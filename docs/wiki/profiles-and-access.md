@@ -730,6 +730,11 @@ is deleted, and the client no longer decides from `formation === 'ICM'`.
   Saint-Etienne student sees, and an admin with no space sees only what they wrote. What an admin
   keeps is OPENING one post BY ITS ID (a report or moderation link: `assertVisible`, option
   `adminSeesAll`) and the gate (they can reach the feed to moderate). Nobody else gets that.
+  **BY ID, AN ADMIN MODERATES AND NEVER PARTICIPATES (2026-11-14, generalising the lead's S2 of
+  #3010 to every post)**: the widening is the moderation read alone - `readPostOpenVerdict` with
+  `allowHidden`, which only the post by id (`getById`) and its comment page (`listComments`) pass for
+  a platform admin. Every participating intent asks an admin the ordinary reader's right, see
+  [the table](#by-id-what-a-platform-admin-may-do-2026-11-14).
 - **A post is visible** (`postVisibleToUserSql`) to its author, to a member of its association (D21: any
   `association_members` row - there is no pending state), and otherwise when its association's
   rules reach one of the reader's spaces - or, since D38, when a REPUBLISHING association is
@@ -773,6 +778,29 @@ service was then booted on a throwaway database with the same cast and every end
 reader: list (all, associations), search, one post, calendar link, the aggregated agenda (signed in
 and anonymous, `.ics` included), a create refused outside the ceiling and on a personal post, and
 the announce sweep's recipient counts.
+
+#### By id, what a platform admin may do (2026-11-14)
+
+| Intent | Route / caller | A platform admin outside the post's audience |
+| --- | --- | --- |
+| Read the post | `GET /api/posts/:id` (`getById`, `allowHidden`) | opens it - hidden, scheduled, "Entre étudiants" included (the moderation read) |
+| Read its comments | `GET /api/posts/:id/comments` (`listComments`, `allowHidden`) | opens them (the moderation read) |
+| Hide, unhide, delete, unmask, delete a comment | `mayModeratePost` / `commentRights` | unchanged: moderation, never a visibility question |
+| React, and the reactions served back | `POST/DELETE /:id/reactions`, `serveReactionsTo` | 404 - an ordinary reader's right; the answer lists their own entry only |
+| Comment, like a comment | `POST /:id/comments`, `POST .../like` (`'COMMENT'`) | 404 |
+| Edit their own comment | `PATCH /:id/comments/:cid` | 404 - no longer passes `allowHidden` (a write) |
+| Vote in a poll | `assertMayVote` (`'VOTE'`), served `canVote` | 404; `canVote` false |
+| Republish into an association | `RepublicationsService.assertVisibleTo`, served `canRepublish` | 404; `canRepublish` false |
+| Member repost, personal republication request | `FIRST_HAND` / `assertVisibleWithoutGrant` | 404 (already: `adminSeesAll: false`) |
+| Report the post or a comment | `ModerationService.createReport` | 404 `CONTENT_NOT_FOUND` - taken by default, to confirm: an admin acts on it directly instead |
+| Be mentioned (push, bell) | `mentionRecipientsOf` | not told - a mention is a notice, not moderation |
+| Calendar link of the post | `GET /:id/calendar-link` | 404 - taken by default, to confirm: it does not pass `allowHidden`, and moderating a post does not need its event |
+| Pin in a space | `SpacePinsService` | unchanged: governing a space, judged on the post reaching that space, never on the admin's sight |
+| Watch a live replay | `LivesService.replay` | the LIVE's own gate: refused outside its audience; a review account's replay opened (`adminSeesCohort`, as the live's key and manifest) |
+
+Inside their own audience an admin does all of these as the reader they are. Proof:
+`post-openable.integration.spec.ts` (the gate, a mention, a report), `republications.integration.spec.ts`,
+`lives.integration.spec.ts` (the replay), `students-only` and `institution-reach` integration specs.
 
 **Judgement calls (the most conservative where it changed who sees what):**
 
@@ -1015,8 +1043,9 @@ foreign key, since what it names depends on the kind.
 - **Republishing** (`posts/republications.service.ts`, the `repost` handler; both flags are
   `POST_AS_ASSO`):
   - `POST /api/posts/:id/republications` republishes AT ONCE. It needs `POST_AS_ASSO` in the
-    republishing association, and the post must be visible to the actor (opened by id, so an admin
-    included - our reading of "already sees").
+    republishing association, and the post must be visible to the actor as an ORDINARY READER - a
+    platform admin included since 2026-11-14 (a republication is participation, not moderation:
+    [by id](#by-id-what-a-platform-admin-may-do-2026-11-14)).
   - `POST /api/posts/:id/republication-proposals` PROPOSES. It needs the post's own association's
     `POST_AS_ASSO`; its acceptors are notified (`repost_proposed`).
   - `DELETE /api/posts/:id/republications/:associationId` lets an association withdraw its own.
@@ -2801,7 +2830,9 @@ revisit them:**
   an admin only with `adminModerates`, which `readPostOpenVerdict` sets from `allowHidden` - the
   post by id, its comment page and a comment's moderation, the routes a platform admin calls as
   one. Reacting, commenting, voting and browsing ask the gate of an admin like of anyone, so an
-  admin without a cursus cannot act on a post they could not read.
+  admin without a cursus cannot act on a post they could not read. **Generalised to every post on
+  2026-11-14** ([by id](#by-id-what-a-platform-admin-may-do-2026-11-14)): `adminSeesAll` is now
+  passed only with `allowHidden`, so this switch no longer narrows anything more for an admin who acts.
 
 **Usage, counted on production 2026-11-14, read-only: not used.** 0 of 327 posts carry
 `studentsOnly` (0 of the 63 posts of the last 7 days), ten days after `v1.6.5` shipped it.

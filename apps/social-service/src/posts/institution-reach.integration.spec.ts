@@ -402,12 +402,11 @@ maybe("an institution's reach against PostgreSQL (migration 162)", () => {
         const opens = async (reader: Reader) =>
           (await readPostOpenVerdict(manager, await row(P), { viewerId: reader }, intent))
             .refusal === null;
-        // By id the platform admin opens any post - except one for students only, as the switch.
-        // A named reader's comments stay withheld (#2998): their grant opens the read only.
+        // Without the moderation read (`allowHidden`) the platform admin is the reader their own
+        // spaces make them (2026-11-14). A named reader's comments stay withheld (#2998): their
+        // grant opens the read only.
         const expected = READERS.filter(
-          (r) =>
-            (readers.includes(r) && (intent === 'READ_OR_REACT' || (r !== 'nr' && r !== 'nf'))) ||
-            (r === 'ad' && reach?.public !== 'students')
+          (r) => readers.includes(r) && (intent === 'READ_OR_REACT' || (r !== 'nr' && r !== 'nf'))
         );
         expect(await whoOf(opens)).toEqual(expected);
       }

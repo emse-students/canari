@@ -997,6 +997,26 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       expect((await refusal(lives.replay(CAROL, live.id))).code).toBe('LIVE_NOT_FOUND');
     });
 
+    it("a platform admin watches a replay only where its live would have let them: never outside its audience, a review account's to judge a report (2026-11-14)", async () => {
+      const live = await finishedLive();
+      await lives.end(ALICE, live.id);
+      const saved = process.env.SERVICE_ACCOUNT_USER_ID;
+      await q(`UPDATE users SET admin = true WHERE id = $1`, [FRANK]);
+      try {
+        // FRANK shares no space with ALICE: the live refused them, and so does its replay.
+        expect((await refusal(lives.replay(FRANK, live.id))).code).toBe('LIVE_NOT_FOUND');
+        await expect(lives.replay(CAROL, live.id)).resolves.toMatchObject({ liveId: live.id });
+        // ALICE a review account: the live's own exception (`adminSeesCohort`), and no member's.
+        process.env.SERVICE_ACCOUNT_USER_ID = ALICE;
+        await expect(lives.replay(FRANK, live.id)).resolves.toMatchObject({ liveId: live.id });
+        expect((await refusal(lives.replay(CAROL, live.id))).code).toBe('LIVE_NOT_FOUND');
+      } finally {
+        await q(`UPDATE users SET admin = false WHERE id = $1`, [FRANK]);
+        if (saved === undefined) delete process.env.SERVICE_ACCOUNT_USER_ID;
+        else process.env.SERVICE_ACCOUNT_USER_ID = saved;
+      }
+    });
+
     it('THE TRIM KEEPS THREE HOURS on a live that keeps a replay, and the window alone on one that does not (D1)', async () => {
       const kept = await start(ALICE);
       await q(`UPDATE platform_config SET live_replays_mode = 'off'`);

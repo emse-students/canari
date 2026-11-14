@@ -40,7 +40,7 @@ const ICM_SE = [{ formation: 'ICM', promo: 2024 }];
 const ISMIN_GA = [{ formation: 'ISMIN', promo: 2024 }];
 
 /** The cast. Readable ids on purpose: a failure names a role, never a uuid. */
-const USERS: Record<string, { campus: string; cursus: unknown[] }> = {
+const USERS: Record<string, { campus: string; cursus: unknown[]; admin?: boolean }> = {
   author: { campus: 'saint-etienne', cursus: ICM_SE },
   // Shares the author's space, no block: the positive case.
   reader: { campus: 'saint-etienne', cursus: ICM_SE },
@@ -54,6 +54,10 @@ const USERS: Record<string, { campus: string; cursus: unknown[] }> = {
   commenter: { campus: 'saint-etienne', cursus: ICM_SE },
   // Same space, and blocked the commenter (not the author).
   blockedTheCommenter: { campus: 'saint-etienne', cursus: ICM_SE },
+  // A platform admin in Gardanne: outside every post's audience as a reader - by id, moderation only.
+  adminOutside: { campus: 'gardanne', cursus: ISMIN_GA, admin: true },
+  // A platform admin who shares the author's space: an ordinary reader there.
+  adminInside: { campus: 'saint-etienne', cursus: ICM_SE, admin: true },
 };
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
@@ -125,10 +129,11 @@ maybe("writes and notifications on a post follow the read's gate, against Postgr
       `CREATE TABLE IF NOT EXISTS user_moderation ("userId" varchar(255) PRIMARY KEY, "isMuted" boolean NOT NULL DEFAULT false)`
     );
     for (const [userId, u] of Object.entries(USERS)) {
-      await client.query(`INSERT INTO users (id, campus, cursus) VALUES ($1, $2, $3)`, [
+      await client.query(`INSERT INTO users (id, campus, cursus, admin) VALUES ($1, $2, $3, $4)`, [
         userId,
         u.campus,
         JSON.stringify(u.cursus),
+        u.admin === true,
       ]);
     }
     await client.query(
@@ -187,6 +192,74 @@ maybe("writes and notifications on a post follow the read's gate, against Postgr
     });
   });
 
+  describe('a platform admin by id: moderates, never participates (2026-11-14)', () => {
+    const INTENTS = ['READ_OR_REACT', 'COMMENT', 'VOTE'] as const;
+    const verdict = async (
+      postId: string,
+      viewerId: string,
+      intent: (typeof INTENTS)[number],
+      allowHidden?: boolean
+    ) =>
+      (await readPostOpenVerdict(manager, await row(postId), { viewerId, allowHidden }, intent))
+        .refusal;
+
+    it.each(['READ_OR_REACT', 'COMMENT'] as const)(
+      'the moderation read (`allowHidden`, intent %s) opens any post: outside the audience, hidden, scheduled',
+      async (intent) => {
+        for (const postId of [P_PERSONAL, P_HIDDEN, P_SCHEDULED]) {
+          expect(await verdict(postId, 'adminOutside', intent, true)).toBeNull();
+        }
+      }
+    );
+
+    it.each(INTENTS)(
+      'a reaction, a comment, a vote (intent %s) outside the audience: the 404 an ordinary reader gets',
+      async (intent) => {
+        expect(await verdict(P_PERSONAL, 'adminOutside', intent)).toBe('not-found');
+        expect(await verdict(P_PERSONAL, 'outsider', intent)).toBe('not-found');
+      }
+    );
+
+    it.each(INTENTS)(
+      'inside their own audience (intent %s) an admin acts as the ordinary reader they are',
+      async (intent) => {
+        expect(await verdict(P_PERSONAL, 'adminInside', intent)).toBeNull();
+        expect(await verdict(P_HIDDEN, 'adminInside', intent)).toBe('hidden');
+      }
+    );
+
+    it('a mention never reaches an admin outside the audience, nor a report from one files', async () => {
+      expect(
+        await new PostNotificationsService(
+          {} as never,
+          { manager } as never,
+          {} as never,
+          {} as never
+        ).mentionRecipientsOf(
+          await row(P_PERSONAL),
+          'author',
+          ['adminOutside', 'adminInside'],
+          'READ_OR_REACT'
+        )
+      ).toEqual(['adminInside']);
+      const save = jest.fn();
+      const moderation = new ModerationService(
+        { manager, findOne: jest.fn(() => Promise.resolve(null)), save } as never,
+        {} as never,
+        {} as never
+      );
+      await expect(
+        moderation.createReport({
+          reporterId: 'adminOutside',
+          contentType: 'post',
+          contentId: P_PERSONAL,
+          reason: 'spam',
+        })
+      ).rejects.toMatchObject({ status: 404 });
+      expect(save).not.toHaveBeenCalled();
+    });
+  });
+
   describe('a mention (`mentionRecipientsOf`)', () => {
     const notifications = () =>
       new PostNotificationsService({} as never, { manager } as never, {} as never, {} as never);
@@ -200,7 +273,7 @@ maybe("writes and notifications on a post follow the read's gate, against Postgr
           everyoneButTheAuthor,
           'READ_OR_REACT'
         )
-      ).toEqual(['reader', 'commenter', 'blockedTheCommenter']);
+      ).toEqual(['reader', 'commenter', 'blockedTheCommenter', 'adminInside']);
     });
 
     it('reaches nobody on a hidden post, nor on one scheduled later', async () => {

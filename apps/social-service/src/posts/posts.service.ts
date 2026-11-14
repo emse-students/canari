@@ -517,10 +517,10 @@ export class PostsService {
    * Builds the per-reader context for a batch of rows: two queries for a whole page, whatever its
    * length, and none at all for a reader whose answer is already known.
    *
-   * A global administrator short-circuits both - `viewerCapabilities` grants them every control
-   * before it looks at either field. The D38b fields are the exception, read for an administrator
-   * too: asking an author is a right the administrator tier does not grant, so they need their own
-   * memberships like anybody else.
+   * A global administrator short-circuits the moderation and management fields - the admin tier
+   * holds them. The grant-free set (a vote, a republication) and the D38b fields are read for an
+   * administrator too: participating and asking an author are rights the administrator tier does
+   * not grant (2026-11-14), so they need their own sight and memberships like anybody else.
    */
   private async viewerContext(
     rows: { id?: string; associationId?: string | null }[],
@@ -541,6 +541,9 @@ export class PostsService {
       const adminAssociationIds = rows
         .map((row) => row.associationId)
         .filter((id): id is string => !!id);
+      // A vote and a republication ask an admin the ordinary reader's right (2026-11-14), so their
+      // controls are read from the same grant-free set as anyone's - one query for the page.
+      const grantFree = await this.grantFreeVisibleIds(postIds, viewerId);
       return {
         memberReposts: await memberRepostContext(this.postRepo.manager, postIds, viewerId),
         ...(await this.pinContext(postIds, viewerId, true)),
@@ -561,8 +564,8 @@ export class PostsService {
               )
             : new Set<string>(),
         republishAsIds: new Set(),
-        grantFreeIds: new Set(),
-        firstHandIds: new Set(),
+        grantFreeIds: grantFree.grantFreeIds,
+        firstHandIds: grantFree.firstHandIds,
         ...(await this.personalRequestContext(personalIds, viewerId, memberships.personal)),
       };
     }
@@ -640,9 +643,9 @@ export class PostsService {
     if (postIds.length === 0) return { grantFreeIds, firstHandIds };
     const rows: unknown = await this.postRepo.manager.query(
       `SELECT posts.id,
-              ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: true, readGrants: false, memberReposts: false })} AS "firstHand"
+              ${postVisibleToViewerSql('posts', '$2', { readGrants: false, memberReposts: false })} AS "firstHand"
          FROM posts WHERE posts.id = ANY($1::uuid[])
-         AND ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: true, readGrants: false })}`,
+         AND ${postVisibleToViewerSql('posts', '$2', { readGrants: false })}`,
       [postIds, viewerId]
     );
     for (const r of Array.isArray(rows) ? (rows as { id: string; firstHand: boolean }[]) : []) {
@@ -846,8 +849,8 @@ export class PostsService {
       canProposeRepublication:
         !!viewer.viewerId && !!post.associationId && (viewer.isGlobalAdmin || isPublisher),
       canUnrepublishAs: this.viewerMayUnrepublishAs(post, viewer),
-      canVote:
-        !!viewer.viewerId && (viewer.isGlobalAdmin || this.viewerSeesWithoutGrant(post, viewer)),
+      // An admin votes where an ordinary reader would (`assertMayVote`, 2026-11-14).
+      canVote: !!viewer.viewerId && this.viewerSeesWithoutGrant(post, viewer),
       canSeeComments: !post.id || !viewer.commentsWithheldIds.has(post.id),
       canRequestRepublication: this.viewerMayRequestRepublication(post, viewer),
       republicationRequests: post.id
@@ -924,10 +927,11 @@ export class PostsService {
     viewer: PostViewerContext
   ): boolean {
     if (!viewer.viewerId || !post.associationId) return false;
-    if (viewer.isGlobalAdmin) return true;
     // A grant opens a post to read only, and a member's repost is not a door an association
-    // republishes through (no chain): either is a 404 (`RepublicationsService`).
+    // republishes through (no chain): either is a 404 (`RepublicationsService`). An admin too: a
+    // republication is participation, asked of their own first-hand sight (2026-11-14).
     if (!post.id || !viewer.firstHandIds.has(post.id)) return false;
+    if (viewer.isGlobalAdmin) return true;
     const already = new Set((post.republishedBy ?? []).map((r) => r.id));
     return [...viewer.republishAsIds].some((id) => id !== post.associationId && !already.has(id));
   }
@@ -2637,7 +2641,7 @@ export class PostsService {
     otherReactionCounts?: Record<string, number>;
   }> {
     const rows: { visible: boolean; withheld: boolean }[] = await this.postRepo.manager.query(
-      `SELECT ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: true })} AS visible,
+      `SELECT ${postVisibleToViewerSql('posts', '$2')} AS visible,
               ${commentsWithheldFromViewerSql('posts', '$2')} AS withheld
          FROM posts WHERE posts.id = $1`,
       [postId, viewerId]

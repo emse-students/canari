@@ -489,6 +489,8 @@ export class PostsController {
    * Updates the text of a comment the caller may edit (`commentRights`). Behind the `'COMMENT'` read:
    * the answer serves the comment (who liked it included) to a reader the comments may be withheld
    * from - a named reader's own comment, written while their switch was on. Deleting it stays open.
+   * A WRITE, so never `allowHidden`: a platform admin edits their own comment only where an ordinary
+   * reader could (2026-11-14, profiles-and-access.md).
    */
   @UseGuards(NginxAuthGuard)
   @Patch(':postId/comments/:commentId')
@@ -499,9 +501,7 @@ export class PostsController {
     @Param('commentId') commentId: string,
     @Body() body: EditCommentDto
   ) {
-    await this.service.assertVisible(postId, xUserId, 'COMMENT', {
-      allowHidden: xGlobalAdmin === 'true',
-    });
+    await this.service.assertVisible(postId, xUserId, 'COMMENT');
     return this.interactions.editComment(
       postId,
       commentId,

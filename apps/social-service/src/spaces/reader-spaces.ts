@@ -595,10 +595,15 @@ export function institutionReachNotForStudentsSql(item: string): string {
 
 /**
  * Post row `post` is visible to user row `user` (decision 3 of WP6b, D38):
- * - the post's author, and a global admin ONLY when `adminSeesAll` (opening one post by its id, the
- *   way a report or a moderation link does) - never when BROWSING, so the feed, the search and the
- *   announcements show an admin what they would show an ordinary reader (user, 2026-10-04: an admin
- *   reading everyone's personal posts would be a mess, and a wrong thing to be able to do);
+ * - the post's author, and a global admin ONLY when `adminSeesAll` (the MODERATION READ: opening one
+ *   post by its id, its comment page, the way a report or a moderation link does) - never when
+ *   BROWSING, so the feed, the search and the announcements show an admin what they would show an
+ *   ordinary reader (user, 2026-10-04: an admin reading everyone's personal posts would be a mess,
+ *   and a wrong thing to be able to do), and never to PARTICIPATE: a reaction, a comment, a vote, a
+ *   republication ask an admin the ordinary reader's right (2026-11-14, profiles-and-access.md);
+ * - with `adminSeesCohort`, a platform admin on a REVIEW ACCOUNT's post - the live's own exception
+ *   (`liveVisibleToUserSql`), passed by a live replay's watch alone, so a replay is never wider than
+ *   its live;
  * - an association post: the reader sees its association (a member, or its rules reach one of the
  *   reader's spaces), OR sees an association that republished it. A post has no rules of its own
  *   any more (D38, user 2026-10-04): what widens its audience is a republication, never the author.
@@ -645,7 +650,8 @@ export function institutionReachNotForStudentsSql(item: string): string {
 export function postVisibleToUserSql(
   post: string,
   user: string,
-  opts: { adminSeesAll?: boolean; adminModerates?: boolean } & ReadOpts & FollowerOpts = {}
+  opts: { adminSeesAll?: boolean; adminModerates?: boolean; adminSeesCohort?: boolean } & ReadOpts &
+    FollowerOpts = {}
 ): string {
   // "For students" in either form - the switch, or an institution's public - closes the grant door
   // and the browsing admin's, as the lead decided for the switch (S1, S2 of #3010).
@@ -655,6 +661,9 @@ export function postVisibleToUserSql(
     ? opts.adminModerates
       ? `${isAdminSql(user)}\n    OR `
       : `(${isAdminSql(user)} AND ${notStudentsOnly})\n    OR `
+    : '';
+  const cohortClause = opts.adminSeesCohort
+    ? `(${isAdminSql(user)} AND ${inReviewCohortSql(`${post}."authorId"`)})\n    OR `
     : '';
   const grantOpts: ReadOpts = { readGrants: opts.readGrants, grantGuard: notStudentsOnly };
   // The post's OWN association reaches only the spaces the post ticked (an institution's reach,
@@ -682,7 +691,7 @@ export function postVisibleToUserSql(
       ? ''
       : `
       OR ${republicationReachesUserSql(post, user)}`;
-  return `(${adminClause}${post}."authorId" = ${user}.id
+  return `(${adminClause}${cohortClause}${post}."authorId" = ${user}.id
     OR (${postPublicAdmitsUserSql(post, user)} AND (
     (${post}."associationId" IS NULL AND (
       ${sharesSpaceWithAuthorSql(`${post}."authorId"`, user)}${personalCarrierClause}${followerClause}${repostClause}))
@@ -836,6 +845,7 @@ export function postVisibleToViewerSql(
   opts: {
     adminSeesAll?: boolean;
     adminModerates?: boolean;
+    adminSeesCohort?: boolean;
     readGrants?: boolean;
   } & FollowerOpts = {}
 ): string {

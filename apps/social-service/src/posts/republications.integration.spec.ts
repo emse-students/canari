@@ -247,6 +247,24 @@ maybe('republication and proposals against PostgreSQL (migrations 071-073)', () 
       );
     });
 
+    it("a platform admin republishes only what they see as an ordinary reader: the by-id read is moderation's (2026-11-14)", async () => {
+      // bGa, made a platform admin: still in Gardanne, still outside P1's audience.
+      await q(`UPDATE users SET admin = true WHERE id = 'bGa'`);
+      try {
+        await expect(republications.republish(P(1), A2, 'bGa', true)).rejects.toBeInstanceOf(
+          NotFoundException
+        );
+        expect(
+          await q(
+            `SELECT 1 FROM post_republications WHERE "postId" = $1 AND "associationId" = $2`,
+            [P(1), A2]
+          )
+        ).toEqual([]);
+      } finally {
+        await q(`UPDATE users SET admin = false WHERE id = 'bGa'`);
+      }
+    });
+
     it('a nominative read grant READS the post but never republishes it, even into an association the reader publishes as (WP7)', async () => {
       // The grant opens A1's post to gMember for reading ...
       expect(await sees(P(1), 'gMember')).toBe(true);
@@ -279,7 +297,7 @@ maybe('republication and proposals against PostgreSQL (migrations 071-073)', () 
         );
         // The offer (`PostsService.grantFreeVisibleIds`'s first-hand column) is the same predicate.
         const offer: { firstHand: boolean }[] = await q(
-          `SELECT ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: true, readGrants: false, memberReposts: false })} AS "firstHand"
+          `SELECT ${postVisibleToViewerSql('posts', '$2', { readGrants: false, memberReposts: false })} AS "firstHand"
              FROM posts WHERE posts.id = $1`,
           [P(9), 'bGa']
         );

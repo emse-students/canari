@@ -51,8 +51,12 @@ const refuse = (refusal: 'not-found' | 'hidden', why: string): PostOpenVerdict =
  *
  * The terms, IN THIS ORDER (the order is the read's, and it matters for what a refusal reveals):
  * 1. a reel past its month is gone for everyone (`isExpiredPost`);
- * 2. the audience - `postVisibleToViewerSql`, a global admin included (opening by id is a
- *    moderation path - for an "Entre étudiants" post only with `allowHidden`, the moderation read);
+ * 2. the audience - `postVisibleToViewerSql`. A platform admin is widened past it ONLY with
+ *    `allowHidden`, the moderation read (the post by id, its comment page): every other caller - a
+ *    reaction, a comment, a comment like or edit, a vote, a report, a mention - asks an admin the
+ *    ordinary reader's right, so an admin reads by id to moderate and never participates outside
+ *    their own audience (2026-11-14, profiles-and-access.md). `adminSeesCohort` is a live replay's
+ *    watch, the live's own exception (a review account's replay, to judge a report);
  *    a read grant counts for `'READ_OR_REACT'` and `'COMMENT'`, never for `'VOTE'`. BEFORE the
  *    moderation term, whose 403 would otherwise confirm the id to someone outside the audience;
  *    for `'COMMENT'`, also: the comments are not withheld from this reader (a named reader whose
@@ -70,14 +74,21 @@ const refuse = (refusal: 'not-found' | 'hidden', why: string): PostOpenVerdict =
 export async function readPostOpenVerdict(
   manager: EntityManager,
   post: OpenablePost,
-  opts: { viewerId?: string; allowHidden?: boolean },
+  opts: { viewerId?: string; allowHidden?: boolean; adminSeesCohort?: boolean },
   intent: PostAccessIntent
 ): Promise<PostOpenVerdict> {
   if (isExpiredPost(post)) return refuse('not-found', `reel expired at ${String(post.expiresAt)}`);
+  // The admin's widening is the MODERATION READ alone (`allowHidden`): a platform admin opens any
+  // post by id to moderate it - an "Entre étudiants" one included (lead, 2026-11-04) - and never
+  // reacts, comments, votes or reports outside their own audience (2026-11-14).
+  const moderates = opts.allowHidden === true;
   const rows: { visible: boolean }[] = await manager.query(
-    // `adminModerates` only with `allowHidden`: a platform admin opens an "Entre étudiants" post to
-    // MODERATE it (read it, its comments), never to react, comment or vote (lead, 2026-11-04).
-    `SELECT ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: true, adminModerates: opts.allowHidden === true, readGrants: intent !== 'VOTE' })} AS visible FROM posts WHERE posts.id = $1`,
+    `SELECT ${postVisibleToViewerSql('posts', '$2', {
+      adminSeesAll: moderates,
+      adminModerates: moderates,
+      adminSeesCohort: opts.adminSeesCohort === true,
+      readGrants: intent !== 'VOTE',
+    })} AS visible FROM posts WHERE posts.id = $1`,
     [post.id, opts.viewerId ?? null]
   );
   if (rows[0]?.visible !== true) return refuse('not-found', 'outside its audience');

@@ -438,7 +438,7 @@ maybe('"Entre étudiants" against PostgreSQL (migration 133)', () => {
   });
 
   it.each(['READ_OR_REACT', 'COMMENT', 'VOTE'] as const)(
-    'the post by id, intent %s (`readPostOpenVerdict`): ON, the admin browsing is refused too',
+    'the post by id, intent %s (`readPostOpenVerdict`): the admin acting is an ordinary reader, OFF and ON',
     async (intent: PostAccessIntent) => {
       const opens = (reader: Reader) => async () =>
         (await readPostOpenVerdict(manager, await row(P), { viewerId: reader }, intent)).refusal ===
@@ -447,7 +447,9 @@ maybe('"Entre étudiants" against PostgreSQL (migration 133)', () => {
       // The named reader: a grant opens a read and a reaction, never a vote, and since #2998 not
       // the comments either (their switch "voit les commentaires" is off).
       const nrOff = intent === 'READ_OR_REACT' ? ['nr'] : [];
-      expect(off).toEqual(['st', 'rp', 'sg', 'mb', 'off', 'sf', ...nrOff, 'fo', 'ad']);
+      // The platform admin has no space here: without the moderation read they open nothing
+      // (2026-11-14), whatever the switch says.
+      expect(off).toEqual(['st', 'rp', 'sg', 'mb', 'off', 'sf', ...nrOff, 'fo']);
       expect(on).toEqual([...ADMITTED]);
     }
   );
@@ -469,8 +471,9 @@ maybe('"Entre étudiants" against PostgreSQL (migration 133)', () => {
           (await readPostOpenVerdict(manager, await row(P), { viewerId: 'ad' }, intent)).refusal ===
           null,
       }));
-      expect(off).toEqual({ moderating: true, acting: true });
-      // React, comment and vote routes never pass `allowHidden`: the admin is asked the gate there.
+      // React, comment and vote routes never pass `allowHidden`: the admin is asked the gate there,
+      // OFF as ON (2026-11-14) - the switch narrows nothing more for an admin who acts.
+      expect(off).toEqual({ moderating: true, acting: false });
       expect(on).toEqual({ moderating: true, acting: false });
     }
   );

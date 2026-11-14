@@ -770,7 +770,8 @@ export class LivesService implements OnModuleDestroy {
    * One page of a live's REPLAY for one viewer (docs/wiki/live-replays.md). NO SEAT: a replay is
    * uncapped like a reel. The gate is the replay POST's own (`readPostOpenVerdict`, the one predicate
    * every path that acts on a post asks): its audience - the live's, with the viewers the broadcaster
-   * removed taken out (`postVisibleToUserSql`) - moderation, a block with a personal author. A replay
+   * removed taken out (`postVisibleToUserSql`), a platform admin widened only as the live widens them
+   * (a review account's, `adminSeesCohort`) - moderation, a block with a personal author. A replay
    * past its `expiresAt` (database clock), absent, or refused for any reason is the same 404
    * `LIVE_NOT_FOUND`, asked before anything else, so an id lifted from a link learns nothing.
    */
@@ -810,7 +811,9 @@ export class LivesService implements OnModuleDestroy {
         kind: 'replay',
         expiresAt: found.expiresAt,
       },
-      { viewerId },
+      // The live's own gate (`WATCH_ONLY`): a platform admin is an ordinary viewer, but for a review
+      // account's replay, opened to judge a report - never wider than the live was.
+      { viewerId, adminSeesCohort: true },
       'READ_OR_REACT'
     );
     if (verdict.refusal !== null) {
