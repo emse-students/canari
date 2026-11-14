@@ -4,8 +4,17 @@ target: 1.8.0
 The owner, 2026-11-14: Messenger stays the reference for the LAYOUT (every size and margin measured
 in [design-reference](../frontend/design-reference.md) holds), but Google Messages does the MOTION
 better - *"la fluidite avec laquelle les messages montent avec le clavier, au lieu d'un bloc, tout
-est smooth"*. This entry is about the motion only. **Not to be built until the owner asks** (the
-directive of 2026-11-11: no new feature unless asked).
+est smooth"*. This entry is about the motion only.
+
+**Decided by the owner, 2026-11-14 (asked to build it the same day):**
+- **Both directions, both platforms**: the thread and the composer ride the keyboard on the rise
+  AND the fall, on Android AND iOS - one mechanism, the ride of `keyboardRide.ts`, extended.
+- **On iOS the pieces ride the keyboard's own curve, with no lead**: Apple Messages starts its
+  thread ahead of the keys; Canari does not copy that.
+- **A short thread sits at the BOTTOM**, against the composer, as in Messenger and Messages
+  ([the readings](what-the-keyboard-readings-of-2026-11-14-filed.md), item 4).
+- **The bench**: development and checks on the web, then the Mi 9T on a dev build; the owner's
+  Pixel 6a only for the final reading of the pre-release, nothing else installed on it.
 
 ### What Google Messages does, measured (Pixel 6a, Android 17, 60 Hz, 2026-11-14)
 
@@ -29,81 +38,82 @@ each frame's composer pill and last bubble located by template match against the
   animation; **the design below reads the duration and the interpolator from the callback and
   assumes neither.**
 
-### What Canari does today
+### What Canari does today - Messenger's motion, built 2026-11-13
 
-`MainActivity.applyKeyboardInsets` ([mobile](../frontend/mobile.md#androidwindowsoftinputmodeadjustresize-is-inert-and-the-manifest-still-carries-it))
-pads `android.R.id.content` by the IME inset from a plain `OnApplyWindowInsetsListener`, which
-sees only the END state. Reading #42 (Mi 9T, 2026-11-14, [chat](../frontend/modules/chat.md)):
-`innerHeight` goes 945 -> 855 **in one frame**. The whole page jumps by the keyboard's height once,
-while the keyboard itself takes ~280 ms to slide. That is the "bloc".
+[keyboard-and-send-motion](../frontend/keyboard-and-send-motion.md) (#3490 Android, #3492 iOS)
+copied MESSENGER's motion, which is not Messages': the content takes its keyboard layout in ONE
+frame and the keyboard slides under or over it.
 
-**Measured the same way as Messages, on the same Pixel 6a** (Canari `1.6.12`, the current stable,
-no keyboard change on `main` since; a long DM, 2026-11-14, the owner's go):
+- **Android rise**: a `WindowInsetsAnimationCompat.Callback` (`ImeAnimationLog`, log only) selects
+  the synced 285 ms slide; the page is handed the target first (`window.canariImeTarget`,
+  `imeTarget.ts`, `ImeHandoff`), lays itself out for the keyboard, and the native padding lands once
+  `postVisualStateCallback` says that frame is drawn.
+- **Android fall**: unchanged - the padding goes at the end, the page relays out once (accepted on
+  2026-11-13 because the synced keyboard was expected to cover the band).
+- **iOS**: the rise is handed to the page the same way; the fall is RIDDEN (`keyboardRide.ts`): the
+  page lays out full height, then every `[data-keyboard-ride]` piece is translated back by its own
+  move and animated to its place over the keyboard's duration and curve, on the compositor.
+
+**Measured on the owner's Pixel 6a** (Canari `1.6.12`; a long DM, 2026-11-14, the owner's go), the
+same instrument as Messages. **`v1.6.12` is `1.6.12-alpha.2`'s commit plus the bump (`git ls-remote`,
+2026-11-14): it carries NEITHER #3490 NOR #3492**, so this is the shipped behaviour BEFORE them - the
+baseline, not a reading of either PR:
 
 | | what the frames show |
 | --- | --- |
-| keyboard opening | 5 frames of the old layout while the keyboard starts; then **3 frames (~50 ms) where the WebView is already shrunk but its bottom is not repainted**: a blank band where the last bubbles and the composer were, the keyboard rising into it; then the composer appears at its FINAL place (868 px up) while the keyboard is still a quarter short, the gap filling as it finishes |
+| keyboard opening | 5 frames of the old layout while the keyboard starts; then **3 frames (~50 ms) of a cropped stale frame** (8 before #3490): a blank band where the last bubbles and the composer were; then the whole page in its FINAL layout (868 px up) while the keyboard is still a quarter short |
 | keyboard closing | **the composer stays up for 13 frames (~220 ms) while the keyboard slides away**, a blank band growing under it, then the whole page drops 868 px in one frame |
 
-So the defect is worse than a jump: both directions show an empty band, and the closing one lasts
-most of the animation. Both come from the same fact - the listener sees only the end state, and
-applies it at the start of the opening (too early) and at the end of the closing (too late).
+So on Android the shipped rise crops and the shipped fall opens a band ABOVE the keys, under the
+composer. #3490's owed readings 1 and 2 are NOT read by this: they need a build that carries it.
 
-### Is it possible in a Tauri app: yes, the hook is ours
+### The design: the ride, in both directions, on both platforms
 
-`MainActivity` is our Kotlin, and `WindowInsetsAnimationCompat.Callback` (API 30+ native, compat
-below) gives `onPrepare` / `onStart(bounds, duration, interpolator)` / `onProgress(insets)` per frame
-/ `onEnd`. What a WebView makes hard is not the signal but **who moves the pixels**:
+`keyboardRide.ts` already IS the mechanism Messages' motion needs: one layout, then a compositor
+transform per piece from where it stood to where it lands, over the keyboard's own timing. What
+Messages does that Canari does not is ride the RISE too, and ride on Android at all. So:
 
-| option | what moves per frame | verdict |
+1. **Android hands the timing to the page.** `onStart(bounds, duration, interpolator)` of the
+   callback that already exists knows the duration and the interpolator: the interpolator is
+   sampled (24 points) into a CSS `linear(...)` easing (Chromium 113+), which reproduces the system
+   curve exactly, and sent with the target (`canariImeTarget`) on the rise and with a
+   `canariKeyboardFall` announcement on the fall - the two hooks iOS already has. ONE message per
+   animation, never one per frame.
+2. **The page rides both directions.** On a rise it lays out for the keyboard (as today) and rides
+   each piece up from where it stood; on a fall it rides them down (as iOS does). The thread's
+   bottom pin runs first, so the measured move is the real one.
+3. **What was refused, and why**: padding the WebView per `onProgress` frame (17 relayouts of a long
+   thread), translating the whole WebView natively (the header would move, Messages' does not), and
+   pushing the inset per frame over the bridge (1-2 frames late, by a different amount each frame).
+
+**The open question that decides it**: on Android the native padding still resizes the WebView, and
+the cropped frames come from that resize reaching the screen before the page's new frame. A ride
+starts from the page's frame, so it hides nothing the resize crops. The hand-off of #3490 already
+waits for the page's frame before padding on the rise; the fall has no hand-off. The first prototype
+step is the fall's hand-off (announce, ride, then pad), read on the Mi 9T frame by frame.
+
+### iOS, measured on the iPhone 12 (2026-11-14)
+
+Read from WebDriverAgent's MJPEG stream (`mjpegServerFramerate` 60 asked, ~25 frames/s delivered, a
+frame every 40 ms), so a curve is coarse but its shape is plain. A full screen in both apps.
+
+| | keyboard opening | keyboard closing |
 | --- | --- | --- |
-| A. pad the WebView on every `onProgress` | a Chromium RESIZE + relayout per frame (17 of them) | refused: a layout per frame on a long thread is the jank we want gone, and the resize reaches the compositor frames late |
-| B. translate the whole WebView natively (`translationY`) | one native layer | refused: the header moves too, and Messages' header does not |
-| C. push the inset to the page every frame (`evaluateJavascript`) | a CSS transform | refused as the primary path: a bridge hop per frame lands 1-2 frames late, and late by a different amount on each frame |
-| **D. ONE message at `onStart`, the page runs the animation on its compositor** | a CSS `transform` on the thread + composer, no layout | **recommended** |
+| **Apple Messages** | the thread LEADS: ~75 % of its 309 pt travel in the first 40 ms, the rest eased; the composer rides the keyboard with a spring, ~16 pt past its rest (302) then 286 pt; ~300 ms in all | only by dragging the thread down: the keyboard follows the finger (interactive dismissal). No key, no tap and no drag from the composer closes it |
+| **Canari `1.6.12-alpha.2`** (TestFlight, before #3492) | the composer jumps to its FINAL place in one frame while the keyboard is a quarter up, a blank band under it for ~3 frames; the GIF near the end is drawn WHITE for ~4 frames (160 ms) as the WebView's frame shrinks and WebKit repaints; the thread then rises over ~6 frames | a tap on the thread closes it: in the FIRST frame of the fall the whole page drops to its final layout, so the composer is hidden under the still-falling keyboard for ~3 frames |
 
-**D in detail.** At `onStart` native knows the from/to insets, the duration, and the interpolator.
-It samples the interpolator (say 24 points) and sends ONE event with
-`{ fromInset, toInset, durationMs, easing: "linear(0, ...)" }`. CSS `linear()` (Chromium 113+)
-reproduces the system curve exactly, so the page needs neither a guess nor a per-frame hop. The
-page then translates ONE wrapper (the thread scroller and the composer, under the header and
-clipped by it) from `0` to `-inset`, as a compositor animation that keeps running while JavaScript
-is busy, and swaps the transform for the real layout at the end.
-
-### The open question that decides the build
-
-**The end swap must land in ONE frame**: removing the transform and shrinking the layout by the
-same amount, or the thread jumps once at the end. With today's split, the native padding resizes
-the WebView and the web owns the transform: two owners, no guarantee they land in the same frame. A
-ledger that reconciles them afterwards is a heal, not a fix ([CLAUDE.md](../../../CLAUDE.md)). The
-two shapes that give ONE owner:
-
-1. **The page owns the keyboard's room on Android** (as `keyboardViewport` already does for a
-   browser): native stops padding and hands the inset to the page, which sets its own bottom
-   inset and drops the transform in the same task. The question to answer FIRST, on the Mi 9T, with
-   a prototype: does Chromium, unresized, still scroll the document onto the white band when a field
-   is focused? That band is why the native padding exists ([mobile](../frontend/mobile.md#androidwindowsoftinputmodeadjustresize-is-inert-and-the-manifest-still-carries-it)).
-2. **Native keeps the padding, applied at `onStart` instead of at the end, and the page drives its
-   transform off the RESIZE it observes** (the resize is the fact, the `onStart` message only
-   supplies the curve), transforming from `+remaining` to `0`. One owner per frame, at the cost of
-   1-3 frames at the start where the keyboard overlaps the old composer, the same lag Messages
-   itself shows.
-
-Shape 2 is the smaller change and keeps the white-band fix untouched. Shape 1 is the cleaner one if
-the prototype says Chromium behaves.
-
-### iOS
-
-Same idea, a different source: `UIKeyboardWillChangeFrame` carries the duration and the curve, and
-`CanariApplyKeyboardLayout` ([mobile](../frontend/mobile.md#ios-shrinks-the-webview-and-that-is-the-same-decision-taken-twice))
-shrinks the WebView's frame in one step today. Whether Apple Messages moves the same way, and how
-Canari's iPhone 12 compares, is **not measured**. That reading comes before any iOS design.
+The bench iPhone ran `1.6.12-alpha.2` (TestFlight), which predates #3492: the fall is not ridden
+because that build has no ride - this is the shipped baseline, and #3492's readings are still owed
+on a build that carries it. The rise blanking a medium for 160 ms is the WKWebView frame changing under a page
+that has not repainted, the iOS face of Android's cropped frames. Messages' spring on the composer is
+the platform's keyboard curve (curve 7, the stand-in of `keyboardRide.ts` is to be read against it);
+the thread LEADING the keys is a choice Canari need not copy.
 
 ### Readings owed before and after a build
 
-- Canari on the Mi 9T, recorded and analysed exactly as above (frames, travel per frame, the
-  composer-to-keyboard gap), as the "before". Reading #42 gives the one-frame jump but not the
-  per-frame gap.
+- Canari on the Mi 9T on a build carrying #3490/#3492 (`main`), recorded and analysed exactly as
+  above (frames, travel per frame, the composer-to-keyboard gap), as the "before" of the ride - the
+  Pixel and iPhone readings above are of the code before those two PRs.
 - After: the same, with a long DM and a salon, both directions, plus the GIF panel's
   [handoff](../frontend/modules/chat.md#one-attachment-menu-and-a-gif-panel-in-the-keyboards-place-2026-10-02),
   which must still swap with the keyboard in one frame.
