@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { initKeyboardViewport } from './keyboardViewport.svelte';
+import { getKeyboardViewport, initKeyboardViewport } from './keyboardViewport.svelte';
 import { rideKeyframes } from './keyboardRide';
 import { Log } from '$lib/utils/Log';
 
@@ -122,5 +122,31 @@ describe('the keyboard fall ride, wired', () => {
     const warn = vi.spyOn(Log, 'w');
     expect(hooks().canariKeyboardFall?.({ ...FALL, fromPx: 55 })).toBe(false);
     expect(warn).not.toHaveBeenCalled();
+  });
+});
+
+describe('the baseline follows the window width, never a clock (review of #3556, F1)', () => {
+  it('a rotation is a new window: the first update at the new width takes its height as the baseline', () => {
+    vi.stubGlobal('innerWidth', 390);
+    vi.stubGlobal('innerHeight', 844);
+    const vv = Object.assign(new EventTarget(), { height: 844, offsetTop: 0, scale: 1 });
+    vi.stubGlobal('visualViewport', vv);
+    vi.stubGlobal('matchMedia', () => ({ matches: false }));
+    const teardown = initKeyboardViewport();
+    // Landscape: 390 tall, 844 wide. Against the portrait baseline that is 454 px "taken" - a
+    // keyboard - until a timer 400 ms after `orientationchange` reset it.
+    vi.stubGlobal('innerWidth', 844);
+    vi.stubGlobal('innerHeight', 390);
+    vv.height = 390;
+    window.dispatchEvent(new Event('resize'));
+    expect(getKeyboardViewport().isOpen).toBe(false);
+    // A keyboard in landscape is measured against the landscape baseline.
+    vv.height = 190;
+    vi.stubGlobal('innerHeight', 190);
+    window.dispatchEvent(new Event('resize'));
+    expect(getKeyboardViewport().isOpen).toBe(true);
+    expect(getKeyboardViewport().keyboardHeight).toBe(200);
+    teardown();
+    vi.unstubAllGlobals();
   });
 });

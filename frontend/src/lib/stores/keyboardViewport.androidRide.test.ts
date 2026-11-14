@@ -1,6 +1,10 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { getKeyboardViewport, initKeyboardViewport } from './keyboardViewport.svelte';
+import {
+  getKeyboardViewport,
+  initKeyboardViewport,
+  onKeyboardInsetChange,
+} from './keyboardViewport.svelte';
 import { rideKeyframes } from './keyboardRide';
 import { Log } from '$lib/utils/Log';
 
@@ -16,8 +20,14 @@ vi.mock('$lib/mls-client/mlsPlatform', async (importOriginal) => ({
   detectRuntimeDeviceOs: () => 'android',
 }));
 
-const glide = vi.hoisted(() => ({ takeOff: vi.fn((_scroller: Element) => false) }));
-vi.mock('$lib/utils/chat/threadGrowthObserver', () => ({ takeThreadGlideOff: glide.takeOff }));
+const glide = vi.hoisted(() => ({
+  takeOff: vi.fn((_scroller: Element) => false),
+  attachRide: vi.fn((_scroller: Element, _fromPx: number, _animations: Animation[]) => {}),
+}));
+vi.mock('$lib/utils/chat/threadGrowthObserver', () => ({
+  takeThreadGlideOff: glide.takeOff,
+  attachThreadRide: glide.attachRide,
+}));
 
 type Hooks = { canariImeTarget?: (v: unknown) => boolean };
 const hooks = () => window as unknown as Hooks;
@@ -41,11 +51,22 @@ describe('the Android keyboard ride, wired', () => {
   let threadAnimate: ReturnType<typeof vi.fn>;
   let rowAnimates: ReturnType<typeof vi.fn>[];
   let cancel: ReturnType<typeof vi.fn>;
+  /** The test clock the rides are phased on. */
+  let clock = 0;
+  /** How far below its place a running ride draws the composer; a cancel puts it back to 0. */
+  let drawnOffset = 0;
+  /** What was read and written, in order, while `trace` is on (D3). */
+  let trace: string[] | null = null;
+  /** The ride starts the seam has not run yet, when it defers them. */
+  let deferred: (() => void)[] | null = null;
 
   /** An element whose `animate` is recorded and whose top follows the layout through `top()`. */
   function piece(top: () => number) {
     const el = document.createElement('div');
-    vi.spyOn(el, 'getBoundingClientRect').mockImplementation(() => ({ top: top() }) as DOMRect);
+    vi.spyOn(el, 'getBoundingClientRect').mockImplementation(() => {
+      trace?.push('read');
+      return { top: top() } as DOMRect;
+    });
     const animate = vi.fn(() => ({ finished: new Promise(() => {}), cancel }));
     (el as unknown as { animate: typeof animate }).animate = animate;
     return { el, animate };
@@ -57,9 +78,15 @@ describe('the Android keyboard ride, wired', () => {
     const vv = Object.assign(new EventTarget(), { height: BASELINE, offsetTop: 0, scale: 1 });
     vi.stubGlobal('visualViewport', vv);
     vi.stubGlobal('matchMedia', (q: string) => ({ matches: reduced && q.includes('reduce') }));
-    cancel = vi.fn();
+    clock = 0;
+    drawnOffset = 0;
+    trace = null;
+    deferred = null;
+    cancel = vi.fn(() => {
+      drawnOffset = 0;
+    });
     // The composer stands on the keyboard; the thread's rows are pinned to the bottom above it.
-    const composer = piece(() => 880 - inset());
+    const composer = piece(() => 880 - inset() + drawnOffset);
     composer.el.dataset.keyboardRide = 'box';
     composerAnimate = composer.animate;
     const thread = piece(() => 0);
@@ -69,7 +96,14 @@ describe('the Android keyboard ride, wired', () => {
     rowAnimates = rows.map((r) => r.animate);
     thread.el.append(...rows.map((r) => r.el));
     document.body.append(thread.el, composer.el);
-    teardown = initKeyboardViewport({ afterLayout: (_targets, start) => (start(), () => {}) });
+    teardown = initKeyboardViewport({
+      afterLayout: (_targets, start) => {
+        if (deferred) deferred.push(start);
+        else start();
+        return () => {};
+      },
+      now: () => clock,
+    });
   });
 
   afterEach(() => {
@@ -78,6 +112,7 @@ describe('the Android keyboard ride, wired', () => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     glide.takeOff.mockClear();
+    glide.attachRide.mockClear();
   });
 
   it('a rise: the shell keeps its height, both insets carry the keyboard, and the pieces ride UP', () => {
@@ -122,11 +157,103 @@ describe('the Android keyboard ride, wired', () => {
     for (const animate of rowAnimates) expect(animate).not.toHaveBeenCalled();
   });
 
-  it('a new announcement during a ride cancels it before capturing again', () => {
+  it('a Back mid-rise: the fall starts from where the composer is DRAWN, then the rise is cancelled (F3)', () => {
     hooks().canariImeTarget?.(RISE);
     expect(cancel).not.toHaveBeenCalled();
+    // 100 ms into the rise the composer is drawn 150 px below its place (880 - KB).
+    drawnOffset = 150;
+    composerAnimate.mockClear();
     hooks().canariImeTarget?.(FALL);
     expect(cancel).toHaveBeenCalledTimes(3); // the composer and the two rows
+    // From 880 - KB + 150 to 880: it rides the 208 px left, not the whole keyboard from the top.
+    expect(composerAnimate).toHaveBeenCalledWith(rideKeyframes(KB - 150), TIMING);
+  });
+
+  it("the ride starts at the keyboard's phase: as far into its curve as the keyboard is (D1)", () => {
+    deferred = [];
+    clock = 1000;
+    hooks().canariImeTarget?.(RISE);
+    expect(composerAnimate).not.toHaveBeenCalled();
+    clock = 1068; // the layout reactions run 68 ms after the announcement arrived
+    for (const start of deferred) start();
+    expect(composerAnimate).toHaveBeenCalledWith(rideKeyframes(-KB), { ...TIMING, delay: -68 });
+    for (const animate of rowAnimates) {
+      expect(animate).toHaveBeenCalledWith(rideKeyframes(-KB), { ...TIMING, delay: -68 });
+    }
+  });
+
+  it('a ride that could only start after the keyboard landed does not animate (D1)', () => {
+    deferred = [];
+    clock = 1000;
+    hooks().canariImeTarget?.(RISE);
+    clock = 1000 + RISE.durationMs;
+    for (const start of deferred) start();
+    expect(composerAnimate).not.toHaveBeenCalled();
+    expect(inset()).toBe(KB);
+  });
+
+  it('reads everything it needs before it writes the first variable (D3)', () => {
+    deferred = [];
+    let width = 412;
+    let height = BASELINE;
+    Object.defineProperty(window, 'innerHeight', {
+      configurable: true,
+      get: () => (trace?.push('read'), height),
+    });
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      get: () => (trace?.push('read'), width),
+    });
+    const setProperty = root().setProperty.bind(root());
+    vi.spyOn(root(), 'setProperty').mockImplementation((...args) => {
+      trace?.push('write');
+      setProperty(...args);
+    });
+    for (const announcement of [RISE, FALL]) {
+      trace = [];
+      hooks().canariImeTarget?.(announcement);
+      const firstWrite = trace.indexOf('write');
+      expect(firstWrite).toBeGreaterThan(0);
+      expect(trace.slice(firstWrite)).not.toContain('read');
+    }
+    width = 0;
+    height = 0;
+  });
+
+  it("the navigation bar strip is the keyboard's while it is up: the safe area is pinned in the same task (D2)", () => {
+    root().removeProperty('--safe-area-inset-bottom');
+    hooks().canariImeTarget?.(RISE);
+    expect(root().getPropertyValue('--safe-area-inset-bottom')).toBe('0px');
+    hooks().canariImeTarget?.(FALL);
+    expect(root().getPropertyValue('--safe-area-inset-bottom')).toBe('');
+    // A keyboard shorter than the open threshold covers the bar as well.
+    hooks().canariImeTarget?.({ px: 90 });
+    expect(getKeyboardViewport().isOpen).toBe(false);
+    expect(root().getPropertyValue('--safe-area-inset-bottom')).toBe('0px');
+  });
+
+  it('follows a window resized for another reason: the shell is the window, not the baseline (F1)', () => {
+    vi.stubGlobal('innerHeight', 450);
+    hooks().canariImeTarget?.({ px: 300 });
+    expect(getKeyboardViewport().isOpen).toBe(true);
+    // The baseline was 945 and only grows: the shell pinned to it stood 945 tall in a 450 window.
+    expect(root().getPropertyValue('--app-viewport-height')).toBe('450px');
+    expect(root().getPropertyValue('--keyboard-occlusion-bottom')).toBe('300px');
+    expect(root().getPropertyValue('--keyboard-free-viewport-height')).toBe('');
+  });
+
+  it('tells the inset listeners when the band moves, and only then (F4)', () => {
+    const heard = vi.fn();
+    const off = onKeyboardInsetChange(heard);
+    hooks().canariImeTarget?.({ px: KB });
+    expect(heard).toHaveBeenCalledTimes(1);
+    hooks().canariImeTarget?.({ px: KB });
+    expect(heard).toHaveBeenCalledTimes(1);
+    hooks().canariImeTarget?.({ px: 0 });
+    expect(heard).toHaveBeenCalledTimes(2);
+    off();
+    hooks().canariImeTarget?.({ px: KB });
+    expect(heard).toHaveBeenCalledTimes(2);
   });
 
   it('a press during a ride cancels it', () => {

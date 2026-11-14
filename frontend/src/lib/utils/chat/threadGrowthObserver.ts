@@ -130,8 +130,23 @@ export function observeThreadGrowth(
     // TWO ARRIVALS INSIDE ONE GLIDE (S5): the new glide starts where the rows are DRAWN - what the
     // running one had left to travel, plus the new row - so nothing jumps. Otherwise the held glide
     // resumes as it was.
+    //
+    // AN ARRIVAL DURING A KEYBOARD RIDE (review of #3556, F8): the ride's transform and the glide's
+    // would both be on the rows, and the later one replaces the other - the rows jumped from the
+    // ride's offset to the glide's. The ride YIELDS: it is taken off the rows where it drew them
+    // (`takeThreadRideOff`), and the glide starts from that offset plus the new row, as from a glide
+    // of its own. A change that brings no arrival leaves the ride alone: its transform does not count
+    // in the overflow measured above (it is inside the padding the keyboard's room opened, or above
+    // the rows' place on a fall). The composer, a box of its own, rides on.
     if (travel > 0) {
-      if (glide.play(glideTravel(held, travel))) markGlideEntrance(added);
+      const ridden = takeThreadRideOff(scroller);
+      if (ridden !== null) {
+        Log.d(
+          'threadGrowth',
+          `arrival mid keyboard ride: the glide takes the rows from ${Math.round(ridden)}px`
+        );
+      }
+      if (glide.play(glideTravel(held, travel) + (ridden ?? 0))) markGlideEntrance(added);
     } else if (held) glide.play(held.px, held.time);
     previousClientHeight = scroller.clientHeight;
     captureAnchor();
@@ -189,6 +204,43 @@ export function takeThreadGlideOff(scroller: Element): boolean {
   return glidesByScroller.get(scroller)?.suspend() != null;
 }
 
+/** A keyboard ride on a followed thread's rows: the offset it started from and its animations. */
+interface ThreadRide {
+  /** Where the ride drew the rows at its start, relative to their place: + below, - above. */
+  fromPx: number;
+  animations: Animation[];
+}
+
+/** The keyboard ride running on each followed thread's rows, for {@link takeThreadRideOff}. */
+const ridesByScroller = new WeakMap<Element, ThreadRide>();
+
+/**
+ * Tells a followed thread that a keyboard ride now moves its rows (`startKeyboardRide`), so an
+ * arrival during it can take the rows on from where the ride drew them. A thread no observer follows
+ * has no arrival to reconcile: nothing is kept.
+ *
+ * @param fromPx the ride's starting offset from the rows' place (its first keyframe's translation).
+ */
+export function attachThreadRide(scroller: Element, fromPx: number, animations: Animation[]): void {
+  if (!glidesByScroller.has(scroller) || animations.length === 0) return;
+  ridesByScroller.set(scroller, { fromPx, animations });
+}
+
+/**
+ * Takes the keyboard ride off a thread's rows and says where it drew them, signed (`fromPx` times
+ * what was left of its eased progress), or null when no ride is drawing them - none attached, or one
+ * that ended or was cancelled (its timing has no progress then). The running animations ARE the
+ * state, as for the glide.
+ */
+function takeThreadRideOff(scroller: Element): number | null {
+  const ride = ridesByScroller.get(scroller);
+  if (!ride) return null;
+  ridesByScroller.delete(scroller);
+  const progress = ride.animations[0].effect?.getComputedTiming().progress ?? null;
+  for (const animation of ride.animations) animation.cancel();
+  return progress === null ? null : ride.fromPx * (1 - progress);
+}
+
 /** Reads a `--motion-*` duration token (`220ms`) as milliseconds, or null if it is not one. */
 function motionMs(value: string): number | null {
   const match = /^(\d+(?:\.\d+)?)ms$/.exec(value.trim());
@@ -210,11 +262,17 @@ export function glideTravel(held: HeldGlide | null, travel: number): number {
   return (held?.remaining ?? 0) + travel;
 }
 
+/** A glide shorter than this is no glide: rounding between two reads of the same layout. */
+const GLIDE_MIN_PX = 0.5;
+
 /** The thread's glide, as the durable state `follow` reads: see {@link createThreadGlide}. */
 export interface ThreadGlide {
   /** Removes the glide's transforms so the layout can be measured; null when none was running. */
   suspend(): HeldGlide | null;
-  /** Plays the rows from `px` below their place back to it, `time` ms in; false if nothing ran. */
+  /**
+   * Plays the rows from `px` below their place (above for a negative `px`, a keyboard fall's rows
+   * taken on mid-ride) back to it, `time` ms in; false if nothing ran.
+   */
   play(px: number, time?: number): boolean;
   /** Ends any glide (teardown). */
   stop(): void;
@@ -246,7 +304,7 @@ export function createThreadGlide(scroller: HTMLElement): ThreadGlide {
   };
 
   const play = (px: number, time = 0): boolean => {
-    if (px <= 0) return false;
+    if (Math.abs(px) < GLIDE_MIN_PX) return false;
     const root = getComputedStyle(document.documentElement);
     const duration = motionMs(root.getPropertyValue('--motion-thread-glide'));
     const easing = root.getPropertyValue('--motion-ease-in-out').trim();

@@ -7,15 +7,23 @@ import {
   KEYBOARD_RIDE_EVENT,
   linearEasing,
   parseKeyboardFall,
+  releaseThreadGlides,
   rideDistancePx,
+  ridePhaseMs,
   rideKeyframes,
   startKeyboardRide,
   UIKIT_KEYBOARD_CURVE_EASING,
   uikitCurveEasing,
 } from './keyboardRide';
 
-const glide = vi.hoisted(() => ({ takeOff: vi.fn((_scroller: Element) => false) }));
-vi.mock('$lib/utils/chat/threadGrowthObserver', () => ({ takeThreadGlideOff: glide.takeOff }));
+const glide = vi.hoisted(() => ({
+  takeOff: vi.fn((_scroller: Element) => false),
+  attachRide: vi.fn((_scroller: Element, _fromPx: number, _animations: Animation[]) => {}),
+}));
+vi.mock('$lib/utils/chat/threadGrowthObserver', () => ({
+  takeThreadGlideOff: glide.takeOff,
+  attachThreadRide: glide.attachRide,
+}));
 
 describe('keyboardRide - what the iOS shell may send', () => {
   it('takes the keyboard animation parameters as they come from UIKit', () => {
@@ -215,7 +223,7 @@ describe('keyboardRide - capture before the resize, each piece rides its own mov
     }
   });
 
-  it('takes a glide in flight off the rows AFTER reading where they are drawn, on Android only', () => {
+  it('capture only reads; the glide in flight is taken off AFTER, and for a thread riding its rows only', () => {
     const t = thread();
     const order: string[] = [];
     vi.spyOn(t.row, 'getBoundingClientRect').mockImplementation(() => {
@@ -226,14 +234,97 @@ describe('keyboardRide - capture before the resize, each piece rides its own mov
       order.push('take-off');
       return true;
     });
-    captureKeyboardRide(document, 285, 'linear(0, 1)', 'rows');
+    const rows = captureKeyboardRide(document, 285, 'linear(0, 1)', 'rows')!;
+    expect(glide.takeOff).not.toHaveBeenCalled();
+    releaseThreadGlides(rows);
     expect(glide.takeOff).toHaveBeenCalledWith(t.el);
     expect(order).toEqual(['read', 'take-off']);
     glide.takeOff.mockClear();
-    captureKeyboardRide(document, 250, 'ease-out');
+    releaseThreadGlides(captureKeyboardRide(document, 250, 'ease-out')!);
     expect(glide.takeOff).not.toHaveBeenCalled();
     glide.takeOff.mockReset();
     glide.takeOff.mockImplementation(() => false);
+  });
+
+  it('reads every probe before the first animation starts (D3)', () => {
+    const order: string[] = [];
+    const a = rider('box');
+    const b = rider('box');
+    let top = 500;
+    for (const r of [a, b]) {
+      vi.spyOn(r.el, 'getBoundingClientRect').mockImplementation(() => {
+        order.push('read');
+        return { top } as DOMRect;
+      });
+      r.animate.mockImplementation(() => {
+        order.push('animate');
+        return { finished: Promise.resolve(), cancel: vi.fn() };
+      });
+    }
+    const capture = captureKeyboardRide(document, 285, 'linear(0, 1)')!;
+    order.length = 0;
+    top = 200;
+    startKeyboardRide(capture);
+    expect(order).toEqual(['read', 'read', 'animate', 'animate']);
+  });
+
+  it("an Android ride starts at the keyboard's phase: its first frame is as far in as the keyboard (D1)", () => {
+    const composer = rider('box');
+    const move = at(composer.el, 787);
+    // The announcement arrived at t = 1000; the layout reactions let the ride start at t = 1068.
+    const capture = captureKeyboardRide(document, 285, 'linear(0, 1)', 'rows', 1000)!;
+    move(429);
+    const ride = startKeyboardRide(capture, () => 1068)!;
+    expect(ride.phaseMs).toBe(68);
+    expect(composer.animate).toHaveBeenCalledWith(rideKeyframes(-358), {
+      duration: 285,
+      easing: 'linear(0, 1)',
+      delay: -68,
+    });
+  });
+
+  it('a ride that could only start after the keyboard landed does not animate: the piece just stands', () => {
+    const composer = rider('box');
+    const move = at(composer.el, 787);
+    const capture = captureKeyboardRide(document, 285, 'linear(0, 1)', 'rows', 1000)!;
+    move(429);
+    expect(startKeyboardRide(capture, () => 1285)).toBeNull();
+    expect(composer.animate).not.toHaveBeenCalled();
+    expect(ridePhaseMs(capture, 1284)).toBe(284);
+    // A clock read before the arrival (never in a browser) is the start, never a negative phase.
+    expect(ridePhaseMs(capture, 990)).toBe(0);
+  });
+
+  it('the iOS fall has no arrival time: it starts at 0, whatever the clock says', () => {
+    const composer = rider('box');
+    const move = at(composer.el, 508);
+    const capture = captureKeyboardRide(document, 250, 'ease-out')!;
+    move(787);
+    expect(startKeyboardRide(capture, () => 1e9)?.phaseMs).toBe(0);
+    expect(composer.animate).toHaveBeenCalledWith(rideKeyframes(279), {
+      duration: 250,
+      easing: 'ease-out',
+    });
+  });
+
+  it('a thread riding its rows registers the ride with its observer, from its starting offset (F8)', () => {
+    const t = thread();
+    for (const child of t.el.children) {
+      (child as unknown as { animate: () => unknown }).animate = () => ({
+        finished: Promise.resolve(),
+        cancel: vi.fn(),
+      });
+    }
+    const moveRow = at(t.row, 749);
+    const capture = captureKeyboardRide(document, 285, 'linear(0, 1)', 'rows')!;
+    moveRow(391);
+    startKeyboardRide(capture);
+    expect(glide.attachRide).toHaveBeenCalledTimes(1);
+    const [scroller, fromPx, animations] = glide.attachRide.mock.calls[0];
+    expect(scroller).toBe(t.el);
+    expect(fromPx).toBe(358); // drawn 358 below its new place at the start of the rise
+    expect(animations).toHaveLength(t.el.children.length);
+    glide.attachRide.mockClear();
   });
 
   it('a screen with no riding piece captures nothing; nothing moved rides nothing', () => {

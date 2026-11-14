@@ -11,12 +11,12 @@
  *   in the Android app; a screen inside the shell adds it where it relied on the shell shrinking.
  * - `--keyboard-occlusion-bottom`: what the keyboard covers of the WINDOW's bottom, for `position:
  *   fixed` elements. 0 wherever the WebView itself was resized (the web, iOS, an older shell).
- * - `--keyboard-inset-bottom`, `--visual-viewport-offset-top`, `--keyboard-baseline-height`,
- *   `--keyboard-free-viewport-height`: below.
+ * - `--keyboard-inset-bottom`, `--visual-viewport-offset-top`, `--keyboard-free-viewport-height`:
+ *   below.
  */
 
 import { detectRuntimeDeviceOs } from '$lib/mls-client/mlsPlatform';
-import { rememberKeyboardHeight } from './keyboardHeightMemory';
+import { orientationOf, rememberKeyboardHeight } from './keyboardHeightMemory';
 import { cssColorToHex, groundOf } from './imeGround';
 import { parseImeTarget, resolveImeTarget, type ImeAnimation, type ImeTarget } from './imeTarget';
 import {
@@ -26,6 +26,7 @@ import {
   parseKeyboardFall,
   startKeyboardRide,
   uikitCurveEasing,
+  releaseThreadGlides,
   type KeyboardRide,
   type KeyboardRideCapture,
 } from './keyboardRide';
@@ -64,12 +65,13 @@ export type KeyboardViewportSnapshot = {
    */
   zoomed: boolean;
   /**
-   * How tall the keyboard is, measured as what it took from the screen: the baseline height (the
-   * tallest the viewport has been with no keyboard) minus the visible height. Zero while closed or
-   * zoomed - a URL bar sliding is not a keyboard. ONE NUMBER FOR EVERY PLATFORM, because each of them
-   * shrinks the VISUAL viewport whatever else it does: iOS's native layer resizes the WebView, the
-   * Android app pads its content, a phone browser shrinks only the visual viewport. The composer's
-   * GIF panel takes exactly this room (`composerSurface.ts`).
+   * How tall the keyboard is. ONE NUMBER FOR EVERY PLATFORM, from the one source each has: where the
+   * keyboard shrinks the VISUAL viewport (iOS's native layer resizes the WebView, a phone browser
+   * shrinks only the visual viewport), what it took from the screen - the baseline height (the
+   * tallest the viewport has been with no keyboard) minus the visible height; in the Android app,
+   * whose WebView the keyboard covers without resizing it, the height the shell announced
+   * (`imeTarget.ts`). Zero while closed or zoomed - a URL bar sliding is not a keyboard. The
+   * composer's GIF panel takes exactly this room (`composerSurface.ts`).
    */
   keyboardHeight: number;
 };
@@ -258,9 +260,24 @@ export function computeSnapshot(
  * (`visualViewport.height` was already 543); the composer footer pads `max(0.75rem, inset)`, so it
  * stood 22 pt too high until the inset caught up (iPhone 12, iOS 27.0.1, 2026-10-02). The settled
  * value is 0, so pinning 0 from the first open frame changes no resting state - only the transient.
- * Android is left alone: its inset was not measured to lag.
+ *
+ * THE ANDROID APP'S OVERLAY KEYBOARD (`occlusionBottom > 0`) IS PINNED HERE TOO, AND IT IS THE ONLY
+ * PLACE THAT SAYS SO (review of #3556, D2). The keyboard covers the navigation bar, so the bar's strip
+ * is the keyboard's. The shell used to say it by withdrawing the bar's inset from the WebView, which
+ * Chromium applies to `env()` a frame or more AFTER the announcement: the composer's floor fell by
+ * 12 px (`max(0.75rem, 23.8px)` to `0.75rem`, Mi 9T) one frame into the ride and the thread's bottom
+ * moved under it (scrollTop 4085 then 4073). Pinned here, it changes in the announcement's own task,
+ * with the keyboard's room. From its first pixel - a keyboard shorter than the open threshold covers
+ * the bar as well.
+ *
+ * @param occlusionBottom what an overlay keyboard covers of the window (0 wherever it resizes it).
  */
-export function keyboardSafeAreaBottomOverride(isOpen: boolean, os: string): string | null {
+export function keyboardSafeAreaBottomOverride(
+  isOpen: boolean,
+  os: string,
+  occlusionBottom = 0
+): string | null {
+  if (occlusionBottom > 0) return '0px';
   return isOpen && os === 'ios' ? '0px' : null;
 }
 
@@ -309,23 +326,42 @@ export function hasVirtualKeyboard(os: string): boolean {
 }
 
 /**
- * Reads the viewport now. A desktop OS has no on-screen keyboard, so its visual viewport is read as
- * the layout viewport: a shorter window there is a resize (`hasVirtualKeyboard`). While the native
- * shell has announced a keyboard, the measurement is the one the announcement implies
- * (`resolveImeTarget`): the iOS resize to come, or the Android overlay.
+ * What the window says of its size, read in ONE place and BEFORE anything is written in a task.
+ *
+ * `innerWidth`, `innerHeight` and `visualViewport.height` are not free on Android: with the viewport
+ * meta enabled, Chromium brings style and layout up to date before answering them. Read after the
+ * keyboard's variables were written - every one of them on `:root`, so the whole document's style is
+ * dirty - each forced that whole pass inside the announcement's task (LoAF on the Mi 9T, 2026-11-14:
+ * 28-33 ms of a ~38 ms announcement, rise and fall alike). So `update` takes this reading, made
+ * first, and nothing after its writes reads the window again (review of #3556, D3).
  */
-function measureViewport(): ViewportMeasurement {
+export type WindowReading = ViewportMeasurement & { winW: number };
+
+/** Reads the window now - see {@link WindowReading}. */
+function readWindow(): WindowReading {
   const vv = window.visualViewport;
   const winH = window.innerHeight;
-  if (!hasVirtualKeyboard(detectRuntimeDeviceOs())) {
-    return { winH, vvHeight: winH, offsetTop: 0, scale: 1 };
-  }
-  const raw = {
+  return {
+    winW: window.innerWidth,
     winH,
     vvHeight: vv?.height ?? winH,
     offsetTop: vv?.offsetTop ?? 0,
     scale: vv?.scale ?? 1,
   };
+}
+
+/**
+ * The viewport measurement of a window reading. A desktop OS has no on-screen keyboard, so its
+ * visual viewport is read as the layout viewport: a shorter window there is a resize
+ * (`hasVirtualKeyboard`). While the native shell has announced a keyboard, the measurement is the one
+ * the announcement implies (`resolveImeTarget`): the iOS resize to come, or the Android overlay.
+ */
+function measureViewport(w: WindowReading = readWindow()): ViewportMeasurement {
+  const winH = w.winH;
+  if (!hasVirtualKeyboard(detectRuntimeDeviceOs())) {
+    return { winH, vvHeight: winH, offsetTop: 0, scale: 1 };
+  }
+  const raw = { winH, vvHeight: w.vvHeight, offsetTop: w.offsetTop, scale: w.scale };
   const { measurement, drop } = resolveImeTarget(raw, baselineHeight, imeTarget);
   if (drop) {
     Log.d(
@@ -395,13 +431,25 @@ function applyCssVars(
   }
   // Inline on the root, so it outranks the `:root` declaration. `app.html` already pins the same
   // property inline outside Tauri, so what was there is put BACK on release, never just removed.
-  pinSafeAreaBottom(root, keyboardSafeAreaBottomOverride(snapshot.isOpen, detectRuntimeDeviceOs()));
+  pinSafeAreaBottom(
+    root,
+    keyboardSafeAreaBottomOverride(
+      snapshot.isOpen,
+      detectRuntimeDeviceOs(),
+      snapshot.occlusionBottom
+    )
+  );
   root.setProperty('--keyboard-inset-bottom', `${snapshot.insetBottom}px`);
   root.setProperty('--keyboard-layout-inset-bottom', `${snapshot.layoutInsetBottom}px`);
   root.setProperty('--keyboard-occlusion-bottom', `${snapshot.occlusionBottom}px`);
   root.setProperty('--visual-viewport-offset-top', `${snapshot.offsetTop}px`);
-  root.setProperty('--keyboard-baseline-height', `${baselineHeight}px`);
-  const keyboardFree = keyboardFreeViewportHeight(snapshot.isOpen, m.winH, baselineHeight);
+  // An overlay keyboard (the Android app) never takes room from the layout viewport: a window
+  // shorter than the baseline there is a window resized for another reason (split screen), which
+  // plain `svh` follows.
+  const keyboardFree =
+    m.overlayPx !== undefined
+      ? null
+      : keyboardFreeViewportHeight(snapshot.isOpen, m.winH, baselineHeight);
   if (keyboardFree !== null) {
     if (root.getPropertyValue(KEYBOARD_FREE_HEIGHT_PROPERTY) !== `${keyboardFree}px`) {
       Log.d(
@@ -499,7 +547,38 @@ export function overlaySettledAroundFocus(
 export type KeyboardViewportSeams = {
   /** Runs a ride's start after the resize's layout reactions (`afterLayoutReactions`). */
   afterLayout?: (targets: Element[], start: () => void) => () => void;
+  /** The clock a ride is phased on (`performance.now`): see `startKeyboardRide`. */
+  now?: () => number;
 };
+
+/** Who is told when the keyboard's band changes: see {@link onKeyboardInsetChange}. */
+const insetListeners = new Set<() => void>();
+
+/**
+ * Calls `listener` every time the keyboard's band at the bottom of the window changes, from the
+ * store's own update - the one moment every platform shares. A `position: fixed` panel placed above
+ * the keyboard needs it: in the Android app the keyboard covers the WebView without resizing it, so
+ * neither `resize` nor a `visualViewport` resize ever fires for it (review of #3556, F4).
+ *
+ * Called AFTER the store has written its variables, in the same task: a listener that reads layout
+ * must wait for a frame (`requestAnimationFrame`), or it forces the style and layout pass those
+ * writes left dirty. Returns the unsubscribe.
+ */
+export function onKeyboardInsetChange(listener: () => void): () => void {
+  insetListeners.add(listener);
+  return () => insetListeners.delete(listener);
+}
+
+/** Tells every inset listener, each in its own `try`: one failing must not silence the next. */
+function notifyInsetListeners(): void {
+  for (const listener of insetListeners) {
+    try {
+      listener();
+    } catch (error) {
+      Log.w('keyboardViewport', `a keyboard inset listener threw: ${String(error)}`);
+    }
+  }
+}
 
 /**
  * How an update reveals the focused field, or null when it does not.
@@ -551,9 +630,18 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
   if (typeof window === 'undefined') return () => {};
 
   baselineHeight = window.innerHeight;
+  /**
+   * The window width the baseline was measured at. A keyboard never changes the width; a rotation, a
+   * split screen or a desktop resize does, and a baseline from another width is another window's.
+   * So a new width IS the new baseline - read in the update that sees it, from the same reading -
+   * which is what a 400 ms timer after `orientationchange` used to guess at (review of #3556, F1).
+   * Not while pinch-zoomed: WebKit's `innerWidth` follows the zoom.
+   */
+  let baselineWidth = window.innerWidth;
 
   let keyboardWasOpen = false;
   const afterLayout = seams.afterLayout ?? afterLayoutReactions;
+  const now = seams.now ?? (() => performance.now());
   /** A fall the iOS shell announced, captured before its resize (`keyboardRide.ts`), or null. */
   let pendingRide: KeyboardRideCapture | null = null;
   /** The ride waiting for the resize's layout reactions: cancels that wait. */
@@ -581,26 +669,41 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
       capture.riders.map((r) => r.el),
       () => {
         cancelArmedRide = null;
-        runningRide = startKeyboardRide(capture);
+        runningRide = startKeyboardRide(capture, now);
         Log.d(
           'keyboardViewport',
           runningRide === null
-            ? `${what}: no piece moved - nothing to ride`
-            : `${what} ridden over ${capture.durationMs} ms: ${runningRide.distances.map(Math.round).join(', ')}px`
+            ? `${what}: nothing to ride`
+            : `${what} ridden over ${capture.durationMs} ms from ${Math.round(runningRide.phaseMs)} ms in: ${runningRide.distances.map(Math.round).join(', ')}px`
         );
       }
     );
   };
 
-  const update = () => {
+  /**
+   * Applies the keyboard's state. `w` is the window as it stood BEFORE the caller wrote anything
+   * (`WindowReading`): nothing below reads the window or the layout after the variables are written.
+   */
+  const update = (w: WindowReading = readWindow()) => {
+    if (w.winW !== baselineWidth && w.scale <= ZOOM_SCALE_EPSILON) {
+      Log.d(
+        'keyboardViewport',
+        `window width ${baselineWidth} -> ${w.winW}: baseline ${baselineHeight} -> ${w.winH}`
+      );
+      baselineWidth = w.winW;
+      baselineHeight = w.winH;
+    }
     const handingOff = imeTarget?.kind === 'handoff';
-    const m = measureViewport();
+    const m = measureViewport(w);
     const next = readSnapshot(m);
     const openedNow = next.isOpen && !keyboardWasOpen;
     const closedNow = !next.isOpen && keyboardWasOpen;
+    const insetMoved = next.insetBottom !== snapshot.insetBottom;
     snapshot = next;
     applyCssVars(next, m, baselineHeight);
-    if (next.keyboardHeight > 0) rememberKeyboardHeight(next.keyboardHeight);
+    if (next.keyboardHeight > 0) {
+      rememberKeyboardHeight(next.keyboardHeight, orientationOf(w.winW, w.winH));
+    }
 
     if (closedNow && pendingRide) {
       const capture = pendingRide;
@@ -619,9 +722,12 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
     keyboardWasOpen = next.isOpen;
 
     if (!next.isOpen) {
-      baselineHeight = Math.max(baselineHeight, window.innerHeight);
+      baselineHeight = Math.max(baselineHeight, w.winH);
     }
+    if (insetMoved) notifyInsetListeners();
   };
+  /** `update` as an event listener: the event is not a window reading. */
+  const onViewportEvent = () => update();
 
   // Fix 3: a visual-viewport `scroll` is a PAN, not a resize. Only refresh the overlay offset -
   // never re-evaluate keyboard state, re-pin the shell height, or re-run scrollIntoView (which
@@ -648,25 +754,33 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
     scrollFocusedFieldIntoView('smooth');
   };
 
-  const handleOrientationChange = () => {
-    setTimeout(() => {
-      baselineHeight = window.innerHeight;
-      update();
-    }, 400);
-  };
-
   /**
-   * The ride of an Android announcement, captured where every piece stands NOW, before its layout is
-   * applied - or null when it is not ridden: no animation (a rotation, a page asking again), an
-   * instant one, reduced motion, or a screen with no riding piece. A thread rides its rows.
+   * The ride of an Android announcement, captured where every piece is DRAWN now - a ride still
+   * running included, its transform being part of what the reader sees - before its layout is
+   * applied; or null when it is not ridden: no animation (a rotation, a page asking again, a
+   * gesture-driven one), an instant one, reduced motion, or a screen with no riding piece. A thread
+   * rides its rows. Reads only: a glide in flight on the rows is taken off afterwards
+   * (`releaseThreadGlides`).
+   *
+   * @param announcedAt when the announcement arrived, on `now`'s clock: the keyboard's own start.
    */
-  const captureAnnouncedRide = (px: number, animation: ImeAnimation | null) => {
+  const captureAnnouncedRide = (
+    px: number,
+    animation: ImeAnimation | null,
+    announcedAt: number
+  ) => {
     if (animation === null || animation.durationMs === 0) return null;
     if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false) {
       Log.d('keyboardViewport', `keyboard to ${px} not ridden: reduced motion`);
       return null;
     }
-    return captureKeyboardRide(document, animation.durationMs, animation.easing, 'rows');
+    return captureKeyboardRide(
+      document,
+      animation.durationMs,
+      animation.easing,
+      'rows',
+      announcedAt
+    );
   };
 
   /**
@@ -677,7 +791,13 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
    *
    * Android (`MainActivity.announceIme`, an object, every change of the keyboard): the layout over
    * the keyboard is applied here too, and the pieces ride from where they stood when the keyboard
-   * moves animated. A new announcement ends any ride still running first.
+   * moves animated, ON THE KEYBOARD'S TIMELINE: the arrival is the keyboard's start, so a ride that
+   * can only start a frame later starts that far into the keyboard's curve (`startKeyboardRide`).
+   *
+   * EVERY READ BEFORE THE FIRST WRITE (review of #3556, D3, F3): the arrival time, the ground under
+   * the keyboard, the window's size and where each riding piece is DRAWN - a ride still running
+   * included, so a Back mid-rise starts the fall from where the composer was, not from its end - and
+   * only then is any ride or glide ended and the variables written. Nothing after reads the layout.
    *
    * `true` tells the shell it was taken.
    */
@@ -687,6 +807,9 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
       Log.w('keyboardViewport', `keyboard target refused: ${JSON.stringify(value)}`);
       return false;
     }
+    // Android's ride is phased on the announcement's arrival: taken before anything else costs time.
+    const announcedAt = now();
+    // A read (a hit test, computed colours): before anything below writes.
     if (target.px > 0) postGroundToNative();
     if (target.kind === 'handoff') {
       Log.d('keyboardViewport', `keyboard target ${target.px} announced ahead of the resize`);
@@ -701,10 +824,12 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
       'keyboardViewport',
       `keyboard over the window: ${target.px} (${target.animation ? `${target.animation.durationMs} ms` : 'no animation'})`
     );
+    const reading = readWindow();
+    const capture = captureAnnouncedRide(target.px, target.animation, announcedAt);
     endRides('a new keyboard announcement');
-    const capture = captureAnnouncedRide(target.px, target.animation);
+    if (capture !== null) releaseThreadGlides(capture);
     imeTarget = target;
-    update();
+    update(reading);
     if (capture !== null) armRide(capture, `keyboard to ${target.px}`);
     return true;
   };
@@ -754,21 +879,19 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
   };
 
   update();
-  window.addEventListener('resize', update);
+  window.addEventListener('resize', onViewportEvent);
   window.addEventListener('pointerdown', handlePointerDown, true);
-  window.addEventListener('orientationchange', handleOrientationChange);
   window.addEventListener('focusin', handleFocusIn, true);
   window.addEventListener('transitionend', handleTransitionEnd, true);
-  window.visualViewport?.addEventListener('resize', update);
+  window.visualViewport?.addEventListener('resize', onViewportEvent);
   window.visualViewport?.addEventListener('scroll', updateOffsetOnly);
 
   return () => {
-    window.removeEventListener('resize', update);
+    window.removeEventListener('resize', onViewportEvent);
     window.removeEventListener('pointerdown', handlePointerDown, true);
-    window.removeEventListener('orientationchange', handleOrientationChange);
     window.removeEventListener('focusin', handleFocusIn, true);
     window.removeEventListener('transitionend', handleTransitionEnd, true);
-    window.visualViewport?.removeEventListener('resize', update);
+    window.visualViewport?.removeEventListener('resize', onViewportEvent);
     window.visualViewport?.removeEventListener('scroll', updateOffsetOnly);
     delete (window as unknown as { canariImeTarget?: unknown }).canariImeTarget;
     delete (window as unknown as { canariKeyboardFall?: unknown }).canariKeyboardFall;
@@ -779,7 +902,6 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
     document.documentElement.style.removeProperty('--keyboard-layout-inset-bottom');
     document.documentElement.style.removeProperty('--keyboard-occlusion-bottom');
     document.documentElement.style.removeProperty('--visual-viewport-offset-top');
-    document.documentElement.style.removeProperty('--keyboard-baseline-height');
     document.documentElement.style.removeProperty(KEYBOARD_FREE_HEIGHT_PROPERTY);
   };
 }

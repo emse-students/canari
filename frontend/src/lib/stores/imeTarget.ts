@@ -47,13 +47,18 @@ export type ImeTargetResolution = {
  * changes nothing on screen. It is spent - and the real measurement read - as soon as either viewport
  * has given up height of its own, or when the shell announces 0 (the keyboard fell).
  *
- * An OVERLAY is never spent by the viewport: the layout keeps the baseline, the visual viewport is
- * `baseline - px`, and `overlayPx` tells `computeSnapshot` that the keyboard covers the window rather
- * than shrinking it. What the WebView itself reports about its visual viewport is not read: the shell
- * is the one source of the keyboard's room.
+ * An OVERLAY is never spent by the viewport: the layout keeps the window's REAL height (`m.winH`,
+ * `innerHeight`), the visual viewport is that height less `px`, and `overlayPx` tells
+ * `computeSnapshot` that the keyboard covers the window rather than shrinking it. The real height and
+ * not the baseline: the shell never resizes the WebView for the keyboard, so `innerHeight` is already
+ * keyboard-free, and it is the only number that follows a window resized for any OTHER reason - split
+ * screen, a freeform window, DeX, a foldable unfolding. The baseline only grows (it is the tallest
+ * keyboard-free height seen), so a shell pinned to it stood 870 px tall in a 450 px window (review of
+ * #3556, F1). What the WebView reports about its visual viewport is not read: the shell is the one
+ * source of the keyboard's room.
  *
  * @param m the raw viewport measurement.
- * @param baselineHeight the tallest the layout viewport has been with no keyboard.
+ * @param baselineHeight the tallest the layout viewport has been with no keyboard (the hand-off's).
  * @param target what the shell announced, or null.
  */
 export function resolveImeTarget(
@@ -63,11 +68,11 @@ export function resolveImeTarget(
 ): ImeTargetResolution {
   if (target === null) return { measurement: m, drop: false };
   if (target.kind === 'overlay') {
-    const px = Math.min(target.px, baselineHeight);
+    const px = Math.min(target.px, m.winH);
     return {
       measurement: {
-        winH: baselineHeight,
-        vvHeight: baselineHeight - px,
+        winH: m.winH,
+        vvHeight: m.winH - px,
         offsetTop: 0,
         scale: m.scale,
         overlayPx: px,

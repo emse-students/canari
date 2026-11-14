@@ -21,6 +21,16 @@
  * reaction to the resize has run - starts each piece that MOVED from where it stood, translated back by
  * its own move, to its new place: a compositor transform, over the keyboard's timing.
  *
+ * THE ANDROID RIDE RUNS ON THE KEYBOARD'S TIMELINE, NOT FROM ITS OWN START (review of #3556, D1). The
+ * announcement arrives 2-10 ms after `onPrepare`, as the keys start moving; the ride can only start
+ * once the layout reactions have run, a frame or more later (60-75 ms on the Mi 9T), and starting it
+ * from 0 then left the composer under the keys on the rise and a band of nothing on the fall, the
+ * thread landing ~70 ms after the keyboard. So the capture carries the arrival time and each ride
+ * animation starts that far into its curve (a negative `delay`): its first frame is the keyboard's
+ * phase and both end together. A ride that could only start after the keyboard landed does not
+ * animate at all. The animation's own end is still its termination; the clock only says WHERE in a
+ * known animation the first frame is.
+ *
  * WHILE A PIECE RIDES IT IS A CONTAINING BLOCK: a transform makes an element the containing block of
  * its `position: fixed` descendants, so for the ride's ~250 ms a fixed panel inside the composer band
  * or the thread would be placed against the piece, not the screen. The ride is cancelled - every piece
@@ -31,7 +41,7 @@
  * the DOM steps, each testable on its own.
  */
 
-import { takeThreadGlideOff } from '$lib/utils/chat/threadGrowthObserver';
+import { attachThreadRide, takeThreadGlideOff } from '$lib/utils/chat/threadGrowthObserver';
 import { Log } from '$lib/utils/Log';
 
 /** What `window.canariKeyboardFall` receives: the keyboard animation's own parameters. */
@@ -176,6 +186,11 @@ export type KeyboardRideCapture = {
   riders: Rider[];
   durationMs: number;
   easing: string;
+  /**
+   * When the keyboard started moving, on the clock `startKeyboardRide` is given: the Android
+   * announcement's arrival. Null for the iOS fall, whose ride starts with the resize it waits for.
+   */
+  announcedAt: number | null;
 };
 
 /**
@@ -194,29 +209,40 @@ function probeOf(el: HTMLElement): HTMLElement {
 }
 
 /**
- * Records every `[data-keyboard-ride]` piece under `root` as it stands NOW, before the layout changes.
- * Null when the screen has none - nothing to ride.
+ * Records every `[data-keyboard-ride]` piece under `root` where it is DRAWN now, before the layout
+ * changes - a transform still on it (a ride, a glide) included. Null when the screen has none -
+ * nothing to ride. READS ONLY: the caller reads everything it needs first, then writes
+ * (`releaseThreadGlides`, its layout), so no read here forces a style pass another write dirtied.
  *
- * With `lastRow: 'rows'` a thread's glide still in flight (`takeThreadGlideOff`) is taken off its rows
- * AFTER their drawn top is read: the ride then starts from where the reader saw them, and the glide's
- * transform is not left fighting the ride's on the same rows.
+ * @param announcedAt when the keyboard started moving, or null - see {@link KeyboardRideCapture}.
  */
 export function captureKeyboardRide(
   root: ParentNode,
   durationMs: number,
   easing: string,
-  lastRow: LastRowRide = 'box'
+  lastRow: LastRowRide = 'box',
+  announcedAt: number | null = null
 ): KeyboardRideCapture | null {
   const riders: Rider[] = [];
   for (const el of root.querySelectorAll<HTMLElement>('[data-keyboard-ride]')) {
     const probe = probeOf(el);
     const rows = lastRow === 'rows' && el.dataset.keyboardRide === 'last-row';
     riders.push({ el, probe, topBefore: probe.getBoundingClientRect().top, rows });
-    if (rows && takeThreadGlideOff(el)) {
+  }
+  return riders.length > 0 ? { riders, durationMs, easing, announcedAt } : null;
+}
+
+/**
+ * Takes a thread's glide still in flight off the rows a capture will ride (`takeThreadGlideOff`),
+ * AFTER their drawn top was read: the ride then starts from where the reader saw them, and the
+ * glide's transform is not left fighting the ride's on the same rows.
+ */
+export function releaseThreadGlides(capture: KeyboardRideCapture): void {
+  for (const rider of capture.riders) {
+    if (rider.rows && takeThreadGlideOff(rider.el)) {
       Log.d('keyboardRide', 'a thread glide in flight was taken off its rows for the ride');
     }
   }
-  return riders.length > 0 ? { riders, durationMs, easing } : null;
 }
 
 /** The elements a rider's ride animates: itself, or its children for a thread that rides its rows. */
@@ -224,37 +250,67 @@ function moversOf(rider: Rider): Element[] {
   return rider.rows ? Array.from(rider.el.children) : [rider.el];
 }
 
-/** A started ride: its animations (cancellable) and the distance each piece rides. */
-export type KeyboardRide = { animations: Animation[]; distances: number[] };
+/**
+ * A started ride: its animations (cancellable), the distance each piece rides, and how far into the
+ * keyboard's animation its first frame is (0 for the iOS fall).
+ */
+export type KeyboardRide = { animations: Animation[]; distances: number[]; phaseMs: number };
+
+/**
+ * How far into the keyboard's animation a ride starting now must start, in ms, or null when the
+ * keyboard has already landed - nothing is left to ride, the pieces just stand at their place. 0 for
+ * a capture with no arrival time (the iOS fall starts with its resize).
+ */
+export function ridePhaseMs(capture: KeyboardRideCapture, now: number): number | null {
+  if (capture.announcedAt === null) return 0;
+  const elapsed = Math.max(0, now - capture.announcedAt);
+  return elapsed < capture.durationMs ? elapsed : null;
+}
 
 /**
  * Starts the ride once the page has its new layout AND every reaction to it (the thread's bottom pin)
  * has run: each captured piece that moved rides from where it stood by ITS OWN move, over the
- * keyboard's duration and curve. A piece that did not move, or is gone, does not ride. Null when none
- * moved.
+ * keyboard's duration and curve, from the keyboard's phase ({@link ridePhaseMs}). A piece that did not
+ * move, or is gone, does not ride. Null when none moved or the keyboard has landed.
+ *
+ * Every probe is read before the first `animate`: an animation started dirties style, and a read
+ * after it would force the pass for nothing. A thread riding its rows registers the ride with its
+ * observer (`attachThreadRide`), so a message arriving mid-ride takes the rows on from where the ride
+ * drew them.
+ *
+ * @param now the clock `announcedAt` was taken on (`performance.now`).
  */
-export function startKeyboardRide(capture: KeyboardRideCapture): KeyboardRide | null {
-  const animations: Animation[] = [];
-  const distances: number[] = [];
+export function startKeyboardRide(
+  capture: KeyboardRideCapture,
+  now: () => number = () => performance.now()
+): KeyboardRide | null {
+  const phaseMs = ridePhaseMs(capture, now());
+  if (phaseMs === null) {
+    Log.d('keyboardRide', 'the keyboard landed before the ride could start - nothing to ride');
+    return null;
+  }
+  const moves: { rider: Rider; distance: number }[] = [];
   for (const rider of capture.riders) {
     const { el, probe, topBefore } = rider;
     if (!el.isConnected || !probe.isConnected) continue;
     const distance = rideDistancePx(topBefore, probe.getBoundingClientRect().top);
-    if (distance === null) continue;
-    distances.push(distance);
-    for (const mover of moversOf(rider)) {
-      animations.push(
-        mover.animate(rideKeyframes(distance), {
-          duration: capture.durationMs,
-          easing: capture.easing,
-        })
-      );
-    }
+    if (distance !== null) moves.push({ rider, distance });
+  }
+  const timing: KeyframeAnimationOptions = {
+    duration: capture.durationMs,
+    easing: capture.easing,
+    ...(phaseMs > 0 ? { delay: -phaseMs } : {}),
+  };
+  const animations: Animation[] = [];
+  for (const { rider, distance } of moves) {
+    const own = moversOf(rider).map((mover) => mover.animate(rideKeyframes(distance), timing));
+    if (rider.rows) attachThreadRide(rider.el, -distance, own);
+    animations.push(...own);
   }
   if (animations.length === 0) return null;
   const finished = Promise.allSettled(animations.map((a) => a.finished));
   window.dispatchEvent(new CustomEvent(KEYBOARD_RIDE_EVENT, { detail: { finished } }));
-  return { animations, distances };
+  return { animations, distances: moves.map((m) => m.distance), phaseMs };
 }
 
 /**

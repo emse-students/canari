@@ -65,7 +65,7 @@ describe('resolveImeTarget - an iOS hand-off (a bare number)', () => {
 });
 
 describe('resolveImeTarget - an Android overlay (an object): the shell is the one source', () => {
-  it('keeps the layout at the baseline and the keyboard over it', () => {
+  it('keeps the layout at the window height and the keyboard over it', () => {
     const { measurement, drop } = resolveImeTarget(measure(), baseline, overlay(kb));
     expect(drop).toBe(false);
     expect(measurement).toEqual({
@@ -86,9 +86,29 @@ describe('resolveImeTarget - an Android overlay (an object): the shell is the on
       const { measurement, drop } = resolveImeTarget(raw, baseline, overlay(kb));
       expect(drop).toBe(false);
       expect(measurement.overlayPx).toBe(kb);
-      expect(measurement.winH).toBe(baseline);
+      expect(measurement.winH).toBe(raw.winH);
+      expect(measurement.vvHeight).toBe(raw.winH - kb);
       expect(measurement.offsetTop).toBe(0);
     }
+  });
+
+  it('follows a window made shorter than the baseline: split screen, freeform, a fold (F1)', () => {
+    // The baseline only grows: 945 from the full-screen start. The window is now 450 tall - the
+    // WebView was resized for a reason that is not the keyboard, and `innerHeight` says so.
+    const { measurement } = resolveImeTarget(
+      measure({ winH: 450, vvHeight: 450 }),
+      baseline,
+      overlay(kb)
+    );
+    expect(measurement.winH).toBe(450);
+    expect(measurement.vvHeight).toBeCloseTo(450 - kb, 6);
+    const snapshot = computeSnapshot(measurement, baseline, ANDROID_THRESHOLD);
+    // The shell is the window, never the 945 px it once was.
+    expect(snapshot.shellHeight).toBe(450);
+    expect(snapshot.occlusionBottom).toBe(kb);
+    // Closed in the same window: the shell is still the window.
+    const closed = resolveImeTarget(measure({ winH: 450, vvHeight: 450 }), baseline, overlay(0));
+    expect(computeSnapshot(closed.measurement, baseline, ANDROID_THRESHOLD).shellHeight).toBe(450);
   });
 
   it('holds 0 as an answer too: no keyboard, whatever the visual viewport says', () => {
