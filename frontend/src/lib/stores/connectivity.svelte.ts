@@ -134,6 +134,14 @@ class ConnectivityStore {
   latencyMs = 0;
   private recent: number[] = [];
   private lastAnswerAt = 0;
+  /**
+   * THE LINK EPOCH: counts every offline transition. An answer is evidence about the link only in
+   * the epoch it arrived in - one from before a Wi-Fi cut says nothing about the link after it, and
+   * no wall-clock freshness window is needed (a 6-10 s narrow link is slow, not unreachable).
+   */
+  private linkEpoch = 0;
+  /** The {@link linkEpoch} in force when `lastAnswerAt` was written. */
+  private lastAnswerEpoch = 0;
   private latencySlow = false;
   private inFlightSlow = false;
   private consecutiveStalls = 0;
@@ -183,6 +191,7 @@ class ConnectivityStore {
     window.addEventListener('offline', () => {
       console.log('[CONNECTIVITY] browser reports offline');
       this.isOnline = false;
+      this.linkEpoch++;
     });
     // The probing a pause stopped resumes with the app, from its first attempt: what was learned
     // before the pause says nothing about the link now.
@@ -302,18 +311,21 @@ class ConnectivityStore {
 
   /**
    * Whether the link demonstrably delivered an answer WHILE a request that left at `startedAt`
-   * waited: one that came after it left AND is still fresh. An answer from before a Wi-Fi cut
-   * is not evidence about the link as it is now - read on the Mi 9T (2026-11-14), a read that left
-   * before the cut was labelled "answers arrived meanwhile - slow, not unreachable" when its
-   * deadline expired seconds after the radio went down. A device the browser reports as offline
-   * has no answers arriving whatever the clock says.
+   * waited: one that came after it left AND in the current link epoch ({@link linkEpoch}). An
+   * answer from before a Wi-Fi cut is not evidence about the link as it is now - read on the Mi 9T
+   * (2026-11-14), a read that left before the cut was labelled "answers arrived meanwhile - slow, not
+   * unreachable" when its deadline expired seconds after the radio went down. The epoch, not a clock,
+   * draws that line: a narrow link answering every 6-10 s stays slow. ONE predicate, used by the
+   * in-flight timer and by the deadline verdict.
    */
   private answeredSince(startedAt: number): boolean {
-    return (
-      this.isOnline &&
-      this.lastAnswerAt > startedAt &&
-      Date.now() - this.lastAnswerAt <= SLOW_IN_FLIGHT_MS
-    );
+    return this.lastAnswerAt > startedAt && this.lastAnswerEpoch === this.linkEpoch;
+  }
+
+  /** Records that the link delivered an answer now, in the current epoch. */
+  private noteAnswer(): void {
+    this.lastAnswerAt = Date.now();
+    this.lastAnswerEpoch = this.linkEpoch;
   }
 
   /**
@@ -346,7 +358,7 @@ class ConnectivityStore {
           }
           // Something else was answered since this one left: the link works, this route is just slow
           // server-side. Looked at again a threshold later, so a link that then goes quiet is caught.
-          if (this.lastAnswerAt > startedAt) {
+          if (this.answeredSince(startedAt)) {
             arm();
             return;
           }
@@ -369,7 +381,7 @@ class ConnectivityStore {
         if (!this.inFlight.has(id)) return;
         settle();
         this.consecutiveStalls = 0;
-        this.lastAnswerAt = Date.now();
+        this.noteAnswer();
         this.notifyServerReachable();
         if (measured) this.observeLatency(Date.now() - startedAt);
         this.recomputeSlow();
@@ -378,7 +390,7 @@ class ConnectivityStore {
         if (!this.inFlight.has(id)) return;
         settle();
         this.consecutiveStalls = 0;
-        this.lastAnswerAt = Date.now();
+        this.noteAnswer();
         console.debug(`[CONNECTIVITY] ${what} - not proven to be the API, reachability unchanged`);
         this.recomputeSlow();
       },
@@ -473,6 +485,8 @@ class ConnectivityStore {
     this.latencyMs = 0;
     this.recent = [];
     this.lastAnswerAt = 0;
+    this.linkEpoch = 0;
+    this.lastAnswerEpoch = 0;
     this.latencySlow = false;
     this.inFlightSlow = false;
     this.consecutiveStalls = 0;

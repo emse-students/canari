@@ -72,6 +72,7 @@
   import {
     classifySwipeRelease,
     bindSwipeNavTouchListeners,
+    standDownForDndDrag,
     createSwipeNavGestureState,
     isSwipeNavActive,
     isSwipeNavArmed,
@@ -503,6 +504,17 @@
     if (!isSwipeNavActive(swipeNavContext())) return;
     if (hasActiveTextSelection()) {
       abandonSwipeForSelection();
+      return;
+    }
+
+    const standing = standDownForDndDrag(swipeGesture);
+    if (standing !== swipeGesture) {
+      // A reorder picked the finger up: release whatever the swipe had already claimed.
+      swipeGesture = standing;
+      if (pageScrollWrap.classList.contains('swipe-nav-dragging')) {
+        pageScrollWrap.classList.remove('swipe-nav-dragging');
+        snapSwipeBack();
+      }
       return;
     }
 
