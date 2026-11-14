@@ -215,6 +215,15 @@ describe('LiveStudio - release', () => {
     expect(mixer.close).toHaveBeenCalledTimes(1);
   });
 
+  it('an open() after the release starts nothing (no clock, no microphone)', async () => {
+    const cam = fakeCamera();
+    const { studio, compositor, deps } = studioOn(cam.session);
+    studio.release();
+    await studio.open();
+    expect(compositor.start).not.toHaveBeenCalled();
+    expect(deps.openMicrophone).not.toHaveBeenCalled();
+  });
+
   it('a screen granted after the release is given straight back', async () => {
     const { studio, deps } = await opened();
     let grant: (s: MediaStream) => void = () => {};

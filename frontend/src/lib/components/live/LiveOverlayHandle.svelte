@@ -54,12 +54,18 @@
   }
 
   function onpointerup(event: PointerEvent) {
-    if (!drag || drag.pointerId !== event.pointerId || !box) return;
-    const center = {
-      x: box.x + box.width / 2 + drag.dx,
-      y: box.y + box.height / 2 + drag.dy,
-    };
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const moved = drag;
+    // Let go is the end of the drag on every path, or the outline stays offset under the pointer.
     drag = null;
+    if (!box) {
+      console.debug('[LIVE-SCREEN] overlay dropped with no box on screen - nothing to snap');
+      return;
+    }
+    const center = {
+      x: box.x + box.width / 2 + moved.dx,
+      y: box.y + box.height / 2 + moved.dy,
+    };
     const onFrame = displayToFrame(center, display);
     if (!onFrame) return;
     const corner = snapCorner(onFrame);
@@ -89,6 +95,7 @@
     style="left: {box.x}px; top: {box.y}px; width: {box.width}px; height: {box.height}px; transform: translate({drag?.dx ??
       0}px, {drag?.dy ?? 0}px);"
     aria-label={m.live_scene_overlay_move_label()}
+    aria-keyshortcuts="ArrowUp ArrowDown ArrowLeft ArrowRight"
     title={m.live_scene_overlay_move_label()}
     {onpointerdown}
     {onpointermove}

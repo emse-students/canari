@@ -621,9 +621,15 @@ describe('LiveBroadcaster - the scenes on a desktop (owner, 2026-11-14)', () => 
     q<HTMLButtonElement>('[data-live-scene="screen-camera"]')!.click();
     await vi.waitFor(() => expect(s!.studio.scene).toBe('screen-camera'));
     await settle();
-    q<HTMLButtonElement>('[data-live-overlay-size="large"]')!.click();
-    q<HTMLButtonElement>('[data-live-overlay-shape="rect"]')!.click();
+    const tab = (group: string, label: string) =>
+      [...document.querySelectorAll<HTMLButtonElement>(`[${group}] [role="tab"]`)].find(
+        (b) => b.textContent?.trim() === label
+      )!;
+    tab('data-live-overlay-sizes', m.live_scene_overlay_large()).click();
+    tab('data-live-overlay-shapes', m.live_scene_overlay_rect()).click();
     await settle();
+    // ONE fill in the bar: the chosen scene's; the overlay's choices are the quiet segmented look.
+    expect(document.querySelectorAll('[data-live-scene-bar] .bg-accent')).toHaveLength(1);
     expect(s!.studio.overlay).toMatchObject({ size: 'large', shape: 'rect' });
   });
 

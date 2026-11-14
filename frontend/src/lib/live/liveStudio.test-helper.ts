@@ -71,6 +71,16 @@ export function fakeStudio() {
     wake: vi.fn(() => {
       mixer.state = mixer.wakeTo;
     }),
+    /** The listener the studio registered: {@link becomes} fires it, as a `statechange` would. */
+    listener: null as ((state: AudioContextState) => void) | null,
+    onStateChange: vi.fn((l: (state: AudioContextState) => void) => {
+      mixer.listener = l;
+    }),
+    /** The engine changes the context's state and fires its `statechange`. */
+    becomes(state: AudioContextState) {
+      mixer.state = state;
+      mixer.listener?.(state);
+    },
     setMic: vi.fn((t: MediaStreamTrack | null) => {
       mixer.mic = t;
     }),

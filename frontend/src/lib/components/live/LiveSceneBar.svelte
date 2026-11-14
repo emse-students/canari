@@ -17,6 +17,7 @@
   } from '@lucide/svelte';
   import type { Component } from 'svelte';
   import Button from '$lib/components/ui/Button.svelte';
+  import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import { m } from '$lib/paraglide/messages';
   import type { LiveStudio } from '$lib/live/liveStudio.svelte';
   import {
@@ -66,8 +67,8 @@
   }
 
   /**
-   * A choice is a `ui/Button` (controls.md): the chosen one wears the fill, the others the quiet
-   * filled secondary - each group is a radio group, so ONE fill per group says which is on.
+   * A scene is a `ui/Button` (controls.md): the chosen one wears the fill, the others the quiet
+   * filled secondary - the bar's ONE fill, which says which scene is on air.
    */
   function variantOf(chosen: boolean): 'primary' | 'soft' {
     return chosen ? 'primary' : 'soft';
@@ -93,39 +94,30 @@
     {/each}
   </div>
   {#if studio.scene === 'screen-camera'}
-    <div class="flex flex-wrap items-center gap-1.5" data-live-overlay-options>
-      <div class="flex gap-1" role="radiogroup" aria-label={m.live_scene_overlay_size_label()}>
-        {#each SIZES as size (size)}
-          <Button
-            variant={variantOf(studio.overlay.size === size)}
-            size="compact"
-            role="radio"
-            aria-checked={studio.overlay.size === size}
-            onclick={() => studio.setOverlay({ size })}
-            data-live-overlay-size={size}
-          >
-            {SIZE_LABEL[size]()}
-          </Button>
-        {/each}
+    <!-- The overlay's size and shape: two small fixed sets, so `ui/SegmentedControl` in its
+         over-a-video look - the scene above keeps the ONE fill of the bar (controls.md). -->
+    <div class="flex flex-wrap items-center gap-3" data-live-overlay-options>
+      <div data-live-overlay-sizes>
+        <SegmentedControl
+          variant="overlay"
+          label={m.live_scene_overlay_size_label()}
+          items={SIZES.map((size) => ({ key: size, label: SIZE_LABEL[size]() }))}
+          value={studio.overlay.size}
+          onSelect={(size) => studio.setOverlay({ size })}
+        />
       </div>
-      <div class="flex gap-1" role="radiogroup" aria-label={m.live_scene_overlay_shape_label()}>
-        {#each SHAPES as shape (shape)}
-          <Button
-            variant={variantOf(studio.overlay.shape === shape)}
-            size="compact"
-            role="radio"
-            aria-checked={studio.overlay.shape === shape}
-            onclick={() => studio.setOverlay({ shape })}
-            data-live-overlay-shape={shape}
-          >
-            {#if shape === 'round'}
-              <Circle size={14} strokeWidth={2.25} />
-            {:else}
-              <RectangleHorizontal size={14} strokeWidth={2.25} />
-            {/if}
-            {SHAPE_LABEL[shape]()}
-          </Button>
-        {/each}
+      <div data-live-overlay-shapes>
+        <SegmentedControl
+          variant="overlay"
+          label={m.live_scene_overlay_shape_label()}
+          items={SHAPES.map((shape) => ({
+            key: shape,
+            label: SHAPE_LABEL[shape](),
+            icon: shape === 'round' ? Circle : RectangleHorizontal,
+          }))}
+          value={studio.overlay.shape}
+          onSelect={(shape) => studio.setOverlay({ shape })}
+        />
       </div>
     </div>
   {/if}

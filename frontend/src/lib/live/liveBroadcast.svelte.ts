@@ -308,6 +308,7 @@ export class LiveBroadcast {
     this.#deps = deps;
     this.supported = deps.recordingSupported();
     this.studio = deps.createStudio(camera);
+    this.studio?.onAudioChange((running) => this.#audioChanged(running));
     console.debug(
       `[LIVE-BROADCAST] screen for ${associationId ? `association ${associationId}` : 'the member'}, recordable ${this.supported}, ${this.studio ? 'scenes (composed)' : 'camera (direct)'}`
     );
@@ -475,7 +476,10 @@ export class LiveBroadcast {
       if (attempt !== this.#reacquireGeneration || this.phase !== 'away') return;
       this.#goOnAir();
     } finally {
-      if (attempt === this.#reacquireGeneration) this.lensSwitching = false;
+      // Whatever superseded this switch (a hide, a Retry, an end) took the screen over: the flag is
+      // this switch's alone, so it is lowered on EVERY exit - left up, it would hide the away
+      // screen's Retry behind a spinner and refuse every later flip.
+      this.lensSwitching = false;
     }
   }
 
@@ -838,6 +842,31 @@ export class LiveBroadcast {
       return;
     }
     this.#record(studio.stream);
+  }
+
+  /**
+   * A desktop live's sound started or stopped running (the context's `statechange`). STOPPED ON AIR,
+   * the recorder writes nothing from that moment (measured, `liveAudioMixer`): the recorder is paused
+   * and the screen is `away` with the sound's sentence - never an 'on air' that sends nothing until
+   * the server ends it by absence. RUNNING AGAIN while away for it (the Retry's click, the red button,
+   * or the engine itself), a new recorder starts on the same live through {@link reacquire}: the
+   * state is the trigger, so the return never depends on which event came first.
+   */
+  #audioChanged(running: boolean): void {
+    if (this.#disposed) return;
+    if (!running && this.phase === 'live') {
+      console.error(
+        "[LIVE-BROADCAST] the live's sound stopped running on air - the recorder would write nothing; away until it runs"
+      );
+      this.#pauseRecording('the sound stopped running');
+      this.phase = 'away';
+      this.awayProblem = 'audio';
+      return;
+    }
+    if (running && this.phase === 'away' && this.awayProblem === 'audio') {
+      console.log('[LIVE-BROADCAST] the sound runs again - back on air');
+      void this.reacquire();
+    }
   }
 
   /** Starts a recorder on `stream` for the live already created, and goes `live`. */

@@ -48,7 +48,15 @@ export type StudioCompositor = Pick<
 /** The mixer as the studio drives it (a fake in tests). */
 export type StudioMixer = Pick<
   LiveAudioMixer,
-  'state' | 'track' | 'wake' | 'setMic' | 'setShare' | 'setMicMuted' | 'setShareAudible' | 'close'
+  | 'state'
+  | 'track'
+  | 'wake'
+  | 'onStateChange'
+  | 'setMic'
+  | 'setShare'
+  | 'setMicMuted'
+  | 'setShareAudible'
+  | 'close'
 >;
 
 /** Everything the studio reaches outside itself. */
@@ -147,6 +155,11 @@ export class LiveStudio {
 
   /** Opens the microphone and starts drawing; the camera is the session's to open. */
   async open(): Promise<void> {
+    if (this.#released) {
+      // A screen mounted after its live was given back: starting the clock now would leak a worker.
+      console.warn('[LIVE-STUDIO] open() on a released studio - nothing started');
+      return;
+    }
     // The screen opens from the click on "En direct": the sound may run already, or wait for a click.
     this.wakeAudio();
     this.#compositor.start();
@@ -193,6 +206,14 @@ export class LiveStudio {
       this.micPhase = 'error';
       console.warn(`[LIVE-STUDIO] microphone not open (${this.micFault})`);
     }
+  }
+
+  /**
+   * Who is told when the sound starts or stops running ({@link audioRunning} changed): the broadcast
+   * pauses its recorder when it stops and starts a new one when it runs again.
+   */
+  onAudioChange(listener: (running: boolean) => void): void {
+    this.#mixer.onStateChange((state) => listener(state === 'running'));
   }
 
   /** Asks the sound to run. Every click of the live screen calls it (see `liveAudioMixer`). */

@@ -817,6 +817,36 @@ describe('LiveBroadcast - a desktop live through the scenes (owner, 2026-11-14)'
     expect(s.screens[0].video.stop).toHaveBeenCalled();
   });
 
+  it('a sound that STOPS on air pauses the recorder (away, not a silent on air) and the live comes back by itself when it runs', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { b, s, recorders, deps } = await desktop();
+    await b.start();
+    expect(b.phase).toBe('live');
+    s.mixer.becomes('suspended');
+    expect(b.phase).toBe('away');
+    expect(b.awayProblem).toBe('audio');
+    expect(recorders[0].stop).toHaveBeenCalled();
+    // The state is the trigger: no Retry is awaited, the engine's own `running` brings it back.
+    s.mixer.becomes('running');
+    await vi.waitFor(() => expect(b.phase).toBe('live'));
+    expect(recorders).toHaveLength(2);
+    expect(recorders[1].stream).toBe(s.studio.stream);
+    expect(deps.startLive).toHaveBeenCalledTimes(1);
+    expect(deps.endLive).not.toHaveBeenCalled();
+  });
+
+  it('a sound running again while away for ANOTHER reason does not put the live back on air', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { b, s, recorders } = await desktop();
+    await b.start();
+    recorders[0].onError(new Event('error'));
+    s.mixer.becomes('suspended');
+    s.mixer.becomes('running');
+    await Promise.resolve();
+    expect(b.phase).toBe('away');
+    expect(recorders).toHaveLength(1);
+  });
+
   it('a desktop flips its lens on air without a new recorder', async () => {
     const { b, recorders } = await desktop();
     await b.start();
@@ -869,6 +899,24 @@ describe('LiveBroadcast - a phone switches its microphone, its camera and its le
     expect(cam.session.facing).toBe(before);
     expect(b.phase).toBe('live');
     expect(recorders).toHaveLength(2);
+  });
+
+  it('a flip superseded by a hide lowers its flag: the away screen keeps its Retry and the next flip works', async () => {
+    const { b, recorders, setHidden } = await ready();
+    await b.start();
+    const switching = b.switchLens();
+    expect(b.lensSwitching).toBe(true);
+    setHidden(true);
+    b.appHidden();
+    await switching;
+    expect(b.lensSwitching).toBe(false);
+    setHidden(false);
+    b.appVisible();
+    await vi.waitFor(() => expect(b.phase).toBe('live'));
+    const before = recorders.length;
+    await b.switchLens();
+    expect(b.phase).toBe('live');
+    expect(recorders).toHaveLength(before + 1);
   });
 
   it('is ignored while not on air, and in the preview it is the camera switch alone', async () => {

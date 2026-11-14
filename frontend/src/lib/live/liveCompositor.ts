@@ -107,6 +107,12 @@ export class LiveCompositor {
     this.#ctx = ctx;
     const track = canvas.captureStream(0).getVideoTracks()[0];
     if (!track) throw new Error('live compositor: the canvas gave no video track');
+    if (typeof (track as CanvasTrack).requestFrame !== 'function') {
+      // `captureStream(0)` pushes a frame ONLY on `requestFrame`: without it the picture never moves.
+      console.error(
+        '[LIVE-STUDIO] the canvas track has no requestFrame - this engine will send no picture'
+      );
+    }
     this.track = track;
     this.#sources = {
       camera: { el: this.#detachedVideo(deps.createVideo()), stream: null },

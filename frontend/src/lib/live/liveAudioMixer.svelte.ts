@@ -38,6 +38,7 @@ export class LiveAudioMixer {
   #shareInput: AudioNode | null = null;
   #micMuted = false;
   #shareAudible = false;
+  #onState: ((state: AudioContextState) => void) | null = null;
 
   constructor(context: MixerContext) {
     this.#context = context;
@@ -45,6 +46,7 @@ export class LiveAudioMixer {
     context.addEventListener('statechange', () => {
       console.debug(`[LIVE-MIX] audio context ${this.#context.state}`);
       this.state = this.#context.state;
+      this.#onState?.(this.#context.state);
     });
     const destination = context.createMediaStreamDestination();
     this.#micGain = context.createGain();
@@ -56,6 +58,14 @@ export class LiveAudioMixer {
     if (!track) throw new Error('live mixer: the destination gave no audio track');
     this.track = track;
     console.debug(`[LIVE-MIX] mixer made, context ${context.state}`);
+  }
+
+  /**
+   * Who is told of every state the context ENTERS (its `statechange`) - the broadcast, which records
+   * only while it is `running` and so must hear it leave and come back, rather than poll for it.
+   */
+  onStateChange(listener: (state: AudioContextState) => void): void {
+    this.#onState = listener;
   }
 
   /** Asks the context to run. CALL IT FROM A CLICK; never awaited (see the module comment). */

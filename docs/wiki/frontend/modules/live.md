@@ -1336,8 +1336,13 @@ silent live, no live. A context starts only inside a click (Safari) or after one
 rule), so every click of the live screen calls `wakeAudio()` (a `resume()` read, never awaited: one
 outside a gesture can stay pending for ever), Start first of all, synchronously. A live whose sound is
 still not running when it goes on air is `away` with its own sentence (`awayProblem = 'audio'`) and the
-Retry - a click - wakes it and starts the recorder on the same live; a sound that stops on air shows a
-red "Le son du live n'a pas démarré" button that wakes it.
+Retry - a click - wakes it and starts the recorder on the same live. **A sound that STOPS on air is the
+same `away`** (review of #3508): the context's `statechange` reaches the broadcast
+(`LiveStudio.onAudioChange`), which pauses the recorder at once rather than staying "on air" with
+nothing written until the server ends the live by absence; the red "Le son du live n'a pas démarré"
+button and the Retry both wake it, and the state coming back to `running` - whoever caused it - starts
+a new recorder on the same live through `reacquire`. The STATE is the trigger, so the return never
+depends on whether the click's `resume()` settled before or after the check.
 
 **A hidden tab keeps drawing - MEASURED, the risk this page named.** A member sharing their screen
 spends the live in another tab or window, and the page's own timers die there. Chrome 157, Windows
