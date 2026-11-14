@@ -3,7 +3,7 @@ import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
 import type { AuthorVerdict } from '$lib/crypto/messageAuthorship';
 import type { DatedKeyPackage } from './keyPackages';
 import type { SkippedDevice } from './skippedKeyPackage';
-import type { DeviceEvent, DevicePin, KeyPackageVerdict } from './deviceTrust';
+import type { DeviceEvent, DevicePin, KeyPackageVerdict, MembershipEvidence } from './deviceTrust';
 import type {
   DeviceKeyPackageAnswer,
   DeviceSignatureKeys,
@@ -1049,6 +1049,13 @@ export interface IMlsService {
    * `BaseMlsService.removalEpochs`.
    */
   removalEpochs(groupId: string, userId: string): Promise<number[]>;
+  /**
+   * What this device can prove, ALONE, about `userId` having been a member of `groupId`: the first
+   * epoch it saw the user hold a leaf of a tree it accepted, and the first epoch its record covers
+   * (`MembershipEvidence`). Per USER, kept in the sealed state, never asked of the server. See
+   * `BaseMlsService.membershipEvidence`.
+   */
+  membershipEvidence(groupId: string, userId: string): Promise<MembershipEvidence>;
   /**
    * Adds multiple devices to a group in a single STAGED MLS commit (C7-A unified regime): stages
    * the commit, validates server-side, merges on accept / rolls back on reject (throws), broadcasts

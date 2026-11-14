@@ -317,7 +317,7 @@ export function registerDeviceNotices(mls: IMlsService, session: DeviceNoticeSes
       heldGroupsKnown: () => mls.heldGroupsKnown(),
       storedConversation: session.storedConversation,
       memberIdentities: (groupId) => mls.getGroupMemberIdentities(groupId),
-      removalEpochs: (groupId, userId) => mls.removalEpochs(groupId, userId),
+      membershipEvidence: (groupId, userId) => mls.membershipEvidence(groupId, userId),
       commitAcceptedAt: (groupId, baseEpoch) => mls.commitAcceptedAt(groupId, baseEpoch),
       addMessageToChat: session.addMessageToChat,
       resolveDisplayNames,

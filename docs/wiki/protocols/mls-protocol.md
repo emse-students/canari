@@ -978,6 +978,33 @@ sight.** The decision is Rust's (`frontend/mls-core/src/device_trust.rs`); the T
   Welcome, is absent. Never a device event and never shown. An empty answer is NOT SEEN, never
   "never happened". Rust
   `MlsManager::removal_epochs`, Tauri `epoques_departs`.
+- **Member sightings: `membershipEvidence(groupId, userId)`** (2026-11-14,
+  `mls-core/src/member_sightings.rs`). Every tree this device ACCEPTS records, per group and per
+  USER, the first epoch at which that user held a leaf of it: a Welcome's tree and the GroupInfo
+  tree of an external join it made (each signed by a member's leaf), both trees of every commit it
+  merges (the one the commit was built on at `epoch - 1`, the one it produced at `epoch`), a group it
+  creates, and every tree it holds at a load (idempotent). **Scoped to the LINEAGE the device holds**
+  (review of #3519): `forget_group` and every freshly joined tree (a Welcome, our own external join)
+  drop the group's sightings first, so epochs are only ever compared within one chain of trees and a
+  sighting from an earlier copy of the group - possibly a copy the server fabricated - never carries
+  into the next. **Retired is not proven** (owner, 2026-11-14): a commit by ANOTHER user that
+  removes every leaf of a user cancels that user's sighting, so their later entry alone is not
+  proven until a tree shows them again (a member's Add); a commit by the user's own device removing
+  their own leaves cancels nothing. A commit never removes its own sender, so a user's LAST leaf
+  always goes through another member's commit - a kick and a sweep of a revoked device alike - and
+  the own-device case keeps the sighting only while one of the user's devices stays in the tree. A
+  departure is therefore NOT evidence of membership, and none is folded in. A tree recovered from
+  orphan storage records nothing (it may be a refused join's tree). Kept in the sealed state
+  (`PersistedState.member_sightings`), so it follows the account's state through restarts, the
+  native background engine and an account switch. It answers `{ firstSeenEpoch, watchedFromEpoch }`:
+  the first sighting of the user and the first epoch the record covers for the group. A group
+  classified `Open` (a key group) records nothing FURTHER and KEEPS what it holds - that
+  classification follows what the server says of a group, so it must not erase evidence. Bounded by
+  the membership history of the conversations held: past 65536 sightings the load drops the groups no
+  longer held, a held group's are NEVER evicted (an evicted sighting is a member accused later), and
+  a WARN says when held groups alone pass it. `firstSeenEpoch: null` is NOT SEEN, never "never a
+  member". Rust `MlsManager::membership_evidence`, WASM `membership_evidence`, Tauri
+  `preuves_appartenance`.
 
 ### What each legitimate flow does
 
@@ -1538,13 +1565,103 @@ and the dev build's `canari_admission_frozen` localStorage key is removed at ses
 (`setupMessageHandler`), so a dev device stops logging the verdict on legitimate joins.
 
 **A legitimate rejoin is not written, only counted.** The report carries a `kind`
-(`UninvitedEntryKind`): `returning` when this device saw the same user leave the tree at an earlier
-epoch (`removalEpochs`), `direct-peer` for the other person of a 1:1 conversation, `new-person`
-otherwise - and only `new-person` is written and logged at ERROR. A departure read that fails keeps
-the entry owed rather than guessing. A device that never saw the departure still reads a returning
-member as `new-person`. The server takes the report from a member of the group only (403
+(`UninvitedEntryKind`): `direct-peer` for the other person of a 1:1 conversation; `returning` for a
+member coming back; `new-person` otherwise - and only `new-person` is written and logged at ERROR.
+
+**`returning` is PROVEN ON THE DEVICE, never taken from the server** (owner, 2026-11-14: *"Preuve
+sur l'appareil. mais il faut un truc solide, robuste, et resilient"*; `decideUninvitedEntry` in
+`deviceNotices.svelte.ts`). It first read only the departures this device merged (`removalEpochs`),
+so a device that never merged the departure read a returning member as `new-person` - the one
+production line of 2026-11-14 was a member seated for two months whose own new web device joined by
+external commit. A first fix asked the server's roster (an admitted seat read as `returning`); its
+adversarial review named the trade-off - a server that lets an outsider in can seat them on the
+roster it serves, and the line went silent exactly when it mattered - and the owner chose the device.
+
+**The rule.** An entrant is `returning` when `membershipEvidence` (above) shows this device saw the
+entrant's USER hold a leaf of a tree of this group it accepted, at an epoch BEFORE the entering
+commit's, and no other member's commit retired them since. Anything else is `new-person`, which reads **NOT PROVEN a member by this device**: written
+in the conversation, logged at ERROR, reported. There is NO fallback to the roster or anything else
+the server returns: a fallback is a signal, never a path. A failed read of the evidence keeps the
+entry owed to the next delivery.
+
+**What it survives, by construction.**
+
+- *A member's new device, a reinstall, a new key, while one of their devices is still in the
+  tree*: the record is per USER, so any device of the member is the member. Once another member's
+  commit removed their last leaf - a kick, or a revoked device swept - they are retired (below).
+- *This device away, across restarts*: the sighting was written when the member was first seen
+  and stays in the sealed state; a restored state carries it too.
+- *A member cleaning up their own old device*: their own commit cancels nothing.
+- *An account switch*: each account has its own MLS state, and the record is in it.
+- *A conversation of any size*: one entry per distinct user ever seen in a held conversation; key
+  groups record nothing.
+
+**What it cannot prove, and how that is measured.** A member whose every device was removed by
+another member - kicked, or a revoked device swept - and who enters alone is not proven on any
+device, by the owner's rule: they come back through a member's Add. A device holds only what it saw. A device that
+joined after the person's every leaf left (a member's NEW device, the reporter's included, or a
+member who joined since), a device that REJOINED the group since (a heal, an external rejoin: a new
+lineage, deliberately), and a device whose sealed state was lost have no sighting, and accuse a
+returning member. That failure is NOISE, never a silent pass, and it is measured: the report carries
+`watchedFromEpoch` (printed `watched_from=` on the server line; `none` when the device holds no
+record of the group), and the server prints one line per (entry, kind), so members that disagree -
+one proving a return, one that cannot - show both. A `new-person` whose `watched_from` is later than
+the entrant's last departure in the commit log is a device that was not there yet; one whose record
+covers the departure watched and never saw them. The record starts at the first load of this build:
+departures before it are known only through the departure record above.
+
+**What a malicious server can and cannot do** (adversarial review of #3519, opus).
+
+- *It cannot write a sighting into the lineage a device holds*: every tree is accepted through a
+  member's signature (a Welcome's or a GroupInfo's signer, a commit's sender) checked against the tree
+  hash in the signed group context. Credentials are self-asserted (no certificate authority), so a
+  server able to hand a device a FABRICATED copy of a group (a GroupInfo signed by a leaf it made)
+  could plant a sighting in that copy - which is why a sighting never outlives the lineage it was
+  seen in: the heal back into the real group starts an empty record.
+- *It cannot erase one by anything it sends*: the record is in the sealed local state, a key-group
+  classification keeps it, and only this device's own `forget_group` or a fresh join drops it. It
+  CAN deny evidence - keep a device out until the person left, or push it into a heal - and that
+  only produces an accusation.
+- *What it still controls, unchanged by this design*: the conversation row. A row the server marks
+  as a key group or a channel makes the classifier return `not-a-conversation` before the evidence is
+  read, and `conversationType` / `directPeerId` come from the same row. That bypass predates the
+  sightings and is the same for every verdict here.
+- *Impersonation of a past member is silent*: the user half of `userId:deviceId` is self-asserted,
+  so an outsider entering under the user id of a member whose every leaf left is read as that member
+  `returning` - and then appears under that member's name. The roster verdict and the departure-only
+  verdict before it had the same hole. What closes it is **cross-signing of a user's devices**,
+  planned as **step 8 of the privacy chantier, after the sealed community state, designed in the
+  wiki first** (owner, 2026-11-14; [decisions](../backlog.d/owner-decisions-of-2026-11-14.md));
+  #3519 ships without it, and until then a `returning` entry writes nothing.
+
+**Designed, not built: a member's signed word for a device that was not there.** A member device
+that HOLDS a sighting of the entrant could post an MLS application message vouching for them
+("seen here since epoch e"), and a device with no sighting would accept a vouch from a member leaf
+as the proof - a member's word, which is what "admitted only by a member" already rests on, never
+the server's. Built only if the `watched_from` count shows the not-there-yet accusations are a
+population.
+
+Cases a reader must hold. A member REMOVED by another member who re-enters by their own commit is
+NOT proven (decided by the owner on 2026-11-14, *"Retiré = non prouvé"*, closing the
+[open question](../open-questions.md#decided-2026-11-14---a-members-removal-by-another-member-cancels-the-device-proof)).
+A member removed by another member right after their legitimate entry is retired by that commit.
+
+**What the rule implies, stated so nobody rediscovers it.** A self-admitted entrant holds no leaf in
+the tree before their commit, so every leaf of theirs left earlier - and a user's LAST leaf always
+leaves through another member's commit (a commit never removes its own sender). In the lineage a
+device holds, such a user was therefore always retired, and a device whose record starts after
+they left never saw them. So `returning` is in practice never reached for this classifier: every
+self-admitted entry of a user absent from the tree is `new-person`, written and reported, and the
+way back is a member's Add. The sightings still carry `watched_from`, and the own-device rule is
+kept exact for the day a removal reaches the device as the user's own (cross-signing, step 8).
+**A simplification the next reader may take:** while that holds, the verdict could drop the
+`firstSeenEpoch` comparison and keep the record for `watched_from` alone; it is kept so the rule
+the owner stated stays the code's rule when step 8 makes the own-commit case reachable.
+
+The server takes the report from a member of the group only (403
 `not-a-member` otherwise), accepts `kind` from that list alone, and writes one line per
-(group, entrant, epoch), so N members reporting one entry make one line, not N.
+(group, entrant, epoch, kind), so N members reporting one entry make one line per kind they reached,
+not N.
 
 **The rule holds for every client allowed to connect since the `1.6.6` floor** (#2358 is in every
 stable since `v1.5.0`, migration 038 with it): its compatibility entry closed on 2026-11-11, with
@@ -1567,10 +1684,13 @@ WHERE NOT m."awaitingAdmission"
                     AND (d.status = 'active' OR d."admittedAtEpoch" IS NOT NULL));
 ```
 
-**How the rollout count subtracts it:** an `[UNINVITED_ENTRY] kind=new-person` line whose `group`
-and entrant user (the `entrant` up to its `:`) are a pair of that list is this population entering
-the way it always could - not a bypass of the rule - and is counted apart. Every other `new-person`
-line after the floor is the rule failing. The list stays in the private operations notes with the
+**How the rollout count subtracts it:** an `[UNINVITED_ENTRY]` line whose `group` and entrant user
+(the `entrant` up to its `:`) are a pair of that list is this population entering the way it always
+could - not a bypass of the rule - and is counted apart. Each reporting device decides from its own
+sightings (2026-11-14), so such an entry may come as `kind=returning` from a device that saw the
+person and `kind=new-person` from one that did not: the pair list is matched against both. Every
+`new-person` line after the floor whose `watched_from` covers the entrant's last departure is the rule
+failing. The list stays in the private operations notes with the
 deploy date; only this query and the rule live here.
 
 **Counted on production, 2026-11-14, read-only: no awaiting seat at all** (0 `dm_group_members` rows

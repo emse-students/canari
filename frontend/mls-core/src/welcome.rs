@@ -363,11 +363,13 @@ impl MlsManager {
         // Every identity in the tree this Welcome hands over is pinned on first sight, and a changed
         // key for one pinned already is recorded - see `crate::device_trust`.
         let own_identity = String::from_utf8_lossy(self.credential.identity()).to_string();
+        let door = self.admission.get(&group_id).copied();
         self.device_trust.observe_joined_tree(
             &group_id,
             welcome_epoch,
             &crate::device_trust::leaf_keys(&group),
             &own_identity,
+            door,
         );
 
         self.groups.insert(group_id.clone(), group);

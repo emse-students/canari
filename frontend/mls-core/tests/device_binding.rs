@@ -584,6 +584,12 @@ fn a_kick_then_a_re_add_seen_only_by_catch_up_still_records_the_departure() {
 
     // carol is away: bob is kicked, then re-added, in two commits.
     let kick = remove(&mut alice, gid, "bob:dev1");
+    // Retired at once on the committer, and across a reload while bob is absent: the load re-seeds
+    // only the tree it holds, which no longer holds him.
+    assert_eq!(alice.membership_evidence(gid, "bob").first_seen_epoch, None);
+    let saved = alice.save_state().expect("save");
+    let mut alice = MlsManager::load_or_create("alice", "dev1", Some(saved)).expect("reload");
+    assert_eq!(alice.membership_evidence(gid, "bob").first_seen_epoch, None);
     let removed_at = alice.get_epoch(gid).unwrap();
     bob.forget_group(gid, 0);
     let kp = bob.generate_key_package().unwrap();
@@ -612,6 +618,171 @@ fn a_kick_then_a_re_add_seen_only_by_catch_up_still_records_the_departure() {
         vec![removed_at],
         "kept in the sealed state"
     );
+}
+
+/// RETIRED IS NOT PROVEN (owner, 2026-11-14): bob's only device is removed by ANOTHER member, then a
+/// new device of bob enters alone by its own commit. No device proves him a member - not the
+/// committer of the removal, not carol who saw him and stayed across a restart, not dave who joined
+/// after he left, not erin who rejoined since (a fresh tree is a new lineage: review of #3519).
+/// `first_seen_epoch` is the entering epoch itself, never earlier, and `watched_from_epoch` names
+/// where each record starts.
+#[test]
+fn a_member_removed_by_another_then_back_alone_is_proven_by_no_device() {
+    let gid = "g-sightings";
+    let mut alice = device("alice", "dev1");
+    let mut bob = device("bob", "dev1");
+    let mut carol = device("carol", "dev1");
+    let mut dave = device("dave", "dev1");
+    let mut erin = device("erin", "dev1");
+    alice.create_group(gid.into()).expect("create");
+    let kp = carol.generate_key_package().unwrap();
+    add_and_join(&mut alice, &mut carol, gid, &kp, "carol:dev1");
+    let kp = erin.generate_key_package().unwrap();
+    let erin_in = add_and_join(&mut alice, &mut erin, gid, &kp, "erin:dev1");
+    carol.process_incoming_message(gid, &erin_in).unwrap();
+    let kp = bob.generate_key_package().unwrap();
+    let bob_in = add_and_join(&mut alice, &mut bob, gid, &kp, "bob:dev1");
+    carol.process_incoming_message(gid, &bob_in).unwrap();
+    erin.process_incoming_message(gid, &bob_in).unwrap();
+    let bob_added_at = alice.get_epoch(gid).unwrap();
+
+    // carol is away, across a restart of her app: bob's only device is removed, then dave joins
+    // AFTER bob left, so no tree dave accepted ever held bob.
+    let saved = carol.save_state().expect("save");
+    let mut carol = MlsManager::load_or_create("carol", "dev1", Some(saved)).expect("reload");
+    let kick = remove(&mut alice, gid, "bob:dev1");
+    let kp = dave.generate_key_package().unwrap();
+    let dave_in = add_and_join(&mut alice, &mut dave, gid, &kp, "dave:dev1");
+    let dave_joined_at = alice.get_epoch(gid).unwrap();
+    carol.process_incoming_message(gid, &kick).unwrap();
+    carol.process_incoming_message(gid, &dave_in).unwrap();
+
+    // erin loses her group and rejoins by external commit: a fresh tree, a new lineage.
+    erin.forget_group(gid, 0);
+    let info = alice.export_group_info(gid).expect("group info");
+    let (_gid, rejoin) = erin.join_by_external_commit(&info).expect("erin rejoins");
+    erin.merge_pending_commit_for(gid).expect("merge rejoin");
+    for member in [&mut alice, &mut carol, &mut dave] {
+        member.process_incoming_message(gid, &rejoin).unwrap();
+    }
+
+    // bob comes back on a NEW device, by his own external commit.
+    let mut bob2 = device("bob", "dev2");
+    let info = alice.export_group_info(gid).expect("group info");
+    let (_gid, entry) = bob2.join_by_external_commit(&info).expect("external join");
+    bob2.merge_pending_commit_for(gid).expect("merge entry");
+    for member in [&mut alice, &mut carol, &mut dave, &mut erin] {
+        member.process_incoming_message(gid, &entry).unwrap();
+    }
+    let entered_at = alice.get_epoch(gid).unwrap();
+
+    for (who, sees) in [
+        ("alice", alice.membership_evidence(gid, "bob")),
+        ("carol", carol.membership_evidence(gid, "BOB")),
+        ("dave", dave.membership_evidence(gid, "bob")),
+        ("erin", erin.membership_evidence(gid, "bob")),
+    ] {
+        assert_eq!(
+            sees.first_seen_epoch,
+            Some(entered_at),
+            "{who} first saw bob again in the tree his entry produced - not proven"
+        );
+    }
+    assert!(bob_added_at < entered_at);
+    assert_eq!(
+        carol.membership_evidence(gid, "carol").first_seen_epoch,
+        Some(1),
+        "carol's record covers the whole lineage"
+    );
+    let dave_sees = dave.membership_evidence(gid, "bob");
+    assert_eq!(dave_sees.watched_from_epoch, Some(dave_joined_at));
+    assert_eq!(
+        erin.membership_evidence(gid, "bob").watched_from_epoch,
+        Some(entered_at - 1),
+        "erin's record starts at her rejoin"
+    );
+
+    // Kept in the sealed state.
+    let saved = carol.save_state().expect("save");
+    let reloaded = MlsManager::load_or_create("carol", "dev1", Some(saved)).expect("reload");
+    assert_eq!(
+        reloaded.membership_evidence(gid, "bob"),
+        carol.membership_evidence(gid, "bob")
+    );
+}
+
+/// A MEMBER REMOVING THEIR OWN OLD DEVICE STAYS PROVEN (owner, 2026-11-14): bob changes phone, and
+/// his web device removes the old phone's leaf. What this pins is that a PARTIAL removal - bob keeps
+/// a leaf - is no retirement, whoever commits it, across a reload too. The owner's exemption for a
+/// user's own commit removing EVERY leaf of theirs cannot be built in MLS (a commit never removes its
+/// own sender); it is pinned by the unit test in `device_trust.rs`.
+#[test]
+fn a_member_removing_their_own_old_device_stays_proven() {
+    let gid = "g-sightings-own-device";
+    let mut alice = device("alice", "dev1");
+    let mut phone = device("bob", "phone");
+    let mut web = device("bob", "web");
+    alice.create_group(gid.into()).expect("create");
+    let kp = phone.generate_key_package().unwrap();
+    add_and_join(&mut alice, &mut phone, gid, &kp, "bob:phone");
+    let kp = web.generate_key_package().unwrap();
+    add_and_join(&mut alice, &mut web, gid, &kp, "bob:web");
+    let seen = alice.membership_evidence(gid, "bob");
+    assert!(seen.first_seen_epoch.is_some());
+
+    let cleanup = remove(&mut web, gid, "bob:phone");
+    alice.process_incoming_message(gid, &cleanup).unwrap();
+    assert_eq!(
+        alice.membership_evidence(gid, "bob"),
+        seen,
+        "own cleanup cancels nothing"
+    );
+    assert!(
+        web.membership_evidence(gid, "bob")
+            .first_seen_epoch
+            .is_some()
+    );
+
+    let saved = alice.save_state().expect("save");
+    let alice = MlsManager::load_or_create("alice", "dev1", Some(saved)).expect("reload");
+    assert_eq!(alice.membership_evidence(gid, "bob"), seen);
+}
+
+/// A KEY GROUP RECORDS NO FURTHER SIGHTING once classified `Open` - every member enters it by
+/// external commit - and KEEPS what it recorded before: the classification follows what the server
+/// says of a group, so it must not be able to erase evidence (review of #3519).
+#[test]
+fn a_key_group_records_no_further_member_sighting_and_erases_none() {
+    let gid = "g-sightings-key-group";
+    let mut alice = device("alice", "dev1");
+    let mut bob = device("bob", "dev1");
+    let mut carol = device("carol", "dev1");
+    alice.create_group(gid.into()).expect("create");
+    let kp = bob.generate_key_package().unwrap();
+    add_and_join(&mut alice, &mut bob, gid, &kp, "bob:dev1");
+    let before = alice.membership_evidence(gid, "bob");
+    assert!(before.first_seen_epoch.is_some());
+
+    alice.set_admission_policy(gid, mls_core::admission::AdmissionPolicy::Open);
+    assert_eq!(
+        alice.membership_evidence(gid, "bob"),
+        before,
+        "nothing erased"
+    );
+    let kp = carol.generate_key_package().unwrap();
+    add_and_join(&mut alice, &mut carol, gid, &kp, "carol:dev1");
+    assert_eq!(
+        alice.membership_evidence(gid, "carol").first_seen_epoch,
+        None,
+        "nothing further recorded"
+    );
+    let saved = alice.save_state().expect("save");
+    let alice = MlsManager::load_or_create("alice", "dev1", Some(saved)).expect("reload");
+    assert_eq!(
+        alice.membership_evidence(gid, "carol").first_seen_epoch,
+        None
+    );
+    assert_eq!(alice.membership_evidence(gid, "bob"), before);
 }
 
 /// A HEAL IS NOT A DEPARTURE: a resync that swaps a device's leaf in ONE commit (an external rejoin
