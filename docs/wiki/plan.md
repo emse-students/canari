@@ -41,7 +41,9 @@ earliest version, as a checklist.
 - ["Envoyer a..." to several targets and CanaReels in chats: the 13 readings, then the production flip](backlog.d/envoyer-a-and-canareels-in-chats-the-readings-then-the-production-flip.md)
 - [The owner's decisions of 2026-11-09](backlog.d/owner-decisions-of-2026-11-09.md)
 - [The owner's decisions of 2026-11-11](backlog.d/owner-decisions-of-2026-11-11.md)
+- [DEFECT read - a new-device alert is NOT dropped on the Mi 9T once its device is revoked](backlog.d/p3-a-new-device-alert-is-not-dropped-on-the-mi-9t-once-its-device-is-revoked.md)
 - [The owner's decisions of 2026-11-14](backlog.d/owner-decisions-of-2026-11-14.md)
+- [Root Back finishes the activity and tao exits the process (read on the Mi 9T 2026-11-14) - DECIDED: Back goes to the background](backlog.d/root-back-exits-the-process-through-tao.md)
 
 **P2 - correctness**
 
@@ -74,10 +76,8 @@ earliest version, as a checklist.
 - [ ] [the resume reload and the send-side rewind on the Mi 9T](backlog.d/p1-the-resume-reload-and-the-receive-ratchet-fixed-owed-one-device-reading-a.md)
 - [ ] [every route fits on REAL hardware](backlog.d/reading-owed-every-route-fits-on-real-hardware.md)
 - [ ] [the twelve emoji-picture rows on real devices, the iPhone first](backlog.d/emoji-pictures-the-campaign-rows-which-need-real-devices.md)
-- [ ] [miconnect-auth signed in on the Mi 9T](backlog.d/p3-miconnect-one-string-left-after-the-french-pass.md)
 - [ ] [a shut phone one commit behind catches up in any community](backlog.d/reading-owed-a-shut-phone-one-commit-behind-catches-up-in-any-community.md)
 - [ ] [Graine v2: the unsigned-row count, the rig re-run and one native refusal](backlog.d/p1-graine-v2-an-author-that-is-proven-and-a-ciphertext-bound-to-its-place.md)
-- [ ] [the salon unread badge after WP-SALON-UNREAD](backlog.d/p2-the-unread-counts-of-salons-ride-a-date-not-a-baseline-2026-10-08.md)
 - [ ] [the CanaReels composer, viewer and editor on real content](backlog.d/reading-owed-the-canareels-composer-viewer-and-editor-on-real-content.md)
 - [ ] [the GRP-3 socket close placed with `ws1.mjs`](backlog.d/p2-a-live-socket-dies-in-the-middle-of-grp-3-and-no-navigation-explains-it-2026.md)
 - [ ] [the named readers' live chat switch on dev](backlog.d/named-readers-comments-switch-readings-owed.md)
@@ -90,7 +90,6 @@ earliest version, as a checklist.
 - [ ] [a BLIND salon banner offers no "Marquer comme lu"](backlog.d/reading-owed-a-blind-salon-banner-offers-no-marquer-comme-lu.md)
 - [ ] [a group joined in the background before its row existed: the "already held" Welcome writes and announces the row, the...](backlog.d/reading-owed-a-group-joined-in-the-background-before-its-row-existed-the.md)
 - [ ] [a reply swipe along a thumb's arc](backlog.d/reading-owed-a-reply-swipe-along-a-thumb-s-arc.md)
-- [ ] [an Android relaunch (navigation-mode switch, WebView update) destroys the old WebView, so its Web Locks no longer...](backlog.d/reading-owed-an-android-relaunch-navigation-mode-switch-webview-update-destroys.md)
 - [ ] [every menu is a fixed segmented control or a hub of route sections](backlog.d/reading-owed-every-menu-is-a-fixed-segmented-control-or-a-hub-of-route-sections.md)
 - [ ] [a GIF never reaches `static.klipy.com` from a reader's browser: the relay carries every recipient's GIF, the picker's...](backlog.d/reading-owed-a-gif-never-reaches-static-klipy-com-from-a-reader-s-browser-the.md)
 - [ ] [a HISTORY ask answered "I hold nothing" is final for its roster](backlog.d/reading-owed-a-history-ask-answered-i-hold-nothing-is-final-for-its-roster.md)
@@ -111,7 +110,6 @@ earliest version, as a checklist.
 - [ ] [the stricter script policy and the iOS 16 minimum](backlog.d/reading-owed-the-stricter-script-policy-and-the-ios-16-minimum.md)
 - [ ] [the uninvited-entry count on production and a waiting-seat ring on dev](backlog.d/a-new-person-is-admitted-only-by-a-member-decided-by-the-user-on-2026-10-23.md)
 - [ ] [the background Welcome staged in the state file (#2329): the app opened inside its round trip](backlog.d/reading-owed-the-background-welcome-staged-in-the-state-file-2329-two-things.md)
-- [ ] [the LEFT edge is excluded from the Android back gesture on every tab root with a section to its left](backlog.d/reading-owed-the-left-edge-is-excluded-from-the-android-back-gesture-on-every.md)
 - [ ] [the pre-038 link seats the group panel would list as members](backlog.d/reading-owed-the-pre-038-link-seats-the-group-panel-would-list-as-members.md)
 - [ ] [sharing into Canari on iOS](backlog.d/reading-owed-sharing-into-canari-on-ios.md)
 - [ ] [call noise suppression on a real call on both phones, which decides its default](backlog.d/call-noise-suppression-clean-speech-gate-fails-and-readings-owed.md)
@@ -129,14 +127,10 @@ earliest version, as a checklist.
 - [ ] [CanaReels "Voir plus" clears the seek line](backlog.d/reading-owed-canareels-voir-plus-clears-the-seek-line.md)
 - [ ] [the camera keeps its layout and the volume keys are its shutter (Mi 9T, iPhone 12)](backlog.d/camera-keeps-its-layout-and-volume-shutter.md)
 - [ ] [the background Welcome's warm-process refusal rate](backlog.d/p3-the-background-welcome-s-warm-process-refusal-its-rate-its-wasted-round-trip.md)
-- [ ] [why the idle Mi 9T closes "zombie" sockets overnight (logcat)](backlog.d/p3-ws-4-pings-without-server-response-closing-zombie-connection-repeatedly.md)
 - [ ] [a comment, reply or mention opens the post AT the comment - the push since #2000, the bell row since the backlog triage...](backlog.d/reading-owed-a-comment-reply-or-mention-opens-the-post-at-the-comment-the-push.md)
 - [ ] [rotation on the video, live and camera screens on both phones](backlog.d/rotation-on-video-and-camera-screens.md)
 - [ ] [a call that loses the audio focus holds its microphone and never hangs up: the member's own mute comes back with the...](backlog.d/reading-owed-a-call-that-loses-the-audio-focus-holds-its-microphone-and-never.md)
-- [ ] [a new-device alert is dropped once its device is revoked](backlog.d/reading-owed-a-new-device-alert-is-dropped-once-its-device-is-revoked.md)
 - [ ] [an institution chooses the reach of each calendar event (owner, 2026-11-13)](backlog.d/institution-event-reach.md)
-- [ ] [a message resent under one `messageId` is stored once](backlog.d/reading-owed-a-message-resent-under-one-messageid-is-stored-once.md)
-- [ ] [a picture in a message keeps its height when the keyboard opens](backlog.d/reading-owed-a-picture-in-a-message-keeps-its-height-when-the-keyboard-opens.md)
 - [ ] [a three-way group call, audio and video, on the Mi 9T and the iPhone 12](backlog.d/reading-owed-a-three-way-group-call-audio-and-video-on-the-bench-phones.md)
 - [ ] [CPU and frame rate of a phone sending its camera to two receivers](backlog.d/reading-owed-cpu-and-fps-of-a-phone-sending-video-to-two-receivers.md)
 - [ ] [overlays stacked by open order, not by rung](backlog.d/reading-owed-overlays-stacked-by-open-order-not-by-rung.md)
@@ -149,7 +143,6 @@ earliest version, as a checklist.
 - [ ] [a live or a reel asks the microphone for one channel](backlog.d/reading-owed-a-live-or-a-reel-asks-the-microphone-for-one-channel.md)
 - [ ] [a notification shows the sender's face, not the app's bird](backlog.d/reading-owed-a-notification-shows-the-sender-s-face-not-the-app-s-bird.md)
 - [ ] [a push carries its ciphertext once, not twice](backlog.d/reading-owed-a-push-carries-its-ciphertext-once-not-twice.md)
-- [ ] [a refused reaction, edit, pin or delete wears a mention with "Retry", a refused delete is not tombstoned](backlog.d/reading-owed-a-refused-reaction-edit-pin-or-delete-wears-a-mention-with-retry-a.md)
 - [ ] [acknowledging a conversation from the notification shade](backlog.d/reading-owed-acknowledging-a-conversation-from-the-notification-shade.md)
 - [ ] [follow suggestions and Suivre, WP-2, WP-5, WP-6, WP-7](backlog.d/reading-owed-follow-suggestions-and-suivre-wp-2-wp-5-wp-6-wp-7.md)
 - [ ] [openings for followers, WP-4](backlog.d/reading-owed-openings-for-followers-wp-4.md)
@@ -160,7 +153,6 @@ earliest version, as a checklist.
 - [ ] [the notification quick reply's 403](backlog.d/reading-owed-the-notification-quick-reply-s-403.md)
 - [ ] [the push sentences are worded in Rust from the app language and a voice note is announced as one](backlog.d/reading-owed-the-push-sentences-are-worded-in-rust-from-the-app-language-and-a.md)
 - [ ] [the row a push creates carries the GROUP's name](backlog.d/reading-owed-the-row-a-push-creates-carries-the-group-s-name.md)
-- [ ] [up to four organisers per event: the stacked faces, the detail modal's chips with "n pending", the picker's `n / 4`,...](backlog.d/reading-owed-up-to-four-organisers-per-event-the-stacked-faces-the-detail-modal.md)
 
 ## 1.8.0
 
