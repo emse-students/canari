@@ -398,6 +398,30 @@ the dev-signed bench build only.
 a WDA session left on another app answers "not running" until it is deleted; a tap on a CanaReel card
 in a DM opens the viewer.
 
+## The iPhone 12 batch 7 readings of 2026-11-14
+
+TestFlight `1.6.12-alpha.2`, dev estate, `canari-test-gamma` (no passcode), driven over WDA
+(`tools/ios-device`), traffic from `python -m pymobiledevice3 pcap`, the second seat a harness Chrome.
+Evidence is outside the repository.
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| Emoji pictures, rows 6 (French), 8, 9 ([entry](backlog.d/emoji-pictures-the-campaign-rows-which-need-real-devices.md)) | **`PASS`** | App language French then restored; peer reaction round trip and the distinct-reaction limit; the lock-screen banner. The evidence lines were not kept as text |
+| Emoji pictures, row 10 (exports) | **`DELETED`** | The agenda's PNG export draws only the selected campus and formation, so the new event was absent from it (the export's scope, not a defect) |
+| Emoji pictures, row 11 (cold start offline) | **`PASS`** | Wi-Fi off, cold launch: the PIN gate, no crash; unlocking refused with "Impossible de contacter le serveur. Verifiez votre connexion puis reessayez." |
+| Share in from Photos, Notes, Files ([entry](backlog.d/reading-owed-sharing-into-canari-on-ios.md)) | **`PASS`** | Card, banner, and the "Envoyer a..." picker carrying the item. Notes defaults to an iCloud collaboration link: choose "Envoyer une copie" |
+| A share, then a sign-out | **`PASS`** | Nothing offered after signing back in |
+| Share sheet suggestion row | **not reproduced** | A pick opens the card and banner, and Canari opened by hand shows the picker with the suggested conversation highlighted. A finger tap on the banner is not read (a Notification Center banner tap does not open the app over WDA) |
+| GIF relay, iPhone ([entry](backlog.d/reading-owed-a-gif-never-reaches-static-klipy-com-from-a-reader-s-browser-the.md)) | **`PASS`** | Picker thumbnails and a sent GIF drew; an 11 MB packet capture holds zero `klipy` and 46 `dev.canari-emse.fr`; two `cloudflare-ech.com` names are the stated caveat |
+| Institution post chip and composer, light and dark ([entry](backlog.d/reading-owed-an-institution-chooses-each-post-s-spaces-and-public.md)) | **`PASS`** | Picker, hint, disabled "Publier", chip "Etudiants - 5 espaces" with the spaces in its title, both themes |
+| Institution event chip, reading 7 ([entry](backlog.d/institution-event-reach.md)) | **`PASS`** | "Tous - 5 espaces" on the event detail, both themes |
+
+**Bench notes.** Changing the iPhone language restarts SpringBoard and kills the WDA runner, and the old
+`wda-daemon.py` keeps port 8100: kill it before starting a new one. The app's own theme (Settings >
+Preferences > Theme) is independent of the phone's appearance. In the feed, a card's actions menu is
+longer than the screen: scroll inside it to reach "Supprimer le post". `ios.mjs swipe` takes four
+separate numbers (`x1 y1 x2 y2`), `long` takes `x y ms`.
+
 ## The layout pass of 2026-09-09, and the sixth check that ran later the same day
 
 Six fixes shipped in `v0.16.6-alpha.5`'s ancestors on the strength of a browser emulated at 393px.
