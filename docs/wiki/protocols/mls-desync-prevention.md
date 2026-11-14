@@ -862,9 +862,12 @@ value is never ahead of the state it moves into. Shim recorded in
   it; a power loss or OS crash inside the next flush is not covered, as it is not for the state.
 - **The ledgers' weight is now on every checkpoint**: the whole seen set of every group (capped at
   5 000 fingerprints and 5 000 row keys per group, 256 groups) is serialised and sealed with the state
-  at each write, where `localStorage` wrote one group at a time. Unmeasured on a heavy profile; the
-  load-time composition line prints it (`app ledgers <keys>x<bytes>B`), and that reading on the
-  busiest bench profile is owed before the stable.
+  at each write, where `localStorage` wrote one group at a time. At the caps that is about 43 MB per
+  checkpoint, so the bound is a defect with a budget, not a reading:
+  [P2](../backlog.d/p2-the-seen-ledgers-inside-the-mls-state-have-no-byte-budget.md). The load-time
+  composition line prints the weight (`app ledgers <keys>x<bytes>B`). That an older build reads and
+  writes back such a state is not gated either:
+  [P2](../backlog.d/p2-no-gate-proves-an-older-build-reads-the-mls-state-this-build-writes.md).
 - The web catch-up session stages marks before its state is installed in the live client - the same
   window the old design had, filed as
   [P2](../backlog.d/p2-web-catch-up-marks-frames-seen-before-its-state-is-live.md).
