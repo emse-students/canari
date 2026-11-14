@@ -823,7 +823,7 @@ export async function listAgendaReachedSpaces(): Promise<{ formation: string; ca
   return request<{ formation: string; campus: string }[]>('/api/associations/calendar/spaces');
 }
 
-/** The selection a subscription URL is signed for: a side left empty is "any". */
+/** The selection a subscription link is asked for: a side left empty is "any". */
 export interface AgendaFeedSelection {
   campus?: Campus | '' | null;
   formation?: Formation | '' | null;
@@ -831,72 +831,68 @@ export interface AgendaFeedSelection {
 }
 
 /**
- * Asks the server to SIGN a feed selection (D40 amended 2026-10-06): it answers only for the
- * reader's OWN campus, formations and pairs of them (403 `AGENDA_SELECTION_FORBIDDEN` otherwise), or
- * for an association, and the `sig` it returns goes into the `.ics` URL unchanged. Needs a session.
+ * Asks the server for the reader's SUBSCRIPTION LINK for a selection (owner, 2026-11-14, "Respecter
+ * les publics"): the token names a row bound to the reader's account, and the feed it opens is the
+ * reader's own agenda, re-read at every poll - never more than they see. The same selection answers
+ * the same token until the reader revokes. Bounded like the selector (403
+ * `AGENDA_SELECTION_FORBIDDEN` outside the reader's own spaces). Needs a session.
  */
-export async function signAgendaFeed(selection: AgendaFeedSelection): Promise<string> {
+export async function requestAgendaSubscription(selection: AgendaFeedSelection): Promise<string> {
   const body: Record<string, string> = {};
   if (selection.campus) body.campus = selection.campus;
   if (selection.formation) body.formation = selection.formation;
   if (selection.associationId?.trim()) body.associationId = selection.associationId.trim();
-  const res = await request<{ sig: string }>('/api/associations/calendar/feed-signature', {
+  const res = await request<{ token: string }>('/api/associations/calendar/subscription', {
     method: 'POST',
     body: JSON.stringify(body),
   });
-  return res.sig;
+  return res.token;
 }
 
 /**
- * Default window for an `.ics` subscription link: 3 months back to the end of the 12th month
- * ahead. The backend defaults to the same range when `from`/`to` are omitted, but a subscribe
- * link is built once and copied/saved by the user, so we still send an explicit window here -
- * it reads better in a calendar app's "range of this subscription" UI than a bare URL would.
+ * Revokes EVERY subscription link of the reader: each link they handed out stops answering, and
+ * the next {@link requestAgendaSubscription} answers a new one. Resolves to how many were revoked.
  */
-export function icsSubscriptionRangeISO(): { from: string; to: string } {
-  const now = new Date();
-  const from = new Date(now.getFullYear(), now.getMonth() - 3, 1, 0, 0, 0, 0);
-  const to = new Date(now.getFullYear(), now.getMonth() + 12, 0, 23, 59, 59, 999);
-  return { from: from.toISOString(), to: to.toISOString() };
+export async function revokeAgendaSubscriptions(): Promise<number> {
+  const res = await request<{ revoked: number }>('/api/associations/calendar/subscriptions', {
+    method: 'DELETE',
+  });
+  return res.revoked;
 }
 
-/** Path + query for the dynamic iCalendar feed (same params as `listAggregatedCalendarFeed`). */
+/**
+ * The path of a subscription link: the token ALONE (the server refuses it beside a selection or a
+ * `sig`), and no window - the server serves its rolling one, so a link saved today still shows the
+ * coming months a year from now.
+ */
+export function agendaSubscriptionIcsPath(token: string): string {
+  return `/api/associations/calendar/feed.ics?${new URLSearchParams({ token }).toString()}`;
+}
+
+/** Absolute URL of a subscription link (`agendaSubscriptionIcsPath`), for a calendar app. */
+export function agendaSubscriptionIcsAbsoluteUrl(token: string): string {
+  return absoluteSocialUrl(agendaSubscriptionIcsPath(token));
+}
+
+/** Path + query of ONE event's `.ics` link (its window, its id and the server's signature of it). */
 export function aggregatedCalendarFeedIcsPath(opts: {
   from: string;
   to: string;
-  associationId?: string;
   /** Narrows the feed to this one event - the link that adds a single evening to a calendar. */
-  eventId?: string;
-  /** D40: the public feed is one per selection; the server REFUSES a bare one. */
-  campus?: Campus | null;
-  formation?: Formation | null;
-  /** The server's signature of that selection (`signAgendaFeed`); a selection feed is refused without it. */
-  sig?: string;
+  eventId: string;
+  /** The server's signature of that event's link (`icsSig`); the link is refused without it. */
+  sig: string;
 }): string {
   const q = new URLSearchParams();
   q.set('from', opts.from);
   q.set('to', opts.to);
-  if (opts.associationId?.trim()) q.set('associationId', opts.associationId.trim());
-  if (opts.campus) q.set('campus', opts.campus);
-  if (opts.formation) q.set('formation', opts.formation);
-  if (opts.eventId?.trim()) q.set('eventId', opts.eventId.trim());
-  if (opts.sig?.trim()) q.set('sig', opts.sig.trim());
+  q.set('eventId', opts.eventId.trim());
+  q.set('sig', opts.sig.trim());
   return `/api/associations/calendar/feed.ics?${q.toString()}`;
 }
 
-/**
- * Absolute URL to `feed.ics` for the given window. Prefer `socialUrl()` when set (Tauri / split API).
- */
-export function aggregatedCalendarFeedIcsAbsoluteUrl(opts: {
-  from: string;
-  to: string;
-  associationId?: string;
-  eventId?: string;
-  campus?: Campus | null;
-  formation?: Formation | null;
-  sig?: string;
-}): string {
-  const path = aggregatedCalendarFeedIcsPath(opts);
+/** `path` made absolute: `socialUrl()` when set (Tauri / split API), else this page's origin. */
+function absoluteSocialUrl(path: string): string {
   const base = socialUrl();
   if (base) return `${base}${path}`;
   if (typeof window !== 'undefined' && window.location?.origin) {
@@ -3561,12 +3557,14 @@ export function eventIcsAbsoluteUrl(
   const start = new Date(startsAt);
   if (Number.isNaN(start.getTime()) || !icsSig?.trim()) return '';
   const DAY_MS = 24 * 60 * 60 * 1000;
-  return aggregatedCalendarFeedIcsAbsoluteUrl({
-    from: new Date(start.getTime() - DAY_MS).toISOString(),
-    to: new Date(start.getTime() + DAY_MS).toISOString(),
-    eventId,
-    sig: icsSig,
-  });
+  return absoluteSocialUrl(
+    aggregatedCalendarFeedIcsPath({
+      from: new Date(start.getTime() - DAY_MS).toISOString(),
+      to: new Date(start.getTime() + DAY_MS).toISOString(),
+      eventId,
+      sig: icsSig,
+    })
+  );
 }
 
 // ── Spaces (WP6d) ─────────────────────────────────────────────────────────

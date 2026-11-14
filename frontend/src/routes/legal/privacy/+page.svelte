@@ -462,7 +462,10 @@
           nom d'une personne ; rien sur un espace accessible par son seul lien) et le début du
           créneau. Ces notifications, message, lieu et début du créneau compris, sont supprimées au
           bout de 90 jours, comme toute notification dans l'application, y compris lorsque l'espace
-          a été supprimé entre-temps.
+          a été supprimé entre-temps. Quand vous demandez un lien d'abonnement à l'agenda, Canari
+          enregistre votre identifiant et l'agenda choisi (campus, formation ou association) jusqu'à
+          ce que vous révoquiez vos liens, que l'association soit supprimée ou que votre compte le
+          soit ; quiconque détient ce lien voit ce que vous voyez de cet agenda, et rien de plus.
         </dd>
       </div>
       <div>

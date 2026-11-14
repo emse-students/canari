@@ -52,10 +52,15 @@ import { releaseUncitedPosters } from '../bookings/booking-poster-media';
 import type { SpaceSelection } from './directory-query';
 import {
   AGENDA_SELECTION_FORBIDDEN,
+  agendaSubscriptionToken,
+  assertAgendaSigningKey,
+  legacyAgendaLinkShape,
   selectionWithinSpaces,
   signAgendaSelection,
 } from './agenda-signature';
 import { Association } from './entities/association.entity';
+import { isForeignKeyViolation } from '../common/pg-errors';
+import { agendaSelectionKey } from './entities/agenda-subscription.entity';
 import {
   assertReviewerReachesAssociation,
   assertRosterStaysOnOneSide,
@@ -417,6 +422,14 @@ function calendarDateRefusal(
  * an anonymous reader - so this is optional by construction, and an absent viewer gets the whole
  * window exactly as before. The limit itself is `promoCutoffFor`, shared with the posts feed.
  */
+/** What a subscription link reads of its row: the holder and the selection. */
+export interface AgendaSubscriptionRow {
+  userId: string;
+  campus: SpaceSelection['campus'];
+  formation: SpaceSelection['formation'];
+  associationId: string | null;
+}
+
 export interface CalendarViewer {
   userId?: string;
   isGlobalAdmin?: boolean;
@@ -2824,8 +2837,8 @@ export class AssociationsService {
    * Default window for the aggregated calendar feed when `from`/`to` are omitted: 3 months back
    * to the end of the 12th month ahead. A "subscribe by URL" feed (`.ics`) is saved once by the
    * calendar app and re-polled with the exact same URL forever - requiring the caller to always
-   * supply a window defeats that, since nothing ever adds one after the first save. Mirrors the
-   * range the frontend itself computes for the same purpose (`icsSubscriptionRangeISO`).
+   * supply a window defeats that, since nothing ever adds one after the first save. This is the ONE
+   * definition of a subscription's window: the links the frontend builds carry no `from`/`to`.
    */
   private static defaultCalendarFeedRange(): { from: Date; to: Date } {
     const now = new Date();
@@ -3623,17 +3636,17 @@ export class AssociationsService {
   }
 
   /**
-   * Signs the agenda selection a signed-in reader asks to subscribe to (D40 amended 2026-10-06).
-   * Only selections inside the reader's OWN spaces are signed - their campus, their formations, a
-   * pair of both (`READER_SPACES_SQL`, the twin of `readerSpaces`); an association needs no
-   * membership, only to exist. A reader with a campus and NO cursus (EMSE staff) is signed their
-   * own campus alone, no formation = every formation of it (user, 2026-10-07). The returned `sig` goes into the feed URL unchanged.
+   * THE BOUND ON WHAT A SUBSCRIPTION SELECTOR MAY NAME (D40 amended 2026-10-06, tightened 2026-10-07):
+   * a pair that is one of the reader's OWN spaces (`READER_SPACES_SQL`, the twin of `readerSpaces`),
+   * or - for a reader with a campus and NO cursus (EMSE staff) - their own campus alone; an
+   * association needs no membership, only to exist (404 otherwise). 403 `AGENDA_SELECTION_FORBIDDEN`
+   * outside it. It bounds the SELECTOR only: what a link serves is decided at every read.
    */
-  async signAgendaFeedSelection(
+  private async assertAgendaSelectionAllowed(
     userId: string,
     selection: SpaceSelection,
     associationId: string | null
-  ): Promise<{ sig: string }> {
+  ): Promise<void> {
     if (associationId) await this.findById(associationId);
     const spaces = (await this.assoRepo.manager.query(READER_SPACES_SQL, [userId])) as SpacePair[];
     // A reader tied to no formation (EMSE staff) has no space: they may follow their own campus
@@ -3649,14 +3662,103 @@ export class AssociationsService {
     }
     if (!selectionWithinSpaces(selection, spaces, campusWide)) {
       this.logger.warn(
-        `[AGENDA_SIG] refused to sign campus=${selection.campus} formation=${selection.formation} for ${userId.slice(0, 8)}: outside their spaces`
+        `[AGENDA_SIG] refused campus=${selection.campus} formation=${selection.formation} for ${userId.slice(0, 8)}: outside their spaces`
       );
       throw new ForbiddenException({
         code: AGENDA_SELECTION_FORBIDDEN,
         message: 'You can only subscribe to the agenda of your own campus and formations',
       });
     }
+  }
+
+  /**
+   * LEGACY (docs/wiki/legacy-compatibility.md): signs a selection for the store builds that still
+   * build `sig` links - a PAIR only (a campus AND a formation, with or without an association), the
+   * one shape a `sig` still serves anything for (`AssociationsController.legacySelectionRead`). Any
+   * other shape is the typed 403 `AGENDA_SELECTION_FORBIDDEN` the old modal already shows: minting a
+   * link that would serve nothing, silently, is worse than a refusal.
+   */
+  async signAgendaFeedSelection(
+    userId: string,
+    selection: SpaceSelection,
+    associationId: string | null
+  ): Promise<{ sig: string }> {
+    if (selection.campus === null || selection.formation === null) {
+      this.logger.warn(
+        `[AGENDA_SIG] refused a legacy signature for ${userId.slice(0, 8)}: not a pair (shape=${legacyAgendaLinkShape(selection)})`
+      );
+      throw new ForbiddenException({
+        code: AGENDA_SELECTION_FORBIDDEN,
+        message: 'Update the app to subscribe to this agenda',
+      });
+    }
+    await this.assertAgendaSelectionAllowed(userId, selection, associationId);
     return { sig: signAgendaSelection({ ...selection, associationId }) };
+  }
+
+  /**
+   * THE HOLDER'S SUBSCRIPTION LINK (owner, 2026-11-14, "Respecter les publics"): the row of
+   * `agenda_subscriptions` for (reader, selection), created on first ask, and its token. ONE statement:
+   * the same selection meets the unique key (`"userId"`, `"selectionKey"`, `agendaSelectionKey`) and
+   * gives the same row back, so the same link, until the reader revokes. The signing key is checked
+   * BEFORE the write, so a misconfigured estate leaves no row behind its 503. An association deleted
+   * between the check and the write is the 404 `findById` gives (classified by SQLSTATE). The
+   * selection is bounded as the legacy one was; what the link SERVES is the holder's signed-in agenda,
+   * read at every poll.
+   */
+  async subscribeAgenda(
+    userId: string,
+    selection: SpaceSelection,
+    associationId: string | null
+  ): Promise<{ token: string }> {
+    await this.assertAgendaSelectionAllowed(userId, selection, associationId);
+    assertAgendaSigningKey();
+    const key = agendaSelectionKey({ ...selection, associationId });
+    let rows: Array<{ id: string }>;
+    try {
+      rows = (await this.assoRepo.manager.query(
+        `INSERT INTO agenda_subscriptions ("userId", campus, formation, "associationId", "selectionKey")
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT ("userId", "selectionKey") DO UPDATE SET "userId" = EXCLUDED."userId"
+           RETURNING id`,
+        [userId, selection.campus, selection.formation, associationId, key]
+      )) as Array<{ id: string }>;
+    } catch (err) {
+      if (isForeignKeyViolation(err)) {
+        this.logger.warn(
+          `[AGENDA_SUBSCRIPTION] association ${associationId?.slice(0, 8)} deleted while ${userId.slice(0, 8)} subscribed`
+        );
+        throw new NotFoundException('Association not found');
+      }
+      throw err;
+    }
+    this.logger.debug(
+      `[AGENDA_SUBSCRIPTION] link ${rows[0].id.slice(0, 8)} for ${userId.slice(0, 8)} campus=${selection.campus ?? '-'} formation=${selection.formation ?? '-'} association=${associationId ? associationId.slice(0, 8) : '-'}`
+    );
+    return { token: agendaSubscriptionToken(rows[0].id) };
+  }
+
+  /**
+   * Revokes every subscription link of the reader: their rows go, so every link they handed out
+   * answers 403, and the next {@link subscribeAgenda} mints a new id, hence a new link.
+   */
+  async revokeAgendaSubscriptions(userId: string): Promise<{ revoked: number }> {
+    const result = (await this.assoRepo.manager.query(
+      `DELETE FROM agenda_subscriptions WHERE "userId" = $1 RETURNING id`,
+      [userId]
+    )) as [unknown[], number];
+    const revoked = result[1];
+    this.logger.log(`[AGENDA_SUBSCRIPTION] ${userId.slice(0, 8)} revoked ${revoked} link(s)`);
+    return { revoked };
+  }
+
+  /** The subscription row a verified token names, or null when it is gone (revoked, erased). */
+  async findAgendaSubscription(id: string): Promise<AgendaSubscriptionRow | null> {
+    const rows = (await this.assoRepo.manager.query(
+      `SELECT "userId", campus, formation, "associationId" FROM agenda_subscriptions WHERE id = $1`,
+      [id]
+    )) as AgendaSubscriptionRow[];
+    return rows[0] ?? null;
   }
 
   /**
