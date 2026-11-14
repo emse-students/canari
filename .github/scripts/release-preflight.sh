@@ -197,7 +197,6 @@ else
       ok "the stable builds ${TARGET_SHA:0:8}, precisely ${SOURCE#exact }'s commit - main is not read"
       ;;
     'mismatch '*)
-      read -r _ ALPHA_TAG ALPHA_SHA <<<"$SOURCE"
       refuse "the stable would build ${TARGET_SHA:0:8}, but the latest pre-release $ALPHA_TAG is ${ALPHA_SHA:0:8}"
       hint 'A stable ships the latest pre-release of its version and nothing else - never the commit its'
       hint 'own tag names, never main. The resolve step of release.yml and this gate disagree, which is'
@@ -206,6 +205,29 @@ else
     *)
       refuse "could not tell which commit the stable must build - ${SOURCE#undecidable }"
       hint "A stable ships the latest v${VERSION}-alpha.N; cut one first: gh release create v${VERSION}-alpha.1 --prerelease"
+      ;;
+  esac
+
+  # AND THE STABLE'S OWN TAG WAS PUBLISHED ON THAT SAME COMMIT (lead, 2026-11-14). GitHub runs a
+  # release event's workflow files - `release.yml` and every `workflow_call` callee, `serve-prod.yml`
+  # included - from the commit the tag named AT PUBLICATION (`github.sha`, handed in as
+  # PUBLISHED_SHA), not from what the arms build. `v1.6.12` was typed against `main` and its
+  # production deploy ran `main`'s `serve-prod.yml` around the alpha's tree. Same classifier, same
+  # equality: the pipeline's code must be the alpha's too.
+  PUBLISHED="$(classify_stable_source "${PUBLISHED_SHA:-}" "$ALPHA_TAG" "$ALPHA_SHA")"
+  case "$PUBLISHED" in
+    'exact '*)
+      ok "the stable's tag was published on ${PUBLISHED_SHA:0:8}, so its workflow files are ${PUBLISHED#exact }'s too"
+      ;;
+    'mismatch '*)
+      refuse "the tag v$VERSION was published on ${PUBLISHED_SHA:0:8}, not on $ALPHA_TAG's commit ${ALPHA_SHA:0:8}"
+      hint 'GitHub runs this release'"'"'s workflow files from the commit the tag named when it was published,'
+      hint 'so a stable typed against main deploys with main'"'"'s pipeline around the alpha'"'"'s tree. Delete'
+      hint "this release AND its tag (gh release delete v$VERSION --cleanup-tag), then publish it on the alpha:"
+      hint "gh release create v$VERSION --target $ALPHA_SHA --generate-notes"
+      ;;
+    *)
+      refuse "could not tell which commit the stable's tag was published on - ${PUBLISHED#undecidable }"
       ;;
   esac
 

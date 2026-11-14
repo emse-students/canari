@@ -217,6 +217,31 @@ else
   fail "release-preflight.sh never compares the stable's commit with its latest pre-release's"
 fi
 
+printf '\nand its tag was published on that commit, so the workflow files come from the alpha too\n'
+# =================================================================================================
+# LEAD, 2026-11-14. GitHub runs a release event's workflow files (and every workflow_call callee)
+# from the commit the tag named AT PUBLICATION. v1.6.12 was typed against main, so its production
+# deploy ran main's serve-prod.yml around the alpha's tree. The same classifier judges the published
+# commit (github.sha, handed in as PUBLISHED_SHA), and anything but the alpha's commit is refused.
+source_of "mismatch v1.6.12-alpha.2 $ALPHA" 'a stable tag typed against main is refused (the v1.6.12 case)' \
+  "$MAIN_HEAD" v1.6.12-alpha.2 "$ALPHA"
+source_of 'undecidable the target (empty) is not a full commit sha' \
+  'a published commit nobody handed in is not permission' '' v1.6.12-alpha.2 "$ALPHA"
+# shellcheck disable=SC2016 # the patterns are the files' literal text
+if grep -qF 'PUBLISHED="$(classify_stable_source "${PUBLISHED_SHA:-}" "$ALPHA_TAG" "$ALPHA_SHA")"' \
+  "$HERE/../release-preflight.sh" &&
+  grep -qF 'gh release create v$VERSION --target $ALPHA_SHA --generate-notes' "$HERE/../release-preflight.sh"; then
+  pass 'release-preflight.sh judges the published commit and names the --target command to type'
+else
+  fail "release-preflight.sh never compares the stable tag's published commit with the alpha's"
+fi
+# shellcheck disable=SC2016 # a GitHub expression, not a shell one
+if grep -qF 'PUBLISHED_SHA: ${{ github.sha }}' "$HERE/../../workflows/release.yml"; then
+  pass 'release.yml hands the published commit (github.sha) to the gates'
+else
+  fail 'release.yml does not hand PUBLISHED_SHA to the gates, so the published-commit check reads nothing'
+fi
+
 printf '\na pre-release older than one already released is refused, not redeployed\n'
 # =================================================================================================
 # THE GAP THE OLD GATE 2 CLOSED BY ACCIDENT. `main still points at it` refused any stale alpha; with

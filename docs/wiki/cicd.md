@@ -1516,8 +1516,12 @@ read a stable by:
 (and every `workflow_call` they make) from the commit the tag named at publication, so `release.yml`,
 `serve-prod.yml` and the rest ran from `640aa34b`. The built tree, the deploy scripts and the
 migrations are the alpha's; only the YAML is not. For `v1.6.12` that meant two extra secrets passed
-by `serve-prod.yml` that the shipped compose file never reads. Typing the stable at the alpha's
-commit (`--target <sha>`) would close it; it is not required by a gate.
+by `serve-prod.yml` that the shipped compose file never reads. **Closed the same day (lead):** gate 4
+also judges the commit the tag was published on (`PUBLISHED_SHA`, `github.sha`) with the same
+classifier, and refuses a stable not typed ON the latest alpha's commit; the refusal names the
+command, `gh release create vX.Y.Z --target <alpha sha> --generate-notes`, after
+`gh release delete vX.Y.Z --cleanup-tag`. `release-preflight.test.sh` asserts the refusal and that
+`release.yml` hands `PUBLISHED_SHA` in.
 
 ### A pre-release is pinned on its release branch (decided 2026-10-30)
 
@@ -1767,7 +1771,9 @@ here rather than fixed silently.
 ## Release workflow
 
 ```
-gh release create vX.Y.Z --target $(git rev-parse HEAD)      <- the human gesture, and the last one
+gh release create vX.Y.Z-alpha.N --prerelease --generate-notes   <- a pre-release: main's head
+gh release create vX.Y.Z --target <latest alpha's commit> --generate-notes
+                                                     <- a stable: ON its alpha, or gate 4 refuses
   |
   '- Release (release.yml), ONE run
        |
