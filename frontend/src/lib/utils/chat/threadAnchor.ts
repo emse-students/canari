@@ -224,8 +224,27 @@ export interface NewMessageState {
   catchupActive: boolean;
   /** Whether the reader was at the live end BEFORE this message. */
   isNearBottom: boolean;
-  /** The message that just landed is the reader's own, which always follows. */
+  /** The message that just landed is the reader's own, which always follows ({@link ownMessageAppended}). */
   ownMessageAdded: boolean;
+}
+
+/**
+ * WHETHER THE READER'S OWN MESSAGE WAS JUST ADDED AT THE END of the list: the newest message is
+ * theirs AND it is not the one that was newest before the list grew.
+ *
+ * 'The newest message is mine' is not that question. A list also grows at the TOP - an older page
+ * from the device, a peer's scrollback answer - and under a reader whose last message was their own
+ * every such page read as 'I just sent': the pane followed the bottom and threw them out of the
+ * history they were reading. The newest id is what tells an append from a prepend.
+ *
+ * @param previousNewestId the id of the newest message before this growth, `undefined` for an empty list
+ * @param newest the newest message now
+ */
+export function ownMessageAppended(
+  previousNewestId: string | undefined,
+  newest: { id: string; isOwn?: boolean } | undefined
+): boolean {
+  return newest?.isOwn === true && newest.id !== previousNewestId;
 }
 
 export function respondToNewMessage(state: NewMessageState): NewMessageResponse {

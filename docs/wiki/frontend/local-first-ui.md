@@ -99,6 +99,14 @@ change: a catch-up may re-pin only while the reader has not left the bottom, and
 re-arms `entering` - which was setting the whole message list to `opacity-0`, so a thread flickered
 blank once per arriving frame.
 
+**"My own message was added" is an APPEND, read from the newest id** (`ownMessageAppended`, same
+file, 2026-11-14). The reader's own message always follows the bottom, and the pane used to ask
+"is the newest message mine". A list also grows at the top - an older page from the device, a
+peer's scrollback answer - so under a reader whose last message was their own, every older page
+read as "I just sent" and threw them back to the bottom (measured on a seeded 5000-message thread:
+the mounted range fell from 1732 bubbles to 200 with no input). The question is now "the newest
+message changed AND is mine"; `ChatArea` keeps the newest id of its last run to ask it.
+
 THE OTHER END OF THE PANE HAD NO ANSWER AT ALL. Three mechanisms prepend into the scroller and only
 one compensated: `loadOlderGroups` restores `scrollTop` for the IndexedDB page, while the render
 window stepping up by 140 groups did not, and neither did a PEER scrollback answer - which does not
