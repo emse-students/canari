@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
+  import Button from '$lib/components/ui/Button.svelte';
   import { m } from '$lib/paraglide/messages';
   import {
     calendarAppSubscribeUrl,
@@ -224,17 +225,17 @@
       {m.calendar_subscribe_holder_notice()}
     </p>
     {#if signing === 'unasked' && onAsk}
-      <button
-        type="button"
+      <Button
+        variant="primary"
+        class="w-full"
         onclick={() => {
           Log.d('CalendarSubscribe', 'the reader asks for their link');
           onAsk();
         }}
-        class="bg-accent text-on-accent hover:bg-accent-hover inline-flex w-full items-center justify-center rounded-xl px-4 py-2.5 text-sm font-bold shadow-sm transition-colors"
         data-subscribe-ask
       >
         {m.calendar_subscribe_ask_button()}
-      </button>
+      </Button>
     {:else if signing === 'signing'}
       <p class="text-text-muted text-xs" role="status" data-subscribe-signing>
         {m.calendar_subscribe_signing()}
@@ -263,17 +264,17 @@
 
     {#if onRevoke}
       <div class="space-y-2" data-subscribe-revoke-section>
-        <button
-          type="button"
+        <Button
+          variant="secondary"
+          class="w-full"
           onclick={() => void confirmRevoke()}
           disabled={revokeStatus === 'revoking'}
-          class="border-cn-border text-text-main hover:bg-cn-bg inline-flex w-full items-center justify-center rounded-xl border px-4 py-2 text-sm font-semibold transition-colors disabled:opacity-60"
           data-subscribe-revoke
         >
           {revokeStatus === 'revoking'
             ? m.calendar_subscribe_revoking()
             : m.calendar_subscribe_revoke_button()}
-        </button>
+        </Button>
         <p class="text-text-muted text-xs">{m.calendar_subscribe_revoke_hint()}</p>
         {#if revokeStatus === 'revoked'}
           <p class="text-text-muted text-xs" role="status" data-subscribe-revoked>
