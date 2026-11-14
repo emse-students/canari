@@ -97,7 +97,7 @@ import {
 import { assertInternalSecret } from './internal-secret.util';
 import { subjectOfAccessToken } from './access-token';
 import { fetchLivesMode } from './lives-mode';
-import { mediaRetention } from './retention-settings';
+import { mediaRetention, type MediaRetentionDays } from './retention-settings';
 import { requireUploadedFile, uploadedFileBuffer, uploadedFileMime } from './uploaded-file';
 
 const POLICY_MAX_MEDIA_MB = 100;
@@ -549,21 +549,27 @@ export class MediaController {
     return this.mediaService.getStorageStats(await this.liveSegments.listSegments());
   }
 
-  // ---------------------------------------------------------------------------
-  // POST /media/internal/retention-class - classify or release existing objects
-  // ---------------------------------------------------------------------------
   /**
-   * Sets the retention class (`'ephemeral'`, `'archive'`, `'association'`) of objects that
-   * already exist.
-   *
-   * Sole consumer: social-service, which owns the post and vault-document rows and is therefore
-   * the only party that can say an object is still cited by one. It classifies what was uploaded
-   * before the class existed, and releases (`'ephemeral'`) what a deleted post no longer references.
-   *
-   * X-Internal-Secret and NO user JWT, unlike `POST /media/touch`: the backfill runs at boot with
-   * no user in sight, and unlike a touch this can also REMOVE a reason to keep an object - so it
-   * is not something a logged-in client may aim at somebody else's id.
+   * The retention durations this process HOLDS and when it read them - what core-service compares
+   * with `platform_config` to tell an admin whether a change reached the files
+   * (docs/wiki/retention-settings.md). `held` is null before the first successful read.
    */
+  @Get('internal/retention')
+  retentionHeld(@Headers('x-internal-secret') internalSecret: string | undefined): {
+    held: MediaRetentionDays | null;
+    readAt: string | null;
+  } {
+    assertInternalSecret(internalSecret);
+    const held = mediaRetention.snapshot();
+    this.logger.debug(
+      `[RETENTION] asked which durations are held: ${held ? `${held.values.chatReelDays} / ${held.values.idleFileDays} days` : 'none yet'}`
+    );
+    return {
+      held: held?.values ?? null,
+      readAt: held ? new Date(held.readAt).toISOString() : null,
+    };
+  }
+
   /**
    * THE RETENTION DURATIONS CHANGED, OR MAY HAVE (docs/wiki/retention-settings.md): core-service
    * calls this when an admin moves one, social-service at its boot. Media-service re-reads them from
@@ -580,6 +586,21 @@ export class MediaController {
     return { refreshed, readAt: held ? new Date(held.readAt).toISOString() : null };
   }
 
+  // ---------------------------------------------------------------------------
+  // POST /media/internal/retention-class - classify or release existing objects
+  // ---------------------------------------------------------------------------
+  /**
+   * Sets the retention class (`'ephemeral'`, `'archive'`, `'association'`) of objects that
+   * already exist.
+   *
+   * Sole consumer: social-service, which owns the post and vault-document rows and is therefore
+   * the only party that can say an object is still cited by one. It classifies what was uploaded
+   * before the class existed, and releases (`'ephemeral'`) what a deleted post no longer references.
+   *
+   * X-Internal-Secret and NO user JWT, unlike `POST /media/touch`: the backfill runs at boot with
+   * no user in sight, and unlike a touch this can also REMOVE a reason to keep an object - so it
+   * is not something a logged-in client may aim at somebody else's id.
+   */
   @Post('internal/retention-class')
   async setRetentionClass(
     @Body() body: { mediaIds?: unknown; retentionClass?: unknown },

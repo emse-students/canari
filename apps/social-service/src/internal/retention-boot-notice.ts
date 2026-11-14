@@ -11,6 +11,12 @@ const NOTICE_TIMEOUT_MS = 5_000;
  * `GET /api/internal/retention`, on the release that introduced it - holds nothing until this
  * notice reaches it. Sent beside the boot, never in its way; a failure is logged and changes nothing
  * here (media-service still asks on its next upload that finds nothing held).
+ *
+ * IT MAY LAND BEFORE THIS SERVICE LISTENS: `onApplicationBootstrap` runs before `listen`, so the read
+ * the notice triggers can find no relay yet and fail (media-service logs it once, as an outage). That
+ * is healed by state, not by a retry here: a media-service holding nothing re-reads at the next
+ * upload that finds nothing held, which reaches this service once it listens; a media-service already
+ * holding values keeps them, and they are the same columns.
  */
 @Injectable()
 export class RetentionBootNotice implements OnApplicationBootstrap {

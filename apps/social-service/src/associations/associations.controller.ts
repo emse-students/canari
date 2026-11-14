@@ -775,7 +775,7 @@ export class AssociationsController {
   async managePermission(
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga: string | undefined,
-    @Param('id', ParseUUIDPipe) id: string
+    @Param('id') id: string
   ) {
     const ok = await this.service.canManagePayoutAccount(userId, id, {
       isGlobalAdmin: ga === 'true',
@@ -800,7 +800,7 @@ export class AssociationsController {
   async payoutAccount(
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga: string | undefined,
-    @Param('id', ParseUUIDPipe) id: string
+    @Param('id') id: string
   ) {
     const isGlobalAdmin = ga === 'true';
     const allowed = await this.service.canManagePayoutAccount(userId, id, { isGlobalAdmin });
@@ -823,7 +823,7 @@ export class AssociationsController {
   async lydiaBusinessKeyStatus(
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga: string | undefined,
-    @Param('id', ParseUUIDPipe) id: string
+    @Param('id') id: string
   ): Promise<{ set: boolean }> {
     await this.assertPayoutAccountManager(userId, ga, id, 'Business key status read');
     return { set: await this.service.isLydiaBusinessKeySet(id) };
@@ -844,7 +844,7 @@ export class AssociationsController {
   async retiredLydiaBusinessKeyPaste(
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga: string | undefined,
-    @Param('id', ParseUUIDPipe) id: string
+    @Param('id') id: string
   ): Promise<never> {
     await this.assertPayoutAccountManager(userId, ga, id, 'retired Business key paste');
     this.logger.warn(
@@ -886,10 +886,7 @@ export class AssociationsController {
    */
   @UseGuards(NginxAuthGuard)
   @Get(':id/push-mute')
-  async pushMuteStatus(
-    @Headers('x-user-id') userId: string,
-    @Param('id', ParseUUIDPipe) id: string
-  ) {
+  async pushMuteStatus(@Headers('x-user-id') userId: string, @Param('id') id: string) {
     return { muted: await this.pushMutes.isMuted(userId, id) };
   }
 
@@ -899,10 +896,7 @@ export class AssociationsController {
    */
   @UseGuards(NginxAuthGuard)
   @Put(':id/push-mute')
-  muteAssociationPush(
-    @Headers('x-user-id') userId: string,
-    @Param('id', ParseUUIDPipe) id: string
-  ) {
+  muteAssociationPush(@Headers('x-user-id') userId: string, @Param('id') id: string) {
     return this.pushMutes.mute(userId, id);
   }
 
@@ -912,10 +906,7 @@ export class AssociationsController {
    */
   @UseGuards(NginxAuthGuard)
   @Delete(':id/push-mute')
-  unmuteAssociationPush(
-    @Headers('x-user-id') userId: string,
-    @Param('id', ParseUUIDPipe) id: string
-  ) {
+  unmuteAssociationPush(@Headers('x-user-id') userId: string, @Param('id') id: string) {
     return this.pushMutes.unmute(userId, id);
   }
 
@@ -1293,7 +1284,7 @@ export class AssociationsController {
   @UseGuards(NginxAuthGuard)
   @Get(':id/events/reach-options')
   listEventReachOptions(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga?: string
   ) {
@@ -1777,7 +1768,7 @@ export class AssociationsController {
   @Post(':id/purchases/:purchaseId/close')
   closePaidNotGranted(
     @Param('id') id: string,
-    @Param('purchaseId', ParseUUIDPipe) purchaseId: string,
+    @Param('purchaseId') purchaseId: string,
     @Headers('x-user-id') closedBy: string,
     @Body() dto: ClosePaidNotGrantedDto
   ) {
@@ -1950,9 +1941,9 @@ export class AssociationsController {
   @Post(':id/products/:productId/checkouts/:checkoutId/confirm')
   @HttpCode(200)
   confirmCheckout(
-    @Param('id', ParseUUIDPipe) id: string,
-    @Param('productId', ParseUUIDPipe) productId: string,
-    @Param('checkoutId', ParseUUIDPipe) checkoutId: string,
+    @Param('id') id: string,
+    @Param('productId') productId: string,
+    @Param('checkoutId') checkoutId: string,
     @Headers('x-user-id') userId: string
   ) {
     return this.productsService.confirmCheckout(id, productId, checkoutId, userId);
@@ -2236,7 +2227,7 @@ export class AssociationsController {
    */
   @Post(':id/lydia-account')
   async setLydiaAccount(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Body()
     body: { lydiaAccountId?: unknown; lydiaDashboardUrl?: unknown; businessPrivateToken?: unknown },
     @Headers('x-internal-secret') internalSecret: string
@@ -2259,7 +2250,7 @@ export class AssociationsController {
    */
   @Post(':id/lydia-complete')
   async markLydiaComplete(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Headers('x-internal-secret') internalSecret: string
   ) {
     assertInternalSecret(internalSecret);
@@ -2289,7 +2280,7 @@ export class AssociationsController {
   @Post('products/:productId/purchase-completed')
   @HttpCode(200)
   purchaseCompleted(
-    @Param('productId', ParseUUIDPipe) productId: string,
+    @Param('productId') productId: string,
     @Body() body: { checkoutId?: unknown; requestId?: unknown; vendorToken?: unknown },
     @Headers('x-internal-secret') internalSecret: string
   ) {

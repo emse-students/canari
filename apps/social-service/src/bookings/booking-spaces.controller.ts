@@ -22,11 +22,13 @@ import {
   ResourceDto,
   SpaceSettingsDto,
 } from './dto/space.dto';
+import { RouteParams } from '../common/route-params';
 
 /**
  * The organiser's routes (WP-B4): spaces, resources and availability. Under the same prefix and
  * guard as the booker's routes (`BookingsController`); rights are checked in the service.
  */
+@RouteParams({ spaceId: 'uuid', resourceId: 'uuid' })
 @Controller('bookings')
 @UseGuards(NginxAuthGuard)
 export class BookingSpacesController {
@@ -56,7 +58,7 @@ export class BookingSpacesController {
   /** Every setting and every resource with its availability: the editor's read. */
   @Get('spaces/:spaceId/manage')
   manage(
-    @Param('spaceId', ParseUUIDPipe) spaceId: string,
+    @Param('spaceId') spaceId: string,
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga?: string
   ) {
@@ -65,7 +67,7 @@ export class BookingSpacesController {
 
   @Patch('spaces/:spaceId')
   update(
-    @Param('spaceId', ParseUUIDPipe) spaceId: string,
+    @Param('spaceId') spaceId: string,
     @Body() dto: SpaceSettingsDto,
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga?: string
@@ -76,7 +78,7 @@ export class BookingSpacesController {
   /** Deletes the space and everything under it (D27). */
   @Delete('spaces/:spaceId')
   remove(
-    @Param('spaceId', ParseUUIDPipe) spaceId: string,
+    @Param('spaceId') spaceId: string,
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga?: string
   ) {
@@ -85,7 +87,7 @@ export class BookingSpacesController {
 
   @Post('spaces/:spaceId/resources')
   addResource(
-    @Param('spaceId', ParseUUIDPipe) spaceId: string,
+    @Param('spaceId') spaceId: string,
     @Body() dto: CreateResourceDto,
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga?: string
@@ -95,7 +97,7 @@ export class BookingSpacesController {
 
   @Patch('resources/:resourceId')
   updateResource(
-    @Param('resourceId', ParseUUIDPipe) resourceId: string,
+    @Param('resourceId') resourceId: string,
     @Body() dto: ResourceDto,
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga?: string
@@ -106,7 +108,7 @@ export class BookingSpacesController {
   /** Deletes a resource that was never booked (D42); one with history is closed instead. */
   @Delete('resources/:resourceId')
   removeResource(
-    @Param('resourceId', ParseUUIDPipe) resourceId: string,
+    @Param('resourceId') resourceId: string,
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga?: string
   ) {
@@ -116,7 +118,7 @@ export class BookingSpacesController {
   /** Replaces the resource's whole availability; refused over coming bookings (D29). */
   @Put('resources/:resourceId/availability')
   setAvailability(
-    @Param('resourceId', ParseUUIDPipe) resourceId: string,
+    @Param('resourceId') resourceId: string,
     @Body() dto: AvailabilityDto,
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga?: string
