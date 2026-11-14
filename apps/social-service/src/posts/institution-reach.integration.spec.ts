@@ -18,8 +18,13 @@
  *   nr  - a named reader (grant: ICM x Saint-Etienne), staff   - the grant
  *   nf  - a named reader (grant: ISMIN x Saint-Etienne), staff - the grant
  *   sf  - staff, a member of carrier C                         - C's republication
- *   os  - staff, no door at all                                - nothing
- *   ad  - a platform admin, no cursus                          - by id only
+ *   os  - staff of Saint-Etienne, no other door                - staff by campus ("Tous", "Personnel")
+ *   og  - staff of Gardanne, no door at all                    - nothing (I does not reach Gardanne)
+ *   ad  - a platform admin of Saint-Etienne, no cursus         - by id; staff by campus
+ *
+ * THE STAFF-BY-CAMPUS DOOR (owner, 2026-11-14): a "Tous" or "Personnel" post opens to every staff
+ * account (a campus, no cursus) of a ticked space's campus - `os` and `ad` here - and to no staff of
+ * another campus (`og`); a student gains nothing, and a post with no reach opens nothing new.
  *
  * GATED ON `SOCIAL_IT_DATABASE_URL`, like every integration spec here. Locally:
  *
@@ -50,6 +55,7 @@ import {
   type InstitutionReach,
 } from '../spaces/institution-reach';
 import {
+  IN_FEED_AUDIENCE_SQL,
   NEWLY_REACHED_BY_REPUBLICATION_SQL,
   announceRecipientsSql,
   postReachesSpaceSql,
@@ -74,11 +80,12 @@ const USERS: Record<string, { campus: string | null; formation: string | null; a
     nf: { campus: null, formation: null },
     sf: { campus: GA, formation: null },
     os: { campus: SE, formation: null },
+    og: { campus: GA, formation: null },
     ad: { campus: SE, formation: null, admin: true },
     // Only for the "never wider than the audience" case: a student of a space I does not reach.
     gi: { campus: GA, formation: 'ICM' },
   };
-const READERS = ['si', 'ss', 'sg', 'mb', 'off', 'nr', 'nf', 'sf', 'os', 'ad'] as const;
+const READERS = ['si', 'ss', 'sg', 'mb', 'off', 'nr', 'nf', 'sf', 'os', 'og', 'ad'] as const;
 type Reader = (typeof READERS)[number];
 
 const I = '00000000-0000-4000-8000-0000000e0001'; // institution, the whole Saint-Etienne campus
@@ -103,10 +110,11 @@ const CASES: {
     readers: ['si', 'ss', 'sg', 'mb', 'off', 'nr', 'nf', 'sf'],
   },
   {
-    // ss loses its space and nf its grant cell; the member, the republisher's readers keep theirs.
+    // ss loses its space and nf its grant cell; the member, the republisher's readers keep theirs;
+    // Saint-Etienne's staff (os, ad) come in by campus, Gardanne's (og) do not (2026-11-14).
     name: 'ICM x Saint-Etienne, everyone',
     reach: { spaces: [ICM_SE], public: 'all' },
-    readers: ['si', 'sg', 'mb', 'off', 'nr', 'sf'],
+    readers: ['si', 'sg', 'mb', 'off', 'nr', 'sf', 'os', 'ad'],
   },
   {
     // Staff - named readers and the carrier's staff - lose it; I's own member keeps it (D21).
@@ -115,10 +123,11 @@ const CASES: {
     readers: ['si', 'ss', 'sg', 'mb', 'off'],
   },
   {
-    // Students lose it, wherever they come from; staff keep the doors they had.
+    // Students lose it, wherever they come from; staff keep the doors they had, and Saint-Etienne's
+    // staff with no other door read it by campus (os, ad) - Gardanne's (og) do not (2026-11-14).
     name: 'ICM and ISMIN x Saint-Etienne, staff',
     reach: { spaces: [ICM_SE, ISMIN_SE], public: 'staff' },
-    readers: ['mb', 'off', 'nr', 'nf', 'sf'],
+    readers: ['mb', 'off', 'nr', 'nf', 'sf', 'os', 'ad'],
   },
 ];
 
@@ -395,10 +404,11 @@ maybe("an institution's reach against PostgreSQL (migration 162)", () => {
             .refusal === null;
         // By id the platform admin opens any post - except one for students only, as the switch.
         // A named reader's comments stay withheld (#2998): their grant opens the read only.
-        const expected = [
-          ...readers.filter((r) => intent === 'READ_OR_REACT' || (r !== 'nr' && r !== 'nf')),
-          ...(reach?.public === 'students' ? [] : ['ad']),
-        ];
+        const expected = READERS.filter(
+          (r) =>
+            (readers.includes(r) && (intent === 'READ_OR_REACT' || (r !== 'nr' && r !== 'nf'))) ||
+            (r === 'ad' && reach?.public !== 'students')
+        );
         expect(await whoOf(opens)).toEqual(expected);
       }
     }
@@ -482,6 +492,57 @@ maybe("an institution's reach against PostgreSQL (migration 162)", () => {
     await setReach(P, { spaces: [ICM_SE, ISMIN_SE], public: 'all' });
     expect(await feedHas('associations', 'ss', P)).toBe(true);
     expect(await feedHas('associations', 'nr', P)).toBe(true);
+  });
+
+  describe('THE STAFF-BY-CAMPUS DOOR (owner, 2026-11-14)', () => {
+    it("a staff account of a ticked space's campus reads a Personnel and a Tous post, through every path", async () => {
+      for (const pub of ['staff', 'all'] as const) {
+        await setReach(Q, { spaces: [ISMIN_SE], public: pub });
+        // Q is carried by nobody: os has no membership, no grant, no follow - only its campus.
+        expect(await visible('os', Q)).toBe(true);
+        expect(await feedHas('associations', 'os', Q)).toBe(true);
+        expect(await feedHas('all', 'os', Q)).toBe(true);
+        expect(
+          (await readPostOpenVerdict(manager, await row(Q), { viewerId: 'os' }, 'COMMENT')).refusal
+        ).toBeNull();
+        const announced = ((await q(announceRecipientsSql(false), [Q])) as { id: string }[]).map(
+          (r) => r.id
+        );
+        expect(announced).toContain('os');
+        // Gardanne's staff is on a campus Q does not tick: nothing, by any path.
+        expect(await visible('og', Q)).toBe(false);
+        expect(announced).not.toContain('og');
+      }
+    });
+
+    it('a student is not affected: their door is still their own space', async () => {
+      await setReach(Q, { spaces: [ISMIN_SE], public: 'staff' });
+      expect(await visible('ss', Q)).toBe(false);
+      expect(await visible('si', Q)).toBe(false);
+      await setReach(Q, { spaces: [ISMIN_SE], public: 'all' });
+      expect(await visible('ss', Q)).toBe(true);
+      // si's space (ICM) is not ticked: the campus they share with the ticked space opens nothing.
+      expect(await visible('si', Q)).toBe(false);
+    });
+
+    it('closed by "Étudiants", by no reach, and by a ticked space the audience does not reach', async () => {
+      await setReach(Q, { spaces: [ISMIN_SE], public: 'students' });
+      expect(await visible('os', Q)).toBe(false);
+      // A post written before the reach: its readers are what they were.
+      await setReach(Q, null);
+      expect(await visible('os', Q)).toBe(false);
+      // Never wider than the audience: I does not reach Gardanne, so its staff gain nothing.
+      await setReach(Q, { spaces: [ICM_GA], public: 'staff' });
+      expect(await visible('og', Q)).toBe(false);
+      expect(await visible('os', Q)).toBe(false);
+    });
+
+    it("the feed gate admits staff of a campus an institution reaches, not another campus's", async () => {
+      const inAudience = async (id: string) =>
+        ((await q(IN_FEED_AUDIENCE_SQL, [id])) as { inAudience: boolean }[])[0].inAudience;
+      expect(await inAudience('os')).toBe(true);
+      expect(await inAudience('og')).toBe(false);
+    });
   });
 
   describe('the write (`resolveInstitutionReachWrite`) against the real audience', () => {
