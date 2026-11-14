@@ -531,7 +531,8 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
     expect(rows.map((r) => EVENTS.find((ev) => ev.id === r.id)?.label)).toEqual(expected);
   });
 
-  it('lists each reader their directory (D37): rules or membership, an admin as anyone', async () => {
+  // The directory also counts read grants since 2026-11-14 (read-grants.integration.spec.ts).
+  it('the plain predicate (D37, a booking space): rules or membership, an admin as anyone', async () => {
     const seen: Record<string, string[]> = {};
     for (const id of EVERYONE) {
       const { rows } = await client.query(

@@ -128,7 +128,10 @@ répéter"*). Each line names where its detail lives.
   ([anonymous-surface](../anonymous-surface.md)).
 - **A nominative read grant opens everything of its cell**: beside the posts and the agenda, the
   association directory, the shop and the partnerships of the ticked cell - *"elle pourrait même
-  payer le tarif cotisant si elle cotisait"*. No per-person switch. To build.
+  payer le tarif cotisant si elle cotisait"*. No per-person switch. Built
+  ([as built](../profiles-and-access.md#a-grant-opens-everything-of-its-cell-owner-2026-11-14)):
+  a partnership card listed to a named reader is one they may claim; a booking space was not part
+  of the answer and is unchanged.
 - **An unknown formation at sign-in is ignored and said** (*"L'ignorer et alerter"*), never filed
   under `Autre`: the cursus entry is kept (it is what tells a student from staff), opens no space,
   and is logged.
