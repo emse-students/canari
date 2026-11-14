@@ -189,7 +189,10 @@ frontend's and core-service's callers pass row ids and treat any failure alike.
 validation in this service, about 120 of them in `associations.controller.ts` - the only controller
 whose guard asks the database about one - and 69 in `channels.controller.ts`; posts, forms, bookings, lives, spaces,
 proposals, refunds and the poster routes already carried a pipe on nearly all of theirs.
-`AssociationsController` is converted (thirteen names, `userId` and `slug` opaque). The rest, the
+`AssociationsController` is converted (thirteen names, `userId` and `slug` opaque), and so are
+`ChannelsController` and `CommunityNicknamesController` (`channelId`, `workspaceId`, `messageId` and
+`roleId` are uuid keys, read in the entities; `userId`, `slug` and an invite `token` are opaque;
+`channels.route-params.http.spec.ts`). The rest, the
 removal of the per-parameter pipes the declaration makes redundant, and the same mechanism in
 core-service and media-service are one
 [backlog entry](../backlog.d/p3-path-parameters-are-declared-in-every-controller.md). Query
