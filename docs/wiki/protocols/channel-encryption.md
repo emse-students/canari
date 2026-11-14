@@ -1173,6 +1173,13 @@ decision, rather than learning it by failing:
 - a row the server returned WITHOUT the flag is elected as if online and accused at warn level: that
   is a social service predating the field, and a bandwidth decision must not strand a want on it.
 
+**Read on the rig on 2026-11-14** (local estate at `ad2053fc0`, two web seats): a newcomer reaching a
+salon whose only holder was closed logged `wait for a holder to come online - 1 member(s) could
+answer and none has a device online` and showed nothing from before; once the holder came back it
+answered and the salon filled, and every ask of the day's rows named one online device. That is the
+production shape of 2026-09-24 reproduced on demand, so the reading closed on it; that community
+itself, as it stood that day, cannot be re-staged.
+
 **What presence does not see.** A backgrounded Android can hold its socket open, so `user:online` can
 be true for a device that will not process the frame (the DM history election randomises for that
 reason). Here the elected member is then silent, the ask stays in the in-memory asked-set, and the
@@ -4758,11 +4765,18 @@ one parked ask per device, bounded; the creator is a root; an unreadable roster 
 `BaseMlsService.groupDrained.test.ts` (the drained fact and its event), `rosterReconcile.test.ts`
 (the sync feeds the ledger), `inviteFragment.test.ts`, `historyOverlayStack.test.ts` and
 `appLinkNavigation.test.ts` (the fragment), `useChannelWorkspaces.svelte.test.ts`,
-`channel.service.spec.ts` and `mls-device-guard.spec.ts`. **Owed on the rig** (proposed
-COMM-26..31): a fresh link with its fragment gives the past, on the web and through the app's link
-handler; an old link joins and reads from arrival; a member's add gives the past; a new device of a
-rooted member gets the past; a kicked member re-added with their old voucher reads from arrival; the
-`admission is not proven` line on the answerer for an unproven newcomer.
+`channel.service.spec.ts` and `mls-device-guard.spec.ts`. **Read on the rig on 2026-11-14** (local
+estate at `ad2053fc0`, web seats): a fresh link WITH its fragment gave the newcomer a message written
+before the join once a holder was online (COMM-26, web), and an unproven salon grantee was answered
+`admission is not proven ... answering as 'joined', nothing from before their arrival` (COMM-31's
+line). The other proposed rows have no runner and are pinned by named cases instead, so the reading
+was closed on them: the app's link handler keeping the fragment (`appLinkNavigation.test.ts`, "keeps
+an invite link fragment"); an old link reading from arrival (`frameHandler.test.ts`, "hands an
+unproven newcomer ... what spans their arrival" and "answers an unproven repair as joined"); a
+member's add giving the past ("hands the past to a newcomer a rooted member admitted directly"); a
+rooted member's new device ("hands a member's NEW device everything since that member arrived"); a
+re-added member's old voucher (`graineAdmission.test.ts`, "does not verify once moved to another
+place in the history").
 
 ## 26. A shut phone joins a salon's key group from the push - DECIDED BY THE USER 2026-10-22
 

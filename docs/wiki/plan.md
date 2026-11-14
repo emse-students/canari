@@ -54,6 +54,7 @@ earliest version, as a checklist.
 **P3 - hygiene**
 
 - [P3 - Two call-resume edges the second review of #2148 found, recorded and not built (2026-10-20)](backlog.d/p3-two-call-resume-edges-the-second-review-of-2148-found-recorded-and-not-built.md)
+- [P3 - an unsigned restored message is only marked, and a history bundle has no byte cap per chunk](backlog.d/p2-signed-authorship-of-restored-history-built-2276-owed-rig-rows-and-a-version.md)
 - [P3 - Connectivity stays "reachable" through a captive portal, so the send waits for the ladder (review of #2428, 2026-10-25)](backlog.d/p3-connectivity-stays-reachable-through-a-captive-portal-so-the-send-waits-for.md)
 - [P3 - a lives integration spec failed once: the association's live pushed to nobody](backlog.d/p3-flaky-lives-spec-member-live-after-association-live.md)
 - [P3 - EXIT-FORTIFY: closing the app on the Mi 9T logs `FORTIFY: pthread_mutex_lock called on a destroyed mutex` from the render thread](backlog.d/reading-owed-exit-fortify-closing-the-app-on-the-mi-9t-logged-fortify-pthread.md)
@@ -113,9 +114,7 @@ earliest version, as a checklist.
 - [ ] [a call survives the app leaving the screen: the Android microphone foreground service](backlog.d/reading-owed-a-call-survives-the-app-leaving-the-screen-the-android-microphone.md)
 - [ ] [NOTIF-6c / NOTIF-6d: the quick reply from a BACKGROUNDED shade, and a reply that fails to send](backlog.d/reading-owed-notif-6c-notif-6d-the-quick-reply-from-a-backgrounded-shade-and-a.md)
 - [ ] [the tab swipe to the camera on a slow start: the 8 px lock](backlog.d/reading-owed-the-tab-swipe-to-the-camera-on-a-slow-start-the-8-px-lock.md)
-- [ ] [the signed history restore and forced-fork rig rows](backlog.d/p2-signed-authorship-of-restored-history-built-2276-owed-rig-rows-and-a-version.md)
 - [ ] [a blind salon banner draws no author, no mention and no mention route, and a held mention's redraw does not sound twice](backlog.d/reading-owed-a-blind-salon-banner-draws-no-author-no-mention-and-no-mention.md)
-- [ ] [a community's past goes only to a proven admission](backlog.d/reading-owed-a-community-s-past-goes-only-to-a-proven-admission.md)
 - [ ] [a shut phone joins a salon's key group from the push; iOS joins at the next foreground](backlog.d/reading-owed-a-shut-phone-joins-a-salon-s-key-group-from-the-push-ios-joins-at.md)
 - [ ] [new-device notices (#2278, every stable since `1.5.0`; mls-protocol)](backlog.d/reading-owed-new-device-notices-2278-every-stable-since-1-5-0-mls-protocol.md)
 - [ ] [the at-rest key on a phone is held by secure hardware, backups have their own recovery secret](backlog.d/reading-owed-the-at-rest-key-on-a-phone-is-held-by-secure-hardware-backups-have.md)
@@ -175,7 +174,6 @@ earliest version, as a checklist.
 - [ ] [CPU and frame rate of a phone sending its camera to two receivers](backlog.d/reading-owed-cpu-and-fps-of-a-phone-sending-video-to-two-receivers.md)
 - [ ] [overlays stacked by open order, not by rung](backlog.d/reading-owed-overlays-stacked-by-open-order-not-by-rung.md)
 - [ ] [WebKit opens each participant's frames with that participant's key in a group call](backlog.d/reading-owed-webkit-receiver-transforms-per-peer-in-a-group-call.md)
-- [ ] [a returner's devices after the holder election](backlog.d/p1-a-returner-s-devices-one-reading-owed-shipped-in-v0-18-26.md)
 - [ ] [a burst of Welcomes costs two restores](backlog.d/reading-owed-a-burst-of-welcomes-costs-two-restores.md)
 - [ ] [a device with no push token now says so](backlog.d/reading-owed-a-device-with-no-push-token-now-says-so.md)
 - [ ] [a salon carries read receipts, seen in a real community](backlog.d/reading-owed-a-salon-carries-read-receipts.md)
