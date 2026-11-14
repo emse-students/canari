@@ -1,5 +1,4 @@
 ## P2 - a DM ending in photos and a video lands on OLDER messages when the keyboard opens (`1.6.12`, Pixel 6a, 2026-11-14) - a defect, the 2026-10-30 fix does not hold
-
 target: 1.7.0
 
 **The defect.** A reader at the bottom of a long DM whose last rows hold a photo, a video and a
