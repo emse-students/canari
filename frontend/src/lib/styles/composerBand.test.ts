@@ -84,4 +84,33 @@ describe('the thread panel on desktop', () => {
     expect(block).toContain('overflow: clip;');
     expect(block).not.toContain('overflow: hidden');
   });
+
+  /**
+   * A KEYBOARD MOVE CHANGES THE THREAD'S BOTTOM IN ONE STYLE PASS (review of #3556, D2). The floor
+   * moves when the bottom safe area is pinned for a keyboard; `--chat-composer-height` is published a
+   * frame late and leaves the floor out (`composerHeight.ts`), so every footer floor and every thread
+   * padding must name the same `--chat-composer-floor` - a raw `max(0.75rem, ...)` in either is the
+   * 12 px step under the ride.
+   */
+  it('names one floor in the footer and in the thread padding', () => {
+    expect(css).toContain(
+      '--chat-composer-floor: max(0.75rem, var(--safe-area-inset-bottom, 0px));'
+    );
+    const rules = css
+      .split('\n}')
+      .filter((r) => /\.chat-(composer-footer|messages-scroll)[^{]*\{/.test(r));
+    const footers = rules.filter((r) => /\.chat-composer-footer[^{]*\{[^}]*padding-bottom/.test(r));
+    const threads = rules.filter((r) => /\.chat-messages-scroll\s*\{[^}]*padding-bottom/.test(r));
+    expect(footers.length).toBeGreaterThan(2);
+    expect(threads.length).toBeGreaterThan(2);
+    for (const rule of footers) {
+      expect(rule).not.toMatch(/padding-bottom:\s*max\(0\.75rem/);
+    }
+    for (const rule of threads) {
+      expect(rule).toMatch(/padding-bottom:\s*calc\([^;]*var\(--chat-composer-floor\)/);
+    }
+    expect(css).toMatch(
+      /\.chat-thread-panel:has\(\.chat-composer-footer\.has-keyboard-panel\)\s*\{\s*--chat-composer-floor:\s*0px;/
+    );
+  });
 });

@@ -551,8 +551,11 @@ export type KeyboardViewportSeams = {
   now?: () => number;
 };
 
-/** Who is told when the keyboard's band changes: see {@link onKeyboardInsetChange}. */
-const insetListeners = new Set<() => void>();
+/**
+ * Who is told when the keyboard's band changes: see {@link onKeyboardInsetChange}. A plain list, not
+ * reactive state: it is called, never rendered.
+ */
+const insetListeners: (() => void)[] = [];
 
 /**
  * Calls `listener` every time the keyboard's band at the bottom of the window changes, from the
@@ -565,13 +568,17 @@ const insetListeners = new Set<() => void>();
  * writes left dirty. Returns the unsubscribe.
  */
 export function onKeyboardInsetChange(listener: () => void): () => void {
-  insetListeners.add(listener);
-  return () => insetListeners.delete(listener);
+  insetListeners.push(listener);
+  return () => {
+    const at = insetListeners.indexOf(listener);
+    if (at >= 0) insetListeners.splice(at, 1);
+  };
 }
 
 /** Tells every inset listener, each in its own `try`: one failing must not silence the next. */
 function notifyInsetListeners(): void {
-  for (const listener of insetListeners) {
+  // A copy: a listener may unsubscribe itself while the list is walked.
+  for (const listener of insetListeners.slice()) {
     try {
       listener();
     } catch (error) {

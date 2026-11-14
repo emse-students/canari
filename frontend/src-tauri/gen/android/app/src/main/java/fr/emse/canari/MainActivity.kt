@@ -19,7 +19,6 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
-import androidx.core.graphics.Insets
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
@@ -33,8 +32,10 @@ import fr.emse.canari.gesture.Edge
 import fr.emse.canari.gesture.ExclusionBand
 import fr.emse.canari.gesture.bandsFor
 import fr.emse.canari.keyboard.ImeAnimationSpec
+import fr.emse.canari.keyboard.ImeAnnouncements
 import fr.emse.canari.keyboard.imeAnnouncementScript
 import fr.emse.canari.keyboard.imeCssPx
+import fr.emse.canari.keyboard.rideableImeAnimation
 import fr.emse.canari.keyboard.sampleImeCurve
 import fr.emse.canari.orientation.OrientationMode
 import fr.emse.canari.orientation.requestedOrientationFor
@@ -175,28 +176,30 @@ class MainActivity : TauriActivity() {
     /**
      * Tells the page where the soft keyboard is; never resizes the content for it.
      *
-     * `android:windowSoftInputMode="adjustResize"` no longer does anything. Since Android 15 an
-     * edge-to-edge window is never resized for the IME - the flag survives in the manifest and is
-     * inert, which `dumpsys window` states outright as `EDGE_TO_EDGE_ENFORCED` next to the
-     * `adjust=resize` we asked for. The content used to be PADDED by the IME inset here instead, and
-     * that resize is what this replaces (2026-11-14, keyboard-and-send-motion.md): a resized WebView
-     * shows its last frame, cropped or stretched, until the page has drawn at the new size - 8 frames
-     * on a rise (Mi 9T), 13 on a fall (Pixel 6a, the composer stuck up while the keys slid away). No
-     * order of announcing and padding hides it, so the WebView keeps its full height and the PAGE
-     * lays itself out over the keyboard: `window.canariImeTarget({ px, durationMs, curve })`, once per
-     * change of the inset, with the animation [ImeAnimationCapture] saw in `onPrepare` - before the
-     * keys move. The page rides its composer and thread on that timing (`keyboardRide.ts`).
+     * `android:windowSoftInputMode="adjustResize"` does nothing for this window. An edge-to-edge
+     * window is not resized for the IME - from Android 15, `dumpsys window` says so outright
+     * (`EDGE_TO_EDGE_ENFORCED` next to the `adjust=resize` we asked for), and below 15 it was measured
+     * just as inert (API 34 emulator, WebView 113, 2026-11-14: `innerHeight` 915 open and closed, an
+     * 883 px IME inset announced as 336.38 CSS px). The content used to be PADDED by the IME inset
+     * here instead, and that resize is what this replaces (2026-11-14, keyboard-and-send-motion.md):
+     * a resized WebView shows its last frame, cropped or stretched, until the page has drawn at the
+     * new size - 8 frames on a rise (Mi 9T), 13 on a fall (Pixel 6a). No order of announcing and
+     * padding hides it, so the WebView keeps its full height and the PAGE lays itself out over the
+     * keyboard: `window.canariImeTarget({ px, durationMs, curve })`, once per change of the inset,
+     * with the animation [ImeAnimationCapture] saw in `onPrepare` - before the keys move. The page
+     * rides its composer and thread on that timing (`keyboardRide.ts`).
      *
-     * A page that answers anything but `true` is said at WARN and nothing else happens: there is no
-     * padding to fall back to, and a page that has just started a new document asks again
-     * (`ImeBridge.pageReady`).
+     * A value counts as told only once the page answered `true` for it ([ImeAnnouncements]): a
+     * refusal is a WARN, and the next insets pass carrying the same inset announces it again. A page
+     * that has just started a new document asks again (`ImeBridge.pageReady`).
      *
-     * THE NAVIGATION BAR IS STILL WITHDRAWN while the keyboard is up. The web layer reserves a strip
-     * for it through `env(safe-area-inset-bottom)`, which is right when the bar is at the bottom of
-     * the app and wrong the moment the keyboard is: the bar is then BEHIND the keyboard, and the strip
-     * becomes an empty band above the keys. So the inset is zeroed on the way down rather than left
-     * for CSS to guess at - "the keyboard is up" is known here and nowhere else, and the status bar is
-     * deliberately untouched because it is still there.
+     * THE INSETS ARE PASSED ON UNTOUCHED - the navigation bar's included (review of #3556, D2). This
+     * listener used to withdraw the bar's inset while the keyboard was up (the bar is then behind the
+     * keyboard, and the web layer's `env(safe-area-inset-bottom)` strip an empty band). But Chromium
+     * applies a changed inset to `env()` a frame or more after the announcement: the composer's
+     * floor fell 12 px one frame into the ride and the thread's bottom moved under it. The PAGE now
+     * zeroes its bottom safe area while the keyboard covers the window
+     * (`keyboardSafeAreaBottomOverride`), in the announcement's own task - one writer for the bottom.
      *
      * THE KEYBOARD MOVES LIKE MESSENGER'S BECAUSE AN ANIMATION CALLBACK IS REGISTERED (2026-11-13).
      * With no `WindowInsetsAnimation` callback in the hierarchy, Android plays the UNSYNCED IME
@@ -209,23 +212,15 @@ class MainActivity : TauriActivity() {
         ViewCompat.setWindowInsetsAnimationCallback(content, imeAnimationCapture)
         ViewCompat.setOnApplyWindowInsetsListener(content) { _, insets ->
             val ime = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
-            if (ime != announcedIme) {
-                announcedIme = ime
+            if (imeAnnouncements.shouldAnnounce(ime)) {
                 announceIme(ime, imeAnimationCapture.take(), "the keyboard moved")
             }
-            if (ime == 0) return@setOnApplyWindowInsetsListener insets
-            val bars = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
-            WindowInsetsCompat.Builder(insets)
-                .setInsets(
-                    WindowInsetsCompat.Type.navigationBars(),
-                    Insets.of(bars.left, bars.top, bars.right, 0)
-                )
-                .build()
+            insets
         }
     }
 
-    /** The IME inset, in px, the page was last told about. UI thread only. */
-    private var announcedIme = 0
+    /** What the page holds of the keyboard's inset, and what is on its way (`ImeAnnouncements`). */
+    private val imeAnnouncements = ImeAnnouncements()
 
     /**
      * Tells the page the keyboard's height and, when it moves animated, the animation's duration and
@@ -237,9 +232,10 @@ class MainActivity : TauriActivity() {
         val css = imeCssPx(ime, resources.displayMetrics.density)
         val timing = if (animation != null) "${animation.durationMs} ms" else "no animation"
         Log.d("MainActivity", "IME inset: $ime px -> page told $css ($timing; $why)")
+        imeAnnouncements.sent(ime)
         webView.evaluateJavascript(imeAnnouncementScript(css, animation)) { answer ->
-            if (answer != "true") {
-                Log.w("MainActivity", "IME inset $ime: the page did not take the keyboard (answered $answer) - it stays laid out as it was")
+            if (!imeAnnouncements.answered(ime, answer == "true")) {
+                Log.w("MainActivity", "IME inset $ime: the page REFUSED the keyboard (answered $answer) - it stays laid out as it was; announced again on the next insets pass")
             }
         }
     }
@@ -271,11 +267,13 @@ class MainActivity : TauriActivity() {
             val curve = sampleImeCurve(interpolator?.let { i -> { t: Float -> i.getInterpolation(t) } })
             if (curve == null) {
                 Log.w("MainActivity", "IME animation: ${animation.durationMillis} ms, its interpolator gave a non-finite value - announced without a curve")
-                prepared = null
-                return
             }
-            prepared = ImeAnimationSpec(animation.durationMillis, curve)
-            Log.d("MainActivity", "IME animation: ${animation.durationMillis} ms, interpolator ${interpolator?.javaClass?.simpleName ?: "none (linear)"}")
+            prepared = rideableImeAnimation(animation.durationMillis, curve)
+            if (animation.durationMillis < 0) {
+                Log.d("MainActivity", "IME animation: controlled (no duration, a gesture drives it) - announced without an animation")
+            } else {
+                Log.d("MainActivity", "IME animation: ${animation.durationMillis} ms, interpolator ${interpolator?.javaClass?.simpleName ?: "none (linear)"}")
+            }
         }
 
         override fun onProgress(
@@ -336,7 +334,7 @@ class MainActivity : TauriActivity() {
             runOnUiThread {
                 val content = findViewById<View>(android.R.id.content) ?: return@runOnUiThread
                 val ime = ViewCompat.getRootWindowInsets(content)?.getInsets(WindowInsetsCompat.Type.ime())?.bottom ?: 0
-                announcedIme = ime
+                imeAnnouncements.forgetPage()
                 announceIme(ime, null, "the page started a new document")
             }
         }

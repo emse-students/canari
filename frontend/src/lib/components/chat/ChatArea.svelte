@@ -1674,7 +1674,12 @@
       isNearBottom,
     });
     if (keyboardWasOpen !== kbOpen) {
-      Log.d('ChatArea', `keyboard ${kbOpen ? 'opened' : 'closed'}: ${response}`);
+      // A reader at the bottom is held there by `observeThreadGrowth` in the keyboard's own layout:
+      // this effect answers only for one above it (`keyboardChangeResponse`).
+      Log.d(
+        'ChatArea',
+        `keyboard ${kbOpen ? 'opened' : 'closed'}: ${response}${isNearBottom ? ' (the thread observer holds the bottom)' : ''}`
+      );
     }
     if (response === 'follow-bottom') {
       tick().then(() => requestAnimationFrame(() => scrollToBottom()));

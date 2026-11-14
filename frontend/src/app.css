@@ -333,6 +333,11 @@
    * plain browser tab already excludes the system nav/gesture area from its own viewport - see
    * that script for why. Every safe-area-bottom consumer reads this variable, never env() itself. */
   --safe-area-inset-bottom: env(safe-area-inset-bottom, 0px);
+  /* THE COMPOSER'S FLOOR: the chat footer's bottom padding, and the same term in the thread's own
+   * padding under its last row. Named once so both change in the SAME style pass when the bottom safe
+   * area is pinned for a keyboard (`keyboardSafeAreaBottomOverride`): `--chat-composer-height` is
+   * published a frame late and leaves this out (`composerHeight.ts`, review of #3556, D2). */
+  --chat-composer-floor: max(0.75rem, var(--safe-area-inset-bottom, 0px));
   /* THE TOP PEER, for the same reason: on iOS WebKit reports env() as 0 here and the native side
    * publishes the real status-bar height (canari_ios.mm), so every top consumer reads THIS. On
    * Android and in a browser env() answers for itself. */
@@ -1784,18 +1789,18 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
 }
 
 .chat-messages-scroll {
-  /* --chat-composer-height already includes var(--safe-area-inset-bottom, 0px) via the footer's own
-     padding-bottom, so it must not be added again here (only the unset-var fallback needs it).
+  /* The footer's height without its floor, plus the floor, plus the keyboard's room - see
+     `--chat-composer-floor`: the floor is composed HERE so a keyboard move lands in one style pass.
      THE KEYBOARD'S ROOM IS THIS PADDING, NEVER A SMALLER BOX (keyboard ride, 2026-11-14): in the
      Android app the keyboard covers the shell without shrinking it, and the thread's box keeps its
      height so its rows can ride up into the room the padding opens. `--keyboard-layout-inset-bottom`
      is 0 everywhere else, so on the web and iOS this is the padding it always was. */
   padding-bottom: calc(
-    var(--chat-composer-height, calc(7.5rem + var(--safe-area-inset-bottom, 0px))) +
+    var(--chat-composer-height, 6.75rem) + var(--chat-composer-floor) +
       var(--keyboard-layout-inset-bottom, 0px)
   );
   scroll-padding-bottom: calc(
-    var(--chat-composer-height, calc(7.5rem + var(--safe-area-inset-bottom, 0px))) +
+    var(--chat-composer-height, 6.75rem) + var(--chat-composer-floor) +
       var(--keyboard-layout-inset-bottom, 0px)
   );
   /* Keep scrolling inside the message list - no chaining/rubber-band to the page that
@@ -1806,22 +1811,24 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
 @media (min-width: 768px) {
   .chat-messages-scroll {
     padding-bottom: calc(
-      var(--chat-composer-height, 6.5rem) + var(--keyboard-layout-inset-bottom, 0px)
+      var(--chat-composer-height, 5.75rem) + var(--chat-composer-floor) +
+        var(--keyboard-layout-inset-bottom, 0px)
     );
     scroll-padding-bottom: calc(
-      var(--chat-composer-height, 6.5rem) + var(--keyboard-layout-inset-bottom, 0px)
+      var(--chat-composer-height, 5.75rem) + var(--chat-composer-floor) +
+        var(--keyboard-layout-inset-bottom, 0px)
     );
   }
 }
 
 .mobile-convo-open .chat-messages-scroll {
-  /* --chat-composer-height already includes var(--safe-area-inset-bottom, 0px) via the footer's
-     padding-bottom, so we must not add it again here. */
   padding-bottom: calc(
-    var(--chat-composer-height, 6rem) + var(--keyboard-layout-inset-bottom, 0px)
+    var(--chat-composer-height, 5.25rem) + var(--chat-composer-floor) +
+      var(--keyboard-layout-inset-bottom, 0px)
   );
   scroll-padding-bottom: calc(
-    var(--chat-composer-height, 6rem) + var(--keyboard-layout-inset-bottom, 0px)
+    var(--chat-composer-height, 5.25rem) + var(--chat-composer-floor) +
+      var(--keyboard-layout-inset-bottom, 0px)
   );
 }
 
@@ -1857,7 +1864,7 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
      all: it is the ground the thread already sits on, made opaque so nothing slides under it. */
   background: var(--chat-thread-ground, var(--cn-bg));
   padding-top: 0.5rem;
-  padding-bottom: max(0.75rem, var(--safe-area-inset-bottom, 0px));
+  padding-bottom: var(--chat-composer-floor);
   pointer-events: none;
   z-index: var(--z-page-overlay);
 }
@@ -1868,7 +1875,7 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
 /* Keyboard open: the same floor as the keyboard-closed rule below - the reserved space must not
    visibly shrink just because the keyboard opened. */
 .keyboard-open .chat-composer-footer {
-  padding-bottom: max(0.75rem, var(--safe-area-inset-bottom, 0px)) !important;
+  padding-bottom: var(--chat-composer-floor) !important;
 }
 
 /* `.app-layout` deliberately has NO keyboard-open height override (WP-KBD-1). Its ancestor
@@ -1881,25 +1888,25 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
    it is not doing it twice. */
 
 .keyboard-open .chat-messages-scroll {
-  /* --chat-composer-height already includes its own padding-bottom (set by
-     .keyboard-open .chat-composer-footer above), so only the extra lift from
-     --keyboard-layout-inset-bottom is added on top - never the safe area again. */
+  /* The same three terms as at rest (`--chat-composer-floor`). */
   padding-bottom: calc(
-    var(--chat-composer-height, 6rem) + var(--keyboard-layout-inset-bottom, 0px)
+    var(--chat-composer-height, 5.25rem) + var(--chat-composer-floor) +
+      var(--keyboard-layout-inset-bottom, 0px)
   );
   scroll-padding-bottom: calc(
-    var(--chat-composer-height, 6rem) + var(--keyboard-layout-inset-bottom, 0px)
+    var(--chat-composer-height, 5.25rem) + var(--chat-composer-floor) +
+      var(--keyboard-layout-inset-bottom, 0px)
   );
 }
 
 /* When a conversation is open on mobile the BottomNav is unmounted - drop its
    reserved height so the composer sits flush with the safe area. */
 .mobile-convo-open .chat-composer-footer {
-  padding-bottom: max(0.75rem, var(--safe-area-inset-bottom, 0px));
+  padding-bottom: var(--chat-composer-floor);
 }
 
 .mobile-convo-open.keyboard-open .chat-composer-footer {
-  padding-bottom: max(0.75rem, var(--safe-area-inset-bottom, 0px)) !important;
+  padding-bottom: var(--chat-composer-floor) !important;
 }
 
 /* THE GIF PANEL TAKES THE KEYBOARD'S PLACE, SO THE COMPOSER SITS ON IT AS IT SITS ON A KEYBOARD
@@ -1909,10 +1916,14 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
    keeps its own content clear of the home indicator. With the margin on the panel and not on the
    footer, the hand-off (panel shrinking to 0 while the keyboard rises) leaves the composer exactly
    0.75rem above whichever is under it, with no step when the panel unmounts. The second selector
-   outranks the `!important` keyboard rule above. */
+   outranks the `!important` keyboard rule above. The thread composes the same floor under its last
+   row (`--chat-composer-floor`), so the panel's 0 is said to it too. */
 .chat-composer-footer.has-keyboard-panel,
 .mobile-convo-open.keyboard-open .chat-composer-footer.has-keyboard-panel {
   padding-bottom: 0 !important;
+}
+.chat-thread-panel:has(.chat-composer-footer.has-keyboard-panel) {
+  --chat-composer-floor: 0px;
 }
 .composer-gif-panel {
   margin-top: 0.75rem;

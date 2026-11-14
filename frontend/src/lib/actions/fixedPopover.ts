@@ -1,4 +1,7 @@
-import { currentKeyboardInsetBottom } from '$lib/stores/keyboardViewport.svelte';
+import {
+  currentKeyboardInsetBottom,
+  onKeyboardInsetChange,
+} from '$lib/stores/keyboardViewport.svelte';
 import { Log } from '$lib/utils/Log';
 
 export type FixedPopoverSide = 'top' | 'bottom';
@@ -222,14 +225,27 @@ export function bindFixedPopover(panel: HTMLElement, options: FixedPopoverOption
   ro.observe(panel);
   window.addEventListener('resize', apply);
   window.addEventListener('scroll', apply, true);
-  // THE KEYBOARD ARRIVES HERE FIRST: the visual viewport shrinks as the keyboard rises, while the
-  // layout viewport (`window` `resize`) follows only when the native layer pads the WebView - about
-  // a second later on the Mi 9T, several on the owner's phone, never in a phone browser. Listening to
-  // `window` alone left the reaction picker under the keyboard for that whole gap (2026-11-10).
+  // A PHONE BROWSER'S KEYBOARD ARRIVES HERE: it shrinks only the visual viewport, never the layout
+  // viewport, so `window` `resize` never fires for it.
   window.visualViewport?.addEventListener('resize', apply);
+  // THE ANDROID APP'S KEYBOARD ARRIVES ONLY HERE (review of #3556, F4): it covers the WebView
+  // without resizing it, so neither viewport fires anything and the emoji search, the mention list
+  // and every floating surface stayed under the keys. The keyboard store says when its band moved,
+  // after writing its variables; the placement reads layout, so it waits for the next frame rather
+  // than force the style pass those writes left dirty inside the announcement.
+  let frame = 0;
+  const offKeyboard = onKeyboardInsetChange(() => {
+    if (frame) return;
+    frame = requestAnimationFrame(() => {
+      frame = 0;
+      apply();
+    });
+  });
 
   return () => {
     ro.disconnect();
+    offKeyboard();
+    if (frame) cancelAnimationFrame(frame);
     window.removeEventListener('resize', apply);
     window.removeEventListener('scroll', apply, true);
     window.visualViewport?.removeEventListener('resize', apply);

@@ -20,9 +20,74 @@ const val IME_CURVE_POINTS = 24
 
 /**
  * The keyboard animation `onPrepare` saw: its duration and its interpolator sampled at
- * [IME_CURVE_POINTS] evenly spaced times from 0 to 1.
+ * [IME_CURVE_POINTS] evenly spaced times from 0 to 1. A duration is never negative here - see
+ * [rideableImeAnimation], the one way an animation reaches the page.
  */
-data class ImeAnimationSpec(val durationMs: Long, val curve: List<Float>)
+data class ImeAnimationSpec(val durationMs: Long, val curve: List<Float>) {
+    init {
+        require(durationMs >= 0) { "an IME animation the page rides has a duration, not $durationMs" }
+    }
+}
+
+/**
+ * The animation the page may ride, or null when there is none to ride.
+ *
+ * A NEGATIVE DURATION IS A CONTROLLED ANIMATION, NOT A BROKEN ONE (review of #3556, F2):
+ * `WindowInsetsAnimation.getDurationMillis()` is -1 when the inset follows a gesture rather than a
+ * clock - the predictive-back IME dismissal of targetSdk 36, a `WindowInsetsAnimationController`.
+ * The page refuses a negative duration (`parseImeTarget`), so announced as such it refused the whole
+ * announcement and kept a keyboard-sized inset after the keyboard was gone. It is announced as a
+ * change with no animation instead: the page lays itself out at once, and nothing rides a gesture
+ * whose timing nobody knows in advance. A curve that could not be sampled is the same answer.
+ *
+ * @param durationMs what `getDurationMillis()` returned.
+ * @param curve the sampled interpolator ([sampleImeCurve]), or null.
+ */
+fun rideableImeAnimation(durationMs: Long, curve: List<Float>?): ImeAnimationSpec? =
+    if (durationMs < 0 || curve == null) null else ImeAnimationSpec(durationMs, curve)
+
+/**
+ * Which keyboard inset the page HOLDS, and which one is on its way to it - so a change is announced
+ * once, and an announcement the page refused is announced again on the next insets pass.
+ *
+ * The inset used to be marked announced before `evaluateJavascript` even ran, so a page that answered
+ * anything but `true` was never told again and kept the old layout for good (review of #3556, F2). A
+ * value is now HELD only once the page answered `true` for it; while an announcement is in flight
+ * its value is not sent a second time (a second announcement ends the ride the first one started).
+ * UI thread only, like the listener that drives it.
+ */
+class ImeAnnouncements {
+    /** The inset, in px, the page answered `true` for. */
+    var held = 0
+        private set
+
+    /** The inset sent and not answered yet, or null. */
+    private var inFlight: Int? = null
+
+    /** True when [ime] is neither what the page holds nor what is on its way to it. */
+    fun shouldAnnounce(ime: Int): Boolean = ime != (inFlight ?: held)
+
+    /** [ime] was sent to the page. */
+    fun sent(ime: Int) {
+        inFlight = ime
+    }
+
+    /**
+     * The page answered for [ime]: [took] when it answered `true`. Returns whether the page holds it.
+     * A refused value stays unheld, so the next insets pass with the same value sends it again.
+     */
+    fun answered(ime: Int, took: Boolean): Boolean {
+        if (inFlight == ime) inFlight = null
+        if (took) held = ime
+        return took
+    }
+
+    /** A new document holds nothing yet: whatever was told to the previous one is gone with it. */
+    fun forgetPage() {
+        held = -1
+        inFlight = null
+    }
+}
 
 /**
  * The interpolator sampled at [IME_CURVE_POINTS] points over `[0..1]`. A null interpolator is LINEAR
