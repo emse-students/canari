@@ -95,8 +95,10 @@ export async function readPostOpenVerdict(
   if (post.kind === 'replay' && (await removedFromReplayLive(manager, post, opts.viewerId))) {
     return refuse('not-found', 'removed from the live by its broadcaster');
   }
+  // The moderation read is not withheld: it reads the comments to judge them (2026-11-14).
   if (
     intent === 'COMMENT' &&
+    !moderates &&
     (await commentsWithheldPostIds(manager, [post.id], opts.viewerId)).has(post.id)
   ) {
     return refuse('not-found', 'comments withheld from a grant-only reader');

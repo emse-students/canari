@@ -228,6 +228,14 @@ interface PostViewerContext {
    * 2026-11-04) - `commentsWithheldPostIds`, the one predicate. Served as `canSeeComments: false`.
    */
   commentsWithheldIds: Set<string>;
+  /**
+   * Ids, among the batch, of the posts the reader may ACT on as a reader - open to them by the
+   * audience predicate with no admin widening (`postVisibleToViewerSql`, grants counted, as a reaction
+   * asks). `null` means every post of the batch: a reader who is not a platform admin is only ever
+   * served a post they see. Read for an admin, who may be served one through the moderation read
+   * (2026-11-14). Served as `canParticipate`.
+   */
+  participableIds: Set<string> | null;
 }
 
 /** A request one of the reader's associations made for a personal post and that still stands (D38b). */
@@ -269,8 +277,17 @@ interface PostCapabilities {
   pinSpaces: PinSpace[];
   /** WP-PIN: shown pinned in one of the READER's spaces (their own, or a read grant's cell). */
   pinned: boolean;
-  /** The flag. Withheld only from the post's own publisher - reporting yourself means nothing. */
+  /**
+   * The flag. Withheld from the post's own publisher - reporting yourself means nothing - and from a
+   * reader who may not act on it (`canParticipate` false): the report asks the reader's gate.
+   */
   canReport: boolean;
+  /**
+   * The reader may react to and comment on this post: it is open to them as a reader. False only
+   * for a platform admin served it by the moderation read (the post by id) outside their own
+   * audience (2026-11-14): the card then offers no reaction, comment or report control.
+   */
+  canParticipate: boolean;
   /** Clears an anonymous post's flag, revealing its author. The moderation tier (`viewerModerates`). */
   canUnmaskAnonymous: boolean;
   /**
@@ -511,6 +528,7 @@ export class PostsService {
     pinnedIds: new Set(),
     pinSpaces: new Map(),
     commentsWithheldIds: new Set(),
+    participableIds: new Set(),
   };
 
   /**
@@ -544,12 +562,18 @@ export class PostsService {
       // A vote and a republication ask an admin the ordinary reader's right (2026-11-14), so their
       // controls are read from the same grant-free set as anyone's - one query for the page.
       const grantFree = await this.grantFreeVisibleIds(postIds, viewerId);
+      // What they may act on, and whose comments are withheld from them, as the reader they are:
+      // the moderation read opens a post to an admin, never a reaction or a comment (2026-11-14).
+      const participableIds = await this.readerVisibleIds(postIds, viewerId);
       return {
         memberReposts: await memberRepostContext(this.postRepo.manager, postIds, viewerId),
         ...(await this.pinContext(postIds, viewerId, true)),
-        // Nothing is withheld from an administrator: the predicate's `adminSeesAll` arm opens every
-        // post to them without a grant, so asking it would cost a query to learn an empty set.
-        commentsWithheldIds: new Set(),
+        commentsWithheldIds: await commentsWithheldPostIds(
+          this.postRepo.manager,
+          postIds.filter((id) => participableIds.has(id) && !grantFree.grantFreeIds.has(id)),
+          viewerId
+        ),
+        participableIds,
         viewerId,
         isGlobalAdmin: true,
         moderatedIds: new Set(),
@@ -602,6 +626,7 @@ export class PostsService {
       grantFreeIds: grantFree.grantFreeIds,
       firstHandIds: grantFree.firstHandIds,
       commentsWithheldIds,
+      participableIds: null,
       ...(await this.personalRequestContext(personalIds, viewerId, memberships.personal)),
     };
   }
@@ -627,6 +652,27 @@ export class PostsService {
       Array.isArray(pinnedRows) ? (pinnedRows as { id: string }[]).map((r) => r.id) : []
     );
     return { pinnedIds, pinSpaces };
+  }
+
+  /**
+   * Of `postIds`, those `viewerId` sees as an ORDINARY READER - the audience predicate, grants
+   * counted, no admin widening: what a reaction or a comment asks (`readPostOpenVerdict` without
+   * `allowHidden`). One query for the page; asked for a platform admin only (`participableIds`).
+   */
+  private async readerVisibleIds(postIds: string[], viewerId: string): Promise<Set<string>> {
+    if (postIds.length === 0) return new Set();
+    const rows: unknown = await this.postRepo.manager.query(
+      `SELECT posts.id FROM posts WHERE posts.id = ANY($1::uuid[])
+         AND ${postVisibleToViewerSql('posts', '$2')}`,
+      [postIds, viewerId]
+    );
+    const ids = new Set((Array.isArray(rows) ? (rows as { id: string }[]) : []).map((r) => r.id));
+    if (ids.size < postIds.length) {
+      this.logger.debug(
+        `[VISIBILITY] admin ${viewerId.slice(0, 8)}: ${postIds.length - ids.size} of ${postIds.length} post(s) served by the moderation read only`
+      );
+    }
+    return ids;
   }
 
   /**
@@ -837,13 +883,17 @@ export class PostsService {
     const isPublisher = this.viewerIsPublisher(post, viewer);
     const isModeratorTier = this.viewerModerates(post, viewer);
     const pinSpaces = (post.id && viewer.pinSpaces.get(post.id)) || [];
+    const participates =
+      !!viewer.viewerId &&
+      (viewer.participableIds === null || (!!post.id && viewer.participableIds.has(post.id)));
     return {
       canManage: isModeratorTier || isPublisher,
       canEdit: isPublisher,
       canPin: pinSpaces.length > 0,
       pinSpaces,
       pinned: !!post.id && viewer.pinnedIds.has(post.id),
-      canReport: !!viewer.viewerId && !isPublisher,
+      canReport: !!viewer.viewerId && !isPublisher && participates,
+      canParticipate: participates,
       canUnmaskAnonymous: !!post.anonymous && isModeratorTier,
       canRepublish: this.viewerMayRepublish(post, viewer),
       canProposeRepublication:
