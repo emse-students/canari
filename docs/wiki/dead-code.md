@@ -40,6 +40,12 @@ do not conflict. The target is every number at 0, after which the file is just z
 the day it was written** (2026-11-13: the PR sat in draft for days and `main` kept adding unused
 exports, so the numbers were re-measured on the last merge: exports 411, types 178, duplicates 6).
 Once it is on `main` it only goes down; the first export sweep is the next pull request.
+
+**Re-merged 2026-11-14** (`main` had moved about 104 commits): knip found 31 new items, none with a
+frontend caller. 29 were exports used only inside their own file (constants, helpers, interfaces: the
+server keeps the same names exported for ITS callers) and lost their `export`; the other two
+(`GameStatus`, `GenerationReport`) belong to the declared Minesweeper mirror and are allow-listed
+above. Nothing was deleted outright: every new item was live code, only over-exported.
 `frontend/knip.json` is the only place a false positive is declared.
 
 ## Entry points, configured as reachable (never deleted)
@@ -69,6 +75,9 @@ deleting an export that smells like a bridge, grep its name under `frontend/src-
 2. The frontend half of a DECLARED byte-for-byte duplicate (`.github/scripts/lib/declared-duplicates.mjs`,
    e.g. `src/lib/utils/users/visibleText.ts`): its exports mirror the server copy and cannot lose
    their `export` one side at a time, so the file gets an `ignoreIssues` entry in `knip.json`.
+   Today two files: `visibleText.ts`, and `src/lib/minesweeper/game.ts` (the engine the server replays
+   to judge a ranked score; compared as code, so its exports and types stay in step with
+   `apps/social-service/src/minesweeper/engine/game.ts`, where the server uses them).
 3. A translation key reached without being named: add it to `frontend/dead-code-allowlist.json`,
    `{ "messages": { "the_key": "why it is reached" } }`. The reason is mandatory.
 

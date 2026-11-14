@@ -708,7 +708,6 @@
   "msg_attached_file_label": "Fichier joint",
   "msg_download_file_label": "Télécharger le fichier",
   "msg_expired_label": "Expiré",
-  "msg_media_label": "Média",
   "msg_go_to_quoted_message_label": "Aller au message cité",
   "msg_edit_placeholder": "Modifier le message…",
   "msg_max_reactions_label": "Maximum de {max} réactions différentes sur ce message.",

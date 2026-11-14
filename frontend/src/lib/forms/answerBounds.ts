@@ -46,15 +46,15 @@ export const FORM_GUEST_IDENTITY_NOT_ASKED = 'FORM_GUEST_IDENTITY_NOT_ASKED';
 /** A price grid splits a multiple-choice question into several groups (refused at save). */
 export const FORM_GRID_MULTIPLE_CHOICE_SPLIT = 'FORM_GRID_MULTIPLE_CHOICE_SPLIT';
 /** The form does not let its answers be changed (the switch is off, or it is anonymous). */
-export const FORM_ANSWER_EDIT_OFF = 'FORM_ANSWER_EDIT_OFF';
+const FORM_ANSWER_EDIT_OFF = 'FORM_ANSWER_EDIT_OFF';
 /** An edit changed a question that touches the price; `itemId` names it. */
-export const FORM_ANSWER_LOCKED = 'FORM_ANSWER_LOCKED';
+const FORM_ANSWER_LOCKED = 'FORM_ANSWER_LOCKED';
 /** The answer was cancelled or has expired: nothing left to change. */
-export const FORM_ANSWER_NOT_EDITABLE = 'FORM_ANSWER_NOT_EDITABLE';
+const FORM_ANSWER_NOT_EDITABLE = 'FORM_ANSWER_NOT_EDITABLE';
 /** No answer of the reader's under this id. */
-export const FORM_ANSWER_NOT_FOUND = 'FORM_ANSWER_NOT_FOUND';
+const FORM_ANSWER_NOT_FOUND = 'FORM_ANSWER_NOT_FOUND';
 /** A manager deleted an answer whose payment was received: refund or cancel it instead. */
-export const FORM_ANSWER_PAID = 'FORM_ANSWER_PAID';
+const FORM_ANSWER_PAID = 'FORM_ANSWER_PAID';
 
 /**
  * The sentence for a form's CODED refusal, or `null` when the code is none of a form's (the

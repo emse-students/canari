@@ -667,7 +667,6 @@
   "msg_attached_file_label": "Attached file",
   "msg_download_file_label": "Download file",
   "msg_expired_label": "Expired",
-  "msg_media_label": "Media",
   "msg_go_to_quoted_message_label": "Go to quoted message",
   "msg_edit_placeholder": "Edit message…",
   "msg_max_reactions_label": "Maximum of {max} different reactions on this message.",
