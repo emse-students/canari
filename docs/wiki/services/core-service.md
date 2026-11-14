@@ -116,12 +116,15 @@ cashier named in a payments path. **A name means one thing in the whole service*
 coverage spec holds: the session route's parameter is `sessionId`, not `id`, because `id` is a user
 everywhere else.
 
-**What changed for a caller.** A session id, an announcement id or a correction-request id that is
-not a uuid is answered `400` before the handler runs (`announcement.route-params.http.spec.ts` shows
-it over HTTP, the session guard not yet asked). The payments routes already refused a malformed
-association or cashier id with a `400` written by hand in each handler; the declaration replaces
-those copies, and the message now names the parameter. The one check left in a handler is on an id
-that arrives in a BODY, which the guard does not read; it uses the guard's own `isUuidShaped`.
+**What changed for a caller.** A session id or an announcement id that is not a uuid is answered
+`400` before the handler runs (`announcement.route-params.http.spec.ts` shows it over HTTP: the
+service is not called, and the session guard has not run). A malformed profile-correction request
+id was a `404` written by the service's own check; it is a `400` now, like the others. The payments
+routes already refused a malformed association or cashier id with a `400` written by hand in each
+handler; the declaration replaces those copies, and the message now names the parameter. The one
+check left in a handler is on an id that arrives in a BODY, which the guard does not read; it uses
+the guard's own `isUuidShaped`. As in social-service, the `400` comes before the session and admin
+guards: a malformed path is refused whoever asks.
 
 ### Auth
 
