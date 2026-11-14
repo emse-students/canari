@@ -122,7 +122,6 @@ earliest version, as a checklist.
 - [ ] [the Android background send behind a captive portal](backlog.d/reading-owed-the-android-background-send-behind-a-captive-portal.md)
 - [ ] [the pre-038 link seats the group panel would list as members](backlog.d/reading-owed-the-pre-038-link-seats-the-group-panel-would-list-as-members.md)
 - [ ] [a read mark for a salon that no longer exists is dropped (dev)](backlog.d/p3-a-read-mark-for-a-salon-that-no-longer-exists-is-retried-forever.md)
-- [ ] [a waiting share is locked with the device on iOS](backlog.d/reading-owed-a-waiting-share-is-locked-with-the-device-on-ios.md)
 - [ ] [sharing into Canari on iOS](backlog.d/reading-owed-sharing-into-canari-on-ios.md)
 - [ ] [call noise suppression on a real call on both phones, which decides its default](backlog.d/call-noise-suppression-clean-speech-gate-fails-and-readings-owed.md)
 - [ ] [broadcasting the screen and switching scenes in a live from a desktop browser](backlog.d/reading-owed-broadcasting-the-screen-in-a-live-from-a-desktop-browser.md)
