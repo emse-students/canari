@@ -590,11 +590,22 @@ branded: only `cursusViews` makes them, so no caller can price on one cursus by 
 person's facts. `forms/form-quote.ts` is where a form picks its winner, once per operation:
 `quoteSubmission` at submit (base cell for the visible answers + every product grid's lines;
 option supplements do not depend on the cursus and are left out of the comparison), and
-`quoteDisplay` for `/check` and the public read - before any answer it compares a REFERENCE total
-(the cheapest combination of the person's grid row plus one unit at every price of every grid) and
-hands the page that one cursus's slice and grid tiers. The two can name different cursus only when
-each cursus wins on part of the form; the page then totals with the displayed one and submit charges
-the cheapest, never more than shown. A boutique product is `cheapestCell`. The winner is logged
+`displaySlices` for `/check` and the public read: EVERY distinct cursus's slice (`cursusSlices`:
+`pricing` + `productGridPrices`, nothing beyond the viewer's own cursus). The fill page
+(`fillPricing.ts`) totals each slice for the current answers and shows the cheapest with the same
+rule; an option is closed, and "combinaison indisponible" said, only when EVERY slice closes it;
+the label and the grid prices shown are the winning slice's; the form is "not open to you" only when
+every slice's row is entirely unavailable. One table of cases, `frontend/src/lib/forms/cursusPricingCases.json`,
+is asserted by `form-quote.spec.ts` on the server and `fillPricing.test.ts` on the page, so the two
+cannot drift. `pricing` and `productGridPrices` alone are still served - the FIRST slice - for a page
+older than D32 ([legacy-compatibility](../../legacy-compatibility.md)).
+The cursus come from core-service as `cursusViews`, reconciled THERE (`cursusViewsOf`): every
+well-formed entry, plus the legacy `promo`/`formation` pair when no entry carries it (a person the
+WP3 backfill has not reached, logged `[PROFILE_CURSUS_BEHIND]`), so D32 only ever ADDS a view -
+nobody pays more or sees less than before it. A core-service that serves no `cursusViews` (only a
+rollback produces one) gets every profile-priced operation a typed `503 PRICING_CORE_BEHIND`
+([cicd](../../cicd.md)).
+A boutique product is `cheapestCell`. The winner is logged
 (`describeCursus`: `cursus=2/2 formation=ICM promo=2024`). Stored snapshots are unchanged in
 meaning: `submissions.lines` carries the winning cursus's tier, as charged.
 
@@ -724,10 +735,14 @@ Measured on prod 2026-08-23, `auth_db.users`, 221 rows:
 
 Three facts shape the feature:
 
-1. **Neither attribute is self-declared.** `UpdateUserDto` carries `bio` and nothing else; `promo` and
-   `formation` are written only by `findOrCreateFromOidc`. That is what makes them safe to price on -
-   the payer cannot move themselves into a cheaper cell. **If that DTO ever gains `promo`, this
-   becomes a self-service discount**, which is why the warning is written at the DTO itself.
+1. **Neither attribute is self-declared.** `UpdateUserDto` carries `bio` and nothing else; the cursus
+   and the `promo`/`formation` columns derived from it are written by `findOrCreateFromOidc` (from
+   the identity provider, at every sign-in) and by the platform admin's profile edit
+   (`ProfileEditService.applyEdit`, audited in `profile_changes`). That is what makes them safe to
+   price on - the payer cannot move themselves into a cheaper cell. Under D32 an admin who ADDS a
+   second cursus to somebody can move that person's price (the cheapest cursus wins), which is the
+   edit's audit trail's business, not the payer's. **If that DTO ever gains `promo` or `cursus`,
+   this becomes a self-service discount**, which is why the warning is written at the DTO itself.
 2. **`formation` is a small OPEN vocabulary, not an enum.** The next value arrives from Authentik with
    no deploy, so the picker offers what EXISTS and the `others` bucket catches what it has not seen.
 3. **Both can be null**, and five rows on prod are. A null is not an error and must price.

@@ -178,6 +178,7 @@ describe('FormsService - public forms', () => {
           'basePrice',
           'closedAt',
           'currency',
+          'cursusSlices',
           'description',
           'formFull',
           'guestFields',
@@ -192,6 +193,8 @@ describe('FormsService - public forms', () => {
         ].sort()
       );
       expect(form).toMatchObject({ basePrice: 1200, allowCashPayment: true, pricing: null });
+      // A guest has no cursus: one slice, the same one the legacy fields carry.
+      expect(form.cursusSlices).toEqual([{ pricing: null, productGridPrices: {} }]);
     });
 
     // Owner, 2026-11-02: a paid form of an entity that cannot collect now (a list whose delegation

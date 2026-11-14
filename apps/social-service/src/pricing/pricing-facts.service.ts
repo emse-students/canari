@@ -4,13 +4,22 @@ import { NO_CURSUS, type CursusView, type PricingFacts } from './audience';
 import { coreUrl } from '../internal/service-urls';
 
 /**
- * What core-service's internal profile route answers with - the part read here. `cursus` is EVERY
- * entry (D32); the `promo`/`formation` it also serves are the first entry only and are not read.
+ * What core-service's internal profile route answers with - the part read here. `cursusViews` is
+ * every cursus the person is priced through (D32), already reconciled by core-service
+ * (`cursusViewsOf`: the well-formed entries plus the legacy pair when no entry carries it), so
+ * nothing is reconciled here. Absent from a core-service older than it.
  */
 interface InternalPublicProfile {
   id: string;
-  cursus?: { formation: string; promo: number }[];
+  cursusViews?: CursusView[];
 }
+
+/**
+ * The `code` of the 503 a profile-priced operation gets when core-service answers without
+ * `cursusViews` - a core-service OLDER than this service, which only a ROLLBACK produces (a forward
+ * deploy replaces core-service first; `cicd.md`). Typed so the log and the answer name the cause.
+ */
+export const PRICING_CORE_BEHIND = 'PRICING_CORE_BEHIND';
 
 /**
  * Assembles the facts a price's criteria are evaluated against, once per request.
@@ -19,11 +28,13 @@ interface InternalPublicProfile {
  * is the point: one grid, one bucket predicate, one set of facts. A price that disagreed with
  * itself between the two surfaces would be nobody's bug to report.
  *
- * The cursus (`promo` and `formation` per entry) live in core-service's `users` table, written ONLY by
- * `findOrCreateFromOidc`, from the identity provider, at every sign-in - `PATCH /api/users/me`
- * accepts `bio` and nothing else. That is what makes them safe to price on: nobody can edit
- * themselves into a cheaper cell. **If `UpdateUserDto` ever gains either field, every price resting
- * on it becomes self-service.**
+ * The cursus (`promo` and `formation` per entry, and the legacy columns derived from it) live in
+ * core-service's `users` table, written by `findOrCreateFromOidc` (from the identity provider, at
+ * every sign-in) and by the platform admin's profile edit (`ProfileEditService.applyEdit`, audited)
+ * - `PATCH /api/users/me` accepts `bio` and nothing else. That is what makes them safe to price on:
+ * nobody can edit themselves into a cheaper cell. Under D32 an admin adding a second cursus can move
+ * that person's price, since the cheapest cursus wins. **If `UpdateUserDto` ever gains `promo`,
+ * `formation` or `cursus`, every price resting on it becomes self-service.**
  *
  * They are fetched over the Docker network from `/api/internal/users/:id/public-profile`, which
  * exists, is `INTERNAL_SECRET`-gated and has no nginx location. Deliberately not obtained by
@@ -107,9 +118,9 @@ export class PricingFactsService {
    * belongs in the "everyone else" bucket. That is the one status treated as data. So is an EMPTY
    * cursus (staff, a post only): `NO_CURSUS`, one view with nothing in it.
    *
-   * A 200 WITHOUT the `cursus` field is a core-service older than D32: refused like any answer this
-   * service cannot read, rather than priced as somebody with no cursus - that would overcharge
-   * every student it served.
+   * A 200 WITHOUT `cursusViews` is a core-service older than D32 (a rollback window): refused with
+   * the typed `PRICING_CORE_BEHIND`, rather than priced as somebody with no cursus - that would
+   * overcharge every student it served.
    */
   private async fetchCursus(userId: string): Promise<readonly CursusView[]> {
     const url = coreUrl(`internal/users/${encodeURIComponent(userId)}/public-profile`);
@@ -142,18 +153,20 @@ export class PricingFactsService {
       );
     }
     const profile = (await res.json()) as InternalPublicProfile;
-    if (!Array.isArray(profile.cursus)) {
+    if (!Array.isArray(profile.cursusViews)) {
       this.logger.error(
-        `[PRICING] profile user=${userId.slice(0, 8)} answered without a cursus list - a core-service ` +
-          'older than D32; refusing rather than pricing on nothing'
+        `[PRICING] ${PRICING_CORE_BEHIND} user=${userId.slice(0, 8)} - core-service older than the ` +
+          'cursus views (a rollback window); refusing rather than pricing on nothing'
       );
-      throw new ServiceUnavailableException(
-        'Cannot check your profile right now, so this cannot be priced. Please try again in a moment.'
-      );
+      throw new ServiceUnavailableException({
+        code: PRICING_CORE_BEHIND,
+        message:
+          'Cannot check your profile right now, so this cannot be priced. Please try again in a moment.',
+      });
     }
-    const cursus = profile.cursus.map((entry) => ({
-      promo: entry.promo ?? null,
-      formation: entry.formation ?? null,
+    const cursus = profile.cursusViews.map((view) => ({
+      promo: view.promo ?? null,
+      formation: view.formation ?? null,
     }));
     this.logger.debug(
       `[PRICING] profile user=${userId.slice(0, 8)} cursus=` +

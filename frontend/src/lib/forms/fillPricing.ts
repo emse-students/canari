@@ -1,5 +1,5 @@
 import { OTHERS_BUCKET_ID, cellKey, hasCell, type CellValue } from '$lib/pricing/priceMatrix';
-import type { AnswerDimensionView, FormItem, PricingView } from './api';
+import type { AnswerDimensionView, CursusSlice, FormItem, PricingView } from './api';
 import { pricedQuestionsAwaitingAnswer, type Selections } from './fillAnswers';
 import {
   productGridTotalCents,
@@ -19,6 +19,12 @@ import { productGridOrderLines } from './productGridFill';
  * each criterion on who the person is), and what is left is their own answers, resolved here as they
  * click. The server recomputes the whole thing at submit
  * and that figure is what is charged.
+ *
+ * A person with several cursus (D32) is handed one slice PER distinct cursus. Each is totalled for
+ * the current answers and the cheapest is shown, with the server's own rule (`form-quote.ts`): an
+ * unavailable total loses to any price, a tie goes to the first slice. An option is closed, and the
+ * price reported unavailable, only when EVERY slice says so. Both sides are pinned to one table of
+ * cases, `cursusPricingCases.json`.
  */
 export interface FillPriceState {
   /** The base price their answers land on; `null` for a combination that does not exist. */
@@ -47,6 +53,35 @@ export interface FillPriceState {
   total: number;
   /** Why this price - " (Cotisant, ICM)" from the groups the server matched - or ''. */
   appliedLabel: string;
+  /** The winning slice's prices on each priced grid: what the grids show and the tier line names. */
+  productGridPrices: ProductGridPrices;
+  /** Which slice won, in the order the server sent them (the person's cursus, duplicates folded). */
+  cursusIndex: number;
+}
+
+/** What a page totals before the server has answered, or for a form it found none for: one price. */
+export const NO_PRICING_SLICE: readonly CursusSlice[] = Object.freeze([
+  { pricing: null, productGridPrices: {} },
+]);
+
+/**
+ * The slices a fill page totals, from what `/check` or the public read answered. A server older
+ * than D32 serves no `cursusSlices`: its single `pricing` and `productGridPrices` ARE the person's
+ * whole pricing there (one cursus was all it read), so they are the one slice - logged, since only a
+ * rollback window serves such an answer to this page.
+ */
+export function cursusSlicesOf(answer: {
+  cursusSlices?: CursusSlice[] | null;
+  pricing: PricingView | null;
+  productGridPrices?: ProductGridPrices | null;
+}): CursusSlice[] {
+  if (Array.isArray(answer.cursusSlices)) {
+    return answer.cursusSlices.length > 0 ? answer.cursusSlices : [...NO_PRICING_SLICE];
+  }
+  console.warn(
+    '[FORMS] the server serves no cursusSlices (older than D32) - its single slice read'
+  );
+  return [{ pricing: answer.pricing, productGridPrices: answer.productGridPrices ?? {} }];
 }
 
 /** Which group of one answer criterion an answer falls in - `others` when it matches none. */
@@ -82,16 +117,59 @@ export function optionModifierOf(
   return state.pricedByGrid.has(item.id) ? 0 : option.priceModifier;
 }
 
-/** Everything a fill page shows about the price, for the answers given so far. */
+/**
+ * Everything a fill page shows about the price, for the answers given so far: every slice totalled,
+ * the cheapest shown (see the header).
+ */
 export function fillPriceState(input: {
+  basePrice: number;
+  /** One per distinct cursus, from the server (`cursusSlicesOf`); a guest's is one. */
+  slices: readonly CursusSlice[];
+  items: FormItem[];
+  visibleItems: FormItem[];
+  selections: Selections;
+}): FillPriceState {
+  const { slices, ...rest } = input;
+  // An empty list is a page with no answer yet: one price, as before any slice.
+  const states = (slices.length > 0 ? slices : NO_PRICING_SLICE).map((slice) =>
+    sliceState({ ...rest, pricing: slice.pricing, productGridPrices: slice.productGridPrices })
+  );
+  // The server's rule (`cheapestCursus`): an unavailable or undecided total loses to any price, a
+  // tie goes to the first. Supplements are the same through every slice, so they decide nothing.
+  let cursusIndex = 0;
+  let best: number | null = null;
+  states.forEach((state, index) => {
+    const cents =
+      state.priceDecided && state.baseCents !== null ? state.baseCents + state.gridCents : null;
+    if (cents !== null && (best === null || cents < best)) {
+      best = cents;
+      cursusIndex = index;
+    }
+  });
+  const winner = states[cursusIndex];
+  // Closed only when no slice can reach it: one cursus open on it is enough for the server.
+  const unavailableOptionIds = new Set(
+    [...winner.unavailableOptionIds].filter((id) =>
+      states.every((state) => state.unavailableOptionIds.has(id))
+    )
+  );
+  return {
+    ...winner,
+    unavailableOptionIds,
+    priceUnavailable: states.every((state) => state.priceUnavailable),
+    cursusIndex,
+  };
+}
+
+/** The price state through ONE slice - what `fillPriceState` computes per cursus. */
+function sliceState(input: {
   basePrice: number;
   pricing: PricingView | null;
   items: FormItem[];
   visibleItems: FormItem[];
   selections: Selections;
-  /** This viewer's prices on each priced grid, from the server (`productGridPrices`). */
-  productGridPrices?: ProductGridPrices | null;
-}): FillPriceState {
+  productGridPrices: ProductGridPrices;
+}): Omit<FillPriceState, 'cursusIndex'> {
   const { basePrice, pricing, items, visibleItems, selections } = input;
 
   // With a grid, the cell the answers land in - looked up in the slice, never computed from a
@@ -177,5 +255,6 @@ export function fillPriceState(input: {
     gridCents,
     total,
     appliedLabel: pricing?.appliedLabels.length ? ` (${pricing.appliedLabels.join(', ')})` : '',
+    productGridPrices: input.productGridPrices,
   };
 }

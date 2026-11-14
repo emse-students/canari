@@ -3,15 +3,17 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { assertInternalSecret } from './internal-secret.util';
 import { User } from '../users/entities/user.entity';
-import type { CursusEntry } from '../users/miconnect-profile';
+import { cursusViewsOf, type CursusView } from '../users/miconnect-profile';
+import { cursusEntriesSql, WELL_FORMED_ENTRY_SQL } from '../users/cursus-filter';
 import { isInReviewCohort } from '../review-cohort';
 
 /**
  * The minimum a `/profile/:id` share needs to render a preview, plus what social-service prices on.
  *
- * `cursus` is EVERY entry, in the provider's order: social-service evaluates a price grid, a
- * question's condition and a form's audience once per cursus (D32 - two cursus pay the most
- * favourable price). `promo`/`formation` are the FIRST entry (`legacyColumns`), kept for the readers
+ * `cursusViews` is every cursus social-service evaluates a price grid, a question's condition and a
+ * form's audience through (D32 - two cursus pay the most favourable price), built by
+ * `cursusViewsOf`: the well-formed entries plus the legacy pair when no entry carries it, so
+ * social-service reconciles nothing. `promo`/`formation` are the legacy columns, kept for the readers
  * that still take them.
  */
 export interface InternalPublicProfile {
@@ -19,7 +21,7 @@ export interface InternalPublicProfile {
   displayName: string | null;
   promo: number | null;
   formation: string | null;
-  cursus: CursusEntry[];
+  cursusViews: CursusView[];
 }
 
 /**
@@ -45,9 +47,10 @@ export class InternalUsersController {
   ) {}
 
   /**
-   * Distinct formation values in use, with how many users carry each - read from EVERY cursus entry
-   * (D32), so a formation followed only as a second cursus is offered too, and a person counts once
-   * per formation however many entries name it.
+   * Distinct formation values in use, with how many users carry each - read from EVERY well-formed
+   * cursus entry AND the legacy `formation` column (D32, the same union as `cursusViewsOf`), so a
+   * formation followed only as a second cursus is offered, a person the backfill has not reached
+   * still counts, and a person counts once per formation however many places name it.
    *
    * Called by social-service to populate a form's "filtrer par formation" picker. It offers what
    * EXISTS rather than a hard-coded list, because `formation` comes from Authentik and the next
@@ -91,20 +94,27 @@ export class InternalUsersController {
       displayName: user.displayName ?? null,
       promo: user.promo ?? null,
       formation: user.formation ?? null,
-      cursus: user.cursus ?? [],
+      cursusViews: cursusViewsOf(user),
     };
   }
 }
 
 /**
- * Every formation named by a cursus entry, and how many DISTINCT people name it. `jsonb_array_elements`
- * over `users.cursus` (never the `formation` column, which is the first entry only); the most used
- * first, then by name so equal counts list in a stable order.
+ * Every formation named by a well-formed cursus entry or by the legacy `formation` column, and how
+ * many DISTINCT people name it; the most used first, then by name so equal counts list in a stable
+ * order. A `cursus` that is not a list (a JSON null, an object) contributes no entry instead of
+ * failing the query for everyone (`cursusEntriesSql`).
  */
 export const FORMATIONS_SQL = `
-  SELECT entry->>'formation' AS value, COUNT(DISTINCT u.id) AS count
-  FROM users u
-  CROSS JOIN LATERAL jsonb_array_elements(u.cursus) AS entry
-  WHERE COALESCE(entry->>'formation', '') <> ''
-  GROUP BY entry->>'formation'
-  ORDER BY COUNT(DISTINCT u.id) DESC, entry->>'formation' ASC`;
+  SELECT named.value AS value, COUNT(DISTINCT named.id) AS count
+  FROM (
+    SELECT u.id, entry->>'formation' AS value
+    FROM users u
+    CROSS JOIN LATERAL ${cursusEntriesSql('u.cursus')} AS entry
+    WHERE ${WELL_FORMED_ENTRY_SQL}
+    UNION ALL
+    SELECT u.id, u.formation AS value FROM users u
+  ) AS named
+  WHERE COALESCE(named.value, '') <> ''
+  GROUP BY named.value
+  ORDER BY COUNT(DISTINCT named.id) DESC, named.value ASC`;

@@ -501,9 +501,9 @@ export class UsersService implements OnModuleInit {
       applyFuzzyNameSearch(qb, q);
     }
 
-    // Promo and formation are read from EVERY cursus entry (D32), never from the `promo`/`formation`
-    // columns (the first entry only) - and from the SAME entry when both are asked: "ICM 2024"
-    // finds an ICM 2024 student, never someone in ICM since 2021 and in another cursus since 2024.
+    // Promo and formation are read from EVERY cursus entry OR the legacy columns (D32, the union a
+    // price reads), and from the SAME place when both are asked: "ICM 2024" finds an ICM 2024
+    // student, never someone in ICM since 2021 and in another cursus since 2024.
     const cursusFilter = cursusEntryFilter(query.promo, formation);
     if (cursusFilter) qb.andWhere(cursusFilter.sql, cursusFilter.params);
 

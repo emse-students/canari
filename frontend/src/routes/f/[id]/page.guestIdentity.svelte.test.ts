@@ -54,6 +54,7 @@ const form = (over: Partial<PublicForm> = {}): PublicForm =>
     paymentsPaused: false,
     formFull: false,
     pricing: null,
+    cursusSlices: [{ pricing: null, productGridPrices: {} }],
     guestFields: [],
     ...over,
   }) as PublicForm;

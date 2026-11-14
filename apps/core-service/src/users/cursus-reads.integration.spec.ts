@@ -1,10 +1,11 @@
 /**
- * EVERY CURSUS ENTRY IS READ, AGAINST A REAL POSTGRESQL (D32, profiles-and-access.md): the people
+ * EVERY CURSUS IS READ, AGAINST A REAL POSTGRESQL (D32, profiles-and-access.md): the people
  * directory's promo and formation filters, and the formations listing behind a price criterion's
- * picker (`GET internal/users/formations`), see a person's SECOND cursus - never only the
- * `promo`/`formation` columns, which are the first entry (`legacyColumns`). Promo and formation are
- * read from the same entry. And the internal public profile serves the whole list, which is what
- * social-service prices on.
+ * picker (`GET internal/users/formations`), see a person's SECOND cursus AND, for somebody the WP3
+ * backfill has not reached, the legacy `promo`/`formation` columns - the union a price reads
+ * (`cursusViewsOf`). Promo and formation are read from the same place. A `cursus` holding a JSON
+ * null or an object answers no entry, never an error for everybody. And the internal public profile
+ * serves the views social-service prices on.
  *
  * The JSON operators are the point, so no mock can judge them. GATED ON `CORE_IT_DATABASE_URL`, like
  * the other integration files; the `boot-nest-apps` job in `ci.yml` sets it. Its own `users` table,
@@ -40,6 +41,12 @@ maybe('every cursus entry is read, against PostgreSQL (D32)', () => {
       promo: cursus[0]?.promo ?? null,
       formation: cursus[0]?.formation ?? null,
     });
+  /** A row as raw SQL writes it: any `cursus` JSON, any legacy columns. */
+  const seedRaw = (id: string, cursus: string, promo: number | null, formation: string | null) =>
+    ds.query(
+      `INSERT INTO users (id, "displayName", cursus, promo, formation) VALUES ($1, $1, $2::jsonb, $3, $4)`,
+      [id, cursus, promo, formation]
+    );
   const ids = async (query: Record<string, unknown>) =>
     (await service.directory(query as never)).users.map((u) => u.id).sort();
 
@@ -78,6 +85,11 @@ maybe('every cursus entry is read, against PostgreSQL (D32)', () => {
       { formation: 'FSSS', promo: 2025 },
     ]);
     await seed('d-staff', []);
+    // Not backfilled: no cursus, the legacy pair only.
+    await seedRaw('e-legacy-only', '[]', 2020, 'Autre');
+    // Broken rows: never an error for the others.
+    await seedRaw('f-null-cursus', 'null', null, null);
+    await seedRaw('g-object-cursus', '{"formation":"ICM","promo":2024}', null, null);
   }, 60_000);
 
   afterAll(async () => {
@@ -85,6 +97,11 @@ maybe('every cursus entry is read, against PostgreSQL (D32)', () => {
     else process.env.INTERNAL_SECRET = savedSecret;
     await ds?.query(`DROP SCHEMA ${schema} CASCADE`);
     await ds?.destroy();
+  });
+
+  it('finds a person the backfill has not reached through the legacy pair', async () => {
+    expect(await ids({ formation: 'autre' })).toEqual(['e-legacy-only']);
+    expect(await ids({ promo: 2020, formation: 'Autre' })).toEqual(['e-legacy-only']);
   });
 
   it('the formation filter finds a person through their SECOND cursus', async () => {
@@ -104,19 +121,25 @@ maybe('every cursus entry is read, against PostgreSQL (D32)', () => {
   });
 
   it('the formations listing counts a second cursus, and a person once per formation', async () => {
+    // ICM counted once for a person whose first entry AND legacy column both name it.
     expect(await internal.formations(SECRET)).toEqual([
       { value: 'ISMIN', count: 2 },
+      { value: 'Autre', count: 1 },
       { value: 'FSSS', count: 1 },
       { value: 'ICM', count: 1 },
     ]);
   });
 
-  it('the internal public profile serves every cursus entry, in order', async () => {
+  it('the internal public profile serves every cursus view, in order', async () => {
     const profile = await internal.publicProfile('a-icm-then-ismin', SECRET);
-    expect(profile.cursus).toEqual([
+    expect(profile.cursusViews).toEqual([
       { formation: 'ICM', promo: 2021 },
       { formation: 'ISMIN', promo: 2024 },
     ]);
-    expect((await internal.publicProfile('d-staff', SECRET)).cursus).toEqual([]);
+    expect((await internal.publicProfile('d-staff', SECRET)).cursusViews).toEqual([]);
+    expect((await internal.publicProfile('e-legacy-only', SECRET)).cursusViews).toEqual([
+      { formation: 'Autre', promo: 2020 },
+    ]);
+    expect((await internal.publicProfile('f-null-cursus', SECRET)).cursusViews).toEqual([]);
   });
 });

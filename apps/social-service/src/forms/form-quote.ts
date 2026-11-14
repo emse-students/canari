@@ -1,4 +1,9 @@
-import { cheapestCursus, type CursusChoice, type PricingFacts } from '../pricing/audience';
+import {
+  cheapestCursus,
+  cursusViews,
+  type CursusChoice,
+  type PricingFacts,
+} from '../pricing/audience';
 import {
   pricingViewFor,
   resolveCellPrice,
@@ -17,19 +22,17 @@ import {
 
 /**
  * WHAT A FORM CHARGES A PERSON WITH SEVERAL CURSUS (D32): the form is priced WHOLE once per cursus
- * and the cheapest total wins (`cheapestCursus`). Two operations price a form, and each picks its
- * winner HERE, once, so no caller re-derives a bucket from another cursus than the one priced:
+ * and the cheapest total wins (`cheapestCursus`: an unavailable total loses, a tie goes to the first
+ * cursus). Two operations read it, through ONE rule:
  *
  * - `quoteSubmission`, at submit: the base cell for the visible answers plus every priced grid's
  *   lines for the order actually sent. Option supplements are left out of the comparison - they do
  *   not depend on who the person is, so they add the same amount to every total.
- * - `quoteDisplay`, for the page (`/check`, the public read): there is no order yet, so it compares
- *   a REFERENCE total - the cheapest combination the person's grid row still offers, plus one unit
- *   at every price of every priced grid - and hands the page the winner's slice and grid prices.
- *
- * The two can name different cursus only when two cursus each win on part of the form (one cheaper
- * on a grid's tier, the other on the base cell): the page then totals with the displayed cursus,
- * and submit charges the cheapest, which is never MORE than the page showed.
+ * - `displaySlices`, for the page (`/check`, the public read): there is no order yet, so the page is
+ *   handed EVERY distinct cursus's slice and totals each for the answers as they are typed, with the
+ *   same rule (`frontend/src/lib/forms/fillPricing.ts`). It reveals nothing beyond the viewer's own
+ *   cursus. The two sides are pinned to one table of cases (`cursusPricingCases.json`, asserted by
+ *   `form-quote.spec.ts` here and `fillPricing.test.ts` there).
  */
 
 /** The form fields a quote reads. */
@@ -82,34 +85,35 @@ export function quoteSubmission(
   );
 }
 
-/** What the page is told of the price, for the cursus that won the reference total. */
-export interface DisplayQuote {
+/** What the page is told of the price through ONE cursus: its grid row and its grid prices. */
+export interface CursusSlice {
   pricing: PricingView | null;
   productGridPrices: ProductGridPrices;
 }
 
 /**
- * The cheapest cursus for the page, before any answer: its grid slice and its grid prices, so the
- * buckets and tiers shown are the ones of ONE cursus. A cursus whose grid row is entirely
- * unavailable loses to any other, so the page reports "not open to you" only when every cursus is.
+ * Every DISTINCT slice the person's cursus give, in cursus order (the first cursus's first): two
+ * cursus landing on the same row and the same tiers are one slice, so the page totals no copy. The
+ * page closes an option, or reports "not open to you", only when EVERY slice does.
  */
-export function quoteDisplay(form: QuotedForm, facts: PricingFacts): CursusChoice<DisplayQuote> {
-  return cheapestCursus(
-    facts,
-    (view) => ({
+export function displaySlices(form: QuotedForm, facts: PricingFacts): CursusSlice[] {
+  const slices: CursusSlice[] = [];
+  const seen = new Set<string>();
+  for (const view of cursusViews(facts)) {
+    const slice: CursusSlice = {
       pricing: form.priceMatrix ? pricingViewFor(form.priceMatrix, view) : null,
       productGridPrices: productGridPricesFor(form.items, view),
-    }),
-    (quote) => {
-      const offered = quote.pricing
-        ? Object.values(quote.pricing.cells).filter((cell): cell is number => cell !== null)
-        : [form.basePrice];
-      if (offered.length === 0) return null;
-      const basket = Object.values(quote.productGridPrices).reduce(
-        (sum, viewer) => sum + Object.values(viewer.prices).reduce((a, b) => a + b, 0),
-        0
-      );
-      return Math.min(...offered) + basket;
-    }
-  );
+    };
+    // Built by the same code from the same form, so equal slices serialise identically.
+    const key = JSON.stringify(slice);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    slices.push(slice);
+  }
+  return slices;
+}
+
+/** Whether a slice's grid row is entirely unavailable: nothing this cursus could answer. */
+export function sliceOffersNothing(slice: CursusSlice): boolean {
+  return !!slice.pricing && Object.values(slice.pricing.cells).every((cell) => cell === null);
 }

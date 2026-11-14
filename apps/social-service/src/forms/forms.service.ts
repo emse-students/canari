@@ -136,7 +136,7 @@ import {
   type AudienceCondition,
   type PricingFacts,
 } from '../pricing/audience';
-import { quoteDisplay, quoteSubmission } from './form-quote';
+import { displaySlices, quoteSubmission, sliceOffersNothing, type CursusSlice } from './form-quote';
 import { FORM_COTISATION_HELD, submitRefusalCode, type SubmitRefusalCode } from './submit-refusal';
 import {
   answerEditOff,
@@ -1195,7 +1195,7 @@ export class FormsService {
     // that know nobody: every criterion on promo, formation or cotisation resolves to its "everyone
     // else" tier, and what is left is the answer criteria. The page totals from it; `submit`
     // recomputes what is charged, from the same facts.
-    const guestQuote = quoteDisplay(form, await this.factsFor(form, undefined)).quote;
+    const guestSlices = displaySlices(form, await this.factsFor(form, undefined));
     // AN ALLOWLIST, like `submission.projection.ts`: a column added to the form later is not served
     // to anybody holding the link until someone adds it here. The price fields are what the page
     // needs to show a total; nothing names the owner, the association or its payment account.
@@ -1216,8 +1216,12 @@ export class FormsService {
       basePrice: form.basePrice,
       currency: form.currency,
       allowCashPayment: form.allowCashPayment,
-      pricing: guestQuote.pricing,
-      productGridPrices: guestQuote.productGridPrices,
+      // A guest has no cursus: one slice. `cursusSlices` is what a current page totals from;
+      // [LEGACY] `pricing` and `productGridPrices` are the same slice, for a page older than D32
+      // (legacy-compatibility.md, "the single pricing slice of a fill page").
+      cursusSlices: guestSlices,
+      pricing: guestSlices[0].pricing,
+      productGridPrices: guestSlices[0].productGridPrices,
       paymentsPaused: await this.paymentsPaused(form),
     };
   }
@@ -2220,6 +2224,12 @@ export class FormsService {
      * the page shows and totals them, `submit` recomputes what is charged. Never another category's.
      */
     productGridPrices: ProductGridPrices;
+    /**
+     * EVERY distinct slice the person's cursus give (D32, `displaySlices`): the page totals each for
+     * the answers given and shows the cheapest, with `submit`'s own rule. `pricing` and
+     * `productGridPrices` above are [LEGACY] - the FIRST slice, for a page older than D32.
+     */
+    cursusSlices: CursusSlice[];
   }> {
     const form = await this.formRepo.findOne({ where: respondentFormWhere(formId) });
     if (!form)
@@ -2231,6 +2241,7 @@ export class FormsService {
         maySubmit: false,
         refusalCode: null,
         productGridPrices: {},
+        cursusSlices: [],
       };
 
     // Check global capacity independently of per-user state
@@ -2240,19 +2251,19 @@ export class FormsService {
     }
 
     const facts = await this.factsFor(form, userId);
-    // ONE cursus decides what the page shows - its grid row and its grid tiers (D32, `form-quote.ts`).
-    const display = quoteDisplay(form, facts);
-    const { pricing, productGridPrices } = display.quote;
-    if (display.of > 1) {
+    // Every distinct cursus slice goes to the page, which totals each live (D32, `form-quote.ts`);
+    // the first is also served alone, for a page older than D32.
+    const cursusSlices = displaySlices(form, facts);
+    const { pricing, productGridPrices } = cursusSlices[0];
+    if (cursusSlices.length > 1) {
       this.logger.debug(
-        `[FORMS] check form=${form.id.slice(0, 8)} shown for ${describeCursus(display)}`
+        `[FORMS] check form=${form.id.slice(0, 8)} slices=${cursusSlices.length} (one per distinct cursus)`
       );
     }
-    // A profile row where EVERY combination is unavailable is a form this person cannot answer
-    // whatever they click, which is the same outcome as an audience condition refusing them - so it
-    // is reported the same way rather than shown as a form with no price.
-    const noCombinationAvailable =
-      !!pricing && Object.values(pricing.cells).every((cell) => cell === null);
+    // A profile row where EVERY combination is unavailable - through every cursus - is a form this
+    // person cannot answer whatever they click, which is the same outcome as an audience condition
+    // refusing them - so it is reported the same way rather than shown as a form with no price.
+    const noCombinationAvailable = cursusSlices.every(sliceOffersNothing);
     // The same classification `submit` refuses with, so the page and the 403 are one fact.
     const refusalCode = submitRefusalCode(form.submitCondition, facts);
     const maySubmit = refusalCode === null && !noCombinationAvailable;
@@ -2269,6 +2280,7 @@ export class FormsService {
         maySubmit,
         refusalCode,
         productGridPrices,
+        cursusSlices,
       };
 
     // An anonymous form's answers know no author, so "has this account answered" is read from the
@@ -2284,6 +2296,7 @@ export class FormsService {
         maySubmit,
         refusalCode,
         productGridPrices,
+        cursusSlices,
       };
     }
 
@@ -2312,6 +2325,7 @@ export class FormsService {
       maySubmit,
       refusalCode,
       productGridPrices,
+      cursusSlices,
     };
   }
 

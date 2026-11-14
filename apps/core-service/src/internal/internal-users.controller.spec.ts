@@ -62,9 +62,9 @@ describe('InternalUsersController.publicProfile and the review cohort', () => {
       displayName: 'Name',
       promo: 2024,
       formation: 'F',
-      cursus: [
-        { formation: 'F', promo: 2024 },
-        { formation: 'G', promo: 2025 },
+      cursusViews: [
+        { promo: 2024, formation: 'F' },
+        { promo: 2025, formation: 'G' },
       ],
     });
   });

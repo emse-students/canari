@@ -739,8 +739,8 @@ describe('SubmitFormDto - a grid answer through the real ValidationPipe', () => 
 
 /**
  * D32 THROUGH `FormsService`: two cursus pay the most favourable price - the WHOLE form priced per
- * cursus (base cell + every grid's lines), the cheapest total charged, and what the page shows read
- * from ONE cursus; a question or a submission open to either cursus is open. Each case failed when
+ * cursus (base cell + every grid's lines), the cheapest total charged, and the page handed every
+ * cursus's slice to total the same way; a question or a submission open to either cursus is open. Each case failed when
  * only the first cursus was read.
  */
 describe('FormsService - two cursus (D32)', () => {
@@ -792,15 +792,39 @@ describe('FormsService - two cursus (D32)', () => {
     );
   });
 
-  it('the page is shown ONE cursus: the base slice and the grid tier of the same winner', async () => {
+  it('the page is handed EVERY cursus slice, and the first alone in the legacy fields', async () => {
     const { service } = makeService({ form: matrixAndPromoGrid(), facts: ICM_THEN_1A });
     const check = await service.hasSubmission('f1', 'u1');
-    // Reference totals: first 1000 + 1600, second 2000 + 500 - the second wins, whole.
-    expect(check.productGridPrices['q-grid']).toEqual(
-      expect.objectContaining({ tierId: 'p26', tierLabel: '1A' })
-    );
-    expect(check.pricing?.baseCents).toBe(2000);
-    expect(check.pricing?.appliedLabels).toEqual([]);
+    // One slice per cursus, in cursus order: the page totals each and shows the cheapest.
+    expect(check.cursusSlices.map((s) => s.pricing?.baseCents)).toEqual([1000, 2000]);
+    expect(check.cursusSlices.map((s) => s.productGridPrices['q-grid'].tierId)).toEqual([
+      '_others',
+      'p26',
+    ]);
+    // [LEGACY] a page older than D32 reads the first slice, as it did when there was one cursus.
+    expect(check.pricing).toEqual(check.cursusSlices[0].pricing);
+    expect(check.productGridPrices).toEqual(check.cursusSlices[0].productGridPrices);
+  });
+
+  it('is open while ANY cursus has an available combination', async () => {
+    const form = baseForm({
+      items: [],
+      priceMatrix: {
+        dimensions: [
+          {
+            id: 'form',
+            kind: 'formation',
+            buckets: [{ id: 'icm', label: 'ICM', values: ['ICM'] }],
+          },
+        ],
+        cells: { icm: null, _others: 1500 },
+      },
+    });
+    const check = await makeService({ form, facts: ICM_THEN_1A }).service.hasSubmission('f1', 'u1');
+    expect(check.maySubmit).toBe(true);
+    const icmOnly = factsOf({ cursus: [{ formation: 'ICM', promo: 2024 }] });
+    const closed = await makeService({ form, facts: icmOnly }).service.hasSubmission('f1', 'u1');
+    expect(closed.maySubmit).toBe(false);
   });
 
   it('a question shown to the second cursus is shown, required and stored; the submission is allowed through it', async () => {
