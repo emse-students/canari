@@ -17,6 +17,9 @@ import {
 
 /** The MLS service the notices consume events from, while an account is signed in. */
 let registeredMls: IMlsService | null = null;
+/** Whether the revoked-device check was asked before an account registered and is still owed. */
+let dropOwedAtRegistration = false;
+
 /** The signed-in account and this device, read live, while the notices are registered. */
 let registeredSession: Pick<DeviceNoticeSession, 'getUserId' | 'getMyDeviceId'> | null = null;
 
@@ -66,7 +69,16 @@ export async function revokeNoticedDevice(deviceId: string): Promise<boolean> {
 export async function dropAlertsOfRevokedDevices(): Promise<void> {
   const mls = registeredMls;
   const session = registeredSession;
-  if (!mls || !session) return;
+  if (!mls || !session) {
+    // The notifications view can open BEFORE the session registers (a cold start or a reload lands
+    // on it directly): the check is owed, and `registerDeviceNotices` runs it once the account is
+    // there. Read on the Mi 9T 2026-11-14: without this the alert of a revoked device stayed.
+    dropOwedAtRegistration = true;
+    console.log(
+      '[DEVICE_NOTICE] revoked-device check deferred: no account registered yet, it runs at registration'
+    );
+    return;
+  }
   const userId = session.getUserId();
   await dropNoticesOfRevokedDevices(userId, (deviceId) => mls.isDeviceRevoked(userId, deviceId));
 }
@@ -79,6 +91,7 @@ export function unregisterDeviceNotices(): void {
   registeredMls?.setDeviceEventConsumer(null);
   registeredMls = null;
   registeredSession = null;
+  dropOwedAtRegistration = false;
   setRefusedDeviceListener(null);
   forgetDeviceNotices();
 }
@@ -295,6 +308,13 @@ export function registerDeviceNotices(mls: IMlsService, session: DeviceNoticeSes
   loadDeviceNotices(session.getUserId());
   registeredMls = mls;
   registeredSession = session;
+  if (dropOwedAtRegistration) {
+    dropOwedAtRegistration = false;
+    console.log(
+      '[DEVICE_NOTICE] running the revoked-device check that was asked before registration'
+    );
+    void dropAlertsOfRevokedDevices();
+  }
   const onPhone = isMobileTauriRuntime();
   const refusedCtx = () => ({ ownUserId: session.getUserId() });
   // The refusals this device already remembers, then each new one as it is recorded - logged only.
