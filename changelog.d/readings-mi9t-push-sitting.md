@@ -1,3 +1,5 @@
 ### Docs - the Mi 9T push sitting of the readings triage, on `1.6.12-alpha.2` against dev
 
 Read and closed on the Mi 9T, the beta web seat as the peer: the resume reload's last half (no duplicate `recevoir_messages_batch` and no error line over two background-and-resume cycles with frames received while away), NOTIF-10 (five messages through a radio cut, the shade ends with the real banners and no generic line) and the sender's face on a DM and a group banner. Mi 9T halves read, the iPhone halves still owed: the whole shade sitting (6b, 6c, 6d, K, D2, D3), check C (the push row carries the group's name) and the ciphertext carried once. Each verdict is in its entry of [the readings owed](docs/wiki/plan.md#readings-owed).
+
+Batch 2 reads the Mi 9T half of "a comment opens at the comment" (killed, backgrounded, the bell) and the French half of the co-organiser push. It also turns the dead-session push tap into a P2 defect: two of four taps signed in to the wrong page, by two measured mechanisms. A P3 defect is filed: a reply on your own post is sent as a comment and counted against the daily cap.

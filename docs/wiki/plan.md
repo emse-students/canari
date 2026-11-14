@@ -63,6 +63,7 @@ earliest version, as a checklist.
 - [P2 - a frame read before a browser kill is called "never read here" on the next cold start](backlog.d/reading-owed-the-live-seen-cipher-mark-written-at-the-checkpoint.md)
 - [P2 - the retention durations a sweep applies are not yet admin settings](backlog.d/retention-durations-not-yet-settings.md)
 - [P2 - what the keyboard readings of 2026-11-14 filed: a photo DM still jumps to older messages, a short thread loads history on close, a 12 px step](backlog.d/what-the-keyboard-readings-of-2026-11-14-filed.md)
+- [P2 - a push tapped after the session ended can sign in to the wrong page: a bare `/login` on a cold start, a stale `returnTo` on a mounted login page (Mi 9T, 2026-11-15)](backlog.d/p2-a-push-tapped-after-the-session-ended-can-sign-in-to-the-wrong-page.md)
 
 **P3 - hygiene**
 
@@ -78,6 +79,7 @@ earliest version, as a checklist.
 - [P3 - comment pushes after the first on one post raised no banner on the iPhone (read 2026-11-14)](backlog.d/p3-comment-pushes-after-the-first-on-one-post-raised-no-banner-on-the-iphone.md)
 - [P3 - "server already unreachable" is logged once per request instead of once per transition (1.6.11 logs, 2026-11-14)](backlog.d/p3-server-already-unreachable-is-logged-per-request.md)
 - [P3 - EXIT-FORTIFY: closing the app on the Mi 9T logs `FORTIFY: pthread_mutex_lock called on a destroyed mutex` from the render thread](backlog.d/reading-owed-exit-fortify-closing-the-app-on-the-mi-9t-logged-fortify-pthread.md)
+- [P3 - a reply to your own comment on your own post is notified as a "comment": it reads "a commenté" and counts against the daily push cap](backlog.d/p3-a-reply-to-your-comment-on-your-own-post-is-notified-as-a-comment.md)
 - [P3 - the gated `video-switch` and `video-off-on` call rows read 19.6-25 fps against a threshold of 27](backlog.d/p3-the-gated-video-switch-and-video-off-on-rig-rows-read-19-6-25-fps-threshold-27.md)
 
 ### Readings owed
@@ -90,7 +92,6 @@ earliest version, as a checklist.
 - [ ] [the GRP-3 socket close placed with `ws1.mjs`](backlog.d/p2-a-live-socket-dies-in-the-middle-of-grp-3-and-no-navigation-explains-it-2026.md)
 - [ ] [the named readers' live chat switch on dev](backlog.d/named-readers-comments-switch-readings-owed.md)
 - [ ] [the in-session community join through the deep link on the phones](backlog.d/p1-owed-one-live-reading-of-the-in-session-join-fix-2026-10-08.md)
-- [ ] [a post push tapped with the session dead lands on `/login?returnTo=` the post](backlog.d/reading-owed-a-post-push-tapped-with-the-session-dead-lands-on-login-returnto.md)
 - [ ] [a 13 MB attachment: the bytes out of the outbox row, an evicted blob parked as `upload_error`](backlog.d/reading-owed-a-13-mb-attachment-the-bytes-out-of-the-outbox-row-an-evicted-blob.md)
 - [ ] [a notification tap to a usable conversation: F1](backlog.d/reading-owed-a-notification-tap-to-a-usable-conversation-f1.md)
 - [ ] [a group joined in the background before its row existed: the "already held" Welcome writes and announces the row, the...](backlog.d/reading-owed-a-group-joined-in-the-background-before-its-row-existed-the.md)
