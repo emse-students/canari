@@ -1475,7 +1475,14 @@ every readiness write, cashier claim and purchase decision already takes - the a
   one whose association reads ready again before the release reached it. The check that the caller
   may reach the association (`assertReviewerReachesAssociation`) runs before any of this. Until
   2026-11-14 the preparation checked `isActive` first and the payer read a 404 for a product that
-  was only waiting for its payments (any revert, not only the bridge's).
+  was only waiting for its payments (any revert, not only the bridge's). **What the changed answer
+  tells:** a caller who holds a withheld product's id and reaches its association now reads the
+  payments-not-ready refusal where it read a 404 - a product CREATED while payments were not ready,
+  and so never on sale, included. Nothing becomes buyable: a withheld product of an association
+  that reads ready again is still the 404, and `decidePurchase` still refuses an inactive product
+  under the lock. **Rows from before migration 057:** that migration marked every then-inactive
+  product withheld, so a product a manager took off sale BEFORE it answers the not-ready refusal
+  while its association is not ready, and the 404 once it is.
 - **What the integration spec proves** (`lydia-account-bridge.integration.spec.ts`), with each
   interleaving forced rather than hoped for: three purchases DECIDED on the switched Business and
   answered error 5 together (the fake core holds the three refusals until all three arrived) make
