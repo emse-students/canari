@@ -312,7 +312,7 @@ adminer:<tag>@sha256:<digest>` with `canari.deploy.replace: pinned` and no `buil
 Dockerfile, its `build.yml` and `scheduled.yml` lines, the image checks of `adminer-route.test.mjs`, and
 this entry. The scan then reads the upstream reference again (`image-scan-targets.sh`).
 
-### Removal once the WP3 backfill is applied and `[PROFILE_CURSUS_BEHIND]` is silent for 7 days - the legacy pair as a cursus view (D32, 2026-11-14)
+### Removal with WP6, once `[PROFILE_CURSUS_BEHIND]` is silent for 7 days - the legacy pair as a cursus view (D32, 2026-11-14)
 
 **Site:** `cursusViewsOf` (`apps/core-service/src/users/miconnect-profile.ts`), served as
 `cursusViews` by `internal/users/:id/public-profile`; the legacy half of `cursusEntryFilter`
@@ -327,9 +327,14 @@ or the picker than before it. Each time it is added, core-service logs WARN
 `[PROFILE_CURSUS_BEHIND] user=<8-char prefix> legacy promo=.. formation=.. is in no cursus entry`.
 **The cost while it stands:** a second source for one fact on every profile-priced operation, and two
 `OR` branches in two queries.
-**Removal condition:** the backfill applied on production (the measure is in #3530's body:
-`legacy_only` and `first_entry_disagrees` at 0) and no `[PROFILE_CURSUS_BEHIND]` line for 7 days. It
-goes WITH WP6, which drops the columns: delete the legacy half of `cursusViewsOf`, of
+**Measured on production, 2026-11-14** (read-only count authorised by the owner, the query in #3530's
+body): `not_array` 0, `legacy_only` 0, `first_entry_disagrees` 0, `multi_cursus` 0 over 563 accounts.
+So that day nobody depended on the legacy pair alone, the first entry agreed with the columns
+everywhere, and nobody had two cursus yet: the shim was a guard, not a rescue.
+`[PROFILE_CURSUS_BEHIND]` stays the witness of any later drift (a write path that sets the columns
+without the cursus).
+**Removal condition:** no `[PROFILE_CURSUS_BEHIND]` line for 7 days, then WITH WP6 - dropping the
+`promo`/`formation` columns is that later chantier, not D32's pull request: delete the legacy half of `cursusViewsOf`, of
 `cursusEntryFilter` and of `FORMATIONS_SQL`, their spec cases and this entry.
 
 ### Removal once `minClientVersion` passes the release carrying D32 - the single pricing slice of a fill page (2026-11-14)

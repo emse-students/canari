@@ -1,8 +1,9 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { OTHERS_BUCKET_ID } from '$lib/pricing/priceMatrix';
 import type { FormItem, PricingView } from './api';
 import { bucketIdOf, cursusSlicesOf, fillPriceState, optionModifierOf } from './fillPricing';
-import CASES from './cursusPricingCases.json';
 
 /**
  * The price both fill pages show (member and guest). Moved out of the member page so the guest page
@@ -108,6 +109,22 @@ describe('bucketIdOf', () => {
   });
 });
 
+/** One case of `libs/contracts/cursus-pricing.cases.json`, the part the page reads. */
+interface PricingCase {
+  name: string;
+  form: { basePrice: number; items: unknown[] };
+  answers: Record<string, unknown>;
+  slices: { productGridPrices: unknown }[];
+  expected: { cents: number | null; cursusIndex: number; closedOptionIds: string[] };
+}
+
+const CASES = JSON.parse(
+  readFileSync(
+    join(__dirname, '..', '..', '..', '..', 'libs', 'contracts', 'cursus-pricing.cases.json'),
+    'utf8'
+  )
+) as { cases: PricingCase[] };
+
 /**
  * D32's ONE rule, pinned on both sides by one table: `apps/social-service/src/forms/form-quote.spec.ts`
  * asserts the server serves exactly these slices and charges exactly `expected`; here the page,
@@ -132,7 +149,7 @@ describe('fillPriceState - the shared table of cursus pricing cases (D32)', () =
     }
     expect([...s.unavailableOptionIds].sort()).toEqual([...c.expected.closedOptionIds].sort());
     // What the page names and the grids show come from the winning slice, never another.
-    const winner = (c.slices as { productGridPrices: unknown }[])[c.expected.cursusIndex];
+    const winner = c.slices[c.expected.cursusIndex];
     expect(s.productGridPrices).toEqual(winner.productGridPrices);
   });
 

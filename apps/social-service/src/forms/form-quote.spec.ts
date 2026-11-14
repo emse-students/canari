@@ -4,7 +4,7 @@ import { displaySlices, quoteSubmission, sliceOffersNothing, type QuotedForm } f
 import type { CursusView, PricingFacts } from '../pricing/audience';
 
 /**
- * D32's ONE rule, pinned on both sides by one table: `cursusPricingCases.json` beside the fill
+ * D32's ONE rule, pinned on both sides by one table: `libs/contracts/cursus-pricing.cases.json`, shared with the fill
  * page's `fillPricing.ts`, which `fillPricing.test.ts` asserts there. Here: the server serves
  * exactly the slices the page is tested on, and charges exactly what the page shows - the cheapest
  * whole total, an unavailable one losing, a tie to the first cursus - with an option closed iff no
@@ -22,10 +22,7 @@ interface PricingCase {
 }
 
 const TABLE = JSON.parse(
-  readFileSync(
-    resolve(__dirname, '../../../../frontend/src/lib/forms/cursusPricingCases.json'),
-    'utf8'
-  )
+  readFileSync(resolve(__dirname, '../../../../libs/contracts/cursus-pricing.cases.json'), 'utf8')
 ) as { cases: PricingCase[] };
 
 /** The facts `submit` builds: a choice answer as a list, a grid's order left to `rawAnswers`. */

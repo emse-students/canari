@@ -1,5 +1,5 @@
 {
-  "_doc": "D32: ONE table of cases pinning the fill page (fillPricing.ts) and the server (form-quote.ts) to the same rule - each cursus priced whole, an unavailable total loses, a tie goes to the first cursus, an option closed only when every slice closes it. `slices` is what the server serves for the person (asserted by apps/social-service/src/forms/form-quote.spec.ts), `expected` what both sides compute from it (fillPricing.test.ts). cursusIndex counts SLICES, which are the person's cursus in order, duplicates folded.",
+  "_doc": "D32: ONE table of cases pinning the fill page (fillPricing.ts) and the server (form-quote.ts) to the same rule - each cursus priced whole, an unavailable total loses, a tie goes to the first cursus, an option closed only when every slice closes it. Read from disk by both sides (docs/wiki/libs.md). `slices` is what the server serves for the person (asserted by apps/social-service/src/forms/form-quote.spec.ts), `expected` what both sides compute from it (frontend/src/lib/forms/fillPricing.test.ts). cursusIndex counts SLICES, which are the person's cursus in order, duplicates folded.",
   "cases": [
     {
       "name": "a combination closed for the first cursus is open, at its price, through the second (review, scenario 1)",
@@ -14,7 +14,9 @@
                 {
                   "id": "icm",
                   "label": "ICM",
-                  "values": ["ICM"]
+                  "values": [
+                    "ICM"
+                  ]
                 }
               ]
             },
@@ -26,12 +28,16 @@
                 {
                   "id": "repas",
                   "label": "Repas",
-                  "values": ["opt_repas"]
+                  "values": [
+                    "opt_repas"
+                  ]
                 },
                 {
                   "id": "sans",
                   "label": "Sans",
-                  "values": ["opt_sans"]
+                  "values": [
+                    "opt_sans"
+                  ]
                 }
               ]
             }
@@ -88,7 +94,9 @@
         {
           "pricing": {
             "baseCents": null,
-            "appliedLabels": ["ICM"],
+            "appliedLabels": [
+              "ICM"
+            ],
             "answerDimensions": [
               {
                 "id": "formule",
@@ -97,12 +105,16 @@
                   {
                     "id": "repas",
                     "label": "Repas",
-                    "values": ["opt_repas"]
+                    "values": [
+                      "opt_repas"
+                    ]
                   },
                   {
                     "id": "sans",
                     "label": "Sans",
-                    "values": ["opt_sans"]
+                    "values": [
+                      "opt_sans"
+                    ]
                   }
                 ]
               }
@@ -112,7 +124,9 @@
               "sans": null,
               "_others": null
             },
-            "ignoredModifierQuestionIds": ["q_formule"]
+            "ignoredModifierQuestionIds": [
+              "q_formule"
+            ]
           },
           "productGridPrices": {}
         },
@@ -128,12 +142,16 @@
                   {
                     "id": "repas",
                     "label": "Repas",
-                    "values": ["opt_repas"]
+                    "values": [
+                      "opt_repas"
+                    ]
                   },
                   {
                     "id": "sans",
                     "label": "Sans",
-                    "values": ["opt_sans"]
+                    "values": [
+                      "opt_sans"
+                    ]
                   }
                 ]
               }
@@ -143,7 +161,9 @@
               "sans": 1000,
               "_others": null
             },
-            "ignoredModifierQuestionIds": ["q_formule"]
+            "ignoredModifierQuestionIds": [
+              "q_formule"
+            ]
           },
           "productGridPrices": {}
         }
@@ -162,7 +182,9 @@
                 {
                   "id": "icm",
                   "label": "ICM",
-                  "values": ["ICM"]
+                  "values": [
+                    "ICM"
+                  ]
                 }
               ]
             },
@@ -174,12 +196,16 @@
                 {
                   "id": "repas",
                   "label": "Repas",
-                  "values": ["opt_repas"]
+                  "values": [
+                    "opt_repas"
+                  ]
                 },
                 {
                   "id": "sans",
                   "label": "Sans",
-                  "values": ["opt_sans"]
+                  "values": [
+                    "opt_sans"
+                  ]
                 }
               ]
             }
@@ -236,7 +262,9 @@
         {
           "pricing": {
             "baseCents": null,
-            "appliedLabels": ["ICM"],
+            "appliedLabels": [
+              "ICM"
+            ],
             "answerDimensions": [
               {
                 "id": "formule",
@@ -245,12 +273,16 @@
                   {
                     "id": "repas",
                     "label": "Repas",
-                    "values": ["opt_repas"]
+                    "values": [
+                      "opt_repas"
+                    ]
                   },
                   {
                     "id": "sans",
                     "label": "Sans",
-                    "values": ["opt_sans"]
+                    "values": [
+                      "opt_sans"
+                    ]
                   }
                 ]
               }
@@ -260,7 +292,9 @@
               "sans": null,
               "_others": null
             },
-            "ignoredModifierQuestionIds": ["q_formule"]
+            "ignoredModifierQuestionIds": [
+              "q_formule"
+            ]
           },
           "productGridPrices": {}
         },
@@ -276,12 +310,16 @@
                   {
                     "id": "repas",
                     "label": "Repas",
-                    "values": ["opt_repas"]
+                    "values": [
+                      "opt_repas"
+                    ]
                   },
                   {
                     "id": "sans",
                     "label": "Sans",
-                    "values": ["opt_sans"]
+                    "values": [
+                      "opt_sans"
+                    ]
                   }
                 ]
               }
@@ -291,7 +329,9 @@
               "sans": 1000,
               "_others": null
             },
-            "ignoredModifierQuestionIds": ["q_formule"]
+            "ignoredModifierQuestionIds": [
+              "q_formule"
+            ]
           },
           "productGridPrices": {}
         }
@@ -310,7 +350,9 @@
                 {
                   "id": "icm",
                   "label": "ICM",
-                  "values": ["ICM"]
+                  "values": [
+                    "ICM"
+                  ]
                 }
               ]
             },
@@ -322,12 +364,16 @@
                 {
                   "id": "repas",
                   "label": "Repas",
-                  "values": ["opt_repas"]
+                  "values": [
+                    "opt_repas"
+                  ]
                 },
                 {
                   "id": "sans",
                   "label": "Sans",
-                  "values": ["opt_sans"]
+                  "values": [
+                    "opt_sans"
+                  ]
                 }
               ]
             }
@@ -384,7 +430,9 @@
         {
           "pricing": {
             "baseCents": null,
-            "appliedLabels": ["ICM"],
+            "appliedLabels": [
+              "ICM"
+            ],
             "answerDimensions": [
               {
                 "id": "formule",
@@ -393,12 +441,16 @@
                   {
                     "id": "repas",
                     "label": "Repas",
-                    "values": ["opt_repas"]
+                    "values": [
+                      "opt_repas"
+                    ]
                   },
                   {
                     "id": "sans",
                     "label": "Sans",
-                    "values": ["opt_sans"]
+                    "values": [
+                      "opt_sans"
+                    ]
                   }
                 ]
               }
@@ -408,7 +460,9 @@
               "sans": 500,
               "_others": null
             },
-            "ignoredModifierQuestionIds": ["q_formule"]
+            "ignoredModifierQuestionIds": [
+              "q_formule"
+            ]
           },
           "productGridPrices": {}
         },
@@ -424,12 +478,16 @@
                   {
                     "id": "repas",
                     "label": "Repas",
-                    "values": ["opt_repas"]
+                    "values": [
+                      "opt_repas"
+                    ]
                   },
                   {
                     "id": "sans",
                     "label": "Sans",
-                    "values": ["opt_sans"]
+                    "values": [
+                      "opt_sans"
+                    ]
                   }
                 ]
               }
@@ -439,7 +497,9 @@
               "sans": 1000,
               "_others": null
             },
-            "ignoredModifierQuestionIds": ["q_formule"]
+            "ignoredModifierQuestionIds": [
+              "q_formule"
+            ]
           },
           "productGridPrices": {}
         }
@@ -458,7 +518,9 @@
                 {
                   "id": "icm",
                   "label": "ICM",
-                  "values": ["ICM"]
+                  "values": [
+                    "ICM"
+                  ]
                 }
               ]
             },
@@ -470,12 +532,16 @@
                 {
                   "id": "repas",
                   "label": "Repas",
-                  "values": ["opt_repas"]
+                  "values": [
+                    "opt_repas"
+                  ]
                 },
                 {
                   "id": "sans",
                   "label": "Sans",
-                  "values": ["opt_sans"]
+                  "values": [
+                    "opt_sans"
+                  ]
                 }
               ]
             }
@@ -532,7 +598,9 @@
         {
           "pricing": {
             "baseCents": null,
-            "appliedLabels": ["ICM"],
+            "appliedLabels": [
+              "ICM"
+            ],
             "answerDimensions": [
               {
                 "id": "formule",
@@ -541,12 +609,16 @@
                   {
                     "id": "repas",
                     "label": "Repas",
-                    "values": ["opt_repas"]
+                    "values": [
+                      "opt_repas"
+                    ]
                   },
                   {
                     "id": "sans",
                     "label": "Sans",
-                    "values": ["opt_sans"]
+                    "values": [
+                      "opt_sans"
+                    ]
                   }
                 ]
               }
@@ -556,7 +628,9 @@
               "sans": 1000,
               "_others": null
             },
-            "ignoredModifierQuestionIds": ["q_formule"]
+            "ignoredModifierQuestionIds": [
+              "q_formule"
+            ]
           },
           "productGridPrices": {}
         },
@@ -572,12 +646,16 @@
                   {
                     "id": "repas",
                     "label": "Repas",
-                    "values": ["opt_repas"]
+                    "values": [
+                      "opt_repas"
+                    ]
                   },
                   {
                     "id": "sans",
                     "label": "Sans",
-                    "values": ["opt_sans"]
+                    "values": [
+                      "opt_sans"
+                    ]
                   }
                 ]
               }
@@ -587,7 +665,9 @@
               "sans": 1000,
               "_others": null
             },
-            "ignoredModifierQuestionIds": ["q_formule"]
+            "ignoredModifierQuestionIds": [
+              "q_formule"
+            ]
           },
           "productGridPrices": {}
         }
@@ -606,7 +686,9 @@
                 {
                   "id": "icm",
                   "label": "ICM",
-                  "values": ["ICM"]
+                  "values": [
+                    "ICM"
+                  ]
                 }
               ]
             },
@@ -618,12 +700,16 @@
                 {
                   "id": "repas",
                   "label": "Repas",
-                  "values": ["opt_repas"]
+                  "values": [
+                    "opt_repas"
+                  ]
                 },
                 {
                   "id": "sans",
                   "label": "Sans",
-                  "values": ["opt_sans"]
+                  "values": [
+                    "opt_sans"
+                  ]
                 }
               ]
             }
@@ -674,13 +760,17 @@
       "expected": {
         "cents": null,
         "cursusIndex": 0,
-        "closedOptionIds": ["opt_sans"]
+        "closedOptionIds": [
+          "opt_sans"
+        ]
       },
       "slices": [
         {
           "pricing": {
             "baseCents": null,
-            "appliedLabels": ["ICM"],
+            "appliedLabels": [
+              "ICM"
+            ],
             "answerDimensions": [
               {
                 "id": "formule",
@@ -689,12 +779,16 @@
                   {
                     "id": "repas",
                     "label": "Repas",
-                    "values": ["opt_repas"]
+                    "values": [
+                      "opt_repas"
+                    ]
                   },
                   {
                     "id": "sans",
                     "label": "Sans",
-                    "values": ["opt_sans"]
+                    "values": [
+                      "opt_sans"
+                    ]
                   }
                 ]
               }
@@ -704,7 +798,9 @@
               "sans": null,
               "_others": null
             },
-            "ignoredModifierQuestionIds": ["q_formule"]
+            "ignoredModifierQuestionIds": [
+              "q_formule"
+            ]
           },
           "productGridPrices": {}
         },
@@ -720,12 +816,16 @@
                   {
                     "id": "repas",
                     "label": "Repas",
-                    "values": ["opt_repas"]
+                    "values": [
+                      "opt_repas"
+                    ]
                   },
                   {
                     "id": "sans",
                     "label": "Sans",
-                    "values": ["opt_sans"]
+                    "values": [
+                      "opt_sans"
+                    ]
                   }
                 ]
               }
@@ -735,7 +835,9 @@
               "sans": null,
               "_others": null
             },
-            "ignoredModifierQuestionIds": ["q_formule"]
+            "ignoredModifierQuestionIds": [
+              "q_formule"
+            ]
           },
           "productGridPrices": {}
         }
@@ -754,7 +856,9 @@
                 {
                   "id": "icm",
                   "label": "ICM",
-                  "values": ["ICM"]
+                  "values": [
+                    "ICM"
+                  ]
                 }
               ]
             }
@@ -792,7 +896,9 @@
                 }
               ],
               "maxPerCell": 3,
-              "closedCells": ["noir:xs"],
+              "closedCells": [
+                "noir:xs"
+              ],
               "pricing": {
                 "mode": "single",
                 "tiers": {
@@ -802,7 +908,9 @@
                     {
                       "id": "p26",
                       "label": "1A",
-                      "values": [2026]
+                      "values": [
+                        2026
+                      ]
                     }
                   ]
                 },
@@ -843,7 +951,9 @@
         {
           "pricing": {
             "baseCents": 1000,
-            "appliedLabels": ["ICM"],
+            "appliedLabels": [
+              "ICM"
+            ],
             "answerDimensions": [],
             "cells": {
               "": 1000
@@ -895,7 +1005,9 @@
                 {
                   "id": "icm",
                   "label": "ICM",
-                  "values": ["ICM"]
+                  "values": [
+                    "ICM"
+                  ]
                 }
               ]
             },
@@ -907,12 +1019,16 @@
                 {
                   "id": "repas",
                   "label": "Repas",
-                  "values": ["opt_repas"]
+                  "values": [
+                    "opt_repas"
+                  ]
                 },
                 {
                   "id": "sans",
                   "label": "Sans",
-                  "values": ["opt_sans"]
+                  "values": [
+                    "opt_sans"
+                  ]
                 }
               ]
             }
@@ -963,13 +1079,17 @@
       "expected": {
         "cents": 500,
         "cursusIndex": 0,
-        "closedOptionIds": ["opt_sans"]
+        "closedOptionIds": [
+          "opt_sans"
+        ]
       },
       "slices": [
         {
           "pricing": {
             "baseCents": null,
-            "appliedLabels": ["ICM"],
+            "appliedLabels": [
+              "ICM"
+            ],
             "answerDimensions": [
               {
                 "id": "formule",
@@ -978,12 +1098,16 @@
                   {
                     "id": "repas",
                     "label": "Repas",
-                    "values": ["opt_repas"]
+                    "values": [
+                      "opt_repas"
+                    ]
                   },
                   {
                     "id": "sans",
                     "label": "Sans",
-                    "values": ["opt_sans"]
+                    "values": [
+                      "opt_sans"
+                    ]
                   }
                 ]
               }
@@ -993,7 +1117,9 @@
               "sans": null,
               "_others": null
             },
-            "ignoredModifierQuestionIds": ["q_formule"]
+            "ignoredModifierQuestionIds": [
+              "q_formule"
+            ]
           },
           "productGridPrices": {}
         }

@@ -31,7 +31,7 @@ import {
  * - `displaySlices`, for the page (`/check`, the public read): there is no order yet, so the page is
  *   handed EVERY distinct cursus's slice and totals each for the answers as they are typed, with the
  *   same rule (`frontend/src/lib/forms/fillPricing.ts`). It reveals nothing beyond the viewer's own
- *   cursus. The two sides are pinned to one table of cases (`cursusPricingCases.json`, asserted by
+ *   cursus. The two sides are pinned to one table of cases (`libs/contracts/cursus-pricing.cases.json`, asserted by
  *   `form-quote.spec.ts` here and `fillPricing.test.ts` there).
  */
 

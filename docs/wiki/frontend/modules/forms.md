@@ -595,7 +595,7 @@ option supplements do not depend on the cursus and are left out of the compariso
 (`fillPricing.ts`) totals each slice for the current answers and shows the cheapest with the same
 rule; an option is closed, and "combinaison indisponible" said, only when EVERY slice closes it;
 the label and the grid prices shown are the winning slice's; the form is "not open to you" only when
-every slice's row is entirely unavailable. One table of cases, `frontend/src/lib/forms/cursusPricingCases.json`,
+every slice's row is entirely unavailable. One table of cases, `libs/contracts/cursus-pricing.cases.json` ([libs](../../libs.md#cursus-pricingcasesjson)),
 is asserted by `form-quote.spec.ts` on the server and `fillPricing.test.ts` on the page, so the two
 cannot drift. `pricing` and `productGridPrices` alone are still served - the FIRST slice - for a page
 older than D32 ([legacy-compatibility](../../legacy-compatibility.md)).

@@ -247,8 +247,11 @@ built.
   or allowed. **BUILT 2026-11-14 - as built:** core-service's internal public profile serves
   `cursusViews` (`cursusViewsOf`: every well-formed entry, PLUS the legacy `promo`/`formation` pair
   when no entry carries it - D32 only ever adds, so a person the WP3 backfill has not reached keeps
-  exactly what they had, logged `[PROFILE_CURSUS_BEHIND]`, [legacy-compatibility](legacy-compatibility.md)),
-  and social-service's `PricingFacts` carries the list (`NO_CURSUS`, one empty view, for a person with
+  exactly what they had, logged `[PROFILE_CURSUS_BEHIND]`, [legacy-compatibility](legacy-compatibility.md)). Measured on
+  production 2026-11-14 over 563 accounts: no `cursus` that is not a list, nobody with the legacy pair
+  alone, no first entry disagreeing with the columns, nobody with two cursus yet - so the pair is a
+  guard today and `[PROFILE_CURSUS_BEHIND]` the witness of any drift; dropping the columns is WP6,
+  a later chantier, not D32's pull request. Social-service's `PricingFacts` carries the list (`NO_CURSUS`, one empty view, for a person with
   none). A condition - a form question's `showIf`, `submitCondition`, a booking space's audience -
   holds through ANY cursus, promo and formation from the same entry; a price is computed WHOLE per
   cursus (base cell, product-grid lines) and the cheapest total wins, ties to the first cursus, and

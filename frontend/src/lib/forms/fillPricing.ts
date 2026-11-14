@@ -24,7 +24,7 @@ import { productGridOrderLines } from './productGridFill';
  * the current answers and the cheapest is shown, with the server's own rule (`form-quote.ts`): an
  * unavailable total loses to any price, a tie goes to the first slice. An option is closed, and the
  * price reported unavailable, only when EVERY slice says so. Both sides are pinned to one table of
- * cases, `cursusPricingCases.json`.
+ * cases, `libs/contracts/cursus-pricing.cases.json`.
  */
 export interface FillPriceState {
   /** The base price their answers land on; `null` for a combination that does not exist. */

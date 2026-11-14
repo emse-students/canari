@@ -805,6 +805,17 @@ jobs:
           CORE_IT_DATABASE_URL: postgres://canari:boot-probe@localhost:5432/boot_probe
         run: node --run test -- platform-config-write.integration
 
+      # THE SEEN-HELP STORE (core migration 019): the migration as it ships, the controller and the
+      # service over a real repository, and the account erasure's statement for `help_seen`. Its own
+      # table, in a throwaway schema, so the boot's database is all it needs (it ran in no step
+      # until 2026-11-14, so it was skipped on every pull request).
+      - name: Seen-help store against PostgreSQL
+        if: ${{ matrix.service == 'apps/core-service' }}
+        working-directory: ${{ matrix.service }}
+        env:
+          CORE_IT_DATABASE_URL: postgres://canari:boot-probe@localhost:5432/boot_probe
+        run: node --run test -- help-seen.integration
+
   # =================================================================================================
   # SOCIAL-SERVICE AGAINST A REAL POSTGRESQL
   # =================================================================================================

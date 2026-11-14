@@ -188,7 +188,7 @@ describe('the price of a form whose priced question is not answered yet', () => 
 /**
  * TWO CURSUS (D32): the page is handed one slice per cursus and shows the cheapest for the answers
  * given, with the server's rule - the two scenarios of the review of #3530, which the page got wrong
- * when it was handed ONE slice (the same cases are in `cursusPricingCases.json`, asserted on both
+ * when it was handed ONE slice (the same cases are in `libs/contracts/cursus-pricing.cases.json`, asserted on both
  * sides).
  */
 describe('the price of a person with two cursus', () => {
