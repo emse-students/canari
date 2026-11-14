@@ -102,8 +102,13 @@ describe('changing a submitted answer', () => {
     const edit = document.querySelector('[data-testid="form-edit-open"]')!;
     expect(edit.textContent).toContain(m.form_view_edit_answer_short());
     const row = edit.parentElement!;
-    expect(row.textContent).toContain(m.form_view_response_sent());
-    expect(row.className).toContain('whitespace-nowrap');
+    const status = [...row.children].find((c) => c.textContent === m.form_view_response_sent())!;
+    expect(status).toBeTruthy();
+    // One row container that may wrap; each child keeps its own text whole.
+    expect(row.className).toContain('flex-wrap');
+    expect(row.className).not.toContain('whitespace-nowrap');
+    expect(status.className).toContain('whitespace-nowrap');
+    expect(edit.className).toContain('whitespace-nowrap');
   });
 
   for (const paid of [false, true]) {

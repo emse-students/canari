@@ -1264,14 +1264,17 @@
           {#if editing}
             <span class="text-text-main text-sm font-semibold">{m.form_view_edit_answer()}</span>
           {:else if submitted}
-            <!-- ONE LINE at 360 px (owner, 2026-11-14): status and short edit action share a row; the sent button already carries the check, so neither text carries an icon. -->
-            <div class="flex items-center gap-2 whitespace-nowrap">
-              <span class="text-green-ok text-sm font-bold">{m.form_view_response_sent()}</span>
+            <!-- ONE LINE when it fits, wraps when it does not (owner, 2026-11-14): status and short edit action share a row; the sent button already carries the check, so neither text carries an icon. -->
+            <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <span class="text-green-ok text-sm font-bold whitespace-nowrap"
+                >{m.form_view_response_sent()}</span
+              >
               <!-- One answer to this form: it is reopened from here (several: the list above). -->
               {#if !form.allowMultipleSubmissions && editableAnswers.length > 0}
                 <Button
                   variant="link"
                   size="compact"
+                  class="whitespace-nowrap"
                   data-testid="form-edit-open"
                   onclick={() => startEdit(editableAnswers[0])}
                 >
