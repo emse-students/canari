@@ -489,7 +489,11 @@ filters.
   (unique where set), `campus`, `cursus` jsonb NOT NULL default `[]`, `posts` text[] NOT NULL default
   `{}`. Idempotent; run twice on a throwaway Postgres.
 - `users/miconnect-profile.ts` parses the claims (`parseProfileClaims`): an absent or malformed claim is
-  the EMPTY value, an unknown campus/post or a malformed cursus entry is dropped with a warning. `findOrCreateFromOidc`
+  the EMPTY value, an unknown campus/post or a malformed cursus entry is dropped with a warning. **A
+  well-formed cursus entry whose formation no space names is KEPT and logged `[UNKNOWN_FORMATION]`
+  (owner, 2026-11-14)**: it opens no space, and it is what keeps the person a student - a campus and
+  an EMPTY cursus is staff. A sign-in that removes the campus or empties the cursus logs
+  `[OIDC_PROFILE_SHRANK]` at WARN. `findOrCreateFromOidc`
   takes that profile, REPLACES the columns, derives `promo`/`formation` from `cursus[0]` (a person
   with no cursus now has them cleared - before, a claim that vanished was kept) and writes only when
   something changed. The legacy `promo`/`formation` claims are no longer read: WP1 derives them from the

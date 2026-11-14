@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { parseProfileClaims } from './miconnect-profile';
 
 describe('parseProfileClaims', () => {
@@ -44,16 +45,23 @@ describe('parseProfileClaims', () => {
     expect(p).toEqual({ miconnectUuid: null, campus: null, cursus: [], posts: [] });
   });
 
-  it('drops a formation no space names, keeping the known entries (audience audit, 2026-11-14)', () => {
-    // 'Master' and 'icm' match no space: kept, they made a person with a cursus and no space.
-    const p = parseProfileClaims({
-      campus: 'saint-etienne',
-      cursus: [
-        { formation: 'Master', promo: 2024 },
-        { formation: 'icm', promo: 2023 },
-        { formation: 'PDIS', promo: 2025 },
-      ],
-    });
-    expect(p.cursus).toEqual([{ formation: 'PDIS', promo: 2025 }]);
+  it('keeps a formation no space names, and says so: the person must never become staff', () => {
+    // Staff is "a campus and an EMPTY cursus". Dropping the one entry of a student whose formation
+    // Canari does not know would hand them the staff public and the whole campus agenda.
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    try {
+      const p = parseProfileClaims(
+        { campus: 'saint-etienne', cursus: [{ formation: 'icm', promo: 2023 }] },
+        'abcd1234'
+      );
+      expect(p.cursus).toEqual([{ formation: 'icm', promo: 2023 }]);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('[UNKNOWN_FORMATION] abcd1234'));
+      warn.mockClear();
+      // A known formation is not said.
+      parseProfileClaims({ campus: 'gardanne', cursus: [{ formation: 'PDIS', promo: 2025 }] });
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
