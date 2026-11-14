@@ -832,7 +832,10 @@ a frame the device had read and accused it (`frame never read here and unreadabl
 - **A ratchet whose repair the state does not hold is not declared durable** (an owed or unproven
   burn, `sendRatchetsNotDurable`), as before.
 - **A follower tab stages but never writes** (`refusesCommitsHere`, #3371): its staged marks die with
-  its copy, and it touches neither the shared `emitted` counts nor the ledger's verdict.
+  its copy, and it touches neither the shared `emitted` counts nor the ledger's verdict - with one
+  exception, the migration, whose `raiseEmittedCounts` only RAISES them (an over-burn, free). A tab
+  promoted to leader must reopen its ledgers from the state it reloads (`openStateLedgers`), never
+  carry its follower copy's over it: the hand-over of #3321 reloads the promoted tab, which does.
 
 **The migration** (`mls-client/stateLedgerMigration.ts`): a state opened without the
 `ledger-format` key takes the old `localStorage` copies, once. The old copies are deleted only at the
@@ -848,8 +851,20 @@ value is never ahead of the state it moves into. Shim recorded in
 - A native background writer carries the ledgers last applied to the live manager, which may be
   BEHIND the ratchet it writes (a re-accusation, survivable), never ahead.
 - **Rollback**: an older build drops `app_ledgers` on its next write, and the `localStorage` copies
-  are gone by then - one re-walk, with possible false accusations, after a downgrade.
-- Each send waits for one IndexedDB transaction before it posts.
+  are gone by then - one re-walk, with possible false accusations, after a downgrade. **And the send
+  repair does not survive it**: an older build reads its send ledger from `localStorage` only, so a
+  device killed with sends not yet checkpointed and reopened on the older build re-issues those
+  generations (`SecretReuseError` at every peer, an AEAD nonce reused) - the exposure that build
+  always had, now with no counts at all. A web rollback past #2515 therefore costs more than a
+  re-walk; prefer a forward fix (review of 2026-11-15).
+- Each send waits for one IndexedDB transaction before it posts. Its durability is IndexedDB's
+  default (relaxed on Chromium): committed to the OS when `complete` fires, so a PROCESS kill keeps
+  it; a power loss or OS crash inside the next flush is not covered, as it is not for the state.
+- **The ledgers' weight is now on every checkpoint**: the whole seen set of every group (capped at
+  5 000 fingerprints and 5 000 row keys per group, 256 groups) is serialised and sealed with the state
+  at each write, where `localStorage` wrote one group at a time. Unmeasured on a heavy profile; the
+  load-time composition line prints it (`app ledgers <keys>x<bytes>B`), and that reading on the
+  busiest bench profile is owed before the stable.
 - The web catch-up session stages marks before its state is installed in the live client - the same
   window the old design had, filed as
   [P2](../backlog.d/p2-web-catch-up-marks-frames-seen-before-its-state-is-live.md).
@@ -860,7 +875,10 @@ value is never ahead of the state it moves into. Shim recorded in
 unit tests in `mls-core`, and `storage.rs`'s
 `a_reload_keeps_the_ledgers_the_app_staged_into_the_live_manager`. The rig: the KILL-3 row (web kill
 after a send and after a receive) is the reading that confirms it on dev; `seenset.mjs` is gone, the
-ledger being no longer readable from `localStorage`.
+ledger being no longer readable from `localStorage`. `archive/burn.mjs` reads its premise from the
+two witnesses left: the `emitted` count in IndexedDB fires the reload, and the load's own repair line
+(`Restored state for ... was N generation(s) behind`) proves the window was entered - a run that
+missed the line is INCONCLUSIVE, never a pass.
 
 Pinned by `mlsBulkIngest.test.ts` (the real persister as observer: before the checkpoint lands, a
 failed checkpoint, a version-guard refusal, a close inside a live drain, a checkpoint already

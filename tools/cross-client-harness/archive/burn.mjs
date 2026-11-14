@@ -42,38 +42,54 @@ const DELAY_MS = Number(arg('delay', 300));
 const PORT = PORTS[DEVICE];
 
 /**
- * THE LEDGER ITSELF, WHICH IS A BETTER WITNESS THAN THE LOG LINE.
+ * THE TWO WITNESSES, ONE ON EACH SIDE OF THE RELOAD (rewritten for KILL-2, #2515).
  *
- * The repair prints one line, during an init this script does not control the start of - a reload
- * that does not raise the PIN gate begins initialising before a CDP session can be re-attached, so a
- * capture that missed it would report "no burn" and be believed. The counters are durable and can be
- * read at leisure on either side of the reload: `emitted - persisted` BEFORE is the deficit the
- * window created, and the same figure AFTER is what the repair left behind. Neither depends on
- * having been listening at the right millisecond.
+ * Until KILL-2 both halves of the send ledger sat in `localStorage`, and `emitted - persisted` read
+ * BEFORE the reload proved the window entered. Since then `persisted` is sealed inside the MLS state,
+ * which no page script can read, so that difference is unreadable and the premise moved:
  *
- * Group ids are summed rather than listed: this file is committed and they identify conversations.
+ * - BEFORE: `emitted` alone, in IndexedDB (`send_ratchet_emitted:<user>` in `CanariDBMls_<user>`,
+ *   the same store on web and in the native WebView). It moves when a frame is counted, which is
+ *   after its encrypt and before its POST - so the reload is fired the instant it moves. That
+ *   TRIGGERS the experiment; it does not prove the checkpoint was beaten (a web checkpoint lands in
+ *   a median of 58 ms).
+ * - AFTER: the repair's own line (`Restored state for <g> was <n> generation(s) behind`). The load
+ *   prints it only when the state it opened was behind a counted send, which IS the premise. A run
+ *   whose line was not captured (a reload that starts its init before the re-attach) is
+ *   INCONCLUSIVE, never a pass.
+ *
+ * Totals only, summed over accounts: group ids identify conversations and this file is committed.
  */
-// SINCE KILL-2 (#2515) THE LEDGER IS NOT IN `localStorage`: `emitted` is in IndexedDB and
-// `persisted` is sealed inside the MLS state, which no page script can read. A client that has
-// migrated therefore reports `present: false` here - never `unpersisted: 0`, which would read as a
-// window that was missed - and the verdict is INCONCLUSIVE until this check reads a witness again.
-const LEDGER = `(function () {
+const EMITTED = `(async function () {
   try {
-    var total = 0, groups = 0, found = false;
+    var uids = [];
     for (var i = 0; i < localStorage.length; i++) {
       var k = localStorage.key(i);
-      if (!k || k.indexOf('mls_send_ledger_') !== 0) continue;
-      found = true;
-      var l = JSON.parse(localStorage.getItem(k) || '{}');
-      var em = l.emitted || {}, pe = l.persisted || {};
-      for (var g in em) {
-        var d = em[g] - (pe[g] || 0);
-        if (d > 0) { total += d; groups++; }
-      }
+      if (k && k.indexOf('mls_device_id_') === 0) uids.push(k.slice('mls_device_id_'.length));
     }
-    return JSON.stringify({ present: found, unpersisted: total, groups: groups });
+    var known = indexedDB.databases ? (await indexedDB.databases()).map(function (d) { return d.name; }) : null;
+    var total = 0, present = false;
+    for (var u = 0; u < uids.length; u++) {
+      var name = 'CanariDBMls_' + uids[u];
+      if (known && known.indexOf(name) < 0) continue;
+      var counts = await new Promise(function (resolve) {
+        var req = indexedDB.open(name);
+        req.onerror = function () { resolve(null); };
+        req.onsuccess = function () {
+          var db = req.result;
+          if (!db.objectStoreNames.contains('state')) { db.close(); resolve(null); return; }
+          var get = db.transaction('state', 'readonly').objectStore('state').get('send_ratchet_emitted:' + uids[u]);
+          get.onsuccess = function () { db.close(); resolve(get.result || null); };
+          get.onerror = function () { db.close(); resolve(null); };
+        };
+      });
+      if (!counts) continue;
+      present = true;
+      for (var key in counts) if (typeof counts[key] === 'number') total += counts[key];
+    }
+    return JSON.stringify({ present: present, emitted: total });
   } catch (e) {
-    return JSON.stringify({ present: false, unpersisted: 0, groups: 0 });
+    return JSON.stringify({ present: false, emitted: 0, error: String(e).slice(0, 120) });
   }
 })()`;
 
@@ -136,14 +152,17 @@ out.baselineDelivered = await awaitMessage(w2, baseline, 25_000).then(
 // reloading reports INCONCLUSIVE every time - correctly, but uselessly, and it looks identical to a
 // run where the repair simply had nothing to do.
 //
-// The premise is not "reload fast", it is "reload while a frame is unpersisted", and that is a FACT
-// the client will state: `emitted - persisted` in the ledger. So poll for it and reload the instant
-// it is true. `DELAY_MS` survives only as the deadline for one attempt. Several sends may be needed
-// on a fast disk; if none opens the window the verdict is still INCONCLUSIVE, never PASS.
+// The premise is not "reload fast", it is "reload while a frame is unpersisted". The page can no
+// longer state that (see the witnesses above), so the reload is fired the instant the frame is
+// COUNTED - the earliest moment the client could have been killed with the frame on the wire - and
+// the load's own repair line says afterwards whether the checkpoint was beaten. Several sends may
+// be needed on a fast disk; if none is beaten the verdict is INCONCLUSIVE, never PASS.
 const inWindow = mark('BURN1');
-let ledger = { present: true, unpersisted: 0, groups: 0 };
+let counted = JSON.parse(await evaluate(w1, EMITTED));
+out.emittedBaseline = counted;
+const emittedBefore = counted.emitted;
 out.windowAttempts = 0;
-for (let i = 0; i < 6 && ledger.unpersisted === 0; i++) {
+for (let i = 0; i < 6 && counted.emitted <= emittedBefore; i++) {
   out.windowAttempts++;
   // ARM, THEN FIRE WITHOUT AWAITING, AND POLL BESIDE IT. `fireComposer` only returns once the
   // composer has emptied, which it establishes by polling at 100 ms - already longer than the
@@ -157,19 +176,19 @@ for (let i = 0; i < 6 && ledger.unpersisted === 0; i++) {
   });
   const t0 = Date.now();
   while (Date.now() - t0 < Math.max(DELAY_MS, 600)) {
-    ledger = JSON.parse(await evaluate(w1, LEDGER).catch(() => JSON.stringify(ledger)));
-    if (ledger.unpersisted > 0) break;
+    counted = JSON.parse(await evaluate(w1, EMITTED).catch(() => JSON.stringify(counted)));
+    if (counted.emitted > emittedBefore) break;
     await sleep(5);
   }
+  if (counted.emitted > emittedBefore) break;
   await firing;
   if (sendError) {
     out.sendError = sendError;
     break;
   }
 }
-// READ BEFORE THE RELOAD, because this is the premise. A run whose ledger shows nothing unpersisted
-// here never entered the window, and everything after it would be a test of an ordinary reload.
-out.ledgerBeforeReload = ledger;
+// READ BEFORE THE RELOAD: a run in which no send was ever counted never reached the window at all.
+out.emittedBeforeReload = counted;
 await reloadWith(w1).catch(() => {});
 w1.close();
 
@@ -212,8 +231,8 @@ out.burnedLine = burnt.value ? Number(burnt.value[2]) : null;
 /**
  * INFORMATIONAL, AND DELIBERATELY NOT A POST-CONDITION.
  *
- * The first version of this check failed A1 on `ledgerAfterLoad.unpersisted > 0`, reasoning that the
- * repair must leave nothing behind. That is wrong, and the run that exposed it was the application
+ * The first version of this check failed A1 on a deficit still standing after the load (then
+ * `emitted - persisted`, read from `localStorage`), reasoning that the repair must leave nothing behind. That is wrong, and the run that exposed it was the application
  * behaving perfectly: the deficit is a LIVE quantity, bumped by every send and cleared 1.7 s later by
  * the phone's checkpoint, and by the time this line runs the restored session has already opened a
  * conversation and sent its read receipts. Reading it late measures ordinary traffic, not damage.
@@ -221,10 +240,10 @@ out.burnedLine = burnt.value ? Number(burnt.value[2]) : null;
  * The same run showed the other half of it: `burnedLine` was 2 where the pre-reload snapshot said 1,
  * because a send landed between that snapshot and the reload. The repair burnt what the ledger held
  * AT LOAD, which is exactly right - and any check comparing the two figures for equality would call
- * that a fault.
+ * that a fault. `emittedAfterLoad` is kept for the same reading: a count, never a post-condition.
  */
-out.ledgerAfterLoad = JSON.parse(await evaluate(w1, LEDGER));
-out.burned = out.ledgerBeforeReload.unpersisted;
+out.emittedAfterLoad = JSON.parse(await evaluate(w1, EMITTED));
+out.burned = out.burnedLine ?? 0;
 
 // ── The frame that used to die ───────────────────────────────────────────────────────────────────
 await ensureConversation(w1, peerNameFor(DEVICE));
@@ -254,14 +273,16 @@ out.senderUnexplained = load.unexplained.slice(0, 3);
 out.verdict =
   !out.baselineDelivered
     ? 'INCONCLUSIVE - the pair could not deliver a baseline, nothing here is about the window'
-    : !out.ledgerBeforeReload.present
-      ? 'INCONCLUSIVE - no send ledger readable from the page (since KILL-2 it is sealed in the MLS state), so the window cannot be proved entered'
-      : out.burned === 0
-        ? 'INCONCLUSIVE - the checkpoint landed before the reload, so the window was never entered'
-        : // THE ASSERTION IS THE ABSENCE OF THE FAULT, and the fault has two halves that must BOTH
+    : !out.emittedBeforeReload.present || out.emittedBeforeReload.emitted <= emittedBefore
+      ? 'INCONCLUSIVE - no send was counted before the reload, so the window was never reached'
+      : out.burnedLine === null
+        ? 'INCONCLUSIVE - the load printed no repair line: the checkpoint landed before the reload, or the line was missed by the re-attach'
+        : out.burned === 0
+          ? 'INCONCLUSIVE - the checkpoint landed before the reload, so the window was never entered'
+          : // THE ASSERTION IS THE ABSENCE OF THE FAULT, and the fault has two halves that must BOTH
           // be absent: the frame the rewind used to kill arrives, and the peer reports no loss. The
-          // repair's own line is evidence of the mechanism, not the verdict - it is missed whenever
-          // a reload skips the PIN gate, and a check that required it would fail a healthy web run.
+          // repair's own line is the PREMISE since KILL-2, never the verdict: a missed line is
+          // INCONCLUSIVE above, so a healthy run whose re-attach was late is never called a FAIL.
           out.afterDelivered && out.peerLossLines === 0
           ? `PASS - reload inside the window (${out.burned} unpersisted), the next frame decrypted in ${out.afterDeliveredMs}ms, no loss reported`
           : `FAIL - delivered=${out.afterDelivered}, peer loss lines=${out.peerLossLines}`;
