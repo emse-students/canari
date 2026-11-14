@@ -870,6 +870,19 @@ orphan purge once wiped another file's staged upload. `jest.temp-cwd.cjs`, loade
 after. The runtime directories are ignored by `.gitignore`, never tracked: the service makes them at
 boot (`ensureDirSync`).
 
+## The daily upload bound per member (2026-11-13)
+
+One member uploads at most 2 GB per rolling 24 hours, every class and route together
+(`MEDIA_MEMBER_DAILY_UPLOAD_BYTES`, below; decided by the lead under the owner's delegation,
+reversible). **Chosen from** one read-only aggregate of production's media index over the 60 days
+before 2026-11-13: 853 uploads by 123 members on 351 member-days, uploads per member per day p50 1,
+p95 8, p99 13, max 22; with the 100 MB per-file ceiling the busiest day stays under the bound unless
+its files averaged more than 90 MB. **It reports itself**: a refusal is one `[MEMBER_UPLOAD_BUDGET]`
+WARN naming the member's uploads and bytes, and the thread says why the message failed, so a value
+that is too low surfaces without a watch. **Read 2026-11-14** (read-only): 0 such lines on
+production since the `1.6.12` deploy and 0 on dev. A line on an ordinary day of use raises the value
+through the variable.
+
 ## Environment variables
 
 | Variable                                | Required | Description                                                                                                                                                                                                  |

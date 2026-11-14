@@ -27,3 +27,5 @@ the proof are in [profiles-and-access](../profiles-and-access.md#an-institutions
    institution's event with no picker (read on dev before its deploy, or by a stubbed answer).
 
 Closes when the nine are read, then this file is deleted.
+
+**Read 2026-11-14 on dev (`1.6.12-alpha.2`, web):** 1, 2, 4, 5, 6, 8 and 9 PASS (9 through a stubbed `/api/version`); 3 half - a "Personnel" event is absent for a student, and the non-member staff case cannot be staged (every test account is a student), pinned by `associations/institution-event-reach.integration.spec.ts`. **Left: reading 7, the chip on the event's detail on both phones.** Seen on the way: adding a co-organiser by an edit put an already validated event back to `pending`.

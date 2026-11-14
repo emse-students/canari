@@ -269,6 +269,13 @@ wait for an animation frame" below.
 | D17 | An overlap is never raised at publish time. |
 | D18 | The dev pre-release was canari-64's to cut; the chantier cut none of its own. |
 
+**D8's cost, measured 2026-11-14** (dev `1.6.12-alpha.2`, desktop Chrome at 1440 px, the tab in the
+foreground, the one carte dev holds): "Export to PDF" to a finished download in **2.9 s**, the tab's
+JS heap 19 MB before and 23 MB at its peak, a **600 KB** one-page PDF on an A0 landscape page
+(3370 x 2384 pt) carrying a 7200 x 5089 raster with its text layer on top; the text runs are set
+from 8.6 pt to 109.5 pt. The owner's look at an export is a row of
+[backlog](backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks).
+
 ## The directory is ordered by FAMILY NAME, and that needs two columns
 
 Reported 2026-09-01: the right-hand directory printed each roster ordered by GIVEN name - "Alice

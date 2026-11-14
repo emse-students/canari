@@ -27,3 +27,5 @@ for their own pull request. Re-read again 2026-12-11.
 **Not a server read (checked 2026-11-14):** `warm-process` appears in no server log - the refusal
 is native and never reported to the server, so the rate is read on the Mi 9T (logcat) or in an
 exported in-app log, not on production.
+
+**Re-triaged 2026-11-14 (owner: every owed reading is read or deleted, never left waiting).** It stays a reading for a Mi 9T sitting (logcat `prepare refused reason=warm-process` against the background Welcomes that reach a stage); 2 and 3 are native changes for their own pull request and do not wait on that rate.
