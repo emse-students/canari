@@ -38,8 +38,6 @@ const PENDING = new Set([
   'BookingCalendarController',
   'BookingSpacesController',
   'BookingsController',
-  'ChannelsController',
-  'CommunityNicknamesController',
   'CoorganisationController',
   'FollowRequestsController',
   'FormsController',
