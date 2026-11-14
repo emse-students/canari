@@ -131,9 +131,11 @@ describe('TauriMlsService.pauseSocket', () => {
     warn.mockRestore();
   });
 
-  it('logs at info, not warn, when the gateway closes on our frame and the refusal beats its Close', async () => {
-    // Mi 9T, 2026-11-08, sign-out: the frame was accepted, the gateway ended the connection, the
+  it('logs at info, not warn, when the connection is gone and the refusal beats its Close', async () => {
+    // Mi 9T, 2026-11-08, sign-out: the frame was accepted, the peer ended the connection, the
     // plugin forgot it and refused `disconnect()` BEFORE delivering the `Close` the watcher waits for.
+    // The gateway no longer ends it on `disconnect` (2026-11-14), but a peer can still end it for
+    // its own reason (a release, the network), and the refusal still says so at info.
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     const svc = new TauriMlsService() as unknown as Internals;
@@ -149,7 +151,9 @@ describe('TauriMlsService.pauseSocket', () => {
     expect(ws.disconnect).toHaveBeenCalledTimes(1);
     expect(unwatch).toHaveBeenCalledTimes(1);
     expect(warn).not.toHaveBeenCalled();
-    expect(log.mock.calls.flat().join(' ')).toContain('the gateway closed the socket');
+    expect(log.mock.calls.flat().join(' ')).toContain(
+      'the connection was gone before the native release ran'
+    );
     warn.mockRestore();
     log.mockRestore();
   });
