@@ -11,6 +11,7 @@ import {
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { ProductsService } from '../associations/products.service';
+import { AssociationsService } from '../associations/associations.service';
 import {
   LYDIA_FLUX_LOG_TAG,
   isCalendarDate,
@@ -33,6 +34,7 @@ export class InternalPaymentsController {
 
   constructor(
     private readonly products: ProductsService,
+    private readonly associations: AssociationsService,
     @InjectDataSource() private readonly ds: DataSource
   ) {}
 
@@ -63,5 +65,27 @@ export class InternalPaymentsController {
       throw new BadRequestException('from and to must be two ordered YYYY-MM-DD dates');
     }
     return measureLydiaFlux((sql, params) => this.ds.query(sql, params), from, to, this.logger);
+  }
+
+  /**
+   * Whether a person may edit a price somewhere (`AssociationsService.mayEditAPrice`): what
+   * core-service asks before it answers the payout estimate's fee schedule, a confidential contract
+   * term (docs/wiki/lydia-contract-flux.md). The caller's identity is the one nginx set on the
+   * core-service request, passed through; this route answers internal calls only.
+   */
+  @Get('may-edit-a-price')
+  async mayEditAPrice(
+    @Headers('x-internal-secret') secret: string | undefined,
+    @Query('userId') userId: unknown,
+    @Query('globalAdmin') globalAdmin: unknown
+  ): Promise<{ ok: boolean }> {
+    assertInternalSecret(secret);
+    if (typeof userId !== 'string' || !userId.trim()) {
+      this.logger.warn('[PERM] may-edit-a-price refused: no user id');
+      throw new BadRequestException('userId is required');
+    }
+    return {
+      ok: await this.associations.mayEditAPrice(userId.trim(), globalAdmin === 'true'),
+    };
   }
 }

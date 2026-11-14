@@ -1,5 +1,11 @@
 import axios from 'axios';
-import { BadGatewayException, BadRequestException, Injectable, Logger } from '@nestjs/common';
+import {
+  BadGatewayException,
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { PlatformConfig } from './entities/platform-config.entity';
@@ -16,10 +22,17 @@ import {
   type LydiaContractTerms,
 } from './lydia-contract';
 import { describeHttpError } from '../common/http-error-log';
-import { internalSocialRequestConfig, lydiaFluxUrl } from '../payment/social-internal-client';
+import {
+  internalSocialRequestConfig,
+  lydiaFluxUrl,
+  mayEditAPriceUrl,
+} from '../payment/social-internal-client';
 
 /** The log tag of every line about the platform's Lydia contract. */
 export const LYDIA_CONTRACT_LOG_TAG = '[LYDIA-CONTRACT]';
+
+/** The 403 of the fee schedule to a caller who edits no price (`assertMayReadFeeSchedule`). */
+export const LYDIA_FEES_NOT_A_PRICE_EDITOR = 'LYDIA_FEES_NOT_A_PRICE_EDITOR';
 
 /** Same budget as the sibling core -> social-service calls. */
 const SOCIAL_FLUX_TIMEOUT_MS = 15_000;
@@ -162,6 +175,43 @@ export class LydiaContractService {
       fixedCents: remote.fixedCents,
       vatBps: settings.vatBps,
     };
+  }
+
+  /**
+   * Refuses (403 `LYDIA_FEES_NOT_A_PRICE_EDITOR`) unless `userId` may edit a price somewhere -
+   * social-service's ONE predicate (`mayEditAPrice`): the fee is a confidential contract term,
+   * answered to those who need it for an estimate (owner, 2026-11-14). A check that cannot be made is
+   * a 502, never an answer.
+   */
+  async assertMayReadFeeSchedule(userId: string, isGlobalAdmin: boolean): Promise<void> {
+    if (isGlobalAdmin) return;
+    let ok: boolean;
+    try {
+      const { data } = await axios.get<{ ok: boolean }>(mayEditAPriceUrl(userId, isGlobalAdmin), {
+        ...internalSocialRequestConfig(),
+        timeout: SOCIAL_FLUX_TIMEOUT_MS,
+      });
+      ok = data?.ok === true;
+    } catch (err: unknown) {
+      this.logger.error(
+        `${LYDIA_CONTRACT_LOG_TAG} whether ${userId.slice(0, 8)} may edit a price could not be read: ${describeHttpError(err)}`
+      );
+      throw new BadGatewayException({
+        statusCode: 502,
+        code: 'LYDIA_FEES_CHECK_UNREADABLE',
+        message: 'The permission could not be checked',
+      });
+    }
+    if (!ok) {
+      this.logger.warn(
+        `${LYDIA_CONTRACT_LOG_TAG} fee schedule refused to ${userId.slice(0, 8)}: edits no price`
+      );
+      throw new ForbiddenException({
+        statusCode: 403,
+        code: LYDIA_FEES_NOT_A_PRICE_EDITOR,
+        message: 'The fee schedule is shown to those who edit a price',
+      });
+    }
   }
 
   /**

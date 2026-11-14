@@ -98,3 +98,10 @@ export function lydiaFluxUrl(from: string, to: string): string {
     `internal/payments/lydia-flux?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`
   );
 }
+
+/** Whether a person may edit a price somewhere (social-service `mayEditAPrice`). */
+export function mayEditAPriceUrl(userId: string, isGlobalAdmin: boolean): string {
+  return socialUrl(
+    `internal/payments/may-edit-a-price?userId=${encodeURIComponent(userId)}&globalAdmin=${isGlobalAdmin ? 'true' : 'false'}`
+  );
+}

@@ -2962,6 +2962,8 @@ export class ProductsService {
           stripePaymentIntentId: paymentIntentId,
           associationId: row.associationId,
           productName: row.productName,
+          // The Business the attempt was issued to and Lydia confirmed on (migration 169).
+          lydiaVendorToken: row.vendorToken,
         },
         manager
       );

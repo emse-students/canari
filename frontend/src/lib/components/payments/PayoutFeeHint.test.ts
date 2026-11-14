@@ -59,9 +59,16 @@ it('renders the admin-entered fee, VAT included, once the provider resolves to l
   await flushProvider();
   flushSync();
 
-  // 10 EUR gross: HT 0.20 + 0.30 = 0.50, times 1.5 = 0.75 fee, 9.25 net.
-  expect(target.textContent).toContain('9,25');
-  expect(target.textContent).toContain('0,75');
+  // 10 EUR gross: HT 0.20 + 0.30 = 0.50, times 1.5 = 0.75 fee, 9.25 net. The price paid, then
+  // the net beneath it - never the fee itself, never "approximately" (owner, 2026-11-14).
+  const lines = [...target.querySelectorAll('p')].map((p) => p.textContent ?? '');
+  const paid = lines.findIndex((l) => l.includes('10,00'));
+  const net = lines.findIndex((l) => l.includes('9,25'));
+  expect(paid).toBeGreaterThanOrEqual(0);
+  expect(net).toBe(paid + 1);
+  expect(target.querySelectorAll('p')[net].className).toContain('text-2xs');
+  expect(target.textContent).not.toContain('0,75');
+  expect(target.textContent).not.toMatch(/environ|approx/i);
 });
 
 it('says the estimate is not configured while no schedule is entered - never a default figure', async () => {

@@ -43,18 +43,31 @@ estimate or a counter is asked without it: a fallback is a signal, never a path.
 
 ## The payout estimate
 
-`PayoutFeeHint.svelte` (the price screens of the boutique and of paid forms) asks `GET
-/api/payments/lydia-fee-schedule` (signed-in callers, core-service `LydiaFeeScheduleController`):
-the `remote` fee and the VAT, or `{ schedule: null }`. The fee really deducted from a payment is
+`PayoutFeeHint.svelte` (the price screens of the boutique, of paid forms and of the Cercle top-up)
+asks `GET /api/payments/lydia-fee-schedule` (core-service `LydiaFeeScheduleController`): the `remote`
+fee and the VAT, or `{ schedule: null }`.
+
+**Only a caller who may edit a price somewhere is answered** (owner, 2026-11-14: *"Reserver a ceux
+qui gerent la boutique, les formulaires etc ? Enfin tous ceux qui en ont besoin"*); anyone else gets
+a 403 `LYDIA_FEES_NOT_A_PRICE_EDITOR`, and a check that cannot be made a 502, never an answer. The
+predicate is social-service's ONE `AssociationsService.mayEditAPrice`, built from the rights that
+guard the editors and asked by core through `GET internal/payments/may-edit-a-price`: a global admin;
+a BDE super-admin; a member holding `MANAGE_PRODUCTS` or `MANAGE_FORMS` in an association or a list
+(not an institution, which collects nothing); the owner of a live form attached to one.
+
+The fee really deducted from a payment is
 
     fee = round((fixedCents + gross * percentBps / 10000) * (1 + vatBps / 10000))
 
 rounded once to the cent (`computeLydiaFeeCents`, `frontend/src/lib/payments/lydiaFees.ts`), and the
-estimate is `gross - fee`. While no schedule is entered the hint says the estimate is unavailable,
-never a figure. The hint's one notice says that the provider's fees are deducted from each payment,
-that the amounts are estimates, and that the rate may be raised at the end of the contract year if
-the target is not reached (owner: *"Rien de verbeux, juste un petit point d'information."*). The
-hint no longer prints the rate itself.
+net is `gross - fee` - exact for the entered schedule, so nothing is worded as approximate.
+
+**What each side sees** (owner, 2026-11-14: *"Le client doit toujours voir le montant qu'il paye, et
+l'association doit voir le montant paye et en plus petit le montant net."*): the PAYER sees only the
+price they pay - no fee, no net, anywhere; the EDITOR sees each price paid and, smaller beneath it,
+the net for the association, then the one short notice: the provider's fees are deducted from each
+payment, and the rate may be raised at the end of the contract year if the target is not reached.
+While no schedule is entered the hint says the net is unavailable, never a figure.
 
 Until 2026-11-14 the estimate was a constant in `lydiaFees.ts`, HT, so it under-estimated the fee
 by the VAT.
@@ -96,9 +109,19 @@ belong to that association's own earlier contract with Lydia, never to this part
 facts decide it, neither a date nor an association's current columns (a bridge swaps them, an unlink
 clears them):
 
-1. **Which Business took the payment** is the row's own vendor token: `product_checkouts."vendorToken"`
-   of a boutique purchase's paid attempt, `submissions."lydiaVendorToken"` of a form answer - the
-   trace a refund follows ([refunds](frontend/modules/payments.md#refunds-from-canari-enrolment-lot-4)).
+1. **Which Business took the payment** is the purchase record's own `"lydiaVendorToken"` (social
+   migration 169), written with the record at the settlement - the paid attempt's token for a
+   boutique purchase, the answer's for a form payment - so a payment keeps its Business when its
+   answer is deleted or its form retired (owner, 2026-11-14: *"Ca doit aussi survivre a la
+   suppression d'un formulaire."*). Migration 169 backfilled every earlier record from the same
+   trace. A record without it (written by an older image during a rollout) is read through the row
+   that issued it - `product_checkouts."vendorToken"`, `submissions."lydiaVendorToken"`, the trace a
+   refund follows ([refunds](frontend/modules/payments.md#refunds-from-canari-enrolment-lot-4)) -
+   and counted at WARN as `recordWithoutToken`. Nothing deletes a record: no foreign key reaches it,
+   a form is only soft-deleted (`retireForms`; `submissions_form_fk` is `RESTRICT`), and **a paid
+   answer is never deleted** - `FormsService.deleteSubmission` refuses `paid` and `paid_over_capacity`
+   in the DELETE's own WHERE with a typed 409 `FORM_ANSWER_PAID` (`libs/contracts/form-answers.json`),
+   and the manager is told to refund or cancel it instead.
 2. **Whether Canari's enrolment created that Business** is `lydia_enrolled_businesses` (social
    migration 168), written by `AssociationsService.setLydiaAccountId` in the transaction that links
    the Business - the ONE link path, called only by core-service's onboarding right after

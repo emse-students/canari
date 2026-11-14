@@ -24,6 +24,11 @@ export interface CreatePurchaseData {
   stripePaymentIntentId?: string | null;
   associationId: string;
   productName: string;
+  /**
+   * The Lydia Business that took an online payment (migration 169): the settled attempt's or the
+   * answer's vendor token. Omitted for a cash or manual sale.
+   */
+  lydiaVendorToken?: string | null;
 }
 
 /** Creates and queries purchase history records across forms and boutique products. */
@@ -53,6 +58,7 @@ export class PurchaseRecordService {
       stripePaymentIntentId: data.stripePaymentIntentId ?? null,
       associationId: data.associationId,
       productName: data.productName,
+      lydiaVendorToken: data.lydiaVendorToken ?? null,
     });
     return repo.save(record);
   }

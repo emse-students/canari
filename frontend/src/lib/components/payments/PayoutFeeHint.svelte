@@ -1,6 +1,5 @@
 <script lang="ts">
   import {
-    computeLydiaFeeCents,
     computeLydiaNetPayoutCents,
     eurosInputToCents,
     fetchLydiaFeeSchedule,
@@ -11,7 +10,9 @@
   import { m } from '$lib/paraglide/messages';
 
   /**
-   * Renders the payout estimate under the platform's Lydia fee schedule - see
+   * Renders, for a price editor, the price the payer pays and - smaller, beneath - what the
+   * association receives after the platform's Lydia fees (owner, 2026-11-14: no "approximately"; the
+   * net is exact for the configured schedule). The payer never sees a fee: only the price paid - see
    * `docs/wiki/lydia-contract-flux.md#the-payout-estimate`.
    *
    * Nothing is drawn until the active provider is KNOWN to be Lydia (`GET /api/payments/provider`):
@@ -64,67 +65,70 @@
       });
   });
 
-  function computeNetPayoutCents(cents: number): number {
+  function netCents(cents: number): number {
     return schedule ? computeLydiaNetPayoutCents(cents, schedule) : 0;
-  }
-
-  function lineFor(cents: number, label: string): string {
-    const net = computeNetPayoutCents(cents);
-    const fee = schedule ? computeLydiaFeeCents(cents, schedule) : 0;
-    return m.payout_line_for({
-      label,
-      payment: formatAmount(cents, currency),
-      net: formatAmount(net, currency),
-      fee: formatAmount(fee, currency),
-    });
   }
 </script>
 
 {#if provider === 'lydia' && schedule !== undefined && (grossCents || memberCents || minCents || maxCents)}
   <div
-    class="border-amber-warn/30 bg-amber-warn/10 text-amber-warn-text space-y-1 rounded-xl border px-4 py-3 text-xs"
+    class="border-amber-warn/30 bg-amber-warn/10 text-amber-warn-text space-y-2 rounded-xl border px-4 py-3 text-xs"
     role="note"
   >
     <p class="font-semibold">{m.payout_hint_title()}</p>
     {#if schedule === null}
       <p>{m.payout_hint_not_configured()}</p>
     {:else}
-      <p class="text-amber-warn-text">{m.payout_hint_fees_note()}</p>
+      {#snippet paidAndNet(paid: string, net: string)}
+        <div>
+          <p class="font-semibold">{paid}</p>
+          <p class="text-2xs opacity-80">{net}</p>
+        </div>
+      {/snippet}
       {#if grossCents}
-        <p>{lineFor(grossCents, m.payout_label_public())}</p>
+        {@render paidAndNet(
+          m.payout_paid_line({
+            label: m.payout_label_public(),
+            payment: formatAmount(grossCents, currency),
+          }),
+          m.payout_net_line({ net: formatAmount(netCents(grossCents), currency) })
+        )}
       {/if}
       {#if memberCents}
-        <p>{lineFor(memberCents, m.payout_label_member())}</p>
+        {@render paidAndNet(
+          m.payout_paid_line({
+            label: m.payout_label_member(),
+            payment: formatAmount(memberCents, currency),
+          }),
+          m.payout_net_line({ net: formatAmount(netCents(memberCents), currency) })
+        )}
       {/if}
       {#if minCents && maxCents}
-        <p>
-          {m.payout_free_amount_range({
-            min: formatAmount(computeNetPayoutCents(minCents), currency),
-            max: formatAmount(computeNetPayoutCents(maxCents), currency),
-            minPayment: formatAmount(minCents, currency),
-            maxPayment: formatAmount(maxCents, currency),
-          })}
-        </p>
+        {@render paidAndNet(
+          m.payout_free_paid_range({
+            min: formatAmount(minCents, currency),
+            max: formatAmount(maxCents, currency),
+          }),
+          m.payout_net_range({
+            min: formatAmount(netCents(minCents), currency),
+            max: formatAmount(netCents(maxCents), currency),
+          })
+        )}
       {:else if minCents}
-        <p>
-          {m.payout_free_amount_min({
-            payment: formatAmount(minCents, currency),
-            net: formatAmount(computeNetPayoutCents(minCents), currency),
-          })}
-        </p>
+        {@render paidAndNet(
+          m.payout_free_paid_min({ payment: formatAmount(minCents, currency) }),
+          m.payout_net_line({ net: formatAmount(netCents(minCents), currency) })
+        )}
       {:else if maxCents}
-        <p>
-          {m.payout_free_amount_max({
-            payment: formatAmount(maxCents, currency),
-            net: formatAmount(computeNetPayoutCents(maxCents), currency),
-          })}
-        </p>
+        {@render paidAndNet(
+          m.payout_free_paid_max({ payment: formatAmount(maxCents, currency) }),
+          m.payout_net_line({ net: formatAmount(netCents(maxCents), currency) })
+        )}
       {/if}
       {#if showOptionSupplementNote && (grossCents || memberCents)}
-        <p class="text-amber-warn-text">
-          {m.payout_option_note()}
-        </p>
+        <p>{m.payout_option_note()}</p>
       {/if}
+      <p class="text-2xs opacity-80">{m.payout_hint_fees_note()}</p>
     {/if}
   </div>
 {/if}

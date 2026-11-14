@@ -72,6 +72,13 @@ export const FORM_ANSWER_LOCKED = 'FORM_ANSWER_LOCKED';
 export const FORM_ANSWER_NOT_EDITABLE = 'FORM_ANSWER_NOT_EDITABLE';
 /** No answer of the caller's under this id - another person's answers the same (404). */
 export const FORM_ANSWER_NOT_FOUND = 'FORM_ANSWER_NOT_FOUND';
+/**
+ * A manager deletes an answer whose payment was received (`PAID_SUBMISSION_STATUSES`): refused, the
+ * answer is refunded or cancelled instead - its payment stays on the record (owner, 2026-11-14).
+ */
+export const FORM_ANSWER_PAID = 'FORM_ANSWER_PAID';
+/** The payment statuses of an answer whose money was received and kept: it is never deleted. */
+export const PAID_SUBMISSION_STATUSES = ['paid', 'paid_over_capacity'] as const;
 
 /** The characters of a guest's last or first name (`submissions.guestLastName`, migration 138). */
 export const GUEST_NAME_MAX_LENGTH = 100;

@@ -10,9 +10,12 @@ import { Logger } from '@nestjs/common';
  * account, collecting through a bridge, lydia-account-bridge.ts) never counts: it belongs to that
  * association's earlier Lydia contract.
  *
- * WHICH BUSINESS TOOK A PAYMENT is the row's own vendor token - `product_checkouts."vendorToken"` of
- * a boutique purchase's paid attempt, `submissions."lydiaVendorToken"` of a form answer (the same
- * trace a refund follows, `RefundsService.targetsOf`). WHETHER THAT BUSINESS IS CANARI-ENROLLED is
+ * WHICH BUSINESS TOOK A PAYMENT is the purchase record's own vendor token (migration 169), written
+ * with the record at the settlement, so it survives the deletion of the answer that issued it. A
+ * record written without it (an image older than 169, during a rollout) is read through the row that
+ * issued it - `product_checkouts."vendorToken"` of a boutique purchase's paid attempt,
+ * `submissions."lydiaVendorToken"` of a form answer (the trace a refund follows,
+ * `RefundsService.targetsOf`) - and counted as `recordWithoutToken`, logged at WARN. WHETHER THAT BUSINESS IS CANARI-ENROLLED is
  * `lydia_enrolled_businesses` (migration 168), written by the link itself
  * ({@link recordEnrolledBusiness}). Neither is inferred from a date or an association's current
  * columns, which a bridge swaps and an unlink clears.
@@ -61,15 +64,18 @@ const WINDOW_END_SQL = `($2::date::timestamp AT TIME ZONE 'Europe/Paris')`;
 /**
  * Every Lydia payment Canari recorded: money Lydia confirmed (`paid`, `paid_not_granted`, or
  * `refunded` - refunded since, and the refund is counted on its own date), online, with the vendor
- * token of the Business that took it, or NULL when no row names it.
+ * token of the Business that took it - the record's own (migration 169), else the issuing row's - or
+ * NULL when no row names it. `onRecord` says which.
  */
 const PAYMENTS_SQL = `
   SELECT r."amountCents" AS amount,
-         CASE WHEN r.source = 'product' THEN (
-                SELECT c."vendorToken" FROM product_checkouts c
-                 WHERE c."purchaseRecordId" = r.id AND c.status = 'paid'
-                 ORDER BY c."vendorToken" LIMIT 1)
-              ELSE s."lydiaVendorToken" END AS token
+         (r."lydiaVendorToken" IS NOT NULL) AS "onRecord",
+         COALESCE(r."lydiaVendorToken",
+           CASE WHEN r.source = 'product' THEN (
+                  SELECT c."vendorToken" FROM product_checkouts c
+                   WHERE c."purchaseRecordId" = r.id AND c.status = 'paid'
+                   ORDER BY c."vendorToken" LIMIT 1)
+                ELSE s."lydiaVendorToken" END) AS token
     FROM purchase_records r
     LEFT JOIN submissions s ON r.source = 'form' AND s.id = r."submissionId"
    WHERE r."paymentMethod" = 'online'
@@ -105,6 +111,7 @@ export async function measureLydiaFlux(
          AS "excludedCents",
        COUNT(*) FILTER (WHERE p.token IS NOT NULL AND NOT (${ENROLLED_SQL}))::int AS "excludedCount",
        COUNT(*) FILTER (WHERE p.token IS NULL)::int AS "untraceableCount",
+       COUNT(*) FILTER (WHERE p.token IS NOT NULL AND NOT p."onRecord")::int AS "recordWithoutToken",
        COUNT(*) FILTER (WHERE e."vendorToken" IS NOT NULL AND h."historicalVendorToken" IS NOT NULL)::int
          AS "contradictionCount"
        FROM (${PAYMENTS_SQL}) p
@@ -153,6 +160,16 @@ export async function measureLydiaFlux(
     logger.error(
       `${LYDIA_FLUX_LOG_TAG} [${from}, ${to}): ${measure.untraceableCount} Lydia payment(s) name no ` +
         `Business and are counted nowhere`
+    );
+  }
+  const recordWithoutToken = Number(payments?.recordWithoutToken ?? 0);
+  if (recordWithoutToken > 0) {
+    // Migration 169 backfilled every record and the settlement writes the token since: a record
+    // without it was written by an older image during a rollout, or by a writer that skipped it.
+    // Counted through the row that issued it, which a deleted answer would have lost.
+    logger.warn(
+      `${LYDIA_FLUX_LOG_TAG} [${from}, ${to}): ${recordWithoutToken} payment record(s) carry no ` +
+        `Business of their own - read through the row that issued them`
     );
   }
   logger.log(

@@ -3098,6 +3098,41 @@ export class AssociationsService {
       .map((a) => ({ id: a.id, name: a.name }));
   }
 
+  /**
+   * MAY `userId` EDIT A PRICE SOMEWHERE - the one predicate the payout estimate's fee schedule is
+   * answered on (core-service `LydiaFeeScheduleController`, docs/wiki/lydia-contract-flux.md; owner,
+   * 2026-11-14: the fees are a confidential contract term, shown to those who need them). Built from
+   * the rights that guard the price editors, never a new axis:
+   * - a global admin (every editor, the Cercle top-up page included);
+   * - a BDE super-admin (`isAssociationSuperAdmin`): `mayAct` grants them MANAGE_PRODUCTS and
+   *   MANAGE_FORMS on the associations they govern;
+   * - a member holding MANAGE_PRODUCTS (the shop, the cotisation tiers) or MANAGE_FORMS (paid forms)
+   *   in an association or a list - not an institution, which collects nothing (TYPE_EXCLUDED_FLAGS);
+   * - the owner of a live form attached to an association or a list (`managesForm`: an owner edits
+   *   their form's price).
+   */
+  async mayEditAPrice(userId: string, isGlobalAdmin: boolean): Promise<boolean> {
+    if (isGlobalAdmin) return true;
+    if (!userId) return false;
+    const priceFlags =
+      AssociationPermissionFlag.MANAGE_PRODUCTS | AssociationPermissionFlag.MANAGE_FORMS;
+    const mine = await this.listByUser(userId);
+    if (mine.some((a) => a.type !== 'institution' && (a.permissions & priceFlags) !== 0)) {
+      return true;
+    }
+    if (await this.isAssociationSuperAdmin(userId)) return true;
+    const [owned]: Array<{ owns: boolean }> = await this.assoRepo.manager.query(
+      `SELECT EXISTS (
+         SELECT 1 FROM forms f JOIN associations a ON a.id = f."associationId"
+          WHERE f."ownerId" = $1 AND f."deletedAt" IS NULL AND a.type <> 'institution'
+       ) AS owns`,
+      [userId]
+    );
+    const may = owned?.owns === true;
+    this.logger.debug(`[PERM] may edit a price user=${userId.slice(0, 8)}: ${may}`);
+    return may;
+  }
+
   /** Returns true if userId is a member of the given association (any role). */
   async isMember(userId: string, associationId: string): Promise<boolean> {
     const m = await this.memberRepo.findOne({ where: { associationId, userId } });

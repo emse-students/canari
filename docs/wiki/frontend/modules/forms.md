@@ -85,6 +85,11 @@ A paid answer can be refunded from Canari, in full or in part, by a payout manag
 (the Achats tab, [payments](payments.md#refunds-from-canari-enrolment-lot-4)); a TOTAL refund turns the
 answer `refunded`, which frees its seat and its single-answer slot.
 
+**A paid answer is never deleted** (owner, 2026-11-14): `deleteSubmission` refuses `paid` and
+`paid_over_capacity` with the typed 409 `FORM_ANSWER_PAID`, and the manager is told to refund or
+cancel it instead - the payment's record keeps its Lydia Business either way
+([lydia-contract-flux](../../lydia-contract-flux.md#enrolled-or-historical-the-discriminator)).
+
 ## Key component: forms/[id]/+page.svelte
 
 The single form submission page handles the three payment flows. Key state:

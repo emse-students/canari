@@ -135,10 +135,13 @@ apply_copy_strips() {
   # goes: with its Business cleared a copy has no bridge to keep. Guarded on the table: a dump taken
   # before migration 167 reached production has none.
   "$sql" "DO \$\$ BEGIN IF to_regclass('lydia_account_bridges') IS NOT NULL THEN DELETE FROM lydia_account_bridges; END IF; END \$\$;" "$database"
+  # The Business a payment was taken on, kept on its record (migration 169): the same live identifier.
+  # Guarded on the column: a dump taken before migration 169 has none.
+  "$sql" "DO \$\$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'purchase_records' AND column_name = 'lydiaVendorToken') THEN UPDATE purchase_records SET \"lydiaVendorToken\" = NULL WHERE \"lydiaVendorToken\" IS NOT NULL; END IF; END \$\$;" "$database"
   # The platform's Lydia flux ledger (migration 168, lydia-contract-flux.ts): the vendor tokens of the
   # Businesses Canari enrolled, the same live identifiers. Emptied with them. Guarded on the table.
   "$sql" "DO \$\$ BEGIN IF to_regclass('lydia_enrolled_businesses') IS NOT NULL THEN DELETE FROM lydia_enrolled_businesses; END IF; END \$\$;" "$database"
-  printf '%s   payment identifiers cleared: 25 columns across users, associations, purchase_records, submissions, product_checkouts, lydia_cashiers, lydia_refunds; lydia_account_bridges and lydia_enrolled_businesses emptied\n' "$prefix"
+  printf '%s   payment identifiers cleared: 26 columns across users, associations, purchase_records, submissions, product_checkouts, lydia_cashiers, lydia_refunds; lydia_account_bridges and lydia_enrolled_businesses emptied\n' "$prefix"
 
   # (c) platform_config.payment_provider is left ALONE, and that is a decision rather than an
   # oversight. Its type is 'stripe' | 'lydia' with no third value, so there is no way to say

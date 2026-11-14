@@ -176,6 +176,7 @@ import {
   ANSWER_MAX_TEXT_LENGTH,
   assertFormItemsShape,
   FORM_ANSWER_MISSING,
+  FORM_ANSWER_PAID,
   FORM_ANSWER_TOO_LONG,
   FORM_ANSWER_TOO_MANY_SELECTIONS,
   FORM_CLOSED,
@@ -186,6 +187,7 @@ import {
   FORM_SIGN_IN_REQUIRED,
   formRefusal,
   isQuestionAnswered,
+  PAID_SUBMISSION_STATUSES,
   withNormalisedGridAnswers,
 } from './answer-bounds';
 import { coreUrl } from '../internal/service-urls';
@@ -2016,6 +2018,25 @@ export class FormsService {
     ) {
       try {
         const delivered = await this.formTierDelivered(form, submission, seatGiven, grant);
+        // The Business the answer's request was issued to (migration 169): kept on the record, so
+        // the payment keeps it if the answer is ever deleted. `select: false` on the answer.
+        const lydiaVendorToken =
+          how.paymentMethod === 'online'
+            ? ((
+                (await this.submissionRepo.findOne({
+                  where: { id: submission.id },
+                  select: { id: true, lydiaVendorToken: true },
+                })) ?? null
+              )?.lydiaVendorToken ?? null)
+            : null;
+        if (how.paymentMethod === 'online' && !lydiaVendorToken) {
+          // Since migration 120 every issued request writes it: an online payment without one is
+          // a writer that skipped it, and the platform's flux will count this payment nowhere.
+          this.logger.error(
+            `[PurchaseRecord] submission ${submission.id}: online payment recorded with NO Business ` +
+              '(lydiaVendorToken) - counted nowhere by the Lydia flux'
+          );
+        }
         await this.purchaseRecordService.create({
           userId: submission.userId,
           source: 'form',
@@ -2026,6 +2047,7 @@ export class FormsService {
           status: receivedStatus(delivered),
           associationId: form.associationId,
           productName: form.title ?? 'Formulaire',
+          lydiaVendorToken,
         });
       } catch (e) {
         this.logger.error(
@@ -3255,7 +3277,12 @@ export class FormsService {
     }
   }
 
-  /** Deletes a submission. Requires form manager access. */
+  /**
+   * Deletes a submission. Requires form manager access. AN ANSWER WHOSE PAYMENT WAS RECEIVED IS NEVER
+   * DELETED (owner, 2026-11-14): it is refunded or cancelled instead, so the money it carries keeps
+   * its trace - a typed 409 `FORM_ANSWER_PAID`. The status is tested IN the delete's own WHERE, so a
+   * payment confirmed between the read and the delete is refused too, never deleted.
+   */
   async deleteSubmission(
     submissionId: string,
     callerId: string,
@@ -3264,7 +3291,25 @@ export class FormsService {
     const sub = await this.submissionRepo.findOne({ where: { id: submissionId } });
     if (!sub) throw new NotFoundException('Submission not found');
     await this.assertFormManager(sub.formId, callerId, isGlobalAdmin);
-    await this.submissionRepo.delete(submissionId);
+    const deleted = (await this.submissionRepo.query(
+      `DELETE FROM submissions WHERE id = $1 AND "paymentStatus" <> ALL($2::text[]) RETURNING id`,
+      [submissionId, [...PAID_SUBMISSION_STATUSES]]
+    )) as unknown[];
+    if (deleted.length === 0) {
+      const now = await this.submissionRepo.findOne({
+        where: { id: submissionId },
+        select: { id: true, paymentStatus: true },
+      });
+      if (!now) throw new NotFoundException('Submission not found');
+      this.logger.warn(
+        `[Forms] Submission ${submissionId} NOT deleted by ${callerId}: its payment was received ` +
+          `(${now.paymentStatus}) - refund or cancel it instead`
+      );
+      throw new ConflictException({
+        code: FORM_ANSWER_PAID,
+        message: 'This answer was paid: refund or cancel it instead of deleting it.',
+      });
+    }
     this.logger.log(`[Forms] Submission ${submissionId} deleted by ${callerId}`);
   }
 

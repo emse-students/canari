@@ -29,6 +29,7 @@
     "answerEditOff": "FORM_ANSWER_EDIT_OFF",
     "answerLocked": "FORM_ANSWER_LOCKED",
     "answerNotEditable": "FORM_ANSWER_NOT_EDITABLE",
-    "answerNotFound": "FORM_ANSWER_NOT_FOUND"
+    "answerNotFound": "FORM_ANSWER_NOT_FOUND",
+    "answerPaid": "FORM_ANSWER_PAID"
   }
 }

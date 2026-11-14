@@ -92,6 +92,15 @@ export class PurchaseRecord {
   @Column({ type: 'uuid' })
   associationId: string;
 
+  /**
+   * The Lydia Business that took this payment (migration 169), written with the record at the
+   * settlement: what the platform's Lydia flux reads (`measureLydiaFlux`), so a payment keeps its
+   * Business when the answer that issued it is deleted. NULL for a cash or manual sale. A live
+   * identifier: `select: false`, no read of a record carries it unless it asks by name.
+   */
+  @Column({ type: 'varchar', length: 256, nullable: true, select: false })
+  lydiaVendorToken: string | null;
+
   /** Snapshot of the product or form title at time of purchase. */
   @Column({ length: 200 })
   productName: string;

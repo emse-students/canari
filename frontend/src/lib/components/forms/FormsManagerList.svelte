@@ -44,6 +44,8 @@
   import QrCodeModal from '$lib/components/shared/QrCodeModal.svelte';
   import { m } from '$lib/paraglide/messages';
   import { submitterName } from '$lib/forms/submissionTable';
+  import { formCodeMessage } from '$lib/forms/answerBounds';
+  import { refusalCode } from '$lib/utils/apiRefusal';
   import FormResponsesPanel from '$lib/components/forms/FormResponsesPanel.svelte';
   import FormRowMenu from '$lib/components/forms/FormRowMenu.svelte';
   import { productGridQuestions } from '$lib/forms/responsesView';
@@ -245,8 +247,18 @@
         submissionsData = { ...submissionsData, [formId]: current.filter((s) => s.id !== sub.id) };
       }
     } catch (e) {
-      console.error(`[FORMS] deleting answer ${sub.id.slice(0, 8)} failed:`, e);
-      showToast(m.form_list_error_delete());
+      // A paid answer is refused with a typed code (FORM_ANSWER_PAID): an expected answer, said to
+      // the manager (refund or cancel it), never an error.
+      const coded = formCodeMessage(refusalCode(e));
+      if (coded) {
+        Log.w(
+          'FormsManagerList',
+          `deleting answer ${sub.id.slice(0, 8)} refused: ${refusalCode(e)}`
+        );
+      } else {
+        console.error(`[FORMS] deleting answer ${sub.id.slice(0, 8)} failed:`, e);
+      }
+      showToast(coded ?? m.form_list_error_delete());
     } finally {
       deletingSubmissionId = null;
     }

@@ -8,7 +8,7 @@ import axios from 'axios';
 import { BadGatewayException, BadRequestException, Logger } from '@nestjs/common';
 import type { Repository } from 'typeorm';
 import type { PlatformConfig } from './entities/platform-config.entity';
-import { LydiaContractService } from './lydia-contract.service';
+import { LYDIA_FEES_NOT_A_PRICE_EDITOR, LydiaContractService } from './lydia-contract.service';
 
 jest.mock('axios');
 const mockedAxios = axios as unknown as { get: jest.Mock };
@@ -45,6 +45,37 @@ beforeEach(() => {
 });
 
 afterEach(() => jest.restoreAllMocks());
+
+describe('assertMayReadFeeSchedule', () => {
+  it('answers a global admin without asking social-service', async () => {
+    const { service } = serviceWith({ lydiaContract: TERMS });
+    await expect(service.assertMayReadFeeSchedule('admin-id', true)).resolves.toBeUndefined();
+    expect(mockedAxios.get).not.toHaveBeenCalled();
+  });
+
+  it('answers a price editor, as social-service decides', async () => {
+    const { service } = serviceWith({ lydiaContract: TERMS });
+    mockedAxios.get.mockResolvedValue({ data: { ok: true } });
+    await expect(service.assertMayReadFeeSchedule('editor-id', false)).resolves.toBeUndefined();
+    expect(mockedAxios.get.mock.calls[0][0]).toContain('may-edit-a-price?userId=editor-id');
+  });
+
+  it('refuses everyone else with the typed 403', async () => {
+    const { service } = serviceWith({ lydiaContract: TERMS });
+    mockedAxios.get.mockResolvedValue({ data: { ok: false } });
+    await expect(service.assertMayReadFeeSchedule('student-id', false)).rejects.toMatchObject({
+      response: { code: LYDIA_FEES_NOT_A_PRICE_EDITOR },
+    });
+  });
+
+  it('is a 502 when the check cannot be made, never an answer', async () => {
+    const { service } = serviceWith({ lydiaContract: TERMS });
+    mockedAxios.get.mockRejectedValue(new Error('ECONNRESET'));
+    await expect(service.assertMayReadFeeSchedule('editor-id', false)).rejects.toMatchObject({
+      response: { code: 'LYDIA_FEES_CHECK_UNREADABLE' },
+    });
+  });
+});
 
 describe('feeSchedule', () => {
   it('is null and accuses at WARN while nothing is entered', async () => {

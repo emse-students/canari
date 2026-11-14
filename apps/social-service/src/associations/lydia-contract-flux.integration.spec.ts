@@ -183,6 +183,7 @@ maybe('the platform Lydia flux (PostgreSQL)', () => {
 
   beforeEach(async () => {
     await ds.query(`DELETE FROM lydia_refunds`);
+    await ds.query(`DELETE FROM submissions`);
     await ds.query(`DELETE FROM product_checkouts`);
     await ds.query(`DELETE FROM purchase_records`);
   });
@@ -266,6 +267,43 @@ maybe('the platform Lydia flux (PostgreSQL)', () => {
   it('reports a payment no row ties to a Business, counted nowhere', async () => {
     await form(500, null, '2031-06-01T10:00:00Z');
     expect(await measure()).toMatchObject({ paidCents: 0, excludedCents: 0, untraceableCount: 1 });
+  });
+
+  it('migration 169 copies each payment trace onto its record, which then survives the answer', async () => {
+    // Written before 169: the Business is only on the answer and on the paid attempt.
+    const formRecord = await form(1_500, T_PLAIN, '2031-06-01T10:00:00Z');
+    const shopRecord = await boutique(2_500, T_SWITCHED_NEW, '2031-06-02T10:00:00Z');
+    await admin.query(migration('169_purchase_record_vendor_token.sql'));
+    await admin.query('RESET lock_timeout');
+    const rows = (await ds.query(
+      `SELECT id, "lydiaVendorToken" FROM purchase_records WHERE id = ANY($1::uuid[]) ORDER BY "amountCents"`,
+      [[formRecord, shopRecord]]
+    )) as Array<{ id: string; lydiaVendorToken: string }>;
+    expect(rows.map((r) => r.lydiaVendorToken)).toEqual([T_PLAIN, T_SWITCHED_NEW]);
+    // The manager deletes the answer (as a pre-2026-11-14 build could) - its form goes with it, or
+    // is soft-deleted: the record keeps the Business, and the payment still counts.
+    await ds.query(
+      `DELETE FROM submissions WHERE id = (SELECT "submissionId" FROM purchase_records WHERE id = $1)`,
+      [formRecord]
+    );
+    expect(await measure()).toMatchObject({
+      paidCents: 4_000,
+      paymentCount: 2,
+      untraceableCount: 0,
+    });
+  });
+
+  it('a record that carries its own Business counts with no answer and no attempt left', async () => {
+    const id = await form(800, null, '2031-06-01T10:00:00Z');
+    await ds.query(`UPDATE purchase_records SET "lydiaVendorToken" = $2 WHERE id = $1`, [
+      id,
+      T_PLAIN,
+    ]);
+    await ds.query(
+      `DELETE FROM submissions WHERE id = (SELECT "submissionId" FROM purchase_records WHERE id = $1)`,
+      [id]
+    );
+    expect(await measure()).toMatchObject({ paidCents: 800, untraceableCount: 0 });
   });
 
   it('a bridge historical account never counts, even if a ledger row names it by mistake', async () => {
