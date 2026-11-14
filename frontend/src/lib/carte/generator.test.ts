@@ -1,10 +1,16 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { bureauCrownOffset } from './layout';
 import {
   buildPosterModel,
   directoryLine,
   orderByFamilyName,
+  rosterLine,
   type PosterMemberRef,
 } from './generator';
+
+// Kept in a variable: Vite rewrites `new URL('<literal>', import.meta.url)` into an asset URL.
+const CASES_REL = '../../../../apps/social-service/src/associations/directory-line.cases.json';
 import type { Association, AssociationMember } from '$lib/associations/api';
 
 /** The one association every test in this file groups its roster under. */
@@ -139,6 +145,17 @@ describe('carte generator', () => {
 
     it('is empty for an association with nobody on it', () => {
       expect(line([])).toBe('');
+    });
+
+    // The server derives the PUBLISHED line from the roster this editor sends, with its own copy:
+    // both specs read the same cases, so the two cannot print a roster differently.
+    it("formats every shared case exactly as the server's directoryLine", () => {
+      const source = readFileSync(fileURLToPath(new URL(CASES_REL, import.meta.url)), 'utf8');
+      const { cases } = JSON.parse(source) as {
+        cases: { members: { name: string; role: string }[]; line: string }[];
+      };
+      expect(cases.length).toBeGreaterThan(0);
+      for (const c of cases) expect(rosterLine(c.members)).toBe(c.line);
     });
   });
 

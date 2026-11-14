@@ -131,9 +131,7 @@ describe('PartnershipsService claiming, gating and mode validation', () => {
         code: PARTNERSHIP_ERROR_CODES.NOT_FOUND,
       });
       // Read grants count at the claim as in the listing (owner, 2026-11-14).
-      expect(associationVisibleTo).toHaveBeenCalledWith(manager, 'asso1', 'user1', {
-        readGrants: true,
-      });
+      expect(associationVisibleTo).toHaveBeenCalledWith(manager, 'asso1', 'user1');
       expect(manager.transaction).not.toHaveBeenCalled();
     });
   });

@@ -12,7 +12,14 @@ import { PosterZone } from './entities/poster-zone.entity';
 import { PosterEntry } from './entities/poster-entry.entity';
 import { AssociationPermissionFlag } from './entities/association-member.entity';
 import { CreatePosterProjectDto, PosterEntryDto, UpdatePosterProjectDto } from './dto/poster.dto';
-import { sanitizePublishedCarte, type PublishedCarte } from './published-carte';
+import {
+  keepCurrentMembers,
+  publicCarte,
+  publishedMemberPairs,
+  sanitizePublishedCarte,
+  type CurrentMembership,
+  type PublishedCarte,
+} from './published-carte';
 import {
   ALL_CARTE_SPACES_SQL,
   CARTE_ERROR,
@@ -197,7 +204,7 @@ export class PosterService {
       const project = await manager.getRepository(PosterProject).save(
         manager.getRepository(PosterProject).create({
           name: dto.name,
-          layout: dto.layout ?? {},
+          layout: {},
           spaceId: dto.spaceId,
           createdBy: caller.userId,
         })
@@ -270,11 +277,27 @@ export class PosterService {
       }
     }
     return this.posterRepo.manager.transaction(async (manager) => {
-      if (dto.name !== undefined) project.name = dto.name;
-      if (dto.layout !== undefined) project.layout = dto.layout;
-      const attaching = dto.spaceId !== undefined && project.spaceId === null;
-      if (attaching) project.spaceId = dto.spaceId as string;
-      const saved = await manager.getRepository(PosterProject).save(project);
+      // The map's row FIRST, then the row itself and who is a member: an account erasure holds this
+      // row until it commits, so a save that waited on it reads what the erasure left - and writes
+      // back none of the columns it was not asked to change (an entity read before the lock would
+      // carry a publication the erasure has since scrubbed, and `save` writes what differs).
+      await manager.query('SELECT 1 FROM poster_projects WHERE id = $1 FOR NO KEY UPDATE', [id]);
+      const row = await manager.getRepository(PosterProject).findOne({ where: { id } });
+      if (!row) throw new NotFoundException('Poster project not found');
+      if (dto.name !== undefined) row.name = dto.name;
+      if (dto.layout !== undefined) {
+        const isMember = await this.currentMembership(manager, layoutBureauPairs(dto.layout));
+        const kept = keepCurrentBureaus(dto.layout, isMember);
+        if (kept.dropped > 0) {
+          this.logger.warn(
+            `[CARTE] save of map ${id} dropped ${kept.dropped} bureau pick(s) of non-members - a stale editor`
+          );
+        }
+        row.layout = kept.layout;
+      }
+      const attaching = dto.spaceId !== undefined && row.spaceId === null;
+      if (attaching) row.spaceId = dto.spaceId as string;
+      const saved = await manager.getRepository(PosterProject).save(row);
       if (attaching) {
         const placed = layoutAssociationIds(saved.layout);
         const offered = await this.spaceAssociationIds(saved.spaceId as string, manager);
@@ -560,6 +583,16 @@ export class PosterService {
       this.logger.warn(`publish rejected for ${id}: payload has no usable bubble`);
       throw new BadRequestException('Publication payload is empty or malformed');
     }
+    const unstructured = unstructuredRosterEntries(publication);
+    if (unstructured > 0) {
+      this.logger.warn(
+        `[CARTE] publish of map ${id} refused: ${CARTE_ERROR.ROSTER_UNSTRUCTURED} (${unstructured} directory line(s) with no roster - a client older than the structured roster)`
+      );
+      throw new BadRequestException({
+        code: CARTE_ERROR.ROSTER_UNSTRUCTURED,
+        message: 'Every directory line must carry its roster; reload the editor and publish again.',
+      });
+    }
     const project = await this.get(id, caller);
     const refusal = await this.refuseUnitsOutsideMap(project, publication);
     if (refusal) {
@@ -577,6 +610,17 @@ export class PosterService {
       // it, and wins: the last publish is the live one. NO KEY: the row is not deleted nor its key
       // changed, so the foreign keys that reference the space (KEY SHARE) are not blocked by it.
       await manager.query('SELECT 1 FROM spaces WHERE id = $1 FOR NO KEY UPDATE', [spaceId]);
+      // Who is a member is read under that lock, and LOCKED (`FOR KEY SHARE`, see
+      // `currentMembership`): a membership an erasure has deleted but not committed is waited for
+      // and then read gone, so this publish cannot commit the account back after the erasure's scan.
+      const isMember = await this.currentMembership(manager, publishedMemberPairs(publication));
+      const kept = keepCurrentMembers(publication, isMember);
+      const dropped = kept.droppedCards + kept.droppedMembers;
+      if (dropped > 0) {
+        this.logger.warn(
+          `[CARTE] publish of map ${id} dropped ${kept.droppedCards} card(s) and ${kept.droppedMembers} roster member(s) of non-members - a stale editor`
+        );
+      }
       const repo = manager.getRepository(PosterProject);
       // Clear the space's previous live map FIRST; the unique index allows one live row per space.
       // Its fingerprint goes with it: a row that is not live describes no published document.
@@ -585,9 +629,11 @@ export class PosterService {
         { publication: null, publishedAt: null, publicationFingerprint: null }
       );
       await repo.update(id, {
-        publication: publication as unknown as Record<string, unknown>,
+        publication: kept.carte as unknown as Record<string, unknown>,
         publishedAt: new Date(),
-        publicationFingerprint: fingerprint,
+        // The client's fingerprint describes the document it SENT; once something was dropped it
+        // describes no stored document, and NULL is the editor's "unknown" (offers an update).
+        publicationFingerprint: dropped > 0 ? null : fingerprint,
       });
       const saved = await repo.findOne({ where: { id } });
       if (!saved) throw new NotFoundException('Poster project not found');
@@ -598,20 +644,80 @@ export class PosterService {
     });
   }
 
-  /** Takes a map offline. Idempotent: unpublishing an already-offline map is a no-op. */
+  /**
+   * Takes a map offline. Idempotent: unpublishing an already-offline map is a no-op.
+   *
+   * A targeted write of the three publication columns, never a `save` of the entity the access check
+   * read: `save` writes every column that differs from the row, so a layout an account erasure
+   * scrubbed between that read and this write would come back.
+   */
   async unpublish(id: string, caller: CarteCaller): Promise<PosterProject> {
     this.logger.debug(`unpublish poster project ${id}`);
-    const project = await this.get(id, caller);
-    project.publication = null;
-    project.publishedAt = null;
-    project.publicationFingerprint = null;
-    return this.posterRepo.save(project);
+    await this.get(id, caller);
+    await this.posterRepo.update(id, {
+      publication: null,
+      publishedAt: null,
+      publicationFingerprint: null,
+    });
+    const project = await this.posterRepo.findOne({ where: { id } });
+    if (!project) throw new NotFoundException('Poster project not found');
+    return project;
   }
 
-  /** The response the showcase reads, from a live row. */
+  /**
+   * Which of `pairs` are CURRENT memberships, in one query. The ONE check the publish and the save
+   * run against what an editor sends: a card, a roster member or a bureau pick of someone who is no
+   * longer a member - an erased account above all - never goes back in through a stale editor.
+   *
+   * The rows read are locked `FOR KEY SHARE`. A plain read would still see a membership an account
+   * erasure has DELETED but not committed, and the publish or save would then commit the account
+   * back onto a map the erasure's scan had already passed. KEY SHARE conflicts with that DELETE: the
+   * read waits for the erasure and reads the row gone - or, taken first, makes the erasure's DELETE
+   * wait for this transaction, whose write the erasure's later candidate scan then sees and scrubs.
+   *
+   * THE LOCK GRAPH. A publish holds its space row, then these rows, then writes its space's maps. A
+   * save holds its map row, then these rows, then writes that map. The erasure takes associations,
+   * lives, the spaces then the maps it will write (`ERASURE_CARTE_SPACES_LOCK_SQL`), and only then
+   * deletes its memberships, before re-reading its candidate maps. A space or map in the erasure's
+   * set is therefore taken in one order by all three: whoever comes second waits holding no
+   * membership row. ONE interleaving still closes a cycle: a save commits the account's id into a
+   * map OUTSIDE the erasure's set after that set was locked but before the DELETE (it read the row
+   * first, so the DELETE waited for it), and a SECOND save of that same map then holds its row while
+   * waiting on the deleted membership - while the erasure's candidate scan waits on that map row.
+   * PostgreSQL aborts one of the two (`40P01`): the save fails and the editor's next save retries
+   * it, or the erasure rolls back whole and core-service's durable queue runs it again
+   * (docs/wiki/account-erasure.md). A deletion of an association works the same way against a
+   * publish of the space it governs (association, its members, then the space's `bdeAssociationId`
+   * against space, then members): the loser is retried by its author.
+   *
+   * Association ids are compared as `uuid`, so the primary-key index is used; a pair whose
+   * association is not a uuid - a layout can carry any string - is not a membership and never
+   * reaches the query.
+   */
+  private async currentMembership(
+    manager: EntityManager,
+    pairs: { assoId: string; userId: string }[]
+  ): Promise<CurrentMembership> {
+    const asked = pairs.filter((p) => UUID_PATTERN.test(p.assoId));
+    if (asked.length === 0) return () => false;
+    const rows: { assoId: string; userId: string }[] = await manager.query(
+      `SELECT "associationId"::text AS "assoId", "userId" FROM association_members
+        WHERE "associationId" = ANY($1::uuid[]) AND "userId" = ANY($2::text[])
+        FOR KEY SHARE`,
+      [[...new Set(asked.map((p) => p.assoId))], [...new Set(asked.map((p) => p.userId))]]
+    );
+    const key = (assoId: string, userId: string) => `${assoId.toLowerCase()}:${userId}`;
+    const current = new Set(rows.map((r) => key(r.assoId, r.userId)));
+    this.logger.debug(
+      `[CARTE] membership checked: ${pairs.length} pair(s), ${pairs.length - asked.length} not of a uuid association, ${current.size} current`
+    );
+    return (assoId, userId) => current.has(key(assoId, userId));
+  }
+
+  /** The response the showcase reads, from a live row: never a stored roster (account ids). */
   private toPublished(project: PosterProject): PublishedCarteResponse {
     return {
-      ...(project.publication as unknown as PublishedCarte),
+      ...publicCarte(project.publication as unknown as PublishedCarte),
       name: project.name,
       publishedAt: (project.publishedAt as Date).toISOString(),
     };
@@ -670,6 +776,20 @@ export class PosterService {
   }
 }
 
+/** A canonical uuid, the only shape an association id has. */
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * How many directory entries of a publication print a roster line with no `members` behind it: a
+ * line of names the server can neither check nor scrub, which a publish refuses
+ * (`CARTE_ROSTER_UNSTRUCTURED`). An entry with an empty line and no roster names nobody.
+ */
+export function unstructuredRosterEntries(carte: PublishedCarte): number {
+  return (carte.directory?.zones ?? [])
+    .flatMap((z) => z.assos)
+    .filter((a) => !a.members && a.line.trim() !== '').length;
+}
+
 /** The association ids a saved layout placed (`layout.bubbles[].assoId`), read defensively. */
 export function layoutAssociationIds(
   layout: Record<string, unknown> | null | undefined
@@ -682,4 +802,43 @@ export function layoutAssociationIds(
     if (typeof assoId === 'string') ids.add(assoId);
   }
   return ids;
+}
+
+/** Every (association, account) pair a saved layout's bubbles pick for their bureau. */
+export function layoutBureauPairs(
+  layout: Record<string, unknown> | null | undefined
+): { assoId: string; userId: string }[] {
+  const bubbles = layout?.bubbles;
+  if (!Array.isArray(bubbles)) return [];
+  return bubbles.flatMap((b) => {
+    const { assoId, selectedBureau } = (b ?? {}) as { assoId?: unknown; selectedBureau?: unknown };
+    if (typeof assoId !== 'string' || !Array.isArray(selectedBureau)) return [];
+    return selectedBureau
+      .filter((u): u is string => typeof u === 'string')
+      .map((userId) => ({ assoId, userId }));
+  });
+}
+
+/**
+ * The layout with each bubble's `selectedBureau` cut to the CURRENT members of that bubble's
+ * association, so a tab left open across a departure or an account erasure cannot save the id back.
+ * A layout with nothing to cut is returned as it came.
+ */
+export function keepCurrentBureaus(
+  layout: Record<string, unknown>,
+  isMember: CurrentMembership
+): { layout: Record<string, unknown>; dropped: number } {
+  const bubbles = layout.bubbles;
+  if (!Array.isArray(bubbles)) return { layout, dropped: 0 };
+  let dropped = 0;
+  const next = bubbles.map((b) => {
+    const bubble = (b ?? {}) as { assoId?: unknown; selectedBureau?: unknown };
+    if (typeof bubble.assoId !== 'string' || !Array.isArray(bubble.selectedBureau)) return b;
+    const assoId = bubble.assoId;
+    const kept = bubble.selectedBureau.filter((u) => typeof u === 'string' && isMember(assoId, u));
+    if (kept.length === bubble.selectedBureau.length) return b;
+    dropped += bubble.selectedBureau.length - kept.length;
+    return { ...bubble, selectedBureau: kept };
+  });
+  return dropped > 0 ? { layout: { ...layout, bubbles: next }, dropped } : { layout, dropped: 0 };
 }

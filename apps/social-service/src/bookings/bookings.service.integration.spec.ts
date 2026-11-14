@@ -188,6 +188,11 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
     await q(
       `CREATE TABLE user_blocks ("blockerId" varchar NOT NULL, "blockedId" varchar NOT NULL)`
     );
+    // The grants table (migration 078), with the columns the visibility predicate reads.
+    await q(
+      `CREATE TABLE read_grants (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+         user_id varchar(255) NOT NULL, campus varchar(32) NOT NULL, formation varchar(16) NULL)`
+    );
     await q(MIGRATION);
     // A listed space tells its association's followers of its opening (engagement WP-4): the
     // follows, in the shape the follow writes them, and the opening reminders 151 creates.
@@ -1307,6 +1312,34 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       // Its manager is never refused, nor kept out of the list.
       expect(await listedTo(ORGA, space.id)).toBe(true);
       await expect(service.getSpace(space.id, as(ORGA))).resolves.toBeDefined();
+    });
+
+    it('a nominative read grant opens an association space of its cell, and nothing without it (owner, 2026-11-14)', async () => {
+      const { space, resourceIds } = await setup({ name: 'granted asso' });
+      await q(
+        `UPDATE association_audiences SET campus = 'gardanne', formation = NULL WHERE "associationId" = $1`,
+        [space.associationId]
+      );
+      // Staff of Saint-Etienne have no space: a Gardanne association is closed to them...
+      expect(await listedTo(STAFF, space.id)).toBe(false);
+      expect(await refusal(service.getSpace(space.id, as(STAFF)))).toEqual({
+        code: 'space-not-found',
+      });
+      // ...until they are granted the Gardanne cell.
+      await q(`INSERT INTO read_grants (user_id, campus) VALUES ($1, 'gardanne')`, [STAFF]);
+      try {
+        expect(await listedTo(STAFF, space.id)).toBe(true);
+        await expect(service.getSpace(space.id, as(STAFF))).resolves.toBeDefined();
+        await expect(
+          book(space.id, resourceIds[0], '10:00', '10:30', STAFF)
+        ).resolves.toBeDefined();
+        // A student of the other campus, with no grant, stays out.
+        expect(await listedTo(ALICE, space.id)).toBe(false);
+      } finally {
+        await q(`DELETE FROM read_grants WHERE user_id = $1`, [STAFF]);
+      }
+      // The revocation holds on the next read.
+      expect(await listedTo(STAFF, space.id)).toBe(false);
     });
 
     /**

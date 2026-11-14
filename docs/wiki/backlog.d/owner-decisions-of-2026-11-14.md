@@ -84,6 +84,11 @@ répéter"*). Each line names where its detail lives.
 
 ### Other open questions answered
 
+- **#3526 (an erased account leaves the carte): the lead republishes every live carte ONCE, right
+  after the release that carries it** - no migration; that publish drops the accounts erased before
+  #3526 and the legacy line-only directory entries. The gesture, who can make it and how to check it:
+  [carte-vie-asso](../carte-vie-asso.md#after-the-release-that-carries-3526-republish-every-live-carte-once).
+
 - **CanaReels cover every short or vertical video, from the camera AND the gallery** (owner: *"Toute
   vidéo verticale et/ou inférieure à 90 s est un CanaReel, y compris depuis la galerie"*); the feed
   CanaReel retention is already **one year** (`REEL_RETENTION_DAYS = 365`, owner 2026-11-09) - the
@@ -135,8 +140,9 @@ répéter"*). Each line names where its detail lives.
   association directory, the shop and the partnerships of the ticked cell - *"elle pourrait même
   payer le tarif cotisant si elle cotisait"*. No per-person switch. Built
   ([as built](../profiles-and-access.md#a-grant-opens-everything-of-its-cell-owner-2026-11-14)):
-  a partnership card listed to a named reader is one they may claim; a booking space was not part
-  of the answer and is unchanged.
+  a partnership card listed to a named reader is one they may claim (confirmed by the owner: *"Oui,
+  comme un etudiant"*, limited stock included), and an association's booking spaces open the same
+  way (*"Ouvrir aussi"*).
 - **An unknown formation at sign-in is ignored and said** (*"L'ignorer et alerter"*), never filed
   under `Autre`: the cursus entry is kept (it is what tells a student from staff), opens no space,
   and is logged.

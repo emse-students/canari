@@ -4783,9 +4783,10 @@ Proved on the phone by applying the new rule over CDP with the keyboard up: the 
 (`keyboardViewport.test.ts`) replays the bench's LatinIME rise (945/945, 945/588, the 588/230.3 double
 report, 588/587.9, back to 945) and holds the ceiling at 567 on every frame. **Limit:** below the
 keyboard-open threshold (160 px on Android) no keyboard is "open", so a 90 px keyboard still takes
-54 px off the ceiling - the same threshold as [the P3 note](../../backlog.d/p3-a-90-px-keyboard-leaves-the-composer-12-px-low-for-24-ms.md).
-**Owed: one reading of the built change on the Mi 9T** - a DM ending on a tall screenshot, the
-keyboard raised: the frame's height equal with the keyboard up and down.
+54 px off the ceiling.
+**Read on the Mi 9T 2026-11-14 (`1.6.12`, dev, LatinIME):** `--keyboard-free-viewport-height` is set to 945 px with the keyboard up and unset when it is down, and a picture (256 CSS px high, not the tall screenshot) keeps its height both ways over two cycles with the end of the thread right above the composer. **A tall screenshot fixture (the 567 px case) was not sent, so the clamp itself is still owed.**
+
+**The 90 px keyboard, per frame (Mi 9T, a one-row keyboard that takes 90 CSS px, 150 frames of a rise, 2026-11-14):** `innerHeight` goes 945 -> 855 in one frame, `visualViewport.height` reads 766 for that single frame (9 ms, the known double report) then 855.8, and the composer's ancestor padding goes 24 -> 12 px in the SAME frame as the resize, so no frame shows the composer 12 px low: the 24 ms of the old report was not reproduced and nothing was changed.
 
 ### The typing indicator is a row of the thread, not a band over it (2026-09-22)
 

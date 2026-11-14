@@ -1152,7 +1152,7 @@ export class AssociationsService {
    * `opts.viewerId` makes it THE DIRECTORY of that reader (D37): an association is kept when its
    * rules reach one of the reader's spaces, the reader is a member of it, or a nominative read
    * grant of the reader reaches it (owner, 2026-11-14: a grant opens everything of its cell) -
-   * `associationVisibleToViewerSql` with read grants, what the signed-in agenda already counts, so
+   * `associationVisibleToViewerSql`, which counts read grants as the signed-in agenda does, so
    * the two never disagree. A global admin is an ordinary reader here. No viewer is the whole catalogue (the public listing and
    * `?scope=all`). `opts.campus` / `opts.formation` keep the associations whose OWN rules reach a
    * space matching them (the association map).
@@ -1169,10 +1169,9 @@ export class AssociationsService {
     if (type) qb.andWhere('a.type = :directoryType', { directoryType: type });
     if (opts.viewerId) {
       this.logger.debug(`[DIRECTORY] restricted to the spaces of ${opts.viewerId.slice(0, 8)}`);
-      qb.andWhere(
-        associationVisibleToViewerSql('a.id', ':directoryViewerId', { readGrants: true }),
-        { directoryViewerId: opts.viewerId }
-      );
+      qb.andWhere(associationVisibleToViewerSql('a.id', ':directoryViewerId'), {
+        directoryViewerId: opts.viewerId,
+      });
     }
     const campus = opts.campus ?? null;
     const formation = opts.formation ?? null;

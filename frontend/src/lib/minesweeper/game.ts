@@ -49,6 +49,43 @@ export interface MinesweeperBoard {
   seed: string | null;
   /** Lazily created from `seed`; advances during generation only. */
   rng: Rng | null;
+  /**
+   * Which generator places the mines. A ranked challenge carries its version because the
+   * server replays on whatever ITS generator produces: both ends must name the same one.
+   */
+  generator: GeneratorVersion;
+  /** What generation did (v2 only), for the caller to log; null until the first reveal. */
+  generationReport: GenerationReport | null;
+}
+
+/**
+ * The mine-placement algorithm. **A published version is FROZEN**: every constant and every
+ * deduction it uses decides a ranked board, so changing one silently rejects the challenges
+ * open at deploy time. A better generator is a NEW version, never an edit.
+ *
+ * - 1: Simon Tatham's perturbation, accepted by the capped frontier solver (the original).
+ * - 2: v1's board, then raised to a target reasoning score by solvable mine swaps.
+ */
+export type GeneratorVersion = 1 | 2;
+
+/** The generator new games use; older versions stay replayable for challenges already issued. */
+export const LATEST_GENERATOR_VERSION: GeneratorVersion = 2;
+
+/** What a v2 generation did, so a caller can log it without the engine owning a logger. */
+export interface GenerationReport {
+  /** Reasoning score reached (see {@link V2_SCORE_WEIGHTS}). */
+  score: number;
+  targetScore: number;
+  /** Solvable mine swaps tried. */
+  evals: number;
+  /** Search nodes the enumerations spent, against the generation's budget (for logging and tuning). */
+  searchNodes: number;
+  reachedTarget: boolean;
+  /**
+   * True when no layout the v2 solver can clear was found, so the board is v1's and may need a
+   * guess. The one outcome that should never happen: callers log it as a warning.
+   */
+  fellBack: boolean;
 }
 
 export interface MinesweeperConfig {
@@ -138,10 +175,12 @@ function rngOf(board: MinesweeperBoard): Rng {
 /**
  * Creates an empty board; mines are placed on the first reveal.
  * @param seed - When set, enables deterministic ranked generation for anti-cheat replay.
+ * @param generator - Mine-placement version; defaults to 1 so nothing changes unless a caller opts in.
  */
 export function createBoard(
   config: MinesweeperConfig = DEFAULT_CONFIG,
-  seed: string | null = null
+  seed: string | null = null,
+  generator: GeneratorVersion = 1
 ): MinesweeperBoard {
   const { width, height, mineCount } = config;
   const total = width * height;
@@ -161,6 +200,8 @@ export function createBoard(
     flagCount: 0,
     seed,
     rng: null,
+    generator,
+    generationReport: null,
   };
 }
 
@@ -1042,6 +1083,585 @@ function placeMines(board: MinesweeperBoard, safeIndex: number): void {
   board.minesPlaced = true;
 }
 
+// ---------------------------------------------------------------------------
+// GENERATOR V2 (2026-11-13): boards that ask for reasoning.
+//
+// A v1 board is as easy as its solver lets it be: perturbation stops at the first layout the
+// solver clears, and typically that layout needs little beyond chords. v2 keeps v1's layout as a
+// starting point and then climbs: swap one mine with one empty cell, keep the swap when the board
+// is STILL clearable without guessing and its reasoning score did not fall. Measured on 300 boards
+// the old generator's best score was 27 and its median 11; the climb reaches 60 in about 120
+// swaps, and 60-85 is where players found the boards worth playing (owner, 2026-11-13).
+//
+// EVERYTHING BELOW IS PART OF THE v2 BOARD: the constants, the order the tiers are tried in, the
+// number of random draws. Change one and every v2 challenge open at deploy time is rejected.
+// ---------------------------------------------------------------------------
+
+/** v2: a frontier component above this many cells is not enumerated (a sound relaxation: it just deduces less). */
+const V2_ENUM_CAP = 40;
+/**
+ * v2: the largest component tier 3 reasons about alone ("a small group of numbers"); bigger ones are
+ * left to tier 4. This is what the scores players judged were measured with, so it is part of what
+ * "60" means.
+ */
+const V2_LOCAL_CAP = 16;
+/**
+ * v2: search nodes one component enumeration may spend. COUNTED, never timed, so every machine
+ * gives up at the same place and the server regenerates exactly what the client did.
+ */
+const V2_ENUM_NODE_BUDGET = 200_000;
+/**
+ * v2: search nodes a whole generation may spend, over every enumeration it asks for. COUNTED like the
+ * one above, and for the same reason; it bounds the worst case, which no per-component cap does (300
+ * swaps x several components each). When it is spent, enumerations are refused and the climb stops
+ * with the best board it has. Measured on 600 boards: 72 000 at the median, 697 000 at the 99.9th
+ * percentile, 1.79 million at most, so this spares every ordinary board.
+ */
+const V2_GENERATION_NODE_BUDGET = 3_000_000;
+/** v2: cached enumerations kept at once; the cache is dropped whole past it (it only ever saves work). */
+const V2_CACHE_ENTRIES = 1000;
+/** v2: the reasoning score the climb aims for. */
+const V2_TARGET_SCORE = 60;
+/** v2: swaps tried before the climb settles for the best board it has. */
+const V2_MAX_EVALS = 300;
+/** v2: starting layouts tried before giving up on finding one the v2 solver clears. */
+const V2_START_ATTEMPTS = 3;
+/** v2: how much one deduction of each tier adds to the score (basic chords are free). */
+const V2_SCORE_WEIGHTS = { subset: 1, local: 2, global: 4 } as const;
+
+/** A solve with tiers: how many deductions each tier above the chords had to make. */
+export interface TieredSolve {
+  won: boolean;
+  subset: number;
+  local: number;
+  global: number;
+  score: number;
+}
+
+/** Every way one frontier component can hold mines, summarised per mine count. */
+interface ComponentInfo {
+  /** The component's cells, in the order the flag arrays below are indexed by. */
+  vars: number[];
+  /** `achievable[c]`: some assignment holds exactly `c` mines. */
+  achievable: boolean[];
+  /** `mineAt[c][k]` / `safeAt[c][k]`: cell `k` is a mine / safe in some assignment holding `c` mines. */
+  mineAt: boolean[][];
+  safeAt: boolean[][];
+  /** Cells that are a mine / safe in EVERY assignment, whatever the count. */
+  forcedMines: number[];
+  forcedSafe: number[];
+}
+
+/**
+ * What one generation shares between its solves: the enumerations already done, keyed by the
+ * component's own constraints (so they are valid across the swaps and the boards), and the search
+ * nodes it may still spend. Never reused across generations: the budget is per generation.
+ */
+export interface SolverContext {
+  components: Map<string, ComponentInfo>;
+  nodesLeft: number;
+}
+
+/** A fresh context for one generation (or one standalone solve). */
+export function createSolverContext(): SolverContext {
+  return { components: new Map(), nodesLeft: V2_GENERATION_NODE_BUDGET };
+}
+
+/** The solver's changed cells are recorded so the chord tier only re-reads numbers they touch. */
+interface TrackedSolveState extends SolveState {
+  changed: number[];
+}
+
+/** A component the enumeration declined: any count, nothing known about its cells. Always sound. */
+function relaxedComponent(vars: number[]): ComponentInfo {
+  const n = vars.length;
+  const all = (): boolean[][] => Array.from({ length: n + 1 }, () => Array<boolean>(n).fill(true));
+  return {
+    vars,
+    achievable: Array<boolean>(n + 1).fill(true),
+    mineAt: all(),
+    safeAt: all(),
+    forcedMines: [],
+    forcedSafe: [],
+  };
+}
+
+/**
+ * Depth-first enumeration of every assignment of `vars` consistent with its constraints, recording
+ * per mine count which cells can be mines and which can be safe. A branch dies as soon as one
+ * equation cannot be met. Past the node budget the component is returned relaxed.
+ */
+function enumerateComponent(
+  vars: number[],
+  constraints: readonly Constraint[],
+  ctx: SolverContext
+): ComponentInfo {
+  const allowance = Math.min(V2_ENUM_NODE_BUDGET, ctx.nodesLeft);
+  if (allowance <= 0) return relaxedComponent(vars);
+  const n = vars.length;
+  const indexOf = new Map(vars.map((v, i) => [v, i]));
+  const equations = constraints.map((c) => ({ count: c.count, placed: 0, open: c.vars.length }));
+  const equationsOf: number[][] = vars.map(() => []);
+  constraints.forEach((c, ci) => {
+    for (const v of c.vars) equationsOf[indexOf.get(v)!].push(ci);
+  });
+
+  const achievable = Array<boolean>(n + 1).fill(false);
+  const mineAt = Array.from({ length: n + 1 }, () => Array<boolean>(n).fill(false));
+  const safeAt = Array.from({ length: n + 1 }, () => Array<boolean>(n).fill(false));
+  const assignment = Array<boolean>(n).fill(false);
+  let nodes = 0;
+  let exhausted = false;
+
+  const search = (i: number, mines: number): void => {
+    if (exhausted) return;
+    if (++nodes > allowance) {
+      exhausted = true;
+      return;
+    }
+    if (i === n) {
+      achievable[mines] = true;
+      for (let k = 0; k < n; k++) (assignment[k] ? mineAt : safeAt)[mines][k] = true;
+      return;
+    }
+    for (const mine of [false, true]) {
+      let feasible = true;
+      for (const ci of equationsOf[i]) {
+        const eq = equations[ci];
+        eq.open--;
+        if (mine) eq.placed++;
+        if (eq.placed > eq.count || eq.placed + eq.open < eq.count) feasible = false;
+      }
+      if (feasible) {
+        assignment[i] = mine;
+        search(i + 1, mine ? mines + 1 : mines);
+      }
+      for (const ci of equationsOf[i]) {
+        const eq = equations[ci];
+        eq.open++;
+        if (mine) eq.placed--;
+      }
+    }
+  };
+  search(0, 0);
+  ctx.nodesLeft -= Math.min(nodes, allowance);
+  if (exhausted) return relaxedComponent(vars);
+
+  const forcedMines: number[] = [];
+  const forcedSafe: number[] = [];
+  for (let k = 0; k < n; k++) {
+    let canMine = false;
+    let canSafe = false;
+    for (let c = 0; c <= n; c++) {
+      canMine ||= mineAt[c][k];
+      canSafe ||= safeAt[c][k];
+    }
+    if (canMine && !canSafe) forcedMines.push(vars[k]);
+    else if (canSafe && !canMine) forcedSafe.push(vars[k]);
+  }
+  return { vars, achievable, mineAt, safeAt, forcedMines, forcedSafe };
+}
+
+/** Groups constraints by the frontier component their cells belong to (a constraint never spans two). */
+function constraintsByComponent(
+  components: readonly number[][],
+  constraints: readonly Constraint[]
+): Constraint[][] {
+  const componentOf = new Map<number, number>();
+  components.forEach((comp, ci) => {
+    for (const v of comp) componentOf.set(v, ci);
+  });
+  const buckets: Constraint[][] = components.map(() => []);
+  for (const c of constraints) buckets[componentOf.get(c.vars[0])!].push(c);
+  return buckets;
+}
+
+/** The enumeration of one component, from the cache when its cells and constraints were seen before. */
+function enumerateCached(
+  comp: number[],
+  bucket: readonly Constraint[],
+  ctx: SolverContext
+): ComponentInfo {
+  const key = `${comp.join(',')}#${bucket.map((c) => `${c.vars.join(',')}:${c.count}`).join('|')}`;
+  let info = ctx.components.get(key);
+  if (!info) {
+    info = enumerateComponent(comp, bucket, ctx);
+    if (ctx.components.size >= V2_CACHE_ENTRIES) ctx.components.clear();
+    ctx.components.set(key, info);
+  }
+  return info;
+}
+
+/** Flags `mines` and opens `safes` (flood included), recording each changed cell. False when nothing changed. */
+function applyDeductions(sim: TrackedSolveState, mines: number[], safes: number[]): boolean {
+  const table = neighborTable(sim);
+  const cells = sim.cells;
+  let changed = false;
+  for (const i of mines) {
+    if (cells[i].state !== 'hidden') continue;
+    cells[i].state = 'flagged';
+    sim.flagCount++;
+    sim.changed.push(i);
+    changed = true;
+  }
+  for (const start of safes) {
+    if (cells[start].state !== 'hidden') continue;
+    if (cells[start].mine) {
+      sim.status = 'lost';
+      return true;
+    }
+    const stack = [start];
+    while (stack.length > 0) {
+      const i = stack.pop()!;
+      const cell = cells[i];
+      if (cell.state !== 'hidden') continue;
+      cell.state = 'revealed';
+      sim.revealedCount++;
+      sim.changed.push(i);
+      if (cell.adjacent === 0 && !cell.mine) {
+        for (const n of table[i]) if (cells[n].state === 'hidden') stack.push(n);
+      }
+    }
+    changed = true;
+  }
+  return changed;
+}
+
+/**
+ * Tier 1, to its fixed point: flag every hidden neighbour of a number whose remaining mines equal its
+ * hidden neighbours, open the hidden neighbours of a number its flags already satisfy. Only numbers
+ * next to a cell that changed are looked at again.
+ */
+function chordTier(sim: TrackedSolveState): boolean {
+  const table = neighborTable(sim);
+  const cells = sim.cells;
+  const queue: number[] = [];
+  const queued = new Uint8Array(cells.length);
+  const enqueue = (i: number) => {
+    if (!queued[i]) {
+      queued[i] = 1;
+      queue.push(i);
+    }
+  };
+  const touch = (c: number) => {
+    if (cells[c].state === 'revealed' && cells[c].adjacent > 0) enqueue(c);
+    for (const n of table[c])
+      if (cells[n].state === 'revealed' && cells[n].adjacent > 0) enqueue(n);
+  };
+  for (const c of sim.changed) touch(c);
+  sim.changed.length = 0;
+
+  let any = false;
+  const open = (start: number) => {
+    const stack = [start];
+    while (stack.length > 0) {
+      const i = stack.pop()!;
+      const cell = cells[i];
+      if (cell.state !== 'hidden') continue;
+      cell.state = 'revealed';
+      sim.revealedCount++;
+      touch(i);
+      if (cell.adjacent === 0 && !cell.mine) {
+        for (const n of table[i]) if (cells[n].state === 'hidden') stack.push(n);
+      }
+    }
+  };
+
+  while (queue.length > 0) {
+    const i = queue.pop()!;
+    queued[i] = 0;
+    const cell = cells[i];
+    if (cell.state !== 'revealed' || cell.adjacent === 0) continue;
+    let flagged = 0;
+    let hidden = 0;
+    for (const n of table[i]) {
+      if (cells[n].state === 'flagged') flagged++;
+      else if (cells[n].state === 'hidden') hidden++;
+    }
+    const remaining = cell.adjacent - flagged;
+    if (remaining > 0 && remaining === hidden) {
+      for (const n of table[i]) {
+        if (cells[n].state !== 'hidden') continue;
+        cells[n].state = 'flagged';
+        sim.flagCount++;
+        touch(n);
+        any = true;
+      }
+    } else if (flagged === cell.adjacent && hidden > 0) {
+      for (const n of table[i]) {
+        if (cells[n].state !== 'hidden') continue;
+        if (cells[n].mine) {
+          // A consistent solve never gets here; it means a deduction was wrong.
+          cells[n].state = 'revealed';
+          sim.revealedCount++;
+          sim.status = 'lost';
+          return true;
+        }
+        open(n);
+        any = true;
+      }
+    }
+  }
+  return any;
+}
+
+/**
+ * Tier 2: when one number's hidden cells are a strict subset of another's, the difference holds
+ * exactly the difference of their counts - all mines, or all safe. (The classic 1-2 and 1-2-1 patterns.)
+ */
+function subsetTier(sim: TrackedSolveState): boolean {
+  const { constraints } = collectConstraints(sim);
+  const byCell = new Map<number, number[]>();
+  constraints.forEach((c, ci) => {
+    for (const v of c.vars) {
+      const list = byCell.get(v);
+      if (list) list.push(ci);
+      else byCell.set(v, [ci]);
+    }
+  });
+  for (let a = 0; a < constraints.length; a++) {
+    const small = constraints[a];
+    // A superset contains the subset's first cell, so only those need looking at.
+    for (const b of byCell.get(small.vars[0]) ?? []) {
+      const big = constraints[b];
+      if (b === a || small.vars.length >= big.vars.length) continue;
+      if (!small.vars.every((v) => big.vars.includes(v))) continue;
+      const rest = big.vars.filter((v) => !small.vars.includes(v));
+      const mines = big.count - small.count;
+      if (mines === 0 && applyDeductions(sim, [], rest)) return true;
+      if (mines === rest.length && applyDeductions(sim, rest, [])) return true;
+    }
+  }
+  return false;
+}
+
+/** Tier 3: whatever every assignment of ONE frontier component agrees on, ignoring the mine total. */
+function localTier(sim: TrackedSolveState, ctx: SolverContext): boolean {
+  const { constraints, frontier } = collectConstraints(sim);
+  if (frontier.length === 0) return false;
+  const components = frontierComponents(constraints, frontier);
+  const buckets = constraintsByComponent(components, constraints);
+  for (let ci = 0; ci < components.length; ci++) {
+    if (components[ci].length > V2_LOCAL_CAP) continue;
+    const info = enumerateCached(components[ci], buckets[ci], ctx);
+    if (applyDeductions(sim, info.forcedMines, info.forcedSafe)) return true;
+  }
+  return false;
+}
+
+/**
+ * Tier 4: the mines left overall. Every component's possible counts are combined with the unconstrained
+ * cells' ("the sea"); a count no combination can reach is impossible, and what only it allowed is forced.
+ * Order independent: it looks at all components at once, unlike counting only a single-component frontier.
+ */
+function globalTier(sim: TrackedSolveState, ctx: SolverContext): boolean {
+  const { constraints, frontier, sea } = collectConstraints(sim);
+  const remaining = sim.mineCount - sim.flagCount;
+  if (remaining < 0) return false;
+  const components = frontierComponents(constraints, frontier);
+  const buckets = constraintsByComponent(components, constraints);
+  const infos = components.map((comp, ci) =>
+    comp.length <= V2_ENUM_CAP ? enumerateCached(comp, buckets[ci], ctx) : relaxedComponent(comp)
+  );
+
+  /** Sums of mine counts reachable by `reach` plus one more component's `achievable`, capped at `remaining`. */
+  const addComponent = (reach: boolean[], achievable: boolean[]): boolean[] => {
+    const out = Array<boolean>(remaining + 1).fill(false);
+    for (let have = 0; have <= remaining; have++) {
+      if (!reach[have]) continue;
+      for (let c = 0; c < achievable.length && have + c <= remaining; c++) {
+        if (achievable[c]) out[have + c] = true;
+      }
+    }
+    return out;
+  };
+  const start = Array.from({ length: remaining + 1 }, (_, i) => i === 0);
+  const before: boolean[][] = [start];
+  for (const info of infos) before.push(addComponent(before[before.length - 1], info.achievable));
+  const after: boolean[][] = Array.from({ length: infos.length + 1 }, () => start);
+  for (let i = infos.length - 1; i >= 0; i--)
+    after[i] = addComponent(after[i + 1], infos[i].achievable);
+
+  // The sea holds whatever the components leave: `remaining - total` mines, anywhere from 0 to its size.
+  const seaFits = (total: number) => remaining - total >= 0 && remaining - total <= sea.length;
+  const totals = before[infos.length];
+  if (!totals.some((reachable, total) => reachable && seaFits(total))) return false;
+
+  const mines: number[] = [];
+  const safes: number[] = [];
+  infos.forEach((info, i) => {
+    // What the OTHER components can add up to; a count of this one is possible when some such total,
+    // with the count, leaves the sea a number of mines it can hold.
+    const others = addComponent(before[i], after[i + 1]);
+    const feasible = info.achievable.map((achievable, c) => {
+      if (!achievable) return false;
+      for (let t = Math.max(0, remaining - sea.length - c); t <= remaining - c; t++) {
+        if (others[t]) return true;
+      }
+      return false;
+    });
+    info.vars.forEach((cell, k) => {
+      let canMine = false;
+      let canSafe = false;
+      feasible.forEach((ok, c) => {
+        if (!ok) return;
+        canMine ||= info.mineAt[c][k];
+        canSafe ||= info.safeAt[c][k];
+      });
+      if (canMine && !canSafe) mines.push(cell);
+      else if (canSafe && !canMine) safes.push(cell);
+    });
+  });
+  if (sea.length > 0) {
+    let canMine = false;
+    let canSafe = false;
+    totals.forEach((reachable, total) => {
+      if (!reachable) return;
+      const inSea = remaining - total;
+      if (inSea >= 1 && inSea <= sea.length) canMine = true;
+      if (inSea >= 0 && inSea <= sea.length - 1) canSafe = true;
+    });
+    if (canMine && !canSafe) mines.push(...sea);
+    else if (canSafe && !canMine) safes.push(...sea);
+  }
+  return applyDeductions(sim, mines, safes);
+}
+
+/**
+ * Solves `board` from `startIndex` the way a careful player would, always taking the cheapest tier
+ * that makes progress, and counts the deductions each tier above the chords had to make. Every sound
+ * deduction is eventually taken, so what it clears does not depend on the order it looked in.
+ */
+export function solveTiered(
+  board: MinesweeperBoard,
+  startIndex: number,
+  ctx: SolverContext
+): TieredSolve {
+  const sim = { ...cloneSolveState(board), changed: [] as number[] };
+  revealFlood(sim, startIndex % board.width, Math.floor(startIndex / board.width));
+  for (let i = 0; i < sim.cells.length; i++)
+    if (sim.cells[i].state === 'revealed') sim.changed.push(i);
+
+  const counts = { subset: 0, local: 0, global: 0 };
+  for (let guard = 0; guard < sim.cells.length * 4; guard++) {
+    if (sim.status !== 'playing' || isWon(sim)) break;
+    if (chordTier(sim)) continue;
+    if (subsetTier(sim)) counts.subset++;
+    else if (localTier(sim, ctx)) counts.local++;
+    else if (globalTier(sim, ctx)) counts.global++;
+    else break;
+  }
+  return {
+    won: sim.status !== 'lost' && isWon(sim),
+    ...counts,
+    score:
+      counts.subset * V2_SCORE_WEIGHTS.subset +
+      counts.local * V2_SCORE_WEIGHTS.local +
+      counts.global * V2_SCORE_WEIGHTS.global,
+  };
+}
+
+/** Recomputes the adjacent-mine counts a mine swap can change: the swapped cells and their neighbours. */
+function recomputeAdjacentsAround(board: MinesweeperBoard, swapped: readonly number[]): void {
+  const table = neighborTable(board);
+  const cells = board.cells;
+  const affected = new Set<number>();
+  for (const c of swapped) {
+    affected.add(c);
+    for (const n of table[c]) affected.add(n);
+  }
+  for (const i of affected) {
+    if (cells[i].mine) {
+      cells[i].adjacent = 0;
+      continue;
+    }
+    let count = 0;
+    for (const n of table[i]) if (cells[n].mine) count++;
+    cells[i].adjacent = count;
+  }
+}
+
+/**
+ * v2 generation: start from a v1 layout the v2 solver clears, then swap one mine with one empty cell at
+ * a time, keeping a swap only when the board stays clearable without guessing and its score does not
+ * fall, until the target score or the swap budget. Deterministic: the swaps are drawn from the board's
+ * RNG, the budget is a count, and the solver's cache never changes an answer, only its cost.
+ */
+function placeMinesV2(board: MinesweeperBoard, safeIndex: number): void {
+  const ctx = createSolverContext();
+  let solve: TieredSolve | null = null;
+  for (let attempt = 0; attempt < V2_START_ATTEMPTS; attempt++) {
+    placeMines(board, safeIndex);
+    solve = solveTiered(board, safeIndex, ctx);
+    if (solve.won) break;
+  }
+  board.minesPlaced = true;
+
+  if (!solve || !solve.won) {
+    board.generationReport = {
+      score: solve?.score ?? 0,
+      targetScore: V2_TARGET_SCORE,
+      evals: 0,
+      searchNodes: V2_GENERATION_NODE_BUDGET - ctx.nodesLeft,
+      reachedTarget: false,
+      fellBack: true,
+    };
+    return;
+  }
+
+  const forbidden = safeZone(board, safeIndex);
+  const rng = rngOf(board);
+  const mines: number[] = [];
+  for (let i = 0; i < board.cells.length; i++) if (board.cells[i].mine) mines.push(i);
+
+  let score = solve.score;
+  let evals = 0;
+  while (evals < V2_MAX_EVALS && score < V2_TARGET_SCORE && ctx.nodesLeft > 0) {
+    evals++;
+    const mineSlot = Math.floor(rng() * mines.length);
+    const from = mines[mineSlot];
+    let to = -1;
+    for (let tries = 0; tries < 40; tries++) {
+      const candidate = Math.floor(rng() * board.cells.length);
+      if (!board.cells[candidate].mine && !forbidden.has(candidate)) {
+        to = candidate;
+        break;
+      }
+    }
+    if (to < 0) continue;
+
+    board.cells[from].mine = false;
+    board.cells[to].mine = true;
+    recomputeAdjacentsAround(board, [from, to]);
+    const tried = solveTiered(board, safeIndex, ctx);
+    if (tried.won && tried.score >= score) {
+      score = tried.score;
+      mines[mineSlot] = to;
+    } else {
+      board.cells[to].mine = false;
+      board.cells[from].mine = true;
+      recomputeAdjacentsAround(board, [from, to]);
+    }
+  }
+
+  board.generationReport = {
+    score,
+    targetScore: V2_TARGET_SCORE,
+    evals,
+    searchNodes: V2_GENERATION_NODE_BUDGET - ctx.nodesLeft,
+    reachedTarget: score >= V2_TARGET_SCORE,
+    fellBack: false,
+  };
+}
+
+/** Places the mines with the generator the board was created for. */
+function placeMinesFor(board: MinesweeperBoard, safeIndex: number): void {
+  // An unknown version is an error, never "the nearest one": the server would replay another board.
+  if (board.generator === 1) placeMines(board, safeIndex);
+  else if (board.generator === 2) placeMinesV2(board, safeIndex);
+  else throw new Error(`unknown minesweeper generator version ${String(board.generator)}`);
+}
+
 function revealAllMines(board: MinesweeperBoard): void {
   for (const cell of board.cells) {
     if (cell.mine && cell.state !== 'flagged') {
@@ -1064,7 +1684,7 @@ export function revealCell(board: MinesweeperBoard, x: number, y: number): Mines
     return chordCell(board, x, y);
   }
 
-  if (!board.minesPlaced) placeMines(board, i);
+  if (!board.minesPlaced) placeMinesFor(board, i);
 
   if (cell.mine) {
     cell.state = 'revealed';
@@ -1104,15 +1724,26 @@ export function remainingMines(board: MinesweeperBoard): number {
   return Math.max(0, board.mineCount - board.flagCount);
 }
 
+/** The verdict of a replay, with what generation did so the server can log a fall-back it would otherwise swallow. */
+export interface VerifyResult {
+  ok: boolean;
+  status: GameStatus;
+  reason?: string;
+  /** Null when no board was generated (the move list was refused before its first reveal). */
+  generation?: GenerationReport | null;
+}
+
 /**
- * Replays `moves` on a fresh board generated from `seed`.
+ * Replays `moves` on a fresh board generated from `seed` by the named `generator` (the one the
+ * challenge was issued with; 1 for a challenge that predates versions).
  * Server anti-cheat uses this: a score is accepted only when replay ends in `won`.
  */
 export function verifySolve(
   seed: string,
   moves: ReadonlyArray<MinesweeperMove>,
-  config: MinesweeperConfig = CHALLENGE
-): { ok: boolean; status: GameStatus; reason?: string } {
+  config: MinesweeperConfig = CHALLENGE,
+  generator: GeneratorVersion = 1
+): VerifyResult {
   if (moves.length === 0) {
     return { ok: false, status: 'playing', reason: 'no_moves' };
   }
@@ -1120,18 +1751,30 @@ export function verifySolve(
     return { ok: false, status: 'playing', reason: 'first_must_reveal' };
   }
 
-  const board = createBoard(config, seed);
+  const board = createBoard(config, seed, generator);
   for (const move of moves) {
     if (board.status !== 'playing') break;
     if (!Number.isInteger(move.x) || !Number.isInteger(move.y)) {
-      return { ok: false, status: board.status, reason: 'invalid_coord' };
+      return {
+        ok: false,
+        status: board.status,
+        reason: 'invalid_coord',
+        generation: board.generationReport,
+      };
     }
     if (move.type === 'reveal') revealCell(board, move.x, move.y);
     else if (move.type === 'flag') toggleFlag(board, move.x, move.y);
-    else return { ok: false, status: board.status, reason: 'invalid_move' };
+    else
+      return {
+        ok: false,
+        status: board.status,
+        reason: 'invalid_move',
+        generation: board.generationReport,
+      };
   }
 
-  if (board.status === 'won') return { ok: true, status: 'won' };
-  if (board.status === 'lost') return { ok: false, status: 'lost', reason: 'hit_mine' };
-  return { ok: false, status: board.status, reason: 'not_cleared' };
+  const generation = board.generationReport;
+  if (board.status === 'won') return { ok: true, status: 'won', generation };
+  if (board.status === 'lost') return { ok: false, status: 'lost', reason: 'hit_mine', generation };
+  return { ok: false, status: board.status, reason: 'not_cleared', generation };
 }
