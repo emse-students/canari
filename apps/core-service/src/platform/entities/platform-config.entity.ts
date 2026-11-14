@@ -98,6 +98,18 @@ export class PlatformConfig {
     default: 'off',
   })
   groupCallsMode!: GroupCallsMode;
+
+  /**
+   * Which relay carries a group call (migration 023, WP-GC4). Read by chat-delivery-service at a
+   * group call's `initiate`; published by `GET /api/version` as `calls.relay`.
+   */
+  @Column({
+    name: 'call_relay',
+    type: 'varchar',
+    length: 16,
+    default: 'none',
+  })
+  callRelay!: CallRelay;
 }
 
 /**
@@ -172,3 +184,14 @@ export type GroupCallsMode = 'off' | 'mesh';
 
 /** Every {@link GroupCallsMode}, for the DTO's validation. */
 export const GROUP_CALLS_MODES: readonly GroupCallsMode[] = ['off', 'mesh'];
+
+/**
+ * Which relay carries a group call (owner decision D2). `none`: the mesh, and the participant past
+ * its cap is refused; `call-service`: our Rust SFU carries the group call from the start (interim,
+ * until WP-GC5's mid-call switch). Held together with the column's CHECK, chat-delivery's reader and
+ * the frontend by `callRelaysAgree.test.ts`. `cloudflare` joins when its leg is built.
+ */
+export type CallRelay = 'none' | 'call-service';
+
+/** Every {@link CallRelay}, for the DTO's validation. */
+export const CALL_RELAYS: readonly CallRelay[] = ['none', 'call-service'];

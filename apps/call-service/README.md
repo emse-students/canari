@@ -52,14 +52,21 @@ no database or Redis dependency of its own.
 the app's E2E worker, relay-only through a TURN server when one is given. `--scenario pair` (the
 default) is two browsers through the SFU; `--scenario mesh` is three browsers in a p2p mesh with
 one key per sender (WP-GC2), every directed leg proven, a fourth user refused past the cap and a
-wrong key shown to fail its leg. CI runs both with a throwaway coturn on every change to this crate
+wrong key shown to fail its leg; `--scenario sfu-group` is five browsers through the SFU with
+one key per sender (WP-GC4), every one of the 20 directed legs proven. CI runs all three with a
+throwaway coturn on every change to this crate
 (owner decision D3, 2026-11-01); the proofs they require are in
 [the wiki](../../docs/wiki/services/call-service.md#the-end-to-end-call-in-ci).
 
 ```bash
 cargo build && bun e2e/run.mjs                    # no TURN: host candidates, a dev box
 cargo build && bun e2e/run.mjs --scenario mesh    # the 3-party mesh
+cargo build && bun e2e/run.mjs --scenario sfu-group   # 5 parties through the SFU
 ```
+
+A group call through the SFU: the seat cap (`max_seats`, 2..=8, reserved atomically), the sender's
+user id as each forwarded track's stream id, and the `mode` claim are described in
+[the wiki](../../docs/wiki/services/call-service.md#the-relay-for-a-group-call-wp-gc4-2026-11-13).
 
 ## Environment Variables
 

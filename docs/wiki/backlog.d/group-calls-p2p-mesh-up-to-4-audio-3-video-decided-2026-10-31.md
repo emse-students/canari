@@ -80,20 +80,31 @@ Each is one pull request or more; none is built by the D3 change.
    the client-version gate, WP-C11's block and ring-end rules:
    [calls](../frontend/modules/calls.md#group-calls---the-mesh-server-half-wp-gc2-2026-11-13));
    **past the cap is REFUSED (`room-full`) as an interim decision, superseded by D1 when WP-GC3
-   lands.** **Client half BUILT 2026-11-13** (one leg per participant in the one call service, the
+   lands.** **The 3-party CI call is BUILT** (`run.mjs --scenario mesh`, every directed leg proven
+   under its sender's key, [call-service](../services/call-service.md#the-mesh-scenario-wp-gc2-2026-11-13)).
+   **Client half BUILT 2026-11-13** (one leg per participant in the one call service, the
    `group_call` invite kind an old build drops, per-leg keys and transforms, WP-C11's decline and
    last-leave rules, the tile grid and the start control behind `group_calls_mode = mesh`:
    [calls](../frontend/modules/calls.md#group-calls---the-mesh-client-half-wp-gc2-2026-11-13)).
-   Owed: the 3-party CI call (#3496), and the bench readings - 3-way audio and 3-way video on the
-   Mi 9T and the iPhone 12, WebKit's receiver transforms per peer, CPU and fps with two receivers
+   Owed: the bench readings - 3-way audio and 3-way video on the Mi 9T and the iPhone 12, WebKit's
+   receiver transforms per peer, CPU and fps with two receivers
    ([readings owed](../plan.md#readings-owed)).
 3. **WP-GC3 - the Cloudflare Realtime SFU leg**: first the Q4 probe (do transformed frames cross
    the raw SFU), then the owner's one-off (a Realtime SFU app and its two secrets), then the backend
    proxy of the sessions/tracks API and the client's SFU leg on it.
-4. **WP-GC4 - the relay setting (D2)**: one server-side setting (`cloudflare` | `call-service`)
-   read where the call starts, and the client's SFU leg against `call-service`'s protocol too - the
-   one `apps/call-service/e2e/page.ts` already speaks. A new platform setting is a migration, so it
-   waits for the owner's yes.
+4. **WP-GC4 - the relay setting (D2)**: **server half BUILT 2026-11-13** -
+   `platform_config.call_relay` (`none` | `call-service`, core migration 023, `none` in production,
+   `call-service` on dev), read at a group call's `initiate`; with `call-service` the call goes
+   through the SFU FROM THE START (`mode: sfu` signed into the tokens - interim until WP-GC5); the
+   SFU's atomic seat cap (2..=8), the sender's user id as each forwarded track's stream id, and the
+   late joiner's renegotiation; a 5-party encrypted call through the SFU in CI
+   ([calls](../frontend/modules/calls.md#the-relay-leg-wp-gc4-2026-11-13),
+   [call-service](../services/call-service.md#the-relay-for-a-group-call-wp-gc4-2026-11-13)).
+   `cloudflare` joins the setting with WP-GC3. Owed: the client's SFU leg (the protocol
+   `apps/call-service/e2e/group-page.ts` speaks in `sfu` mode), reading `mode` from
+   `initiate`/`room-token`; and a renegotiation that cannot cross another (the SFU re-offers on a
+   300 ms debounce and does not wait for the previous answer - harmless at the pace of the CI call,
+   unproven under joins faster than a round trip).
 5. **WP-GC5 - the switch (D1)**: on the participant past the cap, everyone opens the SFU leg,
    proves it, then closes the mesh legs; a rig row that FAILS when any frame crosses the SFU leg
    outside a transform, as `fault-transform-late` does for 1:1.
