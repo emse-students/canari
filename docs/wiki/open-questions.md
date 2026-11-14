@@ -665,16 +665,13 @@ shorter, from the camera or the gallery - and for the videos already posted, *"O
 becomes a CanaReel expiring one year after its publication, the owner knowing that a video older
 than a year then goes at once. The lifetime itself is the admin setting `retention_reel_days` (a
 year by default, [retention-settings](retention-settings.md)). Built: the rule
-([reels](services/reels.md#the-rule-what-is-a-canareel)) and held migration 170. **Two choices the
-lead took, reversible, for the owner to confirm:**
+([reels](services/reels.md#the-rule-what-is-a-canareel)) and held migration 170. **The two follow-up
+questions, answered by the owner the same day:**
 
-- **A post with several media that include a video stays a post** (migration 170 converts only a
-  post whose ONLY content is one video): converting it would delete its photos with the video a year
-  on, and a reel carries one video. The migration's header holds the count of such posts. If the
-  owner wants them converted too, a later migration can (split the video out, or convert the whole
-  post).
-- **A vertical reel is at most 10 minutes** (`REEL_VERTICAL_MAX_DURATION_MS`): the owner named no
-  upper bound, and a declared length needs one. A longer vertical video stays a post.
+- **A post with several media that include a video:** *"Rester des posts"* - it stays a post
+  (migration 170 converts only a post whose ONLY content is one video).
+- **The longest vertical CanaReel:** *"3 minutes"* (`REEL_VERTICAL_MAX_DURATION_MS` = 180 000 ms). A
+  longer vertical video stays a post.
 
 What follows is the question as it was asked, kept for its history:
 

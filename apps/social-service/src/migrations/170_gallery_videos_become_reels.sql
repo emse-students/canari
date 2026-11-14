@@ -6,12 +6,12 @@
 -- CanaReel expiring ONE YEAR AFTER ITS PUBLICATION, the owner knowing that a video older than a year
 -- then goes at once (docs/wiki/services/reels.md#the-rule-what-is-a-canareel).
 --
--- WHAT IT CONVERTS, AND ONLY THAT (an allowlist in the WHERE, conservative where the owner's words
--- leave a choice - docs/wiki/open-questions.md):
+-- WHAT IT CONVERTS, AND ONLY THAT (an allowlist in the WHERE - docs/wiki/open-questions.md):
 --   - `kind = 'post'`: never a reel already, never a live replay;
 --   - EXACTLY ONE media, and it is a video (`type = 'video'` or a `video/*` mimeType): a post with
---     several media, or a photo beside its video, STAYS A POST (the reversible reading of "toutes":
---     converting it would delete the photos with the video a year on, and a reel carries one video);
+--     several media, or a photo beside its video, STAYS A POST (owner, 2026-11-14:
+--     "Rester des posts" - converting it would delete its photos with the video, and a reel carries
+--     one video);
 --   - no poll, no form, no attached form, no linked event: a reel carries none of them (the create
 --     door refuses each), and the member chose them;
 --   - `"publishedAt" <= now()`: a post scheduled for later is not published yet and stays a post.
@@ -33,7 +33,10 @@
 -- blobs as `reel` (`PostMediaRetentionService.backfillReels`). The converted posts leave the feed
 -- (`kind = 'post'`) and join the CanaReels list, newest first.
 --
--- HOW MANY, BEFORE IT RUNS - the read-only count by age band, the same allowlist, run on the estate:
+-- HOW MANY, BEFORE IT RUNS - the read-only count by age band, the same allowlist. Read on 2026-11-14:
+-- dev 2 (all under 30 days), production 39 under 30 days and 1 from 30 to 180 days, NONE over a year
+-- (the oldest post is of 2026-05-13), so the conversion itself deletes nothing; 0 and 4 multi-media
+-- posts with a video stay posts:
 --
 --   SELECT CASE
 --            WHEN p."publishedAt" > now() - interval '30 days'  THEN '1. under 30 days'

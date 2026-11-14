@@ -16,12 +16,10 @@
 export const REEL_MAX_DURATION_MS = 90_000;
 
 /**
- * The longest VERTICAL reel, in milliseconds: 10 minutes (lead, 2026-11-14 - the owner's rule names no
- * upper bound for a vertical video, and a declared integer needs one; TikTok's own ceiling, parked in
- * docs/wiki/open-questions.md). Served as `maxVerticalDurationMs`; a vertical video longer than this
- * stays an ordinary post video.
+ * The longest VERTICAL reel, in milliseconds: 3 minutes (owner, 2026-11-14: "3 minutes"). Served as
+ * `maxVerticalDurationMs`; a vertical video longer than this stays an ordinary post video.
  */
-export const REEL_VERTICAL_MAX_DURATION_MS = 600_000;
+export const REEL_VERTICAL_MAX_DURATION_MS = 180_000;
 
 /**
  * The rule a server applies, served as `rule` so a client knows which one the door enforces (the

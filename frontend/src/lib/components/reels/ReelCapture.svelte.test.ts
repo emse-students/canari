@@ -990,7 +990,7 @@ describe('ReelCapture as a composer destination (D-camera, 2026-10-11)', () => {
       getReelLimits.mockResolvedValue({
         rule: 'vertical-or-short',
         maxDurationMs: 90_000,
-        maxVerticalDurationMs: 600_000,
+        maxVerticalDurationMs: 180_000,
         chatMaxDurationMs: 60_000,
         maxAspectRatio: 0.8,
         retentionDays: 365,
@@ -1012,7 +1012,7 @@ describe('ReelCapture as a composer destination (D-camera, 2026-10-11)', () => {
 
     it.each([
       ['a short landscape video', 30_000, 1280, 720],
-      ['a long vertical video', 300_000, 720, 1280],
+      ['a long vertical video', 150_000, 720, 1280],
     ])('takes %s to the review', async (_l, durationMs, width, height) => {
       try {
         const target = await pickVideo({ durationMs, width, height });

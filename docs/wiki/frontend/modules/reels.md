@@ -412,7 +412,7 @@ local MediaRecorder stream before the existing H.264/AAC preparation path.
 ## The rule: every vertical video of 90 s or less is a CanaReel (owner, 2026-11-09)
 
 **Widened by the owner on 2026-11-14** (*"Toute vidéo verticale et/ou inférieure à 90 s est un
-CanaReel, y compris depuis la galerie"*): VERTICAL OR 90 s or less, a vertical reel up to 10 min, the
+CanaReel, y compris depuis la galerie"*): VERTICAL OR 90 s or less, a vertical reel up to 3 min, the
 videos already posted converted by held migration 170. The client applies the OR only when the
 server serves `rule: 'vertical-or-short'` (`reelRuleOf`); the gallery pick (`reelPickRefusal`), the
 publish (`reelCapForFrame`) and the composer notice (`reelRuleNotice`) all read it - the whole of it

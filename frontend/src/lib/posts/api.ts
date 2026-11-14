@@ -405,7 +405,7 @@ export interface ReelLimits {
    * which refuses a landscape reel - read through `reelRuleOf`, the version-skew gate.
    */
   rule?: 'vertical-or-short';
-  /** The longest VERTICAL reel (10 min), served with `rule`. */
+  /** The longest VERTICAL reel (3 min, owner 2026-11-14), served with `rule`. */
   maxVerticalDurationMs?: number;
   retentionDays: number;
   warningWindowDays: number;

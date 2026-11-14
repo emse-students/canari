@@ -131,7 +131,7 @@ describe('publishReel', () => {
   });
 
   describe('under the rule of 2026-11-14 - vertical OR short', () => {
-    const orRule = { maxDurationMs: 90_000, maxAspectRatio: 0.8, maxVerticalDurationMs: 600_000 };
+    const orRule = { maxDurationMs: 90_000, maxAspectRatio: 0.8, maxVerticalDurationMs: 180_000 };
     const prepared = (width: number, height: number, durationSeconds: number) => ({
       file: new File([new Uint8Array(4)], 'take.mp4', { type: 'video/mp4' }),
       width,
@@ -144,7 +144,7 @@ describe('publishReel', () => {
     it('publishes a short landscape take as a reel', async () => {
       const d = deps();
       vi.mocked(d.prepare).mockResolvedValueOnce(prepared(1280, 720, 12));
-      await publishReel(input({ rule: orRule, maxDurationMs: 600_000 }), d);
+      await publishReel(input({ rule: orRule, maxDurationMs: 180_000 }), d);
       expect(d.createPost).toHaveBeenCalledWith(
         expect.objectContaining({ kind: 'reel', durationMs: 12_000 })
       );
@@ -152,17 +152,17 @@ describe('publishReel', () => {
 
     it('publishes a long vertical take as a reel with its whole length declared', async () => {
       const d = deps();
-      vi.mocked(d.prepare).mockResolvedValueOnce(prepared(720, 1280, 300));
-      await publishReel(input({ rule: orRule, maxDurationMs: 600_000 }), d);
+      vi.mocked(d.prepare).mockResolvedValueOnce(prepared(720, 1280, 150));
+      await publishReel(input({ rule: orRule, maxDurationMs: 180_000 }), d);
       expect(d.createPost).toHaveBeenCalledWith(
-        expect.objectContaining({ kind: 'reel', durationMs: 300_000 })
+        expect.objectContaining({ kind: 'reel', durationMs: 150_000 })
       );
     });
 
     it('declares a landscape take at the recorder grace as the 90 s it is', async () => {
       const d = deps();
       vi.mocked(d.prepare).mockResolvedValueOnce(prepared(1280, 720, 90.2));
-      await publishReel(input({ rule: orRule, maxDurationMs: 600_000 }), d);
+      await publishReel(input({ rule: orRule, maxDurationMs: 180_000 }), d);
       expect(d.createPost).toHaveBeenCalledWith(
         expect.objectContaining({ kind: 'reel', durationMs: 90_000 })
       );
@@ -172,7 +172,7 @@ describe('publishReel', () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
       const d = deps();
       vi.mocked(d.prepare).mockResolvedValueOnce(prepared(1280, 720, 120));
-      await publishReel(input({ rule: orRule, maxDurationMs: 600_000 }), d);
+      await publishReel(input({ rule: orRule, maxDurationMs: 180_000 }), d);
       expect(d.upload).toHaveBeenCalledWith(
         expect.any(File),
         'tok',

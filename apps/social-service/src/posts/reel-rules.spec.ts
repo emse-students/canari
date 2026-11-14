@@ -148,7 +148,7 @@ describe('isReelFrame', () => {
 describe('isReelVideo - the rule on one declared video', () => {
   it.each([
     ['a short landscape video', 30_000, 1920, 1080, true],
-    ['a long vertical video', 300_000, 1080, 1920, true],
+    ['a long vertical video', 150_000, 1080, 1920, true],
     ['a long landscape video', 90_001, 1920, 1080, false],
     ['a vertical video past its cap', REEL_VERTICAL_MAX_DURATION_MS + 1, 1080, 1920, false],
     ['a short video with no frame', 5_000, undefined, undefined, true],
@@ -235,7 +235,7 @@ describe('reelLimits - the numbers a client reads', () => {
       maxDurationMs: REEL_MAX_DURATION_MS,
       maxVerticalDurationMs: REEL_VERTICAL_MAX_DURATION_MS,
     });
-    expect(REEL_VERTICAL_MAX_DURATION_MS).toBe(600_000);
+    expect(REEL_VERTICAL_MAX_DURATION_MS).toBe(180_000);
   });
 
   it('serves the target cap of one "Envoyer à..." press (15.2), so no client carries it', () => {

@@ -32,7 +32,7 @@ says why for the 50 MB), so the camera asks the box before it arms its ring time
 ### `GET /api/posts/reel-limits` (JWT)
 
 ```json
-{ "rule": "vertical-or-short", "maxDurationMs": 90000, "maxVerticalDurationMs": 600000, "chatMaxDurationMs": 60000, "chatReelMaxTargets": 15, "maxAspectRatio": 0.8, "retentionDays": 365, "warningWindowDays": 7 }
+{ "rule": "vertical-or-short", "maxDurationMs": 90000, "maxVerticalDurationMs": 180000, "chatMaxDurationMs": 60000, "chatReelMaxTargets": 15, "maxAspectRatio": 0.8, "retentionDays": 365, "warningWindowDays": 7 }
 ```
 
 `rule` and `maxVerticalDurationMs` are served since 2026-11-14; `retentionDays` is the admin setting
@@ -45,12 +45,11 @@ et/ou inférieure à 90 s est un CanaReel, y compris depuis la galerie".** A vid
 it is **VERTICAL OR 90 s or shorter**: a short landscape or square video is one (drawn with bars -
 the reel pane is `object-contain` over a blurred copy of the frame, `ReelMediaPane`, `ReelBackdrop`),
 and so is a long vertical one, filmed or picked from the gallery alike. Only a **long landscape or
-square** video stays an ordinary post video.
+square** video, or a vertical one past 3 minutes, stays an ordinary post video.
 
 - **The door** (`assertCreateKindShape`, `isReelVideo` in `posts/reel.constants.ts`): a declared reel
   is accepted when its declared frame is vertical and its declared length is 1 ms to
-  `REEL_VERTICAL_MAX_DURATION_MS` (**10 min**, the lead's bound - the owner named none, parked in
-  [open-questions](../open-questions.md)), or whatever its frame when its length is 1 ms to
+  `REEL_VERTICAL_MAX_DURATION_MS` (**3 min**, owner 2026-11-14: *"3 minutes"*), or whatever its frame when its length is 1 ms to
   `REEL_MAX_DURATION_MS` (90 s). The frame read is the `width`/`height` the media element carries,
   which is what is stored on the post.
 - **The version-skew gate**: the OR is served as `rule: 'vertical-or-short'` with
@@ -62,7 +61,7 @@ square** video stays an ordinary post video.
 - **The client**: the composers' publish queue (`reelDeclarationFor`) and the composer notice
   (`reelRuleNotice`) read the rule as served; the CanaReels tab's gallery pick (`reelPickRefusal`)
   takes a short landscape video and a long vertical one and refuses only a long landscape one
-  (`reels_capture_long_landscape`) or a vertical one past its 10 min; `publishReel` prepares a pick
+  (`reels_capture_long_landscape`) or a vertical one past its 3 min; `publishReel` prepares a pick
   under `longestReelMs` and decides on the PREPARED frame and length (`reelCapForFrame`), publishing
   a take outside the rule as a post with a WARN. **The camera's own cap is unchanged** (90 s, C4): the
   rule decides what a video IS, not how long the camera films. A take for a conversation keeps the
@@ -71,8 +70,8 @@ square** video stays an ordinary post video.
   (`170_gallery_videos_become_reels.sql`, `-- canari:hold-for-owner`) converts every published post
   whose ONLY content is one video into a reel expiring **one year after its publication** - so a
   video older than a year is deleted at the reel worker's next tick, which the owner accepted. **A
-  post with several media (a video beside photos, two videos) STAYS A POST** - the lead's
-  conservative reading, reversible, parked in [open-questions](../open-questions.md); so does a post
+  post with several media (a video beside photos, two videos) STAYS A POST** (owner, 2026-11-14:
+  *"Rester des posts"*); so does a post
   with a poll, a form, an attached form, a linked event or a later schedule. A converted reel carries
   **no `durationMs`** (nobody declared it; `posts_kind_shape` is widened by exactly that, and the
   NULL marks the migration's rows for the rollback). The file carries the read-only count, by age

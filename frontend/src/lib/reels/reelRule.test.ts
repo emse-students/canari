@@ -22,8 +22,8 @@ import { m } from '$lib/paraglide/messages';
 
 const rule = { maxDurationMs: 90_000, maxAspectRatio: 0.8 };
 /** What a server of 2026-11-14 or later serves. */
-const orRule = { ...rule, maxVerticalDurationMs: 600_000 };
-const served = { ...rule, rule: 'vertical-or-short' as const, maxVerticalDurationMs: 600_000 };
+const orRule = { ...rule, maxVerticalDurationMs: 180_000 };
+const served = { ...rule, rule: 'vertical-or-short' as const, maxVerticalDurationMs: 180_000 };
 
 describe('reelRuleOf', () => {
   it('reads the served numbers of an estate older than 2026-11-14: vertical AND short', () => {
@@ -32,7 +32,7 @@ describe('reelRuleOf', () => {
 
   it('applies the OR only when the server names it - the version-skew gate', () => {
     expect(reelRuleOf(served)).toEqual(orRule);
-    expect(reelRuleOf({ ...rule, maxVerticalDurationMs: 600_000 })).toEqual(rule);
+    expect(reelRuleOf({ ...rule, maxVerticalDurationMs: 180_000 })).toEqual(rule);
   });
 
   it('keeps vertical AND short, and accuses the answer, when the OR comes with no usable cap', () => {
@@ -85,9 +85,9 @@ describe('isReelVideo - vertical OR short (owner, 2026-11-14)', () => {
     ['a short landscape video, drawn with bars', 1920, 1080, 30_000, true],
     ['a landscape video of 90 s exactly', 1920, 1080, 90_000, true],
     ['a landscape video one ms longer', 1920, 1080, 90_001, false],
-    ['a long vertical video', 1080, 1920, 300_000, true],
-    ['a vertical video at its cap', 1080, 1920, 600_000, true],
-    ['a vertical video past its cap', 1080, 1920, 600_001, false],
+    ['a long vertical video', 1080, 1920, 150_000, true],
+    ['a vertical video at its cap', 1080, 1920, 180_000, true],
+    ['a vertical video past its cap', 1080, 1920, 180_001, false],
     ['a short square video', 1080, 1080, 10_000, true],
     ['a short video with no frame', undefined, undefined, 10_000, true],
   ])('%s', (_label, width, height, durationMs, expected) => {
@@ -96,17 +96,17 @@ describe('isReelVideo - vertical OR short (owner, 2026-11-14)', () => {
 
   it('under the older rule a landscape video is never one, and a vertical one stops at 90 s', () => {
     expect(isReelVideo({ width: 1920, height: 1080, durationMs: 30_000 }, rule)).toBe(false);
-    expect(isReelVideo({ width: 1080, height: 1920, durationMs: 300_000 }, rule)).toBe(false);
+    expect(isReelVideo({ width: 1080, height: 1920, durationMs: 150_000 }, rule)).toBe(false);
   });
 });
 
 describe('reelCapForFrame and longestReelMs', () => {
   it('reads each frame cap under each rule', () => {
-    expect(reelCapForFrame(orRule, true)).toBe(600_000);
+    expect(reelCapForFrame(orRule, true)).toBe(180_000);
     expect(reelCapForFrame(orRule, false)).toBe(90_000);
     expect(reelCapForFrame(rule, true)).toBe(90_000);
     expect(reelCapForFrame(rule, false)).toBeNull();
-    expect(longestReelMs(orRule)).toBe(600_000);
+    expect(longestReelMs(orRule)).toBe(180_000);
     expect(longestReelMs(rule)).toBe(90_000);
   });
 });
@@ -132,19 +132,19 @@ describe('reelPickRefusal - a gallery pick in the CanaReels camera', () => {
 
   it('takes a short landscape video and a long vertical one, refuses only a long landscape one', () => {
     expect(reelPickRefusal(pick(1920, 1080, 30_000), orRule, 90_000, 'feed')).toBeNull();
-    expect(reelPickRefusal(pick(1080, 1920, 300_000), orRule, 90_000, 'feed')).toBeNull();
+    expect(reelPickRefusal(pick(1080, 1920, 150_000), orRule, 90_000, 'feed')).toBeNull();
     expect(reelPickRefusal(pick(1920, 1080, 120_000), orRule, 90_000, 'feed')).toEqual({
       reason: 'long-landscape',
       shortMs: 90_000,
     });
-    expect(reelPickRefusal(pick(1080, 1920, 600_001), orRule, 90_000, 'feed')).toEqual({
+    expect(reelPickRefusal(pick(1080, 1920, 180_001), orRule, 90_000, 'feed')).toEqual({
       reason: 'vertical-too-long',
-      capMs: 600_000,
+      capMs: 180_000,
     });
   });
 
   it('lets through what the engine could not read: the publish decides on the prepared file', () => {
-    expect(reelPickRefusal(pick(null, null, 300_000), orRule, 90_000, 'feed')).toBeNull();
+    expect(reelPickRefusal(pick(null, null, 150_000), orRule, 90_000, 'feed')).toBeNull();
     expect(reelPickRefusal(pick(1920, 1080, null), orRule, 90_000, 'feed')).toBeNull();
   });
 
@@ -173,8 +173,8 @@ describe('reelPickRefusal - a gallery pick in the CanaReels camera', () => {
     expect(reelPickRefusalText({ reason: 'too-long', capMs: 60_000 })).toBe(
       m.reels_capture_too_long({ seconds: 60 })
     );
-    expect(reelPickRefusalText({ reason: 'vertical-too-long', capMs: 600_000 })).toBe(
-      m.reels_capture_too_long_minutes({ minutes: 10 })
+    expect(reelPickRefusalText({ reason: 'vertical-too-long', capMs: 180_000 })).toBe(
+      m.reels_capture_too_long_minutes({ minutes: 3 })
     );
     expect(reelPickRefusalText({ reason: 'long-landscape', shortMs: 90_000 })).toBe(
       m.reels_capture_long_landscape({ seconds: 90 })
