@@ -21,7 +21,15 @@ import {
 } from './entities/platform-config.entity';
 import { UpdatePlatformConfigDto } from './dto/update-platform-config.dto';
 import { RETENTION_SETTINGS, type RetentionDays } from './retention';
-import { notifyMediaRetentionChanged } from './retention-notice';
+import {
+  notifyMediaRetentionChanged,
+  readMediaRetentionHeld,
+  retentionAppliedState,
+  type MediaHeldRetention,
+  type MediaRefusalReason,
+  type MediaRetentionReport,
+  type RetentionAppliedState,
+} from './retention-notice';
 import { compareSemver } from './semver';
 import { deployedVersion } from './deployed-version';
 import { describeHttpError } from '../common/http-error-log';
@@ -30,6 +38,18 @@ import {
   providerActivatedUrl,
 } from '../payment/social-internal-client';
 import type { PaymentProviderId } from '../payment/payment-provider.interface';
+
+/** Whether media-service stamps the durations the platform holds, for the admin page. */
+export type RetentionApplied = {
+  state: RetentionAppliedState;
+  /** Why media-service answered without its durations (`state: 'refused'`), or null. */
+  refusal: { status: number; reason: MediaRefusalReason } | null;
+  configured: MediaHeldRetention;
+  /** What media-service holds, null before its first read or when it did not say. */
+  media: MediaHeldRetention | null;
+  /** When media-service read what it holds (ISO), or null. */
+  mediaReadAt: string | null;
+};
 
 export type PlatformConfigPublic = {
   maintenanceEnabled: boolean;
@@ -120,6 +140,69 @@ export class PlatformService implements OnModuleInit {
    * told: it may answer a pre-write value for the time of one query it started before the write.
    */
   private configInFlight: Promise<PlatformConfigPublic> | null = null;
+
+  /**
+   * The last retention-applied state this process LOGGED (`state` plus what distinguishes it), so a
+   * page view logs only a CHANGE - an admin reloading the page while media-service is behind writes
+   * one line, not one per load. Null before the first check.
+   */
+  private lastRetentionApplied: string | null = null;
+
+  /**
+   * Whether media-service stamps new conversation files with the durations the platform holds -
+   * compared from the columns and what media-service reports holding, never remembered here, so a
+   * lost notice is SEEN on the admin page until it is re-sent (docs/wiki/retention-settings.md).
+   */
+  async retentionApplied(): Promise<RetentionApplied> {
+    const row = await this.repo.findOneOrFail({ where: { id: 1 } });
+    const configured = {
+      chatReelDays: row.retentionChatReelDays,
+      idleFileDays: row.retentionIdleFileDays,
+    };
+    const media = await readMediaRetentionHeld();
+    const state = retentionAppliedState(configured, media);
+    this.logRetentionAppliedChange(state, configured, media);
+    return {
+      state,
+      refusal: media.kind === 'refused' ? { status: media.status, reason: media.reason } : null,
+      configured,
+      media: media.kind === 'held' ? media.held : null,
+      mediaReadAt: media.kind === 'held' ? media.readAt : null,
+    };
+  }
+
+  /** One line per CHANGE of the retention-applied state, at the level its new state deserves. */
+  private logRetentionAppliedChange(
+    state: RetentionAppliedState,
+    configured: MediaHeldRetention,
+    media: MediaRetentionReport
+  ): void {
+    const detail =
+      media.kind === 'held'
+        ? media.held
+          ? `media holds ${media.held.chatReelDays} / ${media.held.idleFileDays}`
+          : 'media holds nothing yet'
+        : media.kind === 'refused'
+          ? `media answered ${media.status} (${media.reason})`
+          : `media unreachable (${media.cause})`;
+    const key = `${state}:${detail}`;
+    if (key === this.lastRetentionApplied) return;
+    const previous = this.lastRetentionApplied;
+    this.lastRetentionApplied = key;
+    const line = `[RETENTION] retention applied to files: ${state} - configured chat reels ${configured.chatReelDays} / idle files ${configured.idleFileDays} days, ${detail}`;
+    if (state === 'applied') {
+      if (previous !== null) this.logger.log(line);
+      return;
+    }
+    this.logger.warn(line);
+  }
+
+  /** Sends the notice again (the admin's "Renvoyer"), then answers the state it left. */
+  async resendRetentionNotice(by: string): Promise<RetentionApplied> {
+    this.logger.log(`[RETENTION] notice to media-service re-sent by=${by}`);
+    await notifyMediaRetentionChanged(this.logger);
+    return this.retentionApplied();
+  }
 
   /**
    * Returns current platform settings for public version endpoint and auth guards.

@@ -107,6 +107,17 @@ state as data, as before, and the ONLY merge it ever makes is the explicit
 **What the documentation does not say**: what the mutation answers on a pull request that is already
 mergeable. That it refuses is a measurement (#3202, "unstable status"), not a documented fact, and
 the step does not depend on the wording: any refusal leads to the same reads.
+**Observed on the first two real pull requests, both already mergeable when the step ran
+(2026-11-14).** #3559, run 43637460344: the mutation was refused (`Pull request Pull request is in
+unstable status`), the step logged `#3559 is already UNSTABLE and CI passed is green on eec504e... -
+merging it now.` and its explicit merge landed. #3560, run 43637462313, met the same refusal and the
+same read, then its explicit merge was refused, `Base branch was modified. Review and try the merge
+again. (mergePullRequest)` - #3559 had just landed - so the step logged `main moved during attempt 1
+(fe4a472... -> 5274f25...) and the pull request is not armed - asking again.`, and the second
+attempt's mutation was ACCEPTED: `Auto-merge armed. GitHub will squash-merge #3560 as soon as CI
+passed goes green.` GitHub merged it thirteen seconds after #3559. So each path was seen once: the
+refusal followed by the gated merge, and the mutation arming; the retry was justified by a base tip
+that had been read to move, not by a clock.
 `arm-auto-merge-app.test.sh` B32 fails if a `gh pr merge --auto` comes back, and B36 that across
 every case of the step none was sent, that an accepted arming merges nothing, and that a refused one
 on a clean, green pull request is followed by exactly one explicit merge. **Sky, MiGallery and
@@ -214,6 +225,10 @@ request they had to run on, the one doing the renaming, is the one they were ski
 rebuilt the poll composer, `channel_poll_add_option` and `channel_poll_option_placeholder` went
 with it, and the rig could not compose a poll until 2026-09-24, when an unrelated workflow edit
 made CI run everything and said so. The trigger now names the two app paths those tests read.
+**And all of `tools/`, since 2026-11-14**: the recipe's second lint reads every directory under
+`tools/`, and a pull request that edited `tools/ios-device/` alone merged a warning the gate never
+saw - which then failed every later pull request that did trigger it. A trigger is what the recipe
+READS, so it is `tools/` whole, and the lint configuration at the root.
 
 **`typecheck` IS A SEPARATE STEP FROM `build`, AND THE DIFFERENCE IS THE TESTS.** `bun run build`
 is `nest build`, which reads `tsconfig.build.json`; every service excludes `*.spec.ts` there. Jest

@@ -398,6 +398,24 @@ the dev-signed bench build only.
 a WDA session left on another app answers "not running" until it is deleted; a tap on a CanaReel card
 in a DM opens the viewer.
 
+## The iPhone 12 batch 8 readings of 2026-11-14
+
+TestFlight `1.6.12-alpha.2`, dev estate, `canari-test-gamma`; the peer is the `delta` web seat (CDP 9227);
+notifications read and tapped with `tools/ios-device/ios.mjs` `nc`, `hold` and `tap` (see the notes at the end of
+batch 7). Evidence is outside the repository.
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| A comment push, app killed ([entry](backlog.d/reading-owed-a-comment-reply-or-mention-opens-the-post-at-the-comment-the-push.md)) | **`PASS`** | NC row, `hold`, tap the card: PIN gate, then the post with the comments sheet open and the comment ringed; a banner tap did the same |
+| The bell row of a comment | **`PASS`** | The post opens with the sheet open and the comment ringed |
+| A comment push, app backgrounded | **not read** | Comments 3 to 7 raised no banner and no NC row: [entry](backlog.d/p3-comment-pushes-after-the-first-on-one-post-raised-no-banner-on-the-iphone.md) |
+| A salon mention, app killed, known author ([entry](backlog.d/reading-owed-a-mention-names-its-author-from-the-phone-s-copy-of-names-and-the.md)) | **`PASS`** | Title "nse banc communaute - #general", subtitle "Canari Test Delta vous a mentionne", body "@vous reading M mention", `TIME SENSITIVE`, the author's face |
+
+Not staged this batch: the readings of Android-only code (the Mi 9T half of each entry stays), the F1 iPhone runs
+(they need an `ios.yml` bench build with `local_url`, not a store build), the new-device notice (a gamma web seat
+was not available: seat w2 is another account and seat w3 is a signed-in profile of an unknown account at a PIN gate,
+neither touched), the republish request push and the co-organiser push (each needs a staged event or consent flow).
+
 ## The iPhone 12 batch 7 readings of 2026-11-14
 
 TestFlight `1.6.12-alpha.2`, dev estate, `canari-test-gamma` (no passcode), driven over WDA
@@ -421,6 +439,16 @@ Evidence is outside the repository.
 Preferences > Theme) is independent of the phone's appearance. In the feed, a card's actions menu is
 longer than the screen: scroll inside it to reach "Supprimer le post". `ios.mjs swipe` takes four
 separate numbers (`x1 y1 x2 y2`), `long` takes `x y ms`.
+
+**Notifications over WDA (read 2026-11-14, `tools/ios-device/ios.mjs`).** A BANNER opens the app with a plain
+`tap x,y` within about 4 s of its arrival. A ROW in Notification Center or on the lock screen does not answer a
+plain tap (a stack expands, a lone row slides to an "Open" button that does nothing): `ios.mjs hold <label>`
+(an XCUI element touch-and-hold, 1 s) expands it into its card, and a tap on that card opens the app, while
+"Repondre" and "Marquer comme lu" are plain taps. `ios.mjs nc` opens Notification Center (a W3C pull from
+y=1; `swipe` does not start the gesture). A coordinate `long` press on a banner falls through to the home
+screen and starts the icons' jiggle mode (`button home` ends it). The display sleeps 8-10 s after a push
+wakes it and a `tree` costs about 1 s, so do wake, find and tap in ONE process, a couple of seconds after the
+send. `tools/ios-device` has no README: the usage lives in the header of `ios.mjs`.
 
 ## The layout pass of 2026-09-09, and the sixth check that ran later the same day
 

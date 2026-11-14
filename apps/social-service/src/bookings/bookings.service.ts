@@ -752,7 +752,9 @@ export class BookingsService {
     }
     if (booking.cancelledAt) throw new GoneException({ code: 'booking-cancelled' });
     return bookingIcs({
-      bookingId,
+      // The row's own id, never the request's spelling of it: what is written into the file comes
+      // from the database, and an id asked for in upper case yields the same calendar entry.
+      bookingId: booking.id,
       spaceId: space.id,
       spaceName: space.name,
       resourceName: resource.name,

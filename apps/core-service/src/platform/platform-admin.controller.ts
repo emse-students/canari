@@ -15,6 +15,7 @@ import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 import {
   PlatformService,
   type PlatformConfigPublic,
+  type RetentionApplied,
   type WithheldReleaseResult,
 } from './platform.service';
 import { UpdatePlatformConfigDto } from './dto/update-platform-config.dto';
@@ -74,6 +75,24 @@ export class PlatformAdminController {
     @Body() dto: UpdatePlatformConfigDto
   ): Promise<PlatformConfigPublic> {
     return this.platformService.updateConfig(dto, xUserId.trim().toLowerCase());
+  }
+
+  /**
+   * Whether media-service stamps new conversation files with the durations saved here: the admin
+   * page shows "pas encore appliqué aux fichiers" and "Renvoyer" while it does not.
+   */
+  @UseGuards(NginxAuthGuard, GlobalAdminGuard)
+  @Get('retention-applied')
+  getRetentionApplied(): Promise<RetentionApplied> {
+    return this.platformService.retentionApplied();
+  }
+
+  /** "Renvoyer": tells media-service again to re-read the durations, and answers the new state. */
+  @UseGuards(NginxAuthGuard, GlobalAdminGuard)
+  @Post('retention-applied/resend')
+  @HttpCode(200)
+  resendRetentionNotice(@Headers('x-user-id') xUserId: string): Promise<RetentionApplied> {
+    return this.platformService.resendRetentionNotice(xUserId.trim().toLowerCase());
   }
 
   /**
