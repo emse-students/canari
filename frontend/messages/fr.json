@@ -2917,6 +2917,7 @@
   "form_list_delete_confirm": "Supprimer le formulaire \"{title}\" ? Cette action est irréversible.",
   "form_list_delete_submission_confirm": "Supprimer la réponse de {name} ? Cette action est irréversible.",
   "form_list_error_delete": "Erreur lors de la suppression",
+  "form_list_delete_payment_open": "Un paiement de cette réponse est en cours : réessayez une fois qu'il aura abouti ou expiré, au plus tard 30 minutes après son lancement.",
   "form_list_error_export": "Échec de l'export",
   "form_list_responses_error": "Impossible de charger les réponses.",
   "form_list_responses_empty": "Aucune réponse pour l'instant.",

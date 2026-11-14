@@ -88,7 +88,10 @@ answer `refunded`, which frees its seat and its single-answer slot.
 **A paid answer is never deleted** (owner, 2026-11-14): `deleteSubmission` refuses `paid` and
 `paid_over_capacity` with the typed 409 `FORM_ANSWER_PAID`, and the manager is told to refund or
 cancel it instead - the payment's record keeps its Lydia Business either way
-([lydia-contract-flux](../../lydia-contract-flux.md#enrolled-or-historical-the-discriminator)).
+([lydia-contract-flux](../../lydia-contract-flux.md#enrolled-or-historical-the-discriminator)). A
+`pending` answer is cancelled first by `cancelSubmission`'s rules, its Lydia request settled, so a
+request left payable never lands on a deleted answer; one that cannot be settled is a 409
+`PREVIOUS_PAYMENT_OPEN`, worded for the manager.
 
 ## Key component: forms/[id]/+page.svelte
 

@@ -130,7 +130,8 @@ clears them):
    a form is only soft-deleted (`retireForms`; `submissions_form_fk` is `RESTRICT`), and **a paid
    answer is never deleted** - `FormsService.deleteSubmission` refuses `paid` and `paid_over_capacity`
    in the DELETE's own WHERE with a typed 409 `FORM_ANSWER_PAID` (`libs/contracts/form-answers.json`),
-   and the manager is told to refund or cancel it instead.
+   and the manager is told to refund or cancel it instead. A `pending` answer is cancelled first
+   (`cancelSubmission`: its request settled at Lydia), so no payment lands on a deleted answer.
 2. **Whether Canari's enrolment created that Business** is `lydia_enrolled_businesses` (social
    migration 168), written by `AssociationsService.setLydiaAccountId` in the transaction that links
    the Business - the ONE link path, called only by core-service's onboarding right after

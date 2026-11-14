@@ -3282,6 +3282,11 @@ export class FormsService {
    * DELETED (owner, 2026-11-14): it is refunded or cancelled instead, so the money it carries keeps
    * its trace - a typed 409 `FORM_ANSWER_PAID`. The status is tested IN the delete's own WHERE, so a
    * payment confirmed between the read and the delete is refused too, never deleted.
+   *
+   * A `pending` answer is CANCELLED first, by `cancelSubmission`'s rules (D2): its request is settled
+   * at Lydia, so a request left payable cannot land on an answer that no longer exists - a payment
+   * nothing would record. Paid meanwhile, it is the 409 above; a request that cannot be settled, or
+   * one a retry issued between the cancel and the delete, is `PREVIOUS_PAYMENT_OPEN`.
    */
   async deleteSubmission(
     submissionId: string,
@@ -3291,9 +3296,13 @@ export class FormsService {
     const sub = await this.submissionRepo.findOne({ where: { id: submissionId } });
     if (!sub) throw new NotFoundException('Submission not found');
     await this.assertFormManager(sub.formId, callerId, isGlobalAdmin);
+    if (sub.paymentStatus === 'pending') {
+      // Settles the request at Lydia and moves the row to `cancelled`, or marks it paid.
+      await this.cancelSubmission(submissionId, callerId, isGlobalAdmin);
+    }
     const deleted = (await this.submissionRepo.query(
       `DELETE FROM submissions WHERE id = $1 AND "paymentStatus" <> ALL($2::text[]) RETURNING id`,
-      [submissionId, [...PAID_SUBMISSION_STATUSES]]
+      [submissionId, [...PAID_SUBMISSION_STATUSES, 'pending']]
     )) as unknown[];
     if (deleted.length === 0) {
       const now = await this.submissionRepo.findOne({
@@ -3301,6 +3310,12 @@ export class FormsService {
         select: { id: true, paymentStatus: true },
       });
       if (!now) throw new NotFoundException('Submission not found');
+      if (now.paymentStatus === 'pending') {
+        throw this.previousPaymentOpen(
+          submissionId,
+          'a manager deletes it while a request is live'
+        );
+      }
       this.logger.warn(
         `[Forms] Submission ${submissionId} NOT deleted by ${callerId}: its payment was received ` +
           `(${now.paymentStatus}) - refund or cancel it instead`

@@ -2885,6 +2885,7 @@
   "form_list_delete_confirm": "Delete form \"{title}\"? This action is irreversible.",
   "form_list_delete_submission_confirm": "Delete response from {name}? This action is irreversible.",
   "form_list_error_delete": "Error deleting",
+  "form_list_delete_payment_open": "A payment for this answer is in progress: try again once it has gone through or expired, at most 30 minutes after it was started.",
   "form_list_error_export": "Export failed",
   "form_list_responses_error": "Unable to load responses.",
   "form_list_responses_empty": "No responses yet.",
