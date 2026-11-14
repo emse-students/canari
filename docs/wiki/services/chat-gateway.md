@@ -90,9 +90,17 @@ On `disconnect` the gateway takes the connection out of `connected_users` (`remo
 pub/sub loop hands nothing more to it), retires its session in Redis (`handle_disconnect`), and then
 keeps READING: every client follows `disconnect` with its Close (web: `pausePlatformSocket` sends it
 then `ws.close()`; the identity rotation closes the old socket as it reopens; Tauri: `ws.disconnect()`;
-`beforeunload`: the page's own unload). Until the Close, a pong refreshes nothing and any other
-frame is dropped with a WARN naming the client defect. The termination is that Close, or the socket
-ending - never a timer.
+`beforeunload`: the page's own unload). Until the Close, a pong refreshes nothing and does NOT reset
+the missed-ping counter, and any other frame ENDS the socket with a WARN: a frame after `disconnect`
+means the client did not leave (a `beforeunload` the page cancelled - the carte editor's "leave this
+page?" prompt answered "stay"), and a socket out of routing kept open would be deaf until the
+client's own watchdog gave up (~32 s on the web); ended, the client's next heartbeat sees it closed
+and reconnects (`a_frame_after_a_disconnect_ends_the_deaf_socket`). The termination is the Close,
+that frame, or the socket ending; a client that sends none of them (an app suspended between its
+`disconnect` and its Close, a half-open network) is ended by the existing heartbeat within
+`DEAD_SOCKET_DETECTION_SECS` (75 s) of its `disconnect`, the same bound as any silent socket - no
+timer of its own. A departed socket is out of `connected_users`, so it no longer counts toward the
+admission limits while it waits; that window is bounded by the same 75 s.
 
 **Why.** Until 2026-11-14 the loop broke on `disconnect`, dropping the TCP connection before
 the client's Close was read. The frontend's nginx then closed the browser side with that frame
@@ -102,9 +110,7 @@ identity-rotation socket of 0.3 s: open, `disconnect`, closed having sent 0 fram
 upstream keepalive race: the edge is layer 4 and the host's nginx pools no upstream connection.
 `a_disconnect_leaves_routing_at_once_and_the_socket_ends_on_the_clients_close` (handlers.rs) holds
 it: the client's first frame after `disconnect` is the Close reply; on the old loop the same test
-reads a connection reset. A socket whose client sends `disconnect` and never closes stays open, out
-of routing, until its client releases it - the duplicate-connection rule already makes the CLIENT
-own releasing every socket it opened.
+reads a connection reset.
 
 ## Admission: one step, two limits (2026-11-12)
 

@@ -613,20 +613,27 @@ async fn handle_socket(
             while let Some(msg) = receiver.next().await {
                 match msg {
                     Ok(Message::Pong(_)) if departed => {
-                        // A retired session is not refreshed: the pong only says the client has
-                        // not yet sent its Close.
+                        // A retired session is not refreshed, and the missed-ping counter is NOT
+                        // reset: the pong only says the client has not yet sent its Close. So a
+                        // client that never sends it is ended by the heartbeat (send task) within
+                        // PING_INTERVAL_SECS * (MAX_MISSED_PONGS + 1) of its `disconnect`.
                         continue;
                     }
                     Ok(Message::Text(text)) if departed => {
-                        // No client sends anything after `disconnect` but its Close: a frame here
-                        // is a client defect, and it is dropped - this socket is out of routing.
+                        // A FRAME AFTER `disconnect` MEANS THE CLIENT DID NOT LEAVE: the socket is
+                        // out of routing, so kept open it would be DEAF - nothing delivered, no
+                        // pong - until the client's own watchdog gave up (4 heartbeats, ~32 s on
+                        // the web). The known way in is a `beforeunload` the page cancelled (a
+                        // "leave this page?" prompt answered "stay"): `disconnect` went out, the
+                        // document stayed. Ending the socket here is the answer the client can act
+                        // on at once - its next heartbeat sees it closed and reconnects.
                         tracing::warn!(
-                            "[presence] {}:{} sent a {}-byte frame after its disconnect - ignored, the socket has left routing",
+                            "[presence] {}:{} sent a {}-byte frame after its disconnect - its client stayed (a cancelled unload?); ending the socket so it reconnects",
                             user_id,
                             device_id,
                             text.len()
                         );
-                        continue;
+                        break;
                     }
                     Ok(Message::Pong(_)) => {
                         // Client is alive: reset the missed-ping counter and refresh TTL.
@@ -783,7 +790,10 @@ async fn handle_socket(
                                 tracing::error!("WebSocket Error from {}: {}", user_id, e);
                             }
                             SocketEnd::Unreadable => tracing::error!(
-                                "WebSocket Error from {} COULD NOT BE CLASSIFIED - the error under                                  axum's is not a tungstenite::Error, so this crate's direct                                  tokio-tungstenite dependency no longer unifies with axum's and                                  every ordinary goodbye is being reported here as a fault: {}",
+                                "WebSocket Error from {} COULD NOT BE CLASSIFIED - the error under \
+                                 axum's is not a tungstenite::Error, so this crate's direct \
+                                 tokio-tungstenite dependency no longer unifies with axum's and \
+                                 every ordinary goodbye is being reported here as a fault: {}",
                                 user_id,
                                 e
                             ),
@@ -1306,22 +1316,52 @@ mod tests {
             "the session's declaration outlived its disconnect"
         );
 
-        // A frame after `disconnect` is not answered: the application ping gets no pong.
-        socket
-            .send(Message::Text(r#"{"type":"ping"}"#.into()))
-            .await
-            .unwrap();
         socket.close(None).await.unwrap();
 
         match socket.next().await {
             Some(Ok(Message::Close(_))) => {}
             other => panic!(
-                "the first frame after a disconnect must be the Close reply (the server read the                  client's Close before ending the connection), got {other:?}"
+                "the first frame after a disconnect must be the Close reply (the server read the \
+                 client's Close before ending the connection), got {other:?}"
             ),
         }
         assert!(
             socket.next().await.is_none(),
             "the socket must end after the closing handshake"
         );
+    }
+
+    /// A client that sends a frame after its `disconnect` did not leave (a `beforeunload` the page
+    /// cancelled). Its socket is out of routing, so kept open it would be deaf; the gateway ends it,
+    /// and the client sees the end at once instead of a pong - never the pong of a live socket.
+    #[tokio::test]
+    async fn a_frame_after_a_disconnect_ends_the_deaf_socket() {
+        use futures::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::Message;
+
+        let state = Arc::new(state());
+        let url = serve(state.clone()).await;
+        let (mut socket, _) = tokio_tungstenite::connect_async(url("user-1", "device-1"))
+            .await
+            .unwrap();
+        socket
+            .send(Message::Text(r#"{"type":"disconnect"}"#.into()))
+            .await
+            .unwrap();
+        socket
+            .send(Message::Text(r#"{"type":"ping"}"#.into()))
+            .await
+            .unwrap();
+
+        // The next thing the client reads is the end of the connection. A socket kept open would
+        // answer nothing until the heartbeat's first ping (PING_INTERVAL_SECS later), which is a
+        // frame and fails here - the proof is what is read, not how long it took.
+        match socket.next().await {
+            None | Some(Err(_)) => {}
+            Some(Ok(frame)) => {
+                panic!("a departed socket that sent a frame was kept open, it read {frame:?}")
+            }
+        }
+        assert!(state.connected_users.lock().unwrap().is_empty());
     }
 }
