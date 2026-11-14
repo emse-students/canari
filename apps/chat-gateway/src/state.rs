@@ -102,6 +102,8 @@ pub struct AppState {
     /// What one connection may send ([`crate::frame_census::FrameLimits`]); the defaults until
     /// `main` reads the two environment values.
     pub frame_limits: crate::frame_census::FrameLimits,
+    /// Sockets ended for each of those limits ([`crate::frame_census::LimitEndings`]).
+    pub limit_endings: crate::frame_census::LimitEndings,
     /// This process's identity in the shared sessions hash, so two gateway processes - which both
     /// number their connections from 0 - never write the same session field.
     pub instance_id: String,
@@ -140,6 +142,7 @@ impl AppState {
             upgrade_origins: crate::origin::UpgradeOrigins::Wildcard,
             refused_origins: crate::log_repeat::RepeatCounter::new(256),
             frame_limits: crate::frame_census::FrameLimits::default(),
+            limit_endings: crate::frame_census::LimitEndings::default(),
             instance_id: uuid::Uuid::new_v4().to_string(),
             jwt_secret,
             presence_audience,

@@ -61,6 +61,16 @@ impl Default for FrameLimits {
     }
 }
 
+/// How many sockets this process ended for each limit, since it started. Written where the
+/// `[WS LIMIT]` line is, so the count and the lines cannot disagree.
+#[derive(Debug, Default)]
+pub struct LimitEndings {
+    /// Sockets ended for a frame over [`FrameLimits::max_frame_bytes`].
+    pub too_large: std::sync::atomic::AtomicU64,
+    /// Sockets ended for more than [`FrameLimits::max_frames_per_minute`] frames in a minute.
+    pub over_rate: std::sync::atomic::AtomicU64,
+}
+
 /// Why a configured limit was not used.
 #[derive(Debug, PartialEq, Eq)]
 pub struct UnusableLimit {
