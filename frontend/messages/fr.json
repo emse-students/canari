@@ -4268,11 +4268,29 @@
   "admin_lydia_load_failed": "Impossible de charger le contrat.",
   "admin_lydia_save_failed": "Enregistrement impossible.",
   "admin_lydia_counter_title": "Flux de l'année de contrat",
-  "admin_lydia_counter_year": "Du {start} au {end} - {days} jours restants",
+  "admin_lydia_counter_year": [
+    {
+      "declarations": ["input days", "input start", "input end", "local daysPlural = days: plural"],
+      "selectors": ["daysPlural"],
+      "match": {
+        "daysPlural=one": "Du {start} au {end} - {days} jour restant",
+        "daysPlural=other": "Du {start} au {end} - {days} jours restants"
+      }
+    }
+  ],
   "admin_lydia_counter_flux": "{flux} sur {target}",
   "admin_lydia_counter_detail": "Paiements {paid} ({payments}), remboursements {refunded} ({refunds}).",
   "admin_lydia_counter_excluded": "Hors contrat (comptes Lydia historiques) : {amount} ({count}).",
-  "admin_lydia_counter_untraceable": "{count} paiement(s) sans compte identifiable, comptés nulle part.",
+  "admin_lydia_counter_untraceable": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} paiement sans compte identifiable, compté nulle part.",
+        "countPlural=other": "{count} paiements sans compte identifiable, comptés nulle part."
+      }
+    }
+  ],
   "admin_lydia_counter_band": "Palier atteint : à partir de {from}.",
   "admin_lydia_counter_band_none": "Sous le premier palier.",
   "admin_lydia_counter_next_band": "Palier suivant à {from}, encore {missing}.",

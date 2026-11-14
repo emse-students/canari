@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { Handshake, Save, Plus, Trash2, RefreshCw } from '@lucide/svelte';
   import Button from '$lib/components/ui/Button.svelte';
+  import Input from '$lib/components/ui/Input.svelte';
   import { formatAmount } from '$lib/forms/fillAnswers';
   import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
@@ -45,9 +46,6 @@
     target: m.admin_lydia_field_target,
     bands: m.admin_lydia_field_bands,
   } as const;
-
-  const inputClass =
-    'border-cn-border text-text-main focus:ring-accent/40 w-full rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none';
 
   async function load() {
     Log.d('[admin.lydia] loading the contract');
@@ -209,34 +207,24 @@
       }}
     >
       <div class="grid gap-4 sm:grid-cols-3">
-        <div class="space-y-1.5">
-          <label for="lydia-anniversary" class="text-text-main text-sm font-bold">
-            {m.admin_lydia_anniversary_label()}
-          </label>
-          <input
-            id="lydia-anniversary"
-            type="date"
-            bind:value={form.anniversary}
-            class={inputClass}
-          />
-        </div>
-        <div class="space-y-1.5">
-          <label for="lydia-target" class="text-text-main text-sm font-bold">
-            {m.admin_lydia_target_label()}
-          </label>
-          <input
-            id="lydia-target"
-            inputmode="decimal"
-            bind:value={form.target}
-            class={inputClass}
-          />
-        </div>
-        <div class="space-y-1.5">
-          <label for="lydia-vat" class="text-text-main text-sm font-bold">
-            {m.admin_lydia_vat_label()}
-          </label>
-          <input id="lydia-vat" inputmode="decimal" bind:value={form.vat} class={inputClass} />
-        </div>
+        <Input
+          id="lydia-anniversary"
+          type="date"
+          label={m.admin_lydia_anniversary_label()}
+          bind:value={form.anniversary}
+        />
+        <Input
+          id="lydia-target"
+          inputmode="decimal"
+          label={m.admin_lydia_target_label()}
+          bind:value={form.target}
+        />
+        <Input
+          id="lydia-vat"
+          inputmode="decimal"
+          label={m.admin_lydia_vat_label()}
+          bind:value={form.vat}
+        />
       </div>
 
       <fieldset class="space-y-2">
@@ -244,14 +232,16 @@
         {#each LYDIA_PAYMENT_KINDS as kind (kind)}
           <div class="grid items-end gap-2 sm:grid-cols-3">
             <p class="text-text-main text-sm">{KIND_LABELS[kind]()}</p>
-            <label class="text-text-muted space-y-1 text-xs">
-              {m.admin_lydia_percent_label()}
-              <input inputmode="decimal" bind:value={form.fees[kind].percent} class={inputClass} />
-            </label>
-            <label class="text-text-muted space-y-1 text-xs">
-              {m.admin_lydia_fixed_label()}
-              <input inputmode="decimal" bind:value={form.fees[kind].fixed} class={inputClass} />
-            </label>
+            <Input
+              inputmode="decimal"
+              label={m.admin_lydia_percent_label()}
+              bind:value={form.fees[kind].percent}
+            />
+            <Input
+              inputmode="decimal"
+              label={m.admin_lydia_fixed_label()}
+              bind:value={form.fees[kind].fixed}
+            />
           </div>
         {/each}
       </fieldset>
@@ -261,10 +251,12 @@
         {#each form.bands as band, i (i)}
           <div class="border-cn-border space-y-2 rounded-xl border p-3">
             <div class="flex items-end gap-2">
-              <label class="text-text-muted flex-1 space-y-1 text-xs">
-                {m.admin_lydia_band_from_label()}
-                <input inputmode="decimal" bind:value={band.from} class={inputClass} />
-              </label>
+              <Input
+                class="flex-1"
+                inputmode="decimal"
+                label={m.admin_lydia_band_from_label()}
+                bind:value={band.from}
+              />
               <Button
                 variant="danger-outline"
                 onclick={() => form && (form.bands = form.bands.filter((_, j) => j !== i))}
@@ -276,22 +268,16 @@
             {#each LYDIA_PAYMENT_KINDS as kind (kind)}
               <div class="grid items-end gap-2 sm:grid-cols-3">
                 <p class="text-text-main text-xs">{KIND_LABELS[kind]()}</p>
-                <label class="text-text-muted space-y-1 text-xs">
-                  {m.admin_lydia_percent_label()}
-                  <input
-                    inputmode="decimal"
-                    bind:value={band.fees[kind].percent}
-                    class={inputClass}
-                  />
-                </label>
-                <label class="text-text-muted space-y-1 text-xs">
-                  {m.admin_lydia_fixed_label()}
-                  <input
-                    inputmode="decimal"
-                    bind:value={band.fees[kind].fixed}
-                    class={inputClass}
-                  />
-                </label>
+                <Input
+                  inputmode="decimal"
+                  label={m.admin_lydia_percent_label()}
+                  bind:value={band.fees[kind].percent}
+                />
+                <Input
+                  inputmode="decimal"
+                  label={m.admin_lydia_fixed_label()}
+                  bind:value={band.fees[kind].fixed}
+                />
               </div>
             {/each}
           </div>

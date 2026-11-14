@@ -4236,11 +4236,29 @@
   "admin_lydia_load_failed": "Could not load the contract.",
   "admin_lydia_save_failed": "Could not save.",
   "admin_lydia_counter_title": "Contract year flux",
-  "admin_lydia_counter_year": "From {start} to {end} - {days} days left",
+  "admin_lydia_counter_year": [
+    {
+      "declarations": ["input days", "input start", "input end", "local daysPlural = days: plural"],
+      "selectors": ["daysPlural"],
+      "match": {
+        "daysPlural=one": "From {start} to {end} - {days} day left",
+        "daysPlural=other": "From {start} to {end} - {days} days left"
+      }
+    }
+  ],
   "admin_lydia_counter_flux": "{flux} of {target}",
   "admin_lydia_counter_detail": "Payments {paid} ({payments}), refunds {refunded} ({refunds}).",
   "admin_lydia_counter_excluded": "Outside the contract (historical Lydia accounts): {amount} ({count}).",
-  "admin_lydia_counter_untraceable": "{count} payment(s) with no identifiable account, counted nowhere.",
+  "admin_lydia_counter_untraceable": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} payment with no identifiable account, counted nowhere.",
+        "countPlural=other": "{count} payments with no identifiable account, counted nowhere."
+      }
+    }
+  ],
   "admin_lydia_counter_band": "Band reached: from {from}.",
   "admin_lydia_counter_band_none": "Below the first band.",
   "admin_lydia_counter_next_band": "Next band at {from}, {missing} to go.",
