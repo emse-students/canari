@@ -584,6 +584,12 @@ fn a_kick_then_a_re_add_seen_only_by_catch_up_still_records_the_departure() {
 
     // carol is away: bob is kicked, then re-added, in two commits.
     let kick = remove(&mut alice, gid, "bob:dev1");
+    // Retired at once on the committer, and across a reload while bob is absent: the load re-seeds
+    // only the tree it holds, which no longer holds him.
+    assert_eq!(alice.membership_evidence(gid, "bob").first_seen_epoch, None);
+    let saved = alice.save_state().expect("save");
+    let mut alice = MlsManager::load_or_create("alice", "dev1", Some(saved)).expect("reload");
+    assert_eq!(alice.membership_evidence(gid, "bob").first_seen_epoch, None);
     let removed_at = alice.get_epoch(gid).unwrap();
     bob.forget_group(gid, 0);
     let kp = bob.generate_key_package().unwrap();
@@ -706,9 +712,10 @@ fn a_member_removed_by_another_then_back_alone_is_proven_by_no_device() {
 }
 
 /// A MEMBER REMOVING THEIR OWN OLD DEVICE STAYS PROVEN (owner, 2026-11-14): bob changes phone, and
-/// his web device removes the old phone's leaf. The commit is bob's own, so nothing is cancelled -
-/// across a reload too. (A commit never removes its own sender, so bob keeps a leaf through it: his
-/// new phone entering by its own commit is then an added device of a member, never this classifier's.)
+/// his web device removes the old phone's leaf. What this pins is that a PARTIAL removal - bob keeps
+/// a leaf - is no retirement, whoever commits it, across a reload too. The owner's exemption for a
+/// user's own commit removing EVERY leaf of theirs cannot be built in MLS (a commit never removes its
+/// own sender); it is pinned by the unit test in `device_trust.rs`.
 #[test]
 fn a_member_removing_their_own_old_device_stays_proven() {
     let gid = "g-sightings-own-device";

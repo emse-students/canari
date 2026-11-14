@@ -1586,8 +1586,9 @@ entry owed to the next delivery.
 
 **What it survives, by construction.**
 
-- *A member's new device, a reinstall, a new key*: the record is per USER, so any device of the
-  member is the member.
+- *A member's new device, a reinstall, a new key, while one of their devices is still in the
+  tree*: the record is per USER, so any device of the member is the member. Once another member's
+  commit removed their last leaf - a kick, or a revoked device swept - they are retired (below).
 - *This device away, across restarts*: the sighting was written when the member was first seen
   and stays in the sealed state; a restored state carries it too.
 - *A member cleaning up their own old device*: their own commit cancels nothing.
@@ -1653,6 +1654,9 @@ they left never saw them. So `returning` is in practice never reached for this c
 self-admitted entry of a user absent from the tree is `new-person`, written and reported, and the
 way back is a member's Add. The sightings still carry `watched_from`, and the own-device rule is
 kept exact for the day a removal reaches the device as the user's own (cross-signing, step 8).
+**A simplification the next reader may take:** while that holds, the verdict could drop the
+`firstSeenEpoch` comparison and keep the record for `watched_from` alone; it is kept so the rule
+the owner stated stays the code's rule when step 8 makes the own-commit case reachable.
 
 The server takes the report from a member of the group only (403
 `not-a-member` otherwise), accepts `kind` from that list alone, and writes one line per
