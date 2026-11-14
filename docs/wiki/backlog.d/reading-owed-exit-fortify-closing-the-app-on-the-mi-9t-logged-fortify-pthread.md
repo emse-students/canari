@@ -19,3 +19,5 @@ crash list carries nothing**: no crash or ANR issue in 28 days, crash rate 0.000
 rule does not accept. Owed: find what calls `exit()` while the WebView's render and GPU threads are
 alive (the finishing `onDestroy` path), and end the process after them or let Android end it - then
 the same thirteen exits show no `FORTIFY` line.
+
+**Owed, moved here from the Root Back entry (fixed by #3544, merged):** `MainActivity.kt` is compiled by no PR gate, so on the Mi 9T after the next pre-release read that Back at a root tab with no history sends the app to the background (`moveTaskToBack`, log "moving the task to the background") and leaves the process alive, so the next launch is warm ([mobile](../frontend/mobile.md#back-at-a-root-tab-goes-to-the-background-owner-2026-11-14)). It also changes this entry's own reading: two Back presses no longer reach `onDestroy` from a root tab, so the FORTIFY line now needs another way out of the app.
