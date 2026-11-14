@@ -380,7 +380,7 @@ repository. The bench iPhone has no passcode and no SIM; Wi-Fi was turned off fo
 | Waiting share locked with the device | **`NOT-READ`** | No passcode on the bench iPhone |
 | Share in, Safari URL | **partial `PASS`** | Card, banner, tap opens the picker warm; the suggestions row lists four conversations ([entry](backlog.d/reading-owed-sharing-into-canari-on-ios.md)) |
 | Emoji pictures, rows 1-3 on the iPhone | **`PASS`** | Seven emoji kinds all drawn as pictures, flag and family one picture each |
-| Trills | **`NOT-READ`** | Needs a human ear |
+| Trills | **`DELETED`** | Delivery proved (6 of 6 pushes arrive with the requested sound); the sound itself is not judged (owner, 2026-11-14) |
 
 **Entries deleted with their reason (owner directive of 2026-11-14).** R3b (cannot be provoked, above); the
 reaction-failure toast (offline the reaction is held, an API refused while the phone believes itself online

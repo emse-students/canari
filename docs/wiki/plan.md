@@ -152,7 +152,6 @@ earliest version, as a checklist.
 - [ ] [why the idle Mi 9T closes "zombie" sockets overnight (logcat)](backlog.d/p3-ws-4-pings-without-server-response-closing-zombie-connection-repeatedly.md)
 - [ ] [a comment, reply or mention opens the post AT the comment - the push since #2000, the bell row since the backlog triage...](backlog.d/reading-owed-a-comment-reply-or-mention-opens-the-post-at-the-comment-the-push.md)
 - [ ] [a slow link is not offline, the connection ring, rows named from local names](backlog.d/reading-owed-a-slow-link-is-not-offline-the-connection-ring-rows-named-from.md)
-- [ ] [the palette-A trills on the iPhone](backlog.d/reading-owed-the-palette-a-trills-on-the-iphone.md)
 - [ ] [rotation on the video, live and camera screens on both phones](backlog.d/rotation-on-video-and-camera-screens.md)
 - [ ] [a call that loses the audio focus holds its microphone and never hangs up: the member's own mute comes back with the...](backlog.d/reading-owed-a-call-that-loses-the-audio-focus-holds-its-microphone-and-never.md)
 - [ ] [a new-device alert is dropped once its device is revoked](backlog.d/reading-owed-a-new-device-alert-is-dropped-once-its-device-is-revoked.md)
