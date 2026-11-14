@@ -74,7 +74,6 @@ export function observeThreadGrowth(
   captureAnchor();
 
   let previousClientHeight = scroller.clientHeight;
-  let previousScrollHeight = scroller.scrollHeight;
   const glide = createThreadGlide(scroller);
   /**
    * `added`: the elements this change inserted, whose bubbles wait out a glide that makes room for
@@ -97,7 +96,7 @@ export function observeThreadGrowth(
       currentReach,
       wasNearBottom: now.wasNearBottom,
       isLoadingOlder: now.isLoadingOlder,
-      boxOnly: scroller.scrollHeight === previousScrollHeight,
+      boxChanged: scroller.clientHeight !== previousClientHeight,
       isEntering: now.isEntering,
     });
     // THE ROW ANCHOR IS FOR A READER IN HISTORY ONLY: for one at the bottom, keeping the top row in
@@ -134,7 +133,6 @@ export function observeThreadGrowth(
       if (glide.play(glideTravel(held, travel))) markGlideEntrance(added);
     } else if (held) glide.play(held.px, held.time);
     previousClientHeight = scroller.clientHeight;
-    previousScrollHeight = scroller.scrollHeight;
     captureAnchor();
   };
 

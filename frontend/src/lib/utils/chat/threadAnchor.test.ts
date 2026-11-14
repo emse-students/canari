@@ -101,13 +101,15 @@ describe('threadGrowthResponse', () => {
     expect(threadGrowthResponse({ ...grew(4000), isLoadingOlder: true })).toBe('keep-row');
   });
 
-  it('follows a box change alone under a reader at the bottom while the store is read', () => {
-    // The keyboard moving during the await: no row to keep, only the bottom moved (review of #3545).
+  it('follows a box change under a reader at the bottom while the store is read', () => {
+    // The keyboard moving during the await, alone or in the same change as the prepend (#3545).
     const box = { ...settled, currentReach: settled.previousReach + 357, isLoadingOlder: true };
-    expect(threadGrowthResponse({ ...box, boxOnly: true })).toBe('follow-bottom');
-    expect(threadGrowthResponse({ ...box, boxOnly: false })).toBe('keep-row');
-    expect(threadGrowthResponse({ ...box, boxOnly: true, wasNearBottom: false })).toBe('keep-row');
-    expect(threadGrowthResponse({ ...settled, isLoadingOlder: true, boxOnly: true })).toBe(
+    expect(threadGrowthResponse({ ...box, boxChanged: true })).toBe('follow-bottom');
+    expect(threadGrowthResponse({ ...grew(4000), isLoadingOlder: true, boxChanged: true })).toBe(
+      'follow-bottom'
+    );
+    expect(threadGrowthResponse({ ...box, boxChanged: false })).toBe('keep-row');
+    expect(threadGrowthResponse({ ...box, boxChanged: true, wasNearBottom: false })).toBe(
       'keep-row'
     );
   });

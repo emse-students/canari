@@ -30,10 +30,11 @@ export interface ThreadGrowth {
   /** Older messages are being prepended - the row at the top of the viewport is kept. */
   isLoadingOlder: boolean;
   /**
-   * The change moved only the pane's own box: `scrollHeight` did not move (the keyboard, a resize).
-   * Optional: a caller that cannot tell says nothing, and the change is treated as content.
+   * The pane's own box changed height in this change (the keyboard, a resize) - measured apart from
+   * the content, so a box change landing in the same mutation as a prepend is still seen. Optional: a
+   * caller that cannot tell says nothing, and the change is treated as content alone.
    */
-  boxOnly?: boolean;
+  boxChanged?: boolean;
   /** The conversation is still being entered - its position is the bottom, whatever moves under it. */
   isEntering: boolean;
 }
@@ -94,12 +95,11 @@ export function threadGrowthResponse(growth: ThreadGrowth): ThreadGrowthResponse
   // PREPENDING IS GROWTH THAT MEANS THE OPPOSITE. `loadOlderGroups` adds height ABOVE the reader,
   // and the row anchor keeps their row; following the bottom here would throw away the history it
   // had just fetched.
-  // EXCEPT THE BOX ALONE UNDER A READER AT THE BOTTOM (review of #3545): a keyboard moving while the
-  // store is read brings no row to keep - only the bottom moved, and that reader follows it.
+  // EXCEPT A BOX CHANGE UNDER A READER AT THE BOTTOM (review of #3545): a keyboard moving while the
+  // store is read moved the bottom, and that reader follows it - whatever the content did in the same
+  // change, since a prepend above a reader at the bottom leaves them at the bottom anyway.
   if (growth.isLoadingOlder) {
-    const boxMovedTheBottom =
-      growth.boxOnly === true && growth.currentReach !== growth.previousReach;
-    return growth.wasNearBottom && boxMovedTheBottom ? 'follow-bottom' : 'keep-row';
+    return growth.wasNearBottom && growth.boxChanged === true ? 'follow-bottom' : 'keep-row';
   }
   if (!growth.wasNearBottom && !growth.isEntering) return 'keep-row';
   return growth.currentReach === growth.previousReach ? 'hold-bottom' : 'follow-bottom';

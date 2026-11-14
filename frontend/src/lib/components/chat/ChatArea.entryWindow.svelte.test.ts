@@ -445,16 +445,91 @@ describe('ChatArea short thread fill', () => {
     expect(load).not.toHaveBeenCalled();
   });
 
-  it('a store page that adds no row does not end the fill: the next page is asked', async () => {
+  it('a store answering "more" without moving its cursor stops the fill: one ask, one warn', async () => {
+    // Every stored row is shown, so a page that moved the store's cursor moves the rows; one that did
+    // not would be asked again at once, forever (review of #3545).
     rowPx = 36;
     modelGeometry();
-    // Two pages of nothing shown (a run of hidden events), then the end of the store.
-    const answers = [true, true, false];
-    const load = vi.fn(async () => answers.shift() ?? false);
+    const load = vi.fn(async () => true);
     mountSwitchable(5, load);
     await settleEntry();
     await settleEntry();
-    expect(load).toHaveBeenCalledTimes(3);
+    expect(load).toHaveBeenCalledTimes(1);
+  });
+
+  it('a store that throws is asked once, not in a loop', async () => {
+    rowPx = 36;
+    modelGeometry();
+    const load = vi.fn(async (): Promise<boolean> => {
+      throw new TypeError('store gone');
+    });
+    mountSwitchable(5, load);
+    await settleEntry();
+    await settleEntry();
+    expect(load).toHaveBeenCalledTimes(1);
+  });
+
+  it('a pane that gains its height later is filled then', async () => {
+    // The pane's own ResizeObserver re-arms the fill: driven by hand, as happy-dom lays nothing out.
+    const callbacks: (() => void)[] = [];
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(cb: () => void) {
+          callbacks.push(cb);
+        }
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      }
+    );
+    restore.push(() => vi.unstubAllGlobals());
+    rowPx = 36;
+    panePx = 0;
+    modelGeometry();
+    const load = vi.fn(async () => false);
+    mountSwitchable(5, load);
+    await settleEntry();
+    expect(load).not.toHaveBeenCalled();
+    panePx = PANE_PX;
+    for (const cb of callbacks) cb();
+    await settleEntry();
+    expect(load).toHaveBeenCalledTimes(1);
+  });
+
+  it("a switch during the fill's peer ask: the answer is not written into the next conversation", async () => {
+    rowPx = 36;
+    modelGeometry();
+    const answers: ((v: 'no-peer') => void)[] = [];
+    const ask = vi.fn(() => new Promise<'no-peer'>((resolve) => answers.push(resolve)));
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const props = $state({
+      conversation: conversationOf(5, 'g1'),
+      messageText: '',
+      onMessageChange: () => {},
+      bindDraftWriter: () => () => {},
+      onSend: () => {},
+      onInviteMembers: () => {},
+      onLoadOlderMessages: async () => false,
+      onRequestOlderFromPeers: ask,
+    });
+    const app = mount(ChatArea, { target, props });
+    mounted.push(() => {
+      void unmount(app);
+      target.remove();
+    });
+    flushSync();
+    await settleEntry();
+    expect(ask).toHaveBeenCalledTimes(1);
+    props.conversation = conversationOf(5, 'g2');
+    flushSync();
+    // g1's answer lands before g2's own fill has asked: written into g2, it would read "nobody
+    // answers" and g2 would never ask.
+    answers[0]('no-peer');
+    await settleEntry();
+    await settleEntry();
+    expect(ask).toHaveBeenCalledTimes(2);
   });
 
   it('the fill is silent: its peer ask shows no spinner and no banner', async () => {

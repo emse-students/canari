@@ -777,8 +777,32 @@
   let shortFillInFlight = $state(false);
   /** Whether the load the thread is showing was asked by the reader, or by the silent entry fill. */
   let olderAskedBy = $state<'reader' | 'fill'>('reader');
-  /** Store pages read in this conversation: a page that adds no group still moves this. */
+  /** Store pages read in this conversation: every page moves this, whatever it brought. */
   let storePagesRead = $state(0);
+  /** The pane's laid-out height, from its `ResizeObserver`: a pane that gains its box re-arms the fill. */
+  let paneHeight = $state(0);
+  /**
+   * The entry whose fill stopped on a FACT that no later state change can undo: the store threw, or
+   * answered "more" without moving its cursor. Without it, either one re-asked at once, forever.
+   */
+  let shortFillStoppedEpoch: number | null = null;
+
+  /** Where the store's pages stand, as this view can see it: the rows held and the oldest one. */
+  function storeCursor(): string {
+    const messages = chatView?.conversation.messages ?? [];
+    return `${messages.length}:${messages[0]?.id ?? ''}`;
+  }
+
+  $effect(() => {
+    const el = chatContainer;
+    if (!el) return;
+    paneHeight = el.clientHeight;
+    const observer = new ResizeObserver(() => {
+      paneHeight = el.clientHeight;
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  });
 
   function armShortThreadFill(epoch: number) {
     if (epoch !== entryEpoch) return;
@@ -789,6 +813,7 @@
     const armed = shortFillEpoch;
     // Every value whose change can make one more page worth asking for.
     void [
+      paneHeight,
       shortFillInFlight,
       isLoadingOlder,
       scrollbackState,
@@ -803,9 +828,11 @@
 
   function continueShortThreadFill(epoch: number) {
     if (epoch !== entryEpoch || !chatContainer || shortFillInFlight) return;
+    if (shortFillStoppedEpoch === epoch) return;
     // A load already running - the reader's or the fill's - is waited for: its end re-runs this.
     if (isLoadingOlder || scrollbackState === 'asking') return;
-    // A pane with no box measures as "short" whatever it holds: never page the store on it.
+    // A pane with no box measures as "short" whatever it holds: never page the store on it. Its
+    // `ResizeObserver` (`paneHeight`) re-runs this when it gains one.
     if (chatContainer.clientHeight === 0) {
       Log.d(
         'chat.entry',
@@ -814,16 +841,39 @@
       return;
     }
     if (chatContainer.scrollHeight > chatContainer.clientHeight) return;
+    const fromStore = renderWindow.start === 0 && !!onLoadOlderMessages && hasMoreInDb;
     const canBring =
       renderWindow.start > 0 ||
-      (!!onLoadOlderMessages && hasMoreInDb) ||
+      fromStore ||
       (!!onRequestOlderFromPeers && !hasMoreInDb && scrollbackState === 'idle');
     if (!canBring) return;
     Log.d('chat.entry', `short thread: asking for older history (window ${renderWindow.start})`);
+    const cursorBefore = storeCursor();
     shortFillInFlight = true;
-    void loadOlderGroups('fill').finally(() => {
-      if (epoch === entryEpoch) shortFillInFlight = false;
-    });
+    void loadOlderGroups('fill')
+      .then(
+        () => {
+          if (epoch !== entryEpoch) return;
+          if (fromStore && hasMoreInDb && storeCursor() === cursorBefore) {
+            Log.w(
+              'chat.entry',
+              'short thread: the store answered "more" without moving its cursor - the fill stops for this entry'
+            );
+            shortFillStoppedEpoch = epoch;
+          }
+        },
+        (e: unknown) => {
+          if (epoch !== entryEpoch) return;
+          Log.w(
+            'chat.entry',
+            `short thread: the older-history load threw (${e instanceof Error ? e.name : typeof e}) - the fill stops for this entry`
+          );
+          shortFillStoppedEpoch = epoch;
+        }
+      )
+      .finally(() => {
+        if (epoch === entryEpoch) shortFillInFlight = false;
+      });
   }
 
   /**
@@ -1247,18 +1297,26 @@
     // for it. Once per conversation-visit: a scroll gesture fires this handler repeatedly, and the
     // answer arrives as an ordinary bundle rather than as a return value.
     if (onRequestOlderFromPeers && !hasMoreInDb && scrollbackState === 'idle') {
+      // The answer belongs to the conversation that asked: a switch during the ask resets the state
+      // for the next one, and this call must not write over it (review of #3545).
+      const askedIn = entryEpoch;
       scrollbackState = 'asking';
       scrollbackAskedAt = oldestHeldAt;
       // `unavailable` IS one of the answers this call returns deliberately, so mapping a throw
       // onto it makes a failed ask and a declined one the same value at every reader. The state
       // still collapses - the UI has one thing to say either way - but the log keeps them apart,
       // which is all a reader gets when someone reports that history stopped here.
-      scrollbackState = (await onRequestOlderFromPeers().catch((e: unknown) => {
+      const answer = (await onRequestOlderFromPeers().catch((e: unknown) => {
         console.warn(
           `[ChatArea] peer scrollback request threw for ${chatView?.conversation.id.slice(0, 8) ?? 'no-conversation'}… - reported as unavailable: ${String(e).slice(0, 200)}`
         );
         return 'unavailable';
       })) as Exclude<ScrollbackState, 'asking'>;
+      if (askedIn !== entryEpoch) {
+        Log.d('ChatArea', `peer scrollback answer (${answer}) retired by a conversation switch`);
+        return;
+      }
+      scrollbackState = answer;
     }
   }
 
@@ -1547,6 +1605,7 @@
         // A new entry retires the previous one's fill and widen at once, not a tick later.
         entryEpoch++;
         shortFillEpoch = null;
+        shortFillStoppedEpoch = null;
         shortFillInFlight = false;
         olderAskedBy = 'reader';
         entryReportOwed = true;

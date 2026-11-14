@@ -234,4 +234,17 @@ describe('observeThreadGrowth - an older page prepended', () => {
     expect(scroller.scrollTop).toBe(reach());
     stop();
   });
+
+  it('a keyboard rise landing in the same change as the prepend: the reader at the end stays there', async () => {
+    const { scroller, layout, relayout, reach, prepend } = makeThread(rowsWithPhoto(), 711);
+    scroller.scrollTop = reach();
+    const stop = observeThreadGrowth(scroller, loading);
+    layout.box -= KEYBOARD;
+    prepend([60, 60, 60, 60, 60]);
+    // One delivery for both: the mutation's microtask runs after the box has already changed.
+    await Promise.resolve();
+    relayout();
+    expect(scroller.scrollTop).toBe(reach());
+    stop();
+  });
 });
