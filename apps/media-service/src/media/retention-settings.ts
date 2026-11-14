@@ -98,6 +98,11 @@ export type RetentionReadReason = 'boot' | 'notice' | 'demand';
  * `updateConfig` drops `configInFlight` after its write for the same reason). A `demand` only needs
  * SOME value, so it joins whatever runs.
  *
+ * ONE READ AT A TIME, ALWAYS (delta review of #3554): the running read hands `inFlight` to the queued
+ * one in the SAME callback that settles it, so `inFlight` is never empty between the two - a demand
+ * arriving then joins instead of starting a second read, and an older, slower read can never
+ * overwrite the values a newer one wrote.
+ *
  * AN OUTAGE IS LOGGED TWICE, by STATE, never per upload (re-review of #3521): the first failed read
  * opens it - WARN naming the age of the values kept, or ERROR when nothing is held and conversation
  * uploads are refused - and the first successful read after it closes it, with its length and how
@@ -108,8 +113,15 @@ export class MediaRetentionHolder {
   private inFlight: Promise<boolean> | null = null;
   /** When the current run of failed reads began, or null while reads succeed. */
   private outageSince: number | null = null;
-  /** The read queued to start after {@link inFlight}, shared by the notices waiting for it. */
-  private queued: Promise<boolean> | null = null;
+  /**
+   * The read queued to start after {@link inFlight}, shared by the notices waiting for it: its
+   * reason, the promise they were given, and how that promise adopts the read once it starts.
+   */
+  private queued: {
+    reason: RetentionReadReason;
+    promise: Promise<boolean>;
+    adopt: (read: Promise<boolean>) => void;
+  } | null = null;
   /** The uploads refused (nothing held) while {@link outageSince} is set; reset by every success. */
   private refusedInOutage = 0;
 
@@ -130,19 +142,13 @@ export class MediaRetentionHolder {
    */
   require(): MediaRetentionDays {
     if (this.held) return this.held.values;
-    if (this.outageSince !== null) {
-      // Inside an outage already logged: counted for its end line, one debug line each.
-      this.refusedInOutage += 1;
-      this.logger.debug(
-        '[RETENTION] no retention durations held (outage): upload refused (503), a read is asked'
-      );
-    } else {
-      // No outage is open - the boot read is still running, or none has failed yet - so nothing
-      // has said why a member's upload is refused: this line does.
-      this.logger.warn(
-        '[RETENTION] no retention durations held yet (first read still running): upload refused (503), a read is asked'
-      );
-    }
+    // Nothing held means an outage is open and already logged: `RetentionBootstrap` awaits the boot
+    // read before the routes listen, and a failed boot read opens the outage (ERROR). So a refusal
+    // is counted for the outage's end line, and is one debug line here.
+    if (this.outageSince !== null) this.refusedInOutage += 1;
+    this.logger.debug(
+      '[RETENTION] no retention durations held (outage): upload refused (503), a read is asked'
+    );
     void this.refresh('demand');
     throw new ServiceUnavailableException();
   }
@@ -154,19 +160,47 @@ export class MediaRetentionHolder {
   refresh(reason: RetentionReadReason): Promise<boolean> {
     if (!this.inFlight) return this.start(reason);
     if (reason === 'demand') return this.inFlight;
-    this.queued ??= this.inFlight.then(() => {
-      this.queued = null;
-      return this.start(reason);
-    });
-    return this.queued;
+    if (!this.queued) {
+      let adopt!: (read: Promise<boolean>) => void;
+      const promise = new Promise<boolean>((resolve) => (adopt = resolve));
+      this.queued = { reason, promise, adopt };
+    }
+    return this.queued.promise;
   }
 
+  /** Starts a read and makes it {@link inFlight}; it hands over to the queued read as it settles. */
   private start(reason: RetentionReadReason): Promise<boolean> {
-    const read: Promise<boolean> = this.readOnce(reason).finally(() => {
-      if (this.inFlight === read) this.inFlight = null;
-    });
+    const read: Promise<boolean> = this.readOnce(reason).then(
+      (ok) => {
+        this.handOver(read);
+        return ok;
+      },
+      (e: unknown) => {
+        // `readOnce` catches everything; reaching here is a defect, and the queue must still move.
+        this.logger.error(
+          `[RETENTION] read (${reason}) REJECTED, which it never should: ${String(e)}`
+        );
+        this.handOver(read);
+        return false;
+      }
+    );
     this.inFlight = read;
     return read;
+  }
+
+  /**
+   * The settled read gives way: to the queued read, started HERE so {@link inFlight} is never empty
+   * between the two, or to nothing.
+   */
+  private handOver(settled: Promise<boolean>): void {
+    if (this.inFlight !== settled) return;
+    const next = this.queued;
+    if (!next) {
+      this.inFlight = null;
+      return;
+    }
+    this.queued = null;
+    next.adopt(this.start(next.reason));
   }
 
   private async readOnce(reason: RetentionReadReason): Promise<boolean> {

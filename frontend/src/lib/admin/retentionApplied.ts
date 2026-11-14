@@ -19,13 +19,24 @@ export interface RetentionAppliedAnswer {
 export type RetentionAppliedView = RetentionAppliedAnswer | { state: 'failed'; refusal: null };
 
 const STATES: ReadonlySet<string> = new Set(['applied', 'behind', 'refused', 'unreachable']);
+const REASONS: ReadonlySet<string> = new Set(['secret', 'route', 'malformed', 'status']);
 
-/** Whether core's answer has a state this page knows; anything else is a failed read. */
+/**
+ * Whether core's answer is one this page can word: a known state, and - for `refused` - a refusal
+ * with its status and a known reason (never worded "HTTP 0"). Anything else is a failed read.
+ */
 export function isRetentionAppliedAnswer(body: unknown): body is RetentionAppliedAnswer {
+  if (typeof body !== 'object' || body === null) return false;
+  const { state, refusal } = body as { state?: unknown; refusal?: unknown };
+  if (!STATES.has(String(state))) return false;
+  if (state !== 'refused') return true;
+  if (typeof refusal !== 'object' || refusal === null) return false;
+  const { status, reason } = refusal as { status?: unknown; reason?: unknown };
   return (
-    typeof body === 'object' &&
-    body !== null &&
-    STATES.has(String((body as { state?: unknown }).state))
+    typeof status === 'number' &&
+    Number.isInteger(status) &&
+    status > 0 &&
+    REASONS.has(String(reason))
   );
 }
 
@@ -41,8 +52,9 @@ export function retentionAppliedText(view: RetentionAppliedView): string {
     case 'failed':
       return m.admin_platform_retention_read_failed();
     case 'refused': {
-      const status = view.refusal?.status ?? 0;
-      switch (view.refusal?.reason) {
+      // `isRetentionAppliedAnswer` let no `refused` through without its refusal.
+      const { status, reason } = view.refusal!;
+      switch (reason) {
         case 'secret':
           return m.admin_platform_retention_media_refused_secret({ status });
         case 'route':

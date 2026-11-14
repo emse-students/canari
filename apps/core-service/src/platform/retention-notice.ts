@@ -36,7 +36,7 @@ export async function notifyMediaRetentionChanged(
     return false;
   } catch (e) {
     logger.error(
-      `[RETENTION] the notice to media-service failed (${e instanceof Error ? e.message : String(e)}): it stamps the values it read last until its next read`
+      `[RETENTION] the notice to media-service failed (${transportCause(e)}): it stamps the values it read last until its next read`
     );
     return false;
   }
@@ -62,6 +62,16 @@ export type MediaRetentionReport =
   /** No answer: the request did not complete (connection, DNS, timeout). */
   | { kind: 'unreachable'; cause: string };
 
+/**
+ * A transport failure, worded so causes can be told apart: Node's fetch says only "fetch failed" and
+ * keeps the system's code (ECONNREFUSED, ENOTFOUND, ...) on `cause` (delta review of #3554).
+ */
+export function transportCause(e: unknown): string {
+  if (!(e instanceof Error)) return String(e);
+  const code = (e.cause as { code?: unknown } | undefined)?.code;
+  return typeof code === 'string' ? `${e.message} (${code})` : e.message;
+}
+
 /** The reason a non-2xx status from media-service names. */
 function refusalReason(status: number): MediaRefusalReason {
   if (status === 401 || status === 403) return 'secret';
@@ -83,12 +93,25 @@ export async function readMediaRetentionHeld(
       signal: AbortSignal.timeout(RETENTION_NOTICE_TIMEOUT_MS),
     });
   } catch (e) {
-    return { kind: 'unreachable', cause: e instanceof Error ? e.message : String(e) };
+    return { kind: 'unreachable', cause: transportCause(e) };
   }
   if (!res.ok) return { kind: 'refused', status: res.status, reason: refusalReason(res.status) };
-  const body = (await res.json().catch(() => undefined)) as
+  // Reading the body is still the TRANSPORT: a reset or a timeout after the status line is no answer
+  // (delta review of #3554). Only a body that arrived and is not JSON is a malformed answer.
+  let text: string;
+  try {
+    text = await res.text();
+  } catch (e) {
+    return { kind: 'unreachable', cause: transportCause(e) };
+  }
+  let body:
     | { held?: { chatReelDays?: unknown; idleFileDays?: unknown } | null; readAt?: unknown }
     | undefined;
+  try {
+    body = JSON.parse(text) as typeof body;
+  } catch {
+    body = undefined;
+  }
   const malformed = { kind: 'refused', status: res.status, reason: 'malformed' } as const;
   if (!body || typeof body !== 'object' || !('held' in body)) return malformed;
   const readAt = typeof body.readAt === 'string' ? body.readAt : null;

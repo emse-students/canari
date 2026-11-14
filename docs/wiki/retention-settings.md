@@ -62,15 +62,19 @@ it did not answer) - so a social-service restart refused every chat file for its
   that read may have asked before the admin's `UPDATE` committed, and joining it answered
   `refreshed: true` with the old values. A notice (or the boot) gets a FRESH read started after the
   running one - one queued read, shared by every notice that arrives before it starts. An upload's
-  demand only needs some value and joins whatever runs.
+  demand only needs some value and joins whatever runs. **One read at a time, always** (delta
+  review): the running read hands `inFlight` to the queued one in the callback that settles it, so a
+  demand arriving in between joins rather than starting a second read, and an older read can never
+  overwrite what a newer one wrote.
 - **A failed re-read keeps the last values.** It logs `[RETENTION] re-read (notice) FAILED (...):
   uploads keep the values read N s ago`, naming their age. It never falls back to a default.
 - **An outage is logged by state, twice** (re-review of #3521): the first failed read opens it -
   the WARN above, or an ERROR when nothing is held - and the first successful read after it closes
   it, `readable again (...) after N s: M upload(s) refused meanwhile`. Every read and refusal in
-  between is a debug line, so a social-service outage is not an ERROR per upload. A refusal while NO
-  outage is open (the boot read still running) is a WARN of its own, never only a debug line, and is
-  not counted into a later outage (the count resets on every successful read).
+  between is a debug line, so a social-service outage is not an ERROR per upload. Nothing held always
+  means an outage is open and already logged: `RetentionBootstrap` awaits the boot read before the
+  routes listen (tested), and a failed boot read opens the outage. The count resets on every
+  successful read, so it never carries into a later outage.
 - **Nothing held at all** (the boot read failed, and nothing has succeeded since) **refuses** the
   upload with a `503`, before a byte is stored. That upload asks for the read, which runs beside the
   refusal and never in its path. The client's outbox retries a 503, and its next try finds the values.
@@ -89,10 +93,14 @@ it did not answer) - so a social-service restart refused every chat file for its
   failure is not: `behind`; `refused` with the status media-service answered and why - `secret`
   (401/403, the internal secret is misconfigured), `route` (404, an older media-service during a
   deploy), `malformed` (a body not of the shape), `status` (anything else); `unreachable` (no
-  answer); and, on the page only, `failed` - the page's OWN request to core-service failed, which
-  claims nothing about media-service and offers no "Renvoyer". Only the latest request's answer is
-  shown (a sequence number). Core logs a CHANGE of the state (WARN, or a line on the return to
-  `applied`), never each page view.
+  answer - a body cut after a 2xx included, and the cause names Node's system code, e.g.
+  `fetch failed (ECONNREFUSED)`); and, on the page only, `failed` - the page's OWN request to core-service failed, which
+  claims nothing about media-service and offers no "Renvoyer". Only the newest answer is
+  shown (a sequence number): a late answer to an older read is dropped, a failed newer read leaves
+  the last good answer in place, and a "Renvoyer" answer is numbered on arrival, so no read started
+  before the notice completed can replace it; a shown answer clears a failed resend's alert. A
+  `refused` without its status and reason is a failed read, never worded "HTTP 0". Core and the page
+  each log a CHANGE of the state (WARN, or a line on the return to `applied`), never each page view.
 - **The social-service boot notice may land before social-service listens** - `onApplicationBootstrap`
   runs before `listen` - so the read it triggers can fail. State heals it, not a retry: a
   media-service holding nothing re-reads at its next upload, by then social-service listens; one

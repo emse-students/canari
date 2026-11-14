@@ -8,6 +8,7 @@
   import {
     isRetentionAppliedAnswer,
     retentionAppliedText,
+    type RetentionAppliedAnswer,
     type RetentionAppliedView,
   } from '$lib/admin/retentionApplied';
 
@@ -30,52 +31,83 @@
   let view = $state<RetentionAppliedView | null>(null);
   let resending = $state(false);
   let resendFailed = $state(false);
-  /**
-   * The number of the latest request: a load, a save's re-read and "Renvoyer" all write the state,
-   * and only the LATEST one's answer may - an older answer arriving late is dropped.
-   */
-  let latest = 0;
+  /** Numbers every request and every resend ANSWER; see {@link show}. */
+  let counter = 0;
+  /** The number of the answer shown, 0 before any: an answer numbered lower is older, and dropped. */
+  let shownSeq = 0;
+  /** The state (and refusal) last logged, so a page view logs a CHANGE only, as core does. */
+  let lastLogged: string | null = null;
 
   const base = () => `${coreUrl()}/api/users/admin/platform/retention-applied`;
 
-  /** Reads the state (or re-sends, then reads); resolves false when this request failed. */
-  async function read(resend: boolean): Promise<boolean> {
-    const mine = ++latest;
-    Log.d(`admin.platform.retentionApplied ${resend ? 'resend' : 'read'} #${mine}`);
+  /** One request to core; resolves with an answer this page can word, else throws. */
+  async function ask(resend: boolean): Promise<RetentionAppliedAnswer> {
+    const res = await apiFetch(
+      resend ? `${base()}/resend` : base(),
+      resend ? { method: 'POST' } : undefined
+    );
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const body: unknown = await res.json();
+    if (!isRetentionAppliedAnswer(body)) throw new Error('an answer this page cannot word');
+    return body;
+  }
+
+  /**
+   * Shows an answer unless a NEWER one is already shown - so a late answer to an older request never
+   * replaces a newer one, while an older good answer still replaces nothing-yet or a failure. A shown
+   * answer clears a previous resend's alert.
+   */
+  function show(answer: RetentionAppliedAnswer, seq: number) {
+    if (seq <= shownSeq) {
+      Log.d(`admin.platform.retentionApplied answer #${seq} is older than #${shownSeq}: dropped`);
+      return;
+    }
+    shownSeq = seq;
+    view = answer;
+    resendFailed = false;
+    const key = `${answer.state}:${answer.refusal?.reason ?? ''}:${answer.refusal?.status ?? ''}`;
+    if (key === lastLogged) return;
+    const first = lastLogged === null;
+    lastLogged = key;
+    if (answer.state !== 'applied') Log.w('admin.platform.retentionApplied', `state ${key}`);
+    else if (!first) Log.i('admin.platform.retentionApplied', 'applied again');
+  }
+
+  /** Reads the state; a failure shows `failed` only while no answer was ever shown. */
+  async function read() {
+    const mine = ++counter;
+    Log.d(`admin.platform.retentionApplied read #${mine}`);
     try {
-      const res = await apiFetch(
-        resend ? `${base()}/resend` : base(),
-        resend ? { method: 'POST' } : undefined
-      );
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const body: unknown = await res.json();
-      if (!isRetentionAppliedAnswer(body)) throw new Error('an answer with no known state');
-      if (mine !== latest) {
-        Log.d(`admin.platform.retentionApplied #${mine} answered after #${latest}: dropped`);
-        return true;
-      }
-      view = body;
-      if (body.state !== 'applied') {
-        Log.w('admin.platform.retentionApplied', `state=${body.state}`);
-      }
-      return true;
+      show(await ask(false), mine);
     } catch (e) {
-      Log.w('admin.platform.retentionApplied', `request #${mine} failed: ${String(e)}`);
-      if (mine === latest && !resend) view = { state: 'failed', refusal: null };
-      return false;
+      Log.w('admin.platform.retentionApplied', `read #${mine} failed: ${String(e)}`);
+      // The last good answer stays: a failed re-read is no news about media-service.
+      if (shownSeq === 0) view = { state: 'failed', refusal: null };
     }
   }
 
   $effect(() => {
     void revision;
-    void read(false);
+    void read();
   });
 
+  /**
+   * "Renvoyer": core sends the notice, THEN reads the state. Its answer is numbered on ARRIVAL, so it
+   * outranks every read that started before the notice completed - the state shown after a resend
+   * comes from a read that began after it.
+   */
   async function resend() {
     resending = true;
     resendFailed = false;
-    resendFailed = !(await read(true));
-    resending = false;
+    try {
+      const answer = await ask(true);
+      show(answer, ++counter);
+    } catch (e) {
+      Log.w('admin.platform.retentionApplied', `resend failed: ${String(e)}`);
+      resendFailed = true;
+    } finally {
+      resending = false;
+    }
   }
 
   const offersResend = $derived(

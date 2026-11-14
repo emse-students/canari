@@ -119,6 +119,32 @@ describe('readMediaRetentionHeld', () => {
     ).resolves.toMatchObject({ kind: 'refused', reason: 'malformed' });
   });
 
+  it('a body that fails to arrive after a 2xx is the transport: unreachable, not malformed', async () => {
+    const cut = jest.fn(() =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        text: () => Promise.reject(new Error('terminated')),
+      } as unknown as Response)
+    ) as unknown as typeof fetch;
+    await expect(readMediaRetentionHeld(cut)).resolves.toEqual({
+      kind: 'unreachable',
+      cause: 'terminated',
+    });
+  });
+
+  it("names Node fetch's system code, so the causes are told apart", async () => {
+    const refused = jest.fn(() =>
+      Promise.reject(
+        Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } })
+      )
+    ) as unknown as typeof fetch;
+    await expect(readMediaRetentionHeld(refused)).resolves.toEqual({
+      kind: 'unreachable',
+      cause: 'fetch failed (ECONNREFUSED)',
+    });
+  });
+
   it('a transport failure is unreachable, with its cause, and never throws', async () => {
     const down = jest.fn(() =>
       Promise.reject(new Error('ECONNREFUSED'))

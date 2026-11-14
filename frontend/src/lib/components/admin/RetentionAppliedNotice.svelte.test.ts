@@ -123,6 +123,74 @@ describe('RetentionAppliedNotice', () => {
     expect(notice()?.dataset.retentionApplied).toBe('behind');
   });
 
+  it('a refused answer without its refusal is a failed read, never worded "HTTP 0"', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    apiFetch.mockImplementation(() => answer('refused', null));
+    await open();
+    expect(notice()?.dataset.retentionApplied).toBe('failed');
+    expect(notice()?.textContent).not.toContain('HTTP 0');
+  });
+
+  it('a newer read that FAILS leaves the older good answer shown, not a stale nothing', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    let slow!: (r: Response) => void;
+    apiFetch.mockImplementationOnce(() => new Promise<Response>((r) => (slow = r)));
+    const props = await open(1);
+    apiFetch.mockImplementationOnce(() => Promise.resolve(new Response('{}', { status: 500 })));
+    props.revision = 2;
+    await settle();
+    slow(new Response(JSON.stringify({ state: 'behind', refusal: null }), { status: 200 }));
+    await settle();
+    expect(notice()?.dataset.retentionApplied).toBe('behind');
+  });
+
+  it('after "Renvoyer", a read that started before the notice completed cannot replace its answer', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    apiFetch.mockImplementationOnce(() => answer('behind'));
+    const props = await open(1);
+
+    let resendDone!: (r: Response) => void;
+    let staleRead!: (r: Response) => void;
+    apiFetch.mockImplementationOnce(() => new Promise<Response>((r) => (resendDone = r)));
+    resendButton()!.click();
+    await settle();
+    apiFetch.mockImplementationOnce(() => new Promise<Response>((r) => (staleRead = r)));
+    props.revision = 2;
+    await settle();
+
+    resendDone(new Response(JSON.stringify({ state: 'applied', refusal: null }), { status: 200 }));
+    await settle();
+    expect(notice()).toBeNull();
+    staleRead(new Response(JSON.stringify({ state: 'behind', refusal: null }), { status: 200 }));
+    await settle();
+    expect(notice()).toBeNull();
+  });
+
+  it("a later successful read clears a failed resend's alert", async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    apiFetch.mockImplementationOnce(() => answer('behind'));
+    const props = await open(1);
+    apiFetch.mockImplementationOnce(() => Promise.reject(new Error('network down')));
+    resendButton()!.click();
+    await settle();
+    expect(document.querySelector('[role="alert"]')).not.toBeNull();
+    apiFetch.mockImplementationOnce(() => answer('behind'));
+    props.revision = 2;
+    await settle();
+    expect(document.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it('logs a state CHANGE, not every view', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    apiFetch.mockImplementation(() => answer('behind'));
+    const props = await open(1);
+    props.revision = 2;
+    await settle();
+    props.revision = 3;
+    await settle();
+    expect(warn.mock.calls.filter((c) => String(c[0]).includes('state behind'))).toHaveLength(1);
+  });
+
   it('shows only the LATEST request: an older answer arriving late is dropped', async () => {
     let slow!: (r: Response) => void;
     apiFetch.mockImplementationOnce(() => new Promise<Response>((r) => (slow = r)));
