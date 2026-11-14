@@ -49,3 +49,7 @@ accounts, ONE salon, all within 15 minutes; every one `missing=seed refused=none
 `held=false`, 1 Android `held=true`). `refused=none` means no open ran: the seed was not there to
 open, so the failing branch is the seed's absence, not a refusal by the open. Steps (2) and (3) stay
 owed.
+
+**Step (1) again, 2026-11-14, 09:11-10:40 UTC after the `1.6.12` deploy:** 2 `[PUSH_BLIND]` lines,
+both iOS, `missing=seed held=false refused=none`, same shape as the 6 above. Still no `refused=`
+value other than `none` on production: the failing branch remains the seed's absence.

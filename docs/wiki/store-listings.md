@@ -42,7 +42,7 @@ Stale against `store/whats-new.txt` (v1.1.2) and `CHANGELOG`:
 
 1. **"Stripe" is false, and so is any payment promise (2026-10-22).** Stripe was removed (#1589)
    and Lydia, the only provider left, was NOT live in production when this was written; it is live
-   since 2026-11-06 ([backlog WP-LYDIA-1](backlog.d/wp-lydia-1-lydia-live-in-production-with-one-payment-observed-end-to-end.md)). The "name no provider"
+   since 2026-11-06 ([backlog WP-LYDIA-1](frontend/modules/payments.md)). The "name no provider"
    rule still holds (a store text never names a processor), and the payment promise stays out until
    the lead decides it is true for users. A listing may therefore name no provider AND promise no
    payment, shop or ticketing flow that rests on one: `FORBIDDEN` in `tools/store-listings/listings.mjs`
@@ -178,7 +178,7 @@ active, de meme que les cotisations etc.").** The wording says associations run 
 with online or cash payment, manage cotisations and have a shop; it names no provider, makes no
 security claim and does not promise it for every association. The wiki itself still lists the Lydia
 readings as owed (a validated Business observed through a form, the guest payment, each
-association's re-onboarding: [WP-LYDIA-1](backlog.d/wp-lydia-1-lydia-live-in-production-with-one-payment-observed-end-to-end.md)),
+association's re-onboarding: [WP-LYDIA-1](frontend/modules/payments.md)),
 so this line rests on the owner's statement, not on a reading. **Ticketing is not a built feature and
 stays out** ("billetterie", "ticketing", "ticket"): "paid registrations" says the idea.
 

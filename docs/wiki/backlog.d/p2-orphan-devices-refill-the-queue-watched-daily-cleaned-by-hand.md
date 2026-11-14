@@ -33,3 +33,11 @@ pass revoked 285 (dev: `devices=5 rows=804`). Only that one line is readable tod
 starts at the deploy, and the deploy archives that hold the earlier days belong to the runner
 account, which the operator's account cannot read ([logging](../infrastructure/logging.md#reading-an-archive)).
 The two weeks of lines are read from that account, or day by day from now on.
+
+**Second line read, 2026-11-14 (after the stable `1.6.12` deploy, 09:12 UTC, read-only; owner's
+authorization of the same day):** `devices=84 rows=8249 insideGcWindow=84`, 16 hours after
+`devices=86 rows=8122`. The device count did not grow (two left, the GC window or a returning
+device); the queued rows grew by 127, about 190 a day. So the regrowth is rows piling on the SAME
+orphans, not new orphans, over this one interval. The live log restarts at every deploy and the
+earlier days are in the runner account's archives, so the two weeks still need that account or
+day-by-day lines; a threshold is not derivable from two points. No cleanup was run.

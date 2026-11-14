@@ -24,3 +24,14 @@ had no leaf in its tree before that commit. **The report's `kind` does not separ
 member with no leaf from a new person**, so the count cannot be read as a breach count until it
 does: the classification is owed before this count can close the entry (it should come from the
 roster the server holds, not from the reporter's tree).
+
+**Misclassification looked at, 2026-11-14 (read-only):** the suspicion holds, and the code says so
+itself. `uninvitedEntry.ts` documents that "a device that never saw a departure reads a returning
+member as" `new-person`; the classifier (`deviceNotices.svelte.ts`) decides from the reporter's
+own tree (a departure epoch it saw), never from the roster the server holds. The only production
+line so far (above) is the evidence: the entrant held a roster seat for two months and the commit
+was that member's own new web device, so a MEMBER's new device with no leaf in the reporter's tree
+was reported as `new-person`. After the `1.6.12` deploy (09:11 UTC) production has 0
+`[UNINVITED_ENTRY]` lines in its live log, dev 0. Left: the classification from the server's
+roster (a seat held by the entrant before the commit means `returning` or `unvouched-device`,
+never `new-person`), then the count.

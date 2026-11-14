@@ -17,7 +17,7 @@ guest types an e-mail, which is what Lydia needs as `payerRecipient`, so the e-m
 | **`create-checkout-session` ALREADY accepts the shared internal secret** (since 2026-10-07; `payment.controller.ts` documents the 401 it used to answer) and `submit` calls it through `internalCoreRequestConfig()` | `apps/core-service/src/payment/payment.controller.ts`, `apps/social-service/src/internal/core-request.ts` | **The wiki line "social-service calls with no credential" in [forms](frontend/modules/forms.md#the-paid-half-what-it-needs-scoped-2026-09-30) is STALE**: correct it in the planning pull request. The checkout itself still needs one observed paid form on dev |
 | `verify-session` is behind `NginxAuthGuard` | `payment.controller.ts` | A guest returning from Lydia cannot call it: the return page must not depend on it, and the Lydia callback (`webhook.controller.ts`) is what marks the submission paid |
 | The member path writes `userId` and `email` on a `pending` submission and `markPaid` and the cotisation grant read `userId` | `forms.service.ts`, `markPaid` | Fulfilment must accept `userId = null` |
-| Lydia is live in production (the owner, and the production core's startup log, 2026-11-06); what is left is owed readings and re-onboarding | [backlog WP-LYDIA-1](backlog.d/wp-lydia-1-lydia-live-in-production-with-one-payment-observed-end-to-end.md) | Not blocking the code: associations not all re-onboarded, three Livrable A answers open (KYC documents, minimum payable amount, rate limits), the partnership contract unsigned, and no guest payment observed yet |
+| Lydia is live in production (the owner, and the production core's startup log, 2026-11-06); what is left is owed readings and re-onboarding | [backlog WP-LYDIA-1](frontend/modules/payments.md) | Not blocking the code: associations not all re-onboarded, three Livrable A answers open (KYC documents, minimum payable amount, rate limits), the partnership contract unsigned, and no guest payment observed yet |
 
 ## Decisions
 
@@ -46,7 +46,7 @@ submitCondition != null)}`): that lock is lifted by this chantier, only for what
 
 WP-P4's stale forms.md line is already corrected in #1906. Guest rows (`userId = null`) go through the same `markPaid`, so a late guest payment needs no extra work in WP-P1.
 
-**Lydia is live in production (2026-11-06), so nothing here waits on it being switched on.** What is owed is the observed guest payment and the Livrable A answers ([WP-LYDIA-1](backlog.d/wp-lydia-1-lydia-live-in-production-with-one-payment-observed-end-to-end.md)):
+**Lydia is live in production (2026-11-06), so nothing here waits on it being switched on.** What is owed is the observed guest payment and the Livrable A answers ([WP-LYDIA-1](frontend/modules/payments.md)):
 the code is written and tested on dev with Lydia's homologation account, and a real payment test on production stays the owner's.
 Order: P0 first (independent), then P1, P2, P3 in parallel, P4 last.
 
