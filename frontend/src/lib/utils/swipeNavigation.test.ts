@@ -2,6 +2,7 @@
 import { APP_PLACES, MOBILE_NAV_PLACES } from '$lib/navigation/places';
 import {
   GESTURE_LOCK_PX,
+  bindSwipeNavTouchListeners,
   MOBILE_SWIPE_PLACES,
   classifySwipeRelease,
   isSwipeNavArmed,
@@ -213,5 +214,28 @@ describe('MOBILE_SWIPE_PLACES', () => {
       ...MOBILE_NAV_PLACES.map((p) => p.id),
     ]);
     expect(APP_PLACES.some((p) => p.id === 'camera' || p.href === '/camera')).toBe(false);
+  });
+});
+
+describe('bindSwipeNavTouchListeners', () => {
+  it('hears a touchstart whose target stops propagation (a svelte-dnd-action row)', () => {
+    const shell = document.createElement('div');
+    const row = document.createElement('button');
+    shell.appendChild(row);
+    document.body.appendChild(shell);
+    row.addEventListener('touchstart', (e) => e.stopPropagation());
+    const onStart = vi.fn();
+    const onMove = vi.fn();
+    const unbind = bindSwipeNavTouchListeners(shell, onStart, onMove);
+
+    row.dispatchEvent(new Event('touchstart', { bubbles: true, cancelable: true }));
+    row.dispatchEvent(new Event('touchmove', { bubbles: true, cancelable: true }));
+    expect(onStart).toHaveBeenCalledTimes(1);
+    expect(onMove).toHaveBeenCalledTimes(1);
+
+    unbind();
+    row.dispatchEvent(new Event('touchstart', { bubbles: true, cancelable: true }));
+    expect(onStart).toHaveBeenCalledTimes(1);
+    shell.remove();
   });
 });

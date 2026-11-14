@@ -301,6 +301,22 @@ class ConnectivityStore {
   }
 
   /**
+   * Whether the link demonstrably delivered an answer WHILE a request that left at `startedAt`
+   * waited: one that came after it left AND is still fresh. An answer from before a Wi-Fi cut
+   * is not evidence about the link as it is now - read on the Mi 9T (2026-11-14), a read that left
+   * before the cut was labelled "answers arrived meanwhile - slow, not unreachable" when its
+   * deadline expired seconds after the radio went down. A device the browser reports as offline
+   * has no answers arriving whatever the clock says.
+   */
+  private answeredSince(startedAt: number): boolean {
+    return (
+      this.isOnline &&
+      this.lastAnswerAt > startedAt &&
+      Date.now() - this.lastAnswerAt <= SLOW_IN_FLIGHT_MS
+    );
+  }
+
+  /**
    * Starts counting a request that left the device. Every REST call goes through here (via
    * `trackedFetch`), so the store sees the whole population rather than the calls that happen to
    * be interesting. Settle the returned handle exactly once.
@@ -369,7 +385,7 @@ class ConnectivityStore {
       failed: (error) => {
         if (!this.inFlight.has(id)) return;
         settle();
-        if (error instanceof RequestDeadlineError && this.lastAnswerAt > startedAt) {
+        if (error instanceof RequestDeadlineError && this.answeredSince(startedAt)) {
           // SLOW IS NOT GONE. Something else was answered while this request waited, so the link
           // delivers: this one is queued behind other transfers on a narrow link, or its route is
           // slow server-side. Counting it is how a 250 kbps link was declared "Hors connexion" while

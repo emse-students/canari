@@ -304,3 +304,25 @@ export function transformTranslateXPx(transform: string): number {
   const tx = values[m[1] ? 12 : 4];
   return Number.isFinite(tx) ? Math.abs(tx) : 0;
 }
+
+/**
+ * Wires the swipe-nav touch listeners on the shell. THE START IS HEARD IN THE CAPTURE PHASE:
+ * svelte-dnd-action calls `stopPropagation()` on the `touchstart` of every draggable row it owns
+ * (the channel rows of a community the viewer manages), so a bubble-phase listener on the shell
+ * never saw a swipe that began on one - no gesture state, no claim, the page stood still while the
+ * browser's own pan took the move (#84). Capture runs before any descendant can stop it, and the
+ * start is passive so it cannot cost a scroll. The move stays non-passive so it can be claimed.
+ * @returns a function that removes both listeners.
+ */
+export function bindSwipeNavTouchListeners(
+  node: HTMLElement,
+  onStart: (e: TouchEvent) => void,
+  onMove: (e: TouchEvent) => void
+): () => void {
+  node.addEventListener('touchstart', onStart, { passive: true, capture: true });
+  node.addEventListener('touchmove', onMove, { passive: false });
+  return () => {
+    node.removeEventListener('touchstart', onStart, { capture: true });
+    node.removeEventListener('touchmove', onMove);
+  };
+}

@@ -71,3 +71,5 @@ What exists now, to reuse in the next lots:
 - Any `pushState` goes through `historyOverlayStack` or SvelteKit navigation, never raw: ghost entries are what the stack's `skipPops` exists for.
 - `aria-label="Edit sections"` is a hard-coded English string; the new component is Paraglide from its first draft.
 - Back behaviour is a GATE, not an impression: a test per level (section -> hub -> parent -> previous page), and one reading on both phones.
+
+- **A DESCENDANT THAT CALLS `stopPropagation()` ON `touchstart` BLINDS A BUBBLE LISTENER (#84, read 2026-11-14 on the Mi 9T).** `svelte-dnd-action` does it on every draggable row it owns - the channel rows of a community the viewer MANAGES - so on `/communities` a section swipe that began on such a row never reached the shell: no gesture state, no claim, the browser's pan took the move (`pointercancel`, then non-cancelable moves). A non-manager, or a cold start before the roles loaded, swiped fine, which is why it looked intermittent. The shell therefore hears the start in the CAPTURE phase (`bindSwipeNavTouchListeners`, pinned by `swipeNavigation.test.ts`).
