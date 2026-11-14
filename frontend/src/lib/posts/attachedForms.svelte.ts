@@ -88,10 +88,10 @@ export function attachedFormsLoader(
     let opensAt: string | null | undefined;
     try {
       const form = await reads.getForm(src.id);
-      title ??= form.title;
+      title ||= form.title;
       opensAt = form.opensAt;
     } catch (e) {
-      if (title === undefined) {
+      if (!title) {
         console.error(
           `[POSTS] attached form ${src.id} could not be read - left as a placeholder`,
           e
