@@ -39,7 +39,7 @@
     isKnownNotificationType,
     reportUnknownNotificationType,
   } from '$lib/posts/notificationTarget';
-  import { formatNoticeSlot, readBookingNoticeMeta } from '$lib/bookings/noticeText';
+  import { formatNoticeSlot, readBookingNoticeMeta, reminderWhen } from '$lib/bookings/noticeText';
   import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
   import type { ReportReason } from '$lib/moderation/reasons';
@@ -353,6 +353,20 @@
   const bookingNotice = $derived(
     isBookingNotif && !isBookingReminder ? readBookingNoticeMeta(notif.meta) : null
   );
+  /**
+   * The reminder's sentence, as of its sending (`createdAt`). A row written before the reminder
+   * carried `meta` (or one whose zone this runtime refuses) keeps the old sentence: a data gap,
+   * logged at debug so it is counted rather than silent.
+   */
+  const reminderSentence = $derived.by(() => {
+    if (!isBookingReminder) return null;
+    const meta = readBookingNoticeMeta(notif.meta);
+    const when = meta ? reminderWhen(meta.startsAt, notif.createdAt, meta.timeZone) : null;
+    if (!when) {
+      Log.d('NOTIF', 'booking reminder without usable meta: the old sentence', { id: notif.id });
+    }
+    return when;
+  });
   const bookingSlot = $derived(
     bookingNotice ? formatNoticeSlot(bookingNotice.startsAt, bookingNotice.timeZone) : null
   );
@@ -540,7 +554,7 @@
       {:else if isLiveModerationNotif}
         <span class="font-semibold">{liveModerationText}</span>
       {:else if isBookingReminder}
-        <span class="font-semibold">{m.notif_booking_reminder_text()}</span>
+        <span class="font-semibold">{reminderSentence ?? m.notif_booking_reminder_text()}</span>
       {:else if isLydiaPaymentsNotif}
         <span class="font-semibold"><EmojiText text={lydiaNoticeText} /></span>
       {:else if isLydiaRefundNotif}

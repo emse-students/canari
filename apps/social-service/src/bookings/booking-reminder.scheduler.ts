@@ -5,6 +5,8 @@ import { Repository } from 'typeorm';
 import { DELETED_ACCOUNT } from '../internal/account-erasure';
 import {
   BookingNotificationsService,
+  bookingNoticeMeta,
+  noticePlace,
   reminderAssociation,
   reminderLine,
 } from './booking-notifications.service';
@@ -138,12 +140,15 @@ export class BookingReminderScheduler {
         for (const row of batch) {
           // Each in its own `try`: one recipient that fails does not silence the batch.
           try {
-            const line = reminderLine(row, new Date(row.startsAt), row.timeZone);
+            const startsAt = new Date(row.startsAt);
+            const line = reminderLine(row, startsAt, row.timeZone, now);
+            const meta = bookingNoticeMeta(noticePlace(row), startsAt, row.timeZone);
             await this.notices.remind(
               row.recipientId,
               row.bookingId,
               line,
-              reminderAssociation(row)
+              reminderAssociation(row),
+              meta
             );
             report.sent += 1;
           } catch (e) {

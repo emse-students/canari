@@ -3,6 +3,7 @@ import {
   bookingNoticeMeta,
   noticePlace,
   reminderAssociation,
+  reminderLine,
 } from './booking-notifications.service';
 
 describe('the association a reminder shows (owner, 2026-10-30)', () => {
@@ -75,5 +76,40 @@ describe('bookingNoticeMeta (the structured facts of a booking notice)', () => {
       timeZone: 'Europe/Paris',
       word: '',
     });
+  });
+});
+
+describe('reminderLine (the push body of a reminder, 2026-11-15)', () => {
+  const facts = {
+    spaceName: 'Salle de musique',
+    discoverability: 'listed',
+    resourceName: 'Salle de musique',
+  };
+  const start = new Date('2026-11-16T13:00:00.000Z'); // 14:00 in Paris
+
+  it('is the time alone-after-place when the reminder goes out the same local day', () => {
+    expect(reminderLine(facts, start, 'Europe/Paris', new Date('2026-11-16T12:00:00.000Z'))).toBe(
+      'Salle de musique · 14:00'
+    );
+  });
+
+  it('leads with the date when a day-before reminder goes out the day before', () => {
+    expect(reminderLine(facts, start, 'Europe/Paris', new Date('2026-11-15T13:00:00.000Z'))).toBe(
+      'Salle de musique · 16/11 14:00'
+    );
+  });
+
+  it('judges the day on the SPACE clock, not UTC', () => {
+    // 23:30 UTC on the 15th is already the 16th in Paris: same local day as a 14:00 slot.
+    expect(reminderLine(facts, start, 'Europe/Paris', new Date('2026-11-15T23:30:00.000Z'))).toBe(
+      'Salle de musique · 14:00'
+    );
+  });
+
+  it('is the date and time alone on a link-only space (Q-R5)', () => {
+    const link = { ...facts, discoverability: 'link' };
+    expect(reminderLine(link, start, 'Europe/Paris', new Date('2026-11-15T13:00:00.000Z'))).toBe(
+      '16/11 14:00'
+    );
   });
 });

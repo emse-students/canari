@@ -9,7 +9,7 @@ import {
 import { BOOKINGS_TARGET } from '../push/push-target';
 import { DELETED_ACCOUNT } from '../internal/account-erasure';
 import { bookingPlace } from './booking-calendar';
-import { localTime } from './zoned-time';
+import { localDate, localTime } from './zoned-time';
 import { Booking } from './entities/booking.entity';
 import { BookingParticipant } from './entities/booking-participant.entity';
 import { BookingResource } from './entities/booking-resource.entity';
@@ -106,11 +106,28 @@ export function reminderAssociation(facts: {
   };
 }
 
-/** The reminder's line: the place and the start time on the space's clock, or the time alone. */
-export function reminderLine(facts: PlaceFacts, startsAt: Date, timeZone: string): string {
+/**
+ * The reminder's line: the place and the start time on the space's clock, or the time alone. When
+ * the reminder is sent on ANOTHER local day than the slot (a 24 h delay), the date leads the time
+ * ("16/11 14:00"), so a push never reads like a time later today. Locale-neutral on purpose: the
+ * three native push tables draw this line verbatim.
+ *
+ * @param sentAt The instant the reminder goes out (the scheduler's `now`), judged on the zone.
+ */
+export function reminderLine(
+  facts: PlaceFacts,
+  startsAt: Date,
+  timeZone: string,
+  sentAt: Date = startsAt
+): string {
   const time = localTime(startsAt.getTime(), timeZone).slice(0, 5);
+  const day = localDate(startsAt.getTime(), timeZone);
+  const when =
+    day === localDate(sentAt.getTime(), timeZone)
+      ? time
+      : `${day.slice(8, 10)}/${day.slice(5, 7)} ${time}`;
   const place = noticePlace(facts);
-  return place ? `${place} · ${time}` : time;
+  return place ? `${place} · ${when}` : when;
 }
 
 /** Who a notice names as having acted, and the picture it carries. */
@@ -318,7 +335,8 @@ export class BookingNotificationsService {
     recipientId: string,
     bookingId: string,
     line: string,
-    association: ReminderAssociation = null
+    association: ReminderAssociation = null,
+    meta?: BookingNoticeMeta
   ): Promise<void> {
     await this.notifications.createNotification({
       recipientId,
@@ -331,6 +349,9 @@ export class BookingNotificationsService {
         associationLogoUrl: association.logoUrl,
       }),
       text: line,
+      // The slot's facts, so the client words WHEN in the reader's language (2026-11-15); `text`
+      // stays the line for every client older than this and for the push.
+      ...(meta && { meta }),
       pushData: { target: BOOKINGS_TARGET },
     });
     this.logger.log(
