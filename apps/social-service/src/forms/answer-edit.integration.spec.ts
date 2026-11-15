@@ -29,6 +29,7 @@ import { FormRespondent } from './entities/form-respondent.entity';
 import { PurchaseRecord } from '../users/entities/purchase-record.entity';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import { FormsService } from './forms.service';
+import { ACTIVITY_DUMP_SQL, settledFlag, untilWaiting } from '../common/lock-wait.it-fixture';
 import {
   FORM_ANSWER_EDIT_OFF,
   FORM_ANSWER_LOCKED,
@@ -624,27 +625,29 @@ maybe('a respondent changes their own answer, against PostgreSQL (migration 166)
       await validator.query(`SELECT 1 FROM submissions WHERE id = $1 FOR UPDATE`, [
         sent.submissionId,
       ]);
-      let settled = false;
-      const edit = service
-        .editAnswer(formId, sent.submissionId, ALICE, { 'q-name': 'Apres', 'q-meal': 'm-yes' })
-        .finally(() => {
-          settled = true;
-        });
+      const edit = service.editAnswer(formId, sent.submissionId, ALICE, {
+        'q-name': 'Apres',
+        'q-meal': 'm-yes',
+      });
       // The edit is WAITING on that lock - observed in PostgreSQL, not assumed from a delay. An edit
-      // that settles first never waited, and the assertion below `settled` says so.
-      while (!settled) {
-        const {
-          rows: [{ n }],
-        } = await admin.query<{ n: number }>(
-          // A session BLOCKED BY the validator: whatever SQL the ORM spelled, the edit is that one.
-          `SELECT count(*)::int AS n FROM pg_stat_activity
-            WHERE $1::int = ANY(pg_blocking_pids(pid))`,
-          [validatorPid]
-        );
-        if (n > 0) break;
-        await new Promise((resolve) => setImmediate(resolve));
-      }
-      expect(settled).toBe(false);
+      // that settles first, or never waits, FAILS here with a message; the `finally` below ends the
+      // validator's connection, which frees the row either way.
+      await untilWaiting({
+        what: 'the edit',
+        settled: settledFlag(edit),
+        waiting: async () => {
+          const {
+            rows: [{ n }],
+          } = await admin.query<{ n: number }>(
+            // A session BLOCKED BY the validator: whatever SQL the ORM spelled, the edit is that one.
+            `SELECT count(*)::int AS n FROM pg_stat_activity
+              WHERE $1::int = ANY(pg_blocking_pids(pid))`,
+            [validatorPid]
+          );
+          return n;
+        },
+        dump: async () => (await admin.query(ACTIVITY_DUMP_SQL)).rows,
+      });
       await validator.query(`UPDATE submissions SET "paymentStatus" = 'paid' WHERE id = $1`, [
         sent.submissionId,
       ]);

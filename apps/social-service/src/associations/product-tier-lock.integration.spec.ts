@@ -41,6 +41,7 @@ import {
   ERASURE_TIER_ORDER,
   erasureParams,
 } from '../internal/account-erasure';
+import { untilWaiting } from '../common/lock-wait.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -317,31 +318,37 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
 
   /**
    * Reads `pg_locks` until `n` of THIS run's sessions (the pools' `application_name`, never the test's
-   * own connection) wait on the advisory lock `key` (`null`: on any lock, a row lock included), or a
-   * bounded number of reads has gone by; answers the last count. Scoped so a concurrent run on the
-   * same cluster cannot be counted. A read loop, never a clock.
+   * own connection) wait on the advisory lock `key` (`null`: on any lock, a row lock included);
+   * answers the last count. Scoped so a concurrent run on the same cluster cannot be counted. It
+   * RETURNS when the bound of reads is spent ({@link untilWaiting}, `onAbsent: 'return'`) rather
+   * than throwing; the caller asserts the count (some callers release `admin`'s lock first, so a
+   * blocked writer is never left behind).
    */
   async function waitersReach(n: number, key: string | null): Promise<number> {
-    let waiting = 0;
-    for (let i = 0; i < 10_000 && waiting < n; i++) {
-      // `pg_stat_activity` is snapshotted once per transaction, and `admin` reads it inside the
-      // transaction holding the lock: without a fresh snapshot a pool session opened since is unseen.
-      await admin.query('SELECT pg_stat_clear_snapshot()');
-      const [row] = (
-        await admin.query(
-          `SELECT count(*)::int AS n FROM pg_locks l
-            WHERE NOT l.granted AND l.pid <> pg_backend_pid()
-              AND l.pid IN (SELECT pid FROM pg_stat_activity WHERE application_name = $1)` +
-            (key === null
-              ? ''
-              : ` AND l.locktype = 'advisory' AND l.objsubid = 1
-                  AND (l.classid::int8 << 32 | l.objid::int8) = hashtextextended($2, 0)`),
-          key === null ? [schema] : [schema, key]
-        )
-      ).rows as { n: number }[];
-      waiting = row.n;
-    }
-    return waiting;
+    const { seen } = await untilWaiting({
+      what: 'the writers',
+      atLeast: n,
+      onAbsent: 'return',
+      waiting: async () => {
+        // `pg_stat_activity` is snapshotted once per transaction, and `admin` reads it inside the
+        // transaction holding the lock: without a fresh snapshot a pool session opened since is unseen.
+        await admin.query('SELECT pg_stat_clear_snapshot()');
+        const [row] = (
+          await admin.query(
+            `SELECT count(*)::int AS n FROM pg_locks l
+              WHERE NOT l.granted AND l.pid <> pg_backend_pid()
+                AND l.pid IN (SELECT pid FROM pg_stat_activity WHERE application_name = $1)` +
+              (key === null
+                ? ''
+                : ` AND l.locktype = 'advisory' AND l.objsubid = 1
+                    AND (l.classid::int8 << 32 | l.objid::int8) = hashtextextended($2, 0)`),
+            key === null ? [schema] : [schema, key]
+          )
+        ).rows as { n: number }[];
+        return row.n;
+      },
+    });
+    return seen;
   }
 
   /** Settles a promise into a value or an error, so a test can await it after a commit. */
