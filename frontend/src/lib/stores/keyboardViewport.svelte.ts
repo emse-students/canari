@@ -712,6 +712,35 @@ function askShellAgain(): void {
 }
 
 /**
+ * Declares to the engine the contract the Android shell runs on: the keyboard OVERLAYS the content
+ * and the page places itself (`navigator.virtualKeyboard.overlaysContent`). Without it Chromium, on
+ * the keyboard's show, scrolls the focused field into the visual viewport it has just shrunk - and
+ * while the composer RIDES, its caret is still drawn at its old place under the keys, so the visual
+ * viewport panned by the whole keyboard on top of the page's own move: the composer stood a keyboard
+ * above the keys and the header left the screen (Mi 9T, 2026-11-15, 6 of 6 taps; 0 of 6 with the
+ * declaration). A field outside a ride is revealed by the page (`keyboardRevealOnUpdate`), which
+ * this does not stop. The shell's bridge (`canariIme`) is the fact that names the Android app;
+ * nowhere else is the keyboard the page's to place. Returns whether the declaration was made.
+ */
+export function declareKeyboardOverlay(win: {
+  canariIme?: unknown;
+  navigator: { virtualKeyboard?: { overlaysContent: boolean } };
+}): boolean {
+  if (!win.canariIme) return false;
+  const keyboard = win.navigator.virtualKeyboard;
+  if (!keyboard) {
+    Log.w(
+      'keyboardViewport',
+      'no navigator.virtualKeyboard in this WebView: the engine will pan to reveal a riding field'
+    );
+    return false;
+  }
+  keyboard.overlaysContent = true;
+  Log.d('keyboardViewport', 'the keyboard overlays the content (declared to the engine)');
+  return true;
+}
+
+/**
  * Registers listeners and updates CSS variables. Call once from the root layout.
  * Returns a teardown function.
  */
@@ -938,6 +967,9 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
   };
   (window as unknown as { canariImeTarget?: (v: unknown) => boolean }).canariImeTarget =
     takeImeTarget;
+  const overlayDeclared = declareKeyboardOverlay(
+    window as unknown as Parameters<typeof declareKeyboardOverlay>[0]
+  );
   // A new document is up: the Android shell announces the keyboard's current inset to it
   // (`MainActivity.ImeBridge`), whatever it told the previous one. Absent outside Android.
   askShellAgain();
@@ -998,6 +1030,11 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
     window.visualViewport?.removeEventListener('scroll', updateOffsetOnly);
     delete (window as unknown as { canariImeTarget?: unknown }).canariImeTarget;
     delete (window as unknown as { canariKeyboardFall?: unknown }).canariKeyboardFall;
+    if (overlayDeclared) {
+      (
+        navigator as unknown as { virtualKeyboard: { overlaysContent: boolean } }
+      ).virtualKeyboard.overlaysContent = false;
+    }
     imeTarget = null;
     endRides('teardown');
     pinSafeAreaBottom(document.documentElement.style, null);

@@ -449,6 +449,20 @@ the end while the thread glided. The marker is now on the footer (`ChatComposer.
 footer moves with its band, so that reading is unchanged, and exactly one of the two may carry it or
 the footer rides twice (`iosKeyboardRiseHandoff.test.ts`).
 
+**The Android app declares the keyboard an OVERLAY to the engine (Mi 9T reading of 2026-11-15).** With
+the footer riding, the first re-read showed the composer a whole keyboard ABOVE the keys and the header
+off the screen. The WebView (152) receives the IME inset and shrinks its visual viewport (945 to 588
+CSS px) without resizing the layout; on the keyboard's show Chromium scrolls the focused field into
+that shrunk viewport, and while the footer rides its caret is still DRAWN at its old place under the
+keys - so it panned the visual viewport by the keyboard (`visualViewport.offsetTop` 357.58), on top of
+the page's own move. Removing the marker live removed the pan, which is how the cause was named.
+`initKeyboardViewport` now sets `navigator.virtualKeyboard.overlaysContent = true` when the shell's
+bridge `canariIme` is present (`declareKeyboardOverlay`): 0 pans in 6 taps against 6 in 6 without it,
+on the same build. The WebView still shrinks the visual viewport (its `boundingRect` stays empty, so
+the API is honoured only as far as the pan), and a field outside a ride is still revealed by the page
+(`keyboardRevealOnUpdate`): a poll option under the keys scrolled above them with the declaration on.
+The browser and the iOS app never declare it - there the engine's own keyboard handling is the contract.
+
 ## Owed on a phone (nothing here is measured after the change - it needs a build)
 
 On the Mi 9T, a pre-release, the same three recordings (`adb screenrecord`, the frame script):

@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  declareKeyboardOverlay,
   getKeyboardViewport,
   initKeyboardViewport,
   onKeyboardInsetChange,
@@ -321,6 +322,38 @@ describe('the Android keyboard ride, wired', () => {
     expect(hooks().canariImeTarget?.({ px: -1 })).toBe(false);
     expect(pageReady).toHaveBeenCalledTimes(2);
     delete (window as unknown as { canariIme?: unknown }).canariIme;
+  });
+
+  it('the Android app declares the keyboard an overlay to the engine, and teardown takes it back (Mi 9T, 2026-11-15)', () => {
+    // Without it Chromium panned the visual viewport by the whole keyboard to reveal the riding
+    // composer's caret, still drawn under the keys: the composer stood a keyboard above them.
+    teardown();
+    const keyboard = { overlaysContent: false };
+    Object.defineProperty(navigator, 'virtualKeyboard', { value: keyboard, configurable: true });
+    (window as unknown as { canariIme?: unknown }).canariIme = { pageReady: vi.fn() };
+    teardown = initKeyboardViewport({ now: () => clock });
+    expect(keyboard.overlaysContent).toBe(true);
+    teardown();
+    expect(keyboard.overlaysContent).toBe(false);
+    teardown = () => {};
+    delete (window as unknown as { canariIme?: unknown }).canariIme;
+    Reflect.deleteProperty(navigator, 'virtualKeyboard');
+  });
+
+  it("the declaration is the Android app's alone: a browser or the iOS app keeps the engine's own keyboard", () => {
+    const keyboard = { overlaysContent: false };
+    expect(declareKeyboardOverlay({ navigator: { virtualKeyboard: keyboard } })).toBe(false);
+    expect(keyboard.overlaysContent).toBe(false);
+    expect(
+      declareKeyboardOverlay({ canariIme: {}, navigator: { virtualKeyboard: keyboard } })
+    ).toBe(true);
+    expect(keyboard.overlaysContent).toBe(true);
+  });
+
+  it('a WebView with no VirtualKeyboard API is accused at WARN, never silently', () => {
+    const warn = vi.spyOn(Log, 'w');
+    expect(declareKeyboardOverlay({ canariIme: {}, navigator: {} })).toBe(false);
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 
   it('teardown takes the occlusion variable away with the others', () => {
