@@ -266,9 +266,15 @@
 
   const isAnonymousSelected = $derived(selectedAssociationId === ANONYMOUS_POST_IDENTITY);
   const isAssociationSelected = $derived(!!selectedAssociationId && !isAnonymousSelected);
-  /** The forms THIS identity may attach (the server's rule): an association's post, its own only. */
+  /**
+   * The forms THIS identity may attach (the server's rule): an association's post, its own only; an
+   * anonymous post, none.
+   */
   const formsForIdentity = $derived(
-    attachableForms(availableForms, isAssociationSelected ? selectedAssociationId : null)
+    attachableForms(availableForms, {
+      associationId: isAssociationSelected ? selectedAssociationId : null,
+      anonymous: isAnonymousSelected,
+    })
   );
   /**
    * The chosen form while the identity may still attach it, else none: an identity changed after
@@ -614,9 +620,10 @@
         markdown,
         fileCount: selectedFiles.length,
         poll: pollDraft,
-        form: includeForm
-          ? { selectedFormId: attachableFormId, availableCount: formsForIdentity.length }
-          : null,
+        form:
+          includeForm && !isAnonymousSelected
+            ? { selectedFormId: attachableFormId, availableCount: formsForIdentity.length }
+            : null,
       });
       pollIssue = blocker?.pollIssue ?? null;
       if (blocker) {
@@ -655,7 +662,8 @@
           },
         ];
       }
-      if (includeForm) payload.attachedFormId = attachableFormId;
+      // An anonymous post carries no form (`attachableForms`): nothing is sent, the server would refuse it.
+      if (includeForm && !isAnonymousSelected) payload.attachedFormId = attachableFormId;
 
       Object.assign(payload, postIdentityFields(selectedAssociationId));
       // Sent only where it is offered: a switch left on before the identity changed is not a choice.
@@ -947,7 +955,11 @@
       </div>
     {/if}
 
-    {#if includeForm}
+    {#if includeForm && isAnonymousSelected}
+      <p class="text-text-muted mt-3 text-sm" transition:slide={{ duration: 250 }}>
+        {m.post_form_not_on_anonymous_note()}
+      </p>
+    {:else if includeForm}
       <div class="mt-3" transition:slide={{ duration: 250 }}>
         <FormSection
           bind:selectedFormId
@@ -986,7 +998,7 @@
       pollActive={includePoll}
       onTogglePoll={() => (includePoll = !includePoll)}
       formActive={includeForm}
-      onToggleForm={() => (includeForm = !includeForm)}
+      onToggleForm={isAnonymousSelected ? undefined : () => (includeForm = !includeForm)}
       bind:scheduledAt
       status={draftSaved ? m.post_create_draft_saved_label() : ''}
       onLive={livesAvailable(serverLivesMode()) &&

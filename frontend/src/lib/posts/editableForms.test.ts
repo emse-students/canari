@@ -50,11 +50,17 @@ describe('attachableForms', () => {
   const forms = [of('a1', 'A'), of('b1', 'B'), of('mine')];
 
   it("offers an association's post only that association's forms (the server's rule)", () => {
-    expect(attachableForms(forms, 'A').map((f) => f.id)).toEqual(['a1']);
-    expect(attachableForms(forms, 'C')).toEqual([]);
+    expect(
+      attachableForms(forms, { associationId: 'A', anonymous: false }).map((f) => f.id)
+    ).toEqual(['a1']);
+    expect(attachableForms(forms, { associationId: 'C', anonymous: false })).toEqual([]);
   });
 
   it('offers a personal post every form the reader manages', () => {
-    expect(attachableForms(forms, null)).toBe(forms);
+    expect(attachableForms(forms, { associationId: null, anonymous: false })).toBe(forms);
+  });
+
+  it('offers an anonymous post no form: the form would name who manages it', () => {
+    expect(attachableForms(forms, { associationId: null, anonymous: true })).toEqual([]);
   });
 });

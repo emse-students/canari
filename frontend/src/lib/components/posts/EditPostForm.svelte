@@ -225,7 +225,10 @@
       // The post's identity is fixed: only the forms it may attach, plus the one it carries (kept as
       // is, even from before the rule - the server judges only a CHANGED form).
       availableForms = await withAttachedForm(
-        attachableForms(publishedForms(await getForms()), post.associationId ?? null),
+        attachableForms(publishedForms(await getForms()), {
+          associationId: post.associationId ?? null,
+          anonymous: post.anonymous === true,
+        }),
         post.attachedFormId,
         getForm
       );
@@ -653,7 +656,9 @@
       pollActive={includePoll}
       onTogglePoll={() => (includePoll = !includePoll)}
       formActive={includeForm}
-      onToggleForm={() => (includeForm = !includeForm)}
+      onToggleForm={post.anonymous && !post.attachedFormId
+        ? undefined
+        : () => (includeForm = !includeForm)}
       bind:scheduledAt
     >
       {#snippet action()}

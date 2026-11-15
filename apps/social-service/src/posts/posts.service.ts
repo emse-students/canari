@@ -101,27 +101,6 @@ import {
 type Bind = (value: unknown) => string;
 
 /** A query's placeholders, numbered in the order the SQL text binds them. */
-const FORM_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/**
- * Every form a post being created names: its `attachedFormId`, and each id of the legacy `forms`
- * list (an older client's inline forms, stored as sent and drawn by their id). An id that is not a
- * uuid names no form and is refused as one (`Linked form not found`), never sent to PostgreSQL.
- */
-function attachedFormIdsOf(data: { attachedFormId?: unknown; forms?: unknown }): string[] {
-  const ids = new Set<string>();
-  if (typeof data.attachedFormId === 'string' && data.attachedFormId) ids.add(data.attachedFormId);
-  if (Array.isArray(data.forms)) {
-    for (const f of data.forms as { id?: unknown }[]) {
-      if (typeof f?.id === 'string' && f.id) ids.add(f.id);
-    }
-  }
-  for (const id of ids) {
-    if (!FORM_ID_RE.test(id)) throw new BadRequestException('Linked form not found');
-  }
-  return [...ids];
-}
-
 function sqlBinder(): { bind: Bind; params: unknown[] } {
   const params: unknown[] = [];
   return {
@@ -173,6 +152,11 @@ import { SpacePinsService } from './space-pins.service';
 import { SCHEDULED_EDIT_CANDIDATES_SQL, SCHEDULED_EDIT_LIMIT } from './scheduled-edit';
 import { assertFormNotDraft } from '../forms/form-status';
 import { assertAuthorManagesForm, assertFormOfAssociation } from '../forms/form-ownership';
+import {
+  assertNoFormOnAnonymousPost,
+  assertNoInlineFormsList,
+  withholdFormsOfHiddenAuthor,
+} from './attached-form';
 import {
   commentsWithheldPostIds,
   ownEntryOnly,
@@ -983,6 +967,7 @@ export class PostsService {
       foldServedReach(out);
       if (!capabilities.canSeeComments) withholdCommentsAndPeople(out, viewer.viewerId);
       if (this.mustHideAnonymousAuthor(p, viewer)) {
+        withholdFormsOfHiddenAuthor(out);
         delete out.authorId;
         delete out.authorDisplayName;
         delete out.authorFirstName;
@@ -1041,6 +1026,7 @@ export class PostsService {
     if (raw.canSeeComments === false) withholdCommentsAndPeople(raw, viewer.viewerId);
     if (!raw.associationId) {
       if (this.mustHideAnonymousAuthor(post, viewer)) {
+        withholdFormsOfHiddenAuthor(raw);
         delete raw.authorId;
       }
       return raw;
@@ -1252,14 +1238,17 @@ export class PostsService {
    * Refuses (400 `FORM_NOT_OF_ENTITY`) a post attaching a form that is not its own entity's: an
    * association's, institution's or list's post only its association's forms (the agenda event's
    * rule, `assertFormOfAssociation`), a personal post only a form its author manages
-   * (`assertAuthorManagesForm` - what the composer offers a person). Asked at create, and at an edit
-   * that CHANGES the form, never for one the post already carries.
+   * (`assertAuthorManagesForm` - what the composer offers a person), an ANONYMOUS post none
+   * (400 `FORM_NOT_ON_ANONYMOUS_POST`: the form would name who manages it). Asked at create, and at
+   * an edit that CHANGES the form, never for one the post already carries.
    */
   private async assertAttachableForm(
     formId: string,
-    associationId: string | null,
+    post: { associationId: string | null; anonymous: boolean },
     author: { userId: string; isGlobalAdmin: boolean }
   ): Promise<void> {
+    assertNoFormOnAnonymousPost(post.anonymous, formId);
+    const associationId = post.associationId;
     const manager = this.postRepo.manager;
     if (associationId) {
       await assertFormOfAssociation(manager, formId, associationId, 'a post attachment');
@@ -1305,14 +1294,16 @@ export class PostsService {
     // A post is read by its audience: a DRAFT form attached to it would show them a form they cannot
     // open (`form-status.ts`). Published first, attached after.
     await assertFormNotDraft(this.postRepo.manager, data.attachedFormId, 'a post');
-    // A post presents its OWN entity's form, as an agenda event does (`form-ownership.ts`): the
-    // attached one, and every id of the legacy `forms` list a client may still send.
-    const authorOfPost = {
-      userId: typeof data.authorId === 'string' ? data.authorId : '',
-      isGlobalAdmin,
-    };
-    for (const formId of attachedFormIdsOf(data)) {
-      await this.assertAttachableForm(formId, data.associationId ?? null, authorOfPost);
+    // A post presents its OWN entity's form, as an agenda event does (`form-ownership.ts`), by
+    // `attachedFormId` alone: the inline `forms` list no client ever wrote is refused.
+    assertNoInlineFormsList(data.forms);
+    delete data.forms;
+    if (data.attachedFormId) {
+      await this.assertAttachableForm(
+        data.attachedFormId,
+        { associationId: data.associationId ?? null, anonymous: data.anonymous === true },
+        { userId: typeof data.authorId === 'string' ? data.authorId : '', isGlobalAdmin }
+      );
     }
     if (Array.isArray(data.polls)) {
       data.polls = this.normalizePolls(data.polls);
@@ -2864,10 +2855,11 @@ export class PostsService {
         // Judged for the post's AUTHOR, who presents it: an editor's own rights add nothing, and a
         // global admin's count only on their own post (as at create).
         if (data.attachedFormId) {
-          await this.assertAttachableForm(data.attachedFormId, post.associationId ?? null, {
-            userId: post.authorId,
-            isGlobalAdmin: isGlobalAdmin && post.authorId === userId,
-          });
+          await this.assertAttachableForm(
+            data.attachedFormId,
+            { associationId: post.associationId ?? null, anonymous: post.anonymous === true },
+            { userId: post.authorId, isGlobalAdmin: isGlobalAdmin && post.authorId === userId }
+          );
         }
       }
       post.attachedFormId = data.attachedFormId ?? null;

@@ -628,6 +628,19 @@ describe('FormsService - drafts', () => {
       ).resolves.toMatchObject({ id: 'f1' });
     });
 
+    it('get: who created a published form is served to its managers alone', async () => {
+      const published = { form: { status: FORM_PUBLISHED } };
+      const toStranger = await makeService(published).service.get('f1', {
+        userId: STRANGER,
+        isGlobalAdmin: false,
+      });
+      expect(toStranger).toMatchObject({ id: 'f1' });
+      expect(toStranger).not.toHaveProperty('ownerId');
+      await expect(
+        makeService(published).service.get('f1', { userId: OWNER, isGlobalAdmin: false })
+      ).resolves.toMatchObject({ ownerId: OWNER });
+    });
+
     it('getPublic (the guest link): 404', async () => {
       await expect(makeService().service.getPublic('f1')).rejects.toThrow(NotFoundException);
     });

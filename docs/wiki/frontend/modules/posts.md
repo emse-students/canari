@@ -2633,28 +2633,48 @@ Plan: a full-screen sheet from the comment icon, the composer pinned above the k
 An agenda event already linked only its association's forms; a post attached ANY form id, so an
 association's post could present another association's form (or a personal one) as its own, and a
 personal post anyone's. The server now applies one rule, `apps/social-service/src/forms/form-ownership.ts`,
-shared with the events (`assertFormOfAssociation`):
+shared with the events (`assertFormOfAssociation`); the post-only refusals live in
+`apps/social-service/src/posts/attached-form.ts`:
 
 | The post | May attach |
 |---|---|
 | an association's, institution's or list's post (`associationId` set) | that association's forms only - the events' rule, 400 `FORM_NOT_OF_ENTITY` otherwise |
-| a personal or anonymous post | a form its AUTHOR manages (`managesForm`: a personal form they own, or a form of an association where they hold MANAGE_FORMS; a global admin any) - exactly what `GET /api/forms` offers the composer. **Taken by default, to confirm with the owner** |
+| a personal post | a form its AUTHOR manages (`managesForm`: a personal form they own, or a form of an association where they hold MANAGE_FORMS; a global admin any) - exactly what `GET /api/forms` offers the composer, 400 `FORM_NOT_OF_ENTITY` otherwise |
+| an anonymous post | **no form**, 400 `FORM_NOT_ON_ANONYMOUS_POST`: the personal rule above means a form names someone who may be its author, which is what the post hides |
 
-- **When**: at create - the `attachedFormId` and every id of the legacy `forms` list an older client
-  may still send (a non-uuid id is `Linked form not found`) - and at an edit that CHANGES the form.
-  An edit that resends the form the post carries is never judged again, so a post written before
-  the rule stays editable. A personal post's form is judged for its author, whoever edits.
-- **The picker follows it** (`attachableForms`, `$lib/posts/editableForms.ts`): the composer offers
-  an association's post that association's forms only, and drops a choice the identity can no longer
-  attach (the readiness check then asks for a form again) rather than send one the server refuses;
-  the edit picker lists the identity's forms plus the one the post carries.
-- **At read, nothing changes, on purpose**: a post serves only the form's id (and, for the legacy
-  list, the title its author stored); everything else the card shows is read through
-  `GET /api/forms/:id` and its own gate (a draft or a form of an archived association is a 404 to a
-  non-manager). So a stored post naming a foreign form serves no more than the form's own link
-  does. No row was rewritten. How many stored posts carry a foreign form was not measured.
-- Proof: `posts.service.attached-form.spec.ts` (each post kind, the legacy list, an edit changing,
-  keeping and a personal post's author), `editableForms.test.ts` (`attachableForms`).
+**Decisions.** The OWNER's, 2026-11-14 ("Oui, comme aujourd'hui"): a personal, non-anonymous post
+may attach any form its author manages, association forms included. Decided by the lead, 2026-11-14,
+reversible: an anonymous post carries no form; stored posts already carrying another entity's form
+are left as they are (no row is rewritten).
+
+- **When**: at create, and at an edit that CHANGES the form. An edit that resends the form the post
+  carries is never judged again, so a post written before the rule stays editable (and an anonymous
+  one may drop its form). A personal post's form is judged for its author, whoever edits.
+- **The retired inline `forms` list is refused** (400 `POST_FORMS_RETIRED`, an empty list
+  excepted): no client of this repository ever wrote it on create - the composer has sent
+  `attachedFormId` since its first version (2026-03), before any store build - so there was no
+  supported client to keep a shim for, and the list (titles stored as sent, never checked) was
+  dead acceptance. Its input DTOs were deleted. Stored rows keep their `forms` and are still drawn.
+- **The pickers follow it** (`attachableForms`, `$lib/posts/editableForms.ts`): the composer offers
+  an association's post that association's forms only and an anonymous post none (no form chip; a
+  form chosen before switching to anonymous becomes a note and is not sent), and drops a choice the
+  identity can no longer attach (the readiness check then asks for a form again) rather than send
+  one the server refuses; the edit picker lists the identity's forms plus the one the post carries.
+  A refusal that still reaches the client is worded by its code (`publishFailure.ts`).
+- **At read**: a post serves only the form's id (and, for the legacy list, the title its author
+  stored); everything else the card shows is read through `GET /api/forms/:id` and its own gate (a
+  draft is a 404 to a non-manager; what an archived association's form answers is the separate
+  change #3562, not this one). So a stored post naming a foreign form
+  serves no more than the form's own link does. Two reads close the anonymous case for stored
+  posts: an anonymous post's form (`attachedFormId`, the legacy `forms`) is withheld from every
+  reader its author is withheld from (`withholdFormsOfHiddenAuthor`, on the same branch that strips
+  `authorId`; the author and moderators still see it), and `GET /api/forms/:id` serves `ownerId`
+  to the form's managers only. How many stored posts carry a foreign form was not measured.
+- Proof: `posts.service.attached-form.spec.ts` (each post kind, the anonymous post, the retired
+  list, an edit changing, keeping, removing and a personal post's author),
+  `posts.service.anonymous-list.spec.ts` (the withheld form), `forms.service.draft.spec.ts`
+  (`ownerId` to managers only), `editableForms.test.ts`, `publishFailure.test.ts`,
+  `CreatePostForm.anonymousForm.svelte.test.ts`.
 
 ### The thread on a phone is the CanaReels drawer, with nothing quoted above it (user, 2026-10-23, phones only)
 

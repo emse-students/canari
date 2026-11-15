@@ -85,9 +85,9 @@ export async function managesForm(
 /**
  * Refuses (400 `FORM_NOT_OF_ENTITY`) a PERSONAL post attaching `formId` unless its author manages
  * the form ({@link managesForm}) - exactly the forms the composer offers a person (`GET /forms`
- * lists those the reader owns or manages). Taken by default on 2026-11-14, to confirm with the
- * owner: a person may present a form of an association whose forms they manage, never anyone
- * else's.
+ * lists those the reader owns or manages). The owner's decision, 2026-11-14: a person may present a
+ * form of an association whose forms they manage, never anyone else's. An ANONYMOUS post carries no
+ * form at all (`posts.service.ts`, `FORM_NOT_ON_ANONYMOUS_POST`): the form would name its manager.
  */
 export async function assertAuthorManagesForm(
   manager: EntityManager,

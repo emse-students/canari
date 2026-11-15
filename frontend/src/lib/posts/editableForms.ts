@@ -34,16 +34,34 @@ export async function withAttachedForm(
 }
 
 /**
+ * Refused by the server (`form-ownership.ts`): the form is not the post's own entity's - another
+ * association's under an association's post, or one its author does not manage under a personal one.
+ */
+export const FORM_NOT_OF_ENTITY = 'FORM_NOT_OF_ENTITY';
+
+/** Refused by the server: an anonymous post carries no form (the form would name its manager). */
+export const FORM_NOT_ON_ANONYMOUS_POST = 'FORM_NOT_ON_ANONYMOUS_POST';
+
+/**
  * The forms a post may attach for the identity it is published under - the server's rule
  * (`form-ownership.ts`, 2026-11-14), so the picker never offers what the publish would refuse:
  * an association's, institution's or list's post only that association's forms (as an agenda
- * event); a personal or anonymous post every form the reader manages (`forms` is `GET /forms`,
- * exactly those).
+ * event); a personal post every form the reader manages (`forms` is `GET /forms`, exactly those);
+ * an anonymous post none ({@link FORM_NOT_ON_ANONYMOUS_POST}).
  *
  * @param forms The reader's own list (`getForms`), already reduced to published ones.
- * @param associationId The association the post speaks for, or null for a personal post.
+ * @param identity The association the post speaks for (null for a personal post), and whether it
+ *   is published anonymously.
  */
-export function attachableForms(forms: Form[], associationId: string | null): Form[] {
+export function attachableForms(
+  forms: Form[],
+  identity: { associationId: string | null; anonymous: boolean }
+): Form[] {
+  if (identity.anonymous) {
+    if (forms.length) Log.d('POSTS', 'form picker: an anonymous post attaches no form');
+    return [];
+  }
+  const { associationId } = identity;
   if (!associationId) return forms;
   const own = forms.filter((f) => f.associationId === associationId);
   if (own.length < forms.length) {

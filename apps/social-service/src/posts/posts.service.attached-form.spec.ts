@@ -8,13 +8,14 @@ import { PostNotificationsService } from './post-notifications.service';
 import { PostMediaRetentionService } from './post-media-retention.service';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import { FORM_NOT_OF_ENTITY } from '../forms/form-ownership';
+import { FORM_NOT_ON_ANONYMOUS_POST, POST_FORMS_RETIRED } from './attached-form';
 
 /**
  * A POST PRESENTS ITS OWN ENTITY'S FORM (2026-11-14), as an agenda event already did: an
  * association's, institution's or list's post attaches only its association's forms, a personal
- * post only a form its author manages (what the composer offers a person). Judged at create - the
- * attached form and every id of the legacy `forms` list - and at an edit that CHANGES the form;
- * a form the post already carries is never judged again.
+ * post only a form its author manages (what the composer offers a person), an anonymous post none.
+ * Judged at create and at an edit that CHANGES the form; a form the post already carries is never
+ * judged again. The retired inline `forms` list is refused.
  *
  * The write is replaced by a sentinel: a call that reaches it passed every check before it.
  */
@@ -120,21 +121,29 @@ describe('PostsService - the form a post attaches', () => {
     );
   });
 
-  it('judges every id of the legacy forms list, and refuses one that names no form', async () => {
+  it('refuses the retired inline forms list, typed, and still answers an unknown form', async () => {
     const { service } = makeService();
     const asA = { authorId: OFFICER, associationId: A };
     expect(await create(service, { ...asA, forms: [{ id: FORM_OF_A, title: 'Gala' }] })).toBe(
+      POST_FORMS_RETIRED
+    );
+    expect(await create(service, { ...asA, forms: [{ title: 'Gala' }] })).toBe(POST_FORMS_RETIRED);
+    // An empty list names nothing: what an older body may carry by default.
+    expect(await create(service, { ...asA, forms: [], attachedFormId: FORM_OF_A })).toBe(
       REACHED_WRITE
-    );
-    expect(await create(service, { ...asA, forms: [{ id: FORM_OF_B, title: 'Gala' }] })).toBe(
-      FORM_NOT_OF_ENTITY
-    );
-    expect(await create(service, { ...asA, forms: [{ id: 'not-a-uuid', title: 'Gala' }] })).toBe(
-      'Linked form not found'
     );
     expect(
       await create(service, { ...asA, attachedFormId: '00000000-0000-4000-8000-000000000000' })
     ).toBe('Linked form not found');
+  });
+
+  it('an anonymous post carries no form, even one its author manages', async () => {
+    const { service } = makeService();
+    const anon = { authorId: PERSON, anonymous: true };
+    expect(await create(service, { ...anon, attachedFormId: PERSONAL_OF_PERSON })).toBe(
+      FORM_NOT_ON_ANONYMOUS_POST
+    );
+    expect(await create(service, anon)).toBe(REACHED_WRITE);
   });
 
   describe('an edit', () => {
@@ -169,6 +178,28 @@ describe('PostsService - the form a post attaches', () => {
       expect(
         await outcome(
           service.updatePost('p1', OFFICER, { markdown: 'x', attachedFormId: FORM_OF_B })
+        )
+      ).toBe(REACHED_WRITE);
+    });
+
+    it('refuses attaching a form to an anonymous post, and lets one stored before be removed', async () => {
+      const anonymous = stored({
+        authorId: PERSON,
+        associationId: null as unknown as string,
+        anonymous: true,
+      });
+      const { service } = makeService({ stored: anonymous });
+      expect(
+        await outcome(
+          service.updatePost('p1', PERSON, { markdown: 'x', attachedFormId: PERSONAL_OF_PERSON })
+        )
+      ).toBe(FORM_NOT_ON_ANONYMOUS_POST);
+      const carrying = makeService({
+        stored: { ...anonymous, attachedFormId: PERSONAL_OF_PERSON } as Partial<Post>,
+      });
+      expect(
+        await outcome(
+          carrying.service.updatePost('p1', PERSON, { markdown: 'x', attachedFormId: null })
         )
       ).toBe(REACHED_WRITE);
     });
