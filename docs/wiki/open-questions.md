@@ -722,3 +722,18 @@ account with no membership, grant or follow.
 **The same question holds for an institution's calendar events (2026-11-13)**: their "Personnel" public
 has exactly the posts' meaning ([as built](profiles-and-access.md#an-institutions-reach-per-calendar-event-as-built-owner-2026-11-13)),
 so one answer settles both, and widening would add the same disjunct to `eventVisibleToUserSql`.
+
+## Should Canari suspend an account? (asked 2026-11-15)
+
+**Parked by the owner on 2026-11-15**, while deciding the [moderation grid](moderation-authority.md#sanctions):
+the strongest sanction today is the mute (one platform-wide row: no post, reaction, comment, live or
+chat line; votes, comment likes and nicknames to be added) and the withdrawal of the right to
+broadcast. **No route suspends or bans an account** - core-service and social-service have none, and
+an account is deactivated only by its owner's own erasure
+(`apps/core-service/src/account-erasure/`).
+
+**Why it is a question and not a work package**: signing in is MiConnect's (the School's identity
+provider), so a suspension either lives in Canari alone (a refused session, which every service must
+honour, encrypted conversations included) or is asked of the identity provider - and which, and who
+may decide it (the platform admin alone, or a BDE for its spaces), touches the [charter](../principes.md)'s
+first principle as much as moderation. No code until it is answered.
