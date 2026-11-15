@@ -65,6 +65,16 @@ it did not answer) - so a social-service restart refused every chat file for its
   before it travelled, and an admin change committed meanwhile would be overwritten by an older value.
   The reads keep the ordering below. A social-service that cannot read the columns at its boot sends
   no notice (ERROR on its side): there is nothing to hand over.
+  **The one window a handed snapshot can leave stale, and what shows it:** social-service reads A, an
+  admin commits B, core-service's bare notice reaches a media-service that holds nothing and its read
+  fails, then the handed A is held. Nothing in media-service can tell A is older; the admin page does -
+  core logged its notice as not taken, `/admin/platform` compares the held A with the column B, shows
+  "pas encore appliqué aux fichiers" and offers "Renvoyer", whose read then brings B (below).
+- **A read that fails after values were held behind it opens no outage** (review of #3645). A demand
+  read in flight when a notice hands the values, answered 404 by the old replica afterwards, would
+  otherwise reopen an outage over values newer than it (a WARN "values read 0 s ago" that no event
+  closes). Each read notes the holder's hold count at its start; when the count moved, its failure is
+  a debug line and the outage state is left alone.
 - **Every read** asks social-service's relay `GET /api/internal/retention` (`InternalRetentionController`),
   which reads `platform_config`. **A notice never joins a read already running** (review of #3554):
   that read may have asked before the admin's `UPDATE` committed, and joining it answered

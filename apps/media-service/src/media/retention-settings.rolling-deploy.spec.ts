@@ -67,6 +67,43 @@ describe('a rolling deploy: the old replica answers 404 while the new one notifi
   });
 });
 
+describe('a read already running when the values are handed', () => {
+  it('fails after them without reopening an outage: no WARN, the handed values stay', async () => {
+    let rejectDemand!: (e: Error) => void;
+    const read = jest
+      .fn<Promise<MediaRetentionDays>, []>()
+      .mockRejectedValueOnce(new ServiceUnavailableException('social-service answered 404'))
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => (rejectDemand = reject)));
+    const logger = logs();
+    const holder = new MediaRetentionHolder(read, logger);
+
+    await holder.refresh('boot');
+    // An upload finds nothing held: its demand read is in flight, towards the old replica.
+    expect(() => holder.require()).toThrow(ServiceUnavailableException);
+    const demand = holder.refresh('demand');
+    expect(read).toHaveBeenCalledTimes(2);
+
+    // The new replica's notice lands first, then the demand read answers 404.
+    expect(await holder.notice(values(30, 90))).toBe(true);
+    rejectDemand(new ServiceUnavailableException('social-service answered 404'));
+    expect(await demand).toBe(false);
+
+    expect(holder.require()).toEqual(values(30, 90));
+    expect(logger.warn).not.toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalledTimes(1); // the boot read's, and only it
+    expect(logger.debug).toHaveBeenCalledWith(
+      expect.stringContaining('after newer values were held')
+    );
+    // The outage stays closed: a later failure is a NEW one, opened by a WARN.
+    const later = jest.fn(() =>
+      Promise.reject(new ServiceUnavailableException('social-service unreachable'))
+    );
+    read.mockImplementation(later);
+    await holder.refresh('notice');
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('handed values never replace held ones', () => {
   it('once anything is held, a notice with values is a read, and the read decides', async () => {
     const read = jest

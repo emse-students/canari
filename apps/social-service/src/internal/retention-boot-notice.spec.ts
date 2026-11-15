@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import type { DataSource } from 'typeorm';
 import { RetentionBootNotice } from './retention-boot-notice';
 
@@ -37,8 +38,15 @@ describe('RetentionBootNotice', () => {
   it('sends nothing when the durations cannot be read: there is nothing to hand over', async () => {
     const fetchImpl = answering(201, { refreshed: true });
     const db = dbWith(jest.fn(() => Promise.reject(new Error('connection terminated'))));
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     await expect(new RetentionBootNotice(db).send(fetchImpl)).resolves.toBe(false);
     expect(fetchImpl).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining(
+        '[RETENTION] the retention durations could not be read at this boot, so none were handed to media-service: connection terminated'
+      )
+    );
+    error.mockRestore();
   });
 
   it('resolves false on a refusal, a failed re-read or an unreachable media-service', async () => {

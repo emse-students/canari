@@ -136,6 +136,12 @@ export type RetentionReadReason = 'boot' | 'notice' | 'demand';
  */
 export class MediaRetentionHolder {
   private held: { values: MediaRetentionDays; readAt: number } | null = null;
+  /**
+   * How many times values were held (read or handed). A read notes it at its start: a read that fails
+   * after values were held behind it opens no outage - what it failed to refresh is newer than it.
+   * A sequence and not a timestamp, so equal clock readings cannot confuse the two.
+   */
+  private holds = 0;
   private inFlight: Promise<boolean> | null = null;
   /** When the current run of failed reads began, or null while reads succeed. */
   private outageSince: number | null = null;
@@ -255,6 +261,7 @@ export class MediaRetentionHolder {
   private hold(values: MediaRetentionDays, why: string, line: string): void {
     const before = this.held?.values;
     this.held = { values, readAt: this.now() };
+    this.holds += 1;
     if (this.outageSince !== null) {
       this.logger.log(
         `[RETENTION] the retention durations are readable again (${why}) after ${Math.round((this.now() - this.outageSince) / 1000)} s: ${this.refusedInOutage} upload(s) refused meanwhile`
@@ -272,11 +279,20 @@ export class MediaRetentionHolder {
   }
 
   private async readOnce(reason: RetentionReadReason): Promise<boolean> {
+    const holdsAtStart = this.holds;
     try {
       this.hold(await this.read(), reason, `read (${reason})`);
       return true;
     } catch (e) {
       const cause = e instanceof Error ? e.message : String(e);
+      if (this.holds !== holdsAtStart) {
+        // Values were held while this read ran (a notice handed them, 2026-11-15 review of #3645):
+        // they are newer than anything this read could have brought, so its failure opens no outage.
+        this.logger.debug(
+          `[RETENTION] read (${reason}) failed (${cause}) after newer values were held; nothing to report`
+        );
+        return false;
+      }
       if (this.outageSince !== null) {
         this.logger.debug(`[RETENTION] read (${reason}) still failing: ${cause}`);
         return false;
