@@ -5,6 +5,8 @@
   import { pageScrollPaddingClass } from '$lib/components/layout/pageScrollPadding';
   import { retryFailedMyAssociationsProbe } from '$lib/associations/api';
   import { afterNavigate, beforeNavigate, goto, onNavigate, preloadData } from '$app/navigation';
+  import { recordArrival } from '$lib/navigation/backToOrigin';
+  import { cancelRestore, rememberLeaving, restoreOnReturn } from '$lib/navigation/scrollMemory';
   import { preloadRouteCodeOnce } from '$lib/navigation/routeCodePreload';
   import { onMount, tick } from 'svelte';
   import { markRouterReady } from '$lib/navigation/routerReady';
@@ -156,6 +158,9 @@
     // A SHALLOW navigation (SvelteKit 3 runs the lifecycle hooks for them too) is a tab or query
     // change on the same page: not a page the hook is about.
     if (shallow && type === 'goto') return;
+    // The page being left keeps its offset for a Back to it (`lib/navigation/scrollMemory.ts`).
+    cancelRestore();
+    if (from) rememberLeaving(from.url, pageScrollWrap?.scrollTop ?? 0);
     // A membership probe that failed is owed one retry on the next navigation (never a timer).
     void retryFailedMyAssociationsProbe();
     drainHistoryOverlayStack();
@@ -709,10 +714,14 @@
    * `swipeEnterClass` was written - which `onNavigate` does BEFORE the route changes, so the class
    * landed on the page being left and had to be re-added when the path caught up.
    */
-  afterNavigate(({ shallow, type }) => {
+  afterNavigate((nav) => {
+    const { shallow, type } = nav;
     // A SHALLOW navigation (SvelteKit 3 runs the lifecycle hooks for them too) is a tab or query
     // change on the same page: not a page the hook is about.
     if (shallow && type === 'goto') return;
+    // The entry remembers where it came from, for the Back arrow (`lib/navigation/backToOrigin.ts`).
+    recordArrival(nav);
+    if (type === 'popstate' && nav.to) restoreOnReturn(nav.to.url, pageScrollWrap);
     if (!swipeEnterClass || !pageScrollWrap) return;
     const cls = swipeEnterClass;
     const wrap = pageScrollWrap;

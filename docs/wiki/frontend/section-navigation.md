@@ -74,3 +74,28 @@ What exists now, to reuse in the next lots:
 
 - **A DESCENDANT THAT CALLS `stopPropagation()` ON `touchstart` BLINDS A BUBBLE LISTENER (#84, read 2026-11-14 on the Mi 9T).** `svelte-dnd-action` does it on every draggable row it owns - the channel rows of a community the viewer MANAGES - so on `/communities` a section swipe that began on such a row never reached the shell: no gesture state, no claim, the browser's pan took the move (`pointercancel`, then non-cancelable moves). A non-manager, or a cold start before the roles loaded, swiped fine, which is why it looked intermittent. The shell therefore hears the start in the CAPTURE phase (`bindSwipeNavTouchListeners`, pinned by `swipeNavigation.test.ts`).
 - **A swipe never outlives a reorder.** Because the shell hears the touch start in the capture phase, a drag of a channel row (`delayTouchStart: 350`) or a community-rail icon is also a swipe the shell tracks. `standDownForDndDrag` (`swipeNavigation.ts`) abandons the swipe, and snaps back anything already claimed, as soon as svelte-dnd-action's dragged clone (`#dnd-action-dragged-el`) exists. A swipe over a row or a rail icon that has not been picked up navigates like on every other surface (lead decision, 2026-11-14).
+
+## Back after a cross-section open returns to the origin (owner report, 2026-11-15)
+
+**Defect against the closed design, not a reopening.** On an iPhone, feed -> a post's association chip -> the arrow of the association page landed on the Associations list, not on the feed (recording read frame by frame: the page showed the path `Associations > Humani'Mines`, the arrow went to its first crumb). "Back goes up one level" is right when the reader went DOWN the tree; it is wrong when a link from elsewhere dropped them inside it.
+
+**Mechanism.** The page header's arrow is an `<a href>` to the structural parent: the previous crumb (`Breadcrumb.svelte`, trail tables) or `backHref` (`PageHeader.svelte`). It never looked at history. The Android hardware back, the iOS edge swipe and the browser Back already walk history, so they were right; only the arrow disagreed.
+
+**The rule, once, no case per link** (`lib/navigation/backToOrigin.ts`): `recordArrival`, called from the root `afterNavigate`, stamps every link or goto navigation into the NEW history entry's own state, `page.state.from`, through a shallow replacing `goto` (SvelteKit 3 deprecates `replaceState`, and the warning would be noise); the state belongs to the ENTRY, so Back, Forward and a reload keep it and nothing global exists. A Back arrow carries `data-back-link` (`Breadcrumb.svelte`, and `PageHeader.svelte`'s `backHref` link) and `handleAppLinkClick` (`utils/openExternal.ts`, the document-level capture listener that already decides EVERY in-app link click) asks `backDecision(current, from, up)`: **history Back** when `from` is the structural parent or in ANOTHER top-level section (first path segment), **the structural link** otherwise (no `from`: cold open, shared link; or `from` a sibling inside the same tree). **Trap found by reading it in a browser**: a first version bound an `onclick` on the anchor and never ran, because that listener already cancels and navigates every in-app link before the anchor hears it. The `href` stays on the anchor for assistive technology; a modified or non-primary click never reaches the decision.
+
+**Back also restores the page's offset** (`lib/navigation/scrollMemory.ts`): the app scrolls inside ONE box (`.page-scroll-wrap`), which SvelteKit's window restoration does not see, so any Back to the feed landed on its top. The layout records the box's offset as a page is left and puts it back on a `popstate` only (a link opens a page at its top), waiting for the content by a `ResizeObserver` and ending on the offset applied, the reader's first touch / wheel / key, or the next navigation. Read in Chrome at 390 px on a fixture API: feed scrolled to post 4, its association chip, the arrow, and the feed is back at the same post, history length unchanged; a cold open of the association and an arrow from the directory keep the structural link. Android hardware back and the browser Back walk history already (and now restore the offset too); the iOS app has no back-forward swipe in its WKWebView, so the arrow IS its Back, and `history.back()` works there like on any WebView.
+
+| Origin | Destination | Back (arrow) before | Back (arrow) now |
+| --- | --- | --- | --- |
+| feed post | association hub | Associations list | feed |
+| feed post | profile section / other profile | hub of profile (or none) | feed |
+| feed post | event / agenda | structural parent | feed |
+| post event chip | association calendar | association hub | feed (history) |
+| chat or community | post | `/posts` | the conversation |
+| notification | association, edit or settings section | structural parent | the notification list |
+| search | association | Associations list | the search |
+| mention | profile | structural parent | the page holding the mention |
+| directory / hub row | section of the same tree | parent (a new entry) | parent (history, same page) |
+| cold open, reload with no state, sibling in the tree | any | structural parent | structural parent (unchanged) |
+
+Tested in `backToOrigin.test.ts` (one case per row, the stamping, the click decision, the markup attribute) and `scrollMemory.test.ts`. **Limit**: a `goto` that REPLACES the entry stamps the page it replaced, which is not in history; this only matters for redirects such as sign-in, where the destination has no arrow.
