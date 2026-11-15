@@ -216,7 +216,8 @@ screen recording; the script reads which side of the screen is lit):
 | `1.6.12-alpha.2`, the owner turning the phone | 11 | 11 | 510 ms (440-680) |
 | `1.6.12-alpha.2`, turns forced over adb (`user_rotation`, lock on) | 8 | 8 | 405 ms (330-490) |
 | first cut: visual-state callback posted at the resize | 8 | 2 | 340 ms, 600 ms |
-| this mechanism (the page's shape, then the frame) | 16 | 0 | - (the old picture held 304-371 ms, then the turn) |
+| second cut: the page's SHAPE, then the frame | 16 | 0 | - (the old picture held 304-371 ms, then the turn) |
+| this mechanism: the page's SIZE, then the frame, rotation required | 16 | 0 | - (the old picture held 268-368 ms, then the turn) |
 
 **The cause, on both engines: the web view's content is its last frame until the web process
 commits one at the new size.** Android logged the window ready 43-53 ms after the configuration
@@ -236,35 +237,57 @@ old layout until the web process commits (Safari hides it with a private animate
 (`MainActivity.holdDrawAcrossTurns`, the pure state in `orientation/TurnFrameGate.kt`,
 `TurnFrameGateTest`). Two proofs, no clock:
 
-1. The WebView's own box flips shape (`isTurn`: the longer side changes axis - a keyboard resize never
-   does) and a pre-draw listener answers false from then on.
-2. The page is asked when IT has that shape (`turnLaidOutScript`: `innerWidth > innerHeight` against
-   the turn, at once or on the `resize` that makes it so, answered through `window.canariTurn`).
-   Only then is `WebView.postVisualStateCallback` posted. The first cut posted it at the resize and 2
-   turns in 8 were answered 24-31 ms later by a frame at the OLD size: the WebView may hand the new
-   size to the renderer after its own resize, so a frame proof asked too early is answered by an old
-   frame.
+1. **A turn is a rotation that flips the box** (`isTurn`): the display's rotation changed since the
+   WebView's last layout AND its box's longer side changed axis. Both, because a split-screen
+   divider, a freeform window, a fold or a split-screen keyboard can flip the box with no rotation,
+   and none of them may hold the draw (review of #3626). A pre-draw listener answers false from then on.
+2. **The page reports its size** (`turnSizeScript`: `innerWidth`, `innerHeight` and
+   `devicePixelRatio`, at once and at every `resize`, through `window.canariTurn.size`), and native
+   alone decides (`pageMatchesBox`: each side within one CSS px of the box over the ratio). A size,
+   never a shape: near square (1081x1080 px at 2.75 is 393x393 CSS px) a shape test never agrees with
+   the box, and the first version of this step (`innerWidth > innerHeight`) would have held the draw
+   for ever there. Only then is `WebView.postVisualStateCallback` posted. The first cut posted it at
+   the resize and 2 turns in 8 were answered 24-31 ms later by a frame at the OLD size: the WebView
+   may hand the new size to the renderer after its own resize, so a frame proof asked too early is
+   answered by an old frame. A layout that moves the box again while held (`rebox`) waits for the page
+   at THAT size, and a proof posted for the previous box releases nothing.
 3. The callback releases the draw; the window manager, which waits for the window's first draw in
-   the new rotation (`finishDrawing` now 362-473 ms after the change), keeps the old screen until
-   then and turns straight onto the laid-out page.
+   the new rotation (`finishDrawing` 364-486 ms after the change), keeps the old screen until then
+   and turns straight onto the laid-out page.
 
-Over 16 turns on the Mi 9T the page had its shape 241-342 ms after the turn (the renderer's
-style and layout of the whole document, above) and its frame 29-70 ms later.
+**Every event that proves no answer can come releases, at ERROR** (`TurnAbandon`, `abandonTurn`):
+a new document started (a document-start script, `WebViewCompat.addDocumentStartJavaScript`, so an
+error page or a page that never mounts counts too - not the app's own ready signal), the WebView left
+the window, the activity paused or stopped. The old frame may then show, which is why the line
+accuses: `turn N: released WITHOUT its frame after N ms - <why>`. Read on the Mi 9T: the Home key pressed
+during a turn's hold logged `turn 19: released WITHOUT its frame after 41 ms - the activity paused`,
+and the next turn held and released normally.
 
-Each turn takes a token and only the newest moves the hold, so turning back before the first frame
-keeps it until the second turn's frame; a new document during a hold is asked again (`pageReady`). The
-log tells a turn from end to end: `turn N laid out at WxH: draw held`, `the page has its shape after N
-ms`, `the page's frame at the new size is ready after N ms - draw released`.
+Over 16 turns on the Mi 9T the page had its new size 218-335 ms after the turn (the renderer's
+style and layout of the whole document, above) and its frame was ready 268-368 ms after it.
+
+Each turn has its number and its start, and only the newest moves the hold, so turning back before
+the first frame keeps it until the second turn's frame. The log tells a turn from end to end: `turn N
+laid out at WxH (rotation R): draw held`, `the page is at the new size after N ms`, `the page's frame
+at the new size is ready after N ms - draw released`. The bridge's parameters are numbers, so a page
+can put no text into these lines.
 
 **iOS: the old picture is held over the turning interface** (`CanariWillTransitionToSize` in
 `canari_ios.mm`, hooked on tao's root controller like the mask). At `viewWillTransitionToSize` of a
 turn, the root view's snapshot (`snapshotViewAfterScreenUpdates:NO`) is laid over everything and
 counter-rotated by the inverse of the coordinator's `targetTransform` alongside UIKit's animation, so
-it stays still on the glass while the interface turns under it; it is removed once WebKit has the new
-layout on screen (`CanariAfterScreenUpdates`, the keyboard path's proof). The syslog says
-`[CanariOrientation] turn N: ... old picture held` then `new layout on screen N ms after the turn
-began ... released`. **Not run on an iPhone yet** - the reading is owed (below): the picture must not
-move during the turn, no black corner may show, and the release must land on the laid-out page.
+it stays still on the glass while the interface turns under it. It is released by the same two
+proofs as Android: the page has the new width (`CanariTurnPageAtWidth`, `callAsyncJavaScript`
+resolving once `innerWidth` is the WebView's width within one CSS px - the width only, since the
+keyboard path moves the WebView's height), then WebKit has put its updates on screen
+(`CanariAfterScreenUpdates`, the keyboard path's proof, which alone could be answered before the web
+process had the new size). A script ended by an error (a navigation, a WebContent crash) releases at
+ERROR. Any transition while a picture is held drops it first with a line (a 180-degree or
+interrupting turn would leave it counter-rotated by the wrong angle). The syslog says
+`[CanariOrientation] turn N: ... old picture held`, `the page is at the new width`, then `new layout
+on screen N ms after the turn began - old picture released`. **Not run on an iPhone yet** - the
+reading is owed (below): the picture must not move during the turn, no black corner may show, and
+the release must land on the laid-out page.
 
 ## Known and accepted
 

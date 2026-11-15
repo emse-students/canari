@@ -724,18 +724,56 @@ static void CanariSafeAreaDidChange(id self, SEL _cmd) {
 /// public form is to HOLD THE OLD PICTURE: the root view as it was (`snapshotViewAfterScreenUpdates:NO`)
 /// is laid over everything and counter-rotated by the inverse of the coordinator's `targetTransform`
 /// alongside UIKit's own animation, so it stays exactly where it was on the glass while the interface
-/// turns under it, and it is removed once WebKit has put the new layout on screen
-/// (`CanariAfterScreenUpdates`, the proof the keyboard path already uses) - never after a delay, no
-/// fade, no black. Only a turn (the shape flips) is held: a keyboard or an iPad split resize is not
-/// one. A second turn replaces the held picture; an older turn's proof finds its sequence superseded.
+/// turns under it. It is released by two proofs, the Android mechanism's, never by a delay:
+///
+/// 1. the PAGE has the new width (`CanariTurnPageAtWidth`: `callAsyncJavaScript` resolving once
+///    `innerWidth` is the WebView's width within one CSS px, now or on a `resize`) - a screen-update
+///    proof alone can be answered before the web process has the new size, which Android measured
+///    (2 turns in 8 answered by an old-size frame). Only the width: the keyboard path moves the
+///    WebView's height, never its width, so the height is not a size this proof can wait for;
+/// 2. then WebKit has put its pending updates on screen (`CanariAfterScreenUpdates`, the keyboard
+///    path's proof).
+///
+/// A failed script (a navigation or a WebContent crash ends it with an error) releases at ERROR: no
+/// answer can come. Only a turn (the shape flips) is held: a keyboard or an iPad split resize is not
+/// one. ANY transition while a picture is held drops it first, with a line - a 180-degree turn or an
+/// interrupting one would otherwise leave it counter-rotated by the wrong angle - and supersedes the
+/// held turn's proofs.
 typedef void (*CanariWillTransitionIMP)(id, SEL, CGSize, id<UIViewControllerTransitionCoordinator>);
 static CanariWillTransitionIMP CanariOrigWillTransition = NULL;
 static UIView *g_canariTurnHold = nil;
 static NSUInteger g_canariTurnSeq = 0;
 
+/// Calls `then` once the page's layout viewport is `width` CSS px wide (within one), or with the
+/// script's error. One shared definition with Android's `pageMatchesBox`: within one CSS px.
+static void CanariTurnPageAtWidth(WKWebView *webView, CGFloat width, void (^then)(NSError *error)) {
+  NSString *body =
+      @"return await new Promise(function (done) {"
+       "  function check() {"
+       "    if (Math.abs(innerWidth - width) <= 1) { removeEventListener('resize', check); done(innerWidth); }"
+       "  }"
+       "  addEventListener('resize', check);"
+       "  check();"
+       "});";
+  [webView callAsyncJavaScript:body
+                     arguments:@{@"width" : @(width)}
+                       inFrame:nil
+                inContentWorld:WKContentWorld.pageWorld
+             completionHandler:^(__unused id result, NSError *error) {
+               then(error);
+             }];
+}
+
 static void CanariWillTransitionToSize(id self, SEL _cmd, CGSize size,
                                        id<UIViewControllerTransitionCoordinator> coordinator) {
   CanariOrigWillTransition(self, _cmd, size, coordinator);
+  if (g_canariTurnHold != nil) {
+    NSLog(@"[CanariOrientation] turn %lu: a new transition began while its old picture was held - dropped",
+          (unsigned long)g_canariTurnSeq);
+    [g_canariTurnHold removeFromSuperview];
+    g_canariTurnHold = nil;
+    g_canariTurnSeq += 1;
+  }
   UIView *root = ((UIViewController *)self).view;
   WKWebView *webView = CanariFindWebView();
   CGSize old = root.bounds.size;
@@ -744,8 +782,6 @@ static void CanariWillTransitionToSize(id self, SEL _cmd, CGSize size,
     return;
   }
   NSUInteger seq = ++g_canariTurnSeq;
-  [g_canariTurnHold removeFromSuperview];
-  g_canariTurnHold = nil;
   UIView *hold = [root snapshotViewAfterScreenUpdates:NO];
   if (hold == nil) {
     NSLog(@"[CanariOrientation] ERROR turn %lu: no snapshot of the screen - the turn shows WebKit's old layout",
@@ -761,26 +797,37 @@ static void CanariWillTransitionToSize(id self, SEL _cmd, CGSize size,
         (unsigned long)seq, old.width, old.height, size.width, size.height);
   CFTimeInterval started = CACurrentMediaTime();
   CGAffineTransform counter = CGAffineTransformInvert(coordinator.targetTransform);
+  void (^release)(NSString *) = ^(NSString *how) {
+    if (seq != g_canariTurnSeq) return;
+    [hold removeFromSuperview];
+    if (g_canariTurnHold == hold) g_canariTurnHold = nil;
+    NSLog(@"[CanariOrientation] turn %lu: %@ %.0f ms after the turn began - old picture released", (unsigned long)seq,
+          how, (CACurrentMediaTime() - started) * 1000.0);  // log-safe: a turn counter, a fixed phrase and a duration
+  };
   [coordinator
       animateAlongsideTransition:^(__unused id<UIViewControllerTransitionCoordinatorContext> context) {
         hold.transform = counter;
         hold.center = CGPointMake(CGRectGetMidX(root.bounds), CGRectGetMidY(root.bounds));
       }
       completion:^(__unused id<UIViewControllerTransitionCoordinatorContext> context) {
-        CanariAfterScreenUpdates(webView, ^(double proofMs, NSError *error) {
-          if (seq != g_canariTurnSeq) {
-            NSLog(@"[CanariOrientation] turn %lu: superseded by turn %lu - its held picture is already gone",
-                  (unsigned long)seq, (unsigned long)g_canariTurnSeq);
+        if (seq != g_canariTurnSeq) return;
+        CanariTurnPageAtWidth(webView, webView.bounds.size.width, ^(NSError *pageError) {
+          if (seq != g_canariTurnSeq) return;
+          if (pageError != nil) {
+            NSLog(@"[CanariOrientation] ERROR turn %lu: the page could not answer its width (%@) - released WITHOUT the proof",
+                  (unsigned long)seq, CanariErrorReason(pageError));
+            release(@"no answer can come,");
             return;
           }
-          if (error != nil) {
-            NSLog(@"[CanariOrientation] ERROR turn %lu: the screen-update proof failed (%@) - released on its answer",
-                  (unsigned long)seq, CanariErrorReason(error));
-          }
-          [hold removeFromSuperview];
-          if (g_canariTurnHold == hold) g_canariTurnHold = nil;
-          NSLog(@"[CanariOrientation] turn %lu: new layout on screen %.0f ms after the turn began (proof %.0f ms) - old picture released",
-                (unsigned long)seq, (CACurrentMediaTime() - started) * 1000.0, proofMs);  // log-safe: a turn counter and two durations
+          NSLog(@"[CanariOrientation] turn %lu: the page is at the new width %.0f ms after the turn began - waiting for the screen",
+                (unsigned long)seq, (CACurrentMediaTime() - started) * 1000.0);  // log-safe: a turn counter and a duration
+          CanariAfterScreenUpdates(webView, ^(__unused double proofMs, NSError *error) {
+            if (error != nil) {
+              NSLog(@"[CanariOrientation] ERROR turn %lu: the screen-update proof failed (%@) - released on its answer",
+                    (unsigned long)seq, CanariErrorReason(error));
+            }
+            release(@"new layout on screen");
+          });
         });
       }];
 }
