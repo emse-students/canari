@@ -197,8 +197,19 @@ pub(crate) fn clear_signed_out_mark(data_dir: &std::path::Path) -> Result<(), St
 /// owed ([`DELETION_OWED_FILE`] stays) and will be completed before anything registers again; the
 /// native side has logged why. `Err` means a file step failed, and the native deletion was still
 /// attempted. Always `Ok(true)` off the phone platforms, which have no push registration.
+///
+/// `cause` is WHO DECIDED the sign-out (`SignOutCause` in `signOutCause.ts`: the PIN gate's button,
+/// the navbar, a revoked device...), logged first: a store build forwards no WebView console to
+/// logcat, so this line is the only sign-out line a phone's log carries, and until 2026-11-15 it
+/// could not tell a button somebody tapped from a session the server ended. A label for the log,
+/// never read to decide anything - and a `String`, so a label this build does not know still ends
+/// the registration rather than failing the command.
 #[tauri::command]
-pub(crate) async fn end_push_registration(app: tauri::AppHandle) -> Result<bool, String> {
+pub(crate) async fn end_push_registration(
+    app: tauri::AppHandle,
+    cause: String,
+) -> Result<bool, String> {
+    log::info!("[PushEnd] sign-out decided by: {cause}");
     #[cfg(any(target_os = "android", target_os = "ios"))]
     {
         let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;

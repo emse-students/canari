@@ -895,7 +895,7 @@
     appendLog('[AUTH] Sign-out from the PIN gate - ending the session, keeping the local state.');
     // A failure here is a failure to REVOKE, never a reason to strand the user on a gate they asked
     // to leave - and a swallowed one would leave nothing behind, so it is accused by name.
-    await clearAuth().catch((e) => appendLog(`[AUTH] Sign-out: clearAuth failed - ${e}`));
+    await clearAuth('pin-gate').catch((e) => appendLog(`[AUTH] Sign-out: clearAuth failed - ${e}`));
     await leaveSignedOut();
     dismissAuthPrompts();
     pinError = '';

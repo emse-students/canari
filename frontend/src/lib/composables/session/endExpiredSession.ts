@@ -1,3 +1,4 @@
+import type { SignOutCause } from '$lib/stores/signOutCause';
 import type { SessionExpiredOutcome } from './sessionTypes';
 
 /** What {@link endExpiredSession} needs, injected so the sign-out count can be driven by a test. */
@@ -6,8 +7,8 @@ export interface EndExpiredSessionDeps {
   outcome?: SessionExpiredOutcome;
   /** The revoked-device reaction: answers `true` when it ran the reset, whose own `clearAuth` signed out. */
   settleRevocation: () => Promise<boolean>;
-  /** The ordinary sign-out (`clearAuth`). */
-  signOut: () => Promise<void>;
+  /** The ordinary sign-out (`clearAuth`), told it is a dead session's - see `SignOutCause`. */
+  signOut: (cause: SignOutCause) => Promise<void>;
   /** The page the user is sent to, for the log line only. */
   loginPath: string;
   log: (msg: string) => void;
@@ -41,6 +42,6 @@ export async function endExpiredSession(deps: EndExpiredSessionDeps): Promise<bo
     return false;
   }
   deps.log(`[AUTH] Session expired - logging out and redirecting to ${deps.loginPath}.`);
-  await deps.signOut().catch(() => {});
+  await deps.signOut('session-expired').catch(() => {});
   return true;
 }
