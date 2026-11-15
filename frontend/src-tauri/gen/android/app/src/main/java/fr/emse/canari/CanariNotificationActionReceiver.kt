@@ -52,7 +52,7 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
                     else -> Log.w(TAG, "onReceive: unknown action ${intent.action}")
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "onReceive: exception: ${e.message}")
+                Log.e(TAG, "onReceive: exception: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
             } finally {
                 if (wakeLock.isHeld) wakeLock.release()
                 pendingResult.finish()

@@ -230,7 +230,7 @@ static void CanariReportSettledKeyboardGeometry(WKWebView *webView) {
               if (error != nil || ![result isKindOfClass:[NSString class]]) {
                 NSLog(@"[CanariIOS] keyboard settled: native offset=%.1f content=%.1f bounds=%.1f | "
                       @"page geometry NOT read: %@",
-                      offset, content, bounds, error);
+                      offset, content, bounds, CanariErrorReason(error));
                 return;
               }
               NSLog(@"[CanariIOS] keyboard settled: native offset=%.1f content=%.1f bounds=%.1f | page %@",
@@ -331,7 +331,7 @@ static void CanariSnapKeyboardFrame(WKWebView *webView, CGRect target) {
       return;
     }
     if (error != nil) {
-      NSLog(@"[CanariIOS] ERROR keyboard settle: the screen-update proof failed (%@)", error);
+      NSLog(@"[CanariIOS] ERROR keyboard settle: the screen-update proof failed (%@)", CanariErrorReason(error));
     }
     CanariKeyboardLayoutSettled(webView);
   });
@@ -384,8 +384,8 @@ static void CanariHandKeyboardRiseToPage(WKWebView *webView, CGRect target, CGFl
               if (!taken) {
                 g_keyboardRisePending = NO;
                 NSLog(@"[CanariIOS] ERROR keyboard rise #%lu: the page did not take the target after "
-                      @"%.0f ms (%@) - resizing now, its old frame may show cropped",
-                      (unsigned long)seq, scriptMs, error ?: result);
+                      @"%.0f ms (%@; page %@) - resizing now, its old frame may show cropped",
+                      (unsigned long)seq, scriptMs, CanariErrorReason(error), result);
                 CanariSnapKeyboardFrame(webView, target);
                 return;
               }
@@ -397,7 +397,7 @@ static void CanariHandKeyboardRiseToPage(WKWebView *webView, CGRect target, CGFl
                 if (proofError != nil) {
                   NSLog(@"[CanariIOS] ERROR keyboard rise #%lu: the screen-update proof failed after "
                         @"%.0f ms (%@) - resizing anyway",
-                        (unsigned long)seq, proofMs, proofError);
+                        (unsigned long)seq, proofMs, CanariErrorReason(proofError));
                 } else {
                   NSLog(@"[CanariIOS] keyboard rise #%lu: the page's keyboard layout is on screen "
                         @"after %.0f ms (script %.0f ms, proof %.0f ms) - webview height %.0f",
@@ -774,7 +774,7 @@ static void CanariApplyOrientation(NSString *mode) {
       [[UIWindowSceneGeometryPreferencesIOS alloc] initWithInterfaceOrientations:mask];
   [scene requestGeometryUpdateWithPreferences:preferences
                                  errorHandler:^(NSError *error) {
-                                   NSLog(@"[CanariOrientation] ERROR the scene refused %@: %@", mode, error);
+                                   NSLog(@"[CanariOrientation] ERROR the scene refused %@: %@", mode, CanariErrorReason(error));
                                  }];
 }
 
@@ -841,7 +841,7 @@ static void CanariPushCameraEvent(NSString *name, NSString *detail) {
   [webView evaluateJavaScript:js
             completionHandler:^(__unused id result, NSError *error) {
               if (error != nil) {
-                NSLog(@"[CanariCamera] ERROR %@ not delivered to the page: %@", name, error);
+                NSLog(@"[CanariCamera] ERROR %@ not delivered to the page: %@", name, CanariErrorReason(error));
               }
             }];
 }
@@ -926,7 +926,7 @@ static void CanariStartCameraAngle(void) {
       startAccelerometerUpdatesToQueue:[NSOperationQueue mainQueue]
                            withHandler:^(CMAccelerometerData *data, NSError *error) {
                              if (error != nil) {
-                               NSLog(@"[CanariCamera] ERROR accelerometer: %@", error);
+                               NSLog(@"[CanariCamera] ERROR accelerometer: %@", CanariErrorReason(error));
                                return;
                              }
                              if (!g_canariCameraArmed || data == nil) return;
@@ -1311,7 +1311,7 @@ static void CanariPublishForeground(NSString *_Nullable opening) {
               if (error != nil) {
                 // A page that cannot be told keeps its last value; said, because a silent failure
                 // here reads exactly like the defect this exists to fix.
-                NSLog(@"[CanariIOS] ERROR foreground=%@ not published to the page: %@", value, error);
+                NSLog(@"[CanariIOS] ERROR foreground=%@ not published to the page: %@", value, CanariErrorReason(error));
               }
             }];
   NSLog(@"[CanariIOS] foreground=%@ published to the page (opens a link=%d)", value,
@@ -1423,7 +1423,7 @@ static void CanariSetAppGroupForegroundFlag(BOOL inForeground) {
     NSError *error = nil;
     if (![[NSFileManager defaultManager] removeItemAtURL:flag error:&error] &&
         error.code != NSFileNoSuchFileError) {
-      NSLog(@"[CanariIOS] foreground flag not removed: %@", error);
+      NSLog(@"[CanariIOS] foreground flag not removed: %@", CanariErrorReason(error));
     }
   }
 }

@@ -43,7 +43,7 @@ object NativeCacheKey {
                 val wrapperGone = try {
                     !MlsDeviceKeyStore.keystoreHoldsAlias(ALIAS)
                 } catch (e: Exception) {
-                    Log.e(TAG, "ensure: Keystore unreadable, key left as it is: ${e.message}")
+                    Log.e(TAG, "ensure: Keystore unreadable, key left as it is: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
                     return
                 }
                 if (!wrapperGone) {

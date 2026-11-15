@@ -165,7 +165,7 @@ class MainActivity : TauriActivity() {
                             .edit().putString(CanariFirebaseMessagingService.KEY_FCM_TOKEN, token).apply()
                         Log.i("MainActivity", "FCM token synced (${token.length} chars)")
                     } catch (e: Exception) {
-                        Log.w("MainActivity", "FCM token sync failed: ${e.message}")
+                        Log.w("MainActivity", "FCM token sync failed: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
                     }
                 }
             }
@@ -510,7 +510,7 @@ class MainActivity : TauriActivity() {
         try {
             webView.evaluateJavascript("window.dispatchEvent(new CustomEvent('$name',{detail:$detail}));", null)
         } catch (e: Exception) {
-            Log.w("MainActivity", "$name not delivered to the page: ${e.message}")
+            Log.w("MainActivity", "$name not delivered to the page: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
         }
     }
 
@@ -559,7 +559,7 @@ class MainActivity : TauriActivity() {
         fun ringerMode(): Int = try {
             (getSystemService(AUDIO_SERVICE) as AudioManager).ringerMode
         } catch (e: Exception) {
-            Log.e("MainActivity", "canariAudio: reading the ringer mode failed", e)
+            Log.e("MainActivity", "canariAudio: reading the ringer mode failed", e) // log-safe: message of a system or native call (Exception); this try parses and names no user input
             -1
         }
     }
@@ -721,7 +721,7 @@ class MainActivity : TauriActivity() {
             // A page that cannot be told is a page that keeps its last value, which is the safe one:
             // it believes it is in the foreground and stays quiet. Logged because a silent failure
             // here reads exactly like the defect this exists to fix.
-            Log.w("MainActivity", "pushForeground($foreground) failed: ${e.message}")
+            Log.w("MainActivity", "pushForeground($foreground) failed: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
         }
     }
 
@@ -796,7 +796,7 @@ class MainActivity : TauriActivity() {
                 Log.d("MainActivity", "call answer waits - the page was told")
             }
         } catch (e: Exception) {
-            Log.w("MainActivity", "pushCallAccept failed, the page drains at its next resume: ${e.message}")
+            Log.w("MainActivity", "pushCallAccept failed, the page drains at its next resume: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
         }
     }
 
@@ -812,7 +812,7 @@ class MainActivity : TauriActivity() {
         try {
             webView.evaluateJavascript("window.dispatchEvent(new CustomEvent('canari:incoming-share'));", null)
         } catch (e: Exception) {
-            Log.w("MainActivity", "pushIncomingShare failed, the page drains at its next resume: ${e.message}")
+            Log.w("MainActivity", "pushIncomingShare failed, the page drains at its next resume: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
         }
     }
 

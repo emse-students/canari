@@ -3394,11 +3394,36 @@ are the truth.
 
 Native log lines - logcat, os_log and the Rust log - carry ids (truncated) and counts only
 (`chars=${text.length}`, `named=true`), never message text, a name or a key.
-`nativeLogContent.test.ts` scans every Kotlin, Swift, Objective-C++ and Rust log call for an
-interpolated content-bearing name (`text`, `body`, `senderName`, `seed`, `token` ...) and fails on
-one; a measure (`.length`, `isEmpty`) is allowed, and a name that is not content is allowlisted
-by `file|expression` with its reason. The harness rules reading those lines (`watch.mjs`) match
-these shapes.
+`nativeLogContent.test.ts` is an **ALLOWLIST** (2026-11-15; it was a denylist of content names until
+a Kotlin lambda's `it` printed a sender's real name and the `e.message` of an `org.json` exception,
+which quotes the whole input, was never inspected): it scans every Kotlin, Swift, Objective-C++ and
+Rust log call and fails on any interpolated expression that is not one of
+
+- a measure or a flag (`.length`, `.len()`, `isEmpty`, `!= null`, `hasVideo`, a comparison, an outcome
+  chosen between two literals);
+- a count, a size, a position or a duration (`epoch`, `index`, `.as_millis()`), a status or a code;
+- an id (`groupId`, `callId`; `.take(8)` / `.prefix(8)` when it is a user's), a constant, a class name
+  (`e.javaClass.simpleName`, `NSStringFromClass`), or the domain and code of an Apple error
+  (`CanariErrorReason`, `errorReason`);
+- a Swift `Logger` interpolation marked `.private` (redacted in release);
+- a Rust error value (`e`, `err`): the one reviewed category, because every error type this tree logs
+  is io, openmls, serde, SQLite, keystore or an own enum that quotes no payload;
+- a value in the small named sets of the test (`SAFE_LOCALS`, `SAFE_LABELS`), or the exact
+  `file|expression` of the reviewed table (`REVIEWED_GROUPS`, each group saying why).
+
+**Everything else fails, including `$it`, `${e.message}`, a bare Kotlin `e` as a `Log` throwable
+(its message and stack are printed whole) and an `NSError` handed to `%@`.** The way out is never
+adding the word by reflex: read where the value comes from, then either rewrite the line to a shape
+above (`e.javaClass.simpleName` is almost always enough: the class names the failure, the stack
+names the line) or annotate the call with `// log-safe: <why>` on its own lines - a reason of at
+least ten characters, or the annotation does not count. A Kotlin `catch` that parses (`JSONObject`,
+`Base64.decode`, `Instant.parse`, a file read of user data) never logs its message: org.json,
+`java.time` and the Base64 decoder echo their input. The harness rules reading those lines
+(`watch.mjs`) match these shapes.
+
+**A URL is logged WITHOUT its query and fragment (2026-11-15)**: the WebView navigation handler
+logged every URL it allowed, and the redirect back from the identity provider carries a one-time
+`code` there (`navigation.rs`, `loggable_url`).
 
 **An Apple error's TEXT is content (2026-10-24)**: a `localizedDescription` (or
 `localizedFailureReason`, `localizedRecoverySuggestion`) often quotes the file it failed on - a

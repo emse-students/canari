@@ -219,7 +219,7 @@ object CallBridge {
                     appSounds = o.optBoolean("appSounds", true),
                 )
             } catch (e: JSONException) {
-                Log.e(TAG, "ringStart refused: not a ring description: ${e.message}")
+                Log.e(TAG, "ringStart refused: not a ring description: ${e.javaClass.simpleName}")
                 return
             }
             if (ring.callId.isBlank() || ring.groupId.isBlank()) {
@@ -269,7 +269,7 @@ object CallBridge {
                 context.startActivity(intent)
                 Log.i(TAG, "openCallChannelSettings: the calls channel settings opened")
             } catch (e: ActivityNotFoundException) {
-                Log.e(TAG, "openCallChannelSettings: no settings screen answered: ${e.message}")
+                Log.e(TAG, "openCallChannelSettings: no settings screen answered: ${e.message}") // log-safe: message of a system or native call (ActivityNotFoundException); this try parses and names no user input
             }
         }
 
@@ -302,7 +302,7 @@ object CallBridge {
                 context.startService(CallForegroundService.intentFor(context, command))
             } catch (e: IllegalStateException) {
                 if (CallForegroundService.running) {
-                    Log.w(TAG, "$what not delivered with the call service running: ${e.message}")
+                    Log.w(TAG, "$what not delivered with the call service running: ${e.message}") // log-safe: message of a system or native call (IllegalStateException); this try parses and names no user input
                 } else {
                     Log.i(TAG, "$what not delivered: no call service runs and the app is in the background - a command of a call already over")
                 }

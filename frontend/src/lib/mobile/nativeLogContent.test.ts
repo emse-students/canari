@@ -14,11 +14,15 @@ import { fileURLToPath } from 'node:url';
  *
  * Nothing types a value as "content", so no compiler sees a log line that prints one. This test
  * reads every native source the app ships and refuses any log call that INTERPOLATES an expression
- * naming a content-bearing value - unless the expression only measures it (`.length`, `!= null`,
- * `isEmpty`...), which is how a line says "there was a body" without saying what it was.
+ * which is not on an ALLOWLIST: a measure (`.length`, `!= null`, `isEmpty`), a flag, a count, an id,
+ * a status, a class name (`e.javaClass.simpleName`), an outcome chosen between two literals, or a
+ * value of a small NAMED set that a reader judged safe. Everything else fails, unless the call
+ * carries `// log-safe: <why>` on its own lines, or its `file|expression` is in the reviewed table.
  *
- * It is a DENYLIST of names, and that is its limit: a content value renamed to something neutral
- * walks past it. The list is therefore wide, and a new name for content goes into it.
+ * It was a DENYLIST of content names, and a denylist is the wrong shape for a protective control: a
+ * Kotlin lambda's `it` held a sender's real name and walked past it, and `e.message` of an
+ * `org.json` exception, which quotes the WHOLE input, was never inspected at all. Now a new name
+ * fails until a person has read where its value comes from.
  */
 const here = dirname(fileURLToPath(import.meta.url));
 const SRC_TAURI = resolve(here, '../../../src-tauri');
@@ -79,62 +83,111 @@ const TREES: { dir: string; lang: Lang; ext: string }[] = [
 const SKIPPED_DIRS = new Set(['generated']);
 
 /**
- * Names whose value is content, a name or a secret. Matched case-insensitively against every
- * identifier and every string key (`data["senderName"]`) an interpolated expression mentions.
+ * THE ALLOWLIST. A value reaches a native log line only through one of the shapes below; anything
+ * else fails. A denylist of "content names" is exactly what a leak walks past: `$it` held the
+ * sender's real name and the `e.message` of org.json holds its whole input, and neither was on the
+ * list. A chain is judged by its VALUE (its last segment that is not a {@link PASS_THROUGH} call):
+ * `decrypted.callEnded` is `callEnded`, `seed["sessionId"]` is `sessionId`.
+ *
+ * Adding a name below is a review: the value must be one that CANNOT hold what a user wrote, who they
+ * are, or a key. A one-off value goes through the annotation ({@link ANNOTATION}) instead, with its
+ * reason on the line.
  */
-const CONTENT_NAMES = [
-  'text',
-  'body',
-  'content',
-  'plaintext',
-  'plain',
-  'decrypted',
-  'title',
-  'subtitle',
-  'preview',
-  'caption',
-  'reply',
-  'replyText',
-  'emoji',
-  'senderName',
-  'sender_name',
-  'actorName',
-  'actor_name',
-  'authorName',
-  'author_name',
-  'groupName',
-  'group_name',
-  'channelName',
-  'channel_name',
-  'workspaceName',
-  'workspace_name',
-  'displayName',
-  'display_name',
-  'userName',
-  'user_name',
-  'fullName',
-  'firstName',
-  'lastName',
-  'seed',
-  'seedB64',
-  'seed_b64',
-  'deviceKey',
-  'deviceKeyB64',
-  'device_key',
-  'device_key_b64',
-  'keyB64',
-  'key_b64',
-  'keyBytes',
-  'key_bytes',
-  'secret',
-  'pushSecret',
-  'push_secret',
-  'token',
-  'fcmToken',
-  'voipToken',
-  'pin',
-  'password',
-].map((n) => n.toLowerCase());
+
+/** Exact value names (case-sensitive), each a count, a size, a flag, a status, a position or a time. */
+const SAFE_NUMBERS = new Set(
+  `count size len length index idx epoch seq port errno status code ms total remaining dropped
+  removed kept failures lost excess attempt attempts height width keyCode responseCode SDK_INT
+  base_epoch msg_epoch group_epoch msgType at short`.split(/\s+/)
+);
+
+/** Name shapes: a count or a time by suffix, a flag by prefix, a constant by spelling, an id. */
+const SAFE_NAME_SHAPES: { shape: string; re: RegExp }[] = [
+  { shape: 'a constant', re: /^[A-Z][A-Z0-9_]*$/ },
+  {
+    shape: 'a count, size, position or time',
+    re: /(Count|Size|Epoch|Index|Ms|Millis|At|Seq|Bytes|_at|_count|_len|_ms)$/,
+  },
+  { shape: 'a flag', re: /^(is|has|was|can|should|did|will)([A-Z_]|_)/ },
+  {
+    shape: 'a party of a call or a conversation, by id',
+    re: /^(subject|previous|next|holder|requester|recipient|stem|identity|joiner_name|f\.peer|peer)$/,
+  },
+  { shape: 'an id', re: /(^|[a-z_])[iI]d$/ },
+];
+
+/** Flags and labels no call site fills with anything but a literal or an enum (reviewed). */
+const SAFE_LABELS = new Set(
+  `why what where reason label tag outcome mode kind verb state level source route verdict phase
+  method action silent granted refused held superseded covers known mentionsMe unlabelled`.split(
+    /\s+/
+  )
+);
+
+/**
+ * A Rust error value (`Err(e)`, `map_err(|e| ...)`) is reviewed safe AS A CATEGORY: every error type
+ * this tree logs is an `std::io`, openmls, serde, SQLite, keystore or plugin error, or one of the
+ * crate's own enums, and none quotes a message, a name or a key (an own error carries a static reason
+ * or an id). Kotlin has no such category: an `org.json` message holds the WHOLE input, so a Kotlin
+ * `e.message` or `$e` is annotated site by site.
+ */
+const RUST_ERROR_NAMES = new Set(['e', 'e2', 'err', 'error', 'db_e', 'err_str']);
+
+/**
+ * Locals and fields reviewed one by one on 2026-11-15: each is a count, a flag, a position, a pixel
+ * measure, a duration, a protocol label (a push `type`, a MIME type, a host, a scheme, a settings or
+ * file-name CONSTANT of the app's own) or a state enum, never a string a user typed. The same word
+ * naming content in a NEW place is the case this list cannot see, which is why it is a list of
+ * reviewed words rather than a pattern: a new word fails until it is read.
+ */
+const SAFE_LOCALS = new Set(
+  `n a b c p y was on ok max now top left right light inset insets curve clamped change offset overlap
+  minY maxY bodyPt bounds position rank present sent copy copied complete deleted written staged
+  claimed released queued moved skipped fresh pruned seeded absent later behind before after back
+  restore joined single batched unknown named unusable unreadable unopenable undecodable unproven
+  stored offered missing output result terminal deferrable encrypted attempted damage had group_had
+  app_had held_epoch minter envelope_sender trust scheme policy encoding class op via cause stage
+  step how bypass seedSource http fields type mime host theme color value foreground cut generation
+  claimed ended_generation moment mirrored seedsMirrored contextMirrored candidate sweep priority
+  ringerMode audioMode speakerphone modeSetHere found notifications speaker described target
+  showsMessage namesEachSender mentionsOnly leftToApp authorProven callHolds shape sample stamp
+  targetPx timeoutSec orientationMode mode wire prefsName ime bands bandSpans selection other
+  min_ep min_epoch group_ep msg_ep welcome_epoch existing_epoch live_epoch server_epoch
+  message_index state_bytes expected_identity loaded_identity holds_state epoch_before epoch_after
+  remove_proposals external unattended unattributed_kept unattributed_dropped left_to_the_app
+  channels_dropped parked_files leftovers flags unrecorded winner first_index unreadable_lines
+  waiting uncropped lockscreenVisibility importance appSounds vibrate sound done files held_channel
+  hasVideo callEnded unlabelled domain locality bgStatus refusal fingerprint key_fingerprint current stated document dropped_ids declaredGroup serverSaysMentioned kind data_dir db_dir`.split(
+    /\s+/
+  )
+);
+
+/**
+ * Whole-expression shapes that are safe whatever they mention: a class name, an outcome chosen
+ * between two literals, a comparison (prints true or false).
+ */
+const SAFE_EXPRESSIONS: RegExp[] = [
+  /^[\w.?!]*\.(javaClass|class)\??\.simpleName$/,
+  /^[\w.?!]*::class(\.java)?\.(simpleName|qualifiedName)$/,
+  /^NSStringFromClass\(.*\)$/,
+  /^\[\s*[\w.]+\s+class\s*\]$/,
+  /^type\(of:\s*[\w.]+\)$/,
+  // `if (c) "a" else "b"`, `if c { "a" } else { "b" }`, `c ? @"a" : @"b"` - strings stripped.
+  /^if\s*\(.*\)\s*""\s*else\s*""$/,
+  /^if\b.*\{\s*""\s*\}\s*else\s*\{\s*""\s*\}$/,
+  /^.*\?\s*@?""\s*:\s*@?""$/,
+  // A duration or a counter read off a Rust value.
+  /\.(as_millis|as_secs|as_micros|as_u64|u32)\(\)$/,
+  // Helpers that return a fingerprint, a cache stem or a description built from ids and states.
+  /^(\w*key_fingerprint|CanariDescribeDeepLink|avatar_cache_stem|copy_label|refused_of|id_of|describe)\(.*\)$/,
+  // The helpers that say an error's domain and code, and a refusal's reason, instead of its text.
+  /^(CanariErrorReason|errorReason|CanariPushContextRefusal)\(.*\)$/,
+  // A comparison or a logical combination prints a boolean.
+  /(==|!=|<=|>=|&&|\|\|)/,
+];
+
+/** The reviewed-safe marker, on the call's own lines: `// log-safe: <why the value holds no content>`. */
+const ANNOTATION = /\/\/\s*log-safe:\s*(\S.{9,})/;
 
 /** An expression that only MEASURES a value says nothing of what it holds. */
 const MEASURES =
@@ -164,6 +217,8 @@ const PASS_THROUGH = new Set(
     'description',
     'orEmpty',
     'as_str',
+    'display',
+    'describe',
     'as_deref',
     'unwrap',
     'unwrap_or',
@@ -171,27 +226,218 @@ const PASS_THROUGH = new Set(
     'to_string',
     'to_owned',
     'clone',
+    'chars',
+    'collect',
+    'get',
     'UTF8String',
   ].map((n) => n.toLowerCase())
 );
 
 /**
- * The lines the scanner misreads, each with WHY the value is not content. Keyed by file name and the
- * exact expression, so the same expression appearing anywhere else is still checked.
+ * EXPRESSIONS REVIEWED ONE BY ONE on 2026-11-15, the allowlist's tail: an expression the shapes above
+ * cannot name (a local called `name`, a path, an id spelled `call`) and a reader judged safe. Keyed
+ * `file|expression` (the expression's first 100 characters, whitespace flattened), so the same word
+ * naming content in ANOTHER file, or another expression, still fails. Each group says WHY. A new line
+ * that fits none of them is not added here by reflex: it is read, and either rewritten to a shape
+ * above or annotated at the call with `// log-safe: <reason>`.
  */
-const NOT_CONTENT: Record<string, string> = {
-  // A comparison: the line says whether the token changed, never the token.
-  'CanariBootReceiver.kt|if (token == previous) "unchanged" else "ROTATED"': 'comparison',
-  // `content` is the keyboard geometry (a CGFloat) and the WebView's content view, not a message.
-  'canari_ios.mm|content': 'geometry',
-  'canari_ios.mm|[content class]': 'class name',
-  'canari_ios.mm|NSStringFromClass([content class])': 'class name',
-  // A comparison of two seeds: the line prints true or false.
-  'push.rs|same_seed(held_seed, seed.seed_b64)': 'comparison',
-  // `token` on a key-group join settlement is its OUTCOME LABEL (a settled or stopped reason), never a credential.
-  'CanariFirebaseMessagingService.kt|settlement.token': 'outcome label',
-  'CanariFirebaseMessagingService.kt|stop.token': 'outcome label',
-};
+const REVIEWED_GROUPS: [string, string[]][] = [
+  [
+    "a label, state or outcome the app spells itself (a constant, an enum, a classifier's output)",
+    [
+      'admission.rs|previous.map_or("unclassified", AdmissionPolicy::as_str)',
+      'owed_welcome.rs|match other { PendingSubmissionRead::None => "no record", PendingSubmissionRead::Unreadable => "unre',
+      'CanariApplication.kt|installer ?: "(none - sideload)"',
+      'CanariFirebaseMessagingService.kt|"[PUSH_WAKE] fetch FAILED queued=$queuedMessageId stage=${outcome.stage} silent=$silent mentionsOnly',
+      'CanariFirebaseMessagingService.kt|base.scopeKind',
+      'CanariFirebaseMessagingService.kt|lastException?.javaClass?.simpleName',
+      'CanariFirebaseMessagingService.kt|missing.joinToString(",").ifEmpty { "none" }',
+      'CanariFirebaseMessagingService.kt|outcome.detail',
+      'CanariFirebaseMessagingService.kt|read.detail',
+      'CanariFirebaseMessagingService.kt|settlement.token',
+      'CanariFirebaseMessagingService.kt|shape.groupConversation',
+      'CanariFirebaseMessagingService.kt|stop.token',
+      'MainActivity.kt|name',
+      'MlsDeviceKeyStore.kt|alias',
+      'KeyboardMediaBridge.mm|(__bridge void *)webView',
+      'canari_ios.mm|[self.owners.allObjects componentsJoinedByString:","]',
+      'canari_ios.mm|g_canariOrientationMode',
+      'canari_ios.mm|name',
+      'canari_ios.mm|taken ? "the page rides it" : [NSString stringWithFormat:"no ride (%@)", error ?: result]',
+      'canari_push.mm|delegateClass',
+      'canari_push.mm|kCanariRingtoneSound',
+      'canari_push.mm|kGraineSeedsFileName',
+      'canari_push.mm|kMlsBinFileName',
+      'canari_push.mm|kPushContextFileName',
+      'NotificationService.swift|Self.pushContextRefusal(), privacy: .public',
+      'NotificationService.swift|String(describing: declaredGroup), privacy: .public',
+      'NotificationService.swift|String(describing: locality), privacy: .public',
+      'NotificationService.swift|content.threadIdentifier.prefix(8), privacy: .public',
+      'NotificationService.swift|key, privacy: .public',
+      'SystemComponentsPlugin.swift|last',
+      'SystemComponentsPlugin.swift|name, privacy: .public',
+      'mls.rs|outcome.forgotten',
+      'mls.rs|outcome.not_held',
+      'mls_account_state.rs|left.join(", ")',
+      'mls_account_state.rs|match &located { None => "absent from this install", Some(p) if p.starts_with(data_dir.join(PARKED_S',
+      'push.rs|f.name',
+      'push.rs|same_seed(held_seed, seed.seed_b64)',
+      'storage.rs|crate::state::MLS_MANAGER_ABSENT',
+      'storage.rs|installer',
+      'happy_eyeballs.rs|addrs',
+      'navigation.rs|logged',
+      'push_text.rs|language',
+      'page_ring.rs|match &call_id { Some(c) => format!("rings call={c} in the page"), None => "rings no call in the pag',
+    ],
+  ],
+  [
+    "an id of a call, channel, user, device, group or session (never a name), or an address of the app's own backend",
+    [
+      'authorship.rs|proof.author',
+      'authorship.rs|sender_identity',
+      'device_trust.rs|added_by.unwrap_or("an unreadable sender")',
+      'device_trust.rs|user',
+      'group.rs|group_id_str',
+      'members.rs|expected.unwrap_or("a well-formed device identity")',
+      'messaging.rs|entrant.as_deref().unwrap_or("unreadable-identity")',
+      'CallForegroundService.kt|call',
+      'CanariFirebaseMessagingService.kt|channel',
+      'CanariFirebaseMessagingService.kt|deepLink',
+      'CanariFirebaseMessagingService.kt|eldest.key',
+      'CanariFirebaseMessagingService.kt|requesterDev',
+      'CanariFirebaseMessagingService.kt|requesterUser',
+      'CanariFirebaseMessagingService.kt|url',
+      'IncomingShare.kt|claimed.name',
+      'IncomingShare.kt|dir.name',
+      'IncomingShare.kt|staging.name',
+      'IncomingShare.kt|uri.authority',
+      'KeyboardMediaBridge.kt|uri',
+      'GalleryPlugin.kt|uri',
+      'push.rs|other_account',
+      'concurrency.rs|claim.0',
+      'background.rs|who',
+      'proto_fields.rs|reel',
+    ],
+  ],
+  [
+    'the text of a native Rust error carried through JSON or a panic: the same category as a Rust `e` (see RUST_ERROR_NAMES)',
+    [
+      'fork_check.rs|f.detail',
+      'messaging.rs|err_dbg',
+      'state.rs|manager.state_composition_summary()',
+      'CallRingPlayer.kt|message',
+      'CanariFirebaseMessagingService.kt|json.optString("error").take(120)',
+      'CanariFirebaseMessagingService.kt|r.optString("error").take(80)',
+      'canari_push.mm|[reason isKindOfClass:[NSString class]] ? reason : "no reason given"',
+      'canari_push.mm|[reason isKindOfClass:[NSString class]] ? reason : "none"',
+      'canari_push.mm|r["error"]',
+      'mls_account_state.rs|message',
+      'lib.rs|info',
+    ],
+  ],
+  [
+    'a counter, a size, a position, a pixel measure or a duration',
+    [
+      'CallForegroundService.kt|wanted',
+      'CanariFirebaseMessagingService.kt|(now - absent.lastModified()) / 1_000',
+      'CanariFirebaseMessagingService.kt|bounds.outHeight',
+      'CanariFirebaseMessagingService.kt|bounds.outWidth',
+      'CanariFirebaseMessagingService.kt|commitPayload.take(16)',
+      'CanariFirebaseMessagingService.kt|e.cause?.javaClass?.simpleName',
+      'CanariFirebaseMessagingService.kt|file.exists()',
+      'CanariFirebaseMessagingService.kt|iso.take(40)',
+      'CanariFirebaseMessagingService.kt|ticket',
+      'IncomingCallActivity.kt|sdk',
+      'IncomingShare.kt|ceiling / 1024 / 1024',
+      'IncomingShare.kt|waiting.optLong("epoch", 0)',
+      'MainActivity.kt|bounds.upperBound.bottom',
+      'canari_ios.mm|(CACurrentMediaTime() - g_keyboardRiseAsked) * 1000.0',
+      'canari_ios.mm|(unsigned long)webActivities',
+      'canari_ios.mm|[UIApplication sharedApplication].preferredContentSizeCategory',
+      'canari_ios.mm|app.idleTimerDisabled',
+      'canari_ios.mm|content',
+      'canari_ios.mm|g_isOnScreen ? 1 : 0',
+      'canari_ios.mm|g_resumePending ? 1 : 0',
+      'canari_ios.mm|insets.bottom',
+      'canari_ios.mm|whats[i]',
+      'canari_push.mm|(unsigned long)excluded',
+      'canari_push.mm|(unsigned long)kCanariDrainMaxBatch',
+      'NotificationService.swift|peak, privacy: .public',
+      'NotificationService.swift|sessions, privacy: .public',
+      'ShareCapture.swift|ShareRules.maxFiles',
+      'ShareCapture.swift|ceiling / 1024 / 1024',
+      'ButtonComponent.swift|holding, privacy: .public',
+      'SystemComponentsPlugin.swift|"[pendi-nav][native] setTabBarInteractive interactive=\\(args.interactive ? "yes" : "no", privacy: .p',
+      'TabBarOverlay.swift|"[pendi-nav][native] TabBarOverlay apply tabs=\\(self.ids.count) classic=\\(self.usesClassicBar ? "yes',
+      'TabBarOverlay.swift|Double(self.tabBar.safeAreaInsets.bottom), format: .fixed(precision: 1)',
+      'TabBarOverlay.swift|NSCoder.string(for: button.frame), privacy: .public',
+      'TabBarOverlay.swift|NSCoder.string(for: self.tabBar.frame), privacy: .public',
+      'GalleryPlugin.swift|status.rawValue, privacy: .public',
+      'app_group_share.rs|manifest .get("files") .and_then(Value::as_array) .map_or(0, Vec::len)',
+      'push.rs|done.gone()',
+      'push.rs|f.bytes',
+      'push_registration.rs|completed(done)',
+    ],
+  ],
+  [
+    'a sink that forwards a line some other call assembled: its callers are scanned, so the content is judged where it is built',
+    [
+      'CanariFirebaseMessagingService.kt|it',
+      'CanariFirebaseMessagingService.kt|line',
+      'NativePushLog.kt|msg',
+      'NativePushLog.kt|tr',
+    ],
+  ],
+  [
+    "a path or a file name inside the app's own directories, generated by the app (never a name a user chose)",
+    [
+      'CanariFirebaseMessagingService.kt|key',
+      'CanariFirebaseMessagingService.kt|name',
+      'MlsBackgroundWorker.kt|filesDir',
+      'KeyboardMediaBridge.mm|name',
+      'canari_ios.mm|CanariTauriDataDir()',
+      'canari_push.mm|dir.lastPathComponent',
+      'canari_push.mm|key',
+      'canari_push.mm|name',
+      'NotificationService.swift|url.lastPathComponent, privacy: .public',
+      'app_group_share.rs|dir.display()',
+      'app_group_share.rs|name',
+      'at_rest_key.rs|dir.display()',
+      'handoff.rs|name',
+      'handoff.rs|rm',
+      'handoff.rs|to.display()',
+      'mls_account_state.rs|dir.file_name() .map(|n| n.to_string_lossy().into_owned()) .unwrap_or_default()',
+      'mls_account_state.rs|name',
+      'native_push_log.rs|name',
+      'nse_outcomes.rs|key',
+      'nse_outcomes.rs|name',
+      'picked_files.rs|name',
+      'push.rs|name',
+      'storage.rs|base',
+      'storage.rs|dir.display()',
+      'storage.rs|file_name',
+      'storage.rs|key',
+      'storage.rs|name',
+      'storage.rs|path.display()',
+      'lib.rs|binary_name',
+      'background.rs|name',
+      'cross_version_push.rs|path.display()',
+      'device_notice.rs|dir.display()',
+      'device_notice.rs|key',
+      'device_notice.rs|marker.display()',
+      'device_notice.rs|path.display()',
+      'graine.rs|name',
+      'native_cache.rs|path.file_name().unwrap_or_default().to_string_lossy()',
+    ],
+  ],
+  [
+    'the file name of a saved reel: its day and a short id, generated by `reelFileName` (saveReel.ts), never typed by a user',
+    ['GalleryPlugin.kt|args.name', 'GalleryPlugin.kt|target.absolutePath'],
+  ],
+];
+const REVIEWED = new Map(
+  REVIEWED_GROUPS.flatMap(([why, keys]) => keys.map((k) => [k, why] as const))
+);
 
 interface Finding {
   file: string;
@@ -232,7 +478,7 @@ const CALL_START: Record<Lang, RegExp> = {
  * VALUE reaches the log line: the interpolations inside string literals (`$x`, `${...}`, `\(...)`,
  * Rust's `{x}`) and every argument that is not a string literal.
  */
-function callExpressions(src: string, start: number, lang: Lang): string[] {
+function callExpressions(src: string, start: number, lang: Lang, span?: { end: number }): string[] {
   const exprs: string[] = [];
   let i = start;
   let depth = 1;
@@ -286,6 +532,7 @@ function callExpressions(src: string, start: number, lang: Lang): string[] {
     i++;
   }
   flushArg();
+  if (span) span.end = i;
   return exprs;
 }
 
@@ -334,7 +581,37 @@ function readString(src: string, i: number, lang: Lang, triple: boolean, exprs: 
 
 /** Index just past the `"` closing a string literal whose body starts at `i`, escapes honoured. */
 function endOfString(s: string, i: number): number {
-  while (i < s.length && s[i] !== '"') i += s[i] === '\\' ? 2 : 1;
+  while (i < s.length && s[i] !== '"') {
+    if (s[i] === '$' && s[i + 1] === '{') {
+      // A Kotlin template: its braces may hold string literals of their own.
+      let depth = 1;
+      i += 2;
+      while (i < s.length && depth > 0) {
+        if (s[i] === '"') i = endOfString(s, i + 1);
+        else {
+          if (s[i] === '{') depth++;
+          if (s[i] === '}') depth--;
+          i++;
+        }
+      }
+      continue;
+    }
+    if (s[i] === '\\' && s[i + 1] === '(') {
+      // A Swift interpolation: its parentheses may hold string literals of their own.
+      let depth = 1;
+      i += 2;
+      while (i < s.length && depth > 0) {
+        if (s[i] === '"') i = endOfString(s, i + 1);
+        else {
+          if (s[i] === '(') depth++;
+          if (s[i] === ')') depth--;
+          i++;
+        }
+      }
+      continue;
+    }
+    i += s[i] === '\\' ? 2 : 1;
+  }
   return i + 1;
 }
 
@@ -370,7 +647,7 @@ function matching(src: string, i: number, open: string, close: string): number {
 }
 
 /**
- * The VALUE name of every chain an expression contains, lower-cased: for `a.b["c"].take(3)` that is
+ * The VALUE name of every chain an expression contains: for `a.b["c"].take(3)` that is
  * `c`, the last segment that is not a {@link PASS_THROUGH} call. Arguments of a call are chains of
  * their own, so `render(text)` still names `text`.
  */
@@ -418,7 +695,7 @@ function valueNamesIn(expr: string): string[] {
       }
     }
     const value = [...segments].reverse().find((s) => !PASS_THROUGH.has(s.toLowerCase()));
-    if (value) names.push(value.toLowerCase());
+    if (value) names.push(value);
     i = j;
   }
   return names;
@@ -427,17 +704,38 @@ function valueNamesIn(expr: string): string[] {
 /** An Apple error's TEXT: it often quotes the file it failed on - a shared file's name, a path. */
 const ERROR_TEXT = /\blocalized(Description|FailureReason|RecoverySuggestion)\b/;
 
+/** Whether a value name is on the allowlist (the user-id rule needs the whole expression). */
+function isSafeName(name: string, expr: string, lang?: Lang): boolean {
+  if (lang === 'rust' && RUST_ERROR_NAMES.has(name)) return true;
+  return (
+    SAFE_NUMBERS.has(name) ||
+    SAFE_LABELS.has(name) ||
+    SAFE_LOCALS.has(name) ||
+    SAFE_NAME_SHAPES.some((s) => s.re.test(name))
+  );
+}
+
 /**
- * Whether an interpolated expression puts content into the line. `redacting` is true for a Swift
- * `Logger` call ONLY: there an interpolation is private unless marked public, so an error text is
- * redacted in release. `NSLog`, Swift `print`, `os_log` with a `%@` and every Rust and Kotlin logger
- * write it out whole - so there an error text is content, and the line says the error's domain and
- * code instead.
+ * Whether an interpolated expression is NOT on the allowlist, i.e. may put content into the line.
+ * `redacting` is true for a Swift `Logger` call ONLY: there an interpolation is private unless
+ * marked public, so an error text is redacted in release. `NSLog`, Swift `print`, `os_log` with a
+ * `%@` and every Rust and Kotlin logger write it whole - so there an error text is content, and
+ * the line says the error's domain and code instead.
  */
-export function leaksContent(expr: string, redacting = false): boolean {
-  if (MEASURES.test(expr)) return false;
+export function leaksContent(expr: string, redacting = false, lang?: Lang): boolean {
+  // A Swift `Logger` interpolation marked `.private` is redacted in release: nothing of it is written.
+  if (redacting && /,\s*privacy:\s*\.private\s*$/.test(expr)) return false;
   if (ERROR_TEXT.test(expr)) return !redacting || /privacy:\s*\.public\b/.test(expr);
-  return valueNamesIn(expr).some((n) => CONTENT_NAMES.includes(n));
+  // The privacy argument and a turbofish are syntax, not values.
+  const value = expr
+    .replace(/^\((?:unsigned )?(?:long|int|NSUInteger|NSInteger)\)/, '')
+    .replace(/,\s*privacy:\s*\.\w+\s*$/, '')
+    .replace(/::<[^>]*>/g, '')
+    .trim();
+  const bare = withoutStrings(value);
+  if (MEASURES.test(bare)) return false;
+  if (SAFE_EXPRESSIONS.some((re) => re.test(bare))) return false;
+  return valueNamesIn(value).some((n) => !isSafeName(n, value, lang));
 }
 
 /** Whether the call `CALL_START` matched is a Swift `Logger` method (`logger.info(`, `log.error(`). */
@@ -447,6 +745,13 @@ function isRedactingCall(lang: Lang, call: string): boolean {
 
 function lineOf(src: string, index: number): number {
   return src.slice(0, index).split('\n').length;
+}
+
+/** Whether a call's own lines carry a `// log-safe: <reason>` annotation of a real reason. */
+export function reviewedSafe(src: string, callStart: number, callEnd: number): boolean {
+  const from = src.lastIndexOf('\n', callStart) + 1;
+  const to = src.indexOf('\n', callEnd);
+  return ANNOTATION.test(src.slice(from, to === -1 ? src.length : to));
 }
 
 function scan(): Finding[] {
@@ -459,10 +764,20 @@ function scan(): Finding[] {
         // tag. Every argument is checked: a variable handed in whole is as much the line as a
         // template is.
         const redacting = isRedactingCall(tree.lang, m[0]);
-        for (const expr of callExpressions(src, m.index! + m[0].length, tree.lang)) {
-          const name = file.split(/[\\/]/).pop();
-          if (leaksContent(expr, redacting) && !NOT_CONTENT[`${name}|${expr}`]) {
-            findings.push({ file: relative(FRONTEND, file), line: lineOf(src, m.index!), expr });
+        const span = { end: 0 };
+        const exprs = callExpressions(src, m.index! + m[0].length, tree.lang, span);
+        if (reviewedSafe(src, m.index!, span.end)) continue;
+        for (const expr of exprs) {
+          const flat = expr.replace(/\s+/g, ' ');
+          if (
+            leaksContent(expr, redacting, tree.lang) &&
+            !REVIEWED.has(`${file.split(/[\\/]/).pop()}|${flat.slice(0, 100)}`)
+          ) {
+            findings.push({
+              file: relative(FRONTEND, file),
+              line: lineOf(src, m.index!),
+              expr: expr.replace(/\s+/g, ' '),
+            });
           }
         }
       }
@@ -483,28 +798,85 @@ describe('the scanner', () => {
     expect(callExpressions('"a={text} b={}", seed_b64)', 0, 'rust')).toEqual(['text', 'seed_b64']);
   });
 
-  it('refuses content and lets a measurement of it through', () => {
+  it('refuses what is not on the allowlist, content or not', () => {
+    // The two lines a denylist let through: Kotlin's `it` held a sender's name, and the message of
+    // an `org.json` exception holds the whole input. Neither NAME is content-like, which is the point.
+    expect(leaksContent('it')).toBe(true);
+    expect(leaksContent('$it')).toBe(true);
+    expect(leaksContent('e.message')).toBe(true);
+    expect(leaksContent('lastException?.message')).toBe(true);
+    expect(leaksContent('e')).toBe(true);
+    expect(leaksContent('e', false, 'kotlin')).toBe(true);
+    expect(leaksContent('parser.localizedDescription')).toBe(true);
+    // A name that is not content-like is refused too: nothing vouches for it.
+    expect(leaksContent('whatever')).toBe(true);
     expect(leaksContent('body.take(60)')).toBe(true);
     expect(leaksContent('data["senderName"]')).toBe(true);
     expect(leaksContent('json.optString("text")')).toBe(true);
-    expect(leaksContent('text.length')).toBe(false);
-    expect(leaksContent('name != null')).toBe(false);
-    expect(leaksContent('groupId.take(8)')).toBe(false);
-    expect(leaksContent('decrypted.callEnded')).toBe(false);
-    expect(leaksContent('seed["sessionId"].as_str().unwrap_or_default()')).toBe(false);
     expect(leaksContent('renderMentions(text, myUserId).take(200)')).toBe(true);
     expect(leaksContent('msg.text')).toBe(true);
-    // An error text is content wherever nothing redacts it: NSLog, print, Rust, Kotlin.
+  });
+
+  it('lets through the shapes that cannot hold content', () => {
+    // A measure, a flag, a count.
+    expect(leaksContent('text.length')).toBe(false);
+    expect(leaksContent('name != null')).toBe(false);
+    expect(leaksContent('queued.len()')).toBe(false);
+    expect(leaksContent('hasVideo')).toBe(false);
+    expect(leaksContent('started.elapsed().as_millis()')).toBe(false);
+    // An id, truncated or not; a status; a code.
+    expect(leaksContent('groupId.take(8)')).toBe(false);
+    expect(leaksContent('group_id.chars().take(8).collect::<String>()')).toBe(false);
+    expect(leaksContent('conn.responseCode')).toBe(false);
+    expect(leaksContent('status, privacy: .public', true)).toBe(false);
+    // A class name, never a message.
+    expect(leaksContent('e.javaClass.simpleName')).toBe(false);
+    expect(leaksContent('e.cause?.javaClass?.simpleName')).toBe(false);
+    expect(leaksContent('NSStringFromClass([content class])')).toBe(false);
+    // An outcome chosen between two literals, and a comparison.
+    expect(leaksContent('if (token == previous) "unchanged" else "ROTATED"')).toBe(false);
+    expect(leaksContent('self.usesClassicBar ? "yes" : "no", privacy: .public', true)).toBe(false);
+    // A chain is judged by its VALUE: a flag of a decrypted object, an id of a seed.
+    expect(leaksContent('decrypted.callEnded')).toBe(false);
+    expect(leaksContent('seed["sessionId"].as_str().unwrap_or_default()')).toBe(false);
+    // A Rust error value is the one reviewed category; Kotlin has none.
+    expect(leaksContent('e', false, 'rust')).toBe(false);
+    expect(leaksContent('e.message', false, 'rust')).toBe(true);
+  });
+
+  it('honours a `// log-safe:` annotation of a real reason, and nothing weaker', () => {
+    const call = 'Log.w(TAG, "x: ${e.message}")';
+    expect(
+      reviewedSafe(
+        `${call} // log-safe: message of a system call; no user input here`,
+        0,
+        call.length
+      )
+    ).toBe(true);
+    expect(reviewedSafe(`${call} // log-safe: ok`, 0, call.length)).toBe(false);
+    expect(reviewedSafe(`${call} // fine`, 0, call.length)).toBe(false);
+    expect(
+      reviewedSafe(`${call}\n// log-safe: on the next line is not on the call`, 0, call.length)
+    ).toBe(false);
+  });
+
+  it('refuses an Apple error text where nothing redacts it, and says domain and code instead', () => {
     expect(leaksContent('error.localizedDescription')).toBe(true);
     expect(leaksContent('[error localizedDescription]')).toBe(true);
     expect(leaksContent('err.localizedFailureReason')).toBe(true);
     // In a Swift Logger call it is private unless marked public.
     expect(leaksContent('error.localizedDescription', true)).toBe(false);
     expect(leaksContent('error.localizedDescription, privacy: .public', true)).toBe(true);
-    expect(leaksContent('error.localizedDescriptionX, privacy: .publicX', true)).toBe(false);
+    expect(leaksContent('error.localizedDescriptionX, privacy: .publicX', true)).toBe(true);
+    // An interpolation marked `.private` is redacted in release whatever it holds.
+    expect(leaksContent('args.name, privacy: .private', true)).toBe(false);
+    expect(leaksContent('args.name, privacy: .public', true)).toBe(true);
     // The error's domain and code are what an unredacted line says instead.
     expect(leaksContent('failure.domain')).toBe(false);
     expect(leaksContent('(long)failure.code')).toBe(false);
+    expect(leaksContent('CanariErrorReason(error)')).toBe(false);
+    // The whole NSError handed to `%@` writes its userInfo, so it is refused.
+    expect(leaksContent('error')).toBe(true);
   });
 
   it('exempts a Swift Logger call alone from naming an error text', () => {
@@ -524,7 +896,9 @@ describe('the scanner', () => {
 describe('native log lines in every build', () => {
   it('carry no message text, name, emoji, seed, secret or token', () => {
     const findings = scan();
-    expect(findings.map((f) => `${f.file}:${f.line} interpolates \`${f.expr}\``)).toEqual([]);
+    expect(
+      findings.map((f) => `${f.file}:${f.line} interpolates \`${f.expr.slice(0, 140)}\``)
+    ).toEqual([]);
   });
 });
 

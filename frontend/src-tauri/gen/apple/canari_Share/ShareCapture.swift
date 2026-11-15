@@ -673,7 +673,7 @@ final class ShareCapture {
             try target.setResourceValues(values)
         } catch {
             let failure = error as NSError
-            log.error("\(url.lastPathComponent, privacy: .public) not excluded from backups: \(failure.domain, privacy: .public) \(failure.code)")
+            log.error("\(url.lastPathComponent, privacy: .private) not excluded from backups: \(failure.domain, privacy: .public) \(failure.code)")
         }
     }
 

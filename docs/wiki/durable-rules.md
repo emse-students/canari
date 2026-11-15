@@ -1551,9 +1551,13 @@ What must not be forgotten between the pages:
   would need two processes to re-seal one file across a change neither holds. Only Rust opens them;
   a platform asks it a yes/no. A new native cache goes through `native_cache.rs` and joins
   `nativeCacheSeal.test.ts` ([mobile](frontend/mobile.md#the-native-caches-are-sealed-at-rest-and-kept-out-of-backups-2026-10-22)).
-- **A NATIVE LOG LINE CARRIES IDS AND COUNTS, NEVER CONTENT, IN EVERY BUILD.** Log `chars=${text.length}`,
-  not the text; `nativeLogContent.test.ts` fails on an interpolated content name in any Kotlin,
-  Swift, Objective-C++ or Rust log call, and a harness rule matching the old line moves with it
+- **A NATIVE LOG LINE CARRIES IDS AND COUNTS, NEVER CONTENT, IN EVERY BUILD - AND THE GUARD IS AN
+  ALLOWLIST, NOT A DENYLIST.** Log `chars=${text.length}`, not the text. `nativeLogContent.test.ts`
+  fails on any interpolated expression in a Kotlin, Swift, Objective-C++ or Rust log call that is not
+  a measure, a flag, a count, an id, a status, a class name or a reviewed value: the denylist it was
+  let a lambda's `it` (a sender's real name) and `${e.message}` (org.json quotes its whole input)
+  through, because neither NAME looks like content. Rewrite to `e.javaClass.simpleName`, or annotate
+  `// log-safe: <why>` after reading where the value comes from
   ([mobile](frontend/mobile.md#what-a-native-log-line-may-carry-2026-10-22)).
 - **A SWIFT `NSLog` IS `<private>` WHOLE ON A STORE BUILD, LITERAL TEXT INCLUDED - A SWIFT LINE MEANT
   TO BE READ GOES THROUGH A `Logger`.** The status bar catcher's proof line arrived as

@@ -144,7 +144,7 @@ class CallForegroundService : Service() {
             try {
                 context.startService(intentFor(context, CallServiceCommand.Stop(null, "the page that held the call is gone")))
             } catch (e: IllegalStateException) {
-                Log.e(TAG, "stop for a gone page not delivered: ${e.message}")
+                Log.e(TAG, "stop for a gone page not delivered: ${e.message}") // log-safe: message of a system or native call (IllegalStateException); this try parses and names no user input
             }
         }
 
