@@ -97,6 +97,18 @@ export class PushRegistrationUnauthorizedError extends Error {
 }
 
 /**
+ * The session that started this registration ended (a sign-out bumped `pushSessionGeneration`):
+ * whatever it would send or store belongs to the account that left. Not a failure of this session -
+ * said at info, and recorded nowhere (the record is gated on the same generation).
+ */
+export class PushRegistrationSupersededError extends Error {
+  constructor(where: string) {
+    super(`the session that started this push registration ended - ${where}`);
+    this.name = 'PushRegistrationSupersededError';
+  }
+}
+
+/**
  * What a failure to obtain a token becomes. An ALLOWLIST of the failures that say only "no new
  * token now" - a refresh that answered with no token (`RefreshFailedError`) or one nobody answered -
  * which pass as they came and are retried; every other failure is a verdict on the session.
@@ -120,6 +132,174 @@ export class PushSecretNotStoredError extends Error {
     super('the push secret the server returned was not stored', { cause });
     this.name = 'PushSecretNotStoredError';
   }
+}
+
+/**
+ * What this install's push registration last came to, kept across processes and stated to the
+ * delivery service with every `register-device` (`pushOutcomeForReport`), which prints it when it
+ * holds no push registration for the device (`[PUSH_MISSING]`).
+ *
+ * - `registered`: the server answered a registration, or the skip key said one already stood;
+ * - a {@link PushRegistrationFailure}: the last attempt's failure;
+ * - `deferred`: a sign-out's token deletion is still owed, so nothing may register;
+ * - `no-user`: the service started with no signed-in user.
+ *
+ * Each of these is FINAL for the attempt it ends, and none is ever overwritten by a marker: a phone
+ * whose OS gives no token states `no-token` on every `register-device`, including the first one of a
+ * process whose ladder is still asking again - the login starts the ladder before the socket opens,
+ * and the ladder lasts four minutes, so a marker written over it would have left an unknown state on
+ * the server for a known one (review of #3649).
+ *
+ * With no final outcome since the sign-out, `pushOutcomeForReport` states `in-progress` while THIS
+ * process's ladder or a registration runs, `started` when a ladder began in an earlier process and
+ * nothing came of it (kept apart, `PUSH_STARTED_STORAGE_KEY`), else `none`.
+ *
+ * WHY IT IS DURABLE: the branches that end a registration without a request - an `unauthorized`
+ * ladder, an owed deletion, a process killed inside the four-minute ladder - leave no trace on the
+ * server, and a device in that state looked exactly like one that was never opened (production,
+ * 2026-11-15: 25 of 65 `1.6.12` devices held no row and had said nothing). The next authenticated
+ * call this device makes anyway carries the evidence; no new request is spent on it.
+ */
+export type PushOutcomeRecord = 'registered' | PushRegistrationFailure | 'deferred' | 'no-user';
+
+/** localStorage key of {@link PushOutcomeRecord}; cleared at sign-out with the registration. */
+export const PUSH_OUTCOME_STORAGE_KEY = 'canari_push_outcome';
+
+/**
+ * localStorage key of the `started` marker: a ladder began and no final outcome has been recorded
+ * since. Apart from the final outcome so it never erases one; cleared by the next final outcome and
+ * at sign-out.
+ */
+export const PUSH_STARTED_STORAGE_KEY = 'canari_push_started';
+
+/**
+ * Bumped by every sign-out (`endPushRegistration`). A ladder captures it when it starts, and one
+ * whose generation is gone belongs to an account that left: it records nothing and sends nothing -
+ * it was still sleeping between attempts when the next account signed in, and would have written its
+ * outcome into that account's state and sent its user id with that account's bearer.
+ */
+let pushSessionGeneration = 0;
+
+/** The generation whose first ladder is running in this process, or null - see `in-progress`. */
+let ladderGeneration: number | null = null;
+
+/**
+ * Records this install's latest {@link PushOutcomeRecord} for the session of `generation`; a ladder
+ * of a session that ended records nothing. A store that refuses is logged.
+ */
+function recordPushOutcome(outcome: PushOutcomeRecord, generation: number): void {
+  if (generation !== pushSessionGeneration) {
+    console.info(`[Push] outcome ${outcome} of a signed-out session not recorded`);
+    return;
+  }
+  try {
+    localStorage.setItem(PUSH_OUTCOME_STORAGE_KEY, outcome);
+    localStorage.removeItem(PUSH_STARTED_STORAGE_KEY);
+  } catch (err) {
+    console.warn(`[Push] could not record the registration outcome (${outcome})`, err);
+  }
+}
+
+/** Marks that a ladder began for the session of `generation`, beside its last final outcome. */
+function markLadderStarted(generation: number): void {
+  if (generation !== pushSessionGeneration) return;
+  try {
+    localStorage.setItem(PUSH_STARTED_STORAGE_KEY, '1');
+  } catch (err) {
+    console.warn('[Push] could not mark the registration as started', err);
+  }
+}
+
+/** Whether THIS process is registering for the current session (the ladder or one attempt). */
+function registeringNow(): boolean {
+  return (
+    ladderGeneration === pushSessionGeneration ||
+    registrationInFlight?.generation === pushSessionGeneration
+  );
+}
+
+/**
+ * The outcome `register-device` states: the last FINAL one since the sign-out whenever there is one,
+ * else `in-progress` while this process registers, `started` when an earlier process began a ladder
+ * and ended inside it, `none` when nothing started. A store that cannot be read says `unreadable`,
+ * never a guess.
+ */
+export function pushOutcomeForReport(): string {
+  try {
+    const final = localStorage.getItem(PUSH_OUTCOME_STORAGE_KEY);
+    if (final) return final;
+    if (registeringNow()) return 'in-progress';
+    return localStorage.getItem(PUSH_STARTED_STORAGE_KEY) ? 'started' : 'none';
+  } catch (err) {
+    console.warn('[Push] could not read the registration outcome', err);
+    return 'unreadable';
+  }
+}
+
+/** The last outcomes registering again cannot change - see {@link reconcilePushRegistration}. */
+const NOT_REDRIVEN: ReadonlySet<string> = new Set(['refused', 'no-token']);
+
+/**
+ * Where `startPushService` was last started, so the delivery service's answer can drive a
+ * registration it owes ({@link reconcilePushRegistration}) without a second copy of these arguments.
+ */
+let startedWith: { apiBaseUrl: string; auth: PushAuth; deviceId: string } | null = null;
+
+/**
+ * Acts on the delivery service's answer to `register-device`: whether it HOLDS a push registration
+ * for this device (`push_token`, keyed by the account and the device).
+ *
+ * THE SERVER'S ROW IS THE FACT, THE SKIP KEY ONLY A LOCAL COPY OF IT. The skip key
+ * (`FCM_TOKEN_STORAGE_KEY`) says "this token was registered once in this WebView", and a row can go
+ * after that (a terminal send error, a session end, a purge) or never have come (a ladder that ended
+ * without a request): the device then skipped, or never retried, for as long as the WebView lived.
+ * `register-device` runs at every unlock and every key-package renewal, so this answer re-drives the
+ * registration deterministically from the durable state, never from a timer.
+ *
+ * NOT RE-DRIVEN: a registration already running (`in-progress`), and the two outcomes another
+ * attempt cannot change - `refused` (the server's 4xx answer) and `no-token` (the OS gave no token;
+ * each process start still asks it again). The server names both in `[PUSH_MISSING]`.
+ *
+ * `null` - a delivery service that does not say (an older one, or a lookup that failed) - changes
+ * nothing.
+ */
+export function reconcilePushRegistration(serverHolds: boolean | null): void {
+  if (serverHolds === null) {
+    console.info('[Push] register-device did not say whether a push registration is held');
+    return;
+  }
+  if (serverHolds) return;
+  if (!pushPlatform()) return;
+  if (registeringNow()) {
+    console.info('[Push] no push registration held yet - this process is registering');
+    return;
+  }
+  const last = pushOutcomeForReport();
+  if (NOT_REDRIVEN.has(last)) {
+    console.info(
+      `[Push] no push registration held, last outcome ${last} - an answer, not re-driven`
+    );
+    return;
+  }
+  // A FIRST REGISTRATION IS THE ORDINARY CASE, said at info; any other state lost a registration.
+  const say = last === 'none' ? console.info : console.warn;
+  say(
+    `[Push] the delivery service holds no push registration for this device (last outcome: ${last}) - registering again`
+  );
+  try {
+    sessionStorage.removeItem(FCM_TOKEN_STORAGE_KEY);
+  } catch (err) {
+    console.error(
+      '[Push] could not drop the registration skip key - the registration may skip',
+      err
+    );
+  }
+  // Not started yet: the start this login owes registers, the skip key being gone.
+  if (!startedWith) return;
+  const { apiBaseUrl, auth, deviceId } = startedWith;
+  void startPushService(apiBaseUrl, auth, deviceId).catch((err) =>
+    console.error('[Push] the registration the delivery service owed failed to start', err)
+  );
 }
 
 /**
@@ -156,8 +336,12 @@ const BACKGROUND_RETRY_DELAY_MS = 5000;
 // Prevents repeated attempts when Google Play Services is unavailable.
 let pushAttempted = false;
 
-// The registration currently talking to the server, if any - see `registerPushToken`.
-let registrationInFlight: Promise<PushRegistrationOutcome> | null = null;
+// The registration currently talking to the server, if any, and the session it belongs to - see
+// `registerPushToken`.
+let registrationInFlight: {
+  generation: number;
+  promise: Promise<PushRegistrationOutcome>;
+} | null = null;
 
 // Whether this process has already told the server that this device has no usable token. Guards the
 // report, NOT the attempts: a device keeps trying on every resume, it just stops repeating itself.
@@ -199,14 +383,25 @@ export async function registerPushToken(
   // logged two `[PUSH_REGISTER]` a second apart for one device (2026-10-12). The server then keeps
   // whichever upsert committed last and the device whichever answer it stored last, and nothing
   // ties those two orders together. A second caller joins the attempt in flight instead.
-  if (registrationInFlight) {
+  //
+  // ONLY ONE OF THE SAME SESSION IS JOINED: one started before a sign-out belongs to the account
+  // that left, ends on its own generation check, and would hand THIS session its failure.
+  const generation = pushSessionGeneration;
+  if (registrationInFlight?.generation === generation) {
     console.info('[Push] registration already in flight, joining it');
-    return registrationInFlight;
+    return registrationInFlight.promise;
   }
-  registrationInFlight = registerPushTokenOnce(registerFn).finally(() => {
-    registrationInFlight = null;
-  });
-  return registrationInFlight;
+  if (registrationInFlight) {
+    console.info('[Push] a registration of a signed-out session is in flight - not joined');
+  }
+  const entry = {
+    generation,
+    promise: registerPushTokenOnce(registerFn).finally(() => {
+      if (registrationInFlight === entry) registrationInFlight = null;
+    }),
+  };
+  registrationInFlight = entry;
+  return entry.promise;
 }
 
 /** The registration `registerPushToken` serialises. */
@@ -247,6 +442,10 @@ async function registerPushTokenOnce(
     if (err instanceof PushRegistrationRefusedError) {
       console.warn(`[Push] registration refused by the server (HTTP ${err.status}) - not retried`);
       return { ok: false, reason: 'refused' };
+    }
+    if (err instanceof PushRegistrationSupersededError) {
+      console.info(`[Push] ${err.message}`);
+      return { ok: false, reason: 'unauthorized' };
     }
     if (err instanceof PushRegistrationUnauthorizedError) {
       console.warn(`[Push] ${err.message} - not retried`, err.cause);
@@ -291,17 +490,31 @@ export async function startPushService(
     return;
   }
 
+  startedWith = { apiBaseUrl, auth, deviceId };
+  const generation = pushSessionGeneration;
+  const superseded = (): boolean => generation !== pushSessionGeneration;
+
   const userId = currentUserId();
   if (!userId) {
-    console.warn('[Push] startPushService aborted: missing currentUserId');
+    console.error('[Push] startPushService aborted: missing currentUserId - nothing registers');
+    recordPushOutcome('no-user', generation);
     return;
   }
 
   // THE TOKEN A SIGN-OUT STILL OWES THE DELETION OF IS NEVER REGISTERED FOR THE NEXT SESSION: the
   // deletion completes first, or nothing registers (see `endPushRegistration`).
-  if (!(await completeOwedPushTokenDeletion())) return;
+  if (!(await completeOwedPushTokenDeletion())) {
+    recordPushOutcome('deferred', generation);
+    return;
+  }
 
   const registerOnce = async (): Promise<PushRegistrationOutcome> => {
+    const outcome = await registerAttempt();
+    recordPushOutcome(outcome.ok ? 'registered' : outcome.reason, generation);
+    return outcome;
+  };
+
+  const registerAttempt = async (): Promise<PushRegistrationOutcome> => {
     return await registerPushToken(async (pushToken) => {
       // PushKit VoIP token (iOS only, WP-C6): written by the native PKPushRegistry callback, which
       // exists only in a binary with the native ring. Sent at registration so CallKit rings from the
@@ -330,8 +543,11 @@ export async function startPushService(
         // group call only when it declared one, so a build before group calls is never rung for one.
         groupCallVersion: GROUP_CALL_VERSION,
       });
-      const send = (token: string): Promise<Response> =>
-        fetch(`${apiBaseUrl}/api/mls/push/register`, {
+      const send = async (token: string): Promise<Response> => {
+        // NEVER ACCOUNT A's USER ID WITH ACCOUNT B's BEARER: `userId` is the one this ladder started
+        // with, the token the session's current one.
+        if (superseded()) throw new PushRegistrationSupersededError('nothing sent');
+        return await fetch(`${apiBaseUrl}/api/mls/push/register`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -341,6 +557,7 @@ export async function startPushService(
           },
           body,
         });
+      };
       // THE TOKEN IS READ FOR THIS ATTEMPT, never captured when the service started: the ladder
       // below lasts minutes, and a token captured at its start could expire under it and then be
       // refused on every attempt, the gave-up report included.
@@ -382,6 +599,10 @@ export async function startPushService(
       // one may start: two stores in flight could land in either order. A store that failed makes
       // the registration fail too, so it is not counted and the next attempt registers again: the
       // device stays signed out of pushes until a secret is stored (`write_push_secret`).
+      // NOT STORED FOR AN ACCOUNT THAT LEFT: an answer to a request sent before the sign-out would
+      // otherwise store its secret after the next account's, and the native secret would then not
+      // be the one the server holds for that account's row - the two stores in either order above.
+      if (superseded()) throw new PushRegistrationSupersededError('its answer is dropped');
       if (pushSecret) {
         try {
           await invoke('store_push_secret', { secret: pushSecret });
@@ -407,88 +628,110 @@ export async function startPushService(
   if (pushAttempted) {
     console.info('[Push] startPushService re-check (possible token rotation)');
     const recheck = await registerOnce();
-    if (!recheck.ok) {
+    if (!recheck.ok && superseded()) {
+      console.info('[Push] the session that started this re-check ended - nothing reported');
+    } else if (!recheck.ok) {
       await reportGaveUp(apiBaseUrl, auth, deviceId, platform, recheck.reason);
     }
     return;
   }
 
   pushAttempted = true;
-
-  console.info(
-    `[Push] startPushService device=${deviceId} (platform will be confirmed by FCM token)`
-  );
-
-  // --- ANDROID 13+ NOTIFICATION PERMISSION ---
-  //
-  // THE RATIONALE IS ACKNOWLEDGED, NEVER TIMED, AND THAT IS THE WHOLE FIX. It used to be a toast
-  // shown for 6 s with a 1200 ms sleep after it, and the OS dialog opened on the way through: for
-  // the remaining 4,8 s both were on screen at once, and a native permission dialog takes EVERY
-  // touch until it is answered. Measured on A1 on 2026-09-14, on the first launch after an install
-  // - and it presented in a way worth knowing about, because the WebView stopped repainting while
-  // still answering CDP, so the DOM said one thing and the screen showed another. Only a screenshot
-  // separated them.
-  //
-  // A sleep cannot be right here, whatever its length: it is a guess about how fast someone reads,
-  // and the thing it is racing is a dialog this code opens itself. So the two are SEQUENCED by the
-  // one event that proves the first is finished - the user dismissing it. Declining is a real
-  // answer and it is honoured: Android gives an app very few chances to ask, and spending one on a
-  // user who just said "later" wastes it for good.
+  // A marker BESIDE the last final outcome, never over it; cleared by the first attempt's outcome. Read
+  // as `started` only when no final outcome exists and this process is not the one registering.
+  markLadderStarted(generation);
+  ladderGeneration = generation;
   try {
-    let permissionGranted = await isPermissionGranted();
-    if (!permissionGranted) {
-      const askNow = await showConfirm(m.push_permission_rationale(), {
-        confirmLabel: m.push_permission_enable_button(),
-        cancelLabel: m.push_permission_later_button(),
-      });
-      if (askNow) {
-        const permission = await requestPermission();
-        permissionGranted = permission === 'granted';
-      } else {
-        console.info('[Push] rationale declined - the OS permission dialog was not opened');
+    await runFirstLadder(platform);
+  } finally {
+    if (ladderGeneration === generation) ladderGeneration = null;
+  }
+
+  /** The first registration of this process: the permission, then the attempts, then the report. */
+  async function runFirstLadder(platform: PushPlatform): Promise<void> {
+    console.info(
+      `[Push] startPushService device=${deviceId} (platform will be confirmed by FCM token)`
+    );
+
+    // --- ANDROID 13+ NOTIFICATION PERMISSION ---
+    //
+    // THE RATIONALE IS ACKNOWLEDGED, NEVER TIMED, AND THAT IS THE WHOLE FIX. It used to be a toast
+    // shown for 6 s with a 1200 ms sleep after it, and the OS dialog opened on the way through: for
+    // the remaining 4,8 s both were on screen at once, and a native permission dialog takes EVERY
+    // touch until it is answered. Measured on A1 on 2026-09-14, on the first launch after an install
+    // - and it presented in a way worth knowing about, because the WebView stopped repainting while
+    // still answering CDP, so the DOM said one thing and the screen showed another. Only a screenshot
+    // separated them.
+    //
+    // A sleep cannot be right here, whatever its length: it is a guess about how fast someone reads,
+    // and the thing it is racing is a dialog this code opens itself. So the two are SEQUENCED by the
+    // one event that proves the first is finished - the user dismissing it. Declining is a real
+    // answer and it is honoured: Android gives an app very few chances to ask, and spending one on a
+    // user who just said "later" wastes it for good.
+    try {
+      let permissionGranted = await isPermissionGranted();
+      if (!permissionGranted) {
+        const askNow = await showConfirm(m.push_permission_rationale(), {
+          confirmLabel: m.push_permission_enable_button(),
+          cancelLabel: m.push_permission_later_button(),
+        });
+        if (askNow) {
+          const permission = await requestPermission();
+          permissionGranted = permission === 'granted';
+        } else {
+          console.info('[Push] rationale declined - the OS permission dialog was not opened');
+        }
       }
-    }
 
-    if (!permissionGranted) {
-      console.warn(
-        '[Push] Notification permission denied. Pop-up display will be blocked by Android.'
-      );
-      // Continue anyway: FCM can still receive silent data messages (background sync).
+      if (!permissionGranted) {
+        console.warn(
+          '[Push] Notification permission denied. Pop-up display will be blocked by Android.'
+        );
+        // Continue anyway: FCM can still receive silent data messages (background sync).
+      }
+    } catch (err) {
+      console.warn('[Push] Cannot check/request notification permission', err);
     }
-  } catch (err) {
-    console.warn('[Push] Cannot check/request notification permission', err);
-  }
-  // --------------------------------------
+    // --------------------------------------
 
-  let outcome = await registerOnce();
-  if (outcome.ok) return;
-
-  // Fallback: token generation can be delayed on some Android devices.
-  for (let i = 0; i < BACKGROUND_RETRY_ATTEMPTS; i++) {
-    if (FINAL_FAILURES.has(outcome.reason)) {
-      console.warn(`[Push] registration ${outcome.reason} - an answer, so no retry`);
-      break;
-    }
-    await new Promise((resolve) => setTimeout(resolve, BACKGROUND_RETRY_DELAY_MS));
-    outcome = await registerOnce();
+    let outcome = await registerOnce();
     if (outcome.ok) return;
-  }
 
-  console.warn(`[Push] startPushService ended without a registration (${outcome.reason})`);
-  // THE FAILURE IS REPORTED HERE AND NOWHERE EARLIER ON THIS PATH. Every attempt above can fail for
-  // a reason the next one fixes - that is what the retries are for - so reporting one of those would
-  // file a defect against a device that goes on to work. Reaching this line means the device has
-  // given up and every notification for it is now silently lost, which is exactly the state that had
-  // gone unnoticed on iOS for the platform's whole life.
-  //
-  // WHAT THIS COSTS, STATED SO IT IS NOT REDISCOVERED AS A MYSTERY: the ladder spends up to
-  // 30 s + BACKGROUND_RETRY_ATTEMPTS * (BACKGROUND_RETRY_DELAY_MS + 30 s) - four minutes with the
-  // current constants - before the report is even attempted, because each `registerOnce` polls
-  // `getFcmToken` for 30 s. An app closed or backgrounded inside that window reports nothing, and
-  // that is a real reason for a silent device. The retries are not a clock this design leans on, so
-  // they are not shortened here on a hunch: the window is written down, and shortening it needs a
-  // measurement of how long a token really takes to appear on a slow Android.
-  await reportGaveUp(apiBaseUrl, auth, deviceId, platform, outcome.reason);
+    // Fallback: token generation can be delayed on some Android devices.
+    for (let i = 0; i < BACKGROUND_RETRY_ATTEMPTS; i++) {
+      if (FINAL_FAILURES.has(outcome.reason)) {
+        console.warn(`[Push] registration ${outcome.reason} - an answer, so no retry`);
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, BACKGROUND_RETRY_DELAY_MS));
+      if (superseded()) {
+        console.info('[Push] the session that started this registration ended - ladder stopped');
+        return;
+      }
+      outcome = await registerOnce();
+      if (outcome.ok) return;
+    }
+
+    console.warn(`[Push] startPushService ended without a registration (${outcome.reason})`);
+    // THE FAILURE IS REPORTED HERE AND NOWHERE EARLIER ON THIS PATH. Every attempt above can fail for
+    // a reason the next one fixes - that is what the retries are for - so reporting one of those would
+    // file a defect against a device that goes on to work. Reaching this line means the device has
+    // given up and every notification for it is now silently lost, which is exactly the state that had
+    // gone unnoticed on iOS for the platform's whole life.
+    //
+    // WHAT THIS COSTS, STATED SO IT IS NOT REDISCOVERED AS A MYSTERY: the ladder spends up to
+    // 30 s + BACKGROUND_RETRY_ATTEMPTS * (BACKGROUND_RETRY_DELAY_MS + 30 s) - four minutes with the
+    // current constants - before the report is even attempted, because each `registerOnce` polls
+    // `getFcmToken` for 30 s. An app closed or backgrounded inside that window reports nothing, and
+    // that is a real reason for a silent device. The retries are not a clock this design leans on, so
+    // they are not shortened here on a hunch: the window is written down, and shortening it needs a
+    // measurement of how long a token really takes to appear on a slow Android.
+    if (superseded()) {
+      console.info('[Push] the session that started this registration ended - nothing reported');
+      return;
+    }
+    await reportGaveUp(apiBaseUrl, auth, deviceId, platform, outcome.reason);
+  }
 }
 
 /**
@@ -509,9 +752,12 @@ async function reportGaveUp(
 ): Promise<void> {
   // NOT SENT WITHOUT A TOKEN THE SERVER TAKES: the registration just learned that this session has
   // none, and the report would be refused with the same bearer - a request whose answer is known.
+  // NOT SILENT EITHER: the outcome is recorded (`recordPushOutcome`), and the next `register-device`
+  // states it, where the server prints `[PUSH_MISSING] ... last=unauthorized` and answers that it
+  // holds no registration - which drives the next attempt (`reconcilePushRegistration`).
   if (reason === 'unauthorized') {
-    console.warn(
-      '[Push] gave up with no accepted token - the unavailable report is not sent (it would be refused too)'
+    console.error(
+      '[Push] gave up with no accepted token - no registration; the next register-device reports it'
     );
     return;
   }
@@ -600,6 +846,20 @@ export async function endPushRegistration(cause: SignOutCause): Promise<void> {
   } catch (err) {
     console.error('[Push] could not forget the registration skip key at sign-out', err);
   }
+  // The outcome is the session's: the next account starts at `none`, and a registration this
+  // sign-out ends is never stated as `registered` for a device the server no longer holds.
+  try {
+    localStorage.removeItem(PUSH_OUTCOME_STORAGE_KEY);
+    localStorage.removeItem(PUSH_STARTED_STORAGE_KEY);
+  } catch (err) {
+    console.error('[Push] could not forget the registration outcome at sign-out', err);
+  }
+  startedWith = null;
+  // Every ladder of the session that ended stops recording and sending (`pushSessionGeneration`),
+  // and the next account starts its own ladder - permission, attempts, report - not a re-check.
+  pushSessionGeneration++;
+  ladderGeneration = null;
+  pushAttempted = false;
   const platform = pushPlatform();
   if (!platform) {
     console.info('[Push] endPushRegistration noop (no push registration on this platform)');

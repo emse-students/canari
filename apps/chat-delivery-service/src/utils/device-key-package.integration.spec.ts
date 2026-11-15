@@ -162,8 +162,8 @@ maybe('register-device writes its key package row in one statement (PostgreSQL)'
     }
 
     await expect(Promise.all(calls)).resolves.toEqual([
-      { status: 'registered' },
-      { status: 'registered' },
+      { status: 'registered', push: { registered: false } },
+      { status: 'registered', push: { registered: false } },
     ]);
     const rows = await rowsOf('u1', 'web-u1-new');
     expect(rows).toHaveLength(1);

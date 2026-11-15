@@ -2,6 +2,8 @@
 
 target: 1.7.0
 
+**Status (2026-11-15): fixed in the `1.7.0` pre-release work, reading owed.** The measurement was re-taken with a predicate keyed on the launch (`key_package.createdAt`) rather than the sticky row: every older build reads 0, `1.6.12` reads 14 of 38 Android and 10 of 20 iOS; 21 of the 24 launched and sent no registration and no report. `register-device` now answers whether the row is held, the phone re-registers on `false` and states its last outcome, and `[PUSH_MISSING]` and a daily `[PUSH_COVERAGE]` name such phones per build ([chat-delivery](../services/chat-delivery.md#the-servers-row-decides-whether-a-registration-is-owed-2026-11-15)). The sub-branch that went silent is still not proven; the `last=` term on `[PUSH_MISSING]` names it on the first `1.7.0` phone it happens to. **What still closes it**: the `[PUSH_COVERAGE]` WARN lines reading zero for the builds from `1.7.0` on.
+
 **Measured 2026-11-15 on production, read-only, aggregates only** (19:06 UTC, one day after the `v1.6.12` deploy). Population: the native devices (`key_package.deviceOs` android or ios, not revoked) that used a session in the last 24 hours; their build is the one their LATEST key package states; "holds a token" is a `push_token` row for the same `deviceId`.
 
 | build | active devices | with no `push_token` row |

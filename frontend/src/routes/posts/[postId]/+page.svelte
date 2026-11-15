@@ -88,6 +88,7 @@
   {#if post === undefined}
     <!-- The page is already here; only the post is on its way. -->
     <div
+      data-loading-skeleton
       class="border-cn-border bg-cn-surface animate-pulse rounded-3xl border p-5"
       role="status"
       aria-label={m.common_loading_label()}

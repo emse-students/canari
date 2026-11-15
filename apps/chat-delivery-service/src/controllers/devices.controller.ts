@@ -27,6 +27,7 @@ import {
   lastResortDeadline,
 } from '../entities/key-package.entity';
 import { OneTimeKeyPackage, usableOneTimePackage } from '../entities/one-time-key-package.entity';
+import { parsePushOutcome, pushPresenceLine } from '../utils/push-coverage';
 import { GroupMember } from '../entities/group-member.entity';
 import { Group } from '../entities/group.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
@@ -323,6 +324,8 @@ export class DevicesController {
       deviceName?: string;
       deviceOs?: string;
       deviceAppVersion?: string;
+      /** What the device's last push registration came to - see `parsePushOutcome`. */
+      pushOutcome?: unknown;
     },
     @Headers('x-user-id') headerUserId?: string
   ) {
@@ -363,6 +366,7 @@ export class DevicesController {
     const deviceName = sanitizeOptionalDeviceName(body.deviceName);
     const deviceOs = sanitizeOptionalDeviceOs(body.deviceOs);
     const deviceAppVersion = sanitizeOptionalDeviceAppVersion(body.deviceAppVersion);
+    const pushOutcome = parsePushOutcome(body.pushOutcome);
 
     // Enforce the per-user device limit (M5) against LIVE devices - see countLiveDevices for what
     // that means and why the old row count was the wrong quantity. The device being registered is
@@ -428,6 +432,7 @@ export class DevicesController {
         deviceName,
         deviceOs,
         deviceAppVersion,
+        pushOutcome: pushOutcome === 'unstated' ? null : pushOutcome,
       },
       crypto.randomUUID()
     );
@@ -463,7 +468,34 @@ export class DevicesController {
     this.logger.log(
       `[REGISTER_DEVICE][${traceId}] DONE user=${userId} device=${deviceId} isNew=${isNew} pendingGroups=${pendingGroups}`
     );
-    return { status: 'registered' };
+    // WHETHER THIS DEVICE CAN BE WOKEN, answered on the call it makes at every unlock and key-package
+    // renewal: the `push_token` row is the fact, and the client re-registers on `false` instead of
+    // trusting its own copy of it (`reconcilePushRegistration`). A row missing from a phone is said
+    // here with what the device states its last attempt came to - see `utils/push-coverage.ts`.
+    // A LOOKUP THAT FAILED IS NOT AN ANSWER, and it must not cost the registration it follows: the
+    // device is answered `null` (unknown), which the client reads as "do not re-drive".
+    let pushRegistered: boolean | null;
+    try {
+      pushRegistered = await this.pushTokenRepo.existsBy({ userId, deviceId });
+    } catch (e) {
+      pushRegistered = null;
+      this.logger.error(
+        `[PUSH_MISSING] user=${userId} device=${deviceId} the push row lookup FAILED - answered ` +
+          `unknown, nothing re-driven: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+    if (pushRegistered !== null) {
+      const presence = pushPresenceLine({
+        userId,
+        deviceId,
+        deviceOs,
+        build: deviceAppVersion,
+        held: pushRegistered,
+        outcome: pushOutcome,
+      });
+      if (presence) this.logger[presence.level](presence.line);
+    }
+    return { status: 'registered', push: { registered: pushRegistered } };
   }
 
   @UseGuards(HeaderAuthGuard)
