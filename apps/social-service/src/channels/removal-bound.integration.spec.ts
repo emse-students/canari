@@ -36,6 +36,7 @@ import { ChannelMember } from './entities/channel-member.entity';
 import { ChannelMessage } from './entities/channel-message.entity';
 import { WorkspaceInvite } from './entities/workspace-invite.entity';
 import type { RedisService } from '../common/redis';
+import { ACTIVITY_DUMP_SQL, untilWaiting } from '../common/lock-wait.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -46,7 +47,12 @@ const DEPARTURES_MIGRATION = readFileSync(
   'utf8'
 );
 
-const WS = '00000000-0000-4000-8000-0000000000f1';
+/**
+ * The workspace of the suite, FRESH PER RUN: its removal lock (`community_removal:<id>`) is an advisory
+ * lock, which is database-wide, and the suites share one database - a fixed id would be a key any
+ * other suite could probe or take.
+ */
+const WS = crypto.randomUUID();
 const ADMIN_ROLE = '00000000-0000-4000-8000-0000000000f2';
 const MOD_ROLE = '00000000-0000-4000-8000-0000000000f3';
 const SALONS_ROLE = '00000000-0000-4000-8000-0000000000f4';
@@ -205,18 +211,24 @@ maybe('a removal against PostgreSQL', () => {
 
   /**
    * Resolves once `count` backends are WAITING on a lock `holder` (a backend pid) holds - read
-   * from the server's own lock table - or once `settled` says the call finished without waiting,
-   * which is the failure the test then reports. Each round is a real query, never a sleep.
+   * from the server's own lock table, so no other session can answer for it. When `settled` says
+   * the call finished without waiting, or a bound of reads goes by, it FAILS with a message
+   * ({@link untilWaiting}): that is the defect under test, never a silent return. Each round is a
+   * real query, never a sleep.
    */
-  const blockedBy = async (holder: number, settled: () => boolean, count = 1) => {
-    while (!settled()) {
-      const waiting: unknown[] = await q(
-        `SELECT 1 FROM pg_stat_activity WHERE $1::int = ANY (pg_blocking_pids(pid))`,
-        [holder]
-      );
-      if (waiting.length >= count) return;
-    }
-  };
+  const blockedBy = (holder: number, settled: () => boolean, count = 1) =>
+    untilWaiting({
+      what: 'the call under test',
+      atLeast: count,
+      settled,
+      waiting: async () =>
+        (
+          await q(`SELECT 1 FROM pg_stat_activity WHERE $1::int = ANY (pg_blocking_pids(pid))`, [
+            holder,
+          ])
+        ).length,
+      dump: () => q(ACTIVITY_DUMP_SQL),
+    });
 
   /** A raw client in the test schema, holding a transaction the test commits when it chooses. */
   const holder = async (): Promise<{ client: Client; pid: number }> => {

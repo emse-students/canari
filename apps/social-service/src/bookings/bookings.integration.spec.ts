@@ -31,6 +31,7 @@ import { BookingResource } from './entities/booking-resource.entity';
 import { BookingParticipant } from './entities/booking-participant.entity';
 import { isExclusionViolation } from '../common/pg-errors';
 import { Association } from '../associations/entities/association.entity';
+import { ACTIVITY_DUMP_SQL, settledFlag, untilWaiting } from '../common/lock-wait.it-fixture';
 import {
   BOOKINGS_ERASURE_STATEMENTS,
   DELETED_ACCOUNT,
@@ -68,19 +69,23 @@ maybe('bookings schema against PostgreSQL (migration 087)', () => {
   /**
    * Resolves once the backend `pid` is WAITING ON A LOCK, read from `pg_stat_activity` - the proof
    * that the second insert really reached the server and is held by the first transaction, rather
-   * than a race the test won by arriving late. Bounded: 200 reads, then it fails.
+   * than a race the test won by arriving late. Each round is a real query, never a sleep; the
+   * insert (`operation`) settling first, or a bound of reads, fails it with a message
+   * ({@link untilWaiting}) - never a bare jest timeout.
    */
-  async function blocked(pid: number): Promise<void> {
-    for (let i = 0; i < 200; i++) {
-      const { rows } = await admin.query(
-        `SELECT 1 FROM pg_stat_activity WHERE pid = $1 AND wait_event_type = 'Lock'`,
-        [pid]
-      );
-      if (rows.length > 0) return;
-      await new Promise((r) => setTimeout(r, 10));
-    }
-    throw new Error(`backend ${pid} never waited on a lock`);
-  }
+  const blocked = (pid: number, operation: Promise<unknown>) =>
+    untilWaiting({
+      what: `the insert on backend ${pid}`,
+      settled: settledFlag(operation),
+      waiting: async () =>
+        (
+          await admin.query(
+            `SELECT 1 FROM pg_stat_activity WHERE pid = $1 AND wait_event_type = 'Lock'`,
+            [pid]
+          )
+        ).rows.length,
+      dump: async () => (await admin.query(ACTIVITY_DUMP_SQL)).rows,
+    });
 
   const pidOf = (c: Client) => (c as unknown as { processID: number }).processID;
 
@@ -171,7 +176,7 @@ maybe('bookings schema against PostgreSQL (migration 087)', () => {
           () => 'inserted',
           (err: unknown) => err
         );
-        await blocked(pidOf(b));
+        await blocked(pidOf(b), second);
         await a.query('COMMIT');
         const outcome = await second;
         await b.query('ROLLBACK');
@@ -193,7 +198,7 @@ maybe('bookings schema against PostgreSQL (migration 087)', () => {
         await a.query('BEGIN');
         await a.query(INSERT, [r.id, ALICE, at('10:00'), at('10:30')]);
         const second = b.query(INSERT, [r.id, BOB, at('10:15'), at('10:45')]);
-        await blocked(pidOf(b));
+        await blocked(pidOf(b), second);
         await a.query('ROLLBACK');
         await expect(second).resolves.toBeDefined();
       } finally {

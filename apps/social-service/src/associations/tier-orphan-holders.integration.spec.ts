@@ -19,6 +19,7 @@
  *
  * Everything happens in a throwaway schema, dropped at the end.
  */
+import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ConflictException, ForbiddenException, Logger } from '@nestjs/common';
@@ -40,7 +41,12 @@ import { ProductsService } from './products.service';
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
 
-const ASSO = '00000000-0000-4000-8000-0000000000b7';
+/**
+ * FRESH PER RUN: the lock probed below is `tier:<this id>`, an advisory lock - database-wide, in a
+ * database every integration suite shares. A fixed id is a key another suite (a form grid reuses
+ * this one) could take or probe, and answer for this test.
+ */
+const ASSO = randomUUID();
 const SLUG = 'orph-it';
 const LOW = '00000000-0000-4000-8000-0000000000d1';
 const HIGH = '00000000-0000-4000-8000-0000000000d2';
