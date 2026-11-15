@@ -25,6 +25,7 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
 
 import MessageBubble from './MessageBubble.svelte';
 import { REPLY_SWIPE_TRIGGER_PX } from '$lib/utils/messageSwipeReply';
+import { Log } from '$lib/utils/Log';
 
 const mounted: (() => void)[] = [];
 
@@ -360,6 +361,29 @@ describe('MessageBubble - a WebKit thumb arc is CLAIMED, not left to the scrolle
     expect(unclaimedMoves).toBe(0);
   });
 
+  it('KNOWN LIMIT: a first delivered move under the 8px lock is not claimed, and the model hands the stroke to the scroller', () => {
+    // Not claiming before the lock is deliberate: a vertical scroll's first move is just as small,
+    // and cancelling it would stop the thread from scrolling. The cost is a stroke whose first
+    // delivered move is 2-4 px: under this (stricter than real) model WebKit takes it. Whether the
+    // iPhone does is the reading owed on the pre-release (design-reference, same section).
+    const h = mountBubble();
+    const el = bubble();
+    el.dispatchEvent(pointer('pointerdown', 100, 200));
+    el.dispatchEvent(touch('touchstart', 100, 200));
+    const first = touch('touchmove', 103, 201);
+    el.dispatchEvent(pointer('pointermove', 103, 201));
+    el.dispatchEvent(first);
+    expect(first.defaultPrevented).toBe(false);
+    const second = touch('touchmove', 140, 215);
+    el.dispatchEvent(pointer('pointermove', 140, 215));
+    el.dispatchEvent(second);
+    el.dispatchEvent(pointer('pointercancel', 0, 0));
+    el.dispatchEvent(touch('touchcancel', 0, 0));
+    flushSync();
+
+    expect(h.reply).not.toHaveBeenCalled();
+  });
+
   it('still lets a vertical drag scroll the thread: not one move is cancelled', () => {
     const h = mountBubble();
     const el = bubble();
@@ -379,7 +403,8 @@ describe('MessageBubble - a WebKit thumb arc is CLAIMED, not left to the scrolle
     expect(h.reply).not.toHaveBeenCalled();
   });
 
-  it('keeps the gesture when the engine already owns the stroke (its loss is logged, once)', () => {
+  it('keeps the gesture when the engine already owns the stroke, and logs the loss exactly once', () => {
+    const warn = vi.spyOn(Log, 'w').mockImplementation(() => {});
     const h = mountBubble();
     const el = bubble();
     el.dispatchEvent(pointer('pointerdown', 100, 200));
@@ -399,6 +424,7 @@ describe('MessageBubble - a WebKit thumb arc is CLAIMED, not left to the scrolle
     // Behaviour is unchanged from before the claim existed (Android kept replying); the loss is
     // reported once per stroke, not once per move.
     expect(h.reply).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 });
 

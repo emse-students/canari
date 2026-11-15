@@ -721,9 +721,9 @@
         // the engine, and WebKit applies a diagonal's vertical component to the thread unless the
         // page cancels the move (iPhone 12, 2026-11-15: a 110 px stroke with 45 px of drift
         // scrolled the thread 35 px and staged no reply). Chromium never needed it - its first
-        // direction decides - which is why Android kept working. Cancelable until the engine has
+        // direction decides - which is why Android kept replying without it. Cancelable until the engine has
         // started a scroll; the lock is at 8 px so the first delivered move already claims.
-        if (!claimTouchMove(e) && !replyClaimLossLogged) {
+        if (!replyClaimLossLogged && !claimTouchMove(e)) {
           replyClaimLossLogged = true;
           Log.w(
             'MESSAGE',
