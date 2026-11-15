@@ -5,7 +5,6 @@ import {
   Get,
   Headers,
   Param,
-  ParseUUIDPipe,
   Patch,
   Post,
   Put,
@@ -22,6 +21,7 @@ import {
   UpdatePosterProjectDto,
 } from './dto/poster.dto';
 import type { CarteCaller } from './poster-scope';
+import { RouteParams } from '../common/route-params';
 
 /** The caller as the carte scope reads it (`poster-scope.ts`). */
 function caller(userId: string, ga: string | undefined): CarteCaller {
@@ -40,6 +40,7 @@ function caller(userId: string, ga: string | undefined): CarteCaller {
  * the `/associations/:id` matcher; `spaces` is declared before `:id` for the same reason.
  */
 @UseGuards(NginxAuthGuard, GlobalAdminOrBdeSuperAdminGuard)
+@RouteParams({ id: 'uuid', zoneId: 'uuid' })
 @Controller('associations/poster')
 export class PosterController {
   constructor(private readonly service: PosterService) {}
@@ -59,7 +60,7 @@ export class PosterController {
   /** One map: layout, space, zones, switches, and the associations its space offers. */
   @Get(':id')
   get(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga?: string
   ) {
@@ -79,7 +80,7 @@ export class PosterController {
   /** Renames a map, replaces its layout, or attaches a map that has no space. */
   @Patch(':id')
   update(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga: string | undefined,
     @Body() dto: UpdatePosterProjectDto
@@ -90,7 +91,7 @@ export class PosterController {
   /** Permanently deletes a map. */
   @Delete(':id')
   remove(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga?: string
   ) {
@@ -100,7 +101,7 @@ export class PosterController {
   /** Adds a zone to the map. */
   @Post(':id/zones')
   createZone(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga: string | undefined,
     @Body() dto: PosterZoneDto
@@ -111,7 +112,7 @@ export class PosterController {
   /** Persists the order of the map's zones. Declared before `zones/:zoneId`. */
   @Put(':id/zones/order')
   reorderZones(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga: string | undefined,
     @Body() dto: ReorderPosterZonesDto
@@ -122,8 +123,8 @@ export class PosterController {
   /** Renames a zone of the map. */
   @Patch(':id/zones/:zoneId')
   renameZone(
-    @Param('id', ParseUUIDPipe) id: string,
-    @Param('zoneId', ParseUUIDPipe) zoneId: string,
+    @Param('id') id: string,
+    @Param('zoneId') zoneId: string,
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga: string | undefined,
     @Body() dto: PosterZoneDto
@@ -134,8 +135,8 @@ export class PosterController {
   /** Deletes a zone of the map; its associations stay, unzoned. */
   @Delete(':id/zones/:zoneId')
   deleteZone(
-    @Param('id', ParseUUIDPipe) id: string,
-    @Param('zoneId', ParseUUIDPipe) zoneId: string,
+    @Param('id') id: string,
+    @Param('zoneId') zoneId: string,
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga?: string
   ) {
@@ -145,7 +146,7 @@ export class PosterController {
   /** Writes the switch and/or zone of associations on the map. */
   @Put(':id/entries')
   setEntries(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga: string | undefined,
     @Body() dto: SetPosterEntriesDto
@@ -160,7 +161,7 @@ export class PosterController {
    */
   @Post(':id/publish')
   publish(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga: string | undefined,
     @Body() payload: unknown
@@ -171,7 +172,7 @@ export class PosterController {
   /** Takes this map offline; its space then has no live map. */
   @Post(':id/unpublish')
   unpublish(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga?: string
   ) {

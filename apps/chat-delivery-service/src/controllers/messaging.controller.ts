@@ -33,6 +33,7 @@ import {
   sanitizeOptionalQueryValue,
   sanitizeQueryValue,
 } from '../utils/sanitize';
+import { RouteParams } from '../common/route-params';
 
 /**
  * Commits one user may submit per minute on `POST /mls/commit`, across all their devices.
@@ -65,6 +66,7 @@ const UNINVITED_ENTRY_KINDS: readonly string[] = [
 const EVIDENCED_UNINVITED_ENTRY_KINDS: readonly string[] = ['new-person', 'returning'];
 
 /** MLS message send, commit validation, welcome delivery, history, and ACK. */
+@RouteParams({ groupId: 'uuid', userId: 'opaque', deviceId: 'opaque' })
 @Controller()
 export class MessagingController {
   private readonly logger = new Logger(MessagingController.name);
@@ -148,7 +150,8 @@ export class MessagingController {
     @Param('groupId') groupId: string,
     @Query('baseEpoch') baseEpochRaw?: string
   ) {
-    // Who is asking before what: an unauthenticated request is refused as such, whatever it asked.
+    // Who is asking before what: an unauthenticated request is refused as such, whatever it asked
+    // of a well-formed path (a `groupId` that is not a uuid never reaches a handler: `@RouteParams`).
     if (!authUserId) {
       throw new BadRequestException('missing x-user-id');
     }

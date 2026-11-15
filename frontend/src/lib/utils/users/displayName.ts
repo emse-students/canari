@@ -4,6 +4,7 @@ import {
   getSavedDisplayName,
   isAbsentUserError,
   isDeletedAccountError,
+  MalformedUserIdError,
 } from '$lib/stores/user';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { TransportFailureError } from '$lib/utils/transportFailure';
@@ -32,6 +33,9 @@ const firstNameCache = new SvelteMap<string, string>();
  * not one per call.
  */
 const profileAsked = new SvelteSet<string>();
+/** Set once the first malformed-id lookup of the session has been said. */
+let malformedSaid = false;
+
 const FAILURE_BACKOFF_MS = 2 * 60 * 1000;
 
 /**
@@ -455,6 +459,28 @@ export async function resolveUserDisplayName(userId: string): Promise<string | n
             `"${label}" for the rest of the session and is not asked for again`,
           { userId: normalized }
         );
+        displayNameCache.set(normalized, label);
+        failedAt.delete(normalized);
+        return label;
+      }
+      // A STRING NO ACCOUNT CAN HAVE IS NEVER GOING TO BECOME ONE (the server's `malformed`, by the
+      // mint rule). It is a defect of whoever asked, so it is neither "deleted" (no noteDeletedAccount,
+      // no label claiming a deletion) nor a failure to ask (no backoff: a timer would only re-ask a
+      // question whose answer cannot change, and each ask would print the string - a person's name when
+      // a payload carried names instead of ids). Settled for the session in the ordinary cache, said
+      // ONCE per session with no value in the line.
+      if (e instanceof MalformedUserIdError) {
+        profileAsked.add(normalized);
+        if (!malformedSaid) {
+          malformedSaid = true;
+          console.warn(
+            `[DISPLAYNAME] a lookup asked for something that is not an account id (length ${normalized.length}) - ` +
+              `a caller handed over a name or a sentence instead of an id; it renders as "unknown" for the ` +
+              `session and is not asked for again`
+          );
+        }
+        if (cached) return cached;
+        const label = m.user_unknown_label();
         displayNameCache.set(normalized, label);
         failedAt.delete(normalized);
         return label;

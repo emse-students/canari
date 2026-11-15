@@ -27,6 +27,7 @@ import { invalidatePostListCache } from '../posts/post-list-cache';
 import { PostMediaRetentionService } from '../posts/post-media-retention.service';
 import { type ErasureDb, eraseSocialRows, keptPostMediaIds } from './account-erasure';
 import type { EntityManager } from 'typeorm';
+import { RouteParams } from '../common/route-params';
 
 /** A membership row of the external profile projection (`GET users/:userId/associations`). */
 export interface ProfileAssociationRow {
@@ -51,6 +52,7 @@ export interface ProfileFormerAssociationRow extends Omit<ProfileAssociationRow,
  * NOT exposed through Nginx: only reachable via Docker-internal networking.
  * Auth: X-Internal-Secret header matched against INTERNAL_SECRET env var.
  */
+@RouteParams({ associationId: 'uuid', userId: 'opaque', userA: 'opaque', userB: 'opaque' })
 @Controller('internal')
 export class InternalController {
   private readonly logger = new Logger(InternalController.name);

@@ -16,6 +16,7 @@ import {
   internalSocialRequestConfig,
   internalUserAssociationsUrl,
 } from '../payment/social-internal-client';
+import { RouteParams } from '../common/route-params';
 
 /** Associations projection returned by social-service for a user. */
 interface SocialAssociations {
@@ -46,6 +47,7 @@ interface SocialAssociations {
  * Exposed through Nginx at /api/external/* WITHOUT the session auth_request:
  * authentication is the x-api-key header matched against EXTERNAL_API_KEY.
  */
+@RouteParams({ sub: 'opaque' })
 @Controller('external')
 export class ExternalController {
   private readonly logger = new Logger(ExternalController.name);

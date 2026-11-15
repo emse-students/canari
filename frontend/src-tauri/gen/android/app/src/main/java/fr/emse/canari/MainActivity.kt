@@ -756,7 +756,7 @@ class MainActivity : TauriActivity() {
         // BACK AT A ROOT TAB WITH NO HISTORY GOES TO THE BACKGROUND, LIKE MESSENGER (owner, 2026-11-14).
         // `super.onBackPressed()` finishes the activity, and tao's Android event loop then ends with
         // `std::process::exit`, so the next launch was a cold start (read on the Mi 9T, 2026-11-14,
-        // docs/wiki/backlog.d/root-back-exits-the-process-through-tao.md). Moving the task back keeps the
+        // docs/wiki/frontend/mobile.md, "Back at a root tab goes to the background"). Moving the task back keeps the
         // process and the WebView warm on every API level; the system still ends them under memory pressure.
         Log.i("MainActivity", "Back at the root with no history on API ${Build.VERSION.SDK_INT} - moving the task to the background")
         moveTaskToBack(true)
