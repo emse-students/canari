@@ -2810,7 +2810,7 @@ are left as they are (no row is rewritten).
   answer where it already had to ask it). **Stored posts are masked at read, never rewritten.
   Measured read-only on production on 2026-11-15** with
   `SELECT anonymous, ("attachedFormId" IS NOT NULL) AS has_form_id, (forms <> '[]'::jsonb)
-  AS has_inline_forms, count(*) FROM posts GROUP BY 1, 2, 3`: 299 posts with neither, 14
+  AS has_inline_forms, count(*) FROM posts GROUP BY 1, 2, 3` (recounted the same day, ~14:20): 301 posts with neither, 14
   non-anonymous posts with an attached form, 16 anonymous posts with none - ZERO anonymous posts
   carrying a form, and ZERO posts with a non-empty inline `forms` list in any group. So the read-side
   mask covers no stored post today, and the retired inline list was never stored: for stored data,
