@@ -4364,17 +4364,16 @@ export abstract class BaseMlsService implements IMlsService {
       const settledBefore = this.keyPackageRoundsSettled;
       // NEVER LEARN BY A 404 WHAT THE CLIENT ALREADY KNOWS: this device's id was MINTED in this
       // process (`stateWasExpected` false - no id was stored before this boot, read from durable
-      // state by `resolveDeviceId`), so its whole life is this process, no round of it has settled
-      // yet and one is running: its FIRST publication is in flight and the server cannot hold a
-      // package of it. A RETURNING device (an id stored before this boot) is never skipped - its
+      // state by `resolveDeviceId`), so its whole life is this process and no round of it has settled
+      // yet: it has never published and the server cannot hold a package of it - whether its
+      // FIRST round is running (the read is made when it settles) or has not started yet (a join
+      // landing in that gap used to ask anyway: one 404 per attempt, and the pass below starts the
+      // round). A RETURNING device (an id stored before this boot) is never skipped - its
       // package may well be published already, and waiting on its boot round would make a failed
-      // round fail a join that a read would have let through. The read is made when the round settles.
-      const firstPublicationRunning =
-        pass === 1 &&
-        !this.stateWasExpected &&
-        this.keyPackageRoundsActive > 0 &&
-        this.keyPackageRoundsSettled === 0;
-      const answer = firstPublicationRunning
+      // round fail a join that a read would have let through.
+      const neverPublished =
+        pass === 1 && !this.stateWasExpected && this.keyPackageRoundsSettled === 0;
+      const answer = neverPublished
         ? null
         : // A PEEK: this reads a fact, and a claim would spend one of this device's own one-time
           // packages per join attempt - production 2026-11-06, a device retrying seven unjoinable

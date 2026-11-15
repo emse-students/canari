@@ -47,7 +47,7 @@ import { Log } from '$lib/utils/Log';
  */
 
 /** Marks a media opener whose tap is held for the double-tap window (see above). */
-export const DOUBLE_TAP_DEFERS = 'data-double-tap-defers';
+const DOUBLE_TAP_DEFERS = 'data-double-tap-defers';
 
 /** Marks a region of a likeable surface where a tap is never part of a double tap. */
 export const NO_DOUBLE_TAP = 'data-no-double-tap';

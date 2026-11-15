@@ -56,6 +56,7 @@
     getToken,
     clearAuth,
     setSessionExpiredHandler,
+    type SessionExpiredTarget,
     setSignOutHandler,
     isRefreshCredentialProvenDead,
     leaveSignedOut,
@@ -749,7 +750,10 @@
    * reset must not depend on which came first. Measured on DEV-2 (2026-10-25): the frame's check met
    * the dead session, read "not revoked", and this generic sign-out kept every local store.
    */
-  async function handleSessionExpired(outcome?: SessionExpiredOutcome) {
+  async function handleSessionExpired(
+    outcome?: SessionExpiredOutcome,
+    verdictTarget?: SessionExpiredTarget | null
+  ) {
     // RELEASING THIS CALLER IS NOT THE LOGOUT, AND DEDUPLICATING THEM TOGETHER SILENCED THE
     // TRIGGER. `_sessionExpiredHandled` answers "has a logout already run for this expiry" -
     // several observers reach the same verdict at once (the global notifier, the promotion path, a
@@ -788,11 +792,9 @@
     // usually still in flight here (its `load` is what met the 401), and `navigating.to` is the
     // only place that target lives. A bare `/login` dropped a tapped post push (Mi 9T, 2026-10-08).
     const loginPath = loginAfterSessionExpiry(
-      (navigating.to?.url ?? (typeof window === 'undefined' ? null : window.location)) as {
-        pathname: string;
-        search: string;
-        hash: string;
-      } | null
+      navigating.to?.url ??
+        verdictTarget ??
+        (typeof window === 'undefined' ? null : window.location)
     );
     // A session the server ended BECAUSE ITS OWNER REVOKED THIS DEVICE resets the device first. The
     // account is the refused credential's: on a cold start no login has named it to the session yet.
@@ -1556,7 +1558,7 @@
     // from any caller - a background poll, a socket reconnect, a native auto-login. Wiring the
     // reaction once, here, is what makes the logout unmissable instead of depending on which path
     // happened to observe the 401 (WP-ANDROID-SESS-1).
-    setSessionExpiredHandler(() => void handleSessionExpired());
+    setSessionExpiredHandler((target) => void handleSessionExpired(undefined, target));
     // A signed-in session whose MLS session is lost is NOT an expired one - that is a status, this a
     // local fact (`mlsSessionLoss.ts`) - so it ends on this device only and reopens at the PIN gate.
     setMlsSessionLostHandler((why) => void handleMlsSessionLost(why));

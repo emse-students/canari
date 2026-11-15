@@ -27,6 +27,7 @@ import {
   publishPaymentRefusal,
 } from './payment-offer';
 import { FORM_DRAFT, FORM_PUBLISHED, respondentFormWhere, type FormStatus } from './form-status';
+import { managesForm } from './form-ownership';
 import {
   FORM_CHANGED_SINCE_REVISION,
   FORM_DRAFT_CONFLICT,
@@ -1115,7 +1116,8 @@ export class FormsService {
   }
 
   /**
-   * Returns a single form by ID with its current submission count and `cotisationDisabled`.
+   * Returns a single form by ID with its current submission count and `cotisationDisabled`;
+   * `ownerId` only to a manager of the form.
    *
    * A form that does not exist (a deleted one included) is a 404, never `null`: Nest serialises a
    * returned `null` as a `200` with an EMPTY body, which the client could only read as a raw
@@ -1147,7 +1149,18 @@ export class FormsService {
     // The name too (the SAME lookup as the list): a link-preview card says "Ouvert · <association>".
     const names = await this.associationNamesOf([form]);
     const associationName = form.associationId ? (names.get(form.associationId) ?? null) : null;
-    return { ...form, submissionCount, cotisationDisabled, paymentsPaused, associationName };
+    // Who created the form is its managers' to read: a respondent is shown the form, never its
+    // creator (an anonymous post's form would otherwise name a candidate author).
+    const manages = await this.managesForm(form, viewer);
+    const { ownerId, ...served } = form;
+    return {
+      ...served,
+      ...(manages ? { ownerId } : {}),
+      submissionCount,
+      cotisationDisabled,
+      paymentsPaused,
+      associationName,
+    };
   }
 
   /**
@@ -1305,14 +1318,8 @@ export class FormsService {
     form: Form,
     viewer: { userId: string; isGlobalAdmin: boolean } | undefined
   ): Promise<boolean> {
-    if (!viewer?.userId) return false;
-    if (viewer.isGlobalAdmin) return true;
-    if (!form.associationId) return form.ownerId === viewer.userId;
-    return this.associationsService.mayAct(
-      viewer.userId,
-      form.associationId,
-      AssociationPermissionFlag.MANAGE_FORMS,
-      { isGlobalAdmin: viewer.isGlobalAdmin }
+    return managesForm(form, viewer, (userId, associationId, flag, opts) =>
+      this.associationsService.mayAct(userId, associationId, flag, opts)
     );
   }
 

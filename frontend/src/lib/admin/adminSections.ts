@@ -228,7 +228,7 @@ const GROUPS: readonly {
 ];
 
 /** The anchor of a group's heading on the hub: what the group crumb links to. */
-export function adminGroupHref(group: AdminGroupKey): string {
+function adminGroupHref(group: AdminGroupKey): string {
   return `/admin#group-${group}`;
 }
 

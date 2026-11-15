@@ -1,0 +1,3 @@
+### Changed - on a weak link, the feed and every page but the chat no longer wait for the MLS engine's download
+
+The 0.88 MB engine was downloaded beside the JavaScript on every page of an enrolled browser and took its share of the link whatever its priority, so the feed `/` lands on became usable 13 s later on Slow 3G (46 s instead of 33 s, local rig). The early download now starts only on `/chat` and `/communities`, whose list waits for it; elsewhere it starts once the page's code has run ([offline-and-weak-network](docs/wiki/frontend/offline-and-weak-network.md#23-the-engine-is-preloaded-only-where-the-first-screen-waits-for-it-2026-11-09)).
