@@ -10,10 +10,7 @@ declare global {
       /** Per-route SEO overrides for {@link import('$lib/components/seo/SeoHead.svelte').default}. */
       seo?: import('$lib/seo/types').SeoMeta;
     }
-    interface PageState {
-      /** The page this history entry was reached from: see `lib/navigation/backToOrigin.ts`. */
-      from?: string;
-    }
+    // interface PageState {}
     // interface Platform {}
   }
 

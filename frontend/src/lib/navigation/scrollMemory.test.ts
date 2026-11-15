@@ -1,17 +1,17 @@
 // @vitest-environment happy-dom
 /**
- * A PAGE IS REOPENED WHERE IT WAS LEFT, ON A BACK (owner report, 2026-11-15).
+ * A PAGE IS REOPENED WHERE IT WAS LEFT, ON A BACK (owner report, 2026-11-15; review of #3648).
  *
- * The box the app scrolls in is not the window, so SvelteKit never restored it. These pin the three
- * facts the layout relies on: only a positive offset is kept per address, a restore waits for the
- * content instead of a clock, and the reader's own scroll or the next navigation ends the wait.
+ * The box the app scrolls in is not the window, so SvelteKit never restored it. These pin what the
+ * layout relies on: an offset per history ENTRY, a restore that waits for the content AND for the
+ * placeholders to leave, and that always ends - applied, settled shorter, scrolled by the reader, or
+ * cancelled by the next navigation - with no clock anywhere.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { resetEntryMemory } from './historyEntry';
 import { cancelRestore, recallScroll, rememberLeaving, restoreOnReturn } from './scrollMemory';
 
-const url = (p: string) => new URL(`http://x${p}`);
-
-/** A scroller whose scrollable height the test controls, and a ResizeObserver it can fire. */
+/** A scroller whose scrollable height the test controls. */
 function scroller(height: { scroll: number }) {
   const el = document.createElement('div');
   Object.defineProperty(el, 'scrollHeight', { get: () => height.scroll });
@@ -35,68 +35,122 @@ class FakeResizeObserver {
   }
 }
 vi.stubGlobal('ResizeObserver', FakeResizeObserver);
-const fireResize = () => live.forEach((o) => o.fire());
+const resized = () => live.forEach((o) => o.fire());
+/** requestAnimationFrame as a queue the test drains, one frame at a time. */
+let frameQueue: (() => void)[] = [];
+vi.stubGlobal('requestAnimationFrame', (cb: () => void) => frameQueue.push(cb));
+const frame = () => {
+  const run = frameQueue;
+  frameQueue = [];
+  run.forEach((cb) => cb());
+};
+/** happy-dom delivers MutationObserver callbacks as microtasks. */
+const flush = () => new Promise((r) => setTimeout(r, 0));
 
 afterEach(() => {
   cancelRestore();
+  resetEntryMemory();
   live.length = 0;
+  frameQueue = [];
   document.body.innerHTML = '';
 });
 
 describe('rememberLeaving / recallScroll', () => {
-  it('keys a page by path and query, and forgets a page left at the top', () => {
-    rememberLeaving(url('/posts?feed=all#a'), 1200);
-    expect(recallScroll(url('/posts?feed=all'))).toBe(1200);
-    expect(recallScroll(url('/posts'))).toBeUndefined();
-    rememberLeaving(url('/posts?feed=all'), 0);
-    expect(recallScroll(url('/posts?feed=all'))).toBeUndefined();
+  it('keys an ENTRY, so two entries of one address keep two offsets, and forgets the top', () => {
+    rememberLeaving(1, 1200);
+    rememberLeaving(2, 300);
+    expect(recallScroll(1)).toBe(1200);
+    expect(recallScroll(2)).toBe(300);
+    rememberLeaving(1, 0);
+    expect(recallScroll(1)).toBeUndefined();
+    rememberLeaving(undefined, 500);
+    expect(recallScroll(undefined)).toBeUndefined();
   });
 });
 
 describe('restoreOnReturn', () => {
-  it('has nothing to do for a first visit', () => {
-    expect(restoreOnReturn(url('/never-seen'), scroller({ scroll: 5000 }))).toBe(false);
+  it('has nothing to do for an entry never left scrolled', () => {
+    expect(restoreOnReturn(99, scroller({ scroll: 5000 }))).toBe(false);
   });
 
-  it('applies the offset at once when the content is already tall enough', () => {
-    rememberLeaving(url('/a'), 1200);
+  it('applies the offset at once when the content is tall enough and nothing is loading', () => {
+    rememberLeaving(1, 1200);
     const el = scroller({ scroll: 5000 });
-    expect(restoreOnReturn(url('/a'), el)).toBe(true);
+    expect(restoreOnReturn(1, el)).toBe(true);
     expect(el.scrollTop).toBe(1200);
   });
 
-  it('waits for the content, then applies it - by a resize, not by a timer', () => {
-    rememberLeaving(url('/b'), 1200);
-    const height = { scroll: 800 };
-    const el = scroller(height);
-    restoreOnReturn(url('/b'), el);
+  it('does NOT trust a tall skeleton: it waits until the placeholders are gone', async () => {
+    rememberLeaving(1, 1200);
+    const el = scroller({ scroll: 5000 });
+    el.innerHTML = '<div class="animate-pulse"></div>';
+    restoreOnReturn(1, el);
     expect(el.scrollTop).toBe(0);
-    fireResize();
-    expect(el.scrollTop).toBe(0);
-    height.scroll = 3000;
-    fireResize();
+    el.innerHTML = '<article>cards</article>';
+    await flush();
     expect(el.scrollTop).toBe(1200);
   });
 
-  it('ends when the reader scrolls by themselves', () => {
-    rememberLeaving(url('/c'), 1200);
+  it('waits for the content to grow, then applies', () => {
+    rememberLeaving(1, 1200);
     const height = { scroll: 800 };
     const el = scroller(height);
-    restoreOnReturn(url('/c'), el);
-    el.dispatchEvent(new Event('touchstart'));
+    restoreOnReturn(1, el);
     height.scroll = 3000;
-    fireResize();
+    resized();
+    expect(el.scrollTop).toBe(1200);
+  });
+
+  it('ENDS when the page settled shorter: two quiet frames after a change, never for ever', () => {
+    rememberLeaving(1, 5000);
+    const height = { scroll: 2000 };
+    const el = scroller(height);
+    restoreOnReturn(1, el);
+    resized(); // a change, no placeholder, not tall enough: wait for the page to stop changing
+    frame();
+    expect(el.scrollTop).toBe(0);
+    frame();
+    expect(el.scrollTop).toBe(5000); // the browser clamps it to the page; the raw assignment here
+    height.scroll = 9000;
+    resized(); // the observers are disconnected: a late growth is not followed
+    expect(live.every((o) => !o.active)).toBe(true);
+  });
+
+  it('a page still growing keeps invalidating the settle check (cards mounted a frame at a time)', () => {
+    rememberLeaving(1, 5000);
+    const height = { scroll: 2000 };
+    const el = scroller(height);
+    restoreOnReturn(1, el);
+    resized();
+    frame();
+    height.scroll = 3000;
+    resized(); // grew again before the second frame
+    frame();
+    expect(el.scrollTop).toBe(0);
+    height.scroll = 6000;
+    resized(); // now tall enough: applied at once
+    expect(el.scrollTop).toBe(5000);
+  });
+
+  it('ends on ANY scroll event the reader started (wheel, scrollbar, key alike)', () => {
+    rememberLeaving(1, 1200);
+    const height = { scroll: 800 };
+    const el = scroller(height);
+    restoreOnReturn(1, el);
+    el.dispatchEvent(new Event('scroll'));
+    height.scroll = 3000;
+    resized();
     expect(el.scrollTop).toBe(0);
   });
 
   it('ends when a navigation begins', () => {
-    rememberLeaving(url('/d'), 1200);
+    rememberLeaving(1, 1200);
     const height = { scroll: 800 };
     const el = scroller(height);
-    restoreOnReturn(url('/d'), el);
+    restoreOnReturn(1, el);
     cancelRestore();
     height.scroll = 3000;
-    fireResize();
+    resized();
     expect(el.scrollTop).toBe(0);
   });
 });

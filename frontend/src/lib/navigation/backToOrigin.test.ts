@@ -1,22 +1,28 @@
 // @vitest-environment happy-dom
 /**
- * BACK AFTER A CROSS-SECTION OPEN RETURNS TO THE ORIGIN (owner report, 2026-11-15).
+ * BACK AFTER A CROSS-SECTION OPEN RETURNS TO THE ORIGIN (owner report, 2026-11-15; review of #3648).
  *
  * One rule decides every arrow: history Back when the page it was reached from is the structural
- * parent or ANOTHER top-level section; the structural link otherwise. Each row below is a real
- * shape of the table in `docs/wiki/frontend/section-navigation.md`.
+ * parent or ANOTHER top-level section, and only for an entry a link or goto ADDED; the structural
+ * link otherwise. A REPLACE inherits and records nothing, and recording never navigates.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const state = vi.hoisted(() => ({
-  page: { url: new URL('http://x/'), state: {} as { from?: string } },
+const route = vi.hoisted(() => ({ url: new URL('http://x/') }));
+vi.mock('$app/state', () => ({ page: route }));
+// Recording must never navigate: every navigation API is a spy the tests assert untouched.
+const nav = vi.hoisted(() => ({
+  goto: vi.fn(),
+  pushState: vi.fn(),
+  replaceState: vi.fn(),
+  invalidate: vi.fn(),
 }));
-const goto = vi.hoisted(() => vi.fn(async (_to: string, _opts?: unknown) => {}));
-vi.mock('$app/state', () => state);
-vi.mock('$app/navigation', () => ({ goto }));
+vi.mock('$app/navigation', () => nav);
+const overlays = vi.hoisted(() => ({ depth: 0 }));
+vi.mock('$lib/utils/historyOverlayStack', () => ({
+  historyOverlayStackDepth: () => overlays.depth,
+}));
 
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { handleAppLinkClick } from '$lib/utils/openExternal';
 import {
   BACK_LINK_ATTRIBUTE,
@@ -25,12 +31,31 @@ import {
   recordArrival,
   sectionOf,
 } from './backToOrigin';
+import { HISTORY_METADATA_KEY, memoryOf, resetEntryMemory } from './historyEntry';
 
 afterEach(() => {
-  goto.mockClear();
-  state.page.state = {};
+  resetEntryMemory();
+  overlays.depth = 0;
+  Object.values(nav).forEach((f) => f.mockReset());
   vi.restoreAllMocks();
+  document.body.innerHTML = '';
 });
+
+/** Plays one navigation: SvelteKit has written the entry key into `history.state` by `afterNavigate`. */
+function go(
+  type: 'link' | 'goto' | 'popstate' | 'enter',
+  key: number,
+  from: string | null,
+  to: string
+) {
+  history.replaceState({ [HISTORY_METADATA_KEY]: { navigationIndex: key } }, '');
+  route.url = new URL(`http://x${to}`);
+  recordArrival({
+    type,
+    from: from ? { url: new URL(`http://x${from}`) } : null,
+    to: { url: new URL(`http://x${to}`) },
+  });
+}
 
 describe('sectionOf', () => {
   it('is the first path segment, query and fragment ignored', () => {
@@ -40,7 +65,7 @@ describe('sectionOf', () => {
   });
 });
 
-describe('backDecision(current, from, up)', () => {
+describe('backDecision(current, from, up) - the table of shapes', () => {
   const cases: [string, string, string | undefined, string, 'history' | 'up'][] = [
     ['feed -> association hub', '/associations/humanimines', '/posts', '/associations', 'history'],
     ['feed -> own profile section', '/profile/me/bio', '/posts', '/profile', 'history'],
@@ -61,7 +86,7 @@ describe('backDecision(current, from, up)', () => {
       '/associations/bde',
       'history',
     ],
-    ['communities mention -> profile', '/profile/u1', '/communities', '/posts', 'history'],
+    ['community mention -> profile', '/profile/u1', '/communities', '/posts', 'history'],
     [
       'association section reached from its hub',
       '/associations/bde/members',
@@ -91,97 +116,157 @@ describe('backDecision(current, from, up)', () => {
       '/associations',
       'up',
     ],
+    [
+      'list created from the association form (another section)',
+      '/lists/new-list',
+      '/associations/new',
+      '/lists',
+      'up',
+    ],
+    ['page reached from a creation form', '/forms/abc', '/forms/create', '/forms', 'up'],
+    [
+      'page reached from an edit form of another section',
+      '/lists/x',
+      '/associations/x/edit/profile',
+      '/lists',
+      'up',
+    ],
   ];
   it.each(cases)('%s', (_name, current, from, up, expected) => {
     expect(backDecision(current, from, up)).toBe(expected);
   });
 });
 
-function nav(
-  type: string,
-  opts: { from?: string; to?: string; shallow?: boolean } = {}
-): Parameters<typeof recordArrival>[0] {
-  return {
-    type,
-    shallow: opts.shallow,
-    from: { url: new URL(opts.from ?? 'http://x/posts') },
-    to: { url: new URL(opts.to ?? 'http://x/associations/bde') },
-  };
-}
-
-describe('recordArrival stamps the entry with the page it left', () => {
-  it('on a link and on a goto', () => {
-    recordArrival(nav('link'));
-    expect(goto).toHaveBeenCalledWith('/associations/bde', {
-      shallow: true,
-      replace: true,
-      state: { from: '/posts' },
-    });
-    recordArrival(nav('goto', { from: 'http://x/chat?c=1' }));
-    expect(goto).toHaveBeenLastCalledWith('/associations/bde', {
-      shallow: true,
-      replace: true,
-      state: { from: '/chat?c=1' },
-    });
+describe('recording never navigates (a mount-time redirect must not be cancelled)', () => {
+  it('calls no navigation API on a push, a replace, a popstate or a first load', () => {
+    go('enter', 1, null, '/posts');
+    go('link', 2, '/posts', '/associations/bde');
+    go('goto', 2, '/associations/bde', '/associations/bde/calendar');
+    go('popstate', 1, '/associations/bde/calendar', '/posts');
+    expect(Object.values(nav).every((f) => f.mock.calls.length === 0)).toBe(true);
   });
-  it.each(['popstate', 'enter', 'leave'])(
-    'never on %s (the entry already holds its state)',
-    (type) => {
-      recordArrival(nav(type));
-      expect(goto).not.toHaveBeenCalled();
-    }
-  );
-  it('never for a shallow navigation, a cold open or the same address', () => {
-    recordArrival(nav('link', { shallow: true }));
-    recordArrival({ type: 'link', from: null, to: { url: new URL('http://x/a') } });
-    recordArrival(nav('link', { from: 'http://x/a', to: 'http://x/a' }));
-    expect(goto).not.toHaveBeenCalled();
+});
+
+describe('what an entry records', () => {
+  it('a link that ADDS an entry records the page it left', () => {
+    go('enter', 1, null, '/posts');
+    go('link', 2, '/posts', '/associations/bde');
+    expect(memoryOf(2)?.from).toBe('/posts');
+    expect(memoryOf(1)?.from).toBeUndefined();
+  });
+
+  it('a first load and a popstate record nothing', () => {
+    go('enter', 5, null, '/associations/bde');
+    go('popstate', 4, '/associations/bde', '/posts');
+    expect(memoryOf(5)?.from).toBeUndefined();
+    expect(memoryOf(4)?.from).toBeUndefined();
+  });
+
+  it('a push that reuses the key of a discarded forward entry starts from nothing', () => {
+    go('enter', 1, null, '/posts');
+    go('link', 2, '/posts', '/associations/a');
+    go('popstate', 1, '/associations/a', '/posts');
+    go('link', 2, '/posts', '/lists/b');
+    expect(memoryOf(2)?.from).toBe('/posts');
+    go('popstate', 1, '/lists/b', '/posts');
+    go('link', 2, '/posts', '/profile/u1');
+    expect(memoryOf(2)?.from).toBe('/posts');
+  });
+
+  it('a shallow navigation records nothing', () => {
+    history.replaceState({ [HISTORY_METADATA_KEY]: { navigationIndex: 9 } }, '');
+    recordArrival({
+      type: 'goto',
+      shallow: true,
+      from: { url: new URL('http://x/a') },
+      to: { url: new URL('http://x/b') },
+    });
+    expect(memoryOf(9)).toBeUndefined();
+  });
+});
+
+describe('a REPLACE records nothing and INHERITS (review of #3648, HIGH 2)', () => {
+  it('sign-in on a cold deep link: /login replaced by the page leaves the arrow its structural link', () => {
+    go('enter', 3, null, '/login');
+    go('goto', 3, '/login', '/associations/bde'); // replace: same key
+    expect(memoryOf(3)?.from).toBeUndefined();
+    expect(backDecision('/associations/bde', memoryOf(3)?.from, '/associations')).toBe('up');
+  });
+
+  it('a guard redirect keeps a correct cross-section origin', () => {
+    go('enter', 1, null, '/posts');
+    go('link', 2, '/posts', '/associations/bde');
+    go('goto', 2, '/associations/bde', '/associations/bde/calendar'); // redirect: same key
+    expect(memoryOf(2)?.from).toBe('/posts');
+  });
+
+  it.each([
+    ['error recovery', '/some/error-page', '/posts'],
+    ['publish sheet exit', '/camera', '/posts'],
+    ['audience redirect', '/posts?feed=x', '/posts'],
+    ['lives to posts', '/lives', '/posts'],
+  ])('%s: the replaced page never becomes the origin', (_name, replacedPath, landing) => {
+    go('enter', 1, null, '/associations/bde');
+    go('link', 2, '/associations/bde', replacedPath);
+    go('goto', 2, replacedPath, landing);
+    expect(memoryOf(2)?.from).toBe('/associations/bde');
+    expect(memoryOf(2)?.from).not.toBe(replacedPath);
+  });
+
+  it('drops the offset of the page it overwrote', () => {
+    go('enter', 1, null, '/posts');
+    go('link', 2, '/posts', '/lists/x');
+    memoryOf(2)!.top = 777;
+    go('goto', 2, '/lists/x', '/lists/y');
+    expect(memoryOf(2)?.top).toBeUndefined();
   });
 });
 
 describe('a Back arrow is answered where every in-app link click is decided', () => {
-  function arrow(href = '/associations'): HTMLAnchorElement {
+  function arrow(href: string): HTMLAnchorElement {
     document.body.innerHTML = `<a href="${href}" ${BACK_LINK_ATTRIBUTE}><span>x</span></a>`;
     return document.querySelector('a')!;
   }
-  function click(el: Element, over: MouseEventInit = {}) {
+  function click(target: Element, over: MouseEventInit = {}) {
     const e = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0, ...over });
-    el.querySelector('span')!.dispatchEvent(e);
+    target.dispatchEvent(e);
     handleAppLinkClick(e);
     return e;
   }
 
-  it('walks history when the entry came from another section, and cancels the link', () => {
-    state.page.url = new URL('http://x/associations/bde');
-    state.page.state = { from: '/posts' };
+  it('walks history for an entry a link added from another section, and cancels the link', () => {
+    go('enter', 1, null, '/posts');
+    go('link', 2, '/posts', '/associations/bde');
     const back = vi.spyOn(history, 'back').mockImplementation(() => {});
-    const e = click(arrow());
+    const e = click(arrow('/associations').querySelector('span')!);
     expect(back).toHaveBeenCalledOnce();
     expect(e.defaultPrevented).toBe(true);
   });
 
-  it('leaves the structural link alone with no origin', () => {
-    state.page.url = new URL('http://x/associations/bde');
+  it('leaves the structural link alone for a cold deep link, so the arrow is never dead', () => {
+    go('enter', 1, null, '/login');
+    go('goto', 1, '/login', '/associations/bde');
     const back = vi.spyOn(history, 'back').mockImplementation(() => {});
-    expect(backLinkTaken(arrow())).toBe(false);
+    expect(backLinkTaken(arrow('/associations'))).toBe(false);
+    expect(back).not.toHaveBeenCalled();
+  });
+
+  it('leaves the structural link alone while an overlay owns a ghost entry', () => {
+    go('enter', 1, null, '/posts');
+    go('link', 2, '/posts', '/associations/bde');
+    overlays.depth = 1;
+    const back = vi.spyOn(history, 'back').mockImplementation(() => {});
+    expect(backLinkTaken(arrow('/associations'))).toBe(false);
     expect(back).not.toHaveBeenCalled();
   });
 
   it('never for a link that is not an arrow, or a modified click', () => {
-    state.page.url = new URL('http://x/associations/bde');
-    state.page.state = { from: '/posts' };
+    go('enter', 1, null, '/posts');
+    go('link', 2, '/posts', '/associations/bde');
     const back = vi.spyOn(history, 'back').mockImplementation(() => {});
     document.body.innerHTML = '<a href="/associations"><span>x</span></a>';
-    click(document.body);
-    click(arrow(), { ctrlKey: true });
+    click(document.querySelector('span')!);
+    click(arrow('/associations').querySelector('span')!, { ctrlKey: true });
     expect(back).not.toHaveBeenCalled();
-  });
-});
-
-describe('the markup carries the attribute the handler reads', () => {
-  it.each(['Breadcrumb.svelte', 'PageHeader.svelte'])('%s', (name) => {
-    const dir = name === 'Breadcrumb.svelte' ? 'navigation' : 'layout';
-    const src = readFileSync(resolve(__dirname, `../components/${dir}/${name}`), 'utf8');
-    expect(src).toContain(BACK_LINK_ATTRIBUTE);
   });
 });

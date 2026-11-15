@@ -5,8 +5,7 @@
   import { pageScrollPaddingClass } from '$lib/components/layout/pageScrollPadding';
   import { retryFailedMyAssociationsProbe } from '$lib/associations/api';
   import { afterNavigate, beforeNavigate, goto, onNavigate, preloadData } from '$app/navigation';
-  import { recordArrival } from '$lib/navigation/backToOrigin';
-  import { cancelRestore, rememberLeaving, restoreOnReturn } from '$lib/navigation/scrollMemory';
+  import { onArrivedAtEntry, onLeavingEntry } from '$lib/navigation/navigationMemory';
   import { preloadRouteCodeOnce } from '$lib/navigation/routeCodePreload';
   import { onMount, tick } from 'svelte';
   import { markRouterReady } from '$lib/navigation/routerReady';
@@ -157,10 +156,9 @@
   beforeNavigate(({ from, to, shallow, type }) => {
     // A SHALLOW navigation (SvelteKit 3 runs the lifecycle hooks for them too) is a tab or query
     // change on the same page: not a page the hook is about.
-    if (shallow && type === 'goto') return;
-    // The page being left keeps its offset for a Back to it (`lib/navigation/scrollMemory.ts`).
-    cancelRestore();
-    if (from) rememberLeaving(from.url, pageScrollWrap?.scrollTop ?? 0);
+    if (shallow) return;
+    // The entry being left keeps its offset for a Back to it (`lib/navigation/navigationMemory.ts`).
+    onLeavingEntry({ type, shallow, from, to }, pageScrollWrap?.scrollTop ?? 0);
     // A membership probe that failed is owed one retry on the next navigation (never a timer).
     void retryFailedMyAssociationsProbe();
     drainHistoryOverlayStack();
@@ -718,10 +716,9 @@
     const { shallow, type } = nav;
     // A SHALLOW navigation (SvelteKit 3 runs the lifecycle hooks for them too) is a tab or query
     // change on the same page: not a page the hook is about.
-    if (shallow && type === 'goto') return;
-    // The entry remembers where it came from, for the Back arrow (`lib/navigation/backToOrigin.ts`).
-    recordArrival(nav);
-    if (type === 'popstate' && nav.to) restoreOnReturn(nav.to.url, pageScrollWrap);
+    if (shallow) return;
+    // The entry remembers where it came from (Back arrow) and where it was left (offset).
+    onArrivedAtEntry(nav, pageScrollWrap);
     if (!swipeEnterClass || !pageScrollWrap) return;
     const cls = swipeEnterClass;
     const wrap = pageScrollWrap;
