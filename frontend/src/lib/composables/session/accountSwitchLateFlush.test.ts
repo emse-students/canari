@@ -221,6 +221,7 @@ const WELCOME: DeliveredWelcome = {
   userId: 'newcomer',
   deviceId: 'newcomer-dev',
   welcome: new Uint8Array([1]),
+  addressability: 'addressable',
 };
 
 describe('the join push is wired into every client the session builds', () => {

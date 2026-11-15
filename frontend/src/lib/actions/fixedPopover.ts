@@ -1,6 +1,6 @@
 import {
   currentKeyboardInsetBottom,
-  onKeyboardInsetChange,
+  placeOnKeyboardMove,
 } from '$lib/stores/keyboardViewport.svelte';
 import { Log } from '$lib/utils/Log';
 
@@ -230,22 +230,14 @@ export function bindFixedPopover(panel: HTMLElement, options: FixedPopoverOption
   window.visualViewport?.addEventListener('resize', apply);
   // THE ANDROID APP'S KEYBOARD ARRIVES ONLY HERE (review of #3556, F4): it covers the WebView
   // without resizing it, so neither viewport fires anything and the emoji search, the mention list
-  // and every floating surface stayed under the keys. The keyboard store says when its band moved,
-  // after writing its variables; the placement reads layout, so it waits for the next frame rather
-  // than force the style pass those writes left dirty inside the announcement.
-  let frame = 0;
-  const offKeyboard = onKeyboardInsetChange(() => {
-    if (frame) return;
-    frame = requestAnimationFrame(() => {
-      frame = 0;
-      apply();
-    });
-  });
+  // and every floating surface stayed under the keys. The keyboard store places the panel once the
+  // keyboard's layout is in, before that frame is painted, and in the Android ride the panel RIDES
+  // from where it was drawn (N2) instead of jumping there on the next animation frame.
+  const offKeyboard = placeOnKeyboardMove(panel, apply);
 
   return () => {
     ro.disconnect();
     offKeyboard();
-    if (frame) cancelAnimationFrame(frame);
     window.removeEventListener('resize', apply);
     window.removeEventListener('scroll', apply, true);
     window.visualViewport?.removeEventListener('resize', apply);

@@ -28,7 +28,7 @@ final class ShareViewController: UIViewController {
         // First line of the extension's life: its absence means the system never started it (a suggestion
         // row that launches nothing); its presence without the `opened` line below means it never appeared.
         let launchedWithIntent = extensionContext?.intent != nil
-        log.notice("[CanariShare] share extension launched, intent=\(launchedWithIntent)")
+        log.notice("[CanariShare] share extension launched, intent=\(launchedWithIntent)")  // log-safe: a Bool, whether the system handed the extension an intent
         // A copy in progress holds the App Group lock; a swipe-down would end the extension mid-copy.
         isModalInPresentation = true
         view.backgroundColor = UIColor.black.withAlphaComponent(0.3)

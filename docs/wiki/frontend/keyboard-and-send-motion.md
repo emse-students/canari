@@ -300,7 +300,8 @@ contract, because no ride can hide a WebView resize (above).
   `canariTheme.setGround` still paints the page's ground under the transparent WebView (no band opens
   any more; the readings say whether a transparent strip ever shows it).
 
-**The page's half: ONE module owns every keyboard variable** (`keyboardViewport.svelte.ts`, with the
+**The page's half: ONE module owns every keyboard variable, and writes it to TWO targets** (the leaf
+channel, below) (`keyboardViewport.svelte.ts`, with the
 pure `imeTarget.ts` and `keyboardRide.ts`). An object announcement is an OVERLAY target: never spent by
 the viewport, 0 included, so the shell is the one source of the keyboard's room for as long as the page
 lives (what the WebView reports of its own visual viewport is not read). Its measurement keeps the
@@ -310,7 +311,7 @@ a window made shorter for another reason (split screen, a freeform window, DeX, 
 
 | variable                             | the Android app                                                                            | the web, iOS, an older shell  |
 | ------------------------------------ | ------------------------------------------------------------------------------------------ | ----------------------------- |
-| `--app-viewport-height` (while open) | the window's height: the shell does NOT shrink                                             | the visible height, as before |
+| `--app-viewport-height` (while open) | never written: the shell keeps `100dvh`, the window's own height (the leaf channel, below) | the visible height, as before |
 | `--keyboard-layout-inset-bottom`     | the keyboard's height, from its first pixel (a keyboard under the open threshold included) | 0, as it always was           |
 | `--keyboard-occlusion-bottom` (new)  | the keyboard's height: what it covers of the WINDOW, for `fixed` elements                  | 0                             |
 
@@ -383,10 +384,10 @@ keyboard (`postGroundToNative`: a hit test and computed colours), the window (`r
 ends the running ride, takes a glide off (`releaseThreadGlides`), writes the variables (`update(reading)`,
 which reads nothing after). `startKeyboardRide` reads every probe before its first `animate`. What
 could NOT be removed: the ground's hit test is still a read in the announcement (it is first, so it pays
-only what earlier work left dirty - normally nothing), and the style pass the variable writes cause is
+only what earlier work left dirty - normally nothing), and the style pass the variable writes cause was
 the frame's own, now paid once by the renderer instead of forced in script; the inset listeners
 (fixed popovers, F4) read layout on the NEXT frame, never in the task. Owed: the LoAF reading again on
-this build.
+this build. (Superseded by the leaf channel, below: the announcement no longer writes `:root` at all.)
 
 **A message arriving mid-ride (review F8).** The thread's glide and the ride both animate the rows'
 `transform`, and the later one replaces the other: the rows jumped from the ride's offset to the
@@ -415,7 +416,8 @@ full screen). `[data-keyboard-aware-toast]` had no user and was deleted. After r
 `ModalOverlay` is capped by the overlay's box, `min(<n>vh,100%)` (the poll composer, the GIF picker;
 guarded by `ModalOverlay.test.ts`), the live chat by `0.38 x (100vh - occlusion)`, and every
 `bindFixedPopover` panel (emoji pickers, mentions, `FloatingSurface`) re-places on the store's
-`onKeyboardInsetChange` - neither viewport fires anything for an overlay keyboard (F4, F5). The unused
+`placeOnKeyboardMove` (it was `onKeyboardInsetChange` and a next-frame placement until the leaf channel, below) -
+neither viewport fires anything for an overlay keyboard (F4, F5). The unused
 `--keyboard-baseline-height` was deleted.
 
 **Read on the Mi 9T at f364f3c47 (2026-11-14, debug sideload; the numbers are on the PR).** Once
@@ -425,6 +427,79 @@ moving, the thread and the composer follow the keys frame by frame in both direc
 the announcement frame recalculates the whole document's style. Any custom-property write on `:root`
 costs 17-30 ms on 1156 elements, against 0.2 ms on one leaf. That latency, and the emoji picker that
 jumps rather than rides (N2), are the stacked follow-up's.
+
+**THE LEAF CHANNEL - ONE WRITER, TWO TARGETS (stacked on #3556, 2026-11-14).** Measured on the Mi 9T at
+6d74c1437 (debug, WebView 152): the ride started 40-105 ms after the announcement (146 ms in the
+comments drawer's fall, 161 ms in the emoji picker) and, being phase-aligned, its first visible frame
+was already at 50-70 % of the travel - ~3 frames of composer under the keys on a rise, ~3 frames of
+black band on a fall. The announcement frame's trace: 12-16 ms of script, then `UpdateLayoutTree`
+36.5 ms (28.5 + 24.9 ms on two frames for a fall), then ~7 ms of paint. In the page through CDP (1156
+elements, forced style): ANY custom property written on `:root` costs 17-30 ms, an unused `--zz`
+included (24-83 ms); the same write on one leaf, 0.2 ms; a class toggle on `:root` with no rule, 0.
+`bench/keyboard-announcement/run.mjs` reproduces the shape in a desktop Chromium (923 elements, CPU x4):
+`:root` 27-35 ms; a REGISTERED inherited property on `:root` 28 ms (so `@property` alone, option (b),
+buys nothing); an UNREGISTERED variable on the thread's scroller 20-24 ms (its 842 descendants inherit
+it); a REGISTERED NON-INHERITED one on the scroller 0.1-0.7 ms; an unchanged value 0.
+
+So `keyboardViewport` writes ONE computation (`keyboardVariables`) to TWO targets:
+
+- **The riding pieces, in the announcement's task.** Every element whose own rules read the keyboard's
+  room carries `data-keyboard-leaf` - the composer's footer (`bottom`, its floor), the thread's scroller
+  (its padding) and the comments drawer's sheet (`bottom`, `max-height`, its safe area) - and gets the
+  twins `--keyboard-leaf-layout-inset-bottom`, `--keyboard-leaf-occlusion-bottom` and
+  `--keyboard-leaf-safe-area-inset-bottom` (`keyboardLeafValues`). They are registered
+  `inherits: false` with no initial value (`app.css`), so a twin restyles its element alone, and an
+  unwritten one falls back: every such rule reads `var(--keyboard-leaf-x, var(--x))`. The floor and the
+  room are resolved on the two chat pieces themselves (`--chat-composer-floor`, `--chat-keyboard-room`,
+  also non-inherited): resolved on `:root`, the floor carried the root's safe area down already
+  substituted. A released pin's twin is what the root goes back to: the inline value the pin replaced,
+  else `--safe-area-inset-bottom-unpinned`, the stylesheet's own value under a name no pin replaces.
+- **`:root`, once the ride's first frame is out** - in the next rendering update's animation frame,
+  requested from the ride's start (which runs in the layout reactions, after that update's frames): an
+  event, never a timer. Not the animations' `ready`: the ride sets their `startTime` to the arrival,
+  which settles it at once. The root takes the same values and the twins come off in
+  that task, so every piece reads the same lengths through either name and nothing moves twice (the
+  bench reads the footer's offset and height, the thread's `scrollTop`, padding and last row before and
+  after that write: identical). The whole-document pass then lands while the compositor runs the ride.
+  An announcement with no ride (no animation, reduced motion, nothing captured), a ride with no
+  `data-keyboard-leaf` piece on screen (a popover panel alone: it is placed from the root's variables,
+  so holding the root would only delay it), a ride that moved nothing, a press before the first frame and the teardown write the root at once. A new announcement
+  before that frame holds its own values instead; the WebView's no-change `resize` (N3) refreshes the
+  pieces, never the root.
+- **`--app-viewport-height` is no longer written for an overlay keyboard**: it pinned the shell to
+  `innerHeight`, a whole CSS px, where `100dvh` is the window's exact height - moving every piece by the
+  difference on the root's write.
+
+Option (a) of the brief, decided by those numbers; (b) measured and refused (a registered inherited
+property costs what an unregistered one does), and narrower scoping refused for the same reason (the
+pieces' subtrees are most of the document - the thread). What stays on the critical path: the
+announcement's reads (the ground's hit test first) and the pieces' own restyle, ~1 ms.
+
+**N2: the popovers ride.** A `bindFixedPopover` panel registers with `placeOnKeyboardMove`. Its drawn
+top is captured with the other pieces in the announcement; it is placed once the new layout is in -
+a `ResizeObserver` on the document root created before the ride's, so the placement runs first in the
+same rendering update, and observing the shallowest element keeps a panel resized by its new place
+from being reported as a `ResizeObserver` loop - and it rides from where it was drawn to that place on
+the keyboard's curve. It used to be placed on the next animation frame and jump there with the keyboard
+half-way. Outside the Android ride (iOS, the web, an unanimated change) the panel is placed in the same
+rendering update as before - after layout instead of in an animation frame, the same frame painted - and
+it is not ridden: the iOS fall captures no panel.
+
+**What iOS sees.** Unchanged: iOS never writes the leaf channel (only an Android announcement that is
+ridden does), `--app-viewport-height` is still pinned there, and the floor and the drawer's terms resolve
+to the same root variables as before, now on the pieces instead of `:root`. The one shared change is the
+panels' placement on a keyboard change, moved from an animation frame to the layout reactions of the
+same rendering update.
+
+**Not measured on a phone yet (owed):** the ride's start after the announcement and its first visible
+frame on the Mi 9T, rise and fall, in the salon, the drawer and the emoji picker; a LoAF of the
+announcement (no `UpdateLayoutTree` of the whole document in it) and of the frame after (the deferred
+pass). Read at 6d74c1437's logs: the ride listed ONE distance (`-346px`, the thread's rows) - the composer
+band (`absolute bottom-0`, height 0) never moved, its footer moving inside it by `bottom`, so the
+composer jumped. Riding a box by its bottom edge (above) does not change that: the band's bottom does
+not move either (`bench/keyboard-announcement` reports which elements ride - the band is not among
+them); OPEN, owed to the base branch, which owns the riding pieces. The script-placed panels ride by
+the bottom edge like every box.
 
 **Two fixes from that reading.** N3: the Android WebView fires a window `resize` and a visual-viewport
 `resize`, with no size changed, ~15 ms after every overlay announcement. Each one re-ran `update()`,

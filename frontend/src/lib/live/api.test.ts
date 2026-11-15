@@ -33,6 +33,7 @@ import {
   fetchLive,
   fetchLiveLimits,
   fetchLiveRules,
+  fetchLiveStanding,
   fetchLiveManifest,
   fetchLiveReplay,
   fetchLivePoster,
@@ -145,6 +146,17 @@ describe('the routes', () => {
       key: KEY,
       acceptedRulesVersion: 1,
     });
+  });
+
+  it("the caller's right to broadcast is a GET on /api/lives/standing", async () => {
+    const standing = {
+      cutsOnRecord: 2,
+      suspendedUntil: '2026-11-20T10:00:00.000Z',
+      withdrawnAt: null,
+    };
+    apiFetch.mockResolvedValueOnce(json(200, standing));
+    expect(await fetchLiveStanding()).toEqual(standing);
+    expect(apiFetch).toHaveBeenLastCalledWith('https://social.test/api/lives/standing', {});
   });
 
   it('the rules standing is a GET on /api/lives/rules; its refusal at the start is typed', async () => {

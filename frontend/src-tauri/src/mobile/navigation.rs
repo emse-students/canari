@@ -53,22 +53,30 @@
 //! killer included) - but it is a residue, not a proof, and it closes when the `wry` fix becomes
 //! reachable rather than here.
 
+/// `url` cut before its query or fragment: what a log line may say of an address.
+fn loggable_url(url: &str) -> &str {
+    url.split(['?', '#']).next().unwrap_or("")
+}
+
 /// True when the WebView may start loading `url`.
 ///
 /// See the module docs: the one question is whether this string can still be turned into an
 /// `http::Uri` when wry hands it back on the next IPC. If it cannot, loading it arms an abort that
 /// no error boundary on either side of the bridge can contain.
 pub fn webview_may_load(url: &str) -> bool {
+    // Logged WITHOUT its query and fragment: a redirect back from the identity provider carries a
+    // one-time code there, and a link may carry a token.
+    let logged = loggable_url(url);
     let allowed = url.parse::<tauri::http::Uri>().is_ok();
     if allowed {
-        log::debug!("[nav] allowing navigation to {url}");
+        log::debug!("[nav] allowing navigation to {logged}");
     } else {
         // ACCUSING on purpose. Reaching this is not a user doing something exotic - it is a link
         // this application rendered, or a redirect it followed, that would have killed the
         // process. Whatever produced it is a defect, and this line is the only thing that will
         // ever name it: the refusal itself is silent to the user, and has to be.
         log::error!(
-            "[nav] REFUSED navigation to {url} - http::Uri cannot parse it, and loading it would abort the process"
+            "[nav] REFUSED navigation to {logged} - http::Uri cannot parse it, and loading it would abort the process"
         );
     }
     allowed
@@ -76,7 +84,7 @@ pub fn webview_may_load(url: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::webview_may_load;
+    use super::{loggable_url, webview_may_load};
 
     /// The exact string measured on A1 on 2026-09-14, the one that killed the app three times.
     ///
@@ -129,5 +137,15 @@ mod tests {
         ] {
             assert!(webview_may_load(url), "expected {url} to be allowed");
         }
+    }
+
+    #[test]
+    fn a_logged_address_carries_no_query_and_no_fragment() {
+        assert_eq!(
+            loggable_url("fr.emse.canari://callback?code=1&state=2"),
+            "fr.emse.canari://callback"
+        );
+        assert_eq!(loggable_url("https://a.fr/p#token=x"), "https://a.fr/p");
+        assert_eq!(loggable_url("about:blank"), "about:blank");
     }
 }

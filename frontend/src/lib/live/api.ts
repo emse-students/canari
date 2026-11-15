@@ -40,6 +40,7 @@ import type {
   LiveRefusalKind,
   LiveRemovedViewer,
   LiveReplayPage,
+  LiveOwnStanding,
   LiveRulesStatus,
   LiveTitleResult,
   LiveView,
@@ -249,6 +250,12 @@ export async function listOpenLives(): Promise<LiveListItem[]> {
 export async function fetchLiveRules(): Promise<LiveRulesStatus> {
   console.debug('[LIVE] rules');
   return liveJson<LiveRulesStatus>(`${livesBase()}/rules`, 'Live rules');
+}
+
+/** `GET /api/lives/standing` - the caller's own right to broadcast: cuts on record, suspension, withdrawal. */
+export async function fetchLiveStanding(): Promise<LiveOwnStanding> {
+  console.debug('[LIVE] standing');
+  return liveJson<LiveOwnStanding>(`${livesBase()}/standing`, 'Live standing');
 }
 
 /**

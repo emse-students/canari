@@ -68,7 +68,8 @@ describe('the composer band', () => {
    * permanently hidden rather than occasionally overlapped, which is worse than the report.
    */
   it('keeps reserving the composer height, so the thread still ends above the bar at rest', () => {
-    const scroller = css.slice(at('.chat-messages-scroll {'));
+    // The rule of its own, not the one that resolves the floor on it and the footer.
+    const scroller = css.slice(css.indexOf('\n\n.chat-messages-scroll {'));
     // The keyboard's room is added to it (Android's layout inset, 0 elsewhere - keyboard ride).
     expect(scroller.slice(0, scroller.indexOf('\n}'))).toMatch(
       /padding-bottom: (calc\(\s*)?var\(--chat-composer-height/
@@ -93,8 +94,10 @@ describe('the thread panel on desktop', () => {
    * 12 px step under the ride.
    */
   it('names one floor in the footer and in the thread padding', () => {
-    expect(css).toContain(
-      '--chat-composer-floor: max(0.75rem, var(--safe-area-inset-bottom, 0px));'
+    // Resolved on the two pieces that read it, from the leaf channel's twin first (the keyboard's
+    // announcement writes it on them) and the root's safe area otherwise.
+    expect(css).toMatch(
+      /\.chat-composer-footer,\s*\.chat-messages-scroll\s*\{\s*--chat-composer-floor:\s*max\(\s*0\.75rem,\s*var\(--keyboard-leaf-safe-area-inset-bottom, var\(--safe-area-inset-bottom, 0px\)\)\s*\);/
     );
     const rules = css
       .split('\n}')
@@ -107,10 +110,36 @@ describe('the thread panel on desktop', () => {
       expect(rule).not.toMatch(/padding-bottom:\s*max\(0\.75rem/);
     }
     for (const rule of threads) {
-      expect(rule).toMatch(/padding-bottom:\s*calc\([^;]*var\(--chat-composer-floor\)/);
+      expect(rule).toMatch(
+        /padding-bottom:\s*calc\([^;]*var\(--chat-composer-floor\)[^;]*var\(--chat-keyboard-room\)/
+      );
+    }
+    // The GIF panel's 0 is said to both pieces, where the floor is resolved.
+    expect(css).toMatch(
+      /\.chat-thread-panel:has\(\.chat-composer-footer\.has-keyboard-panel\)\s*:is\(\.chat-composer-footer, \.chat-messages-scroll\)\s*\{\s*--chat-composer-floor:\s*0px;/
+    );
+  });
+
+  /**
+   * THE LEAF CHANNEL (keyboard-and-send-motion.md, section 6): the twins the keyboard's announcement
+   * writes on a riding piece, and the terms resolved from them, are registered NOT inherited - an
+   * inherited one written on the thread's scroller restyled its 840 descendants (20 ms, as much as a
+   * `:root` write), a non-inherited one restyles the scroller alone (0.1 ms).
+   */
+  it('registers the leaf twins and the terms resolved from them as not inherited', () => {
+    for (const name of [
+      '--keyboard-leaf-layout-inset-bottom',
+      '--keyboard-leaf-occlusion-bottom',
+      '--keyboard-leaf-safe-area-inset-bottom',
+      '--chat-composer-floor',
+      '--chat-keyboard-room',
+    ]) {
+      expect(css).toMatch(
+        new RegExp(`@property ${name} \\{\\s*syntax: '\\*';\\s*inherits: false;\\s*\\}`)
+      );
     }
     expect(css).toMatch(
-      /\.chat-thread-panel:has\(\.chat-composer-footer\.has-keyboard-panel\)\s*\{\s*--chat-composer-floor:\s*0px;/
+      /--chat-keyboard-room: var\(\s*--keyboard-leaf-layout-inset-bottom,\s*var\(--keyboard-layout-inset-bottom, 0px\)\s*\);/
     );
   });
 });

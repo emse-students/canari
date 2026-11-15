@@ -105,7 +105,7 @@ internal object ShareTargets {
                     Log.w(TAG, "publish: the platform refused target #$rank")
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "publish: target #$rank failed: ${e.message}", e)
+                Log.e(TAG, "publish: target #$rank failed: ${e.javaClass.simpleName}")
             }
         }
         record.write(context, staleLeft + keptIds)
@@ -138,7 +138,7 @@ internal object ShareTargets {
         disablePinnedShortcuts(context, ids, TAG)
         true
     } catch (e: Exception) {
-        Log.e(TAG, "remove: ${ids.size} target(s) not removed: ${e.message}", e)
+        Log.e(TAG, "remove: ${ids.size} target(s) not removed: ${e.message}", e) // log-safe: message of a system or native call (Exception); this try parses and names no user input
         false
     }
 
@@ -151,7 +151,7 @@ internal object ShareTargets {
             ShortcutManagerCompat.enableShortcuts(context, disabled)
             Log.i(TAG, "publish: ${disabled.size} pinned target(s) enabled again")
         } catch (e: Exception) {
-            Log.e(TAG, "publish: pinned targets not enabled again: ${e.message}", e)
+            Log.e(TAG, "publish: pinned targets not enabled again: ${e.message}", e) // log-safe: message of a system or native call (Exception); this try parses and names no user input
         }
     }
 

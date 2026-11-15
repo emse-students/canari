@@ -369,7 +369,7 @@ export class PostsController {
     return this.service.withdrawPost(postId, xUserId, body?.mediaIds ?? []);
   }
 
-  /** Deletes a post; global admins may delete any post. */
+  /** Deletes a post: its publisher, a platform admin, or a moderator of it (`assertMayManage`). */
   @UseGuards(NginxAuthGuard)
   @Delete(':postId')
   deletePost(

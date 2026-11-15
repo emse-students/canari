@@ -828,6 +828,28 @@ under 60 % battery where the engine has the Battery API (Android; WebKit has non
 (WP-L1 drained ~40 %/h on a charger). Start is the acceptance; **nothing records the acceptance on
 the server** (owed if L11's "accepted before a member's first live" must be provable).
 
+**The pre-live screen reads the member's right to broadcast (2026-11-15).** `LiveBroadcast.loadLimits`
+reads `GET /api/lives/standing` with the limits and the rules (`fetchLiveStanding`, `LiveOwnStanding`:
+`cutsOnRecord`, `suspendedUntil`, `withdrawnAt`), and Start waits for the three. A running suspension
+or a withdrawal is SAID on the sheet (`data-live-standing`: the suspension with its end date, the
+withdrawal's sentence - the strings the two start refusals already had) and Start is disabled, so
+the member no longer learns it from a refused `POST /api/lives`. Rules of the read:
+
+- **No clock on the client.** `suspendedUntil` is non-null only while the server judged the
+  suspension running; `standingBar` reads the field, never compares it to `Date.now()`. A sheet
+  left open past the end keeps the sentence until its "Retry" button reads the three again
+  (`loadLimits`), which is also how a withdrawal staff lifted is found.
+- **The server still decides at the start.** A cut or a withdrawal that lands between the read and
+  the Start is refused as before (`LIVE_BROADCAST_SUSPENDED`, `LIVE_BROADCAST_WITHDRAWN`); the
+  standing is then read again and its sentence REPLACES the refusal's - one sentence, not two. If
+  that re-read fails, it is the limits' "could not read" with its Retry, and Start waits.
+- **Cuts on record with no suspension say nothing**: the first cut already told the member (the
+  `live_cut` notice and push). No sentence was decided for it on this sheet.
+
+Tests: "the right to broadcast, read before Start (WP-L8)" in `liveBroadcast.svelte.test.ts`, the two
+standing cases of `LiveBroadcaster.svelte.test.ts`, the route in `api.test.ts`. Not read on a device
+yet ([reading](../../backlog.d/reading-owed-the-pre-live-screen-says-a-suspension-before-start.md)).
+
 **The title and the preview (owner, 2026-11-07).** The pre-live sheet carries an optional title field
 when the limits serve `titleMaxChars`: one line, cut at 80 CODE POINTS as typed (`liveTitle.ts`,
 the server's rule mirrored - an `<input maxlength>` counts UTF-16 units and would refuse half the
