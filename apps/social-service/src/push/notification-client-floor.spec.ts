@@ -141,6 +141,15 @@ describe('PushService.notifyContent writes the key floor', () => {
       await sent(campusTrendContent('', 'photo'), { [MIN_APP_VERSION_DATA_KEY]: '0.0.1' })
     ).toMatchObject({ [MIN_APP_VERSION_DATA_KEY]: CAMPUS_TREND_MIN_CLIENT_VERSION });
   });
+
+  it('can be RAISED by a caller - the higher of the two travels (a post quiet update)', async () => {
+    expect(
+      await sent(mentionContent('Ana', 'hello'), { [MIN_APP_VERSION_DATA_KEY]: '1.7.0' })
+    ).toMatchObject({ [MIN_APP_VERSION_DATA_KEY]: '1.7.0' });
+    expect(
+      await sent(campusTrendContent('', 'photo'), { [MIN_APP_VERSION_DATA_KEY]: '9.0.0' })
+    ).toMatchObject({ [MIN_APP_VERSION_DATA_KEY]: '9.0.0' });
+  });
 });
 
 describe('campusTrendContent', () => {

@@ -365,9 +365,11 @@ export class FollowerTabSendError extends Error {
   /**
    * @param refusal `follower`: the tab follows - its caller was not routed to the leader (a defect);
    *   `reload-owed`: the tab was promoted in place and reloads - an expected refusal, the gesture is
-   *   refused rather than lost; `lead-lost`: a send begun while this document led found, once its
-   *   count was durable, that the lead had left it - expected, the sealed frame was NOT posted (its
-   *   generation is counted, so no reload re-issues it) and the leader sends the gesture.
+   *   refused rather than lost; `lead-lost`: a send begun while this document led found that the
+   *   lead had left it (a leader suspended by the browser, or one that handed the lead to a visible
+   *   tab, releases the lock - `tabLeader.ts`) - expected, nothing was posted and the leader sends it.
+   *   Two sites raise it: at the last synchronous step before the encrypt (nothing sealed), and after
+   *   the send's count is durable (sealed and counted, so no reload re-issues its generation).
    */
   constructor(
     readonly groupId: string,
@@ -378,8 +380,8 @@ export class FollowerTabSendError extends Error {
         ? `an MLS frame of ${groupId.slice(0, 8)}... was asked of a tab that has just become the ` +
             'leader and reloads - nothing was encrypted'
         : refusal === 'lead-lost'
-          ? `an MLS frame of ${groupId.slice(0, 8)}... was sealed and counted, then the lead left ` +
-            'this tab - it was not posted, the leader sends it'
+          ? `an MLS frame of ${groupId.slice(0, 8)}... was not posted: the lead left this tab ` +
+            'during the send - the leader sends it'
           : `an MLS frame of ${groupId.slice(0, 8)}... was asked of a follower tab - only the leader tab ` +
             'sends, so nothing was encrypted'
     );

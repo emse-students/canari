@@ -3057,25 +3057,23 @@ and none with a face. Three defects, three fixes:
   (`push-content.ts`) converts once on the server; a spec reads the frontend's `REACTIONS` and
   fails if the two lists drift, and an unknown type logs at `warn` and is drawn as the heart the app
   draws.
-- **Six notifications**: `showPostReactionNotification` (Kotlin) keys ONE notification on the post
-  (`postReactionNotifKey`, stable id like `reactionNotifKey` does for a conversation). The actors
-  accumulate in SharedPreferences (`canari_post_reactions`, bounded to 50 posts and 50 actors) and
-  the sentence is `A a reagi 🔨 ...` / `A et B ...` / `A, B et C ...` / `A, B et N autres ...`
-  (newest first, `N >= 2`). **The group ends on the SHADE, not on a clock**: a reaction joins the
-  ledger only when that notification is still posted, so a swipe or a tap starts a fresh group.
-  The large icon is the actor's face for one person and a collage of up to three faces for several,
-  through the same `fetchAvatar` and the same initials disc (logged) as every other path. The pure
-  half - ledger, sentence shape, faces, encoding - is `push/PostReactionGroup.kt`, compiled by the
-  JVM test project (`PostReactionGroupTest`).
+- **Six notifications**: since 2026-11-14 the SERVER decides it, for reactions and comments alike
+  ([one live notification per post](../engagement.md#the-owners-decision-of-2026-11-14---what-concerns-you-directly-is-never-dropped-one-live-notification-per-post)): every push about the
+  reader's own post carries `collapseId = post_activity_<postId>`, `quiet` while the post's bell rows
+  stay unread, and `contentCount` (the other people of the same kind). Android keys the notification
+  on `collapsedNotifKey(collapseId)` and posts a quiet one with `setSilent(true)`; the title reads
+  "A et N autres ont commenté" / "N réactions". The client ledger of 2026-10-08
+  (`PostReactionGroup.kt`, SharedPreferences `canari_post_reactions`, the face collage) is DELETED:
+  it grouped on the shade, a second source of truth, and the bell's read state is now the only one.
+  A device that ran the old build keeps an orphan `canari_post_reactions` preferences file, never
+  read again.
 
-An un-react does not shrink an already-shown group: removing a reaction sends no push, so "A, B et 4 autres" stays until the notification is swiped or opened.
-
-**iOS** gets the cheap half only: `buildInternalApnsRequest` files a `social_reaction` under the
-thread `post_reaction_<postId>`, so the notification centre stacks the reactions to one post, and
-`attachSocialIcon` already draws the one actor's face from `iconUserId`. What it does not get is ONE
-banner updated in place with "A, B et N autres": that needs the NSE to read the delivered
-notifications of the thread and rewrite its text and a face collage, which is new native code that
-nothing here can run without an iPhone ([backlog](../backlog.md)).
+**iOS** gets the same identity: chat-delivery sends the push with the `apns-collapse-id` header and
+the `thread-id` both set to the `collapseId`, so a later push REPLACES the delivered one; a quiet one
+carries `interruption-level: passive` and no sound. The NSE writes the count line and keeps a quiet
+one passive; with the app alive, `canari_push.mm` posts its local twin under the same identifier
+(`CanariPostLocalNotification`) and files a passive one in the list only. **Inferred, not yet read on
+an iPhone**: that a local request whose identifier equals the collapse id replaces the remote one.
 
 **"NO PICTURE" IS REMEMBERED ON ANDROID, AND NOTHING ELSE THAT IS NOT A PICTURE IS (2026-10-01).**
 `cachedRemoteIcon` used to write its file only on a `200`, so a person with no photo - every bench

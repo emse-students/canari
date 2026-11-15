@@ -57,6 +57,7 @@ import { isEntitledToDistributionGroup } from '../internal/distribution-entitlem
 import { RETENTION_WINDOW_MS } from '../retention.constants';
 import { parsePresenceAudienceBody } from '../utils/presence-audience';
 import { describeSeat, readDeviceSeat, type DeviceSeat } from '../utils/device-seat';
+import { RouteParams } from '../common/route-params';
 
 /**
  * Whether a flagged 1:1's roster lets an erasure END the conversation: KNOWN (something still names
@@ -72,6 +73,15 @@ function isOneToOneRoster(roster: Set<string> | undefined): boolean {
  * NOT exposed through Nginx.
  * Auth: X-Internal-Secret header matched against INTERNAL_SECRET env var.
  */
+@RouteParams({
+  token: 'opaque',
+  userId: 'opaque',
+  deviceId: 'opaque',
+  sessionId: 'uuid',
+  scope: 'opaque',
+  scopeId: 'uuid',
+  departure: 'opaque',
+})
 @Controller('internal')
 export class InternalController {
   private readonly logger = new Logger(InternalController.name);

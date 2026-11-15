@@ -3,6 +3,12 @@
 // mlsService -> subclasses -> BaseMlsService).
 vi.mock('$lib/services/TauriMlsService', () => ({ TauriMlsService: class {} }));
 vi.mock('$lib/services/WebMlsService', () => ({ WebMlsService: class {} }));
+/** Whether this tab leads - read by the gate at the start and by the latch at the put. */
+const tab = vi.hoisted(() => ({ leads: true }));
+vi.mock('$lib/mls-client/stateAuthority', async (original) => ({
+  ...(await original<typeof import('$lib/mls-client/stateAuthority')>()),
+  refusesCommitsHere: () => !tab.leads,
+}));
 
 // The history marks are staged by `history.ts`; here they are a stand-in that stages ONE known mark,
 // so a case can follow it into the write.
@@ -74,6 +80,7 @@ describe('BaseMlsService.persistCheckpoint', () => {
     globalThis.indexedDB = new IDBFactory();
     resetStateLedgersForTests();
     hydrateStateLedgers(U, {});
+    tab.leads = true;
     vi.clearAllMocks();
     vi.spyOn(console, 'log').mockImplementation(() => {});
     stagePendingHistoryMarks.mockImplementation((userId: string) => {
@@ -185,5 +192,52 @@ describe('BaseMlsService.persistCheckpoint', () => {
     await persist(ctx);
 
     expect(handed(ctx)).not.toHaveProperty(STATE_LEDGER.sendPersisted);
+  });
+
+  /**
+   * #3321's coverage mark, with the ledgers inside the write: `durableApplied` (what an ack may rely
+   * on) is the inbound count read BEFORE the export, raised only once THAT write landed.
+   */
+  it('raises the durable inbound mark to what the export held, only once the write landed', async () => {
+    const ctx = makeCtx({ inboundApplied: 3, durableApplied: 1 });
+    ctx.writeCheckpoint.mockImplementation(async () => {
+      // A frame applied while the write seals is not in it.
+      (ctx as { inboundApplied: number }).inboundApplied = 4;
+    });
+    await persist(ctx);
+    expect((ctx as { durableApplied: number }).durableApplied).toBe(3);
+
+    const failing = makeCtx({
+      inboundApplied: 5,
+      durableApplied: 3,
+      writeCheckpoint: vi.fn().mockRejectedValue(new Error('quota exceeded')),
+    });
+    await expect(persist(failing)).rejects.toThrow('quota exceeded');
+    expect((failing as { durableApplied: number }).durableApplied).toBe(3);
+  });
+
+  /**
+   * A DEMOTED TAB WRITES NO LEDGER. The lead can leave while the write seals (#3321's hand-over): the
+   * put reads `holdsNoLead` and refuses, the ledgers handed to it go back to the batch - dying with
+   * the page the demotion reloads - and nothing is declared durable. Once demoted, nothing is staged.
+   */
+  it('refuses at the put when the lead left during the seal, and stages nothing once demoted', async () => {
+    const ctx = makeCtx({ inboundApplied: 2, durableApplied: 0 });
+    ctx.writeCheckpoint.mockImplementation(
+      async (_k: string, latch: { holdsNoLead?: () => boolean }) => {
+        tab.leads = false;
+        if (latch.holdsNoLead?.()) throw new Error('follower-tab');
+      }
+    );
+    await expect(persist(ctx)).rejects.toThrow('follower-tab');
+    expect((ctx as { durableApplied: number }).durableApplied).toBe(0);
+    // The marks went back to the batch, never into a write that landed.
+    expect(takeStagedStateLedgers(U)).toHaveProperty(SEEN);
+
+    stagePendingHistoryMarks.mockClear();
+    const demoted = makeCtx({ followerStateWriteRefusalSaid: true });
+    await expect(persist(demoted)).rejects.toMatchObject({ name: 'MlsStateWriteRefusedError' });
+    expect(demoted.writeCheckpoint).not.toHaveBeenCalled();
+    expect(stagePendingHistoryMarks).not.toHaveBeenCalled();
   });
 });

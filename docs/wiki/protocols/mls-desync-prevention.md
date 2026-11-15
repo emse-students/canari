@@ -836,6 +836,10 @@ a frame the device had read and accused it (`frame never read here and unreadabl
   exception, the migration, whose `raiseEmittedCounts` only RAISES them (an over-burn, free). A tab
   promoted to leader must reopen its ledgers from the state it reloads (`openStateLedgers`), never
   carry its follower copy's over it: the hand-over of #3321 reloads the promoted tab, which does.
+  A DEMOTED tab writes none: the gate refuses before anything is staged, and a write whose lead left
+  while it sealed is refused at the put (`holdsNoLead`), its ledgers going back to a batch that dies
+  with the reload. `durableApplied` (#3321's ack mark) is read before the export and raised only
+  inside the write's success, so it never claims a write that carried no ledger.
 - **A send whose lead left during its count is not posted** (`FollowerTabSendError('lead-lost')`):
   the awaited count is a task gap, the leader that takes over reloads a state without this frame's
   advance, and a frame posted from there is one it may seal again at the same generation.

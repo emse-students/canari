@@ -170,6 +170,19 @@ export class DeletedAccountError extends UserProfileFetchError {
   }
 }
 
+/**
+ * The server said this string is NOT an account id (`malformed` in the batch answer): the caller
+ * asked about something no account could have. A DEFECT of the caller, never an answer about an
+ * account - so it is not an absence (`isAbsentUserError` is false), is not labelled deleted, and
+ * `displayName` logs it at warn like any failed lookup.
+ */
+export class MalformedUserIdError extends UserProfileFetchError {
+  constructor() {
+    super(400);
+    this.name = 'MalformedUserIdError';
+  }
+}
+
 /** `true` when the server answered that this account is deleted (see `DeletedAccountError`). */
 export function isDeletedAccountError(e: unknown): boolean {
   return e instanceof DeletedAccountError;
@@ -309,9 +322,10 @@ async function flushProfileBatch(
           `${coreUrl()}/api/users/batch?ids=${chunk.map(encodeURIComponent).join(',')}`
         );
         if (!res.ok) throw new UserProfileFetchError(res.status, await refusalOrigin(res));
-        const { users, deleted } = (await res.json()) as {
+        const { users, deleted, malformed } = (await res.json()) as {
           users: UserProfile[];
           deleted?: string[];
+          malformed?: string[];
         };
         // LEGACY SHIM (docs/wiki/legacy-compatibility.md, "The profile batch without `deleted`"):
         // a server older than 2026-10-18 has no `deleted` field and answers an unknown id by its
@@ -323,12 +337,14 @@ async function flushProfileBatch(
           );
         }
         const deletedIds = new Set(deleted ?? []);
+        const malformedIds = new Set(malformed ?? []);
         const byId = new Map(users.map((u) => [u.id, u]));
         for (const id of chunk) {
           const profile = byId.get(id);
           for (const waiter of batch.get(id) ?? []) {
             if (profile) waiter.resolve(profile);
             else if (deletedIds.has(id)) waiter.reject(new DeletedAccountError());
+            else if (malformedIds.has(id)) waiter.reject(new MalformedUserIdError());
             else if (legacyAnswer) waiter.reject(new UserProfileFetchError(404));
             else {
               // Neither a profile nor a deletion from a server that SENDS `deleted`: it broke its

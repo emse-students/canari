@@ -30,8 +30,29 @@ describe('PostInteractionsService.addComment notifications', () => {
       ),
       // The daily cap, proven in `engagement-push-cap.integration.spec.ts`: open here.
       withinPushBudget: jest.fn((_type: string, ids: string[]) => Promise.resolve(ids)),
+      // The post's author: ONE notification per post (owner, 2026-11-14), its alert-or-quiet claim
+      // proven in `post-activity-notice.integration.spec.ts`. Here it writes the row and pushes as
+      // the first comment of an unread post does (the collapse fields are that spec's).
+      notifyPostActivity: jest.fn(),
     };
-    const push = { notifyContent: jest.fn(() => Promise.resolve()) };
+    const push = { notifyContent: jest.fn((..._args: unknown[]) => Promise.resolve()) };
+    notifications.notifyPostActivity.mockImplementation(
+      async (n: {
+        recipientId: string;
+        type: string;
+        postId: string;
+        content: (others: number) => unknown;
+        pushData?: Record<string, string>;
+      }) => {
+        await notifications.createNotification(n);
+        await push.notifyContent(n.recipientId, n.content(0), {
+          type: 'social',
+          postId: n.postId,
+          ...n.pushData,
+        });
+        return { alert: true, others: 0 };
+      }
+    );
     const postRepo = {
       findOne: jest.fn(() => Promise.resolve(post)),
       save: jest.fn((p: unknown) => Promise.resolve(p)),
@@ -145,7 +166,7 @@ describe('PostInteractionsService.addComment notifications', () => {
     expect(order).toEqual(['comment', 'reply', 'mention', 'trend']);
   });
 
-  it('asks the daily cap for every push, and a comment beyond it keeps its row only (owner, 2026-11-10)', async () => {
+  it('tells the post author through the per-post notice, never the daily cap; replies and mentions ask the cap (owner, 2026-11-14)', async () => {
     const { service, push, notifications } = makeService({
       id: 'p1',
       authorId: 'author',
@@ -153,21 +174,18 @@ describe('PostInteractionsService.addComment notifications', () => {
       comments: [{ id: 'parent', userId: 'parent-author', parentId: null }],
     });
     notifications.resolveMentionedUserIds.mockReturnValue(['mentioned']);
-    // The budget the real table answers: a comment is counted (and spent here), a reply and a
-    // mention are not.
-    notifications.withinPushBudget.mockImplementation((type: string, ids: string[]) =>
-      Promise.resolve(type === 'comment' ? [] : ids)
-    );
     await service.addComment('p1', { userId: 'reader', text: 'hello', parentId: 'parent' });
     await flush();
     expect(notifications.withinPushBudget.mock.calls.map(([type]) => type).sort()).toEqual([
-      'comment',
       'mention',
       'reply',
     ]);
-    expect(notifications.createNotification).toHaveBeenCalledTimes(3);
+    expect(notifications.notifyPostActivity).toHaveBeenCalledTimes(1);
+    expect(notifications.notifyPostActivity).toHaveBeenCalledWith(
+      expect.objectContaining({ recipientId: 'author', type: 'comment', postId: 'p1' })
+    );
     const sent = push.notifyContent.mock.calls as unknown as Array<[string]>;
-    expect(sent.map(([to]) => to).sort()).toEqual(['mentioned', 'parent-author']);
+    expect(sent.map(([to]) => to).sort()).toEqual(['author', 'mentioned', 'parent-author']);
   });
 
   it("asks the read's gate who of the mentioned may be told, as the writer, and tells only them", async () => {
@@ -272,7 +290,7 @@ describe('PostInteractionsService.addReaction across the review cohort', () => {
     process.env.SERVICE_ACCOUNT_USER_ID = cohort;
     try {
       const notifications = {
-        createNotification: jest.fn(() => Promise.resolve()),
+        notifyPostActivity: jest.fn(() => Promise.resolve({ alert: true, others: 0 })),
         resolveActorName: jest.fn(() => Promise.resolve('Actor')),
         withinPushBudget: jest.fn((_type: string, ids: string[]) => Promise.resolve(ids)),
       };
@@ -293,12 +311,18 @@ describe('PostInteractionsService.addReaction across the review cohort', () => {
       );
       await service.addReaction('p1', 'reader', 'Rire');
       await flush();
-      expect(notifications.createNotification).toHaveBeenCalledTimes(cohort === '' ? 1 : 0);
-      expect(push.notifyContent).toHaveBeenCalledTimes(cohort === '' ? 1 : 0);
-      // The daily cap is asked before the push, and only when there is one to send.
-      expect(notifications.withinPushBudget.mock.calls).toEqual(
-        cohort === '' ? [['reaction', ['author']]] : []
-      );
+      // ONE notification per post, never the daily cap (owner, 2026-11-14).
+      const told = [
+        expect.objectContaining({
+          recipientId: 'author',
+          type: 'reaction',
+          postId: 'p1',
+          actorId: 'reader',
+        }),
+      ];
+      expect(notifications.notifyPostActivity.mock.calls).toEqual(cohort === '' ? [told] : []);
+      expect(notifications.withinPushBudget).not.toHaveBeenCalled();
+      expect(push.notifyContent).not.toHaveBeenCalled();
     } finally {
       if (saved === undefined) delete process.env.SERVICE_ACCOUNT_USER_ID;
       else process.env.SERVICE_ACCOUNT_USER_ID = saved;

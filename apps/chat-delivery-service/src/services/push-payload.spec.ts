@@ -423,24 +423,48 @@ describe('buildInternalApnsRequest', () => {
     expect((form.payload.aps as Record<string, unknown>)['thread-id']).toBe('canari_forms');
   });
 
-  it('stacks the reactions to one post under that post, and other posts apart', () => {
-    const react = (postId: string) =>
-      buildInternalApnsRequest('Nouvelle réaction', '', {
+  it("collapses a post's comments and reactions into ONE notification: thread and apns-collapse-id (owner, 2026-11-14)", () => {
+    const activity = (postId: string, contentKey: string, extra: Record<string, string> = {}) =>
+      buildInternalApnsRequest('x', 'y', {
         type: 'social',
-        contentKey: 'social_reaction',
+        contentKey,
         postId,
+        collapseId: `post_activity_${postId}`,
+        ...extra,
       });
-    const thread = (r: ReturnType<typeof react>) =>
-      (r.payload.aps as Record<string, unknown>)['thread-id'];
-    expect(thread(react('p1'))).toBe('post_reaction_p1');
-    expect(thread(react('p2'))).toBe('post_reaction_p2');
-    // A comment on the same post is a different notification and keeps the coarse thread.
-    const comment = buildInternalApnsRequest('x', 'y', {
-      type: 'social',
-      contentKey: 'social_comment',
-      postId: 'p1',
+    const aps = (r: ReturnType<typeof activity>) => r.payload.aps as Record<string, unknown>;
+    const reaction = activity('p1', 'social_reaction');
+    const comment = activity('p1', 'social_comment');
+    // One identity for the post, whatever the kind; another post is another notification.
+    expect(aps(reaction)['thread-id']).toBe('post_activity_p1');
+    expect(aps(comment)['thread-id']).toBe('post_activity_p1');
+    expect(reaction.collapseId).toBe('post_activity_p1');
+    expect(comment.collapseId).toBe('post_activity_p1');
+    expect(activity('p2', 'social_comment').collapseId).toBe('post_activity_p2');
+    // An ALERT rings as every social push does.
+    expect(aps(comment).sound).toBe('default');
+    expect(aps(comment)['interruption-level']).toBeUndefined();
+    // A QUIET update replaces it with no sound, filed passively, and says so to a wake too.
+    const quiet = activity('p1', 'social_comment', { quiet: 'true' });
+    expect(aps(quiet).sound).toBeUndefined();
+    expect(aps(quiet)['interruption-level']).toBe('passive');
+    expect(quiet.pushType).toBe('alert');
+    expect(quiet.collapseId).toBe('post_activity_p1');
+    expect(presentationOf(quiet)).toEqual({
+      title: 'x',
+      body: 'y',
+      threadId: 'post_activity_p1',
+      interruptionLevel: 'passive',
     });
-    expect(thread(comment)).toBe('canari_social');
+    // A push with no identity keeps the coarse thread and no collapse id.
+    const plain = buildInternalApnsRequest('x', 'y', {
+      type: 'social',
+      contentKey: 'social_mention',
+    });
+    expect(aps(plain)['thread-id']).toBe('canari_social');
+    expect(plain.collapseId).toBeUndefined();
+    // An identity APNs would refuse (over 64 bytes) is not sent as a header.
+    expect(activity('p'.repeat(60), 'social_comment').collapseId).toBeUndefined();
   });
 
   it('names the palette-A trill Android files the same push under, and the default elsewhere', () => {
