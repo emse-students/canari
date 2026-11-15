@@ -169,7 +169,6 @@ earliest version, as a checklist.
 - [P2 - an answer whose Lydia request is still OPEN shows "pending" with no button for up to 28 minutes (2026-10-21)](backlog.d/p2-an-answer-whose-lydia-request-is-still-open-shows-pending-with-no-button-for.md)
 - [P2 - Graine rotates on every key-group epoch, so a growing community mints a seed per message (measured 2026-10-21)](backlog.d/p2-graine-rotates-on-every-key-group-epoch-so-a-growing-community-mints-a-seed.md)
 - [P2 - one tap from Canari signs the user into its MiConnect sites, and MiGallery's notifications go through Canari (owner, 2026-11-07: decided; Canari's half of the handoff built 2026-11-08, MiGallery's flag ON 2026-11-14, the others OFF)](backlog.d/sign-in-handoff-to-the-ecosystem-sites-and-migallery-notifications.md)
-- [P2 - a reply or a mention aimed at a post's AUTHOR is sent as a "comment" (it read "a commente" and the daily cap swallowed it; the cap half is fixed by #3579)](backlog.d/p2-a-reply-or-mention-of-a-post-s-author-is-pushed-as-a-comment-and-capped.md)
 - [P2 - iOS: a quick reply from a suspended app is not sent in the background time, it waits for the next open](backlog.d/p2-ios-quick-reply-from-a-suspended-app-waits-for-the-next-open.md)
 - [P2 - the web catch-up decrypt session marks frames seen before its state is installed in the live client](backlog.d/p2-web-catch-up-marks-frames-seen-before-its-state-is-live.md)
 
