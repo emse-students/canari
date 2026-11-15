@@ -35,6 +35,7 @@
   import AdminEntityCreateForm from '$lib/components/admin/spaces/AdminEntityCreateForm.svelte';
   import AdminDependenciesPanel from '$lib/components/admin/spaces/AdminDependenciesPanel.svelte';
   import { dependencyRefusalMessage } from '$lib/associations/dependencies';
+  import { audienceRefusalMessage } from '$lib/associations/audienceRefusal';
   import Picker from '$lib/components/ui/Picker.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
   import Button from '$lib/components/ui/Button.svelte';
@@ -221,7 +222,8 @@
       return true;
     } catch (e) {
       Log.d('admin.spaces.saveReach failed', e);
-      error = m.admin_audiences_save_error();
+      // The server's typed refusal says WHY (one campus only, everyone on an institution only).
+      error = audienceRefusalMessage(e) ?? m.admin_audiences_save_error();
       return false;
     } finally {
       busy = null;

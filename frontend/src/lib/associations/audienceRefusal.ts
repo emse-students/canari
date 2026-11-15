@@ -13,6 +13,8 @@ export const AUDIENCE_REFUSAL = {
   INSTITUTION_ADMIN_ONLY: 'AUDIENCE_INSTITUTION_ADMIN_ONLY',
   OUTSIDE_BDE_CAMPUS: 'AUDIENCE_OUTSIDE_BDE_CAMPUS',
   RULE_BEYOND_BDE_SPACES: 'AUDIENCE_RULE_BEYOND_BDE_SPACES',
+  ONE_CAMPUS_ONLY: 'AUDIENCE_ONE_CAMPUS_ONLY',
+  DEFAULT_CAMPUS_UNDECIDED: 'AUDIENCE_DEFAULT_CAMPUS_UNDECIDED',
 } as const;
 
 export type AudienceRefusalCode = (typeof AUDIENCE_REFUSAL)[keyof typeof AUDIENCE_REFUSAL];
@@ -42,6 +44,10 @@ export function audienceRefusalText(code: AudienceRefusalCode): string {
       return m.audience_err_outside_bde_campus();
     case AUDIENCE_REFUSAL.RULE_BEYOND_BDE_SPACES:
       return m.audience_err_rule_beyond_bde_spaces();
+    case AUDIENCE_REFUSAL.ONE_CAMPUS_ONLY:
+      return m.audience_err_one_campus_only();
+    case AUDIENCE_REFUSAL.DEFAULT_CAMPUS_UNDECIDED:
+      return m.audience_err_default_campus_undecided();
   }
 }
 

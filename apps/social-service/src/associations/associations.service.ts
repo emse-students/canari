@@ -217,7 +217,11 @@ import {
   servedInstitutionReach,
   type InstitutionReachSpace,
 } from '../spaces/institution-reach';
-import { assertAudienceAllowedForType, defaultCampusRules } from '../spaces/audience-policy';
+import {
+  assertAudienceAllowedForType,
+  defaultCampusRules,
+  defaultSpacesFromParent,
+} from '../spaces/audience-policy';
 import { normaliseRules, smallestRules } from '../spaces/spaces.service';
 import { writeDependencyJournal } from '../spaces/dependency-journal';
 import {
@@ -968,7 +972,16 @@ export class AssociationsService {
         const governed = await manager.find(Space, {
           where: { bdeAssociationId: dependency.parentId },
         });
-        const fromParent = smallestRules(governed);
+        // One campus per association or list (decision 3): a parent governing spaces of two
+        // campuses hands its child the ones of the CREATOR's campus, read only then. A creator
+        // whose profile names neither is refused, typed; thrown here, the row saved above rolls back.
+        const spansCampuses = new Set(governed.map((s) => s.campus)).size > 1;
+        const [creator] = spansCampuses
+          ? ((await manager.query(READER_PROFILE_SQL, [userId])) as { campus: string | null }[])
+          : [];
+        const fromParent = smallestRules(
+          defaultSpacesFromParent(governed, creator?.campus ?? null)
+        );
         this.logger.log(
           `[spaces] ${saved.id} reaches its parent's spaces: ${fromParent.map((r) => `${r.formation ?? '*'}|${r.campus ?? '*'}`).join(', ')}`
         );
