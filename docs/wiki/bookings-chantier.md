@@ -1117,7 +1117,12 @@ the blocks it created). Nobody else is sent it.
 
 - **A LINK-ONLY SPACE IS NEVER LISTED, WHOEVER ASKS** - its organiser included: it is reached by
   its link or QR code (the psychologist case). **A PERSONAL space is listed to its owner alone
-  (D43), and an ARCHIVED association's to nobody.** The audience is judged per space with that
+  (D43), and an ARCHIVED association's to nobody - and BY ITS LINK an archived association's space
+  opens to its managers alone (2026-11-14): every read, booking, upload and holder's edit answers
+  404 `space-not-found` (`assertSpaceVisible`, the linked account included; `book` and `edit` re-read
+  the association `FOR SHARE` before the space's lock), while a booking already made keeps its
+  people's exits (`mine`, `cancel`, `withdraw`, the calendar link)
+  ([associations](frontend/modules/associations.md#what-an-archive-closes)).** The audience is judged per space with that
   space's own association's facts, as `assertMayUse` judges a read, so a listed space always opens.
 - **A SPACE FOLLOWS THE CAMPUS (owner, 2026-10-31)**: an association space is listed only when its
   association is visible to the reader (D37's predicate: a member of it, or its rules reach one of

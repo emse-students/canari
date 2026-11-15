@@ -23,7 +23,7 @@
   import { getForm, getForms, type Form } from '$lib/forms/api';
   // A post cannot carry a DRAFT form (the server refuses it): the picker never offers one.
   import { publishedForms } from '$lib/forms/publish';
-  import { withAttachedForm } from '$lib/posts/editableForms';
+  import { attachableForms, withAttachedForm } from '$lib/posts/editableForms';
   import { buildCreateFormHref } from '$lib/posts/postComposerDraft';
   import {
     listLinkableValidatedCalendarEvents,
@@ -222,8 +222,13 @@
     }
 
     try {
+      // The post's identity is fixed: only the forms it may attach, plus the one it carries (kept as
+      // is, even from before the rule - the server judges only a CHANGED form).
       availableForms = await withAttachedForm(
-        publishedForms(await getForms()),
+        attachableForms(publishedForms(await getForms()), {
+          associationId: post.associationId ?? null,
+          anonymous: post.anonymous === true,
+        }),
         post.attachedFormId,
         getForm
       );
@@ -651,7 +656,9 @@
       pollActive={includePoll}
       onTogglePoll={() => (includePoll = !includePoll)}
       formActive={includeForm}
-      onToggleForm={() => (includeForm = !includeForm)}
+      onToggleForm={post.anonymous && !post.attachedFormId
+        ? undefined
+        : () => (includeForm = !includeForm)}
       bind:scheduledAt
     >
       {#snippet action()}

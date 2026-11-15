@@ -17,7 +17,9 @@
  */
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { PG_SESSION_OPTIONS } from '../common/pg-session-options';
 import { DataSource } from 'typeorm';
+import { createBellTargetTables } from './post-notifications.it-schema';
 import {
   BadRequestException,
   ConflictException,
@@ -257,7 +259,8 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
       url: URL,
       entities: [Proposal, PostRepublication],
       synchronize: false,
-      extra: { options: `-c search_path=${schema},public` },
+      // The service's own session settings (`PG_SESSION_OPTIONS`), as `AppModule` opens its pool.
+      extra: { options: `${PG_SESSION_OPTIONS} -c search_path=${schema},public` },
     });
     await ds.initialize();
     await q(`CREATE SCHEMA ${schema}`);
@@ -424,6 +427,8 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
       proposals
     );
     personal.onModuleInit();
+    // The bell's one statement reads what its target gates name (`bell-row-gates.ts`).
+    await createBellTargetTables(q);
   });
 
   afterAll(async () => {

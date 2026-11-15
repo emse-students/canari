@@ -29,7 +29,7 @@ import { client, evaluate, openConversation, realClick } from '../chat.mjs';
 import { resolveDevices, tabMatchFor } from '../device.mjs';
 import { srvLines } from '../estate.mjs';
 import { createDM } from '../groupnav.mjs';
-import { closeBrowser, isUp, startBrowser } from '../launch.mjs';
+import { FAKE_MEDIA_FLAGS, closeBrowser, isUp, startBrowser } from '../launch.mjs';
 import { closeSeats, displayNameOf, observersOf, openSeats } from '../mlsrow.mjs';
 import { STATE_DIR } from '../names.mjs';
 import { errorDetail, finishObserved, keepConsoles, record } from '../results.mjs';
@@ -130,8 +130,7 @@ function wavOf(seat) {
 
 /** Chrome's fake media, on this seat's own tone when it has one. */
 const mediaFlags = (seat) => [
-  '--use-fake-device-for-media-stream=fps=30',
-  '--use-fake-ui-for-media-stream',
+  ...FAKE_MEDIA_FLAGS,
   ...(SEAT_TONES[seat] ? [`--use-file-for-fake-audio-capture=${wavOf(seat)}`] : []),
 ];
 

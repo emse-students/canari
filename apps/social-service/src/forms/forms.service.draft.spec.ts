@@ -77,6 +77,11 @@ describe('FormsService - drafts', () => {
       if (want && typeof want === 'object' && (want as { _type?: string })._type === 'isNull') {
         return have === null || have === undefined;
       }
+      // The association's archive clause (a raw SQL condition): no association here is archived,
+      // and the clause itself is proven on PostgreSQL (form-status.integration).
+      if (want && typeof want === 'object' && (want as { _type?: string })._type === 'raw') {
+        return true;
+      }
       return have === want;
     });
   }
@@ -626,6 +631,19 @@ describe('FormsService - drafts', () => {
       await expect(
         makeService({ mayAct: true }).service.get('f1', { userId: STRANGER, isGlobalAdmin: false })
       ).resolves.toMatchObject({ id: 'f1' });
+    });
+
+    it('get: who created a published form is served to its managers alone', async () => {
+      const published = { form: { status: FORM_PUBLISHED } };
+      const toStranger = await makeService(published).service.get('f1', {
+        userId: STRANGER,
+        isGlobalAdmin: false,
+      });
+      expect(toStranger).toMatchObject({ id: 'f1' });
+      expect(toStranger).not.toHaveProperty('ownerId');
+      await expect(
+        makeService(published).service.get('f1', { userId: OWNER, isGlobalAdmin: false })
+      ).resolves.toMatchObject({ ownerId: OWNER });
     });
 
     it('getPublic (the guest link): 404', async () => {

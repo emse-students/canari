@@ -16,6 +16,13 @@ vi.mock('$lib/stores/auth', () => ({
   getToken: async () => 'token',
   PASSWORD_LOGIN_FLOW_SLUG: 'password-login',
 }));
+vi.mock('$app/state', () => ({
+  page: {
+    get url() {
+      return new URL(window.location.href);
+    },
+  },
+}));
 vi.mock('$lib/stores/appVersionCheck.svelte', () => ({
   getAppVersionCheck: () => null,
   isBelowMinClientVersion: () => false,
