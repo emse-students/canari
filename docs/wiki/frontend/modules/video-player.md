@@ -39,6 +39,74 @@ owner chose **"Ouvrir le plein ecran"**. The `chat` row of `utils/videoTapAction
   played when asked, audible, never looped (user, 2026-10-02) - a conversation is a place where the
   reader chose to press play, a feed is a place where videos arrive by scrolling.
 
+## One art direction: flat at rest, glass while transient (owner, 2026-11-15)
+
+*"l'icone permanente est plate mais l'icone au survol est glass. On peut imaginer un truc hybride sur
+toutes les plateformes ? Mais coherents dans toutes les parties de l'app ?"* and *"Il faut
+homogeneiser entre les plateformes, je ne veux qu'une DA."* The rule, identical on iOS, Android and the
+web, on every surface:
+
+- **(a) ON SCREEN AT REST = FLAT**: a bare white lucide glyph with a drop shadow, no chip, no blur.
+- **(b) TRANSIENT, SHOWN ON INTERACTION = FAKE GLASS**: the raised bar, the volume slider, the time
+  bubble, the gesture's pop. One recipe (below); iOS adds a blur on top.
+
+| Control | Players | Class | Drawn as |
+| --- | --- | --- | --- |
+| Big play triangle (poster, paused, refused autoplay) | chat, conversation, lightbox, reel (refusal), every poster/tile (`VideoPoster`, `SharedMediaThumb`, `ChatReelTile`, `SharedPostCard`, `ReplayCard`) | (a) | `VideoRestingPlay`: lucide `Play`, filled, `drop-shadow-md` (was the glass triangle, SUPERSEDED) |
+| Speaker in a corner | feed (while playing), chat (once started), conversation viewer, live | (a) | `VideoSoundButton quiet`: bare 18 px `Volume2`/`VolumeX` |
+| Speaker on the rail | CanaReels | (a) | `VideoSoundButton rail`: bare 26 px |
+| Message actions `...` | chat | (a) | `VideoChipButton glass={false}`, 18 px `Ellipsis` (was a glass chip) |
+| Seek line (2 px, 32 px target) | chat, conversation, reel | (a) | the kit's `VideoScrubber line`; its time bubble is (b) |
+| Time bubble while dragging | every scrubber | (b) | `.glass-video` pill |
+| Control bar (play/pause, time, scrubber, speaker, full screen) | lightbox | (b) | ONE `.glass-video` pill; its buttons draw no chip of their own |
+| Volume slider rising above the speaker | every player, under a mouse | (b) | `.glass-video` pill |
+| Play/pause pop at the centre (600 ms) | chat-viewer, reel, feed, conversation | (b) | `VideoGlassGlyph` |
+| Sound pop at the centre | same | (b) | `.glass-video` chip, 22 px glyphs |
+
+Removed instead of aligned: the chat's expand chip and pause chip (see the section above).
+
+**ONE GLYPH AT THE CENTRE AT ANY INSTANT** (owner, 2026-11-15: at a pause the pop's glass bars and the
+resting triangle were drawn together, superimposed - *"c'est moche"*). The cause: two elements keyed on
+two different states, the gesture (`feedback`) and `paused`. The resting triangle now waits while a
+play/pause pop is on screen: `VideoFeedbackGlyph` reports `onTransport`, which owns the pop's lifetime
+(its `animationend`, also under `prefers-reduced-motion`, where it is a fade) - no timer. Test:
+`VideoPlayer.svelte.test.ts`, "never two of the play and pause glyphs".
+
+### Owner, 2026-11-15: one recipe, the blur is an iOS enhancement on top; Android measured and refused
+
+The Mi 9T measured the blur over a playing 1080p clip at 98-99 % janky frames against 38-44 % flat
+([the reading](#the-mi-9t-reading-of-2026-11-15---glass-fails-the-pass-mark)). The owner: *"Faux verre
+sans flou partout"*, then *"small differences are acceptable when they give each platform its best"*.
+So the build is **progressive enhancement over ONE recipe**:
+
+- **Base, every platform**: `.glass-video` (`app.css`, tokens `--glass-video-*`) is FAKE GLASS - a
+  translucent dark fill (56 % black), a 26 % white hairline, an inner highlight (rim and sheen) and a
+  shadow. NO `backdrop-filter`. Shapes, sizes, icons and tokens are identical on every platform.
+- **Enhancement, iOS (WebKit) only**: `data-glass='blur'` adds `backdrop-filter: blur(12px)
+  saturate(160%)` ON TOP of the same recipe and lowers the fill to 42 % so both read as one object.
+  `utils/videoGlass.ts` is the ONE place that decides ("blur available"): `decideVideoGlass({ ios })`,
+  iOS = the Tauri iOS app or any iPhone/iPad browser; Android and desktop stay on the base.
+  `ANDROID_VIDEO_GLASS`, the low-end heuristics and the flat chip are deleted.
+- Reduced transparency and `prefers-contrast: more` set the fill near-solid, the sheen off and the blur
+  off through the same tokens. `styles/videoGlass.test.ts` pins that the blur lives in one rule and in
+  no component.
+- **Legibility** (the 2026-10-01 report), crops from the Mi 9T over a white and a saturated green frame,
+  in `chat-video-1115/legibility-{white,green}-old-fake-flat.png` (old shipped glass at 28 % black,
+  the new fake glass, the old flat chip): the old 28 % glass left a white glyph weak on white; the
+  56 % fill reads on both frames and keeps the highlight.
+- **The fake glass's own cost on the Mi 9T** (same blob method, three pairs alternating order, 30 s,
+  vs the old flat solid chip). **First recipe, WITH an outer shadow** (`0 2px 10px` black 40 %): flat
+  28.48 / 23.31 / 29.42 % janky (median 12 ms), fake 37.12 / 28.93 / 30.73 % (13 / 12 / 13 ms): mean
+  +5.2 points, +0.7 ms - over the +3 budget, so the owner had the shadow dropped. **Final recipe, NO
+  outer shadow** (depth is an inset 1 px bottom shade drawn inside the same box): flat 27.24 / 34.30 /
+  31.87 % (median 12 / 13 / 12 ms), fake 26.11 / 28.90 / 28.63 % (12 / 12 / 12 ms): mean -3.3 points
+  (fake 27.9 % against flat 31.1 %, the baseline moving 7 points between runs) and 0 ms - **within the
+  +3 points / +1 ms budget, so it ships**. Legibility of the final recipe over white and green:
+  `chat-video-1115/lite-white-green.png`.
+- **iOS cost: OWED, a check and not a gate** (the iPhone was busy): the procedure is "The iPhone 12 - a
+  check, not a gate" below. A visible stutter or FPS under 55 with the bar up would send iOS to the base
+  recipe too, by changing `decideVideoGlass` to `false`.
+
 ## A tap in full screen never mutes (owner, 2026-11-10)
 
 *"c'est insupportable que le clic coupe le son en plein ecran ... n'importe quel clic sur l'interface coupe le son."*
@@ -92,7 +160,7 @@ merging the shells.
    (`--glass-video-*`), degrading without a timer. No SVG `feDisplacementMap` lensing: WebKit does
    not apply an SVG filter to a live `<video>` (Aave, "Building Glass for the Web"), so it cannot be
    the same on the iPhone. **Android is flat until a Mi 9T measurement shows no janky-frame
-   regression** ([the glass budget](#the-glass-budget)).
+   regression** ([the glass budget](#the-glass-budget)) - SUPERSEDED 2026-11-15: measured and refused, one fake-glass recipe everywhere, blur on iOS only ([one recipe](#owner-2026-11-15-one-recipe-the-blur-is-an-ios-enhancement-on-top-android-measured-and-refused)).
 3. **The gestures, the same everywhere**: a single TAP toggles the SOUND (amended 2026-11-10: in full screen it plays or pauses and never mutes, see below) (a speaker glyph pops and
    fades); a PRESS HELD pauses while held and resumes on release; a DOUBLE TAP likes where likes
    exist (CanaReels, a feed post) and leaves the sound as it was. A small speaker stays visible on
@@ -594,6 +662,8 @@ second meter, no second law, no second route.
 
 ## The glass play glyph - a triangle with no disc (owner, 2026-11-09)
 
+> **SUPERSEDED 2026-11-15 for the RESTING triangle**: it is flat now ([one art direction](#one-art-direction-flat-at-rest-glass-while-transient-owner-2026-11-15)). The glass glyph stays as the gesture's play/pause pop.
+
 > *"J'aurais juste fait le triangle en liquid glass."* The play glyph ITSELF is the glass: no circle
 > behind it, on every surface at once (viewer, reels, feed, chat, live, the poster before a first
 > frame). The pause bars the same way where they are shown (the gesture's feedback glyph).
@@ -628,6 +698,8 @@ nothing but its own box.
 
 ## The glass
 
+> **SUPERSEDED 2026-11-15** where it says flat chip, `--glass-video-flat-bg`, `data-glass="flat"`, `ANDROID_VIDEO_GLASS` or the low-end heuristics: those are deleted. The recipe is now ONE fake glass with an iOS-only blur on top ([one recipe](#owner-2026-11-15-one-recipe-the-blur-is-an-ios-enhancement-on-top-android-measured-and-refused)); the `data-glass` values are `blur` and `fake`.
+
 `.glass-video` in `app.css`, beside `.glass-chrome` and built the same way, with what makes it read
 as Liquid Glass rather than frosted grey: a specular rim (`--glass-video-rim`, an inset top line), a
 sheen (`--glass-video-sheen`, a top-down white gradient) and a dark tint (`--glass-video-bg`, black at
@@ -653,6 +725,8 @@ disc may take the frame's colour through its blur, the glyph cannot.
 Tests: `styles/videoGlass.test.ts` (each fallback line), `utils/videoGlass.test.ts`.
 
 ## The glass budget
+
+> **Narrowed 2026-11-15**: the budget now covers the TRANSIENT glass only (bar, slider, bubble, pop); resting controls are flat on every platform.
 
 The Android default is flat until a reading on the Mi 9T says the blur costs no janky frames
 (owner, 2026-11-09). **The lead takes the readings, on a pre-release carrying the lightbox migration;
@@ -696,9 +770,38 @@ avoids a second install.
    A Chrome trace (`chrome://inspect` > Performance, 10 s, with the bar up) is the deeper reading if the
    numbers are near the line: look for `Paint` / `RasterTask` time per frame with glass vs flat.
 
+### The Mi 9T reading of 2026-11-15 - glass FAILS the pass mark
+
+Build 1.7.0-alpha.1 (versionCode 100700001), Mi 9T, app on the feed, Chrome DevTools over the WebView's
+socket. **Method, and its one deviation**: no 1080p clip was on a post, and the WebView's HTTP scope
+refuses `localhost`, so a 35 s 1080p30 H.264 testsrc2 clip (3 Mbps) was pushed into the page as a blob
+and played looping, full screen, over the feed, with the WORST-CASE transient glass drawn over it by the
+app's own `.glass-video` class: the raised bar (full width, 56 px), the volume pill (44 x 120) and the
+time bubble, all three at once. `data-glass` was flipped `flat`/`glass` on those three elements; each run is
+30 s after `gfxinfo reset`; six pairs, order alternated (the bar and slider are the same CSS and
+blur radius as the real ones, not their components - the cost being measured is the blur over a decoder).
+
+| Pair | Flat: janky / median | Glass: janky / median |
+| --- | --- | --- |
+| 1 | 43.46 % / 13 ms | 99.12 % / 21 ms |
+| 2 | 43.03 % / 13 ms | 99.89 % / 21 ms |
+| 3 | 38.89 % / 13 ms | 99.45 % / 21 ms |
+| 4 | 43.63 % / 13 ms | 99.78 % / 21 ms |
+| 5 | 37.54 % / 13 ms | 99.67 % / 20 ms |
+| 6 | 42.57 % / 13 ms | 98.45 % / 21 ms |
+
+**Verdict: the glass fails the pass mark (+3 points, +1 ms) by a factor of twenty** - +56 points of
+janky frames and +8 ms of median frame time, every pair, both orders, so the 12 px blur over a live 1080p
+decode is not affordable on this GPU, even for three small transient pieces. (The flat baseline is itself
+~40 % janky here: a full-screen 1080p decode over the feed on a Snapdragon 730; the comparison is the
+difference.) A first run, started twice by mistake and overlapping itself, gave the same alternation and
+was discarded; the table is the clean rerun. **Decided by the owner, 2026-11-15: no blur on Android; one
+fake-glass recipe, the blur an iOS-only enhancement** ([above](#owner-2026-11-15-one-recipe-the-blur-is-an-ios-enhancement-on-top-android-measured-and-refused)). The raw logs are in the
+harness folder (`chat-video-1115/measure3.log`).
+
 ### The iPhone 12 - a check, not a gate
 
-The iPhone draws glass already (WebKit, `decideVideoGlass`). The reading confirms it does not cost a
+The iPhone is the ONE platform that adds the blur on top of the fake glass (`decideVideoGlass`). **OWED.** The reading confirms it does not cost a
 dropped frame there: on the pre-release, the same 30 s clip in the lightbox with the bar held up
 (Safari Web Inspector on the Mac, the same console line as step 2), and the device log read with
 `python -m pymobiledevice3 syslog live` filtered on the app for `[VIDEO]` and WebKit's

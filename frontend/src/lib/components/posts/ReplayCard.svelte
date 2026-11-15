@@ -14,7 +14,7 @@
    */
   import { History } from '@lucide/svelte';
   import type { PostEntity } from '$lib/posts/api';
-  import VideoGlassGlyph from '$lib/components/ui/player/VideoGlassGlyph.svelte';
+  import VideoRestingPlay from '$lib/components/ui/player/VideoRestingPlay.svelte';
   import LivePosterImage from '$lib/components/live/LivePosterImage.svelte';
   import { formatLiveElapsed } from '$lib/live/openLives';
   import { replayCoverOf, replayTimeLeft } from '$lib/live/replayTimeline';
@@ -81,7 +81,7 @@
         >
       {/if}
     </span>
-    <VideoGlassGlyph kind="play" size={64} class="relative" />
+    <VideoRestingPlay size={64} class="relative" />
     {#if fallbackTitle}
       <span
         class="absolute inset-x-0 bottom-0 truncate bg-linear-to-t from-black/70 to-transparent px-3 pt-6 pr-16 pb-2 text-left text-sm font-semibold"

@@ -18,7 +18,7 @@
   import MediaFrame from '$lib/components/shared/MediaFrame.svelte';
   import type { MediaRef } from '$lib/media';
   import type { ReelTombstone } from '$lib/reels/chatReel';
-  import VideoGlassGlyph from '$lib/components/ui/player/VideoGlassGlyph.svelte';
+  import VideoRestingPlay from '$lib/components/ui/player/VideoRestingPlay.svelte';
   import { formatVideoTime } from '$lib/utils/videoPlayback';
   import { timeAgo } from '$lib/utils/time';
   import { m } from '$lib/paraglide/messages';
@@ -171,7 +171,7 @@
       data-reel-tile
     >
       <span class="transition-transform duration-300 md:group-hover/media:scale-110">
-        <VideoGlassGlyph kind="play" size={64} />
+        <VideoRestingPlay size={64} />
       </span>
       <span class="bg-cn-scrim/50 rounded-full px-3 py-1 text-xs font-semibold">
         {m.reel_chat_tile_tap()}

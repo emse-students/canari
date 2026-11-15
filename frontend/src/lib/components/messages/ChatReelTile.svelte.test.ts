@@ -22,7 +22,7 @@ afterEach(() => {
 });
 
 describe('ChatReelTile play glyph', () => {
-  it('draws the glass triangle and no Lucide play icon', () => {
+  it('draws the flat resting triangle', () => {
     const target = document.createElement('div');
     document.body.appendChild(target);
     mounted.push(
@@ -39,7 +39,7 @@ describe('ChatReelTile play glyph', () => {
     );
     flushSync();
     expect(target.querySelector('[data-reel-tile]')).not.toBeNull();
-    expect(target.querySelector('[data-video-glass-glyph="play"]')).not.toBeNull();
-    expect(target.querySelector('.lucide-play')).toBeNull();
+    expect(target.querySelector('[data-video-resting-play]')).not.toBeNull();
+    expect(target.querySelector('.glass-video-shape'), 'flat at rest').toBeNull();
   });
 });

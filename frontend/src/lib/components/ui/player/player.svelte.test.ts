@@ -114,8 +114,8 @@ describe('the play glyph', () => {
     const button = target.querySelector('button')!;
     // The glass is the SHAPE: the button itself draws no chip, no circle, no yellow.
     expect(button.className).not.toMatch(/glass-video|rounded-full|bg-accent/);
-    expect(button.querySelector('.glass-video-shape')).not.toBeNull();
-    expect(button.querySelector('[data-video-glass-glyph="play"]')).not.toBeNull();
+    expect(button.querySelector('.glass-video-shape'), 'flat, never glass at rest').toBeNull();
+    expect(button.querySelector('[data-video-resting-play]')).not.toBeNull();
     expect(button.getAttribute('aria-label')).toBeTruthy();
     button.click();
     expect(onclick).toHaveBeenCalledTimes(1);
