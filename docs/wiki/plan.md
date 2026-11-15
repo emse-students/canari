@@ -208,6 +208,7 @@ earliest version, as a checklist.
 - [P3 - a comment push tapped while its post is the page left open lands on the post, not on the comment](backlog.d/p3-a-comment-push-for-the-post-already-open-does-not-open-the-comment.md)
 - [P3 - iOS: a foreground ring flashes the CallKit banner over the in-app ring, because the server still sends the VoIP push](backlog.d/p3-ios-a-foreground-ring-flashes-the-callkit-banner-over-the-in-app-ring.md)
 - [P3 - iOS: an answer on the locked CallKit screen is lost if the app is opened after the ring deadline](backlog.d/p3-ios-an-answer-on-the-locked-callkit-screen-is-lost-if-the-app-opens-after-the-ring-deadline.md)
+- [P3 - the bell picker keeps its old level after a re-follow, until the page is opened again](backlog.d/p3-the-bell-picker-keeps-its-old-level-after-a-re-follow.md)
 - [P3 - the comment route accepts a comment with no text and no media, and pushes "Nouveau commentaire"](backlog.d/p3-the-comment-route-accepts-an-empty-comment-and-pushes-it.md)
 
 ## 1.9.0
