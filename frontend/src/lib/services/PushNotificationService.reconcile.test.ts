@@ -19,12 +19,19 @@ import type { PushAuth } from './PushNotificationService';
 /** What the OS gives `get_fcm_token`: null is a phone with no token (no Play services, APNs down). */
 let osToken: string | null = 'fcm-1';
 
+/** The push secret the native side holds, as `store_push_secret` last wrote it. */
+let nativeSecret: string | null = null;
+
 Object.defineProperty(globalThis, '__TAURI_INTERNALS__', {
   value: {
-    invoke: (cmd?: string) => {
+    invoke: (cmd?: string, args?: unknown) => {
       if (cmd === 'complete_owed_push_token_deletion') return Promise.resolve(true);
       if (cmd === 'end_push_registration') return Promise.resolve(true);
       if (cmd === 'get_fcm_token') return Promise.resolve(osToken);
+      if (cmd === 'store_push_secret') {
+        nativeSecret = (args as { secret: string }).secret;
+        return Promise.resolve(null);
+      }
       return Promise.resolve(null);
     },
     transformCallback: vi.fn(),
@@ -88,6 +95,7 @@ async function drain(): Promise<void> {
 
 beforeEach(() => {
   osToken = 'fcm-1';
+  nativeSecret = null;
   sessionStorage.clear();
   localStorage.clear();
   vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -250,6 +258,37 @@ describe(
         vi.useRealTimers();
       }
       expect(registrations()).toBe(1);
+      expect(push.pushOutcomeForReport()).toBe('registered');
+    });
+  }
+);
+
+describe(
+  'an answer to the account that left is not stored (review of #3649)',
+  { timeout: 30_000 },
+  () => {
+    it('A answered after the sign-out and after B registered: the native secret is the one of the account signed in', async () => {
+      let answerA!: (r: Response) => void;
+      let calls = 0;
+      globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+        if (!String(url).includes('/api/mls/push/register')) return Response.json({});
+        calls++;
+        if (calls === 1) return await new Promise<Response>((r) => (answerA = r));
+        return Response.json({ pushSecret: 'secret-B' });
+      });
+      const push = await freshModule();
+      // A's request is sent, past every check, and its answer has not come back.
+      const ladderA = push.startPushService('https://api', LIVE, 'dev-1');
+      await drain();
+      expect(calls).toBe(1);
+
+      await push.endPushRegistration();
+      await push.startPushService('https://api', LIVE, 'dev-1');
+      expect(nativeSecret).toBe('secret-B');
+
+      answerA(Response.json({ pushSecret: 'secret-A' }));
+      await ladderA;
+      expect(nativeSecret).toBe('secret-B');
       expect(push.pushOutcomeForReport()).toBe('registered');
     });
   }

@@ -96,6 +96,18 @@ export class PushRegistrationUnauthorizedError extends Error {
 }
 
 /**
+ * The session that started this registration ended (a sign-out bumped `pushSessionGeneration`):
+ * whatever it would send or store belongs to the account that left. Not a failure of this session -
+ * said at info, and recorded nowhere (the record is gated on the same generation).
+ */
+export class PushRegistrationSupersededError extends Error {
+  constructor(where: string) {
+    super(`the session that started this push registration ended - ${where}`);
+    this.name = 'PushRegistrationSupersededError';
+  }
+}
+
+/**
  * What a failure to obtain a token becomes. An ALLOWLIST of the failures that say only "no new
  * token now" - a refresh that answered with no token (`RefreshFailedError`) or one nobody answered -
  * which pass as they came and are retried; every other failure is a verdict on the session.
@@ -430,6 +442,10 @@ async function registerPushTokenOnce(
       console.warn(`[Push] registration refused by the server (HTTP ${err.status}) - not retried`);
       return { ok: false, reason: 'refused' };
     }
+    if (err instanceof PushRegistrationSupersededError) {
+      console.info(`[Push] ${err.message}`);
+      return { ok: false, reason: 'unauthorized' };
+    }
     if (err instanceof PushRegistrationUnauthorizedError) {
       console.warn(`[Push] ${err.message} - not retried`, err.cause);
       return { ok: false, reason: 'unauthorized' };
@@ -529,9 +545,7 @@ export async function startPushService(
       const send = async (token: string): Promise<Response> => {
         // NEVER ACCOUNT A's USER ID WITH ACCOUNT B's BEARER: `userId` is the one this ladder started
         // with, the token the session's current one.
-        if (superseded()) {
-          throw new PushRegistrationUnauthorizedError('the session that started it has ended');
-        }
+        if (superseded()) throw new PushRegistrationSupersededError('nothing sent');
         return await fetch(`${apiBaseUrl}/api/mls/push/register`, {
           method: 'POST',
           headers: {
@@ -584,6 +598,10 @@ export async function startPushService(
       // one may start: two stores in flight could land in either order. A store that failed makes
       // the registration fail too, so it is not counted and the next attempt registers again: the
       // device stays signed out of pushes until a secret is stored (`write_push_secret`).
+      // NOT STORED FOR AN ACCOUNT THAT LEFT: an answer to a request sent before the sign-out would
+      // otherwise store its secret after the next account's, and the native secret would then not
+      // be the one the server holds for that account's row - the two stores in either order above.
+      if (superseded()) throw new PushRegistrationSupersededError('its answer is dropped');
       if (pushSecret) {
         try {
           await invoke('store_push_secret', { secret: pushSecret });

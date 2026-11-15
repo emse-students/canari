@@ -2016,7 +2016,10 @@ the server could say a phone was silent, which is how a third of a build went un
   the server for a known one at every short session, and the daily report would WARN for a phone with
   no Play services. With no final outcome since the sign-out (which clears both keys), the phone
   states `in-progress` while THIS process registers, `started` when an earlier process began a ladder
-  and died inside it (a marker kept apart, `canari_push_started`), else `none`. An
+  and died inside it (a marker kept apart, `canari_push_started`), else `none`. **Accepted, stated so
+  it is not reopened**: a phone whose last final outcome was a failure states that failure on the
+  first `register-device` of a new process, and gets one `[PUSH_MISSING]` WARN before its ladder
+  succeeds - an accusation about a real past state, not noise. An
   allowlist on the server; anything else prints `invalid`, an older build `unstated`. The server
   keeps the last stated one on the device's key package (`key_package."pushOutcome"`, migration
   `052`, additive). **`051` is reserved by the held #3518** (`051_departed_seats_removed.sql`,
@@ -2026,7 +2029,9 @@ the server could say a phone was silent, which is how a third of a build went un
   session generation; a ladder whose generation is gone records nothing, stops between attempts and
   sends nothing - it would otherwise write account A's outcome into account B's state, and send A's
   `x-user-id` with B's bearer. The next account runs its own ladder (`pushAttempted` is reset), and
-  never joins a registration still in flight for the account that left.
+  never joins a registration still in flight for the account that left. An answer that comes back for it
+  after the sign-out is dropped before its push secret is stored, so the native secret is always
+  the one the server holds for the signed-in account's row.
 - When a phone holds no row, `register-device` prints `[PUSH_MISSING] user device os build last=<outcome>`:
   at `log` for the expected states (`none`, a fresh sign-in; `in-progress`; `no-token`, a phone its
   OS gives no token, already reported by `[PUSH_UNAVAILABLE]`), at WARN otherwise, naming the side -
