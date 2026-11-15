@@ -11,12 +11,18 @@ vi.mock('$lib/utils/chat/tabCommitDelegation', () => ({ delegateCommitToLeader }
 vi.mock('$lib/utils/graine/runtime', () => ({
   requireGraineRuntime: () => ({ deviceKey: () => new Uint8Array(32) }),
 }));
+/** What the leader's open of a handed frame returns (`null`: the device key changed). */
+const opened = vi.hoisted(() => ({ bytes: null as Uint8Array | null }));
 vi.mock('$lib/encryption', () => ({
   sealBytes: async () => ({ iv: new Uint8Array([1]), cipherText: new Uint8Array([2]) }),
-  openSealedBytes: async () => null,
+  openSealedBytes: async () => opened.bytes,
 }));
 
-import { FrameNotHandedError, sendFrameFromThisTab } from './frameFromAnyTab';
+import {
+  FrameNotHandedError,
+  frameHandoverExecutors,
+  sendFrameFromThisTab,
+} from './frameFromAnyTab';
 import { FollowerTabSendError } from './commitSubmission';
 
 const GROUP = 'group-0123456789';
@@ -61,5 +67,62 @@ describe('sendFrameFromThisTab when the lead leaves during the send (review of #
     const svc = { sendMessage: vi.fn(async () => Promise.reject(boom)) };
     await expect(sendFrameFromThisTab(svc, GROUP, BYTES)).rejects.toBe(boom);
     expect(delegateCommitToLeader).not.toHaveBeenCalled();
+  });
+});
+
+describe("the leader half when the lead leaves it while it runs a follower's frame", () => {
+  const OP = {
+    kind: 'emit-frame' as const,
+    groupId: GROUP,
+    frame: { iv: 'AQ==', cipherText: 'Ag==' },
+    delivery: 'visible' as const,
+  };
+  let error: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    tab.leads = true;
+    opened.bytes = BYTES;
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+    error = vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  it('answers unsent by value when the send refuses with lead-lost - nothing at error', async () => {
+    const svc = {
+      sendMessage: vi.fn(async () => {
+        tab.leads = false;
+        throw new FollowerTabSendError(GROUP, 'lead-lost');
+      }),
+    };
+    await expect(frameHandoverExecutors(() => svc)['emit-frame'](OP)).resolves.toEqual({
+      unsent: 'lead-lost',
+    });
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it('answers unsent without calling the send when the lead left during the open', async () => {
+    tab.leads = false;
+    const svc = { sendMessage: vi.fn() };
+    await expect(frameHandoverExecutors(() => svc)['emit-frame'](OP)).resolves.toEqual({
+      unsent: 'lead-lost',
+    });
+    expect(svc.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('still throws every other failure - a defect stays one', async () => {
+    const boom = new Error('network');
+    const svc = { sendMessage: vi.fn(async () => Promise.reject(boom)) };
+    await expect(frameHandoverExecutors(() => svc)['emit-frame'](OP)).rejects.toBe(boom);
+  });
+
+  it('the follower that asked gets FrameNotHandedError(lead-lost), and hands it on no further', async () => {
+    tab.leads = false;
+    delegateCommitToLeader.mockReset();
+    delegateCommitToLeader.mockResolvedValue({ status: 'done', value: { unsent: 'lead-lost' } });
+    const refused = await sendFrameFromThisTab({ sendMessage: vi.fn() }, GROUP, BYTES).catch(
+      (e: unknown) => e
+    );
+    expect(refused).toBeInstanceOf(FrameNotHandedError);
+    expect((refused as FrameNotHandedError).reason).toBe('lead-lost');
+    expect(delegateCommitToLeader).toHaveBeenCalledTimes(1);
   });
 });

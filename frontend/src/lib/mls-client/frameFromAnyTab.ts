@@ -11,6 +11,7 @@ import {
   type DelegationRefusal,
   type HandedFrameDelivery,
   type HandedOverBytes,
+  type HandoverUnsent,
 } from '$lib/utils/chat/tabCommitDelegation';
 
 /**
@@ -36,9 +37,16 @@ import {
  *   changed between the follower's seal and the leader's open (a PIN change); nothing was sent;
  * - `reload-owed`: this tab was promoted to leader IN PLACE and reloads to read the state as it now
  *   stands - its copy may not send, and there is no other leader to hand the frame to. Refused at
- *   once, never written as a request nobody would run.
+ *   once, never written as a request nobody would run;
+ * - `lead-lost`: the leader that took the request lost the lead before it posted the frame
+ *   ({@link HandoverUnsent}) - nothing was posted. Never handed on a second time: one gesture is one
+ *   request, so the handover terminates whatever the lead does.
  */
-export type FrameNotSentReason = DelegationRefusal | 'device-key-changed' | 'reload-owed';
+export type FrameNotSentReason =
+  | DelegationRefusal
+  | 'device-key-changed'
+  | 'reload-owed'
+  | HandoverUnsent;
 
 /** A frame this tab could not send itself was not sent for it either, for a typed reason. */
 export class FrameNotHandedError extends Error {
@@ -141,6 +149,12 @@ export async function sendFrameFromThisTab(
     );
     throw new FrameNotHandedError(groupId, answer.value.unopened);
   }
+  if ('unsent' in answer.value) {
+    console.warn(
+      `[SEND] ${groupId.slice(0, 8)}... frame handed to the leader tab was not sent: that tab lost the lead before posting it`
+    );
+    throw new FrameNotHandedError(groupId, answer.value.unsent);
+  }
   console.debug(`[SEND] ${groupId.slice(0, 8)}... frame sent by the leader tab for this one`);
   return answer.value;
 }
@@ -158,14 +172,33 @@ export function frameHandoverExecutors(
         );
         return { unopened: 'device-key-changed' };
       }
-      const sent = await ensureMls().sendMessage(
-        op.groupId,
-        bytes,
-        op.messageId,
-        DELIVERY[op.delivery]
-      );
+      // THE LEAD CAN LEAVE THIS TAB WHILE IT RUNS THE REQUEST (a freeze, a handover to a visible
+      // tab): an expected event, answered BY VALUE where it is known - here, read synchronously right
+      // before the call (the open above is a task gap), and `sendMessage`'s own `lead-lost` once the
+      // send began. Neither posted anything. Every other failure still throws: a defect, said at error.
+      if (refusesCommitsHere()) return leadLeftDuringRun(op.groupId, 'before the send');
+      let sent;
+      try {
+        sent = await ensureMls().sendMessage(
+          op.groupId,
+          bytes,
+          op.messageId,
+          DELIVERY[op.delivery]
+        );
+      } catch (e) {
+        if (!(e instanceof FollowerTabSendError) || e.refusal !== 'lead-lost') throw e;
+        return leadLeftDuringRun(op.groupId, 'during the send');
+      }
       console.debug(`[SEND] ${op.groupId.slice(0, 8)}... frame sent for a follower tab`);
       return { receivedAt: sent.receivedAt };
     },
   };
+}
+
+/** The leader half's typed answer when the lead left it mid-run - see {@link frameHandoverExecutors}. */
+function leadLeftDuringRun(groupId: string, when: string): { unsent: HandoverUnsent } {
+  console.warn(
+    `[SEND] ${groupId.slice(0, 8)}... a follower's frame was not sent: the lead left this tab ${when} - nothing posted, the follower is told`
+  );
+  return { unsent: 'lead-lost' };
 }
