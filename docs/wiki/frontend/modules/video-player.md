@@ -28,6 +28,29 @@ sources: [9to5Google](https://9to5google.com/2026/03/19/instagram-finally-settle
   playback as it was. The live viewer has no pause: its tap only turns the sound on.
 - The inline feed player is unchanged: muted at start, its tap opens the viewer, its chip is the sound.
 
+## The conversation viewer's seek line could not be touched (owner, 2026-11-15)
+
+*"le lecteur plein ecran des messages est a revoir completement aussi ... la barre de lecture n'est
+pas 'touchable'"*. **The cause is an overlay, not the scrubber**: the kit's `line` (2 px drawn, 32 px
+to touch, captured pointer) works alone and in the CanaReels viewer. In `FullScreenViewer`, `immersive`
+draws the `footer` snippet as an absolute `z-20` strip over the bottom of the picture, padded to the
+safe inset - and `MediaLightbox` ALWAYS hands it a footer (the gallery dots), empty when a viewer has no
+dots (a conversation's has none: `dotCount={0}`). That strip sat on the lower half of the line's touch
+zone, exactly where a thumb lands, and took the touch for itself. **Fix**: the immersive footer is
+`pointer-events-none` (its dots already opted back in with `pointer-events-auto`), and a test
+(`MediaLightbox.seekLine.svelte.test.ts`) pins both the overlay and a touch press-then-drag that seeks
+inside the real viewer.
+
+**Can the conversation viewer BE the CanaReels viewer? Not as one component, and it already shares what
+matters.** Both are `VideoPlayer` (variants `conversation` and `reel`) on the same kit, tap map and seek
+line. The shells differ in what they exist for: the reel pager is a vertical feed with likes, comments,
+a rail and a caption; the conversation viewer is `MediaLightbox`, which also shows PHOTOS, zooms, pans,
+swipes between a conversation's media and has an info sheet. Folding one into the other would give a
+reel viewer that zooms photos or a lightbox with a rail - two features dragged in to remove a variant
+that is only a placement of the speaker. The drift risk is in the CONTROLS, handled by the hybrid
+art-direction decision (one table of controls, flat at rest and glass while transient), not by
+merging the shells.
+
 ## The owner's decisions (2026-11-09, final)
 
 1. **ONE player for every surface** - feed, CanaReels, chat video, lightbox, live viewer - with a
