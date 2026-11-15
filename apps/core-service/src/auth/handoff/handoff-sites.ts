@@ -34,7 +34,7 @@ export const ECOSYSTEM_SITES: readonly EcosystemSiteContract[] = [
     origin: 'https://gallery.mitv.fr',
     miconnect: true,
     miconnectApplication: 'migallery',
-    handoff: false,
+    handoff: true,
     dests: ['/', '/mes-photos', '/albums/{uuid}'],
   },
   {
