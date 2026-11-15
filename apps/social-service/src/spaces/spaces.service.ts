@@ -35,6 +35,8 @@ import type { AudienceRuleDto } from './dto/space.dto';
  * Locks association `$1` for a write of its audience rules and answers its `type`; no row when it
  * does not exist. `FOR NO KEY UPDATE`: two audience writes of one entity wait for each other, while
  * a row that merely REFERENCES the entity (a post, a member seat - `FOR KEY SHARE`) is not held up.
+ * A reader that takes the row `FOR SHARE` (the archived check of a write, the members-only gate)
+ * does wait, for the few statements of this transaction.
  */
 export const AUDIENCE_WRITE_LOCK_SQL = `SELECT type FROM associations WHERE id = $1 FOR NO KEY UPDATE`;
 
@@ -533,7 +535,9 @@ export class SpacesService {
    * first ({@link AUDIENCE_WRITE_LOCK_SQL}), then its type, the rules in force and the writer's
    * bounds are read, judged and replaced in that ONE transaction. Two writes of one entity are
    * therefore ordered, and the second is judged on what the first stored - never on a read taken
-   * before it.
+   * before it. `READ COMMITTED` IS NAMED, NOT INHERITED: each statement after the lock must see what
+   * the write it waited for committed, which a transaction-wide snapshot (`REPEATABLE READ`, taken
+   * before the wait) would not - the default of a connection is a setting, and this depends on it.
    */
   async setAudiences(
     associationId: string,
@@ -542,7 +546,7 @@ export class SpacesService {
   ): Promise<AudienceRuleView[]> {
     const rules = normaliseRules(submitted);
     let governedBy: SpaceStanding[] | null = null;
-    const stored = await this.dataSource.transaction(async (manager) => {
+    const stored = await this.dataSource.transaction('READ COMMITTED', async (manager) => {
       const [locked] = (await manager.query(AUDIENCE_WRITE_LOCK_SQL, [associationId])) as {
         type: string;
       }[];

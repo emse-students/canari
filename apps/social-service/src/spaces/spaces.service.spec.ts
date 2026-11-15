@@ -203,9 +203,10 @@ describe('SpacesService', () => {
         ),
     };
     const dataSource = {
-      transaction: jest.fn().mockImplementation(async (cb: (m: unknown) => unknown) => {
+      // `transaction(work)` or `transaction(isolation, work)`: the work is the last argument.
+      transaction: jest.fn().mockImplementation(async (...args: unknown[]) => {
         if (opts.writeFails) throw opts.writeFails;
-        return cb(manager);
+        return (args[args.length - 1] as (m: unknown) => unknown)(manager);
       }),
       query: jest.fn().mockImplementation(standing),
     } as unknown as DataSource;
@@ -561,6 +562,14 @@ describe('SpacesService', () => {
     expect(manager.insert).toHaveBeenCalledWith(expect.anything(), [
       { associationId: 'a', formation: null, campus: 'saint-etienne' },
     ]);
+  });
+
+  it('names the isolation its judgement depends on: each read after the lock sees what was committed', async () => {
+    const { service } = make({ association: { id: 'a' } });
+    await service.setAudiences('a', [], ADMIN);
+    const dataSource = (service as unknown as { dataSource: { transaction: jest.Mock } })
+      .dataSource;
+    expect(dataSource.transaction).toHaveBeenCalledWith('READ COMMITTED', expect.any(Function));
   });
 
   it('accepts an empty set: the association then reaches nobody', async () => {
