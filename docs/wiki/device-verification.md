@@ -415,6 +415,100 @@ R3b is a race the bench cannot force: a run that FINISHED before the power-off l
 (its line reads `decrypted` or `fallback` at the next drain), which is no verdict - repeat until a
 drain reports either a `killed` line or the `pid liveness not provable` warning.
 
+## The production read-only readings of 2026-11-15
+
+**What this is.** The halves of the [readings owed](plan.md#readings-owed) whose evidence is the
+production population rather than a phone: the server-side rule of a notice, measured over every
+account it ran on, by `GROUP BY` and by the social-service log's own lines. Granted by the owner on
+2026-11-15 (*"La prod t'es completement accessible en lecture"*): every statement ran in a session
+whose `SHOW default_transaction_read_only` printed `on` first; logs were read with `docker logs
+--since 30h` of the production social-service container (started 2026-11-14 09:12 UTC, the `v1.6.12`
+deploy). Only aggregates are written here: no id, no name, no text. Paris days are
+`(("createdAt" AT TIME ZONE 'UTC') AT TIME ZONE 'Europe/Paris')::date` (the database runs in UTC and
+`post_notifications."createdAt"` is a UTC timestamp without zone). **No phone half is read here; every
+entry keeps its device halves.**
+
+### Campus trends and the daily cap (WP-8, WP-10, the quieter batch) - the server half PASSES on production
+
+[Entry](backlog.d/reading-owed-campus-trends-and-the-daily-cap-wp-8-wp-10-and-the-quieter-batch.md),
+[engagement](engagement.md#the-owners-decisions-of-2026-11-10---quieter-1610).
+
+- **One trend a day per reader.** `post_notifications` of type `campus_trend`, grouped by reader and
+  Paris day: 2026-11-10 (the `1.6.9` backlog, before the quieter batch, [as recorded](engagement.md#the-deploy-of-2026-11-10-and-what-it-changed))
+  4,459 rows to 499 readers, up to 9 each; **from 2026-11-11 on, 1,001 rows and no reader-day above
+  one** (11-11: 499 rows / 499 readers; 11-12: 499 / 499; 11-14: 1 / 1; 11-15: 2 / 2). No reader holds
+  two rows for one post (`GROUP BY recipient, post HAVING count(*) > 1`: 0).
+- **Two a week.** Per reader and Paris week, the rows written since 2026-11-11: 500 readers at 2, 1 at
+  1, none above; `campus_trend_weeks` agrees row for row (joined on reader and week: 501 equal, 0
+  above the ledger, 0 below, 0 without a ledger row). The log shows the bound biting: the two trends
+  since the deploy each logged `took off: k to tell of ~500 eligible (498 already told of a trend
+  today, twice this week, or concurrently)` and `told k: 1 push group(s), 0 failed`.
+- **The told-once ledger and a deleted post.** 498 of the 2026-11-12 rows have no
+  `post_engagement_notices` row: their post was deleted, and the ledger's rows cascade with their post
+  while the bell rows (`postId` a string, no foreign key) stay - the documented shape, not a reader
+  told twice.
+- **The daily cap of three.** `engagement_push_days`: 2026-11-10, 497 readers at 5 (the old cap of
+  `1.6.9`); **from 2026-11-11 the counter never exceeds 3** (max 3, 0 rows above). **The fourth counted
+  push reaches the bell only:** reader-days with MORE than three counted bell rows (the `PUSH_BUDGET`
+  counted types of `v1.6.12`) from 2026-11-12 on: 42 reader-days with the counter at exactly 3 (11-12:
+  18, 11-13: 14, 11-14: 9, 11-15: 1) and 3 with no counter row (pushes withheld by category or device)
+  - the bell rows were written, the push stopped at 3. The log's withheld lines since the deploy:
+  `event_open` 72 of 72, `reaction` 30 of 30, `comment` 4 of 4, `campus_trend` 3 of 3; that build's
+  line names the three causes together (the per-cause line of the 2026-11-14 decision is not in
+  `v1.6.12`), so the cause of each is not separable from the log.
+- **"Aimee par ..." cannot be read on production.** One account shares its activity, and none of the
+  1,001 trend rows since 2026-11-11 had a followed reactor sharing it (upper bound: any reaction,
+  0 rows), so `named=0` in every `[TREND]` line is the expected value; the naming stays a dev reading.
+  The trend PUSH itself is not observable either (the suggestion push is off by default; the three
+  told readers since the deploy were all withheld).
+- **Verdict:** the server's "once a day, twice a week, three counted pushes a day, the rest to the
+  bell" holds over the whole production population since `1.6.10`. **Left:** the phone halves (the
+  pushed texts, "Aimee par ..." with a followed liker, the Recents order).
+
+### Birthdays - the morning notice's claim PASSES on production, restart included
+
+[Entry](backlog.d/reading-owed-birthdays-on-profiles-3180-first-stable-v1-6-9-birthdays.md),
+[birthdays](birthdays.md#the-morning-notice).
+
+Dates and counts that would point at one member (which day is whose birthday, their followers,
+their visibility) are deliberately left out of this public page; the reading only needs the shape.
+
+- `profile_birthdays` grouped by `lastAnnouncedOn`: exactly one announcement in the window read, on
+  the day of the `v1.6.12` deploy.
+- **Its bell rows:** type `birthday`, written at the FIRST morning tick (08:13 Paris), only to
+  accepted followers; max rows per (recipient, celebrant): 1.
+- **None again after a restart:** the social-service was restarted about two hours later the same
+  day (the `v1.6.12` deploy) and ticked every hour to the end of the day; no second row, and
+  `lastAnnouncedOn` did not move. The ring read the claim: every `[BIRTHDAY] today` line after the
+  restart counted the celebrant, and the next day's ticks before 08:00 Paris each logged `before the
+  morning, nothing to do`; a tick with no due celebrant logs nothing, by design.
+- **Not readable here:** the push of that notice (it was sent by the container the deploy replaced,
+  whose log is gone), and every phone half.
+- **Verdict:** one bell row per follower allowed the date, and none again after a social-service
+  restart: READ on production, population of one. **Left:** the phone halves (the ring on initials,
+  the morning notice's push texts and tap on both phones, `Anniversaires` off).
+
+### Openings for followers (WP-4) - "one notice, never two" PASSES on production
+
+[Entry](backlog.d/reading-owed-openings-for-followers-wp-4.md),
+[engagement](engagement.md#wp-4---openings-for-followers-built).
+
+- `post_notifications` of the opening types, max rows per (type, recipient, target): `event_open`
+  130 rows, 15 events, 37 followers, max 1; `form_reminder` 25 rows, 5 forms, 16 followers, max 1.
+  No booking-space opening has happened on production yet (no `booking` kind in `opening_reminders`).
+- `opening_reminders` (unique on kind, target, user; 0 duplicates): every opened row is
+  `notifiedOnOpen` (event 130, form 25), and their counts equal the bell rows one for one; the 15
+  form rows not yet open are waiting. Every row is `origin = followed`.
+- **Verdict:** a follower is told of an opening once, never twice, over every event and form opened
+  on production. **Left:** the iPhone halves (the booking space, the validated event, the bell at
+  "Rien") and the card's bell after #3576.
+
+### What was looked for and is not a production reading
+
+The other entries of the list were read for a production half and have none: their evidence is a
+phone (a push drawn, a tap, a console), a staged dev fixture, or a client-only log line (the seed
+mirror's `[GRAINE_MIRROR]` count lives on the device and never reaches a server).
+
 ## The Mi 9T sitting 5 readings of 2026-11-15 - the verdicts of the entries it closed
 
 `1.6.12-alpha.2` (build 100601202, built for dev, tag on `fa1bc2655`; `v1.6.12` is the bump commit `0b6947d20`
