@@ -178,7 +178,7 @@ export function useMentionAutocomplete(opts: {
     ).slice(0, MENTION_MAX_ROWS);
     open = suggestions.length > 0;
     selectedIdx = -1;
-    Log.d(`[mention] search answer applied: ${suggestions.length} row(s) of ${found.length}`);
+    Log.d('mention', `search answer applied: ${suggestions.length} row(s) of ${found.length}`);
     if (!open && hasSpace(req.q)) endMention('no account matches the words typed', 'no-match');
   }
 
@@ -194,12 +194,13 @@ export function useMentionAutocomplete(opts: {
     const req: SearchRequest = { q, kind, generation };
     if (searching) {
       Log.d(
-        `[mention] a search is in flight - this ${kind} query waits${waiting ? ', replacing the one that was waiting' : ''}`
+        'mention',
+        `a search is in flight - this ${kind} query waits${waiting ? ', replacing the one that was waiting' : ''}`
       );
       waiting = req;
       return;
     }
-    Log.d(`[mention] ${kind} search sent (${q.length} char(s))`);
+    Log.d('mention', `${kind} search sent (${q.length} char(s))`);
     void runSearch(req);
   }
 
@@ -221,7 +222,8 @@ export function useMentionAutocomplete(opts: {
       Log.d('mention', 'a search answer for an earlier query dropped');
     } else if (req.kind === 'search' && rosterLoaded()) {
       Log.d(
-        '[mention] a directory answer arrived after the roster loaded - dropped, the members stay'
+        'mention',
+        'a directory answer arrived after the roster loaded - dropped, the members stay'
       );
     } else if (req.kind === 'more') {
       if (found) applyMore(req, found);
@@ -242,7 +244,7 @@ export function useMentionAutocomplete(opts: {
       Log.d('mention', 'the waiting directory query is moot - the roster loaded, not sent');
       return;
     }
-    Log.d(`[mention] the waiting ${next.kind} query sent (${next.q.length} char(s))`);
+    Log.d('mention', `the waiting ${next.kind} query sent (${next.q.length} char(s))`);
     void runSearch(next);
   }
 
@@ -261,7 +263,7 @@ export function useMentionAutocomplete(opts: {
    */
   function noteSearchFailure(kind: SearchRequest['kind'], why: unknown) {
     if (!searchFailing) console.warn(`[mention] the name search failed (${kind})`, why);
-    else Log.d(`[mention] the name search still fails (${kind})`);
+    else Log.d('mention', `the name search still fails (${kind})`);
     searchFailing = true;
   }
 
@@ -485,7 +487,7 @@ export function useMentionAutocomplete(opts: {
 
   /** The reader gave up on this mention (see {@link ended}); `why` is logged. */
   function endMention(why: string, by: 'no-match' | 'reader') {
-    Log.d(`[mention] mention closed: ${why}`);
+    Log.d('mention', `mention closed: ${why}`);
     ended = { start, query, by };
     closeMention();
   }
@@ -500,7 +502,8 @@ export function useMentionAutocomplete(opts: {
     generation += 1;
     if (searching || waiting) {
       Log.d(
-        `[mention] picker destroyed with a search in flight${waiting ? ' and one waiting' : ''} - their answers will be dropped`
+        'mention',
+        `picker destroyed with a search in flight${waiting ? ' and one waiting' : ''} - their answers will be dropped`
       );
     }
     waiting = null;

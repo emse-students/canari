@@ -141,7 +141,7 @@ export function noteResumeOpening(
   if (!link || !selected) return;
   const landedSinceLeave = nav.landing !== atLeave.landing;
   const nothing = (why: string) =>
-    Log.d(`[RESUME-OPEN] resume opens ${describeDeepLink(link)} - nothing held: ${why}`);
+    Log.d('RESUME-OPEN', `resume opens ${describeDeepLink(link)} - nothing held: ${why}`);
   if (nowhereSeq !== atLeave.nowhere) return nothing('the open was already routed nowhere');
 
   let kind: ResumeOpening['kind'];
@@ -189,7 +189,8 @@ export function noteResumeOpening(
     resolve,
   };
   Log.d(
-    `[RESUME-OPEN] resume opens ${describeDeepLink(link)}: ${selected.slice(0, 12)} is not read until it lands`
+    'RESUME-OPEN',
+    `resume opens ${describeDeepLink(link)}: ${selected.slice(0, 12)} is not read until it lands`
   );
 }
 
@@ -244,7 +245,7 @@ export function noteOpenNavigated(): void {
  */
 export function noteOpenRoutedNowhere(why: string): void {
   nowhereSeq += 1;
-  Log.d(`[RESUME-OPEN] an open routes nowhere (${why})${opening ? ' - the hold ends' : ''}`);
+  Log.d('RESUME-OPEN', `an open routes nowhere (${why})${opening ? ' - the hold ends' : ''}`);
 }
 
 /**

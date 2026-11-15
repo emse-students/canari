@@ -858,7 +858,8 @@
     // nothing.
     if (verdict === 'idle') {
       Log.d(
-        `[READ] ${convs.selectedContact.slice(0, 12)} not marked: nobody has touched this window ` +
+        'READ',
+        `${convs.selectedContact.slice(0, 12)} not marked: nobody has touched this window ` +
           `for ${ATTENTION_WINDOW_MS / 1000} s - the first gesture marks it`
       );
       return;
