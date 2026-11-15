@@ -151,16 +151,17 @@
   }
 </script>
 
+<!-- The poll closes the card zone, just above the action bar (owner, 2026-11-15): it is the one
+     attachment the reader acts on IN the post, so it sits where the hand already is. Same inset,
+     corner and border as the cards (`AttachmentCard`); its voting body stays its own. -->
 {#if polls && polls.length > 0}
-  <div class="space-y-5 px-5 py-4">
+  <div class="space-y-2 px-4 pb-3" data-post-polls>
     {#each polls as poll (poll.id)}
       {@const totalVotes = getTotalVotes(poll)}
       {@const over = isOver(poll)}
       {@const full = pollSelectionIsFull(selectionIn(poll), poll)}
 
-      <div
-        class="bg-cn-surface rounded-2xl border border-black/5 p-5 shadow-sm dark:border-white/10"
-      >
+      <div class="bg-cn-surface rounded-2xl border border-black/5 p-4 dark:border-white/10">
         <!-- Poll header. -->
         <div class="mb-5 flex items-start gap-3">
           <div class="bg-accent/10 text-accent-text mt-0.5 shrink-0 rounded-xl p-2">

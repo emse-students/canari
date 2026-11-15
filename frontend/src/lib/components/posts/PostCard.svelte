@@ -1,6 +1,5 @@
 <script lang="ts">
   import { intlLocale } from '$lib/utils/intlLocale';
-  import { postEventHref } from '$lib/calendar/postEventLink';
   import {
     votePoll,
     getPost,
@@ -53,7 +52,6 @@
   import PostActions from './PostActions.svelte';
   import ReactionsDisplay from './ReactionsDisplay.svelte';
   import PostPolls from './PostPolls.svelte';
-  import PostForms from './PostForms.svelte';
   import PostComments from './PostComments.svelte';
   import CommentsPreview from './CommentsPreview.svelte';
   import PostCommentsSheet from './PostCommentsSheet.svelte';
@@ -61,12 +59,11 @@
   import PostFeedback from './PostFeedback.svelte';
   import EditPostForm from './EditPostForm.svelte';
   import RepublishDialog from './RepublishDialog.svelte';
-  import { CalendarCheck, Clock } from '@lucide/svelte';
+  import { Clock } from '@lucide/svelte';
   import { isReplay } from '$lib/live/replayTimeline';
   import { replaysAvailable } from '$lib/live/replayAvailability';
   import { serverLiveReplaysMode } from '$lib/stores/appVersionCheck.svelte';
   import { untrack } from 'svelte';
-  import { FORM_CARD_PLACEHOLDER_MIN_HEIGHT } from '$lib/utils/mediaLayout';
   import { REACTIONS, reactionCountsOf } from '$lib/posts/reactions';
   import { m } from '$lib/paraglide/messages';
   import { pendingRingStyle } from '$lib/calendar/feedEvents';
@@ -261,8 +258,11 @@
     getForm,
     checkSubmission,
   });
-  const formInfos = $derived(attachedForms.infos);
-  const pendingAttachedFormIds = $derived(attachedForms.pending);
+  /** The forms in the post's order and those read so far, for `PostContent`'s card zone. */
+  const attachedFormsView = $derived({
+    ids: attachedFormSources(localPost).map((source) => source.id),
+    infos: attachedForms.infos,
+  });
   // Auto-clear error messages after 4 seconds.
   $effect(() => {
     if (errorMessage) {
@@ -759,29 +759,6 @@
           </p>
         {/if}
 
-        {#if localPost.linkedCalendarEvent}
-          {@const ev = localPost.linkedCalendarEvent}
-          <div class="px-4 pb-3">
-            <a
-              href={postEventHref(localPost.id)}
-              class="border-accent/25 bg-accent/10 text-accent-text hover:bg-accent/20 inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-bold transition-colors"
-            >
-              <CalendarCheck size={14} strokeWidth={2.5} />
-              <span>
-                {m.post_event_label()}
-                {ev.title}
-                ·
-                {new Date(ev.startsAt).toLocaleString(intlLocale(), {
-                  day: 'numeric',
-                  month: 'short',
-                  hour: '2-digit',
-                  minute: '2-digit',
-                })}
-              </span>
-            </a>
-          </div>
-        {/if}
-
         {#if editingPost}
           <div class="px-4 pb-4">
             <EditPostForm
@@ -792,8 +769,29 @@
             />
           </div>
         {:else}
-          <PostContent post={localPost} {authToken} likerId={currentUserId.trim() || undefined} />
+          <!-- Text, media, then the card zone (event, forms, files, links): `PostContent`. The
+               poll follows it, then the action bar - one fixed order (owner, 2026-11-15). -->
+          <PostContent
+            post={localPost}
+            {authToken}
+            likerId={currentUserId.trim() || undefined}
+            attachedForms={attachedFormsView}
+          />
         {/if}
+
+        <!--
+      A post poll's deadline is a date its author picked, hours or days out, so comparing it to this
+      clock is sound - and stating that here is the point: the renderer no longer decides for callers
+      whose deadline came from a different clock (see PostPolls.isOver).
+    -->
+        <PostPolls
+          polls={localPost.polls}
+          {selectedOptions}
+          onVoteClick={handleVoteClick}
+          onSubmitVote={submitVote}
+          isOver={pollIsOver}
+          canVote={localPost.canVote !== false && !scheduled}
+        />
 
         <!--
       THE TALLY SITS ON THE ACTION BAR, NOT UNDER IT. `ReactionsDisplay` used to be the next sibling
@@ -829,33 +827,6 @@
             </PostActions>
           </div>
         {/if}
-
-        <!--
-      A post poll's deadline is a date its author picked, hours or days out, so comparing it to this
-      clock is sound - and stating that here is the point: the renderer no longer decides for callers
-      whose deadline came from a different clock (see PostPolls.isOver).
-    -->
-        <PostPolls
-          polls={localPost.polls}
-          {selectedOptions}
-          onVoteClick={handleVoteClick}
-          onSubmitVote={submitVote}
-          isOver={pollIsOver}
-          canVote={localPost.canVote !== false && !scheduled}
-        />
-
-        {#if pendingAttachedFormIds.length > 0}
-          <div class="space-y-3 px-4 py-3" aria-hidden="true">
-            {#each pendingAttachedFormIds as formId (formId)}
-              <div
-                class="animate-pulse rounded-2xl border border-black/5 bg-black/5 dark:border-white/10 dark:bg-white/5"
-                style="min-height: {FORM_CARD_PLACEHOLDER_MIN_HEIGHT}"
-              ></div>
-            {/each}
-          </div>
-        {/if}
-
-        <PostForms {formInfos} />
 
         {#if canSeeComments && !scheduled}
           <div data-no-double-tap>

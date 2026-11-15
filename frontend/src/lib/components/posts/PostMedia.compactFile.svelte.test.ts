@@ -219,3 +219,11 @@ it('the full card still saves at once, inside the tap', async () => {
   flushSync();
   expect(save).toHaveBeenCalledWith('blob:full', 'cours.pdf');
 });
+
+it('draws any file but a PDF as a row, even when the full card was asked: only a PDF has a page', async () => {
+  const target = mountFile(false, {}, 'application/zip');
+  await settle();
+  expect(download).not.toHaveBeenCalled();
+  expect(card(target)).not.toBeNull();
+  expect(target.querySelector('[data-post-media-open]')).toBeNull();
+});

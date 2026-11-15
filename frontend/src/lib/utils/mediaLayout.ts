@@ -88,5 +88,8 @@ export function reservesAspectRatio(type: MediaType): boolean {
   return type === 'image' || type === 'video';
 }
 
-/** Min-height reserved for a form card while metadata loads (matches PostForms). */
-export const FORM_CARD_PLACEHOLDER_MIN_HEIGHT = '4.75rem';
+/**
+ * Min-height reserved for a form card while it is read: `AttachmentCard`'s compact row, 12 px of
+ * padding twice, the 64 px tile and a 1 px border twice (90 px).
+ */
+export const FORM_CARD_PLACEHOLDER_MIN_HEIGHT = '5.625rem';

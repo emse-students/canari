@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { ArrowUpRight, ExternalLink, Globe } from '@lucide/svelte';
+  import { Globe, Images } from '@lucide/svelte';
+  import AttachmentCard from '$lib/components/shared/AttachmentCard.svelte';
   import CanariLinkPreviewMedia from '$lib/components/shared/CanariLinkPreviewMedia.svelte';
-  import EcosystemCoverPreview from '$lib/components/messages/EcosystemCoverPreview.svelte';
+  import { m } from '$lib/paraglide/messages';
   import SharedReelViewer from '$lib/components/reels/SharedReelViewer.svelte';
   import { getToken } from '$lib/stores/auth';
   import { navigateInAppFromHref } from '$lib/utils/appLinkNavigation';
@@ -27,9 +28,11 @@
     url: string;
     /** When true, removes the top margin (card is the only element in the bubble). */
     standalone?: boolean;
+    /** Drawn large: the post's only attachment (`planPostAttachments`). */
+    hero?: boolean;
   }
 
-  let { url, standalone = false }: Props = $props();
+  let { url, standalone = false, hero = false }: Props = $props();
 
   const isInApp = $derived(isInAppHref(url));
 
@@ -174,7 +177,8 @@
   const cardTitle = $derived(
     isInApp
       ? (canariPreview?.title ?? fallbackInAppLabel ?? 'Canari')
-      : externalPreview?.title || parsed.path || parsed.href
+      : externalPreview?.title ||
+          (coverCard ? coverCard.fallbackTitle() : parsed.path || parsed.href)
   );
 
   /**
@@ -241,6 +245,47 @@
 
   /** Whether the Open Graph image is what the card draws - the first rung of the cascade. */
   const showsPreviewImage = $derived(Boolean(previewImageUrl) && !previewImageBroken);
+
+  /**
+   * An album's cover, square when the site serves one (`ecosystemSquareCoverUrl`, known from the
+   * URL alone, so it paints before the preview answers), else the page's Open Graph picture. Fetched
+   * through Canari's proxy like every preview picture.
+   */
+  const coverUrl = $derived(
+    coverCard ? proxiedPreviewImageUrl(squareCoverUrl ?? externalPreview?.image) : ''
+  );
+
+  /**
+   * Whether the cover is PROVEN to decode - the Open Graph picture's rule (`previewImageBroken`): a
+   * URL existing is not an image existing, and an album that is gone or private answers an error,
+   * which drew a broken-image glyph over the whole banner.
+   */
+  let coverLoads = $state(false);
+  $effect(() => {
+    const src = coverUrl;
+    coverLoads = false;
+    if (!src) return;
+    let cancelled = false;
+    void loadsAsImage(src).then((ok) => {
+      if (cancelled) return;
+      coverLoads = ok;
+      if (!ok)
+        Log.d('LINK_PREVIEW', `album cover did not decode, card drawn without it: ${parsed.host}`);
+    });
+    return () => {
+      cancelled = true;
+    };
+  });
+
+  /** Whether the post preview carries its own photo, decrypted for this reader. */
+  const hasPostImage = $derived(
+    isInApp && Boolean(canariPreview?.postImage && postImageAuthToken && PostMedia)
+  );
+
+  /** What a HERO card can put forward: a picture. Without one it stays a row. */
+  const hasBanner = $derived(
+    hasPostImage || (coverCard ? coverLoads : !isInApp && showsPreviewImage)
+  );
 
   /**
    * The site's own icon, as an ordered list of things to try. The preview endpoint
@@ -347,109 +392,76 @@
   }
 </script>
 
-{#if coverCard}
-  <EcosystemCoverPreview
-    onnear={() => (isNear = true)}
-    url={parsed.href}
-    preview={externalPreview}
-    isLoading={isPending}
-    siteLabel={ecosystemSite?.label ?? parsed.host}
-    fallbackTitle={coverCard.fallbackTitle()}
-    {squareCoverUrl}
-    {standalone}
-  />
-{:else}
-  <a
-    use:nearViewport={{ onnear: () => (isNear = true) }}
-    onclick={handleClick}
-    href={isInApp ? (inAppPath ?? '#') : parsed.href}
-    target={isInApp ? undefined : '_blank'}
-    rel={isInApp ? undefined : 'noopener noreferrer'}
-    class="group {standalone
-      ? ''
-      : 'mt-3'} bg-cn-surface hover:bg-cn-surface hover:border-accent/35 flex flex-col overflow-hidden rounded-2xl border border-black/5 transition-all duration-300 hover:shadow-md dark:border-white/10 dark:hover:bg-black/40 {isInApp
-      ? 'ring-accent/12 ring-1'
-      : ''}"
-  >
-    <div class="flex items-stretch gap-3.5 p-3 sm:p-4">
-      {#if isInApp}
-        <CanariLinkPreviewMedia preview={canariPreview} loading={isPending} />
-      {:else}
-        <div
-          class="relative flex shrink-0 items-center justify-center overflow-hidden rounded-xl border border-black/5 bg-black/5 transition-all duration-300 dark:border-white/5 dark:bg-white/5
- {showsPreviewImage ? 'h-16 w-16 sm:h-[4.5rem] sm:w-[4.5rem]' : 'h-12 w-12'}"
-        >
-          {#if isPending}
-            <div class="absolute inset-0 animate-pulse bg-black/10 dark:bg-white/10"></div>
-          {:else if showsPreviewImage}
-            <img src={previewImageUrl} alt="" class="h-full w-full object-cover" loading="lazy" />
-          {:else if faviconUrl}
-            <!-- No Open Graph image: the site's own favicon stands in for its logo.
-                 Already proven loadable by the probe above, so it needs no onerror. -->
-            <img
-              src={faviconUrl}
-              alt=""
-              class="h-8 w-8 object-contain opacity-70 transition-opacity duration-300 group-hover:opacity-100"
-            />
-          {:else if faviconSearchDone}
-            <Globe
-              size={20}
-              strokeWidth={2}
-              class="text-text-muted opacity-50 transition-opacity duration-300 group-hover:opacity-80"
-            />
-          {/if}
-        </div>
-      {/if}
+<!-- The tile: the in-app target's picture or the Canari logo; an album's square cover; a page's
+     Open Graph picture, else its favicon, else a globe. -->
+{#snippet tile()}
+  {#if isInApp}
+    <CanariLinkPreviewMedia preview={canariPreview} loading={isPending} />
+  {:else if coverCard && coverLoads}
+    <img src={coverUrl} alt="" class="absolute inset-0 h-full w-full object-cover" loading="lazy" />
+  {:else if isPending}
+    <div class="absolute inset-0 animate-pulse bg-black/10 dark:bg-white/10"></div>
+  {:else if coverCard}
+    <Images size={24} strokeWidth={1.75} class="text-text-muted opacity-50" />
+  {:else if showsPreviewImage}
+    <img
+      src={previewImageUrl}
+      alt=""
+      class="absolute inset-0 h-full w-full object-cover"
+      loading="lazy"
+    />
+  {:else if faviconUrl}
+    <!-- No Open Graph image: the site's own favicon stands in for its logo.
+         Already proven loadable by the probe above, so it needs no onerror. -->
+    <img src={faviconUrl} alt="" class="h-8 w-8 object-contain opacity-70" />
+  {:else if faviconSearchDone}
+    <Globe size={20} strokeWidth={2} class="text-text-muted opacity-50" />
+  {/if}
+{/snippet}
 
-      <div class="flex min-w-0 flex-1 flex-col justify-center gap-0.5 py-0.5">
-        <span
-          class="text-2xs sm:text-2xs bg-accent/12 text-accent-text inline-flex max-w-full items-center self-start truncate rounded-md px-2 py-0.5 font-bold"
-        >
-          {cardCategory}
-        </span>
-
-        <p
-          class="text-text-main group-hover:text-accent-text line-clamp-3 text-sm leading-snug font-bold transition-colors duration-300 sm:text-sm"
-        >
-          {cardTitle}
-        </p>
-
-        {#if isPending && isInApp}
-          <div
-            class="mt-1 h-3 w-4/5 max-w-[14rem] animate-pulse rounded bg-black/6 dark:bg-white/8"
-          ></div>
-        {:else if cardSubtitle}
-          <p class="text-text-muted line-clamp-2 text-xs leading-snug opacity-90">
-            {cardSubtitle}
-          </p>
-        {/if}
-      </div>
-
-      <div
-        class="text-text-muted group-hover:text-accent-text shrink-0 self-center pr-1 pl-0.5 opacity-35 transition-all duration-300 group-hover:translate-x-0.5 group-hover:opacity-100"
-      >
-        {#if isInApp}
-          <ArrowUpRight size={20} strokeWidth={2.25} />
-        {:else}
-          <ExternalLink size={20} strokeWidth={2.25} />
-        {/if}
-      </div>
+<!-- The hero's picture: an album's cover, a page's Open Graph picture, or a post's own photo. -->
+{#snippet banner()}
+  {#if isInApp && canariPreview?.postImage && postImageAuthToken && PostMedia}
+    <div class="relative h-64 w-full">
+      <PostMedia media={canariPreview.postImage} authToken={postImageAuthToken} letterbox />
     </div>
+  {:else}
+    <img
+      src={coverCard ? coverUrl : previewImageUrl}
+      alt=""
+      class="aspect-[1.91/1] w-full bg-black/5 object-cover dark:bg-white/5"
+      loading="lazy"
+    />
+  {/if}
+{/snippet}
 
-    {#if isInApp && canariPreview?.postImage && postImageAuthToken && PostMedia}
-      <!-- The post's OWN photo, below the logo/text row rather than replacing the logo there -
-           the small slot above stays the association's mark (or the brand, for a personal post),
-           exactly what it already was. -->
-      <!-- LETTERBOXED, like the post this is a preview OF. Without it the slot cropped the picture
-           to its own band, which on an A4 poster (ratio 0.707, what an association actually posts)
-           takes the bottom off - the date, the place and the price. The band is also TALLER than the
-           10rem it was: a contained portrait poster is only as wide as the band is high, so the
-           previous height showed all of it at a size nothing could be read at. -->
-      <div class="relative h-56 w-full border-t border-black/5 sm:h-64 dark:border-white/10">
-        <PostMedia media={canariPreview.postImage} authToken={postImageAuthToken} letterbox />
-      </div>
-    {/if}
-  </a>
-{/if}
+<!-- THE POST'S OWN PHOTO, below the row in the compact card: the tile stays the association's mark
+     (or the brand, for a personal post). LETTERBOXED, like the post this is a preview OF - an A4
+     poster cropped to a band loses the date, the place and the price. -->
+{#snippet postImage()}
+  {#if canariPreview?.postImage && PostMedia}
+    <div class="relative h-56 w-full sm:h-64">
+      <PostMedia media={canariPreview.postImage} authToken={postImageAuthToken} letterbox />
+    </div>
+  {/if}
+{/snippet}
+
+<AttachmentCard
+  kind="link"
+  href={isInApp ? (inAppPath ?? '#') : parsed.href}
+  external={!isInApp}
+  onclick={handleClick}
+  onnear={() => (isNear = true)}
+  chip={cardCategory}
+  title={cardTitle}
+  subtitle={cardSubtitle}
+  pending={isPending && (isInApp || Boolean(coverCard))}
+  {tile}
+  {hero}
+  banner={hasBanner ? banner : undefined}
+  heroAction={canariPreview?.kind === 'form' ? m.post_form_fill_label() : undefined}
+  below={hasPostImage && !hero ? postImage : undefined}
+  class={standalone ? '' : 'mt-3'}
+/>
 
 <SharedReelViewer reel={openReel} logTag="LINK_PREVIEW" onClose={() => (openReel = null)} />
