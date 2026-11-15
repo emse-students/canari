@@ -1,4 +1,4 @@
--- Migration 051: what a phone's last push registration came to, as the phone states it on every
+-- Migration 052: what a phone's last push registration came to, as the phone states it on every
 -- `register-device` (2026-11-15; docs/wiki/services/chat-delivery.md, "The server's row decides
 -- whether a registration is owed").
 --

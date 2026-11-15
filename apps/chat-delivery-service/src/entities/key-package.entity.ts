@@ -41,7 +41,7 @@ export class KeyPackage {
 
   /**
    * What the device's last push registration came to, as stated on its latest `register-device`
-   * (`parsePushOutcome`); null from a build that does not state it (migration 051). Read by the
+   * (`parsePushOutcome`); null from a build that does not state it (migration 052). Read by the
    * daily `[PUSH_COVERAGE]` count only.
    */
   @Column({ type: 'varchar', length: 32, nullable: true })

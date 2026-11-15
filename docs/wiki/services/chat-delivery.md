@@ -2016,7 +2016,9 @@ the server could say a phone was silent, which is how a third of a build went un
   `register-device`, so `started` alone would accuse every fresh sign-in of a dead process. An
   allowlist on the server; anything else prints `invalid`, an older build `unstated`. The server
   keeps the last stated one on the device's key package (`key_package."pushOutcome"`, migration
-  `051`, additive).
+  `052`, additive). **`051` is reserved by the held #3518** (`051_departed_seats_removed.sql`,
+  decided with the owner); the ledger is keyed by filename, so whichever lands second is still
+  applied on its deploy.
 - **A sign-out supersedes the ladder of the account that left.** `endPushRegistration` bumps a
   session generation; a ladder whose generation is gone records nothing, stops between attempts and
   sends nothing - it would otherwise write account A's outcome into account B's state, and send A's

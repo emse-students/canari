@@ -34,7 +34,7 @@ const PUSH_PLATFORMS = ['android', 'ios'] as const;
 /**
  * Per (platform, build): the native devices that ran inside the window, how many hold no row while
  * their registration did not reach the server (`withoutPush`), and how many hold none because the OS
- * gave them no push token (`noOsToken`: the last outcome they stated, migration 051). The second is
+ * gave them no push token (`noOsToken`: the last outcome they stated, migration 052). The second is
  * a KNOWN state - no Play services, an APNs failure - accused once per process by
  * `[PUSH_UNAVAILABLE]` and not curable by registering again, so it is counted and never accused here.
  * `$1` window start, `$2` grace cutoff, `$3` ban cutoff, `$4` now (the session liveness instant).
