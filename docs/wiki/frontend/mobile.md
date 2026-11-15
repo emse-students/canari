@@ -3432,11 +3432,60 @@ are the truth.
 
 Native log lines - logcat, os_log and the Rust log - carry ids (truncated) and counts only
 (`chars=${text.length}`, `named=true`), never message text, a name or a key.
-`nativeLogContent.test.ts` scans every Kotlin, Swift, Objective-C++ and Rust log call for an
-interpolated content-bearing name (`text`, `body`, `senderName`, `seed`, `token` ...) and fails on
-one; a measure (`.length`, `isEmpty`) is allowed, and a name that is not content is allowlisted
-by `file|expression` with its reason. The harness rules reading those lines (`watch.mjs`) match
-these shapes.
+`nativeLogContent.test.ts` is an **ALLOWLIST** (2026-11-15; it was a denylist of content names until
+a Kotlin lambda's `it` printed a sender's real name and the `e.message` of an `org.json` exception,
+which quotes the whole input, was never inspected): it scans every Kotlin, Swift, Objective-C++ and
+Rust log call and fails on any interpolated expression that is not one of
+
+- a measure or a flag (`.length`, `.len()`, `isEmpty`, `!= null`, `hasVideo`, a comparison, an outcome
+  chosen between two literals);
+- a count, a size, a position or a duration (`epoch`, `index`, `.as_millis()`), a status or a code;
+- an id (`groupId`, `callId`; `.take(8)` / `.prefix(8)` when it is a user's), a constant, a class name
+  (`e.javaClass.simpleName`, `NSStringFromClass`), or the domain and code of an Apple error
+  (`CanariErrorReason`, `errorReason`);
+- a Swift `Logger` interpolation marked `.private` (redacted in release);
+- a Rust error value (`e`, `err`): the one reviewed category, because every error type this tree logs
+  is io, openmls, serde, SQLite, keystore or an own enum that quotes no payload;
+- a value in the small named sets of the test (`SAFE_LOCALS`, `SAFE_LABELS`), or the exact
+  `file|expression` of the reviewed table (`REVIEWED_GROUPS`, each group saying why).
+
+**Everything else fails, including `$it`, `${e.message}`, a bare Kotlin `e` as a `Log` throwable
+(its message and stack are printed whole) and an `NSError` handed to `%@`.** The way out is never
+adding the word by reflex: read where the value comes from, then either rewrite the line to a shape
+above (`e.javaClass.simpleName` is almost always enough: the class names the failure, the stack
+names the line) or annotate the call with `// log-safe: <why>` on its own lines - a reason of at
+least ten characters, or the annotation does not count. A Kotlin `catch` that parses (`JSONObject`,
+`Base64.decode`, `Instant.parse`, a file read of user data) never logs its message: org.json,
+`java.time` and the Base64 decoder echo their input. The harness rules reading those lines
+(`watch.mjs`) match these shapes.
+
+**What the scan reads, and what it cannot (review of 2026-11-15).** A measure or a comparison counts
+only as the WHOLE value - `if (name != null) name else ""`, `body.take(body.length - 1)` and
+`names.filter { it != me }` print content; a conditional is judged by its two branches. A local
+named like a pass-through call (`suffix`, `description`) is still a value. Besides the platform
+loggers it reads stdout and stderr (`println`, `print!`, `dbg!`, `printStackTrace`, `log::log!`)
+and the app's line-taking wrappers (`output.log`, the ladders' `log` lambda, `sayOnce`), and a line
+handed in as a local (`val line = "..."` then `Log.w(TAG, line)`) is read where it was assembled.
+A table key carries its line count (`3x file|expr`), so the next line spelling a reviewed word in
+that file fails. A throwable handed to a logger (a Kotlin `Log.*`'s third argument,
+`x.printStackTrace()`) is judged by its POSITION, whatever the local is called. A second review
+(same day) closed the shapes that still walked past: a measure ending a concatenation
+(`body + body.length`), a `var` reassigned after its literal, a statement continued on the next
+line, Rust's `{{{text}}}` and `'"'`, a ternary written tight (`ok ? body:"none"`), an annotation
+spelled inside the logged string, a name merely ending in "id" (`said`), and the restore plugin and
+the plugins' Rust, which were not read at all. **Two gaps no regex closes**: a value laundered
+through a NAME that is trusted (`why`, `reason`, `detail` - a parameter filled with a message by a
+caller, as `CallBridge.parse` did with an org.json message until that review, or a local assigned
+one; following every such local to its right-hand side flags 18 safe lines), and a wrapper with a new
+name - both are review questions, and a new wrapper is added to `CALL_START`. **A catch-all over a
+body that parses** (a push lane, a notification redraw, a broadcast receiver) cannot vouch for an
+exception's message, so it logs `throwableSite(e)` (`push/ThrowableSite.kt`: the class and the
+app's frame that threw) and does not hand the throwable to `Log`, whose stack starts with the
+message.
+
+**A URL is logged WITHOUT its query and fragment (2026-11-15)**: the WebView navigation handler
+logged every URL it allowed, and the redirect back from the identity provider carries a one-time
+`code` there (`navigation.rs`, `loggable_url`).
 
 **An Apple error's TEXT is content (2026-10-24)**: a `localizedDescription` (or
 `localizedFailureReason`, `localizedRecoverySuggestion`) often quotes the file it failed on - a

@@ -225,6 +225,14 @@ export interface LiveStanding {
   withdrawalDue: boolean;
 }
 
+/**
+ * `GET /api/lives/standing` - the caller's OWN place on the ladder, read by the pre-live screen so
+ * a suspended or withdrawn member is told before Start rather than by a refused start.
+ * `suspendedUntil` is non-null only while a suspension RUNS, as the server judged it when it
+ * answered: the client compares it to no clock. `withdrawalDue` is staff's to read, not the member's.
+ */
+export type LiveOwnStanding = Omit<LiveStanding, 'withdrawalDue'>;
+
 /** `POST /api/lives/broadcasters/:userId/withdrawal` (200, idempotent). */
 export interface LiveWithdrawalResult {
   userId: string;

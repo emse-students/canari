@@ -110,7 +110,7 @@ class MlsBackgroundWorker(context: Context, workerParams: WorkerParameters) :
             MlsStateLock.LOCK.tryLock(15, java.util.concurrent.TimeUnit.SECONDS)
         } catch (e: InterruptedException) {
             Thread.currentThread().interrupt()
-            Log.e(TAG, "doWork: thread interrupted during tryLock: ${e.message}")
+            Log.e(TAG, "doWork: thread interrupted during tryLock: ${e.message}") // log-safe: message of a system or native call (InterruptedException); this try parses and names no user input
             return Result.retry()
         }
         if (!lockAcquired) {
@@ -133,10 +133,10 @@ class MlsBackgroundWorker(context: Context, workerParams: WorkerParameters) :
                 Result.retry()
             }
         } catch (e: UnsatisfiedLinkError) {
-            Log.e(TAG, "doWork: native library not loaded -> retry: ${e.message}")
+            Log.e(TAG, "doWork: native library not loaded -> retry: ${e.message}") // log-safe: message of a system or native call (UnsatisfiedLinkError); this try parses and names no user input
             Result.retry()
         } catch (e: Exception) {
-            Log.e(TAG, "doWork: unexpected exception -> failure: ${e.message}")
+            Log.e(TAG, "doWork: unexpected exception -> failure: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
             Result.failure()
         } finally {
             MlsStateLock.LOCK.unlock()

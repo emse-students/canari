@@ -3366,9 +3366,9 @@ export class AssociationsService {
 
   /**
    * Of `associationIds`, those whose PUBLISHED content `userId` moderates (`bdeModeratesPublisherSql`):
-   * every one for a platform admin; for a BDE `MODERATE` holder, the associations its governed spaces
-   * reach - never an institution, never another BDE. What `commentRights` reads for a comment in an
-   * association's name; empty for an unknown caller.
+   * every one for a platform admin; for a BDE `MODERATE` holder, the associations its
+   * BDE is the PARENT of (WP-D2) and the BDE itself - never an institution, never another BDE.
+   * What `commentRights` reads for a comment in an association's name; empty for an unknown caller.
    */
   async moderatedAssociationIds(
     userId: string | undefined,

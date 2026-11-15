@@ -407,7 +407,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       // `content_reports`: a live is reported through the posts' one report store (WP-L8, D6).
       entities: [...LIVE_ENTITIES, ContentReport],
       synchronize: false,
-      extra: { options: `-c search_path=${schema}` },
+      // Named after the suite's schema: a lock wait is looked for among THIS suite's sessions.
+      extra: { options: `-c search_path=${schema}`, application_name: schema },
     });
     await ds.initialize();
     // The one other table the service reads, in the shape it reads it (core-service owns it).
@@ -1627,6 +1628,51 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         expect((await refusal(lives.manifest(CAROL, live.id))).code).toBe('LIVE_SEATS_UNAVAILABLE');
         await expect(lives.manifest(BOB, live.id)).resolves.toMatchObject({ viewers: 1 });
         expect([...seats.held]).toEqual([`${live.id}:${BOB}`]);
+      });
+
+      it('a bar the row no longer backs is ONE error line, counted apart from an unknown live, and its count is said at the purge', async () => {
+        const live = await start();
+        await lives.ingest(ALICE, live.id, 0, segment(0));
+        await lives.removeViewer(ALICE, live.id, CAROL);
+        await q(`DELETE FROM live_removed_viewers WHERE "viewerId" = $1`, [CAROL]);
+        const internals = lives as unknown as {
+          logger: { error(m: string): void; log(m: string): void; warn(m: string): void };
+          unknownToRedis: Map<string, number>;
+          barredWithoutRow: Map<string, number>;
+        };
+        const error = jest.spyOn(internals.logger, 'error').mockImplementation(() => {});
+        const log = jest.spyOn(internals.logger, 'log').mockImplementation(() => {});
+        const warn = jest.spyOn(internals.logger, 'warn').mockImplementation(() => {});
+        try {
+          await refusal(lives.get(CAROL, live.id));
+          await refusal(lives.manifest(CAROL, live.id));
+          expect(error).toHaveBeenCalledTimes(1);
+          expect(error).toHaveBeenCalledWith(
+            expect.stringContaining('Redis bars a viewer the row allows')
+          );
+          expect(internals.barredWithoutRow.get(live.id)).toBe(2);
+          expect(internals.unknownToRedis.has(live.id)).toBe(false);
+          // A seat granted to somebody else says nothing about the bar: no recovery line, and
+          // the count stands.
+          await lives.get(BOB, live.id);
+          expect(log).not.toHaveBeenCalledWith(expect.stringContaining('seats are granted again'));
+          expect(internals.barredWithoutRow.get(live.id)).toBe(2);
+          await lives.leave(BOB, live.id);
+          await lives.end(ALICE, live.id);
+          await lives.purgeEnded(live.id);
+          expect(log).toHaveBeenCalledWith(
+            expect.stringContaining('2 take(s) were refused to a viewer Redis barred')
+          );
+          expect(warn).not.toHaveBeenCalledWith(
+            expect.stringContaining('purged while Redis still refused its seats')
+          );
+          expect(internals.barredWithoutRow.has(live.id)).toBe(false);
+          expect(error).toHaveBeenCalledTimes(1);
+        } finally {
+          error.mockRestore();
+          log.mockRestore();
+          warn.mockRestore();
+        }
       });
     });
 
@@ -4217,11 +4263,13 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
           () => 'withdrawn',
           (e: unknown) => (e as { getResponse: () => { code: string } }).getResponse().code
         );
-        // A proof, not a delay: wait until PostgreSQL reports a backend waiting on a lock.
+        // A proof, not a delay: wait until PostgreSQL reports a session of THIS suite's pool (its
+        // `application_name`; the suites share one database) waiting on a lock.
         for (;;) {
           const [{ n }] = await q(
             `SELECT count(*)::int AS n FROM pg_stat_activity
-              WHERE wait_event_type = 'Lock' AND datname = current_database()`
+              WHERE application_name = $1 AND wait_event_type = 'Lock'`,
+            [schema]
           );
           if (n > 0) break;
         }

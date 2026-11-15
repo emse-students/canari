@@ -244,9 +244,10 @@ maybe('the last admin against PostgreSQL', () => {
   };
 
   /**
-   * Starts `operation` and returns once PostgreSQL reports another session waiting on a lock - the
-   * operation is blocked behind the transaction the caller holds - or once the operation settled
-   * without ever waiting. A state read from the server, never a clock. The outcome comes back
+   * Starts `operation` and returns once PostgreSQL reports a session of THIS suite's pool (its
+   * `application_name`; the suites share one database) waiting on a lock - the operation is blocked
+   * behind the transaction the caller holds - or once the operation settled without ever waiting.
+   * A state read from the server, never a clock. The outcome comes back
    * WRAPPED: awaiting a bare promise here would wait for the operation, which waits for the caller.
    */
   const startUntilWaiting = async (
@@ -259,7 +260,8 @@ maybe('the last admin against PostgreSQL', () => {
     while (!settled) {
       const { rows } = await admin.query<{ n: number }>(
         `SELECT count(*)::int AS n FROM pg_stat_activity
-          WHERE datname = current_database() AND wait_event_type = 'Lock'`
+          WHERE application_name = $1 AND wait_event_type = 'Lock'`,
+        [schema]
       );
       if (rows[0].n > 0) break;
     }
@@ -296,7 +298,8 @@ maybe('the last admin against PostgreSQL', () => {
       synchronize: false,
       uuidExtension: 'pgcrypto',
       installExtensions: false,
-      extra: { options: `-c search_path=${schema}` },
+      // Named after the suite's schema: a lock wait is looked for among THIS suite's sessions.
+      extra: { options: `-c search_path=${schema}`, application_name: schema },
     });
     await ds.initialize();
     await ds.synchronize();

@@ -168,7 +168,7 @@ class MainActivity : TauriActivity() {
                             .edit().putString(CanariFirebaseMessagingService.KEY_FCM_TOKEN, token).apply()
                         Log.i("MainActivity", "FCM token synced (${token.length} chars)")
                     } catch (e: Exception) {
-                        Log.w("MainActivity", "FCM token sync failed: ${e.message}")
+                        Log.w("MainActivity", "FCM token sync failed: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
                     }
                 }
             }
@@ -235,18 +235,18 @@ class MainActivity : TauriActivity() {
         val webView = liveWebView ?: return
         val css = imeCssPx(ime, resources.displayMetrics.density)
         val timing = if (animation != null) "${animation.durationMs} ms" else "no animation"
-        Log.d("MainActivity", "IME inset: $ime px -> page told $css ($timing; $why)")
+        Log.d("MainActivity", "IME inset: $ime px -> page told $css ($timing; $why)")  // log-safe: a CSS pixel count and an animation duration, numbers the shell computed
         val ticket = imeAnnouncements.sent(ime)
         webView.evaluateJavascript(imeAnnouncementScript(css, animation)) { raw ->
             val answer = imeAnswerOf(raw)
             if (!imeAnnouncements.answered(ticket, answer)) {
-                Log.d("MainActivity", "IME inset $ime: answer $raw is stale - the page said it was ready since")
+                Log.d("MainActivity", "IME inset $ime: answer $raw is stale - the page said it was ready since")  // log-safe: raw is the JSON answer of a fixed script, one of three literals or null
                 return@evaluateJavascript
             }
             when (answer) {
                 ImeAnswer.TAKEN -> Unit
                 ImeAnswer.NOT_READY -> Log.d("MainActivity", "IME inset $ime: the page has no keyboard hook yet - announced when it says it is ready")
-                ImeAnswer.REFUSED -> Log.e("MainActivity", "IME inset $ime: the page REFUSED the keyboard (answered $raw) - a broken contract; announced again on the page's next ready signal")
+                ImeAnswer.REFUSED -> Log.e("MainActivity", "IME inset $ime: the page REFUSED the keyboard (answered $raw) - a broken contract; announced again on the page's next ready signal")  // log-safe: raw is the JSON answer of a fixed script, one of three literals or null
             }
         }
     }
@@ -283,7 +283,7 @@ class MainActivity : TauriActivity() {
             if (animation.durationMillis < 0) {
                 Log.d("MainActivity", "IME animation: controlled (no duration, a gesture drives it) - announced without an animation")
             } else {
-                Log.d("MainActivity", "IME animation: ${animation.durationMillis} ms, interpolator ${interpolator?.javaClass?.simpleName ?: "none (linear)"}")
+                Log.d("MainActivity", "IME animation: ${animation.durationMillis} ms, interpolator ${interpolator?.javaClass?.simpleName ?: "none (linear)"}")  // log-safe: a duration and a framework class name
             }
         }
 
@@ -494,7 +494,7 @@ class MainActivity : TauriActivity() {
         try {
             webView.evaluateJavascript("window.dispatchEvent(new CustomEvent('$name',{detail:$detail}));", null)
         } catch (e: Exception) {
-            Log.w("MainActivity", "$name not delivered to the page: ${e.message}")
+            Log.w("MainActivity", "$name not delivered to the page: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
         }
     }
 
@@ -543,7 +543,7 @@ class MainActivity : TauriActivity() {
         fun ringerMode(): Int = try {
             (getSystemService(AUDIO_SERVICE) as AudioManager).ringerMode
         } catch (e: Exception) {
-            Log.e("MainActivity", "canariAudio: reading the ringer mode failed", e)
+            Log.e("MainActivity", "canariAudio: reading the ringer mode failed", e) // log-safe: message of a system or native call (Exception); this try parses and names no user input
             -1
         }
     }
@@ -707,7 +707,7 @@ class MainActivity : TauriActivity() {
             // A page that cannot be told is a page that keeps its last value, which is the safe one:
             // it believes it is in the foreground and stays quiet. Logged because a silent failure
             // here reads exactly like the defect this exists to fix.
-            Log.w("MainActivity", "pushForeground($foreground) failed: ${e.message}")
+            Log.w("MainActivity", "pushForeground($foreground) failed: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
         }
     }
 
@@ -782,7 +782,7 @@ class MainActivity : TauriActivity() {
                 Log.d("MainActivity", "call answer waits - the page was told")
             }
         } catch (e: Exception) {
-            Log.w("MainActivity", "pushCallAccept failed, the page drains at its next resume: ${e.message}")
+            Log.w("MainActivity", "pushCallAccept failed, the page drains at its next resume: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
         }
     }
 
@@ -798,7 +798,7 @@ class MainActivity : TauriActivity() {
         try {
             webView.evaluateJavascript("window.dispatchEvent(new CustomEvent('canari:incoming-share'));", null)
         } catch (e: Exception) {
-            Log.w("MainActivity", "pushIncomingShare failed, the page drains at its next resume: ${e.message}")
+            Log.w("MainActivity", "pushIncomingShare failed, the page drains at its next resume: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
         }
     }
 

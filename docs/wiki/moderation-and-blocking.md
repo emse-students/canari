@@ -5,6 +5,10 @@ Two mechanisms that look adjacent and are deliberately kept apart.
 A **report** asks a moderator to look at something. It is a public act inside the platform: it
 creates a row a third party reads and acts on.
 
+**Who may do what to whom** - every role, every content kind, the target decided on 2026-11-15 and
+today's gaps - is [moderation-authority](moderation-authority.md), the one copy. This page explains
+the mechanisms; it does not restate that grid.
+
 A **block** is between two people and reaches nobody else. It is not a moderation signal, it is not
 counted anywhere, and no administrator sees it - by the user's decision of 2026-08-27, because these
 are conflicts, break-ups and fallings-out, and a dashboard tallying them would turn a private
@@ -48,7 +52,12 @@ describing it as a live rival is what made it look like a design decision rather
 only, its `reportedUserId` the setter read from the membership row, every refusal the `404
 CONTENT_NOT_FOUND` of a post. Only global admins see it in the queue: a BDE's scope
 (`reportInBdeScopeSql`) does not name it. A community moderator reverses one by clearing it. An MLS
-group's nicknames never reach a server and are not reportable.
+group's nicknames never reach a server and are not reportable. **A gap**: no community moderator
+sees the report, and the platform admin who does has no route to clear the nickname (owner,
+2026-11-15: it goes to the community's moderators,
+[moderation-authority](moderation-authority.md#people-profile-mute-community-nicknames)). More
+generally the encrypted world - communities, salons, DMs, groups - has NO platform authority: neither
+the platform admin nor a BDE has a route there, and each community regulates itself by its own roles.
 
 `live` arrived with WP-L8 (2026-10-19, decision D6: a live is moderated like a post). Its `reportedUserId` is
 the broadcaster read from the live row, never the client's; the live must still have a row and be
@@ -57,8 +66,9 @@ answer is "delete the post", a live's is **"cut the live"**: `POST /api/lives/:i
 `isContentModerator` predicate, which ends the live for everyone, records the cut (`live_cuts`: who,
 when, which reason code) and marks the live's pending reports `reviewed`. A live is never
 auto-hidden by a count. **A strike ladder reads the cuts** (WP-L8b, 2026-10-21): a warning, then a
-30-day suspension of BROADCASTING (posts untouched - the account mute stays the one posting
-sanction), then a withdrawal staff decide ([lives](services/lives.md#the-strike-ladder-wp-l8b)).
+30-day suspension of BROADCASTING (posts untouched - the account mute stays the posting sanction;
+what it covers is [the sanctions table](moderation-authority.md#sanctions)), then a withdrawal staff
+decide ([lives](services/lives.md#the-strike-ladder-wp-l8b)).
 
 `live_chat` arrived with WP-L8b (2026-10-21): the one case where a report CARRIES content. A live
 chat line is sealed with the live key, which the server holds while the live runs, so unlike an MLS
@@ -132,9 +142,13 @@ The lazy purge is gone, the cron is the only mechanism, and its clock is `review
 
 ### Who may read the queue
 
-`isContentModerator`: a platform admin, or a BDE member holding `MODERATE`. One predicate, shared by
+`isContentModerator`: a platform admin, or a member holding `MODERATE` in the governor of a space.
+One predicate, shared by
 `/api/moderation/*` and by the post controls that give the same people the same reach - and, since
-WP-L8, by the staff cut of a live.
+WP-L8, by the staff cut of a live. **A space's governor may be an INSTITUTION (WP-D1)**, and
+the code counts its `MODERATE` members like a BDE's - at the door, and over the people of that space
+(`bdeStandingInSpaceSql` reads no type). The owner refused that on 2026-11-15; the target and its
+work package are in [moderation-authority](moderation-authority.md#the-roles).
 
 **SCOPED SINCE 2026-11-02 (owner).** That predicate is now only the DOOR: a BDE moderator reads the
 reports, the hidden posts and the muted people of the spaces its BDE governs, and every act (hide,
@@ -345,7 +359,8 @@ spaces hold it), or the post's own author (2026-09-17: a moderator
 must be able to tell WHO published an anonymous post, and so must the author looking at their own
 post - not just THAT it exists). `canUnmaskAnonymous` (same shape as `canPin`) is drawn from the
 moderator tier only, never from self-authorship. `PATCH /posts/:postId/unmask` (`PostsController`,
-guarded by the same `assertContentModerator` pin/hide already use) clears the flag,
+guarded by `assertModeratesPost` - `mayModeratePost`, the scoped predicate hide and unhide use;
+`assertContentModerator` now guards only `GET /posts/hidden`) clears the flag,
 one-directional: an author who did not choose anonymity at creation has no route back into it
 later, and the flag is otherwise immutable on edit - like `associationId` already is.
 
@@ -354,8 +369,9 @@ On the client, an anonymous post is named "Anonyme" with the mask for EVERY read
 (moderator, admin, or self): "Anonyme" stays the name, big, and the real author follows SMALL under
 it, linking the profile (`RevealedAuthorLine`; user, 2026-10-24 - it replaced the 2026-09-17 shape,
 the real name and photo with an "Anonyme" badge beside the time). The same holds for an anonymous
-COMMENT: `serveComment` sends its `userId` to the writer, a content moderator and a platform admin
-only, the comment stores no name, so the client resolves the name from that id
+COMMENT: `serveComment` sends its `userId` to the writer, a moderator of THAT post and of
+the comment's publisher (`seesAccount`, `posts/comment-identity.ts`) and a platform admin only, the
+comment stores no name, so the client resolves the name from that id
 (`commentRevealedAuthorId`). The client never decides who may see an author; it draws what the
 server sent ([posts](frontend/modules/posts.md#who-wrote-it-anonyme-big-the-real-author-small-2026-10-24)).
 

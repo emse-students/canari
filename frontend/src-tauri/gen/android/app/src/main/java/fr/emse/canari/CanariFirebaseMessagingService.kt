@@ -47,6 +47,7 @@ import fr.emse.canari.push.ChannelReadMark
 import fr.emse.canari.push.ConversationShape
 import fr.emse.canari.push.FallbackLine
 import fr.emse.canari.push.GenericBannerLedger
+import fr.emse.canari.push.throwableSite
 import fr.emse.canari.push.GroupLocality
 import fr.emse.canari.push.KeyGroupPushJoin
 import fr.emse.canari.push.NotificationLevelGate
@@ -200,7 +201,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 try {
                     task()
                 } catch (e: Throwable) {
-                    Log.e(TAG, "[PUSH_WAKE] an action released by a deadline threw: ${e.javaClass.simpleName}", e)
+                    Log.e(TAG, "[PUSH_WAKE] an action released by a deadline threw: ${throwableSite(e)}")
                 }
             }, delayMs, TimeUnit.MILLISECONDS)
         }
@@ -512,7 +513,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 // which an API below 26 does not filter by channel and a channel move would miss.
                 manager.cancel(WAKE_UNAVAILABLE_NOTIF_ID)
             } catch (e: Exception) {
-                Log.w(TAG, "cancelAllMessageNotifications: ${e.message}")
+                Log.w(TAG, "cancelAllMessageNotifications: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
             }
         }
 
@@ -563,7 +564,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                         Log.w(TAG, "retrievePushSecret: pending_push_secret.txt present but empty - falling through to the Keystore")
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "retrievePushSecret: pending_push_secret.txt unreadable: ${e.message}")
+                    Log.e(TAG, "retrievePushSecret: pending_push_secret.txt unreadable: ${e.javaClass.simpleName}")
                 }
 
                 val stored = PushSecretKeystore.retrieve(context)
@@ -608,7 +609,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     .build()
                 if (ConversationShortcuts.push(context, info)) id else null
             } catch (e: Exception) {
-                Log.e(TAG, "publishConversationShortcut: refused for group=${groupId.take(8)}: ${e.message}")
+                Log.e(TAG, "publishConversationShortcut: refused for group=${groupId.take(8)}: ${e.javaClass.simpleName}")
                 null
             }
         }
@@ -751,7 +752,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 manager.notify(notifId, builder.build())
                 Log.i(TAG, "repostReplyPending: re-posted group=${groupId.take(8)} - spinner cleared, actions restored")
             } catch (e: Exception) {
-                Log.e(TAG, "repostReplyPending: ${e.message}", e)
+                Log.e(TAG, "repostReplyPending: ${e.message}", e) // log-safe: message of a system or native call (Exception); this try parses and names no user input
             }
         }
 
@@ -940,7 +941,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             } catch (e: Throwable) {
                 // UnsatisfiedLinkError included: the seal is a JNI call, and an older native library
                 // has no such symbol - a crash here would take the notification with it.
-                Log.e(TAG, "writeFcmCache: failed: ${e.javaClass.simpleName}: ${e.message}")
+                Log.e(TAG, "writeFcmCache: failed: ${e.javaClass.simpleName}")
             }
         }
 
@@ -1038,7 +1039,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 }
                 Log.d(TAG, "appendReadWatermark: group=${groupId.take(8)} at=$at serverAt=$serverAt recorded for the next boot")
             } catch (e: Exception) {
-                Log.w(TAG, "appendReadWatermark: failed: ${e.message}")
+                Log.w(TAG, "appendReadWatermark: failed: ${e.javaClass.simpleName}")
             }
         }
 
@@ -1055,7 +1056,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             return try {
                 java.time.Instant.parse(iso).toEpochMilli().coerceAtLeast(0L)
             } catch (e: Exception) {
-                Log.w(TAG, "serverInstantOf: unreadable createdAt '${iso.take(40)}': ${e.message}")
+                Log.w(TAG, "serverInstantOf: unreadable createdAt '${iso.take(40)}': ${e.javaClass.simpleName}")
                 0L
             }
         }
@@ -1111,7 +1112,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     CACHE_LOCK.unlock()
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "shadeReadWatermark: unreadable for group=${groupId.take(8)}: ${e.message}")
+                Log.w(TAG, "shadeReadWatermark: unreadable for group=${groupId.take(8)}: ${e.javaClass.simpleName}")
                 none
             }
         }
@@ -1556,7 +1557,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 if (justCancelled != 0) ids.remove(justCancelled)
                 ids.size
             } catch (e: Exception) {
-                Log.w(TAG, "countUnreadConversations: ${e.message}")
+                Log.w(TAG, "countUnreadConversations: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
                 0
             }
         }
@@ -1784,7 +1785,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 MlsStateLock.LOCK.tryLock(10, java.util.concurrent.TimeUnit.SECONDS)
             } catch (e: InterruptedException) {
                 Thread.currentThread().interrupt()
-                Log.e(TAG, "encryptQueuedMessages: interrupted during tryLock: ${e.message}")
+                Log.e(TAG, "encryptQueuedMessages: interrupted during tryLock: ${e.message}") // log-safe: message of a system or native call (InterruptedException); this try parses and names no user input
                 return null
             }
             if (!lockAcquired) {
@@ -1830,7 +1831,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 }
                 return out
             } catch (e: Exception) {
-                Log.e(TAG, "encryptQueuedMessages: exception: ${e.message}")
+                Log.e(TAG, "encryptQueuedMessages: exception: ${e.javaClass.simpleName}")
                 return null
             } finally {
                 MlsStateLock.LOCK.unlock()
@@ -1909,7 +1910,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     conn.disconnect()
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "sendQueuedMessagePush: exception: ${e.message}")
+                Log.e(TAG, "sendQueuedMessagePush: exception: ${e.javaClass.simpleName}")
                 null
             }
         }
@@ -1961,7 +1962,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     conn.disconnect()
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "postChannelRead: exception: ${e.message}")
+                Log.w(TAG, "postChannelRead: exception: ${e.javaClass.simpleName}")
                 false
             }
         }
@@ -1994,7 +1995,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     }
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "readOutboxMirror: ${e.message}")
+                Log.w(TAG, "readOutboxMirror: ${e.javaClass.simpleName}")
                 emptyList()
             }
         }
@@ -2019,7 +2020,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 }
                 file.writeText(body + "\n")
             } catch (e: Exception) {
-                Log.w(TAG, "rewriteOutboxMirror: ${e.message}")
+                Log.w(TAG, "rewriteOutboxMirror: ${e.javaClass.simpleName}")
             }
         }
 
@@ -2052,7 +2053,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     conn.disconnect()
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "refreshTokenOnBackend: exception: ${e.message}")
+                Log.w(TAG, "refreshTokenOnBackend: exception: ${e.javaClass.simpleName}")
             }
         }
 
@@ -2072,7 +2073,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 val lines = ids.joinToString("\n") { if (it.receivedAt > 0L) "${it.id}\t${it.receivedAt}" else it.id }
                 file.writeText(existing + lines + "\n")
             } catch (e: Exception) {
-                Log.w(TAG, "appendOutboxSent: ${e.message}")
+                Log.w(TAG, "appendOutboxSent: ${e.javaClass.simpleName}")
             }
         }
 
@@ -2303,7 +2304,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     // EVERY SWALLOWED BRANCH LOGS: this lane is the only path to a banner for a
                     // message the server will never push, so a silent throw here is a message the
                     // user is never told about.
-                    Log.e(TAG, "notifyMessageFromWebSocket: build failed for ${groupId.take(8)}: ${e.message}", e)
+                    Log.e(TAG, "notifyMessageFromWebSocket: build failed for ${groupId.take(8)}: ${throwableSite(e)}")
                 }
             }
             return true
@@ -2511,7 +2512,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                             }
                             Log.d(TAG, "$label: cached for ${subject.take(8)}")
                         } catch (e: Exception) {
-                            Log.w(TAG, "$label: unable to save the cache: ${e.message}")
+                            Log.w(TAG, "$label: unable to save the cache: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
                         }
                         decodeSampled(target) { BitmapFactory.decodeByteArray(bytes, 0, bytes.size, it) }
                             ?.let { circleCrop(it, target) }
@@ -2527,7 +2528,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                             }
                             Log.d(TAG, "$label: HTTP 404 for ${subject.take(8)} -> no picture, remembered for ${AVATAR_CACHE_MAX_AGE_MS / 3_600_000}h")
                         } catch (e: Exception) {
-                            Log.w(TAG, "$label: HTTP 404 for ${subject.take(8)}, and the no-picture marker could not be saved: ${e.message}")
+                            Log.w(TAG, "$label: HTTP 404 for ${subject.take(8)}, and the no-picture marker could not be saved: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
                         }
                         null
                     } else {
@@ -2555,12 +2556,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 // A transport failure - the bad Wi-Fi of 2026-10-01 - is not an answer either. Said
                 // at WARN: the picture is lost for this notification, and a run of these is a radio
                 // or a server worth reading about.
-                Log.w(TAG, "$label: transport failure for ${subject.take(8)} (${e.javaClass.simpleName}: ${e.message}) -> initials, not remembered")
+                Log.w(TAG, "$label: transport failure for ${subject.take(8)} (${e.javaClass.simpleName}) -> initials, not remembered")
                 null
             } catch (e: Exception) {
                 // Not the network: a defect in how this was called - a fetch on the main thread
                 // (`NetworkOnMainThreadException`, the review of #2877), a bad URL. It ACCUSES.
-                Log.e(TAG, "$label: ${e.javaClass.simpleName} fetching ${subject.take(8)} - a defect, not the network: ${e.message}")
+                Log.e(TAG, "$label: ${e.javaClass.simpleName} fetching ${subject.take(8)} - a defect, not the network: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
                 null
             }
         }
@@ -2777,7 +2778,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val existingNotif = try {
                 manager.activeNotifications.firstOrNull { it.id == notifId }?.notification
             } catch (e: Exception) {
-                Log.w(TAG, "showNotification: activeNotifications unavailable: ${e.message}")
+                Log.w(TAG, "showNotification: activeNotifications unavailable: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
                 null
             }
 
@@ -3316,7 +3317,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val dataDir = MlsContextLoader.tauriDataDir(this).also { it.mkdirs() }
             File(dataDir, "fcm_token.txt").writeText(token)
         } catch (e: Exception) {
-            Log.w(TAG, "onNewToken: unable to write fcm_token.txt: ${e.message}")
+            Log.w(TAG, "onNewToken: unable to write fcm_token.txt: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
         }
         // FCM2: push the new token to the backend WITHOUT waiting for the next foreground open.
         // A token rotated while the app is killed would stay stale server-side (push to a dead
@@ -3987,14 +3988,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                         .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "canari:$name")
                     wl.acquire(timeoutMs)
                 } catch (e: Throwable) {
-                    Log.e(TAG, "$name: wake lock NOT taken, running without it: ${e.javaClass.simpleName}", e)
+                    Log.e(TAG, "$name: wake lock NOT taken, running without it: ${e.javaClass.simpleName}", e) // log-safe: message of a system or native call (Throwable); this try parses and names no user input
                 }
                 try {
                     block()
                 } catch (e: Throwable) {
                     // A task that dies must not take the lane with it: the executor would keep running,
                     // but this is the only place the failure is visible at all.
-                    Log.e(TAG, "$name: uncaught in the MLS push lane: ${e.message}", e)
+                    Log.e(TAG, "$name: uncaught in the MLS push lane: ${throwableSite(e)}")
                 } finally {
                     if (wl?.isHeld == true) wl.release()
                 }
@@ -4031,7 +4032,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 conn.disconnect()
             }
         } catch (e: Exception) {
-            Log.w(TAG, "markMembershipActive: exception: ${e.message}")
+            Log.w(TAG, "markMembershipActive: exception: ${e.javaClass.simpleName}")
         }
     }
 
@@ -4249,7 +4250,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 conn.disconnect()
             }
         } catch (e: Exception) {
-            Log.e(TAG, "acquireAddLock: exception: ${e.message}")
+            Log.e(TAG, "acquireAddLock: exception: ${e.javaClass.simpleName}")
             null
         }
     }
@@ -4283,7 +4284,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 conn.disconnect()
             }
         } catch (e: Exception) {
-            Log.e(TAG, "releaseAddLock: exception: ${e.message}")
+            Log.e(TAG, "releaseAddLock: exception: ${e.javaClass.simpleName}")
         }
     }
 
@@ -4324,7 +4325,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 conn.disconnect()
             }
         } catch (e: Exception) {
-            Log.e(TAG, "fetchKeyPackage: exception: ${e.message}")
+            Log.e(TAG, "fetchKeyPackage: exception: ${e.javaClass.simpleName}")
             null
         }
     }
@@ -4385,7 +4386,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 conn.disconnect()
             }
         } catch (e: Exception) {
-            Log.e(TAG, "sendWelcomeAndCommit: exception: ${e.message}")
+            Log.e(TAG, "sendWelcomeAndCommit: exception: ${e.javaClass.simpleName}")
             BackgroundWelcomeAnswer.classify(null, null, null, null)
         }
     }
@@ -4548,7 +4549,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             MlsStateLock.LOCK.tryLock(5, java.util.concurrent.TimeUnit.SECONDS)
         } catch (e: InterruptedException) {
             Thread.currentThread().interrupt()
-            Log.e(TAG, "tryDecrypt: thread interrupted during tryLock MlsStateLock: ${e.message}")
+            Log.e(TAG, "tryDecrypt: thread interrupted during tryLock MlsStateLock: ${e.message}") // log-safe: message of a system or native call (InterruptedException); this try parses and names no user input
             return PushDecrypt.Refused
         }
         if (!lockAcquired) {
@@ -4645,7 +4646,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                             "- its deadline settled it first; the frame stays queued for the next open")
                 }
             } catch (e: Throwable) {
-                Log.e(TAG, "[PUSH_WAKE] a released action threw queued=$queuedMessageId: ${e.javaClass.simpleName}", e)
+                Log.e(TAG, "[PUSH_WAKE] a released action threw queued=$queuedMessageId: ${throwableSite(e)}")
             }
         }
         try {
@@ -4666,7 +4667,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                         outcome = fetchWakeFrameWithinDeadline(queuedMessageId, silent, remainingMs)
                     }
                 } catch (e: Throwable) {
-                    Log.e(TAG, "[PUSH_WAKE] fetch threw queued=$queuedMessageId: ${e.javaClass.simpleName}", e)
+                    Log.e(TAG, "[PUSH_WAKE] fetch threw queued=$queuedMessageId: ${throwableSite(e)}")
                 } finally {
                     settle(outcome)
                     if (wl?.isHeld == true) wl.release()
@@ -4675,7 +4676,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         } catch (e: RejectedExecutionException) {
             // Never expected (the pool is never shut down) - and if it ever is, the ticket is settled
             // HERE, so no later push waits even for the deadline.
-            Log.e(TAG, "[PUSH_WAKE] fetch NOT scheduled queued=$queuedMessageId: ${e.message}")
+            Log.e(TAG, "[PUSH_WAKE] fetch NOT scheduled queued=$queuedMessageId: ${e.message}") // log-safe: message of a system or native call (RejectedExecutionException); this try parses and names no user input
             settle(WakeAnswer.Outcome.Failed("not-scheduled"))
         }
     }
@@ -4700,7 +4701,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             call.cancel(true)
             WakeAnswer.Outcome.Failed("deadline-${phase.get()}")
         } catch (e: java.util.concurrent.ExecutionException) {
-            Log.e(TAG, "[PUSH_WAKE] fetch threw queued=$queuedMessageId: ${e.cause?.javaClass?.simpleName}", e.cause)
+            Log.e(TAG, "[PUSH_WAKE] fetch threw queued=$queuedMessageId: ${throwableSite(e.cause ?: e)}")
             WakeAnswer.Outcome.Failed("uncaught")
         }
     }
@@ -4842,7 +4843,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 if (attempt == 0) Thread.sleep(1_000)
             }
         }
-        Log.e(TAG, "fetchProtoFromBackend: failed after 2 attempts: ${lastException?.message}")
+        Log.e(TAG, "fetchProtoFromBackend: failed after 2 attempts: ${lastException?.javaClass?.simpleName}")
         return null
     }
 
@@ -4917,7 +4918,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             MlsStateLock.LOCK.tryLock(10, java.util.concurrent.TimeUnit.SECONDS)
         } catch (e: InterruptedException) {
             Thread.currentThread().interrupt()
-            Log.e(TAG, "processReceivedWelcomeBackground: interrupted during tryLock: ${e.message}")
+            Log.e(TAG, "processReceivedWelcomeBackground: interrupted during tryLock: ${e.message}") // log-safe: message of a system or native call (InterruptedException); this try parses and names no user input
             return
         }
         if (!jniLockAcquired) {
@@ -4995,7 +4996,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 conn.disconnect()
             }
         } catch (e: Exception) {
-            Log.e(TAG, "fetchWelcomeBundle: exception: ${e.message}")
+            Log.e(TAG, "fetchWelcomeBundle: exception: ${e.javaClass.simpleName}")
             null
         }
     }
@@ -5030,10 +5031,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val claim = try {
             JSONObject(nativeClaimDeviceNotices(MlsContextLoader.tauriDataDir(this).also { it.mkdirs() }.absolutePath, keys.toString()))
         } catch (e: UnsatisfiedLinkError) {
-            Log.e(TAG, "$where: native library not loaded - new-device notice not raised: ${e.message}")
+            Log.e(TAG, "$where: native library not loaded - new-device notice not raised: ${e.javaClass.simpleName}")
             return
         } catch (e: Exception) {
-            Log.e(TAG, "$where: new-device claim failed - notice not raised: ${e.message}")
+            Log.e(TAG, "$where: new-device claim failed - notice not raised: ${throwableSite(e)}")
             return
         }
         val claimed = claim.optJSONArray("claimed") ?: JSONArray()
@@ -5107,7 +5108,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     // Rust refused these v1 seeds (channel-encryption 21.7); its own line goes
                     // nowhere in a killed app, so the reason is said here.
                     json.optJSONArray("v1Refused")?.let {
-                        Log.w(TAG, "$where: REFUSED ${it.length()} v1 seed(s) $it - a v1 seed is no longer accepted")
+                        Log.w(TAG, "$where: REFUSED ${it.length()} v1 seed(s) - a v1 seed is no longer accepted")
                     }
                     PushDecrypt.KeyMaterial(seeds)
                 }
@@ -5194,10 +5195,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val jsonStr = nativeDecryptMessageWithKey(stateBytes, keyB64, userId, deviceId, groupId, senderId, cipherBytes, locale)
             parseNativeDecrypt(jsonStr, "decryptProto")
         } catch (e: UnsatisfiedLinkError) {
-            Log.e(TAG, "decryptProto: native library not loaded: ${e.message}")
+            Log.e(TAG, "decryptProto: native library not loaded: ${e.javaClass.simpleName}")
             PushDecrypt.Refused
         } catch (e: Exception) {
-            Log.e(TAG, "decryptProto: exception: ${e.message}")
+            Log.e(TAG, "decryptProto: exception: ${e.javaClass.simpleName}")
             PushDecrypt.Refused
         }
     }
@@ -5230,7 +5231,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val cipherBytes = try {
             Base64.decode(protoB64, Base64.DEFAULT)
         } catch (e: Exception) {
-            Log.e(TAG, "catchup: proto base64 invalid: ${e.message}"); return null
+            Log.e(TAG, "catchup: proto base64 invalid: ${e.javaClass.simpleName}"); return null
         }
 
         // 1) Read the current epoch (brief lock: mls.bin + Argon2 via JNI).
@@ -5278,7 +5279,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             MlsStateLock.LOCK.tryLock(timeoutSec, java.util.concurrent.TimeUnit.SECONDS)
         } catch (e: InterruptedException) {
             Thread.currentThread().interrupt()
-            Log.e(TAG, "withMlsStateLock: interrupted: ${e.message}")
+            Log.e(TAG, "withMlsStateLock: interrupted: ${e.message}") // log-safe: message of a system or native call (InterruptedException); this try parses and names no user input
             return null
         }
         if (!acquired) {
@@ -5320,10 +5321,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 Log.d(TAG, "groupLocality: epoch=$epoch group=${groupId.take(8)}")
                 if (epoch >= 0) GroupLocality.LOCAL else GroupLocality.ABSENT
             } catch (e: UnsatisfiedLinkError) {
-                Log.e(TAG, "groupLocality: native library not loaded: ${e.message}")
+                Log.e(TAG, "groupLocality: native library not loaded: ${e.message}") // log-safe: message of a system or native call (UnsatisfiedLinkError); this try parses and names no user input
                 GroupLocality.UNKNOWN
             } catch (e: Exception) {
-                Log.e(TAG, "groupLocality: exception: ${e.message}")
+                Log.e(TAG, "groupLocality: exception: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
                 GroupLocality.UNKNOWN
             }
         }
@@ -5357,9 +5358,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val jsonStr = nativeDecryptMessageWithCommitsWithKey(stateBytes, keyB64, userId, deviceId, groupId, senderId, commitsJson, cipherBytes, locale)
             parseNativeDecrypt(jsonStr, "decryptProtoWithCommits")
         } catch (e: UnsatisfiedLinkError) {
-            Log.e(TAG, "decryptProtoWithCommits: native library not loaded: ${e.message}"); PushDecrypt.Refused
+            Log.e(TAG, "decryptProtoWithCommits: native library not loaded: ${e.javaClass.simpleName}"); PushDecrypt.Refused
         } catch (e: Exception) {
-            Log.e(TAG, "decryptProtoWithCommits: exception: ${e.message}"); PushDecrypt.Refused
+            Log.e(TAG, "decryptProtoWithCommits: exception: ${e.javaClass.simpleName}"); PushDecrypt.Refused
         }
     }
 
@@ -5411,7 +5412,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 conn.disconnect()
             }
         } catch (e: Exception) {
-            Log.w(TAG, "fetchCommitsFromBackend: exception: ${e.message}")
+            Log.w(TAG, "fetchCommitsFromBackend: exception: ${e.javaClass.simpleName}")
             null
         }
     }
@@ -5575,7 +5576,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             Log.d(TAG, "fetchAndDecryptMedia: thumbnail ready ${mediaId.take(8)} (${plaintext.size}B)")
             Pair(uri, decrypted.mimeType ?: "image/jpeg")
         } catch (e: Exception) {
-            Log.d(TAG, "fetchAndDecryptMedia: ${e.message} -> text only")
+            Log.d(TAG, "fetchAndDecryptMedia: ${e.javaClass.simpleName} -> text only")
             null
         }
     }
@@ -6238,7 +6239,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val claim = try {
             KeyGroupPushJoin.readClaim(nativeKeyGroupJoinClaim(filesDir, cacheKey, ctx.userId, groupId))
         } catch (e: UnsatisfiedLinkError) {
-            Log.e(TAG, "joinKeyGroupFromPush: native library not loaded: ${e.message}")
+            Log.e(TAG, "joinKeyGroupFromPush: native library not loaded: ${e.message}") // log-safe: message of a system or native call (UnsatisfiedLinkError); this try parses and names no user input
             return
         }
         val skipBaseAt = when (claim) {
@@ -6255,7 +6256,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         } catch (e: Exception) {
             // Anything thrown before the install is a join that did not happen; the staged state,
             // if any, is deleted so it can never be installed later by mistake.
-            Log.e(TAG, "joinKeyGroupFromPush: exception group=$tag: ${e.message}")
+            Log.e(TAG, "joinKeyGroupFromPush: exception group=$tag: ${e.javaClass.simpleName}")
             nativeAbandonKeyGroupJoin(filesDir, ctx.userId)
             KeyGroupPushJoin.Settlement.Retryable("exception")
         }
@@ -6413,7 +6414,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 conn.disconnect()
             }
         } catch (e: Exception) {
-            Log.w(TAG, "postPushSecretJson: $route no answer: ${e.message}")
+            Log.w(TAG, "postPushSecretJson: $route no answer: ${e.javaClass.simpleName}")
             null to null
         }
     }
@@ -6526,7 +6527,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     buildChannelFallbackText(res, channelName)
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "handleChannelMessage: decrypt exception: ${e.javaClass.simpleName}: ${e.message}")
+                Log.e(TAG, "handleChannelMessage: decrypt exception: ${e.javaClass.simpleName}")
                 refusal = BlindBannerReport.EXCEPTION
                 buildChannelFallbackText(res, channelName)
             }
@@ -6683,7 +6684,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 conn.disconnect()
             }
         } catch (e: Exception) {
-            Log.w(TAG, "reportBlindBanner: exception: ${e.message}")
+            Log.w(TAG, "reportBlindBanner: exception: ${e.javaClass.simpleName}")
         }
     }
 
@@ -6733,7 +6734,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         } catch (e: Throwable) {
             // UnsatisfiedLinkError included: an older native library has no such symbol, and a
             // crash in a push handler takes the whole notification with it.
-            Log.e(TAG, "absorbGraineSeeds: ${e.message}")
+            Log.e(TAG, "absorbGraineSeeds: ${e.javaClass.simpleName}")
         }
     }
 
@@ -6780,7 +6781,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             try {
                 postChannelNotification(cacheKey, frame.data, seedHeld = true, supersedes = frame.genericStamp)
             } catch (e: Exception) {
-                Log.e(TAG, "drainPendingChannelFrames: redraw failed channel=${frame.data["channelId"]}: ${e.message}")
+                Log.e(TAG, "drainPendingChannelFrames: redraw failed channel=${frame.data["channelId"]}: ${throwableSite(e)}")
             }
         }
     }
@@ -6807,7 +6808,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             held == 1
         } catch (e: Throwable) {
             // UnsatisfiedLinkError included, as in [absorbGraineSeeds].
-            Log.e(TAG, "graineSeedHeld: ${e.message}")
+            Log.e(TAG, "graineSeedHeld: ${e.message}") // log-safe: message of a system or native call (Throwable); this try parses and names no user input
             false
         }
     }
