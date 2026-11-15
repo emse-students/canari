@@ -1433,8 +1433,9 @@ export async function clearAuth(cause: SignOutCause): Promise<void> {
  * signed in since - a second logout here would end THAT account's session for nothing.
  */
 export async function clearAuthLocally(): Promise<void> {
-  alog('clear (local only - another tab ended this account)');
-  await clearAuthCounted({ revokeServerSession: false, cause: 'account-deleted-in-another-tab' });
+  const cause: SignOutCause = 'account-deleted-in-another-tab';
+  alog(`clear (${cause}) - local only`);
+  await clearAuthCounted({ revokeServerSession: false, cause });
 }
 
 /** Counts one sign-out under way around {@link clearAuthUnderway} - see {@link clearAuth}. */

@@ -647,9 +647,9 @@ in-app browser - which a dead session never opens (`leaveSignedOut` is for a sig
 Every refresh across the reload answered 200; no request answered 401 or 403. The session rules held;
 what was missing was a log that said so.
 
-**The rig's lesson:** a phone tap goes through `cdp.mjs click`, whose resolver refuses an element that
-is not clickable at its own centre - a bare `adb shell input tap` at a tab's coordinates taps whatever
-is drawn there, and after a reload that is the PIN gate.
+**The rig's lesson:** a phone tap goes through `cdp.mjs click`, which waits in `stablePoint` while its
+target is covered and FAILS naming it as covered if it stays so - a bare `adb shell input tap` at a
+tab's coordinates taps whatever is drawn there, and after a reload that is the PIN gate.
 
 ## A return target is held to the page's origin (2026-10-28)
 

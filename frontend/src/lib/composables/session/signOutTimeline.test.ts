@@ -182,7 +182,7 @@ describe('sign-out, then the resume of the sign-in browser, then a second sign-o
       expect(s.log.mock.calls.flat().join('\n')).not.toContain('App in foreground');
 
       // 3. A second sign-out (the PIN gate's) finds nothing live: no second, flushing teardown.
-      await clearAuth('chosen');
+      await clearAuth('pin-gate');
       expect(s.mls.pauseSocket).toHaveBeenCalledTimes(1);
       expect(s.clearConversations).toHaveBeenCalledTimes(1);
       expect(s.log).toHaveBeenCalledWith(
@@ -207,7 +207,7 @@ describe('sign-out, then the resume of the sign-in browser, then a second sign-o
       expect(probe).not.toBe(s.clients[0]);
 
       // The gate's exit.
-      await clearAuth('chosen');
+      await clearAuth('pin-gate');
       await s.ctx.whenMlsRetired();
       expect(probe.destroy).toHaveBeenCalledTimes(1);
       expect(s.endNative).toHaveBeenCalledWith('sign-out');
