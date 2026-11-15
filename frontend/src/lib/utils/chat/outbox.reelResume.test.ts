@@ -1204,7 +1204,13 @@ describe('one take, several conversations (RC-13)', () => {
       fileName: 'take2.webm',
       targets: [{ messageId: OTHER_SEND, groupId: 'g1', conversationKey: 'g1' }],
     });
+    // THE FIXTURE'S EXPIRY, as `takeRows` sets it: left to derive from `sentAt: 200` it is long past,
+    // and the flush fails this send for good as expired - deleting the row the reads below name.
+    other.take.media!.expiresAtMs = EXPIRES;
+    for (const send of other.sends) send.entry.media!.expiresAtMs = EXPIRES;
     await l.outbox.enqueueTake(other.take, other.sends);
+    // Both takes parked in their encoder: nothing writes a row any more, so the reads see durable state.
+    await waitForEvent(() => expect(w.prepares).toHaveLength(2));
     const mine = await l.outbox.reelTakeReachOf(SEND_IDS[0]);
     expect(mine?.takeId).toBe(ID);
     expect(mine?.queued.map((s) => s.id)).toEqual(SEND_IDS.slice(0, 2));
