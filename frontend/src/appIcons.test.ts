@@ -2,8 +2,9 @@ import { readFileSync, readdirSync } from 'node:fs';
 import sharp from 'sharp';
 import { LOGO_BIRD_FILL, SVG } from '../scripts/logo-render.mjs';
 import {
-  ANDROID_LAUNCHER_ZOOM_COMPENSATION,
-  ANDROID_VISIBLE,
+  ANDROID_BIRD_DP,
+  ANDROID_CANVAS_DP,
+  ANDROID_SAFE_RADIUS_DP,
   BIRD_ICON_FILL,
   BRAND_PALETTE,
   DEV_PALETTE,
@@ -239,25 +240,75 @@ describe('the bird inside each generated icon', () => {
     return { bird: right - left + 1, icon: info.width };
   }
 
-  it('is half of what a person sees on the home-screen icon', async () => {
-    // It was 0.76 here and 0.5 of the wrong box on Android, two constants that drifted apart.
-    const { bird, icon } = await yellowWidth('static/apple-touch-icon.png');
-    expect(bird / icon).toBeCloseTo(BIRD_ICON_FILL, 1);
+  /**
+   * The ink of a layer drawn on a TRANSPARENT canvas, read off its alpha: the width of what is
+   * opaque, and the farthest any visible pixel reaches from the centre, both in pixels.
+   */
+  async function inkReach(file: string): Promise<{ width: number; reach: number; edge: number }> {
+    const { data, info } = await sharp(file)
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    const c = info.width / 2;
+    let left = info.width;
+    let right = -1;
+    let reach = 0;
+    for (let y = 0; y < info.height; y++) {
+      for (let x = 0; x < info.width; x++) {
+        const a = data[(y * info.width + x) * 4 + 3];
+        if (a > 0) reach = Math.max(reach, Math.hypot(x + 0.5 - c, y + 0.5 - c));
+        if (a < 128) continue;
+        left = Math.min(left, x);
+        right = Math.max(right, x);
+      }
+    }
+    return { width: right - left + 1, reach, edge: info.width };
+  }
+
+  it('is 0.66 of the home-screen icon on iOS and the web (owner, 2026-11-15)', async () => {
+    // 0.5 until 2026-11-15, when it read 49 % of the iPhone tile against a median 75 % around it.
+    expect(BIRD_ICON_FILL).toBe(0.66);
+    for (const file of ['static/apple-touch-icon.png', '../store/icons/app-store-1024.png']) {
+      const { bird, icon } = await yellowWidth(file);
+      expect({ file, fill: Math.round((bird / icon) * 100) / 100 }).toEqual({
+        file,
+        fill: BIRD_ICON_FILL,
+      });
+    }
   });
 
-  it('is sized against the 72 dp window, less the zoom measured on the Mi 9T launcher', async () => {
-    const { bird, icon } = await yellowWidth(
-      `${ANDROID_RES}/mipmap-xxxhdpi/ic_launcher_foreground.png`
-    );
-    expect(bird / icon).toBeCloseTo(
-      BIRD_ICON_FILL * ANDROID_VISIBLE * ANDROID_LAUNCHER_ZOOM_COMPENSATION,
-      2
-    );
-  });
+  // Google's two bounds for an adaptive-icon logo: "at least 48x48 dp. It must not exceed 66x66 dp"
+  // (developer.android.com, adaptive icons). The bird read 27 dp until 2026-11-15, under a "launcher
+  // zoom compensation" that a capture of the Mi 9T drawer refuted.
+  for (const layer of ['ic_launcher_foreground', 'ic_launcher_monochrome']) {
+    it(`${layer}: the bird is at least 48 dp wide and no ink reaches past the 33 dp safe circle`, async () => {
+      expect(ANDROID_BIRD_DP).toBeGreaterThanOrEqual(48);
+      for (const bucket of ['mdpi', 'hdpi', 'xhdpi', 'xxhdpi', 'xxxhdpi']) {
+        const { width, reach, edge } = await inkReach(
+          `${ANDROID_RES}/mipmap-${bucket}/${layer}.png`
+        );
+        const dp = ANDROID_CANVAS_DP / edge;
+        // Two pixels of slack for the pixel grid: the trimmed render of a 48 px bird is 46 px at
+        // mdpi, where a pixel IS a dp; at xxxhdpi it measures 47.5 dp.
+        expect({ bucket, wide: (width + 2) * dp >= ANDROID_BIRD_DP }).toEqual({
+          bucket,
+          wide: true,
+        });
+        expect({ bucket, inside: reach * dp <= ANDROID_SAFE_RADIUS_DP }).toEqual({
+          bucket,
+          inside: true,
+        });
+      }
+    });
+  }
 
-  it('is half of the legacy icon, which has no window', async () => {
-    const { bird, icon } = await yellowWidth(`${ANDROID_RES}/mipmap-xxxhdpi/ic_launcher.png`);
-    expect(bird / icon).toBeCloseTo(BIRD_ICON_FILL, 1);
+  it('ships no legacy launcher bitmap: minSdk 28 resolves every ic_launcher to the adaptive XML', () => {
+    for (const bucket of ['mdpi', 'hdpi', 'xhdpi', 'xxhdpi', 'xxxhdpi']) {
+      const files = readdirSync(`${ANDROID_RES}/mipmap-${bucket}`);
+      expect(files.filter((f) => /^ic_launcher(_round)?\.png$/.test(f))).toEqual([]);
+    }
+    const gradle = readFileSync('src-tauri/gen/android/app/build.gradle.kts', 'utf8');
+    expect(Number(gradle.match(/minSdk = (\d+)/)?.[1])).toBeGreaterThanOrEqual(26);
   });
 
   it('ships the themed layer the adaptive icon declares', () => {
