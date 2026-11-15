@@ -1637,8 +1637,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       await follow(BOB);
       const first = await start();
       await lives.ingest(ALICE, first.id, 0, segment(0));
-      // The announcement is read before the end: a live this short is purged at its end, and one
-      // purged before its announcement was read is not announced (the case pinned below).
+      // The announcement is read before the end: a live ended before its announcement was read is
+      // not announced (the cases pinned below).
       await lives.announcementsSettled();
       await lives.end(ALICE, first.id);
       const second = await start();
@@ -1709,8 +1709,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       };
       /**
        * Starts a live as the association, stores its segment 0, lets its announcement be read, and
-       * ends it. The announcement FIRST: the end purges a live this short, and one purged before its
-       * announcement was read is not announced - these cases are about the slot, not that race.
+       * ends it. The announcement FIRST: a live ended before its announcement was read is not
+       * announced - these cases are about the slot, not that race.
        */
       const assoLive = async () => {
         const live = await lives.start(ALICE, { key: KEY, associationId: ASSO });
@@ -1944,6 +1944,22 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         index: 0,
       });
       expect(await pushed()).toEqual([]);
+    });
+
+    it('a live ended before its announcement is read is not announced, its row kept or not', async () => {
+      await follow(BOB);
+      const live = await start();
+      await lives.ingest(ALICE, live.id, 0, segment(0));
+      await lives.announcementsSettled();
+      notices.length = 0;
+      // Ended with its row KEPT - what a seated viewer or a replay due leaves behind the end.
+      await q(`UPDATE lives SET "endedAt" = now(), "endReason" = 'broadcaster' WHERE id = $1`, [
+        live.id,
+      ]);
+      await expect(
+        announcer.announce(live.id, { broadcasterId: ALICE, associationId: null })
+      ).resolves.toBeNull();
+      expect(notices).toEqual([]);
     });
 
     it('a live ended and purged before its announcement is read is not announced, to nobody', async () => {
