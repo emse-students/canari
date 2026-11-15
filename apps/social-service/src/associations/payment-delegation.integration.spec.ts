@@ -24,6 +24,7 @@ import { Space } from '../spaces/space.entity';
 import { PostNotification } from '../posts/entities/post-notification.entity';
 import { AssociationsService } from './associations.service';
 import { ProductsService } from './products.service';
+import { ACTIVITY_DUMP_SQL, settledFlag, untilWaiting } from '../common/lock-wait.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -372,25 +373,27 @@ maybe('a list collects through an accepted payment delegation (PostgreSQL)', () 
       [LIST]
     );
     tellDelegation.mockClear();
-    let settled = false;
-    const readiness = associations
-      .setLydiaReadiness('vendor-receiver', true, 'admin', { path: 'admin' })
-      .finally(() => {
-        settled = true;
-      });
+    const readiness = associations.setLydiaReadiness('vendor-receiver', true, 'admin', {
+      path: 'admin',
+    });
     // Until the readiness waits on the revoke's lock - or finishes without waiting, which is the
-    // defect, and the assertions below then fail.
-    for (;;) {
-      const {
-        rows: [{ waiting }],
-      } = await admin.query(
-        `SELECT count(*)::int AS waiting FROM pg_stat_activity
-          WHERE application_name = $1 AND wait_event_type = 'Lock'`,
-        [schema]
-      );
-      if (waiting > 0 || settled) break;
-      await new Promise((resolve) => setImmediate(resolve));
-    }
+    // defect: that outcome is RETURNED, and the assertions below fail on it.
+    await untilWaiting({
+      what: 'the readiness',
+      settled: settledFlag(readiness),
+      onAbsent: 'return',
+      waiting: async () => {
+        const {
+          rows: [{ waiting }],
+        } = await admin.query(
+          `SELECT count(*)::int AS waiting FROM pg_stat_activity
+            WHERE application_name = $1 AND wait_event_type = 'Lock'`,
+          [schema]
+        );
+        return waiting;
+      },
+      dump: async () => (await admin.query(ACTIVITY_DUMP_SQL)).rows,
+    });
     await revoke.query('COMMIT');
     await revoke.end();
     await readiness;

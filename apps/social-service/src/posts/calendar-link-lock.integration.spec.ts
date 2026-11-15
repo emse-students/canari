@@ -26,6 +26,7 @@ import {
   AssociationCalendarEventStatus,
 } from '../associations/entities/association-calendar-event.entity';
 import { CALENDAR_NEUTRAL_ERROR_CODES } from '../associations/event-presentation';
+import { untilWaiting } from '../common/lock-wait.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -165,21 +166,26 @@ maybe(
     }
 
     /**
-     * Reads `pg_locks` until one of THIS run's pool sessions waits on a lock, or a bounded number of
-     * reads has gone by; answers whether it did. A read loop, never a clock.
+     * Reads `pg_locks` until one of THIS run's pool sessions waits on a lock, or the bound of reads
+     * is spent ({@link untilWaiting}, `onAbsent: 'return'`: the caller releases its lock before it
+     * asserts); answers whether it did. A read loop, never a clock.
      */
     async function aSessionWaits(): Promise<boolean> {
-      for (let i = 0; i < 10_000; i++) {
-        await admin.query('SELECT pg_stat_clear_snapshot()');
-        const { rows } = await admin.query(
-          `SELECT count(*)::int AS n FROM pg_locks l
-          WHERE NOT l.granted
-            AND l.pid IN (SELECT pid FROM pg_stat_activity WHERE application_name = $1)`,
-          [schema]
-        );
-        if ((rows[0] as { n: number }).n > 0) return true;
-      }
-      return false;
+      const { outcome } = await untilWaiting({
+        what: 'the post write',
+        onAbsent: 'return',
+        waiting: async () => {
+          await admin.query('SELECT pg_stat_clear_snapshot()');
+          const { rows } = await admin.query(
+            `SELECT count(*)::int AS n FROM pg_locks l
+            WHERE NOT l.granted
+              AND l.pid IN (SELECT pid FROM pg_stat_activity WHERE application_name = $1)`,
+            [schema]
+          );
+          return (rows[0] as { n: number }).n;
+        },
+      });
+      return outcome === 'waiting';
     }
 
     const linkedPosts = async (eventId: string) =>

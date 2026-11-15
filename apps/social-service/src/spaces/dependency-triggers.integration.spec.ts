@@ -29,6 +29,7 @@ import {
   dependencyRefusalOf,
 } from './dependency-rules';
 import type { EntityType } from './dependency-rules';
+import { ACTIVITY_DUMP_SQL, settledFlag, untilWaiting } from '../common/lock-wait.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -378,14 +379,22 @@ maybe('the dependency axis against PostgreSQL (migrations 129-131)', () => {
           () => null,
           (e: unknown) => dependencyRefusalOf(e)
         );
-      // Proven waiting, never slept on: the other backend is parked on the advisory lock.
-      for (;;) {
-        const { rows } = await client.query(
-          `SELECT wait_event FROM pg_stat_activity WHERE pid = $1`,
-          [otherPid]
-        );
-        if (rows[0]?.wait_event === 'advisory') break;
-      }
+      // Proven waiting, never slept on: the other backend is parked on the advisory lock. `client`
+      // reads inside the transaction holding the lock, and `pg_stat_activity` is snapshotted once
+      // per transaction: a fresh snapshot each round, or a backend that parked since is unseen.
+      await untilWaiting({
+        what: 'the designation',
+        settled: settledFlag(designation),
+        waiting: async () => {
+          await client.query('SELECT pg_stat_clear_snapshot()');
+          const { rows } = await client.query(
+            `SELECT wait_event FROM pg_stat_activity WHERE pid = $1`,
+            [otherPid]
+          );
+          return rows[0]?.wait_event === 'advisory' ? 1 : 0;
+        },
+        dump: async () => (await client.query(ACTIVITY_DUMP_SQL)).rows,
+      });
       await client.query('COMMIT');
       expect(await designation).toBe(DEPENDENCY_CHILD_IS_A_BDE);
     } finally {

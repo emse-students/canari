@@ -167,11 +167,11 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
    * settles first the wait fails with a message (it never waited), and so does a bound of reads
    * with the server's activity in it ({@link untilWaiting}) - never a bare jest timeout.
    */
-  const parked = (count: number, operation?: Promise<unknown>) =>
+  const parked = (count: number, operation: Promise<unknown>) =>
     untilWaiting({
       what: 'the call under test',
       atLeast: count,
-      settled: operation && settledFlag(operation),
+      settled: settledFlag(operation),
       waiting: async () => {
         const [row]: { n: string }[] = await q(
           `SELECT count(*) AS n FROM pg_stat_activity

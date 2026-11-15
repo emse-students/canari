@@ -2339,13 +2339,20 @@ Environment and tooling traps that belong to no one subsystem. Each cost a run.
   chat-delivery - and now ask their own. And such a wait ends on what the SERVER says, each round a
   real query and never a sleep: the wait is seen, or the operation settled without waiting, said as
   the failure it is. A pause "long enough for it to get there" is a clock. **A probe whose wait
-  never comes FAILS WITH A MESSAGE, never a jest timeout**: the operation settled without waiting
-  (an event, said so), or a bounded number of reads went by and the error carries what the server
-  shows. Every suite uses the ONE helper (`lock-wait.it-fixture.ts` in social-service,
-  `testing/lockWait.ts` in chat-delivery) and keeps only its own scoping; a ninth hand-written loop
-  is how the unbounded ones came back. **An advisory key probed across the shared database must be
-  unique to the run** (a fresh uuid for the workspace or association id): advisory locks are
-  database-wide, so a fixed id is safe only while no other suite reuses it.
+  never comes FAILS WITH A MESSAGE, never a jest timeout**: the operation settled before the wait
+  was seen (an event, worded as what was observed, not inferred), or a bounded number of reads went
+  by and the error carries what the server shows. EVERY lock-wait probe of the social-service and
+  chat-delivery integration specs (about thirty, swept by `pg_stat_activity`, `pg_locks`,
+  `pg_blocking_pids` and `wait_event`) goes through the ONE helper - `lock-wait.it-fixture.ts` in
+  social-service, `testing/lockWait.ts` in chat-delivery, two copies declared and compared as code -
+  and keeps only its own scoping; a test that must release a lock before it asserts asks for
+  `onAbsent: 'return'` and reads the outcome (its own assertion then carries the message), it
+  never wraps a throw or reads an error message. The bound
+  is 2,000 reads: jest's budget for an integration spec is 60 s, so 2,000 reads leave 30 ms each, far
+  above the heaviest read, and a bound that outlasts the budget brings the bare timeout back. A
+  ninth hand-written loop is how the unbounded ones came back. **An advisory key probed across the
+  shared database must be unique to the run** (a fresh uuid for the workspace or association id):
+  advisory locks are database-wide, so a fixed id is safe only while no other suite reuses it.
 - **A LITERAL DATE IS A WALL CLOCK WHENEVER IT MUST OUT-RANK A SLIDING WINDOW**, and it fails
   on a day nobody chose. `actions.historyRequest.test.ts` pinned `FLOOR = 2026-06-01` under a
   comment reading "well above any device window"; the window is `now - 90 days`, so the claim

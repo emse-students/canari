@@ -37,6 +37,7 @@ import { ChannelMember } from './entities/channel-member.entity';
 import { ChannelMessage } from './entities/channel-message.entity';
 import { WorkspaceInvite } from './entities/workspace-invite.entity';
 import type { RedisService } from '../common/redis';
+import { ACTIVITY_DUMP_SQL, settledFlag, untilWaiting } from '../common/lock-wait.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -253,18 +254,23 @@ maybe('the last admin against PostgreSQL', () => {
   const startUntilWaiting = async (
     operation: () => Promise<unknown>
   ): Promise<{ outcome: Promise<unknown> }> => {
-    let settled = false;
-    const outcome = settle(operation()).finally(() => {
-      settled = true;
+    const outcome = settle(operation());
+    // An operation that settled without waiting is RETURNED, not thrown: the caller's assertions on
+    // its outcome carry the verdict.
+    await untilWaiting({
+      what: 'the operation',
+      settled: settledFlag(outcome),
+      onAbsent: 'return',
+      waiting: async () => {
+        const { rows } = await admin.query<{ n: number }>(
+          `SELECT count(*)::int AS n FROM pg_stat_activity
+            WHERE application_name = $1 AND wait_event_type = 'Lock'`,
+          [schema]
+        );
+        return rows[0].n;
+      },
+      dump: async () => (await admin.query(ACTIVITY_DUMP_SQL)).rows,
     });
-    while (!settled) {
-      const { rows } = await admin.query<{ n: number }>(
-        `SELECT count(*)::int AS n FROM pg_stat_activity
-          WHERE application_name = $1 AND wait_event_type = 'Lock'`,
-        [schema]
-      );
-      if (rows[0].n > 0) break;
-    }
     return { outcome };
   };
 
