@@ -39,7 +39,7 @@
   import { TAP_SLOP_PX, TransformGesture, pointInRect } from '$lib/gestures/transformGesture';
   import type { ReelClip } from '$lib/reels/reelCapture';
   import ReelFrame from './ReelFrame.svelte';
-  import { renderEditedReelMedia } from '$lib/reels/reelEditor';
+  import { ReelExportError, renderEditedReelMedia } from '$lib/reels/reelEditor';
   import {
     controlBands,
     keptInFrame,
@@ -509,7 +509,10 @@
       const edited = await renderEditedReelMedia(clip.blob, { overlays }, fontFamily);
       onnext(edited.blob);
     } catch (cause) {
-      console.error('[reel-editor] export failed', cause);
+      console.error(
+        `[reel-editor] export failed (${cause instanceof ReelExportError ? cause.fault : 'unclassified'})`,
+        cause
+      );
       error = true;
       busy = false;
     }
