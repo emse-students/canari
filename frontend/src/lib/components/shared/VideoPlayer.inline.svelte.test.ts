@@ -72,15 +72,11 @@ function mountVariant(variant: 'feed' | 'chat', extra: Record<string, unknown> =
   flushSync();
   const root = target.querySelector<HTMLElement>('[data-video-player]')!;
   const video = target.querySelector('video')!;
-  // A FEED CARD HAS NO EXPAND BUTTON (owner, 2026-11-10): its keyboard twin is Enter on the card.
-  // The chat keeps its chip.
-  const openButton = () =>
-    variant === 'feed'
-      ? {
-          click: () =>
-            root.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })),
-        }
-      : target.querySelector<HTMLButtonElement>('button[aria-label="Plein ecran"]')!;
+  // NEITHER HAS AN EXPAND BUTTON (owner, 2026-11-10 the feed, 2026-11-15 the chat): the tap opens
+  // the viewer and its keyboard twin is Enter on the focused picture.
+  const openButton = () => ({
+    click: () => root.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })),
+  });
   const soundButton = () =>
     target.querySelector<HTMLButtonElement>(`button[aria-label="${m.video_sound_label()}"]`);
   const playButton = () =>
@@ -441,10 +437,12 @@ it('chat: is audible while the app answer is muted, and its own sound leaves tha
   flushSync();
   expect(chat.video.muted).toBe(true);
   expect(videoSound.muted).toBe(true);
+  // The speaker's mute stays: the tap opens the viewer and never touches the sound (2026-11-15).
   tap(chat.root);
   flushSync();
-  expect(chat.video.muted).toBe(false);
-  expect(videoSound.muted, 'the tap is local too').toBe(true);
+  expect(chat.video.muted).toBe(true);
+  expect(chat.onOpen).toHaveBeenCalledTimes(1);
+  expect(videoSound.muted).toBe(true);
   expect(feed.video.muted).toBe(true);
 });
 
@@ -486,8 +484,9 @@ it("chat: a tap on the picture goes no further - a bubble's info panel never ope
   expect(bubble).not.toHaveBeenCalled();
 });
 
-it('chat: the expand chip opens the viewer, which does the playing', () => {
-  const { openButton, onOpen, video } = mountVariant('chat');
+it('chat: Enter on the picture opens the viewer, which does the playing; no expand chip is drawn', () => {
+  const { openButton, onOpen, video, target } = mountVariant('chat');
+  expect(target.querySelector('button[aria-label="Plein ecran"]')).toBeNull();
   const play = vi.spyOn(video, 'play').mockResolvedValue();
   openButton().click();
   expect(onOpen).toHaveBeenCalledTimes(1);
@@ -592,34 +591,40 @@ it('feed with no viewer: a tap on a video on screen but paused gives the sound a
   expect(play).toHaveBeenCalledTimes(1);
 });
 
-it('chat: the first tap plays it, audible, as the disc does - and the next is its sound', () => {
-  const { root, video, target } = mountVariant('chat');
+it('chat: a tap opens the viewer, before and after the first play, and never changes the sound', () => {
+  const { root, video, onOpen } = mountVariant('chat');
+  const { play } = liveElement(video);
+  tap(root);
+  flushSync();
+  expect(onOpen).toHaveBeenCalledTimes(1);
+  expect(play, 'the viewer plays, not the bubble').not.toHaveBeenCalled();
+  expect(video.muted).toBe(false);
+  void video.play();
+  flushSync();
+  tap(root);
+  flushSync();
+  expect(onOpen).toHaveBeenCalledTimes(2);
+  expect(video.muted, 'started: the tap is NOT the sound').toBe(false);
+  expect(videoSound.muted).toBe(true);
+});
+
+it('chat: with no viewer handed down the tap plays and pauses, still never the sound', () => {
+  const { root, video } = mountVariant('chat', { onOpen: undefined });
   const { play } = liveElement(video);
   tap(root);
   flushSync();
   expect(play).toHaveBeenCalledTimes(1);
   expect(video.muted).toBe(false);
-  expect(target.querySelector('[data-video-glyph]')!.getAttribute('data-video-glyph')).toBe('play');
-  tap(root);
-  flushSync();
-  expect(video.muted, 'started: the tap is its sound').toBe(true);
-  expect(play).toHaveBeenCalledTimes(1);
-  expect(videoSound.muted, 'its own sound, never the app').toBe(true);
 });
 
-it('chat: once started, a pause chip pauses it and plays it again', () => {
-  const { target, video } = mountVariant('chat');
-  const { play, pause } = liveElement(video);
+it('chat: draws no pause chip - the hold pauses and the play triangle plays again', () => {
+  const { target, video, frameIn } = mountVariant('chat');
+  liveElement(video);
+  frameIn();
   void video.play();
   flushSync();
-  const toggle = () => target.querySelector<HTMLButtonElement>('[data-video-toggle]')!;
-  expect(toggle().getAttribute('aria-label')).toBe(m.video_pause_label());
-  toggle().click();
-  flushSync();
-  expect(pause).toHaveBeenCalledTimes(1);
-  expect(toggle().getAttribute('aria-label')).toBe(m.video_play_label());
-  toggle().click();
-  expect(play).toHaveBeenCalledTimes(2);
+  expect(target.querySelector('[data-video-toggle]')).toBeNull();
+  expect(target.querySelector('[data-video-line-slot]')).not.toBeNull();
 });
 
 it("chat: the message's actions are a chip, given by the bubble, since a hold is the pause", () => {

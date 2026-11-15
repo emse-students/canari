@@ -12,8 +12,11 @@
  *   tap turns the sound ON instead (the autoplay-refused case). Sound goes off through the speaker or
  *   the `m` key only. A double tap (Reels: the like) calls no single tap, so it leaves playback as it
  *   was. The press held pauses - the hold is `videoGestures`'.
- * - **chat** (a conversation's inline video): the first tap plays it, audible, as its disc does; once
- *   started the tap is its sound (its pause chip pauses).
+ * - **chat** (a conversation's inline video; owner, 2026-11-15, "Ouvrir le plein ecran"): THE TAP OPENS
+ *   THE CONVERSATION VIEWER, exactly as a feed post's does, and never touches the sound (it used to be
+ *   the sound once started - SUPERSEDED). The inline video is played by its own play glyph, paused
+ *   by a hold, and its sound is the speaker's alone. With no viewer to open (none handed down) the
+ *   tap plays or pauses it.
  */
 export type VideoVariant = 'lightbox' | 'reel' | 'feed' | 'chat' | 'conversation';
 
@@ -36,26 +39,18 @@ export interface VideoTapState {
   canOpen: boolean;
   /** The element is paused. */
   paused: boolean;
-  /** A conversation's inline video has been played once. */
-  started: boolean;
   /** The element's sound is off. */
   muted: boolean;
 }
 
 /** The answer to a tap on the picture - see the table above. Pure, so it is tested as a table. */
-export function videoTapAction({
-  variant,
-  canOpen,
-  paused,
-  started,
-  muted,
-}: VideoTapState): VideoTapAction {
+export function videoTapAction({ variant, canOpen, paused, muted }: VideoTapState): VideoTapAction {
   switch (variant) {
     case 'feed':
       if (canOpen) return 'open-viewer';
       return paused ? 'toggle-sound-and-play' : 'toggle-sound';
     case 'chat':
-      return started ? 'toggle-sound' : 'toggle-play';
+      return canOpen ? 'open-viewer' : 'toggle-play';
     case 'conversation':
     case 'reel':
     case 'lightbox':

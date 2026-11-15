@@ -12,7 +12,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, unmount, type Component } from 'svelte';
 import VideoSoundButton from './VideoSoundButton.svelte';
 import VideoPlayGlyph from './VideoPlayGlyph.svelte';
-import VideoExpandButton from './VideoExpandButton.svelte';
 import VideoScrubber from './VideoScrubber.svelte';
 import VideoFeedbackGlyph from './VideoFeedbackGlyph.svelte';
 
@@ -107,7 +106,7 @@ describe('the speaker', () => {
   });
 });
 
-describe('the play glyph and the expand chip', () => {
+describe('the play glyph', () => {
   it('the glyph is a glass triangle with no disc, never the amber sticker', () => {
     const onclick = vi.fn();
     const target = render(VideoPlayGlyph, { onclick });
@@ -121,15 +120,6 @@ describe('the play glyph and the expand chip', () => {
     button.click();
     expect(onclick).toHaveBeenCalledTimes(1);
     expect(onParent).not.toHaveBeenCalled();
-  });
-
-  it('the expand chip opens the viewer, with a label of its own', () => {
-    const onclick = vi.fn();
-    const target = render(VideoExpandButton, { onclick });
-    const chip = target.querySelector('button')!;
-    expect(chip.getAttribute('aria-label')).toBeTruthy();
-    chip.click();
-    expect(onclick).toHaveBeenCalledTimes(1);
   });
 });
 
