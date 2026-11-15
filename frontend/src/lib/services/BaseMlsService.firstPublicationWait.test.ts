@@ -50,8 +50,20 @@ describe('awaitOwnKeyPackagePublished while the first publication runs', () => {
     expect(fetchDeviceKeyPackage).toHaveBeenCalledTimes(1);
   });
 
-  it('still reads at once when no round runs', async () => {
+  it('a device minted in this process never reads before its first round has settled, even when none has started', async () => {
     const { ctx, fetchDeviceKeyPackage } = makeCtx();
+    const generateKeyPackage = vi.fn().mockImplementation(async () => {
+      ctx.keyPackageRoundsSettled = 1;
+    });
+    Object.assign(ctx, { generateKeyPackage });
+    await expect(wait(ctx)).resolves.toBe('published');
+    expect(generateKeyPackage).toHaveBeenCalledTimes(1);
+    // The single read is the one after the round it started, never the 404 before it.
+    expect(fetchDeviceKeyPackage).toHaveBeenCalledTimes(1);
+  });
+
+  it('a RETURNING device still reads at once when no round runs', async () => {
+    const { ctx, fetchDeviceKeyPackage } = makeCtx(true);
     await expect(wait(ctx)).resolves.toBe('published');
     expect(fetchDeviceKeyPackage).toHaveBeenCalledTimes(1);
   });
