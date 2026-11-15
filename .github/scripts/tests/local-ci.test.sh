@@ -280,6 +280,21 @@ out=$(scope_push script)
 check "a CI script change runs make test-ci-scripts" "a script change planned no test-ci-scripts: $out" planned test-ci-scripts "$out"
 check "and lints the pushed script" "the pushed script was not handed to shellcheck" \
   test -n "$(grep -F 'shellcheck .github/scripts/new.sh' <<<"$out" || true)"
+# main moves with a page while the branch was verified: the merge is checked for what it brought.
+s_other="$scratch/scope-other"
+git clone -q "$s_origin" "$s_other"
+configure "$s_other"
+echo "# Main" >"$s_other/docs/wiki/main.md"
+git -C "$s_other" add docs/wiki/main.md
+git -C "$s_other" commit -qm main-page
+git -C "$s_other" push -q origin main
+out=$( (cd "$s" && printf 'refs/heads/feature %s refs/heads/feature %s\n' "$(git rev-parse HEAD)" "$ZERO" |
+  LOCAL_CI_DRY_RUN=1 bash .github/scripts/local-ci.sh push origin 2>&1) || true)
+check "a merge onto a verified commit is checked for what main brought" \
+  "the merge onto a verified commit was not scoped to main's changes: $out" \
+  test -n "$(grep -F 'checking only what has come in' <<<"$out" || true)" -a -n "$(grep -F 'PLAN wiki-links:' <<<"$out" || true)"
+check "and not for the branch's own, already verified, work" "the verified branch work was planned again" \
+  test -z "$(grep -F 'PLAN test-ci-scripts:' <<<"$out" || true)"
 
 # ── 5. the hooks ────────────────────────────────────────────────────────────────────────────────
 echo "the tracked hooks call the script:"

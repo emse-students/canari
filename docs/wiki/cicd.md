@@ -3483,7 +3483,10 @@ push `shellcheck`, `cargo`, `node` or `java` as the planned checks need them.
    and a dirty tree. A push of deletions only passes.
 2. `git fetch origin main`. When `origin/main` is not already in HEAD, `git merge --no-edit
    origin/main`. **A conflict aborts the merge and refuses the push**, listing the files.
-3. The plan for the range `origin/main..HEAD`: the path rules over every file of the range (the
+3. The plan for the range `origin/main..HEAD` - or, when a commit already verified here (the
+   stamp) is in HEAD, for `stamp..HEAD`: its tree passed what its range owed, so only what came in
+   since is checked. Without that a branch whose plan outlasts main's merge rate never converges
+   (measured 2026-11-15: an hour-long plan, main moved twice during it). The plan is the path rules over every file of the range (the
    commit tier's, re-proved for the whole branch), the whole-tree scans, and each job whose
    `ci-scopes.sh` scope the range triggers - with a progress line each (`[push 3/9] frontend-lint ... ok (13s)`);
    a failure prints the last 40 lines of its log (`.git/canari-local-ci/<check>.log`, per worktree)

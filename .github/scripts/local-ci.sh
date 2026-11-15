@@ -310,9 +310,21 @@ commit, and push again."
     return 0
   fi
 
+  # WHAT CHANGED SINCE A VERIFIED COMMIT IS WHAT IS CHECKED. When the stamped commit is in HEAD, its
+  # whole tree passed every check its range owed, and the tree difference from it is exactly what
+  # came in since - new commits, main's merges, any resolution - so the plan is scoped to that.
+  # Without it, a branch whose plan outlasts main's merge rate never converges: measured 2026-11-15,
+  # an hour-long plan, main moved twice meanwhile.
+  local plan_base="$base" stamped
+  stamped="$(cat "$STAMP" 2>/dev/null || true)"
+  if [ -n "$stamped" ] && [ "$stamped" != "$head" ] && git merge-base --is-ancestor "$stamped" HEAD 2>/dev/null; then
+    say "[push] ${stamped:0:12} was verified; checking only what has come in since"
+    plan_base="$stamped"
+  fi
+
   TIER=push
   local plan
-  plan="$(push_plan "$base")"
+  plan="$(push_plan "$plan_base")"
   require_tools "$plan"
   run_plan "$plan"
   printf '%s\n' "$head" >"$STAMP"
