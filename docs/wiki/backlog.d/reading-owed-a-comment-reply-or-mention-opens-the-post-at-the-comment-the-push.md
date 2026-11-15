@@ -15,6 +15,6 @@ target: 1.7.0
 - **Backgrounded:** the daily cap of 3 counted pushes was already spent by then, so a further comment would rightly raise no banner. A reply was read instead: reply 645be92f on beta's post ec6705ba, which uses the same `fr.emse.canari://post/<id>?comment=<id>` link. It opened the post scrolled to that reply and ringed.
 - **The bell row:** it opened `/posts/f1a6cac0...?comment=0249c5e0...` with the comment ringed.
 
-The iPhone P3 about comment pushes after the first one raising no banner is explained by the same cap: reported to the iPhone sitting, not edited here. The run also found that a reply on your own post is sent as a comment: see [the entry on it](p3-a-reply-to-your-comment-on-your-own-post-is-notified-as-a-comment.md).
+The iPhone P3 about comment pushes after the first one raising no banner is explained by the same cap: reported to the iPhone sitting, not edited here. The run also found that a reply on your own post is sent as a comment: see [the entry on it](p2-a-reply-or-mention-of-a-post-s-author-is-pushed-as-a-comment-and-capped.md).
 
 **Left: on the iPhone, a reply and a mention-in-a-comment, killed (about 10 min).**
