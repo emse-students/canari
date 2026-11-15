@@ -76,7 +76,7 @@ play/pause pop is on screen: `VideoFeedbackGlyph` reports `onTransport`, which o
 for (b) until the Mi 9T reading ([the glass budget](#the-glass-budget)), which measures the WORST CASE -
 the raised bar with the slider open, in the lightbox or the reel viewer. Pass: (b) is glass on Android.
 Fail: the fallback applies to both platforms alike, with the flat tint closest to the glass, and the
-numbers go to the owner before it is chosen. **Not yet measured.** The "Android is flat until a
+numbers go to the owner before it is chosen. **Measured 2026-11-15: it FAILS** ([the reading](#the-mi-9t-reading-of-2026-11-15---glass-fails-the-pass-mark)); the owner chooses. The "Android is flat until a
 measurement" rule below is SUPERSEDED as to resting controls (they are flat everywhere, always).
 
 ## A tap in full screen never mutes (owner, 2026-11-10)
@@ -714,6 +714,36 @@ avoids a second install.
    write the numbers here as the reason. Either way, record the date, the build and the clip.
    A Chrome trace (`chrome://inspect` > Performance, 10 s, with the bar up) is the deeper reading if the
    numbers are near the line: look for `Paint` / `RasterTask` time per frame with glass vs flat.
+
+### The Mi 9T reading of 2026-11-15 - glass FAILS the pass mark
+
+Build 1.7.0-alpha.1 (versionCode 100700001), Mi 9T, app on the feed, Chrome DevTools over the WebView's
+socket. **Method, and its one deviation**: no 1080p clip was on a post, and the WebView's HTTP scope
+refuses `localhost`, so a 35 s 1080p30 H.264 testsrc2 clip (3 Mbps) was pushed into the page as a blob
+and played looping, full screen, over the feed, with the WORST-CASE transient glass drawn over it by the
+app's own `.glass-video` class: the raised bar (full width, 56 px), the volume pill (44 x 120) and the
+time bubble, all three at once. `data-glass` was flipped `flat`/`glass` on those three elements; each run is
+30 s after `gfxinfo reset`; six pairs, order alternated (the bar and slider are the same CSS and
+blur radius as the real ones, not their components - the cost being measured is the blur over a decoder).
+
+| Pair | Flat: janky / median | Glass: janky / median |
+| --- | --- | --- |
+| 1 | 43.46 % / 13 ms | 99.12 % / 21 ms |
+| 2 | 43.03 % / 13 ms | 99.89 % / 21 ms |
+| 3 | 38.89 % / 13 ms | 99.45 % / 21 ms |
+| 4 | 43.63 % / 13 ms | 99.78 % / 21 ms |
+| 5 | 37.54 % / 13 ms | 99.67 % / 20 ms |
+| 6 | 42.57 % / 13 ms | 98.45 % / 21 ms |
+
+**Verdict: the glass fails the pass mark (+3 points, +1 ms) by a factor of twenty** - +56 points of
+janky frames and +8 ms of median frame time, every pair, both orders, so the 12 px blur over a live 1080p
+decode is not affordable on this GPU, even for three small transient pieces. (The flat baseline is itself
+~40 % janky here: a full-screen 1080p decode over the feed on a Snapdragon 730; the comparison is the
+difference.) A first run, started twice by mistake and overlapping itself, gave the same alternation and
+was discarded; the table is the clean rerun. **`ANDROID_VIDEO_GLASS` stays `false`; the decision between
+"flat for (b) on both platforms" and "glass on iOS only" is the owner's** - the art direction asks for
+one look, which means the flat tint on both. The raw logs are in the harness folder
+(`chat-video-1115/measure3.log`).
 
 ### The iPhone 12 - a check, not a gate
 
