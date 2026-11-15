@@ -342,7 +342,7 @@ it("a tap on a control is the control's, and is not the sound tap", () => {
 });
 
 it('draws one glass bar whose buttons wear no blur of their own, and a glass play triangle with no disc', () => {
-  // A MOUSE, so the speaker's volume pill is rendered: it too wears the FLAT tint inside the bar.
+  // A MOUSE, so the speaker's volume pill is rendered: it too wears the fake glass inside the bar.
   const fine = (q: string) =>
     ({
       matches: true,
@@ -357,11 +357,14 @@ it('draws one glass bar whose buttons wear no blur of their own, and a glass pla
   flushSync();
   const pill = target.querySelector<HTMLElement>('[data-video-bar] [data-video-volume]');
   expect(pill, 'the pill is rendered inside the bar').not.toBeNull();
-  expect(pill!.dataset.glass, 'and flat, with no blur of its own').toBe('flat');
-  expect(target.querySelectorAll('[data-video-bar] .glass-video').length).toBe(0);
+  expect(pill!.dataset.glass, 'the base recipe off iOS: no blur').toBe('fake');
+  expect(pill!.className).toContain('glass-video');
+  // The buttons draw no chip of their own: the one fake-glass piece inside the bar is the volume pill.
+  expect(target.querySelectorAll('[data-video-bar] .glass-video').length).toBe(1);
   expect(target.querySelector('[data-video-bar]')!.className).toContain('glass-video');
   const glyph = target.querySelector('[data-video-play-glyph]')!;
-  expect(glyph.querySelector('.glass-video-shape'), 'the triangle is the glass').not.toBeNull();
+  expect(glyph.querySelector('.glass-video-shape'), 'the resting triangle is flat').toBeNull();
+  expect(glyph.querySelector('[data-video-resting-play]')).not.toBeNull();
   expect(glyph.className).not.toMatch(/glass-video|rounded-full|bg-accent/);
 });
 
@@ -796,6 +799,61 @@ it('conversation viewer: a tap on the picture pauses it and the next plays it', 
   expect(HTMLMediaElement.prototype.play).toHaveBeenCalled();
   expect(video.muted, 'the tap is not the sound here').toBe(false);
 });
+
+/**
+ * ONE GLYPH AT THE CENTRE AT ANY INSTANT (owner, 2026-11-15, "c'est moche"): a pause drew the pop's
+ * glass bars AND the resting play triangle together, superimposed. The resting triangle now waits for
+ * the pop's own `animationend`. Asserted at every step of a pause and a play (the conversation viewer; the feed, chat and reel share the gate).
+ */
+const centreGlyphs = (target: HTMLElement) =>
+  target.querySelectorAll(
+    '[data-video-glyph="play"], [data-video-glyph="pause"], [data-video-play-glyph]'
+  ).length;
+
+for (const variant of ['conversation'] as const) {
+  it(`${variant}: never two of the play and pause glyphs through a pause and a play`, () => {
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue();
+    vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const component = mount(VideoPlayer, {
+      target,
+      props: { src: 'blob:one-glyph', variant, soundScope: 'local' },
+    });
+    mounted.push(() => unmount(component));
+    flushSync();
+    const root = target.querySelector('[role="group"]') as HTMLElement;
+    const video = target.querySelector('video')!;
+    let paused = true;
+    Object.defineProperty(video, 'paused', { configurable: true, get: () => paused });
+    video.dispatchEvent(new Event('loadeddata'));
+    flushSync();
+    expect(centreGlyphs(target), 'at rest, paused: the triangle alone').toBe(1);
+
+    // PLAY: the triangle leaves as the pop comes in.
+    tap(root);
+    paused = false;
+    video.dispatchEvent(new Event('play'));
+    flushSync();
+    expect(centreGlyphs(target)).toBeLessThanOrEqual(1);
+    target.querySelector('[data-video-glyph]')?.dispatchEvent(new Event('animationend'));
+    flushSync();
+    expect(centreGlyphs(target), 'playing: nothing at the centre').toBe(0);
+
+    // PAUSE: the pop alone, THEN the resting triangle once the pop has ended.
+    tap(root);
+    paused = true;
+    video.dispatchEvent(new Event('pause'));
+    flushSync();
+    expect(centreGlyphs(target), 'the pause pop and the triangle are never together').toBe(1);
+    expect(target.querySelector('[data-video-glyph="pause"]')).not.toBeNull();
+    expect(target.querySelector('[data-video-play-glyph]')).toBeNull();
+    target.querySelector('[data-video-glyph]')!.dispatchEvent(new Event('animationend'));
+    flushSync();
+    expect(centreGlyphs(target)).toBe(1);
+    expect(target.querySelector('[data-video-play-glyph]'), 'the triangle follows').not.toBeNull();
+  });
+}
 
 /**
  * "ON NE PEUT PLUS AVANCER DANS LES VIDEOS" (owner, 2026-11-10): a press on the line seeks once the

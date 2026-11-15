@@ -1000,7 +1000,8 @@
 
     {#snippet footer()}
       {#if dotCount > 1 && onDotSelect}
-        <div class="pointer-events-auto flex justify-center gap-1.5 pt-2">
+        <!-- The wrapper takes NO touch: it spans the width above a video's seek line. Only the dots do. -->
+        <div class="pointer-events-none flex justify-center gap-1.5 pt-2">
           {#each { length: dotCount } as _, i (i)}
             <button
               type="button"
@@ -1010,7 +1011,7 @@
                 measured = null;
                 onDotSelect!(i);
               }}
-              class="h-2 w-2 rounded-full transition-all {i === dotIndex
+              class="pointer-events-auto h-2 w-2 rounded-full transition-all {i === dotIndex
                 ? 'bg-white'
                 : 'bg-white/35'}"
               aria-label={m.media_lightbox_dot_aria({ index: i + 1 })}
