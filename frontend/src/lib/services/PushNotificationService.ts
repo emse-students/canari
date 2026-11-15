@@ -129,12 +129,17 @@ export class PushSecretNotStoredError extends Error {
  * - `registered`: the server answered a registration, or the skip key said one already stood;
  * - a {@link PushRegistrationFailure}: the last attempt's failure;
  * - `deferred`: a sign-out's token deletion is still owed, so nothing may register;
- * - `no-user`: the service started with no signed-in user;
- * - `started`: a registration began and nothing came of it before the process ended.
+ * - `no-user`: the service started with no signed-in user.
  *
- * Stated, never stored: `in-progress` while THIS process's ladder or a registration is running
- * (`pushOutcomeForReport`) - the login starts the ladder before its first `register-device`, so
- * the stored `started` would otherwise accuse every fresh sign-in of a dead process.
+ * Each of these is FINAL for the attempt it ends, and none is ever overwritten by a marker: a phone
+ * whose OS gives no token states `no-token` on every `register-device`, including the first one of a
+ * process whose ladder is still asking again - the login starts the ladder before the socket opens,
+ * and the ladder lasts four minutes, so a marker written over it would have left an unknown state on
+ * the server for a known one (review of #3649).
+ *
+ * With no final outcome since the sign-out, `pushOutcomeForReport` states `in-progress` while THIS
+ * process's ladder or a registration runs, `started` when a ladder began in an earlier process and
+ * nothing came of it (kept apart, `PUSH_STARTED_STORAGE_KEY`), else `none`.
  *
  * WHY IT IS DURABLE: the branches that end a registration without a request - an `unauthorized`
  * ladder, an owed deletion, a process killed inside the four-minute ladder - leave no trace on the
@@ -142,15 +147,17 @@ export class PushSecretNotStoredError extends Error {
  * 2026-11-15: 25 of 65 `1.6.12` devices held no row and had said nothing). The next authenticated
  * call this device makes anyway carries the evidence; no new request is spent on it.
  */
-export type PushOutcomeRecord =
-  | 'registered'
-  | PushRegistrationFailure
-  | 'deferred'
-  | 'no-user'
-  | 'started';
+export type PushOutcomeRecord = 'registered' | PushRegistrationFailure | 'deferred' | 'no-user';
 
 /** localStorage key of {@link PushOutcomeRecord}; cleared at sign-out with the registration. */
 export const PUSH_OUTCOME_STORAGE_KEY = 'canari_push_outcome';
+
+/**
+ * localStorage key of the `started` marker: a ladder began and no final outcome has been recorded
+ * since. Apart from the final outcome so it never erases one; cleared by the next final outcome and
+ * at sign-out.
+ */
+export const PUSH_STARTED_STORAGE_KEY = 'canari_push_started';
 
 /**
  * Bumped by every sign-out (`endPushRegistration`). A ladder captures it when it starts, and one
@@ -174,20 +181,42 @@ function recordPushOutcome(outcome: PushOutcomeRecord, generation: number): void
   }
   try {
     localStorage.setItem(PUSH_OUTCOME_STORAGE_KEY, outcome);
+    localStorage.removeItem(PUSH_STARTED_STORAGE_KEY);
   } catch (err) {
     console.warn(`[Push] could not record the registration outcome (${outcome})`, err);
   }
 }
 
+/** Marks that a ladder began for the session of `generation`, beside its last final outcome. */
+function markLadderStarted(generation: number): void {
+  if (generation !== pushSessionGeneration) return;
+  try {
+    localStorage.setItem(PUSH_STARTED_STORAGE_KEY, '1');
+  } catch (err) {
+    console.warn('[Push] could not mark the registration as started', err);
+  }
+}
+
+/** Whether THIS process is registering for the current session (the ladder or one attempt). */
+function registeringNow(): boolean {
+  return (
+    ladderGeneration === pushSessionGeneration ||
+    registrationInFlight?.generation === pushSessionGeneration
+  );
+}
+
 /**
- * The outcome `register-device` states: `in-progress` while this process's ladder or a registration
- * runs, else the recorded one (`none`: nothing started since the last sign-out). A store that cannot
- * be read says `unreadable`, never a guess.
+ * The outcome `register-device` states: the last FINAL one since the sign-out whenever there is one,
+ * else `in-progress` while this process registers, `started` when an earlier process began a ladder
+ * and ended inside it, `none` when nothing started. A store that cannot be read says `unreadable`,
+ * never a guess.
  */
 export function pushOutcomeForReport(): string {
-  if (ladderGeneration === pushSessionGeneration || registrationInFlight) return 'in-progress';
   try {
-    return localStorage.getItem(PUSH_OUTCOME_STORAGE_KEY) ?? 'none';
+    const final = localStorage.getItem(PUSH_OUTCOME_STORAGE_KEY);
+    if (final) return final;
+    if (registeringNow()) return 'in-progress';
+    return localStorage.getItem(PUSH_STARTED_STORAGE_KEY) ? 'started' : 'none';
   } catch (err) {
     console.warn('[Push] could not read the registration outcome', err);
     return 'unreadable';
@@ -228,11 +257,11 @@ export function reconcilePushRegistration(serverHolds: boolean | null): void {
   }
   if (serverHolds) return;
   if (!pushPlatform()) return;
-  const last = pushOutcomeForReport();
-  if (last === 'in-progress') {
+  if (registeringNow()) {
     console.info('[Push] no push registration held yet - this process is registering');
     return;
   }
+  const last = pushOutcomeForReport();
   if (NOT_REDRIVEN.has(last)) {
     console.info(
       `[Push] no push registration held, last outcome ${last} - an answer, not re-driven`
@@ -294,8 +323,12 @@ const BACKGROUND_RETRY_DELAY_MS = 5000;
 // Prevents repeated attempts when Google Play Services is unavailable.
 let pushAttempted = false;
 
-// The registration currently talking to the server, if any - see `registerPushToken`.
-let registrationInFlight: Promise<PushRegistrationOutcome> | null = null;
+// The registration currently talking to the server, if any, and the session it belongs to - see
+// `registerPushToken`.
+let registrationInFlight: {
+  generation: number;
+  promise: Promise<PushRegistrationOutcome>;
+} | null = null;
 
 // Whether this process has already told the server that this device has no usable token. Guards the
 // report, NOT the attempts: a device keeps trying on every resume, it just stops repeating itself.
@@ -337,14 +370,25 @@ export async function registerPushToken(
   // logged two `[PUSH_REGISTER]` a second apart for one device (2026-10-12). The server then keeps
   // whichever upsert committed last and the device whichever answer it stored last, and nothing
   // ties those two orders together. A second caller joins the attempt in flight instead.
-  if (registrationInFlight) {
+  //
+  // ONLY ONE OF THE SAME SESSION IS JOINED: one started before a sign-out belongs to the account
+  // that left, ends on its own generation check, and would hand THIS session its failure.
+  const generation = pushSessionGeneration;
+  if (registrationInFlight?.generation === generation) {
     console.info('[Push] registration already in flight, joining it');
-    return registrationInFlight;
+    return registrationInFlight.promise;
   }
-  registrationInFlight = registerPushTokenOnce(registerFn).finally(() => {
-    registrationInFlight = null;
-  });
-  return registrationInFlight;
+  if (registrationInFlight) {
+    console.info('[Push] a registration of a signed-out session is in flight - not joined');
+  }
+  const entry = {
+    generation,
+    promise: registerPushTokenOnce(registerFn).finally(() => {
+      if (registrationInFlight === entry) registrationInFlight = null;
+    }),
+  };
+  registrationInFlight = entry;
+  return entry.promise;
 }
 
 /** The registration `registerPushToken` serialises. */
@@ -565,16 +609,18 @@ export async function startPushService(
   if (pushAttempted) {
     console.info('[Push] startPushService re-check (possible token rotation)');
     const recheck = await registerOnce();
-    if (!recheck.ok) {
+    if (!recheck.ok && superseded()) {
+      console.info('[Push] the session that started this re-check ended - nothing reported');
+    } else if (!recheck.ok) {
       await reportGaveUp(apiBaseUrl, auth, deviceId, platform, recheck.reason);
     }
     return;
   }
 
   pushAttempted = true;
-  // Overwritten by the first attempt's outcome; read as `started` only when this process ended first
-  // - while it runs, `pushOutcomeForReport` says `in-progress` from `ladderGeneration`.
-  recordPushOutcome('started', generation);
+  // A marker BESIDE the last final outcome, never over it; cleared by the first attempt's outcome. Read
+  // as `started` only when no final outcome exists and this process is not the one registering.
+  markLadderStarted(generation);
   ladderGeneration = generation;
   try {
     await runFirstLadder(platform);
@@ -781,13 +827,16 @@ export async function endPushRegistration(): Promise<void> {
   // sign-out ends is never stated as `registered` for a device the server no longer holds.
   try {
     localStorage.removeItem(PUSH_OUTCOME_STORAGE_KEY);
+    localStorage.removeItem(PUSH_STARTED_STORAGE_KEY);
   } catch (err) {
     console.error('[Push] could not forget the registration outcome at sign-out', err);
   }
   startedWith = null;
-  // Every ladder of the session that ended stops recording and sending (`pushSessionGeneration`).
+  // Every ladder of the session that ended stops recording and sending (`pushSessionGeneration`),
+  // and the next account starts its own ladder - permission, attempts, report - not a re-check.
   pushSessionGeneration++;
   ladderGeneration = null;
+  pushAttempted = false;
   const platform = pushPlatform();
   if (!platform) {
     console.info('[Push] endPushRegistration noop (no push registration on this platform)');

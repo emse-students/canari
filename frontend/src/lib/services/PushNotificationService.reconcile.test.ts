@@ -207,6 +207,54 @@ describe('a sign-out supersedes the ladder of the account that left', { timeout:
   });
 });
 
+describe(
+  'a final outcome is never erased by a later ladder (review of #3649)',
+  { timeout: 30_000 },
+  () => {
+    it('a `no-token` phone still states `no-token` while the NEXT process asks the OS again', async () => {
+      osToken = null;
+      registerAnswers(200);
+      const { isPermissionGranted } = await import('@tauri-apps/plugin-notification');
+      const first = await freshModule();
+      await settle(first.startPushService('https://api', LIVE, 'dev-1'));
+      expect(first.pushOutcomeForReport()).toBe('no-token');
+
+      // The next process: the login starts the ladder before the socket opens, and register-device
+      // runs while it is still asking. It must state the known state, not `in-progress` or `started`.
+      const next = await freshModule();
+      vi.mocked(isPermissionGranted).mockReturnValueOnce(new Promise(() => {}));
+      void next.startPushService('https://api', LIVE, 'dev-1');
+      await drain();
+      expect(next.pushOutcomeForReport()).toBe('no-token');
+      // ...and a process that dies here leaves it known too.
+      const third = await freshModule();
+      expect(third.pushOutcomeForReport()).toBe('no-token');
+    });
+
+    it('the next account does not join the registration of the account that left', async () => {
+      osToken = null;
+      registerAnswers(200);
+      const push = await freshModule();
+      vi.useFakeTimers();
+      try {
+        // Account A's first attempt is polling the OS for a token.
+        const ladderA = push.startPushService('https://api', LIVE, 'dev-1');
+        await vi.advanceTimersByTimeAsync(10_000);
+        await push.endPushRegistration();
+        osToken = 'fcm-1';
+        // Account B signs in while A's attempt is still in flight.
+        const ladderB = push.startPushService('https://api', LIVE, 'dev-1');
+        await vi.advanceTimersByTimeAsync(300_000);
+        await Promise.all([ladderA, ladderB]);
+      } finally {
+        vi.useRealTimers();
+      }
+      expect(registrations()).toBe(1);
+      expect(push.pushOutcomeForReport()).toBe('registered');
+    });
+  }
+);
+
 describe('the outcome a device states on register-device', { timeout: 30_000 }, () => {
   it('is `none` before any registration since the sign-out', async () => {
     const push = await freshModule();

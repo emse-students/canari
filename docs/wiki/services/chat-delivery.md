@@ -2009,11 +2009,14 @@ the server could say a phone was silent, which is how a third of a build went un
   4xx) and `no-token` (the OS gave none; each process start asks it again). A first registration
   (`none`) is said at info, any other lost one at warn.
 - The phone states what its last registration came to, `pushOutcome`, kept in `localStorage`
-  (`canari_push_outcome`) across processes: `registered`, a `PushRegistrationFailure`, `deferred`
-  (an owed sign-out deletion), `no-user`, `started` (the process ended inside the ladder), `none`
-  (nothing since the sign-out, which clears it). Stated, never stored: `in-progress` while THIS
-  process's ladder or a registration runs - the login starts the ladder before its first
-  `register-device`, so `started` alone would accuse every fresh sign-in of a dead process. An
+  (`canari_push_outcome`) across processes: the last FINAL one - `registered`, a
+  `PushRegistrationFailure`, `deferred` (an owed sign-out deletion), `no-user`. **A final outcome is
+  never overwritten by a ladder that starts**: the login starts the ladder before the socket opens and
+  a `no-token` ladder lasts four minutes, so a marker written over it would put an unknown state on
+  the server for a known one at every short session, and the daily report would WARN for a phone with
+  no Play services. With no final outcome since the sign-out (which clears both keys), the phone
+  states `in-progress` while THIS process registers, `started` when an earlier process began a ladder
+  and died inside it (a marker kept apart, `canari_push_started`), else `none`. An
   allowlist on the server; anything else prints `invalid`, an older build `unstated`. The server
   keeps the last stated one on the device's key package (`key_package."pushOutcome"`, migration
   `052`, additive). **`051` is reserved by the held #3518** (`051_departed_seats_removed.sql`,
@@ -2022,7 +2025,8 @@ the server could say a phone was silent, which is how a third of a build went un
 - **A sign-out supersedes the ladder of the account that left.** `endPushRegistration` bumps a
   session generation; a ladder whose generation is gone records nothing, stops between attempts and
   sends nothing - it would otherwise write account A's outcome into account B's state, and send A's
-  `x-user-id` with B's bearer.
+  `x-user-id` with B's bearer. The next account runs its own ladder (`pushAttempted` is reset), and
+  never joins a registration still in flight for the account that left.
 - When a phone holds no row, `register-device` prints `[PUSH_MISSING] user device os build last=<outcome>`:
   at `log` for the expected states (`none`, a fresh sign-in; `in-progress`; `no-token`, a phone its
   OS gives no token, already reported by `[PUSH_UNAVAILABLE]`), at WARN otherwise, naming the side -
