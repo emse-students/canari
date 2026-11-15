@@ -94,7 +94,7 @@ object KeyboardMediaBridge {
                 val dataB64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
                 dispatchToWeb(webView, mime, name, dataB64)
             } catch (e: Exception) {
-                Log.e(TAG, "readAndDispatch failed: ${e.message}")
+                Log.e(TAG, "readAndDispatch failed: ${e.javaClass.simpleName}")
             }
         }, "canari-keyboard-media").start()
     }

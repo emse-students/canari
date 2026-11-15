@@ -87,7 +87,7 @@ export class GroupMember {
   @Column({ type: 'varchar', length: 255 })
   userId: string;
 
-  /** Permission level: `admin` can add/remove members; `member` can only send messages. */
+  /** Written `member`, read NOWHERE: every admitted member adds and removes (owner, 2026-11-15). */
   @Column({ type: 'enum', enum: ['admin', 'member'], default: 'member' })
   role: 'admin' | 'member';
 

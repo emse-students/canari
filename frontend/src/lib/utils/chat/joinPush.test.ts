@@ -36,6 +36,7 @@ const DELIVERED: DeliveredWelcome = {
   userId: 'beta',
   deviceId: 'beta-dev',
   welcome: new Uint8Array([1, 2, 3]),
+  addressability: 'addressable',
 };
 
 function inviter() {
@@ -237,7 +238,44 @@ describe('the join push of a delivered Welcome', () => {
     expect(localStorage.getItem('mls_join_pushes_sent:v1:someone-else')).toBeNull();
   });
 
-  it('says at warn when the newcomer could not be addressed - offline at the push, the known limit', async () => {
+  /**
+   * NEVER LEARN BY FAILING WHAT A FACT COULD HAVE TOLD YOU (2026-11-15): an Add of ten devices, eight
+   * of them stale, cost eight `400 addressed_unsupported`. The server says in its answer to the
+   * Welcome whether it can address the device, and a push it would refuse is not sent.
+   */
+  it.each(['offline', 'undeclared'] as const)(
+    'sends nothing to a device whose Welcome was answered `%s`, and counts it at warn',
+    async (addressability) => {
+      const { mlsService, deps } = inviter();
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      await queueJoinPush(mlsService, { ...DELIVERED, addressability }, deps);
+
+      expect(mlsService.sendMessage).not.toHaveBeenCalled();
+      expect(
+        warn.mock.calls.filter(([l]) =>
+          String(l).includes('[JOIN_PUSH] g1... NOT DELIVERED to beta:beta-dev')
+        )
+      ).toHaveLength(1);
+      // Claimed like any other: the same bytes delivered again decide nothing a second time.
+      await queueJoinPush(mlsService, { ...DELIVERED, addressability: 'addressable' }, deps);
+      expect(mlsService.sendMessage).not.toHaveBeenCalled();
+      warn.mockRestore();
+    }
+  );
+
+  it('pushes when the Welcome answer did not say (an older delivery service): the send decides', async () => {
+    const { mlsService, deps } = inviter();
+
+    await queueJoinPush(mlsService, { ...DELIVERED, addressability: null }, deps);
+
+    expect(bundlesSent(mlsService)).toHaveLength(1);
+    expect(vi.mocked(deps.log).mock.calls.some(([l]) => String(l).includes('did not say'))).toBe(
+      true
+    );
+  });
+
+  it('says at warn when the newcomer could not be addressed at the push although its Welcome answer allowed it - it left in between', async () => {
     const { mlsService, deps } = inviter();
     vi.mocked(mlsService.sendMessage).mockRejectedValueOnce(
       new AddressedUnsupportedError(GROUP, ['beta:beta-dev'])

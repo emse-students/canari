@@ -566,7 +566,7 @@ and written back here.
 ## WP-4 - openings for followers (BUILT)
 
 Built 2026-11-09 to [(d)](#d-openings-for-followers---one-notice-never-two) (decision 5d, L9) plus
-L24-L29 above. Never capped (decision 11).
+L24-L29 above. A FORM opening is never capped; a booking or event opening IS counted by the daily cap (the owner's "quieter" decision of 2026-11-10, #3316: `PUSH_BUDGET`, three a day), read on the Mi 9T 2026-11-15.
 
 - **Migrations.** 151 (`opening_reminders`, its due and user indexes; plain) and 152 (**HELD**,
   marked `-- canari:hold-for-owner`; its approval line is NOT in this pull request - the lead adds it
@@ -1242,8 +1242,8 @@ person.
   "Nouvel événement sur le campus", with no association - the masking rule of
   [calendar](frontend/modules/calendar.md#neutral-campus-events-owner-2026-11-08).
 - Categories: `form_open` stays `forms`, a booking opening files under `bookings`, an event opening
-  under `events`. **Never capped**, whatever the row's origin (decision 11: shotgun openings are
-  outside the cap).
+  under `events`. A FORM opening is never capped; a booking or event opening is COUNTED by the daily cap since the quieter decision of 2026-11-10 (`PUSH_BUDGET`: three pushes a day, whatever the row's origin - decision 11 had
+  left shotgun openings outside it).
 
 ## The noise budget - a daily cap from a counter row
 
@@ -1582,7 +1582,7 @@ then WP-9). Shipping it earlier would guard nothing.
 | **WP-1b** (BUILT, #3119) | One announced live per association per 6 hours (L16) | `lives/lives.service.ts` (the claim) | [above](#wp-1b---one-announced-live-per-association-per-6-hours-built-in-the-same-pull-request) |
 | **WP-2** (BUILT, [below](#wp-2---suivre-everywhere-built)) | Suivre everywhere a person or entity is named: post headers of an account the viewer does not follow, search results, association cards (today only the profile and the association page carry it) | `frontend/src/lib/follows/api.ts` | component tests per surface; a phone reading of a follow request from a post header |
 | **WP-3** (BUILT, [below](#wp-3---the-bell-built)) | The bell (decisions 3d, 5a, 10): `account_bells` (`lives` and `none` only, L3), the HELD copy of `association_push_mutes`, the old mute endpoints writing `account_bells` (L8), a follow deleting the row in the creating statement, the seam in `fanOutPush`, the profile control, the association mute UI moved onto it | `follows/association-push-mutes.service.ts` | integration spec of the level table above; a new follow resets a reduced bell and a RETRIED follow does not; following a muted association again unmutes it; a mute set through the old endpoint after the copy is honoured; the existing mute specs still green against the new store |
-| **WP-4** (BUILT, [below](#wp-4---openings-for-followers-built)) | Openings for followers (5d): `opening_reminders`, the HELD copy of `form_reminders`, follower rows at publication, "Me prévenir" upsert, booking and event openings; never capped | `forms/forms-reminder.scheduler.ts` | integration spec: a follower who also asked gets ONE push, a follower gets the opening and no heads-up, a non-follower who asked gets both |
+| **WP-4** (BUILT, [below](#wp-4---openings-for-followers-built)) | Openings for followers (5d): `opening_reminders`, the HELD copy of `form_reminders`, follower rows at publication, "Me prévenir" upsert, booking and event openings; a form opening never capped, the other two counted by the daily cap since 2026-11-10 | `forms/forms-reminder.scheduler.ts` | integration spec: a follower who also asked gets ONE push, a follower gets the opening and no heads-up, a non-follower who asked gets both |
 | **WP-5** (BUILT, [above](#wp-5---the-suggestion-query-built)) | The suggestion query, its faces, entities, `follow_suggestion_dismissals`, `GET /api/suggestions`, `POST /api/suggestions/dismiss`, the erasure | `follows/` | integration spec of every exclusion of decision 2 and every face rule of decision 4; EXPLAIN on dev |
 | **WP-6** (BUILT, [above](#wp-6---the-surfaces-built)) | The surfaces (decisions 3 and 7): the carousel in the feed, "Suivez aussi...", the empty Suivis feed, the onboarding banner | the feed route | component tests; phone readings on both bench phones |
 | **WP-7** (BUILT, [above](#wp-7---suggested-posts-built)) | Suggested posts (decision 8), through the feed's own block filter (`PostsService.blockedAuthorSql`) as every feed row | the feed query | integration spec: a suggested post is visible by the space rule to the viewer, never through a grant or a follower door, and never by an author blocked either way |

@@ -361,9 +361,9 @@ maybe('an Add enrols its invitee with the accepted commit (PostgreSQL)', () => {
   it('the same Welcome sent again - its first answer lost - is stored once and its one row delivered again (DUP-7)', async () => {
     await addCommit(1);
     deliverWelcome().mockClear();
-    await expect(welcome()).resolves.toEqual({ status: 'queued' });
+    await expect(welcome()).resolves.toEqual({ status: 'queued', addressability: 'addressable' });
     // The client re-sends the owed Welcome it never read an answer for: the same bytes.
-    await expect(welcome()).resolves.toEqual({ status: 'queued' });
+    await expect(welcome()).resolves.toEqual({ status: 'queued', addressability: 'addressable' });
     expect(await queuedWelcomes()).toBe(1);
     // ...and the ONE row is delivered again: the first request may have died between its store
     // and its delivery, and only the re-send is left to arm the live publish and the push.

@@ -179,7 +179,7 @@ function ctx(
     delivery: {
       submitCommit,
       // The one request a Welcome is; `sendWelcome` itself is the real seam that consumes what is owed.
-      sendWelcome: vi.fn().mockResolvedValue(undefined),
+      sendWelcome: vi.fn().mockResolvedValue(null),
       acquireAddLock: vi.fn().mockResolvedValue({ acquired: true, token: 'tok' }),
       releaseAddLock: vi.fn().mockResolvedValue(true),
     },
@@ -828,8 +828,24 @@ describe('settleUnresolvedCommits - the resubmission at the next connection', ()
     });
     await c.settleUnresolvedCommits();
     expect(c.welcomeDeliveredListener.mock.calls).toEqual([
-      [{ groupId: G, userId: 'u-b', deviceId: 'd-b1', welcome: new Uint8Array([3]) }],
-      [{ groupId: G, userId: 'u-b', deviceId: 'd-b2', welcome: new Uint8Array([3]) }],
+      [
+        {
+          groupId: G,
+          userId: 'u-b',
+          deviceId: 'd-b1',
+          welcome: new Uint8Array([3]),
+          addressability: null,
+        },
+      ],
+      [
+        {
+          groupId: G,
+          userId: 'u-b',
+          deviceId: 'd-b2',
+          welcome: new Uint8Array([3]),
+          addressability: null,
+        },
+      ],
     ]);
     // A re-run delivers nothing, so it announces nothing.
     await c.settleUnresolvedCommits();
@@ -853,6 +869,7 @@ describe('settleUnresolvedCommits - the resubmission at the next connection', ()
       userId: 'u-b',
       deviceId: 'd-b',
       welcome: new Uint8Array([3]),
+      addressability: null,
     });
     await c.settleUnresolvedCommits();
     expect(c.welcomeDeliveredListener).toHaveBeenCalledTimes(1);
@@ -2032,6 +2049,26 @@ describe('sendWelcome - every delivered Welcome is announced, whoever sends it',
       userId: 'u-b',
       deviceId: 'd-b',
       welcome: new Uint8Array([4]),
+      addressability: null,
+    });
+  });
+
+  it("carries the server's answer on whether the device can be addressed - the join push reads it", async () => {
+    const c = ctx(submitting());
+    c.delivery.sendWelcome.mockResolvedValueOnce('offline');
+    const send = c.sendWelcome as unknown as (
+      w: Uint8Array,
+      u: string,
+      g: string,
+      d: string
+    ) => Promise<void>;
+    await send.call(c, new Uint8Array([5]), 'u-b', G, 'd-b');
+    expect(c.welcomeDeliveredListener).toHaveBeenCalledExactlyOnceWith({
+      groupId: G,
+      userId: 'u-b',
+      deviceId: 'd-b',
+      welcome: new Uint8Array([5]),
+      addressability: 'offline',
     });
   });
 

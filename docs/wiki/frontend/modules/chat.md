@@ -5999,9 +5999,12 @@ concurrent send of the same bytes awaits the first), and `joinPush.ts`, installe
 **The limit it keeps: online only.** The push is an ADDRESSED frame, and an addressed frame is
 transport-only - the server publishes it to a device all of whose live sessions declared the capability
 and refuses it otherwise (`addressed_unsupported`); it is never queued. A newcomer whose device is not
-connected when its Welcome is delivered gets no push, and nothing retries it. That outcome is returned
-(`sendFullHistoryBundle` -> `unaddressable`) and said at warn (`[JOIN_PUSH] NOT DELIVERED`), never
-swallowed. **The fix is the newcomer asking, not the inviter retrying**, and the reasoning is the
+connected when its Welcome is delivered gets no push, and nothing retries it. **The push is not sent to
+find that out**: the Welcome's answer says whether the server can address the device
+(`DeliveredWelcome.addressability`, [history-answer-addressing rule 3](../../protocols/history-answer-addressing.md#the-rules-as-built)),
+and a device answered `offline` or `undeclared` is sent nothing. That outcome - or, for a device that
+left between the Welcome and the push, the send's own refusal (`sendFullHistoryBundle` ->
+`unaddressable`) - is said at warn (`[JOIN_PUSH] NOT DELIVERED`), never swallowed. **The fix is the newcomer asking, not the inviter retrying**, and the reasoning is the
 choice: an inviter retry "when the device becomes present" rests on two things nobody holds durably -
 the newcomer's `join` ask lives in memory (`noteJoinSolicited`), so a reload between the Welcome and the
 retried push refuses it, and the inviter's own device has to come back while the newcomer is online.

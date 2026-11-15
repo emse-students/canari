@@ -3332,6 +3332,16 @@ Android activity (capped at 200 dp of height per edge by the OS), a wider own-si
 nothing (Messenger has the same 12 px). Never an in-page workaround: the page receives only a
 `pointercancel`.
 
+## The reply swipe on WebKit: `touch-action: pan-y` does not claim a stroke (iPhone 12, 2026-11-15)
+
+Read on the iPhone 12 (TestFlight `1.6.12-alpha.2`, WDA W3C touch strokes of 12 moves) on a RECEIVED bubble: 110 px across with 45 or 60 px of vertical drift, down or up, staged 0 replies in 5 and the thread scrolled about 35 px; a straight stroke and 20 px of drift each staged one, 30 px none. The Mi 9T (`adb input swipe`) replied 12 of 12 on the same strokes.
+
+**Cause.** The bubble already sets `touch-action: pan-y` (`MessageBubble.svelte`, the `touch-pan-y` class), and the handler bound a non-passive `touchmove` - but it never CANCELLED one: it only called `stopPropagation`, and it waited for a 10 px lock on either axis before deciding. `pan-y` leaves the vertical axis to the engine, and WebKit applies a diagonal's vertical component to the scroller unless the page cancels the move; Chromium decides on the stroke's FIRST direction, so a horizontal-first stroke never scrolls there, which is the whole difference between the phones. A 12-step stroke moves about 9 px first, under the 10 px lock: `pending`, nothing claimed, the engine took the stroke, and the page saw a `pointercancel`. The tab swipe met the same shape on 2026-10-21 and settled on a lock under the slop ([class A above](#the-swipe-to-the-camera-that-sometimes-did-nothing-two-classes-measured-mi-9t-2026-10-21)).
+
+**Fix, no timer.** `REPLY_SWIPE_LOCK_PX` 10 -> 8, and a touch stroke locked horizontal calls `claimTouchMove` on every move from the lock on (the same helper as the tab swipe), and stops after the first loss in a stroke (`replyStrokeLost`, reset at the next touch start). Vertical strokes are never claimed, so the thread still scrolls from a bubble. A move that is already uncancelable is logged once per stroke (`Log.w`) and the gesture continues as before. Android changes too, in two ways: the lock moves from 10 to 8 px and a horizontal touch stroke is now `preventDefault`-ed on Chromium as well (it was never cancelled before); its 12 of 12 is to be re-read on the Mi 9T. A claimed-before-the-lock stroke was refused on purpose: a vertical scroll starts with a move just as small. KNOWN LIMIT: a stroke whose first delivered move is under 8 px on both axes (2-4 px) stays `pending`, is not claimed, and under the test model WebKit takes it (a test pins it); whether the iPhone does is the reading owed. Tests (`MessageBubble.swipeReply.svelte.test.ts`): a model of WebKit (the first uncancelled move with vertical travel hands the stroke to the scroller, then `pointercancel`), 12-step strokes of 110 px with +-45 and +-60 px of drift, received and own, red before and green after; the first 9 px move is claimed; a vertical drag is not cancelled; an uncancelable stroke still replies.
+
+**Not measured, said plainly.** Reviewer hypothesis, UNPROVEN: a right thumb swiping right (received) drifts more than one swiping left (own). The reading that settles it: arcs with OPPOSITE drift signs (+45 and -45) on each side, on the iPhone 12. Why an OWN bubble's 45 and 60 px arcs replied on the same build while the received one's did not: both are the same element with the same classes and the same handlers (the only differences in code are the sign of `replySwipeDragOffset` and the side), so it cannot be read from the source; the model above is the stricter engine and covers both. Owed: the same five arcs on a received bubble on the iPhone 12 and the Mi 9T class-A cells, on the next pre-release.
+
 ## The swipe to the camera that "sometimes" did nothing: two classes, measured (Mi 9T, 2026-10-21)
 
 User report, phone app: *the swipe from the feed to the camera does not work every time*, and the
@@ -3377,9 +3387,7 @@ of the screen - [section 38](#a-tap-that-drifts-is-not-a-swipe-and-60px-could-no
 a start on the header (`data-swipe-nav-ignore`), and any swipe while a modal is open (the
 overlay-stack depth - a composer left open from an earlier session refused two cells here).
 
-**iPhone, by code only (not measured):** WebKit has no slop suppression, so its first `touchmove`
-arrives at 1-2 px and the 12 px lock is reached with every move still `cancelable` until UIKit's
-own pan recognises - whether that happens before 12 px is not known, so class A is unproven there.
+**iPhone 12, MEASURED 2026-11-15 (TestFlight `1.6.12-alpha.2`, WDA touch sequences on `/posts`):** class A does not occur. 15 of 15 slow starts (the first 6 px over 900 ms, the rest over 300 ms) from x = 20, 40, 60, 100 and 200 at y = 300, 520 and 700 reached the camera, and so did 9 of 9 plain sweeps of 230 px over 300, 1200 and 2500 ms from x = 20, 60 and 200; a vertical stroke on the same page, as the control, did not open it. The earlier "by code only" reading (WebKit has no slop suppression, the first `touchmove` arrives at 1-2 px) held. A WDA stroke is a synthetic touch, not a thumb: a human slow swipe by thumb stays on the owner's list.
 Class B has no iOS twin on the left (the iOS back swipe is the app's own, `swipeBack`, and only in
 a conversation).
 
