@@ -1734,7 +1734,7 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
           []
         );
         expect(warn).toHaveBeenCalledWith(
-          expect.stringContaining('were not told'),
+          expect.stringContaining('were not all told'),
           expect.stringContaining('connection terminated')
         );
       } finally {

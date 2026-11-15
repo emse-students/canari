@@ -4183,7 +4183,7 @@ ${rejectionReason}`
       );
     } catch (err) {
       this.logger.warn(
-        `[notify] the validators of asso ${sanitizeLog(associationId)} were not all told about an event waiting for validation (a write of the notice failed)`,
+        `[notify] the validators of asso ${sanitizeLog(associationId)} were not all told about an event waiting for validation`,
         err instanceof Error ? err.stack : String(err)
       );
       return [];
