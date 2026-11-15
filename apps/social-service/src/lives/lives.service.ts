@@ -2648,19 +2648,36 @@ export class LivesService implements OnModuleDestroy {
    */
   private readonly unknownToRedis = new Map<string, number>();
 
+  /**
+   * The lives on which Redis bars a viewer the row allows, each with the takes refused so: counted
+   * apart from {@link unknownToRedis}, because a seat granted to somebody else says nothing about
+   * a bar. Reported and forgotten at the purge, on the instance that runs it.
+   */
+  private readonly barredWithoutRow = new Map<string, number>();
+
   private seatsUnknown(liveId: string, why: LiveSeatRefused['why']): void {
+    if (why === 'barred') {
+      const refused = this.barredWithoutRow.get(liveId);
+      this.barredWithoutRow.set(liveId, (refused ?? 0) + 1);
+      if (refused !== undefined) return;
+      // THE ONE KNOWN WAY HERE IS WANTED BEHAVIOUR: no route lifts a removal, and the only delete
+      // of a removal while its live is open is the removed viewer's account erasure - back under
+      // the same id, that person stays out of the live they were removed from (lives.md, "What is
+      // not closed", 7). IT STAYS AN ERROR ALL THE SAME, because nothing here can tell that case
+      // from a bar written by a defect: the row that would say "removed, then erased" is the one
+      // the erasure deleted, and social-service keeps no record of an erasure. A level lowered on
+      // an inference would hide the defect; one line per live is what the certainty costs.
+      this.logger.error(
+        `[LIVE_SEAT] ${liveId}: Redis bars a viewer the row allows - expected only for a removed viewer whose account was erased and who came back; no seat for that viewer until the live closes (further refusals are counted, not logged)`
+      );
+      return;
+    }
     const refused = this.unknownToRedis.get(liveId);
     this.unknownToRedis.set(liveId, (refused ?? 0) + 1);
     if (refused !== undefined) return;
-    // The two refusals do not heal alike: a live Redis does not know is said open again by its
-    // next segment; a bar the row does not back is removed by nothing but the live's close. No
-    // route lifts a removal: the one way to that state is the removed viewer's account erasure,
-    // completed, and the same id back on the same live (lives.md, "What is not closed", 7).
-    const state =
-      why === 'closed'
-        ? 'Redis does not hold the live open while its row is open - no seat until its next segment says it again'
-        : 'Redis bars a viewer the row allows - no seat for that viewer until the live closes';
-    this.logger.error(`[LIVE_SEAT] ${liveId}: ${state} (further refusals are counted, not logged)`);
+    this.logger.error(
+      `[LIVE_SEAT] ${liveId}: Redis does not hold the live open while its row is open - no seat until its next segment says it again (further refusals are counted, not logged)`
+    );
   }
 
   private seatsKnown(liveId: string): void {
@@ -2723,6 +2740,13 @@ export class LivesService implements OnModuleDestroy {
       this.unknownToRedis.delete(liveId);
       this.logger.warn(
         `[LIVE_SEAT] ${liveId}: purged while Redis still refused its seats (${refused} refused take(s))`
+      );
+    }
+    const barred = this.barredWithoutRow.get(liveId);
+    if (barred !== undefined) {
+      this.barredWithoutRow.delete(liveId);
+      this.logger.log(
+        `[LIVE_SEAT] ${liveId}: purged, ${barred} take(s) were refused to a viewer Redis barred and the row allowed`
       );
     }
     for (const op of ['note', 'read'] as const) {

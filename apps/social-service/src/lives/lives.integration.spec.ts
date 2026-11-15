@@ -1494,6 +1494,23 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         expect((await refusal(lives.get(CAROL, live.id))).code).toBe('LIVE_VIEWER_REMOVED');
         expect([...seats.held]).toEqual([`${live.id}:${BOB}`]);
       });
+
+      it('A REMOVAL HOLDS FOR ITS LIVE when the removed viewer erased their account and came back: no seat, and nobody else is refused', async () => {
+        const live = await start();
+        await lives.ingest(ALICE, live.id, 0, segment(0));
+        await lives.removeViewer(ALICE, live.id, CAROL);
+        // The erasure's own statement for this table: the row goes, Redis is not told.
+        await q(`DELETE FROM live_removed_viewers WHERE "viewerId" = $1`, [CAROL]);
+        expect(await refusal(lives.get(CAROL, live.id))).toEqual({
+          status: HttpStatus.SERVICE_UNAVAILABLE,
+          code: 'LIVE_SEATS_UNAVAILABLE',
+        });
+        // A segment re-reads the removals and finds none: the bar is added to, never replaced.
+        await lives.ingest(ALICE, live.id, 1, segment(1));
+        expect((await refusal(lives.manifest(CAROL, live.id))).code).toBe('LIVE_SEATS_UNAVAILABLE');
+        await expect(lives.manifest(BOB, live.id)).resolves.toMatchObject({ viewers: 1 });
+        expect([...seats.held]).toEqual([`${live.id}:${BOB}`]);
+      });
     });
 
     /**
