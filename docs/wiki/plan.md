@@ -45,7 +45,6 @@ earliest version, as a checklist.
 - [The owner's decisions of 2026-11-11](backlog.d/owner-decisions-of-2026-11-11.md)
 - [The owner's decisions of 2026-11-14](backlog.d/owner-decisions-of-2026-11-14.md)
 - [The background Welcome's warm-process refusal: two native changes](backlog.d/p3-the-background-welcome-s-warm-process-refusal-its-rate-its-wasted-round-trip.md)
-- [A send into a group that admits ten of alpha's devices answered `400` nine times on `/api/mls/send`](backlog.d/p3-a-send-into-a-group-admitting-ten-stale-devices-answers-400-nine-times.md)
 
 **P2 - correctness**
 
@@ -67,6 +66,7 @@ earliest version, as a checklist.
 - [P2 - what the keyboard readings of 2026-11-14 filed: a photo DM still jumps to older messages, a short thread loads history on close, a 12 px step](backlog.d/what-the-keyboard-readings-of-2026-11-14-filed.md)
 - [P2 - A post's pictures and videos: the layout from one to many, designed (owner, 2026-11-15)](backlog.d/p2-a-post-s-media-layout-one-to-many-pictures-and-videos.md)
 - [P2 - no gate proves that an older build reads, and writes back, the MLS state this build writes](backlog.d/p2-no-gate-proves-an-older-build-reads-the-mls-state-this-build-writes.md)
+- [P2 - the first message posted in a salon right after an in-session join raised no unread badge on the iPhone](backlog.d/p2-the-first-message-after-an-in-session-join-raised-no-badge-on-the-iphone.md)
 - [P2 - the reply swipe along a thumb's arc does nothing on WebKit: the thread scrolls instead](backlog.d/p2-the-reply-swipe-along-a-thumb-s-arc-does-nothing-on-webkit.md)
 
 **P3 - hygiene**
@@ -83,6 +83,7 @@ earliest version, as a checklist.
 - [P3 - "server already unreachable" is logged once per request instead of once per transition (1.6.11 logs, 2026-11-14)](backlog.d/p3-server-already-unreachable-is-logged-per-request.md)
 - [P3 - EXIT-FORTIFY: closing the app on the Mi 9T logs `FORTIFY: pthread_mutex_lock called on a destroyed mutex` from the render thread](backlog.d/reading-owed-exit-fortify-closing-the-app-on-the-mi-9t-logged-fortify-pthread.md)
 - [P3 - a republication-request push tapped on the Mi 9T landed on the feed, not the request inbox (found by the push reading, 2026-11-15)](backlog.d/p3-a-republication-request-push-tapped-on-the-mi-9t-landed-on-the-feed-2026-11-15.md)
+- [P3 - the Emojis preference row squeezes its description into a five-word column on a phone](backlog.d/p3-the-emojis-preference-row-squeezes-its-description-on-a-phone.md)
 - [P3 - the gated `video-switch` and `video-off-on` call rows read 19.6-25 fps against a threshold of 27](backlog.d/p3-the-gated-video-switch-and-video-off-on-rig-rows-read-19-6-25-fps-threshold-27.md)
 
 ### Readings owed
@@ -99,7 +100,6 @@ earliest version, as a checklist.
 - [ ] [a mention names its author from the phone's copy of names, and the push sentences come from Rust in the app language](backlog.d/reading-owed-a-mention-names-its-author-from-the-phone-s-copy-of-names-and-the.md)
 - [ ] [the push of a request to republish a post](backlog.d/reading-owed-the-push-of-a-request-to-republish-a-post.md)
 - [ ] [a call survives the app leaving the screen: the Android microphone foreground service](backlog.d/reading-owed-a-call-survives-the-app-leaving-the-screen-the-android-microphone.md)
-- [ ] [the tab swipe to the camera on a slow start: the 8 px lock](backlog.d/reading-owed-the-tab-swipe-to-the-camera-on-a-slow-start-the-8-px-lock.md)
 - [ ] [a blind salon banner draws no author, no mention and no mention route, and a held mention's redraw does not sound twice](backlog.d/reading-owed-a-blind-salon-banner-draws-no-author-no-mention-and-no-mention.md)
 - [ ] [new-device notices (#2278, every stable since `1.5.0`; mls-protocol)](backlog.d/reading-owed-new-device-notices-2278-every-stable-since-1-5-0-mls-protocol.md)
 - [ ] [the native caches sealed at rest (2026-10-22): the upgrade readings on both phones](backlog.d/reading-owed-the-native-caches-sealed-at-rest-2026-10-22-the-upgrade-readings.md)
@@ -125,7 +125,6 @@ earliest version, as a checklist.
 - [ ] [follow suggestions and Suivre, WP-2, WP-5, WP-6, WP-7](backlog.d/reading-owed-follow-suggestions-and-suivre-wp-2-wp-5-wp-6-wp-7.md)
 - [ ] [openings for followers, WP-4](backlog.d/reading-owed-openings-for-followers-wp-4.md)
 - [ ] [the checkpoint every commit awaits under the MLS lock before its first request](backlog.d/reading-owed-the-checkpoint-every-commit-awaits-under-the-mls-lock-before-its.md)
-- [ ] [the push sentences are worded in Rust from the app language and a voice note is announced as one](backlog.d/reading-owed-the-push-sentences-are-worded-in-rust-from-the-app-language-and-a.md)
 
 ## 1.8.0
 

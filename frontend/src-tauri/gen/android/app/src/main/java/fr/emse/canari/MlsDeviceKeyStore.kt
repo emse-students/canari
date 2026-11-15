@@ -98,7 +98,7 @@ object MlsDeviceKeyStore {
             Log.d(TAG, "store: success alias=$alias")
             true
         } catch (e: Exception) {
-            Log.e(TAG, "store: failed: ${e.message}", e)
+            Log.e(TAG, "store: failed: ${e.javaClass.simpleName}")
             false
         }
     }
@@ -145,7 +145,7 @@ object MlsDeviceKeyStore {
             Log.d(TAG, "retrieve: success alias=$alias")
             result
         } catch (e: Exception) {
-            Log.e(TAG, "retrieve: failed: ${e.message}", e)
+            Log.e(TAG, "retrieve: failed: ${e.javaClass.simpleName}")
             null
         }
     }
@@ -179,7 +179,7 @@ object MlsDeviceKeyStore {
             val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
             keyStore.getKey(alias, null) as? SecretKey
         } catch (e: Exception) {
-            Log.e(TAG, "getKeystoreKey: failed for alias=$alias: ${e.message}", e)
+            Log.e(TAG, "getKeystoreKey: failed for alias=$alias: ${e.javaClass.simpleName}")
             null
         }
     }

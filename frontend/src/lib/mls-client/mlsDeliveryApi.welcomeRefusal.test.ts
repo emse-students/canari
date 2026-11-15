@@ -23,6 +23,43 @@ describe('sendWelcome and the refusal of its target', () => {
   }
   const send = (a: MlsDeliveryApi) => a.sendWelcome(new Uint8Array([1]), 'bob', 'group-1', 'd-b');
 
+  const json = { 'content-type': 'application/json' };
+
+  it("returns the server's word on whether the device can be addressed a history answer", async () => {
+    for (const addressability of ['addressable', 'offline', 'undeclared'] as const) {
+      const body = JSON.stringify({ status: 'queued', addressability });
+      await expect(send(api(new Response(body, { status: 201, headers: json })))).resolves.toBe(
+        addressability
+      );
+    }
+  });
+
+  it('returns null, silently, when the answer carries no field - an older delivery service', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await expect(
+      send(api(new Response(JSON.stringify({ status: 'queued' }), { status: 201, headers: json })))
+    ).resolves.toBeNull();
+    expect(error).not.toHaveBeenCalled();
+    error.mockRestore();
+  });
+
+  it('returns null and accuses it at error when the answer carries a value this client does not know', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const body = JSON.stringify({ status: 'queued', addressability: 'maybe' });
+    await expect(send(api(new Response(body, { status: 201, headers: json })))).resolves.toBeNull();
+    expect(error.mock.calls.some(([l]) => String(l).includes('unknown addressability'))).toBe(true);
+    error.mockRestore();
+  });
+
+  it('returns null, and accuses it at error, when the stored Welcome answered a body that cannot be read', async () => {
+    const warn = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await expect(
+      send(api(new Response('{not json', { status: 201, headers: json })))
+    ).resolves.toBeNull();
+    expect(warn.mock.calls.some(([l]) => String(l).includes('could not be read'))).toBe(true);
+    warn.mockRestore();
+  });
+
   it('throws WelcomeTargetNotMemberError on a 403 carrying WELCOME_TARGET_NOT_MEMBER', async () => {
     const body = JSON.stringify({
       code: 'WELCOME_TARGET_NOT_MEMBER',

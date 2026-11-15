@@ -108,7 +108,7 @@ object ConversationShortcuts {
         disablePinnedShortcuts(context, ids, TAG)
         true
     } catch (e: Exception) {
-        Log.e(TAG, "remove: ${ids.size} conversation shortcut(s) not removed: ${e.message}", e)
+        Log.e(TAG, "remove: ${ids.size} conversation shortcut(s) not removed: ${e.message}", e) // log-safe: message of a system or native call (Exception); this try parses and names no user input
         false
     }
 }

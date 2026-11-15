@@ -153,6 +153,9 @@ describe('a queued frame - one delivery, two routes', () => {
 
   const redis = {
     exists: jest.fn().mockResolvedValue(0),
+    // The Welcome's answer reads the device's addressability (`welcomeAnswer`); it decides nothing
+    // about the delivery this file compares, so one fixed verdict serves every case.
+    eval: jest.fn().mockResolvedValue(2),
     publish: jest.fn().mockResolvedValue(1),
     sadd: jest.fn().mockResolvedValue(0),
     srem: jest.fn().mockResolvedValue(1),

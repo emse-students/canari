@@ -27,6 +27,7 @@ import type {
   PendingInvitationRow,
   RefusedAdmit,
   SentFrame,
+  WelcomeAddressability,
 } from './mlsDeliveryApi';
 
 /**
@@ -46,6 +47,11 @@ export type DeliveredWelcome = {
   deviceId: string;
   /** The Welcome's bytes - what tells this delivery from a later Welcome to the same device. */
   welcome: Uint8Array;
+  /**
+   * Whether the server can address the device a history answer, read when it answered the Welcome;
+   * `null` when its answer did not say (an older delivery service). The join push reads it.
+   */
+  addressability: WelcomeAddressability | null;
 };
 
 export interface OneDeviceAddResult {
