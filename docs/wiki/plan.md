@@ -296,7 +296,6 @@ earliest version, as a checklist.
 - [P2 - A CallKit Decline is still refused for a user whose launch signs in by itself (review of #2782, 2026-10-31)](backlog.d/p2-a-callkit-decline-is-still-refused-for-a-user-whose-launch-signs-in.md)
 - [P2 - An old-PIN recovery installs bytes it read before the PIN check, with no compare under the lock (review of #2782, 2026-10-31)](backlog.d/p2-an-old-pin-recovery-installs-bytes-it-read-before-the-pin-check-wit.md)
 - [P2 - iOS: "mark as read" from a banner over an open app is refused, and its watermark erased](backlog.d/p2-ios-mark-as-read-from-a-banner-over-an-open-app.md)
-- [P2 - a service-to-service call can still be reset while its peer is retired: the rotation covers only nginx (2026-11-01)](backlog.d/p2-service-to-service-calls-bypass-the-rotation.md)
 - [P2 - reading owed: the new-device alert posted once on the Mi 9T (2026-11-01)](backlog.d/reading-owed-the-new-device-alert-posted-once-on-the-mi-9t.md)
 - [P2 - governance follows reach: an association reaching two BDEs' spaces is governed by either (proposal written 2026-11-02)](backlog.d/p2-governance-follows-reach-a-two-campus-association-has-two-bdes.md)
 - [P2 - signed avatar URLs, phase 2: refuse an avatar request that carries no token, once the measurement says the old builds are gone](backlog.d/p2-avatar-urls-refuse-unsigned-requests.md)
