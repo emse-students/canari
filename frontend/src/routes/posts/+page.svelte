@@ -919,7 +919,10 @@
 
 {#snippet skeletonCards()}
   {#each { length: 4 } as _, i (i)}
-    <div class="border-cn-border bg-cn-surface animate-pulse space-y-3 rounded-3xl border p-5">
+    <div
+      data-loading-skeleton
+      class="border-cn-border bg-cn-surface animate-pulse space-y-3 rounded-3xl border p-5"
+    >
       <div class="flex items-center gap-3">
         <div class="bg-cn-border/60 h-9 w-9 shrink-0 rounded-full"></div>
         <div class="flex-1 space-y-1.5">
