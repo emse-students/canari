@@ -638,6 +638,19 @@ export function keyboardMoved(
 }
 
 /**
+ * Whether the keyboard covers part of the page - the question a REVEAL asks, which is not `isOpen`'s.
+ * `isOpen` (over the open threshold, 160 px on Android) hides the bars and remembers the keyboard's
+ * height, and a one-row IME, a floating or split keyboard or the ADB keyboard stays under it. Under the
+ * Android overlay such a keyboard still lifts the shell (its inset is applied whatever its height), and
+ * since the page declares the keyboard an overlay Chromium no longer reveals the field either - so a
+ * field under it stayed covered (review of #3556). Under the overlay the inset itself is the fact: any
+ * keyboard above 0 covers. Elsewhere the engine resizes for the keyboard and `isOpen` stays the answer.
+ */
+export function keyboardCovers(s: KeyboardViewportSnapshot, overlay: boolean): boolean {
+  return s.isOpen || (overlay && s.occlusionBottom > 0);
+}
+
+/**
  * How an update reveals the focused field, or null when it does not.
  *
  * A keyboard OPENING reveals at once (`auto`): the field must be above the keyboard on the frame it
@@ -652,14 +665,15 @@ export function keyboardMoved(
  * focus with the keyboard already up is `handleFocusIn`'s, not this.
  */
 export function keyboardRevealOnUpdate(u: {
-  isOpen: boolean;
+  /** The keyboard covers part of the page: {@link keyboardCovers}. */
+  covers: boolean;
   openedNow: boolean;
   targetSpent: boolean;
   hasFocus: boolean;
   /** The update moved the keyboard: {@link keyboardMoved}. */
   keyboardMoved: boolean;
 }): ScrollBehavior | null {
-  if (!u.isOpen) return null;
+  if (!u.covers) return null;
   if (u.openedNow || u.targetSpent) return 'auto';
   return u.hasFocus && u.keyboardMoved ? 'smooth' : null;
 }
@@ -724,14 +738,17 @@ function askShellAgain(): void {
  */
 export function declareKeyboardOverlay(win: {
   canariIme?: unknown;
-  navigator: { virtualKeyboard?: { overlaysContent: boolean } };
+  navigator: { virtualKeyboard?: { overlaysContent: boolean }; userAgent?: string };
 }): boolean {
   if (!win.canariIme) return false;
   const keyboard = win.navigator.virtualKeyboard;
   if (!keyboard) {
+    // The engine's version is the evidence: the API ships with Chromium 94, so this names a WebView
+    // that missed its updates, and the population it hits is read from these lines.
+    const engine = /Chrome\/([\d.]+)/.exec(win.navigator.userAgent ?? '')?.[1] ?? 'unknown';
     Log.w(
       'keyboardViewport',
-      'no navigator.virtualKeyboard in this WebView: the engine will pan to reveal a riding field'
+      `no navigator.virtualKeyboard in this WebView (Chrome ${engine}): the engine will pan to reveal a riding field`
     );
     return false;
   }
@@ -762,6 +779,8 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
   let baselineSettled = false;
 
   let keyboardWasOpen = false;
+  /** Whether the last update's keyboard covered part of the page ({@link keyboardCovers}). */
+  let keyboardWasCovering = false;
   const afterLayout = seams.afterLayout ?? afterLayoutReactions;
   const now = seams.now ?? (() => performance.now());
   /** A fall the iOS shell announced, captured before its resize (`keyboardRide.ts`), or null. */
@@ -825,7 +844,8 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
     const handingOff = imeTarget?.kind === 'handoff';
     const m = measureViewport(w);
     const next = readSnapshot(m);
-    const openedNow = next.isOpen && !keyboardWasOpen;
+    const covers = keyboardCovers(next, m.overlayPx !== undefined);
+    const coveredNow = covers && !keyboardWasCovering;
     const closedNow = !next.isOpen && keyboardWasOpen;
     const insetMoved = next.insetBottom !== snapshot.insetBottom;
     const moved = keyboardMoved(snapshot, next);
@@ -842,8 +862,8 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
     }
 
     const reveal = keyboardRevealOnUpdate({
-      isOpen: next.isOpen,
-      openedNow,
+      covers,
+      openedNow: coveredNow,
       targetSpent: handingOff && imeTarget === null,
       hasFocus: document.activeElement instanceof HTMLElement,
       keyboardMoved: moved,
@@ -851,6 +871,7 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
     if (reveal) scrollFocusedFieldIntoView(reveal);
 
     keyboardWasOpen = next.isOpen;
+    keyboardWasCovering = covers;
 
     if (!next.isOpen) {
       baselineHeight = Math.max(baselineHeight, w.winH);
@@ -874,12 +895,12 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
   const handleFocusIn = (e: FocusEvent) => {
     const target = e.target;
     if (!(target instanceof HTMLElement) || !isFocusableField(target)) return;
-    if (!snapshot.isOpen) return;
+    if (!keyboardWasCovering) return;
     scrollFocusedFieldIntoView('smooth');
   };
 
   const handleTransitionEnd = (e: TransitionEvent) => {
-    if (!snapshot.isOpen) return;
+    if (!keyboardWasCovering) return;
     if (!overlaySettledAroundFocus(e.propertyName, e.target, document.activeElement)) return;
     Log.d('keyboardViewport', 'overlay settled - revealing the focused field in its final box');
     scrollFocusedFieldIntoView('smooth');

@@ -260,7 +260,7 @@ describe('the web and iOS reveal exactly what they revealed before, unless nothi
           before.viewportHeight !== after.viewportHeight ||
           before.insetBottom !== after.insetBottom;
         const now = keyboardRevealOnUpdate({
-          isOpen: after.isOpen,
+          covers: after.isOpen,
           openedNow: false,
           targetSpent: false,
           hasFocus: true,

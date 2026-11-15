@@ -111,6 +111,10 @@ describe('the Android keyboard ride, wired', () => {
   afterEach(() => {
     teardown();
     document.body.innerHTML = '';
+    // The globals a case installs go back here, so a failing assertion cannot leak them into the
+    // next case (review of #3556): the shell's bridge and the engine's keyboard API.
+    delete (window as unknown as { canariIme?: unknown }).canariIme;
+    Reflect.deleteProperty(navigator, 'virtualKeyboard');
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     glide.takeOff.mockClear();
@@ -285,6 +289,37 @@ describe('the Android keyboard ride, wired', () => {
     expect(behaviours()).toEqual(['auto', 'smooth']);
   });
 
+  it('a keyboard UNDER the open threshold still reveals the field it covers, rising from 0 (review of #3556)', () => {
+    // A one-row IME, a floating or split keyboard, the ADB keyboard: under 160 px it never counts as
+    // OPEN, yet the overlay lifts the shell by it and Chromium no longer reveals the field (the page
+    // declares the keyboard an overlay). The reveal follows the inset, not the threshold.
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+      cb(0);
+      return 0;
+    });
+    const field = document.createElement('input');
+    const scrollIntoView = vi.fn();
+    field.scrollIntoView = scrollIntoView;
+    document.body.append(field);
+    field.focus();
+    const behaviours = () =>
+      scrollIntoView.mock.calls.map((c) => (c[0] as ScrollIntoViewOptions).behavior);
+    const SMALL = 48;
+    hooks().canariImeTarget?.({ px: SMALL });
+    expect(getKeyboardViewport().isOpen).toBe(false);
+    expect(behaviours()).toEqual(['auto']);
+    // A second field focused with that keyboard still up is revealed too.
+    const second = document.createElement('input');
+    second.scrollIntoView = scrollIntoView;
+    document.body.append(second);
+    second.focus();
+    expect(behaviours()).toEqual(['auto', 'smooth']);
+    // Gone: nothing covers, nothing is revealed.
+    hooks().canariImeTarget?.({ px: 0 });
+    field.focus();
+    expect(behaviours()).toEqual(['auto', 'smooth']);
+  });
+
   it('a press during a ride cancels it', () => {
     hooks().canariImeTarget?.(RISE);
     window.dispatchEvent(new Event('pointerdown'));
@@ -321,7 +356,6 @@ describe('the Android keyboard ride, wired', () => {
     // A refusal with no animation in it would only be refused again: it does not ask.
     expect(hooks().canariImeTarget?.({ px: -1 })).toBe(false);
     expect(pageReady).toHaveBeenCalledTimes(2);
-    delete (window as unknown as { canariIme?: unknown }).canariIme;
   });
 
   it('the Android app declares the keyboard an overlay to the engine, and teardown takes it back (Mi 9T, 2026-11-15)', () => {
@@ -336,8 +370,6 @@ describe('the Android keyboard ride, wired', () => {
     teardown();
     expect(keyboard.overlaysContent).toBe(false);
     teardown = () => {};
-    delete (window as unknown as { canariIme?: unknown }).canariIme;
-    Reflect.deleteProperty(navigator, 'virtualKeyboard');
   });
 
   it("the declaration is the Android app's alone: a browser or the iOS app keeps the engine's own keyboard", () => {
@@ -352,8 +384,11 @@ describe('the Android keyboard ride, wired', () => {
 
   it('a WebView with no VirtualKeyboard API is accused at WARN, never silently', () => {
     const warn = vi.spyOn(Log, 'w');
-    expect(declareKeyboardOverlay({ canariIme: {}, navigator: {} })).toBe(false);
+    const userAgent = 'Mozilla/5.0 (Linux; Android 9; wv) Chrome/88.0.4324.93 Mobile Safari/537.36';
+    expect(declareKeyboardOverlay({ canariIme: {}, navigator: { userAgent } })).toBe(false);
     expect(warn).toHaveBeenCalledTimes(1);
+    // The line carries the engine's version: an old WebView is named, not guessed at.
+    expect(String(warn.mock.calls[0][1])).toContain('Chrome 88.0.4324.93');
   });
 
   it('teardown takes the occlusion variable away with the others', () => {

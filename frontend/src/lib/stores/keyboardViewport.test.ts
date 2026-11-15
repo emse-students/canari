@@ -455,7 +455,7 @@ describe('keyboardFreeViewportHeight - a picture does not shrink because someone
 
 describe('keyboardRevealOnUpdate - an opening reveals at once, both halves of the Android hand-off (review of #3490, S3)', () => {
   const base = {
-    isOpen: true,
+    covers: true,
     openedNow: false,
     targetSpent: false,
     hasFocus: true,
@@ -472,7 +472,7 @@ describe('keyboardRevealOnUpdate - an opening reveals at once, both halves of th
   it('is smooth on a later update with a focused field, and nothing with the keyboard down', () => {
     expect(keyboardRevealOnUpdate(base)).toBe('smooth');
     expect(keyboardRevealOnUpdate({ ...base, hasFocus: false })).toBeNull();
-    expect(keyboardRevealOnUpdate({ ...base, isOpen: false, targetSpent: true })).toBeNull();
+    expect(keyboardRevealOnUpdate({ ...base, covers: false, targetSpent: true })).toBeNull();
   });
 
   it('is nothing on a later update that moved nothing (the WebView resize after an overlay announcement, N3)', () => {

@@ -463,6 +463,14 @@ the API is honoured only as far as the pan), and a field outside a ride is still
 (`keyboardRevealOnUpdate`): a poll option under the keys scrolled above them with the declaration on.
 The browser and the iOS app never declare it - there the engine's own keyboard handling is the contract.
 
+**A reveal follows what COVERS, not what is OPEN (review of #3556).** With Chromium no longer revealing
+the field, the page's reveal is the only one, and it was gated on `isOpen` - over the open threshold
+(160 px on Android). A one-row IME, a floating or split keyboard or the ADB keyboard stays under it
+while the overlay still lifts the shell by its height, so a field under it stayed covered.
+`keyboardCovers` answers the reveal's own question: under the overlay any inset above 0 covers;
+elsewhere the engine resizes for the keyboard and `isOpen` stays the answer. `isOpen` keeps its own
+jobs (the bars, the remembered height).
+
 ## Owed on a phone (nothing here is measured after the change - it needs a build)
 
 On the Mi 9T, a pre-release, the same three recordings (`adb screenrecord`, the frame script):

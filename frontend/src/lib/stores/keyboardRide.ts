@@ -216,9 +216,10 @@ export type KeyboardRideCapture = {
 /**
  * The element whose edge is a piece's position. `data-keyboard-ride="box"`: the piece itself (the
  * composer footer). `data-keyboard-ride="last-row"`: its last child (the thread's newest row) - a scroll
- * container's box does not move when it grows, its CONTENT does, and only by what the bottom pin
- * actually scrolled: nothing for a thread shorter than its box, the overflow for one that overflows by
- * less than the keyboard.
+ * container's box does not move when it grows, its CONTENT does: by what the bottom pin scrolled for
+ * a thread that overflows, and for a thread SHORTER than its box by the free space its first row's
+ * `margin-top: auto` gives up as the box shrinks (it sits at the bottom, `app.css`, owner
+ * 2026-11-14) - the probe reads where the row really lands, so both ride the same way.
  */
 function probeOf(el: HTMLElement): HTMLElement {
   if (el.dataset.keyboardRide === 'last-row') {
