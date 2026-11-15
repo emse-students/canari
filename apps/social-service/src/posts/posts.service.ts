@@ -145,7 +145,7 @@ import {
   reviewCohortAuthorFilterSql,
   type PostAccessIntent,
 } from '../spaces/reader-spaces';
-import { POST_EDIT_PUBLISHER_ONLY, bdeModeratesContentSql } from '../spaces/bde-moderation';
+import { POST_EDIT_PUBLISHER_ONLY, bdeModerationReadsPostSql } from '../spaces/bde-moderation';
 import { sameSideOfReviewCohort } from '../review-cohort';
 import { PINNED_FOR_VIEWER_IDS_SQL, pinnedForViewerSql, type PinSpace } from './space-pins';
 import { SpacePinsService } from './space-pins.service';
@@ -2532,7 +2532,9 @@ export class PostsService {
   /**
    * Returns the posts currently hidden by moderation, with their pending report count, within the
    * caller's scope (owner, 2026-11-02): every one for a platform admin, those of its governed spaces
-   * for a BDE `MODERATE` holder (`bdeModeratesContentSql`). The caller is a moderator already.
+   * for a BDE `MODERATE` holder its moderation read (`bdeModerationReadsPostSql`: a hidden post
+   * scheduled later only while an open report targets it, owner 2026-11-15, "Exclure les posts
+   * programmes"). The caller is a moderator already.
    */
   async getHiddenPosts(scope: { userId: string; isGlobalAdmin: boolean }): Promise<any[]> {
     return this.postRepo.manager.query(
@@ -2541,7 +2543,7 @@ export class PostsService {
                WHERE cr."contentId" = p.id::text AND cr.status = 'pending') AS "pendingReportCount"
        FROM posts p
        WHERE p."hiddenByModeration" = true
-         AND ($2::boolean OR ${bdeModeratesContentSql('$1', 'p."associationId"', 'p."authorId"')})
+         AND ($2::boolean OR ${bdeModerationReadsPostSql('$1', 'p')})
        ORDER BY p."createdAt" DESC
        LIMIT 200`,
       [scope.userId ?? '', scope.isGlobalAdmin]

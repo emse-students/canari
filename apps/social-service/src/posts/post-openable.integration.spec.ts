@@ -427,6 +427,44 @@ maybe("writes and notifications on a post follow the read's gate, against Postgr
       }
     });
 
+    it('the hidden-posts list asks the same read: a hidden post scheduled later is listed to the BDE moderator only while an open report targets it, or once published; always to a platform admin', async () => {
+      const post = id(803);
+      await client.query(
+        `ALTER TABLE posts ADD COLUMN IF NOT EXISTS markdown text,
+           ADD COLUMN IF NOT EXISTS "createdAt" timestamp NOT NULL DEFAULT now()`
+      );
+      await client.query(
+        `INSERT INTO posts (id, "authorId", "hiddenByModeration", "scheduledAt", markdown)
+           VALUES ($1, 'author', true, now() + interval '1 day', 'held')`,
+        [post]
+      );
+      const listed = async (userId: string, isGlobalAdmin = false) =>
+        (await service.getHiddenPosts({ userId, isGlobalAdmin })).some(
+          (r: { id: string }) => r.id === post
+        );
+      try {
+        expect(await listed('modInScope')).toBe(false);
+        expect(await listed('adminOutside', true)).toBe(true);
+        await client.query(
+          `INSERT INTO content_reports ("contentType", "contentId", status) VALUES ('post', $1, 'pending')`,
+          [post]
+        );
+        expect(await listed('modInScope')).toBe(true);
+        await client.query(`DELETE FROM content_reports`);
+        expect(await listed('modInScope')).toBe(false);
+        await client.query(
+          `UPDATE posts SET "scheduledAt" = now() - interval '1 minute' WHERE id = $1`,
+          [post]
+        );
+        expect(await listed('modInScope')).toBe(true);
+        // Out of scope, it is never listed.
+        expect(await listed('modOutOfScope')).toBe(false);
+      } finally {
+        await client.query(`DELETE FROM content_reports`);
+        await client.query(`DELETE FROM posts WHERE id = $1`, [post]);
+      }
+    });
+
     it("the exclusion names the BDE moderator: a platform admin's read of a post scheduled later is unchanged", async () => {
       expect(
         await status(

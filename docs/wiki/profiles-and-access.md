@@ -733,8 +733,8 @@ is deleted, and the client no longer decides from `formation === 'ICM'`.
   **BY ID, A MODERATOR MODERATES AND NEVER PARTICIPATES (2026-11-14, generalising the lead's S2 of
   #3010 to every post; owner, 2026-11-15, *"Oui, dans ses espaces"*)**: the widening is the
   moderation read alone - `readPostOpenVerdict` with `allowHidden`, set from
-  `AssociationsService.mayModeratePost` (a platform admin, a BDE `MODERATE` holder within its
-  scope) by the post by id (`getById`), its comment page (`listComments`) and its replay. Every
+  `AssociationsService.mayReadToModeratePost` (a platform admin; a BDE `MODERATE` holder within its
+  scope, a post scheduled later only once published or while an open report targets it) by the post by id (`getById`), its comment page (`listComments`) and its replay. Every
   participating intent asks a moderator the ordinary reader's right, see
   [the table](#by-id-what-a-platform-admin-may-do-2026-11-14). The rule: **by id, whoever moderates a
   post READS it to moderate - the post, its comments, its replay - and participates only as an
@@ -813,7 +813,8 @@ the platform admin's read is unchanged); out of scope they are an ordinary reade
 
 Inside their own audience a moderator does all of these as the reader they are. Proof:
 `post-openable.integration.spec.ts` (the gate, a grant-only admin's comments, a mention, a report, a
-BDE moderator in and out of scope on the real `mayModeratePost`),
+BDE moderator in and out of scope on the real `mayReadToModeratePost`, its scheduled-post
+exclusion included),
 `republications.integration.spec.ts`, `lives.integration.spec.ts` (the replay, both reads),
 `posts.service.can-manage.spec.ts` (`canParticipate`, `canReport`), `students-only` and
 `institution-reach` integration specs, the client's `live/api.test.ts` and `PostCard.served`.
