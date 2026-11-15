@@ -475,7 +475,7 @@ same pull request.
   start, zone), and the client words the sentence AS OF THE SENDING (`reminderWhen`, `lib/bookings/noticeText.ts`;
   the sending instant is the row's `createdAt`): under an hour "dans N min", a whole number of hours up
   to six "dans N h", else the space's own day - "aujourd'hui a", "demain a", or the weekday and date.
-  Every branch is true at send time. A row with no `meta` (every row before) keeps
+  The sentence is worded from the CHOSEN delay, which the scheduler writes into `meta.reminderMinutes` (cron sends 0-60 s late, so the raw gap would read "dans 59 min"); a row without it snaps the measured gap to 5 minutes. Every branch is true at send time. A row with no `meta` (every row before) keeps
   `notif_booking_reminder_text` and logs at debug - a data gap, not a path. **The push body is the
   locale-neutral line** the three native tables draw verbatim, so it does not translate a day word: it
   leads with `dd/MM` when the reminder goes out on another local day than the slot (`reminderLine`,

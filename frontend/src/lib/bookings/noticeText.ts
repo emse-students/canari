@@ -12,6 +12,8 @@ export interface BookingNoticeMeta {
   timeZone: string;
   /** The organiser's word on a cancellation (Q-R3); empty when none. */
   word: string;
+  /** A reminder's chosen delay in minutes (absent on every other notice and on older reminders). */
+  reminderMinutes?: number;
 }
 
 /**
@@ -27,7 +29,10 @@ export function readBookingNoticeMeta(meta: unknown): BookingNoticeMeta | null {
   }
   if (typeof word !== 'string') return null;
   if (Number.isNaN(new Date(startsAt).getTime())) return null;
-  return { place, startsAt, timeZone, word };
+  const delay = (meta as Record<string, unknown>).reminderMinutes;
+  return typeof delay === 'number' && Number.isFinite(delay) && delay > 0
+    ? { place, startsAt, timeZone, word, reminderMinutes: delay }
+    : { place, startsAt, timeZone, word };
 }
 
 /**
@@ -61,12 +66,20 @@ export function formatNoticeSlot(startsAt: string, timeZone: string): string | n
  * @returns null when the zone is not one the runtime knows (the caller then draws the old
  *   sentence and logs it), so a wrong hour is never shown for a right one.
  */
-export function reminderWhen(startsAt: string, sentAt: string, timeZone: string): string | null {
+export function reminderWhen(
+  startsAt: string,
+  sentAt: string,
+  timeZone: string,
+  delayMinutes?: number
+): string | null {
   const startMs = Date.parse(startsAt);
   const sentMs = Date.parse(sentAt);
   if (Number.isNaN(startMs) || Number.isNaN(sentMs)) return null;
   try {
-    const minutes = Math.max(1, Math.round((startMs - sentMs) / 60_000));
+    // The chosen delay when the row carries it; else the measured gap snapped to 5 min, because
+    // the cron sends 0-60 s late and the raw gap would flip "dans 1 h" to "dans 59 min".
+    const measured = Math.max(1, Math.round((startMs - sentMs) / 60_000));
+    const minutes = delayMinutes ?? (measured < 5 ? measured : Math.round(measured / 5) * 5);
     if (minutes < 60) return m.notif_booking_reminder_in_minutes({ minutes });
     if (minutes <= 360 && minutes % 60 === 0) {
       return m.notif_booking_reminder_in_hours({ hours: minutes / 60 });

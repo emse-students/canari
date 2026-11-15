@@ -361,9 +361,17 @@
   const reminderSentence = $derived.by(() => {
     if (!isBookingReminder) return null;
     const meta = readBookingNoticeMeta(notif.meta);
-    const when = meta ? reminderWhen(meta.startsAt, notif.createdAt, meta.timeZone) : null;
+    const when = meta
+      ? reminderWhen(meta.startsAt, notif.createdAt, meta.timeZone, meta.reminderMinutes)
+      : null;
     if (!when) {
-      Log.d('NOTIF', 'booking reminder without usable meta: the old sentence', { id: notif.id });
+      if (notif.meta == null) {
+        Log.d('NOTIF', 'booking reminder without meta (old row): the old sentence', {
+          id: notif.id,
+        });
+      } else {
+        Log.w('NOTIF', 'booking reminder meta unusable: the old sentence', { id: notif.id });
+      }
     }
     return when;
   });

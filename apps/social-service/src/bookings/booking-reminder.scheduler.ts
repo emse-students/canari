@@ -30,6 +30,8 @@ interface ClaimedReminder {
   associationId: string | null;
   associationName: string | null;
   associationLogoUrl: string | null;
+  /** The delay this person chose, in minutes: what the reminder's sentence is worded from. */
+  reminderMinutes: number;
 }
 
 /** What one run did, for the test and the log line. */
@@ -48,7 +50,7 @@ export interface BookingReminderReport {
  * does a delay lengthened past the instant. The tombstone of an erased account is never reminded.
  */
 const DUE_HOLDERS = `
-  SELECT b.id AS "bookingId", b."holderId" AS "recipientId", b."startsAt",
+  SELECT b.id AS "bookingId", b."holderId" AS "recipientId", b."startsAt", b."reminderMinutes",
          s.name AS "spaceName", r.name AS "resourceName", s.discoverability, s."timeZone",
          s."associationId", a.name AS "associationName", a."logoUrl" AS "associationLogoUrl"
     FROM bookings b
@@ -65,7 +67,7 @@ const DUE_HOLDERS = `
    FOR UPDATE OF b SKIP LOCKED`;
 
 const DUE_PARTICIPANTS = `
-  SELECT p.id AS "rowId", b.id AS "bookingId", p."userId" AS "recipientId", b."startsAt",
+  SELECT p.id AS "rowId", b.id AS "bookingId", p."userId" AS "recipientId", b."startsAt", p."reminderMinutes",
          s.name AS "spaceName", r.name AS "resourceName", s.discoverability, s."timeZone",
          s."associationId", a.name AS "associationName", a."logoUrl" AS "associationLogoUrl"
     FROM booking_participants p
@@ -142,7 +144,12 @@ export class BookingReminderScheduler {
           try {
             const startsAt = new Date(row.startsAt);
             const line = reminderLine(row, startsAt, row.timeZone, now);
-            const meta = bookingNoticeMeta(noticePlace(row), startsAt, row.timeZone);
+            // The chosen delay rides the meta: the client words from it, not from a send instant
+            // that cron jitter (0-60 s late) would turn into "dans 59 min".
+            const meta = {
+              ...bookingNoticeMeta(noticePlace(row), startsAt, row.timeZone),
+              reminderMinutes: row.reminderMinutes,
+            };
             await this.notices.remind(
               row.recipientId,
               row.bookingId,

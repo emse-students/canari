@@ -13,6 +13,17 @@ describe('readBookingNoticeMeta', () => {
     expect(readBookingNoticeMeta(meta)).toEqual(meta);
   });
 
+  it('reads the chosen delay of a reminder when present', () => {
+    const meta = {
+      place: 'Salle',
+      startsAt: '2026-11-03T09:00:00.000Z',
+      timeZone: 'Europe/Paris',
+      word: '',
+      reminderMinutes: 1440,
+    };
+    expect(readBookingNoticeMeta(meta)).toEqual(meta);
+  });
+
   it('accepts an empty place (link-only space)', () => {
     const meta = {
       place: '',
@@ -110,6 +121,26 @@ describe('reminderWhen (said as of the sending, 2026-11-15)', () => {
     // 23:30 UTC the 15th is already the 16th in Paris: a 14:00 slot is today.
     expect(reminderWhen(start, '2026-11-15T23:30:00Z', Z)).toBe(
       m.notif_booking_reminder_today_at({ time: '14:00' })
+    );
+  });
+
+  it('words from the chosen delay, not from cron jitter (59 min late-by-a-minute reads 1 h)', () => {
+    // Sent 60 s late: the raw gap is 3_540_000 ms.
+    expect(reminderWhen(start, '2026-11-16T12:01:00Z', Z, 60)).toBe(
+      m.notif_booking_reminder_in_hours({ hours: 1 })
+    );
+    // A 2 h reminder sent 60 s late (7_140_000 ms) is still "dans 2 h".
+    expect(reminderWhen(start, '2026-11-16T11:01:00Z', Z, 120)).toBe(
+      m.notif_booking_reminder_in_hours({ hours: 2 })
+    );
+  });
+
+  it('snaps the measured gap when the row has no delay', () => {
+    expect(reminderWhen(start, '2026-11-16T12:01:00Z', Z)).toBe(
+      m.notif_booking_reminder_in_hours({ hours: 1 })
+    );
+    expect(reminderWhen(start, '2026-11-16T11:01:00Z', Z)).toBe(
+      m.notif_booking_reminder_in_hours({ hours: 2 })
     );
   });
 

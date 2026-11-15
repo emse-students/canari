@@ -336,7 +336,7 @@ export class BookingNotificationsService {
     bookingId: string,
     line: string,
     association: ReminderAssociation = null,
-    meta?: BookingNoticeMeta
+    meta?: BookingNoticeMeta & { reminderMinutes?: number }
   ): Promise<void> {
     await this.notifications.createNotification({
       recipientId,
