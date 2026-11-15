@@ -220,7 +220,7 @@
   {#if postNotifStore.loading && postNotifStore.notifications.length === 0}
     <div class="flex flex-col gap-3">
       {#each { length: 6 } as _, i (i)}
-        <div class="flex animate-pulse items-start gap-3 px-2 py-2.5">
+        <div data-loading-skeleton class="flex animate-pulse items-start gap-3 px-2 py-2.5">
           <div class="bg-cn-surface h-14 w-14 shrink-0 rounded-full"></div>
           <div class="flex-1 space-y-2 py-1">
             <div class="bg-cn-surface h-3 w-3/4 rounded"></div>

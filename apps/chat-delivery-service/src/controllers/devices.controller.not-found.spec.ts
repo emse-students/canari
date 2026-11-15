@@ -48,7 +48,10 @@ describe('DevicesController - a missing row is 404, a malformed request stays 40
         { provide: getRepositoryToken(GroupMember), useValue: {} },
         { provide: getRepositoryToken(Group), useValue: {} },
         { provide: getRepositoryToken(DeviceGroupMembership), useValue: {} },
-        { provide: getRepositoryToken(PushToken), useValue: {} },
+        {
+          provide: getRepositoryToken(PushToken),
+          useValue: { existsBy: jest.fn(async () => true) },
+        },
         { provide: getRepositoryToken(RevokedDevice), useValue: revokedDeviceRepo },
         { provide: 'REDIS_CLIENT', useValue: {} },
         // No transaction is reachable in these cases: the resolver returns before the OTKP pop.

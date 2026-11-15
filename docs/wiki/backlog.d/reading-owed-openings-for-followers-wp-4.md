@@ -29,3 +29,5 @@ target: 1.7.0
 - **Left: the iPhone 12 half of the booking space, the validated event and the bell at "Rien"** (the form halves are read on both phones); the card's reminder bell after #3576, on the first pre-release carrying it.
 
 **Production, read-only, 2026-11-15 - "one notice, never two" PASSES** ([readings](../device-verification.md#the-production-read-only-readings-of-2026-11-15)): 130 event openings to 37 followers and 25 form openings to 16, at most one bell row per follower and target, each matching one `opening_reminders` row marked `notifiedOnOpen`. No booking-space opening has happened on production yet. **Left: unchanged, the iPhone halves and the card's bell after #3576.**
+
+**iPhone 12, 2026-11-15 (`1.7.0-alpha.1`, dev): the iPhone halves READ - a booking space, a validated event and the bell at "Rien" PASS, and the card's reminder bell after #3576 PASS** ([readings](#the-iphone-12-readings-of-2026-11-15-170-alpha1-second-sitting)). **Left: nothing on the phones; the production booking-space opening has not happened yet.**

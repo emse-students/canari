@@ -466,7 +466,10 @@
   {#if loadingReports}
     <div class="space-y-3">
       {#each { length: 3 } as _, i (i)}
-        <div class="border-cn-border bg-cn-surface animate-pulse space-y-2 rounded-2xl border p-5">
+        <div
+          data-loading-skeleton
+          class="border-cn-border bg-cn-surface animate-pulse space-y-2 rounded-2xl border p-5"
+        >
           <div class="bg-cn-border/60 h-3 w-2/3 rounded"></div>
           <div class="bg-cn-border/40 h-3 w-full rounded"></div>
         </div>
@@ -800,7 +803,10 @@
   {#if loadingHidden}
     <div class="space-y-3">
       {#each { length: 3 } as _, i (i)}
-        <div class="border-cn-border bg-cn-surface animate-pulse space-y-2 rounded-2xl border p-5">
+        <div
+          data-loading-skeleton
+          class="border-cn-border bg-cn-surface animate-pulse space-y-2 rounded-2xl border p-5"
+        >
           <div class="bg-cn-border/60 h-3 w-1/2 rounded"></div>
           <div class="bg-cn-border/40 h-3 w-full rounded"></div>
           <div class="bg-cn-border/30 h-3 w-3/4 rounded"></div>
@@ -931,7 +937,10 @@
   {#if loadingMuted}
     <div class="space-y-3">
       {#each { length: 3 } as _, i (i)}
-        <div class="border-cn-border bg-cn-surface animate-pulse space-y-2 rounded-2xl border p-5">
+        <div
+          data-loading-skeleton
+          class="border-cn-border bg-cn-surface animate-pulse space-y-2 rounded-2xl border p-5"
+        >
           <div class="bg-cn-border/60 h-3 w-2/3 rounded"></div>
         </div>
       {/each}

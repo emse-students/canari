@@ -11,6 +11,11 @@ export interface DeviceKeyPackageWrite {
   deviceName?: string;
   deviceOs?: string;
   deviceAppVersion?: string;
+  /**
+   * The device's stated push outcome (`parsePushOutcome`), or `null` when it stated none - written
+   * as given on every call, never kept from an earlier one.
+   */
+  pushOutcome?: string | null;
 }
 
 /**
@@ -44,15 +49,16 @@ export async function upsertDeviceKeyPackage(
   const rows = (await db.query(
     `INSERT INTO key_package
        (id, "userId", "deviceId", "keyPackage", "notAfter", "deviceName", "deviceOs",
-        "deviceAppVersion", "createdAt")
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        "deviceAppVersion", "createdAt", "pushOutcome")
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
      ON CONFLICT ("userId", "deviceId") DO UPDATE SET
        "keyPackage" = EXCLUDED."keyPackage",
        "notAfter" = EXCLUDED."notAfter",
        "deviceName" = COALESCE(EXCLUDED."deviceName", key_package."deviceName"),
        "deviceOs" = COALESCE(EXCLUDED."deviceOs", key_package."deviceOs"),
        "deviceAppVersion" = COALESCE(EXCLUDED."deviceAppVersion", key_package."deviceAppVersion"),
-       "createdAt" = EXCLUDED."createdAt"
+       "createdAt" = EXCLUDED."createdAt",
+       "pushOutcome" = EXCLUDED."pushOutcome"
      RETURNING (xmax = 0) AS inserted`,
     [
       newId,
@@ -64,6 +70,7 @@ export async function upsertDeviceKeyPackage(
       write.deviceOs ?? null,
       write.deviceAppVersion ?? null,
       now,
+      write.pushOutcome ?? null,
     ]
   )) as Array<{ inserted: boolean }>;
   return { inserted: rows[0]?.inserted === true };

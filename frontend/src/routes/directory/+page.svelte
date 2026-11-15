@@ -281,7 +281,12 @@
     {#if error}
       <p class="text-red-err text-sm" role="alert">{error}</p>
     {:else if loading}
-      <ul class="space-y-1" aria-busy="true" aria-label={m.directory_loading_label()}>
+      <ul
+        class="space-y-1"
+        data-loading-skeleton
+        aria-busy="true"
+        aria-label={m.directory_loading_label()}
+      >
         {#each [0, 1, 2, 3, 4] as i (i)}
           <li class="flex items-center gap-3 px-2 py-2.5" data-directory-skeleton>
             <div class="bg-cn-surface-alt h-12 w-12 shrink-0 animate-pulse rounded-full"></div>
