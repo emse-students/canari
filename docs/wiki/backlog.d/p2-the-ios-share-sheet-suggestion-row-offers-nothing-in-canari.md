@@ -11,3 +11,5 @@ target: 1.7.0
 **To do:** read the cause from the `[CanariShare]` lines on the first build carrying #3535 first (`bun x pymobiledevice3 syslog live` or the iOS bench's syslog, filtered on `CanariShare`), then fix what they name. Candidates in order of cheapness are below.
 
 **The fix:** not made yet - it follows the cause. Candidates in order of cheapness: the extension is not started for an intent suggestion (an `Info.plist` activation or `IntentsSupported` cause), it starts with no intent, or it receives an identifier not of the `c:` shape.
+
+**2026-11-15, `1.7.0-alpha.1`:** the first build carrying the `[CanariShare]` launch line was run, but only through the app row; no suggestion pick was captured, so the cause is still unread ([readings](#the-iphone-12-readings-of-2026-11-15-170-alpha1-second-sitting)).
