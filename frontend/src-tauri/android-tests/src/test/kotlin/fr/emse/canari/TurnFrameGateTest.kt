@@ -1,8 +1,10 @@
 package fr.emse.canari
 
 import fr.emse.canari.orientation.TURN_SIZE_STOP_SCRIPT
+import fr.emse.canari.orientation.TurnAbandon
 import fr.emse.canari.orientation.TurnFrameGate
 import fr.emse.canari.orientation.isTurn
+import fr.emse.canari.orientation.isUnrotatedFlip
 import fr.emse.canari.orientation.pageMatchesBox
 import fr.emse.canari.orientation.turnSizeScript
 import org.junit.Assert.assertEquals
@@ -28,6 +30,17 @@ class TurnFrameGateTest {
         assertFalse(isTurn(0, 0, 1080, 2340, 1080, 1400))
         // The first layout comes from nothing.
         assertFalse(isTurn(-1, 0, 0, 0, 1080, 2340))
+    }
+
+    @Test
+    fun aFlipWithTheRotationReadUnchangedIsNamedButNotHeld() {
+        // A split screen or a fold - or a turn whose rotation was read stale: the caller logs it at WARN.
+        assertTrue(isUnrotatedFlip(0, 0, 1080, 1200, 1080, 900))
+        assertFalse(isTurn(0, 0, 1080, 1200, 1080, 900))
+        // A real turn, a keyboard resize and a 180-degree turn are not that case.
+        assertFalse(isUnrotatedFlip(0, 1, 1080, 2340, 2340, 1080))
+        assertFalse(isUnrotatedFlip(0, 0, 1080, 2340, 1080, 1400))
+        assertFalse(isUnrotatedFlip(1, 3, 2340, 1080, 2340, 1080))
     }
 
     @Test
@@ -106,6 +119,19 @@ class TurnFrameGateTest {
         assertNull(gate.frameReady(proof))
         assertNull(gate.pageSize(turn.number, 851.0, 393.0, 2.75))
         assertNull(gate.abandon())
+    }
+
+    @Test
+    fun anUnresponsiveRendererEndsTheHoldLikeTheOtherTerminalEvents() {
+        // A hung renderer never reports its size nor commits a frame: the WebView's own
+        // `onRenderProcessUnresponsive` is the event that proves it, never a clock.
+        assertTrue(TurnAbandon.entries.contains(TurnAbandon.UNRESPONSIVE))
+        for (why in TurnAbandon.entries) {
+            val gate = TurnFrameGate()
+            val turn = gate.hold(2340, 1080, 0)
+            assertEquals("$why", turn, gate.abandon())
+            assertFalse("$why", gate.holding)
+        }
     }
 
     @Test

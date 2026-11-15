@@ -78,7 +78,13 @@ running. Owed on the **Mi 9T** and the **iPhone 12**, each with the rotation loc
   Android: measured on the Mi 9T before the merge (the table on that page); the log shows `draw
   released` for every turn. **iOS: never run** - the old picture must stay still while the interface
   turns (no black corner during the animation: tao's root view must not clip it), and the syslog shows
-  `old picture released` for every turn.
+  `old picture released` for every turn. An iPad Split View resize logs `not held`.
+  **Android: the Mi 9T runs Android 16 (shell transitions, BLAST sync), which is where the table was
+  measured; a phone on Android 9-12 (minSdk 28, before BLAST sync) has never been run.** Owed there and
+  on a second Android 13+ phone from another maker: the same ten turns each way show no stale frame,
+  logcat shows `draw released` for every turn and no `released WITHOUT`, and `finishDrawing of
+  orientation change` comes after the release (the window manager waiting for the held draw, not
+  timing it out).
 
 ### iPhone 12 reading of 2026-11-15 (second sitting): the live viewer, landscape live from the rig seat
 

@@ -3,11 +3,21 @@ package fr.emse.canari.orientation
 import kotlin.math.abs
 
 /**
+ * Whether the box's longer side changed axis between [oldWidth] x [oldHeight] and [newWidth] x
+ * [newHeight]. An unmeasured box (a zero side) flips nothing.
+ */
+fun flipsShape(oldWidth: Int, oldHeight: Int, newWidth: Int, newHeight: Int): Boolean {
+    if (oldWidth <= 0 || oldHeight <= 0 || newWidth <= 0 || newHeight <= 0) return false
+    return (oldWidth > oldHeight) != (newWidth > newHeight)
+}
+
+/**
  * Whether the WebView's resize is a TURN OF THE SCREEN: the display's rotation changed since the last
- * layout AND the box's longer side changed axis. Both, because each alone is wrong somewhere: a
+ * layout AND the box flipped shape ([flipsShape]). Both, because each alone is wrong somewhere: a
  * split-screen divider, a freeform window, a fold or a split-screen keyboard can flip the box's shape
- * with no rotation, and a 180-degree turn rotates with no new shape (nothing to re-lay out). An
- * unmeasured box (a zero side) is no turn.
+ * with no rotation, and a 180-degree turn rotates with no new shape (nothing to re-lay out). A flip
+ * with the rotation read unchanged is NOT held, and the caller says so at WARN
+ * ([isUnrotatedFlip]): if the rotation was read stale, that line is the only trace of a missed turn.
  */
 fun isTurn(
     oldRotation: Int,
@@ -16,11 +26,17 @@ fun isTurn(
     oldHeight: Int,
     newWidth: Int,
     newHeight: Int,
-): Boolean {
-    if (oldRotation == newRotation) return false
-    if (oldWidth <= 0 || oldHeight <= 0 || newWidth <= 0 || newHeight <= 0) return false
-    return (oldWidth > oldHeight) != (newWidth > newHeight)
-}
+): Boolean = oldRotation != newRotation && flipsShape(oldWidth, oldHeight, newWidth, newHeight)
+
+/** The box flipped shape while the rotation reads unchanged: not a turn, and worth a WARN line. */
+fun isUnrotatedFlip(
+    oldRotation: Int,
+    newRotation: Int,
+    oldWidth: Int,
+    oldHeight: Int,
+    newWidth: Int,
+    newHeight: Int,
+): Boolean = oldRotation == newRotation && flipsShape(oldWidth, oldHeight, newWidth, newHeight)
 
 /**
  * Whether the page's layout viewport ([cssWidth] x [cssHeight] CSS px at [devicePixelRatio], as the
@@ -63,6 +79,7 @@ enum class TurnAbandon(val reason: String) {
     DETACHED("the WebView left the window"),
     PAUSED("the activity paused"),
     STOPPED("the activity stopped"),
+    UNRESPONSIVE("the renderer stopped answering"),
 }
 
 /**

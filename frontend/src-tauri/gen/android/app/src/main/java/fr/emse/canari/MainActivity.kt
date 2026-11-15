@@ -26,6 +26,8 @@ import androidx.core.view.WindowInsetsAnimationCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import androidx.webkit.WebViewRenderProcess
+import androidx.webkit.WebViewRenderProcessClient
 import com.google.firebase.messaging.FirebaseMessaging
 import fr.emse.canari.camera.CameraKeyAction
 import fr.emse.canari.camera.angleWorthSending
@@ -46,9 +48,13 @@ import fr.emse.canari.orientation.TURN_SIZE_STOP_SCRIPT
 import fr.emse.canari.orientation.TurnAbandon
 import fr.emse.canari.orientation.TurnFrameGate
 import fr.emse.canari.orientation.isTurn
+import fr.emse.canari.orientation.isUnrotatedFlip
 import fr.emse.canari.orientation.turnSizeScript
 import fr.emse.canari.orientation.requestedOrientationFor
 import java.io.File
+
+/** Whether the WebView's turn capabilities were logged: once per process, not per WebView or activity. */
+private var turnCapabilitiesLogged = false
 
 class MainActivity : TauriActivity() {
     companion object {
@@ -354,14 +360,26 @@ class MainActivity : TauriActivity() {
      * window manager waits for the window's first draw in the new rotation, so the screen keeps the
      * old picture until then and turns straight onto the laid-out page. Every event that proves no
      * answer can come ([TurnAbandon]: a new document, the WebView detached, the activity paused or
-     * stopped) releases at ERROR. No clock anywhere.
+     * stopped, the renderer unresponsive) releases at ERROR. No clock anywhere.
      */
     private fun holdDrawAcrossTurns(webView: WebView) {
         webView.addJavascriptInterface(TurnBridge(), "canariTurn")
-        if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+        val documentStart = WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)
+        if (documentStart) {
             WebViewCompat.addDocumentStartJavaScript(webView, "window.canariTurn&&canariTurn.newDocument();", setOf("*"))
-        } else {
-            Log.e("MainActivity", "turn: this WebView runs no document-start script - a new document during a held turn is seen at the next pause only")
+        }
+        val unresponsive = WebViewFeature.isFeatureSupported(WebViewFeature.WEB_VIEW_RENDERER_CLIENT_BASIC_USAGE)
+        if (unresponsive) {
+            WebViewCompat.setWebViewRenderProcessClient(webView, object : WebViewRenderProcessClient() {
+                override fun onRenderProcessUnresponsive(view: WebView, renderer: WebViewRenderProcess?) =
+                    abandonTurn(TurnAbandon.UNRESPONSIVE)
+
+                override fun onRenderProcessResponsive(view: WebView, renderer: WebViewRenderProcess?) = Unit
+            })
+        }
+        if (!turnCapabilitiesLogged) {
+            turnCapabilitiesLogged = true
+            Log.i("MainActivity", "turn: this WebView reports new documents=$documentStart, an unresponsive renderer=$unresponsive (otherwise a held turn ends at the next pause)")  // log-safe: two capability booleans
         }
         webView.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
             override fun onViewAttachedToWindow(v: View) = Unit
@@ -374,6 +392,11 @@ class MainActivity : TauriActivity() {
             val height = bottom - top
             val rotation = webView.display?.rotation ?: -1
             val turned = isTurn(lastLayoutRotation, rotation, oldRight - oldLeft, oldBottom - oldTop, width, height)
+            if (isUnrotatedFlip(lastLayoutRotation, rotation, oldRight - oldLeft, oldBottom - oldTop, width, height)) {
+                // A split screen, a freeform window or a fold - or a turn whose rotation was read stale
+                // (the display's cached rotation lagging the layout), shown unheld. This line tells them apart.
+                Log.w("MainActivity", "turn: the WebView flipped to ${width}x$height with the display rotation still $rotation - NOT held; a stale frame may show if this was a turn")  // log-safe: a box and a rotation
+            }
             lastLayoutRotation = rotation
             if (turned) {
                 val turn = turnFrameGate.hold(width, height, System.nanoTime())

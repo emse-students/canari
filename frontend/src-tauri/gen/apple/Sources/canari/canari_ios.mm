@@ -734,9 +734,13 @@ static void CanariSafeAreaDidChange(id self, SEL _cmd) {
 /// 2. then WebKit has put its pending updates on screen (`CanariAfterScreenUpdates`, the keyboard
 ///    path's proof).
 ///
+/// THE LIMIT, stated: no public iOS event says the web process is hung (Android has
+/// `onRenderProcessUnresponsive`), so a WebContent process that stops answering without crashing
+/// keeps the old picture until it answers - a crash or a navigation does end the script with an error.
+///
 /// A failed script (a navigation or a WebContent crash ends it with an error) releases at ERROR: no
-/// answer can come. Only a turn (the shape flips) is held: a keyboard or an iPad split resize is not
-/// one. ANY transition while a picture is held drops it first, with a line - a 180-degree turn or an
+/// answer can come. Only a turn is held: the shape flips AND the interface rotates (a non-identity
+/// `targetTransform`) - a keyboard, an iPad Split View or a Stage Manager resize is not one. ANY transition while a picture is held drops it first, with a line - a 180-degree turn or an
 /// interrupting one would otherwise leave it counter-rotated by the wrong angle - and supersedes the
 /// held turn's proofs.
 typedef void (*CanariWillTransitionIMP)(id, SEL, CGSize, id<UIViewControllerTransitionCoordinator>);
@@ -779,6 +783,13 @@ static void CanariWillTransitionToSize(id self, SEL _cmd, CGSize size,
   CGSize old = root.bounds.size;
   if (webView == nil || root == nil || old.width <= 0 || old.height <= 0 || size.width <= 0 ||
       size.height <= 0 || (old.width > old.height) == (size.width > size.height)) {
+    return;
+  }
+  if (CGAffineTransformIsIdentity(coordinator.targetTransform)) {
+    // The shape flipped with no rotation: an iPad Split View or Stage Manager resize, Android's
+    // `isUnrotatedFlip`. Not a turn, so not held - and said, since a missed turn would look the same.
+    NSLog(@"[CanariOrientation] %.0fx%.0f -> %.0fx%.0f pt with no rotation (a window resize) - not held",
+          old.width, old.height, size.width, size.height);
     return;
   }
   NSUInteger seq = ++g_canariTurnSeq;
