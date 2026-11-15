@@ -293,7 +293,7 @@
   onMount(() => {
     const draft = loadPostCommentDraft(postId);
     if (draft && !value) {
-      Log.d(`[CommentComposer] draft restored on ${postId.slice(0, 8)}`);
+      Log.d('CommentComposer', `draft restored on ${postId.slice(0, 8)}`);
       void onChange(draft.text);
       if (draft.parentId) onRestoreReply?.(draft.parentId);
     }

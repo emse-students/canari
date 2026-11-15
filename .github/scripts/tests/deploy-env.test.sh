@@ -781,6 +781,44 @@ for compose in infrastructure/docker-compose.dev.yml infrastructure/docker-compo
 done
 
 # ═════════════════════════════════════════════════════════════════════════════
+printf '\nthe rendered file is private to its owner\n'
+# ═════════════════════════════════════════════════════════════════════════════
+
+# The rendered .env holds every secret of an estate, so it is written 0600 whatever umask the caller
+# runs under, and an older file left at a wider mode is REPLACED by a private one, not inherited.
+# A filesystem that does not keep POSIX modes (NTFS under MSYS bash) cannot measure this: the probe
+# below says so by name, and CI's Linux runner is the reading.
+probe="$TMP/mode-probe"
+: >"$probe"
+chmod 600 "$probe"
+if [ "$(stat -c '%a' "$probe" 2>/dev/null)" != "600" ]; then
+  printf '  SKIP the filesystem under %s keeps no POSIX mode, so the 0600 assertion is read on CI (Linux) only\n' "$TMP"
+else
+  out="$TMP/mode.env"
+  : >"$out"
+  chmod 644 "$out"
+  # shellcheck disable=SC2046 # word splitting is the point: each line is one VAR=value assignment
+  (umask 022 && render prod "$out" $(prod_env)) >"$TMP/mode.log" 2>&1
+  mode="$(stat -c '%a' "$out" 2>/dev/null)"
+  if [ "$mode" = "600" ]; then
+    pass "a production render under umask 022, over a 0644 file, leaves a 0600 file"
+  else
+    fail "a production render left $out at mode '$mode' - it holds every secret and must be 0600"
+    cat "$TMP/mode.log"
+  fi
+  out="$TMP/mode-dev.env"
+  # shellcheck disable=SC2046 # word splitting is the point: each line is one VAR=value assignment
+  (umask 000 && render dev "$out" $(dev_env)) >"$TMP/mode-dev.log" 2>&1
+  mode="$(stat -c '%a' "$out" 2>/dev/null)"
+  if [ "$mode" = "600" ]; then
+    pass "a dev render under umask 000 leaves a 0600 file"
+  else
+    fail "a dev render left $out at mode '$mode' - it holds every secret and must be 0600"
+    cat "$TMP/mode-dev.log"
+  fi
+fi
+
+# ═════════════════════════════════════════════════════════════════════════════
 printf '\nthe decisions the user took are locked, not merely documented\n'
 # ═════════════════════════════════════════════════════════════════════════════
 

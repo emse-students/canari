@@ -16,6 +16,13 @@
 # bare names, so every secret production had, dev silently inherited, `JWT_SECRET` included - and a
 # shared signing secret makes a token minted by either environment valid in the other.
 #
+# THE DEV_ NAMES LIVE IN THE `development` ENVIRONMENT SINCE 2026-11-13, AND THE PREFIX STAYS. An
+# environment secret overrides a repository secret of the same name, but a name the environment
+# LACKS is read from the repository - where production's bare names still are until their deletion.
+# The prefix keeps a missing dev name empty whatever the repository holds. Dropping it is a later,
+# separate step with a precondition the release preflight must prove first
+# (docs/wiki/cicd.md#where-a-secret-lives-and-why).
+#
 # Usage:
 #   render-env.sh --environment prod|dev --domain canari-emse.fr [--build dev.abc1234] [--out FILE]
 #
@@ -362,6 +369,12 @@ fi
 # Regenerated from the template on every deploy so .env stays ordered like .env.example, drops keys
 # that are no longer in it, and never accumulates leftovers. Every real secret is re-injected below,
 # so nothing is lost; non-secret defaults come straight from the template.
+#
+# THE RENDERED FILE IS PRIVATE TO ITS OWNER (mode 0600): it holds every secret of the estate. The
+# umask covers each intermediate file this pass creates, and the chmod states the mode of the one
+# that is moved into place, whatever umask the caller runs under. `mv` keeps the source's mode, so
+# the file at OUT is born 0600 rather than tightened after it exists.
+umask 077
 TMP="$(mktemp "${TMPDIR:-/tmp}/render-env.XXXXXX")"
 trap 'rm -f "$TMP"' EXIT
 cp "$TEMPLATE" "$TMP"
@@ -377,6 +390,7 @@ while [ "$i" -lt "${#WRITE_KEYS[@]}" ]; do
   i=$((i + 1))
 done
 
+chmod 600 "$TMP"
 mv "$TMP" "$OUT"
 trap - EXIT
 

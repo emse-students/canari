@@ -29,6 +29,7 @@ earliest version, as a checklist.
 - [P1 - the admission rule's fix-forward: a conversation may refuse an entry no member made only once nothing legitimate produces one](backlog.d/p1-the-admission-rule-fix-forward.md)
 - [P1 - push payloads carry nothing for Google and Apple (owner, recorded 2026-11-01; decided and built 2026-11-02, switch OFF; raised from P2 on 2026-11-10 by principle 1 of the charter)](backlog.d/push-payloads-carry-nothing-for-google-and-apple.md)
 - [P1 - blind salon banners: the seed is absent when the push lands](backlog.d/p1-blind-salon-banners-the-failing-branch-is-unnamed.md)
+- [P1 - a backup restore resumed an outbound Graine session at an index it had already used](backlog.d/p1-a-backup-restore-resumed-an-outbound-graine-session-at-a-spent-index.md)
 - [P1 - rows before ratchet: a live drain stores its rows only when its window closes, after a checkpoint may already hold their ratchet advance (raised by the second review of #3321, 2026-11-15)](backlog.d/p1-rows-before-ratchet.md)
 
 **Chantiers, decisions and questions (no severity)**
@@ -44,6 +45,7 @@ earliest version, as a checklist.
 - [The owner's decisions of 2026-11-11](backlog.d/owner-decisions-of-2026-11-11.md)
 - [The owner's decisions of 2026-11-14](backlog.d/owner-decisions-of-2026-11-14.md)
 - [The background Welcome's warm-process refusal: two native changes](backlog.d/p3-the-background-welcome-s-warm-process-refusal-its-rate-its-wasted-round-trip.md)
+- [A send into a group that admits ten of alpha's devices answered `400` nine times on `/api/mls/send`](backlog.d/p3-a-send-into-a-group-admitting-ten-stale-devices-answers-400-nine-times.md)
 
 **P2 - correctness**
 
@@ -64,6 +66,8 @@ earliest version, as a checklist.
 - [P2 - a frame read before a browser kill is called "never read here" on the next cold start](backlog.d/reading-owed-the-live-seen-cipher-mark-written-at-the-checkpoint.md)
 - [P2 - the retention durations a sweep applies are not yet admin settings](backlog.d/retention-durations-not-yet-settings.md)
 - [P2 - what the keyboard readings of 2026-11-14 filed: a photo DM still jumps to older messages, a short thread loads history on close, a 12 px step](backlog.d/what-the-keyboard-readings-of-2026-11-14-filed.md)
+- [P2 - no gate proves that an older build reads, and writes back, the MLS state this build writes](backlog.d/p2-no-gate-proves-an-older-build-reads-the-mls-state-this-build-writes.md)
+- [P2 - the reply swipe along a thumb's arc does nothing on WebKit: the thread scrolls instead](backlog.d/p2-the-reply-swipe-along-a-thumb-s-arc-does-nothing-on-webkit.md)
 
 **P3 - hygiene**
 
@@ -78,12 +82,11 @@ earliest version, as a checklist.
 - [P3 - A salon is read before the key-group drain has finished, so its rows warn "unreadable - missing seed" and are read again later (1.6.11 logs, 2026-11-14)](backlog.d/p3-a-salon-is-read-before-the-key-group-drain-finishes.md)
 - [P3 - "server already unreachable" is logged once per request instead of once per transition (1.6.11 logs, 2026-11-14)](backlog.d/p3-server-already-unreachable-is-logged-per-request.md)
 - [P3 - EXIT-FORTIFY: closing the app on the Mi 9T logs `FORTIFY: pthread_mutex_lock called on a destroyed mutex` from the render thread](backlog.d/reading-owed-exit-fortify-closing-the-app-on-the-mi-9t-logged-fortify-pthread.md)
+- [P3 - a republication-request push tapped on the Mi 9T landed on the feed, not the request inbox (found by the push reading, 2026-11-15)](backlog.d/p3-a-republication-request-push-tapped-on-the-mi-9t-landed-on-the-feed-2026-11-15.md)
 - [P3 - the gated `video-switch` and `video-off-on` call rows read 19.6-25 fps against a threshold of 27](backlog.d/p3-the-gated-video-switch-and-video-off-on-rig-rows-read-19-6-25-fps-threshold-27.md)
 
 ### Readings owed
 
-- [ ] [every route fits on REAL hardware](backlog.d/reading-owed-every-route-fits-on-real-hardware.md)
-- [ ] [the twelve emoji-picture rows on real devices, the iPhone first](backlog.d/emoji-pictures-the-campaign-rows-which-need-real-devices.md)
 - [ ] [the CanaReels composer, viewer and editor on real content](backlog.d/reading-owed-the-canareels-composer-viewer-and-editor-on-real-content.md)
 - [ ] [the named readers' live chat switch on dev](backlog.d/named-readers-comments-switch-readings-owed.md)
 - [ ] [the in-session community join through the deep link on the phones](backlog.d/p1-owed-one-live-reading-of-the-in-session-join-fix-2026-10-08.md)
@@ -121,7 +124,6 @@ earliest version, as a checklist.
 - [ ] [a salon carries read receipts, seen in a real community](backlog.d/reading-owed-a-salon-carries-read-receipts.md)
 - [ ] [follow suggestions and Suivre, WP-2, WP-5, WP-6, WP-7](backlog.d/reading-owed-follow-suggestions-and-suivre-wp-2-wp-5-wp-6-wp-7.md)
 - [ ] [openings for followers, WP-4](backlog.d/reading-owed-openings-for-followers-wp-4.md)
-- [ ] [the bell, WP-3 (#3156, first stable `v1.6.8`, migration 143 approved; engagement)](backlog.d/reading-owed-the-bell-wp-3-3156-first-stable-v1-6-8-migration-143-approved.md)
 - [ ] [the checkpoint every commit awaits under the MLS lock before its first request](backlog.d/reading-owed-the-checkpoint-every-commit-awaits-under-the-mls-lock-before-its.md)
 - [ ] [the push sentences are worded in Rust from the app language and a voice note is announced as one](backlog.d/reading-owed-the-push-sentences-are-worded-in-rust-from-the-app-language-and-a.md)
 
@@ -167,8 +169,8 @@ earliest version, as a checklist.
 - [P2 - an answer whose Lydia request is still OPEN shows "pending" with no button for up to 28 minutes (2026-10-21)](backlog.d/p2-an-answer-whose-lydia-request-is-still-open-shows-pending-with-no-button-for.md)
 - [P2 - Graine rotates on every key-group epoch, so a growing community mints a seed per message (measured 2026-10-21)](backlog.d/p2-graine-rotates-on-every-key-group-epoch-so-a-growing-community-mints-a-seed.md)
 - [P2 - one tap from Canari signs the user into its MiConnect sites, and MiGallery's notifications go through Canari (owner, 2026-11-07: decided; Canari's half of the handoff built 2026-11-08, MiGallery's flag ON 2026-11-14, the others OFF)](backlog.d/sign-in-handoff-to-the-ecosystem-sites-and-migallery-notifications.md)
-- [P2 - a reply or a mention aimed at a post's AUTHOR is sent as a "comment" (it read "a commente" and the daily cap swallowed it; the cap half is fixed by #3579)](backlog.d/p2-a-reply-or-mention-of-a-post-s-author-is-pushed-as-a-comment-and-capped.md)
 - [P2 - iOS: a quick reply from a suspended app is not sent in the background time, it waits for the next open](backlog.d/p2-ios-quick-reply-from-a-suspended-app-waits-for-the-next-open.md)
+- [P2 - the web catch-up decrypt session marks frames seen before its state is installed in the live client](backlog.d/p2-web-catch-up-marks-frames-seen-before-its-state-is-live.md)
 
 **P3 - hygiene**
 
@@ -193,12 +195,14 @@ earliest version, as a checklist.
 - [P3 - the identity provider's PostgreSQL pin moves by hand, in its own window](backlog.d/the-identity-providers-postgres-pin-moves-by-hand.md)
 - [P3 - the conversation rises with the keyboard in one block; Android Messages rises with it frame by frame (owner, 2026-11-14) - a study, not built](backlog.d/keyboard-motion-like-android-messages.md)
 - [P3 - Minesweeper: the first dig's generation blocks the main thread (2026-11-14)](backlog.d/p3-minesweeper-generation-off-the-main-thread.md)
+- [P3 - two tests that are not source scans still time out at 5 s under full-suite load](backlog.d/p3-two-non-scan-tests-time-out-under-full-suite-load.md)
 - [P3 - a comment push tapped while its post is the page left open lands on the post, not on the comment](backlog.d/p3-a-comment-push-for-the-post-already-open-does-not-open-the-comment.md)
 - [P3 - a publisher whose live was cut by a reload or a crash cannot go live again for a minute](backlog.d/p3-a-publisher-restart-closes-its-own-open-live.md)
 - [P3 - iOS: a foreground ring flashes the CallKit banner over the in-app ring, because the server still sends the VoIP push](backlog.d/p3-ios-a-foreground-ring-flashes-the-callkit-banner-over-the-in-app-ring.md)
 - [P3 - iOS: an answer on the locked CallKit screen is lost if the app is opened after the ring deadline](backlog.d/p3-ios-an-answer-on-the-locked-callkit-screen-is-lost-if-the-app-opens-after-the-ring-deadline.md)
 - [P3 - the bell picker keeps its old level after a re-follow, until the page is opened again](backlog.d/p3-the-bell-picker-keeps-its-old-level-after-a-re-follow.md)
 - [P3 - the comment route accepts a comment with no text and no media, and pushes "Nouveau commentaire"](backlog.d/p3-the-comment-route-accepts-an-empty-comment-and-pushes-it.md)
+- [P3 - the iOS volume buttons do not reach the in-app camera: withdraw the iOS half of the volume shutter](backlog.d/p3-the-ios-volume-buttons-do-not-reach-the-in-app-camera-withdraw-the-ios-half.md)
 
 ## 1.9.0
 
@@ -292,7 +296,6 @@ earliest version, as a checklist.
 - [P2 - A CallKit Decline is still refused for a user whose launch signs in by itself (review of #2782, 2026-10-31)](backlog.d/p2-a-callkit-decline-is-still-refused-for-a-user-whose-launch-signs-in.md)
 - [P2 - An old-PIN recovery installs bytes it read before the PIN check, with no compare under the lock (review of #2782, 2026-10-31)](backlog.d/p2-an-old-pin-recovery-installs-bytes-it-read-before-the-pin-check-wit.md)
 - [P2 - iOS: "mark as read" from a banner over an open app is refused, and its watermark erased](backlog.d/p2-ios-mark-as-read-from-a-banner-over-an-open-app.md)
-- [P2 - a service-to-service call can still be reset while its peer is retired: the rotation covers only nginx (2026-11-01)](backlog.d/p2-service-to-service-calls-bypass-the-rotation.md)
 - [P2 - reading owed: the new-device alert posted once on the Mi 9T (2026-11-01)](backlog.d/reading-owed-the-new-device-alert-posted-once-on-the-mi-9t.md)
 - [P2 - governance follows reach: an association reaching two BDEs' spaces is governed by either (proposal written 2026-11-02)](backlog.d/p2-governance-follows-reach-a-two-campus-association-has-two-bdes.md)
 - [P2 - signed avatar URLs, phase 2: refuse an avatar request that carries no token, once the measurement says the old builds are gone](backlog.d/p2-avatar-urls-refuse-unsigned-requests.md)

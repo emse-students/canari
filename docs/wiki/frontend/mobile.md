@@ -276,9 +276,11 @@ and why this won:
 | WebView `fetch` for binary bodies to first-party origins | **Chosen.** One predicate, no native code, the same path web users run today (including the 401-refresh retry in `fetchUpload`), and no copy at all. |
 
 **Which origin the release builds bake (read from the workflows and the relay, 2026-10-10).** `android.yml` and
-`ios.yml` write the SAME `APP_URL` into every `VITE_*_URL`: the `BASE_URL` secret for a stable (the classifier
-accepts `canari.emse.fr` or `canari-emse.fr`; `BASE_URL` moved to `canari.emse.fr` on 2026-09-25) and
-`DEV_BASE_URL` for a pre-release, which must be `dev.canari-emse.fr` (the only dev name the classifier knows).
+`ios.yml` write the SAME `APP_URL` into every `VITE_*_URL`: the `BASE_URL` secret, read from the `production`
+environment for a stable (the classifier accepts `canari.emse.fr` or `canari-emse.fr`; `BASE_URL` moved to
+`canari.emse.fr` on 2026-09-25) and from the `development` environment for a pre-release, where it must be
+`dev.canari-emse.fr` (the only dev name the classifier knows; it was the `DEV_BASE_URL` secret until 2026-11-13,
+[cicd](../cicd.md#where-a-secret-lives-and-why)).
 Measured with a 2 MB POST to `/api/media/upload`: `canari.emse.fr` answers `401` (straight to the Portail-etu
 host, no cap), while `dev.canari-emse.fr` and `canari-emse.fr` answer **`413`** - both still go through the old
 VM's nginx relay (`canari-relay-dev.conf`, `canari-relay-prod.conf`), which sets no `client_max_body_size` and
@@ -3505,7 +3507,7 @@ id": the envelope was logged as `Duplicate ignored during a bulk ingest`, droppe
 answered `true`. The frame was acknowledged and deleted server-side, and all three recovery routes
 shut in the same instant - the queue row gone, the generation spent, and the archive replay
 skipping the fingerprint for ever because the drain had marked it consumed
-(`saveSeenCipherHashes` is durable). The bubble reads `📷 Photo` for good, on a device that
+(the seen marks are durable - inside the MLS state since KILL-2). The bubble reads `📷 Photo` for good, on a device that
 never missed anything. The live path below it had always asked `shouldUpgradeMessage`; the bulk
 path now asks too, and an upgrade **falls through to that live path** rather than being buffered -
 buffering exists to stop a drain re-rendering the list once per message, and an upgrade adds no

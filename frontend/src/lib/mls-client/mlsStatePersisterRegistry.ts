@@ -52,10 +52,10 @@ export function unregisterMlsStatePersister(owner?: MlsStatePersister | null): v
  * WHAT IT IS NOT. This docblock used to say the guarantee lived here, "never deferred", while the
  * body below queued the write on a microtask and returned `void` - so nothing could await it and
  * nothing did, on either platform. The claim outlived the design: the window is closed by the SEND
- * LEDGER (`sendRatchetLedger`), a synchronous `localStorage` write taken before the frame goes on
- * the wire and burnt by `reconcileSendRatchets` on the next `init`. That is the guarantee, and it
- * needs no await on the send path - which is why there is none, and why adding one would only put
- * a 1.7 s checkpoint on the latency of every message.
+ * LEDGER (`sendRatchetLedger`), an IndexedDB write awaited before the frame goes on the wire
+ * (KILL-2) and burnt by `reconcileSendRatchets` on the next `init`. That is the guarantee, and it
+ * needs no CHECKPOINT awaited on the send path - which is why there is none, and why adding one
+ * would only put a 1.7 s checkpoint on the latency of every message.
  *
  * So this call SHORTENS the window rather than closing it, which is worth having: a checkpoint
  * that lands means no generation to burn at all. `persistNow` merges same-tick calls and stays

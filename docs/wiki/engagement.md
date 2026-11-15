@@ -233,7 +233,11 @@ switches still silence it in one gesture. Principle 1 is untouched: the push car
    the lock: exactly one alerts. **Only a row whose push the reader receives counts** (review of
    #3579): a prior row whose category is switched off (`pushCategoryOffSql`, the switch chat-delivery
    applies) was never pushed, so with "Commentaires" off the comments' rows do not make a reaction
-   quiet. The other writes that remove an unread row (a comment or a post deleted, a block, the GC)
+   quiet. **And only a row the BELL shows**: the statement applies `bellRowVisibleSql` (the
+   bell page's own predicate - `bellRowShownSql` plus the review-cohort boundary - one implementation, read at call time because the service imports the
+   module) to the prior rows, so a comment hidden by moderation, or on a post the reader no longer sees,
+   never silences the next one. The bell page's third filter, the renderable types for the reader's build, is not in it on purpose: `comment` and `reaction` have a `null` floor in `NOTIFICATION_TYPE_MIN_CLIENT`, so every admitted build draws them. The client's unread badge counts the rows the bell returned
+   (`postNotifStore`), so it already agrees; the IT builds the bell's tables for this. The other writes that remove an unread row (a comment or a post deleted, a block, the GC)
    do not take the lock: racing one, a comment is quiet against a row about to vanish, which only
    means it replaces a notification that already rang.
 4. **The notification is updated in place by ONE identity per post on every platform**, carried as
@@ -286,6 +290,17 @@ switches still silence it in one gesture. Principle 1 is untouched: the push car
    for k of n`, `[NOTIFY] type=X no device at build >= F for k of n`, one line per cause present.
    `pushedToday` is the counter as the claim's statement read it.
 8. **No migration**: the state is the bell's existing rows, the lock is advisory.
+
+**A reply to MY comment or a mention of ME on my own post rings of its own** (owner, 2026-11-15). Principle 2
+(the essential is never lost): what is addressed to the reader is never folded into a notification that may
+update quietly. `addComment` decides the author's notice kind from ids it already holds
+(`authorNoticeKind`, `posts/post-activity-notice.ts`: a reply when the parent comment is the author's or was written for an association they hold, else
+a mention when the text names them, else `comment`; the most specific wins, never a parsed message). A `reply`
+or `mention` to the post's author goes the FREE way of `PUSH_BUDGET` (never counted, so the daily cap is untouched), as its own
+row and push with sound, never `quiet`, so `POST_ACTIVITY_QUIET_MIN_CLIENT_VERSION` does not apply to it and
+it adds no row to the post's unread activity. The reply/mention category switches still apply at the send.
+Every other comment keeps the fold above. Each decision is logged (`author notice kind=...`). This is the
+fix of the backlog entry on a reply or mention aimed at the post's author.
 
 **Every consumer of the cap**, enumerated before it changed: `PostNotificationsService.withinPushBudget`
 (the only caller of `claimEngagementPushes`), asked by `createNotification`, `fanOutPush`
