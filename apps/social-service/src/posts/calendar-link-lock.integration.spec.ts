@@ -167,8 +167,8 @@ maybe(
 
     /**
      * Reads `pg_locks` until one of THIS run's pool sessions waits on a lock, or the bound of reads
-     * is spent ({@link untilWaiting}, `onAbsent: 'return'`: the caller releases its lock before it
-     * asserts); answers whether it did. A read loop, never a clock.
+     * is spent ({@link untilWaiting}, `onAbsent: 'return'`); answers whether it did, and the caller
+     * asserts that. A read loop, never a clock.
      */
     async function aSessionWaits(): Promise<boolean> {
       const { outcome } = await untilWaiting({

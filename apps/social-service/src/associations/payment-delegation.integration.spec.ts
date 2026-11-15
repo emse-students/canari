@@ -377,8 +377,9 @@ maybe('a list collects through an accepted payment delegation (PostgreSQL)', () 
       path: 'admin',
     });
     // Until the readiness waits on the revoke's lock - or finishes without waiting, which is the
-    // defect: that outcome is RETURNED, and the assertions below fail on it.
-    await untilWaiting({
+    // defect: that outcome is RETURNED (the revoke's connection is released below either way) and
+    // ASSERTED once it is.
+    const waited = await untilWaiting({
       what: 'the readiness',
       settled: settledFlag(readiness),
       onAbsent: 'return',
@@ -397,6 +398,7 @@ maybe('a list collects through an accepted payment delegation (PostgreSQL)', () 
     await revoke.query('COMMIT');
     await revoke.end();
     await readiness;
+    expect(waited).toMatchObject({ outcome: 'waiting' });
 
     expect(await productState(tee.id)).toEqual({ isActive: false, activationWithheld: true });
     expect(tellDelegation).not.toHaveBeenCalledWith(

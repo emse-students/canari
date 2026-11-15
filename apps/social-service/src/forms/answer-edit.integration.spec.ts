@@ -29,7 +29,7 @@ import { FormRespondent } from './entities/form-respondent.entity';
 import { PurchaseRecord } from '../users/entities/purchase-record.entity';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import { FormsService } from './forms.service';
-import { ACTIVITY_DUMP_SQL, untilWaiting } from '../common/lock-wait.it-fixture';
+import { ACTIVITY_DUMP_SQL, settledFlag, untilWaiting } from '../common/lock-wait.it-fixture';
 import {
   FORM_ANSWER_EDIT_OFF,
   FORM_ANSWER_LOCKED,
@@ -625,18 +625,16 @@ maybe('a respondent changes their own answer, against PostgreSQL (migration 166)
       await validator.query(`SELECT 1 FROM submissions WHERE id = $1 FOR UPDATE`, [
         sent.submissionId,
       ]);
-      let settled = false;
-      const edit = service
-        .editAnswer(formId, sent.submissionId, ALICE, { 'q-name': 'Apres', 'q-meal': 'm-yes' })
-        .finally(() => {
-          settled = true;
-        });
+      const edit = service.editAnswer(formId, sent.submissionId, ALICE, {
+        'q-name': 'Apres',
+        'q-meal': 'm-yes',
+      });
       // The edit is WAITING on that lock - observed in PostgreSQL, not assumed from a delay. An edit
-      // that settles first never waited: that is RETURNED, and the assertion below `settled` says so.
+      // that settles first, or never waits, FAILS here with a message; the `finally` below ends the
+      // validator's connection, which frees the row either way.
       await untilWaiting({
         what: 'the edit',
-        settled: () => settled,
-        onAbsent: 'return',
+        settled: settledFlag(edit),
         waiting: async () => {
           const {
             rows: [{ n }],
@@ -650,7 +648,6 @@ maybe('a respondent changes their own answer, against PostgreSQL (migration 166)
         },
         dump: async () => (await admin.query(ACTIVITY_DUMP_SQL)).rows,
       });
-      expect(settled).toBe(false);
       await validator.query(`UPDATE submissions SET "paymentStatus" = 'paid' WHERE id = $1`, [
         sent.submissionId,
       ]);

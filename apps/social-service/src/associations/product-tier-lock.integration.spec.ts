@@ -321,8 +321,8 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
    * own connection) wait on the advisory lock `key` (`null`: on any lock, a row lock included);
    * answers the last count. Scoped so a concurrent run on the same cluster cannot be counted. It
    * RETURNS when the bound of reads is spent ({@link untilWaiting}, `onAbsent: 'return'`) rather
-   * than throwing: the caller commits `admin`'s lock first, so a writer is never left blocked, and
-   * asserts the count after.
+   * than throwing; the caller asserts the count (some callers release `admin`'s lock first, so a
+   * blocked writer is never left behind).
    */
   async function waitersReach(n: number, key: string | null): Promise<number> {
     const { seen } = await untilWaiting({

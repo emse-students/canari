@@ -22,7 +22,7 @@ import { AssociationsService } from './associations.service';
 import { AssociationMember, AssociationPermissionFlag } from './entities/association-member.entity';
 import { LAST_MEMBER_MANAGER } from './member-flag-ceiling';
 import { ERASURE_ASSOCIATION_LOCK_SQL, ERASURE_ROW_STATEMENTS } from '../internal/account-erasure';
-import { ACTIVITY_DUMP_SQL, settledFlag, untilWaiting } from '../common/lock-wait.it-fixture';
+import { settledFlag, untilWaiting } from '../common/lock-wait.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -144,7 +144,7 @@ maybe('the last member manager against PostgreSQL', () => {
       let waiting = 0;
       // Ends on an event - every write either blocked or settled - never on a timer; a write that
       // fails fast while the other blocks ends it too, and the `waiting` assertion then says so.
-      // The bound of reads RETURNS ('return') rather than throws: the holder commits below either way.
+      // The bound of reads RETURNS ('return') rather than throws; the `waiting` count is asserted by the caller.
       await untilWaiting({
         what: 'the writes',
         atLeast: outcomes.length,
@@ -158,7 +158,6 @@ maybe('the last member manager against PostgreSQL', () => {
           waiting = rows[0].n;
           return waiting + finished.filter((done) => done()).length;
         },
-        dump: async () => (await admin.query(ACTIVITY_DUMP_SQL)).rows,
       });
       await holder.query('COMMIT');
       return { waiting, outcomes: await Promise.all(outcomes) };
@@ -243,7 +242,6 @@ maybe('the last member manager against PostgreSQL', () => {
           );
           return rows[0].n;
         },
-        dump: async () => (await admin.query(ACTIVITY_DUMP_SQL)).rows,
       });
       expect(waiting).toBe(1);
       await erasure.query('COMMIT');

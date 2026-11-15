@@ -9,8 +9,9 @@
  * the count is reached, the operation settled first (an event), or a bounded number of reads went
  * by and the error carries what the server shows. A test whose verdict is read AFTER the wait (it
  * must release a lock first, or the operation settling without waiting is an outcome it asserts
- * on) asks for `onAbsent: 'return'` and reads which end happened from the result; it never wraps
- * a throw and never reads an error message.
+ * on) asks for `onAbsent: 'return'` and MUST assert the result itself (`expect(waited)
+ * .toMatchObject({ outcome: 'waiting' })`): an ignored result lets a wait that never came pass.
+ * It never wraps a throw and never reads an error message.
  *
  * The caller keeps the SCOPING of `waiting` (its `application_name`, a holder's blocking tree or a
  * lock key): this helper only owns the loop and the failure. Never widen a probe to the whole
@@ -65,10 +66,12 @@ export interface LockWait {
   dump?: () => Promise<unknown>;
 }
 
-/** Which of the two ends happened, and the last count read. */
+/** Which end happened, the last count read, and what the server shows when the wait did not come. */
 export interface LockWaitResult {
   outcome: 'waiting' | 'settled' | 'unseen';
   seen: number;
+  /** `dump()` of a wait that did not come, in `'return'` mode, for the test's own assertion to show. */
+  dump?: unknown;
 }
 
 /**
@@ -84,15 +87,18 @@ export async function untilWaiting(wait: LockWait): Promise<LockWaitResult> {
     seen = await wait.waiting();
     if (seen >= atLeast) return { outcome: 'waiting', seen };
     if (wait.settled?.()) {
-      if (wait.onAbsent === 'return') return { outcome: 'settled', seen };
+      if (wait.onAbsent === 'return') {
+        return { outcome: 'settled', seen, dump: await wait.dump?.() };
+      }
       throw new Error(
         `${wait.what} settled before ${atLeast} waiting session(s) were seen (saw ${seen})`
       );
     }
     await new Promise((resolve) => setImmediate(resolve));
   }
-  if (wait.onAbsent === 'return') return { outcome: 'unseen', seen };
-  const shown = wait.dump ? JSON.stringify(await wait.dump()) : 'no dump given';
+  const dump = await wait.dump?.();
+  if (wait.onAbsent === 'return') return { outcome: 'unseen', seen, dump };
+  const shown = wait.dump ? JSON.stringify(dump) : 'no dump given';
   throw new Error(
     `${wait.what}: ${atLeast} waiting session(s) not seen after ${LOCK_WAIT_READS} reads (last ${seen}); the server shows ${shown}`
   );

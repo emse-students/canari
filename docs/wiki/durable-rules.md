@@ -2345,12 +2345,14 @@ Environment and tooling traps that belong to no one subsystem. Each cost a run.
   chat-delivery integration specs (about thirty, swept by `pg_stat_activity`, `pg_locks`,
   `pg_blocking_pids` and `wait_event`) goes through the ONE helper - `lock-wait.it-fixture.ts` in
   social-service, `testing/lockWait.ts` in chat-delivery, two copies declared and compared as code -
-  and keeps only its own scoping; a test that must release a lock before it asserts asks for
-  `onAbsent: 'return'` and reads the outcome (its own assertion then carries the message), it
-  never wraps a throw or reads an error message. The bound
-  is 2,000 reads: jest's budget for an integration spec is 60 s, so 2,000 reads leave 30 ms each, far
-  above the heaviest read, and a bound that outlasts the budget brings the bare timeout back. A
-  ninth hand-written loop is how the unbounded ones came back. **An advisory key probed across the
+  and keeps only its own scoping. A wait that throws says what it saw; a test that genuinely needs
+  the count for its own assertion, or must release a lock first, asks for `onAbsent: 'return'` and
+  MUST assert the result (`outcome: 'waiting'`) - an ignored result lets a wait that never came
+  pass, so the assertion is what fails there, not the helper. It never wraps a throw or reads an
+  error message. The bound is 2,000 reads: jest's budget for an integration spec is 60 s, so 2,000
+  reads leave 30 ms each, far above the heaviest read, and a bound that outlasts the budget brings
+  the bare timeout back. A new lock-wait loop written by hand is how the unbounded ones came back.
+  **An advisory key probed across the
   shared database must be unique to the run** (a fresh uuid for the workspace or association id):
   advisory locks are database-wide, so a fixed id is safe only while no other suite reuses it.
 - **A LITERAL DATE IS A WALL CLOCK WHENEVER IT MUST OUT-RANK A SLIDING WINDOW**, and it fails

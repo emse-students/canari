@@ -921,11 +921,11 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
         // Only a waiter on THIS poster's lock counts: `pg_locks` is database-wide, and a sibling
         // spec waiting on its own advisory lock must never end this wait early. A bigint key is
         // split by PostgreSQL into classid (high 32 bits) and objid (low 32 bits). A release that
-        // finished without waiting is RETURNED, and the assertions below fail on it.
+        // finished without waiting, or never waited, FAILS here with a message; the `finally` below
+        // ends the writer's connection, which frees the lock either way.
         await untilWaiting({
           what: 'the release',
           settled: settledFlag(release),
-          onAbsent: 'return',
           waiting: async () => {
             const [{ n }] = (
               await admin.query(
