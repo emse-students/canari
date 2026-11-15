@@ -80,7 +80,9 @@ async function open(identity: string, withForm: boolean) {
   });
   const target = document.createElement('div');
   document.body.appendChild(target);
-  mounted.push(mount(CreatePostForm, { target, props: { onPostCreated: vi.fn() } }));
+  mounted.push(
+    mount(CreatePostForm, { target, props: { onPostCreated: vi.fn(), onGoLive: vi.fn() } })
+  );
   flushSync();
   for (let i = 0; i < 6; i++) await tick();
   return target;
