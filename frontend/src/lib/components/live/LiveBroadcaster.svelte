@@ -625,7 +625,7 @@
   {#if broadcast.phase === 'preview' || broadcast.phase === 'starting'}
     <!-- Turned, the sheet takes the left side and leaves the picture on the right. -->
     <div
-      class="absolute inset-x-0 bottom-0 flex max-h-[calc(100%-var(--safe-area-inset-top,0px)-4rem)] flex-col gap-3 overflow-y-auto bg-linear-to-t from-black/90 via-black/70 to-transparent px-4 pt-12 pb-[calc(var(--safe-area-inset-bottom,0px)+1.25rem)] landscape:max-w-md"
+      class="absolute inset-x-0 bottom-(--keyboard-occlusion-bottom,0px) flex max-h-[calc(100%-var(--safe-area-inset-top,0px)-4rem-var(--keyboard-occlusion-bottom,0px))] flex-col gap-3 overflow-y-auto bg-linear-to-t from-black/90 via-black/70 to-transparent px-4 pt-12 pb-[calc(var(--safe-area-inset-bottom,0px)+1.25rem)] landscape:max-w-md"
       style={sideSafePadding('1rem')}
       data-no-double-tap
       data-live-prelive-sheet
@@ -827,7 +827,7 @@
        cursors survive a camera taken away. A verdict that the live is over goes to the machine. -->
   {#if onAir && broadcast.liveId && broadcast.chatKey}
     <div
-      class="pointer-events-none absolute inset-x-0 top-1/4 bottom-(--safe-area-inset-bottom,0px) landscape:max-w-sm"
+      class="pointer-events-none absolute inset-x-0 top-1/4 bottom-[calc(var(--safe-area-inset-bottom,0px)+var(--keyboard-occlusion-bottom,0px))] landscape:max-w-sm"
       style={sideSafePadding()}
       data-no-double-tap
       data-live-broadcaster-chat-box

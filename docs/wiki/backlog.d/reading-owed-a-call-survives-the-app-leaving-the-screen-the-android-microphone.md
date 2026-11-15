@@ -4,7 +4,7 @@ target: 1.7.0
 
 **What is built:** a call survives the app leaving the screen: the Android microphone foreground service (WP-C-BG-A, #2162) and the iPhone's `audio` background mode (WP-C-BG-I, #2164), both in `v1.3.1` ([calls](../frontend/modules/calls.md#the-blockers-each-with-its-evidence), rows B8 and B9)
 
-**The reading that closes it:** the twelve Mi 9T readings of [WP-C-BG-A](../frontend/modules/calls.md#wp-c-bg-a---the-android-ongoing-call-service-2026-10-20) and CALL-L1 row 12 on the iPhone 12
+**The reading that closes it:** the twelve Mi 9T readings of [WP-C-BG-A](../frontend/modules/calls.md#wp-c-bg-a---the-android-ongoing-call-service-2026-10-20) (the iPhone half, CALL-L1 row 12, was READ 2026-11-15, below)
 
 **Triage 2026-11-14 - MERGED with "a call that loses the audio focus holds its microphone and never hangs up"** (D056, decided 2026-11-12, `CallFocusHold.kt`, `CallService.onAudioFocus`, in `v1.6.12`; [calls](../frontend/modules/calls.md#a-call-behaves-like-a-phone-call-2026-10-30-after-the-owners-first-production-call)): during a Canari call with the iPhone, the Mi 9T loses the audio focus - the iPhone shows the microphone cut, the Mi 9T its banner, `focus`/`lost` then `gained` in the app log; once unmuted and once muted before the loss, the second comes back muted; the call is never ended. **Staging: the loss is made by another app taking the focus (a video started with `adb shell am start`), the same `onAudioFocus` path as a SIM ring; the bench needs no SIM.** **Left, both phones together, about 40 min on the Mi 9T side and 10 min on the iPhone side: the twelve WP-C-BG-A readings, the focus loss, and CALL-L1 row 12.**
 
@@ -23,3 +23,5 @@ target: 1.7.0
 - **(11) A Bluetooth and a wired headset mid-call: DELETED, no such hardware on the bench.** The Telecom log lists `supportedRouteMask: EARPIECE, SPEAKER` and no Bluetooth device; the Mi 9T bench has neither a headset nor a Bluetooth peripheral, and the routing code (`pickCallOutput`) is pinned by `OngoingCallTest`. It stays unread until a headset exists, and no longer blocks the entry.
 
 **Left in this entry: CALL-L1 row 12 on the iPhone 12 only** (10 min, the `audio` background mode). Build note: read on `v1.6.12-alpha.2` (built for dev, tag on `fa1bc2655`), not the stable APK; `v1.6.12` is the bump commit `0b6947d20` directly over it (version files and changelog fragments only), so the code read is the stable's.
+
+**CALL-L1 row 12 on the iPhone 12, READ 2026-11-15** (`v1.6.12` dev build; delta on the W5 desktop seat with Chrome's fake microphone dialled, gamma answered in the app): the app was sent HOME for 40 s mid-call (WDA state 3, SpringBoard in front) and the peer's `getStats` kept receiving, +251 packets per 5 s throughout (Opus, 0 to 2.6 % concealed, jitter 4 to 18 ms), 110 s sampled, then hung up by the peer. The iPhone half of the reading is closed; the twelve Mi 9T readings remain.

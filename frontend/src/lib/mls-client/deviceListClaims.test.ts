@@ -1,7 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readdirSync, readFileSync } from 'node:fs';
-import { join, relative, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { relativeTo, sourceFiles } from '../../test/sourceTree';
 
 /**
  * WHO MAY CLAIM AN ACCOUNT'S KEYPACKAGES - AN ALLOWLIST, BECAUSE A CLAIM DESTROYS.
@@ -40,18 +38,12 @@ const TOP_LEVEL =
 /** A member of a class or interface, at the two-space indent this codebase formats them to. */
 const MEMBER = /^ {2}(?:(?:public|private|protected|static|readonly)\s+)*(?:async\s+)?(\w+)\s*[(<]/;
 
-// Kept in a variable: Vite rewrites `new URL('<literal>', import.meta.url)` into an asset URL.
-const SRC_REL = '../..';
-const SRC = fileURLToPath(new URL(SRC_REL, import.meta.url));
-
-function sources(dir: string): string[] {
-  return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
-    const path = join(dir, e.name);
-    if (e.isDirectory()) return e.name === 'wasm' || e.name === 'paraglide' ? [] : sources(path);
-    const isSource = /\.(ts|svelte)$/.test(e.name) && !/\.(test|spec)\.ts$/.test(e.name);
-    return isSource && !path.includes(`${sep}test${sep}`) ? [path] : [];
-  });
-}
+/**
+ * Every shipped `.ts` / `.svelte` under `src`, from the run's source snapshot: tests and `test/`
+ * directories are out, and the generated trees are never in it.
+ */
+const sources = () =>
+  sourceFiles({ under: 'src', extensions: ['ts', 'svelte'], tests: 'exclude', skipDirs: ['test'] });
 
 /**
  * The function enclosing each claim in `text`, one entry per call, sorted: the nearest top-level
@@ -79,9 +71,13 @@ function claimSites(text: string): string[] {
 describe('claiming the device list', () => {
   it('is done only at the call sites that add every device it lists', () => {
     const found: Record<string, string[]> = {};
-    for (const path of sources(SRC)) {
-      const sites = claimSites(readFileSync(path, 'utf8'));
-      if (sites.length > 0) found[relative(SRC, path).split(sep).join('/')] = sites;
+    const scanned = sources();
+    // The tree the scan thinks it reads: an allowed file that is not in it would fail below, but a
+    // wrong root would fail for the wrong reason.
+    expect(scanned.map((f) => f.path)).toContain('src/lib/mls-client/IMlsService.ts');
+    for (const { path, text } of scanned) {
+      const sites = claimSites(text);
+      if (sites.length > 0) found[relativeTo(path, 'src')] = sites;
     }
     const allowed = Object.fromEntries(
       Object.entries(MAY_CLAIM).map(([path, sites]) => [path, [...sites].sort()])

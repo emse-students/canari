@@ -1,5 +1,11 @@
 // @vitest-environment happy-dom
-import { createThreadGlide, glideTravel, observeThreadGrowth } from './threadGrowthObserver';
+import {
+  attachThreadRide,
+  createThreadGlide,
+  glideTravel,
+  observeThreadGrowth,
+  takeThreadGlideOff,
+} from './threadGrowthObserver';
 
 /**
  * THE THREAD'S GLIDE, AGAINST A LAYOUT THAT COUNTS IT IN ITS OVERFLOW (review of #3490, B1, S5, S6).
@@ -180,6 +186,81 @@ describe('observeThreadGrowth - the glide of an arrival', () => {
     expect(scroller.scrollTop).toBe(layoutReach());
     expect(new Set(live().map((a) => a.px))).toEqual(new Set([105]));
     expect(live().every((a) => a.currentTime === 0)).toBe(true);
+    stop();
+  });
+
+  it('a keyboard ride takes a glide in flight off for good: nothing resumes it', async () => {
+    const { scroller, layout, layoutReach, addRow } = makeThread(Array(20).fill(60), 400);
+    scroller.scrollTop = layoutReach();
+    const stop = observeThreadGrowth(scroller, atBottom);
+    expect(takeThreadGlideOff(scroller)).toBe(false); // nothing in flight yet
+    addRow(70);
+    await flush();
+    now = 55;
+    expect(takeThreadGlideOff(scroller)).toBe(true);
+    expect(live()).toHaveLength(0);
+    // The ride's layout change reaches the observer: it pins, and leaves the rows to the ride.
+    layout.box -= 100;
+    fireResize();
+    expect(scroller.scrollTop).toBe(layoutReach());
+    expect(live()).toHaveLength(0);
+    stop();
+    expect(takeThreadGlideOff(scroller)).toBe(false); // a thread no longer followed
+  });
+
+  /** A keyboard ride's animations on the rows, `progress` of the way through its eased curve. */
+  function rideAt(progress: () => number | null) {
+    const cancelled: boolean[] = [];
+    const animation = {
+      effect: { getComputedTiming: () => ({ progress: progress() }) },
+      cancel: () => cancelled.push(true),
+    } as unknown as Animation;
+    return { animation, cancelled };
+  }
+
+  it('an arrival mid keyboard ride: the ride yields, the glide takes the rows from its offset (F8)', async () => {
+    const { scroller, layoutReach, addRow } = makeThread(Array(20).fill(60), 400);
+    scroller.scrollTop = layoutReach();
+    const stop = observeThreadGrowth(scroller, atBottom);
+    // A rise: the rows started 300 px below their place and are 60% of the way up - drawn 120 low.
+    const ride = rideAt(() => 0.6);
+    attachThreadRide(scroller, 300, [ride.animation]);
+    addRow(70);
+    await flush();
+    expect(ride.cancelled).toEqual([true]);
+    // The glide starts where the ride drew them, plus the new row: nothing jumps.
+    expect(new Set(live().map((a) => a.px))).toEqual(new Set([190]));
+    stop();
+  });
+
+  it('a fall mid ride: the glide starts ABOVE the rows when the ride drew them higher than the row (F8)', async () => {
+    const { scroller, layoutReach, addRow } = makeThread(Array(20).fill(60), 400);
+    scroller.scrollTop = layoutReach();
+    const stop = observeThreadGrowth(scroller, atBottom);
+    const ride = rideAt(() => 0.5); // started 300 px above, half way down: drawn 150 high
+    attachThreadRide(scroller, -300, [ride.animation]);
+    addRow(70);
+    await flush();
+    expect(new Set(live().map((a) => a.px))).toEqual(new Set([-80]));
+    stop();
+  });
+
+  it('a change with no arrival leaves the ride alone; an ended ride is not taken on (F8)', async () => {
+    const { scroller, layout, layoutReach, addRow } = makeThread(Array(20).fill(60), 400);
+    scroller.scrollTop = layoutReach();
+    const stop = observeThreadGrowth(scroller, atBottom);
+    const ride = rideAt(() => 0.5);
+    attachThreadRide(scroller, 300, [ride.animation]);
+    layout.box -= 100;
+    fireResize();
+    expect(ride.cancelled).toEqual([]);
+    expect(live()).toHaveLength(0);
+    // The ride ended (no progress): the arrival glides its own row only.
+    const ended = rideAt(() => null);
+    attachThreadRide(scroller, 300, [ended.animation]);
+    addRow(70);
+    await flush();
+    expect(new Set(live().map((a) => a.px))).toEqual(new Set([70]));
     stop();
   });
 
