@@ -56,7 +56,7 @@ export type SendCounts = Record<string, number>;
  * The IndexedDB record holding `userId`'s `emitted` counts. The account is in the key as well as in
  * the database name: two accounts in one profile must never share a ratchet count.
  */
-export function sendEmittedRecordKey(userId: string): string {
+function sendEmittedRecordKey(userId: string): string {
   return `send_ratchet_emitted:${userId}`;
 }
 
@@ -103,7 +103,7 @@ export class OwedSendBurnFailedError extends Error {
  * peer consumed its generation, a reload that does not know of it re-issues that generation. The
  * ratchet has moved in memory, which skips one generation nobody will read - free.
  */
-export class SendCountNotDurableError extends Error {
+class SendCountNotDurableError extends Error {
   constructor(
     readonly groupId: string,
     readonly epoch: number,

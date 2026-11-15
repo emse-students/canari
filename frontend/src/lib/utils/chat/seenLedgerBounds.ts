@@ -52,7 +52,7 @@ const CBOR_STRING_HEADER_BYTES = 5;
  * for the ledgers this module does not bound - the send ledger's `persisted` counts (about 50 bytes
  * per group this device sent in, forgotten once their epoch is spent) and the format key.
  */
-export const SEEN_LEDGERS_BYTE_BUDGET = APP_LEDGERS_BYTE_BUDGET - 64 * 1024;
+const SEEN_LEDGERS_BYTE_BUDGET = APP_LEDGERS_BYTE_BUDGET - 64 * 1024;
 
 /**
  * UTF-8 length of `s`, without allocating: the unit the state is written in (a lone surrogate counts
