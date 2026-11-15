@@ -309,6 +309,11 @@ maybe("writes and notifications on a post follow the read's gate, against Postgr
     let service: PostsService;
 
     beforeAll(async () => {
+      // An OPEN report is what lets a BDE moderator read a post scheduled later (owner, 2026-11-15).
+      await client.query(
+        `CREATE TABLE content_reports (id serial PRIMARY KEY, "contentType" varchar(30) NOT NULL,
+           "contentId" varchar NOT NULL, status varchar(20) NOT NULL DEFAULT 'pending')`
+      );
       await client.query(
         `INSERT INTO associations (id, name) VALUES ($1, 'BDE SE'), ($2, 'BDE GA')`,
         [BDE_SE, BDE_GA]
@@ -387,6 +392,53 @@ maybe("writes and notifications on a post follow the read's gate, against Postgr
         }
       }
     );
+
+    it('a post scheduled later: refused to the BDE moderator, opened by an open report on it, and once published (owner, 2026-11-15: "Exclure les posts programmes")', async () => {
+      const opens = async () => [
+        await status(service.getById(P_SCHEDULED, { viewerId: 'modInScope' })),
+        await status(service.listComments(P_SCHEDULED, 'modInScope', {})),
+      ];
+      expect(await opens()).toEqual([404, 404]);
+      // A report already dealt with opens nothing; an open one does.
+      await client.query(
+        `INSERT INTO content_reports ("contentType", "contentId", status) VALUES ('post', $1, 'reviewed')`,
+        [P_SCHEDULED]
+      );
+      expect(await opens()).toEqual([404, 404]);
+      await client.query(
+        `INSERT INTO content_reports ("contentType", "contentId", status) VALUES ('post', $1, 'pending')`,
+        [P_SCHEDULED]
+      );
+      expect(await opens()).toEqual(['open', 'open']);
+      await client.query(`DELETE FROM content_reports`);
+      expect(await opens()).toEqual([404, 404]);
+      // Published: an ordinary post in its scope again.
+      await client.query(
+        `UPDATE posts SET "scheduledAt" = now() - interval '1 minute' WHERE id = $1`,
+        [P_SCHEDULED]
+      );
+      try {
+        expect(await opens()).toEqual(['open', 'open']);
+      } finally {
+        await client.query(
+          `UPDATE posts SET "scheduledAt" = now() + interval '1 day' WHERE id = $1`,
+          [P_SCHEDULED]
+        );
+      }
+    });
+
+    it("the exclusion names the BDE moderator: a platform admin's read of a post scheduled later is unchanged", async () => {
+      expect(
+        await status(
+          service.getById(P_SCHEDULED, { viewerId: 'adminOutside', isGlobalAdmin: true })
+        )
+      ).toBe('open');
+    });
+
+    it('a hidden post in its audience answers a reader who does not moderate it the 403 of a hidden post', async () => {
+      expect(await status(service.getById(P_HIDDEN, { viewerId: 'reader' }))).toBe(403);
+      expect(await status(service.listComments(P_HIDDEN, 'reader', {}))).toBe(403);
+    });
 
     it.each(['READ_OR_REACT', 'COMMENT', 'VOTE'] as const)(
       'outside its audience, the moderator is refused a write of intent %s (no write asks the moderation read)',

@@ -779,7 +779,7 @@ export class LivesService implements OnModuleDestroy {
    *
    * THE MODERATION READ (owner, 2026-11-15: "La moderation des lives doit avoir le meme regulateur
    * que les posts"): `read.moderate` is the explicit intent a moderation screen sends. It opens the
-   * replay to whoever moderates its post - `AssociationsService.mayModeratePost`, the post moderation
+   * replay to whoever may read its post to moderate it - `AssociationsService.mayReadToModeratePost`, the post moderation
    * scope: a platform admin, a BDE `MODERATE` holder within its governed spaces - past the viewer's
    * gate, and serves the page a viewer gets. Anyone else sending it gets the ordinary gate. The read
    * hands out the replay's key (docs/wiki/moderation-and-blocking.md).
@@ -817,12 +817,12 @@ export class LivesService implements OnModuleDestroy {
       throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
     }
     // THE MODERATION READ has the post's own regulator (owner, 2026-11-15): whoever MODERATES the
-    // replay's post (`mayModeratePost`: a platform admin, a BDE `MODERATE` holder within its scope)
+    // replay's post (`mayReadToModeratePost`: a platform admin, a BDE `MODERATE` holder within its scope)
     // reads it to judge it, past the viewer's gate - a removal or a block by the broadcaster, the
     // "Entre etudiants" switch. It hands out the replay's key, so it is logged.
     const moderates =
       read.moderate === true &&
-      (await this.associations.mayModeratePost(viewerId, found.postId, {
+      (await this.associations.mayReadToModeratePost(viewerId, found.postId, {
         isGlobalAdmin: read.isGlobalAdmin === true,
       }));
     if (moderates) {

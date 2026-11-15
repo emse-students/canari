@@ -243,6 +243,7 @@ import { BDES_WHERE_USER_HOLDS_SQL } from '../spaces/bde';
 import {
   BDE_MODERATED_ASSOCIATION_IDS_SQL,
   BDE_MODERATED_POST_IDS_SQL,
+  BDE_MODERATION_READ_OPENS_POST_SQL,
   BDE_MODERATED_USER_IDS_SQL,
   BDE_MODERATES_COMMENT_SQL,
   BDE_MODERATES_LIVE_SQL,
@@ -3225,6 +3226,35 @@ export class AssociationsService {
       `[MODERATION] scope user=${sanitizeLog(userId.slice(0, 8))} posts=${unique.length} moderated=${rows.length}`
     );
     return new Set(rows.map((r) => r.id));
+  }
+
+  /**
+   * THE MODERATION READ'S ONE QUESTION - may `userId` open post `postId` to moderate it: by id, its
+   * comments, its replay (owner, 2026-11-15: "Oui, dans ses espaces"). Asked by every such read
+   * (`PostsService.getById` / `listComments`, `LivesService.replay`), never by a write.
+   * - A platform admin: always, a post scheduled later included - the owner's exclusion below names
+   *   the BDE moderator, and the admin's read is left as it was.
+   * - A BDE `MODERATE` holder: a post in its scope, EXCEPT an unpublished scheduled one that no open
+   *   report targets (owner, 2026-11-15: *"Exclure les posts programmes"*) -
+   *   `BDE_MODERATION_READ_OPENS_POST_SQL`, one statement. Hiding and deleting keep the unnarrowed
+   *   scope (`mayModeratePost`).
+   */
+  async mayReadToModeratePost(
+    userId: string | undefined,
+    postId: string,
+    opts?: { isGlobalAdmin?: boolean }
+  ): Promise<boolean> {
+    if (opts?.isGlobalAdmin) return true;
+    if (!userId) return false;
+    const rows: { reads: boolean }[] = await this.memberRepo.query(
+      BDE_MODERATION_READ_OPENS_POST_SQL,
+      [userId, postId.toLowerCase()]
+    );
+    const reads = rows[0]?.reads === true;
+    this.logger.debug(
+      `[MODERATION] read scope user=${sanitizeLog(userId.slice(0, 8))} post=${sanitizeLog(postId.slice(0, 8))} reads=${String(reads)}`
+    );
+    return reads;
   }
 
   /** `moderatedPostIds` asked of one post, whatever the case its id is spelled in. */

@@ -88,6 +88,7 @@ describe('PostsService republication fields', () => {
       isContentModerator: jest.fn(() => Promise.resolve(false)),
       moderatedPostIds: () => Promise.resolve(new Set<string>()),
       mayModeratePost: () => Promise.resolve(false),
+      mayReadToModeratePost: () => Promise.resolve(false),
       findValidatedCalendarEventSummary: jest.fn(() => Promise.resolve(null)),
     };
     return new PostsService(
