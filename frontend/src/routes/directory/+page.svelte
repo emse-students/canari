@@ -111,7 +111,7 @@
     try {
       associations = await listAssociations();
     } catch (err) {
-      Log.d('[directory] association list failed, the filter offers none', err);
+      Log.d('directory', 'association list failed, the filter offers none', err);
     }
   }
 
@@ -128,9 +128,9 @@
         limit: SUGGESTION_SIZE + 1,
       });
       suggestions = res.users.filter((u) => u.id !== me).slice(0, SUGGESTION_SIZE);
-      Log.d('[directory] class suggestions', { promo, n: suggestions.length });
+      Log.d('directory', 'class suggestions', { promo, n: suggestions.length });
     } catch (err) {
-      Log.d('[directory] class suggestions unavailable', err);
+      Log.d('directory', 'class suggestions unavailable', err);
     }
   }
 
@@ -169,7 +169,7 @@
       total = res.total;
     } catch (err) {
       if (mine !== seq) return;
-      Log.d('[directory] search failed', err);
+      Log.d('directory', 'search failed', err);
       error = describeRefusalCode(refusalCode(err)) ?? m.directory_search_error_fallback();
       results = [];
       total = 0;
@@ -194,7 +194,7 @@
       results = [...results, ...res.users.filter((u) => !known.has(u.id))];
       total = res.total;
     } catch (err) {
-      Log.d('[directory] load more failed', err);
+      Log.d('directory', 'load more failed', err);
       moreError = describeRefusalCode(refusalCode(err)) ?? m.directory_more_error();
     } finally {
       loadingMore = false;

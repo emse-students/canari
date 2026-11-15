@@ -985,6 +985,7 @@ other: the phone that sounds wrong FROM it, or makes it conceal, is the faulty o
 - `--launch` starts the profile with a FAKE microphone (Chrome's beep, or `--wav`). The flags are
   read at start, so a profile already up is refused: `bun launch.mjs close w3` first.
 - Without `--launch` it attaches to the running profile, microphone as is.
+- A web-seat DIAL must be started with `--launch` (a fresh browser with the fake-media flags): against an already-running seat without them the caller waits on the microphone prompt for ever, sits at "Appel..." and never rings (measured on dev, 2026-11-15).
 - It installs a peer-connection tracker before the app loads, then reloads.
 - `--dial` presses the header's audio-call button, `--accept` presses Accept when the phone rings.
   Both labels are read from `frontend/messages/fr.json`.

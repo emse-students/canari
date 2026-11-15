@@ -53,16 +53,17 @@ const READ_EVENTS = new Set<string>(['conversation_read', 'read_state', 'unread_
  */
 export function tabEventIsAddressedHere(event: TabMessageEvent, me: string): boolean {
   if (!me) {
-    Log.d(`[TAB-SYNC] ${event.type} dropped - this tab is signed out`);
+    Log.d('TAB-SYNC', `${event.type} dropped - this tab is signed out`);
     return false;
   }
   if (event.account === undefined) {
-    Log.d(`[TAB-SYNC] ${event.type} from a tab of an older bundle (unstamped) - accepted`);
+    Log.d('TAB-SYNC', `${event.type} from a tab of an older bundle (unstamped) - accepted`);
     return true;
   }
   if (event.account.toLowerCase() === me.toLowerCase()) return true;
   Log.d(
-    `[TAB-SYNC] ${event.type} from ${event.account ? `account ${event.account.slice(0, 8)}` : 'a signed-out tab'} dropped - this tab is ${me.slice(0, 8)}`
+    'TAB-SYNC',
+    `${event.type} from ${event.account ? `account ${event.account.slice(0, 8)}` : 'a signed-out tab'} dropped - this tab is ${me.slice(0, 8)}`
   );
   return false;
 }
@@ -124,7 +125,8 @@ export function routeTabReadEvent<C extends ReadConversation>(
       conversations.set(event.conversationId, next);
       if (own) {
         Log.d(
-          `[TAB-SYNC] own read of ${event.conversationId.slice(0, 12)} relayed by the leader: unread ${target.unreadCount ?? 0} -> ${next.unreadCount ?? 0}`
+          'TAB-SYNC',
+          `own read of ${event.conversationId.slice(0, 12)} relayed by the leader: unread ${target.unreadCount ?? 0} -> ${next.unreadCount ?? 0}`
         );
       }
     }
@@ -144,12 +146,13 @@ export function routeTabReadEvent<C extends ReadConversation>(
       const target = conversations.get(key);
       if (!target || (target.unreadCount ?? 0) === count) continue;
       if (ctx.isReading(key)) {
-        Log.d(`[TAB-SYNC] salon ${key.slice(0, 16)} is being read here - relayed count ignored`);
+        Log.d('TAB-SYNC', `salon ${key.slice(0, 16)} is being read here - relayed count ignored`);
         continue;
       }
       if (watermarkFor(target.readWatermarks, me) > mark) {
         Log.d(
-          `[TAB-SYNC] salon ${key.slice(0, 16)} read here after the leader's count - relayed count ignored`
+          'TAB-SYNC',
+          `salon ${key.slice(0, 16)} read here after the leader's count - relayed count ignored`
         );
         continue;
       }

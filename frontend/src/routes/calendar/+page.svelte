@@ -501,7 +501,7 @@
     } catch (e) {
       // The right was checked before the call, so a refusal here is the transport or a rule that
       // moved - either way the picker is empty and the reason must not vanish with it.
-      Log.d('[calendar] link candidates failed', e);
+      Log.d('calendar', 'link candidates failed', e);
     }
   }
 

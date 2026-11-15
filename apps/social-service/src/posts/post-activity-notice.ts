@@ -1,6 +1,7 @@
 import type { EntityManager } from 'typeorm';
 import { ONE_PER_POST_TYPES } from './engagement-push-cap';
 import { NOTIFICATION_TYPE_CATEGORY, pushCategoryOffSql } from '../push/notification-category';
+import { bellRowVisibleSql } from './post-notifications.service';
 
 /**
  * ONE LIVE NOTIFICATION PER POST for the comments and reactions on the reader's own post (owner,
@@ -41,18 +42,28 @@ const ROW_CATEGORY_SQL = `(CASE type ${ONE_PER_POST_TYPES.map(
  * OTHER actors of the same type among them. An actor id equal to `$8` (anonymous, or an association
  * speaking - the id names nobody) counts per row.
  *
- * ONLY ROWS WHOSE PUSH THE READER RECEIVES COUNT as "the post has an unread notification": with
- * "Commentaires" off, the comments' rows are written but never pushed, so they must not silence the
- * reactions the reader asked for - a prior row whose category is off is not a notification the
- * device shows (review of #3579).
+ * ONLY ROWS THE READER SEES COUNT as "the post has an unread notification", by the two predicates
+ * that decide what the reader is shown:
+ * - the push: with "Commentaires" off, the comments' rows are written but never pushed, so they must
+ *   not silence the reactions the reader asked for (`pushCategoryOffSql`, review of #3579);
+ * - the BELL: a row `bellRowVisibleSql` hides (a comment hidden by moderation, a post the reader no
+ *   longer sees, comments withheld from them) is not in the bell, so the client's unread badge - the
+ *   count of the rows the bell returned - does not count it either; counting it here made the next
+ *   comment update silently over a bell that showed nothing unread. THE SAME FUNCTION the bell's
+ *   page applies (`bellPageQuery`), never a copy.
+ *
+ * A FUNCTION, not a constant: `post-notifications.service` imports this module, so the predicate is
+ * read from it at call time, never at load.
  *
  * `$1` recipient, `$2` post, `$3` type, `$4` actor id, `$5` actor name, `$6` text, `$7` comment id,
  * `$8` the anonymous actor id, `$9` the collapsed types.
  */
-export const POST_ACTIVITY_WRITE_SQL = `WITH prior AS (
-  SELECT id, type, "actorId" FROM post_notifications
-   WHERE "recipientId" = $1 AND "postId" = $2 AND NOT read AND type = ANY($9::varchar[])
+export function postActivityWriteSql(): string {
+  return `WITH prior AS (
+  SELECT pn.id, pn.type, pn."actorId" FROM post_notifications pn
+   WHERE pn."recipientId" = $1 AND pn."postId" = $2 AND NOT pn.read AND pn.type = ANY($9::varchar[])
      AND NOT ${pushCategoryOffSql('$1::varchar', ROW_CATEGORY_SQL)}
+     AND ${bellRowVisibleSql('pn')}
 ), written AS (
   INSERT INTO post_notifications ("recipientId", type, "postId", "actorId", "actorName", text, "commentId")
   VALUES ($1, $3, $2, $4, $5, $6, $7)
@@ -63,6 +74,7 @@ SELECT (SELECT count(*) FROM prior) = 0 AS alert,
           FROM prior
          WHERE type = $3 AND ("actorId" <> $4 OR "actorId" = $8))::int AS others,
        (SELECT id FROM written) AS id`;
+}
 
 /** One comment or reaction row about to be written for the post's author. */
 export interface PostActivityRow {
@@ -93,7 +105,7 @@ export async function writePostActivityRow(
 ): Promise<PostActivityVerdict> {
   return manager.transaction(async (tx) => {
     await tx.query(POST_ACTIVITY_LOCK_SQL, [row.recipientId]);
-    const rows: { alert: boolean; others: number }[] = await tx.query(POST_ACTIVITY_WRITE_SQL, [
+    const rows: { alert: boolean; others: number }[] = await tx.query(postActivityWriteSql(), [
       row.recipientId,
       row.postId,
       row.type,
