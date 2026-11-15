@@ -3377,9 +3377,7 @@ of the screen - [section 38](#a-tap-that-drifts-is-not-a-swipe-and-60px-could-no
 a start on the header (`data-swipe-nav-ignore`), and any swipe while a modal is open (the
 overlay-stack depth - a composer left open from an earlier session refused two cells here).
 
-**iPhone, by code only (not measured):** WebKit has no slop suppression, so its first `touchmove`
-arrives at 1-2 px and the 12 px lock is reached with every move still `cancelable` until UIKit's
-own pan recognises - whether that happens before 12 px is not known, so class A is unproven there.
+**iPhone 12, MEASURED 2026-11-15 (TestFlight `1.6.12-alpha.2`, WDA touch sequences on `/posts`):** class A does not occur. 15 of 15 slow starts (the first 6 px over 900 ms, the rest over 300 ms) from x = 20, 40, 60, 100 and 200 at y = 300, 520 and 700 reached the camera, and so did 9 of 9 plain sweeps of 230 px over 300, 1200 and 2500 ms from x = 20, 60 and 200; a vertical stroke on the same page, as the control, did not open it. The earlier "by code only" reading (WebKit has no slop suppression, the first `touchmove` arrives at 1-2 px) held. A WDA stroke is a synthetic touch, not a thumb: a human slow swipe by thumb stays on the owner's list.
 Class B has no iOS twin on the left (the iOS back swipe is the app's own, `swipeBack`, and only in
 a conversation).
 
