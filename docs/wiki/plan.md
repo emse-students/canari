@@ -45,6 +45,7 @@ earliest version, as a checklist.
 - [The owner's decisions of 2026-11-11](backlog.d/owner-decisions-of-2026-11-11.md)
 - [The owner's decisions of 2026-11-14](backlog.d/owner-decisions-of-2026-11-14.md)
 - [The background Welcome's warm-process refusal: two native changes](backlog.d/p3-the-background-welcome-s-warm-process-refusal-its-rate-its-wasted-round-trip.md)
+- [A send into a group that admits ten of alpha's devices answered `400` nine times on `/api/mls/send`](backlog.d/p3-a-send-into-a-group-admitting-ten-stale-devices-answers-400-nine-times.md)
 
 **P2 - correctness**
 
@@ -123,7 +124,6 @@ earliest version, as a checklist.
 - [ ] [a salon carries read receipts, seen in a real community](backlog.d/reading-owed-a-salon-carries-read-receipts.md)
 - [ ] [follow suggestions and Suivre, WP-2, WP-5, WP-6, WP-7](backlog.d/reading-owed-follow-suggestions-and-suivre-wp-2-wp-5-wp-6-wp-7.md)
 - [ ] [openings for followers, WP-4](backlog.d/reading-owed-openings-for-followers-wp-4.md)
-- [ ] [the bell, WP-3 (#3156, first stable `v1.6.8`, migration 143 approved; engagement)](backlog.d/reading-owed-the-bell-wp-3-3156-first-stable-v1-6-8-migration-143-approved.md)
 - [ ] [the checkpoint every commit awaits under the MLS lock before its first request](backlog.d/reading-owed-the-checkpoint-every-commit-awaits-under-the-mls-lock-before-its.md)
 - [ ] [the push sentences are worded in Rust from the app language and a voice note is announced as one](backlog.d/reading-owed-the-push-sentences-are-worded-in-rust-from-the-app-language-and-a.md)
 
