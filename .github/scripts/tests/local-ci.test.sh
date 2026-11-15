@@ -256,7 +256,7 @@ scope_push() { # <message>: commit what is staged, and print the dry-run push pl
   (cd "$s" && printf 'refs/heads/feature %s refs/heads/feature %s\n' "$(git rev-parse HEAD)" "$ZERO" |
     LOCAL_CI_DRY_RUN=1 bash .github/scripts/local-ci.sh push origin 2>&1) || true
 }
-# shellcheck disable=SC2329 # called through `check`
+# shellcheck disable=SC2317,SC2329 # called through `check` (0.10 names it SC2317, 0.11 SC2329)
 planned() { grep -F "PLAN $1:" <<<"$2" >/dev/null; }
 echo "# Changed" >>"$s/docs/wiki/page.md"
 git -C "$s" add docs/wiki/page.md
