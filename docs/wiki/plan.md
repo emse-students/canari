@@ -202,7 +202,6 @@ earliest version, as a checklist.
 - [P3 - the identity provider's PostgreSQL pin moves by hand, in its own window](backlog.d/the-identity-providers-postgres-pin-moves-by-hand.md)
 - [P3 - the conversation rises with the keyboard in one block; Android Messages rises with it frame by frame (owner, 2026-11-14) - a study, not built](backlog.d/keyboard-motion-like-android-messages.md)
 - [P3 - Minesweeper: the first dig's generation blocks the main thread (2026-11-14)](backlog.d/p3-minesweeper-generation-off-the-main-thread.md)
-- [P3 - Path parameters are declared in chat-delivery too (2026-11-14)](backlog.d/p3-path-parameters-are-declared-in-chat-delivery-too.md)
 
 ## 1.9.0
 

@@ -49,8 +49,10 @@ import {
   writePendingSeats,
   type DepartureScope,
 } from '../utils/group-membership';
+import { RouteParams } from '../common/route-params';
 
 /** Device-group membership management: pending invitations, status updates, kick-stale. */
+@RouteParams({ groupId: 'uuid', token: 'opaque', userId: 'opaque', deviceId: 'opaque' })
 @Controller()
 export class InvitationsController {
   private readonly logger = new Logger(InvitationsController.name);
