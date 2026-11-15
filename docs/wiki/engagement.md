@@ -233,7 +233,11 @@ switches still silence it in one gesture. Principle 1 is untouched: the push car
    the lock: exactly one alerts. **Only a row whose push the reader receives counts** (review of
    #3579): a prior row whose category is switched off (`pushCategoryOffSql`, the switch chat-delivery
    applies) was never pushed, so with "Commentaires" off the comments' rows do not make a reaction
-   quiet. The other writes that remove an unread row (a comment or a post deleted, a block, the GC)
+   quiet. **And only a row the BELL shows**: the statement applies `bellRowShownSql` (the
+   bell page's own predicate, one implementation, read at call time because the service imports the
+   module) to the prior rows, so a comment hidden by moderation, or on a post the reader no longer sees,
+   never silences the next one. The client's unread badge counts the rows the bell returned
+   (`postNotifStore`), so it already agrees; the IT builds the bell's tables for this. The other writes that remove an unread row (a comment or a post deleted, a block, the GC)
    do not take the lock: racing one, a comment is quiet against a row about to vanish, which only
    means it replaces a notification that already rang.
 4. **The notification is updated in place by ONE identity per post on every platform**, carried as
