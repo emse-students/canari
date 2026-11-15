@@ -73,7 +73,7 @@ the four values actually observed.
 If commits stop re-staging, read it back before anything else:
 
 ```sh
-git config core.hooksPath      # must print .husky and nothing else
+git config core.hooksPath      # .husky; .husky/_ while an older branch ran the last bun install
 git config core.hooksPath .husky
 ```
 

@@ -3461,14 +3461,15 @@ without it makes git skip the hook silently. **`core.hooksPath` is now `.husky`,
 directory itself** - `pre-commit` and `pre-push` are committed with mode 100755 and git calls them
 directly, so every worktree of the clone has them. `frontend/scripts/install-husky.js` (run by the
 frontend `bun install`) sets and asserts that value; it no longer runs the husky binary.
-`husky-hookspath.test.mjs` asserts the value and the tracked modes. **And both tiers refuse to run
-unless `core.hooksPath` is exactly `.husky`** (`assert_hooks_path` in `local-ci.sh`): the same day
-the shared value was found UNSET (no hook ran in any worktree) and then `.husky/_` again, written by
-an older branch's install. A hook that runs is the only place able to see it, so it refuses with
-`git config core.hooksPath .husky` - safe for every branch, since an older branch's
-`.husky/pre-commit` runs from there too. `local-ci.test.sh` refuses both wrong values at both tiers.
-Until this merges, an older branch's `bun install` writes `.husky/_` back; after it, every install
-writes `.husky`.
+`husky-hookspath.test.mjs` asserts the value and the tracked modes. **And both tiers refuse any
+`core.hooksPath` but `.husky` or `.husky/_`** (`assert_hooks_path` in `local-ci.sh`): the same day
+the shared value was found UNSET (no hook ran in any worktree). `.husky/_` is what an older
+branch's `bun install` writes, and stays the expected state until every branch carries the new
+install script, so it is SAID (one line naming what a fresh worktree loses), not refused - the hook
+running at all proves this checkout has the wrappers. **The shared config is never written by hand
+or by a hook**: it follows the install script of whatever branch ran `bun install` last, so it
+converges on `.husky` as branches take main. `local-ci.test.sh` refuses an unset and an absolute
+value at both tiers, and accepts `.husky/_` with its line.
 
 A hook that runs but lacks its toolchain FAILS, naming what to install: `bun` not on PATH, a
 package's `node_modules` missing (with its `bun install` line), `cargo` for a staged crate, and at

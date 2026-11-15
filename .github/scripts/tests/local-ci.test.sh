@@ -311,18 +311,27 @@ check "local-ci.sh and hooks-path.js name the same hooks path ($sh_path)" \
   "local-ci.sh says '$sh_path', hooks-path.js says '$js_path'" test -n "$sh_path" -a "$sh_path" = "$js_path"
 h="$scratch/hooks"
 make_repo "$h"
-for wrong in .husky/_ ""; do
+for wrong in /abs/hooks ""; do
   if [ -n "$wrong" ]; then git -C "$h" config core.hooksPath "$wrong"; else git -C "$h" config --unset core.hooksPath; fi
   rc=0
   out=$(cd "$h" && echo x >>shared.txt && git add shared.txt && LOCAL_CI_DRY_RUN=1 bash .github/scripts/local-ci.sh commit 2>&1) || rc=$?
   check "commit refuses core.hooksPath='${wrong:-<unset>}'" "commit ran with core.hooksPath='${wrong:-<unset>}'" \
-    test "$rc" -ne 0 -a -n "$(grep -F 'git config core.hooksPath .husky' <<<"$out" || true)"
+    test "$rc" -ne 0 -a -n "$(grep -F 'Run bun install in frontend/' <<<"$out" || true)"
   rc=0
   out=$(cd "$h" && git reset -q --hard && printf 'refs/heads/main %s refs/heads/main %s\n' "$(git rev-parse HEAD)" "$ZERO" |
     LOCAL_CI_DRY_RUN=1 bash .github/scripts/local-ci.sh push origin 2>&1) || rc=$?
   check "push refuses core.hooksPath='${wrong:-<unset>}'" "push ran with core.hooksPath='${wrong:-<unset>}'" \
-    test "$rc" -ne 0 -a -n "$(grep -F 'git config core.hooksPath .husky' <<<"$out" || true)"
+    test "$rc" -ne 0 -a -n "$(grep -F 'Run bun install in frontend/' <<<"$out" || true)"
 done
+# An older branch's install writes `.husky/_` into the shared config: said, not refused.
+git -C "$h" config core.hooksPath .husky/_
+git -C "$h" reset -q --hard
+rc=0
+out=$(cd "$h" && echo y >>shared.txt && git add shared.txt && LOCAL_CI_DRY_RUN=1 bash .github/scripts/local-ci.sh commit 2>&1) || rc=$?
+check "core.hooksPath='.husky/_' (an older install) runs the commit tier, saying so" \
+  "core.hooksPath='.husky/_' was refused or not named (rc=$rc): $out" \
+  test "$rc" -eq 0 -a -n "$(grep -F 'written by an older branch' <<<"$out" || true)"
+git -C "$h" reset -q --hard
 
 # The commit tier lints only the staged scripts, and only those of the set CI lints.
 narrowed=$(make -s -n -C "$repo_root" lint-ci-scripts FILES=".github/scripts/local-ci.sh frontend/not-linted.sh")

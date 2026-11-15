@@ -91,7 +91,7 @@ refuse() {
 # `core.hooksPath` lives in the git directory every worktree shares. Unset, or `.husky/_` (husky's
 # generated wrappers, absent from a fresh worktree), it disarms the hooks of some checkouts with no
 # message at all - both were found on this workstation that day. A hook that runs is the one place
-# that can see it, so both tiers refuse until it is fixed. The value is HOOKS_PATH in
+# that can see it, so both tiers refuse a value that is neither of the two below. The value is HOOKS_PATH in
 # frontend/scripts/hooks-path.js; local-ci.test.sh asserts the two agree.
 # THE SHELLCHECK CI PINS, OR NONE. Versions name findings differently (0.11's SC2329 is 0.10's
 # SC2317), so a local pass at another version proves nothing: #3623 went red in CI that way.
@@ -104,11 +104,23 @@ shellcheck_version_problem() {
 }
 
 HOOKS_PATH=.husky
+# The value a branch without this script's install writes, on every `bun install` (husky's wrappers,
+# which call the same tracked hooks where they exist). Shared by every worktree, so it is left to
+# the install script of whatever branch ran last - never written here - and said, not refused:
+# until every branch carries the new install, it is the expected state, and the hook running at all
+# proves this checkout has the wrappers.
+HUSKY_WRAPPERS_PATH=.husky/_
 assert_hooks_path() {
   local value
   value="$(git config core.hooksPath || true)"
-  [ "$value" = "$HOOKS_PATH" ] && return 0
-  refuse "core.hooksPath is '${value:-<unset>}', not '$HOOKS_PATH' (the tracked hooks). Every worktree shares it, and any other value leaves some checkout with no hook and no message. Fix it once: git config core.hooksPath $HOOKS_PATH  - an older branch's .husky/pre-commit runs from there too."
+  case "$value" in
+    "$HOOKS_PATH") return 0 ;;
+    "$HUSKY_WRAPPERS_PATH")
+      say "local-ci: core.hooksPath is $HUSKY_WRAPPERS_PATH (written by an older branch's bun install) - a fresh worktree runs no hook until a bun install on a branch with frontend/scripts/install-husky.js writes $HOOKS_PATH"
+      return 0
+      ;;
+  esac
+  refuse "core.hooksPath is '${value:-<unset>}', neither '$HOOKS_PATH' (the tracked hooks) nor '$HUSKY_WRAPPERS_PATH' (an older install's wrappers). Every worktree shares it, so any other value leaves some checkout with no hook and no message. Run bun install in frontend/ - its install script writes '$HOOKS_PATH' - rather than editing the shared config by hand."
 }
 
 # ── Running one check ────────────────────────────────────────────────────────────────────────────
