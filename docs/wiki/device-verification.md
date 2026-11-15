@@ -3652,3 +3652,15 @@ About 14:12-14:30, dev `1.6.12-alpha.2`. The owner held both phones and the lead
 | Found | note | `Refresh refused for the NATIVE app: no canari_refresh cookie ... client=1.7.0-alpha.1` at 17:12Z and 17:27Z on dev, from an Android 16 device that was not this sitting's (the Mi was installed at 18:18Z); one device without its refresh header after the update, not explained |
 
 Dev data written: two bookings of `alpha` (cancelled), the group "RD1700 stale add" (alpha, delta, beta, one message-less group), both ids in the harness folder's `WRITTEN-IDS.txt`. End state: the Mi on `1.7.0-alpha.1`, logged in, on the feed, auto-rotate back to ON.
+
+## The web seat and production readings of 2026-11-15 on `1.7.0-alpha.1`
+
+A sitting with NEITHER bench phone (both were taken by other sittings): one web seat of the rig on dev `1.7.0-alpha.1` (build `dev.bacebc1`), and production through the read-only form (`default_transaction_read_only` forced on and checked, aggregates only). Evidence and queries stay in the harness state folder (`sitting-1700a1-web/`).
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| The pre-live screen says a suspension before Start ([entry](backlog.d/reading-owed-the-pre-live-screen-says-a-suspension-before-start.md)) | **`PASS` on a web seat, staging PARTIAL** | A rig account with two cuts on record (two fixture rows, deleted afterwards - not two cuts through `/admin/moderation`): the sheet said "Vous ne pouvez plus lancer de live jusqu'au 14 décembre." and in English "You can no longer start a live until December 14.", Start greyed, `[LIVE] standing` logged and no `[LIVE] start`; the control before and after (no rows) offered Start. The phone WebView read is left. |
+| Native devices with no push token, production re-read ([entry](backlog.d/reading-owed-a-device-with-no-push-token-now-says-so.md)) | **FAIL, filed as a P1** | 0 of 209 active native devices on a build older than `1.6.12` hold no `push_token` row; **25 of 65 on `1.6.12` do** (Android 14 of 43, iOS 11 of 22), none inside the four-minute ladder. Cause not established ([defect](backlog.d/p1-a-third-of-the-1-6-12-native-devices-hold-no-push-token-row.md)). |
+| The stricter script policy, the web gestures, re-read ([entry](backlog.d/reading-owed-the-stricter-script-policy-and-the-ios-16-minimum.md)) | **`PASS` (web)** | Image, video, PDF, GIF picker and trombinoscope export: no violation beyond the edge's injected script. |
+
+**Not taken, and why:** the pseudos remainder, the named readers and the live-title carousel need a second and third signed-in account, and the rig's two spare seats (`W6`, `W7`) hold a vault locked by a PIN older than the file's (the product refused both; recovering would reset the account's PIN for every device), so they cannot be used without re-enrolling a device. LEAF-REFRESH-1..4 still have no runner.
