@@ -18,3 +18,11 @@ The owner decided on 2026-11-15 that what a pull request checks is checked at co
    then one `ConnectionRefused` in 44502 POSTs across 450 reloads - while CI's Linux engine is
    green. Whether the second is Docker Desktop's network or a gap a Linux run can also hit is
    unknown; the test runs again here the day that is answered.
+   **The first of the two is a defect of the test, not of the machine.** The DNS-name control
+   (`v3m -> v3d`) ASSERTS a failure, and gets one only when a call is queued on the old replica as
+   its listener closes - ordered by a `sleep 2` before the release and the caller's fixed loop under
+   Bun's 30 s address cache, nothing event-ordered. A quiet machine misses it as easily as a busy
+   one, and one CI run already saw no failure (2026-11-13). The fix: make the witness event-ordered -
+   a slow endpoint in `rolling-fixture/api.mjs` holds one call open on the old replica, the release
+   then stops that replica, so the reset is certain. The failure line now prints the bad statuses and
+   the call count. The second failure (one `ConnectionRefused` in 44502) is read after that.
