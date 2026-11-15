@@ -759,15 +759,16 @@
               ? m.live_start_withdrawn()
               : suspendedText(broadcast.standing?.suspendedUntil ?? null)}
           </p>
-          <button
-            type="button"
-            class="{pill} shrink-0 bg-white/15 hover:bg-white/25"
+          <Button
+            variant="secondary"
+            size="compact"
+            class="shrink-0"
             onclick={() => void broadcast.loadLimits()}
             data-live-standing-retry
           >
             <RefreshCcw size={16} strokeWidth={2.5} />
             {m.live_retry()}
-          </button>
+          </Button>
         </div>
       {/if}
 
