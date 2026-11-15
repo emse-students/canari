@@ -66,6 +66,15 @@ describe('AttachmentCard arrow', () => {
     for (const button of buttons) expect(button.querySelector('div, p')).toBeNull();
   });
 
+  it('clamps the title to two lines: no display utility overrides the clamp box', () => {
+    const target = render({ href: '/x', title: 'A long title' });
+    const title = [...target.querySelectorAll('span')].find(
+      (s) => s.textContent?.trim() === 'A long title'
+    )!;
+    expect(title.className).toContain('line-clamp-2');
+    expect(title.className).not.toMatch(/(^|\s)(block|flex|inline|grid)(\s|$)/);
+  });
+
   it('is a link whenever it has an address, even with a tap handler of its own', () => {
     const target = render({ href: '/forms/1', onclick: () => {} });
     expect(target.querySelector('button')).toBeNull();

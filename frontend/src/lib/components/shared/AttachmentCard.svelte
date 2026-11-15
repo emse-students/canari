@@ -168,7 +168,7 @@
       </span>
     {/if}
     <span
-      class="text-text-main group-hover/att:text-accent-text block {hero
+      class="text-text-main group-hover/att:text-accent-text {hero
         ? 'text-base'
         : 'text-sm'} line-clamp-2 leading-snug font-bold transition-colors duration-300"
     >
