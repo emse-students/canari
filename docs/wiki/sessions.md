@@ -162,7 +162,7 @@ Two rules come out of it, and they generalise past Android:
   2026-11-15, see [two ways that target was still lost](#two-ways-that-target-was-still-lost-mi-9t-2026-11-15-2-of-4-taps-signed-in-to-the-wrong-page)). The general form: a
   one-shot announcement and a late subscriber are a race, and a fallback that "covers" it is only
   equivalent if it does everything the real handler does - which it never does, or it would BE the
-  handler. So the announcement is queued, and the one handler decides.
+  handler. So the announcement is queued, and the shell's handler reacts.
 
 Both halves were verified on an Android device on 2026-08-06, against production. Persistence: two
 rounds of rotate -> `am force-stop` -> wait past 60 s -> relaunch, and in both the row's
@@ -612,11 +612,12 @@ redirect would have built survives; the root and the sign-in pages stay bare. So
   registers `setSessionExpiredHandler`. `notifySessionExpired` used to `goto('/login')` bare as a
   fallback, and the late handler replayed from a location that was already `/login`, so `returnTo`
   was gone. Now the verdict is QUEUED with the page in flight, captured AT the verdict
-  (`SessionExpiredTarget` in `stores/auth.ts`), and the handler - the ONE place that decides the login
-  redirect - is handed it on registration (`navigating.to`, else the verdict's target, else the
+  (`SessionExpiredTarget` in `stores/auth.ts`), and the app shell's handler (`handleSessionExpired`, the
+  only reaction that also clears auth and the PIN modal) is handed it on registration (`navigating.to`, else the verdict's target, else the
   location). The fallback is deleted: a fallback is a signal, never a path. The two other bare
   `/login` jumps of the session composables (no `onSessionExpired` wired, a socket reconnect that met
-  a dead session) go through `gotoLoginAfterExpiry` and carry the target too. Tests:
+  a dead session) go through `gotoLoginAfterExpiry` (`navigation/gotoLoginAfterExpiry.ts`, tested) and carry the
+  target too; both it and the handler build the path with `loginAfterSessionExpiry`. Tests:
   `auth.test.ts` ("a verdict that arrives before its handler").
 - **A login page already mounted.** A second redirect to `/login?returnTo=<new>` reuses the mounted
   `LoginPage`, which read `returnTo` once in `onMount` and signed in to the PREVIOUS page. It is now
