@@ -28,6 +28,7 @@ a job in this file, not a fifth visible workflow). Each spec is gated on `SOCIAL
 and reports SKIPPED without it - and until that day nothing set it, so every one was skipped on
 every pull request and `CI passed` was green for the reason that they had not run. The day the job
 was written, the migration 082 spec turned out to have failed on EVERY run since its merge (#1913).
+**Reproduce them locally on `postgres:18-alpine`, never 16**: CI (`ci.yml`) and both estates run PostgreSQL 18 ([databases](infrastructure/databases.md)), and some SQL uses 18-only syntax (`campus-trend.ts` reads `RETURNING OLD/NEW`), so on 16 `campus-trend.integration.spec.ts` fails 27 tests with `missing FROM-clause entry for table "new"` while CI and production are fine.
 The job runs them in band against production's PostgreSQL, pinned by the digest the compose files
 carry, and its last step FAILS unless jest ran as many suites as there are files on disk and skipped
 none: a jest run that selects nothing is no longer a pass (the `test` scripts lost `--passWithNoTests` in WP-T2), but a gate that selects by name still needs its own count of what ran.
