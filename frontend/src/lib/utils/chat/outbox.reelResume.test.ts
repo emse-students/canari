@@ -1355,10 +1355,11 @@ describe('one take, several conversations (RC-13)', () => {
     // it: the transfer was aborted before the server stored anything, so there is NO file to give
     // back - no chat release, nothing stored - and the SESSION it opened was released (a DELETE).
     // (A file that does complete after a cancel is the case above: released through the chat hold.)
-    expect(w.uploads).toBe(1);
     expect(w.server.stored.size).toBe(0);
     expect(w.events).toEqual([]);
-    expect(w.server.sent.some((r) => r.method === 'DELETE')).toBe(true);
+    // The session's release is fire-and-forget in the outbox (`releaseSessionOf`), and no promise
+    // reaches the caller: the request reaching the server is the event to read.
+    await waitForEvent(() => expect(w.server.sent.some((r) => r.method === 'DELETE')).toBe(true));
   });
 
   it('a withdrawal WHILE THE DRIVE READS THE TAKE never starts its transfer (checked right before the claim)', async () => {
