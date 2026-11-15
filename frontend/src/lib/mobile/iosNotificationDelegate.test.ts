@@ -269,7 +269,7 @@ describe('a suspended page gets the time to own a reply (review of #2843, A1)', 
     expect(h).not.toMatch(/dispatch_after|NSTimer|asyncAfter/);
     const release = body('static void CanariReleaseQuickReplyHold(');
     expect(release).toContain('CanariTellQuickReplyOutcome(outcome);');
-    expect(release).toContain('hold.completion();');
+    expect(release).not.toContain('hold.completion');
     expect(release).toContain('CanariEndQuickReplyTask(hold);');
     expect(body('static void CanariEndQuickReplyTaskOnMain(')).toContain('endBackgroundTask:task');
   });
@@ -464,6 +464,25 @@ describe('a notification response is completed on the main thread (iPhone 12, 1.
       expect(branch, id).toContain('dispatch_get_global_queue');
       expect(branch, id).toMatch(/\bfinish[();]/);
     }
+  });
+
+  it('completes a held reply on main, BEFORE its task ends, in the step the expiry runs too', () => {
+    // A settlement off main used to call the completion there and queue only the end: an expiry
+    // running first ended the task with the response outstanding (review of #3583).
+    const onMain = body('static void CanariEndQuickReplyTaskOnMain(');
+    const taken = onMain.indexOf('hold.completion = nil;');
+    expect(taken).toBeGreaterThan(-1);
+    expect(onMain.indexOf('completion();')).toBeGreaterThan(taken);
+    expect(onMain.indexOf('endBackgroundTask:task')).toBeGreaterThan(
+      onMain.indexOf('completion();')
+    );
+  });
+
+  it('completes mark read only after the notification removal, on main', () => {
+    const action = body('static void CanariHandleMarkReadAction(');
+    expect(action).toContain('dispatch_group_leave(removal);');
+    expect(action).not.toContain('CanariCancelConversationNotification(groupId, nil)');
+    expect(action).toContain('dispatch_group_notify(removal, dispatch_get_main_queue(), done);');
   });
 
   it('hops to the main queue in the wrapper, with no timer', () => {

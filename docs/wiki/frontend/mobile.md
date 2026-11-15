@@ -1095,7 +1095,12 @@ Notification Center over an open app was lost. The fix:
   other `completionHandler` in `didReceiveNotificationResponse` and `willPresentNotification` is
   called synchronously in the callback iOS delivers on main. `iosNotificationDelegate.test.ts` holds
   it on the source: no block that can run off main names the raw handler, every registered action has
-  a branch finishing through the wrapper, and the wrapper hops with no timer. **Code fixed, not yet
+  a branch finishing through the wrapper, and the wrapper hops with no timer. Two orderings were
+  tightened in review: a held reply's completion is now taken and run ON MAIN in the same step that
+  ends its background task (`CanariEndQuickReplyTaskOnMain`), so an expiry racing a settlement off
+  main can no longer end the task with the response outstanding; and mark read completes only once
+  the conversation's notification removal has run (`CanariCancelConversationNotification`'s `done`,
+  joined with the watermark drain by a dispatch group), never before it. **Code fixed, not yet
   shipped: the reading is the same gesture on the FIRST pre-release carrying it - no crash, no
   "Canari Crashed" prompt at the next open, and the read mark observed on the peer.**
 
