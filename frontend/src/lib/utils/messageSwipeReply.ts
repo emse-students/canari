@@ -1,5 +1,14 @@
-/** Horizontal drag (px) before locking a reply swipe vs vertical scroll. */
-export const REPLY_SWIPE_LOCK_PX = 10;
+/**
+ * Drag (px) on either axis before the stroke is classified, horizontal or vertical, ONCE.
+ *
+ * IT SITS UNDER THE ENGINES' TOUCH SLOP, NOT ABOVE IT (iPhone 12, 2026-11-15). The first `touchmove`
+ * that reaches the page decides who owns the stroke: left unclaimed, WebKit applies the vertical
+ * component of a diagonal to the thread even under `touch-action: pan-y`, and from then on the
+ * stroke is the scroller's. At 10 px, a thumb's 12-step stroke (110 px across, first move about
+ * 9 px) was still `pending` at that first move, so nothing claimed it. 8 is the value the tab swipe
+ * settled on for the same reason (`GESTURE_LOCK_PX`, Mi 9T, 2026-10-21).
+ */
+export const REPLY_SWIPE_LOCK_PX = 8;
 
 /** Minimum horizontal travel toward the thread center to trigger reply. */
 export const REPLY_SWIPE_TRIGGER_PX = 56;

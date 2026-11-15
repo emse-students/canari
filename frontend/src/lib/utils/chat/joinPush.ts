@@ -28,10 +28,14 @@
  *
  * **ONLINE ONLY, AND SAID SO.** The push is an addressed frame, and an addressed frame is
  * transport-only: the server refuses it for a device that is not connected when it leaves
- * (`addressed_unsupported`). A newcomer offline at the delivery of its Welcome therefore receives no
- * push, and nothing here retries it - the ledger entry is written before the push starts. That outcome
- * is returned by `sendFullHistoryBundle` and reported here at warn (`[JOIN_PUSH] NOT DELIVERED`), so
- * its rate can be counted; the deterministic fix (the newcomer asks for the register on its own
+ * (`addressed_unsupported`). **It is not sent to learn that**: the server's answer to the Welcome
+ * carries whether it can address the device (`DeliveredWelcome.addressability`, read by the same
+ * script that decides the send), and a device answered `offline` or `undeclared` is sent nothing
+ * (2026-11-15: an Add of ten devices, eight of them stale, cost eight `400`s). A newcomer offline at
+ * the delivery of its Welcome therefore receives no push, and nothing here retries it - the ledger
+ * entry is written before the push starts. That outcome, whether read from the Welcome's answer or
+ * returned by `sendFullHistoryBundle` for a device that left in between, is reported here at warn
+ * (`[JOIN_PUSH] NOT DELIVERED`), so its rate can be counted; the deterministic fix (the newcomer asks for the register on its own
  * reconciliation) is designed in `docs/wiki/backlog.d/p2-an-offline-newcomer-receives-no-join-push.md`.
  */
 import type { IStorage } from '$lib/db';
@@ -149,7 +153,20 @@ export async function pushForDeliveredWelcome(
     );
     return;
   }
-  deps.log(`[JOIN_PUSH] ${short}... join push -> ${userId}:${deviceId}`);
+  // THE SERVER SAID, WHEN IT ANSWERED THE WELCOME, WHETHER IT CAN ADDRESS THIS DEVICE - so a push
+  // it would refuse (`addressed_unsupported`) is not sent to learn that. The send's own check stays
+  // the authority for what changed since (a device that left between the two).
+  if (delivered.addressability === 'offline' || delivered.addressability === 'undeclared') {
+    // THE KNOWN LIMIT, COUNTED, exactly as when the send was refused: nothing retries - see the
+    // module docstring.
+    console.warn(
+      `[JOIN_PUSH] ${short}... NOT DELIVERED to ${userId}:${deviceId} - the server answered its Welcome ${delivered.addressability === 'offline' ? 'offline' : 'with a session that predates addressed answers'}, so no addressed push is sent; it gets no register until the newcomer-asks step ships`
+    );
+    return;
+  }
+  deps.log(
+    `[JOIN_PUSH] ${short}... join push -> ${userId}:${deviceId} (${delivered.addressability === 'addressable' ? 'addressable when its Welcome was answered' : 'its Welcome answer did not say whether it is addressable (a delivery service that predates the field, a verdict the server could not read, or a value this client does not know); the send decides'})`
+  );
   try {
     const outcome = await sendFullHistoryBundle(groupId, {
       storage,
@@ -159,10 +176,11 @@ export async function pushForDeliveredWelcome(
       to: digestIdentity(userId, deviceId),
     });
     if (outcome === 'unaddressable') {
-      // THE KNOWN LIMIT, COUNTED: the device was not connected (or a session of it predates
-      // addressed answers), and nothing retries - see the module docstring.
+      // THE KNOWN LIMIT, COUNTED: the send was refused although the Welcome's answer did not rule
+      // the device out - it left (or an older session of it connected) between the two reads, or the
+      // delivery service predates the answer's field. Nothing retries - see the module docstring.
       console.warn(
-        `[JOIN_PUSH] ${short}... NOT DELIVERED to ${userId}:${deviceId} - the server could not address it (offline at the push, or an older session); it gets no register until the newcomer-asks step ships`
+        `[JOIN_PUSH] ${short}... NOT DELIVERED to ${userId}:${deviceId} - the server could not address it at the push (${delivered.addressability === 'addressable' ? 'addressable when its Welcome was answered, gone since' : 'its Welcome answer did not say'}); it gets no register until the newcomer-asks step ships`
       );
     }
   } catch (e) {

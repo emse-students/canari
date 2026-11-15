@@ -14,3 +14,7 @@ target: 1.7.0
 - the contact search of "Nouvelle discussion" (a dropdown inside a dialog): the listbox reads z-index 202 over the dialog's 200 and the four names were tappable.
 
 **Left: the comment REPORT dialog over a viewer (the reel had no comment), a confirmation raised from a modal, the guided help over a quiet app and the toast over all of them, on the Mi 9T; and the whole iPhone half.**
+
+**iPhone 12 half, partly read 2026-11-15** (TestFlight `1.6.12-alpha.2`, dev, gamma): in a CanaReel viewer opened from the feed, the comment sheet opens over the viewer; the GIF picker opened from that sheet is above both and closing it leaves the sheet and the viewer as they were; the delete confirmation raised from the sheet covers the sheet; the share sheet opened from the viewer's Partager is above the viewer. **Not reached, left for the pre-release sitting:** the comment REPORT dialog (a reel with a comment by ANOTHER account on it: the bench reels carry none, and the reader cannot report their own), the message-actions sheet and an emoji picker over a reel (CanaReels in chats are not flipped yet), a dropdown inside a nested dialog, the guided help over a quiet app, and the toast over the stack.
+
+**Left, counting both sittings above:** the comment REPORT dialog over a viewer, a confirmation raised from a modal, the guided help over a quiet app and the toast over the stack, on both phones; on the iPhone, the message-actions sheet and an emoji picker over a reel, and a dropdown inside a nested dialog.

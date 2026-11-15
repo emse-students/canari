@@ -88,6 +88,7 @@
   } from '$lib/utils/messageSwipeReply';
   import { hasActiveTextSelection } from '$lib/utils/textSelection';
   import { isCoarsePointerDevice, onCoarsePointerChange } from '$lib/utils/pointerDevice';
+  import { claimTouchMove } from '$lib/utils/touchClaim';
 
   interface Props {
     /** The conversation's nickname scope ("Modifier les pseudos"): names drawn here are read in it. */
@@ -311,6 +312,11 @@
   let pointerStartY = $state(0);
   let swipeHandled = $state(false);
   let replyGesture = $state<ReplySwipeGestureState | null>(null);
+  /**
+   * The engine took this stroke (a touchmove was uncancelable): it gates the claim AND its log, so
+   * the bubble stops claiming and writes ONE line per stroke. Reset at every touch start.
+   */
+  let replyStrokeLost = false;
   let replyDragPx = $state(0);
 
   let envelope = $derived(parseEnvelope(content));
@@ -651,6 +657,7 @@
     pointerStartX = x;
     pointerStartY = y;
     swipeHandled = false;
+    replyStrokeLost = false;
     replyDragPx = 0;
 
     const pointerType = 'pointerType' in e ? e.pointerType : 'touch';
@@ -700,11 +707,34 @@
     }
 
     const { x, y } = pointerCoords(e);
+    const before = replyGesture.phase;
     const updated = updateReplySwipeGesture(replyGesture, x, y);
     replyGesture = updated;
+    if (before === 'pending' && updated.phase !== 'pending') {
+      Log.d(
+        'MESSAGE',
+        `reply swipe on ${messageId.slice(0, 8)} locked ${updated.phase} (dx ${Math.round(x - updated.startX)}, dy ${Math.round(y - updated.startY)})`
+      );
+    }
 
     if (updated.phase === 'horizontal') {
-      if ('touches' in e) e.stopPropagation();
+      if ('touches' in e) {
+        e.stopPropagation();
+        // THE STROKE IS CLAIMED, NOT HOPED FOR. `touch-action: pan-y` leaves the vertical axis to
+        // the engine, and WebKit applies a diagonal's vertical component to the thread unless the
+        // page cancels the move (iPhone 12, 2026-11-15: a 110 px stroke with 45 px of drift
+        // scrolled the thread 35 px and staged no reply). Chromium never needed it - its first
+        // direction decides - which is why Android kept replying without it. Cancelable until the
+        // engine has started a scroll; the lock is at 8 px so the first delivered move already
+        // claims.
+        if (!replyStrokeLost && !claimTouchMove(e)) {
+          replyStrokeLost = true;
+          Log.w(
+            'MESSAGE',
+            `reply swipe on ${messageId.slice(0, 8)} locked horizontal but its touchmove is not cancelable: the engine already owns the stroke`
+          );
+        }
+      }
       const dx = x - updated.startX;
       // `null` is an OUTWARD drag, which is no longer a gesture - the bubble simply does not move.
       replyDragPx = replySwipeDragOffset(dx, isOwn) ?? 0;

@@ -35,12 +35,16 @@ maybe('comment writes against PostgreSQL: none is lost to another', () => {
     (await client.query(`SELECT comments FROM posts WHERE id = $1`, [postId])).rows[0]
       .comments as StoredComment[];
 
-  /** Waits, by asking PostgreSQL and never a clock, until `n` backends are queued on a lock. */
+  /**
+   * Waits, by asking PostgreSQL and never a clock, until `n` sessions of THIS suite's pool (its
+   * `application_name`; the suites share one database) are queued on a lock.
+   */
   const queuedOnLock = async (n: number) => {
     for (let asked = 0; asked < 10_000; asked++) {
       const { rows } = await client.query(
         `SELECT count(*)::int AS n FROM pg_stat_activity
-          WHERE datname = current_database() AND wait_event_type = 'Lock'`
+          WHERE application_name = $1 AND wait_event_type = 'Lock'`,
+        [schema]
       );
       if ((rows[0].n as number) >= n) return;
     }
@@ -84,7 +88,8 @@ maybe('comment writes against PostgreSQL: none is lost to another', () => {
       url: URL,
       entities: [Post, ContentReport],
       synchronize: true,
-      extra: { options: `-c search_path=${schema},public`, max: 6 },
+      // Named after the suite's schema: a lock wait is looked for among THIS suite's sessions.
+      extra: { options: `-c search_path=${schema},public`, application_name: schema, max: 6 },
     });
     await ds.initialize();
     await client.query(`

@@ -971,6 +971,7 @@ impl MlsManager {
             let ledger_bytes = manager.app_ledgers_bytes();
             if ledger_bytes > crate::app_ledgers::APP_LEDGERS_BYTE_BUDGET {
                 log::error!(
+                    // log-safe: two byte counts, the ledgers' weight and its compile-time budget
                     "load_or_create: the app ledgers weigh {ledger_bytes}B, over their {}B budget - the seen-ledger bound is broken, and every checkpoint writes the excess",
                     crate::app_ledgers::APP_LEDGERS_BYTE_BUDGET
                 );

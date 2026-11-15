@@ -23,7 +23,10 @@ describe('the bottom safe area has one reader of env()', () => {
     });
     // The scan reads the tree it thinks it does: the definition is in it.
     const definition = files.find((f) => f.path === THE_DEFINITION);
-    expect(definition?.text).toContain('--safe-area-inset-bottom: env(safe-area-inset-bottom');
+    // The pin's unpinned twin is the one place env() is read (#3569: the overlay pins the public name).
+    expect(definition?.text).toContain(
+      '--safe-area-inset-bottom-unpinned: env(safe-area-inset-bottom'
+    );
     const offenders = files
       .filter((f) => f.path !== THE_DEFINITION)
       .filter((f) => /env\(\s*safe-area-inset-bottom/.test(withoutAnyComments(f.text)))

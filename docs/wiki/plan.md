@@ -45,7 +45,6 @@ earliest version, as a checklist.
 - [The owner's decisions of 2026-11-11](backlog.d/owner-decisions-of-2026-11-11.md)
 - [The owner's decisions of 2026-11-14](backlog.d/owner-decisions-of-2026-11-14.md)
 - [The background Welcome's warm-process refusal: two native changes](backlog.d/p3-the-background-welcome-s-warm-process-refusal-its-rate-its-wasted-round-trip.md)
-- [A send into a group that admits ten of alpha's devices answered `400` nine times on `/api/mls/send`](backlog.d/p3-a-send-into-a-group-admitting-ten-stale-devices-answers-400-nine-times.md)
 
 **P2 - correctness**
 
@@ -67,6 +66,7 @@ earliest version, as a checklist.
 - [P2 - the retention durations a sweep applies are not yet admin settings](backlog.d/retention-durations-not-yet-settings.md)
 - [P2 - what the keyboard readings of 2026-11-14 filed: a photo DM still jumps to older messages, a short thread loads history on close, a 12 px step](backlog.d/what-the-keyboard-readings-of-2026-11-14-filed.md)
 - [P2 - no gate proves that an older build reads, and writes back, the MLS state this build writes](backlog.d/p2-no-gate-proves-an-older-build-reads-the-mls-state-this-build-writes.md)
+- [P2 - the first message posted in a salon right after an in-session join raised no unread badge on the iPhone](backlog.d/p2-the-first-message-after-an-in-session-join-raised-no-badge-on-the-iphone.md)
 - [P2 - the reply swipe along a thumb's arc does nothing on WebKit: the thread scrolls instead](backlog.d/p2-the-reply-swipe-along-a-thumb-s-arc-does-nothing-on-webkit.md)
 
 **P3 - hygiene**
@@ -83,6 +83,7 @@ earliest version, as a checklist.
 - [P3 - "server already unreachable" is logged once per request instead of once per transition (1.6.11 logs, 2026-11-14)](backlog.d/p3-server-already-unreachable-is-logged-per-request.md)
 - [P3 - EXIT-FORTIFY: closing the app on the Mi 9T logs `FORTIFY: pthread_mutex_lock called on a destroyed mutex` from the render thread](backlog.d/reading-owed-exit-fortify-closing-the-app-on-the-mi-9t-logged-fortify-pthread.md)
 - [P3 - a republication-request push tapped on the Mi 9T landed on the feed, not the request inbox (found by the push reading, 2026-11-15)](backlog.d/p3-a-republication-request-push-tapped-on-the-mi-9t-landed-on-the-feed-2026-11-15.md)
+- [P3 - the Emojis preference row squeezes its description into a five-word column on a phone](backlog.d/p3-the-emojis-preference-row-squeezes-its-description-on-a-phone.md)
 - [P3 - the gated `video-switch` and `video-off-on` call rows read 19.6-25 fps against a threshold of 27](backlog.d/p3-the-gated-video-switch-and-video-off-on-rig-rows-read-19-6-25-fps-threshold-27.md)
 
 ### Readings owed
@@ -94,11 +95,10 @@ earliest version, as a checklist.
 - [ ] [a notification tap to a usable conversation: F1](backlog.d/reading-owed-a-notification-tap-to-a-usable-conversation-f1.md)
 - [ ] [a group joined in the background before its row existed: the "already held" Welcome writes and announces the row, the...](backlog.d/reading-owed-a-group-joined-in-the-background-before-its-row-existed-the.md)
 - [ ] [a reply swipe along a thumb's arc](backlog.d/reading-owed-a-reply-swipe-along-a-thumb-s-arc.md)
+- [ ] [every menu is a fixed segmented control or a hub of route sections](backlog.d/reading-owed-every-menu-is-a-fixed-segmented-control-or-a-hub-of-route-sections.md)
 - [ ] [a HISTORY ask answered "I hold nothing" is final for its roster](backlog.d/reading-owed-a-history-ask-answered-i-hold-nothing-is-final-for-its-roster.md)
 - [ ] [the push of a request to republish a post](backlog.d/reading-owed-the-push-of-a-request-to-republish-a-post.md)
 - [ ] [a call survives the app leaving the screen: the Android microphone foreground service](backlog.d/reading-owed-a-call-survives-the-app-leaving-the-screen-the-android-microphone.md)
-- [ ] [the tab swipe to the camera on a slow start: the 8 px lock](backlog.d/reading-owed-the-tab-swipe-to-the-camera-on-a-slow-start-the-8-px-lock.md)
-- [ ] [new-device notices (#2278, every stable since `1.5.0`; mls-protocol)](backlog.d/reading-owed-new-device-notices-2278-every-stable-since-1-5-0-mls-protocol.md)
 - [ ] [the native caches sealed at rest (2026-10-22): the upgrade readings on both phones](backlog.d/reading-owed-the-native-caches-sealed-at-rest-2026-10-22-the-upgrade-readings.md)
 - [ ] [the stricter script policy and the iOS 16 minimum](backlog.d/reading-owed-the-stricter-script-policy-and-the-ios-16-minimum.md)
 - [ ] [a waiting-seat ring on dev (the uninvited-entry count moves to the build that carries #3519)](backlog.d/a-new-person-is-admitted-only-by-a-member-decided-by-the-user-on-2026-10-23.md)
@@ -119,9 +119,13 @@ earliest version, as a checklist.
 - [ ] [follow suggestions and Suivre, WP-2, WP-5, WP-6, WP-7](backlog.d/reading-owed-follow-suggestions-and-suivre-wp-2-wp-5-wp-6-wp-7.md)
 - [ ] [openings for followers, WP-4](backlog.d/reading-owed-openings-for-followers-wp-4.md)
 - [ ] [the checkpoint every commit awaits under the MLS lock before its first request](backlog.d/reading-owed-the-checkpoint-every-commit-awaits-under-the-mls-lock-before-its.md)
-- [ ] [the push sentences are worded in Rust from the app language and a voice note is announced as one](backlog.d/reading-owed-the-push-sentences-are-worded-in-rust-from-the-app-language-and-a.md)
 
 ## 1.8.0
+
+**P1 - security, or a user-facing path that is broken**
+
+- [P1 - `/posts/hidden` serves an association post's raw writer, while the card hides it from every moderator](backlog.d/p1-hidden-posts-list-serves-an-association-post-s-raw-writer.md)
+- [P1 - an institution's MODERATE member moderates the students of a space it governs, and not the institution's own content](backlog.d/p1-institution-moderators-moderate-their-own-content-not-students.md)
 
 **Chantiers, decisions and questions (no severity)**
 
@@ -138,6 +142,7 @@ earliest version, as a checklist.
 - [Decided by the user on 2026-10-19 - lives before calls, and what a live owes before a stable](backlog.d/decided-by-the-user-on-2026-10-19-lives-before-calls-and-what-a-live-owes.md)
 - [Found by the dev payment end-to-end of 2026-10-21 (Lydia, sandbox)](backlog.d/found-by-the-dev-payment-end-to-end-of-2026-10-21-lydia-sandbox.md)
 - [Live replays - a finished live is kept three days and shown as a CanaReel (owner, 2026-11-07; designed and decided 2026-11-09, WP-R1 built)](backlog.d/live-replays-kept-three-days-as-canareels.md)
+- [The moderation authority grid is asserted by one table-driven spec per service (owner, 2026-11-15)](backlog.d/the-moderation-authority-grid-is-asserted-by-table-driven-specs.md)
 
 **P2 - correctness**
 
@@ -224,6 +229,15 @@ earliest version, as a checklist.
 - [P2 - the history rule saved by an admin is not applied from the live frame](backlog.d/p2-the-history-rule-saved-by-an-admin-is-not-applied-from-the-live-frame.md)
 - [P2 - the Lydia reconciliation sweep is built; the `request/state` signature it verifies is documented, not measured (2026-10-27)](backlog.d/p2-the-lydia-reconciliation-sweep-is-built-the-request-state-signature-it.md)
 - [P2 - WP-CHECKPOINT-CAS: one owner of the MLS state per process, handed over by the platform (2026-10-27, design reviewed four times, nothing built)](backlog.d/p2-wp-checkpoint-cas-one-owner-of-the-mls-state-per-process-handed-over-by-the.md)
+- [P2 - a BDE, a parent super-admin and the platform admin rewrite another body's event or form](backlog.d/p2-a-bde-validates-an-event-but-never-rewrites-it.md)
+- [P2 - a person whose content was hidden or deleted is never told](backlog.d/p2-a-moderated-person-is-told-which-place-acted.md)
+- [P2 - an offensive bio can only end in a mute, which leaves the bio up](backlog.d/p2-a-moderator-erases-a-bio.md)
+- [P2 - a post's owner cannot act on another person's comment under it](backlog.d/p2-a-post-owner-hides-a-comment-under-it.md)
+- [P2 - a reported community nickname reaches a queue that cannot clear it, and a muted moderator still renames](backlog.d/p2-a-reported-community-nickname-reaches-the-community-moderators.md)
+- [P2 - an association's live is ended and moderated by its broadcaster alone, and no chat line is hidden after the end](backlog.d/p2-an-association-live-is-moderated-by-its-co-holders.md)
+- [P2 - a massively reported comment stays up until a human acts](backlog.d/p2-auto-hide-extends-to-comments.md)
+- [P2 - no moderator sees what the other moderators of the same place did](backlog.d/p2-every-moderation-act-is-journaled-for-its-peers.md)
+- [P2 - a muted account still votes in polls and likes comments](backlog.d/p2-the-mute-covers-votes-and-comment-likes.md)
 
 **P3 - hygiene**
 
@@ -270,6 +284,7 @@ earliest version, as a checklist.
 - [P3 - Three loose ends of the per-conversation drafts (review of #2614, 2026-10-27)](backlog.d/p3-three-loose-ends-of-the-per-conversation-drafts-review-of-2614-2026-10-27.md)
 - [P3 - Two devices of one account joining a community at once: one exhausts its external-join attempts and loses a frame (LIST-RACE-1-W, 2026-10-27)](backlog.d/p3-two-devices-of-one-account-joining-a-community-at-once-one-exhausts-its.md)
 - [P3 - A rotation that fails every time loops through the PIN gate (2026-10-28)](backlog.d/p3-a-rotation-that-fails-every-time-loops-through-the-pin-gate-2026-10-28.md)
+- [P3 - `dm_group_members.role` promises group admins that do not exist (a held migration)](backlog.d/p3-the-unread-mls-group-role-column-is-dropped.md)
 
 ## 1.10.0
 

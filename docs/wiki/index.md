@@ -47,6 +47,7 @@
 - [Community rework](services/community-rework.md) — the master plan for the community subsystem: what triggered it, the three axes, and the crypto axis still to do
 - [NestJS framework](services/nestjs-framework.md) — which major each of the four services runs, why they differ, and what an ESM-only framework did to jest
 - [Account erasure](account-erasure.md) — `DELETE /users/me` as a durable, retried, journalled queue; every service's delete set asserted against its schema; what is NOT covered
+- [Moderation authority](moderation-authority.md) — the ONE grid of who may do what to whom: every role, every content kind, the owner's target of 2026-11-15 and the gaps with their work packages
 - [Reporting and blocking](moderation-and-blocking.md) — the one report store, and what a block does and does not close
 - [Read receipt privacy](read-receipt-privacy.md) — every path that can move a salon's "Lu par", its evidence, and the closed chantier (2026-10-14)
 

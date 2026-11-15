@@ -7,6 +7,7 @@ import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.RemoteInput
 import fr.emse.canari.push.ChannelReadMark
+import fr.emse.canari.push.throwableSite
 import java.util.UUID
 
 /**
@@ -52,7 +53,7 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
                     else -> Log.w(TAG, "onReceive: unknown action ${intent.action}")
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "onReceive: exception: ${e.message}")
+                Log.e(TAG, "onReceive: exception: ${throwableSite(e)}")
             } finally {
                 if (wakeLock.isHeld) wakeLock.release()
                 pendingResult.finish()
