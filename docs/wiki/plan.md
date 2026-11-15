@@ -59,6 +59,7 @@ earliest version, as a checklist.
 - [P2 - A post's attachments follow one standard (owner, 2026-11-14/15)](backlog.d/p2-a-post-s-attachments-follow-one-standard.md)
 - [P2 - an iPhone re-announces what its extension showed after a cold start (2026-11-14; prior attempt: PR #2844, branch kept)](backlog.d/p2-an-iphone-re-announces-what-its-extension-showed-after-a-cold-start.md)
 - [P2 - the group panel lists 22 roster seats that hold no device (18 are departed people, 4 are a join that never completed; counted on production 2026-11-14)](backlog.d/p2-the-group-panel-lists-22-roster-seats-that-hold-no-device.md)
+- [P2 - picking a conversation suggestion in the iOS share sheet offers nothing in Canari](backlog.d/p2-the-ios-share-sheet-suggestion-row-offers-nothing-in-canari.md)
 - [P2 - native devices with no push token stay silent: a fifth cause](backlog.d/reading-owed-a-device-with-no-push-token-now-says-so.md)
 - [P2 - a frame read before a browser kill is called "never read here" on the next cold start](backlog.d/reading-owed-the-live-seen-cipher-mark-written-at-the-checkpoint.md)
 - [P2 - the retention durations a sweep applies are not yet admin settings](backlog.d/retention-durations-not-yet-settings.md)
@@ -82,7 +83,6 @@ earliest version, as a checklist.
 
 ### Readings owed
 
-- [ ] [every route fits on REAL hardware](backlog.d/reading-owed-every-route-fits-on-real-hardware.md)
 - [ ] [the twelve emoji-picture rows on real devices, the iPhone first](backlog.d/emoji-pictures-the-campaign-rows-which-need-real-devices.md)
 - [ ] [the CanaReels composer, viewer and editor on real content](backlog.d/reading-owed-the-canareels-composer-viewer-and-editor-on-real-content.md)
 - [ ] [the named readers' live chat switch on dev](backlog.d/named-readers-comments-switch-readings-owed.md)
@@ -194,10 +194,12 @@ earliest version, as a checklist.
 - [P3 - the conversation rises with the keyboard in one block; Android Messages rises with it frame by frame (owner, 2026-11-14) - a study, not built](backlog.d/keyboard-motion-like-android-messages.md)
 - [P3 - Minesweeper: the first dig's generation blocks the main thread (2026-11-14)](backlog.d/p3-minesweeper-generation-off-the-main-thread.md)
 - [P3 - a comment push tapped while its post is the page left open lands on the post, not on the comment](backlog.d/p3-a-comment-push-for-the-post-already-open-does-not-open-the-comment.md)
+- [P3 - a publisher whose live was cut by a reload or a crash cannot go live again for a minute](backlog.d/p3-a-publisher-restart-closes-its-own-open-live.md)
 - [P3 - iOS: a foreground ring flashes the CallKit banner over the in-app ring, because the server still sends the VoIP push](backlog.d/p3-ios-a-foreground-ring-flashes-the-callkit-banner-over-the-in-app-ring.md)
 - [P3 - iOS: an answer on the locked CallKit screen is lost if the app is opened after the ring deadline](backlog.d/p3-ios-an-answer-on-the-locked-callkit-screen-is-lost-if-the-app-opens-after-the-ring-deadline.md)
 - [P3 - the bell picker keeps its old level after a re-follow, until the page is opened again](backlog.d/p3-the-bell-picker-keeps-its-old-level-after-a-re-follow.md)
 - [P3 - the comment route accepts a comment with no text and no media, and pushes "Nouveau commentaire"](backlog.d/p3-the-comment-route-accepts-an-empty-comment-and-pushes-it.md)
+- [P3 - the iOS volume buttons do not reach the in-app camera: withdraw the iOS half of the volume shutter](backlog.d/p3-the-ios-volume-buttons-do-not-reach-the-in-app-camera-withdraw-the-ios-half.md)
 
 ## 1.9.0
 

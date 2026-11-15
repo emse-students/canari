@@ -112,7 +112,7 @@ export async function saveLydiaContract(
   if (res.status === 400) {
     const body = (await res.json().catch(() => null)) as { field?: unknown } | null;
     const field = typeof body?.field === 'string' ? body.field : null;
-    Log.w(`[admin.lydia] terms refused field=${field ?? 'none'}`);
+    Log.w('admin.lydia', `terms refused field=${field ?? 'none'}`);
     throw new LydiaContractRefused(field);
   }
   if (!res.ok) throw new Error(`lydia contract write answered ${res.status}`);

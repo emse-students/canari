@@ -985,6 +985,7 @@ other: the phone that sounds wrong FROM it, or makes it conceal, is the faulty o
 - `--launch` starts the profile with a FAKE microphone (Chrome's beep, or `--wav`). The flags are
   read at start, so a profile already up is refused: `bun launch.mjs close w3` first.
 - Without `--launch` it attaches to the running profile, microphone as is.
+- A web-seat DIAL must be started with `--launch` (a fresh browser with the fake-media flags): against an already-running seat without them the caller waits on the microphone prompt for ever, sits at "Appel..." and never rings (measured on dev, 2026-11-15).
 - It installs a peer-connection tracker before the app loads, then reloads.
 - `--dial` presses the header's audio-call button, `--accept` presses Accept when the phone rings.
   Both labels are read from `frontend/messages/fr.json`.
@@ -994,6 +995,23 @@ other: the phone that sounds wrong FROM it, or makes it conceal, is the faulty o
   `--out`, default the OS temp dir. `--hangup` ends the call and waits for the end-of-call report.
 - The profile must be signed in on the estate the phone uses (`--url`). Accounts stay in
   `test-accounts.json`, out of tree.
+
+### A browser seat that must PUBLISH media (a live, a reel camera) - 2026-11-15
+
+`bun launch.mjs start w5 --fake-media` (the flags are `FAKE_MEDIA_FLAGS` in `launch.mjs`, the same
+ones `callpeer.mjs --launch` uses; `--log-dir <dir>` adds Chrome's own log and crash dumps). A seat
+started without them has no camera, `getUserMedia` is refused and "Demarrer le live" stays disabled.
+Read at start, so `bun launch.mjs close w5` first. Measured on dev, W5 as the fourth account: a live
+started from `/posts` > Publier > En direct held 65 s twice and ended cleanly, Chrome 157 alive
+throughout, no crash dump, no Windows application error. **Chrome did not die from the fake capture or
+the encoder.** The one thing that ended a live mid-run was a SECOND CDP client on the same port
+(another session's `archive/graineauth.mjs` attached to W5 and navigated the page, which closes the
+broadcaster overlay). Before a long gesture on a seat: `netstat -ano | grep :<port>` must show only
+the browser's own pid.
+
+**A chrome-devtools MCP page labelled `viewer-<name>` proves nothing about the account.** The label is
+the `isolatedContext` string whoever called `new_page` typed (`docs/wiki/development.md`); it is a
+cookie-jar name, never read from the session. Check who is signed in from the page, not the label.
 
 ### `deployed-wasm-check.mjs` - ask a DEPLOYED estate whether its wasm can panic
 

@@ -54,6 +54,7 @@ import { activeGroupIds, amberListCost, cut, navigationCost, readAll, sidebar, w
 import {
   BLOCK_LIST_READ_NARRATION,
   DEVICE_PANEL_NARRATION,
+  FRESH_DEVICE_FIRST_SESSION_NARRATION,
   ignoringExpectedLog,
   ignoringExpectedRefusal,
   MINT_REFUSALS,
@@ -115,6 +116,7 @@ const withoutTheMintsOwnNoise = (rep) =>
     ...DEVICE_PANEL_NARRATION,
     ...NO_LOCAL_STATE_NARRATION,
     ...BLOCK_LIST_READ_NARRATION,
+    ...FRESH_DEVICE_FIRST_SESSION_NARRATION,
   ]);
 
 const argv = process.argv.slice(2);

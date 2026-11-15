@@ -219,14 +219,14 @@ async function pollPresence(): Promise<void> {
     // the POST would be answered 405 by an older gateway. The next tick asks again.
     if (!unknownRouteAnnounced) {
       unknownRouteAnnounced = true;
-      Log.d(`[presence] ${asked.length} watched user(s) not asked: /api/version has not answered`);
+      Log.d('presence', `${asked.length} watched user(s) not asked: /api/version has not answered`);
     }
     return;
   }
   unknownRouteAnnounced = false;
   if (!postServed && !legacyRouteAnnounced) {
     legacyRouteAnnounced = true;
-    Log.d('[presence] this estate predates POST /api/presence - asking with the legacy GET');
+    Log.d('presence', 'this estate predates POST /api/presence - asking with the legacy GET');
   }
   try {
     const data: Record<string, boolean> = {};
@@ -255,7 +255,7 @@ async function pollPresence(): Promise<void> {
       for (const k of hidden) delete next[k];
       return next;
     });
-    if (hidden.length > 0) Log.d(`[presence] ${hidden.length} watched user(s) no longer visible`);
+    if (hidden.length > 0) Log.d('presence', `${hidden.length} watched user(s) no longer visible`);
     if (cameOnline.length > 0) notifyCameOnline(cameOnline);
   } catch (err) {
     // A request that got no answer is the link being down, which the connectivity store already
