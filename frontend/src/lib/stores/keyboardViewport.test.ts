@@ -3,8 +3,11 @@ import {
   computeSnapshot,
   hasVirtualKeyboard,
   isDoubleReport,
+  isSettledWindow,
   keyboardFreeViewportHeight,
   keyboardInsetBottom,
+  keyboardMoved,
+  keyboardCovers,
   keyboardRevealOnUpdate,
   keyboardSafeAreaBottomOverride,
   overlaySettledAroundFocus,
@@ -451,17 +454,89 @@ describe('keyboardFreeViewportHeight - a picture does not shrink because someone
   });
 });
 
+describe('keyboardCovers - what a reveal asks, which is not isOpen (review of #3556)', () => {
+  const ANDROID_THRESHOLD = 160;
+  it('under the overlay, any keyboard above 0 covers - a 48 px one-row IME included', () => {
+    const small = computeSnapshot(measure({ overlayPx: 48 }), 900, ANDROID_THRESHOLD);
+    expect(small.isOpen).toBe(false);
+    expect(keyboardCovers(small, true)).toBe(true);
+    const gone = computeSnapshot(measure({ overlayPx: 0 }), 900, ANDROID_THRESHOLD);
+    expect(keyboardCovers(gone, true)).toBe(false);
+  });
+
+  it('where the engine resizes for the keyboard, isOpen stays the answer', () => {
+    const closed = computeSnapshot(measure(), baseline, IOS_THRESHOLD);
+    expect(keyboardCovers(closed, false)).toBe(closed.isOpen);
+    const open = { ...closed, isOpen: true, occlusionBottom: 300 };
+    expect(keyboardCovers(open, false)).toBe(true);
+    expect(keyboardCovers({ ...open, isOpen: false }, false)).toBe(false);
+  });
+});
+
 describe('keyboardRevealOnUpdate - an opening reveals at once, both halves of the Android hand-off (review of #3490, S3)', () => {
-  const base = { isOpen: true, openedNow: false, targetSpent: false, hasFocus: true };
+  const base = {
+    covers: true,
+    openedNow: false,
+    targetSpent: false,
+    hasFocus: true,
+    keyboardMoved: true,
+  };
 
   it('is instant on the opening, and on the real resize that spends the announced target', () => {
     expect(keyboardRevealOnUpdate({ ...base, openedNow: true })).toBe('auto');
     expect(keyboardRevealOnUpdate({ ...base, targetSpent: true })).toBe('auto');
+    // The opening reveals whatever the inset did on that update.
+    expect(keyboardRevealOnUpdate({ ...base, openedNow: true, keyboardMoved: false })).toBe('auto');
   });
 
   it('is smooth on a later update with a focused field, and nothing with the keyboard down', () => {
     expect(keyboardRevealOnUpdate(base)).toBe('smooth');
     expect(keyboardRevealOnUpdate({ ...base, hasFocus: false })).toBeNull();
-    expect(keyboardRevealOnUpdate({ ...base, isOpen: false, targetSpent: true })).toBeNull();
+    expect(keyboardRevealOnUpdate({ ...base, covers: false, targetSpent: true })).toBeNull();
+  });
+
+  it('is nothing on a later update that moved nothing (the WebView resize after an overlay announcement, N3)', () => {
+    // Mi 9T, #3556: a window and a visual-viewport `resize` with no size changed followed every
+    // announcement, and each re-revealed the field - three reveals per rise.
+    expect(keyboardRevealOnUpdate({ ...base, keyboardMoved: false })).toBeNull();
+  });
+});
+
+describe('keyboardMoved - the inset OR the visible height (second review of #3556, P2)', () => {
+  it('is a move when only the visible height changes: the iOS WebView resized, its inset always 0', () => {
+    expect(
+      keyboardMoved(
+        { insetBottom: 0, viewportHeight: 543 },
+        { insetBottom: 0, viewportHeight: 503 }
+      )
+    ).toBe(true);
+  });
+
+  it('is a move when only the band changes: a phone browser that pans', () => {
+    expect(
+      keyboardMoved(
+        { insetBottom: 0, viewportHeight: 588 },
+        { insetBottom: 40, viewportHeight: 588 }
+      )
+    ).toBe(true);
+  });
+
+  it("is no move when neither changes: the Android overlay's no-op resizes", () => {
+    const over = { insetBottom: 357.98, viewportHeight: 945 - 357.98 };
+    expect(keyboardMoved(over, { ...over })).toBe(false);
+  });
+});
+
+describe('isSettledWindow - the fact a new baseline is taken from (second review of #3556)', () => {
+  const w = { winW: 844, vvWidth: 844, winH: 390, vvHeight: 390, offsetTop: 0, scale: 1 };
+
+  it('is settled when both viewports agree on the size, within rounding', () => {
+    expect(isSettledWindow(w)).toBe(true);
+    expect(isSettledWindow({ ...w, vvHeight: 389.6 })).toBe(true);
+  });
+
+  it('is not settled mid-turn: a layout height or width the visual viewport does not share', () => {
+    expect(isSettledWindow({ ...w, winH: 430 })).toBe(false);
+    expect(isSettledWindow({ ...w, vvWidth: 390 })).toBe(false);
   });
 });

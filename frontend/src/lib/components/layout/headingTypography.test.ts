@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { allMarkup, withoutComments } from '$lib/styles/markupSources';
+import { withoutComments } from '$lib/styles/markupSources';
+import { allMarkup } from '$lib/styles/markupTree';
 
 /**
  * THE HEADING TYPE RULE (owner, 2026-11-09): the display face (Fredoka) is for the page title (`h1`),
@@ -11,7 +12,7 @@ import { allMarkup, withoutComments } from '$lib/styles/markupSources';
  * Fredoka rule would compile and look only slightly off.
  */
 const ROOT = process.cwd();
-const markup = allMarkup(join(ROOT, 'src'));
+const markup = allMarkup();
 
 describe('heading typography', () => {
   it('app.css gives the display face to h1 and the opt-in classes only', () => {

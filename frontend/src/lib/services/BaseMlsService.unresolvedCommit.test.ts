@@ -179,7 +179,7 @@ function ctx(
     delivery: {
       submitCommit,
       // The one request a Welcome is; `sendWelcome` itself is the real seam that consumes what is owed.
-      sendWelcome: vi.fn().mockResolvedValue(undefined),
+      sendWelcome: vi.fn().mockResolvedValue(null),
       acquireAddLock: vi.fn().mockResolvedValue({ acquired: true, token: 'tok' }),
       releaseAddLock: vi.fn().mockResolvedValue(true),
     },

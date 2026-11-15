@@ -65,9 +65,8 @@ a member of any age, and that push is filtered for its own reader like every oth
    classify it; the behaviour is the same for both.
    **The inviter's join push does not learn that refusal by failing (2026-11-15).** The one addressed
    send nobody asked for is the join push that follows every delivered Welcome (`joinPush.ts`); every
-   other addressed answer replies to an ask, whose asker was online to make it. On dev, an Add of ten
-   devices of one account, eight of them stale rig devices, cost eight `400 addressed_unsupported`
-   (the [rig run](../cross-client-harness-findings.md)). **Decided: the Welcome's answer carries the
+   other addressed answer replies to an ask, whose asker was online to make it. On dev, one group
+   creation cost nine `400 addressed_unsupported` (measured below). **Decided: the Welcome's answer carries the
    verdict** - `POST /api/mls/welcome` answers `{ status: 'queued', addressability }`, read by the SAME
    script in check-only mode (`MessagingService.welcomeAnswer`), and the join push sends nothing to a
    device answered `offline` or `undeclared` (still counted at warn, `[JOIN_PUSH] NOT DELIVERED`). Why
@@ -85,11 +84,37 @@ a member of any age, and that push is filtered for its own reader like every oth
    push leaves later (the pushes run one at a time, each decrypting the store). A device that DISCONNECTS
    in between is still refused at the send - the send's check is unchanged and stays the authority, the
    refusal stays a `400`, and the inviter's warn line names it (`addressable when its Welcome was
-   answered, gone since`). A device that CONNECTS in between is not pushed: it is the offline newcomer of
-   the [backlog](../backlog.d/p2-an-offline-newcomer-receives-no-join-push.md), whose fix is the
-   newcomer asking. A server that predates the field answers without it (`null` on the client): the push
+   answered, gone since`). A device that CONNECTS in between - answered `offline` (or `undeclared`) when
+   its Welcome was answered, online before its turn in the one-at-a-time queue - is skipped, and
+   **nothing recovers it today**: the newcomer asking for the register on its own reconciliation is
+   DESIGNED BUT NOT BUILT ([backlog](../backlog.d/p2-an-offline-newcomer-receives-no-join-push.md),
+   target `1.10.0`), so until it ships such a device gets no register, exactly like a newcomer offline
+   at the push. A server that predates the field answers without it (`null` on the client): the push
    is sent and the send decides, as before. A verdict the server could not read is said at error there
    and left out, with the same effect.
+
+   **What the nine `400`s were** (read 2026-11-15, `1.6.12-alpha.2` on dev, by `bun archive/notif17b.mjs`
+   with a second CDP client recording `Network` on the inviting web seat - request shape and response
+   body only, no ciphertext kept; the capture is rig-local). The seat minted a group and added a second
+   account. **Nine `POST /api/mls/send` answered `400`, every one with the same body:
+   `{"error":"addressed_unsupported","message":"the addressed device(s) did not declare addressed-history-1","devices":[<one device>]}`**;
+   nothing else on `/api/mls/` answered an error.
+   - **All nine were one-device addressed answers** - `silent: true`, `durable: false`,
+     `recipientDevices` of exactly ONE device. Not a Welcome, not a commit (the `silent: false,
+     durable: true`, no-recipients frame, answered `201` after each admission), not an application
+     message (`201`). Each was followed within 100 ms by `[HISTORY_BUNDLE] <device> cannot be
+     addressed ... pushing it nothing`: the sender learned the refusal from the `400`.
+   - **Where they came from.** `[COMMIT] ... admits 1 device(s) at epoch 1` admitted the inviter's OWN
+     second, stale web device: the first `400`. `[COMMIT] ... admits 10 device(s) at epoch 2` admitted
+     the other account's ten enrolled devices: eight more, its stale rig devices. The other two of the
+     ten, the phone and one live web device, were answered `201` (an empty bundle, and a one-message
+     bundle).
+   - **Why refused:** the refused devices are enrolled and not connected, so `offline`, not an older
+     build; the body does not say which, the server's `per device:` line does.
+   - **The roster of stale devices is a separate question** (a device that never signs in again stays
+     enrolled), the device lifecycle; this fix only stops pushing to them.
+
+   The same cause gave GRP-3's seven `400`s ([findings](../cross-client-harness-findings.md)).
 4. **The server marks an addressed row.** `queued_message.addressed` (migration `035`, which sets a
    `lock_timeout` so it fails rather than queue every send behind a long transaction), set when the
    send was addressed ON A CONVERSATION - the flag is what rule 5 and the gateway's edge filter (rule

@@ -567,6 +567,15 @@ describe('MessagingService - sendWelcome does not touch membership status or the
       });
     });
 
+    it("does not read a key group's addressability: no join push follows a community admission", async () => {
+      groupRepo.findOne.mockResolvedValue({ id: 'g1', distributionWorkspaceId: 'ws-1' });
+      deviceGroupRepo.findOne.mockResolvedValue({ status: 'active' });
+      social(true);
+
+      await expect(service.sendWelcome('u1', body)).resolves.toEqual({ status: 'queued' });
+      expect(redis.eval).not.toHaveBeenCalled();
+    });
+
     /**
      * A KEY GROUP'S SEAT IS SOCIAL-SERVICE'S ANSWER, TAKEN AGAINST A CLAIM. The claim is read
      * before the question; the store re-reads it under the seat lock the eviction takes, so an

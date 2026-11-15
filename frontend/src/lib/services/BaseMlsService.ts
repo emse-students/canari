@@ -3917,8 +3917,7 @@ export abstract class BaseMlsService implements IMlsService {
         userId: targetUserId,
         deviceId: targetDeviceId,
         welcome: welcomeBytes,
-        // `?? null`: a delivery double that answers nothing is a server that did not say.
-        addressability: addressability ?? null,
+        addressability,
       });
     })();
     const entry = { welcome: welcomeBytes, done };

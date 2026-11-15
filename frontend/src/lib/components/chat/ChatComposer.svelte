@@ -906,8 +906,12 @@
   </div>
 {/snippet}
 
-<!-- Footer Container -->
+<!-- Footer Container. It RIDES the keyboard (`data-keyboard-ride="box"`, keyboardRide.ts): on the
+     Android overlay the band around it never moves, the footer does (`bottom:
+     var(--keyboard-layout-inset-bottom)`), so the footer is the piece whose edge a ride measures. On
+     iOS the footer moves with its band, so the reading is the same there. -->
 <footer
+  data-keyboard-ride="box"
   class="chat-composer-footer"
   class:has-keyboard-panel={surfaceReservesPanel(surface)}
   bind:this={composerFooter}

@@ -61,3 +61,11 @@ Compile iOS is the first compile of the iOS half.
 **iPhone 12 half of the volume keys, READ 2026-11-15: the open question is answered, and the iOS half is withdrawn** by [its own entry](p3-the-ios-volume-buttons-do-not-reach-the-in-app-camera-withdraw-the-ios-half.md): the interaction installs and arms, three presses move the system volume, and no `volume button` line comes.
 
 **The volume keys are settled on both phones (2026-11-15): Android READ, iOS withdrawn.** Left: the rest of the triage list above (the layout, the file orientation, the sensor under the rotation lock).
+
+### The iPhone 12 rows of 2026-11-15 (a bench sitting with WDA and W5, no human holding the phone)
+
+**Read, in portrait**: the camera opens from the feed's swipe, `[CanariCamera] AVCaptureEventInteraction installed on the WebView` then `armed by the page` are in the syslog, CoreMotion runs in the app (`Ping timer fired, resetting watchdog`), and a shutter tap gives the review. The page's `[framed-capture]` lines are NOT in the device syslog (the WebView console is not forwarded), so they need the WebKit inspector bridge.
+
+**Deleted, with the measured reason: nothing on the bench can turn the phone.** WDA's `POST /session/<id>/orientation` answers `Unable To Rotate Device` on the iPhone 12 (the app is portrait-locked), and no tool reaches `CMMotionManager`'s accelerometer from outside. These iPhone rows therefore need a HUMAN turning the phone, and are dropped from the bench's list: the layout holding with the phone turned either way (lock OFF then ON), a sideways photo and take being 16:9 files with `turn=90`/`270`, the portrait-frame check of `[framed-capture] photo ... from WxH`, and the sensor ignoring the rotation lock.
+
+**Inconclusive, not withdrawn**: WDA's `button volumeUp` on the camera produced `SpringBoard: will begin volume button press` and NO `volume button down` line from the app. A WDA press goes through SpringBoard, not a finger on the key, so it neither confirms nor refutes the open question about WebKit's capture; a human press is the reading. (A `tree` on the live camera screen also wedged the WDA daemon once: restart `wda-daemon.py`.)

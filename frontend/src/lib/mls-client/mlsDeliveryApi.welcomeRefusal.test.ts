@@ -42,8 +42,8 @@ describe('sendWelcome and the refusal of its target', () => {
     }
   });
 
-  it('returns null, and says so, when the stored Welcome answered a body that cannot be read', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  it('returns null, and accuses it at error, when the stored Welcome answered a body that cannot be read', async () => {
+    const warn = vi.spyOn(console, 'error').mockImplementation(() => {});
     await expect(
       send(api(new Response('{not json', { status: 201, headers: json })))
     ).resolves.toBeNull();

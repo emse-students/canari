@@ -5644,7 +5644,7 @@ export class MessagingService {
           `group=${safeGroupId} - the same Welcome is already queued, nothing stored again; its row is delivered again`
       );
       await this.deliverWelcome(stored, traceId);
-      return this.welcomeAnswer(deviceInfo.userId, targetDeviceId, safeGroupId, traceId);
+      return this.welcomeAnswer(group, deviceInfo.userId, targetDeviceId, safeGroupId, traceId);
     }
     this.logger.log(
       `[WELCOME][${traceId}] QUEUED id=${queuedWelcome.id} recipient=${deviceInfo.userId}:${targetDeviceId} group=${safeGroupId}`
@@ -5671,7 +5671,7 @@ export class MessagingService {
       `[WELCOME][${traceId}] DONE group=${safeGroupId} target=${deviceInfo.userId}:${targetDeviceId}`
     );
 
-    return this.welcomeAnswer(deviceInfo.userId, targetDeviceId, safeGroupId, traceId);
+    return this.welcomeAnswer(group, deviceInfo.userId, targetDeviceId, safeGroupId, traceId);
   }
 
   /**
@@ -5690,13 +5690,23 @@ export class MessagingService {
    * A verdict that cannot be read is said at error and left OUT of the answer: the Welcome is
    * stored and delivered whatever this read does, and an answer without the field is what every
    * older server gives - the inviter then pushes and the send's check decides.
+   *
+   * NOT READ FOR A KEY GROUP: a community's key group gets no join push (it carries no history), so
+   * the verdict would answer a question nobody asks there.
    */
   private async welcomeAnswer(
+    group: Group | null,
     userId: string,
     deviceId: string,
     groupId: string,
     traceId: string
   ): Promise<WelcomeAnswer> {
+    if (distributionScopeOf(group) !== null) {
+      this.logger.log(
+        `[WELCOME][${traceId}] group=${groupId} is a key group - no join push follows, addressability of ${cutUserId(userId)}:${deviceId} not read`
+      );
+      return { status: 'queued' };
+    }
     let addressability: Addressability;
     try {
       addressability = await addressabilityOf(this.redis, userId, deviceId);

@@ -15,6 +15,13 @@ swallowed: `sendFullHistoryBundle` returns `unaddressable` and `joinPush.ts` say
 measured by. The joiner's later reconciliation answers are `addOnly` (messages, nothing else), so they do
 not repair it.
 
+**A second way to land here (since the join push reads the Welcome's answer, 2026-11-15).** The inviter
+sends no push to a device the server answered `offline` (or `undeclared`) when its Welcome was answered
+([history-answer-addressing](../protocols/history-answer-addressing.md#the-rules-as-built), rule 3). A
+device that CONNECTS between that answer and its turn in the one-at-a-time push queue is therefore
+skipped too, although it would have been addressable at the push; it is counted by the same
+`[JOIN_PUSH] ... NOT DELIVERED` warn and recovered by nothing until the step below ships.
+
 **Why the inviter does not retry.** A retry on the inviter's side ("push again when the device becomes
 present") depends on two things neither side holds durably: the newcomer's `join` ask lives in memory
 (`historyAddressing.ts`, opened by `noteJoinSolicited` when the Welcome is processed), so a reload of the
@@ -50,7 +57,9 @@ pull request and its own adversarial review for that.
 **What proves it, when built:** a newcomer offline at the delivery, then online - the digest carries
 `register`, the responder's answer carries the register and no message, the newcomer takes it
 "Defini avant votre arrivee" and clears the marker; a reload between the Welcome and the answer still
-asks; an older responder leaves the marker set.
+asks; an older responder leaves the marker set; and a newcomer answered `offline` when its Welcome was
+answered, which connects before the inviter's push queue reaches it (so is skipped), still gets the
+register from its own digest ask.
 
 **The reading owed on a pre-release, which FAILS until this ships and must then pass:** reading 2 of
 the nicknames row of the [readings owed](../plan.md#readings-owed) with the new

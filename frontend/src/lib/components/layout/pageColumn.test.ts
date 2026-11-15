@@ -40,9 +40,7 @@
  * beside them had to say the root was never read.
  */
 import { describe, it, expect } from 'vitest';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { allMarkup } from '$lib/styles/markupSources';
+import { allMarkup } from '$lib/styles/markupTree';
 import { PAGE_WIDTHS } from './pageWidth';
 
 /**
@@ -118,16 +116,15 @@ function centredWidthOf(classes: string): number | null {
   return null;
 }
 
-// The same spelling every other markup gate uses: `src` is three levels up from a file in
-// `lib/components/layout`, resolved from the module's own URL rather than from a cwd.
-const src = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
-// THE TREE IS READ ONCE, HERE, AND NOT INSIDE A TEST. Reading every `.svelte` file takes ~0.7 s on
-// its own, and a test body is charged against vitest's 5 s timeout: under the full suite, with every
-// worker reading the disk at once, a body that walked the tree timed out while asserting nothing
-// wrong. Module scope is collection time, which no per-test timeout measures.
-const markup = allMarkup(src);
+// The markup comes from the run's source snapshot (no disk walk), filtered once at module scope.
+const markup = allMarkup();
 
 describe('the page column', () => {
+  it('reads the markup tree, so the guard is not guarding an empty set', () => {
+    expect(markup.length).toBeGreaterThan(200);
+    expect(markup.map(({ file }) => file)).toContain('routes/+layout.svelte');
+  });
+
   it('is never written by hand: no markup centres itself at a page width', () => {
     const offenders = markup
       .flatMap(({ file, body }) =>

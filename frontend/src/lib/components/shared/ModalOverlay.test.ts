@@ -24,18 +24,20 @@
  * disagreed, which is the same reason `associations/accent.test.ts` walks the tree.
  */
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { join, relative } from 'node:path';
-import { svelteFiles, withoutAnyComments } from '$lib/styles/markupSources';
+import { withoutAnyComments } from '$lib/styles/markupSources';
+import { svelteSources } from '$lib/styles/markupTree';
+import { readSource, relativeTo } from '../../../test/sourceTree';
 
-const dir = join(process.cwd(), 'src');
-const code = (body: string) => withoutAnyComments(readFileSync(body, 'utf8'));
-// The tree is read once, here, and not inside a test: a test body is charged against vitest's 5 s
-// timeout, and under the full suite a walk of `src` took seconds on its own.
-const markup = svelteFiles(dir).map((file) => ({ file, body: code(file) }));
+const dir = 'src';
+const code = (path: string) => withoutAnyComments(readSource(path));
+// The tree comes from the run's source snapshot (no disk walk), filtered once here.
+const markup = svelteSources(dir).map(({ path, text }) => ({
+  file: path,
+  body: withoutAnyComments(text),
+}));
 
 /** The overlay itself, and the two full-page surfaces that are deliberately NOT modals. */
-const OVERLAY = join(dir, 'lib/components/shared/ModalOverlay.svelte');
+const OVERLAY = `${dir}/lib/components/shared/ModalOverlay.svelte`;
 /**
  * AN ALLOWLIST, NAMED, WITH A REASON EACH - never a denylist.
  *
@@ -45,8 +47,8 @@ const OVERLAY = join(dir, 'lib/components/shared/ModalOverlay.svelte');
  * call-sites error in CSS: the same markup does not make them the same thing.
  */
 const NOT_MODALS = [
-  join(dir, 'lib/components/chat/CallOverlay.svelte'),
-  join(dir, 'lib/components/shared/FullScreenViewer.svelte'),
+  `${dir}/lib/components/chat/CallOverlay.svelte`,
+  `${dir}/lib/components/shared/FullScreenViewer.svelte`,
 ];
 
 /** A panel CENTRED on a full-viewport plate - which is what "a modal" means in markup. */
@@ -54,11 +56,17 @@ const centresAPanel = (body: string) =>
   /class="[^"]*\bfixed inset-0\b[^"]*\bjustify-center\b/.test(body);
 
 describe('one overlay for every modal', () => {
+  it('reads the tree it thinks it does: the overlay and both non-modals are in the scan', () => {
+    const files = markup.map(({ file }) => file);
+    expect(files).toContain(OVERLAY);
+    for (const notModal of NOT_MODALS) expect(files).toContain(notModal);
+  });
+
   it('is the only thing that centres a panel on a full-viewport plate', () => {
     const offenders = markup
       .filter(({ file }) => file !== OVERLAY && !NOT_MODALS.includes(file))
       .filter(({ body }) => centresAPanel(body))
-      .map(({ file }) => relative(dir, file));
+      .map(({ file }) => relativeTo(file, dir));
 
     expect(
       offenders,
@@ -126,9 +134,39 @@ describe('one overlay for every modal', () => {
         const labelled = body.match(/<ModalOverlay\b[\s\S]{0,800}?(?<![\w-])label=/g)?.length ?? 0;
         return labelled < tags;
       })
-      .map(({ file }) => relative(dir, file));
+      .map(({ file }) => relativeTo(file, dir));
     expect(unnamed, `these open a dialog with no accessible name: ${unnamed.join(', ')}`).toEqual(
       []
     );
+  });
+});
+
+/**
+ * A PANEL INSIDE `ModalOverlay` IS BOUND BY THE OVERLAY'S BOX, NEVER BY A RAW VIEWPORT FRACTION
+ * (review of #3556, F5). The overlay pads its bottom by what the keyboard covers of the window
+ * (`--keyboard-occlusion-bottom`, the Android app, whose WebView keeps its full height), so `vh` no
+ * longer means "the room there is": the poll composer's `max-h-[85vh]` was 803 px in the 555 px left
+ * above a Mi 9T keyboard and ran off the top. `min(85vh,100%)` keeps the fraction and adds the bound
+ * - `100%` is the overlay's content box, keyboard and safe area already taken out.
+ */
+describe('a panel inside the overlay', () => {
+  /** A height or max-height in a raw viewport unit, not bounded by `min(...,100%)`. */
+  const rawViewportHeight = /\b(?:max-)?h-\[\d+(?:\.\d+)?(?:vh|dvh|svh|lvh)\]/;
+
+  it('caps its height by the room the overlay leaves, not by the viewport', () => {
+    const offenders = markup
+      .filter(({ body }) => body.includes('<ModalOverlay'))
+      .flatMap(({ file, body }) =>
+        [...body.matchAll(/panelClass="([^"]*)"/g)]
+          .filter((m) => rawViewportHeight.test(m[1]))
+          .map(() => relativeTo(file, dir))
+      );
+    expect(offenders, `bound these by min(<n>vh,100%): ${offenders.join(', ')}`).toEqual([]);
+  });
+
+  it('sees the shape it forbids', () => {
+    expect(rawViewportHeight.test('flex max-h-[85vh] w-full')).toBe(true);
+    expect(rawViewportHeight.test('flex h-[70vh] w-full')).toBe(true);
+    expect(rawViewportHeight.test('flex max-h-[min(85vh,100%)] w-full')).toBe(false);
   });
 });

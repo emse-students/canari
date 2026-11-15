@@ -1841,12 +1841,13 @@ export class MlsDeliveryApi {
       `Welcome delivery to ${targetUserId}:${targetDeviceId} (group ${groupId})`
     );
     // THE WELCOME IS STORED from here: a body that cannot be read loses only the addressability,
-    // which is then "not said" - the join push is sent and the server's own check decides.
+    // which is then "not said" - the join push is sent and the server's own check decides. A 2xx
+    // JSON answer whose body cannot be read is a server or proxy defect, said at error.
     let answered: unknown;
     try {
       answered = await response.json();
     } catch (e) {
-      console.warn(
+      console.error(
         `[DELIVERY] Welcome to ${targetDeviceId} in ${groupId.slice(0, 8)}... stored, but its answer could not be read - its addressability is not known:`,
         e
       );
