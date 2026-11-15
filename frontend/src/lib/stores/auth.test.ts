@@ -634,3 +634,30 @@ describe('the local identity at sign-out', () => {
     await signOutA;
   });
 });
+
+/**
+ * A VERDICT REACHED BEFORE ITS HANDLER KEEPS ITS TARGET (Mi 9T, 2026-11-15). On a cold start the
+ * first refresh 401s before the app shell registers the handler. The fallback used to `goto('/login')`
+ * bare, and the handler replayed later from a location that was already `/login`: the page a tapped
+ * push was going to was lost in 2 of 4 taps. The verdict is now queued WITH its target, and the
+ * handler - the one place that decides the redirect - is handed it.
+ */
+describe('a verdict that arrives before its handler', () => {
+  it('is queued with the page in flight and handed to the handler that registers later', async () => {
+    setToken(liveToken()); // lifts the latch the blocks above left armed
+    setSessionExpiredHandler(null);
+    history.replaceState(null, '', '/posts/p1?comment=c1');
+    fetchMock.mockResolvedValue(answer(401));
+
+    await expect(refresh()).rejects.toThrow();
+    // The location moves on (a fallback redirect, or the guard) before the handler registers.
+    history.replaceState(null, '', '/login');
+
+    const late = vi.fn();
+    setSessionExpiredHandler(late);
+    expect(late).toHaveBeenCalledTimes(1);
+    expect(late).toHaveBeenCalledWith(
+      expect.objectContaining({ pathname: '/posts/p1', search: '?comment=c1' })
+    );
+  });
+});
