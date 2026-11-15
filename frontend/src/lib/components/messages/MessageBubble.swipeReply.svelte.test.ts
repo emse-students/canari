@@ -287,6 +287,121 @@ describe('MessageBubble - a thumb ARCS, and an armed bubble replies (Mi 9T, 2026
   });
 });
 
+describe('MessageBubble - a WebKit thumb arc is CLAIMED, not left to the scroller (iPhone 12, 2026-11-15)', () => {
+  /**
+   * A MODEL OF WHAT WEBKIT DOES, because happy-dom has no scroller. Under `touch-action: pan-y` the
+   * engine applies the vertical component of a stroke to the thread UNLESS the page cancels the
+   * move: the first `touchmove` that carries vertical travel and is not `defaultPrevented` hands
+   * the stroke to the scroller. From then on its moves are not cancelable and the page's
+   * `pointerup` becomes a `pointercancel` - exactly the iPhone's "thread scrolled 35 px, no reply".
+   * Chromium decides on the first direction instead, which is why the same stroke worked on the
+   * Mi 9T; this model is the stricter engine, so a pass here holds for both.
+   */
+  function webkitStroke(
+    el: HTMLElement,
+    x0: number,
+    dx: number,
+    dy: number,
+    steps = 12
+  ): { scrolled: boolean; unclaimedMoves: number } {
+    let scrolled = false;
+    let unclaimedMoves = 0;
+    el.dispatchEvent(pointer('pointerdown', x0, 200));
+    el.dispatchEvent(touch('touchstart', x0, 200));
+    flushSync();
+    let prevY = 200;
+    for (let i = 1; i <= steps; i++) {
+      const x = x0 + (dx * i) / steps;
+      const y = 200 + (dy * i) / steps;
+      if (!scrolled) {
+        el.dispatchEvent(pointer('pointermove', x, y));
+        const move = touch('touchmove', x, y);
+        el.dispatchEvent(move);
+        if (!move.defaultPrevented && Math.abs(y - prevY) > 0) scrolled = true;
+        if (!move.defaultPrevented) unclaimedMoves++;
+      }
+      prevY = y;
+      flushSync();
+    }
+    if (scrolled) {
+      el.dispatchEvent(pointer('pointercancel', 0, 0));
+      el.dispatchEvent(touch('touchcancel', 0, 0));
+    } else {
+      el.dispatchEvent(pointer('pointerup', x0 + dx, 200 + dy));
+      el.dispatchEvent(touch('touchend', x0 + dx, 200 + dy));
+    }
+    flushSync();
+    return { scrolled, unclaimedMoves };
+  }
+
+  it.each([45, 60, -45, -60])(
+    'replies to a RECEIVED message along a 110px stroke with %ipx of drift, the thread untouched',
+    (drift) => {
+      const h = mountBubble();
+      const { scrolled } = webkitStroke(bubble(), 100, 110, drift);
+
+      expect(scrolled).toBe(false);
+      expect(h.reply).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it.each([45, 60, -45, -60])('and for an OWN message swiped left with %ipx of drift', (drift) => {
+    const h = mountBubble({ isOwn: true, senderId: 'u-me' });
+    const { scrolled } = webkitStroke(bubble(), 300, -110, drift);
+
+    expect(scrolled).toBe(false);
+    expect(h.reply).toHaveBeenCalledTimes(1);
+  });
+
+  it('claims from the FIRST delivered move: a 12-step stroke moves 9px first, under the old 10px lock', () => {
+    mountBubble();
+    const { unclaimedMoves } = webkitStroke(bubble(), 100, 110, 45);
+
+    expect(unclaimedMoves).toBe(0);
+  });
+
+  it('still lets a vertical drag scroll the thread: not one move is cancelled', () => {
+    const h = mountBubble();
+    const el = bubble();
+    el.dispatchEvent(pointer('pointerdown', 100, 200));
+    el.dispatchEvent(touch('touchstart', 100, 200));
+    const moves: Event[] = [];
+    for (let i = 1; i <= 8; i++) {
+      el.dispatchEvent(pointer('pointermove', 100 + i, 200 + 20 * i));
+      const m = touch('touchmove', 100 + i, 200 + 20 * i);
+      el.dispatchEvent(m);
+      moves.push(m);
+    }
+    el.dispatchEvent(touch('touchend', 108, 360));
+    flushSync();
+
+    expect(moves.every((m) => !m.defaultPrevented)).toBe(true);
+    expect(h.reply).not.toHaveBeenCalled();
+  });
+
+  it('keeps the gesture when the engine already owns the stroke (its loss is logged, once)', () => {
+    const h = mountBubble();
+    const el = bubble();
+    el.dispatchEvent(pointer('pointerdown', 100, 200));
+    el.dispatchEvent(touch('touchstart', 100, 200));
+    for (let i = 1; i <= 6; i++) {
+      el.dispatchEvent(pointer('pointermove', 100 + 20 * i, 200));
+      const m = new Event('touchmove', { bubbles: true, cancelable: false });
+      const list = [{ clientX: 100 + 20 * i, clientY: 200 }];
+      Object.defineProperty(m, 'touches', { value: list });
+      Object.defineProperty(m, 'changedTouches', { value: list });
+      el.dispatchEvent(m);
+    }
+    el.dispatchEvent(pointer('pointerup', 220, 200));
+    el.dispatchEvent(touch('touchend', 220, 200));
+    flushSync();
+
+    // Behaviour is unchanged from before the claim existed (Android kept replying); the loss is
+    // reported once per stroke, not once per move.
+    expect(h.reply).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('MessageBubble - the outward swipe is a NON-GESTURE, and that is the point', () => {
   // It used to open the reaction tray. The user cut it on 2026-09-22 - *"swiper pour reagir n'est
   // pas quelque chose de bien, c'est meme assez bizarre"* - after it was measured against Messenger

@@ -1,0 +1,3 @@
+### Fixed - the reply swipe along a thumb's arc replies on iPhone instead of scrolling the thread
+
+A reply swipe with a vertical drift (110 px across, 45 px down) staged nothing on the iPhone and scrolled the conversation: the bubble now locks its direction under WebKit's slop and claims the stroke, so the thread stays put and the reply is staged. Android is unchanged; to be read on the next pre-release. See [design-reference](docs/wiki/frontend/design-reference.md#the-reply-swipe-on-webkit-touch-action-pan-y-does-not-claim-a-stroke-iphone-12-2026-11-15).
