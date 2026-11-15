@@ -2318,8 +2318,8 @@ Environment and tooling traps that belong to no one subsystem. Each cost a run.
   disk refills before anyone finds out.
 - Bash-tool commit messages: a heredoc or `git commit -F file`, NOT a PowerShell here-string.
 - Backend lint needs `bun install` in the app dir (bare `oxlint` / `oxfmt` + repo-level configs).
-- The pre-commit hook sweeps the WHOLE frontend and re-stages - isolate unrelated dirty files first.
-- Before push: `rm -rf apps/*/dist`, then `git pull --rebase --autostash origin main`.
+- The pre-commit hook sweeps the WHOLE frontend and re-stages, then runs the path-scoped checks - isolate unrelated dirty files first.
+- Before push: nothing by hand - the pre-push hook merges `origin/main` and runs the local checks ([cicd](cicd.md#checks-at-commit-at-push-and-in-ci-only)).
 - Commit signing is ON globally over SSH - all commits Verified, do NOT disable.
 - **Never assert a wall clock in a test**; two isolated browser contexts = two devices.
 - **A LITERAL DATE IS A WALL CLOCK WHENEVER IT MUST OUT-RANK A SLIDING WINDOW**, and it fails

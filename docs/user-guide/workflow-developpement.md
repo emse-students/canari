@@ -67,6 +67,22 @@ Le hook de pre-commit balaye tout le frontend (2-3 min) et re-stage le resultat.
 contourner : si un hook echoue, la cause se corrige. Pour la chaine complete en local :
 `make run-ci`. Pour les tests : `make test`.
 
+**Depuis le 15 novembre 2026, ce que la pull request verifie est verifie avant elle** (decision du
+proprietaire : *"tout ce qui est verifie a la PR devrait etre verifie au commit, la fusion de PR
+devrait etre une formalite"*). Trois niveaux :
+
+| Quand | Ce qui tourne | Combien de temps |
+|---|---|---|
+| **au commit** | les verifications rapides des fichiers indexes seulement : liens du wiki, plan regenere, garde des donnees privees, cliquets et listes autorisees, tests unitaires du module touche | quelques secondes de plus |
+| **au push** | le hook fusionne d'abord le dernier `origin/main` dans la branche, puis lance tout ce qui peut tourner sur un poste, exactement comme la CI le choisirait | quelques minutes ; en arriere-plan |
+| **en CI seulement** | ce qu'un poste Windows ne peut pas faire : compilation iOS, specs d'integration PostgreSQL, appels de bout en bout, scans d'images | la seule chose propre a la PR |
+
+Deux choses a savoir. **Si le push a fusionne `origin/main`, il refuse une fois** (git avait deja
+choisi le commit a envoyer) : relancer le meme `git push`, il passe aussitot. **Une variable doit
+etre posee sur chaque poste** : `DOCS_PRIVATE_DENYLIST_FILE`, le chemin de la liste des noms prives
+(hors du depot), ou `none` si le poste n'en a pas - sinon le hook refuse. Le detail et les mesures :
+[cicd](../wiki/cicd.md#checks-at-commit-at-push-and-in-ci-only).
+
 ---
 
 ## 3. Livrer : la pull request

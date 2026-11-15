@@ -18,6 +18,7 @@
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const { HOOKS_PATH, hooksPathProblem } = await import(
@@ -44,9 +45,30 @@ const BS = String.fromCharCode(92);
 hooksPathProblem(HOOKS_PATH) === null
   ? ok(`the declared value ${HOOKS_PATH} is accepted`)
   : no(`the declared value ${HOOKS_PATH} is rejected: ${hooksPathProblem(HOOKS_PATH)}`);
-HOOKS_PATH === '.husky/_'
-  ? ok('the declared value is relative and names the directory husky generates')
-  : no(`HOOKS_PATH is ${HOOKS_PATH}, which is not the path husky generates`);
+HOOKS_PATH === '.husky'
+  ? ok('the declared value is relative and names the TRACKED hooks directory')
+  : no(
+      `HOOKS_PATH is ${HOOKS_PATH}, not the tracked .husky - a generated directory is absent ` +
+        `from a fresh worktree, and git then runs no hook in silence`
+    );
+
+// A FRESH WORKTREE MUST HAVE ITS HOOKS (2026-11-15, PR #3611 was committed with none): every hook
+// git calls is a tracked file, executable in the index, so it exists - and runs on Linux - in a
+// checkout that never ran an install.
+const indexModes = execFileSync('git', ['ls-files', '-s', '--', HOOKS_PATH], {
+  cwd: repoRoot,
+  encoding: 'utf8',
+});
+for (const hook of ['pre-commit', 'pre-push']) {
+  // `git ls-files -s` prints `<mode> <sha> <stage>\t<path>`.
+  const line = indexModes
+    .split(/\r?\n/)
+    .find((l) => l.endsWith(`\t${HOOKS_PATH}/${hook}`));
+  if (!line) no(`${HOOKS_PATH}/${hook} is not tracked, so a fresh checkout runs no ${hook} hook`);
+  else if (!line.startsWith('100755 '))
+    no(`${HOOKS_PATH}/${hook} is tracked without the executable bit: git on Linux would skip it`);
+  else ok(`${HOOKS_PATH}/${hook} is tracked and executable`);
+}
 
 // The four SHAPES actually observed in `.git/config` on this project - a checkout, a sibling
 // worktree, a nested agent worktree, on two drive letters - plus the POSIX and UNC spellings the

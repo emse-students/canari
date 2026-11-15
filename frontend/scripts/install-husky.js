@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Points git at the repository-root `.husky/` directory after an install.
+ * Points git at the repository-root `.husky/` directory, the tracked hooks, after an install.
  *
  * Run from `frontend`, but the hooks belong to the WHOLE monorepo: the root
  * `.husky/pre-commit` decides per-area what to gate. This script therefore walks up to the git
@@ -12,19 +12,6 @@ import { dirname, join } from 'path';
 import { HOOKS_PATH, hooksPathProblem } from './hooks-path.js';
 
 const cwd = process.cwd();
-const binDir = join(cwd, 'node_modules', '.bin');
-
-// WINDOWS DOES NOT PUT A BARE `husky` IN `.bin`, AND THIS ONLY EVER LOOKED FOR THAT ONE NAME.
-// bun and npm write `husky.exe` / `husky.cmd` / `husky.bunx` there instead, so on every Windows
-// install the check below was false, the warning fired, the script exited 0 - and the repository
-// was left with NO git hooks while `bun install` reported success. Measured on this workstation,
-// 2026-09-07: `.bin` held `husky.exe` and `husky.bunx`, while this file looked for a name that
-// is never written there and reported it missing. The hooks happened to be armed from an earlier
-// install, which is exactly why nobody noticed: a fresh clone gets none, and is told so in one
-// line that scrolls past an install.
-const binPath = ['husky', 'husky.exe', 'husky.cmd', 'husky.bunx']
-  .map((name) => join(binDir, name))
-  .find((candidate) => existsSync(candidate));
 
 function findGitRoot(startDir) {
   let current = startDir;
@@ -46,28 +33,11 @@ if (!gitRoot || process.env.CI === 'true') {
   process.exit(0);
 }
 
-const target = join(gitRoot, '.husky');
-
-// Not an error worth failing an install over: `bun install --production` legitimately leaves the
-// binary out. But it MUST say so - a hook silently not installed is a gate silently not running,
-// and this branch used to be an empty catch that left no trace at all.
-if (!binPath) {
-  console.warn(
-    `[install-husky] no husky binary in ${binDir} - git hooks were NOT installed. ` +
-      `Run 'bun install' with dev dependencies from 'frontend' to arm them.`
-  );
-  process.exit(0);
-}
-
-try {
-  execSync(`"${binPath}" "${target}"`, { stdio: 'inherit', shell: true, cwd: gitRoot });
-} catch (error) {
-  console.warn(
-    `[install-husky] husky failed to install hooks into ${target} - git hooks are NOT armed: ${error.message}`
-  );
-  process.exit(0);
-}
-
+// NO HUSKY BINARY IS RUN ANY MORE (2026-11-15). The hooks are the TRACKED files in `.husky/`,
+// and git is pointed at them directly: husky's generated `.husky/_` wrappers existed only after an
+// install, so a fresh worktree had none and git skipped every hook in silence. What husky did
+// beyond that one setting - a PATH entry for a root `node_modules` this repository does not have,
+// and the `HUSKY=0` switch that turned every hook off - is not wanted.
 // THE SETTING IS THIS SCRIPT'S JOB, NOT A SIDE EFFECT OF THE ARGUMENT HUSKY WAS HANDED.
 // husky writes whatever path it is given, and `findGitRoot` reaches a WORKTREE root - a worktree's
 // `.git` is a FILE, and `existsSync` is true for a file - so husky was handed that worktree's
