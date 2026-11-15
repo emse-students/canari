@@ -1241,8 +1241,7 @@
     at every breakpoint for the same reason.
   -->
   <div
-    class="keyboard-aware-bottom mx-auto {PAGE_WIDTHS.reading} px-4 pb-3 md:px-8 {reachedEnd ||
-    hasProductGrid
+    class="mx-auto {PAGE_WIDTHS.reading} px-4 pb-3 md:px-8 {reachedEnd || hasProductGrid
       ? 'sticky bottom-0 z-50 md:pb-5'
       : ''}"
   >

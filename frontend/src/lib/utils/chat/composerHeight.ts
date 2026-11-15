@@ -4,18 +4,24 @@ import { Log } from '$lib/utils/Log';
 export const COMPOSER_HEIGHT_PROPERTY = '--chat-composer-height';
 
 /**
- * Publishes the composer footer's height as `--chat-composer-height`, which IS the thread's
- * `padding-bottom` - the room the last row (the typing bubble, while somebody types) stands in.
+ * Publishes the composer footer's height WITHOUT ITS BOTTOM FLOOR as `--chat-composer-height`. The
+ * thread's `padding-bottom` is that height plus the floor (`--chat-composer-floor`, the footer's own
+ * `padding-bottom`) plus the keyboard's room - the room the last row (the typing bubble, while
+ * somebody types) stands in (`app.css`, `.chat-messages-scroll`).
  *
- * **THE BOX OBSERVED IS THE BOX PUBLISHED: `border-box`.** The height is `offsetHeight`, padding
- * included, and the footer's bottom padding is `max(0.75rem, var(--safe-area-inset-bottom))` - it
- * moves on its own when the platform's bottom inset changes (Android's navigation bar inset reaching
- * the WebView after the composer mounted, the keyboard's open/close, iOS's pinned inset). A default
- * `ResizeObserver` watches the CONTENT box, which a padding change does not touch, so the footer
- * grew by the inset and nothing republished: measured at 390 px with a 24 px inset arriving late,
- * footer 76 px against a published 64 px, and the typing bubble's 16 px clearance became 4.5 px -
- * with a 48 px inset (three-button navigation) the bubble goes UNDER the composer, keyboard closed
- * (user report, phone app, 2026-10-13).
+ * **THE FLOOR IS LEFT TO CSS, BECAUSE IT MOVES WITH THE KEYBOARD AND THIS PUBLISHES A FRAME LATE.**
+ * The floor is `max(0.75rem, var(--safe-area-inset-bottom))`, and the bottom safe area is pinned to 0
+ * while a keyboard covers it (`keyboardSafeAreaBottomOverride`). Counted here, the footer shrank by
+ * 12 px in the keyboard announcement's frame and the thread's padding followed one frame later: the
+ * thread's bottom moved under the keyboard ride (Mi 9T, review of #3556, D2: scrollTop 4085 then
+ * 4073). Composed in CSS, both change in the same style pass, and a keyboard move changes nothing
+ * this publishes.
+ *
+ * **THE BOX OBSERVED IS THE `border-box`**, so a padding change is seen at all (a default
+ * `ResizeObserver` watches the CONTENT box) - an inset arriving after mount once left the typing
+ * bubble 4.5 px from the composer instead of 16 (user report, phone app, 2026-10-13). What is
+ * published is `offsetHeight` less the computed `padding-bottom`, so a floor-only change publishes
+ * the same value and writes nothing.
  *
  * Returns the teardown, which also cancels a pending publish and removes the property so a thread
  * with no composer reserves the stylesheet's own fallback.
@@ -26,7 +32,8 @@ export function publishComposerHeight(
 ): () => void {
   let published = '';
   const publish = () => {
-    const value = `${Math.ceil(footer.offsetHeight)}px`;
+    const floor = parseFloat(getComputedStyle(footer).paddingBottom) || 0;
+    const value = `${Math.ceil(footer.offsetHeight - floor)}px`;
     if (value === published) return;
     Log.d('ChatComposer', `composer height ${published || 'unset'} -> ${value}`);
     published = value;

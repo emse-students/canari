@@ -140,3 +140,33 @@ describe('one overlay for every modal', () => {
     );
   });
 });
+
+/**
+ * A PANEL INSIDE `ModalOverlay` IS BOUND BY THE OVERLAY'S BOX, NEVER BY A RAW VIEWPORT FRACTION
+ * (review of #3556, F5). The overlay pads its bottom by what the keyboard covers of the window
+ * (`--keyboard-occlusion-bottom`, the Android app, whose WebView keeps its full height), so `vh` no
+ * longer means "the room there is": the poll composer's `max-h-[85vh]` was 803 px in the 555 px left
+ * above a Mi 9T keyboard and ran off the top. `min(85vh,100%)` keeps the fraction and adds the bound
+ * - `100%` is the overlay's content box, keyboard and safe area already taken out.
+ */
+describe('a panel inside the overlay', () => {
+  /** A height or max-height in a raw viewport unit, not bounded by `min(...,100%)`. */
+  const rawViewportHeight = /\b(?:max-)?h-\[\d+(?:\.\d+)?(?:vh|dvh|svh|lvh)\]/;
+
+  it('caps its height by the room the overlay leaves, not by the viewport', () => {
+    const offenders = markup
+      .filter(({ body }) => body.includes('<ModalOverlay'))
+      .flatMap(({ file, body }) =>
+        [...body.matchAll(/panelClass="([^"]*)"/g)]
+          .filter((m) => rawViewportHeight.test(m[1]))
+          .map(() => relativeTo(file, dir))
+      );
+    expect(offenders, `bound these by min(<n>vh,100%): ${offenders.join(', ')}`).toEqual([]);
+  });
+
+  it('sees the shape it forbids', () => {
+    expect(rawViewportHeight.test('flex max-h-[85vh] w-full')).toBe(true);
+    expect(rawViewportHeight.test('flex h-[70vh] w-full')).toBe(true);
+    expect(rawViewportHeight.test('flex max-h-[min(85vh,100%)] w-full')).toBe(false);
+  });
+});
