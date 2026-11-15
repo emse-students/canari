@@ -102,6 +102,7 @@ import {
   DailySightings,
   logDigest,
   verifiedAgendaSubscriptionId,
+  subscriptionNarrowing,
   withEventIcsSig,
   withoutAccountIds,
 } from './agenda-signature';
@@ -460,13 +461,14 @@ export class AssociationsController {
 
   /**
    * WHAT A SUBSCRIPTION LINK SERVES (owner, 2026-11-14, "Respecter les publics"): EXACTLY the signed-in
-   * agenda of its holder, narrowed to the row's selection - read at every poll, so a profile change, a
-   * lost membership or a read grant follows by itself. Validated events only, the promo cutoff included.
+   * agenda of its holder, narrowed to the row's selection (`subscriptionNarrowing`: a campus-alone
+   * row, the staff link, is the whole of it) - read at every poll, so a profile change, a lost
+   * membership or a read grant follows by itself. Validated events only, the promo cutoff included.
    */
   private holderFeed(holder: AgendaSubscriptionRow, from?: string, to?: string) {
     return this.service.listAggregatedCalendarFeed(from, to, holder.associationId ?? undefined, {
       viewer: { userId: holder.userId },
-      selection: { campus: holder.campus, formation: holder.formation },
+      selection: subscriptionNarrowing(holder),
     });
   }
 

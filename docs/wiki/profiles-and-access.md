@@ -1688,7 +1688,9 @@ one". Links already distributed keep resolving, but never serve more than their 
   so a holder's agenda is never handed out as JSON (account ids, per-event links) - checks the HMAC
   (constant time), loads the row, and
   serve `listAggregatedCalendarFeed(from, to, row.associationId, { viewer: { userId: row.userId },
-  selection })` - EXACTLY the holder's signed-in agenda (their spaces, memberships, read grants, the
+  selection })` (`selection` from `subscriptionNarrowing`: a campus-alone row
+  [narrows nothing](#a-staff-accounts-subscription-shows-its-in-app-agenda-owner-2026-11-15)) -
+  EXACTLY the holder's signed-in agenda (their spaces, memberships, read grants, the
   event's public and reach, the promo cutoff), re-read at every poll, so a profile change, a lost
   membership or a grant follows by itself. `Cache-Control: private, max-age=120`. Unknown, revoked or
   wrongly signed: a BODYLESS 403, logged `[AGENDA_SUBSCRIPTION_REFUSED]` once per process per UTC
@@ -1960,6 +1962,33 @@ in; an association is still reached from its own page, and a `?association=` dee
   account). The first month is asked with the remembered value; a value the reader's spaces no longer
   offer is dropped and the month re-read. The subscribe link and the PDF export keep their own
   selectors (D40) and do not follow this filter.
+
+### A staff account's subscription shows its in-app agenda (owner, 2026-11-15)
+
+**Decided by the owner (2026-11-15):** a staff account's calendar subscription shows exactly what
+its in-app agenda shows - its memberships and its nominative read grants. The rule of 2026-11-14
+(the door for staff is a grant, never the campus) holds on both surfaces.
+
+**What was true before, measured on PostgreSQL (`agenda-subscription.integration.spec.ts`, case f).**
+The question was asked on the belief that the link gave staff their whole campus. It did not, since
+the [link became its holder's](#d40-re-decided-2026-11-14---the-link-is-its-holders): a link serves
+its holder's own agenda, and `campusWideReaderCampus` only bounds which SELECTOR a staff account may
+name (its own campus, no formation) - it opens nothing at read time; the legacy `sig` link for a
+campus alone answers an empty calendar since that same day. With no grant and no membership, the app
+and the link both showed nothing; with a grant on its own campus, the same events. They differed in
+ONE case, the other way round: the link then NARROWED the holder's agenda to its campus, so a grant
+or a membership on the OTHER campus showed in the app and not in the calendar.
+
+**As built.** `subscriptionNarrowing` (`agenda-signature.ts`) is the one function that says how a
+subscription row narrows its holder's agenda, read by `holderFeed`: a row naming a space or an
+association keeps that selection; a row naming a CAMPUS ALONE - the one link an account with no
+space can ask - narrows nothing, and is its holder's whole in-app agenda. The selector staff may
+name is unchanged (their own campus), and so is the modal.
+
+**The visible effect:** a staff link GAINS the events of a grant or a membership on another campus;
+it loses nothing. **The population, measured 2026-11-15:** none yet - the per-holder link has not
+shipped to production, where every subscriber still holds a legacy link; every holder is on this
+rule from the first stable that carries the link.
 
 ### D40 closed - no event is published to an anonymous reader (2026-11-02)
 

@@ -9,6 +9,7 @@ import {
   selectionWithinSpaces,
   signAgendaSelection,
   signEventIcs,
+  subscriptionNarrowing,
   verifiedAgendaSubscriptionId,
 } from './agenda-signature';
 import { AssociationsService } from './associations.service';
@@ -287,6 +288,27 @@ describe('AssociationsService.subscribeAgenda (2026-11-14)', () => {
     );
     const insertCall = query.mock.calls.find((c) => String(c[0]).includes('INSERT')) as unknown[];
     expect(insertCall[1]).toEqual(['user-1', 'gardanne', 'ICM', null, 'gardanne|ICM|-']);
+  });
+
+  it('narrows a subscription to its space or its association, and a campus-alone row (the staff link) to nothing', () => {
+    const pair = { campus: 'gardanne', formation: 'ICM', associationId: null };
+    expect(subscriptionNarrowing(pair)).toEqual({ campus: 'gardanne', formation: 'ICM' });
+    expect(subscriptionNarrowing({ ...pair, associationId: 'a1' })).toEqual({
+      campus: 'gardanne',
+      formation: 'ICM',
+    });
+    expect(subscriptionNarrowing({ campus: null, formation: null, associationId: 'a1' })).toEqual({
+      campus: null,
+      formation: null,
+    });
+    // The staff link: the holder's whole agenda.
+    expect(
+      subscriptionNarrowing({ campus: 'gardanne', formation: null, associationId: null })
+    ).toEqual({ campus: null, formation: null });
+    // A campus beside an association still narrows that association's agenda.
+    expect(
+      subscriptionNarrowing({ campus: 'gardanne', formation: null, associationId: 'a1' })
+    ).toEqual({ campus: 'gardanne', formation: null });
   });
 
   it('lets staff subscribe to their whole campus (the bound the legacy signature had)', async () => {
