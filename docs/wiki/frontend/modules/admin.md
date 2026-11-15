@@ -170,7 +170,10 @@ refused here: its `MANAGE_ASSO` creates through `POST /associations`, in its own
   absence rule, 2026-11-15, reversible): the server refuses that rule on an association or a list for
   a platform admin too (decision 6), so the box was a control that could only fail. `offersEveryone`
   (`audienceRules.ts`) decides; the cell stays in the row, empty, so the columns keep their place.
-  The campus and formation boxes are unchanged.
+  **And once a pair of one campus is reached, the other campus's boxes are not offered** to an
+  association or a list (`offersCampus`, same file; decision 3: one campus, refused by the server on
+  two): they are disabled, with the refusal's own sentence as their title. A box already ticked
+  stays its own to untick, so an entity found on two campuses can be brought back to one.
 - **Every row has two links**: the public page and the management hub, both under the base of its kind
   (`entityBase`: `/lists` for a list, `/associations` otherwise). The management page admits a non-member
   platform admin (`canEdit = isGlobalAdmin() || ...`, then `editRights`, which reads `isGlobalAdmin`

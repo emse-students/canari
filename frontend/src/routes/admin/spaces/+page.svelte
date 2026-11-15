@@ -22,6 +22,7 @@
     campusCells,
     cellOf,
     coverage,
+    offersCampus,
     offersEveryone,
     reachedCells,
     toggleGroup,
@@ -464,10 +465,16 @@
                 {#each CAMPUSES as campus (campus)}
                   {@const group = campusCells(campus)}
                   {@const state = coverage(group, reached)}
+                  <!-- One campus per association or list: the other campus's boxes may be unticked, never added. -->
+                  {@const offered = offersCampus(association.type, reached, campus)}
                   <td class="border-cn-border border-l px-1.5 py-2 text-center">
                     <button
                       type="button"
-                      disabled={busy === `${association.id}:${campus}`}
+                      disabled={busy === `${association.id}:${campus}` ||
+                        (!offered && state !== 'all')}
+                      title={!offered && state !== 'all'
+                        ? m.audience_err_one_campus_only()
+                        : undefined}
                       aria-pressed={state === 'all'}
                       aria-label={m.admin_spaces_campus_aria({
                         association: association.name,
@@ -491,7 +498,10 @@
                         <!-- Governing a pair and reaching it are two axes (reform 2.5): each its own button. -->
                         <button
                           type="button"
-                          disabled={busy === cellKey}
+                          disabled={busy === cellKey || (!offered && !reached.has(cell))}
+                          title={!offered && !reached.has(cell)
+                            ? m.audience_err_one_campus_only()
+                            : undefined}
                           aria-pressed={reached.has(cell)}
                           aria-label={m.admin_spaces_reach_aria({
                             association: association.name,
