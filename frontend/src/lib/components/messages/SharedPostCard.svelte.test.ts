@@ -129,7 +129,7 @@ describe('SharedPostCard', () => {
     );
     expect(target.textContent).toContain('Ada');
     expect(target.textContent).toContain('La soirée de rentrée');
-    expect(target.querySelector('[data-video-glass-glyph]')).toBeNull();
+    expect(target.querySelector('[data-video-resting-play]')).toBeNull();
     tap(target);
     await vi.waitFor(() => expect(navigateInAppFromHref).toHaveBeenCalledWith(URL_P));
   });
@@ -142,7 +142,7 @@ describe('SharedPostCard', () => {
     const target = render();
     await settled(target, 'post');
     expect(target.querySelector('[data-shared-post-media="video"]')).not.toBeNull();
-    const glyph = target.querySelector('[data-video-glass-glyph="play"]')!;
+    const glyph = target.querySelector('[data-video-resting-play]')!;
     expect(glyph.tagName).toBe('SPAN');
     expect(glyph.getAttribute('aria-hidden')).toBe('true');
     expect(target.querySelector('[data-video-play-glyph]')).toBeNull();

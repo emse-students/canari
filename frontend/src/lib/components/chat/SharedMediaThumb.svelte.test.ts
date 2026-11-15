@@ -34,7 +34,7 @@ afterEach(() => {
 });
 
 describe('SharedMediaThumb play glyph', () => {
-  it('draws the glass triangle over a video and no Lucide play icon', async () => {
+  it('draws the flat resting triangle over a video', async () => {
     const target = document.createElement('div');
     document.body.appendChild(target);
     mounted.push(
@@ -48,7 +48,7 @@ describe('SharedMediaThumb play glyph', () => {
     await Promise.resolve();
     flushSync();
     expect(target.querySelector('video')).not.toBeNull();
-    expect(target.querySelector('[data-video-glass-glyph="play"]')).not.toBeNull();
-    expect(target.querySelector('.lucide-play')).toBeNull();
+    expect(target.querySelector('[data-video-resting-play]')).not.toBeNull();
+    expect(target.querySelector('.glass-video-shape'), 'flat at rest').toBeNull();
   });
 });

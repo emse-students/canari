@@ -387,6 +387,7 @@
         muted={videoSound.muted}
         onToggle={toggleSound}
         onLevel={(v) => videoSound.setVolume(v)}
+        quiet
         data-live-sound
       />
       {#if orientation.canRotate && !terminal}
