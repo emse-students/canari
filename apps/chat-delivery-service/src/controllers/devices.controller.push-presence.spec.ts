@@ -26,6 +26,7 @@ describe('DevicesController.registerDevice - the push registration it answers ab
   let controller: DevicesController;
   let held: boolean;
   let existsBy: jest.Mock;
+  let query: jest.Mock;
   const log = jest.fn();
   const warn = jest.fn();
 
@@ -36,6 +37,7 @@ describe('DevicesController.registerDevice - the push registration it answers ab
     log.mockReset();
     warn.mockReset();
     existsBy = jest.fn(async () => held);
+    query = jest.fn(async () => [{ inserted: false }]);
     const qb = {
       select: jest.fn(() => qb),
       where: jest.fn(() => qb),
@@ -59,7 +61,7 @@ describe('DevicesController.registerDevice - the push registration it answers ab
           useValue: { findOne: jest.fn(async () => null), find: jest.fn(async () => []) },
         },
         { provide: 'REDIS_CLIENT', useValue: {} },
-        { provide: DataSource, useValue: { query: jest.fn(async () => [{ inserted: false }]) } },
+        { provide: DataSource, useValue: { query } },
         { provide: MessagingService, useValue: {} },
         { provide: DeviceSignatureKeysService, useValue: { record: jest.fn() } },
       ],
@@ -107,11 +109,39 @@ describe('DevicesController.registerDevice - the push registration it answers ab
     expect(line).toContain(side);
   });
 
-  it('a first registration of a sign-in (last=none) is expected: said at log, never accused', async () => {
+  it.each([
+    ['none', 'first registration of this sign-in'],
+    // The login starts the ladder BEFORE the first register-device: an Android 13+ first install
+    // with its permission rationale still open said `started`, and was accused of a dead process.
+    ['in-progress', 'still running'],
+    // No Play services, an APNs failure: a known state, already accused by [PUSH_UNAVAILABLE].
+    ['no-token', 'no push token'],
+  ])('last=%s is EXPECTED: said at log, never accused', async (outcome, says) => {
     held = false;
-    await controller.registerDevice({ ...BODY, pushOutcome: 'none' }, 'u1');
+    await controller.registerDevice({ ...BODY, pushOutcome: outcome }, 'u1');
     expect(missingLines(warn)).toHaveLength(0);
-    expect(missingLines(log)).toEqual([expect.stringContaining('last=none')]);
+    expect(missingLines(log)).toEqual([
+      expect.stringMatching(new RegExp(`last=${outcome} .*${says}`)),
+    ]);
+  });
+
+  it('writes the stated outcome on the key package row, and NULL when the build states none', async () => {
+    await controller.registerDevice({ ...BODY, pushOutcome: 'no-token' }, 'u1');
+    await controller.registerDevice(BODY, 'u1');
+    const written = query.mock.calls
+      .filter(([sql]) => String(sql).includes('INSERT INTO key_package'))
+      .map(([, params]) => (params as unknown[])[9]);
+    expect(written).toEqual(['no-token', null]);
+  });
+
+  it('a lookup that fails answers the registration with push unknown, accused at error - never a 500', async () => {
+    const error = jest.fn();
+    (controller as unknown as { logger: { error: jest.Mock } }).logger.error = error;
+    existsBy.mockRejectedValueOnce(new Error('db blip'));
+    const answer = await controller.registerDevice(BODY, 'u1');
+    expect(answer).toEqual({ status: 'registered', push: { registered: null } });
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('lookup FAILED'));
+    expect(missingLines(warn)).toHaveLength(0);
   });
 
   it('an outcome off the allowlist prints invalid, an absent one unstated', async () => {

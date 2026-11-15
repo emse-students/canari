@@ -366,6 +366,7 @@ export class DevicesController {
     const deviceName = sanitizeOptionalDeviceName(body.deviceName);
     const deviceOs = sanitizeOptionalDeviceOs(body.deviceOs);
     const deviceAppVersion = sanitizeOptionalDeviceAppVersion(body.deviceAppVersion);
+    const pushOutcome = parsePushOutcome(body.pushOutcome);
 
     // Enforce the per-user device limit (M5) against LIVE devices - see countLiveDevices for what
     // that means and why the old row count was the wrong quantity. The device being registered is
@@ -431,6 +432,7 @@ export class DevicesController {
         deviceName,
         deviceOs,
         deviceAppVersion,
+        pushOutcome: pushOutcome === 'unstated' ? null : pushOutcome,
       },
       crypto.randomUUID()
     );
@@ -470,16 +472,29 @@ export class DevicesController {
     // renewal: the `push_token` row is the fact, and the client re-registers on `false` instead of
     // trusting its own copy of it (`reconcilePushRegistration`). A row missing from a phone is said
     // here with what the device states its last attempt came to - see `utils/push-coverage.ts`.
-    const pushRegistered = await this.pushTokenRepo.existsBy({ userId, deviceId });
-    const presence = pushPresenceLine({
-      userId,
-      deviceId,
-      deviceOs,
-      build: deviceAppVersion,
-      held: pushRegistered,
-      outcome: parsePushOutcome(body.pushOutcome),
-    });
-    if (presence) this.logger[presence.level](presence.line);
+    // A LOOKUP THAT FAILED IS NOT AN ANSWER, and it must not cost the registration it follows: the
+    // device is answered `null` (unknown), which the client reads as "do not re-drive".
+    let pushRegistered: boolean | null;
+    try {
+      pushRegistered = await this.pushTokenRepo.existsBy({ userId, deviceId });
+    } catch (e) {
+      pushRegistered = null;
+      this.logger.error(
+        `[PUSH_MISSING] user=${userId} device=${deviceId} the push row lookup FAILED - answered ` +
+          `unknown, nothing re-driven: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+    if (pushRegistered !== null) {
+      const presence = pushPresenceLine({
+        userId,
+        deviceId,
+        deviceOs,
+        build: deviceAppVersion,
+        held: pushRegistered,
+        outcome: pushOutcome,
+      });
+      if (presence) this.logger[presence.level](presence.line);
+    }
     return { status: 'registered', push: { registered: pushRegistered } };
   }
 

@@ -2002,24 +2002,41 @@ the server could say a phone was silent, which is how a third of a build went un
   `{status, push: {registered}}` - whether a `push_token` row exists for `(userId, deviceId)`. On
   `false` the client drops the skip key and runs the registration again
   (`reconcilePushRegistration`, called from `TauriMlsService.publishKeyPackage`). Deterministic,
-  from durable state, never a timer; a server that does not say answers `null` and changes nothing,
-  said at warn.
+  from durable state, never a timer; a server that does not say (an older one, or a row lookup that
+  failed - the registration is still answered, the lookup failure logged as an error) answers
+  `null` and changes nothing, said at info. **Not re-driven**: a registration already running
+  (`in-progress`), and the two outcomes another attempt cannot change - `refused` (the server's own
+  4xx) and `no-token` (the OS gave none; each process start asks it again). A first registration
+  (`none`) is said at info, any other lost one at warn.
 - The phone states what its last registration came to, `pushOutcome`, kept in `localStorage`
   (`canari_push_outcome`) across processes: `registered`, a `PushRegistrationFailure`, `deferred`
   (an owed sign-out deletion), `no-user`, `started` (the process ended inside the ladder), `none`
-  (nothing since the sign-out, which clears it). An allowlist on the server; anything else prints
-  `invalid`, an older build `unstated`.
+  (nothing since the sign-out, which clears it). Stated, never stored: `in-progress` while THIS
+  process's ladder or a registration runs - the login starts the ladder before its first
+  `register-device`, so `started` alone would accuse every fresh sign-in of a dead process. An
+  allowlist on the server; anything else prints `invalid`, an older build `unstated`. The server
+  keeps the last stated one on the device's key package (`key_package."pushOutcome"`, migration
+  `051`, additive).
+- **A sign-out supersedes the ladder of the account that left.** `endPushRegistration` bumps a
+  session generation; a ladder whose generation is gone records nothing, stops between attempts and
+  sends nothing - it would otherwise write account A's outcome into account B's state, and send A's
+  `x-user-id` with B's bearer.
 - When a phone holds no row, `register-device` prints `[PUSH_MISSING] user device os build last=<outcome>`:
-  at `log` for `last=none` (a fresh sign-in, the registration follows), at WARN otherwise, naming the
-  side - `registered` accuses a server-side deletion, any failure the client's attempt.
+  at `log` for the expected states (`none`, a fresh sign-in; `in-progress`; `no-token`, a phone its
+  OS gives no token, already reported by `[PUSH_UNAVAILABLE]`), at WARN otherwise, naming the side -
+  `registered` accuses a server-side deletion, any failure the client's attempt.
 - `[PUSH_COVERAGE]` (daily, and in the initial sweep): one line for the fleet, and one WARN per
-  `(os, build)` whose phones ran and hold no row ten minutes after - zero is the steady state.
+  `(os, build)` whose phones ran and hold no row ten minutes after - zero is the steady state. A
+  phone whose stated outcome is `no-token` is **counted apart** (`noOsToken`, on the log line, never
+  a WARN): its state is known and no fix of ours changes it. A live session counts only when it is
+  the device's OWN account's (`s."userId" = k."userId"`).
 
 Tests: `PushNotificationService.reconcile.test.ts`, `mlsDeliveryApi.pushRegistered.test.ts`,
 `TauriMlsService.pushReconcile.test.ts` (client); `devices.controller.push-presence.spec.ts`,
-`utils/push-coverage.spec.ts` (server). **What closes the incident** is the `[PUSH_COVERAGE]` WARN
+`utils/push-coverage.spec.ts`, `utils/push-coverage.integration.spec.ts` (the predicate against
+PostgreSQL) (server). **What closes the incident** is the `[PUSH_COVERAGE]` WARN
 lines reading zero for the build that ships this, and the `[PUSH_MISSING] last=` terms naming the
-branch if they do not (backlog entry `p1-a-third-of-the-1-6-12-native-devices-hold-no-push-token-row`).
+branch if they do not ([the backlog entry](../backlog.d/p1-a-third-of-the-1-6-12-native-devices-hold-no-push-token-row.md)).
 
 #### Transport — single gateway (FCM)
 

@@ -31,6 +31,7 @@ describe('reportPushCoverage', () => {
   it('asks about the phones that RAN - a key package reset by register-device - never row age', () => {
     expect(PUSH_COVERAGE_SQL).toMatch(/k\."createdAt" > \$1\s+AND k\."createdAt" <= \$2/);
     expect(PUSH_COVERAGE_SQL).toContain(`k."deviceOs" IN ('android', 'ios')`);
+    expect(PUSH_COVERAGE_SQL).toContain(`s."userId" = k."userId"`);
     expect(PUSH_COVERAGE_SQL).toMatch(
       /t\."userId" = l\."userId"\s+AND t\."deviceId" = l\."deviceId"/
     );
@@ -40,14 +41,14 @@ describe('reportPushCoverage', () => {
     const l = logger();
     await reportPushCoverage(
       db([
-        { os: 'android', build: '1.6.11', devices: 8, withoutPush: 0 },
-        { os: 'android', build: '1.6.12', devices: 38, withoutPush: 14 },
-        { os: 'ios', build: '1.6.12', devices: 20, withoutPush: 10 },
+        { os: 'android', build: '1.6.11', devices: 8, withoutPush: 0, noOsToken: 0 },
+        { os: 'android', build: '1.6.12', devices: 38, withoutPush: 14, noOsToken: 0 },
+        { os: 'ios', build: '1.6.12', devices: 20, withoutPush: 10, noOsToken: 0 },
       ]),
       l,
       NOW
     );
-    expect(l.log).toHaveBeenCalledWith(expect.stringMatching(/ran in 24 h: 66, .*: 24$/));
+    expect(l.log).toHaveBeenCalledWith(expect.stringMatching(/ran in 24 h: 66, .*: 24, .*: 0$/));
     expect(l.warn).toHaveBeenCalledTimes(2);
     expect(l.warn).toHaveBeenCalledWith(
       expect.stringContaining('os=android build=1.6.12 without=14/38')
@@ -60,11 +61,22 @@ describe('reportPushCoverage', () => {
   it('zero is the steady state: one line, no accusation', async () => {
     const l = logger();
     await reportPushCoverage(
-      db([{ os: 'ios', build: '1.6.11', devices: 29, withoutPush: 0 }]),
+      db([{ os: 'ios', build: '1.6.11', devices: 29, withoutPush: 0, noOsToken: 0 }]),
       l,
       NOW
     );
     expect(l.log).toHaveBeenCalledTimes(1);
+    expect(l.warn).not.toHaveBeenCalled();
+  });
+
+  it('a phone the OS gives no push token is COUNTED apart, never accused - zero stays the steady state', async () => {
+    const l = logger();
+    await reportPushCoverage(
+      db([{ os: 'android', build: '1.7.0', devices: 40, withoutPush: 0, noOsToken: 2 }]),
+      l,
+      NOW
+    );
+    expect(l.log).toHaveBeenCalledWith(expect.stringMatching(/: 0, given no push token .*: 2$/));
     expect(l.warn).not.toHaveBeenCalled();
   });
 });

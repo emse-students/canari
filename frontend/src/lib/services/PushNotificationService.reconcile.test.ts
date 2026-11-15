@@ -16,12 +16,15 @@ import type { PushAuth } from './PushNotificationService';
  * Each case imports a FRESH module: `pushAttempted` and the start arguments are per process.
  */
 
+/** What the OS gives `get_fcm_token`: null is a phone with no token (no Play services, APNs down). */
+let osToken: string | null = 'fcm-1';
+
 Object.defineProperty(globalThis, '__TAURI_INTERNALS__', {
   value: {
     invoke: (cmd?: string) => {
       if (cmd === 'complete_owed_push_token_deletion') return Promise.resolve(true);
       if (cmd === 'end_push_registration') return Promise.resolve(true);
-      if (cmd === 'get_fcm_token') return Promise.resolve('fcm-1');
+      if (cmd === 'get_fcm_token') return Promise.resolve(osToken);
       return Promise.resolve(null);
     },
     transformCallback: vi.fn(),
@@ -84,6 +87,7 @@ async function drain(): Promise<void> {
 }
 
 beforeEach(() => {
+  osToken = 'fcm-1';
   sessionStorage.clear();
   localStorage.clear();
   vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -139,10 +143,91 @@ describe('the delivery service says it holds no push registration', { timeout: 3
   });
 });
 
+describe('what is NOT re-driven, and what is said at which level', { timeout: 30_000 }, () => {
+  it('a `refused` registration is an answer: not sent again on `false`', async () => {
+    registerAnswers(403);
+    const push = await freshModule();
+    await settle(push.startPushService('https://api', LIVE, 'dev-1'));
+    registerAnswers(200);
+    push.reconcilePushRegistration(false);
+    await drain();
+    expect(registrations()).toBe(0);
+  });
+
+  it('a `no-token` phone is not re-driven on `false` (each process start asks the OS again)', async () => {
+    osToken = null;
+    registerAnswers(200);
+    const push = await freshModule();
+    await settle(push.startPushService('https://api', LIVE, 'dev-1'));
+    expect(push.pushOutcomeForReport()).toBe('no-token');
+    osToken = 'fcm-1';
+    push.reconcilePushRegistration(false);
+    await drain();
+    expect(registrations()).toBe(0);
+  });
+
+  it('a first registration and an older server are said at info, never warn', async () => {
+    const push = await freshModule();
+    push.reconcilePushRegistration(false);
+    push.reconcilePushRegistration(null);
+    expect(console.warn).not.toHaveBeenCalled();
+  });
+
+  it('a lost registration is warned', async () => {
+    registerAnswers(401);
+    const push = await freshModule();
+    await settle(push.startPushService('https://api', LIVE, 'dev-1'));
+    vi.mocked(console.warn).mockClear();
+    push.reconcilePushRegistration(false);
+    expect(console.warn).toHaveBeenCalledWith(
+      expect.stringContaining('last outcome: unauthorized')
+    );
+  });
+});
+
+describe('a sign-out supersedes the ladder of the account that left', { timeout: 30_000 }, () => {
+  it('a ladder asleep between attempts sends nothing and records nothing after the sign-out', async () => {
+    osToken = null;
+    registerAnswers(200);
+    const push = await freshModule();
+    vi.useFakeTimers();
+    try {
+      const ladder = push.startPushService('https://api', LIVE, 'dev-1');
+      await vi.advanceTimersByTimeAsync(40_000);
+      await push.endPushRegistration();
+      // The OS now has a token: the old ladder must not send it under the old user id.
+      osToken = 'fcm-1';
+      await vi.advanceTimersByTimeAsync(300_000);
+      await ladder;
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(registrations()).toBe(0);
+    expect(push.pushOutcomeForReport()).toBe('none');
+  });
+});
+
 describe('the outcome a device states on register-device', { timeout: 30_000 }, () => {
   it('is `none` before any registration since the sign-out', async () => {
     const push = await freshModule();
     expect(push.pushOutcomeForReport()).toBe('none');
+  });
+
+  it('is `in-progress` while this process registers - a fresh sign-in is not a dead process', async () => {
+    registerAnswers(200);
+    const { isPermissionGranted } = await import('@tauri-apps/plugin-notification');
+    const push = await freshModule();
+    // The login starts the ladder before its first register-device; the ladder is still running.
+    vi.mocked(isPermissionGranted).mockReturnValueOnce(new Promise(() => {}));
+    void push.startPushService('https://api', LIVE, 'dev-1');
+    await drain();
+    expect(push.pushOutcomeForReport()).toBe('in-progress');
+    // ...and on `false` it is not started a second time.
+    push.reconcilePushRegistration(false);
+    expect(console.warn).not.toHaveBeenCalled();
+    // A NEXT process reads `started`: this one died inside its ladder.
+    const next = await freshModule();
+    expect(next.pushOutcomeForReport()).toBe('started');
   });
 
   it('is `registered` after a registration the server answered', async () => {

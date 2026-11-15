@@ -32,14 +32,19 @@ export const PUSH_COVERAGE_WINDOW_MS = 24 * 60 * 60 * 1000;
 const PUSH_PLATFORMS = ['android', 'ios'] as const;
 
 /**
- * Per (platform, build): the native devices that ran inside the window and how many hold no row.
+ * Per (platform, build): the native devices that ran inside the window, how many hold no row while
+ * their registration did not reach the server (`withoutPush`), and how many hold none because the OS
+ * gave them no push token (`noOsToken`: the last outcome they stated, migration 051). The second is
+ * a KNOWN state - no Play services, an APNs failure - accused once per process by
+ * `[PUSH_UNAVAILABLE]` and not curable by registering again, so it is counted and never accused here.
  * `$1` window start, `$2` grace cutoff, `$3` ban cutoff, `$4` now (the session liveness instant).
  * `auth_sessions."deviceId"` has no index; a daily report does not add one.
  */
 export const PUSH_COVERAGE_SQL = `
 WITH launched AS (
   SELECT k."userId", k."deviceId", k."deviceOs" AS "os",
-         COALESCE(k."deviceAppVersion", 'unstated') AS "build"
+         COALESCE(k."deviceAppVersion", 'unstated') AS "build",
+         (k."pushOutcome" IS NOT DISTINCT FROM 'no-token') AS "noOsToken"
     FROM key_package k
    WHERE k."deviceOs" IN (${PUSH_PLATFORMS.map((p) => `'${p}'`).join(', ')})
      AND k."createdAt" > $1
@@ -48,15 +53,19 @@ WITH launched AS (
                       WHERE r."userId" = k."userId" AND r."deviceId" = k."deviceId"
                         AND r."revokedAt" > $3)
      AND EXISTS (SELECT 1 FROM auth_sessions s
-                  WHERE s."deviceId" = k."deviceId" AND s."expiresAt" > $4)
+                  WHERE s."deviceId" = k."deviceId" AND s."userId" = k."userId"
+                    AND s."expiresAt" > $4)
+), unheld AS (
+  SELECT l.*, NOT EXISTS (SELECT 1 FROM push_token t
+                           WHERE t."userId" = l."userId" AND t."deviceId" = l."deviceId") AS "noRow"
+    FROM launched l
 )
-SELECT l."os", l."build", count(*)::int AS "devices",
-       count(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM push_token t
-                                           WHERE t."userId" = l."userId"
-                                             AND t."deviceId" = l."deviceId"))::int AS "withoutPush"
-  FROM launched l
- GROUP BY l."os", l."build"
- ORDER BY l."os", l."build"`;
+SELECT u."os", u."build", count(*)::int AS "devices",
+       count(*) FILTER (WHERE u."noRow" AND NOT u."noOsToken")::int AS "withoutPush",
+       count(*) FILTER (WHERE u."noRow" AND u."noOsToken")::int AS "noOsToken"
+  FROM unheld u
+ GROUP BY u."os", u."build"
+ ORDER BY u."os", u."build"`;
 
 /** One (platform, build) row of the count. */
 export interface PushCoverageRow {
@@ -64,6 +73,7 @@ export interface PushCoverageRow {
   build: string;
   devices: number;
   withoutPush: number;
+  noOsToken: number;
 }
 
 /** The parameters of {@link PUSH_COVERAGE_SQL}, in order. */
@@ -91,9 +101,11 @@ export async function reportPushCoverage(
     []) as PushCoverageRow[];
   const devices = rows.reduce((n, r) => n + r.devices, 0);
   const without = rows.reduce((n, r) => n + r.withoutPush, 0);
+  const noOsToken = rows.reduce((n, r) => n + r.noOsToken, 0);
   logger.log(
     `[PUSH_COVERAGE] native devices that ran in 24 h: ${devices}, holding no push registration ` +
-      `${PUSH_REGISTRATION_GRACE_MS / 60_000} min after: ${without}`
+      `${PUSH_REGISTRATION_GRACE_MS / 60_000} min after: ${without}, given no push token by their OS ` +
+      `(known, [PUSH_UNAVAILABLE]): ${noOsToken}`
   );
   for (const r of rows) {
     if (r.withoutPush === 0) continue;
@@ -122,9 +134,17 @@ const PUSH_OUTCOMES: ReadonlySet<string> = new Set([
   'deferred',
   'no-user',
   'started',
+  'in-progress',
   'none',
   'unreadable',
 ]);
+
+/** The outcomes with no row that are expected, and what each means - see {@link pushPresenceLine}. */
+const EXPECTED_WITHOUT_ROW: Readonly<Record<string, string>> = {
+  none: 'first registration of this sign-in, owed now',
+  'in-progress': 'the registration of this process is still running',
+  'no-token': 'the OS gives this phone no push token (accused by [PUSH_UNAVAILABLE])',
+};
 
 /** The stated outcome, normalised by {@link PUSH_OUTCOMES}. */
 export function parsePushOutcome(raw: unknown): string {
@@ -136,10 +156,17 @@ export function parsePushOutcome(raw: unknown): string {
  * The line `register-device` prints about the device's push registration, or null when there is
  * nothing to say (the row is held, or the device is not a phone).
  *
- * `none` is a device that has not registered since it signed in - the registration follows this very
- * call, so it is expected and said at `log`. Every other outcome with no row is a device that ran
- * and holds nothing: `registered` accuses a row the SERVER lost after the client wrote it, any
- * failure accuses the CLIENT's last attempt - opposite causes, which is why the line names the term.
+ * Said at `log`, never accused - the three EXPECTED states:
+ * - `none`: nothing since the sign-in; the registration follows this very call;
+ * - `in-progress`: this process's ladder is running (an Android permission rationale still open, a
+ *   token still coming) - the login starts it before the first `register-device`;
+ * - `no-token`: the OS gave this phone no push token, a known state accused once per process by
+ *   `[PUSH_UNAVAILABLE]`, which registering again cannot cure.
+ *
+ * Every other outcome with no row is a phone that ran and holds nothing, at WARN: `registered`
+ * accuses a row the SERVER lost after the client wrote it, any failure (and `started`, a previous
+ * process that died inside its ladder) the CLIENT's last attempt - opposite causes, which is why the
+ * line names the term.
  */
 export function pushPresenceLine(args: {
   userId: string;
@@ -154,9 +181,8 @@ export function pushPresenceLine(args: {
   const line =
     `[PUSH_MISSING] user=${args.userId} device=${args.deviceId} os=${args.deviceOs} ` +
     `build=${args.build ?? 'unstated'} last=${args.outcome}`;
-  if (args.outcome === 'none') {
-    return { level: 'log', line: `${line} - first registration of this sign-in, owed now` };
-  }
+  const expected = EXPECTED_WITHOUT_ROW[args.outcome];
+  if (expected) return { level: 'log', line: `${line} - ${expected}` };
   return {
     level: 'warn',
     line:
