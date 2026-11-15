@@ -85,6 +85,7 @@ earliest version, as a checklist.
 - [P3 - A salon is read before the key-group drain has finished, so its rows warn "unreadable - missing seed" and are read again later (1.6.11 logs, 2026-11-14)](backlog.d/p3-a-salon-is-read-before-the-key-group-drain-finishes.md)
 - [P3 - "server already unreachable" is logged once per request instead of once per transition (1.6.11 logs, 2026-11-14)](backlog.d/p3-server-already-unreachable-is-logged-per-request.md)
 - [P3 - EXIT-FORTIFY: closing the app on the Mi 9T logs `FORTIFY: pthread_mutex_lock called on a destroyed mutex` from the render thread](backlog.d/reading-owed-exit-fortify-closing-the-app-on-the-mi-9t-logged-fortify-pthread.md)
+- [P3 - a 13 MB upload on the iPhone restarted at about half and ran at 40 to 65 KB/s](backlog.d/p3-a-13-mb-upload-on-the-iphone-restarted-at-half-and-ran-at-40-to-65-kb-s.md)
 - [P3 - a group joined from a Welcome on the iPhone reads "Utilisateur inconnu a ajouté Utilisateur inconnu au groupe"](backlog.d/p3-a-group-joined-from-a-welcome-on-the-phone-reads-unknown-user-added-unknown-user.md)
 - [P3 - a newcomer's thread reads "Compte supprime a ajoute Compte supprime au groupe" for its own Add](backlog.d/p3-a-newcomer-s-first-added-notice-reads-compte-supprime-for-both-names.md)
 - [P3 - the Emojis preference row squeezes its description into a five-word column on a phone](backlog.d/p3-the-emojis-preference-row-squeezes-its-description-on-a-phone.md)
@@ -94,7 +95,6 @@ earliest version, as a checklist.
 
 - [ ] [the CanaReels composer, viewer and editor on real content](backlog.d/reading-owed-the-canareels-composer-viewer-and-editor-on-real-content.md)
 - [ ] [the in-session community join through the deep link on the phones](backlog.d/p1-owed-one-live-reading-of-the-in-session-join-fix-2026-10-08.md)
-- [ ] [a 13 MB attachment: the bytes out of the outbox row, an evicted blob parked as `upload_error`](backlog.d/reading-owed-a-13-mb-attachment-the-bytes-out-of-the-outbox-row-an-evicted-blob.md)
 - [ ] [a notification tap to a usable conversation: F1](backlog.d/reading-owed-a-notification-tap-to-a-usable-conversation-f1.md)
 - [ ] [a group joined in the background before its row existed: the "already held" Welcome writes and announces the row, the...](backlog.d/reading-owed-a-group-joined-in-the-background-before-its-row-existed-the.md)
 - [ ] [a reply swipe along a thumb's arc](backlog.d/reading-owed-a-reply-swipe-along-a-thumb-s-arc.md)
