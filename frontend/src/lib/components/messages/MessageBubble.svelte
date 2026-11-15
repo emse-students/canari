@@ -312,8 +312,11 @@
   let pointerStartY = $state(0);
   let swipeHandled = $state(false);
   let replyGesture = $state<ReplySwipeGestureState | null>(null);
-  /** The unclaimable-move line is written once per stroke: every later move would repeat it. */
-  let replyClaimLossLogged = false;
+  /**
+   * The engine took this stroke (a touchmove was uncancelable): it gates the claim AND its log, so
+   * the bubble stops claiming and writes ONE line per stroke. Reset at every touch start.
+   */
+  let replyStrokeLost = false;
   let replyDragPx = $state(0);
 
   let envelope = $derived(parseEnvelope(content));
@@ -654,7 +657,7 @@
     pointerStartX = x;
     pointerStartY = y;
     swipeHandled = false;
-    replyClaimLossLogged = false;
+    replyStrokeLost = false;
     replyDragPx = 0;
 
     const pointerType = 'pointerType' in e ? e.pointerType : 'touch';
@@ -721,10 +724,11 @@
         // the engine, and WebKit applies a diagonal's vertical component to the thread unless the
         // page cancels the move (iPhone 12, 2026-11-15: a 110 px stroke with 45 px of drift
         // scrolled the thread 35 px and staged no reply). Chromium never needed it - its first
-        // direction decides - which is why Android kept replying without it. Cancelable until the engine has
-        // started a scroll; the lock is at 8 px so the first delivered move already claims.
-        if (!replyClaimLossLogged && !claimTouchMove(e)) {
-          replyClaimLossLogged = true;
+        // direction decides - which is why Android kept replying without it. Cancelable until the
+        // engine has started a scroll; the lock is at 8 px so the first delivered move already
+        // claims.
+        if (!replyStrokeLost && !claimTouchMove(e)) {
+          replyStrokeLost = true;
           Log.w(
             'MESSAGE',
             `reply swipe on ${messageId.slice(0, 8)} locked horizontal but its touchmove is not cancelable: the engine already owns the stroke`

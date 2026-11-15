@@ -25,7 +25,12 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
 
 import MessageBubble from './MessageBubble.svelte';
 import { REPLY_SWIPE_TRIGGER_PX } from '$lib/utils/messageSwipeReply';
+vi.mock('$lib/utils/touchClaim', async (orig) => {
+  const real = await orig<typeof import('$lib/utils/touchClaim')>();
+  return { ...real, claimTouchMove: vi.fn(real.claimTouchMove) };
+});
 import { Log } from '$lib/utils/Log';
+import { claimTouchMove } from '$lib/utils/touchClaim';
 
 const mounted: (() => void)[] = [];
 
@@ -403,8 +408,9 @@ describe('MessageBubble - a WebKit thumb arc is CLAIMED, not left to the scrolle
     expect(h.reply).not.toHaveBeenCalled();
   });
 
-  it('keeps the gesture when the engine already owns the stroke, and logs the loss exactly once', () => {
+  it('keeps the gesture when the engine already owns the stroke, claims once, logs once, and the next stroke claims again', () => {
     const warn = vi.spyOn(Log, 'w').mockImplementation(() => {});
+    vi.mocked(claimTouchMove).mockClear();
     const h = mountBubble();
     const el = bubble();
     el.dispatchEvent(pointer('pointerdown', 100, 200));
@@ -421,10 +427,21 @@ describe('MessageBubble - a WebKit thumb arc is CLAIMED, not left to the scrolle
     el.dispatchEvent(touch('touchend', 220, 200));
     flushSync();
 
-    // Behaviour is unchanged from before the claim existed (Android kept replying); the loss is
-    // reported once per stroke, not once per move.
+    // Behaviour is unchanged from before the claim existed (Android kept replying); after the
+    // first loss the bubble stops claiming AND stops logging: one of each per stroke.
     expect(h.reply).toHaveBeenCalledTimes(1);
     expect(warn).toHaveBeenCalledTimes(1);
+    expect(claimTouchMove).toHaveBeenCalledTimes(1);
+
+    // The flag is per stroke: a fresh touch start claims again.
+    vi.mocked(claimTouchMove).mockClear();
+    el.dispatchEvent(pointer('pointerdown', 100, 200));
+    el.dispatchEvent(touch('touchstart', 100, 200));
+    const move = touch('touchmove', 130, 200);
+    el.dispatchEvent(pointer('pointermove', 130, 200));
+    el.dispatchEvent(move);
+    expect(claimTouchMove).toHaveBeenCalledTimes(1);
+    expect(move.defaultPrevented).toBe(true);
   });
 });
 
