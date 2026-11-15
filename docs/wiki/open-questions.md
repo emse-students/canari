@@ -738,6 +738,14 @@ honour, encrypted conversations included) or is asked of the identity provider -
 may decide it (the platform admin alone, or a BDE for its spaces), touches the [charter](../principes.md)'s
 first principle as much as moderation. No code until it is answered.
 
+## Should the privacy policy describe named readers? (parked 2026-11-15)
+
+The privacy policy (`frontend/src/routes/legal/privacy/+page.svelte`) does not describe named readers at
+all - neither the read grants of 2026-10-07 nor the comments switch that narrows them. The register row
+C5 already says what they read ([register](compliance/register-of-processing.md)). Whether the public
+policy should say it too is the owner's call. Moved here when its reading entry was deleted on the
+owner's decision of 2026-11-15 ("Supprimer cette lecture"), so the question is not lost with it.
+
 ## Should a BDE moderator read a reported COMMENT under a post that is not out yet? (asked 2026-11-15)
 
 **Today**: a BDE moderator's read of a post scheduled later opens only once it is published, or while

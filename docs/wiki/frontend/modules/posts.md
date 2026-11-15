@@ -1098,6 +1098,108 @@ Four changes from one reading of the feed on the phone, each measured at 436 px 
 blur, which takes the hue of the frame under it. It is now an amber glyph on a near-opaque
 `--color-cn-scrim` while muted and a solid `--cn-yellow` disc once the sound is on.
 
+### The card zone: one family, a fixed order (owner, 2026-11-15)
+
+The owner's decision, "Une seule famille de cartes", read on dev screenshots of 2026-11-15 (one post
+holding a text with two links, a photo, a PDF and an attached form). What they showed: the same form
+twice - a link card in the text ("Form" chip, diagonal arrow, "Open") and an attached-form card under
+the action bar (40 px glyph tile, no chip, "Fill out the form", exit arrow, narrower inset); seven
+card shapes, arrows and chips; the event ABOVE the text, the links and the media between the text
+and the action bar, the attached form and the poll AFTER it; the PDF's 22rem first page; and every
+URL left in full in the text above its own card.
+
+**ONE CARD, `AttachmentCard`** (`components/shared/AttachmentCard.svelte`), modelled on the chat's
+link card, which was already coherent: a 64 px tile, a type chip (the host, "Formulaire", "PDF",
+"Événement", "MiGallery"; dropped when the title only repeats it), a title (two lines), ONE subtitle
+line, ONE arrow, one border, `rounded-2xl` (12 px, the scale's larger card), `p-3`. Every non-media
+attachment is it.
+
+- **The arrow says "this card opens something", and where**: the exit glyph out of the app, a
+  chevron inside it (the up-right arrow it replaced read as "external" too). A card that opens
+  nothing (a file that is not a PDF) has none; a hero showing its call to action has none, and
+  neither has a file row, whose download button beside it already says what the card is for
+  (`showArrow`). A card with an address is ALWAYS a link, a tap handler of its own included
+  (middle click and copy link work); only a tap with no address (a PDF opening in the viewer) is
+  a button, `ui/Button variant="bare"` ([controls](../controls.md)), and everything a card draws
+  is phrasing content (spans), which a button requires.
+- **The tile is one treatment**: the accent-tinted surface (`bg-accent/10`), a glyph or a picture on
+  it. The Canari logo stays for an in-app LINK only, where it identifies the destination.
+
+| Kind | Caller | Tile | Subtitle | Arrow, and the control beside it |
+| --- | --- | --- | --- | --- |
+| Link, external | `LinkPreviewCard` | Open Graph picture, favicon, globe | the page's description | exit |
+| Link, in-app (post, form, association...) | `LinkPreviewCard` | the target's picture or the Canari logo | the target's line | chevron |
+| MiGallery album | `LinkPreviewCard` (the old `EcosystemCoverPreview` is deleted) | the square cover once PROVEN to decode, else the album glyph | the album's description | exit |
+| Attached form | `FormCard` | the form glyph, a check once answered | answered / opens on / open (`link_preview_form_open`, the link card's word) | chevron; the reminder bell beside it when not open yet |
+| File | `PostMedia` (`fileCard`) | the file glyph | the size | none: the download beside it; a PDF's row still opens the reader, named `pdf_open_named_document_label` |
+| Calendar event | `PostEventCard` (was an amber pill above the text) | a calendar page: the locale's short month in sentence case, and the day | short weekday, date, hour | chevron |
+
+The control beside the arrow is the ONE that is not the card's destination (the bell, the
+download), so it sits beside the link and never inside it. What a banner or the band below shows
+(a link's picture, a post preview's photo with its own zoom button) is `inert` and takes no pointer
+events: it repeats the row's destination and is never a control of its own. The chat keeps the same card: it is the model, and a
+MiGallery album in a conversation is now the same family too.
+
+**THE ORDER IS FIXED: text, media, cards, poll, action bar.** `planPostAttachments`
+(`utils/posts/postAttachments.ts`, pure and tested) decides it once for `PostContent`:
+
+- the **media** are the pictures and videos, full-bleed, in the gallery (unchanged);
+- the **card zone** follows, on the text's 16 px inset, `space-y-2`: the **event**, the **attached
+  forms** in the post's order, the **files**, then the **links** of the text in the text's order;
+- the **poll** closes it, just above the action bar (`PostCard`): it is the one attachment the reader
+  acts on in the post, so it sits where the hand already is; it takes the cards' corner and border
+  and keeps its own voting body. Before, it was under the action bar. Its inset is the host's
+  (`PostPolls` `inset`): `px-4 pb-3` under the cards of a post, `px-5 py-4` in a channel bubble,
+  where it is the whole bubble.
+
+**A form is drawn once.** A link to `/forms/<id>` or `/f/<id>` whose form is also attached is not a
+second card: the attached form's card stands for both (`linkedFormId`). The moderation preview
+reads no forms, so it draws the link card.
+
+**A URL that has a card leaves the text** where it ends its line - alone on it, after the words
+introducing it ("inscription ici https://..."), or as a trailing run of several: `stripCardedUrls`.
+In the middle of a sentence it stays (taking it out would leave "plus d'infos sur et inscription"),
+and so do a labelled Markdown link (text in brackets, then the URL) and an `<url>` autolink. A URL
+is matched by the link identity the cards were drawn by, so `https://x/` leaves with the card of
+`https://x`. The punctuation after the last URL of the run stays, and so does the author's before
+it ("!!! https://x" keeps "!!!"); a line left EMPTY goes, its list, quote or heading marker
+included (no bare `-` or `>`). `\r\n` lines are read like `\n` ones.
+
+**Code is never a link** (`utils/markdownCode.ts`, `codeRanges` / `codeBlockLines`): a URL in an
+inline code span, a backtick or tilde fence, or an indented block gets no card
+(`extractPreviewUrls`, which the chat shares) and is never taken out of the text. A span's closing
+backtick used to end up inside the URL. CommonMark's reading, which the renderer draws: a backtick
+run whose info string holds a backtick ("```x``` voir") opens no fence, a closer is fence characters
+and white space only, and under a list item an indented block needs four columns PAST the item's
+content - four columns under "- item" continue the item, its URL a link. `extractPreviewUrls` also draws `https://x` and
+`https://x/` once (the first spelling kept).
+
+**HERO: a lone attachment under a short caption is put forward** (owner, 2026-11-15). The rule,
+`planPostAttachments`: exactly ONE card, NO picture or video, NO poll, not a replay, and at most
+`HERO_TEXT_MAX` = 140 characters of PLAIN text (Markdown marks and the URL the card replaces not
+counted), counted as a reader sees them (`Intl.Segmenter` graphemes: a family emoji is one, not
+eight UTF-16 units; the length alone decides below 140 units or above 140 x 11, and an engine without
+`Intl.Segmenter` counts code points and says so once) - a one-sentence caption, two lines on a phone. Then the card is drawn large:
+
+- a **link** with a picture runs it full width at 1.91:1 (the Open Graph ratio) above the chip and the
+  title; an album its cover; a post preview its own photo. A link with no picture stays a row;
+- a **PDF** shows its first page full width (4:3, top-anchored: a document's top is its identity)
+  above the row, its box reserved before the file arrives so nothing moves; a tap opens the reader.
+  Any other file stays a row;
+- a **form** or an **event**, which have no picture, keep the row and gain a full-width call to
+  action ("Remplir le formulaire", "Voir l'événement") - decorative (`aria-hidden`, `tabindex=-1`),
+  the row being the one tab stop, and the row's arrow is dropped (the button says it). A form not
+  open yet shows its bell instead.
+
+A lone PICTURE needs no rule: it is already drawn at its own shape, full width.
+
+Pinned by `postAttachments.test.ts` (order, the form drawn once, the URL taken out or kept - markers,
+runs, fences, indented code, CRLF - and every side of the hero rule, emoji included),
+`messageDisplay.test.ts` (no card for code, one card for `x` and `x/`), `PostContent.cards.svelte.test.ts`
+(the combined post of the screenshots, rendered), `AttachmentCard.svelte.test.ts` (the arrow, the
+chip, the inert picture), `PostCard.order.test.ts` (the poll between the cards and the action bar),
+`PostMedia.compactFile.svelte.test.ts` (the named row, the reserved page) and `FormCard.svelte.test.ts`.
+
 ### Several media: square cells, and a "+N" past four (2026-10-05)
 
 Decided by the user with a screenshot: a post of several pictures was a two-column grid whose
@@ -1137,13 +1239,13 @@ already fixed `aspect-square` thumbnails in a scrolling row.
 A post of five PDFs was a column of five first-page previews, up to 22rem each. Images were already
 compacted into the gallery; documents were not.
 
-- **One document is a card, several are a list.** `usesCompactDocumentRows`
-  (`utils/posts/documentRows.ts`, the ONE rule) counts a post's `file` media: exactly one keeps the
-  file row plus the first-page preview; from two on EVERY file is a compact row - icon, name, size,
-  download, NO preview - passed to `PostMedia` as `compact`. Audio is not a document and keeps its
-  player. Images keep the gallery, unchanged; the rows sit under it as the cards did. The rule is
-  read by `PostContent` (the feed, the post page, community and channel posts via `PostCard`, the
-  moderation preview) and by `EditPostForm`'s strip of existing attachments.
+- **A document is a compact card; only the post's LONE attachment is large.** Superseded on
+  2026-11-15 by [the card zone](#the-card-zone-one-family-a-fixed-order-owner-2026-11-15): the
+  "one document keeps its first-page preview" rule of 2026-11-02 drew a 22rem page for a PDF beside a
+  photo and two links. Every file is now a compact card of the one family (`compact` on `PostMedia`)
+  unless the plan names it the hero, and only a PDF has a large shape at all - any other file is a
+  row whatever the caller asks (`PostMedia.compactFile`). `EditPostForm`'s strip of existing
+  attachments always draws the compact row. Audio keeps its player, in the card zone.
 - **A compact row downloads nothing until it is asked.** It is drawn from the metadata the post
   already holds (`PostMedia`, `compactFile`); the row and the full card are ONE snippet
   (`fileCard`). What a tap does (`activate`):
@@ -2705,14 +2807,14 @@ its reminder state, so never its bell. Under it sat a second gap: the post's `fo
 title but no `opensAt`, and the loader read the form only when it lacked the title, so a titled form
 could never say when it opens. The loader now reads every form (the post's title stays the one shown).
 
-**The fix.** `FormCard.svelte` (one card per attached form, drawn by `PostForms`): the bell is an
+**The fix.** `FormCard.svelte` (one card per attached form, drawn by `PostForms` then, by
+`PostContent`'s card zone since 2026-11-15): the bell is an
 `$effect` on the form and on "not open yet and not answered" - no mount-time read, no timer - drawn at
 once, its subscribed state filled in when `checkFormReminder` answers; a failed read is LOGGED
 (`FORM_CARD`) and drawn as not subscribed, the old `.catch(() => {})` having said nothing. Pinned by
 `FormCard.svelte.test.ts` (the bell appears when `opensAt` arrives after mount - the old `PostForms`
-fails it) and `attachedForms.svelte.test.ts`. Making a form LINK in a post look like this card is part
-of the wider design entry
-[a post's attachments follow one standard](../../backlog.d/p2-a-post-s-attachments-follow-one-standard.md).
+fails it) and `attachedForms.svelte.test.ts`. A form LINK and an attached form are now the same card
+family, and one form is drawn once ([the card zone](#the-card-zone-one-family-a-fixed-order-owner-2026-11-15)).
 
 ## Comment sheet rework (2026-10-21)
 

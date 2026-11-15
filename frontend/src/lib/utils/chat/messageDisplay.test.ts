@@ -226,4 +226,24 @@ describe('extractPreviewUrls', () => {
     expect(extractPreviewUrls('see <https://x.example> here')).toEqual([]);
     expect(extractPreviewUrls('no link')).toEqual([]);
   });
+
+  it('skips a URL written as code: a span, a backtick or tilde fence, an indented block', () => {
+    expect(extractPreviewUrls('run `curl https://api.example/v1` now')).toEqual([]);
+    expect(extractPreviewUrls('```\nhttps://a.example\n```')).toEqual([]);
+    expect(extractPreviewUrls('~~~\r\nhttps://a.example\r\n~~~')).toEqual([]);
+    expect(extractPreviewUrls('Code:\n\n    https://a.example\n\nhttps://b.example')).toEqual([
+      'https://b.example',
+    ]);
+    // A single backtick with no closer is not a span: the URL after it is a link.
+    expect(extractPreviewUrls('a ` b https://c.example')).toEqual(['https://c.example']);
+  });
+
+  it('draws a link once with or without its trailing slash, keeping the first spelling', () => {
+    expect(extractPreviewUrls('https://x.example and https://x.example/')).toEqual([
+      'https://x.example',
+    ]);
+    expect(extractPreviewUrls('https://x.example/a/ then https://x.example/a')).toEqual([
+      'https://x.example/a/',
+    ]);
+  });
 });

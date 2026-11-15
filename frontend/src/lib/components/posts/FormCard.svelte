@@ -1,13 +1,6 @@
 <script lang="ts">
-  import {
-    CircleCheck,
-    ClipboardList,
-    ArrowRight,
-    ExternalLink,
-    Clock,
-    Bell,
-    BellOff,
-  } from '@lucide/svelte';
+  import { Bell, BellOff, CircleCheck, ClipboardList } from '@lucide/svelte';
+  import AttachmentCard from '$lib/components/shared/AttachmentCard.svelte';
   import { formatFormOpensAt, formOpensAtIso } from '$lib/posts/postComposerDraft';
   import {
     subscribeFormReminder,
@@ -28,18 +21,18 @@
     submitted: boolean;
     /** When the form opens; a past or empty value means it is open now. */
     opensAt?: string | null;
-    /** The status line of an OPEN, unanswered form; defaults to the "fill out" call to action. */
-    openLabel?: string;
-    /** Taken over by a caller that must route the tap itself (an in-app link inside a post). */
-    onclick?: (e: MouseEvent) => void;
+    /** Drawn large, with its call to action: the post's only attachment (`planPostAttachments`). */
+    hero?: boolean;
   }
 
-  let { formId, href, title, submitted, opensAt, openLabel, onclick }: Props = $props();
+  let { formId, href, title, submitted, opensAt, hero = false }: Props = $props();
 
   /**
-   * THE ONE FORM CARD: an attached form and a form link inside a post draw this and nothing else.
-   * The reminder bell belongs to the card whenever the form is not open yet and not answered, so a
-   * reader never has to open the form to be told when it opens.
+   * AN ATTACHED FORM, IN THE ONE CARD FAMILY (`AttachmentCard`, owner 2026-11-15): a form glyph,
+   * the "Formulaire" chip and the state words of a form LINK's card (`formStateLabel`), so a form
+   * reads the same whether it was attached or linked - and a post that does both draws it once
+   * (`planPostAttachments`). The reminder bell belongs to the card whenever the form is not open
+   * yet and not answered, so a reader never has to open the form to be told when it opens.
    */
   const notOpenYet = $derived(!submitted && formOpensAtIso(opensAt) !== null);
 
@@ -66,6 +59,15 @@
       });
   });
 
+  /** The one subtitle line: answered, opening on a date, or open. */
+  const status = $derived(
+    submitted
+      ? m.post_form_response_sent()
+      : notOpenYet && opensAt
+        ? m.post_form_opens_on_label({ date: formatFormOpensAt(opensAt) })
+        : m.link_preview_form_open()
+  );
+
   async function toggleReminder() {
     if (toggling) return;
     toggling = true;
@@ -85,90 +87,48 @@
   }
 </script>
 
-<div
-  class="bg-cn-surface relative flex items-center rounded-2xl border border-black/5 shadow-sm transition-all duration-300 dark:border-white/10 {submitted
-    ? 'hover:border-emerald-500/30'
-    : 'hover:border-accent/30'}"
-  data-testid="form-card"
->
-  <a
-    {href}
-    {onclick}
-    class="group focus-visible:ring-accent/50 flex min-w-0 flex-1 items-center justify-between rounded-2xl p-4 outline-none focus-visible:ring-4"
-  >
-    <div class="flex min-w-0 items-center gap-3.5">
-      <div
-        class="shrink-0 rounded-xl p-2.5 transition-colors {submitted
-          ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
-          : 'bg-accent/10 text-accent-text group-hover:bg-accent/20'}"
-      >
-        {#if submitted}
-          <CircleCheck size={20} strokeWidth={2.5} />
-        {:else}
-          <ClipboardList size={20} strokeWidth={2.5} />
-        {/if}
-      </div>
-
-      <div class="min-w-0 flex-1">
-        <h3
-          class="text-text-main truncate text-sm font-bold transition-colors {submitted
-            ? 'group-hover:text-emerald-600 dark:group-hover:text-emerald-400'
-            : 'group-hover:text-accent-text'}"
-        >
-          {title || m.post_form_fallback_title()}
-        </h3>
-        <p
-          class="text-2xs mt-0.5 font-semibold {submitted
-            ? 'text-emerald-600/80 dark:text-emerald-400/80'
-            : 'text-text-muted'}"
-        >
-          {#if submitted}
-            {m.post_form_response_sent()}
-          {:else if notOpenYet && opensAt}
-            <span class="inline-flex items-center gap-1">
-              <Clock size={12} strokeWidth={2.5} />
-              {m.post_form_opens_on_label({ date: formatFormOpensAt(opensAt) })}
-            </span>
-          {:else}
-            {openLabel ?? m.post_form_fill_label()}
-          {/if}
-        </p>
-      </div>
-    </div>
-
-    <div
-      class="ml-4 shrink-0 opacity-40 transition-all duration-300 group-hover:translate-x-1 group-hover:opacity-100 {submitted
-        ? 'group-hover:text-emerald-500'
-        : 'group-hover:text-accent-text'}"
-    >
-      {#if submitted}
-        <ArrowRight size={18} strokeWidth={2.5} />
-      {:else}
-        <ExternalLink size={18} strokeWidth={2.5} />
-      {/if}
-    </div>
-  </a>
-
-  {#if notOpenYet}
-    <Button
-      variant={subscribed ? 'soft' : 'ghost'}
-      size="compact"
-      class="mr-3 shrink-0"
-      onclick={toggleReminder}
-      disabled={toggling}
-      aria-pressed={subscribed}
-      data-testid="form-card-bell"
-      title={subscribed
-        ? m.post_form_disable_reminder_label()
-        : m.post_form_notify_when_available_label()}
-    >
-      {#if subscribed}
-        <BellOff size={16} strokeWidth={2} />
-        <span class="hidden sm:inline">{m.post_form_reminder_enabled_label()}</span>
-      {:else}
-        <Bell size={16} strokeWidth={2} />
-        <span class="hidden sm:inline">{m.post_form_notify_me_label()}</span>
-      {/if}
-    </Button>
+<!-- The tile family's treatment: a glyph on the tinted surface - a check once answered. -->
+{#snippet tile()}
+  {#if submitted}
+    <CircleCheck size={26} strokeWidth={2} />
+  {:else}
+    <ClipboardList size={26} strokeWidth={2} />
   {/if}
+{/snippet}
+
+{#snippet bell()}
+  <Button
+    variant={subscribed ? 'soft' : 'ghost'}
+    size="compact"
+    class="shrink-0"
+    onclick={toggleReminder}
+    disabled={toggling}
+    aria-pressed={subscribed}
+    data-testid="form-card-bell"
+    title={subscribed
+      ? m.post_form_disable_reminder_label()
+      : m.post_form_notify_when_available_label()}
+  >
+    {#if subscribed}
+      <BellOff size={16} strokeWidth={2} />
+      <span class="hidden sm:inline">{m.post_form_reminder_enabled_label()}</span>
+    {:else}
+      <Bell size={16} strokeWidth={2} />
+      <span class="hidden sm:inline">{m.post_form_notify_me_label()}</span>
+    {/if}
+  </Button>
+{/snippet}
+
+<div data-testid="form-card">
+  <AttachmentCard
+    kind="form"
+    {href}
+    chip={m.link_label_form()}
+    title={title || m.post_form_fallback_title()}
+    subtitle={status}
+    {tile}
+    {hero}
+    heroAction={submitted || notOpenYet ? undefined : m.post_form_fill_label()}
+    trailing={notOpenYet ? bell : undefined}
+  />
 </div>

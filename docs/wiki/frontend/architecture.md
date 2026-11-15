@@ -478,10 +478,10 @@ never whether it happens, so a wrong number costs a little early traffic or a li
 never a wrong answer.
 
 **An action cannot be applied to a component**, which is what decides where the call site sits when
-a component renders one of two shapes. `LinkPreviewCard` renders either its own `<a>` or
-`EcosystemCoverPreview`; a layout-neutral wrapper was the obvious alternative and is impossible,
-because `display: contents` generates no box and an element with no box is never observed. Both
-branches carry the action on their own root `<a>` instead, the second through an `onnear` prop.
+a component renders another. `LinkPreviewCard` renders `AttachmentCard` (the one card family of
+2026-11-15); a layout-neutral wrapper was the obvious alternative and is impossible, because
+`display: contents` generates no box and an element with no box is never observed. The card carries
+the action on its own root instead, and hands it back through an `onnear` prop.
 
 *This is not the deferral that was rejected on [backlog](../backlog.md).* That one gated the whole
 feed's ~45 requests at the SvelteKit route `load`, which changes the web client for every reader;
