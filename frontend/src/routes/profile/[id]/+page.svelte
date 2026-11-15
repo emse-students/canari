@@ -368,7 +368,7 @@
     reportSubmitting = true;
     actionMessage = '';
     try {
-      await createReport('user', profile.id, reason, undefined, profile.id);
+      await createReport('user', profile.id, reason);
       actionMessage = m.post_signalement_merci();
     } catch (err) {
       if (err instanceof ModerationApiError && err.isAlreadyReported) {

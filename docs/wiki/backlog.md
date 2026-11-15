@@ -28,6 +28,8 @@ what is built and the reading that closes it, and it targets the EARLIEST versio
 marre de trainer ca"*). Where an entry keeps an open half, the shipped half is a pointer, never a
 retelling.
 
+**READINGS MUST BE AT 0 BEFORE A STABLE ONLY** (owner, 2026-11-15). A pre-release may ship so that the readings that need its code can be read on it; the stable waits for 0.
+
 **NO ENTRY IS WRITTEN HERE.** A heading added to this page is refused by
 `.github/scripts/tests/backlog-fragments.test.mjs`; `backlog-plan.test.mjs` refuses a fragment with no
 target or an unknown one, and a `plan.md` that is not what the targets produce.

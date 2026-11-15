@@ -12,7 +12,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
-import { ModerationService } from './moderation.service';
+import { ModerationService, receiptOf, type ReportReceipt } from './moderation.service';
 import { AssociationsService } from '../associations/associations.service';
 import { CreateReportDto, MuteUserDto, ReviewReportDto } from './dto/moderation.dto';
 import { MODERATOR_REQUIRED } from '../spaces/bde-moderation';
@@ -61,20 +61,28 @@ export class ModerationController {
 
   // ── Public (authenticated) reports ───────────────────────────────────────
 
-  /** Submits a content report. Any authenticated user may file one. */
+  /**
+   * Submits a content report. Any authenticated user may file one. Answers a RECEIPT
+   * (`receiptOf`), never the stored row: who the report is about is the server's to read from the
+   * content and the moderators' to see, not the reporter's.
+   */
   @UseGuards(NginxAuthGuard)
   @Post('reports')
-  createReport(@Headers('x-user-id') userId: string, @Body() dto: CreateReportDto) {
-    return this.service.createReport({
-      reporterId: userId,
-      contentType: dto.contentType,
-      contentId: dto.contentId,
-      reason: dto.reason,
-      details: dto.details,
-      reportedUserId: dto.reportedUserId ?? null,
-      liveId: dto.liveId,
-      message: dto.message,
-    });
+  async createReport(
+    @Headers('x-user-id') userId: string,
+    @Body() dto: CreateReportDto
+  ): Promise<ReportReceipt> {
+    return receiptOf(
+      await this.service.createReport({
+        reporterId: userId,
+        contentType: dto.contentType,
+        contentId: dto.contentId,
+        reason: dto.reason,
+        details: dto.details,
+        liveId: dto.liveId,
+        message: dto.message,
+      })
+    );
   }
 
   // ── Admin (BDE MODERATE or global admin) ─────────────────────────────────

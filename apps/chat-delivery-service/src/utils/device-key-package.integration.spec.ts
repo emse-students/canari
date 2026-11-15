@@ -33,6 +33,8 @@ import { RevokedDevice } from '../entities/revoked-device.entity';
 import { DevicesController } from '../controllers/devices.controller';
 import type { MessagingService } from '../services/messaging.service';
 import { upsertDeviceKeyPackage } from './device-key-package';
+import { settledFlag } from '../testing/lockWait';
+import { untilBlockedBehind } from '../testing/lockBehind';
 
 const URL = process.env.CHAT_DELIVERY_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -72,28 +74,15 @@ maybe('register-device writes its key package row in one statement (PostgreSQL)'
   };
   /**
    * Resolves once `count` sessions are blocked BEHIND `holder` (transitively): the proof that the
-   * operations under test overlap. Polled, never timed - jest's own timeout ends a hang.
+   * operations under test overlap. Polled, never timed; the `operations` settling first, or the
+   * read bound, fails it with a message.
    */
-  const untilBlockedBy = async (holder: Client, count: number) => {
-    const [{ pid }] = (await holder.query(`SELECT pg_backend_pid() AS pid`)).rows as Array<{
-      pid: number;
-    }>;
-    for (;;) {
-      const [{ waiting }] = (
-        await admin.query(
-          `WITH RECURSIVE behind AS (
-             SELECT pid FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))
-             UNION
-             SELECT a.pid FROM pg_stat_activity a JOIN behind b ON b.pid = ANY(pg_blocking_pids(a.pid))
-           )
-           SELECT count(*)::int AS waiting FROM behind`,
-          [pid]
-        )
-      ).rows as Array<{ waiting: number }>;
-      if (waiting >= count) return;
-      await new Promise((resolve) => setImmediate(resolve));
-    }
-  };
+  const untilBlockedBy = (holder: Client, operations: Array<Promise<unknown>>, count: number) =>
+    untilBlockedBehind(admin, holder, {
+      what: 'the registrations',
+      atLeast: count,
+      settled: settledFlag(Promise.all(operations)),
+    });
 
   beforeAll(async () => {
     for (const level of ['log', 'warn', 'debug'] as const) {
@@ -164,7 +153,7 @@ maybe('register-device writes its key package row in one statement (PostgreSQL)'
           'u1'
         ),
       ];
-      await untilBlockedBy(holder, 2);
+      await untilBlockedBy(holder, calls, 2);
       // Rolled back: the two registrations were both waiting on a row that never exists, so both
       // go on to INSERT - the exact shape of production's two "no row yet" reads.
       await holder.query('ROLLBACK');
@@ -200,7 +189,7 @@ maybe('register-device writes its key package row in one statement (PostgreSQL)'
           randomUUID()
         );
       writes = [write('kp-a'), write('kp-b')];
-      await untilBlockedBy(holder, 2);
+      await untilBlockedBy(holder, writes, 2);
       // Committed: the row exists, so both waiting writes become updates of it.
       await holder.query('COMMIT');
     } finally {

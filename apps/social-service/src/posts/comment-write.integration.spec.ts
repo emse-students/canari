@@ -20,6 +20,7 @@ import { ModerationService } from '../moderation/moderation.service';
 import { Post } from './entities/post.entity';
 import { PostInteractionsService } from './post-interactions.service';
 import type { StoredComment } from './comment-identity';
+import { ACTIVITY_DUMP_SQL, untilWaiting } from '../common/lock-wait.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -39,17 +40,20 @@ maybe('comment writes against PostgreSQL: none is lost to another', () => {
    * Waits, by asking PostgreSQL and never a clock, until `n` sessions of THIS suite's pool (its
    * `application_name`; the suites share one database) are queued on a lock.
    */
-  const queuedOnLock = async (n: number) => {
-    for (let asked = 0; asked < 10_000; asked++) {
-      const { rows } = await client.query(
-        `SELECT count(*)::int AS n FROM pg_stat_activity
-          WHERE application_name = $1 AND wait_event_type = 'Lock'`,
-        [schema]
-      );
-      if ((rows[0].n as number) >= n) return;
-    }
-    throw new Error(`never saw ${n} writer(s) queued on the post's lock`);
-  };
+  const queuedOnLock = (n: number) =>
+    untilWaiting({
+      what: `the ${n} writer(s) on the post's lock`,
+      atLeast: n,
+      waiting: async () => {
+        const { rows } = await client.query(
+          `SELECT count(*)::int AS n FROM pg_stat_activity
+            WHERE application_name = $1 AND wait_event_type = 'Lock'`,
+          [schema]
+        );
+        return rows[0].n as number;
+      },
+      dump: async () => (await client.query(ACTIVITY_DUMP_SQL)).rows,
+    });
 
   /** Runs `start` while another connection holds post `postId`'s row lock; lets go once all queued. */
   const raceUnderHeldLock = async <T>(postId: string, writers: (() => Promise<T>)[]) => {

@@ -29,6 +29,7 @@ import { ChannelMember } from './entities/channel-member.entity';
 import { ChannelMessage } from './entities/channel-message.entity';
 import { WorkspaceInvite } from './entities/workspace-invite.entity';
 import type { RedisService } from '../common/redis';
+import { ACTIVITY_DUMP_SQL, settledFlag, untilWaiting } from '../common/lock-wait.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -112,17 +113,21 @@ maybe('accepting a community invite link against PostgreSQL', () => {
   /**
    * Resolves once some backend is WAITING on a lock `holder` (a backend pid) holds - read from the
    * server's own lock table, so the test knows the other side is parked rather than hoping a pause
-   * was long enough. Each round is a real query, never a sleep; jest's timeout bounds it.
+   * was long enough. Each round is a real query, never a sleep. `operation` settling first, or a
+   * bound of reads, fails it with a message ({@link untilWaiting}) - never a bare jest timeout.
    */
-  const blockedBy = async (holder: number) => {
-    for (;;) {
-      const waiting: unknown[] = await q(
-        `SELECT 1 FROM pg_stat_activity WHERE $1::int = ANY (pg_blocking_pids(pid))`,
-        [holder]
-      );
-      if (waiting.length > 0) return;
-    }
-  };
+  const blockedBy = (holder: number, operation: Promise<unknown>) =>
+    untilWaiting({
+      what: 'the accept',
+      settled: settledFlag(operation),
+      waiting: async () =>
+        (
+          await q(`SELECT 1 FROM pg_stat_activity WHERE $1::int = ANY (pg_blocking_pids(pid))`, [
+            holder,
+          ])
+        ).length,
+      dump: () => q(ACTIVITY_DUMP_SQL),
+    });
 
   /** A raw client in the test schema, holding a transaction the test commits when it chooses. */
   const holder = async (): Promise<{ client: Client; pid: number }> => {
@@ -156,7 +161,7 @@ maybe('accepting a community invite link against PostgreSQL', () => {
       await other.client.query('BEGIN');
       await other.client.query(`UPDATE workspace_invites SET uses = uses + 1 WHERE id = $1`, [id]);
       const late = service.acceptWorkspaceInvite(token, 'joiner-late').catch((e: unknown) => e);
-      await blockedBy(other.pid);
+      await blockedBy(other.pid, late);
       await other.client.query('COMMIT');
       expect(await late).toBeInstanceOf(NotFoundException);
       expect(await isMember('joiner-late')).toBe(false);
@@ -176,7 +181,7 @@ maybe('accepting a community invite link against PostgreSQL', () => {
         id,
       ]);
       const late = service.acceptWorkspaceInvite(token, 'joiner-revoked').catch((e: unknown) => e);
-      await blockedBy(rotation.pid);
+      await blockedBy(rotation.pid, late);
       await rotation.client.query('COMMIT');
       expect(await late).toBeInstanceOf(NotFoundException);
       expect(await isMember('joiner-revoked')).toBe(false);

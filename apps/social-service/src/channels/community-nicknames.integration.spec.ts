@@ -198,7 +198,6 @@ maybe('community nicknames against PostgreSQL (migration 149)', () => {
       contentType: 'nickname',
       contentId: first.reportSubject,
       reason: 'harassment',
-      reportedUserId: 'forged',
     });
     expect(report.reportedUserId).toBe(MOD);
 

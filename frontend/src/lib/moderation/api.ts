@@ -146,7 +146,7 @@ export interface ContentReport {
   details: string | null;
   status: 'pending' | 'reviewed' | 'dismissed';
   reviewedBy: string | null;
-  /** User ID of the reported content's author. Null for association posts. */
+  /** Who the report is about, read from the content by the server. Null for association posts. */
   reportedUserId: string | null;
   createdAt: string;
   /** Short excerpt of the reported content (first ~250 chars), or the display name when a person is reported. Null for deleted content. */
@@ -176,9 +176,15 @@ export interface MutedUser {
   mutedReason: string | null;
 }
 
+/** What the reporter is answered: that the report exists, and nothing about who it names. */
+export type ReportReceipt = Pick<
+  ContentReport,
+  'id' | 'contentType' | 'contentId' | 'status' | 'createdAt'
+>;
+
 /**
- * Submits a content report for a post, a comment, a person, a live or a community nickname (whose
- * setter the server reads from the membership row - `reportedUserId` is not sent for one).
+ * Submits a content report for a post, a comment, a person, a live or a community nickname. WHO
+ * the report is about is not sent: the server reads it from the content, for every type.
  *
  * Throws {@link ModerationApiError}; `isAlreadyReported` tells a duplicate from a real failure.
  */
@@ -186,12 +192,11 @@ export async function createReport(
   contentType: 'post' | 'comment' | 'user' | 'live' | 'nickname',
   contentId: string,
   reason: 'spam' | 'harassment' | 'inappropriate' | 'other',
-  details?: string,
-  reportedUserId?: string | null
-): Promise<ContentReport> {
-  return request<ContentReport>('/api/moderation/reports', {
+  details?: string
+): Promise<ReportReceipt> {
+  return request<ReportReceipt>('/api/moderation/reports', {
     method: 'POST',
-    body: JSON.stringify({ contentType, contentId, reason, details, reportedUserId }),
+    body: JSON.stringify({ contentType, contentId, reason, details }),
   });
 }
 

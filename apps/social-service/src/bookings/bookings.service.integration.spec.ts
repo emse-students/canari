@@ -56,6 +56,7 @@ import { BookingFile } from './entities/booking-file.entity';
 import type { BookingPosterMedia } from './booking-poster-media';
 import type { FormFilesService } from '../forms/form-files.service';
 import { BookingNotificationsService } from './booking-notifications.service';
+import { ACTIVITY_DUMP_SQL, settledFlag, untilWaiting } from '../common/lock-wait.it-fixture';
 import { BookingReminderScheduler } from './booking-reminder.scheduler';
 import type { PostNotificationsService } from '../posts/post-notifications.service';
 
@@ -487,21 +488,23 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
      * a schema each: asked of the whole database, another suite's waiting session answered for this
      * one when the suites ran in parallel, the erasure went on before the booking waited, no
      * deadlock formed and the booking landed (the intermittent failure of "a writer that breaks
-     * the order", 2026-11-15). It ends on an event, never a count of reads: the wait is seen, or
+     * the order", 2026-11-15). It ends on an event or a bound ({@link untilWaiting}): the wait is seen, or
      * the booking settled without ever waiting, which is said as the failure it is.
      */
     async function theBookingWaitsOnALock(booking: Promise<unknown>) {
-      let settled = false;
-      void booking.then(() => (settled = true));
-      while (!settled) {
-        const { rows } = await admin.query<{ n: number }>(
-          `SELECT count(*)::int AS n FROM pg_stat_activity
-            WHERE application_name = $1 AND wait_event_type = 'Lock'`,
-          [schema]
-        );
-        if (rows[0].n > 0) return;
-      }
-      throw new Error('the booking settled without ever waiting on a lock');
+      await untilWaiting({
+        what: 'the booking',
+        settled: settledFlag(booking),
+        waiting: async () => {
+          const { rows } = await admin.query<{ n: number }>(
+            `SELECT count(*)::int AS n FROM pg_stat_activity
+              WHERE application_name = $1 AND wait_event_type = 'Lock'`,
+            [schema]
+          );
+          return rows[0].n;
+        },
+        dump: async () => (await admin.query(ACTIVITY_DUMP_SQL)).rows,
+      });
     }
 
     /**
