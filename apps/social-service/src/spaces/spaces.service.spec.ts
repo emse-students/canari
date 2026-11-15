@@ -10,13 +10,18 @@ import type { Association } from '../associations/entities/association.entity';
 import { AssociationAudience } from './association-audience.entity';
 import { Space, SPACE_CAMPUSES, SPACE_FORMATIONS } from './space.entity';
 import {
+  AUDIENCE_WRITE_LOCK_SQL,
   FORMER_PARENT_SEATS_SQL,
   SpacesService,
   normaliseRules,
   ruleReachesSpace,
   smallestRules,
 } from './spaces.service';
-import { ENTITY_GOVERNOR_SPACE_STANDINGS_SQL, HOLDS_BDE_FLAG_OVER_SQL } from './bde';
+import {
+  BDE_SPACE_STANDINGS_SQL,
+  ENTITY_GOVERNOR_SPACE_STANDINGS_SQL,
+  HOLDS_BDE_FLAG_OVER_SQL,
+} from './bde';
 import {
   DEPENDENCY_CHILD_IS_A_BDE,
   DEPENDENCY_INSTITUTION,
@@ -149,11 +154,48 @@ describe('SpacesService', () => {
     const audiences = {
       find: jest.fn().mockResolvedValue(opts.rules ?? []),
     } as unknown as Repository<AssociationAudience>;
+    // Every opened space of the two campuses; the star's BDE governs all of `bdeCampuses`. The
+    // management predicate (does the star govern THIS entity) answers from the same campuses: a
+    // rule of the entity on one of them reaches a governed space.
+    const standing = async (sql: string) => {
+      if (sql === FORMER_PARENT_SEATS_SQL) return opts.formerParentSeats ?? [];
+      if (sql === HOLDS_BDE_FLAG_OVER_SQL) {
+        return [
+          {
+            holds:
+              opts.governs ??
+              (opts.rules ?? []).some(
+                (r) => r.campus != null && (opts.bdeCampuses ?? []).includes(r.campus)
+              ),
+          },
+        ];
+      }
+      const campuses =
+        sql === ENTITY_GOVERNOR_SPACE_STANDINGS_SQL
+          ? (opts.parentCampuses ?? opts.bdeCampuses ?? [])
+          : (opts.bdeCampuses ?? []);
+      return SPACE_CAMPUSES.flatMap((campus) =>
+        SPACE_FORMATIONS.map((formation) => ({
+          formation,
+          campus,
+          governed: campuses.includes(campus),
+        }))
+      );
+    };
+    /** The statements an audience write runs INSIDE its transaction: the lock, then the bounds. */
+    const IN_THE_AUDIENCE_WRITE = [
+      BDE_SPACE_STANDINGS_SQL,
+      ENTITY_GOVERNOR_SPACE_STANDINGS_SQL,
+      HOLDS_BDE_FLAG_OVER_SQL,
+    ];
     const manager = {
       delete: jest.fn(),
       insert: jest.fn(),
       update: jest.fn(),
-      query: jest.fn(),
+      query: jest.fn().mockImplementation(async (sql: string) => {
+        if (sql === AUDIENCE_WRITE_LOCK_SQL) return opts.association ? [opts.association] : [];
+        return IN_THE_AUDIENCE_WRITE.includes(sql) ? standing(sql) : undefined;
+      }),
       find: jest
         .fn()
         .mockImplementation(async (entity: unknown) =>
@@ -161,38 +203,12 @@ describe('SpacesService', () => {
         ),
     };
     const dataSource = {
-      transaction: jest.fn().mockImplementation(async (cb: (m: unknown) => unknown) => {
+      // `transaction(work)` or `transaction(isolation, work)`: the work is the last argument.
+      transaction: jest.fn().mockImplementation(async (...args: unknown[]) => {
         if (opts.writeFails) throw opts.writeFails;
-        return cb(manager);
+        return (args[args.length - 1] as (m: unknown) => unknown)(manager);
       }),
-      // Every opened space of the two campuses; the star's BDE governs all of `bdeCampuses`. The
-      // management predicate (does the star govern THIS entity) answers from the same campuses: a
-      // rule of the entity on one of them reaches a governed space.
-      query: jest.fn().mockImplementation(async (sql: string) => {
-        if (sql === FORMER_PARENT_SEATS_SQL) return opts.formerParentSeats ?? [];
-        if (sql === HOLDS_BDE_FLAG_OVER_SQL) {
-          return [
-            {
-              holds:
-                opts.governs ??
-                (opts.rules ?? []).some(
-                  (r) => r.campus != null && (opts.bdeCampuses ?? []).includes(r.campus)
-                ),
-            },
-          ];
-        }
-        const campuses =
-          sql === ENTITY_GOVERNOR_SPACE_STANDINGS_SQL
-            ? (opts.parentCampuses ?? opts.bdeCampuses ?? [])
-            : (opts.bdeCampuses ?? []);
-        return SPACE_CAMPUSES.flatMap((campus) =>
-          SPACE_FORMATIONS.map((formation) => ({
-            formation,
-            campus,
-            governed: campuses.includes(campus),
-          }))
-        );
-      }),
+      query: jest.fn().mockImplementation(standing),
     } as unknown as DataSource;
     const redis = {
       incr: jest.fn().mockResolvedValue(1),
@@ -546,6 +562,14 @@ describe('SpacesService', () => {
     expect(manager.insert).toHaveBeenCalledWith(expect.anything(), [
       { associationId: 'a', formation: null, campus: 'saint-etienne' },
     ]);
+  });
+
+  it('names the isolation its judgement depends on: each read after the lock sees what was committed', async () => {
+    const { service } = make({ association: { id: 'a' } });
+    await service.setAudiences('a', [], ADMIN);
+    const dataSource = (service as unknown as { dataSource: { transaction: jest.Mock } })
+      .dataSource;
+    expect(dataSource.transaction).toHaveBeenCalledWith('READ COMMITTED', expect.any(Function));
   });
 
   it('accepts an empty set: the association then reaches nobody', async () => {
