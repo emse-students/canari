@@ -202,7 +202,7 @@ describe('a sign-out supersedes the ladder of the account that left', { timeout:
     try {
       const ladder = push.startPushService('https://api', LIVE, 'dev-1');
       await vi.advanceTimersByTimeAsync(40_000);
-      await push.endPushRegistration();
+      await push.endPushRegistration('chosen');
       // The OS now has a token: the old ladder must not send it under the old user id.
       osToken = 'fcm-1';
       await vi.advanceTimersByTimeAsync(300_000);
@@ -248,7 +248,7 @@ describe(
         // Account A's first attempt is polling the OS for a token.
         const ladderA = push.startPushService('https://api', LIVE, 'dev-1');
         await vi.advanceTimersByTimeAsync(10_000);
-        await push.endPushRegistration();
+        await push.endPushRegistration('chosen');
         osToken = 'fcm-1';
         // Account B signs in while A's attempt is still in flight.
         const ladderB = push.startPushService('https://api', LIVE, 'dev-1');
@@ -282,7 +282,7 @@ describe(
       await drain();
       expect(calls).toBe(1);
 
-      await push.endPushRegistration();
+      await push.endPushRegistration('chosen');
       await push.startPushService('https://api', LIVE, 'dev-1');
       expect(nativeSecret).toBe('secret-B');
 
@@ -364,7 +364,7 @@ describe('the outcome a device states on register-device', { timeout: 30_000 }, 
     registerAnswers(200);
     const push = await freshModule();
     await settle(push.startPushService('https://api', LIVE, 'dev-1'));
-    await push.endPushRegistration();
+    await push.endPushRegistration('chosen');
     expect(push.pushOutcomeForReport()).toBe('none');
   });
 });

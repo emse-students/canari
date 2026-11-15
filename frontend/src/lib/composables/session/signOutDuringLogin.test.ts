@@ -300,7 +300,7 @@ describe('a sign-out during a login in progress', () => {
     expect(a.state.socketOpen).toBe(true);
 
     // The user signs out during the decrypt.
-    await clearAuth();
+    await clearAuth('chosen');
 
     initHeld.resolve();
     await login;
@@ -328,7 +328,7 @@ describe('a sign-out during a login in progress', () => {
 
     const login = loginImpl(s.ctx, s.cb);
     await a.initReached.promise;
-    await clearAuth();
+    await clearAuth('chosen');
     initHeld.resolve();
     await login;
     await s.holder.whenRetired();
@@ -355,7 +355,7 @@ describe('a sign-out during a login in progress', () => {
     expect(s.ctx.isLoggedIn()).toBe(true);
 
     // The sign-out finds a live session and ends it: socket paused, client retired.
-    await clearAuth();
+    await clearAuth('chosen');
     expect(s.ctx.isLoggedIn()).toBe(false);
     expect(a.known.pauseSocket).toHaveBeenCalled();
 
@@ -385,7 +385,7 @@ describe('a sign-out during a login in progress', () => {
 
     const login = loginImpl(s.ctx, s.cb);
     await restoreReached.promise;
-    await clearAuth();
+    await clearAuth('chosen');
     // The teardown closed the store the restore was reading.
     restoreHeld.reject(new TypeError("Cannot read properties of null (reading 'getAll')"));
     await login;
@@ -402,7 +402,7 @@ describe('a sign-out during a login in progress', () => {
 
     const login = loginImpl(s.ctx, s.cb);
     await a.resolveReached.promise;
-    await clearAuth();
+    await clearAuth('chosen');
     // pin-check now meets the revoked session and answers 401.
     resolveHeld.resolve();
     await login;
@@ -420,7 +420,7 @@ describe('a sign-out during a login in progress', () => {
 
     const loginA = loginImpl(s.ctx, s.cb);
     await a.initReached.promise;
-    await clearAuth();
+    await clearAuth('chosen');
 
     // The PIN gate clears the flag to start a sign-in while A still decrypts (`handlePinSubmit`).
     s.ctx.setIsLoginInProgress(false);
@@ -451,7 +451,7 @@ describe('a sign-out during a login in progress', () => {
     const loginA = loginImpl(s.ctx, s.cb);
     await pinCheckReached.promise;
     // The user signs out while pin-check hangs; A ends because its request is cancelled.
-    await clearAuth();
+    await clearAuth('chosen');
     await loginA;
     expect(logs(s.cb)).toContain('after pin-check (cancelled)');
 
@@ -537,7 +537,7 @@ describe('a sign-out during the PIN recovery', () => {
     await pinCheckReached.promise;
 
     // The gate's exit, during the new PIN's check.
-    await clearAuth();
+    await clearAuth('chosen');
     const stopped = await recovery;
     await s.holder.whenRetired();
 

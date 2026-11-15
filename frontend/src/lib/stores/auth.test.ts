@@ -385,7 +385,7 @@ describe('a token for another account than the local identity', () => {
 
   it('is lifted by the sign-out, and a matching token is then accepted', async () => {
     fetchMock.mockResolvedValue(new Response('', { status: 200 }));
-    await clearAuth();
+    await clearAuth('chosen');
     expect(getIdentitySplit()).toBeNull();
 
     currentUserId.mockReturnValue('delta');
@@ -433,7 +433,7 @@ describe('the sign-out handler', () => {
       });
     });
 
-    await clearAuth();
+    await clearAuth('chosen');
     setSignOutHandler(null);
 
     // Once, with nothing torn down yet: the teardown deregisters the push token with that credential.
@@ -457,7 +457,7 @@ describe('the sign-out handler', () => {
     });
     setSignOutHandler(() => deregistration);
 
-    const signingOut = clearAuth();
+    const signingOut = clearAuth('chosen');
     // The revocation must not have been sent while the deregistration is still pending.
     await flushMacrotask();
     expect(order).toEqual([]);
@@ -476,7 +476,7 @@ describe('the sign-out handler', () => {
       throw new Error('boom');
     });
 
-    await clearAuth();
+    await clearAuth('chosen');
     setSignOutHandler(null);
 
     // The server-side revocation still went out, and the throw was accused rather than swallowed.
@@ -503,7 +503,7 @@ describe('the local identity at sign-out', () => {
       return new Response('', { status: 200 });
     });
 
-    await clearAuth();
+    await clearAuth('chosen');
 
     expect(identityAtLogout).toBeNull();
     expect(clearUserLocally).toHaveBeenCalledTimes(1);
@@ -526,7 +526,7 @@ describe('the local identity at sign-out', () => {
       return answer(401);
     });
 
-    await clearAuth();
+    await clearAuth('chosen');
     setSessionExpiredHandler(null);
 
     expect(logouts).toBe(1);
@@ -551,7 +551,7 @@ describe('the local identity at sign-out', () => {
       return answer(200);
     });
 
-    await clearAuth();
+    await clearAuth('chosen');
     setSessionExpiredHandler(null);
 
     // Not sent at all: the answer is known, and a 200 would rotate the session being revoked.
@@ -582,7 +582,7 @@ describe('the local identity at sign-out', () => {
     const inFlight = refresh().catch((e: unknown) => e);
     // Let the refresh reach its request before the sign-out starts.
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-    const signOut = clearAuth();
+    const signOut = clearAuth('chosen');
     answerRefresh(answer(200));
     const outcome = await inFlight;
     await signOut;
@@ -621,9 +621,9 @@ describe('the local identity at sign-out', () => {
       return Promise.resolve(answer(200));
     });
 
-    const signOutA = clearAuth();
+    const signOutA = clearAuth('chosen');
     await vi.waitFor(() => expect(logouts).toBe(1));
-    await clearAuth();
+    await clearAuth('chosen');
 
     await expect(refresh()).rejects.toBeInstanceOf(SignOutInProgressError);
     expect(refreshes).toBe(0);
