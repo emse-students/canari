@@ -43,7 +43,7 @@ export async function reportComment(
 ): Promise<CommentReportOutcome> {
   Log.d('reportComment', `comment ${comment.id.slice(0, 8)} reason=${reason}`);
   try {
-    await createReport('comment', comment.id, reason, undefined, comment.userId ?? null);
+    await createReport('comment', comment.id, reason);
     return { ok: true, message: m.post_comment_reported() };
   } catch (err) {
     return refusalOutcome(
@@ -56,12 +56,12 @@ export async function reportComment(
 
 /** Files a report on `post` - the card's report path, worded as {@link reportComment}'s. */
 export async function reportPost(
-  post: Pick<PostEntity, 'id' | 'authorId'>,
+  post: Pick<PostEntity, 'id'>,
   reason: ReportReason
 ): Promise<CommentReportOutcome> {
   Log.d('reportPost', `post ${post.id.slice(0, 8)} reason=${reason}`);
   try {
-    await createReport('post', post.id, reason, undefined, post.authorId ?? null);
+    await createReport('post', post.id, reason);
     return { ok: true, message: m.post_signalement_merci() };
   } catch (err) {
     return refusalOutcome(err, `post ${post.id.slice(0, 8)}`, m.post_already_reported());

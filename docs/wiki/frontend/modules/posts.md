@@ -2733,7 +2733,7 @@ Plan: a full-screen sheet from the comment icon, the composer pinned above the k
 - Edit/delete: the author alone edits (the writer; any `POST_AS_ASSO` holder for an association's comment); the author, a platform admin or a moderator of the post deletes, whatever the kind of comment (2026-11-02, [profiles-and-access](../../profiles-and-access.md#d23-amended---moderate-is-scoped-and-only-the-author-edits-a-post-2026-11-02)).
 - Served in every path: feed windows and count (`serveRows`, BEFORE the post's own shaping since `byPostAuthor` reads `authorId`), `getById`, the paged route, and the like/edit/add responses.
 - Notices are masked at the WRITE: anonymous -> actor `''` / "Anonyme", association -> its name. A reply to an association comment notifies every holder (`listFlagHolders`), to an anonymous one the real account.
-- A report on a comment takes `reportedUserId` from the stored comment, never from the client.
+- A report takes `reportedUserId` from the stored content, never from the client - a comment's from the stored comment, a post's from the post - and the reporter is answered a receipt without it ([moderation-and-blocking](../../moderation-and-blocking.md)).
 - Account erasure keeps an association comment (writer detached, `userId: ''`).
 - Privacy policy and register of processing say moderation can identify an anonymous author (dated 21/10/2026).
 

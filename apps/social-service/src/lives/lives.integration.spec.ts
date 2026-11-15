@@ -3038,14 +3038,13 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
     it('a viewer REPORTS a live through content_reports; once each; staff read its state', async () => {
       await q(`UPDATE users SET "displayName" = 'Alice' WHERE id = $1`, [ALICE]);
       const live = await start();
-      // `reportedUserId` from the client is ignored: the broadcaster comes from the live row.
+      // The broadcaster comes from the live row: no client names who a report is about.
       await expect(
         reports().createReport({
           reporterId: BOB,
           contentType: 'live',
           contentId: live.id.toUpperCase(),
           reason: 'harassment',
-          reportedUserId: CAROL,
         })
       ).resolves.toMatchObject({ contentId: live.id, reportedUserId: ALICE, status: 'pending' });
       expect(await refusal(report(BOB, live.id))).toEqual({
