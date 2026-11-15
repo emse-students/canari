@@ -639,7 +639,10 @@ export class ModerationService {
    * (`bdeModerationReadsPostSql`; owner, 2026-11-15: "Exclure les posts programmes"): the queue
    * lists reports of every status, and the text of a post scheduled later is shown only while an
    * OPEN report targets it, or once it is published - `contentPreview` is null otherwise, the row
-   * itself stays. A platform admin's preview is unchanged.
+   * itself stays. A reported COMMENT's preview follows the read of the post it sits under, as the
+   * comments read does (its `postId` is kept: it names the thread, not its text). A platform admin's
+   * preview is unchanged. A preview served of a post still scheduled later is a moderation read of
+   * something unpublished, so it is logged `[MODERATION_READ]`, post ids only.
    */
   async listAllReports(
     scope: ModerationScope,
@@ -672,28 +675,55 @@ export class ModerationService {
     const commentIds = reports.filter((r) => r.contentType === 'comment').map((r) => r.contentId);
     const reportedUserIds = reports.filter((r) => r.contentType === 'user').map((r) => r.contentId);
 
+    // The caller's read of post row `p`: every post for a platform admin, the moderation read for a
+    // BDE moderator. `$2` is the admin flag, `$3` the caller.
+    const readsPost = `($2::boolean OR ${bdeModerationReadsPostSql('$3', 'p')})`;
+    const scheduledLater = `(p."scheduledAt" IS NOT NULL AND p."scheduledAt" > now())`;
+    const reader = [scope.isGlobalAdmin, scope.userId];
+    /** Posts still scheduled later whose text this page served: a moderation read, logged below. */
+    const unpublishedServed = new Set<string>();
+
     const postPreviews = new Map<string, string>();
     if (postIds.length > 0) {
-      const rows: { id: string; markdown: string }[] = await this.reportRepo.manager.query(
-        `SELECT p.id::text, LEFT(p.markdown, 250) AS markdown FROM posts p
-          WHERE p.id = ANY($1)
-            AND ($2::boolean OR ${bdeModerationReadsPostSql('$3', 'p')})`,
-        [postIds, scope.isGlobalAdmin, scope.userId]
-      );
-      for (const row of rows) postPreviews.set(row.id, row.markdown);
+      const rows: { id: string; markdown: string; unpublished: boolean }[] =
+        await this.reportRepo.manager.query(
+          `SELECT p.id::text, LEFT(p.markdown, 250) AS markdown, ${scheduledLater} AS unpublished
+             FROM posts p
+            WHERE p.id = ANY($1) AND ${readsPost}`,
+          [postIds, ...reader]
+        );
+      for (const row of rows) {
+        postPreviews.set(row.id, row.markdown);
+        if (row.unpublished) unpublishedServed.add(row.id);
+      }
     }
 
-    const commentPreviews = new Map<string, { text: string; postId: string }>();
+    const commentPreviews = new Map<string, { text: string | null; postId: string }>();
     if (commentIds.length > 0) {
-      const rows: { post_id: string; comment_id: string; text: string }[] =
-        await this.reportRepo.manager.query(
-          `SELECT p.id::text AS post_id, elem->>'id' AS comment_id, elem->>'text' AS text
+      const rows: {
+        post_id: string;
+        comment_id: string;
+        text: string | null;
+        unpublished: boolean;
+      }[] = await this.reportRepo.manager.query(
+        `SELECT p.id::text AS post_id, elem->>'id' AS comment_id,
+                  CASE WHEN ${readsPost} THEN elem->>'text' END AS text,
+                  (${readsPost} AND ${scheduledLater}) AS unpublished
            FROM posts p, jsonb_array_elements(COALESCE(p.comments, '[]'::jsonb)) elem
            WHERE elem->>'id' = ANY($1)`,
-          [commentIds]
-        );
-      for (const row of rows)
+        [commentIds, ...reader]
+      );
+      for (const row of rows) {
         commentPreviews.set(row.comment_id, { text: row.text, postId: row.post_id });
+        if (row.unpublished) unpublishedServed.add(row.post_id);
+      }
+    }
+    if (unpublishedServed.size > 0) {
+      this.logger.log(
+        `[MODERATION_READ] queue preview by ${short(scope.userId)}` +
+          `${scope.isGlobalAdmin ? ' (platform admin)' : ' (BDE moderator in scope, open report)'}` +
+          ` of post(s) scheduled later: ${[...unpublishedServed].map(short).join(', ')}`
+      );
     }
 
     // A report on a person carries no text, so the preview is who they are. Without it a moderator

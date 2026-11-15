@@ -311,8 +311,16 @@ maybe("writes and notifications on a post follow the read's gate, against Postgr
     beforeAll(async () => {
       // An OPEN report is what lets a BDE moderator read a post scheduled later (owner, 2026-11-15).
       await client.query(
-        `CREATE TABLE content_reports (id serial PRIMARY KEY, "contentType" varchar(30) NOT NULL,
-           "contentId" varchar NOT NULL, status varchar(20) NOT NULL DEFAULT 'pending')`
+        `CREATE TABLE content_reports (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+           "contentType" varchar(30) NOT NULL, "contentId" varchar NOT NULL,
+           status varchar(20) NOT NULL DEFAULT 'pending');
+         -- The tables the queue's scope (reportInBdeScopeSql) names beside posts.
+         CREATE TABLE IF NOT EXISTS lives (id uuid PRIMARY KEY, "broadcasterId" varchar(255) NOT NULL,
+           "associationId" uuid);
+         CREATE TABLE IF NOT EXISTS live_cuts ("liveId" uuid PRIMARY KEY,
+           "broadcasterId" varchar(255) NOT NULL, "associationId" uuid);
+         CREATE TABLE IF NOT EXISTS live_chat_reported_lines ("reportId" uuid PRIMARY KEY,
+           "liveId" uuid NOT NULL)`
       );
       await client.query(
         `INSERT INTO associations (id, name) VALUES ($1, 'BDE SE'), ($2, 'BDE GA')`,
@@ -466,44 +474,92 @@ maybe("writes and notifications on a post follow the read's gate, against Postgr
       }
     });
 
-    it("the queue's preview of a reported post asks the same read: the text of a post scheduled later is shown to the BDE moderator only while the report is open, or once published; always to a platform admin", async () => {
+    it("the queue's previews ask the same read: the text of a post scheduled later, and of a comment under it, is shown to the BDE moderator only while the post's report is open, or once published; always to a platform admin; and the read of something unpublished is logged", async () => {
       await client.query(`ALTER TABLE posts ADD COLUMN IF NOT EXISTS markdown text`);
-      await client.query(`UPDATE posts SET markdown = 'not out yet' WHERE id = $1`, [P_SCHEDULED]);
+      const before = (await client.query(`SELECT comments FROM posts WHERE id = $1`, [P_SCHEDULED]))
+        .rows[0].comments as unknown;
+      await client.query(`UPDATE posts SET markdown = 'not out yet', comments = $2 WHERE id = $1`, [
+        P_SCHEDULED,
+        JSON.stringify([{ id: 'c-under-scheduled', userId: 'author', text: 'a word under it' }]),
+      ]);
       await client.query(
-        `INSERT INTO content_reports ("contentType", "contentId", status) VALUES ('post', $1, 'pending')`,
+        `INSERT INTO content_reports ("contentType", "contentId", status)
+           VALUES ('post', $1, 'pending'), ('comment', 'c-under-scheduled', 'pending')`,
         [P_SCHEDULED]
       );
-      // The queue's own listing, its page read from the suite's table: every status is listed.
-      const page = {
-        orderBy: () => page,
-        take: () => page,
-        skip: () => page,
-        where: () => page,
-        getMany: async () => (await client.query(`SELECT * FROM content_reports`)).rows,
+      // The queue's own listing: every status is listed, and the page is narrowed by the scope
+      // fragment the service hands its query builder (`reportInBdeScopeSql`), run for real here -
+      // `bde-moderation.integration.spec.ts` covers its passage through TypeORM.
+      const queueOf = () => {
+        let scope: { sql: string; moderator: string } | null = null;
+        const page = {
+          orderBy: () => page,
+          take: () => page,
+          skip: () => page,
+          where: (sql: string, params: { scopeModerator: string }) => {
+            scope = {
+              sql: sql.replaceAll(':scopeModerator', '$1'),
+              moderator: params.scopeModerator,
+            };
+            return page;
+          },
+          getMany: async () => {
+            const narrowed = scope as { sql: string; moderator: string } | null;
+            const { rows } = narrowed
+              ? await client.query(
+                  `SELECT r.* FROM content_reports r WHERE ${narrowed.sql} ORDER BY r."contentType" DESC`,
+                  [narrowed.moderator]
+                )
+              : await client.query(
+                  `SELECT r.* FROM content_reports r ORDER BY r."contentType" DESC`
+                );
+            return rows;
+          },
+        };
+        return page;
       };
       const moderation = new ModerationService(
-        { manager, createQueryBuilder: () => page } as never,
+        { manager, createQueryBuilder: queueOf } as never,
         {} as never,
         {} as never
       );
+      const logged = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+      const reads = () =>
+        logged.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('[MODERATION_READ]'));
+      /** The page as `[the post's preview, the comment's preview]`, the post's report first. */
       const preview = async (userId: string, isGlobalAdmin = false) =>
         (await moderation.listAllReports({ userId, isGlobalAdmin })).map((r) => r.contentPreview);
       try {
-        expect(await preview('modInScope')).toEqual(['not out yet']);
-        await client.query(`UPDATE content_reports SET status = 'dismissed'`);
-        // The report is still listed; the text it is about is no longer the moderator's to read.
-        expect(await preview('modInScope')).toEqual([null]);
-        expect(await preview('adminOutside', true)).toEqual(['not out yet']);
+        expect(await preview('modInScope')).toEqual(['not out yet', 'a word under it']);
+        // Served of a post still scheduled later: a moderation read, logged with the post's id only.
+        expect(reads()).toHaveLength(1);
+        expect(reads()[0]).toContain(P_SCHEDULED.slice(0, 8));
+        expect(reads()[0]).not.toContain('not out yet');
+        // Out of scope, the queue lists neither report: nothing to preview.
+        expect(await preview('modOutOfScope')).toEqual([]);
+        logged.mockClear();
+        await client.query(
+          `UPDATE content_reports SET status = 'dismissed' WHERE "contentType" = 'post'`
+        );
+        // Both reports are still listed; the text they are about is no longer the moderator's to
+        // read - the comment's own open report does not open the post it sits under.
+        expect(await preview('modInScope')).toEqual([null, null]);
+        expect(reads()).toEqual([]);
+        expect(await preview('adminOutside', true)).toEqual(['not out yet', 'a word under it']);
         await client.query(
           `UPDATE posts SET "scheduledAt" = now() - interval '1 minute' WHERE id = $1`,
           [P_SCHEDULED]
         );
-        expect(await preview('modInScope')).toEqual(['not out yet']);
+        logged.mockClear();
+        expect(await preview('modInScope')).toEqual(['not out yet', 'a word under it']);
+        // Published: an ordinary read of the queue, nothing unpublished was served.
+        expect(reads()).toEqual([]);
       } finally {
+        logged.mockRestore();
         await client.query(`DELETE FROM content_reports`);
         await client.query(
-          `UPDATE posts SET "scheduledAt" = now() + interval '1 day' WHERE id = $1`,
-          [P_SCHEDULED]
+          `UPDATE posts SET "scheduledAt" = now() + interval '1 day', comments = $2 WHERE id = $1`,
+          [P_SCHEDULED, JSON.stringify(before)]
         );
       }
     });
