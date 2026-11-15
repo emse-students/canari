@@ -23,6 +23,14 @@ repo_root=$(cd "$(dirname "$0")/../../.." && pwd)
 # shellcheck disable=SC2046 # one variable name per word, by construction
 unset $(git rev-parse --local-env-vars)
 fail=0
+# AND THE REAL REPOSITORY'S CONFIG IS THE SAME AFTER THE RUN. The leak above wrote user.*,
+# commit.gpgsign, core.hooksPath and core.autocrlf (what `configure` sets) and core.bare (what
+# `git init` re-initialising a work-tree-less GIT_DIR writes) into the shared .git/config, and the
+# main checkout stopped working. Those keys are read before and compared after, byte for byte.
+guarded_config() {
+  git -C "$repo_root" config --local --list | grep -E '^(core\.bare|core\.hooksPath|user\.|commit\.gpgsign)=' || true
+}
+config_before=$(guarded_config)
 ok() { echo "  ok    $1"; }
 bad() {
   echo "  FAIL  $1"
@@ -177,7 +185,7 @@ head=$(git -C "$p" rev-parse HEAD)
 rc=0
 out=$(push_hook "$head") || rc=$?
 check "a branch on top of origin/main runs the plan and passes" "a clean push was refused or ran nothing (rc=$rc): $out" \
-  test "$rc" -eq 0 -a -n "$(grep -F 'PLAN test-ci-scripts:' <<<"$out" || true)"
+  test "$rc" -eq 0 -a -n "$(grep -F 'PLAN control-characters:' <<<"$out" || true)"
 rc=0
 out=$(push_hook "$head") || rc=$?
 check "the same commit pushed again is not re-checked (the stamp)" "a verified commit was checked again or refused (rc=$rc): $out" \
@@ -213,7 +221,7 @@ check "origin/main moved: the push is refused once, asking for the same push aga
   test "$rc" -ne 0 -a -n "$(grep -F 'Run the same git push again' <<<"$out" || true)"
 parents=$(git -C "$p" rev-list --parents -n1 HEAD | wc -w | tr -d ' ')
 check "the branch now carries a merge commit of origin/main" "no merge commit was made" test "$parents" -eq 3
-check "the checks ran on the merged result" "the merge was not checked: $out" has "PLAN test-ci-scripts:" "$out"
+check "the checks ran on the merged result" "the merge was not checked: $out" has "PLAN control-characters:" "$out"
 rc=0
 out=$(push_hook "$merged_head") || rc=$?
 check "the second push sends the verified merge at once" "the second push did not pass (rc=$rc): $out" \
@@ -233,6 +241,45 @@ check "a conflict is refused, naming the file" "conflict refusal unclear (rc=$rc
 check "the branch is left exactly as it was" "the branch moved after a refused merge" test "$(git -C "$p" rev-parse HEAD)" = "$before"
 check "no merge is left in progress" "a merge was left in progress" test ! -f "$(git -C "$p" rev-parse --git-path MERGE_HEAD)"
 check "the working tree is clean" "the refused merge left changes behind" test -z "$(git -C "$p" status --porcelain)"
+
+# ── 4b. the push runs what CI would run for its range, and nothing more ─────────────────────────
+echo "the push plan follows the range, through the same scopes as CI:"
+s_origin="$scratch/scope-origin.git"
+git init -q --bare "$s_origin"
+s="$scratch/scope"
+make_repo "$s"
+git -C "$s" remote add origin "$s_origin"
+git -C "$s" push -q origin main
+git -C "$s" switch -q -c feature
+scope_push() { # <message>: commit what is staged, and print the dry-run push plan
+  git -C "$s" commit -qm "$1"
+  (cd "$s" && printf 'refs/heads/feature %s refs/heads/feature %s\n' "$(git rev-parse HEAD)" "$ZERO" |
+    LOCAL_CI_DRY_RUN=1 bash .github/scripts/local-ci.sh push origin 2>&1) || true
+}
+# shellcheck disable=SC2329 # called through `check`
+planned() { grep -F "PLAN $1:" <<<"$2" >/dev/null; }
+echo "# Changed" >>"$s/docs/wiki/page.md"
+git -C "$s" add docs/wiki/page.md
+out=$(scope_push docs)
+check "a docs-only push runs the docs gates" "a docs-only push planned no wiki-links: $out" planned wiki-links "$out"
+check "a docs-only push runs no frontend suite" "a docs-only push planned the frontend suite" \
+  test -z "$(grep -F 'PLAN frontend-test:' <<<"$out" || true)"
+check "a docs-only push does not run make test-ci-scripts" "a docs-only push planned test-ci-scripts" \
+  test -z "$(grep -F 'PLAN test-ci-scripts:' <<<"$out" || true)"
+check "and says the rest of that suite is CI's" "a skipped test-ci-scripts was not named" \
+  test -n "$(grep -F 'CI only for this range: test-ci-scripts' <<<"$out" || true)"
+echo "export const a = 2;" >"$s/frontend/src/lib/x/mod.ts"
+git -C "$s" add frontend/src/lib/x/mod.ts
+out=$(scope_push frontend)
+check "a frontend change runs the frontend suite" "a frontend change planned no frontend-test: $out" planned frontend-test "$out"
+check "a frontend change does not run make test-ci-scripts" "a frontend change planned test-ci-scripts" \
+  test -z "$(grep -F 'PLAN test-ci-scripts:' <<<"$out" || true)"
+printf '#!/usr/bin/env bash\necho hi\n' >"$s/.github/scripts/new.sh"
+git -C "$s" add .github/scripts/new.sh
+out=$(scope_push script)
+check "a CI script change runs make test-ci-scripts" "a script change planned no test-ci-scripts: $out" planned test-ci-scripts "$out"
+check "and lints the pushed script" "the pushed script was not handed to shellcheck" \
+  test -n "$(grep -F 'shellcheck .github/scripts/new.sh' <<<"$out" || true)"
 
 # ── 5. the hooks ────────────────────────────────────────────────────────────────────────────────
 echo "the tracked hooks call the script:"
@@ -269,5 +316,11 @@ check "FILES narrows shellcheck to the staged scripts CI lints" "FILES does not 
 everything=$(make -s -n -C "$repo_root" lint-ci-scripts)
 check "without FILES, shellcheck lints the whole set" "without FILES, the set is not linted whole" \
   has "scripts/*.sh" "$everything"
+
+echo "the real repository is untouched:"
+config_after=$(guarded_config)
+check "core.bare, core.hooksPath, user.* and commit.gpgsign are as before the run" \
+  "this run changed the real repository's config: before [$config_before] after [$config_after]" \
+  test "$config_before" = "$config_after"
 
 exit "$fail"

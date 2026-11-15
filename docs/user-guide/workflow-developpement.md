@@ -74,7 +74,7 @@ devrait etre une formalite"*). Trois niveaux :
 | Quand | Ce qui tourne | Combien de temps |
 |---|---|---|
 | **au commit** | les verifications rapides des fichiers indexes seulement : liens du wiki, plan regenere, garde des donnees privees, cliquets et listes autorisees, tests unitaires du module touche | quelques secondes de plus |
-| **au push** | le hook fusionne d'abord le dernier `origin/main` dans la branche, puis lance tout ce qui peut tourner sur un poste, exactement comme la CI le choisirait | quelques minutes ; en arriere-plan |
+| **au push** | le hook fusionne d'abord le dernier `origin/main` dans la branche, puis lance ce que la CI lancerait pour les fichiers modifies (memes filtres), sauf ce qu'un poste ne peut pas faire tourner | quelques secondes pour de la doc, jusqu'a une heure pour un changement qui touche tout ; en arriere-plan |
 | **en CI seulement** | ce qu'un poste Windows ne peut pas faire : compilation iOS, specs d'integration PostgreSQL, appels de bout en bout, scans d'images | la seule chose propre a la PR |
 
 Deux choses a savoir. **Si le push a fusionne `origin/main`, il refuse une fois** (git avait deja

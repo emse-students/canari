@@ -96,7 +96,7 @@ Portail-etu since 2026-09-04, minus the bump and the two stores.
 **Before every commit**: `bun run check` (0 errors), `bun run lint`, `bun run format` in `frontend/` -
 the hook runs them anyway and re-stages, so run them first rather than reading a commit you have not
 seen. Then commit AND push in the background. **The commit runs path-scoped checks; the push merges
-`origin/main`, runs every locally runnable CI check, and after a merge asks for the same push again**
+`origin/main`, runs the locally runnable CI jobs its range triggers, and after a merge asks for the same push again**
 (owner, 2026-11-15; needs `DOCS_PRIVATE_DENYLIST_FILE` set, or `none`; [tiers](docs/wiki/cicd.md#checks-at-commit-at-push-and-in-ci-only)).
 
 **GESTURE ONE, and the whole of it.** `git switch -c`, commit, `gh pr create` - then **nothing**.

@@ -3364,7 +3364,10 @@ before the pull request.
 
 Durations measured on the Windows workstation (OXYGEN, 2026-11-15, under the load of other
 sessions - a Linux runner is faster). "Push" means the pre-push runs it when `ci-scopes.sh` says the
-pushed range touches its area, exactly as CI would.
+pushed range (the merged `origin/main` to HEAD) touches its area, exactly as CI's `changes` job
+gates the job - **the push runs what CI would run for that range, and nothing more** (lead,
+2026-11-15: an 82-minute push of everything, measured, is not a formality). A docs-only push runs
+the path rules and the whole-tree scans, in seconds; a frontend change runs the frontend jobs.
 
 | Job | Tier | Runs locally as | Measured | Why |
 | --- | --- | --- | --- | --- |
@@ -3375,7 +3378,7 @@ pushed range touches its area, exactly as CI would.
 | `test-frontend-shards` | push | `checks.sh frontend-test`, the four shards as one run | 15 min (1786 files, 19165 tests; ~6-7 min per shard on a CI runner) | - |
 | `test-android` | push | `android-unit-tests.sh` (a JDK) | 75 s (272 tests) | - |
 | `test-harness` | push | `make test-harness` | 41 s | - |
-| `test-ci-scripts` | push, but one step | `make test-ci-scripts`, then `ratchet-not-raised.mjs` against the merge base | 46 min here with `deploy-rolling.test.sh` (6 min on a CI runner); that one step is ~27 min of it | needs `shellcheck`. **`deploy-rolling.test.sh` does not run under Docker Desktop** (the recipe reads `docker info`, prints a named line, and runs it on any other engine): it measures a Linux engine's reload timing, and here it failed twice in two runs on two different cases - its own control saw no failure from DNS-name calls, then one `ConnectionRefused` in 44502 POSTs across 450 reloads. CI, on a Linux engine, is green on it. Not diagnosed further; open in [backlog.d](backlog.d/p3-the-checks-at-commit-shape-is-carried-to-the-other-repos-and-the-ci-only-list-shrinks.md) |
+| `test-ci-scripts` | push, by range | `make test-ci-scripts` when the range touches `CI_SCRIPTS_PATHS` (`.github/`, `.husky/`, the Makefile, `scripts/`, `infrastructure/`, `libs/`, a `.*-version` pin); on every push its whole-tree scans (`control-characters`, `no-nul-in-source`, `line-endings`) and the path rules over the range; then `ratchet-not-raised.mjs` against the merge base | `make test-ci-scripts`: 43 min here without `deploy-rolling.test.sh` (the push of 2026-11-15), 46 min with it (6 min on a CI runner) | **The one place a push proves less than the pull request:** CI runs this suite on every pull request, and a push that touches none of `CI_SCRIPTS_PATHS` leaves its source guards (those reading the frontend or the services) to CI, said by name on stderr. Needs `shellcheck`. **`deploy-rolling.test.sh` does not run under Docker Desktop** (the recipe reads `docker info`, prints a named line, and runs it on any other engine): it measures a Linux engine's reload timing, and here it failed twice in two runs on two different cases - its own control saw no failure from DNS-name calls, then one `ConnectionRefused` in 44502 POSTs across 450 reloads. CI, on a Linux engine, is green on it. Not diagnosed further; open in [backlog.d](backlog.d/p3-the-checks-at-commit-shape-is-carried-to-the-other-repos-and-the-ci-only-list-shrinks.md) |
 | `mls-forward-compat` | push | `mls-forward-compat.sh` | 107 s | - |
 | `security` | split | the lockfile and Tauri-parity guards at push (`checks.sh lockfile-version`, `tauri-parity`, < 1 s each) | - | CodeQL and the secret scan are GitHub services: CI only |
 | `boot-nest-apps` | CI only | - | - | boots each service on PostgreSQL, Redis and an S3 endpoint |
@@ -3480,7 +3483,9 @@ push `shellcheck`, `cargo`, `node` or `java` as the planned checks need them.
    and a dirty tree. A push of deletions only passes.
 2. `git fetch origin main`. When `origin/main` is not already in HEAD, `git merge --no-edit
    origin/main`. **A conflict aborts the merge and refuses the push**, listing the files.
-3. Every check of the plan, with a progress line each (`[push 3/9] frontend-lint ... ok (13s)`);
+3. The plan for the range `origin/main..HEAD`: the path rules over every file of the range (the
+   commit tier's, re-proved for the whole branch), the whole-tree scans, and each job whose
+   `ci-scopes.sh` scope the range triggers - with a progress line each (`[push 3/9] frontend-lint ... ok (13s)`);
    a failure prints the last 40 lines of its log (`.git/canari-local-ci/<check>.log`, per worktree)
    and stops.
 4. On success it stamps the verified commit. **If it merged, it refuses once**: git chose the
@@ -3490,9 +3495,12 @@ push `shellcheck`, `cargo`, `node` or `java` as the planned checks need them.
 **A hook's environment is not CI's.** Git hands a hook `GIT_DIR` (and, at commit, `GIT_INDEX_FILE`),
 and every check inherits it. The first push run on 2026-11-15 ran `local-ci.test.sh`, whose
 `git -C "$scratch" ...` then wrote into the REAL repository: two `base` commits on the pushed branch
-and a test identity with signing off in the shared `.git/config` (both undone by hand). `local-ci.sh`
+and a test identity with signing off in the shared `.git/config`, and `core.bare=true` (from `git init`
+re-initialising a `GIT_DIR` with no work tree), which broke the main checkout - all undone by hand.
+The keys the leak could touch are what the test's `configure` and `git init` write: `user.name`,
+`user.email`, `commit.gpgsign`, `core.hooksPath`, `core.autocrlf` and `core.bare`. `local-ci.sh`
 now unsets `git rev-parse --local-env-vars` first, keeping only the commit's index for the one read
-of what is staged, and `local-ci.test.sh` asserts it with a decoy `GIT_DIR`.
+of what is staged, and `local-ci.test.sh` asserts it with a decoy `GIT_DIR`, then compares the real repository's `core.bare`, `core.hooksPath`, `user.*` and `commit.gpgsign` with what they were before its run.
 
 A push that needs CI's verdict on an unmerged range is not possible from here on; that is the
 point. The emergency path is unchanged: a human with admin rights, written into `CHANGELOG.md`.

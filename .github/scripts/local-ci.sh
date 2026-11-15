@@ -63,7 +63,7 @@ compile-android-app                ci-only   needs the Android SDK and NDK
 compile-ios-app                    ci-only   needs macOS and Xcode
 test-call-service-e2e              ci-only   coturn and five headless browsers on a Linux runner
 test-harness                       push      make test-harness
-test-ci-scripts                    push      make test-ci-scripts, ratchet-not-raised
+test-ci-scripts                    push      make test-ci-scripts when the range touches CI_SCRIPTS_PATHS; its whole-tree scans and the path rules always
 dependency-ceiling                 ci-only   decides on a Dependabot pull request only
 security                           split     the lockfile guards at push; CodeQL and the secret scan in CI only
 dependency-audit                   ci-only   a verdict on the advisory databases, not on the commit; ~5 min per tree
@@ -175,6 +175,10 @@ frontend_generated() {
   bash .github/scripts/checks.sh mls-wasm-verify
 }
 
+# What `make test-ci-scripts` tests: the CI scripts and workflows, the hooks, the Makefile, the
+# deploy and infrastructure scripts, the shared libs and the pinned tool versions.
+CI_SCRIPTS_PATHS='^(\.github/|\.husky/|Makefile$|scripts/|infrastructure/|libs/|\.[a-z-]+-version$)'
+
 # ── The push plan, from the same scopes CI computes ──────────────────────────────────────────────
 # Prints `name|command` lines, cheap checks first. CI-only jobs this change would trigger are
 # named on stderr, so the reader knows what the push did NOT prove.
@@ -183,7 +187,29 @@ push_plan() {
   scopes="$(CI_WORKFLOW=.github/workflows/ci.yml bash .github/scripts/ci-scopes.sh "$base" HEAD 2>"$STATE_DIR/scopes.log")"
   scope() { printf '%s\n' "$scopes" | sed -n "s/^$1=//p"; }
 
-  echo "test-ci-scripts|make test-ci-scripts"
+  # The path rules over the whole range: the docs, plan, private-name, duplicate and CI-definition
+  # gates a docs-only push owes, in seconds.
+  local range moved
+  if [ -n "$base" ]; then
+    range="$(git diff --name-only --diff-filter=ACMRD "$base" HEAD)"
+    moved="$(git diff --name-only --diff-filter=DR "$base" HEAD)"
+    commit_rules "$(git diff --name-only --diff-filter=ACMR "$base" HEAD)" "$range" "$moved" push
+  fi
+  # The whole-tree scans of `make test-ci-scripts`, seconds each, whatever the range touched.
+  local t=.github/scripts/tests
+  echo "control-characters|bun $t/control-characters.test.mjs"
+  echo "no-nul-in-source|bun $t/no-nul-in-source.test.mjs"
+  echo "line-endings|bun $t/line-endings.test.mjs"
+  # THE SUITE ITSELF RUNS WHEN THE RANGE TOUCHES WHAT IT TESTS (owner's lead, 2026-11-15: a push is
+  # gated like a pull request, not like a release). CI runs it on every pull request, 6 min on a
+  # runner; here it is 43 min, so a push that touches none of these leaves its source guards (those
+  # that read the frontend or services' sources) to CI - the one place the push proves less, said
+  # by name on stderr.
+  if [ -z "$base" ] || grep -qE "$CI_SCRIPTS_PATHS" <<<"$range"; then
+    echo "test-ci-scripts|make test-ci-scripts"
+  else
+    echo "CI only for this range: test-ci-scripts beyond its whole-tree scans and the path rules" >&2
+  fi
   echo "raw-controls-ratchet|bun .github/scripts/ratchet-not-raised.mjs ${base:-origin/main}"
   echo "lockfile-version|bash .github/scripts/checks.sh lockfile-version"
   echo "tauri-parity|bash .github/scripts/checks.sh tauri-parity"
@@ -363,8 +389,12 @@ module_tests() {
 # anyway inside `make test-ci-scripts`; at commit it runs alone, in a fraction of a second to a few
 # seconds (measured in docs/wiki/cicd.md). Whole-tree scans that take longer - control characters,
 # NUL bytes, line endings - are the push's.
+# THE PATH RULES, shared by both tiers: at commit over what is staged, at push over the whole pushed
+# range (merge base to HEAD) - the range CI's `changes` job reads, so a push re-proves what each of
+# its commits was checked for. <moved> lists the deleted or renamed paths; <tier> is commit or push
+# (the plan is regenerated and staged at commit, only verified at push).
 commit_rules() {
-  local staged="$1" all_changed="$2" t=.github/scripts/tests
+  local staged="$1" all_changed="$2" moved="$3" tier="$4" t=.github/scripts/tests
   rule() {
     local regex="$1" input="$2" name="$3"
     shift 3
@@ -372,19 +402,23 @@ commit_rules() {
   }
   # A page, or a deleted or renamed file, can break a link anywhere.
   rule '\.md$' "$staged" wiki-links bun "$t/wiki-links.test.mjs"
-  if [ -n "$(staged_paths DR)" ] && ! grep -qE '\.md$' <<<"$staged"; then
+  if [ -n "$moved" ] && ! grep -qE '\.md$' <<<"$staged"; then
     echo "wiki-links|bun $t/wiki-links.test.mjs"
   fi
   rule '\.md$' "$all_changed" docs-merge-artefacts bun "$t/docs-merge-artefacts.test.mjs"
+  local backlog_check="bash .github/scripts/local-ci.sh plan"
+  [ "$tier" = commit ] || backlog_check="bun $t/backlog-plan.test.mjs"
+  # shellcheck disable=SC2086 # the command is words by construction
   rule '^(docs/wiki/backlog\.d/|docs/wiki/backlog\.md$|docs/wiki/plan\.md$|tools/backlog-plan/)' "$all_changed" \
-    backlog-plan bash .github/scripts/local-ci.sh plan
+    backlog-plan $backlog_check
   rule '^docs/wiki/backlog' "$all_changed" backlog-fragments bun "$t/backlog-fragments.test.mjs"
   rule '^docs/wiki/backlog' "$all_changed" backlog-closed bun "$t/backlog-closed.test.mjs"
   rule '^CLAUDE\.md$' "$staged" claude-md-cap bun "$t/claude-md-cap.test.mjs"
   rule '(\.md|\.sh|\.ya?ml|\.ts|\.mjs|\.env\.example)$' "$staged" docs-private-guard bun "$t/docs-private-guard.test.mjs"
   rule '(\.sh$|^\.husky/)' "$staged" executable-bit bun "$t/executable-bit.test.mjs"
   rule '(\.sh|\.ya?ml)$|^Makefile$|^\.husky/' "$staged" pipefail-early-reader bun "$t/pipefail-early-reader.test.mjs"
-  rule '\.sh$' "$staged" shellcheck bash .github/scripts/local-ci.sh shellcheck
+  # shellcheck disable=SC2046 # one path per word: the repository's script paths carry no spaces
+  rule '\.sh$' "$staged" shellcheck bash .github/scripts/local-ci.sh shellcheck $(grep -E '\.sh$' <<<"$staged" || true)
   rule '^(\.github/|Makefile$)' "$all_changed" ci-definition bash .github/scripts/local-ci.sh ci-definition
   rule '^(frontend/src|apps/[^/]+/src)/.*\.ts$' "$staged" duplicates bash .github/scripts/local-ci.sh duplicates
   rule '^apps/[^/]+/src/migrations/' "$all_changed" migration-numbers bun "$t/migration-numbers.test.mjs"
@@ -401,7 +435,7 @@ mode_commit() {
   all_changed="$(staged_paths ACMRD)"
   [ -n "$all_changed" ] || return 0
   if git rev-parse -q --verify MERGE_HEAD >/dev/null; then merging=1; fi
-  plan="$(commit_rules "$staged" "$all_changed")"$'\n'
+  plan="$(commit_rules "$staged" "$all_changed" "$(staged_paths DR)" commit)"$'\n'
 
   # The vitest files: the guards a native or a markup change answers to, and the touched modules'.
   local vitest=""
@@ -509,15 +543,15 @@ case "$mode" in
   jest) mode_jest "$@" ;;
   ci-definition) mode_ci_definition ;;
   duplicates) mode_duplicates ;;
-  # The staged scripts of the set CI lints, through the one recipe that names it (the push lints
-  # the whole set). The recipe only WARNS when the linter is absent (a contributor's `make test`
+  # The named scripts (staged at commit, in the range at push) that are in the set CI lints,
+  # through the one recipe that names that set. The recipe only WARNS when the linter is absent (a contributor's `make test`
   # must not need it); a hook that lints must.
   shellcheck)
     command -v shellcheck >/dev/null 2>&1 || {
       echo "shellcheck is not installed, and this commit stages a shell script CI lints with it: winget install koalaman.shellcheck (or your package manager)"
       exit 1
     }
-    make lint-ci-scripts FILES="$(staged_paths ACMR -- '*.sh' | tr '\n' ' ')"
+    make lint-ci-scripts FILES="$*"
     ;;
   *)
     echo "usage: local-ci.sh commit | push <remote> | all | tiers" >&2
