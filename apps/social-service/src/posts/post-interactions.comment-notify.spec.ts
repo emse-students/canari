@@ -58,6 +58,7 @@ describe('PostInteractionsService.addComment notifications', () => {
       save: jest.fn((p: unknown) => Promise.resolve(p)),
       manager: lockedCommentsManager(post as { comments?: unknown[] }),
     };
+    const holdersOf = jest.fn(() => Promise.resolve([] as string[]));
     const service = new PostInteractionsService(
       postRepo as unknown as Repository<Post>,
       notifications as unknown as PostNotificationsService,
@@ -65,10 +66,10 @@ describe('PostInteractionsService.addComment notifications', () => {
       {} as PostMediaRetentionService,
       {
         serve: jest.fn((c: unknown[]) => Promise.resolve(c)),
-        holdersOf: jest.fn(() => Promise.resolve([] as string[])),
+        holdersOf,
       } as unknown as CommentIdentityService
     );
-    return { service, created, push, notifications };
+    return { service, created, push, notifications, holdersOf };
   }
 
   /** The notification block is fire-and-forget: let its microtasks finish. */
@@ -216,6 +217,73 @@ describe('PostInteractionsService.addComment notifications', () => {
     expect(mention.created).toEqual([
       expect.objectContaining({ recipientId: 'author', type: 'mention' }),
     ]);
+  });
+
+  it('a reply to a comment written for an association the author holds is a reply to the author', async () => {
+    const t = makeService({
+      id: 'p1',
+      authorId: 'author',
+      associationId: null,
+      comments: [{ id: 'parent', userId: 'someone', associationId: 'asso-1', parentId: null }],
+    });
+    t.holdersOf.mockResolvedValue(['author']);
+    await t.service.addComment('p1', { userId: 'reader', text: 'hi', parentId: 'parent' });
+    await flush();
+    expect(t.notifications.notifyPostActivity).not.toHaveBeenCalled();
+    expect(t.created).toEqual([expect.objectContaining({ recipientId: 'author', type: 'reply' })]);
+  });
+
+  it('the author mentioned inside a reply to someone else gets exactly one mention', async () => {
+    const t = makeService({
+      id: 'p1',
+      authorId: 'author',
+      associationId: null,
+      comments: [{ id: 'parent', userId: 'other', parentId: null }],
+    });
+    t.notifications.resolveMentionedUserIds.mockReturnValue(['author']);
+    await t.service.addComment('p1', { userId: 'reader', text: '@[author]', parentId: 'parent' });
+    await flush();
+    expect(t.notifications.notifyPostActivity).not.toHaveBeenCalled();
+    expect(t.created.filter((n) => n.recipientId === 'author')).toEqual([
+      expect.objectContaining({ type: 'mention' }),
+    ]);
+    expect(t.created.filter((n) => n.recipientId === 'other')).toEqual([
+      expect.objectContaining({ type: 'reply' }),
+    ]);
+  });
+
+  it('a reply to the author asks the push budget (category switch): row kept, no push when refused', async () => {
+    const t = makeService({
+      id: 'p1',
+      authorId: 'author',
+      associationId: null,
+      comments: [{ id: 'parent', userId: 'author', parentId: null }],
+    });
+    t.notifications.withinPushBudget.mockResolvedValue([]);
+    await t.service.addComment('p1', { userId: 'reader', text: 'hi', parentId: 'parent' });
+    await flush();
+    expect(t.notifications.withinPushBudget).toHaveBeenCalledWith('reply', ['author']);
+    expect(t.created).toHaveLength(1);
+    expect(t.push.notifyContent).not.toHaveBeenCalled();
+  });
+
+  it('an anonymous reply to the author stays masked in the row', async () => {
+    const t = makeService({
+      id: 'p1',
+      authorId: 'author',
+      associationId: null,
+      comments: [{ id: 'parent', userId: 'author', parentId: null }],
+    });
+    await t.service.addComment('p1', {
+      userId: 'reader',
+      text: 'hi',
+      parentId: 'parent',
+      anonymous: true,
+    } as never);
+    await flush();
+    expect(t.created).toHaveLength(1);
+    expect(t.created[0]).toEqual(expect.objectContaining({ recipientId: 'author', type: 'reply' }));
+    expect((t.created[0] as unknown as { actorId: string }).actorId).not.toBe('reader');
   });
 
   it("asks the read's gate who of the mentioned may be told, as the writer, and tells only them", async () => {

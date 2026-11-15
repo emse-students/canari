@@ -90,10 +90,14 @@ export type AuthorNoticeKind = 'comment' | 'reply' | 'mention';
 export function authorNoticeKind(args: {
   authorId: string;
   parentWriterId: string | null | undefined;
+  /** The parent comment was written for an association the author holds (speaks for). */
+  authorHoldsParentAssociation?: boolean;
+  /** Lowercased, as `resolveMentionedUserIds` returns them. */
   mentionedIds: readonly string[];
 }): AuthorNoticeKind {
+  if (args.authorHoldsParentAssociation) return 'reply';
   if (args.parentWriterId && args.parentWriterId === args.authorId) return 'reply';
-  if (args.mentionedIds.includes(args.authorId)) return 'mention';
+  if (args.mentionedIds.includes(args.authorId.toLowerCase())) return 'mention';
   return 'comment';
 }
 

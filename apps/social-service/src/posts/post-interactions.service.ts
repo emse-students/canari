@@ -338,9 +338,22 @@ export class PostInteractionsService {
         alreadyNotified.add(post.authorId);
         // A reply to the author's own comment, or a mention of them, rings of its own and is never
         // folded into the post's live notification (owner, 2026-11-15); the rest keeps the fold.
+        let authorHoldsParentAssociation = false;
+        if (parent?.associationId) {
+          try {
+            const holders = await this.identity.holdersOf(parent.associationId);
+            authorHoldsParentAssociation = holders.includes(post.authorId);
+          } catch (e) {
+            this.logger.warn(
+              `[NOTIFY] holders of association ${String(parent.associationId)} unreadable, the author's notice stays a comment`,
+              e
+            );
+          }
+        }
         const kind = authorNoticeKind({
           authorId: post.authorId,
           parentWriterId: parent?.userId,
+          authorHoldsParentAssociation,
           mentionedIds: data.text ? this.notifications.resolveMentionedUserIds(data.text) : [],
         });
         this.logger.log(

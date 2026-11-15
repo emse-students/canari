@@ -294,9 +294,9 @@ switches still silence it in one gesture. Principle 1 is untouched: the push car
 **A reply to MY comment or a mention of ME on my own post rings of its own** (owner, 2026-11-15). Principle 2
 (the essential is never lost): what is addressed to the reader is never folded into a notification that may
 update quietly. `addComment` decides the author's notice kind from ids it already holds
-(`authorNoticeKind`, `posts/post-activity-notice.ts`: a reply when the parent comment is the author's, else
+(`authorNoticeKind`, `posts/post-activity-notice.ts`: a reply when the parent comment is the author's or was written for an association they hold, else
 a mention when the text names them, else `comment`; the most specific wins, never a parsed message). A `reply`
-or `mention` goes the FREE way of `PUSH_BUDGET` (never counted, so the daily cap is untouched), as its own
+or `mention` to the post's author goes the FREE way of `PUSH_BUDGET` (never counted, so the daily cap is untouched), as its own
 row and push with sound, never `quiet`, so `POST_ACTIVITY_QUIET_MIN_CLIENT_VERSION` does not apply to it and
 it adds no row to the post's unread activity. The reply/mention category switches still apply at the send.
 Every other comment keeps the fold above. Each decision is logged (`author notice kind=...`). This is the
