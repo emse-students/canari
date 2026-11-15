@@ -1223,6 +1223,56 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
     });
 
     /**
+     * A SEAT IS TAKEN UNDER THE LIVE'S ROW LOCK, so no seat can follow the release of an end. The
+     * take is stalled inside the seat store; a cut fired then must WAIT for it (read in the server's
+     * own lock state, not after a delay) - without the lock it completes, frees the seats, and the
+     * stalled take then seats a viewer on a live that is over, for a lease.
+     */
+    it('RACE: a cut waits for a seat being taken, frees it, and no seat is taken after it', async () => {
+      const live = await start();
+      const take = seats.take.bind(seats);
+      let entered!: () => void;
+      const inTake = new Promise<void>((resolve) => (entered = resolve));
+      let open!: () => void;
+      const gate = new Promise<void>((resolve) => (open = resolve));
+      seats.take = async (liveId: string, viewerId: string) => {
+        entered();
+        await gate;
+        return take(liveId, viewerId);
+      };
+      try {
+        const joining = lives.get(BOB, live.id);
+        await inTake;
+        let cutSettled = false;
+        const cutting = lives.cut('9'.repeat(64), live.id, { reason: 'spam' }).finally(() => {
+          cutSettled = true;
+        });
+        for (;;) {
+          const [{ n }] = await q(
+            `SELECT count(*)::int AS n FROM pg_stat_activity
+              WHERE wait_event_type = 'Lock' AND cardinality(pg_blocking_pids(pid)) > 0`
+          );
+          if (n > 0) break;
+          // The cut finished while the take was still stalled: nothing ordered them.
+          expect(cutSettled).toBe(false);
+        }
+        expect(seats.held.size).toBe(0);
+        open();
+        // The join began before the cut: it is served, and its seat is one the cut's release frees.
+        await expect(joining).resolves.toMatchObject({ id: live.id });
+        await cutting;
+        expect(seats.held.size).toBe(0);
+      } finally {
+        open();
+        seats.take = take;
+      }
+      // After the cut, the check under the lock refuses before any seat exists.
+      expect((await refusal(lives.get(BOB, live.id))).code).toBe('LIVE_ENDED');
+      expect((await refusal(lives.manifest(BOB, live.id))).code).toBe('LIVE_ENDED');
+      expect(seats.held.size).toBe(0);
+    });
+
+    /**
      * THE ARRIVAL LINES (owner, 2026-11-07; the reversal of "a count, never an identity"): "X a
      * rejoint" for every viewer, rate-limited by a COUNT per poll. The seat store is the in-memory
      * stand-in; the Redis scripts have their own spec (`live-seats.spec.ts`).

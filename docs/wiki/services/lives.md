@@ -352,7 +352,8 @@ all, and nobody has measured that path.
   (`live-seats.spec.ts`, gated on `SOCIAL_IT_REDIS_URL`, run in CI by `test-social-integration`
   since 2026-10-21 - [cicd](../cicd.md)).
 - The seat is taken AFTER the watch rule, so a blocked, removed or ended answer is never masked as
-  "full"; the broadcaster takes none.
+  "full"; the broadcaster takes none. The rule and the take run
+  [under the live's row lock](#a-seat-is-taken-under-the-rows-lock-2026-11-15).
 - **Given back by a proof first**: `DELETE /api/lives/:id/seat` when the viewer leaves, the
   broadcaster's removal of a viewer frees that viewer's seat at once, and **a live CUT or ERASED
   frees all of its seats** (`releaseLive`, one Lua script over the set, called by `purgeEnded`). An
@@ -425,6 +426,41 @@ times four ever passes a quarter of the budget.
 polling a manifest and fetching a segment every few seconds is ~10-20 requests a second from that
 address, which a crawl scenario could read as abuse. **Unknown, and a question for the DSI before
 the first public live** (not a change: a question).
+
+### A seat is taken under the row's lock (2026-11-15)
+
+An end, a cut, an erasure and a viewer's removal write under the live's `FOR UPDATE` and free seats
+AFTER their commit. Until 2026-11-15 the watch rule was read outside any lock, so one of them could
+commit and free the seats between a viewer's check and its take: the seat taken then belonged to a
+live that was over (or to a removed viewer), and counted against the host's cap until its 30 s
+lease lapsed. A clock was deciding a count.
+
+`LivesService.watchSeated` is now the one place a seat is taken. It runs the watch rule and the take
+in ONE transaction that first locks the live's row `FOR SHARE`:
+
+- viewers share the lock with each other, so polls do not queue behind polls;
+- a writer's `FOR UPDATE` WAITS for the takes in flight, so every seat taken before its commit is
+  in the set when it frees them;
+- a take that comes after a writer's commit reads the ended or removed state under the lock
+  (READ COMMITTED: the rule's statement starts after the lock is granted) and is refused by the
+  rule - `410`, `403` - before any seat exists.
+
+So after an end commits, the set of that live's seats only shrinks, and no seat follows a release.
+The lease is left with the one job it was given: the viewer that could not say it left.
+
+**What it costs.** Each key read and each manifest poll of a viewer is one transaction and one row
+lock more, and holds its connection across ONE Redis script, which the client bounds
+(`commandTimeout`, one second, in `RedisService`): a Redis that does not answer delays an end by
+that bound, and the take is refused `LIVE_SEATS_UNAVAILABLE` as before. The segment store, which
+nothing bounds, is still never called under a held connection
+([the reservation](#the-end-is-the-rows-state-q5)). The broadcaster's poll takes the same
+shared lock and no seat.
+
+**Proven on PostgreSQL** (`lives.integration.spec.ts`, "RACE: a cut waits for a seat being taken"):
+the take is stalled inside the seat store, a cut fired then is read WAITING in `pg_stat_activity`
+while no seat exists, the join is served, the cut then frees its seat, and the next key read and
+manifest are `410` with no seat taken. Without the lock the cut completes while the take is
+stalled, which the test refuses.
 
 ## The viewer count (2026-10-21)
 
@@ -981,9 +1017,9 @@ a cut. The cut row is then what answers `410 LIVE_ENDED` with the live's own end
 answers at once, the purge waits for the reservation, the segment then gets `410 cut` and nothing
 outlives the purge; a cut, a segment and a viewer join fired together - whichever ran first, every
 refusal is `410 cut` and nothing is served after it. A viewer whose key read began before the cut
-committed may take a seat AFTER the purge freed them: that seat lasts at most its 30 s lease (its
-next poll is a `410` that renews nothing). The same holds for every kind of end, not only a cut -
-filed in [backlog](../backlog.d/p1-live-moderation-wp-l8-merged-the-client-s-standing-refusals-the-vie.md).
+committed takes its seat BEFORE the cut frees them, and none after: the take holds the row's lock
+the cut waits for ([above](#a-seat-is-taken-under-the-rows-lock-2026-11-15)). The same holds for
+every kind of end and for a viewer's removal.
 
 **Repeat offenders: [the strike ladder](#the-strike-ladder-wp-l8b)**, built 2026-10-21 on the
 decisions of 2026-10-20. Step 1 above records the cut's STRIKE, and the notice after the commit is

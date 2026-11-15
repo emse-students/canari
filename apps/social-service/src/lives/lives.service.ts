@@ -723,10 +723,10 @@ export class LivesService implements OnModuleDestroy {
 
   /** One live and its key, to a viewer allowed to watch it ({@link assertMayWatch}). */
   async get(viewerId: string, liveId: string): Promise<LiveViewerView> {
-    const row = await this.assertMayWatch(this.db.manager, viewerId, liveId, WATCH_ONLY);
-    // Opened before the seat is taken: a key that cannot be read (503) seats nobody.
-    const key = openLiveKeyOr503(row.id, row);
-    await this.takeSeat(row, viewerId);
+    // The key is opened before the seat is taken: a key that cannot be read (503) seats nobody.
+    const { row, prepared: key } = await this.watchSeated(viewerId, liveId, (watched) =>
+      openLiveKeyOr503(watched.id, watched)
+    );
     const scoped: { moderates: boolean }[] = await this.db.query(BDE_MODERATES_LIVE_SQL, [
       viewerId,
       row.id,
@@ -744,8 +744,8 @@ export class LivesService implements OnModuleDestroy {
    * 410 from the moment the live has ended: the manifest stops at `endedAt`.
    */
   async manifest(viewerId: string, liveId: string, from?: number): Promise<LiveManifestForViewer> {
-    const row = await this.assertMayWatch(this.db.manager, viewerId, liveId, WATCH_ONLY);
-    const viewers = await this.viewerCount(row, viewerId, await this.takeSeat(row, viewerId));
+    const { row, taken } = await this.watchSeated(viewerId, liveId, () => undefined);
+    const viewers = await this.viewerCount(row, viewerId, taken);
     const start = from ?? Math.max(0, row.nextIndex - LIVE_MANIFEST_WINDOW);
     const segments: LiveManifestSegment[] = await this.db.query(
       `SELECT s."index", s.name, s.bytes
@@ -2538,10 +2538,49 @@ export class LivesService implements OnModuleDestroy {
   }
 
   /**
+   * THE WATCH CHECK AND THE SEAT, ORDERED AGAINST EVERY END BY THE LIVE'S ROW LOCK (lives.md, "A
+   * seat is taken under the row's lock").
+   *
+   * An end, a cut, an erasure and a viewer's removal all write under the row's `FOR UPDATE` and free
+   * seats only AFTER their commit. A watch check read outside that lock could be followed by one of
+   * them, and the seat then taken AFTER the seats were freed lived until its lease lapsed, counted
+   * against the host's cap: a clock deciding a count. So the check and the take run in ONE
+   * transaction holding the row `FOR SHARE`: viewers share it with each other, a writer waits for
+   * the takes in flight, and a take that comes after a writer's commit reads the ended (or removed)
+   * state under the lock and is refused by {@link assertMayWatch} before any seat exists. READ
+   * COMMITTED is what makes the second half true: the check's statement starts after the lock is
+   * granted, so it sees what the writer it waited for committed.
+   *
+   * The connection is held across ONE Redis script, which the client bounds
+   * (`RedisService`'s command timeout); the segment store, which nothing bounds, is never called
+   * under it.
+   *
+   * @param prepare what must succeed between the check and the seat (the key read's open), so its
+   *                refusal seats nobody.
+   */
+  private async watchSeated<T>(
+    viewerId: string,
+    liveId: string,
+    prepare: (row: LiveRow) => T
+  ): Promise<{
+    row: Awaited<ReturnType<LivesService['assertMayWatch']>>;
+    prepared: T;
+    taken: number | null;
+  }> {
+    return this.db.transaction(async (tx) => {
+      await tx.query(`SELECT 1 FROM lives WHERE id = $1 FOR SHARE`, [liveId]);
+      const row = await this.assertMayWatch(tx, viewerId, liveId, WATCH_ONLY);
+      const prepared = prepare(row);
+      return { row, prepared, taken: await this.takeSeat(row, viewerId) };
+    });
+  }
+
+  /**
    * THE VIEWER CAP (lives.md, "The viewer cap"): a viewer reading the key or polling the manifest
    * takes or renews a seat, 503 `LIVE_FULL` past the host's cap. Taken AFTER the watch check, so a
-   * removed, blocked or ended answer is never masked as "full". The broadcaster takes none: its
-   * reads cost the uplink nothing a viewer's would.
+   * removed, blocked or ended answer is never masked as "full", and only by {@link watchSeated},
+   * under the row's lock. The broadcaster takes none: its reads cost the uplink nothing a viewer's
+   * would.
    *
    * Answers the live's viewer count as the take counted it, or `null` for the broadcaster (no seat,
    * no take) - who asks {@link viewerCount} instead, and only where a count is shown.
