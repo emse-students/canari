@@ -14,6 +14,7 @@
     unsubscribeFormReminder,
     checkFormReminder,
   } from '$lib/posts/api';
+  import Button from '$lib/components/ui/Button.svelte';
   import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
 
@@ -149,15 +150,14 @@
   </a>
 
   {#if notOpenYet}
-    <button
-      type="button"
+    <Button
+      variant={subscribed ? 'soft' : 'ghost'}
+      size="compact"
+      class="mr-3 shrink-0"
       onclick={toggleReminder}
       disabled={toggling}
       aria-pressed={subscribed}
       data-testid="form-card-bell"
-      class="focus-visible:ring-accent/50 mr-3 flex shrink-0 items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-medium transition-colors outline-none focus-visible:ring-4 {subscribed
-        ? 'bg-accent/10 text-accent-text hover:bg-accent/20'
-        : 'text-text-muted hover:text-text-main hover:bg-text-main/10'}"
       title={subscribed
         ? m.post_form_disable_reminder_label()
         : m.post_form_notify_when_available_label()}
@@ -169,6 +169,6 @@
         <Bell size={16} strokeWidth={2} />
         <span class="hidden sm:inline">{m.post_form_notify_me_label()}</span>
       {/if}
-    </button>
+    </Button>
   {/if}
 </div>

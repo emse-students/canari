@@ -28,7 +28,7 @@ The two non-media card families differ in: thumbnail (64 px photo or logo vs a 4
 (present vs absent), padding (`p-3 sm:p-4` vs `p-4` vs `p-5`), wrapper inset (none, `px-5`, `px-4`),
 vertical rhythm (`mt-3`, `space-y-3`, `space-y-5`) and the arrow (external, up-right, forward).
 Screenshots of each, to keep OUT of the repo (they may show names), go in
-`F:/Programmation/canari-harness/post-layout/`.
+the private operations notes folder (a `post-layout` directory).
 
 ### Proposed standard (the feed follows Instagram and Facebook, [design-reference](../frontend/design-reference.md))
 
