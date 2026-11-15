@@ -344,4 +344,4 @@ let go. iOS's `cancelled` is the reducer's cancelled touch (no photo; a take is 
   is WebKit's `getUserMedia`**: whether that counts is the first iOS reading.
 - **Web**: nothing - no volume key reaches a page.
 
-Readings owed: [the entry](../backlog.d/camera-keeps-its-layout-and-volume-shutter.md).
+Readings owed: the entry (entry deleted 2026-11-15).
