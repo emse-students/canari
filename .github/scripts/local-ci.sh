@@ -185,7 +185,16 @@ wasm_key() {
 # are seconds), and the WASM when its key changed. The pinned wasm-pack is installed first, by the
 # script CI uses; on Windows it has no prebuilt binary, refuses, and names the cargo command.
 frontend_generated() {
+  # The install's `prepare` runs THIS branch's install-husky.js, which writes core.hooksPath into
+  # the config every worktree shares. A check must leave that config as it found it (owner's lead,
+  # 2026-11-15): the value follows whichever checkout a human ran `bun install` in, never a hook.
+  local hooks_before
+  hooks_before="$(git config core.hooksPath || true)"
   bash .github/scripts/checks.sh frontend-prepare
+  if [ "$(git config core.hooksPath || true)" != "$hooks_before" ] && [ -n "$hooks_before" ]; then
+    git config core.hooksPath "$hooks_before"
+    echo "the install rewrote the shared core.hooksPath; put back to $hooks_before"
+  fi
   if [ ! -s "$WASM_DIR/mls_wasm_bg.wasm" ] || [ "$(cat "$WASM_KEY_FILE" 2>/dev/null)" != "$(wasm_key)" ]; then
     echo "the MLS WASM is missing or was built from other sources: rebuilding it"
     bash ./scripts/install-wasm-pack.sh
