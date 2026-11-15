@@ -18,6 +18,10 @@
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "$0")/../../.." && pwd)
+# Run from a hook, GIT_DIR names the REAL repository and every `git -C "$scratch"` below would write
+# into it (2026-11-15: two "base" commits and a test identity in the shared config). Dropped first.
+# shellcheck disable=SC2046 # one variable name per word, by construction
+unset $(git rev-parse --local-env-vars)
 fail=0
 ok() { echo "  ok    $1"; }
 bad() {
@@ -109,6 +113,12 @@ out=$(plan_for)
 check "a staged page -> wiki-links" "a staged page does not plan wiki-links: $out" has "PLAN wiki-links:" "$out"
 check "a staged page -> docs-private-guard" "a staged page does not plan docs-private-guard" has "PLAN docs-private-guard:" "$out"
 check "a staged page runs no vitest" "a staged page planned vitest" test -z "$(grep -F 'PLAN vitest' <<<"$out" || true)"
+# A hook's GIT_DIR never reaches the checks: here it names a decoy, as a hook's names the real one.
+decoy="$scratch/decoy"
+git init -q "$decoy"
+out=$(cd "$c" && GIT_DIR="$decoy/.git" LOCAL_CI_DRY_RUN=1 bash .github/scripts/local-ci.sh commit 2>&1) || true
+check "an inherited GIT_DIR is dropped: the plan reads the repository it runs in" \
+  "an inherited GIT_DIR steered local-ci.sh to another repository: $out" has "PLAN wiki-links:" "$out"
 reset_c
 
 git -C "$c" rm -q shared.txt

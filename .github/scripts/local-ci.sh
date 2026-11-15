@@ -23,6 +23,27 @@ set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
+# A HOOK INHERITS GIT_DIR (and GIT_INDEX_FILE at commit), AND EVERY CHECK BELOW INHERITS THE HOOK.
+# A self-test that builds a scratch repository with `git -C "$dir" ...` then writes into THIS
+# repository instead: on 2026-11-15 the push tier's run of local-ci.test.sh committed "base" twice
+# on the branch being pushed and wrote a test identity, with signing off, into the shared
+# .git/config. CI never sets them, so no check was written to survive them. Git finds this
+# repository from the working directory, so they carry nothing a check needs - except the index a
+# partial commit (`git commit <path>`) stages into, kept here for the one read of what is staged.
+COMMIT_INDEX="${GIT_INDEX_FILE:-${LOCAL_CI_COMMIT_INDEX:-}}"
+export LOCAL_CI_COMMIT_INDEX="$COMMIT_INDEX" # the helper modes below run as child processes
+# shellcheck disable=SC2046 # one variable name per word, by construction
+unset $(git rev-parse --local-env-vars)
+# What this commit stages, read from the index git is committing.
+staged_paths() { # <diff-filter> [-- <pathspec>...]
+  local filter="$1"
+  shift
+  if [ -n "$COMMIT_INDEX" ]; then
+    GIT_INDEX_FILE="$COMMIT_INDEX" git diff --cached --name-only --diff-filter="$filter" "$@"
+  else
+    git diff --cached --name-only --diff-filter="$filter" "$@"
+  fi
+}
 
 # EVERY JOB OF ci.yml, AND WHERE IT RUNS BEFORE THE PULL REQUEST. `local-ci.test.sh` fails when a
 # job of ci.yml is missing here, so a new CI job cannot arrive without deciding its local tier, and
@@ -351,7 +372,7 @@ commit_rules() {
   }
   # A page, or a deleted or renamed file, can break a link anywhere.
   rule '\.md$' "$staged" wiki-links bun "$t/wiki-links.test.mjs"
-  if [ -n "$(git diff --cached --name-only --diff-filter=DR)" ] && ! grep -qE '\.md$' <<<"$staged"; then
+  if [ -n "$(staged_paths DR)" ] && ! grep -qE '\.md$' <<<"$staged"; then
     echo "wiki-links|bun $t/wiki-links.test.mjs"
   fi
   rule '\.md$' "$all_changed" docs-merge-artefacts bun "$t/docs-merge-artefacts.test.mjs"
@@ -376,8 +397,8 @@ commit_rules() {
 mode_commit() {
   local staged all_changed plan merging=0
   assert_hooks_path
-  staged="$(git diff --cached --name-only --diff-filter=ACMR)"
-  all_changed="$(git diff --cached --name-only --diff-filter=ACMRD)"
+  staged="$(staged_paths ACMR)"
+  all_changed="$(staged_paths ACMRD)"
   [ -n "$all_changed" ] || return 0
   if git rev-parse -q --verify MERGE_HEAD >/dev/null; then merging=1; fi
   plan="$(commit_rules "$staged" "$all_changed")"$'\n'
@@ -436,7 +457,7 @@ mode_plan() {
 }
 
 mode_artefacts() {
-  commit_artefacts "$(git diff --cached --name-only --diff-filter=ACMR)"
+  commit_artefacts "$(staged_paths ACMR)"
 }
 
 mode_vitest() {
@@ -496,7 +517,7 @@ case "$mode" in
       echo "shellcheck is not installed, and this commit stages a shell script CI lints with it: winget install koalaman.shellcheck (or your package manager)"
       exit 1
     }
-    make lint-ci-scripts FILES="$(git diff --cached --name-only --diff-filter=ACMR -- '*.sh' | tr '\n' ' ')"
+    make lint-ci-scripts FILES="$(staged_paths ACMR -- '*.sh' | tr '\n' ' ')"
     ;;
   *)
     echo "usage: local-ci.sh commit | push <remote> | all | tiers" >&2

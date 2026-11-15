@@ -3487,6 +3487,13 @@ push `shellcheck`, `cargo`, `node` or `java` as the planned checks need them.
    pushed commits before the hook ran, so the merge cannot ride this push - *"Run the same git push
    again"*. The second push finds HEAD stamped and passes at once.
 
+**A hook's environment is not CI's.** Git hands a hook `GIT_DIR` (and, at commit, `GIT_INDEX_FILE`),
+and every check inherits it. The first push run on 2026-11-15 ran `local-ci.test.sh`, whose
+`git -C "$scratch" ...` then wrote into the REAL repository: two `base` commits on the pushed branch
+and a test identity with signing off in the shared `.git/config` (both undone by hand). `local-ci.sh`
+now unsets `git rev-parse --local-env-vars` first, keeping only the commit's index for the one read
+of what is staged, and `local-ci.test.sh` asserts it with a decoy `GIT_DIR`.
+
 A push that needs CI's verdict on an unmerged range is not possible from here on; that is the
 point. The emergency path is unchanged: a human with admin rights, written into `CHANGELOG.md`.
 
