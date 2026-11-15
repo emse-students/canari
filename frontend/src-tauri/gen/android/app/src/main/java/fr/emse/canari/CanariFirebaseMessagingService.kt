@@ -47,6 +47,7 @@ import fr.emse.canari.push.ChannelReadMark
 import fr.emse.canari.push.ConversationShape
 import fr.emse.canari.push.FallbackLine
 import fr.emse.canari.push.GenericBannerLedger
+import fr.emse.canari.push.throwableSite
 import fr.emse.canari.push.GroupLocality
 import fr.emse.canari.push.KeyGroupPushJoin
 import fr.emse.canari.push.NotificationLevelGate
@@ -201,7 +202,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 try {
                     task()
                 } catch (e: Throwable) {
-                    Log.e(TAG, "[PUSH_WAKE] an action released by a deadline threw: ${e.javaClass.simpleName}", e) // log-safe: message of a system or native call (Throwable); this try parses and names no user input
+                    Log.e(TAG, "[PUSH_WAKE] an action released by a deadline threw: ${throwableSite(e)}")
                 }
             }, delayMs, TimeUnit.MILLISECONDS)
         }
@@ -2336,7 +2337,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     // EVERY SWALLOWED BRANCH LOGS: this lane is the only path to a banner for a
                     // message the server will never push, so a silent throw here is a message the
                     // user is never told about.
-                    Log.e(TAG, "notifyMessageFromWebSocket: build failed for ${groupId.take(8)}: ${e.message}", e) // log-safe: message of a system or native call (Exception); this try parses and names no user input
+                    Log.e(TAG, "notifyMessageFromWebSocket: build failed for ${groupId.take(8)}: ${throwableSite(e)}")
                 }
             }
             return true
@@ -4031,7 +4032,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 } catch (e: Throwable) {
                     // A task that dies must not take the lane with it: the executor would keep running,
                     // but this is the only place the failure is visible at all.
-                    Log.e(TAG, "$name: uncaught in the MLS push lane: ${e.message}", e) // log-safe: message of a system or native call (Throwable); this try parses and names no user input
+                    Log.e(TAG, "$name: uncaught in the MLS push lane: ${throwableSite(e)}")
                 } finally {
                     if (wl?.isHeld == true) wl.release()
                 }
@@ -4682,7 +4683,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                             "- its deadline settled it first; the frame stays queued for the next open")
                 }
             } catch (e: Throwable) {
-                Log.e(TAG, "[PUSH_WAKE] a released action threw queued=$queuedMessageId: ${e.javaClass.simpleName}", e) // log-safe: message of a system or native call (Throwable); this try parses and names no user input
+                Log.e(TAG, "[PUSH_WAKE] a released action threw queued=$queuedMessageId: ${throwableSite(e)}")
             }
         }
         try {
@@ -4703,7 +4704,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                         outcome = fetchWakeFrameWithinDeadline(queuedMessageId, silent, remainingMs)
                     }
                 } catch (e: Throwable) {
-                    Log.e(TAG, "[PUSH_WAKE] fetch threw queued=$queuedMessageId: ${e.javaClass.simpleName}", e) // log-safe: message of a system or native call (Throwable); this try parses and names no user input
+                    Log.e(TAG, "[PUSH_WAKE] fetch threw queued=$queuedMessageId: ${throwableSite(e)}")
                 } finally {
                     settle(outcome)
                     if (wl?.isHeld == true) wl.release()
@@ -4737,7 +4738,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             call.cancel(true)
             WakeAnswer.Outcome.Failed("deadline-${phase.get()}")
         } catch (e: java.util.concurrent.ExecutionException) {
-            Log.e(TAG, "[PUSH_WAKE] fetch threw queued=$queuedMessageId: ${e.cause?.javaClass?.simpleName}", e.cause)
+            Log.e(TAG, "[PUSH_WAKE] fetch threw queued=$queuedMessageId: ${throwableSite(e.cause ?: e)}")
             WakeAnswer.Outcome.Failed("uncaught")
         }
     }
@@ -5070,7 +5071,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             Log.e(TAG, "$where: native library not loaded - new-device notice not raised: ${e.javaClass.simpleName}")
             return
         } catch (e: Exception) {
-            Log.e(TAG, "$where: new-device claim failed - notice not raised: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
+            Log.e(TAG, "$where: new-device claim failed - notice not raised: ${throwableSite(e)}")
             return
         }
         val claimed = claim.optJSONArray("claimed") ?: JSONArray()
@@ -6894,7 +6895,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             try {
                 postChannelNotification(cacheKey, frame.data, seedHeld = true, supersedes = frame.genericStamp)
             } catch (e: Exception) {
-                Log.e(TAG, "drainPendingChannelFrames: redraw failed channel=${frame.data["channelId"]}: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
+                Log.e(TAG, "drainPendingChannelFrames: redraw failed channel=${frame.data["channelId"]}: ${throwableSite(e)}")
             }
         }
     }

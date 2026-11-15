@@ -300,7 +300,7 @@ class CallForegroundService : Service() {
             // The service was started with a plain `startService`, so stopping here is an ordinary
             // stop - logged and reported, never a process kill - and the call goes on in the
             // foreground only. Not papered over by dropping the microphone type.
-            val why = "startForeground: ${e.javaClass.simpleName}: ${e.message}"
+            val why = "startForeground: ${e.javaClass.simpleName}: ${e.message}" // log-safe: the message of startForeground, a system call handed no user input
             val offScreenKind = e is SecurityException ||
                 (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && e is ForegroundServiceStartNotAllowedException)
             when (classifyStartRefusal(offScreenKind, MainActivity.isInForeground)) {

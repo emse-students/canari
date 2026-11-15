@@ -84,7 +84,7 @@ pub fn webview_may_load(url: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::webview_may_load;
+    use super::{loggable_url, webview_may_load};
 
     /// The exact string measured on A1 on 2026-09-14, the one that killed the app three times.
     ///

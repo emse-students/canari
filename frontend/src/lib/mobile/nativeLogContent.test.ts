@@ -98,7 +98,7 @@ const SKIPPED_DIRS = new Set(['generated']);
 const SAFE_NUMBERS = new Set(
   `count size len length index idx epoch seq port errno status code ms total remaining dropped
   removed kept failures lost excess attempt attempts height width keyCode responseCode SDK_INT
-  base_epoch msg_epoch group_epoch msgType at short`.split(/\s+/)
+  base_epoch msg_epoch group_epoch msgType at short true false null nil`.split(/\s+/)
 );
 
 /** Name shapes: a count or a time by suffix, a flag by prefix, a constant by spelling, an id. */
@@ -146,7 +146,7 @@ const SAFE_LOCALS = new Set(
   claimed released queued moved skipped fresh pruned seeded absent later behind before after back
   restore joined single batched unknown named unusable unreadable unopenable undecodable unproven
   stored offered missing output result terminal deferrable encrypted attempted damage had group_had
-  app_had held_epoch minter envelope_sender trust scheme policy encoding class op via cause stage
+  app_had held_epoch minter envelope_sender trust scheme policy encoding class op via stage
   step how bypass seedSource http fields type mime host theme color value foreground cut generation
   claimed ended_generation moment mirrored seedsMirrored contextMirrored candidate sweep priority
   ringerMode audioMode speakerphone modeSetHere found notifications speaker described target
@@ -157,7 +157,7 @@ const SAFE_LOCALS = new Set(
   remove_proposals external unattended unattributed_kept unattributed_dropped left_to_the_app
   channels_dropped parked_files leftovers flags unrecorded winner first_index unreadable_lines
   waiting uncropped lockscreenVisibility importance appSounds vibrate sound done files held_channel
-  hasVideo callEnded unlabelled domain locality bgStatus refusal fingerprint key_fingerprint current stated document dropped_ids declaredGroup serverSaysMentioned kind data_dir db_dir`.split(
+  hasVideo callEnded unlabelled domain locality bgStatus refusal fingerprint key_fingerprint current stated document dropped_ids declaredGroup serverSaysMentioned kind data_dir db_dir locale groupTag closedAs`.split(
     /\s+/
   )
 );
@@ -177,21 +177,49 @@ const SAFE_EXPRESSIONS: RegExp[] = [
   /^if\b.*\{\s*""\s*\}\s*else\s*\{\s*""\s*\}$/,
   /^.*\?\s*@?""\s*:\s*@?""$/,
   // A duration or a counter read off a Rust value.
-  /\.(as_millis|as_secs|as_micros|as_u64|u32)\(\)$/,
+  /\.(as_millis|as_secs|as_micros|as_u64|u32|sum|count|len)\(\)$/,
   // Helpers that return a fingerprint, a cache stem or a description built from ids and states.
   /^(\w*key_fingerprint|CanariDescribeDeepLink|avatar_cache_stem|copy_label|refused_of|id_of|describe)\(.*\)$/,
   // The helpers that say an error's domain and code, and a refusal's reason, instead of its text.
   /^(CanariErrorReason|errorReason|CanariPushContextRefusal)\(.*\)$/,
-  // A comparison or a logical combination prints a boolean.
-  /(==|!=|<=|>=|&&|\|\|)/,
+  // Where a throwable was thrown (its class and its frame), never what it says.
+  /^throwableSite\([\w.?: ]+\)$/,
 ];
+
+/** A comparison or a logical combination prints a boolean ({@link BRANCHES} permitting). */
+const COMPARES = /(==|!=|<=|>=|&&|\|\|)/;
+
+/**
+ * A branch, a fallback or a closure: an expression holding one may print either side, so a
+ * comparison or a measure INSIDE it says nothing of what it prints (`if (x != null) x else ""`,
+ * `a ?: b`, `c ? a : b`, `unwrap_or_else(|| raw)`, `match`).
+ */
+const BRANCHES = /\bif\b|\belse\b|\bmatch\b|\?:|\?\?|\s\?\s|[(,]\s*(move\s*)?\|/;
 
 /** The reviewed-safe marker, on the call's own lines: `// log-safe: <why the value holds no content>`. */
 const ANNOTATION = /\/\/\s*log-safe:\s*(\S.{9,})/;
 
-/** An expression that only MEASURES a value says nothing of what it holds. */
+/** An expression that only MEASURES a value - it ENDS on the measure - says nothing of what it holds. */
 const MEASURES =
-  /\.(length|size|count|len\(\)|isEmpty|isNotEmpty|isNullOrEmpty|isNullOrBlank|is_empty\(\)|is_some\(\)|is_none\(\))|[!=]=\s*(null|nil)\b/;
+  /(\.(length|size|count|len|isEmpty|isNotEmpty|isNullOrEmpty|isNullOrBlank|is_empty|is_some|is_none)(\(\))?|[!=]=\s*(null|nil))\s*$/;
+
+/**
+ * `bare` (strings already removed) with what its brackets hold emptied, and one wrapping pair of
+ * parentheses dropped: what is left is what the expression does at its TOP level, so a comparison
+ * in a call's argument or a lambda (`names.filter { it != me }`) is not taken for the value.
+ */
+function outermost(bare: string): string {
+  let s = bare.trim();
+  if (s.startsWith('(') && matching(s, 1, '(', ')') === s.length - 1) s = s.slice(1, -1);
+  let out = '';
+  let depth = 0;
+  for (const c of s) {
+    if (')]}'.includes(c)) depth--;
+    if (depth === 0) out += c;
+    if ('([{'.includes(c)) depth++;
+  }
+  return out;
+}
 
 /**
  * Calls that hand back (part of) the value they are called on: `body.take(60)` is still the body.
@@ -237,7 +265,8 @@ const PASS_THROUGH = new Set(
  * EXPRESSIONS REVIEWED ONE BY ONE on 2026-11-15, the allowlist's tail: an expression the shapes above
  * cannot name (a local called `name`, a path, an id spelled `call`) and a reader judged safe. Keyed
  * `file|expression` (the expression's first 100 characters, whitespace flattened), so the same word
- * naming content in ANOTHER file, or another expression, still fails. Each group says WHY. A new line
+ * naming content in ANOTHER file, or another expression, still fails; `Nx ` before a key says how many
+ * lines it covers, so the next line spelling it in the same file fails too. Each group says WHY. A new line
  * that fits none of them is not added here by reflex: it is read, and either rewritten to a shape
  * above or annotated at the call with `// log-safe: <reason>`.
  */
@@ -249,29 +278,37 @@ const REVIEWED_GROUPS: [string, string[]][] = [
       'owed_welcome.rs|match other { PendingSubmissionRead::None => "no record", PendingSubmissionRead::Unreadable => "unre',
       'CanariApplication.kt|installer ?: "(none - sideload)"',
       'CanariFirebaseMessagingService.kt|"[PUSH_WAKE] fetch FAILED queued=$queuedMessageId stage=${outcome.stage} silent=$silent mentionsOnly',
-      'CanariFirebaseMessagingService.kt|base.scopeKind',
-      'CanariFirebaseMessagingService.kt|lastException?.javaClass?.simpleName',
+      '2x CanariFirebaseMessagingService.kt|base.scopeKind',
       'CanariFirebaseMessagingService.kt|missing.joinToString(",").ifEmpty { "none" }',
       'CanariFirebaseMessagingService.kt|outcome.detail',
       'CanariFirebaseMessagingService.kt|read.detail',
       'CanariFirebaseMessagingService.kt|settlement.token',
       'CanariFirebaseMessagingService.kt|shape.groupConversation',
       'CanariFirebaseMessagingService.kt|stop.token',
-      'MainActivity.kt|name',
-      'MlsDeviceKeyStore.kt|alias',
+      // `BackgroundWelcomeAnswer.report`'s literal, its `Left.why` a literal or a server reason token.
+      '3x CanariFirebaseMessagingService.kt|suffix',
+      // `RingClosed`, an enum.
+      'RingSequencer.kt|it',
+      'canari_push.mm|ctx == nil ? ["push_context.json " stringByAppendingString:CanariPushContextRefusal()] : "another ac',
+      // `finalCause` / `causeValue`, the extension's own fallback tokens.
+      'NotificationService.swift|cause, privacy: .public',
+      // A claim file's suffix: `claimed`, `draining`, spelled by `handoff.rs`'s callers.
+      '3x handoff.rs|suffix',
+      '2x MainActivity.kt|name',
+      '4x MlsDeviceKeyStore.kt|alias',
       'KeyboardMediaBridge.mm|(__bridge void *)webView',
       'canari_ios.mm|[self.owners.allObjects componentsJoinedByString:","]',
-      'canari_ios.mm|g_canariOrientationMode',
-      'canari_ios.mm|name',
+      '2x canari_ios.mm|g_canariOrientationMode',
+      '2x canari_ios.mm|name',
       'canari_ios.mm|taken ? "the page rides it" : [NSString stringWithFormat:"no ride (%@)", error ?: result]',
-      'canari_push.mm|delegateClass',
-      'canari_push.mm|kCanariRingtoneSound',
+      '2x canari_push.mm|delegateClass',
+      '2x canari_push.mm|kCanariRingtoneSound',
       'canari_push.mm|kGraineSeedsFileName',
       'canari_push.mm|kMlsBinFileName',
       'canari_push.mm|kPushContextFileName',
-      'NotificationService.swift|Self.pushContextRefusal(), privacy: .public',
+      '2x NotificationService.swift|Self.pushContextRefusal(), privacy: .public',
       'NotificationService.swift|String(describing: declaredGroup), privacy: .public',
-      'NotificationService.swift|String(describing: locality), privacy: .public',
+      '2x NotificationService.swift|String(describing: locality), privacy: .public',
       'NotificationService.swift|content.threadIdentifier.prefix(8), privacy: .public',
       'NotificationService.swift|key, privacy: .public',
       'SystemComponentsPlugin.swift|last',
@@ -280,12 +317,12 @@ const REVIEWED_GROUPS: [string, string[]][] = [
       'mls.rs|outcome.not_held',
       'mls_account_state.rs|left.join(", ")',
       'mls_account_state.rs|match &located { None => "absent from this install", Some(p) if p.starts_with(data_dir.join(PARKED_S',
-      'push.rs|f.name',
+      '3x push.rs|f.name',
       'push.rs|same_seed(held_seed, seed.seed_b64)',
       'storage.rs|crate::state::MLS_MANAGER_ABSENT',
       'storage.rs|installer',
       'happy_eyeballs.rs|addrs',
-      'navigation.rs|logged',
+      '2x navigation.rs|logged',
       'push_text.rs|language',
       'page_ring.rs|match &call_id { Some(c) => format!("rings call={c} in the page"), None => "rings no call in the pag',
     ],
@@ -295,20 +332,20 @@ const REVIEWED_GROUPS: [string, string[]][] = [
     [
       'authorship.rs|proof.author',
       'authorship.rs|sender_identity',
-      'device_trust.rs|added_by.unwrap_or("an unreadable sender")',
+      '3x device_trust.rs|added_by.unwrap_or("an unreadable sender")',
       'device_trust.rs|user',
-      'group.rs|group_id_str',
+      '2x group.rs|group_id_str',
       'members.rs|expected.unwrap_or("a well-formed device identity")',
       'messaging.rs|entrant.as_deref().unwrap_or("unreadable-identity")',
-      'CallForegroundService.kt|call',
-      'CanariFirebaseMessagingService.kt|channel',
+      '9x CallForegroundService.kt|call',
+      '4x CanariFirebaseMessagingService.kt|channel',
       'CanariFirebaseMessagingService.kt|deepLink',
       'CanariFirebaseMessagingService.kt|eldest.key',
       'CanariFirebaseMessagingService.kt|requesterDev',
       'CanariFirebaseMessagingService.kt|requesterUser',
       'CanariFirebaseMessagingService.kt|url',
       'IncomingShare.kt|claimed.name',
-      'IncomingShare.kt|dir.name',
+      '2x IncomingShare.kt|dir.name',
       'IncomingShare.kt|staging.name',
       'IncomingShare.kt|uri.authority',
       'KeyboardMediaBridge.kt|uri',
@@ -317,6 +354,9 @@ const REVIEWED_GROUPS: [string, string[]][] = [
       'concurrency.rs|claim.0',
       'background.rs|who',
       'proto_fields.rs|reel',
+      // `ConversationShortcuts.ID_PREFIX` + `channel_`, the one caller's literal.
+      'ConversationShortcuts.kt|prefix',
+      'canari_push.mm|idLower.length > 8 ? [idLower substringToIndex:8] : idLower',
     ],
   ],
   [
@@ -325,11 +365,9 @@ const REVIEWED_GROUPS: [string, string[]][] = [
       'fork_check.rs|f.detail',
       'messaging.rs|err_dbg',
       'state.rs|manager.state_composition_summary()',
-      'CallRingPlayer.kt|message',
+      '2x CallRingPlayer.kt|message',
       'CanariFirebaseMessagingService.kt|json.optString("error").take(120)',
       'CanariFirebaseMessagingService.kt|r.optString("error").take(80)',
-      'canari_push.mm|[reason isKindOfClass:[NSString class]] ? reason : "no reason given"',
-      'canari_push.mm|[reason isKindOfClass:[NSString class]] ? reason : "none"',
       'canari_push.mm|r["error"]',
       'mls_account_state.rs|message',
       'lib.rs|info',
@@ -338,16 +376,15 @@ const REVIEWED_GROUPS: [string, string[]][] = [
   [
     'a counter, a size, a position, a pixel measure or a duration',
     [
-      'CallForegroundService.kt|wanted',
+      '3x CallForegroundService.kt|wanted',
       'CanariFirebaseMessagingService.kt|(now - absent.lastModified()) / 1_000',
-      'CanariFirebaseMessagingService.kt|bounds.outHeight',
-      'CanariFirebaseMessagingService.kt|bounds.outWidth',
+      '2x CanariFirebaseMessagingService.kt|bounds.outHeight',
+      '2x CanariFirebaseMessagingService.kt|bounds.outWidth',
       'CanariFirebaseMessagingService.kt|commitPayload.take(16)',
-      'CanariFirebaseMessagingService.kt|e.cause?.javaClass?.simpleName',
       'CanariFirebaseMessagingService.kt|file.exists()',
       'CanariFirebaseMessagingService.kt|iso.take(40)',
-      'CanariFirebaseMessagingService.kt|ticket',
-      'IncomingCallActivity.kt|sdk',
+      '3x CanariFirebaseMessagingService.kt|ticket',
+      '2x IncomingCallActivity.kt|sdk',
       'IncomingShare.kt|ceiling / 1024 / 1024',
       'IncomingShare.kt|waiting.optLong("epoch", 0)',
       'MainActivity.kt|bounds.upperBound.bottom',
@@ -355,9 +392,7 @@ const REVIEWED_GROUPS: [string, string[]][] = [
       'canari_ios.mm|(unsigned long)webActivities',
       'canari_ios.mm|[UIApplication sharedApplication].preferredContentSizeCategory',
       'canari_ios.mm|app.idleTimerDisabled',
-      'canari_ios.mm|content',
-      'canari_ios.mm|g_isOnScreen ? 1 : 0',
-      'canari_ios.mm|g_resumePending ? 1 : 0',
+      '2x canari_ios.mm|content',
       'canari_ios.mm|insets.bottom',
       'canari_ios.mm|whats[i]',
       'canari_push.mm|(unsigned long)excluded',
@@ -367,65 +402,62 @@ const REVIEWED_GROUPS: [string, string[]][] = [
       'ShareCapture.swift|ShareRules.maxFiles',
       'ShareCapture.swift|ceiling / 1024 / 1024',
       'ButtonComponent.swift|holding, privacy: .public',
-      'SystemComponentsPlugin.swift|"[pendi-nav][native] setTabBarInteractive interactive=\\(args.interactive ? "yes" : "no", privacy: .p',
-      'TabBarOverlay.swift|"[pendi-nav][native] TabBarOverlay apply tabs=\\(self.ids.count) classic=\\(self.usesClassicBar ? "yes',
       'TabBarOverlay.swift|Double(self.tabBar.safeAreaInsets.bottom), format: .fixed(precision: 1)',
       'TabBarOverlay.swift|NSCoder.string(for: button.frame), privacy: .public',
       'TabBarOverlay.swift|NSCoder.string(for: self.tabBar.frame), privacy: .public',
       'GalleryPlugin.swift|status.rawValue, privacy: .public',
       'app_group_share.rs|manifest .get("files") .and_then(Value::as_array) .map_or(0, Vec::len)',
-      'push.rs|done.gone()',
+      '2x push.rs|done.gone()',
       'push.rs|f.bytes',
-      'push_registration.rs|completed(done)',
+      '2x push_registration.rs|completed(done)',
     ],
   ],
   [
     'a sink that forwards a line some other call assembled: its callers are scanned, so the content is judged where it is built',
     [
-      'CanariFirebaseMessagingService.kt|it',
-      'CanariFirebaseMessagingService.kt|line',
-      'NativePushLog.kt|msg',
-      'NativePushLog.kt|tr',
+      '2x CanariFirebaseMessagingService.kt|it',
+      '7x NativePushLog.kt|msg',
+      '2x NativePushLog.kt|tr',
     ],
   ],
   [
     "a path or a file name inside the app's own directories, generated by the app (never a name a user chose)",
     [
       'CanariFirebaseMessagingService.kt|key',
-      'CanariFirebaseMessagingService.kt|name',
+      '2x CanariFirebaseMessagingService.kt|name',
       'MlsBackgroundWorker.kt|filesDir',
       'KeyboardMediaBridge.mm|name',
       'canari_ios.mm|CanariTauriDataDir()',
-      'canari_push.mm|dir.lastPathComponent',
+      '2x canari_push.mm|dir.lastPathComponent',
       'canari_push.mm|key',
       'canari_push.mm|name',
       'NotificationService.swift|url.lastPathComponent, privacy: .public',
-      'app_group_share.rs|dir.display()',
-      'app_group_share.rs|name',
+      '3x app_group_share.rs|dir.display()',
+      '6x app_group_share.rs|name',
       'at_rest_key.rs|dir.display()',
-      'handoff.rs|name',
+      '8x handoff.rs|name',
       'handoff.rs|rm',
       'handoff.rs|to.display()',
-      'mls_account_state.rs|dir.file_name() .map(|n| n.to_string_lossy().into_owned()) .unwrap_or_default()',
-      'mls_account_state.rs|name',
-      'native_push_log.rs|name',
+      '2x mls_account_state.rs|dir.file_name() .map(|n| n.to_string_lossy().into_owned()) .unwrap_or_default()',
+      '2x mls_account_state.rs|name',
+      '2x native_push_log.rs|name',
       'nse_outcomes.rs|key',
-      'nse_outcomes.rs|name',
+      '3x nse_outcomes.rs|name',
       'picked_files.rs|name',
-      'push.rs|name',
-      'storage.rs|base',
+      '3x push.rs|name',
+      '2x storage.rs|base',
       'storage.rs|dir.display()',
       'storage.rs|file_name',
-      'storage.rs|key',
+      '2x storage.rs|key',
       'storage.rs|name',
       'storage.rs|path.display()',
-      'lib.rs|binary_name',
+      '3x lib.rs|binary_name',
       'background.rs|name',
-      'cross_version_push.rs|path.display()',
+      '2x cross_version_push.rs|path.display()',
       'device_notice.rs|dir.display()',
-      'device_notice.rs|key',
+      '7x device_notice.rs|key',
       'device_notice.rs|marker.display()',
-      'device_notice.rs|path.display()',
+      '2x device_notice.rs|path.display()',
       'graine.rs|name',
       'native_cache.rs|path.file_name().unwrap_or_default().to_string_lossy()',
     ],
@@ -435,8 +467,18 @@ const REVIEWED_GROUPS: [string, string[]][] = [
     ['GalleryPlugin.kt|args.name', 'GalleryPlugin.kt|target.absolutePath'],
   ],
 ];
+/**
+ * Each reviewed key and HOW MANY lines it covers: `file|expr` is one line, `3x file|expr` three.
+ * The count is what keeps a word as wide as `name` from being a pass for the next line in that
+ * file that spells it - a new line is a new count, so it is read before the number moves.
+ */
 const REVIEWED = new Map(
-  REVIEWED_GROUPS.flatMap(([why, keys]) => keys.map((k) => [k, why] as const))
+  REVIEWED_GROUPS.flatMap(([, keys]) =>
+    keys.map((k) => {
+      const counted = /^(\d+)x (.*)$/s.exec(k);
+      return counted ? ([counted[2], Number(counted[1])] as const) : ([k, 1] as const);
+    })
+  )
 );
 
 interface Finding {
@@ -464,13 +506,25 @@ function walk(dir: string, ext: string): string[] {
   return out;
 }
 
-/** The log calls of each language, up to and including the opening parenthesis. */
+/**
+ * The log calls of each language, up to and including the opening parenthesis: the platform
+ * loggers, the standard streams (stdout and stderr reach logcat and the unified log too), and the
+ * app's own WRAPPERS that take a finished line - Kotlin's `log(...)` sinks (`RingSequencer.Output`,
+ * the recovery ladders' `log` lambda) and `NativePushLog`'s `sayOnce`. A wrapper whose line is
+ * assembled away from any call is covered by {@link assembledLine}.
+ *
+ * KNOWN GAPS, which no regex over the source can close: a value laundered through a parameter whose
+ * NAME is on the allowlist (`why`, `reason`, `detail` filled by a caller with a message), and a
+ * wrapper with a new name. Both are review questions: the allowlist's labels say which names are
+ * trusted to hold only literals, and a new wrapper is added to this pattern when it is written.
+ */
 const CALL_START: Record<Lang, RegExp> = {
-  kotlin: /\bLog\.(v|d|i|w|e|wtf|println)\s*\(/g,
+  kotlin:
+    /\bLog\.(v|d|i|w|e|wtf|println)\s*\(|(?<!fun )\b(?:System\.(?:out|err)\.)?print(?:ln)?\s*\(|(?<![\w.]|fun )(?:output\.)?log\s*\(|(?<!fun )\bsayOnce\s*\(|\b\w+\.printStackTrace\s*\(/g,
   swift:
-    /\b(NSLog|os_log|print)\s*\(|\b(?:logger|log)\.(debug|info|notice|error|fault|warning)\s*\(/g,
-  objc: /\bNSLog\s*\(/g,
-  rust: /\b(?:log::)?(trace|debug|info|warn|error)!\s*\(|\b(println|eprintln)!\s*\(/g,
+    /\b(NSLog|os_log|print|debugPrint|dump)\s*\(|\b(?:logger|log)\.(debug|info|notice|error|fault|warning|log|trace|critical)\s*\(/g,
+  objc: /\b(NSLog|os_log\w*|printf|fprintf)\s*\(/g,
+  rust: /\b(?:log::)?(trace|debug|info|warn|error|log)!\s*\(|\b(println|eprintln|print|eprint|dbg)!\s*\(/g,
 };
 
 /**
@@ -694,7 +748,15 @@ function valueNamesIn(expr: string): string[] {
         break;
       }
     }
-    const value = [...segments].reverse().find((s) => !PASS_THROUGH.has(s.toLowerCase()));
+    // The ROOT is a value whatever it is called: a local named `suffix` or `description` is not a
+    // call on anything, so it never passes through. A capitalised root with a tail is a type or an
+    // object (`Answer.describe(outcome)`): what it returns is judged by its arguments, read above.
+    const tail = segments
+      .slice(1)
+      .reverse()
+      .find((s) => !PASS_THROUGH.has(s.toLowerCase()));
+    const value =
+      tail ?? (segments.length > 1 && /^[A-Z]/.test(segments[0]) ? undefined : segments[0]);
     if (value) names.push(value);
     i = j;
   }
@@ -728,12 +790,19 @@ export function leaksContent(expr: string, redacting = false, lang?: Lang): bool
   if (ERROR_TEXT.test(expr)) return !redacting || /privacy:\s*\.public\b/.test(expr);
   // The privacy argument and a turbofish are syntax, not values.
   const value = expr
-    .replace(/^\((?:unsigned )?(?:long|int|NSUInteger|NSInteger)\)/, '')
+    .replace(/\((?:unsigned )?(?:long|int|NSUInteger|NSInteger)\)/g, '')
     .replace(/,\s*privacy:\s*\.\w+\s*$/, '')
     .replace(/::<[^>]*>/g, '')
+    // An Objective-C selector part or a Swift argument label names a parameter, not a value.
+    .replace(/(?<![:\w])[A-Za-z_]\w*:(?!:)/g, '')
     .trim();
+  const branches = branchesOf(value);
+  if (branches) return branches.some((b) => leaksContent(b, redacting, lang));
   const bare = withoutStrings(value);
-  if (MEASURES.test(bare)) return false;
+  // A measure or a comparison prints a number or a boolean - but only when it is the WHOLE value:
+  // `if (name != null) name else ""` and `body.take(body.length - 1)` hold one and print content.
+  const top = outermost(bare);
+  if (!BRANCHES.test(top) && (MEASURES.test(top) || COMPARES.test(top))) return false;
   if (SAFE_EXPRESSIONS.some((re) => re.test(bare))) return false;
   return valueNamesIn(value).some((n) => !isSafeName(n, value, lang));
 }
@@ -754,12 +823,107 @@ export function reviewedSafe(src: string, callStart: number, callEnd: number): b
   return ANNOTATION.test(src.slice(from, to === -1 ? src.length : to));
 }
 
-function scan(): Finding[] {
+/**
+ * The expressions of the string a log call's LOCAL was assembled from: for `val line = "a=$x"` then
+ * `Log.w(TAG, line)`, that is `x`. Only a local declared within the 40 lines above the call and
+ * assigned a string literal (a template, or literals joined by `+`) is followed; anything else is
+ * `undefined`, and the local is judged by its name like any other value.
+ */
+export function assembledLine(
+  src: string,
+  callAt: number,
+  expr: string,
+  lang: Lang
+): string[] | undefined {
+  if (!/^[A-Za-z_]\w*$/.test(expr)) return undefined;
+  let windowStart = callAt;
+  for (let n = 0; n < 40 && windowStart > 0; n++) {
+    windowStart = src.lastIndexOf('\n', windowStart - 1);
+  }
+  windowStart = Math.max(0, windowStart);
+  const window = src.slice(windowStart, callAt);
+  const decl = new RegExp(
+    `\\b(?:val|var|let)\\s+(?:mut\\s+)?${expr}\\s*(?::\\s*[\\w<>?&']+)?\\s*=\\s*(?=["@]|r#*")`,
+    'g'
+  );
+  const found = [...window.matchAll(decl)].pop();
+  if (!found) return undefined;
+  const rhsAt = windowStart + found.index! + found[0].length;
+  // The right-hand side up to the end of its statement: its line, and the next while it ends on `+`.
+  let end = src.indexOf('\n', rhsAt);
+  while (end !== -1 && /\+\s*$/.test(src.slice(rhsAt, end))) end = src.indexOf('\n', end + 1);
+  const rhs = src.slice(rhsAt, end === -1 ? src.length : end).replace(/;\s*$/, '');
+  // Reviewed where it is assembled: the annotation rides the declaration's own lines.
+  const declLine = src.slice(src.lastIndexOf('\n', rhsAt) + 1, end === -1 ? src.length : end);
+  if (ANNOTATION.test(declLine)) return [];
+  return callExpressions(`${rhs})`, 0, lang);
+}
+
+/** Whether `index` sits in a line comment or a block comment's `*` line (a KDoc naming `log(`). */
+function inComment(src: string, index: number): boolean {
+  const prefix = src.slice(src.lastIndexOf('\n', index - 1) + 1, index);
+  return /^\s*(\*|\/\*)/.test(prefix) || withoutStrings(prefix).includes('//');
+}
+
+/**
+ * The two values a top-level conditional may print - `c ? a : b`, `if (c) a else b`,
+ * `if c { a } else { b }` - or `undefined` when the expression is not one. The condition prints
+ * nothing, so only the branches are judged.
+ */
+export function branchesOf(expr: string): [string, string] | undefined {
+  /** Top-level indices of `needle` in `s`, strings and brackets skipped. */
+  const topLevel = (s: string, needle: RegExp): number[] => {
+    const at: number[] = [];
+    let depth = 0;
+    for (let i = 0; i < s.length;) {
+      const c = s[i];
+      if (c === '"') {
+        i = endOfString(s, i + 1);
+        continue;
+      }
+      if ('([{'.includes(c)) depth++;
+      if (')]}'.includes(c)) depth--;
+      if (depth === 0) {
+        needle.lastIndex = i;
+        if (needle.test(s) && needle.lastIndex > i) at.push(i);
+      }
+      i++;
+    }
+    return at;
+  };
+  const e = expr.trim();
+  const unbrace = (s: string) =>
+    s
+      .trim()
+      .replace(/^\{([\s\S]*)\}$/, '$1')
+      .trim();
+  const ifAt = /^if\b\s*/.exec(e);
+  if (ifAt) {
+    const elseAt = topLevel(e, /\selse\s/y)[0];
+    if (elseAt === undefined) return undefined;
+    const head = e.slice(ifAt[0].length, elseAt);
+    // Kotlin: `(cond) then`; Rust: `cond { then }`.
+    const then = head.startsWith('(')
+      ? head.slice(matching(head, 1, '(', ')') + 1)
+      : head.slice(head.lastIndexOf('{'));
+    return [unbrace(then), unbrace(e.slice(elseAt + ' else '.length))];
+  }
+  const q = topLevel(e, /\s\?\s/y)[0];
+  if (q === undefined) return undefined;
+  const rest = e.slice(q + 3);
+  const colon = topLevel(rest, /\s:\s/y)[0];
+  if (colon === undefined) return undefined;
+  return [rest.slice(0, colon), rest.slice(colon + 3)];
+}
+
+/** Every log call's unreviewed interpolations; `used` collects the reviewed keys that matched. */
+function scan(used?: Map<string, number>): Finding[] {
   const findings: Finding[] = [];
   for (const tree of TREES) {
     for (const file of walk(tree.dir, tree.ext)) {
       const src = readFileSync(file, 'utf8');
       for (const m of src.matchAll(CALL_START[tree.lang])) {
+        if (inComment(src, m.index!)) continue;
         // The first argument of a Rust or ObjC call is the format string; Kotlin's first is the
         // tag. Every argument is checked: a variable handed in whole is as much the line as a
         // template is.
@@ -767,12 +931,21 @@ function scan(): Finding[] {
         const span = { end: 0 };
         const exprs = callExpressions(src, m.index! + m[0].length, tree.lang, span);
         if (reviewedSafe(src, m.index!, span.end)) continue;
+        // `e.printStackTrace()` writes the throwable's message to stderr, i.e. to logcat.
+        const thrown = /^(\w+)\.printStackTrace/.exec(m[0]);
+        if (thrown) exprs.push(thrown[1]);
+        // A line handed in as a local is judged where it was ASSEMBLED.
+        for (const [k, expr] of [...exprs.entries()].reverse()) {
+          const assembled = assembledLine(src, m.index!, expr, tree.lang);
+          if (assembled) exprs.splice(k, 1, ...assembled);
+        }
         for (const expr of exprs) {
           const flat = expr.replace(/\s+/g, ' ');
-          if (
-            leaksContent(expr, redacting, tree.lang) &&
-            !REVIEWED.has(`${file.split(/[\\/]/).pop()}|${flat.slice(0, 100)}`)
-          ) {
+          if (!leaksContent(expr, redacting, tree.lang)) continue;
+          const key = `${file.split(/[\\/]/).pop()}|${flat.slice(0, 100)}`;
+          if (REVIEWED.has(key)) {
+            used?.set(key, (used.get(key) ?? 0) + 1);
+          } else {
             findings.push({
               file: relative(FRONTEND, file),
               line: lineOf(src, m.index!),
@@ -844,6 +1017,45 @@ describe('the scanner', () => {
     expect(leaksContent('e.message', false, 'rust')).toBe(true);
   });
 
+  it('judges a measure or a comparison only when it is the whole value', () => {
+    // A branch prints one of its sides: the comparison in its condition vouches for neither.
+    expect(leaksContent('if (name != null) name else "none"')).toBe(true);
+    expect(leaksContent('body.take(body.length - 1)')).toBe(true);
+    expect(leaksContent('raw.unwrap_or_else(|| text.clone())', false, 'rust')).toBe(true);
+    expect(leaksContent('text.length > 0 ? text : "none"')).toBe(true);
+    expect(leaksContent('text.length > 0 ? "some" : "none"')).toBe(false);
+    expect(leaksContent('if c { "a" } else { name }', false, 'rust')).toBe(true);
+    expect(leaksContent('names.filter { it != me }.joinToString()')).toBe(true);
+    expect(leaksContent('(a == b)')).toBe(false);
+    // A local is a value whatever it is called, even the name of a call that passes a value through.
+    expect(leaksContent('suffix')).toBe(true);
+    expect(leaksContent('description')).toBe(true);
+    // A type's call is judged by its arguments.
+    expect(leaksContent('Answer.describe(outcome, baseEpoch)')).toBe(false);
+    expect(leaksContent('Answer.describe(text)')).toBe(true);
+    // A throwable is named by where it was thrown, never by what it says.
+    expect(leaksContent('throwableSite(e)')).toBe(false);
+    expect(leaksContent('throwableSite(e.cause ?: e)')).toBe(false);
+  });
+
+  it('reads a line where it was assembled, and the wrappers that take one', () => {
+    const src = 'val line = "a=$text b=${n}"\nif (x) Log.w(TAG, line)';
+    expect(assembledLine(src, src.indexOf('Log.w'), 'line', 'kotlin')).toEqual(['text', 'n']);
+    const reviewed =
+      'val why = "m: ${e.message}" // log-safe: a system call handed no input\nLog.w(TAG, why)';
+    expect(assembledLine(reviewed, reviewed.indexOf('Log.w'), 'why', 'kotlin')).toEqual([]);
+    expect(assembledLine(src, src.indexOf('Log.w'), 'other', 'kotlin')).toBeUndefined();
+    const kotlinCalls = (s: string) => [...s.matchAll(CALL_START.kotlin)].map((m) => m[0]);
+    expect(kotlinCalls('output.log(true, "x") log("y") e.printStackTrace() println(z)')).toEqual([
+      'output.log(',
+      'log(',
+      'e.printStackTrace(',
+      'println(',
+    ]);
+    expect(kotlinCalls('fun log(message: String) fun println(p: Int) Math.log(2.0)')).toEqual([]);
+    expect([...'log::log!(level, "x")'.matchAll(CALL_START.rust)].length).toBe(1);
+  });
+
   it('honours a `// log-safe:` annotation of a real reason, and nothing weaker', () => {
     const call = 'Log.w(TAG, "x: ${e.message}")';
     expect(
@@ -898,6 +1110,18 @@ describe('native log lines in every build', () => {
     const findings = scan();
     expect(
       findings.map((f) => `${f.file}:${f.line} interpolates \`${f.expr.slice(0, 140)}\``)
+    ).toEqual([]);
+  });
+
+  it('covers exactly the lines each reviewed expression was read on', () => {
+    // A stale entry, or a count above what is there, is a free pass waiting for the next line that
+    // happens to spell it; a count below means a line nobody read rides an old review.
+    const used = new Map<string, number>();
+    scan(used);
+    expect(
+      [...REVIEWED.entries()]
+        .filter(([k, n]) => (used.get(k) ?? 0) !== n)
+        .map(([k, n]) => `${k}: reviewed ${n}, found ${used.get(k) ?? 0}`)
     ).toEqual([]);
   });
 });

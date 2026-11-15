@@ -3421,6 +3421,22 @@ least ten characters, or the annotation does not count. A Kotlin `catch` that pa
 `java.time` and the Base64 decoder echo their input. The harness rules reading those lines
 (`watch.mjs`) match these shapes.
 
+**What the scan reads, and what it cannot (review of 2026-11-15).** A measure or a comparison counts
+only as the WHOLE value - `if (name != null) name else ""`, `body.take(body.length - 1)` and
+`names.filter { it != me }` print content; a conditional is judged by its two branches. A local
+named like a pass-through call (`suffix`, `description`) is still a value. Besides the platform
+loggers it reads stdout and stderr (`println`, `print!`, `dbg!`, `printStackTrace`, `log::log!`)
+and the app's line-taking wrappers (`output.log`, the ladders' `log` lambda, `sayOnce`), and a line
+handed in as a local (`val line = "..."` then `Log.w(TAG, line)`) is read where it was assembled.
+A table key carries its line count (`3x file|expr`), so the next line spelling a reviewed word in
+that file fails. **Two gaps no regex closes**: a value laundered through a parameter whose NAME is
+trusted (`why`, `reason`, `detail` filled with a message by a caller), and a wrapper with a new
+name - both are review questions, and a new wrapper is added to `CALL_START`. **A catch-all over a
+body that parses** (a push lane, a notification redraw, a broadcast receiver) cannot vouch for an
+exception's message, so it logs `throwableSite(e)` (`push/ThrowableSite.kt`: the class and the
+app's frame that threw) and does not hand the throwable to `Log`, whose stack starts with the
+message.
+
 **A URL is logged WITHOUT its query and fragment (2026-11-15)**: the WebView navigation handler
 logged every URL it allowed, and the redirect back from the identity provider carries a one-time
 `code` there (`navigation.rs`, `loggable_url`).
