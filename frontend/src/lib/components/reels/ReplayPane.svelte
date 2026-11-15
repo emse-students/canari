@@ -57,7 +57,8 @@
 
   /**
    * THE MODERATION READ (lead, 2026-11-15): a post served with `canParticipate` false is, by
-   * construction, one only a platform admin outside its audience is served (`participableIds`), so
+   * construction, one only its moderator (a platform admin, a BDE moderator in scope) outside its
+   * audience is served (`participableIds`), so
    * its replay is asked with `?moderation=true` - the read the server opens to whoever moderates
    * its post (owner, 2026-11-15) - on every screen that draws it. Anywhere else it is a viewer's read.
    */
