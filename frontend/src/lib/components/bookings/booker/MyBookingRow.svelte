@@ -5,7 +5,7 @@
   import type { MyBooking } from '$lib/bookings/api';
   import { bookingPlace } from '$lib/bookings/columns';
   import { bookingOthers, othersNames } from '$lib/bookings/others';
-  import { bookingWhen, reminderTime } from '$lib/bookings/bookingRow';
+  import { bookingWhen, reminderChip } from '$lib/bookings/bookingRow';
   import { BOOKING_NOTIFICATIONS_LIVE } from '$lib/bookings/notified';
   import { m } from '$lib/paraglide/messages';
 
@@ -53,7 +53,13 @@
   );
   const bell = $derived(
     coming && booking.mine && BOOKING_NOTIFICATIONS_LIVE
-      ? reminderTime(startMs, booking.reminderMinutes ?? null, booking.space.timeZone)
+      ? reminderChip(
+          startMs,
+          booking.reminderMinutes ?? null,
+          booking.space.timeZone,
+          nowMs,
+          booking.reminderSentAt ? Date.parse(booking.reminderSentAt) : null
+        )
       : null
   );
 </script>

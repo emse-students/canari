@@ -562,6 +562,10 @@ export class BookingsService {
           // their own row; null = none. A linked account that is neither has none to set.
           reminderMinutes:
             b.holderId === actor.userId ? b.reminderMinutes : (own?.reminderMinutes ?? null),
+          // When THIS person's reminder went out (null = not yet), so the list never shows a
+          // past reminder time as pending (2026-11-15).
+          reminderSentAt:
+            (b.holderId === actor.userId ? b.reminderSentAt : own?.reminderSentAt) ?? null,
           space: { id: space.id, name: space.name, timeZone: space.timeZone },
           resource: { id: resource.id, name: resource.name },
           privateInfo: privateInfoFor(relation, b.cancelledAt !== null, space, resource),
