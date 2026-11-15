@@ -126,6 +126,7 @@ earliest version, as a checklist.
 - [ ] [openings for followers, WP-4](backlog.d/reading-owed-openings-for-followers-wp-4.md)
 - [ ] [the checkpoint every commit awaits under the MLS lock before its first request](backlog.d/reading-owed-the-checkpoint-every-commit-awaits-under-the-mls-lock-before-its.md)
 - [ ] [the push sentences are worded in Rust from the app language and a voice note is announced as one](backlog.d/reading-owed-the-push-sentences-are-worded-in-rust-from-the-app-language-and-a.md)
+- [ ] [the pre-live screen says a suspension before Start](backlog.d/reading-owed-the-pre-live-screen-says-a-suspension-before-start.md)
 
 ## 1.8.0
 

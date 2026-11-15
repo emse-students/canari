@@ -313,8 +313,8 @@
   }
 
   /** The suspension sentence, with its end date in the reader's locale when the server sent one. */
-  function suspendedText(): string {
-    const until = broadcast.startSuspendedUntil ? new Date(broadcast.startSuspendedUntil) : null;
+  function suspendedText(iso: string | null): string {
+    const until = iso ? new Date(iso) : null;
     if (!until || Number.isNaN(until.getTime())) return m.live_start_suspended_no_date();
     return m.live_start_suspended({
       date: new Intl.DateTimeFormat(getLocale(), { day: 'numeric', month: 'long' }).format(until),
@@ -336,7 +336,7 @@
   const START_TEXT: Record<LiveStartProblem, () => string> = {
     muted: m.live_start_muted,
     'rules-not-accepted': m.live_start_rules_not_accepted,
-    suspended: suspendedText,
+    suspended: () => suspendedText(broadcast.startSuspendedUntil),
     withdrawn: m.live_start_withdrawn,
     'already-open': m.live_start_already_open,
     'association-forbidden': m.live_start_association_forbidden,
@@ -748,6 +748,27 @@
         </div>
       {:else if !broadcast.limits}
         <p class="text-sm text-white/70">{m.live_limits_loading()}</p>
+      {/if}
+
+      {#if broadcast.standingBar}
+        <!-- Said BEFORE Start, from the standing the server answered: Start is not offered. "Retry"
+             reads it again - a suspension that ended, a withdrawal staff lifted. -->
+        <div class="flex items-center justify-between gap-3" role="alert" data-live-standing>
+          <p class="text-sm font-semibold text-red-300">
+            {broadcast.standingBar === 'withdrawn'
+              ? m.live_start_withdrawn()
+              : suspendedText(broadcast.standing?.suspendedUntil ?? null)}
+          </p>
+          <button
+            type="button"
+            class="{pill} shrink-0 bg-white/15 hover:bg-white/25"
+            onclick={() => void broadcast.loadLimits()}
+            data-live-standing-retry
+          >
+            <RefreshCcw size={16} strokeWidth={2.5} />
+            {m.live_retry()}
+          </button>
+        </div>
       {/if}
 
       {#if broadcast.startProblem}

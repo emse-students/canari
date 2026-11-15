@@ -2651,7 +2651,8 @@ export class LivesService implements OnModuleDestroy {
   /**
    * The lives on which Redis bars a viewer the row allows, each with the takes refused so: counted
    * apart from {@link unknownToRedis}, because a seat granted to somebody else says nothing about
-   * a bar. Reported and forgotten at the purge, on the instance that runs it.
+   * a bar. PER INSTANCE, as that map: each instance logs its own first refusal, and the purge
+   * reports and forgets the count on the instance that runs it.
    */
   private readonly barredWithoutRow = new Map<string, number>();
 
@@ -2666,7 +2667,7 @@ export class LivesService implements OnModuleDestroy {
       // not closed", 7). IT STAYS AN ERROR ALL THE SAME, because nothing here can tell that case
       // from a bar written by a defect: the row that would say "removed, then erased" is the one
       // the erasure deleted, and social-service keeps no record of an erasure. A level lowered on
-      // an inference would hide the defect; one line per live is what the certainty costs.
+      // an inference would hide the defect; one line per live PER INSTANCE is what the certainty costs.
       this.logger.error(
         `[LIVE_SEAT] ${liveId}: Redis bars a viewer the row allows - expected only for a removed viewer whose account was erased and who came back; no seat for that viewer until the live closes (further refusals are counted, not logged)`
       );
