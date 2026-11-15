@@ -98,8 +98,8 @@ environment secret read by a job that does not declare that environment, fails `
 | `AUTHENTIK_CLIENT_ID` | production, development | build :: build-frontend, android :: build-android, ios :: build-ios, serve-prod :: deploy-to-server |
 | `AUTHENTIK_CLIENT_SECRET` | production | serve-prod :: deploy-to-server |
 | `AUTHENTIK_URL` | production, development | build :: build-frontend, android :: build-android, ios :: build-ios, serve-prod :: deploy-to-server |
-| `AUTOMERGE_APP_CLIENT_ID` | repo | arm-auto-merge :: arm, release :: bump/land/notes, scheduled :: cargo-lock-refresh |
-| `AUTOMERGE_APP_PRIVATE_KEY` | repo | arm-auto-merge :: arm, release :: bump/land/notes, scheduled :: cargo-lock-refresh |
+| `AUTOMERGE_APP_CLIENT_ID` | repo | arm-auto-merge :: arm, release :: bump/land/notes, scheduled :: cargo-lock-refresh/arming-bypass |
+| `AUTOMERGE_APP_PRIVATE_KEY` | repo | arm-auto-merge :: arm, release :: bump/land/notes, scheduled :: cargo-lock-refresh/arming-bypass |
 | `AVATAR_TOKEN_SECRET` | production | serve-prod :: deploy-to-server |
 | `BASE_URL` | production, development | build :: build-frontend, android :: build-android, ios :: build-ios, serve-prod :: deploy-to-server |
 | `CALL_ROOM_SECRET` | production | serve-prod :: deploy-to-server |
