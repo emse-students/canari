@@ -3,8 +3,8 @@
  *
  * - **feed** (a post card's video, a CanaReel's card): the tap OPENS FULL SCREEN, and full screen is
  *   the CanaReels viewer, on that video, at the time it had reached. 1.6.9 had made the feed's tap the
- *   sound and moved full screen to the expand chip; readers disliked it - the chip still opens it, the
- *   speaker chip is the sound. A feed video with no viewer to open (none handed down) keeps the sound
+ *   sound and moved full screen to an expand chip; readers disliked it - the chip is gone (2026-11-10,
+ *   and the chat's 2026-11-15), the speaker is the sound. A feed video with no viewer to open (none handed down) keeps the sound
  *   tap, and plays a paused video too (no play button is drawn there).
  * - **reel**, **lightbox** and **conversation** (full screen; owner, 2026-11-10, after "n'importe quel
  *   clic sur l'interface coupe le son"): THE TAP NEVER MUTES. It PLAYS or PAUSES, as TikTok, YouTube

@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 /**
- * THE VIDEO PLAYER'S CONTROLS KIT (owner, 2026-11-09) - one speaker, one play disc, one expand chip,
+ * THE VIDEO PLAYER'S CONTROLS KIT (owner, 2026-11-09) - one speaker, one play disc,
  * one scrubber and one gesture glyph for every video surface.
  *
  * Pinned: each control is a real, labelled button with a 44px target that keeps its press from the

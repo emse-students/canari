@@ -333,7 +333,7 @@
   });
 
   /**
-   * Opens the viewer from a tap, the expand chip or `f`, noting where this video had got to, and
+   * Opens the viewer from a tap, Enter, a screen reader's activation or `f`, noting where this video had got to, and
    * waiting for the viewer to hand back where it left it (owner, 2026-11-10: entering and leaving
    * full screen never restart at 0).
    */
@@ -681,6 +681,20 @@
     }
   }
 
+  /**
+   * A SCREEN READER'S ACTIVATION OPENS THE VIEWER (review, 2026-11-15): VoiceOver and TalkBack answer a
+   * double tap on a `button` with a click whose `detail` is 0, which `videoGestures` never reads as a tap
+   * (the keyboard map answers those). The inline picture, whose tap opens the viewer, is that button; an
+   * inner control's own activation (the speaker, a click it stops itself) never reaches here.
+   */
+  function onActivate(e: MouseEvent) {
+    if (e.detail !== 0 || !inline || !onOpen) return;
+    if ((e.target as HTMLElement).closest('button, [data-video-controls]')) return;
+    e.stopPropagation();
+    Log.d('VideoPlayer', `${variant}: assistive activation`);
+    openViewer();
+  }
+
   function onKeydown(e: KeyboardEvent) {
     // A focused button answers its own space bar: the sound button must not play the video.
     if (e.key === ' ' && (e.target as HTMLElement).closest('button')) return;
@@ -906,12 +920,13 @@
   class="relative flex items-center justify-center overflow-hidden outline-none select-none [-webkit-touch-callout:none] focus-visible:ring-2 focus-visible:ring-white {inline
     ? ''
     : 'bg-black'} {klass}"
-  role="group"
+  role={inline && onOpen ? 'button' : 'group'}
   aria-label={inline && onOpen && openLabel ? openLabel : m.video_player_label()}
   tabindex="0"
   data-video-player={variant}
   use:videoGestures={{ onTap: onPictureTap, onHoldStart, onHoldEnd }}
   onkeydown={onKeydown}
+  onclick={onActivate}
   onfocusin={onFocusIn}
   onpointermove={onPointerMove}
 >
@@ -1027,7 +1042,15 @@
            minimal player draws it on a decided outcome only, with or without a first frame; the
            feed's only when the reader's "Lecture automatique des vidéos" keeps it from starting
            (`video/autoplayPolicy.ts`) - otherwise it plays by being on screen, as Instagram's does. -->
-      <VideoPlayGlyph onclick={togglePlay} size={minimal ? 'lg' : 'md'} tabindex={-1} />
+      <!-- THE CHAT'S TRIANGLE IS A POSTER, NOT A BUTTON (owner, 2026-11-15, "tap = open full screen"): a
+           centre tap opens the viewer like the rest of the picture, which plays it; Space still plays
+           inline from the keyboard. -->
+      <VideoPlayGlyph
+        onclick={togglePlay}
+        size={minimal ? 'lg' : 'md'}
+        tabindex={-1}
+        decorative={variant === 'chat' && !!onOpen}
+      />
     {/if}
 
     {#if minimal && buffering}

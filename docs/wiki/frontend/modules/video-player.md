@@ -22,9 +22,15 @@ owner chose **"Ouvrir le plein ecran"**. The `chat` row of `utils/videoTapAction
 - **The expand chip is removed (`VideoExpandButton` deleted, `video_expand_label` with it)**: the tap
   does its job, and a second control for one action is what the owner called not homogeneous. The
   accessible name `openLabel` now sits on the picture itself, as the feed's does.
-- **The pause chip is removed**: a hold on the picture pauses (the feed's rule, unchanged), and a
-  paused video draws the big play triangle, which plays it again. A chip beside it would be a third
-  way to do the same thing, and the feed has none.
+- **The pause chip is removed**: a hold on the picture pauses (the feed's rule, unchanged). A chip
+  beside it would be a second way to do the same thing, and the feed has none.
+- **The big play triangle is a POSTER in a chat, not a button** (review, 2026-11-15): it carries no
+  `data-video-controls`, so a tap on it is a tap on the picture and opens the viewer, which plays. An
+  inline chat video therefore starts from the keyboard (Space) or the viewer; with no viewer handed
+  down the triangle is the play button again.
+- **Assistive technology**: the inline picture is `role="button"` with the `openLabel` name, and a click
+  with `detail` 0 (a VoiceOver or TalkBack activation, which `videoGestures` never reads as a tap)
+  opens the viewer too. `MessageMediaRenderer.openViewer` is idempotent, so a double tap opens one.
 - **The speaker is the ONLY inline control for the sound** and is the feed's: a bare `quiet` glyph,
   drawn once the video has started (the feed's: while it plays). **The message's actions chip
   (`onActions`) stays**: a hold is taken by the pause, so a bubble that is nothing but its video would
@@ -276,7 +282,7 @@ allows them ([controls](../controls.md)).
 | --- | --- |
 | `VideoChipButton` | the kit's one button: a transparent 44 px `.ui-icon-button` holding a 28 px round `glass-video` chip (`glass` off inside a glass bar, so blurs never stack); stops its press from the player's tap |
 | `VideoSoundButton` | the speaker: state by shape (struck / waves) and `aria-pressed`; the sound-on glyph is the only yellow glyph |
-| `VideoExpandButton` | opens the full-screen viewer where a tap used to |
+| ~~`VideoExpandButton`~~ | DELETED 2026-11-15: a tap opens the viewer, with no chip |
 | `VideoPlayGlyph` | the play button: a rounded triangle that IS the glass, no disc, in an invisible 64 px (72 px `lg`) hit square; shown only when it answers "is this playing?" |
 | `VideoGlassGlyph` | the shape itself - play triangle or pause bars - clipped out of a `.glass-video-shape` layer, with an SVG rim and a sibling shadow; also the feedback glyph's play/pause and the poster's triangle |
 | `VideoScrubber` | `line` (2 px, 32 px to touch, thickens with a handle while touched) and `bar` (4 px with buffered); the played part is yellow; a glass time bubble above the handle while dragged |

@@ -5,12 +5,12 @@
  *
  * Pinned, for the FEED (user, 2026-09-29): it starts at the app's one remembered answer; its speaker
  * and a tap on the picture change that answer for EVERY video, the viewer's included; it plays while
- * it is on screen and pauses when it leaves; the expand chip opens the viewer (never a tap) and notes
- * where the video had got to.
+ * it is on screen and pauses when it leaves; its tap opens the viewer and notes where the video
+ * had got to.
  *
- * For a CONVERSATION (user, 2026-10-02, Discord's way): it plays when its play disc is pressed, never
- * on scroll; it is audible whatever the app-wide answer, and never changes it; it does not loop; two
- * take turns; a tap is its own sound, and goes no further than the player.
+ * For a CONVERSATION (user, 2026-10-02, Discord's way): it is played when asked, never on scroll;
+ * it is audible whatever the app-wide answer, and never changes it; it does not loop; two take turns;
+ * its tap opens the viewer (owner, 2026-11-15) and goes no further than the player.
  */
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
@@ -81,6 +81,8 @@ function mountVariant(variant: 'feed' | 'chat', extra: Record<string, unknown> =
     target.querySelector<HTMLButtonElement>(`button[aria-label="${m.video_sound_label()}"]`);
   const playButton = () =>
     target.querySelector<HTMLButtonElement>(`button[aria-label="${m.video_play_label()}"]`);
+  /** The big play triangle, whatever draws it: a button on the feed, a poster in the chat. */
+  const glyph = () => target.querySelector<HTMLElement>('[data-video-play-glyph]');
   /** The video is playing: a feed card draws its speaker only then. */
   const startPlaying = () => {
     Object.defineProperty(video, 'paused', { configurable: true, get: () => false });
@@ -100,6 +102,7 @@ function mountVariant(variant: 'feed' | 'chat', extra: Record<string, unknown> =
     openButton,
     soundButton,
     playButton,
+    glyph,
     frameIn,
     startPlaying,
   };
@@ -403,23 +406,35 @@ it('chat: does NOT start when it scrolls into view, and does not loop', () => {
   expect(video.autoplay).toBe(false);
 });
 
-it('chat: offers the glass play triangle once the first frame is in, and not before', () => {
-  const { playButton, frameIn } = mountVariant('chat');
-  expect(playButton()).toBeNull();
+it('chat: offers the play triangle once the first frame is in, and not before - as a poster, not a button', () => {
+  const { glyph, playButton, frameIn } = mountVariant('chat');
+  expect(glyph()).toBeNull();
   frameIn();
-  expect(playButton()).not.toBeNull();
-  expect(playButton()!.querySelector('.glass-video-shape')).not.toBeNull();
+  expect(glyph()).not.toBeNull();
+  expect(glyph()!.tagName, 'a poster: a tap on it is a tap on the picture').not.toBe('BUTTON');
+  expect(glyph()!.hasAttribute('data-video-controls')).toBe(false);
+  expect(playButton(), 'no play button in the chat').toBeNull();
 });
 
-it('chat: the glyph starts it where it is, with sound, and opens nothing', () => {
-  const { video, onOpen, frameIn, playButton } = mountVariant('chat');
+it('chat: a tap on the triangle opens the viewer like any other point of the picture', () => {
+  const { video, onOpen, frameIn, glyph } = mountVariant('chat');
+  const play = vi.spyOn(video, 'play').mockResolvedValue();
+  frameIn();
+  tap(glyph()!);
+  flushSync();
+  expect(onOpen).toHaveBeenCalledTimes(1);
+  expect(play, 'the viewer plays, not the bubble').not.toHaveBeenCalled();
+  expect(video.muted).toBe(false);
+});
+
+it('chat with no viewer: the triangle is the play button again', () => {
+  const { video, onOpen, frameIn, playButton } = mountVariant('chat', { onOpen: undefined });
   const play = vi.spyOn(video, 'play').mockResolvedValue();
   frameIn();
   playButton()!.click();
   flushSync();
   expect(play).toHaveBeenCalledTimes(1);
   expect(onOpen).not.toHaveBeenCalled();
-  expect(video.muted).toBe(false);
 });
 
 /**
@@ -456,7 +471,7 @@ it('chat: does not follow the app-wide answer either way', () => {
 });
 
 it('chat: the disc goes while it plays and comes back when it pauses; the line and speaker stay', () => {
-  const { video, target, frameIn, playButton, soundButton } = mountVariant('chat');
+  const { video, target, frameIn, glyph, soundButton } = mountVariant('chat');
   let paused = true;
   Object.defineProperty(video, 'paused', { configurable: true, get: () => paused });
   frameIn();
@@ -464,13 +479,13 @@ it('chat: the disc goes while it plays and comes back when it pauses; the line a
   paused = false;
   video.dispatchEvent(new Event('play'));
   flushSync();
-  expect(playButton()).toBeNull();
+  expect(glyph()).toBeNull();
   expect(soundButton()).not.toBeNull();
   expect(target.querySelector('[data-video-line-slot]')).not.toBeNull();
   paused = true;
   video.dispatchEvent(new Event('pause'));
   flushSync();
-  expect(playButton()).not.toBeNull();
+  expect(glyph()).not.toBeNull();
   expect(soundButton()).not.toBeNull();
 });
 
@@ -617,14 +632,39 @@ it('chat: with no viewer handed down the tap plays and pauses, still never the s
   expect(video.muted).toBe(false);
 });
 
-it('chat: draws no pause chip - the hold pauses and the play triangle plays again', () => {
+it('chat: draws no play/pause control at all once started - the hold pauses, the viewer plays', () => {
   const { target, video, frameIn } = mountVariant('chat');
   liveElement(video);
   frameIn();
   void video.play();
   flushSync();
   expect(target.querySelector('[data-video-toggle]')).toBeNull();
+  for (const label of [m.video_play_label(), m.video_pause_label()]) {
+    expect(target.querySelector(`button[aria-label="${label}"]`), label).toBeNull();
+  }
   expect(target.querySelector('[data-video-line-slot]')).not.toBeNull();
+});
+
+it('chat: the picture is a labelled button whose tap opens the viewer', () => {
+  const { root, onOpen } = mountVariant('chat');
+  expect(root.getAttribute('role')).toBe('button');
+  expect(root.getAttribute('aria-label')).toBe('Plein ecran');
+  tap(root);
+  expect(onOpen).toHaveBeenCalledTimes(1);
+});
+
+it('chat and feed: a screen reader activation (a click with detail 0) opens the viewer', () => {
+  for (const variant of ['chat', 'feed'] as const) {
+    const { root, onOpen, soundButton, startPlaying } = mountVariant(variant);
+    startPlaying();
+    root.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 0 }));
+    expect(onOpen, variant).toHaveBeenCalledTimes(1);
+    // The speaker's own activation is the speaker's, never the viewer's.
+    soundButton()?.dispatchEvent(
+      new MouseEvent('click', { bubbles: true, cancelable: true, detail: 0 })
+    );
+    expect(onOpen, `${variant} speaker`).toHaveBeenCalledTimes(1);
+  }
 });
 
 it("chat: the message's actions are a chip, given by the bubble, since a hold is the pause", () => {
