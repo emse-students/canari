@@ -230,7 +230,6 @@
           value={muted ? 0 : videoSound.level}
           onChange={(v) => onLevel?.(v)}
           onCommit={() => videoSound.commitLevel()}
-          flat={!glass}
         />
       </span>
     </span>

@@ -1,8 +1,8 @@
 <script lang="ts">
   import { m } from '$lib/paraglide/messages';
   import { clampFraction, formatVideoTime } from '$lib/utils/videoPlayback';
-  import { videoGlass } from '$lib/utils/videoGlass';
   import { Log } from '$lib/utils/Log';
+  import { videoGlass } from '$lib/utils/videoGlass';
   import { SEEK_LINE_TOUCH_REM } from './seekLineGeometry';
 
   /**

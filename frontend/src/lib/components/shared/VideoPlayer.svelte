@@ -10,10 +10,10 @@
 <script lang="ts">
   import { onDestroy, onMount, untrack } from 'svelte';
   import { videoTapAction } from '$lib/utils/videoTapAction';
+  import { videoGlass } from '$lib/utils/videoGlass';
   import { useViewerChrome } from '$lib/utils/videoViewerChrome.svelte';
   import { CircleAlert, Ellipsis, Maximize, Minimize, Pause, Play } from '@lucide/svelte';
   import { videoGestures } from '$lib/actions/videoGestures';
-  import { videoGlass } from '$lib/utils/videoGlass';
   import VideoChipButton from '$lib/components/ui/player/VideoChipButton.svelte';
   import VideoPlayGlyph from '$lib/components/ui/player/VideoPlayGlyph.svelte';
   import VideoScrubber from '$lib/components/ui/player/VideoScrubber.svelte';

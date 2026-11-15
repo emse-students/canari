@@ -1,67 +1,42 @@
-import { isAndroidTauriRuntime } from '$lib/utils/appVersion';
+import { isIosTauriRuntime } from '$lib/utils/appVersion';
 import { Log } from '$lib/utils/Log';
 
 /**
- * WHETHER THE VIDEO PLAYER'S CONTROLS ARE BLURRED GLASS OR THE FLAT DARK CHIP (owner, 2026-11-09).
+ * ONE RECIPE FOR THE VIDEO PLAYER'S TRANSIENT PIECES, AND A BLUR ON TOP WHERE IT IS AFFORDABLE (owner,
+ * 2026-11-15: "faux verre sans flou partout", then "small differences are acceptable when they give
+ * each platform its best").
  *
- * `backdrop-filter` over a playing video has no published cost on an Android WebView - only bug
- * reports of stutter on Mali and older Adreno GPUs, scaling with the blurred area and the frame rate
- * (`docs/wiki/frontend/modules/video-player.md`). So the decision is taken from FACTS THE DEVICE
- * ALREADY KNOWS, once, never from a frame-time measured while it plays (no timer decides a look):
+ * The recipe (`.glass-video` in `app.css`) is FAKE GLASS: a translucent dark fill, a hairline, an inner
+ * highlight and a shadow - the same shapes, sizes, icons and tokens on every platform. THE BLUR IS AN
+ * ENHANCEMENT ON TOP OF THAT SAME RECIPE, iOS (WebKit) ONLY: `data-glass='blur'` adds `backdrop-filter`
+ * and lowers the fill alpha a little so both looks read as one object.
  *
- * - ANDROID IS FLAT UNTIL ITS MEASUREMENT (owner): {@link ANDROID_VIDEO_GLASS} is the one switch the
- *   Mi 9T reading flips (the protocol: video-player.md, "the glass budget"). Android means the app's
- *   WebView or a browser on Android - the same GPUs;
- * - once that switch is flipped, a LOW-END Android stays flat: `navigator.deviceMemory` <= 4 GB or
- *   `hardwareConcurrency` <= 4 cores. Only on Android: WebKit does not expose the memory and rounds
- *   the core count for privacy, so the same numbers would flatten an iPhone 12 for nothing - and no
- *   iPhone this app supports is low-end for a 12px blur;
- * - everything else (iOS, a desktop) is glass.
+ * ANDROID IS NEVER BLURRED: the Mi 9T measured a 12 px blur over a playing 1080p clip at 98-99 % janky
+ * frames against 38-44 % without (`docs/wiki/frontend/modules/video-player.md`, "the glass budget").
+ * The iOS cost is a CHECK, not a gate, and is still owed there. A desktop browser stays on the base
+ * recipe: it is not the platform whose best is being given.
  *
- * The CSS fallbacks (`@supports not (backdrop-filter)`, `prefers-reduced-transparency`,
- * `prefers-contrast: more`) flatten it again in `app.css`, whatever this says.
+ * This is the ONE place that decides "blur available"; it reads a fact the device states, once, never
+ * a frame time measured while it plays.
  */
-export type VideoGlass = 'glass' | 'flat';
-
-/**
- * ANDROID'S DEFAULT - flat until the Mi 9T reading shows the blur costs no janky frames
- * (owner, 2026-11-09). Flipping it to `true` is the whole change once that reading passes.
- */
-export const ANDROID_VIDEO_GLASS = false;
-
-/** A device at or under this memory (GB, `navigator.deviceMemory`) gets the flat chip. */
-export const LOW_END_MEMORY_GB = 4;
-
-/** A device at or under this many logical cores gets the flat chip. */
-export const LOW_END_CORES = 4;
+export type VideoGlass = 'blur' | 'fake';
 
 /** The facts the decision reads - a parameter, so a test states them without a device. */
 export interface VideoGlassFacts {
-  android: boolean;
-  /** `navigator.deviceMemory`, undefined where the engine does not expose it. */
-  deviceMemoryGb?: number;
-  /** `navigator.hardwareConcurrency`, undefined where the engine does not expose it. */
-  cores?: number;
+  /** An iPhone or iPad: the app on iOS, or Safari / any browser there (all WebKit). */
+  ios: boolean;
 }
 
-/** The decision itself, pure. */
+/** The decision itself, pure: blur on iOS, the base recipe everywhere else. */
 export function decideVideoGlass(facts: VideoGlassFacts): VideoGlass {
-  if (!facts.android) return 'glass';
-  if (!ANDROID_VIDEO_GLASS) return 'flat';
-  const lowMemory = facts.deviceMemoryGb !== undefined && facts.deviceMemoryGb <= LOW_END_MEMORY_GB;
-  const fewCores = facts.cores !== undefined && facts.cores > 0 && facts.cores <= LOW_END_CORES;
-  return lowMemory || fewCores ? 'flat' : 'glass';
+  return facts.ios ? 'blur' : 'fake';
 }
 
 /** Reads the facts off this device. */
 function readFacts(): VideoGlassFacts {
-  if (typeof navigator === 'undefined') return { android: false };
-  const nav = navigator as Navigator & { deviceMemory?: number };
-  return {
-    android: isAndroidTauriRuntime() || /\bAndroid\b/.test(nav.userAgent),
-    deviceMemoryGb: typeof nav.deviceMemory === 'number' ? nav.deviceMemory : undefined,
-    cores: typeof nav.hardwareConcurrency === 'number' ? nav.hardwareConcurrency : undefined,
-  };
+  if (typeof navigator === 'undefined') return { ios: false };
+  const ua = navigator.userAgent;
+  return { ios: isIosTauriRuntime() || /\b(iPhone|iPad|iPod)\b/.test(ua) };
 }
 
 let decided: VideoGlass | null = null;

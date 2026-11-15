@@ -342,7 +342,7 @@ it("a tap on a control is the control's, and is not the sound tap", () => {
 });
 
 it('draws one glass bar whose buttons wear no blur of their own, and a glass play triangle with no disc', () => {
-  // A MOUSE, so the speaker's volume pill is rendered: it too wears the FLAT tint inside the bar.
+  // A MOUSE, so the speaker's volume pill is rendered: it too wears the fake glass inside the bar.
   const fine = (q: string) =>
     ({
       matches: true,
@@ -357,8 +357,10 @@ it('draws one glass bar whose buttons wear no blur of their own, and a glass pla
   flushSync();
   const pill = target.querySelector<HTMLElement>('[data-video-bar] [data-video-volume]');
   expect(pill, 'the pill is rendered inside the bar').not.toBeNull();
-  expect(pill!.dataset.glass, 'and flat, with no blur of its own').toBe('flat');
-  expect(target.querySelectorAll('[data-video-bar] .glass-video').length).toBe(0);
+  expect(pill!.dataset.glass, 'the base recipe off iOS: no blur').toBe('fake');
+  expect(pill!.className).toContain('glass-video');
+  // The buttons draw no chip of their own: the one fake-glass piece inside the bar is the volume pill.
+  expect(target.querySelectorAll('[data-video-bar] .glass-video').length).toBe(1);
   expect(target.querySelector('[data-video-bar]')!.className).toContain('glass-video');
   const glyph = target.querySelector('[data-video-play-glyph]')!;
   expect(glyph.querySelector('.glass-video-shape'), 'the resting triangle is flat').toBeNull();

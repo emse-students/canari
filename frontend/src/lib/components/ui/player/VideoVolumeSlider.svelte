@@ -19,15 +19,10 @@
     onChange: (value: number) => void;
     /** A gesture ended (release, a key step, a wheel notch): the moment to remember the level. */
     onCommit?: () => void;
-    /**
-     * Inside a glass bar: NO blur of its own (design-reference section 3, never two), the flat dark
-     * tint instead.
-     */
-    flat?: boolean;
     class?: string;
   }
 
-  let { value, onChange, onCommit, flat = false, class: klass = '' }: Props = $props();
+  let { value, onChange, onCommit, class: klass = '' }: Props = $props();
 
   const percent = $derived(Math.round(value * 100));
 
@@ -52,10 +47,8 @@
 </script>
 
 <div
-  class="flex items-center justify-center rounded-full px-2 py-3 {flat
-    ? 'video-volume-flat'
-    : 'glass-video'} {klass}"
-  data-glass={flat ? 'flat' : videoGlass()}
+  class="glass-video flex items-center justify-center rounded-full px-2 py-3 {klass}"
+  data-glass={videoGlass()}
   data-video-controls
   data-video-volume
   role="presentation"
@@ -89,11 +82,6 @@
 </div>
 
 <style>
-  /* The flat pair of the glass (`--glass-video-flat-bg`): an opaque-ish dark pill, no blur. */
-  .video-volume-flat {
-    background: var(--glass-video-flat-bg);
-    border: 1px solid var(--glass-video-edge);
-  }
   /* Upright: the minimum at the bottom, the thumb moving up as the value grows. The input is as wide
      as the thumb so the thumb is never clipped; the 4px track is drawn on the track pseudo-element
      (WebKit, Firefox), which both centre in it. */

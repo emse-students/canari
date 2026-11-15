@@ -47,8 +47,8 @@ homogeneiser entre les plateformes, je ne veux qu'une DA."* The rule, identical 
 web, on every surface:
 
 - **(a) ON SCREEN AT REST = FLAT**: a bare white lucide glyph with a drop shadow, no chip, no blur.
-- **(b) TRANSIENT, SHOWN ON INTERACTION = GLASS**: the raised bar, the volume slider, the time bubble,
-  the gesture's pop.
+- **(b) TRANSIENT, SHOWN ON INTERACTION = FAKE GLASS**: the raised bar, the volume slider, the time
+  bubble, the gesture's pop. One recipe (below); iOS adds a blur on top.
 
 | Control | Players | Class | Drawn as |
 | --- | --- | --- | --- |
@@ -72,12 +72,37 @@ play/pause pop is on screen: `VideoFeedbackGlyph` reports `onTransport`, which o
 (its `animationend`, also under `prefers-reduced-motion`, where it is a fade) - no timer. Test:
 `VideoPlayer.svelte.test.ts`, "never two of the play and pause glyphs".
 
-**Android glass is limited to (b), so the budget is narrower**: `ANDROID_VIDEO_GLASS` stays `false`
-for (b) until the Mi 9T reading ([the glass budget](#the-glass-budget)), which measures the WORST CASE -
-the raised bar with the slider open, in the lightbox or the reel viewer. Pass: (b) is glass on Android.
-Fail: the fallback applies to both platforms alike, with the flat tint closest to the glass, and the
-numbers go to the owner before it is chosen. **Measured 2026-11-15: it FAILS** ([the reading](#the-mi-9t-reading-of-2026-11-15---glass-fails-the-pass-mark)); the owner chooses. The "Android is flat until a
-measurement" rule below is SUPERSEDED as to resting controls (they are flat everywhere, always).
+### Owner, 2026-11-15: one recipe, the blur is an iOS enhancement on top; Android measured and refused
+
+The Mi 9T measured the blur over a playing 1080p clip at 98-99 % janky frames against 38-44 % flat
+([the reading](#the-mi-9t-reading-of-2026-11-15---glass-fails-the-pass-mark)). The owner: *"Faux verre
+sans flou partout"*, then *"small differences are acceptable when they give each platform its best"*.
+So the build is **progressive enhancement over ONE recipe**:
+
+- **Base, every platform**: `.glass-video` (`app.css`, tokens `--glass-video-*`) is FAKE GLASS - a
+  translucent dark fill (56 % black), a 26 % white hairline, an inner highlight (rim and sheen) and a
+  shadow. NO `backdrop-filter`. Shapes, sizes, icons and tokens are identical on every platform.
+- **Enhancement, iOS (WebKit) only**: `data-glass='blur'` adds `backdrop-filter: blur(12px)
+  saturate(160%)` ON TOP of the same recipe and lowers the fill to 42 % so both read as one object.
+  `utils/videoGlass.ts` is the ONE place that decides ("blur available"): `decideVideoGlass({ ios })`,
+  iOS = the Tauri iOS app or any iPhone/iPad browser; Android and desktop stay on the base.
+  `ANDROID_VIDEO_GLASS`, the low-end heuristics and the flat chip are deleted.
+- Reduced transparency and `prefers-contrast: more` set the fill near-solid, the sheen off and the blur
+  off through the same tokens. `styles/videoGlass.test.ts` pins that the blur lives in one rule and in
+  no component.
+- **Legibility** (the 2026-10-01 report), crops from the Mi 9T over a white and a saturated green frame,
+  in `chat-video-1115/legibility-{white,green}-old-fake-flat.png` (old shipped glass at 28 % black,
+  the new fake glass, the old flat chip): the old 28 % glass left a white glyph weak on white; the
+  56 % fill reads on both frames and keeps the highlight.
+- **The fake glass's own cost on the Mi 9T** (same blob method, three pairs, 30 s, vs the old flat solid
+  chip): flat 28.48 / 23.31 / 29.42 % janky (median 12 ms), fake glass 37.12 / 28.93 / 30.73 % (median
+  13 / 12 / 13 ms). Mean +5.2 points of janky frames and +0.7 ms median - the median is inside the 1 ms
+  budget, the janky share is about 2 points over the +3 mark on average (+8.6, +5.6, +1.3 per pair; the
+  flat baseline itself moves 6 points between runs, so this is noisy and not a collapse like the blur's
+  +56). Tell the owner; the cheapest lever, if wanted, is dropping the outer shadow.
+- **iOS cost: OWED, a check and not a gate** (the iPhone was busy): the procedure is "The iPhone 12 - a
+  check, not a gate" below. A visible stutter or FPS under 55 with the bar up would send iOS to the base
+  recipe too, by changing `decideVideoGlass` to `false`.
 
 ## A tap in full screen never mutes (owner, 2026-11-10)
 
@@ -107,7 +132,7 @@ sources: [9to5Google](https://9to5google.com/2026/03/19/instagram-finally-settle
    (`--glass-video-*`), degrading without a timer. No SVG `feDisplacementMap` lensing: WebKit does
    not apply an SVG filter to a live `<video>` (Aave, "Building Glass for the Web"), so it cannot be
    the same on the iPhone. **Android is flat until a Mi 9T measurement shows no janky-frame
-   regression** ([the glass budget](#the-glass-budget)).
+   regression** ([the glass budget](#the-glass-budget)) - SUPERSEDED 2026-11-15: measured and refused, one fake-glass recipe everywhere, blur on iOS only ([one recipe](#owner-2026-11-15-one-recipe-the-blur-is-an-ios-enhancement-on-top-android-measured-and-refused)).
 3. **The gestures, the same everywhere**: a single TAP toggles the SOUND (amended 2026-11-10: in full screen it plays or pauses and never mutes, see below) (a speaker glyph pops and
    fades); a PRESS HELD pauses while held and resumes on release; a DOUBLE TAP likes where likes
    exist (CanaReels, a feed post) and leaves the sound as it was. A small speaker stays visible on
@@ -645,6 +670,8 @@ nothing but its own box.
 
 ## The glass
 
+> **SUPERSEDED 2026-11-15** where it says flat chip, `--glass-video-flat-bg`, `data-glass="flat"`, `ANDROID_VIDEO_GLASS` or the low-end heuristics: those are deleted. The recipe is now ONE fake glass with an iOS-only blur on top ([one recipe](#owner-2026-11-15-one-recipe-the-blur-is-an-ios-enhancement-on-top-android-measured-and-refused)); the `data-glass` values are `blur` and `fake`.
+
 `.glass-video` in `app.css`, beside `.glass-chrome` and built the same way, with what makes it read
 as Liquid Glass rather than frosted grey: a specular rim (`--glass-video-rim`, an inset top line), a
 sheen (`--glass-video-sheen`, a top-down white gradient) and a dark tint (`--glass-video-bg`, black at
@@ -740,14 +767,13 @@ janky frames and +8 ms of median frame time, every pair, both orders, so the 12 
 decode is not affordable on this GPU, even for three small transient pieces. (The flat baseline is itself
 ~40 % janky here: a full-screen 1080p decode over the feed on a Snapdragon 730; the comparison is the
 difference.) A first run, started twice by mistake and overlapping itself, gave the same alternation and
-was discarded; the table is the clean rerun. **`ANDROID_VIDEO_GLASS` stays `false`; the decision between
-"flat for (b) on both platforms" and "glass on iOS only" is the owner's** - the art direction asks for
-one look, which means the flat tint on both. The raw logs are in the harness folder
-(`chat-video-1115/measure3.log`).
+was discarded; the table is the clean rerun. **Decided by the owner, 2026-11-15: no blur on Android; one
+fake-glass recipe, the blur an iOS-only enhancement** ([above](#owner-2026-11-15-one-recipe-the-blur-is-an-ios-enhancement-on-top-android-measured-and-refused)). The raw logs are in the
+harness folder (`chat-video-1115/measure3.log`).
 
 ### The iPhone 12 - a check, not a gate
 
-The iPhone draws glass already (WebKit, `decideVideoGlass`). The reading confirms it does not cost a
+The iPhone is the ONE platform that adds the blur on top of the fake glass (`decideVideoGlass`). **OWED.** The reading confirms it does not cost a
 dropped frame there: on the pre-release, the same 30 s clip in the lightbox with the bar held up
 (Safari Web Inspector on the Mac, the same console line as step 2), and the device log read with
 `python -m pymobiledevice3 syslog live` filtered on the app for `[VIDEO]` and WebKit's
