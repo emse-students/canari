@@ -237,9 +237,13 @@ earliest version, as a checklist.
 - [P2 - the Lydia reconciliation sweep is built; the `request/state` signature it verifies is documented, not measured (2026-10-27)](backlog.d/p2-the-lydia-reconciliation-sweep-is-built-the-request-state-signature-it.md)
 - [P2 - WP-CHECKPOINT-CAS: one owner of the MLS state per process, handed over by the platform (2026-10-27, design reviewed four times, nothing built)](backlog.d/p2-wp-checkpoint-cas-one-owner-of-the-mls-state-per-process-handed-over-by-the.md)
 - [P2 - a BDE, a parent super-admin and the platform admin rewrite another body's event or form](backlog.d/p2-a-bde-validates-an-event-but-never-rewrites-it.md)
+- [P2 - a person whose content was hidden or deleted is never told](backlog.d/p2-a-moderated-person-is-told-which-place-acted.md)
+- [P2 - an offensive bio can only end in a mute, which leaves the bio up](backlog.d/p2-a-moderator-erases-a-bio.md)
 - [P2 - a post's owner cannot act on another person's comment under it](backlog.d/p2-a-post-owner-hides-a-comment-under-it.md)
 - [P2 - a reported community nickname reaches a queue that cannot clear it, and a muted moderator still renames](backlog.d/p2-a-reported-community-nickname-reaches-the-community-moderators.md)
-- [P2 - an association's live is ended and moderated by its broadcaster alone](backlog.d/p2-an-association-live-is-moderated-by-its-co-holders.md)
+- [P2 - an association's live is ended and moderated by its broadcaster alone, and no chat line is hidden after the end](backlog.d/p2-an-association-live-is-moderated-by-its-co-holders.md)
+- [P2 - a massively reported comment stays up until a human acts](backlog.d/p2-auto-hide-extends-to-comments.md)
+- [P2 - no moderator sees what the other moderators of the same place did](backlog.d/p2-every-moderation-act-is-journaled-for-its-peers.md)
 - [P2 - a muted account still votes in polls and likes comments](backlog.d/p2-the-mute-covers-votes-and-comment-likes.md)
 
 **P3 - hygiene**

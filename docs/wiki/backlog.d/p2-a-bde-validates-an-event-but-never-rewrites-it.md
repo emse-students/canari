@@ -26,11 +26,13 @@ for forms, which the platform admin and the parent BDE's super-admin edit today.
 - **regulate** (validate, reject, delete; close or delete a form): unchanged - the validator, the
   parent super-admin, and the platform admin as recourse.
 
-**FLAGGED, to confirm with the owner before building** (the lead's reading, reversible): a parent
-super-admin holds `MANAGE_ASSO` over the association, so it can grant itself `PROPOSE_EVENT` or
-`MANAGE_FORMS` as a member and rewrite anyway. The split makes a rewrite an explicit act of membership
-(it shows in the member list) rather than an implicit tier - which is the point - but it is not a hard
-wall. A personal form's rewrite by the platform admin is refused under the same rule.
+**The super-admin, decided by the owner on 2026-11-15** (decision 12, *"Non, l'acte visible
+suffit"*): a parent super-admin holds `MANAGE_ASSO`, so it can make itself a member with
+`PROPOSE_EVENT` or `MANAGE_FORMS` and rewrite. That is a visible act (it shows in the member list),
+good conduct is trusted, and no further wall is built. **The platform admin's rewrite** is refused too
+- the lead's reading of decision 8, which names the BDE (the platform admin edits no other text, a post
+or a comment), reversible; a personal form's rewrite by the platform admin is refused under the same
+rule.
 
 **Proof.** The agenda and forms integration specs: a validator and a parent super-admin validate,
 reject and delete, and get the typed 403 on a `PATCH` of another body's event; the same for a form's

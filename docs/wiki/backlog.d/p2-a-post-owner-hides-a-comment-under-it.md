@@ -24,9 +24,13 @@ an association's post waits for a report and a BDE moderator or the platform adm
   never grants `seesAccount`: the place owner learns nothing about an anonymous or association writer.
 - The place owner's own comments, and those in its own association's name, are outside the hide: they
   edit or delete them as their author.
-- **Design point, the lead's reversible reading (written to the page when built):** the hide is undone
-  by the place owner (any holder, for an association) and by any moderator of the post; the writer is
-  not notified, like a moderation tombstone; the replies under a hidden comment stay shown.
+- **Restoring it, decided by the owner on 2026-11-15** (decision 15, *"Auteur ou moderateur, en
+  silence"*): the place owner (any holder, for an association) or any moderator of the post restores
+  it, and the writer is not notified - neither of the hide nor of the restore. It is a lighter act than
+  moderation, like a broadcaster hiding a line of their chat, so the moderation notice
+  ([its entry](p2-a-moderated-person-is-told-which-place-acted.md)) does not apply; the act IS
+  journaled for the place's peers ([the journal](p2-every-moderation-act-is-journaled-for-its-peers.md)).
+  The replies under a hidden comment stay shown.
 - A served `canHide` per comment; the client draws "Masquer" in the comment menu.
 
 **Proof.** `comment-identity.spec.ts` (the rights table: the place owner hides, never deletes, never
