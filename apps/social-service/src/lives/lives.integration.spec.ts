@@ -1342,26 +1342,99 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         await expect(lives.get(CAROL, live.id)).resolves.toMatchObject({ id: live.id });
       });
 
-      it('THE INGEST says the live open WHILE ITS RESERVATION STANDS, so that write cannot follow a purge', async () => {
+      /**
+       * Runs one ingest whose open to Redis STALLS, and reads the reservation once the store has
+       * answered and the ingest has had every chance to go on: it must still stand, and the ingest
+       * must not have answered. That is what keeps the open ahead of a purge - the purge waits
+       * for a reservation, so an open awaited before the reservation is given up cannot land
+       * after it. Removing either await in `ingestOnce` fails the matching test.
+       */
+      const ingestWhileOpenStalls = async (
+        liveId: string
+      ): Promise<{
+        pendingAtOpen: unknown;
+        pendingAfterStore: unknown;
+        settled: boolean;
+        outcome: Promise<unknown>;
+      }> => {
+        const open = seats.open.bind(seats);
+        const put = store.store.bind(store);
+        const pending = async (): Promise<unknown> =>
+          (
+            await q(`SELECT "pendingName" IS NOT NULL AS pending FROM lives WHERE id = $1`, [
+              liveId,
+            ])
+          )[0];
+        let entered!: (pendingAtOpen: unknown) => void;
+        let proceed!: () => void;
+        let stored!: () => void;
+        const enteredP = new Promise<unknown>((r) => (entered = r));
+        const proceedP = new Promise<void>((r) => (proceed = r));
+        const storedP = new Promise<void>((r) => (stored = r));
+        seats.open = async (id: string, removed: readonly string[]) => {
+          entered(await pending());
+          await proceedP;
+          return open(id, removed);
+        };
+        store.store = async (id: string, name: string, data: Buffer) => {
+          try {
+            await put(id, name, data);
+          } finally {
+            stored();
+          }
+        };
+        let settled = false;
+        const outcome = lives.ingest(ALICE, liveId, 0, segment(0)).then(
+          (v) => ((settled = true), v),
+          (e: unknown) => ((settled = true), e)
+        );
+        try {
+          const pendingAtOpen = await enteredP;
+          await storedP;
+          // The store has answered. A confirm or a release that did not wait for the open would
+          // commit within these round trips; nothing here is a delay the verdict depends on - a
+          // correct ingest is blocked on the gate however long this takes.
+          for (let i = 0; i < 25; i++) await q('SELECT 1');
+          const pendingAfterStore = await pending();
+          return { pendingAtOpen, pendingAfterStore, settled, outcome };
+        } finally {
+          proceed();
+          await outcome;
+          seats.open = open;
+          store.store = put;
+        }
+      };
+
+      it('THE INGEST says the live open WHILE ITS RESERVATION STANDS: the confirm waits for it', async () => {
         const live = await start();
         seats.wipe();
-        const open = seats.open.bind(seats);
-        const pendingAtOpen: unknown[] = [];
-        seats.open = async (liveId: string, removed: readonly string[]) => {
-          pendingAtOpen.push(
-            ...(await q(`SELECT "pendingName" IS NOT NULL AS pending FROM lives WHERE id = $1`, [
-              liveId,
-            ]))
-          );
-          return open(liveId, removed);
-        };
-        try {
-          await lives.ingest(ALICE, live.id, 0, segment(0));
-        } finally {
-          seats.open = open;
-        }
-        expect(pendingAtOpen).toEqual([{ pending: true }]);
+        const run = await ingestWhileOpenStalls(live.id);
+        expect(run.pendingAtOpen).toEqual({ pending: true });
+        expect(run.pendingAfterStore).toEqual({ pending: true });
+        expect(run.settled).toBe(false);
+        expect(await run.outcome).not.toBeInstanceOf(Error);
         expect(seats.openLives.has(live.id)).toBe(true);
+        expect(store.countFor(live.id)).toBe(1);
+      });
+
+      it('A STORE THAT FAILS keeps the reservation until the open has answered: the release waits for it', async () => {
+        const live = await start();
+        seats.wipe();
+        store.failStore = true;
+        try {
+          const run = await ingestWhileOpenStalls(live.id);
+          expect(run.pendingAtOpen).toEqual({ pending: true });
+          expect(run.pendingAfterStore).toEqual({ pending: true });
+          expect(run.settled).toBe(false);
+          expect((await refusal(Promise.reject(await run.outcome))).code).toBe(
+            'LIVE_STORE_UNAVAILABLE'
+          );
+        } finally {
+          store.failStore = false;
+        }
+        expect(
+          await q(`SELECT "pendingName" IS NOT NULL AS pending FROM lives WHERE id = $1`, [live.id])
+        ).toEqual([{ pending: false }]);
       });
 
       it('a segment whose commit read the live open, then lost to the end, reopens nothing', async () => {

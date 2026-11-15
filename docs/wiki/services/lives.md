@@ -457,8 +457,10 @@ sets derived from it, beside the seats and in their slot (`live-seats.ts`):
   that read the live open and then lost to an end reopens nothing, whatever order the two reach
   Redis in. The ingest sends it between the reservation and the confirm, beside the store and
   awaited before the reservation is given up: while a reservation stands the purge keeps the row,
-  and with it the tombstone. It costs the ingest slot nothing unless Redis answers slower than the
-  store, and it never fails a segment.
+  and with it the tombstone. It never fails a segment. Its cost is one indexed read of the live's
+  removals and one Redis write per segment, run beside the store: the ingest slot is held longer
+  only when Redis answers slower than the store, and a Redis that does not answer lengthens every
+  segment (and a start) by up to the command timeout and its retries.
 
 **Redis says THAT it refused; the row says why.** On `{2}` or `{3}` the service asks the watch rule
 again, which throws the typed refusal: `410`, `403`, `404`. If the row still allows the viewer, the
@@ -474,13 +476,17 @@ live whose broadcaster has stalled stays closed to new viewers until a segment l
 sweep ends it. An eviction of one of the three sets is the same state as a wipe; none of them has
 an expiry.
 
-**The one deployment that crosses versions.** A build older than 2026-11-15 writes none of the
-three sets. While the instances are being replaced, a live whose start and segments all reached an
-old instance is refused (`503`) to the viewers a new instance serves, until one of its segments
-reaches a new instance; the bound is the duration of the rolling replace, plus one segment. It
-happens ONCE, at the deployment that first ships these sets: every later build writes them, so two
-later versions side by side agree. A rollback to the older build ignores the sets and takes seats
-as before; the entries left behind are rewritten or closed by the next build that reads them.
+**Two builds side by side, across the 2026-11-15 boundary.** A build older than 2026-11-15 writes
+none of the three sets. While the instances are being replaced, a live whose start and segments all
+reached an old instance is refused (`503`) to the viewers a new instance serves, until one of its
+segments reaches a new instance; the bound is the duration of the rolling replace, plus one segment.
+Every later build writes the sets, so two later versions side by side agree: the window exists only
+when a deployment crosses THIS boundary. That is the first deployment that ships the sets - and
+again a rollback to the older build followed by its re-deployment, each crossing with the same
+bound. A rollback ignores the sets and takes seats as before. What it leaves behind is harmless and
+is not all cleaned: a live started on the new build and ended and purged by the old one keeps its
+`open` entry (and bars) for good, since the old build closes and forgets nothing; nobody is seated
+on it, the watch rule refusing a live whose row is gone before any take is asked.
 
 **The tombstone's lifetime is the ended row's.** `closed` is forgotten when the purge deletes the
 row (`FORGET_LIVE_LUA`, which also takes the live out of `open` and `barred`), because from then on
@@ -499,9 +505,15 @@ No entry of the three sets expires on a timer.
    and was purged meanwhile. It then leaves an `open` entry (and bars) nobody removes, for a live
    whose row is gone - so nobody is seated on it, the watch rule refusing first.
 3. When a close or a bar fails (Redis not answering), a warning says so and the old behaviour is
-   what is left: a late seat lasts its lease.
+   what is left: a late seat lasts its lease. When the FORGET fails, the row is already deleted
+   and nothing sends it again: the live's tombstone stays, one entry, read by nobody.
 4. `CLOSE_LIVE_LUA` and `FORGET_LIVE_LUA` read the barred set whole; it holds the viewers removed
    from the lives now open, which nothing caps.
+5. The START's open follows its commit with no reservation standing. A live ended AND purged
+   inside that one Redis round trip (an account erasure, in practice) would be opened after its
+   forget, leaving the same entry as item 2, as harmless.
+6. The outage counts (`unknownToRedis`) are per instance: the purge reports and forgets them on
+   the instance that runs it, and another instance keeps one number per such live until it stops.
 
 **Proven.** Against a real Redis (`live-seats.spec.ts`): an unknown live and a wiped one refuse and
 write nothing; after a close no take is granted, renewal included; an open after the close reopens
@@ -509,7 +521,8 @@ nothing; a bar frees the seat, survives a reopen and goes with the close; a forg
 out of the three sets and no other. On PostgreSQL (`lives.integration.spec.ts`, "a take that lands
 after an end, a removal, or a loss of Redis"): a request is stalled between its check and its take
 while a cut, an ordinary end or a removal runs to completion, and is then refused `410` or `403`
-with no seat; the ingest's open is sent while the reservation is pending; a late reopen of an ended
+with no seat; with the ingest's open stalled, the reservation still stands once the store has
+answered and the ingest has not, on a stored segment and on a store that failed; a late reopen of an ended
 live is refused; a purged live reopened late seats nobody because the take is never asked; a wipe
 refuses with `503` until the next segment, which also restores the bar.
 

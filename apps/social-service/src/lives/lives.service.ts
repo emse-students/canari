@@ -905,7 +905,10 @@ export class LivesService implements OnModuleDestroy {
     // given up (the confirm, or the release): the reservation just read the live open, and while it
     // stands the purge keeps the row and its tombstone, so this write can never follow a purge -
     // an end that crossed it finds the tombstone and is not undone ({@link openToSeats}). It never
-    // rejects, and costs the ingest slot nothing unless Redis answers slower than the store.
+    // rejects. It runs beside the store, so the ingest slot is held longer only when Redis answers
+    // slower than the store - a Redis that does not answer costs each segment up to the command
+    // timeout and its retries. BOTH awaits below are load-bearing: an open still in flight after
+    // the confirm or the release could land after the purge.
     const opening = this.openToSeats(liveId);
     try {
       await this.store.store(liveId, step.name, data);
@@ -2639,7 +2642,9 @@ export class LivesService implements OnModuleDestroy {
    * The lives Redis refuses seats on while their row is open, each with the takes refused since the
    * first: durable state, no timer, as {@link arrivalOutages}. The FIRST refusal is logged at ERROR
    * (it accuses); the ones after it - every poll of every viewer until a segment lands - only
-   * count, and the first seat granted again says how many. The purge forgets what is left.
+   * count, and the first seat granted again says how many. PER INSTANCE: the purge forgets what is
+   * left on the instance that runs it, with a warning; another instance's entry for a purged live
+   * stays, one number, until that process ends.
    */
   private readonly unknownToRedis = new Map<string, number>();
 
@@ -2647,9 +2652,13 @@ export class LivesService implements OnModuleDestroy {
     const refused = this.unknownToRedis.get(liveId);
     this.unknownToRedis.set(liveId, (refused ?? 0) + 1);
     if (refused !== undefined) return;
-    this.logger.error(
-      `[LIVE_SEAT] ${liveId}: Redis holds the live ${why} while its row is open and allows the viewer - no seat until its next segment says it again (further refusals are counted, not logged)`
-    );
+    // The two refusals do not heal alike: a live Redis does not know is said open again by its
+    // next segment; a bar the row does not back is removed by nothing but the live's close.
+    const state =
+      why === 'closed'
+        ? 'Redis does not hold the live open while its row is open - no seat until its next segment says it again'
+        : 'Redis bars a viewer the row allows - no seat for that viewer until the live closes';
+    this.logger.error(`[LIVE_SEAT] ${liveId}: ${state} (further refusals are counted, not logged)`);
   }
 
   private seatsKnown(liveId: string): void {
