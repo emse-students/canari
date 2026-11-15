@@ -250,6 +250,10 @@
   // grant with "voit les commentaires" off. No comment control is drawn then - no button, no count,
   // no preview, no thread - and the reaction badges are a tally with no "who reacted".
   const canSeeComments = $derived(localPost.canSeeComments !== false);
+  // The server's answer (2026-11-14): false only for a platform admin shown the post by the
+  // moderation read outside their own audience. They read it to moderate; no reaction or comment
+  // control is drawn, since the server would refuse it. Absent is true (an older server).
+  const participates = $derived(localPost.canParticipate !== false);
   let comments = $derived<PostComment[]>(localPost.comments ?? []);
   let topLevelComments = $derived(comments.filter((c) => !c.parentId));
 
@@ -663,7 +667,7 @@
     class="relative mb-3"
     use:doubleTapLike={{
       onDoubleTap: likeOnDoubleTap,
-      enabled: !editingPost && !scheduled && currentUserId.trim() !== '',
+      enabled: !editingPost && !scheduled && participates && currentUserId.trim() !== '',
     }}
   >
     <DoubleTapHeart bind:this={hearts} />
@@ -799,7 +803,7 @@
       spends 44 px on both together. Passing it as a snippet keeps its five props here, where the
       post's reaction state already lives, while `PostActions` decides only where it sits.
     -->
-        {#if !scheduled}
+        {#if !scheduled && participates}
           <div data-no-double-tap>
             <PostActions
               {userReaction}
@@ -838,6 +842,7 @@
               pendingCommentIds={thread.pending}
               onLike={(id) => void thread.like(id)}
               onOpen={openCommentsSheet}
+              readOnly={!participates}
             />
           </div>
         {/if}
@@ -869,6 +874,7 @@
       {authToken}
       {focusCommentId}
       autofocusComposer={sheetWrite}
+      readOnly={!participates}
       onCommentTextChange={async (text) => {
         commentText = text;
         commentError = '';

@@ -99,7 +99,8 @@ export class PostInteractionsService {
     await this.postRepo.save(post);
 
     // Notify post author of a new reaction (not for self-reactions or changes), never across the
-    // review cohort's boundary (review-cohort.ts).
+    // review cohort's boundary (review-cohort.ts), and for an entity's post only while its writer
+    // is still a member there (`postAuthorIsTold`, 2026-11-14).
     if (
       isNew &&
       post.authorId &&
@@ -108,6 +109,7 @@ export class PostInteractionsService {
     ) {
       void (async () => {
         try {
+          if (!(await this.notifications.postAuthorIsTold(postId))) return;
           const actorName = await this.notifications.resolveActorName(userId);
           // ONE NOTIFICATION PER POST, never counted (owner, 2026-11-14): it alerts when the post had
           // no unread row, and updates silently otherwise. THE ACTOR'S FACE, AND THE EMOJI RATHER
@@ -350,7 +352,6 @@ export class PostInteractionsService {
       }
 
       if (post.authorId && !alreadyNotified.has(post.authorId)) {
-        alreadyNotified.add(post.authorId);
         // A reply to the author's own comment, or a mention of them, rings of its own and is never
         // folded into the post's live notification (owner, 2026-11-15); the rest keeps the fold.
         const kind = authorNoticeKind({
@@ -359,14 +360,24 @@ export class PostInteractionsService {
           authorHoldsParentAssociation: parentHolders?.includes(post.authorId) ?? false,
           mentionedIds: data.text ? this.notifications.resolveMentionedUserIds(data.text) : [],
         });
-        this.logger.log(
-          `[NOTIFY] post=${postId.slice(0, 8)} author notice kind=${kind} ` +
-            (kind === 'comment'
-              ? '(folded into the post activity notification)'
-              : '(targets the author: rings of its own, outside the fold)')
-        );
         try {
-          await send(post.authorId, kind);
+          // The post's comment notice reaches an entity post's writer only while they are still a
+          // member there (2026-11-14); a reply to their own comment or a mention of them is theirs
+          // as that writer, under those rules, whatever the post.
+          if (kind === 'comment' && !(await this.notifications.postAuthorIsTold(postId))) {
+            this.logger.log(
+              `[NOTIFY] post=${postId.slice(0, 8)} author notice not sent: no longer a member of its entity`
+            );
+          } else {
+            alreadyNotified.add(post.authorId);
+            this.logger.log(
+              `[NOTIFY] post=${postId.slice(0, 8)} author notice kind=${kind} ` +
+                (kind === 'comment'
+                  ? '(folded into the post activity notification)'
+                  : '(targets the author: rings of its own, outside the fold)')
+            );
+            await send(post.authorId, kind);
+          }
         } catch (e) {
           this.logger.warn(
             `[NOTIFY] comment notification failed for post.authorId=${post.authorId}`,
