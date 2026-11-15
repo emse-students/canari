@@ -327,17 +327,51 @@
   --z-skip-link: 500;
 }
 
+/* THE KEYBOARD'S LEAF CHANNEL (keyboard-and-send-motion.md, section 6). `keyboardViewport` is the one
+   writer of the keyboard's variables and has TWO targets: `:root`, which every screen reads, and the
+   pieces that ride the keyboard (`[data-keyboard-leaf]`), which read these twins first. Measured in
+   Chromium (Mi 9T, 1156 elements; the desktop bench `bench/keyboard-announcement` gives the same
+   shape): ANY custom property written on `:root` costs 17-30 ms of style for the whole document, an
+   unused one included, while a NON-INHERITED one written on one element costs 0.1-0.2 ms - even on
+   the thread's scroller, whose 840 descendants an inherited one would restyle (20 ms). So the
+   announcement writes these on the riding pieces, the ride's first frame is drawn without the
+   whole-document pass, and the root is written once that frame is out, at the same values: the
+   pieces read the same lengths through either name and move once. Not inherited, so a twin is read
+   only by the element it is written on; no initial value, so an unwritten twin falls back to the
+   root's variable. */
+@property --keyboard-leaf-layout-inset-bottom {
+  syntax: '*';
+  inherits: false;
+}
+@property --keyboard-leaf-occlusion-bottom {
+  syntax: '*';
+  inherits: false;
+}
+@property --keyboard-leaf-safe-area-inset-bottom {
+  syntax: '*';
+  inherits: false;
+}
+/* Resolved on each piece that reads them (`.chat-composer-footer`, `.chat-messages-scroll`), from the
+   twins above or the root's variables - not inherited, so the thread's rows never restyle for them. */
+@property --chat-composer-floor {
+  syntax: '*';
+  inherits: false;
+}
+@property --chat-keyboard-room {
+  syntax: '*';
+  inherits: false;
+}
+
 :root {
   /* Default assumes the native Tauri WebView (env() answers a real question there); app.html's
    * inline script overrides this to 0px before first paint when not running in Tauri, since a
    * plain browser tab already excludes the system nav/gesture area from its own viewport - see
    * that script for why. Every safe-area-bottom consumer reads this variable, never env() itself. */
-  --safe-area-inset-bottom: env(safe-area-inset-bottom, 0px);
-  /* THE COMPOSER'S FLOOR: the chat footer's bottom padding, and the same term in the thread's own
-   * padding under its last row. Named once so both change in the SAME style pass when the bottom safe
-   * area is pinned for a keyboard (`keyboardSafeAreaBottomOverride`): `--chat-composer-height` is
-   * published a frame late and leaves this out (`composerHeight.ts`, review of #3556, D2). */
-  --chat-composer-floor: max(0.75rem, var(--safe-area-inset-bottom, 0px));
+  --safe-area-inset-bottom: var(--safe-area-inset-bottom-unpinned);
+  /* The same, under a name the keyboard's pin never replaces: what `--safe-area-inset-bottom` goes
+   * back to when the pin is released, which the leaf channel writes on a riding piece before the root
+   * itself is released (`keyboardViewport.svelte.ts`, `keyboardLeafValues`). */
+  --safe-area-inset-bottom-unpinned: env(safe-area-inset-bottom, 0px);
   /* THE TOP PEER, for the same reason: on iOS WebKit reports env() as 0 here and the native side
    * publishes the real status-bar height (canari_ios.mm), so every top consumer reads THIS. On
    * Android and in a browser env() answers for itself. */
@@ -1788,20 +1822,37 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
   }
 }
 
+/* THE COMPOSER'S FLOOR AND THE KEYBOARD'S ROOM, resolved on the two pieces that read them: the chat
+   footer's bottom padding, and the same terms in the thread's own padding under its last row. Named
+   once so both change in the SAME style pass when the bottom safe area is pinned for a keyboard
+   (`keyboardSafeAreaBottomOverride`): `--chat-composer-height` is published a frame late and leaves
+   the floor out (`composerHeight.ts`, review of #3556, D2). Each reads the leaf channel's twin first
+   (`--keyboard-leaf-*`, written on the piece itself by the announcement) and the root's variable
+   otherwise - the same length either way. */
+.chat-composer-footer,
+.chat-messages-scroll {
+  --chat-composer-floor: max(
+    0.75rem,
+    var(--keyboard-leaf-safe-area-inset-bottom, var(--safe-area-inset-bottom, 0px))
+  );
+  --chat-keyboard-room: var(
+    --keyboard-leaf-layout-inset-bottom,
+    var(--keyboard-layout-inset-bottom, 0px)
+  );
+}
+
 .chat-messages-scroll {
   /* The footer's height without its floor, plus the floor, plus the keyboard's room - see
      `--chat-composer-floor`: the floor is composed HERE so a keyboard move lands in one style pass.
      THE KEYBOARD'S ROOM IS THIS PADDING, NEVER A SMALLER BOX (keyboard ride, 2026-11-14): in the
      Android app the keyboard covers the shell without shrinking it, and the thread's box keeps its
-     height so its rows can ride up into the room the padding opens. `--keyboard-layout-inset-bottom`
-     is 0 everywhere else, so on the web and iOS this is the padding it always was. */
+     height so its rows can ride up into the room the padding opens. `--chat-keyboard-room` (the
+     layout inset) is 0 everywhere else, so on the web and iOS this is the padding it always was. */
   padding-bottom: calc(
-    var(--chat-composer-height, 6.75rem) + var(--chat-composer-floor) +
-      var(--keyboard-layout-inset-bottom, 0px)
+    var(--chat-composer-height, 6.75rem) + var(--chat-composer-floor) + var(--chat-keyboard-room)
   );
   scroll-padding-bottom: calc(
-    var(--chat-composer-height, 6.75rem) + var(--chat-composer-floor) +
-      var(--keyboard-layout-inset-bottom, 0px)
+    var(--chat-composer-height, 6.75rem) + var(--chat-composer-floor) + var(--chat-keyboard-room)
   );
   /* Keep scrolling inside the message list - no chaining/rubber-band to the page that
      would drag content off-screen (notably while the keyboard is open). */
@@ -1819,24 +1870,20 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
 @media (min-width: 768px) {
   .chat-messages-scroll {
     padding-bottom: calc(
-      var(--chat-composer-height, 5.75rem) + var(--chat-composer-floor) +
-        var(--keyboard-layout-inset-bottom, 0px)
+      var(--chat-composer-height, 5.75rem) + var(--chat-composer-floor) + var(--chat-keyboard-room)
     );
     scroll-padding-bottom: calc(
-      var(--chat-composer-height, 5.75rem) + var(--chat-composer-floor) +
-        var(--keyboard-layout-inset-bottom, 0px)
+      var(--chat-composer-height, 5.75rem) + var(--chat-composer-floor) + var(--chat-keyboard-room)
     );
   }
 }
 
 .mobile-convo-open .chat-messages-scroll {
   padding-bottom: calc(
-    var(--chat-composer-height, 5.25rem) + var(--chat-composer-floor) +
-      var(--keyboard-layout-inset-bottom, 0px)
+    var(--chat-composer-height, 5.25rem) + var(--chat-composer-floor) + var(--chat-keyboard-room)
   );
   scroll-padding-bottom: calc(
-    var(--chat-composer-height, 5.25rem) + var(--chat-composer-floor) +
-      var(--keyboard-layout-inset-bottom, 0px)
+    var(--chat-composer-height, 5.25rem) + var(--chat-composer-floor) + var(--chat-keyboard-room)
   );
 }
 
@@ -1860,7 +1907,7 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
      Android app, where the shell keeps its height. No `transition` on it: the keyboard ride
      (`keyboardRide.ts`) moves the composer on the keyboard's own timing, from where it stood - a
      transition would move the box itself and leave the ride nothing to measure. */
-  bottom: var(--keyboard-layout-inset-bottom, 0px);
+  bottom: var(--chat-keyboard-room);
   /* OPAQUE, AND IT USED TO BE TRANSPARENT ON PURPOSE (user, 2026-09-18: *"le fait que l'on puisse
      avoir des messages ou reactions derriere la barre de saisie est moche"*). The list already
      RESERVES this height with `padding-bottom`, so a thread at rest ends above the bar; what showed
@@ -1898,12 +1945,10 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
 .keyboard-open .chat-messages-scroll {
   /* The same three terms as at rest (`--chat-composer-floor`). */
   padding-bottom: calc(
-    var(--chat-composer-height, 5.25rem) + var(--chat-composer-floor) +
-      var(--keyboard-layout-inset-bottom, 0px)
+    var(--chat-composer-height, 5.25rem) + var(--chat-composer-floor) + var(--chat-keyboard-room)
   );
   scroll-padding-bottom: calc(
-    var(--chat-composer-height, 5.25rem) + var(--chat-composer-floor) +
-      var(--keyboard-layout-inset-bottom, 0px)
+    var(--chat-composer-height, 5.25rem) + var(--chat-composer-floor) + var(--chat-keyboard-room)
   );
 }
 
@@ -1925,12 +1970,13 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
    footer, the hand-off (panel shrinking to 0 while the keyboard rises) leaves the composer exactly
    0.75rem above whichever is under it, with no step when the panel unmounts. The second selector
    outranks the `!important` keyboard rule above. The thread composes the same floor under its last
-   row (`--chat-composer-floor`), so the panel's 0 is said to it too. */
+   row (`--chat-composer-floor`, resolved on each of the two pieces), so the panel's 0 is said to both. */
 .chat-composer-footer.has-keyboard-panel,
 .mobile-convo-open.keyboard-open .chat-composer-footer.has-keyboard-panel {
   padding-bottom: 0 !important;
 }
-.chat-thread-panel:has(.chat-composer-footer.has-keyboard-panel) {
+.chat-thread-panel:has(.chat-composer-footer.has-keyboard-panel)
+  :is(.chat-composer-footer, .chat-messages-scroll) {
   --chat-composer-floor: 0px;
 }
 .composer-gif-panel {
@@ -2236,12 +2282,19 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
 }
 
 /* A sheet anchored to the bottom of a `fixed` layer (the comments drawer): it stands on what the
-   keyboard covers of the window, which is 0 wherever the WebView itself is resized. */
-/* Stands on the keyboard. No transition: a piece that must move with the keys rides them
-   (`data-keyboard-ride`, keyboardRide.ts) at their own duration, curve and phase - a clock of its
-   own could only disagree with the keyboard's (#3556, N4). */
+   keyboard covers of the window, which is 0 wherever the WebView itself is resized, and is never
+   taller than what the keyboard leaves. No transition: a piece that must move with the keys rides them
+   (`data-keyboard-ride`, keyboardRide.ts) at their own duration, curve and phase - a clock of its own
+   could only disagree with the keyboard's (#3556, N4). Every keyboard term reads the leaf channel's
+   twin first (`--keyboard-leaf-*`, see the `@property` block), so the sheet's comment thread is never
+   restyled for a keyboard move. */
 .keyboard-aware-bottom {
-  bottom: var(--keyboard-occlusion-bottom, 0px);
+  bottom: var(--keyboard-leaf-occlusion-bottom, var(--keyboard-occlusion-bottom, 0px));
+  max-height: calc(
+    var(--app-viewport-height, 100dvh) - var(--safe-area-inset-top, 0px) - 3rem -
+      var(--keyboard-leaf-occlusion-bottom, var(--keyboard-occlusion-bottom, 0px))
+  );
+  padding-bottom: var(--keyboard-leaf-safe-area-inset-bottom, var(--safe-area-inset-bottom, 0px));
 }
 
 /* Fullscreen overlays: modals, PIN, sync, payment, calendar pickers… */

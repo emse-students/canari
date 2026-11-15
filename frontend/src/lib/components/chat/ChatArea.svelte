@@ -2179,6 +2179,7 @@
       <div
         bind:this={chatContainer}
         data-keyboard-ride="last-row"
+        data-keyboard-leaf
         onscroll={handleScroll}
         class="chat-messages-scroll flex min-h-0 flex-1 flex-col gap-2 overflow-x-hidden overflow-y-auto px-3 py-3 transition-opacity duration-150 md:px-6 md:py-6 {hideDuringEntry
           ? 'opacity-0'

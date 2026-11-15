@@ -913,6 +913,7 @@
 <footer
   data-keyboard-ride="box"
   class="chat-composer-footer"
+  data-keyboard-leaf
   class:has-keyboard-panel={surfaceReservesPanel(surface)}
   bind:this={composerFooter}
 >
