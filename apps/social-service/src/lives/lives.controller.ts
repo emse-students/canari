@@ -238,19 +238,24 @@ export class LivesController {
   /**
    * One page of a live's three-day REPLAY (docs/wiki/live-replays.md): the key, the segments from
    * `from` with their place on the time line, `nextFrom`. No seat. 404 `LIVE_NOT_FOUND` to anyone the
-   * replay post is not visible to, and once it has expired.
+   * replay post is not visible to, and once it has expired. `?moderation=true` is the moderation
+   * read (`LivesService.replay`): it opens the replay to whoever moderates its post, and changes
+   * nothing for anyone else.
    */
   @Get(':id/replay')
   @Header('Cache-Control', 'no-store')
   async replay(
     @Param('id') id: string,
     @Headers('x-user-id') userId: string,
-    @Query('from') from?: string
+    @Headers('x-global-admin') globalAdmin: string | undefined,
+    @Query('from') from?: string,
+    @Query('moderation') moderation?: string
   ): Promise<LiveReplayPage> {
     return this.lives.replay(
       callerOf(userId),
       id,
-      from === undefined ? 0 : indexOf(from, 'REPLAY_FROM')
+      from === undefined ? 0 : indexOf(from, 'REPLAY_FROM'),
+      { moderate: moderation === 'true', isGlobalAdmin: globalAdmin === 'true' }
     );
   }
 

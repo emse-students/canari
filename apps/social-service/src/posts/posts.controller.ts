@@ -320,8 +320,9 @@ export class PostsController {
   }
 
   /**
-   * Returns a single post by its ID. Global admins may load moderation-hidden posts; the author
-   * may load their own post before its scheduled publication date, nobody else can.
+   * Returns a single post by its ID. Whoever MODERATES it (a platform admin, a BDE moderator in
+   * scope - `getById` asks `mayReadToModeratePost`) reads it to moderate, hidden or outside their audience
+   * included; the author may load their own post before its scheduled publication date.
    */
   @UseGuards(NginxAuthGuard, FeedAudienceGuard)
   @Get(':postId')
@@ -332,7 +333,6 @@ export class PostsController {
     @Query('withReplays') withReplays?: string
   ) {
     return this.service.getById(postId, {
-      allowHidden: xGlobalAdmin === 'true',
       viewerId: userId,
       isGlobalAdmin: xGlobalAdmin === 'true',
       withReplays: withReplays === 'true',
@@ -490,6 +490,8 @@ export class PostsController {
    * Updates the text of a comment the caller may edit (`commentRights`). Behind the `'COMMENT'` read:
    * the answer serves the comment (who liked it included) to a reader the comments may be withheld
    * from - a named reader's own comment, written while their switch was on. Deleting it stays open.
+   * A WRITE, so never `allowHidden`: a platform admin edits their own comment only where an ordinary
+   * reader could (2026-11-14, profiles-and-access.md).
    */
   @UseGuards(NginxAuthGuard)
   @Patch(':postId/comments/:commentId')
@@ -500,9 +502,7 @@ export class PostsController {
     @Param('commentId') commentId: string,
     @Body() body: EditCommentDto
   ) {
-    await this.service.assertVisible(postId, xUserId, 'COMMENT', {
-      allowHidden: xGlobalAdmin === 'true',
-    });
+    await this.service.assertVisible(postId, xUserId, 'COMMENT');
     return this.interactions.editComment(
       postId,
       commentId,

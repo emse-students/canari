@@ -109,6 +109,20 @@ afterEach(() => {
 });
 
 describe('ReplayPane', () => {
+  it('asks the moderation read exactly for a post served to a reader who may not act on it (2026-11-15)', async () => {
+    const viewer = vi.fn(async () => page());
+    render(true, viewer);
+    await settle();
+    expect(viewer).toHaveBeenCalledWith('live-1', undefined, { moderation: false });
+
+    const moderator = vi.fn(async () => page());
+    render(true, moderator, vi.fn(), undefined, {
+      post: { ...post, canParticipate: false } as PostEntity,
+    });
+    await settle();
+    expect(moderator).toHaveBeenCalledWith('live-1', undefined, { moderation: true });
+  });
+
   it('mounts no player on a page that is not on screen, and still marks itself a replay', async () => {
     const fetchReplay = vi.fn(async () => page());
     const { target } = render(false, fetchReplay);

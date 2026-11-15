@@ -728,9 +728,19 @@ is deleted, and the client no longer decides from `formation === 'ICM'`.
   The feed, the search, the announcements and the agenda give a global admin exactly what their own
   spaces and memberships give: an admin who is an ICM Saint-Etienne student sees what an ICM
   Saint-Etienne student sees, and an admin with no space sees only what they wrote. What an admin
-  keeps is OPENING one post BY ITS ID (a report or moderation link: `assertVisible`, option
-  `adminSeesAll`) and the gate (they can reach the feed to moderate). Nobody else gets that.
-- **A post is visible** (`postVisibleToUserSql`) to its author, to a member of its association (D21: any
+  keeps is OPENING one post BY ITS ID to moderate it (a report or moderation link: `getById`,
+  `listComments` and a replay's moderation read) and the gate (they can reach the feed to moderate).
+  **BY ID, A MODERATOR MODERATES AND NEVER PARTICIPATES (2026-11-14, generalising the lead's S2 of
+  #3010 to every post; owner, 2026-11-15, *"Oui, dans ses espaces"*)**: the widening is the
+  moderation read alone - `readPostOpenVerdict` with `allowHidden`, set from
+  `AssociationsService.mayReadToModeratePost` (a platform admin; a BDE `MODERATE` holder within its
+  scope, a post scheduled later only once published or while an open report targets it) by the post by id (`getById`), its comment page (`listComments`) and its replay. Every
+  participating intent asks a moderator the ordinary reader's right, see
+  [the table](#by-id-what-a-platform-admin-may-do-2026-11-14). The rule: **by id, whoever moderates a
+  post READS it to moderate - the post, its comments, its replay - and participates only as an
+  ordinary reader** ([moderation-and-blocking](moderation-and-blocking.md#the-moderation-read-of-a-post-its-comments-and-its-replay-owner-2026-11-15)).
+  The SQL visibility predicate itself has no admin door.
+- **A post is visible** (`postVisibleToUserSql`) to its author ([the author's door](#the-authors-door-an-entitys-post-belongs-to-the-entity-2026-11-14)), to a member of its association (D21: any
   `association_members` row - there is no pending state), and otherwise when its association's
   rules reach one of the reader's spaces - or, since D38, when a REPUBLISHING association is
   visible to the reader the same way ([D38 as built](#d38-republication-as-built-2026-10-04)). The
@@ -774,6 +784,49 @@ reader: list (all, associations), search, one post, calendar link, the aggregate
 and anonymous, `.ics` included), a create refused outside the ceiling and on a personal post, and
 the announce sweep's recipient counts.
 
+#### By id, what a platform admin may do (2026-11-14)
+
+The same table holds for a BDE `MODERATE` holder on a post within its scope (owner, 2026-11-15,
+*"Oui, dans ses espaces"*), except a post scheduled later, which their read opens only once
+published or while an open report targets it (owner, 2026-11-15, *"Exclure les posts programmes"*;
+the platform admin's read is unchanged); out of scope they are an ordinary reader.
+
+| Intent | Route / caller | A platform admin outside the post's audience |
+| --- | --- | --- |
+| Read the post | `GET /api/posts/:id` (`getById` asks `mayReadToModeratePost`, then `allowHidden`) | opens it - hidden, scheduled, a block, "Entre étudiants" included (the moderation read, logged) |
+| Read its comments | `GET /api/posts/:id/comments` (`listComments` asks `mayReadToModeratePost`, then `allowHidden`) | opens them (the moderation read, logged) |
+| Hide, unhide, delete, unmask, delete a comment | `mayModeratePost` / `commentRights` | unchanged: moderation, never a visibility question |
+| React, and the reactions served back | `POST/DELETE /:id/reactions`, `serveReactionsTo` | 404 - an ordinary reader's right; the answer lists their own entry only |
+| Comment, like a comment | `POST /:id/comments`, `POST .../like` (`'COMMENT'`) | 404 |
+| Edit their own comment | `PATCH /:id/comments/:cid` | 404 - no longer passes `allowHidden` (a write) |
+| A grant-only post with "voit les commentaires" off | `commentsWithheldFromViewerSql` (`'COMMENT'`) | withheld as from any named reader: no admin exemption; the moderation read (`allowHidden`) still reads the comments |
+| Vote in a poll | `assertMayVote` (`'VOTE'`), served `canVote` | 404; `canVote` false |
+| Republish into an association | `RepublicationsService.assertVisibleTo`, served `canRepublish` | 404; `canRepublish` false |
+| Member repost, personal republication request | `FIRST_HAND` / `assertVisibleWithoutGrant` | 404 (the predicate has no admin door) |
+| Report the post or a comment | `ModerationService.createReport`, served `canReport` | 404 `CONTENT_NOT_FOUND`; `canReport` false - an admin acts on it directly instead |
+| Be mentioned (push, bell) | `mentionRecipientsOf` | not told - a mention is a notice, not moderation |
+| Calendar link of the post | `GET /:id/calendar-link` | 404 - the participation gate: it does not pass `allowHidden`, and moderating a post does not need its event |
+| The controls a card draws | served `canParticipate` | false: the card draws no reaction and no double-tap like, and its comment preview and thread are READ-ONLY - no box, like, reply or report, a delete the server grants kept (`CommentsPreview`, `PostComments`, `CommentItem` `readOnly`), so a reported comment is read in context (`/posts/{id}`, the moderation preview). Asked for an admin's page and for a BDE moderator's page holding a post they moderate (`participableIds`); every other signed-in reader is served `true` |
+| Pin in a space | `SpacePinsService` | unchanged: governing a space, judged on the post reaching that space, never on the admin's sight |
+| Watch a live replay, as a viewer | `GET /api/lives/:id/replay` (`LivesService.replay`) | the LIVE's own gate: refused outside its audience; a review account's replay opened (`adminSeesCohort`, as the live's key and manifest) |
+| Watch a live replay, to moderate it | `GET /api/lives/:id/replay?moderation=true` | whoever MODERATES its post (`mayReadToModeratePost`: a platform admin, a BDE `MODERATE` holder within its scope, a post scheduled later excepted for the latter), past the viewer's gate (a removal, a block, the "Entre etudiants" switch), the same key and segment list a viewer gets, logged - the owner's decision of 2026-11-15, [moderation-and-blocking](moderation-and-blocking.md#the-moderation-read-of-a-post-its-comments-and-its-replay-owner-2026-11-15). The client asks it exactly when the post was served with `canParticipate` false - by construction a post only its moderator outside its audience is served (`ReplayPane`), so it plays on `/posts/{id}` and in the moderation preview. Anyone else sending the flag meets the ordinary gate. A live in progress keeps its own rule |
+
+Inside their own audience a moderator does all of these as the reader they are. Proof:
+`post-openable.integration.spec.ts` (the gate, a grant-only admin's comments, a mention, a report, a
+BDE moderator in and out of scope on the real `mayReadToModeratePost`, its scheduled-post
+exclusion included),
+`republications.integration.spec.ts`, `lives.integration.spec.ts` (the replay, both reads),
+`posts.service.can-manage.spec.ts` (`canParticipate`, `canReport`), `students-only` and
+`institution-reach` integration specs, the client's `live/api.test.ts` and `PostCard.served`.
+
+**Decided by the lead, 2026-11-14, reversible (owner's absence delegation):** an admin's own report
+of content outside their audience is refused; the calendar link of a post by id follows the
+participation gate; a mention of an admin outside the audience is not notified; a comment thread
+an admin may not act in is read-only rather than hidden. **Owner, 2026-11-15:** a replay's moderation read has the
+post's own regulator, the post moderation scope (*"La moderation des lives doit avoir le meme
+regulateur que les posts. Donc ouvrir."*), and then the post by id and its comments too (*"Oui,
+dans ses espaces"*): a BDE moderator in scope reads all three as an admin does.
+
 **Judgement calls (the most conservative where it changed who sees what):**
 
 - ~~A post's own rules are held to the ceiling at read time~~ and ~~the share preview skips a post
@@ -784,6 +837,42 @@ the announce sweep's recipient counts.
   reaches its creator's spaces by default.
 - The `custom` feed's promo/formation filters still read the legacy `users.promo`/`formation`
   columns; they only narrow, after visibility.
+
+#### The author's door: an entity's post belongs to the entity (2026-11-14)
+
+**The rule.** `authorDoorHoldsSql` (`spaces/reader-spaces.ts`) is the one fragment: the writer of a
+PERSONAL post always holds the author's door; the writer of a post in an ENTITY's name (association,
+list, institution) holds it only while they still have an `association_members` row in that entity -
+the membership the own-entity branch already reads. An officer who left keeps nothing a former member
+does not have: they read the post only if the audience still reaches them.
+
+**OWNER DECISION, 2026-11-14 (choice 13, "Tant qu'il est membre"):** the author's door on an entity's
+post holds on ANY membership row of the entity, whatever its role; a demoted officer still reads it
+but cannot edit it (editing asks `POST_AS_ASSO`); leaving the entity loses it. This supersedes the
+earlier reversible "decision 3" of the students-only switch.
+
+**Every place "the author" is special asks it:**
+
+| Where | What it does now |
+| --- | --- |
+| `postVisibleToUserSql`'s first door | the author's door (it also bypasses the "Entre étudiants" and institution-public gates, as before) |
+| `readPostOpenVerdict` term 4 (scheduled later) | "unless the reader wrote it" is the author's door, asked of a scheduled post only |
+| a comment and a reaction notice to the author (push and bell row) | `PostNotificationsService.postAuthorIsTold`, one statement; a departed writer stays reachable as a parent comment's writer or by a mention, under those rules |
+| the bell rows already written to the author (`comment`, `reaction`) | `bellRowShownSql` re-asks the door at every read, so they leave the departed writer's bell (nothing deleted; a rejoin shows them again) |
+| the author's own live reels, with their keys (`GET /api/posts/my-reels`, `getMyReels`) | an entity's reel is listed only while the door holds: a member who left gets neither its row nor its key |
+| editing and deleting the post | unchanged: already permission-gated - `isPublisherOf` asks `POST_AS_ASSO` in the entity, never `authorId` |
+
+**Decided by the lead, 2026-11-14, reversible (owner's absence delegation)**: a platform admin who
+publishes in an entity's name through the admin tier, without a membership row there, holds no
+author's door on that post either - they read
+it as the reader they are, or by id through the moderation read (`reader-spaces.integration.spec.ts`
+asserts it). The newly-reached and announce sweeps keep leaving out `authorId` itself, so a departed
+writer is not announced their own old post.
+
+A push already delivered cannot be recalled. Proof: `posts/entity-author-door.integration.spec.ts`
+(real PostgreSQL: before and after the membership, an officer outside and one inside the audience, a
+personal post's writer with no space, the scheduled exemption, the notice, the bell, the own reels),
+`post-interactions.comment-notify.spec.ts` (the notices are not sent).
 
 **PRODUCTION CONSEQUENCES - THE RELEASE ORDER IS FORCED.** The migration gave every existing
 association the single rule (ICM, saint-etienne), so the moment this ships **only ICM x
@@ -1015,8 +1104,9 @@ foreign key, since what it names depends on the kind.
 - **Republishing** (`posts/republications.service.ts`, the `repost` handler; both flags are
   `POST_AS_ASSO`):
   - `POST /api/posts/:id/republications` republishes AT ONCE. It needs `POST_AS_ASSO` in the
-    republishing association, and the post must be visible to the actor (opened by id, so an admin
-    included - our reading of "already sees").
+    republishing association, and the post must be visible to the actor as an ORDINARY READER - a
+    platform admin included since 2026-11-14 (a republication is participation, not moderation:
+    [by id](#by-id-what-a-platform-admin-may-do-2026-11-14)).
   - `POST /api/posts/:id/republication-proposals` PROPOSES. It needs the post's own association's
     `POST_AS_ASSO`; its acceptors are notified (`repost_proposed`).
   - `DELETE /api/posts/:id/republications/:associationId` lets an association withdraw its own.
@@ -1985,9 +2075,9 @@ The seven decisions of [the decisions](#the-nominative-read-grants---the-decisio
 - **Visibility plugs into the one predicate**: `readGrantReachesAssociationSql` in `spaces/reader-spaces.ts` - a grant cell contains the OPEN spaces it matches, and an association is reached when one of ITS RULES reaches such a space (any type; an institution addressing Gardanne is reached by a Gardanne cell whatever campus the grantee has). It is spliced through `ReadOpts.readGrants`, which only the `*ToViewerSql` read paths turn on (feed, search, one post, comments, reactions, votes, signed-in agenda, calendar link) and the feed gate (`IN_FEED_AUDIENCE_SQL`, so a named reader with no space and no membership opens the feed). It goes into the ASSOCIATION branch of `postVisibleToUserSql` (and the republisher's), never the personal-post branch: personal posts stay invisible by construction.
 - **Not widened**: `announceRecipientsSql` and `NEWLY_REACHED_BY_REPUBLICATION_SQL` use the plain predicate, so a grantee is NEVER notified; **the association directory, the shop and the partnerships ARE widened since 2026-11-14** ([below](#a-grant-opens-everything-of-its-cell-owner-2026-11-14)), and so are an association's booking spaces; the agenda signing (D40, `signAgendaFeedSelection`, `READER_SPACES_SQL`) signs the reader's OWN spaces only, a grant adds none, and the anonymous selection has no reader. Publishing is untouched: a grantee publishes through an institution they belong to (D31).
 - **UI**: `/admin/read-access` replaces `/admin/document-reviewers`. Since 2026-10-16 it is two tabs drawn by one template - a card per named reader with their campuses and formations as chips, edited in a sheet (ISTP is FSSS, noted there), each change saved at once with an undo toast, the journal folded under the list - and the document reviewers in the other tab ([admin](frontend/modules/admin.md#read-access-adminread-access)). It was first built as a person x (campus x whole-campus/ICM/ISMIN/FSSS/PDIS/Autre) grid of checkboxes; the document-reviewer list stayed a separate capability (its `document_reviewer_grants` rows were NOT moved: it is a different capability - public documents - and still open to BDE super-admins, who do not see the grid).
-- **Proof**: `spaces/read-grants.integration.spec.ts` (real PostgreSQL, `SOCIAL_IT_DATABASE_URL`): per-post matrix over four named readers, personal posts never visible (even with `adminSeesAll`), no-grant readers unchanged, gate, agenda, no notification, the directory per grantee and the plain predicate unwidened, revocation, unique key, idempotent migration; `read-grants.service.spec.ts` for the writes.
+- **Proof**: `spaces/read-grants.integration.spec.ts` (real PostgreSQL, `SOCIAL_IT_DATABASE_URL`): per-post matrix over four named readers, personal posts never visible, no-grant readers unchanged, gate, agenda, no notification, the directory per grantee and the plain predicate unwidened, revocation, unique key, idempotent migration; `read-grants.service.spec.ts` for the writes.
 - **THE WRITE BOUNDARY (review of 2026-10-08, user decision "read + react/comment")**: a grant lets its holder **read and react: YES; comment and like a comment: YES only with their switch "voit les commentaires" on (2026-11-04, next bullet); vote in a poll, republish, publish: NO.** `postVisibleToViewerSql` counts the grant by default (every read) and takes an explicit `readGrants: false` for the writes a grant never opened. `PostsService.assertVisible(postId, viewer, intent)` has a REQUIRED intent: `'READ_OR_REACT'` (post by id, calendar link, reaction), `'COMMENT'` (list, write, edit and like a comment, report a comment - the grant counts, then the comments predicate of the next bullet) or `'VOTE'` (the poll vote, grant-free). `RepublicationsService.assertVisibleTo` is grant-free: a grantee who also publishes as some association X cannot republish into X a post only the grant shows them (404, like any post they cannot see). Publishing a post is unchanged and stays through an institution (D31). Proof: `read-grants.integration.spec.ts` (read-or-react vs vote over every post and reader), `republications.integration.spec.ts` (a grantee who is POST_AS of an association is refused, no row written), `posts.service.visibility.spec.ts` (the SQL of `'VOTE'` has no `read_grants`), `posts.controller.visibility.spec.ts` (each route passes its intent). **Narrowed on 2026-11-04 for comments** - next bullet.
-- **COMMENTS AND PEOPLE OF A GRANT-ONLY POST (the 2026-11-04 amendment, [decisions](#the-nominative-read-grants---the-decisions-user-2026-10-07-moved-from-the-backlog-2026-10-08))**. ONE predicate, `commentsWithheldFromViewerSql(post, viewer)` in `spaces/reader-spaces.ts`, the posts' half of the ONE definition of "withheld" (`withheldFromGrantOnlyReaderSql`, shared with the live chat - next bullet): the viewer is no global admin, holds a grant, their switch is OFF (`readerSeesGrantCommentsSql`: no `read_grant_readers` row with `sees_comments`), the post is visible WITH grants and NOT visible WITHOUT them (both arms `adminSeesAll`, as the by-id gate does, and a reader who also reaches the post natively - own space, membership, republication, accepted follow, member repost - keeps everything). It composes with the "Entre étudiants" gate ([as built](#the-students-only-switch-as-built-owner-2026-11-04)) with no term of its own: the gate sits INSIDE `postVisibleToUserSql` and closes the grant door on such a post, so there the two visibility arms agree (no grant door either way) and the predicate is never true: a named reader who reaches it only through a grant - a student holding a grant on another cell included - never opens it, and one who reaches it natively keeps everything; a live has no students-only column, so the live half below is unaffected. Its consumers, each asking it and nothing else:
+- **COMMENTS AND PEOPLE OF A GRANT-ONLY POST (the 2026-11-04 amendment, [decisions](#the-nominative-read-grants---the-decisions-user-2026-10-07-moved-from-the-backlog-2026-10-08))**. ONE predicate, `commentsWithheldFromViewerSql(post, viewer)` in `spaces/reader-spaces.ts`, the posts' half of the ONE definition of "withheld" (`withheldFromGrantOnlyReaderSql`, shared with the live chat - next bullet): the viewer holds a grant, their switch is OFF (`readerSeesGrantCommentsSql`: no `read_grant_readers` row with `sees_comments`), the post is visible WITH grants and NOT visible WITHOUT them (neither arm widened for an admin since 2026-11-14: a platform admin is withheld from as any named reader, and reads the comments only by the moderation read, which skips this term; the live chat's half keeps its admin exemption, and a reader who also reaches the post natively - own space, membership, republication, accepted follow, member repost - keeps everything). It composes with the "Entre étudiants" gate ([as built](#the-students-only-switch-as-built-owner-2026-11-04)) with no term of its own: the gate sits INSIDE `postVisibleToUserSql` and closes the grant door on such a post, so there the two visibility arms agree (no grant door either way) and the predicate is never true: a named reader who reaches it only through a grant - a student holding a grant on another cell included - never opens it, and one who reaches it natively keeps everything; a live has no students-only column, so the live half below is unaffected. Its consumers, each asking it and nothing else:
   1. **list, write, edit and like a comment, and report one** - `assertVisible(.., 'COMMENT')` (the edit's answer serves the comment, who liked it included; deleting one's own comment stays open), and `ModerationService` asks `readPostOpenVerdict(.., 'COMMENT')` for a comment report - a third `PostAccessIntent` (`post-openable.ts`: the grant opens the audience term, then a withheld reader is `not-found`, the 404 of an invisible resource);
   2. **the served post** - feed, search, reels, one post by id, a vote's and a write's answer - through `PostViewerContext.commentsWithheldIds` (`commentsWithheldPostIds`, `posts/comments-withheld.ts`, asked only of the page's posts NOT in `grantFreeIds` - the predicate's own last term - so an ordinary reader's page and an administrator's cost no query for it) and the two shaping points (`shapeListRow`, `toPublicPostFromEntity`): `canSeeComments: false`, no `comments`, no `commentCount`, `reactions` = the reader's own entry plus `otherReactionCounts` (a tally by type), named polls served as tallies (`votes: number`, `votesByUser` = the reader's own) - never another id;
   3. **the reaction routes' answer** - `PostsService.serveReactionsTo`, for the add AND the removal (which is not gated, so it also stopped listing a post's reactors to whoever held its id: an outsider gets their own entry only);
@@ -2609,7 +2699,7 @@ review account. A READ across the boundary returns nothing, as for anything outs
 **AN ADMIN BROWSES LIKE ANY READER, AND THE COHORT IS NOT ONE OF THEIR SPACES.** The house rule holds:
 browsing the feed, the "Live now" list or the agenda, a platform admin sees their own spaces and
 nothing of the cohort. An admin reaches the cohort only by an id: a post opened by its id
-(`adminSeesAll`), a profile, and **a review account's live opened by its id (`adminSeesCohort`,
+to moderate it (`mayReadToModeratePost`, the moderation read), a profile, and **a review account's live opened by its id (`adminSeesCohort`,
 `get` and `manifest` only)** - no admin ever shares the cohort's space, so without it a reported live
 of the cohort could be judged by nobody. It opens the key and the manifest and nothing else: the
 admin's chat lines and reactions on that live are refused (`mayWatch`).
@@ -2703,8 +2793,8 @@ see nothing of it. OFF by default, for every author.
   a personal post never carries it. The entity's TYPE is the write's to refuse, since a CHECK
   cannot read `associations`.
 - **ONE conjunct of the one predicate**: `studentsOnlyAdmitsUserSql` in `spaces/reader-spaces.ts`
-  narrows EVERY door of `postVisibleToUserSql` but two - the post's author, and `adminSeesAll` with
-  `adminModerates` (the moderation read, below). It
+  narrows EVERY door of `postVisibleToUserSql` but the post's author's (the moderation read is not a
+  door of the predicate: it skips it, below). It
   admits a reader who is a student (`isStudentSql`: at least one SPACE, so a campus and a cursus
   formation that make a space; staff and a review account have none) or a member of the post's own
   association (`isMemberSql` on `posts."associationId"`, never a republisher's). Because it reads no
@@ -2794,7 +2884,10 @@ see nothing of it. OFF by default, for every author.
    until that space opens - the same gap they meet on every other space-based rule.
 2. The platform admin keeps the MODERATION read only (see the lead's decision S2 below); browsing
    (feed, search, bell) shows an admin without a cursus nothing of it, like any staff member.
-3. The post's author always reads it, even after leaving the association.
+3. ~~The post's author always reads it, even after leaving the association.~~ Superseded 2026-11-14 by
+   the owner's decision (choice 13, "Tant qu'il est membre",
+   [the author's door](#the-authors-door-an-entitys-post-belongs-to-the-entity-2026-11-14)): the writer
+   of an entity's post keeps it only while they are a member of that entity.
 4. "Members" are the members of the PUBLISHING association only (decision 2 says so); a republisher's
    members without a cursus do not read it.
 5. Reopening a post announces nothing new (above).
@@ -2807,11 +2900,14 @@ revisit them:**
   disjunct), so on such a post the doors are asked WITHOUT grants: a student who also holds a grant
   on another cell does not read that cell's post through it. A grant is a staff tool; the switch
   says the post is not for staff.
-- **S2 - the platform admin bypasses the gate only to MODERATE.** `adminSeesAll` opens such a post to
-  an admin only with `adminModerates`, which `readPostOpenVerdict` sets from `allowHidden` - the
-  post by id, its comment page and a comment's moderation, the routes a platform admin calls as
-  one. Reacting, commenting, voting and browsing ask the gate of an admin like of anyone, so an
-  admin without a cursus cannot act on a post they could not read.
+- **S2 - the platform admin bypasses the gate only to MODERATE.** The moderation read
+  (`readPostOpenVerdict` with `allowHidden`) opens such a post to whoever moderates it - the post by
+  id, its comment page and a comment's moderation. Reacting, commenting, voting and browsing ask the gate of an admin like of anyone, so an
+  admin without a cursus cannot act on a post they could not read. **Generalised to every post on
+  2026-11-14** ([by id](#by-id-what-a-platform-admin-may-do-2026-11-14)), and to the BDE moderator in
+  scope on 2026-11-15 (owner, *"Oui, dans ses espaces"*); the predicate's admin door
+  (`adminSeesAll` / `adminModerates`) is deleted, so this switch narrows nothing more for a
+  moderator who acts.
 
 **Usage, counted on production 2026-11-14, read-only: not used.** 0 of 327 posts carry
 `studentsOnly` (0 of the 63 posts of the last 7 days), ten days after `v1.6.5` shipped it.

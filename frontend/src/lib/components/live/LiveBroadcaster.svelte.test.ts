@@ -19,6 +19,7 @@ import { fakeCamera, fakeDeps } from '$lib/live/liveBroadcast.test-helper';
 import { FakeMediaStream, studioOn } from '$lib/live/liveStudio.test-helper';
 import { showConfirm } from '$lib/stores/confirm.svelte';
 import { m } from '$lib/paraglide/messages';
+import { getLocale } from '$lib/paraglide/runtime';
 import {
   clearHistoryOverlayStack,
   historyOverlayStackDepth,
@@ -222,6 +223,76 @@ describe('LiveBroadcaster', () => {
     q<HTMLButtonElement>('[data-live-start]')!.click();
     await settle();
     expect(f.deps.startLive).toHaveBeenCalledWith(expect.any(String), undefined, 1, null);
+  });
+
+  it('a suspended member reads it BEFORE Start, with its date; Start is disabled until a re-read clears it', async () => {
+    const f = fakeDeps();
+    f.deps.fetchLiveStanding.mockResolvedValue({
+      cutsOnRecord: 2,
+      suspendedUntil: '2026-11-20T10:00:00.000Z',
+      withdrawnAt: null,
+    });
+    const cam = fakeCamera();
+    const broadcast = new LiveBroadcast(cam.session, null, f.deps);
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    mounted.push(
+      mount(LiveBroadcaster, {
+        target,
+        props: {
+          broadcast,
+          associationId: null,
+          associationName: null,
+          onclose: vi.fn(),
+          readBattery: () => Promise.resolve(null),
+        },
+      })
+    );
+    await settle();
+    const date = new Intl.DateTimeFormat(getLocale(), { day: 'numeric', month: 'long' }).format(
+      new Date('2026-11-20T10:00:00.000Z')
+    );
+    expect(q('[data-live-standing]')!.textContent).toContain(m.live_start_suspended({ date }));
+    expect(q<HTMLButtonElement>('[data-live-start]')!.disabled).toBe(true);
+    expect(q('[data-live-start-problem]')).toBeNull();
+    expect(f.deps.startLive).not.toHaveBeenCalled();
+
+    f.deps.fetchLiveStanding.mockResolvedValue({
+      cutsOnRecord: 2,
+      suspendedUntil: null,
+      withdrawnAt: null,
+    });
+    q<HTMLButtonElement>('[data-live-standing-retry]')!.click();
+    await settle();
+    expect(q('[data-live-standing]')).toBeNull();
+    expect(q<HTMLButtonElement>('[data-live-start]')!.disabled).toBe(false);
+  });
+
+  it('a withdrawn member reads the withdrawal before Start', async () => {
+    const f = fakeDeps();
+    f.deps.fetchLiveStanding.mockResolvedValue({
+      cutsOnRecord: 3,
+      suspendedUntil: null,
+      withdrawnAt: '2026-11-01T08:00:00.000Z',
+    });
+    const broadcast = new LiveBroadcast(fakeCamera().session, null, f.deps);
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    mounted.push(
+      mount(LiveBroadcaster, {
+        target,
+        props: {
+          broadcast,
+          associationId: null,
+          associationName: null,
+          onclose: vi.fn(),
+          readBattery: () => Promise.resolve(null),
+        },
+      })
+    );
+    await settle();
+    expect(q('[data-live-standing]')!.textContent).toContain(m.live_start_withdrawn());
+    expect(q<HTMLButtonElement>('[data-live-start]')!.disabled).toBe(true);
   });
 
   it('a rules refusal at the start shows the sheet again with its sentence', async () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bookingWhen, reminderTime, resourcesLabel } from './bookingRow';
+import { bookingWhen, reminderChip, resourcesLabel } from './bookingRow';
 import { m } from '$lib/paraglide/messages';
 
 const Z = 'Europe/Paris';
@@ -39,12 +39,37 @@ describe('bookingWhen', () => {
   });
 });
 
-describe('reminderTime', () => {
-  it('is the wall time the reminder fires, in the space zone', () => {
-    expect(reminderTime(at('2026-11-02T16:00:00Z'), 60, Z)).toBe('16:00');
+describe('reminderChip', () => {
+  const start = at('2026-11-02T16:00:00Z'); // 17:00 Paris, today at NOW
+  it('is the time alone when it fires on the booking day', () => {
+    expect(reminderChip(start, 60, Z, NOW, null)).toBe('16:00');
   });
   it('is null without a reminder', () => {
-    expect(reminderTime(at('2026-11-02T16:00:00Z'), null, Z)).toBeNull();
+    expect(reminderChip(start, null, Z, NOW, null)).toBeNull();
+  });
+  it('says Tomorrow for a day-before reminder of a booking in two days', () => {
+    const s = at('2026-11-04T13:00:00Z'); // 14:00 on the 4th
+    expect(reminderChip(s, 1440, Z, NOW, null)).toBe(
+      m.bookings_row_reminder_tomorrow({ time: '14:00' })
+    );
+  });
+  it('says Today for a day-before reminder still to fire today', () => {
+    const s = at('2026-11-03T13:00:00Z'); // 14:00 tomorrow, reminder 14:00 today
+    expect(reminderChip(s, 1440, Z, NOW, null)).toBe(
+      m.bookings_row_reminder_today({ time: '14:00' })
+    );
+  });
+  it('names the weekday when the reminder is further away', () => {
+    const s = at('2026-11-12T13:00:00Z');
+    const chip = reminderChip(s, 1440, Z, NOW, null);
+    expect(chip).toMatch(/14:00$/);
+    expect(chip).not.toBe('14:00');
+    expect(chip).toContain(' ');
+  });
+  it('is hidden once the reminder was sent, or its instant has passed', () => {
+    const s = at('2026-11-03T13:00:00Z');
+    expect(reminderChip(s, 1440, Z, NOW, at('2026-11-02T13:00:00Z'))).toBeNull();
+    expect(reminderChip(start, 60, Z, at('2026-11-02T15:30:00Z'), null)).toBeNull();
   });
 });
 

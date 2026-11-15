@@ -37,6 +37,7 @@
   import { replayTimeLeftText } from '$lib/live/replayLabels';
   import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
   import { m } from '$lib/paraglide/messages';
+  import { fetchLiveReplay } from '$lib/live/api';
 
   interface Props {
     post: PostEntity;
@@ -53,6 +54,16 @@
   }
 
   let { post, active, playerSafeBottom, onReady, deps, loadCover }: Props = $props();
+
+  /**
+   * THE MODERATION READ (lead, 2026-11-15): a SIGNED-IN reader served `canParticipate` false is,
+   * by construction, the post's moderator (a platform admin, a BDE moderator in scope) reading it
+   * outside their audience (`participableIds`). A signed-out reader is served false too, but never
+   * reaches this read: `/api/lives` needs a session. So the replay is asked with `?moderation=true` -
+   * the read the server opens to whoever moderates its post (owner, 2026-11-15) - on every screen
+   * that draws it. Anywhere else it is a viewer's read.
+   */
+  const moderationRead = $derived(post.canParticipate === false);
 
   const cover = $derived(replayCoverOf(post));
 
@@ -115,6 +126,9 @@
       onMeta: (facts) => (meta = { expiresAt: facts.expiresAt, serverNow: facts.serverNow }),
       deps: {
         ...deps,
+        // The one fetcher (a test's or the real one), told which read this page asks.
+        fetchReplay: (id: string, from?: number) =>
+          (deps?.fetchReplay ?? fetchLiveReplay)(id, from, { moderation: moderationRead }),
         attach: (source) => {
           const url = URL.createObjectURL(source as unknown as MediaSource);
           src = url;
