@@ -217,17 +217,20 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
   }
 
   /**
-   * Resolves once at least `n` backends of this database wait on a lock - how a two-connection case
+   * Resolves once at least `n` sessions of THIS suite's pool (its `application_name`; the suites
+   * share one database) wait on a lock - how a two-connection case
    * knows a transaction has REACHED its wait, rather than guessing a duration.
    */
   async function lockWaiters(n: number): Promise<void> {
-    for (let i = 0; i < 400; i++) {
+    // Each round is a real query, never a sleep; the bound only turns a wait that never comes
+    // into the dump below instead of a bare timeout.
+    for (let i = 0; i < 10_000; i++) {
       const rows: { n: number }[] = await q(
         `SELECT count(*)::int AS n FROM pg_stat_activity
-          WHERE datname = current_database() AND wait_event_type = 'Lock'`
+          WHERE application_name = $1 AND wait_event_type = 'Lock'`,
+        [schema]
       );
       if (rows[0].n >= n) return;
-      await new Promise((resolve) => setTimeout(resolve, 25));
     }
     const seen: unknown[] = await q(
       `SELECT pid, state, wait_event_type, wait_event, left(query, 120) AS query FROM pg_stat_activity
@@ -260,7 +263,11 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
       entities: [Proposal, PostRepublication],
       synchronize: false,
       // The service's own session settings (`PG_SESSION_OPTIONS`), as `AppModule` opens its pool.
-      extra: { options: `${PG_SESSION_OPTIONS} -c search_path=${schema},public` },
+      // Named after the suite's schema: a lock wait is looked for among THIS suite's sessions.
+      extra: {
+        options: `${PG_SESSION_OPTIONS} -c search_path=${schema},public`,
+        application_name: schema,
+      },
     });
     await ds.initialize();
     await q(`CREATE SCHEMA ${schema}`);
@@ -807,9 +814,9 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
       );
       let proposalFree: boolean;
       try {
-        // Waits on the hide's row, whatever its order; this sleep only lets it get there. The
-        // verdict is the lock state below, never the duration.
-        await new Promise((resolve) => setTimeout(resolve, 300));
+        // Waits on the hide's row, whatever its order: seen waiting, by the server's own account.
+        // The verdict is the lock state below.
+        await lockWaiters(1);
         // The acceptance waits on the post and has NOT taken the proposal, so the hide could still
         // delete it. Taking the proposal first would make this NOWAIT fail (SQLSTATE 55P03).
         proposalFree = await q(`SELECT 1 FROM proposals WHERE id = $1 FOR UPDATE NOWAIT`, [
