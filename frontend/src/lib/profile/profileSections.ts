@@ -126,7 +126,7 @@ export function associationsSummary(memberships: UserMembershipRow[]): string {
 }
 
 /** The key of the hub's last row: the app's settings, a page of its own and not a profile section. */
-export const PROFILE_SETTINGS_ROW_KEY = 'settings';
+const PROFILE_SETTINGS_ROW_KEY = 'settings';
 
 /**
  * The hub's rows, in order, with a count where one is already loaded, then ONE row to the app's

@@ -46,9 +46,6 @@ export interface BirthdaysToday {
   userIds: string[];
 }
 
-/** The typed refusal of a date no calendar has. */
-export const BIRTHDAY_DATE_INVALID = 'BIRTHDAY_DATE_INVALID';
-
 /**
  * The typed refusal (409) of a NEW date within 30 days of the last one, a clear then a set
  * included. The settings know it beforehand from {@link OwnBirthdayState.changeOpensOn}; the refusal

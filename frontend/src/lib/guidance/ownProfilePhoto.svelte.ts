@@ -12,7 +12,7 @@ import { Log } from '$lib/utils/Log';
  * opening asks again. Only the account last passed to {@link OwnProfilePhoto.load} is held, so an
  * account switch never reads the previous account's answer.
  */
-export class OwnProfilePhoto {
+class OwnProfilePhoto {
   #account: string | null = null;
   #hasPhoto = $state<boolean | null>(null);
 
