@@ -91,8 +91,9 @@
     /** Put the caret in the box when the thread opens (the "write a comment" tap, an empty thread). */
     autofocusComposer?: boolean;
     /**
-     * READ-ONLY: the reader may read the thread but not act in it - a platform admin reading a post
-     * outside their own audience to moderate it (`canParticipate` false, 2026-11-14). No composer, and every
+     * READ-ONLY: the reader may read the thread but not act in it - a moderator (a platform
+     * admin, a BDE moderator in scope) reading a post outside their own audience to moderate it
+     * (`canParticipate` false, 2026-11-14; owner, 2026-11-15). No composer, and every
      * comment drawn read-only (`CommentItem`).
      */
     readOnly?: boolean;

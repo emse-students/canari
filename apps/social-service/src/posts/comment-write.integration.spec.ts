@@ -106,6 +106,8 @@ maybe('comment writes against PostgreSQL: none is lost to another', () => {
       mentionRecipientsOf: jest.fn(() => Promise.resolve([] as string[])),
       // The daily cap, proven in `engagement-push-cap.integration.spec.ts`: open here.
       withinPushBudget: jest.fn((_type: string, ids: string[]) => Promise.resolve(ids)),
+      // The author's door, proven in `entity-author-door.integration.spec.ts`: open here.
+      postAuthorIsTold: jest.fn(() => Promise.resolve(true)),
     };
     interactions = new PostInteractionsService(
       ds.getRepository(Post),

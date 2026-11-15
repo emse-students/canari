@@ -50,7 +50,11 @@ const maybe = URL ? describe : describe.skip;
 
 const migration = (name: string) => readFileSync(join(__dirname, '..', 'migrations', name), 'utf8');
 
-/** The cast: students, a poster (author of every entity post) and four named readers. */
+/**
+ * The cast: students, a poster (author of every entity post) and four named readers. The poster
+ * is a member of none of those entities, so the author's door of an entity's post does not open
+ * to them (2026-11-14): they read none of those posts, as a former officer would not.
+ */
 const USERS = {
   icmSe: { campus: 'saint-etienne', cursus: [{ formation: 'ICM', promo: 2023 }] },
   isminGa: { campus: 'gardanne', cursus: [{ formation: 'ISMIN', promo: 2023 }] },
@@ -104,21 +108,21 @@ const POSTS: {
     label: 'an ICM x Saint-Etienne association post: its ticked cells and nobody else',
     authorId: 'poster',
     associationId: A1,
-    seenBy: ['icmSe', 'poster', 'grantIcmSe', 'grantBoth'],
+    seenBy: ['icmSe', 'grantIcmSe', 'grantBoth'],
   },
   {
     id: '00000000-0000-4000-8000-000000000002',
     label: 'a whole-Gardanne association post',
     authorId: 'poster',
     associationId: A2,
-    seenBy: ['isminGa', 'poster', 'grantGa', 'grantBoth'],
+    seenBy: ['isminGa', 'grantGa', 'grantBoth'],
   },
   {
     id: '00000000-0000-4000-8000-000000000003',
     label: 'an institution addressing everyone: every named reader whose cell holds a space',
     authorId: 'poster',
     associationId: I_ALL,
-    seenBy: ['icmSe', 'isminGa', 'poster', ...GRANTEES],
+    seenBy: ['icmSe', 'isminGa', ...GRANTEES],
   },
   {
     id: '00000000-0000-4000-8000-000000000004',
@@ -140,14 +144,14 @@ const POSTS: {
     authorId: 'poster',
     associationId: A2,
     republishedBy: [A1],
-    seenBy: ['isminGa', 'icmSe', 'poster', 'grantGa', 'grantIcmSe', 'grantBoth'],
+    seenBy: ['isminGa', 'icmSe', 'grantGa', 'grantIcmSe', 'grantBoth'],
   },
   {
     id: '00000000-0000-4000-8000-000000000007',
     label: 'an institution of the Gardanne campus: seen by a grantee ticking Gardanne',
     authorId: 'poster',
     associationId: I_GA,
-    seenBy: ['isminGa', 'poster', 'grantGa', 'grantBoth'],
+    seenBy: ['isminGa', 'grantGa', 'grantBoth'],
   },
 ];
 
