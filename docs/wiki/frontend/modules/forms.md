@@ -770,6 +770,16 @@ in `criteriaOptions.ts`, `FIRST_PROMO_YEAR` in `pricing/validate.ts` - because `
 `2024` matches nobody for ever, and a criterion that silently matches nobody is what this module
 refuses everywhere else.
 
+**A formation criterion names a formation a profile can carry** (2026-11-15). A cursus may only name
+the five of `SPACE_FORMATIONS` (D4: `Autre` is the one bucket for masters, doctorates and the rest),
+so any other string in a criterion - a question's `showIf`, the submit condition, a grid dimension -
+matches nobody for ever. `asFormationValues` (`pricing/validate.ts`) refuses it where it is written,
+`400 { code: 'AUDIENCE_FORMATION_UNKNOWN' }`, worded through Paraglide (`paymentRefusal.ts`). The
+picker offers the values in use (`GET forms/criteria/formations`), a subset of the five, so the
+refusal reaches an older client or a hand-made request only. Measured on production the same day:
+the only formation any stored criterion names is `ICM`, and no profile names one outside the five -
+no stored form is refused by this, and no data needed rewriting.
+
 ## One predicate, three uses
 
 The criteria that divide a price grid are the same criteria that gate a question and gate the form:

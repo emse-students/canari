@@ -112,6 +112,9 @@ export function providerRefusalMessage(err: unknown): string | null {
   if (err instanceof SocialApiError && err.code === AUDIENCE_COTISATION_BOTH_MODES) {
     return m.form_condition_cotisation_both_modes();
   }
+  if (err instanceof SocialApiError && err.code === AUDIENCE_FORMATION_UNKNOWN) {
+    return m.form_condition_formation_unknown();
+  }
   if (err instanceof SocialApiError && err.code === PAYMENT_ROUTING_CHANGED) {
     return m.shop_payment_routing_changed();
   }
@@ -267,6 +270,12 @@ const FORM_NOT_OPEN_TO_YOU = 'FORM_NOT_OPEN_TO_YOU';
  * a "ne detient pas" condition; this editor moves the tiers instead.
  */
 const AUDIENCE_COTISATION_BOTH_MODES = 'AUDIENCE_COTISATION_BOTH_MODES';
+
+/**
+ * The body `code` of social-service's 400 when a criterion names a formation no profile can carry
+ * (`pricing/validate.ts`): it would match nobody, so it is refused when the form is saved.
+ */
+const AUDIENCE_FORMATION_UNKNOWN = 'AUDIENCE_FORMATION_UNKNOWN';
 
 /**
  * The body `code` of social-service's 409 when the association's payment account changed while
