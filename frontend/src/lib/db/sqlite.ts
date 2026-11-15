@@ -34,7 +34,7 @@ import type {
   PendingMutationReseal,
   PendingMutationWrite,
 } from './types';
-import { FeedPageUnreadableError } from './types';
+import { FeedPageUnreadableError, StoreWriteRefusedError } from './types';
 import {
   joinPendingMutation,
   pendingMessageTag,
@@ -1979,8 +1979,15 @@ export class SqliteStorage implements IStorage {
   }
 
   /** Encrypt the seed and upsert the session. See {@link IStorage.saveGraineSession}. */
-  async saveGraineSession(session: StoredGraineSession, deviceKeyB64: string): Promise<void> {
+  async saveGraineSession(
+    session: StoredGraineSession,
+    deviceKeyB64: string,
+    onlyWhile?: () => boolean
+  ): Promise<void> {
     const encrypted = await encryptData(encodeGraineSensitive(session), deviceKeyB64);
+    if (onlyWhile && !onlyWhile()) {
+      throw new StoreWriteRefusedError(`the Graine session ${session.sessionId}`);
+    }
     const c = graineClearColumns(session);
     await this.db.execute(
       `INSERT OR REPLACE INTO graine

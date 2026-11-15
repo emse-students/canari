@@ -12,6 +12,7 @@ vi.mock('$lib/stores/auth', () => ({
   signOutGeneration: () => 0,
 }));
 
+import 'fake-indexeddb/auto';
 import { TauriMlsService } from './TauriMlsService';
 import { LocalStateNotReadyError } from '$lib/mls-client';
 import { noteFrameEmitted } from '$lib/mls-client/sendRatchetLedger';
@@ -29,6 +30,7 @@ describe('TauriMlsService.openLocalStateWithKey - the group caches', () => {
     invoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'lister_groupes') return ['group-held'];
       if (cmd === 'obtenir_epoch') return 3;
+      if (cmd === 'lire_ledgers_mls') return {};
       return undefined;
     });
   });
@@ -59,8 +61,8 @@ describe('TauriMlsService.openLocalStateWithKey - the group caches', () => {
   });
 
   it('burns the generations this device sent but never checkpointed, as init does', async () => {
-    noteFrameEmitted('user-1', 'group-held', 3);
-    noteFrameEmitted('user-1', 'group-held', 3);
+    await noteFrameEmitted('user-1', 'group-held', 3);
+    await noteFrameEmitted('user-1', 'group-held', 3);
     const svc = new TauriMlsService();
     (svc as unknown as { deviceId: string }).deviceId = 'device-1';
 
@@ -81,6 +83,7 @@ describe('TauriMlsService.openLocalStateWithKey - the group caches', () => {
         listingAsked();
         return new Promise<string[]>((r) => (releaseListing = r));
       }
+      if (cmd === 'lire_ledgers_mls') return {};
       return undefined;
     });
     const svc = new TauriMlsService();
