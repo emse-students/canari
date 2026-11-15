@@ -65,3 +65,19 @@ describe('every sign-out exit names itself', () => {
     ).toContain('signOut: clearAuth,');
   });
 });
+
+describe('the native log knows the same causes', () => {
+  it('maps exactly the labels of the TypeScript union, and nothing else, to themselves', () => {
+    const union = [...read('lib/stores/signOutCause.ts').matchAll(/^\s*\| '([a-z-]+)'/gm)].map(
+      (m) => m[1]
+    );
+    const rust = read('../src-tauri/src/commands/push_registration.rs');
+    const start = rust.indexOf('fn sign_out_cause_label(');
+    expect(start).toBeGreaterThan(-1);
+    const body = rust.slice(start, rust.indexOf('\n}', start));
+    const arms = [...body.matchAll(/"([a-z-]+)" => "([a-z-]+)"/g)];
+    expect(arms.every(([, from, to]) => from === to)).toBe(true);
+    expect(arms.map(([, from]) => from).sort()).toEqual([...union].sort());
+    expect(union.length).toBeGreaterThan(0);
+  });
+});

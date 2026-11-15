@@ -190,6 +190,26 @@ pub(crate) fn clear_signed_out_mark(data_dir: &std::path::Path) -> Result<(), St
     }
 }
 
+/// The sign-out causes the client names (`SignOutCause` in `signOutCause.ts`, the SAME closed list -
+/// `signOutCause.callSites.test.ts` compares the two), as the `'static` label the log prints.
+///
+/// What reaches the log is always one of these literals: the command takes a `String` so that a
+/// label this build does not know never fails the deregistration, and such a label prints as
+/// `unknown` - never the caller's text, so the native log carries nothing a caller supplied.
+pub(crate) fn sign_out_cause_label(cause: &str) -> &'static str {
+    match cause {
+        "chosen" => "chosen",
+        "pin-gate" => "pin-gate",
+        "platform-gate" => "platform-gate",
+        "identity-split" => "identity-split",
+        "account-deleted" => "account-deleted",
+        "session-expired" => "session-expired",
+        "device-revoked" => "device-revoked",
+        "account-deleted-in-another-tab" => "account-deleted-in-another-tab",
+        _ => "unknown",
+    }
+}
+
 /// Ends this device's push registration at a sign-out: [`end_push_registration_files`], then the
 /// native deletion of the OS token and of the platform-held push secret.
 ///
@@ -209,7 +229,10 @@ pub(crate) async fn end_push_registration(
     app: tauri::AppHandle,
     cause: String,
 ) -> Result<bool, String> {
-    log::info!("[PushEnd] sign-out decided by: {cause}");
+    log::info!(
+        "[PushEnd] sign-out decided by: {}",
+        sign_out_cause_label(&cause)
+    );
     #[cfg(any(target_os = "android", target_os = "ios"))]
     {
         let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
@@ -367,8 +390,17 @@ fn completed(done: bool) -> &'static str {
 mod tests {
     use super::{
         clear_signed_out_mark, end_push_registration_files, end_push_registration_files_then,
-        DELETION_OWED_FILE, FCM_TOKEN_FILE, SIGNED_OUT_FILE, VOIP_TOKEN_FILE,
+        sign_out_cause_label, DELETION_OWED_FILE, FCM_TOKEN_FILE, SIGNED_OUT_FILE, VOIP_TOKEN_FILE,
     };
+
+    /// A known cause prints as itself; anything else prints `unknown`, never the caller's text.
+    #[test]
+    fn a_sign_out_cause_prints_only_a_label_of_the_closed_list() {
+        assert_eq!(sign_out_cause_label("pin-gate"), "pin-gate");
+        assert_eq!(sign_out_cause_label("session-expired"), "session-expired");
+        assert_eq!(sign_out_cause_label("alice@example.org"), "unknown");
+        assert_eq!(sign_out_cause_label(""), "unknown");
+    }
     use crate::commands::push::{
         EXTENSION_PUSH_SECRET_FILE, PENDING_PUSH_SECRET_FILE, PUSH_CONTEXT_FILE,
     };

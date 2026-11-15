@@ -629,7 +629,7 @@ redirect would have built survives; the root and the sign-in pages stay bare. So
 **Every `clearAuth` names its cause** (`SignOutCause`, `frontend/src/lib/stores/signOutCause.ts`: `chosen`,
 `pin-gate`, `platform-gate`, `identity-split`, `account-deleted`, `session-expired`, `device-revoked`,
 `account-deleted-in-another-tab`), printed on the `[A] clear (<cause>)` line and handed to the native
-`end_push_registration`, whose first line is `[PushEnd] sign-out decided by: <cause>`. A label for the
+`end_push_registration`, whose first line is `[PushEnd] sign-out decided by: <cause>` - mapped in Rust onto the same closed list (`sign_out_cause_label`), anything else printing `unknown`, so the native log carries nothing a caller wrote. A label for the
 log, never read to decide anything; a closed union so the compiler makes every exit name itself.
 
 **Why the NATIVE line has to carry it.** A store build forwards no WebView console to logcat, so on a
