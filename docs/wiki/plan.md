@@ -101,7 +101,6 @@ earliest version, as a checklist.
 - [ ] [the push of a request to republish a post](backlog.d/reading-owed-the-push-of-a-request-to-republish-a-post.md)
 - [ ] [a call survives the app leaving the screen: the Android microphone foreground service](backlog.d/reading-owed-a-call-survives-the-app-leaving-the-screen-the-android-microphone.md)
 - [ ] [a blind salon banner draws no author, no mention and no mention route, and a held mention's redraw does not sound twice](backlog.d/reading-owed-a-blind-salon-banner-draws-no-author-no-mention-and-no-mention.md)
-- [ ] [new-device notices (#2278, every stable since `1.5.0`; mls-protocol)](backlog.d/reading-owed-new-device-notices-2278-every-stable-since-1-5-0-mls-protocol.md)
 - [ ] [the native caches sealed at rest (2026-10-22): the upgrade readings on both phones](backlog.d/reading-owed-the-native-caches-sealed-at-rest-2026-10-22-the-upgrade-readings.md)
 - [ ] [the stricter script policy and the iOS 16 minimum](backlog.d/reading-owed-the-stricter-script-policy-and-the-ios-16-minimum.md)
 - [ ] [a waiting-seat ring on dev (the uninvited-entry count moves to the build that carries #3519)](backlog.d/a-new-person-is-admitted-only-by-a-member-decided-by-the-user-on-2026-10-23.md)
