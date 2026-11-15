@@ -223,7 +223,7 @@
   <div
     bind:this={sheet}
     use:holdFocus={scrim}
-    class="motion-sheet-in keyboard-aware-bottom bg-cn-surface text-text-main absolute inset-x-0 bottom-0 flex h-[60dvh] max-h-[calc(var(--app-viewport-height,100dvh)-var(--safe-area-inset-top,0px)-3rem-var(--keyboard-occlusion-bottom,0px))] flex-col rounded-t-3xl pb-[var(--safe-area-inset-bottom,0px)] shadow-2xl outline-none"
+    class="motion-sheet-in keyboard-aware-bottom bg-cn-surface text-text-main absolute inset-x-0 bottom-0 flex h-[60dvh] flex-col rounded-t-3xl shadow-2xl outline-none"
     style:transform="translate3d(0, {dragY}px, 0)"
     style:transition={settling
       ? `transform ${GESTURE.SETTLE_MS}ms cubic-bezier(0.2, 0, 0, 1)`
@@ -235,6 +235,7 @@
     tabindex="-1"
     data-comments-drawer-sheet
     data-keyboard-ride="box"
+    data-keyboard-leaf
   >
     <div
       class="flex shrink-0 cursor-grab touch-none flex-col items-center px-2 pt-2 select-none"

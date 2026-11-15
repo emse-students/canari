@@ -236,19 +236,27 @@ function probeOf(el: HTMLElement): HTMLElement {
  * (`releaseThreadGlides`, its layout), so no read here forces a style pass another write dirtied.
  *
  * @param announcedAt when the keyboard started moving, or null - see {@link KeyboardRideCapture}.
+ * @param panels `position: fixed` panels placed by script above the keyboard (`bindFixedPopover`),
+ *   ridden by their own box like a `box` piece: they are re-placed once the new layout is in, and ride
+ *   from where they were drawn to that place (the Android ride only - see `keyboardViewport`).
  */
 export function captureKeyboardRide(
   root: ParentNode,
   durationMs: number,
   easing: string,
   lastRow: LastRowRide = 'box',
-  announcedAt: number | null = null
+  announcedAt: number | null = null,
+  panels: readonly HTMLElement[] = []
 ): KeyboardRideCapture | null {
   const riders: Rider[] = [];
   for (const el of root.querySelectorAll<HTMLElement>('[data-keyboard-ride]')) {
     const probe = probeOf(el);
     const rows = lastRow === 'rows' && el.dataset.keyboardRide === 'last-row';
     riders.push({ el, probe, edgeBefore: rideEdgeOf(probe), rows });
+  }
+  for (const el of panels) {
+    if (!el.isConnected) continue;
+    riders.push({ el, probe: el, edgeBefore: rideEdgeOf(el), rows: false });
   }
   return riders.length > 0 ? { riders, durationMs, easing, announcedAt } : null;
 }

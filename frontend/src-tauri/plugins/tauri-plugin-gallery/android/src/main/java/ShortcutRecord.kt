@@ -27,7 +27,7 @@ internal class ShortcutRecord(private val prefsName: String, private val tag: St
             val array = JSONArray(raw)
             List(array.length()) { array.getString(it) }
         } catch (e: Exception) {
-            Log.e(tag, "the shortcut record $prefsName is unreadable: ${e.message}")
+            Log.e(tag, "the shortcut record $prefsName is unreadable: ${e.javaClass.simpleName}")
             null
         }
     }
