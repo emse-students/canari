@@ -3,7 +3,8 @@
 target: 1.9.0
 
 **Owner, 2026-11-15** ([moderation-authority](../moderation-authority.md#comments-plain-anonymous-in-an-associations-name),
-decision 17): auto-hide extends to comments, with the same threshold, and a moderator restores one.
+decision 17): auto-hide extends to comments, with the same threshold. That a moderator restores one
+is the lead's reading, reversible (the post's rule).
 Live chat lines stay with the broadcaster and the bureau - no auto-hide for them.
 
 **Today** five pending reports hide a POST (`createReport`, `apps/social-service/src/moderation/moderation.service.ts`,

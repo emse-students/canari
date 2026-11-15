@@ -27,7 +27,7 @@ the moderator can only mute. The open report is the fact that keeps the door ope
 clock): the hide reads `live_chat_reported_lines` for a pending report naming that line, marks the
 line hidden wherever it is still served (the replay's chat, the kept report text is untouched for the
 reviewer), and reviews the report. The broadcaster of a personal live is not named by the decision and
-keeps the 410. `live_chat` reports reach the bureau's queue for its own lives. No auto-hide of chat
+keeps the 410 - the lead's reading, reversible. `live_chat` reports reach the bureau's queue for its own lives. No auto-hide of chat
 lines (decision 17: they stay with the broadcaster and the bureau).
 
 **Proof.** `lives.integration.spec.ts` on PostgreSQL: a co-holder ends the association's live, removes

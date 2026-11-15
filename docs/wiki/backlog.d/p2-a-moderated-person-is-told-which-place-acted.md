@@ -18,9 +18,14 @@ becomes a tombstone, and the author learns it by noticing.
   act and place kind.
 - Acts that notify: a moderator's hide and delete of a post, a CanaReel or a replay, a moderator's
   delete of a comment, a live cut (already told to the broadcaster by the ladder - one notice, not
-  two), a mute, a bio erasure ([its entry](p2-a-moderator-erases-a-bio.md)). Acts that do NOT: a place
+  two), a bio erasure, and - the lead's reading, reversible - a mute ([its entry](p2-a-moderator-erases-a-bio.md)). Acts that do NOT: a place
   owner's silent hide of a comment (decision 15), an auto-hide (no one acted; the notice comes if a
   moderator then deletes), a moderation read.
+- **Reading their own hidden content** (the lead's reading, reversible, principle 1: it is theirs):
+  the author of a hidden post or CanaReel, and the broadcaster of a hidden replay (any holder, for
+  content in an association's name), may open it READ-ONLY - no reaction, comment or share - so the
+  notice points at something they can see. Today a hidden post and a hidden replay are refused to
+  everyone but the platform admin (`post-openable.ts`, the replay read in `lives.service.ts`).
 - An anonymous post's author is told like any author, and the notice never names the post in a way
   that reaches anyone else.
 - No reply, no appeal route; the reason is a code from the one reason list
@@ -31,5 +36,6 @@ becomes a tombstone, and the author learns it by noticing.
 
 **Proof.** A spec per notifying act: one notice, naming the place and never the actor (an assertion on
 the stored row's fields); no notice for a silent hide, an auto-hide and a read; a client test that the
-notice draws the place's name and the reason. The `[NOTICE]` rows of the
+notice draws the place's name and the reason; the author and the broadcaster open their own hidden
+post and replay read-only, and any other reader still gets the refusal. The `[NOTICE]` rows of the
 [grid spec](the-moderation-authority-grid-is-asserted-by-table-driven-specs.md).

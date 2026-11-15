@@ -77,23 +77,28 @@ questions the first draft of this page left open, the same day.
 12. **A parent BDE super-admin's rewrite: "Non, l'acte visible suffit".** Making oneself a member
     with the right to edit is a visible act, and good conduct is trusted: no further wall than
     decision 8's split. Decision 8's WP carries no open point any more.
-13. **The moderation journal: "Oui, visible des pairs".** Every act - hide, delete, unmask, a
-    moderation read, a mute - leaves a trace visible to the other moderators of the same place (the
-    BDE, the bureau, the institution) and to the platform admin.
+13. **The moderation journal: "Oui, visible des pairs".** Asked whether every act - hide, delete,
+    unmask, a moderation read, a mute - should leave a trace visible to *"les autres moderateurs du
+    meme lieu (BDE, bureau, institution)"* and to the platform admin, the owner answered *"Oui,
+    visible des pairs"*. Who counts as a peer for each kind of act is the lead's reading, reversible
+    ([the journal table](#the-journal-and-the-notice)).
     [WP](backlog.d/p2-every-moderation-act-is-journaled-for-its-peers.md).
 14. **The person whose content was hidden or deleted: "Savoir seulement".** They see WHICH PLACE
     acted (the association, the BDE, the institution or the platform admin), never the person, and
     the reason when one was given. There is no appeal inside the app.
     [WP](backlog.d/p2-a-moderated-person-is-told-which-place-acted.md).
-15. **A comment hidden by the post's owner: "Auteur ou moderateur, en silence".** The post's owner or
-    a moderator of the post restores it, and the writer is not notified - a lighter act than
-    moderation, like a broadcaster hiding a line of their chat (so decision 14's notice does not
-    apply to it). Decision 5's WP.
+15. **A comment hidden by the post's owner: "Auteur ou moderateur, en silence".** Asked who restores
+    it and whether its writer is told, the owner answered: the post's owner or a moderator of the
+    post restores it, in silence - the writer is told neither of the hide nor of the restore. This
+    does not contradict decision 14: a hide by the post's owner is the place owner's lighter act, like
+    a broadcaster hiding a line of their chat, not moderation, and decision 14 is about moderation.
+    Decision 5's WP.
 16. **A bio: "Effacement par l'admin et le BDE".** Erase only, never rewrite, by the platform admin and
     the BDE in scope; the person is told (decision 14) and the act is journaled (decision 13).
     [WP](backlog.d/p2-a-moderator-erases-a-bio.md).
-17. **Auto-hide extends to comments**: the same threshold, restored by a moderator. Live chat lines
-    stay with the broadcaster and the bureau (no auto-hide).
+17. **Auto-hide extends to comments**, with the same threshold; live chat lines stay with the
+    broadcaster and the bureau (no auto-hide). That a moderator of the comment restores an auto-hidden
+    one is the lead's reading, reversible (the post's rule).
     [WP](backlog.d/p2-auto-hide-extends-to-comments.md).
 18. **A live chat line is hidden by the live's moderators (the BDE, the bureau, the platform admin)
     after the live ended**, as long as a report on it is open. Decision 7's WP.
@@ -122,12 +127,12 @@ questions the first draft of this page left open, the same day.
 
 | Publisher | Local regulator (target) | Today, where it differs |
 | --- | --- | --- |
-| a person (personal, anonymous, "Entre etudiants", a CanaReel, a replay) | the BM of any space the author belongs to (`bdeModeratesUserSql`) | also the IM of an institution governing one of those spaces |
+| a person (personal, anonymous, "Entre etudiants", a CanaReel, a replay) | the BM of any space the author belongs to (`bdeModeratesUserSql`) | also the IM of an institution governing one of those spaces [IM] |
 | an association or a list with a parent BDE | the parent BDE's BM (`bdeModeratesPublisherSql`, WP-D2) | - |
 | a BDE | its own `MODERATE` members (`governingBdeJoinSql`: a BDE governs itself) | - |
-| an institution | **its own IM**, AP as recourse | AP only (`MODERATION_RESERVED_TO_PLATFORM_ADMIN`) |
+| an institution | **its own IM**, AP as recourse | AP only (`MODERATION_RESERVED_TO_PLATFORM_ADMIN`) [IM] |
 | an association with no parent, a person with no space | AP - a place with no regulator | - |
-| a student of a space whose governor is an institution, no BDE | AP - a place with no regulator | the institution's IM |
+| a student of a space whose governor is an institution, no BDE | AP - a place with no regulator | the institution's IM [IM] |
 
 ---
 
@@ -145,6 +150,7 @@ the table above defines it.
 | Action | AP | BM | IM (own institution's post) | HO | AU (personal) | RD |
 | --- | --- | --- | --- | --- | --- | --- |
 | Moderation read: a hidden or out-of-audience post, its comments, its replay - logged | yes (P1) | **yes in scope** (today: no, P1) [3561] | **yes** (today: no) [IM] | no | no | no |
+| Read one's own hidden post, CanaReel or replay, read-only (principle 1: it is theirs) - the lead's reading, reversible | no | no | no | **yes**, a post in its name (today: no, P1) [NOTICE] | **yes** (today: no, P1) [NOTICE] | no |
 | Participate (react, comment, vote, report) outside the audience | **no** (today: yes, P2) [3561] | no | no | no | - | no |
 | Hide / unhide | yes | yes in scope (P3) | **yes** (today: no, AP only, P4) [IM] | no | no | no |
 | Delete | yes | yes in scope (P5) | **yes** (today: only if HO too) [IM] | yes | yes | no |
@@ -180,7 +186,7 @@ the table above defines it.
 | Delete (a tombstone where a protected reply stays) | yes (C4) | yes in scope (C4) | **yes** (today: no, AP only) [IM] | no - hide only | yes | yes, with its thread (C5) | no |
 | Edit the text | no (C6) | no (C6) | no | no | yes | yes | no |
 | Delete from the reports queue | yes | yes in scope (C7) | **yes** (today: no) [IM] | - | - | - | - |
-| Auto-hide | - | - | - | - | - | **5 pending reports hide it, a moderator restores it** (today: never, C8) [AUTOHIDE] |
+| Auto-hide | - | - | - | - | - | - | **5 pending reports hide it**; a moderator restores it, the lead's reading (today: never, C8) [AUTOHIDE] |
 
 - (C1) `SS/posts/posts.service.ts` `listComments`: `allowHidden` = `opts.isGlobalAdmin`. Being built by #3561 (decision 2).
 - (C2) `seesAccount` (`SS/posts/comment-identity.ts`); the post's author has no reveal right.
@@ -196,11 +202,12 @@ the table above defines it.
 | Action | AP | BM | IM (own institution's live) | HO (association / institution live, not broadcasting) | BC | RD |
 | --- | --- | --- | --- | --- | --- | --- |
 | Watch outside the audience | no (review cohort only, L1) | no | no | no | yes | no |
-| Moderation read of a replay | **yes** (today: yes outside the audience, never once hidden, L7) [3561] | **yes in scope** (today: no, L7) [3561] | **yes** (today: no) [IM] | no | yes | no |
+| Moderation read of a replay | **yes** (today: yes outside the audience, never once hidden, L7) [3561] | **yes in scope** (today: no, L7) [3561] | **yes** (today: no) [IM] | no | no | no |
+| Read one's own hidden replay, read-only (principle 1: it is theirs) - the lead's reading, reversible, as for a post | no | no | no | **yes**, a live in its name (today: no, L7) [NOTICE] | **yes** (today: no, L7) [NOTICE] | no |
 | End the live | via a cut | via a cut | via a cut | **yes** (today: no, L2) [LIVE] | yes | no |
 | Cut (ends it, records a strike) | yes | yes in scope (L3) | **yes** (today: no) [IM] | no | - | no |
 | Hide a chat line, live open | yes | yes in scope (L4) | **yes** (today: no) [IM] | **yes** (today: no, L4) [LIVE] | yes | no |
-| Hide a chat line after the live ended, while a report on it is open (decision 18) | **yes** (today: 410, L4) [LIVE] | **yes in scope** (today: 410) [LIVE] | **yes** (today: 410) [LIVE] | **yes** (today: 410) [LIVE] | no | no |
+| Hide a chat line after the live ended, while a report on it is open (decision 18) | **yes** (today: 410, L4) [LIVE] | **yes in scope** (today: 410) [LIVE] | **yes** (today: no) [IM] [LIVE] | **yes** (today: no, L4) [LIVE] | no, the lead's reading (decision 18 does not name a personal live's broadcaster), reversible | no |
 | Remove a viewer | no | no | no | **yes** (today: no, L5) [LIVE] | yes | no |
 | Withdraw or restore the right to broadcast (a person) | yes | yes, a person of its spaces (L6) | **no** (today: yes for a governed space's students) [IM] | no | no | no |
 | Hide / delete a replay | as a post | as a post | as a post | delete | delete | no |
@@ -282,12 +289,13 @@ delete `SS/channels/channel.service.ts` with `SS/channels/moderation-grant.ts`, 
 | Read | no | no | yes, on their device | no |
 | Add someone | no, explicitly | no | yes | no |
 | Remove someone | no | no | yes, anyone (decision 10) | no |
+| Group admin role | - | - | **none, all members equal** (today: an unread `role` column says otherwise) [MLS] | - |
 | Report a message | does not exist | - | - | - |
 | Block (refuses an add, a call, a 1-to-1) | - | - | yes | - |
 
 `assertCallerMayMutateMembership` (`CD/controllers/members.controller.ts`, "A PLATFORM GLOBAL ADMIN IS
 NOT EXEMPT"). The `role` column (`CD/entities/group-member.entity.ts`) is written `member` by
-`CD/utils/group-membership.ts` and read nowhere - to drop, the `MLS` entry of the gaps table.
+`CD/utils/group-membership.ts` and read nowhere - to drop.
 
 ### Reports - which queue, and what follows
 
@@ -309,8 +317,8 @@ A reporter sees no status and may not re-file after a dismissal (409 `ALREADY_RE
 
 | Who sees | What | Target | Today |
 | --- | --- | --- | --- |
-| The other moderators of the same place - the BDE's `MODERATE` members, the bureau, the institution's IM - and the AP | every act: hide, unhide, delete, unmask, a moderation read, a mute, a bio erasure, a cut, a place owner's hide (decision 13) | **a journal entry: who, what, when, the reason** | **server logs only, read by nobody in the app** [JOURNAL] |
-| The person whose content was hidden or deleted, or whose bio was erased | which PLACE acted (the association, the BDE, the institution, the platform admin), never the person; the reason when one was given; no appeal in the app (decision 14) | **an in-app notice** | **nothing** [NOTICE] |
+| The other moderators of the same place (owner: *"BDE, bureau, institution"*) and the AP - per act, the lead's reading, reversible: the BDE's `MODERATE` members for a BDE act, the bureau for a place owner's act, the institution's IM for its acts | every act: hide, unhide, delete, unmask, a moderation read, a mute, a bio erasure, a cut, a place owner's hide (decision 13) | **a journal entry: who, what, when, the reason** | **server logs only, read by nobody in the app** [JOURNAL] |
+| The person whose content was hidden or deleted, or whose bio was erased (decisions 14, 16); also a muted person - the lead's reading, reversible | which PLACE acted (the association, the BDE, the institution, the platform admin), never the person; the reason when one was given; no appeal in the app (decision 14) | **an in-app notice**, and a read-only view of their own hidden content (the lead's reading, reversible) | **nothing** [NOTICE] |
 | The writer of a comment the place owner hid | nothing - a silent act (decision 15) | nothing | nothing (no such hide yet) |
 
 ### Blocks - private, outside moderation
