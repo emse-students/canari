@@ -61,6 +61,20 @@ export function offersEveryone(type: string): boolean {
   return type === 'institution';
 }
 
+/**
+ * May a pair of `campus` be ADDED to an entity of this type that reaches `reached`? An institution:
+ * always. Anything else addresses ONE campus (decision 3; the server refuses rules on two, for a
+ * platform admin too), so once a pair of a campus is reached the other campuses' boxes are not
+ * offered - a grid offers what can be saved. A box already ticked stays its own to untick, whatever
+ * this answers: removing is never refused.
+ */
+export function offersCampus(type: string, reached: Set<Cell>, campus: Campus): boolean {
+  if (offersEveryone(type)) return true;
+  return CAMPUSES.every(
+    (other) => other === campus || !campusCells(other).some((c) => reached.has(c))
+  );
+}
+
 export type Coverage = 'none' | 'some' | 'all';
 
 /** The coverage of a set of pairs by the reached ones. */
