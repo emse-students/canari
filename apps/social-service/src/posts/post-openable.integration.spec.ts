@@ -675,6 +675,37 @@ maybe("writes and notifications on a post follow the read's gate, against Postgr
       expect(s.reportRepo.save).toHaveBeenCalled();
     });
 
+    it("names who a reported post is about from the post's own row: the author of a personal post, an anonymous one included, and nobody for a post in an association's name", async () => {
+      const about = async (postId: string) => {
+        const { s, done } = report('reader', 'post', postId);
+        await done;
+        return (s.reportRepo.save.mock.calls[0][0] as { reportedUserId: string | null })
+          .reportedUserId;
+      };
+      expect(await about(P_PERSONAL)).toBe('author');
+      expect(await about(P_ANONYMOUS)).toBe('author');
+      const asso = id(905);
+      const post = id(906);
+      await client.query(`INSERT INTO associations (id, name) VALUES ($1, 'Club')`, [asso]);
+      // The reader's own space, so the post opens to them as any post of that association would.
+      await client.query(
+        `INSERT INTO association_audiences ("associationId", formation, campus)
+           VALUES ($1, 'ICM', 'saint-etienne')`,
+        [asso]
+      );
+      await client.query(
+        `INSERT INTO posts (id, "authorId", "associationId") VALUES ($1, 'author', $2)`,
+        [post, asso]
+      );
+      try {
+        expect(await about(post)).toBeNull();
+      } finally {
+        await client.query(`DELETE FROM posts WHERE id = $1`, [post]);
+        await client.query(`DELETE FROM association_audiences WHERE "associationId" = $1`, [asso]);
+        await client.query(`DELETE FROM associations WHERE id = $1`, [asso]);
+      }
+    });
+
     it.each([
       ['outsider', P_PERSONAL],
       ['blockedByAuthor', P_PERSONAL],
