@@ -447,6 +447,28 @@ rows ever exist during the mount. The parallel-run readings are in #2286.
   timeouts). The helper holds the clock still for the pair. With a clock that advances 300 ms per
   read, 5 of 10 tests fail on the old helper and none on the new one.
 
+**The stragglers, migrated (2026-11-15).** The 19 scans moved in 2026-10-19, but the markup gates
+(`markupSources.ts`: `svelteFiles`, `shippedSourceFiles`, `allMarkup`) and eight tests still walked or
+read `src` themselves, and under a loaded full run they timed out at 5 s again (one carried a
+`60_000` ms timeout to hide it). **Measured cause, not a guess: the disk.** Walking and reading the
+~1,700 shipped sources costs 12 s cold and 150 ms warm on this Windows box (the antivirus inspects every
+filesystem call), while the regex work on the same strings costs 26-36 ms; parsing the snapshot costs
+45-53 ms per file. `markupSources` now answers from the snapshot (`svelteSources(...dirs)`,
+`shippedSources(...dirs)`, `allMarkup()`, texts included, so no caller reads a file twice) and
+`sourceTree.hasSource(path)` is the in-memory "is this a file". Migrated: the 16 markup gates (callers
+of the three helpers), `avatarUrl`, `openEcosystemSite`, `deviceListClaims`, `uppercaseTracking` (its
+`cssFiles`), `pendingCallAccept` (its `60_000` timeout and the comment justifying it are gone),
+`guideAnchorSources`, `globalChatSingleton.importCycle` (same algorithm, the `statSync` existence check
+is now `hasSource`), `guidance.importGraph`. Left alone by design: the tests reading `src-tauri` and the
+native folders. Every migrated scan keeps or gains a "reads the tree it thinks it does" assertion. **The
+file set each scan sees is the same**, except generated files only the old walks reached
+(`proto/canari.*`, `wasm/*.d.ts`, and for `pendingCallAccept` and `guideAnchorSources` the 5,598
+Paraglide files) and `utils/users/displayName.spec.ts` (a test, now excluded where the old code
+excluded only `*.test.ts`); no guide anchor is satisfied only by generated code. Alone, a full run
+(`--maxWorkers=4`, 1,774 files, 18,990 tests, 0 failures), per-test durations against main in a quiet
+full run: `avatarUrl` 1673 to 926 ms, `openEcosystemSite` 957 to 290 ms, `accentTokens` 778 to 190 ms,
+`deviceListClaims` 657 to 621 ms (its own line loop dominates), `pendingCallAccept` 3492 to 16 ms.
+
 ## 6. Expected end state
 
 | Measure | Today | After WP-T1..T4 (estimate from the A/B) |

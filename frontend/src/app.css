@@ -333,6 +333,11 @@
    * plain browser tab already excludes the system nav/gesture area from its own viewport - see
    * that script for why. Every safe-area-bottom consumer reads this variable, never env() itself. */
   --safe-area-inset-bottom: env(safe-area-inset-bottom, 0px);
+  /* THE COMPOSER'S FLOOR: the chat footer's bottom padding, and the same term in the thread's own
+   * padding under its last row. Named once so both change in the SAME style pass when the bottom safe
+   * area is pinned for a keyboard (`keyboardSafeAreaBottomOverride`): `--chat-composer-height` is
+   * published a frame late and leaves this out (`composerHeight.ts`, review of #3556, D2). */
+  --chat-composer-floor: max(0.75rem, var(--safe-area-inset-bottom, 0px));
   /* THE TOP PEER, for the same reason: on iOS WebKit reports env() as 0 here and the native side
    * publishes the real status-bar height (canari_ios.mm), so every top consumer reads THIS. On
    * Android and in a browser env() answers for itself. */
@@ -504,9 +509,10 @@
      `svh` and not `dvh`: the SMALL viewport is the stable one, so the cap does not re-layout the
      feed every time the mobile URL bar collapses. Deliberately NOT `--app-viewport-height`, which
      tracks the soft keyboard - a picture must not resize because someone started typing.
-     BUT IN THE APP `svh` TRACKS THE KEYBOARD TOO: Android pads the WebView by the IME inset and iOS
-     shrinks its frame, so the LAYOUT viewport shrinks and every viewport unit with it (`lvh`
-     included). Mi 9T, 2026-11-13: 567 px closed, 353 px with the keyboard up, a chat screenshot
+     BUT IN THE iOS APP `svh` TRACKS THE KEYBOARD TOO: iOS shrinks the WebView's frame, so the LAYOUT
+     viewport shrinks and every viewport unit with it (`lvh` included). The Android app did the same
+     until 2026-11-14, when it stopped resizing the WebView for the keyboard (keyboard ride). Mi 9T,
+     2026-11-13: 567 px closed, 353 px with the keyboard up, a chat screenshot
      cropped top and bottom. `--keyboard-free-viewport-height` is the height before the keyboard,
      written by `keyboardViewport.svelte.ts` only while a keyboard holds the layout viewport, and
      absent otherwise - so a browser, a desktop resize and a rotation keep plain `svh`. */
@@ -1783,12 +1789,19 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
 }
 
 .chat-messages-scroll {
-  /* --chat-composer-height already includes var(--safe-area-inset-bottom, 0px) via the footer's own
-     padding-bottom, so it must not be added again here (only the unset-var fallback needs it). */
-  padding-bottom: var(--chat-composer-height, calc(7.5rem + var(--safe-area-inset-bottom, 0px)));
-  scroll-padding-bottom: var(
-    --chat-composer-height,
-    calc(7.5rem + var(--safe-area-inset-bottom, 0px))
+  /* The footer's height without its floor, plus the floor, plus the keyboard's room - see
+     `--chat-composer-floor`: the floor is composed HERE so a keyboard move lands in one style pass.
+     THE KEYBOARD'S ROOM IS THIS PADDING, NEVER A SMALLER BOX (keyboard ride, 2026-11-14): in the
+     Android app the keyboard covers the shell without shrinking it, and the thread's box keeps its
+     height so its rows can ride up into the room the padding opens. `--keyboard-layout-inset-bottom`
+     is 0 everywhere else, so on the web and iOS this is the padding it always was. */
+  padding-bottom: calc(
+    var(--chat-composer-height, 6.75rem) + var(--chat-composer-floor) +
+      var(--keyboard-layout-inset-bottom, 0px)
+  );
+  scroll-padding-bottom: calc(
+    var(--chat-composer-height, 6.75rem) + var(--chat-composer-floor) +
+      var(--keyboard-layout-inset-bottom, 0px)
   );
   /* Keep scrolling inside the message list - no chaining/rubber-band to the page that
      would drag content off-screen (notably while the keyboard is open). */
@@ -1805,16 +1818,26 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
 
 @media (min-width: 768px) {
   .chat-messages-scroll {
-    padding-bottom: calc(var(--chat-composer-height, 6.5rem));
-    scroll-padding-bottom: calc(var(--chat-composer-height, 6.5rem));
+    padding-bottom: calc(
+      var(--chat-composer-height, 5.75rem) + var(--chat-composer-floor) +
+        var(--keyboard-layout-inset-bottom, 0px)
+    );
+    scroll-padding-bottom: calc(
+      var(--chat-composer-height, 5.75rem) + var(--chat-composer-floor) +
+        var(--keyboard-layout-inset-bottom, 0px)
+    );
   }
 }
 
 .mobile-convo-open .chat-messages-scroll {
-  /* --chat-composer-height already includes var(--safe-area-inset-bottom, 0px) via the footer's
-     padding-bottom, so we must not add it again here. */
-  padding-bottom: var(--chat-composer-height, 6rem);
-  scroll-padding-bottom: var(--chat-composer-height, 6rem);
+  padding-bottom: calc(
+    var(--chat-composer-height, 5.25rem) + var(--chat-composer-floor) +
+      var(--keyboard-layout-inset-bottom, 0px)
+  );
+  scroll-padding-bottom: calc(
+    var(--chat-composer-height, 5.25rem) + var(--chat-composer-floor) +
+      var(--keyboard-layout-inset-bottom, 0px)
+  );
 }
 
 /* THE THREAD'S GROUND, NAMED RATHER THAN COPIED - because the band below has to BE it, and a second
@@ -1833,7 +1856,11 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 0;
+  /* ON THE KEYBOARD: the layout inset is what the keyboard covers of the shell, non-zero only in the
+     Android app, where the shell keeps its height. No `transition` on it: the keyboard ride
+     (`keyboardRide.ts`) moves the composer on the keyboard's own timing, from where it stood - a
+     transition would move the box itself and leave the ride nothing to measure. */
+  bottom: var(--keyboard-layout-inset-bottom, 0px);
   /* OPAQUE, AND IT USED TO BE TRANSPARENT ON PURPOSE (user, 2026-09-18: *"le fait que l'on puisse
      avoir des messages ou reactions derriere la barre de saisie est moche"*). The list already
      RESERVES this height with `padding-bottom`, so a thread at rest ends above the bar; what showed
@@ -1845,21 +1872,18 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
      all: it is the ground the thread already sits on, made opaque so nothing slides under it. */
   background: var(--chat-thread-ground, var(--cn-bg));
   padding-top: 0.5rem;
-  padding-bottom: max(0.75rem, var(--safe-area-inset-bottom, 0px));
+  padding-bottom: var(--chat-composer-floor);
   pointer-events: none;
   z-index: var(--z-page-overlay);
-  transition: bottom 180ms ease;
 }
 
 /* The chat composer is only visible when the BottomNav is unmounted (mobile-convo-open),
    so no extra padding is needed to clear it. */
 
-/* Keyboard open: shell height follows visual viewport; only lift composer when layout did not resize (adjustPan).
-   Same floor as the keyboard-closed rule below - the reserved space must not visibly shrink
-   just because the keyboard opened. */
+/* Keyboard open: the same floor as the keyboard-closed rule below - the reserved space must not
+   visibly shrink just because the keyboard opened. */
 .keyboard-open .chat-composer-footer {
-  bottom: var(--keyboard-layout-inset-bottom, 0px);
-  padding-bottom: max(0.75rem, var(--safe-area-inset-bottom, 0px)) !important;
+  padding-bottom: var(--chat-composer-floor) !important;
 }
 
 /* `.app-layout` deliberately has NO keyboard-open height override (WP-KBD-1). Its ancestor
@@ -1872,25 +1896,25 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
    it is not doing it twice. */
 
 .keyboard-open .chat-messages-scroll {
-  /* --chat-composer-height already includes its own padding-bottom (set by
-     .keyboard-open .chat-composer-footer above), so only the extra lift from
-     --keyboard-layout-inset-bottom is added on top - never the safe area again. */
+  /* The same three terms as at rest (`--chat-composer-floor`). */
   padding-bottom: calc(
-    var(--chat-composer-height, 6rem) + var(--keyboard-layout-inset-bottom, 0px)
+    var(--chat-composer-height, 5.25rem) + var(--chat-composer-floor) +
+      var(--keyboard-layout-inset-bottom, 0px)
   );
   scroll-padding-bottom: calc(
-    var(--chat-composer-height, 6rem) + var(--keyboard-layout-inset-bottom, 0px)
+    var(--chat-composer-height, 5.25rem) + var(--chat-composer-floor) +
+      var(--keyboard-layout-inset-bottom, 0px)
   );
 }
 
 /* When a conversation is open on mobile the BottomNav is unmounted - drop its
    reserved height so the composer sits flush with the safe area. */
 .mobile-convo-open .chat-composer-footer {
-  padding-bottom: max(0.75rem, var(--safe-area-inset-bottom, 0px));
+  padding-bottom: var(--chat-composer-floor);
 }
 
 .mobile-convo-open.keyboard-open .chat-composer-footer {
-  padding-bottom: max(0.75rem, var(--safe-area-inset-bottom, 0px)) !important;
+  padding-bottom: var(--chat-composer-floor) !important;
 }
 
 /* THE GIF PANEL TAKES THE KEYBOARD'S PLACE, SO THE COMPOSER SITS ON IT AS IT SITS ON A KEYBOARD
@@ -1900,10 +1924,14 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
    keeps its own content clear of the home indicator. With the margin on the panel and not on the
    footer, the hand-off (panel shrinking to 0 while the keyboard rises) leaves the composer exactly
    0.75rem above whichever is under it, with no step when the panel unmounts. The second selector
-   outranks the `!important` keyboard rule above. */
+   outranks the `!important` keyboard rule above. The thread composes the same floor under its last
+   row (`--chat-composer-floor`), so the panel's 0 is said to it too. */
 .chat-composer-footer.has-keyboard-panel,
 .mobile-convo-open.keyboard-open .chat-composer-footer.has-keyboard-panel {
   padding-bottom: 0 !important;
+}
+.chat-thread-panel:has(.chat-composer-footer.has-keyboard-panel) {
+  --chat-composer-floor: 0px;
 }
 .composer-gif-panel {
   margin-top: 0.75rem;
@@ -1921,7 +1949,7 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
   left: 0;
   height: var(--app-viewport-height, 100dvh);
   padding-top: var(--safe-area-inset-top, 0px);
-  padding-bottom: var(--safe-area-inset-bottom, 0px);
+  padding-bottom: calc(var(--safe-area-inset-bottom, 0px) + var(--keyboard-occlusion-bottom, 0px));
   background-color: var(--cn-surface);
 }
 
@@ -2188,7 +2216,18 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
 }
 
 html.keyboard-open .page-scroll-wrap {
-  scroll-padding-bottom: calc(var(--bottom-nav-reserve) + var(--keyboard-layout-inset-bottom, 0px));
+  scroll-padding-bottom: var(--bottom-nav-reserve);
+}
+
+/* A PAGE ENDS ABOVE THE KEYBOARD (keyboard ride, 2026-11-14). In the Android app the keyboard
+   covers the shell without shrinking it, so the page's scroller - a form, the search, a settings
+   page, and every `sticky bottom-0` bar in them - is made to end where the keyboard begins, as the
+   shell shrinking used to make it. A CSS box shrinking is no WebView resize: it lands in the
+   announcement's own frame, with nothing stale to show. Not the chat's, whose thread keeps its box
+   and takes the keyboard's room as padding (`.chat-messages-scroll`) so its rows can ride. The inset
+   is 0 on the web and iOS. */
+.page-scroll-wrap:not(:has(.app-layout)) {
+  bottom: var(--keyboard-layout-inset-bottom, 0px);
 }
 
 /* Block background scroll only in chat (non-chat pages like forms must keep their scroll) */
@@ -2196,13 +2235,13 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   overflow: hidden;
 }
 
-/* Fixed bottom bars on non-chat pages (forms, etc.) */
+/* A sheet anchored to the bottom of a `fixed` layer (the comments drawer): it stands on what the
+   keyboard covers of the window, which is 0 wherever the WebView itself is resized. */
+/* Stands on the keyboard. No transition: a piece that must move with the keys rides them
+   (`data-keyboard-ride`, keyboardRide.ts) at their own duration, curve and phase - a clock of its
+   own could only disagree with the keyboard's (#3556, N4). */
 .keyboard-aware-bottom {
-  transition: bottom 180ms ease;
-}
-
-.keyboard-open .keyboard-aware-bottom {
-  bottom: var(--keyboard-layout-inset-bottom, 0px);
+  bottom: var(--keyboard-occlusion-bottom, 0px);
 }
 
 /* Fullscreen overlays: modals, PIN, sync, payment, calendar pickers… */
@@ -2216,7 +2255,11 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   padding-top: max(1rem, var(--safe-area-inset-top, 0px));
   padding-right: max(1rem, env(safe-area-inset-right, 0px));
   padding-left: max(1rem, env(safe-area-inset-left, 0px));
-  padding-bottom: max(1rem, var(--safe-area-inset-bottom, 0px));
+  /* The backdrop keeps the whole window; its content keeps clear of what the keyboard covers of it
+     (the Android app, where `--app-viewport-height` stays the full height). */
+  padding-bottom: calc(
+    max(1rem, var(--safe-area-inset-bottom, 0px)) + var(--keyboard-occlusion-bottom, 0px)
+  );
   transition:
     height 180ms ease,
     top 180ms ease,
@@ -2235,8 +2278,13 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   scroll-margin-block-end: 6.5rem;
 }
 
+/* The cap is the space above the keyboard: `92dvh` and `--app-viewport-height` follow a WebView the
+   keyboard resizes (iOS), and lose what the keyboard covers where it does not (the Android app). */
 .keyboard-aware-modal-panel {
-  max-height: min(92dvh, var(--app-viewport-height, 100dvh)) !important;
+  max-height: min(
+    calc(92dvh - 0.92 * var(--keyboard-occlusion-bottom, 0px)),
+    calc(var(--app-viewport-height, 100dvh) - var(--keyboard-occlusion-bottom, 0px))
+  ) !important;
 }
 
 /*
@@ -2254,55 +2302,39 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   .modal-phone-full .keyboard-aware-modal-panel {
     max-height: none !important;
     padding-top: var(--safe-area-inset-top, 0px);
-    padding-bottom: var(--safe-area-inset-bottom, 0px);
+    padding-bottom: calc(
+      var(--safe-area-inset-bottom, 0px) + var(--keyboard-occlusion-bottom, 0px)
+    );
   }
 
   .keyboard-open .modal-phone-full .keyboard-aware-modal-panel {
-    padding-bottom: 0;
+    padding-bottom: var(--keyboard-occlusion-bottom, 0px);
   }
 }
 
 /* Message action wheel (long-press menu) - above composer / bottom nav */
 [data-keyboard-aware-actions] {
   bottom: calc(
-    max(4.5rem, var(--safe-area-inset-bottom, 0px) + 3rem) +
-      var(--keyboard-layout-inset-bottom, 0px)
+    max(4.5rem, var(--safe-area-inset-bottom, 0px) + 3rem) + var(--keyboard-occlusion-bottom, 0px)
   );
   transition: bottom 180ms ease;
 }
 
 .mobile-convo-open [data-keyboard-aware-actions] {
   bottom: calc(
-    max(1rem, var(--safe-area-inset-bottom, 0px) + 1rem) + var(--keyboard-layout-inset-bottom, 0px)
+    max(1rem, var(--safe-area-inset-bottom, 0px) + 1rem) + var(--keyboard-occlusion-bottom, 0px)
   );
 }
 
-.keyboard-open [data-keyboard-aware-toast] {
-  bottom: calc(
-    var(--safe-area-inset-bottom, 0px) + 1rem + var(--keyboard-layout-inset-bottom, 0px)
-  ) !important;
-}
-
-/* Side panels (group settings, channel members) with bottom actions */
+/* Side panels (group settings, channel members) with bottom actions. The keyboard is kept clear of
+   by `.side-panel` itself, so these add only the safe area. */
 .keyboard-aware-panel-scroll {
   padding-bottom: max(1.25rem, var(--safe-area-inset-bottom, 0px));
-}
-
-.keyboard-open .keyboard-aware-panel-scroll {
-  padding-bottom: calc(
-    max(1.25rem, var(--safe-area-inset-bottom, 0px)) + var(--keyboard-layout-inset-bottom, 0px)
-  ) !important;
 }
 
 .keyboard-aware-panel-footer {
   padding-bottom: max(1.25rem, var(--safe-area-inset-bottom, 0px));
   transition: padding-bottom 180ms ease;
-}
-
-.keyboard-open .keyboard-aware-panel-footer {
-  padding-bottom: calc(
-    max(1.25rem, var(--safe-area-inset-bottom, 0px)) + var(--keyboard-layout-inset-bottom, 0px)
-  ) !important;
 }
 
 [data-theme='dark'] .chat-composer-footer {
@@ -2329,6 +2361,10 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   top: 0;
   right: 0;
   bottom: 0;
+  /* ITS CONTENT ENDS ABOVE THE KEYBOARD, its surface does not: what the keyboard covers of the window
+     (the drawer, `fixed`) and of the shell (the column, `static` from 1280px) are the same number,
+     and 0 wherever the WebView itself is resized. */
+  padding-bottom: var(--keyboard-occlusion-bottom, 0px);
   z-index: var(--overlay-z, auto);
   width: 100%;
   /* A PHONE GETS THE WHOLE SCREEN (owner, 2026-11-04): no cap below 768px, where the drawer used to

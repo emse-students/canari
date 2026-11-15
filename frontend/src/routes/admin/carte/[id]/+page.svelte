@@ -1183,7 +1183,7 @@
     use:portalWhile={true}
     use:coversScreen
     use:inertAppShell
-    class="bg-cn-bg text-text-main fixed inset-0 z-(--z-page-overlay) flex flex-col pt-(--safe-area-inset-top,0px)"
+    class="bg-cn-bg text-text-main fixed inset-0 z-(--z-page-overlay) flex flex-col pt-(--safe-area-inset-top,0px) pb-(--keyboard-occlusion-bottom,0px)"
   >
     {#if loading}
       <div class="flex flex-1 items-center justify-center">
