@@ -1118,8 +1118,10 @@ attachment is it.
   chevron inside it (the up-right arrow it replaced read as "external" too). A card that opens
   nothing (a file that is not a PDF) has none; a hero showing its call to action has none, and
   neither has a file row, whose download button beside it already says what the card is for
-  (`showArrow`). A tap-only card (no address) is `ui/Button`, its control box reset
-  ([controls](../controls.md)).
+  (`showArrow`). A card with an address is ALWAYS a link, a tap handler of its own included
+  (middle click and copy link work); only a tap with no address (a PDF opening in the viewer) is
+  a button, `ui/Button variant="bare"` ([controls](../controls.md)), and everything a card draws
+  is phrasing content (spans), which a button requires.
 - **The tile is one treatment**: the accent-tinted surface (`bg-accent/10`), a glyph or a picture on
   it. The Canari logo stays for an in-app LINK only, where it identifies the destination.
 

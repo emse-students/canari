@@ -841,7 +841,7 @@
     <FileText size={24} strokeWidth={2} />
   {/snippet}
   {#snippet pdfPage()}
-    <div class="aspect-[4/3] w-full overflow-hidden bg-white" data-pdf-page-slot>
+    <span class="block aspect-[4/3] w-full overflow-hidden bg-white" data-pdf-page-slot>
       {#if blobUrl}
         <PdfThumbnail
           url={blobUrl}
@@ -849,9 +849,9 @@
           imgClass="h-full w-full object-cover object-top bg-white"
         />
       {:else}
-        <div class="h-full w-full animate-pulse bg-black/5" aria-hidden="true"></div>
+        <span class="block h-full w-full animate-pulse bg-black/5" aria-hidden="true"></span>
       {/if}
-    </div>
+    </span>
   {/snippet}
   {#snippet download()}
     <button

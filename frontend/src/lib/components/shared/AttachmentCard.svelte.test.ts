@@ -49,12 +49,27 @@ describe('AttachmentCard arrow', () => {
     expect(arrow(download)).toBeNull();
   });
 
-  it('draws a tap-only card through ui/Button: one button, named, the layout inside', () => {
-    const target = render({ onclick: () => {}, ariaLabel: 'Open cours.pdf' });
-    const buttons = target.querySelectorAll('button');
-    expect(buttons).toHaveLength(1);
-    expect(buttons[0].getAttribute('aria-label')).toBe('Open cours.pdf');
-    expect(buttons[0].querySelector('span.flex')).not.toBeNull();
+  it('draws a tap-only card as a bare ui/Button holding phrasing content only', () => {
+    const target = render({
+      onclick: () => {},
+      ariaLabel: 'Open cours.pdf',
+      subtitle: '12 kB',
+      hero: true,
+      banner: html('<span>page</span>'),
+    });
+    const buttons = [...target.querySelectorAll('button')];
+    expect(buttons).toHaveLength(2);
+    const row = buttons.find((b) => b.getAttribute('aria-label') === 'Open cours.pdf')!;
+    expect(row.className).not.toContain('ui-control');
+    expect(row.className).toContain('flex');
+    // A button takes phrasing content only: no div, no paragraph inside either of them.
+    for (const button of buttons) expect(button.querySelector('div, p')).toBeNull();
+  });
+
+  it('is a link whenever it has an address, even with a tap handler of its own', () => {
+    const target = render({ href: '/forms/1', onclick: () => {} });
+    expect(target.querySelector('button')).toBeNull();
+    expect(target.querySelector('a[href="/forms/1"]')).not.toBeNull();
   });
 
   it('is absent on a card that opens nothing, and on a hero showing its call to action', () => {

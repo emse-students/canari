@@ -108,10 +108,11 @@
   );
 </script>
 
-<!-- One destination, drawn by whichever element the card has: a link, a button, or nothing. The
-     button is `ui/Button` (controls.md), its control box reset so the card's own layout (`cls`, on
-     the span inside) is what draws; `outer` is the button's place in the card. -->
-{#snippet opener(content: Snippet, cls: string, decorative: boolean, outer = 'w-full')}
+<!-- One destination, drawn by whichever element the card has: a link, a button, or nothing. A card
+     with an address is ALWAYS the link (middle click, copy link); only a tap with no address to go to
+     (a PDF opening in the viewer) is a button - `ui/Button variant="bare"`, no control box to undo.
+     Everything inside is phrasing content (spans), which a button requires. -->
+{#snippet opener(content: Snippet, cls: string, decorative: boolean)}
   {#if href}
     <a
       {href}
@@ -127,14 +128,14 @@
     </a>
   {:else if onclick}
     <Button
-      variant="ghost"
+      variant="bare"
       {onclick}
       tabindex={decorative ? -1 : undefined}
       aria-hidden={decorative ? 'true' : undefined}
       aria-label={decorative ? undefined : ariaLabel}
-      class="focus-visible:ring-accent/50 block! h-auto! min-h-0! rounded-none! border-0! bg-transparent! p-0! text-left! font-normal! text-inherit! outline-none hover:bg-transparent! focus-visible:ring-4 focus-visible:ring-inset active:scale-100! {outer}"
+      class="text-left {cls}"
     >
-      <span class={cls}>{@render content()}</span>
+      {@render content()}
     </Button>
   {:else}
     <div class={cls}>{@render content()}</div>
@@ -145,19 +146,19 @@
      a control of its own - `inert` and no pointer events, so a media's zoom button inside (a post
      preview's photo) can neither take the focus nor the tap. -->
 {#snippet bannerContent()}
-  <div inert class="pointer-events-none" data-attachment-picture>{@render banner?.()}</div>
+  <span inert class="pointer-events-none block" data-attachment-picture>{@render banner?.()}</span>
 {/snippet}
 
 {#snippet rowContent()}
   {#if !showsBanner}
-    <div
+    <span
       class="bg-accent/10 text-accent-text relative flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-black/5 dark:border-white/10"
       data-attachment-tile
     >
       {@render tile()}
-    </div>
+    </span>
   {/if}
-  <div class="flex min-w-0 flex-1 flex-col justify-center gap-0.5">
+  <span class="flex min-w-0 flex-1 flex-col justify-center gap-0.5">
     {#if showsChip}
       <span
         class="text-2xs bg-accent/12 text-accent-text inline-flex max-w-full items-center self-start truncate rounded-md px-2 py-0.5 font-bold"
@@ -166,21 +167,21 @@
         {chip}
       </span>
     {/if}
-    <p
-      class="text-text-main group-hover/att:text-accent-text {hero
+    <span
+      class="text-text-main group-hover/att:text-accent-text block {hero
         ? 'text-base'
         : 'text-sm'} line-clamp-2 leading-snug font-bold transition-colors duration-300"
     >
       {title}
-    </p>
+    </span>
     {#if pending}
-      <div class="mt-1 h-3 w-4/5 animate-pulse rounded bg-black/6 dark:bg-white/8"></div>
+      <span class="mt-1 block h-3 w-4/5 animate-pulse rounded bg-black/6 dark:bg-white/8"></span>
     {:else if subtitle}
-      <p class="text-text-muted truncate text-xs leading-snug">{subtitle}</p>
+      <span class="text-text-muted block truncate text-xs leading-snug">{subtitle}</span>
     {/if}
-  </div>
+  </span>
   {#if arrow}
-    <div
+    <span
       class="text-text-muted group-hover/att:text-accent-text shrink-0 self-center opacity-50 transition-all duration-300 group-hover/att:translate-x-0.5 group-hover/att:opacity-100"
       aria-hidden="true"
       data-attachment-arrow={arrow}
@@ -190,12 +191,12 @@
       {:else}
         <ChevronRight size={22} strokeWidth={2.25} />
       {/if}
-    </div>
+    </span>
   {/if}
 {/snippet}
 
 {#snippet belowContent()}
-  <div inert class="pointer-events-none" data-attachment-picture>{@render below?.()}</div>
+  <span inert class="pointer-events-none block" data-attachment-picture>{@render below?.()}</span>
 {/snippet}
 
 {#snippet actionContent()}
@@ -216,12 +217,7 @@
     )}
   {/if}
   <div class="flex items-center">
-    {@render opener(
-      rowContent,
-      'flex min-w-0 flex-1 items-center gap-3.5 p-3',
-      false,
-      'min-w-0 flex-1'
-    )}
+    {@render opener(rowContent, 'flex min-w-0 flex-1 items-center gap-3.5 p-3', false)}
     {#if trailing}
       <div class="shrink-0 pr-3">{@render trailing()}</div>
     {/if}
