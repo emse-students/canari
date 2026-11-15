@@ -1,6 +1,11 @@
 // @vitest-environment happy-dom
-import { describe, expect, it, vi } from 'vitest';
-import { drawDecorations, renderEditedReelMedia, type ReelEdits } from './reelEditor';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  ReelExportError,
+  drawDecorations,
+  renderEditedReelMedia,
+  type ReelEdits,
+} from './reelEditor';
 import { createStrokeOverlay } from './reelStrokes';
 import { createEmojiOverlay, createTextOverlay, type ReelOverlay } from './reelOverlays';
 
@@ -158,5 +163,117 @@ describe('drawDecorations', () => {
     drawDecorations(context, { overlays: [first, second] }, 100, 100, 'x', new Map());
     const drawn = calls.filter((c) => c[0] === 'fillText').map((c) => c[1]);
     expect(drawn).toEqual(['un', 'deux']);
+  });
+});
+
+// The VIDEO path is WebCodecs through mediabunny, never `captureStream` (WebKit has none).
+const mbState = vi.hoisted(() => ({
+  valid: true,
+  track: true as boolean,
+  executeError: null as Error | null,
+  process: null as null | ((sample: unknown) => unknown),
+  captured: [] as unknown[],
+}));
+
+vi.mock('mediabunny', () => ({
+  ALL_FORMATS: [],
+  QUALITY_HIGH: 'high',
+  BlobSource: class {},
+  BufferTarget: class {
+    buffer: ArrayBuffer | null = new Uint8Array([1, 2, 3]).buffer;
+  },
+  Mp4OutputFormat: class {},
+  Input: class {
+    async getPrimaryVideoTrack() {
+      return mbState.track
+        ? { getDisplayWidth: async () => 721, getDisplayHeight: async () => 1281 }
+        : null;
+    }
+    dispose() {}
+  },
+  Output: class {
+    target = new (class {
+      buffer: ArrayBuffer | null = new Uint8Array([1, 2, 3]).buffer;
+    })();
+    async getMimeType() {
+      return 'video/mp4; codecs="avc1.640028"';
+    }
+  },
+  Conversion: {
+    init: async (options: { video: { process: (s: unknown) => unknown } }) => {
+      mbState.process = options.video.process;
+      return {
+        isValid: mbState.valid,
+        discardedTracks: [{ track: { type: 'video' }, reason: 'undecodable_source_codec' }],
+        execute: async () => {
+          if (mbState.executeError) throw mbState.executeError;
+        },
+      };
+    },
+  },
+}));
+
+describe('renderEditedReelMedia, video', () => {
+  const edits: ReelEdits = { overlays: [] };
+  const video = () => new Blob(['v'], { type: 'video/mp4' });
+  function stubCanvas() {
+    const context = {
+      clearRect: vi.fn(),
+      save: vi.fn(),
+      restore: vi.fn(),
+    } as unknown as CanvasRenderingContext2D;
+    const canvas = document.createElement('canvas');
+    vi.spyOn(canvas, 'getContext').mockReturnValue(context);
+    const original = document.createElement.bind(document);
+    vi.spyOn(document, 'createElement').mockImplementation((name: string) =>
+      name === 'canvas' ? canvas : original(name)
+    );
+    return { canvas, context };
+  }
+  afterEach(() => {
+    vi.restoreAllMocks();
+    Object.assign(mbState, { valid: true, track: true, executeError: null, process: null });
+  });
+
+  it('renders on WebCodecs with no captureStream and no MediaRecorder, to even sides', async () => {
+    vi.stubGlobal('MediaRecorder', undefined);
+    const { canvas } = stubCanvas();
+    const result = await renderEditedReelMedia(video(), edits);
+    expect(result.width).toBe(720);
+    expect(result.height).toBe(1280);
+    expect(result.blob.type).toContain('video/mp4');
+    expect(canvas.width).toBe(720);
+    vi.unstubAllGlobals();
+  });
+
+  it('draws each decoded frame, then the overlays, and hands the canvas back', async () => {
+    const { canvas, context } = stubCanvas();
+    await renderEditedReelMedia(video(), edits);
+    const draw = vi.fn();
+    const out = mbState.process!({ draw });
+    expect(draw).toHaveBeenCalledWith(context, 0, 0, 720, 1280);
+    expect(out).toBe(canvas);
+  });
+
+  it('refuses a file with no video track as a typed unreadable fault', async () => {
+    stubCanvas();
+    mbState.track = false;
+    await expect(renderEditedReelMedia(video(), edits)).rejects.toMatchObject({
+      fault: 'unreadable',
+    });
+  });
+
+  it('refuses an engine that cannot convert as a typed unsupported fault', async () => {
+    stubCanvas();
+    mbState.valid = false;
+    const failure = renderEditedReelMedia(video(), edits);
+    await expect(failure).rejects.toBeInstanceOf(ReelExportError);
+    await expect(failure).rejects.toMatchObject({ fault: 'unsupported' });
+  });
+
+  it('names an encoder failure as the encode fault', async () => {
+    stubCanvas();
+    mbState.executeError = new Error('boom');
+    await expect(renderEditedReelMedia(video(), edits)).rejects.toMatchObject({ fault: 'encode' });
   });
 });

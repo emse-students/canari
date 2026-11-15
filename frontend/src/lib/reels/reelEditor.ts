@@ -147,83 +147,114 @@ async function renderImage(
   };
 }
 
-async function loadVideo(source: Blob): Promise<HTMLVideoElement> {
-  const url = URL.createObjectURL(source);
-  const video = document.createElement('video');
-  video.src = url;
-  video.muted = true;
-  video.playsInline = true;
-  await new Promise<void>((resolve, reject) => {
-    video.onloadedmetadata = () => resolve();
-    video.onerror = () => reject(new Error('video could not be decoded'));
-  });
-  return video;
+/** Why a decorated video could not be rendered; classified at the throw, never read from a message. */
+export type ReelExportFault = 'unreadable' | 'unsupported' | 'encode';
+
+/** The typed refusal of {@link renderEditedReelMedia} for a video. */
+export class ReelExportError extends Error {
+  constructor(
+    readonly fault: ReelExportFault,
+    message: string,
+    options?: { cause?: unknown }
+  ) {
+    super(message, options);
+    this.name = 'ReelExportError';
+  }
 }
 
+/**
+ * Paints the overlays into the frames of a video, ON THE ENGINE-NEUTRAL PATH: WebCodecs decode and
+ * encode driven by mediabunny, the very pair `prepareVideoForUpload` already requires of every
+ * member who publishes. The previous path played the clip into a canvas and recorded
+ * `canvas.captureStream()`; WebKit has no `HTMLMediaElement.captureStream`, so on the iPhone every
+ * edited video was refused (docs/wiki/frontend/modules/reel-editor.md). Nothing here needs a
+ * playing element: frames are decoded, drawn and re-encoded faster than real time, with the
+ * source's own audio carried over.
+ */
 async function renderVideo(
   source: Blob,
   edits: ReelEdits,
   fontFamily: string
 ): Promise<EditedReelMedia> {
-  const video = await loadVideo(source);
-  const images = await loadOverlayImages(edits);
-  const canvas = document.createElement('canvas');
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
-  const context = canvas.getContext('2d');
-  const captureVideo = video as HTMLVideoElement & {
-    captureStream?: () => MediaStream;
-  };
-  if (
-    !context ||
-    !captureVideo.captureStream ||
-    !canvas.captureStream ||
-    typeof MediaRecorder === 'undefined'
-  ) {
-    throw new Error('video editing is unavailable on this device');
-  }
-
-  const canvasStream = canvas.captureStream(30);
-  const sourceStream = captureVideo.captureStream();
-  for (const track of sourceStream.getAudioTracks()) canvasStream.addTrack(track);
-  const mimeType = ['video/mp4', 'video/webm;codecs=vp8,opus', 'video/webm'].find((type) =>
-    MediaRecorder.isTypeSupported(type)
+  console.debug(
+    `[reel-editor] video export start: ${source.type || 'typeless'}, ${source.size} bytes,` +
+      ` ${edits.overlays.length} overlay(s)`
   );
-  if (!mimeType) throw new Error('video export is unavailable on this device');
-
-  const recorder = new MediaRecorder(canvasStream, { mimeType });
-  const chunks: Blob[] = [];
-  recorder.ondataavailable = (event) => {
-    if (event.data.size > 0) chunks.push(event.data);
-  };
-  const result = new Promise<Blob>((resolve, reject) => {
-    recorder.onerror = () => reject(new Error('video export failed'));
-    recorder.onstop = () => resolve(new Blob(chunks, { type: mimeType }));
-  });
-
-  const draw = () => {
-    if (video.ended) return;
-    context.drawImage(video, 0, 0, canvas.width, canvas.height);
-    drawDecorations(context, edits, canvas.width, canvas.height, fontFamily, images);
-    requestAnimationFrame(draw);
-  };
-  video.onended = () => recorder.stop();
-  recorder.start(200);
+  const images = await loadOverlayImages(edits);
+  const mb = await import('mediabunny');
+  const input = new mb.Input({ source: new mb.BlobSource(source), formats: mb.ALL_FORMATS });
   try {
-    await video.play();
-    draw();
-    const blob = await result;
-    return { blob, width: canvas.width, height: canvas.height };
+    let width: number;
+    let height: number;
+    try {
+      const track = await input.getPrimaryVideoTrack();
+      if (!track) throw new ReelExportError('unreadable', 'video: the file has no video track');
+      width = await track.getDisplayWidth();
+      height = await track.getDisplayHeight();
+    } catch (cause) {
+      if (cause instanceof ReelExportError) throw cause;
+      console.error('[reel-editor] the take could not be read', cause);
+      throw new ReelExportError('unreadable', 'video: the take could not be read', { cause });
+    }
+    if (!(width > 0 && height > 0)) {
+      throw new ReelExportError('unreadable', 'video: the track has no frame size');
+    }
+    // Even sides: H.264 4:2:0 cannot carry an odd one.
+    width -= width % 2;
+    height -= height % 2;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext('2d');
+    if (!context) throw new ReelExportError('unsupported', 'canvas is unavailable');
+
+    const output = new mb.Output({
+      format: new mb.Mp4OutputFormat(),
+      target: new mb.BufferTarget(),
+    });
+    const conversion = await mb.Conversion.init({
+      input,
+      output,
+      tracks: 'primary',
+      showWarnings: false,
+      video: {
+        codec: 'avc',
+        width,
+        height,
+        fit: 'fill',
+        // High: the publish re-encodes this file once more (single-pass export is WP-E4).
+        quality: mb.QUALITY_HIGH,
+        allowTransformationMetadata: false,
+        forceTranscode: true,
+        processedWidth: width,
+        processedHeight: height,
+        process: (sample) => {
+          context.clearRect(0, 0, width, height);
+          sample.draw(context, 0, 0, width, height);
+          drawDecorations(context, edits, width, height, fontFamily, images);
+          return canvas;
+        },
+      },
+    });
+    if (!conversion.isValid) {
+      const why = conversion.discardedTracks.map((d) => `${d.track.type}: ${d.reason}`).join(', ');
+      console.warn(`[reel-editor] this engine cannot render the take: ${why}`);
+      throw new ReelExportError('unsupported', `video: cannot render on this engine - ${why}`);
+    }
+    try {
+      await conversion.execute();
+    } catch (cause) {
+      console.error('[reel-editor] the encoder failed', cause);
+      throw new ReelExportError('encode', 'video: the encoder failed', { cause });
+    }
+    const buffer = output.target.buffer;
+    if (!buffer) throw new ReelExportError('encode', 'video: the muxer produced no bytes');
+    const blob = new Blob([buffer], { type: await output.getMimeType() });
+    console.debug(`[reel-editor] video export done: ${blob.size} bytes, ${width}x${height}`);
+    return { blob, width, height };
   } finally {
-    // EVERYTHING THE RENDER OPENED IS RELEASED, success or failure: the source element and its
-    // decoder (a loaded element keeps a media pipeline, audio sink included, until its source is
-    // dropped) and both capture streams. The app holds no audio output it is not playing.
-    for (const track of [...canvasStream.getTracks(), ...sourceStream.getTracks()]) track.stop();
-    const url = video.src;
-    video.pause();
-    video.removeAttribute('src');
-    video.load();
-    URL.revokeObjectURL(url);
+    input.dispose();
   }
 }
 
