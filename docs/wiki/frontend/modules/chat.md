@@ -5540,7 +5540,7 @@ than a page unread shows a page's worth until it is opened. A store count would 
 backends over encrypted rows for a badge that reads "many" either way.
 
 **Logs:** ONE census line per load, `[RESTORE] unread census: N conversation(s) counted from the
-upgrade's local read seed, N with a badge, N unread in all`; per row, at debug only, the count and
+upgrade's local read seed, N with a badge, N unread in all, N removed or pending (they take no mark)`; per row, at debug only, the count and
 the point that decided it (`saved`, `seed`, `own`, `none`). The migrations say once how many rows they
 seeded (`[SQLITE] Migration v19->v20: ...`, `[IDB] Migration v13->v14: ...`). `[FCM_CACHE] message
 <id> is already covered by the read point - no badge` when a push row is not counted. Tests:

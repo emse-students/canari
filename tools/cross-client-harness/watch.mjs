@@ -2826,7 +2826,7 @@ export const PAGE_BOOT_NARRATION = [
   /^\[RoutePreload\] \{"pathname":"\/[a-z]*","first":true\}$/,
   /^\[MLS\] Bulk ingest checkpoint landed - committing its progress markers\.$/,
   /^\[STRAY\] compared \d+ tree\(s\): \d+ roster\(s\) in one read, 0 refused, 0 not answered \(nobody removed in them\)$/,
-  /^\[CHAT_VIEW\] channel_ messages \d+ \(hasNewMessage=(?:true|false), response=[a-z-]+\)$/,
+  /^\[CHAT_VIEW\] channel_ messages \d+ \(hasNewMessage=(?:true|false), response=[a-z/-]+\)$/,
   // THREE MORE, read on the first live FLOOR draw on dev (1.4.1-alpha.3, 2026-10-25): the device
   // notices kept across the reload, the trust consumer taking over device events, and the at-rest
   // format the session's first checkpoint is sealed in (`legacy` until the blob-header writer may
@@ -2834,6 +2834,88 @@ export const PAGE_BOOT_NARRATION = [
   /^\[DEVICE_NOTICE\] \d+ unseen new-device alert\(s\) restored$/,
   /^\[TRUST\] device-event consumer registered$/,
   /^\[MLS\] web checkpoint seal format: legacy \(WASM ChaCha20\)$/,
+  // THE BOOT'S OWN DECISIONS, read on GRAINE-AUTH-1, -2 and -6 against `dev.78988dd` (2026-11-15),
+  // where every reload was PASS-DIRTY on them. Each is the decision log the coding standard asks for,
+  // said once per boot (or once per key group), and none carries a value that could be a finding:
+  // the tab-commit drain's three states, the guidance and birthday reads (`seenHelps`, `birthdays`:
+  // what the device held and what the server answered), the router and publish queue coming up, the
+  // avatar token and own-photo presence, the peer names read from the device, the boot's community
+  // read, the tab leader link, the boot pull, the drain gate per key group (not yet drained, then
+  // drained - the pair is the gate working), the unread census inputs, the admission vouchers
+  // waiting for that drain, and the window waking on its first gesture. An ERROR or WARN of the same
+  // tags (`[seenHelps] ... refused`, `[birthdays] ... could not`) is not matched and stays dirt.
+  /^\[TAB-COMMIT\] drain \((?:executors registered|this tab is unavailable|this tab is ready)\)$/,
+  /^\[seenHelps\] local copy: \d+ seen, \d+ owed, confirmed by an earlier answer - drawn now$/,
+  /^\[seenHelps\] server answered: \d+ seen, \d+ owed$/,
+  /^\[birthdays\] own birthday: device copy (?:true|false), asking the server$/,
+  /^\[birthdays\] own birthday read: (?:set|none), change opens \S+$/,
+  /^\[birthdays\] today \(\d{4}-\d\d-\d\d\): \d+ celebrant\(s\)$/,
+  /^\[router\] ready - deferred one-shot inputs may be taken$/,
+  /^\[PUBLISH-QUEUE\] started$/,
+  /^\[AvatarUrl\] avatar token adopted$/,
+  /^\[ownProfilePhoto\] presence for the signed-in account: (?:true|false)$/,
+  /^\[PEER-NAMES\] \d+ name\(s\) read from the device, no network$/,
+  /^\[BOOT_READS\] asking \d+ communities in \d+ request\(s\)$/,
+  /^\[TAB\] leader link published: connected$/,
+  /^\[PENDING\] boot pull issued - the restore seeded the conversation rows$/,
+  /^\[QUEUE\] group [0-9a-f]{8} not known drained: pulled=(?:true|false) pulling=(?:true|false) owed=(?:true|false) socket=(?:true|false) idle=(?:true|false)$/,
+  /^\[QUEUE\] group [0-9a-f]{8} drained \(pull ended\) - waking \d+ waiter\(s\)$/,
+  /^\[RESTORE\] [0-9a-f]{8} unread \d+ of \d+ held, read point: (?:saved|seed|own|none)$/,
+  /^\[RESTORE\] unread census: \d+ conversation\(s\) counted from the upgrade's local read seed, \d+ with a badge, \d+ unread in all, \d+ removed or pending \(they take no mark\)$/,
+  /^\[GRAINE\] \d+ admission voucher\(s\) not observed yet: key group [0-9a-f]{8} is not drained on this device$/,
+  /^\[GRAINE\] key group [0-9a-f]{8} drained - observing the admission vouchers of community [0-9a-f]{8}$/,
+  /^\[CHANNEL\] channel_[0-9a-f]{8} stored page drawn \(\d+ row\(s\)\) before the server page$/,
+  /^\[CHAT_VIEW\] channel_ entry settled: pinned=(?:true|false) isNearBottom=(?:true|false) newestVisible=(?:true|false) rows=\d+ fromBottom=\d+$/,
+  /^\[nav\] gotoAppPath -> \/[a-z]*$/,
+  /^\[ATTENTION\] a gesture after idleness - this window is attended again$/,
+];
+
+/**
+ * WHAT A CHECK THAT CREATES A SALON, POSTS IN IT AND GRANTS A MEMBER ACCESS SAYS, per seat, so
+ * COMM-8 names the narration it PROVOKES instead of widening the shared classifier.
+ *
+ * Read on COMM-8 against `dev.78988dd` (2026-11-15), `PASS-DIRTY` since the row existed. Every line
+ * is a decision or a hand-off the coding standard asks the app to log, with the ids shrunk the way
+ * the app shrinks them: the overlay stack registering and releasing the panels the check opens, the
+ * new salon being joined and its view settling, the first send held until the salon is loaded and
+ * released the moment it is (the pair is the gate working), the unsent ledger forgetting what the
+ * server holds, the access list loaded and edited, the grant echoed back, the admission of the
+ * grantee (one Welcome per device, so `no join push` for a key group is the other door being
+ * correctly shut), the history/seed answer and the drain re-reading once for what it brought.
+ *
+ * IT FORGIVES NO OUTCOME: a refused admission, a withheld seed, a Welcome that never lands and any
+ * `warn`/`error` of the same tags have other spellings and stay dirt; and COMM-8 still asserts the
+ * absence of the seed on the excluded client by name.
+ */
+export const SALON_SESSION_NARRATION = [
+  /^\[nav\] gotoAppPath -> \/[a-z]*$/,
+  /^\[overlayStack\] (?:register|release) \w+#\d+, depth \d+$/,
+  /^\[historyOverlay\] a navigation closes \d+ open overlay\(s\)$/,
+  /^Joined channel [0-9a-f]{8}…$/,
+  /^\[CHAT_VIEW\] channel_ entry settled: pinned=(?:true|false) isNearBottom=(?:true|false) newestVisible=(?:true|false) rows=\d+ fromBottom=\d+$/,
+  /^\[CHAT_VIEW\] channel_ messages \d+ \(hasNewMessage=(?:true|false), response=[a-z/-]+\)$/,
+  /^\[SEND\] channel send [0-9a-f]{8}\.\.\. HELD: salon [0-9a-f]{8} is not loaded on this device yet$/,
+  /^\[SEND\] channel send [0-9a-f]{8}\.\.\. released: its salon is loaded$/,
+  /^\[CHANNEL\] page of [0-9a-f]{8} decoded after its salon entry was decided$/,
+  /^\[SALON-UNSENT\] \d+ entr\(y\/ies\) forgotten: the server holds them$/,
+  // The sender's own row going out and settling under the server's id. A `failed` or `removed` echo
+  // is another spelling and stays dirt.
+  /^\[SALON-ECHO\] [0-9a-f]{8}… (?:sending|settled as [0-9a-f]{8}…)$/,
+  /^\[SALON-REPEAT\] the server echoed client id [0-9a-f]{8}\.\.\.: a repeated send is answered with its row - \d+ waiting repeat\(s\) released$/,
+  /^\[channelSettings\.loadChannelAccess\] channel_[0-9a-f]{8}…$/,
+  /^\[channelSettings\.addAllowedUser\] \{"channelId":"channel_[0-9a-f]{8}…","userId":"[0-9a-f]{8}…"\}$/,
+  /^\[CHANNEL\] #[0-9a-f]{8}… updated - canWrite=(?:true|false|unchanged) writePolicy=\w+$/,
+  /^\[GRAINE\] ADMIT salon grantee [0-9a-f]{8} to [0-9a-f]{8} \(community [0-9a-f]{8}\)$/,
+  /^\[JOIN_PUSH\] [0-9a-f]{8}\.\.\. is a key group - no join push to \S+$/,
+  /^\[GRAINE\] answered [0-9a-f]{8}…:\S+ with \d+ seed\(s\) in \d+ page\(s\)$/,
+  /^\[GRAINE\] absorbed \d+\/\d+ seed\(s\) \(\d+ already held(?:; endorsements verified: \d+ from the tree, \d+ from the server's published keys)?\) from \S+ in community [0-9a-f]{8} - salon\(s\) .+$/,
+  /^\[GRAINE\] drain over - re-reading \d+ salon\(s\) once for the seeds it brought$/,
+  /^\[QUEUE\] Welcome for key group [0-9a-f]{8}\.\.\. - not announced to the conversation layer$/,
+  /^\[WELCOME\] [0-9a-f]{8}\S* is a KEY-DISTRIBUTION group \(server row\) - installing it as a seed carrier$/,
+  // The GRANTEE's side of the same admission: its device is told a Welcome is owed and does NOT open
+  // a second door by external commit. The sibling saying the owed-ness could not be READ is not
+  // matched and stays dirt.
+  /^\[GRAINE\] salon [0-9a-f]{8} of [0-9a-f]{8}: a Welcome is owed to this device \((?:welcome-queued|add-in-flight)\) - not joining by external commit, the admitter's Welcome is the door$/,
 ];
 
 /**

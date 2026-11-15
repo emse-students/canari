@@ -102,7 +102,8 @@ export function createAttentionSignal(source: AttentionSource): AttentionSignal 
     const wasAttentive = isAttentiveAt(lastGestureAt, at);
     lastGestureAt = at;
     if (wasAttentive) return;
-    Log.d('[ATTENTION] a gesture after idleness - this window is attended again');
+    // The tag is the FIRST argument: written as one string it rendered `[[ATTENTION] ...]`.
+    Log.d('ATTENTION', 'a gesture after idleness - this window is attended again');
     wakes += 1;
   }
 
