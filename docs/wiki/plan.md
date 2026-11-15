@@ -121,7 +121,6 @@ earliest version, as a checklist.
 - [ ] [overlays stacked by open order, not by rung](backlog.d/reading-owed-overlays-stacked-by-open-order-not-by-rung.md)
 - [ ] [a FIRST message from someone with no conversation yet notifies, end to end](backlog.d/reading-owed-a-first-message-from-someone-with-no-conversation-yet-notifies-end.md)
 - [ ] [a live or a reel asks the microphone for one channel](backlog.d/reading-owed-a-live-or-a-reel-asks-the-microphone-for-one-channel.md)
-- [ ] [a salon carries read receipts, seen in a real community](backlog.d/reading-owed-a-salon-carries-read-receipts.md)
 - [ ] [follow suggestions and Suivre, WP-2, WP-5, WP-6, WP-7](backlog.d/reading-owed-follow-suggestions-and-suivre-wp-2-wp-5-wp-6-wp-7.md)
 - [ ] [openings for followers, WP-4](backlog.d/reading-owed-openings-for-followers-wp-4.md)
 - [ ] [the checkpoint every commit awaits under the MLS lock before its first request](backlog.d/reading-owed-the-checkpoint-every-commit-awaits-under-the-mls-lock-before-its.md)
