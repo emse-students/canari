@@ -16,7 +16,8 @@
  * says what the difference costs.
  */
 import { spawn, execSync } from "node:child_process";
-import { join } from "node:path";
+import { mkdirSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { connect, listTargets } from "./cdp.mjs";
 import { EstateRefusedError, refuseForeignPage } from "./estate-target.mjs";
 import { STATE_DIR } from "./names.mjs";
@@ -72,7 +73,10 @@ export const FAKE_MEDIA_FLAGS = [
  * A browser that "stopped answering" is otherwise indistinguishable from one another run killed.
  */
 export function chromeLogFlags(dir) {
-  return ["--enable-logging", "--v=1", `--log-file=${dir}/chrome.log`, `--crash-dumps-dir=${dir}/dumps`];
+  // Absolute (Chrome resolves a relative path against ITS cwd, not ours) and created up front.
+  dir = resolve(dir);
+  mkdirSync(join(dir, "dumps"), { recursive: true });
+  return ["--enable-logging", "--v=1", `--log-file=${join(dir, "chrome.log")}`, `--crash-dumps-dir=${join(dir, "dumps")}`];
 }
 
 /** True when something still answers on that debugging port. */
