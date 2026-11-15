@@ -1691,7 +1691,12 @@ export class MlsDeliveryApi {
     }
   }
 
-  /** Registers this device on the delivery service with its initial KeyPackage and metadata. */
+  /**
+   * Registers this device on the delivery service with its initial KeyPackage and metadata.
+   *
+   * Answers whether the service HOLDS a push registration for this device (`pushRegistered`), or
+   * `null` from a service that does not say - the fact `reconcilePushRegistration` acts on.
+   */
   async registerDeviceKeyPackage(params: {
     keyPackageBase64: string;
     /**
@@ -1703,8 +1708,13 @@ export class MlsDeliveryApi {
     deviceName?: string;
     deviceOs: string;
     deviceAppVersion?: string;
-  }): Promise<void> {
-    await this.underDeadline('register-device', async (signal) => {
+    /**
+     * What this install's push registration last came to (`pushOutcomeForReport`), printed by the
+     * server when it holds no registration for the device. Native only; the web registers none.
+     */
+    pushOutcome?: string;
+  }): Promise<{ pushRegistered: boolean | null }> {
+    return await this.underDeadline('register-device', async (signal) => {
       const response = await this.f(`${this.historyUrl}/api/mls/register-device`, {
         method: 'POST',
         signal,
@@ -1717,6 +1727,7 @@ export class MlsDeliveryApi {
           ...(params.deviceName ? { deviceName: params.deviceName } : {}),
           deviceOs: params.deviceOs,
           ...(params.deviceAppVersion ? { deviceAppVersion: params.deviceAppVersion } : {}),
+          ...(params.pushOutcome ? { pushOutcome: params.pushOutcome } : {}),
         }),
       });
 
@@ -1740,7 +1751,11 @@ export class MlsDeliveryApi {
         throw await refusalFromResponse(response, 'Failed to publish KeyPackage');
       }
       // A portal's 2xx registered nothing: no answer, never a registration.
-      assertAnsweredByApi(response, 'POST /api/mls/register-device');
+      const body = (await readApiJson(response, 'POST /api/mls/register-device', signal)) as {
+        push?: { registered?: unknown };
+      } | null;
+      const held = body?.push?.registered;
+      return { pushRegistered: typeof held === 'boolean' ? held : null };
     });
   }
 

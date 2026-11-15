@@ -51,6 +51,7 @@ import {
   type GatewaySocketOpen,
 } from '$lib/mls-client/gatewaySocketOpen';
 import { getToken, signOutGeneration } from '$lib/stores/auth';
+import { pushOutcomeForReport, reconcilePushRegistration } from './PushNotificationService';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { toBase64, toHex, type MlsStateWriteLatch } from '$lib/utils/hex';
 import type { StateLedgerChanges } from '$lib/mls-client/stateLedgers';
@@ -1905,13 +1906,19 @@ export class TauriMlsService extends BaseMlsService {
     const storedName =
       localStorage.getItem(ACCOUNT_KEY.deviceName(this.userId, this.deviceId)) || undefined;
     const deviceAppVersion = getClientAppVersion();
-    await this.delivery.registerDeviceKeyPackage({
+    const deviceOs = detectRuntimeDeviceOs('desktop');
+    const pushes = deviceOs === 'android' || deviceOs === 'ios';
+    const answer = await this.delivery.registerDeviceKeyPackage({
       keyPackageBase64: base64,
       notAfterSecs: keyPackage.notAfterSecs,
       deviceName: storedName,
-      deviceOs: detectRuntimeDeviceOs('desktop'),
+      deviceOs,
       deviceAppVersion,
+      ...(pushes ? { pushOutcome: pushOutcomeForReport() } : {}),
     });
+    // The delivery service's push row is the fact a registration is owed against - this call runs at
+    // every unlock and every key-package renewal, so a lost or never-written row is re-driven here.
+    if (pushes) reconcilePushRegistration(answer.pushRegistered);
   }
 
   /** Returns the list of MLS group IDs known locally, populated from Rust via `lister_groupes` at init time. */

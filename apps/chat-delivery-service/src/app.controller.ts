@@ -46,6 +46,7 @@ import { expireUnansweredAsks, seatKey } from './utils/group-membership';
 import { announceExpiredAsks, trackJoinAskWork } from './utils/join-ask-announce';
 import { checkDatabaseClockAgreement } from './utils/clock-agreement';
 import { reportOrphanDevices } from './utils/orphan-devices';
+import { reportPushCoverage } from './utils/push-coverage';
 import { deleteSentFrameReceiptsBefore } from './utils/sent-frame-receipt';
 import { takeSafeBrowsingRefusalCount } from './utils/safe-browsing';
 import {
@@ -78,6 +79,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   private reportSingleHolderInterval: ReturnType<typeof setInterval>;
   private reportCommitLogInterval: ReturnType<typeof setInterval>;
   private reportOrphanDevicesInterval: ReturnType<typeof setInterval>;
+  private reportPushCoverageInterval: ReturnType<typeof setInterval>;
   private reportSafeBrowsingInterval: ReturnType<typeof setInterval>;
   private reportKnownAccusationsInterval: ReturnType<typeof setInterval>;
   private initialSweepTimeout: ReturnType<typeof setTimeout>;
@@ -246,6 +248,15 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       );
     }, 24 * ONE_HOUR);
 
+    // Count the phones that ran and hold no push registration, per build. Purely a report, daily, and
+    // it exists because a third of one build's phones stopped registering and only a hand-written
+    // query saw it (production 2026-11-15) - see utils/push-coverage.ts.
+    this.reportPushCoverageInterval = setInterval(() => {
+      void this.reportPushCoverage().catch((e) =>
+        this.logger.error('[CRON] reportPushCoverage failed', e)
+      );
+    }, 24 * ONE_HOUR);
+
     // Count the Safe Browsing configuration refusals of the day, so a dead link check is found the
     // day it dies - see utils/safe-browsing.ts.
     this.reportSafeBrowsingInterval = setInterval(() => {
@@ -316,7 +327,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
         'orphan group purge (6h), ' +
         'soft-deleted groups purge (24h), stale push tokens purge (24h), ' +
         'stale pending invitations purge (24h), ' +
-        'expired device revocations purge (24h), orphan device report (24h), ' +
+        'expired device revocations purge (24h), orphan device report (24h), push coverage report (24h), ' +
         'known accusations summary (24h) scheduled'
     );
 
@@ -357,6 +368,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       ['reportCommitLogHealth', () => this.reportCommitLogHealth()],
       // After the GC above, so it counts only what the GC left - the population it cannot reach.
       ['reportOrphanDevices', () => this.reportOrphanDevices()],
+      ['reportPushCoverage', () => this.reportPushCoverage()],
       // After the four reports that settle their ledgers, so it counts what they just left there.
       ['reportKnownAccusations', () => this.reportKnownAccusations()],
     ];
@@ -413,6 +425,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     clearInterval(this.reportSingleHolderInterval);
     clearInterval(this.reportCommitLogInterval);
     clearInterval(this.reportOrphanDevicesInterval);
+    clearInterval(this.reportPushCoverageInterval);
     clearInterval(this.reportSafeBrowsingInterval);
     clearInterval(this.reportKnownAccusationsInterval);
     clearTimeout(this.initialSweepTimeout);
@@ -1338,6 +1351,11 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       },
     };
     await summarizeAccusations(this.groupRepo.manager, this.logger, labels);
+  }
+
+  /** The daily push-coverage count - read-only; see {@link reportPushCoverage}. */
+  private async reportPushCoverage() {
+    await reportPushCoverage(this.groupRepo.manager, this.logger);
   }
 
   /** The daily orphan-device count - read-only; see {@link reportOrphanDevices}. */
