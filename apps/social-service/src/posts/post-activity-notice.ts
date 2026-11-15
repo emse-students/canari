@@ -1,7 +1,7 @@
 import type { EntityManager } from 'typeorm';
 import { ONE_PER_POST_TYPES } from './engagement-push-cap';
 import { NOTIFICATION_TYPE_CATEGORY, pushCategoryOffSql } from '../push/notification-category';
-import { bellRowShownSql } from './post-notifications.service';
+import { bellRowVisibleSql } from './post-notifications.service';
 
 /**
  * ONE LIVE NOTIFICATION PER POST for the comments and reactions on the reader's own post (owner,
@@ -46,7 +46,7 @@ const ROW_CATEGORY_SQL = `(CASE type ${ONE_PER_POST_TYPES.map(
  * that decide what the reader is shown:
  * - the push: with "Commentaires" off, the comments' rows are written but never pushed, so they must
  *   not silence the reactions the reader asked for (`pushCategoryOffSql`, review of #3579);
- * - the BELL: a row `bellRowShownSql` hides (a comment hidden by moderation, a post the reader no
+ * - the BELL: a row `bellRowVisibleSql` hides (a comment hidden by moderation, a post the reader no
  *   longer sees, comments withheld from them) is not in the bell, so the client's unread badge - the
  *   count of the rows the bell returned - does not count it either; counting it here made the next
  *   comment update silently over a bell that showed nothing unread. THE SAME FUNCTION the bell's
@@ -63,7 +63,7 @@ export function postActivityWriteSql(): string {
   SELECT pn.id, pn.type, pn."actorId" FROM post_notifications pn
    WHERE pn."recipientId" = $1 AND pn."postId" = $2 AND NOT pn.read AND pn.type = ANY($9::varchar[])
      AND NOT ${pushCategoryOffSql('$1::varchar', ROW_CATEGORY_SQL)}
-     AND ${bellRowShownSql('pn')}
+     AND ${bellRowVisibleSql('pn')}
 ), written AS (
   INSERT INTO post_notifications ("recipientId", type, "postId", "actorId", "actorName", text, "commentId")
   VALUES ($1, $3, $2, $4, $5, $6, $7)

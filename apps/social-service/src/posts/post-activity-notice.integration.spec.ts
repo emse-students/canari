@@ -23,6 +23,7 @@ import {
   POST_ACTIVITY_QUIET_MIN_CLIENT_VERSION,
 } from '../push/notification-client-floor';
 import { postActivityCollapseId } from './post-activity-notice';
+import { REVIEW_COHORT_ENV } from '../review-cohort';
 import { commentContent, reactionContent, type PushContent } from '../push/push-content';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
@@ -240,6 +241,22 @@ maybe('one live notification per post (owner, 2026-11-14) against PostgreSQL', (
     expect(await comment(svc, 'bob')).toEqual({ alert: true, others: 0 });
     await q(`UPDATE posts SET "hiddenByModeration" = false WHERE id = $1`, [P1]);
     expect(await comment(svc, 'carol')).toEqual({ alert: false, others: 2 });
+  });
+
+  it("a row across the review cohort's boundary is not in the bell, so it does not count either", async () => {
+    const before = process.env[REVIEW_COHORT_ENV];
+    process.env[REVIEW_COHORT_ENV] = 'alice';
+    try {
+      const svc = service();
+      // Alice is a review account, the author is not: her row is left out of the author's bell.
+      expect(await comment(svc, 'alice')).toEqual({ alert: true, others: 0 });
+      expect(await comment(svc, 'bob')).toEqual({ alert: true, others: 0 });
+      // Bob's row is shown, so the next comment is quiet over it.
+      expect(await comment(svc, 'carol')).toEqual({ alert: false, others: 1 });
+    } finally {
+      if (before === undefined) delete process.env[REVIEW_COHORT_ENV];
+      else process.env[REVIEW_COHORT_ENV] = before;
+    }
   });
 
   it('a dozen comments arriving TOGETHER write a dozen rows and exactly ONE alert', async () => {
