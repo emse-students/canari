@@ -47,7 +47,12 @@ describe('association profiles and rosters and the review cohort', () => {
   }
 
   it('never lists a review account on a public roster', async () => {
-    const raw = (userId: string) => ({ m_id: `row-${userId}`, m_userId: userId, m_permissions: 0 });
+    const raw = (userId: string) => ({
+      m_id: `row-${userId}`,
+      m_userId: userId,
+      m_permissions: 0,
+      m_createdAt: new Date(0),
+    });
     const qb: Record<string, jest.Mock> = {};
     for (const step of ['select', 'addSelect', 'leftJoin', 'where', 'orderBy', 'addOrderBy']) {
       qb[step] = jest.fn(() => qb);
@@ -55,7 +60,12 @@ describe('association profiles and rosters and the review cohort', () => {
     qb.getRawMany = jest.fn(() => Promise.resolve([raw('member'), raw('reviewer')]));
     const service = serviceWith({ createQueryBuilder: jest.fn(() => qb) });
     const listed = await service.listMembersPublic('asso1');
-    expect(listed.map((m) => m.userId)).toEqual(['member']);
+    expect(listed.map((m) => m.id)).toEqual(['row-member']);
+    // A public roster names its members, never their accounts nor when they joined.
+    expect(Object.keys(listed[0]).sort()).toEqual(
+      ['avatarUrl', 'displayName', 'firstName', 'id', 'isAdmin', 'lastName', 'promo', 'role'].sort()
+    );
+    expect(JSON.stringify(listed)).not.toContain('"member"');
     // The photo is the ROW's, absolute on Canari's public origin (anonymous-surface.md).
     expect(listed[0].avatarUrl).toBe('https://canari.example/api/public/members/row-member/avatar');
   });

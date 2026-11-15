@@ -2551,6 +2551,14 @@ row drawn from the device, wherever it sits, including when the answer is empty:
 
 The store is then rewritten from that answer, so the next launch draws what the server last said.
 
+**The stored copy has no age limit of its own (taken by the lead under the owner's absence rule,
+2026-11-15, reversible).** A device that stays offline keeps drawing the page it last received,
+however old, including a post withdrawn since; the first server answer replaces it. Charter,
+principle 2 (the essential is never lost) decides: the copy is content the server served to this
+reader, sealed under the device key, bounded to four pages and stripped of every right, and an age
+limit would take offline reading away for what the next answer already does. The bell's stored
+rows follow the same rule.
+
 **A card already drawn takes the answer's row (review of #1896).** The list is keyed by post id, so
 the card drawn from the copy is KEPT when the answer replaces its row, and `PostCard` used to copy
 its prop once: the vote stayed refused (`canVote: false`), the owner's and moderator's menu never

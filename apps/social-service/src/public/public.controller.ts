@@ -83,8 +83,11 @@ function toPublic(
   };
 }
 
-/** A card of the published carte, with the photo address of the public roster row behind it. */
-export type PublicCarteCard = PublishedCarteCard & { avatarUrl: string | null };
+/**
+ * A card of the published carte as served without an account: the photo address of the public
+ * roster row behind it, and NOT the account id the stored card is joined by.
+ */
+export type PublicCarteCard = Omit<PublishedCarteCard, 'userId'> & { avatarUrl: string | null };
 
 /** The published carte as served without an account: every card carries {@link PublicCarteCard}. */
 export type PublicCarteResponse = Omit<PublishedCarteResponse, 'units'> & {
@@ -380,7 +383,7 @@ export class PublicController {
       }
     }
     // Each card's photo by its roster row, the address the public roster hands out. The card's
-    // `userId` is served beside it: the showcase keys its card list on that field.
+    // `userId` joins it here and is not served: the cards are drawn in order, keyed by nothing.
     const avatars = await this.associations.publicAvatarUrlsFor(
       carte.units.flatMap((u) =>
         u.cards.map((c) => ({ associationId: u.assoId, userId: c.userId }))
@@ -390,9 +393,9 @@ export class PublicController {
       ...carte,
       units: carte.units.map((u) => ({
         ...u,
-        cards: u.cards.map((c) => ({
-          ...c,
-          avatarUrl: avatars.get(`${u.assoId}:${c.userId}`) ?? null,
+        cards: u.cards.map(({ userId, ...card }) => ({
+          ...card,
+          avatarUrl: avatars.get(`${u.assoId}:${userId}`) ?? null,
         })),
       })),
     };
