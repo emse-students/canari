@@ -460,7 +460,7 @@ batch 7). Evidence is outside the repository.
 | --- | --- | --- |
 | A comment push, app killed ([entry](backlog.d/reading-owed-a-comment-reply-or-mention-opens-the-post-at-the-comment-the-push.md)) | **`PASS`** | NC row, `hold`, tap the card: PIN gate, then the post with the comments sheet open and the comment ringed; a banner tap did the same |
 | The bell row of a comment | **`PASS`** | The post opens with the sheet open and the comment ringed |
-| A comment push, app backgrounded | **not read** | Comments 3 to 7 raised no banner and no NC row: [entry](backlog.d/p3-comment-pushes-after-the-first-on-one-post-raised-no-banner-on-the-iphone.md) |
+| A comment push, app backgrounded | **not read** | Comments 3 to 7 raised no banner and no NC row: [entry](backlog.d/p2-a-reply-or-mention-of-a-post-s-author-is-pushed-as-a-comment-and-capped.md) |
 | A salon mention, app killed, known author ([entry](backlog.d/reading-owed-a-mention-names-its-author-from-the-phone-s-copy-of-names-and-the.md)) | **`PASS`** | Title "nse banc communaute - #general", subtitle "Canari Test Delta vous a mentionne", body "@vous reading M mention", `TIME SENSITIVE`, the author's face |
 
 Not staged this batch: the readings of Android-only code (the Mi 9T half of each entry stays), the F1 iPhone runs

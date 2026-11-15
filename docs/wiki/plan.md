@@ -61,6 +61,7 @@ earliest version, as a checklist.
 - [P2 - a frame read before a browser kill is called "never read here" on the next cold start](backlog.d/reading-owed-the-live-seen-cipher-mark-written-at-the-checkpoint.md)
 - [P2 - the retention durations a sweep applies are not yet admin settings](backlog.d/retention-durations-not-yet-settings.md)
 - [P2 - what the keyboard readings of 2026-11-14 filed: a photo DM still jumps to older messages, a short thread loads history on close, a 12 px step](backlog.d/what-the-keyboard-readings-of-2026-11-14-filed.md)
+- [P2 - iOS: "Marquer comme lu" from a killed app does its work, then crashes the app off the main thread](backlog.d/p2-ios-mark-as-read-from-a-killed-app-crashes-off-the-main-thread.md)
 
 **P3 - hygiene**
 
@@ -73,7 +74,6 @@ earliest version, as a checklist.
 - [P3 - a lives integration spec failed once: the association's live pushed to nobody](backlog.d/p3-flaky-lives-spec-member-live-after-association-live.md)
 - [P3 - A channel invite sends a rendered sentence as the `memberAdded` frame data, which is not JSON: receivers draw nothing and the archive replay parses it bare (2026-11-14)](backlog.d/p3-a-channel-invite-sends-a-sentence-as-the-memberadded-data.md)
 - [P3 - A salon is read before the key-group drain has finished, so its rows warn "unreadable - missing seed" and are read again later (1.6.11 logs, 2026-11-14)](backlog.d/p3-a-salon-is-read-before-the-key-group-drain-finishes.md)
-- [P3 - comment pushes after the first on one post raised no banner on the iPhone (read 2026-11-14)](backlog.d/p3-comment-pushes-after-the-first-on-one-post-raised-no-banner-on-the-iphone.md)
 - [P3 - "server already unreachable" is logged once per request instead of once per transition (1.6.11 logs, 2026-11-14)](backlog.d/p3-server-already-unreachable-is-logged-per-request.md)
 - [P3 - EXIT-FORTIFY: closing the app on the Mi 9T logs `FORTIFY: pthread_mutex_lock called on a destroyed mutex` from the render thread](backlog.d/reading-owed-exit-fortify-closing-the-app-on-the-mi-9t-logged-fortify-pthread.md)
 - [P3 - the gated `video-switch` and `video-off-on` call rows read 19.6-25 fps against a threshold of 27](backlog.d/p3-the-gated-video-switch-and-video-off-on-rig-rows-read-19-6-25-fps-threshold-27.md)
@@ -178,6 +178,8 @@ earliest version, as a checklist.
 - [P2 - an answer whose Lydia request is still OPEN shows "pending" with no button for up to 28 minutes (2026-10-21)](backlog.d/p2-an-answer-whose-lydia-request-is-still-open-shows-pending-with-no-button-for.md)
 - [P2 - Graine rotates on every key-group epoch, so a growing community mints a seed per message (measured 2026-10-21)](backlog.d/p2-graine-rotates-on-every-key-group-epoch-so-a-growing-community-mints-a-seed.md)
 - [P2 - one tap from Canari signs the user into its MiConnect sites, and MiGallery's notifications go through Canari (owner, 2026-11-07: decided; Canari's half of the handoff built 2026-11-08, every site's flag OFF)](backlog.d/sign-in-handoff-to-the-ecosystem-sites-and-migallery-notifications.md)
+- [P2 - a reply or a mention aimed at a post's AUTHOR is sent as a "comment", so the daily cap swallows it](backlog.d/p2-a-reply-or-mention-of-a-post-s-author-is-pushed-as-a-comment-and-capped.md)
+- [P2 - iOS: a quick reply from a suspended app is not sent in the background time, it waits for the next open](backlog.d/p2-ios-quick-reply-from-a-suspended-app-waits-for-the-next-open.md)
 
 **P3 - hygiene**
 
@@ -202,6 +204,8 @@ earliest version, as a checklist.
 - [P3 - the identity provider's PostgreSQL pin moves by hand, in its own window](backlog.d/the-identity-providers-postgres-pin-moves-by-hand.md)
 - [P3 - the conversation rises with the keyboard in one block; Android Messages rises with it frame by frame (owner, 2026-11-14) - a study, not built](backlog.d/keyboard-motion-like-android-messages.md)
 - [P3 - Minesweeper: the first dig's generation blocks the main thread (2026-11-14)](backlog.d/p3-minesweeper-generation-off-the-main-thread.md)
+- [P3 - a comment push tapped while its post is the page left open lands on the post, not on the comment](backlog.d/p3-a-comment-push-for-the-post-already-open-does-not-open-the-comment.md)
+- [P3 - the comment route accepts a comment with no text and no media, and pushes "Nouveau commentaire"](backlog.d/p3-the-comment-route-accepts-an-empty-comment-and-pushes-it.md)
 
 ## 1.9.0
 
