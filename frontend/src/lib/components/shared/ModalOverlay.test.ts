@@ -159,7 +159,7 @@ describe('a panel inside the overlay', () => {
       .flatMap(({ file, body }) =>
         [...body.matchAll(/panelClass="([^"]*)"/g)]
           .filter((m) => rawViewportHeight.test(m[1]))
-          .map(() => relative(dir, file))
+          .map(() => relativeTo(file, dir))
       );
     expect(offenders, `bound these by min(<n>vh,100%): ${offenders.join(', ')}`).toEqual([]);
   });
