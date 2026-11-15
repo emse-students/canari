@@ -810,6 +810,13 @@ new field lives in the encrypted outbox payload.
   only mechanism that covers it (no part was ever staged, so no bytes and no budget beyond the
   slot). A permanent failure that deletes the
   row (group deleted, eviction, an unpreparable take) releases it the same way.
+  **A cancel that lands while the preparation's row write is held** (`reelResume` test "A CANCEL DURING
+  THE PREPARATION'S WRITE", rewritten 2026-11-15 so the TEST holds and releases the write through a
+  promise, never an assertion inside the storage hook, which the outbox swallowed): the write lands
+  first under the take's lock, the settles of the withdrawn sends follow, the transfer is aborted
+  before the server stored anything, and the session it opened is released. Nothing is left on the
+  server. A cancel that arrives AFTER the last send reached the wire answers "too late" and keeps the
+  take as its sent record: that stored file is held for the sent message, not an orphan.
   **The release is owed in DURABLE STATE (2026-11-01, `utils/chat/uploadReleaseMarks.ts`).** The
   outbox's `releaseUpload` is `releaseUploadDurably`: the session id is written to ONE device-wide
   `localStorage` key (`canari_upload_release_marks`, `{ ownerId: uploadId[] }`, ids only, no key)

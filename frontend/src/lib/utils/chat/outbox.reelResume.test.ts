@@ -1317,28 +1317,48 @@ describe('one take, several conversations (RC-13)', () => {
     expect(sends(second)).toBe(0);
   });
 
-  it("A CANCEL DURING THE PREPARATION'S WRITE: the write lands first (the take's lock), the withdrawal after it - no row comes back", async () => {
+  it("A CANCEL DURING THE PREPARATION'S WRITE: the write lands first (the take's lock), the withdrawal after it - no row comes back, the file it uploaded is released", async () => {
     const w = world();
     let l!: ReturnType<typeof life>;
     const execute = w.sql.db.execute;
-    let cancel: Promise<void> | null = null;
+    // THE HOLD IS THE TEST'S: the hook (production code calls it) only signals that the write is
+    // pending and waits on a promise the test releases - it asserts nothing, so nothing can throw
+    // into the outbox, which would swallow it as a failed attempt.
+    let holding!: () => void;
+    const writePending = new Promise<void>((resolve) => (holding = resolve));
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let seen = false;
     w.sql.db.execute = async (q: string, p?: any[]) => {
-      if (!cancel && q.includes('UPDATE outbox SET conversation_id') && p?.[0] === ID) {
-        // Every send withdrawn while this write is held: the last one's settle then waits for the
-        // take's lock, which the preparation's write holds.
-        cancel = cancelAll(l, 3);
-        await waitForEvent(() => expect(SEND_IDS.some((id) => w.sql.rows.has(id))).toBe(false));
+      if (!seen && q.includes('UPDATE outbox SET conversation_id') && p?.[0] === ID) {
+        seen = true;
+        holding();
+        await gate;
       }
       return execute(q, p);
     };
     l = life(w);
     await enqueueTake(l, 3);
-    await waitForEvent(() => expect(cancel).not.toBeNull());
-    await cancel;
+    await writePending;
+    // EVERY SEND WITHDRAWN AT ONCE while the write is held: each row goes at once (that needs no
+    // lock), each settle then queues on the take's lock the write holds. Awaited one by one, the
+    // last send could reach the wire between two settles - a cancel that answers "too late" is a
+    // different case. The test lets the write land only once every send row is gone.
+    const cancels = Promise.all(SEND_IDS.map((id) => l.outbox.cancelPending(id)));
+    await waitForEvent(() => expect(SEND_IDS.some((id) => w.sql.rows.has(id))).toBe(false));
+    release();
+    expect(await cancels).toEqual([true, true, true]);
     await waitForEvent(() => expect(w.sql.rows.size).toBe(0));
     await waitForEvent(async () => expect(await w.blobs.list()).toEqual([]));
-    expect(w.server.stored.size).toBe(0);
     expect(sends(l)).toBe(0);
+    // THE WRITE LANDED (the take went on to open its upload session) and the withdrawals came after
+    // it: the transfer was aborted before the server stored anything, so there is NO file to give
+    // back - no chat release, nothing stored - and the SESSION it opened was released (a DELETE).
+    // (A file that does complete after a cancel is the case above: released through the chat hold.)
+    expect(w.uploads).toBe(1);
+    expect(w.server.stored.size).toBe(0);
+    expect(w.events).toEqual([]);
+    expect(w.server.sent.some((r) => r.method === 'DELETE')).toBe(true);
   });
 
   it('a withdrawal WHILE THE DRIVE READS THE TAKE never starts its transfer (checked right before the claim)', async () => {
