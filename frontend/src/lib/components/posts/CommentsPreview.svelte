@@ -36,7 +36,8 @@
     /** Opens the sheet; `write` puts the caret in its box. */
     onOpen: (opts: { write: boolean }) => void;
     /**
-     * READ-ONLY (`canParticipate` false: a platform admin reading outside their audience, 2026-11-14):
+     * READ-ONLY (`canParticipate` false: a moderator - a platform admin, a BDE moderator in scope -
+     * reading outside their audience, 2026-11-14; owner, 2026-11-15):
      * no like, no "write a comment" line; the sheet still opens, to read.
      */
     readOnly?: boolean;

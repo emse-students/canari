@@ -108,10 +108,13 @@ const POSTS: {
   },
   {
     id: '00000000-0000-4000-8000-000000000002',
-    label: 'an A2 post (the whole Gardanne campus)',
+    label:
+      'an A2 post (the whole Gardanne campus), written by a platform admin who is not a member of A2',
     authorId: 'admin',
     associationId: A2,
-    seenBy: ['isminGa', 'admin'],
+    // The author's door of an entity's post is held only with a membership of it (2026-11-14): the admin
+    // wrote it through the admin tier, is no member, and has no space - browsing shows them nothing.
+    seenBy: ['isminGa'],
   },
   {
     id: '00000000-0000-4000-8000-000000000003',
@@ -119,7 +122,7 @@ const POSTS: {
     authorId: 'admin',
     associationId: A2,
     republishedBy: [A1],
-    seenBy: ['isminGa', 'admin', 'icmSe', 'icmSe2', 'adminIcm', 'staff'],
+    seenBy: ['isminGa', 'icmSe', 'icmSe2', 'adminIcm', 'staff'],
   },
   {
     id: '00000000-0000-4000-8000-000000000004',
@@ -367,10 +370,9 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
       `SELECT posts.id FROM posts WHERE ${postVisibleToViewerSql('posts', '$1')} ORDER BY posts.id`,
       ['admin']
     );
-    // Only what the admin wrote themselves: the posts of the two A2 rows.
-    expect(rows.map((r) => r.id as string)).toEqual(
-      POSTS.filter((p) => p.authorId === 'admin').map((p) => p.id)
-    );
+    // Nothing: the two A2 rows they wrote are A2's, and they are not a member of A2 (the author's door
+    // of an entity's post, 2026-11-14) - an admin's personal post would be theirs, as anyone's.
+    expect(rows.map((r) => r.id as string)).toEqual([]);
   });
 
   it('an absent viewer (NULL) sees nothing at all', async () => {

@@ -73,8 +73,9 @@
     onDelete: (commentId: string) => Promise<void>;
     onReport?: (commentId: string) => void;
     /**
-     * READ-ONLY: the reader may read this thread but not act in it - a platform admin reading a post
-     * outside their own audience to moderate it (`canParticipate` false, 2026-11-14). No reply, like,
+     * READ-ONLY: the reader may read this thread but not act in it - a moderator (a platform
+     * admin, a BDE moderator in scope) reading a post outside their own audience to moderate it
+     * (`canParticipate` false, 2026-11-14; owner, 2026-11-15). No reply, like,
      * edit or report control; a delete the server grants (moderation) stays.
      */
     readOnly?: boolean;
