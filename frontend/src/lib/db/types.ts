@@ -673,8 +673,9 @@ export interface StoredGraineV2 {
   /**
    * The session's Ed25519 SECRET, base64 - present only on a session this device minted, like
    * `sentCount`. A backup carries it inside the sealed blob and never uses it: a restored session
-   * has no `distributionEpoch` (the backup does not carry one), so it always rotates rather than
-   * continuing an index another copy of this device may already have written past.
+   * comes back with no `sentCount` (`importBackup`), so it is a session this device READS and the
+   * first send after the restore mints a new one, rather than continuing an index this device may
+   * already have written past.
    */
   signingSecretKeyB64?: string;
 }
@@ -1175,6 +1176,9 @@ export interface IStorage {
   /**
    * Non-destructive insert of a backed-up Graine row: writes only when the device holds no session
    * with that id, so a device live since the backup keeps what it has learned since.
+   *
+   * The backup path hands it no `sentCount`: a restored session is held to READ, and a count from
+   * the file would resume an outbound session at indices already used (`importBackup`).
    */
   importEncryptedGraineRow(row: EncryptedGraineRow): Promise<void>;
 
