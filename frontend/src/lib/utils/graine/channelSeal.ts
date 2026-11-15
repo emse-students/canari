@@ -666,6 +666,15 @@ async function sealOnLeaderTab(
       'main-tab-key-changed'
     );
   }
+  if ('unsent' in answer.value) {
+    console.warn(
+      `[SEND] the leader tab lost the lead before sealing this tab's message for channel ${channel.slice(0, 8)} - nothing sealed`
+    );
+    throw new GraineSealUnavailableError(
+      `[GRAINE] the leader tab lost the lead before sealing for channel ${channel.slice(0, 8)}`,
+      'main-tab-lead-lost'
+    );
+  }
   if ('unavailable' in answer.value) {
     // The leader's own refusal, said by it where it was decided; carried here as the same type.
     throw new GraineSealUnavailableError(
@@ -697,6 +706,17 @@ export const salonSealExecutors: Pick<DelegatedCommitExecutors, 'seal-salon-mess
         `[SEND] a follower's message for channel ${op.channelId.slice(0, 8)} not sealed: this tab's salon gate refused (reason=${gate.reason})`
       );
       return { gate: gate.reason };
+    }
+    // THE LEAD CAN LEAVE THIS TAB WHILE IT WAITS ON THE GATE (a freeze, a handover to a visible tab):
+    // read synchronously right before the seal, whose own entry would otherwise hand the payload to
+    // the NEW leader from inside this run - a second request for one gesture. Answered by value,
+    // nothing reserved, nothing sealed; the follower that asked is told (`frameFromAnyTab.ts` does
+    // the same for a frame).
+    if (refusesCommitsHere()) {
+      console.warn(
+        `[SEND] a follower's message for channel ${op.channelId.slice(0, 8)} not sealed: the lead left this tab while it waited on the salon gate - nothing sealed, the follower is told`
+      );
+      return { unsent: 'lead-lost' };
     }
     try {
       const sealed = await sealChannelMessage(op.channelId, payload);

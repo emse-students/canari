@@ -110,6 +110,15 @@ describe('sealChannelMessage in a follower tab', () => {
     await expect(sealing).rejects.toMatchObject({ reason: 'main-tab-key-changed' });
   });
 
+  it('a leader that lost the lead before sealing is a typed seal refusal, handed on no further', async () => {
+    delegateCommitToLeader.mockResolvedValue({ status: 'done', value: { unsent: 'lead-lost' } });
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const sealing = sealChannelMessage('abcdef123456', new Uint8Array([1]));
+    await expect(sealing).rejects.toBeInstanceOf(GraineSealUnavailableError);
+    await expect(sealing).rejects.toMatchObject({ reason: 'main-tab-lead-lost' });
+    expect(delegateCommitToLeader).toHaveBeenCalledTimes(1);
+  });
+
   it('a tab promoted in place, its reload owed, refuses at once and hands nothing over', async () => {
     state.promoted = true;
     vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -170,5 +179,24 @@ describe("the leader seals a follower's salon message behind its OWN salon gate"
       })
     ).resolves.toEqual({ unopened: 'device-key-changed' });
     expect(whenSalonSendable).not.toHaveBeenCalled();
+  });
+
+  it('the lead leaving during the gate wait is answered unsent - no nested handover, nothing sealed, nothing at error', async () => {
+    whenSalonSendable.mockImplementation(async () => {
+      state.follower = true;
+      return { kind: 'ready' };
+    });
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await expect(
+      salonSealExecutors['seal-salon-message']({
+        kind: 'seal-salon-message',
+        channelId: 'abcdef123456',
+        payload: await sealForHandover(new Uint8Array([3])),
+      })
+    ).resolves.toEqual({ unsent: 'lead-lost' });
+    expect(delegateCommitToLeader).not.toHaveBeenCalled();
+    expect(reserveOutboundSlot).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
   });
 });

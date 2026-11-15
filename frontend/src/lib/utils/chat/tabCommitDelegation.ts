@@ -145,13 +145,14 @@ interface DelegatedCommitResults {
   /**
    * The sealed message; the typed reason the leader could not seal for that salon; the reason the
    * leader's OWN salon gate refused it (`whenSalonSendable`, waited on before the seal exactly as a
-   * single tab waits); or `unopened`, as for a frame.
+   * single tab waits); or `unopened` and `unsent`, as for a frame.
    */
   'seal-salon-message':
     | { sealed: SealedChannelMessage }
     | { unavailable: GraineSealUnavailableReason }
     | { gate: SalonGateRefusal }
-    | { unopened: HandoverUnopened };
+    | { unopened: HandoverUnopened }
+    | { unsent: HandoverUnsent };
   'note-missing-seeds': 'noted';
 }
 
