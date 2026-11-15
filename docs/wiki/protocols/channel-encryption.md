@@ -2545,6 +2545,15 @@ it is decided (`noteHistoryHeldNothing`, `noteSeedUnavailable`).
 seed. That assertion could not hold on any wording, because the only line it could match belongs to
 the path a mid-salon grant never takes.
 
+**A re-granted member gets the seed by the history ask, and that is the design (decided 2026-11-15, reversible; WP-REGRANT-2 closed).**
+**Confirmed by the owner on 2026-11-15** (decided under delegation in #3588): no longer pending.
+A seed travels WITH the message that needs it ([section 19](#19-design-the-seed-travels-with-the-message---decided-by-the-user-2026-09-27)),
+so a member granted mid-salon holds no seed until it meets a row it cannot open; it then asks and absorbs the answer
+([section 25](#25-a-member-hands-the-past-only-to-an-admission-it-can-verify-decided-by-the-user-2026-10-22)). That is the
+route every COMM-8 pass in the ledger has taken (`seedAfterTheGrant: repaired`, never `distributed`), and the one COMM-22's four
+grant/revoke cycles read green on. COMM-8 asserts the seed was STORED (`distributed` or `repaired`), not which route brought it, and
+it was re-run on dev on 2026-11-15: every assertion held, `repaired`. A grant that left a member unable to read would still fail the row. Charter ([principes](../../principes.md)): principle 1 holds because the ask and its answer travel as ciphertext between members and the server learns nothing new; principle 2 holds because the row still fails if the member cannot read what was said. Reverting means restoring the `distributed` expectation in `archive/comm8.mjs` and the grant's seed frame, which section 19 already describes.
+
 ### The creator prepared nothing, so the first message in a new community was refused - FIXED 2026-08-20
 
 Creating a community selects its default salon and leaves the composer ready. A public salon seals
@@ -3506,8 +3515,9 @@ otherwise keep minting v1 sessions to forge an author; the v1 seeds already held
 rows until those age out of the 365-day window, and the v1 reader goes with the last of them
 ([legacy-compatibility](../legacy-compatibility.md)). **The verified MLS sender is MEASURED before it
 refuses**: one release logs every envelope that contradicts it and refuses nothing, because a
-legitimate mismatch nobody foresaw would otherwise lose messages. The work packages, WP-G2-0 to WP-G2-6, are in
-the [backlog](../backlog.d/p1-graine-v2-an-author-that-is-proven-and-a-ciphertext-bound-to-its-place.md).
+legitimate mismatch nobody foresaw would otherwise lose messages. The work packages, WP-G2-0 to WP-G2-6, are all built and are
+the sections below; the chantier closed on 2026-11-15, when the rig re-run on dev read GRAINE-AUTH-1, -2, -3, -6 and -7 (the two
+refusals, the replay door, the history notice and the unsigned door) against a build carrying #1802, and the production count read 0 unsigned rows written since 2026-10-10.
 
 ### 21.1 The verified sender, measured then refused (WP-G2-1, G2-1b)
 
@@ -3662,9 +3672,12 @@ nothing verifies anything. That is G2-4.
   - `storeIncomingSeed` extends G2-0's refusal: a copy whose endorsement, key, device or minter
     differs from the one held is `[GRAINE] REFUSED` (`'endorsement'`), as a different seed already
     was. So a relayed copy cannot downgrade a v2 session, nor re-attribute it.
-- **The restored secret cannot reuse a key.** A backup import carries no `distributionEpoch`, so a
-  restored session always rotates before it seals again, and the same index is never signed twice
-  from two installs.
+- **The restored secret cannot reuse a key.** A backup import writes no `sentCount` (2026-11-15), so
+  a restored session is one this device READS and the first send after a restore mints a new
+  session; the same index is never signed twice from two installs. The argument this bullet made
+  before - "no `distributionEpoch`, so it rotates" - stopped holding on 2026-10-22, when the verdict
+  moved to the rotation anchor, which the backup carries inside the sealed blob
+  ([backup](../frontend/backup.md#a-seed-comes-back-to-read-never-to-seal-under---2026-11-15)).
 - **In the native mirror.** A `graine_seeds.json` entry becomes
   `{seed, createdAt, firstIndex[, version: 2, minterUserId, signingPk]}` - and since 2026-11-07
   `accounts[, unattributed]`, its writers' labels

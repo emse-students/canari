@@ -1,7 +1,6 @@
-import { readdirSync, readFileSync } from 'node:fs';
-import { join, relative, sep } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { avatarUrl, setAvatarToken } from './avatarUrl';
+import { sourceFiles } from '../../test/sourceTree';
 
 /**
  * ONE BUILDER OF A USER'S AVATAR URL (docs/wiki/sessions.md, "The avatar token").
@@ -20,22 +19,7 @@ const RAW_BUILDERS = [
 ];
 
 /** The one file allowed to spell the route: the helper itself. */
-const HELPER = ['src', 'lib', 'utils', 'avatarUrl.ts'].join(sep);
-
-function sourceFiles(dir: string): string[] {
-  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-    const path = join(dir, entry.name);
-    if (entry.isDirectory()) {
-      // Generated code (the WASM binding, paraglide) builds no avatar URL and is not ours to edit.
-      if (entry.name === 'wasm' || entry.name === 'paraglide') return [];
-      return sourceFiles(path);
-    }
-    if (!/\.(ts|js|svelte)$/.test(entry.name)) return [];
-    // A test may spell a URL to assert against; it builds nothing that reaches a server.
-    if (/\.(test|spec)\.ts$/.test(entry.name)) return [];
-    return [path];
-  });
-}
+const HELPER = 'src/lib/utils/avatarUrl.ts';
 
 describe('avatarUrl', () => {
   afterEach(() => setAvatarToken(null));
@@ -98,20 +82,25 @@ describe('no hand-built avatar URL anywhere in src/', () => {
   });
 
   it('every avatar URL in src/ goes through avatarUrl(userId)', () => {
-    const root = process.cwd();
-    const files = sourceFiles(join(root, 'src'));
-    // A walk that found nothing would pass vacuously.
+    // The run's source snapshot, no disk walk. Generated code (the WASM binding, paraglide) builds
+    // no avatar URL and is not in it; a test may spell a URL to assert against, so tests are out.
+    const files = sourceFiles({
+      under: 'src',
+      extensions: ['ts', 'js', 'svelte'],
+      tests: 'exclude',
+    });
+    // A scan that found nothing would pass vacuously.
     expect(files.length).toBeGreaterThan(100);
+    expect(files.map((f) => f.path)).toContain(HELPER);
     const offenders = files
-      .filter((file) => relative(root, file) !== HELPER)
-      .flatMap((file) =>
-        readFileSync(file, 'utf8')
+      .filter(({ path }) => path !== HELPER)
+      .flatMap(({ path, text }) =>
+        text
           .split('\n')
-          .map((line, i) => ({ line, at: `${relative(root, file)}:${i + 1}` }))
+          .map((line, i) => ({ line, at: `${path}:${i + 1}` }))
           .filter(({ line }) => RAW_BUILDERS.some((re) => re.test(line)))
           .map(({ at }) => at)
       );
     expect(offenders).toEqual([]);
-    // A walk of the whole tree: measured ~6 s on a Windows workstation, past vitest's 5 s default.
-  }, 60_000);
+  });
 });

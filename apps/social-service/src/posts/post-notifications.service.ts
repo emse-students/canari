@@ -246,9 +246,21 @@ export function bellRowShownSql(n: string): string {
 }
 
 /**
+ * THE ONE PREDICATE OF "the bell shows row `n`": {@link bellRowShownSql} AND the row's actor and its
+ * recipient stand on the same side of the review cohort. The bell's page (`bellPageQuery`) and the
+ * per-post unread question (`postActivityWriteSql`) both apply THIS, so what the reader is shown and
+ * what counts as unread for them can never drift apart. Build-dependent filtering (the renderable
+ * types) is the page's alone: `comment` and `reaction` have no client floor
+ * (`NOTIFICATION_TYPE_MIN_CLIENT`), every admitted build draws them.
+ */
+export function bellRowVisibleSql(n: string): string {
+  return `(${bellRowShownSql(n)} AND ${sameSideOfReviewCohortSql(`${n}."actorId"`, `${n}."recipientId"`)})`;
+}
+
+/**
  * The bell types written TO A POST'S AUTHOR alone (`PostInteractionsService`: a reaction, a comment on
  * their post). Shown only while the recipient holds the post's author's door (`authorDoorHoldsSql`):
- * an officer who left the entity a post speaks for stops seeing them, as they stop being told.
+ * a writer no longer a member of the entity a post speaks for stops seeing them, as they stop being told.
  */
 export const AUTHOR_ADDRESSED_NOTIFICATION_TYPES: readonly string[] = ['comment', 'reaction'];
 
@@ -1259,8 +1271,7 @@ export class PostNotificationsService {
         .where('n."recipientId" = :userId', { userId })
         // An ALLOWLIST of what the reader's build draws: a type with no declared floor is served to nobody.
         .andWhere('n.type IN (:...renderableTypes)', { renderableTypes: types })
-        .andWhere(sameSideOfReviewCohortSql('n."actorId"', 'n."recipientId"'))
-        .andWhere(bellRowShownSql('n'))
+        .andWhere(bellRowVisibleSql('n'))
         .orderBy('n.createdAt', 'DESC')
         .limit(limit)
     );

@@ -133,7 +133,8 @@
       // Deleted since the push, or not in this list: the thread is shown from the top, and the log
       // says why the page did not move.
       Log.d(
-        `[PostComments] focus comment ${id.slice(0, 8)} not in the thread - shown from the top`
+        'PostComments',
+        `focus comment ${id.slice(0, 8)} not in the thread - shown from the top`
       );
       focusHandled = id;
       return;
@@ -141,7 +142,7 @@
     focusHandled = id;
     void tick().then(() => {
       const el = document.getElementById(commentAnchorId(id));
-      Log.d(`[PostComments] focus comment ${id.slice(0, 8)} found=${el !== null}`);
+      Log.d('PostComments', `focus comment ${id.slice(0, 8)} found=${el !== null}`);
       el?.scrollIntoView({ block: 'center' });
     });
   });
@@ -199,7 +200,8 @@
     const target = comments.find((c) => c.id === commentId);
     if (!target) {
       Log.d(
-        `[PostComments] draft reply target ${commentId.slice(0, 8)} is gone - draft kept as a comment`
+        'PostComments',
+        `draft reply target ${commentId.slice(0, 8)} is gone - draft kept as a comment`
       );
       return;
     }

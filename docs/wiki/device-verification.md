@@ -44,8 +44,7 @@ plays any peer.
 
 | Sitting | What it holds | Minutes |
 | --- | --- | --- |
-| Web and rig, no phone | pseudos 30, script policy (web) 10, waiting-seat ring 20, Graine rig 20, GRP-3 `ws1.mjs` 15, WP-REGRANT-2 (decide, then COMM-8) 15, LEAF-REFRESH rows 10, NOTIF-17b 5, staging the institution reel and post 20, live titles on a web seat 10 | 155 |
-| Production, read-only | the WP-5 EXPLAIN 5, the birthdays `profile_birthdays` count 5 | 10 |
+| Web and rig, no phone | pseudos 30, script policy (web) 10, waiting-seat ring 20, LEAF-REFRESH rows 10, NOTIF-17b 5, staging the institution reel and post 20, live titles on a web seat 10 | 105 |
 | Bench build | F1 on the iPhone (`ios.yml` with `local_url`) 40, seeds mirrored before the label (old APK, Mi 9T) 30, sealed caches upgrade (v1.4.0 APK, Mi 9T) 30 | 100 |
 | Both phones together | noise suppression routes 30, the call that survives the app leaving the screen and the audio focus 50, the deploy drill 40, campus trends 30, new-device notices 30 | 180 |
 | Mi 9T alone | see the list below | 735 |
@@ -70,7 +69,7 @@ CanaReels 35, in-session join 15, 13 MB 20, reply swipe 15, menus 10, live title
 Entre etudiants 25, Voir plus 10, camera volume buttons 15, rotation (lock ON) 20, overlays 15, microphone channel
 10, tab swipe class A 10, sharing banner tap 10.
 
-The total is about 1700 minutes, 28 hours.
+The total is about 1640 minutes, 27 hours.
 
 ## Where the pass stands
 
@@ -460,7 +459,7 @@ batch 7). Evidence is outside the repository.
 | --- | --- | --- |
 | A comment push, app killed | **`PASS`** | NC row, `hold`, tap the card: PIN gate, then the post with the comments sheet open and the comment ringed; a banner tap did the same |
 | The bell row of a comment | **`PASS`** | The post opens with the sheet open and the comment ringed |
-| A comment push, app backgrounded | **`PASS`, explained 2026-11-15** | Comments 3 to 7 raised no banner because they were the daily cap (read in social-service `[NOTIFY] ... withheld`); a backgrounded reply then opened the post at the comment: [entry](backlog.d/p2-a-reply-or-mention-of-a-post-s-author-is-pushed-as-a-comment-and-capped.md) |
+| A comment push, app backgrounded | **`PASS`, explained 2026-11-15** | Comments 3 to 7 raised no banner because they were the daily cap (read in social-service `[NOTIFY] ... withheld`); a backgrounded reply then opened the post at the comment: [entry](engagement.md) |
 | A salon mention, app killed, known author ([entry](backlog.d/reading-owed-a-mention-names-its-author-from-the-phone-s-copy-of-names-and-the.md)) | **`PASS`** | Title "nse banc communaute - #general", subtitle "Canari Test Delta vous a mentionne", body "@vous reading M mention", `TIME SENSITIVE`, the author's face |
 
 Not staged this batch: the readings of Android-only code (the Mi 9T half of each entry stays), the F1 iPhone runs
@@ -476,7 +475,7 @@ Evidence is outside the repository.
 
 | Reading | Verdict | What was seen |
 | --- | --- | --- |
-| Emoji pictures, rows 6 (French), 8, 9 ([entry](backlog.d/emoji-pictures-the-campaign-rows-which-need-real-devices.md)) | **`PASS`** | App language French then restored; peer reaction round trip and the distinct-reaction limit; the lock-screen banner. The evidence lines were not kept as text |
+| Emoji pictures, rows 6 (French), 8, 9 (entry deleted 2026-11-15, every row read) | **`PASS`** | App language French then restored; peer reaction round trip and the distinct-reaction limit; the lock-screen banner. The evidence lines were not kept as text |
 | Emoji pictures, row 10 (exports) | **`DELETED`** | The agenda's PNG export draws only the selected campus and formation, so the new event was absent from it (the export's scope, not a defect) |
 | Emoji pictures, row 11 (cold start offline) | **`PASS`** | Wi-Fi off, cold launch: the PIN gate, no crash; unlocking refused with "Impossible de contacter le serveur. Verifiez votre connexion puis reessayez." |
 | Share in from Photos, Notes, Files ([entry](backlog.d/reading-owed-sharing-into-canari-on-ios.md)) | **`PASS`** | Card, banner, and the "Envoyer a..." picker carrying the item. Notes defaults to an iCloud collaboration link: choose "Envoyer une copie" |
@@ -3391,3 +3390,24 @@ The reading has one setup and three checks:
 
   No `REJECT` appears, and in particular no commit-caller refusal.
 - **The newcomer.** It opens the group and reads the next message.
+
+## The iPhone 12 readings of 2026-11-15, second sitting
+
+TestFlight `1.6.12-alpha.2`, dev estate, `canari-test-gamma` (`223bc34e`), driven over WDA (`tools/ios-device`), the syslog
+from `python -m pymobiledevice3 syslog live`, the second party the rig seat W5 (`43319a65`) with a fake camera and microphone.
+Evidence (screenshots, the syslog) is outside the repository. The TestFlight WebView is NOT inspectable
+(`pymobiledevice3 webinspector cdp` lists `[]`), so no `[LIVE]`, `[BELL]` or orientation console line can be read on a store
+build: such halves are read from the server's `[LIVE_ANNOUNCE]` / `[SOCIAL_PUSH]` / `[NOTIFY]` lines and the phone's picture.
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| Bell, "Lives seulement" on an association, then a live (entry closed 2026-11-15, both phones read) | **`PASS`** | Phone in the background: `[LIVE_ANNOUNCE] kind=association followers=22 titled=true`, `[SOCIAL_PUSH] sent platform=ios`, and a banner "Club d'Echecs Fictif est en live / Tournoi blitz 1115b" over the home screen. A second live of the same association inside 6 h is not announced, by design |
+| Bell, a followed person at "Lives seulement" | **`PASS`** | A person post: `[NOTIFY] type=followed_post ... push withheld by the bell from 1 of 1`; a person live: `kind=member followers=1`, `[SOCIAL_PUSH] sent platform=ios`, SpringBoard `Posting notification ... fr.emse.canari` the same second |
+| Live card with title and picture, iPhone ([entry](backlog.d/reading-owed-live-titles-and-the-preview-card.md)) | **`PASS`** (part) | Title, association, badge and a refreshing picture ("Apercu d'il y a 14 s", then 9 s, a different frame); the push text with a title. Not read: the iPhone as broadcaster, two lives on air, the title-less text, the card's off-screen stop |
+| Rotation, live viewer, landscape live ([entry](backlog.d/rotation-on-video-and-camera-screens.md)) | **`PASS`** (part) | "Passer en paysage" turned the app to 844x390 pt, the controls cleared the left side, and "Passer en portrait" returned; the end of the live drew "Le live est termine" |
+| Follow suggestions, iPhone half ([entry](backlog.d/reading-owed-follow-suggestions-and-suivre-wp-2-wp-5-wp-6-wp-7.md)) | **`PASS`** (part) | Banner, empty Pour toi carousel, request toast and the card leaving, an X kept across an OS kill, the inline carousel after the third post (swipes; none in Campus), "Suivez aussi...", a request from a post header |
+| Emoji pictures, row 4 full recents and row 5 anchors (entry deleted) | **`PASS`** | The picker held a full recents row (12, two lines) and the Flags category still ended on the Wales flag; the full panel sat at the same place inside the viewport (`y` 375-835 of 844 pt) opened from a message at the top edge and from the last one. The thread's first message is a deleted tombstone that takes no reaction, so the first LIVE message was the top-edge one |
+| CanaReels "Voir plus" ([entry](backlog.d/reading-owed-canareels-voir-plus-clears-the-seek-line.md)) | **`PASS`** | One line: no toggle; about 110 characters: two lines, "Voir plus" / "Voir moins" at `y` 705-725 pt, the seek slider's zone from 736 pt, a seek tap moved the reading; about 790 characters: expanded, same |
+| A killed iPhone is added to a group ([entry](backlog.d/reading-owed-a-group-joined-in-the-background-before-its-row-existed-the.md), check (c)) | **`PASS`** | `terminate`, then the other account created a group and added the phone's account from W5: the Welcome was queued `online=false` and the notification extension drew a banner with the group's name and the GENERIC body "Nouveau message de ..."; the next message was generic too (iOS does not join in the background); at the next foreground the group was listed with the latest message readable, and the message after it came as a banner in clear |
+| Openings for followers, forms ([entry](backlog.d/reading-owed-openings-for-followers-wp-4.md)) | **`PASS`** (part) | A follower: "Formulaire ouvert !" at 06:55 and no heads-up; a follower who asked: "Formulaire bientot ouvert" at 06:50 (5 minutes before) and ONE opening banner. On alpha.2 the attached form card draws no reminder bell (fixed by #3576, unreleased); the form page has it. Not read: booking space, validated event, bell at "Rien" |
+

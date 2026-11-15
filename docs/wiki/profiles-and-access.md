@@ -802,7 +802,7 @@ the announce sweep's recipient counts.
 | The controls a card draws | served `canParticipate` | false: the card draws no reaction and no double-tap like, and its comment preview and thread are READ-ONLY - no box, like, reply or report, a delete the server grants kept (`CommentsPreview`, `PostComments`, `CommentItem` `readOnly`), so a reported comment is read in context (`/posts/{id}`, the moderation preview). Only an admin's page asks it (`participableIds`), every other signed-in reader is served `true` |
 | Pin in a space | `SpacePinsService` | unchanged: governing a space, judged on the post reaching that space, never on the admin's sight |
 | Watch a live replay, as a viewer | `GET /api/lives/:id/replay` (`LivesService.replay`) | the LIVE's own gate: refused outside its audience; a review account's replay opened (`adminSeesCohort`, as the live's key and manifest) |
-| Watch a live replay, to moderate it | `GET /api/lives/:id/replay?moderation=true` | a PLATFORM ADMIN alone (`x-global-admin`), the replay's twin of `allowHidden`: the gate widened as `allowHidden` widens it, the same key and segment list a viewer gets, logged `[LIVE_REPLAY] ... MODERATION READ by platform admin ...`. The client asks it exactly when the post was served with `canParticipate` false - by construction a post only an admin outside its audience is served (`ReplayPane`), so it plays on every screen (`/posts/{id}`, the moderation preview). Anyone else sending the flag, a BDE moderator included, meets the ordinary gate. Who and why: [moderation-and-blocking](moderation-and-blocking.md#who-may-read-a-live-replay-to-moderate-it-2026-11-15). A live in progress keeps its own rule |
+| Watch a live replay, to moderate it | `GET /api/lives/:id/replay?moderation=true` | whoever MODERATES its post (`mayModeratePost`: a platform admin, a BDE `MODERATE` holder within its scope), past the viewer's gate (a removal, a block, the "Entre etudiants" switch), the same key and segment list a viewer gets, logged - the owner's decision of 2026-11-15, [moderation-and-blocking](moderation-and-blocking.md#who-may-read-a-live-replay-to-moderate-it-2026-11-15). The client asks it exactly when the post was served with `canParticipate` false - by construction a post only an admin outside its audience is served (`ReplayPane`), so it plays on `/posts/{id}` and in the moderation preview. Anyone else sending the flag meets the ordinary gate. A live in progress keeps its own rule |
 
 Inside their own audience an admin does all of these as the reader they are. Proof:
 `post-openable.integration.spec.ts` (the gate, a grant-only admin's comments, a mention, a report),
@@ -813,10 +813,9 @@ Inside their own audience an admin does all of these as the reader they are. Pro
 **Decided by the lead, 2026-11-14, reversible (owner's absence delegation):** an admin's own report
 of content outside their audience is refused; the calendar link of a post by id follows the
 participation gate; a mention of an admin outside the audience is not notified; a comment thread
-an admin may not act in is read-only rather than hidden. **Decided by the lead, 2026-11-15,
-reversible:** a replay's moderation read is a platform admin's alone, as a post's `allowHidden` is
-(it was first opened to the post moderation scope, which handed a BDE moderator the replay's key past
-the gate).
+an admin may not act in is read-only rather than hidden. **Owner, 2026-11-15:** a replay's moderation read has the
+post's own regulator, the post moderation scope (*"La moderation des lives doit avoir le meme
+regulateur que les posts. Donc ouvrir."*); the post's own by-id moderation read is unchanged.
 
 **Judgement calls (the most conservative where it changed who sees what):**
 

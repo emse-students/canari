@@ -135,24 +135,35 @@ interface DelegatedCommitResults {
   /**
    * The server's acceptance time of the frame, `null` when it answered none (`SentFrame`) - or, as
    * an answer and not a failure, `unopened`: the device key changed between the follower's seal and
-   * the leader's open, nothing was sent.
+   * the leader's open, nothing was sent; or `unsent`: the lead left the leader while it ran the
+   * request, nothing was posted.
    */
-  'emit-frame': { receivedAt: number | null } | { unopened: HandoverUnopened };
+  'emit-frame':
+    | { receivedAt: number | null }
+    | { unopened: HandoverUnopened }
+    | { unsent: HandoverUnsent };
   /**
    * The sealed message; the typed reason the leader could not seal for that salon; the reason the
    * leader's OWN salon gate refused it (`whenSalonSendable`, waited on before the seal exactly as a
-   * single tab waits); or `unopened`, as for a frame.
+   * single tab waits); or `unopened` and `unsent`, as for a frame.
    */
   'seal-salon-message':
     | { sealed: SealedChannelMessage }
     | { unavailable: GraineSealUnavailableReason }
     | { gate: SalonGateRefusal }
-    | { unopened: HandoverUnopened };
+    | { unopened: HandoverUnopened }
+    | { unsent: HandoverUnsent };
   'note-missing-seeds': 'noted';
 }
 
 /** Why the leader could not open what a follower sealed: the device key changed in between. */
 export type HandoverUnopened = 'device-key-changed';
+
+/**
+ * Why the leader that ran a follower's frame did not post it: the lead left it during the run (a
+ * freeze, a handover) - an expected event, answered by value rather than thrown as a defect.
+ */
+export type HandoverUnsent = 'lead-lost';
 
 /**
  * Bytes a follower hands to the leader, sealed under the account's device key (`encryption.ts`

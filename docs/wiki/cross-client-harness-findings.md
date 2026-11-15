@@ -56,6 +56,13 @@ one is a known shape with an unknown cause. `GRP --repeat 5` pass 1: ten rows, n
   `wsOpened` (dated, outside `clean`) and on the `timeline`. Owed, with the rig: `ws1.mjs` over GRP-3's
   sequence. A close at a fixed offset from `removeMember` belongs to the Remove path; at a fixed offset from
   the socket's own age it is a lifetime, which `wsidle.mjs` did not test (it watched a fresh socket).
+- **Reading closed 2026-11-15, NOT REPRODUCED.** Against dev (build `dev.78988dd`) GRP-3 ran three times and `archive/ws1.mjs` twice
+  (a 25 s hold after the DM opens): no `Network.webSocketClosed` in any of the five captures, every GRP-3 product assertion held
+  (the removed device keeps what it read and receives nothing after the Remove). Each GRP-3 run was `PASS-DIRTY` for other reasons only: seven
+  `POST /api/mls/send -> 400` on the remover, which are the documented `addressed_unsupported` refusals of a history bundle addressed to
+  the account's stale devices ([history-answer-addressing](protocols/history-answer-addressing.md)), and debug/info lines the classifier has not
+  met. The cause stays unknown and is not guessed; the instrument (`wsOpened` and the timeline in `report()`) stays, so the next GRP run
+  that closes a socket places it on its own, and THAT is the day to file a defect.
 
 ## One named starting point at every granularity (asked 2026-08-25)
 

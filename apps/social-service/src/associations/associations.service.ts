@@ -169,6 +169,7 @@ import { Post } from '../posts/entities/post.entity';
 import { Form } from '../forms/entities/form.entity';
 import { FORM_DRAFT, FORM_IS_DRAFT, FORM_PUBLISHED } from '../forms/form-status';
 import { retireForms } from '../forms/retire-forms';
+import { assertFormOfAssociation } from '../forms/form-ownership';
 import { formsWithUnpublishedChanges } from '../forms/form-draft-revision';
 import {
   AddMemberDto,
@@ -2586,14 +2587,13 @@ export class AssociationsService {
     associationId: string,
     manager?: EntityManager
   ) {
-    const f = await (manager ? manager.getRepository(Form) : this.formRepo).findOne({
-      where: { id: formId },
-      select: { id: true, associationId: true, status: true },
-    });
-    if (!f) throw new BadRequestException('Linked form not found');
-    if (f.associationId !== associationId) {
-      throw new BadRequestException('Form must belong to this association');
-    }
+    // The ONE ownership rule, shared with a post's attachment (`form-ownership.ts`).
+    const f = await assertFormOfAssociation(
+      manager ?? this.formRepo.manager,
+      formId,
+      associationId,
+      'an agenda event link'
+    );
     // An agenda entry is read by the association's audience: a DRAFT linked to it would hand them a
     // link to a form they cannot open. Published first, linked after (`form-status.ts`).
     if (f.status === FORM_DRAFT) {

@@ -52,8 +52,9 @@ import { logcatSince, logcatReport } from '../watch.mjs';
  * `cipher_text` is never named in the query (it would be ciphertext if it were).
  *
  * The database is keyed `sqlite:canari_<userId>.db`. The id comes from the page's OWN
- * `mls_send_ledger_<userId>` key, never from an argument, so no account identifier is typed on a
- * command line or committed.
+ * `mls_device_id_<userId>` key, never from an argument, so no account identifier is typed on a
+ * command line or committed. (It was the send ledger's key until KILL-2 moved that ledger out of
+ * `localStorage`; the device id is written for every account this device registered.)
  *
  * Shape-compatible with the web snapshot on purpose: the comparison below must not know which side
  * it is reading, or the two paths drift and only one of them stays correct.
@@ -68,9 +69,9 @@ const nativeSnapshot = async (cx) =>
         var uid = null;
         for (var k = 0; k < localStorage.length; k++) {
           var key = localStorage.key(k);
-          if (key && key.indexOf('mls_send_ledger_') === 0) { uid = key.slice('mls_send_ledger_'.length); break; }
+          if (key && key.indexOf('mls_device_id_') === 0) { uid = key.slice('mls_device_id_'.length); break; }
         }
-        if (!uid) return JSON.stringify({ err: 'no send ledger key, so no user id to build the db path from' });
+        if (!uid) return JSON.stringify({ err: 'no device id key, so no user id to build the db path from' });
         try {
           const db = 'sqlite:canari_' + uid + '.db';
           const cs = await invoke('plugin:sql|select', { db: db, query: 'SELECT id, name, lifecycle FROM conversations', values: [] });

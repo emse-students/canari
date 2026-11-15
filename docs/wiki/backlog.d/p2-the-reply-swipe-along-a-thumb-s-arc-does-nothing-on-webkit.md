@@ -1,0 +1,7 @@
+## P2 - the reply swipe along a thumb's arc does nothing on WebKit: the thread scrolls instead
+
+target: 1.7.0
+
+Read on the iPhone 12 on 2026-11-15 (`v1.6.12` dev build, a WDA W3C touch sequence of 12 moves, a received bubble in a DM, thread at its bottom): a 110 px stroke to the right with 45 px of vertical drift, down and up, and with 60 px, down and up, replied **0 times in 5** and the thread scrolled by about 35 px each time; the same stroke with 0 px and with 20 px of drift staged exactly one reply, 30 px did not. A 110 px stroke to the left and a 40 px stroke to the right staged nothing, a 60 px stroke to the right staged one (the trigger is 56 px). The Android fix of 2026-10-14 ([design-reference](../frontend/design-reference.md#the-reply-swipe-that-sometimes-did-nothing-two-classes-measured-mi-9t-2026-10-14)) lets a locked horizontal stroke ignore the vertical axis, but on WebKit the page never gets the stroke: the bubble sets no `touch-action`, so WKWebView probably claims a stroke with this much drift as a vertical pan before the page's 10 px lock, and the page sees a cancel (the mechanism is an inference, not measured).
+
+What closes it: a `touch-action` on the bubble that leaves the horizontal axis to the page (to be measured: `pan-y` first), the same five arcs re-read on the iPhone 12, and a regression test of the style. Evidence: the harness state folder `readings-iphone-1115c/` (screenshots `r1-*.png`).

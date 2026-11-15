@@ -408,6 +408,9 @@ try {
         edit: (r) => `UPDATE channel_messages SET "authorId" = '${peerId}' WHERE id = '${r.id}'`,
         undo: (r) => `UPDATE channel_messages SET "authorId" = '${r.authorId}' WHERE id = '${r.id}'`,
         needle: 'author mismatch',
+        // The refused row was drawn from the store first, so the fresh page not naming it withdraws it:
+        // the REFUSAL's own consequence on the pane, said once.
+        companions: ['stored row(s) the fresh page does not name withdrawn'],
       });
     } else if (n === 2) {
       await tamperArm(2, {
