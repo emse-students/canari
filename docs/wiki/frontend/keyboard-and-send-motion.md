@@ -461,8 +461,9 @@ So `keyboardViewport` writes ONE computation (`keyboardVariables`) to TWO target
   that task, so every piece reads the same lengths through either name and nothing moves twice (the
   bench reads the footer's offset and height, the thread's `scrollTop`, padding and last row before and
   after that write: identical). The whole-document pass then lands while the compositor runs the ride.
-  An announcement with no ride (no animation, reduced motion, nothing captured), a ride that moved
-  nothing, a press before the first frame and the teardown write the root at once. A new announcement
+  An announcement with no ride (no animation, reduced motion, nothing captured), a ride with no
+  `data-keyboard-leaf` piece on screen (a popover panel alone: it is placed from the root's variables,
+  so holding the root would only delay it), a ride that moved nothing, a press before the first frame and the teardown write the root at once. A new announcement
   before that frame holds its own values instead; the WebView's no-change `resize` (N3) refreshes the
   pieces, never the root.
 - **`--app-viewport-height` is no longer written for an overlay keyboard**: it pinned the shell to

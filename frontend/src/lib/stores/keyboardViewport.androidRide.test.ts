@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import {
   declareKeyboardOverlay,
   getKeyboardViewport,
@@ -301,6 +301,32 @@ describe('the Android keyboard ride, wired', () => {
     await frameOut();
     // Written once, at the latest announcement's values: KB never reached the root.
     expect(inset()).toBe(200);
+  });
+
+  it('a ride of a popover panel alone, with no leaf piece, writes the root in the announcement and holds nothing', () => {
+    composer.remove();
+    thread.remove();
+    deferred = [];
+    const panel = document.createElement('div');
+    vi.spyOn(panel, 'getBoundingClientRect').mockImplementation(
+      () => ({ top: 500, bottom: 600 }) as DOMRect
+    );
+    document.body.append(panel);
+    const place = vi.fn();
+    // Unregistered even when an assertion fails: a panel left registered would ride in later cases.
+    onTestFinished(placeOnKeyboardMove(panel, place));
+
+    hooks().canariImeTarget?.(RISE);
+    // Ridden (the panel rides), yet no piece reads a twin: the root is written in this task.
+    expect(deferred).not.toHaveLength(0);
+    expect(inset()).toBe(KB);
+    expect(root().getPropertyValue(OCCLUSION)).toBe(`${KB}px`);
+    for (const [, twin] of TWINS) expect(panel.style.getPropertyValue(twin)).toBe('');
+    // A resize before the first frame is not held back for a ride with no leaf piece.
+    window.dispatchEvent(new Event('resize'));
+    expect(inset()).toBe(KB);
+    for (const start of deferred.splice(0)) start();
+    expect(place).toHaveBeenCalled();
   });
 
   it('a ride with nothing to move writes the root in its layout reactions', () => {

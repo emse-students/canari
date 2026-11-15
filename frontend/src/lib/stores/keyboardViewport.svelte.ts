@@ -1172,8 +1172,10 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
     if (capture !== null) releaseThreadGlides(capture);
     imeTarget = target;
     // Ridden: the pieces take the layout from their own twins in this task, and the root waits for
-    // the ride's first frame. Not ridden: the root now, as every screen reads it.
-    update(reading, capture === null ? 'root' : pieces);
+    // the ride's first frame. Not ridden, or ridden by no piece that reads the leaf channel (a
+    // popover panel alone, placed from the root's variables): the root now, as every screen reads it
+    // - holding it would delay that panel's placement for no style pass saved.
+    update(reading, pieces.length > 0 ? pieces : 'root');
     if (capture !== null) armRide(capture, `keyboard to ${target.px}`);
     return true;
   };
