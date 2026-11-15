@@ -129,6 +129,11 @@ earliest version, as a checklist.
 
 ## 1.8.0
 
+**P1 - security, or a user-facing path that is broken**
+
+- [P1 - `/posts/hidden` serves an association post's raw writer, while the card hides it from every moderator](backlog.d/p1-hidden-posts-list-serves-an-association-post-s-raw-writer.md)
+- [P1 - an institution's MODERATE member moderates the students of a space it governs, and not the institution's own content](backlog.d/p1-institution-moderators-moderate-their-own-content-not-students.md)
+
 **Chantiers, decisions and questions (no severity)**
 
 - [A SECOND campaign, for everything that is not chat - asked 2026-08-16](backlog.d/a-second-campaign-for-everything-that-is-not-chat-asked-2026-08-16.md)
@@ -144,6 +149,7 @@ earliest version, as a checklist.
 - [Decided by the user on 2026-10-19 - lives before calls, and what a live owes before a stable](backlog.d/decided-by-the-user-on-2026-10-19-lives-before-calls-and-what-a-live-owes.md)
 - [Found by the dev payment end-to-end of 2026-10-21 (Lydia, sandbox)](backlog.d/found-by-the-dev-payment-end-to-end-of-2026-10-21-lydia-sandbox.md)
 - [Live replays - a finished live is kept three days and shown as a CanaReel (owner, 2026-11-07; designed and decided 2026-11-09, WP-R1 built)](backlog.d/live-replays-kept-three-days-as-canareels.md)
+- [The moderation authority grid is asserted by one table-driven spec per service (owner, 2026-11-15)](backlog.d/the-moderation-authority-grid-is-asserted-by-table-driven-specs.md)
 
 **P2 - correctness**
 
@@ -230,6 +236,11 @@ earliest version, as a checklist.
 - [P2 - the history rule saved by an admin is not applied from the live frame](backlog.d/p2-the-history-rule-saved-by-an-admin-is-not-applied-from-the-live-frame.md)
 - [P2 - the Lydia reconciliation sweep is built; the `request/state` signature it verifies is documented, not measured (2026-10-27)](backlog.d/p2-the-lydia-reconciliation-sweep-is-built-the-request-state-signature-it.md)
 - [P2 - WP-CHECKPOINT-CAS: one owner of the MLS state per process, handed over by the platform (2026-10-27, design reviewed four times, nothing built)](backlog.d/p2-wp-checkpoint-cas-one-owner-of-the-mls-state-per-process-handed-over-by-the.md)
+- [P2 - a BDE, a parent super-admin and the platform admin rewrite another body's event or form](backlog.d/p2-a-bde-validates-an-event-but-never-rewrites-it.md)
+- [P2 - a post's owner cannot act on another person's comment under it](backlog.d/p2-a-post-owner-hides-a-comment-under-it.md)
+- [P2 - a reported community nickname reaches a queue that cannot clear it, and a muted moderator still renames](backlog.d/p2-a-reported-community-nickname-reaches-the-community-moderators.md)
+- [P2 - an association's live is ended and moderated by its broadcaster alone](backlog.d/p2-an-association-live-is-moderated-by-its-co-holders.md)
+- [P2 - a muted account still votes in polls and likes comments](backlog.d/p2-the-mute-covers-votes-and-comment-likes.md)
 
 **P3 - hygiene**
 
@@ -276,6 +287,7 @@ earliest version, as a checklist.
 - [P3 - Three loose ends of the per-conversation drafts (review of #2614, 2026-10-27)](backlog.d/p3-three-loose-ends-of-the-per-conversation-drafts-review-of-2614-2026-10-27.md)
 - [P3 - Two devices of one account joining a community at once: one exhausts its external-join attempts and loses a frame (LIST-RACE-1-W, 2026-10-27)](backlog.d/p3-two-devices-of-one-account-joining-a-community-at-once-one-exhausts-its.md)
 - [P3 - A rotation that fails every time loops through the PIN gate (2026-10-28)](backlog.d/p3-a-rotation-that-fails-every-time-loops-through-the-pin-gate-2026-10-28.md)
+- [P3 - `dm_group_members.role` promises group admins that do not exist (a held migration)](backlog.d/p3-the-unread-mls-group-role-column-is-dropped.md)
 
 ## 1.10.0
 

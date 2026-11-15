@@ -1782,6 +1782,12 @@ within its scope**: the served `canDelete` is the author, the platform admin, or
 post the comment sits under, for a plain, an anonymous and an association's comment alike - the same
 answer `POST /moderation/comments/:id/delete` gives, so the bin and the route agree (2026-11-02).
 
+**Who may do what to whom, every role and content kind, is [moderation-authority](moderation-authority.md)**
+(the one copy since 2026-11-15). **A gap this section did not name**: a space's governor may be an
+INSTITUTION (WP-D1), and `bdeStandingInSpaceSql` reads no type, so that institution's `MODERATE`
+members pass the door and moderate the people of the space like a BDE. The owner refused it on
+2026-11-15 ([work package](backlog.d/p1-institution-moderators-moderate-their-own-content-not-students.md)).
+
 **THE BDE'S `MODERATE` IS SCOPED** like MANAGE_ASSO, in `spaces/bde-moderation.ts`, on the one per-space
 standing every BDE power reads (`bdeStandingInSpaceSql`, `spaces/bde.ts`):
 
