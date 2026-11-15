@@ -1,0 +1,1 @@
+### Changed - the iPhone 12 readings of the second sitting of 2026-11-15: the bell at "Lives seulement", live titles and card, a landscape live, follow suggestions, "Voir plus", the killed-phone join and the last two emoji rows read; the emoji entry deleted ([readings](docs/wiki/device-verification.md#the-iphone-12-readings-of-2026-11-15-second-sitting)).

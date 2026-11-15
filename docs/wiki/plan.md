@@ -65,6 +65,7 @@ earliest version, as a checklist.
 - [P2 - a frame read before a browser kill is called "never read here" on the next cold start](backlog.d/reading-owed-the-live-seen-cipher-mark-written-at-the-checkpoint.md)
 - [P2 - the retention durations a sweep applies are not yet admin settings](backlog.d/retention-durations-not-yet-settings.md)
 - [P2 - what the keyboard readings of 2026-11-14 filed: a photo DM still jumps to older messages, a short thread loads history on close, a 12 px step](backlog.d/what-the-keyboard-readings-of-2026-11-14-filed.md)
+- [P2 - on iOS an edited VIDEO take cannot leave the reel editor ("La capture n'a pas pu etre preparee")](backlog.d/p2-ios-edited-video-take-cannot-export-in-the-reel-editor.md)
 - [P2 - no gate proves that an older build reads, and writes back, the MLS state this build writes](backlog.d/p2-no-gate-proves-an-older-build-reads-the-mls-state-this-build-writes.md)
 
 **P3 - hygiene**
@@ -85,7 +86,6 @@ earliest version, as a checklist.
 
 ### Readings owed
 
-- [ ] [the twelve emoji-picture rows on real devices, the iPhone first](backlog.d/emoji-pictures-the-campaign-rows-which-need-real-devices.md)
 - [ ] [the CanaReels composer, viewer and editor on real content](backlog.d/reading-owed-the-canareels-composer-viewer-and-editor-on-real-content.md)
 - [ ] [the named readers' live chat switch on dev](backlog.d/named-readers-comments-switch-readings-owed.md)
 - [ ] [the in-session community join through the deep link on the phones](backlog.d/p1-owed-one-live-reading-of-the-in-session-join-fix-2026-10-08.md)
