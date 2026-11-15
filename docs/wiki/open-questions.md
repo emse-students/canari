@@ -760,3 +760,19 @@ published, so nothing under it is the BDE's to read on a comment's report alone 
 admin is the recourse. The other answer is that an open report on a comment opens that one comment
 (not its post) to the moderator in scope. In practice a comment under an unpublished post is rare:
 only the author's side can write one.
+
+## Should a staff account's calendar subscription and its in-app agenda show the same events? (asked 2026-11-15)
+
+**Today**: a staff account (a campus, an empty cursus) has no space. Its in-app agenda shows the
+events of its memberships and of its nominative read grants only, while its signed calendar
+subscription gives its whole campus (`campusWideReaderCampus` is called by the signature alone). The
+owner closed "open the app to staff by campus" on 2026-11-14: the door is a nominative read grant
+([as built](profiles-and-access.md#a-grant-opens-everything-of-its-cell-owner-2026-11-14)).
+
+**Why it is a question, and why it is parked rather than taken**: the two surfaces disagree, and
+either way of aligning them changes what real people see. (a) Align the SUBSCRIPTION on the app -
+the 2026-11-14 rule then holds everywhere, and events leave calendars staff already subscribed to
+at their next refresh. (b) Align the app on the subscription - staff sees its campus's agenda in
+the app, which reverses part of 2026-11-14 for the agenda. (c) Keep the difference, documented.
+Recommended: (a). Not reversible without notice in case (a) - a subscriber sees events go - so it
+waits for the owner. Tracked in the [audience audit](backlog.d/audience-audit-2026-11-14.md).

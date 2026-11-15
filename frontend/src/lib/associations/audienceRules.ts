@@ -52,6 +52,15 @@ export function toRules(cells: Set<Cell>): AudienceRule[] {
 }
 
 /** How a group of pairs is selected: none, some (a partial parent, like a half-ticked folder) or all. */
+/**
+ * May an entity of this type address EVERYONE? Only an institution (decision 6): the server refuses
+ * the rule on anything else, for a platform admin too, so a grid offers the box to institutions
+ * alone - it offers what can be saved.
+ */
+export function offersEveryone(type: string): boolean {
+  return type === 'institution';
+}
+
 export type Coverage = 'none' | 'some' | 'all';
 
 /** The coverage of a set of pairs by the reached ones. */
