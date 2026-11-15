@@ -735,8 +735,9 @@ is deleted, and the client no longer decides from `formation === 'ICM'`.
   #3010 to every post)**: the widening is the moderation read alone - `readPostOpenVerdict` with
   `allowHidden`, which only the post by id (`getById`) and its comment page (`listComments`) pass for
   a platform admin. Every participating intent asks an admin the ordinary reader's right, see
-  [the table](#by-id-what-a-platform-admin-may-do-2026-11-14). The rule: **by id, an admin reads to
-  moderate, and never participates**.
+  [the table](#by-id-what-a-platform-admin-may-do-2026-11-14). The rule: **by id, a platform admin
+  READS to moderate - the post, its comments, its replay - and participates only as an ordinary
+  reader**.
 - **A post is visible** (`postVisibleToUserSql`) to its author ([the author's door](#the-authors-door-an-entitys-post-belongs-to-the-entity-2026-11-14)), to a member of its association (D21: any
   `association_members` row - there is no pending state), and otherwise when its association's
   rules reach one of the reader's spaces - or, since D38, when a REPUBLISHING association is
@@ -798,10 +799,10 @@ the announce sweep's recipient counts.
 | Report the post or a comment | `ModerationService.createReport`, served `canReport` | 404 `CONTENT_NOT_FOUND`; `canReport` false - an admin acts on it directly instead |
 | Be mentioned (push, bell) | `mentionRecipientsOf` | not told - a mention is a notice, not moderation |
 | Calendar link of the post | `GET /:id/calendar-link` | 404 - the participation gate: it does not pass `allowHidden`, and moderating a post does not need its event |
-| The controls a card draws | served `canParticipate` | false: the card draws no reaction, comment or double-tap like (`PostCard.svelte`); only an admin's page asks it (`participableIds`), every other reader is served `true` when signed in |
+| The controls a card draws | served `canParticipate` | false: the card draws no reaction and no double-tap like, and its comment preview and thread are READ-ONLY - no box, like, reply or report, a delete the server grants kept (`CommentsPreview`, `PostComments`, `CommentItem` `readOnly`), so a reported comment is read in context (`/posts/{id}`, the moderation preview). Only an admin's page asks it (`participableIds`), every other signed-in reader is served `true` |
 | Pin in a space | `SpacePinsService` | unchanged: governing a space, judged on the post reaching that space, never on the admin's sight |
 | Watch a live replay, as a viewer | `GET /api/lives/:id/replay` (`LivesService.replay`) | the LIVE's own gate: refused outside its audience; a review account's replay opened (`adminSeesCohort`, as the live's key and manifest) |
-| Watch a live replay, to moderate it | `GET /api/lives/:id/replay?moderation=true` | opens it to whoever MODERATES its post (`AssociationsService.mayModeratePost`: a platform admin, a BDE `MODERATE` holder within its governed spaces - the post moderation scope, nothing wider); the same key and segment list a viewer gets; logged `[LIVE_REPLAY] ... MODERATION READ by ...`. Only the reported-content preview asks it (`ModerationPostPreviewModal` -> `moderationRead.ts` context -> `ReplayPane`, for the judged post alone). Without the flag, or outside that scope, the viewer's row above decides. A live in progress keeps its own rule |
+| Watch a live replay, to moderate it | `GET /api/lives/:id/replay?moderation=true` | a PLATFORM ADMIN alone (`x-global-admin`), the replay's twin of `allowHidden`: the gate widened as `allowHidden` widens it, the same key and segment list a viewer gets, logged `[LIVE_REPLAY] ... MODERATION READ by platform admin ...`. The client asks it exactly when the post was served with `canParticipate` false - by construction a post only an admin outside its audience is served (`ReplayPane`), so it plays on every screen (`/posts/{id}`, the moderation preview). Anyone else sending the flag, a BDE moderator included, meets the ordinary gate. Who and why: [moderation-and-blocking](moderation-and-blocking.md#who-may-read-a-live-replay-to-moderate-it-2026-11-15). A live in progress keeps its own rule |
 
 Inside their own audience an admin does all of these as the reader they are. Proof:
 `post-openable.integration.spec.ts` (the gate, a grant-only admin's comments, a mention, a report),
@@ -811,8 +812,11 @@ Inside their own audience an admin does all of these as the reader they are. Pro
 
 **Decided by the lead, 2026-11-14, reversible (owner's absence delegation):** an admin's own report
 of content outside their audience is refused; the calendar link of a post by id follows the
-participation gate; a mention of an admin outside the audience is not notified; a replay has an
-explicit moderation read (option A above), open to the post moderation scope and to nobody else.
+participation gate; a mention of an admin outside the audience is not notified; a comment thread
+an admin may not act in is read-only rather than hidden. **Decided by the lead, 2026-11-15,
+reversible:** a replay's moderation read is a platform admin's alone, as a post's `allowHidden` is
+(it was first opened to the post moderation scope, which handed a BDE moderator the replay's key past
+the gate).
 
 **Judgement calls (the most conservative where it changed who sees what):**
 

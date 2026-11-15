@@ -72,6 +72,12 @@
     onEdit: (commentId: string, text: string) => Promise<void>;
     onDelete: (commentId: string) => Promise<void>;
     onReport?: (commentId: string) => void;
+    /**
+     * READ-ONLY: the reader may read this thread but not act in it - a platform admin reading a post
+     * outside their own audience to moderate it (`canParticipate` false, 2026-11-14). No reply, like,
+     * edit or report control; a delete the server grants (moderation) stays.
+     */
+    readOnly?: boolean;
   }
 
   let {
@@ -88,6 +94,7 @@
     onEdit,
     onDelete,
     onReport,
+    readOnly = false,
   }: Props = $props();
 
   const authorName = $derived(commentAuthorName(comment));
@@ -312,7 +319,7 @@
            server, and a pending row's id is local. The reader sees the comment; they simply cannot
            act on it until it exists. `tap-target` gives each small control a 44px hit box on a touch
            screen without changing how it is drawn. -->
-        {#if !isPending}
+        {#if !isPending && !readOnly}
           <button
             type="button"
             onclick={() => onReply(comment)}
@@ -359,6 +366,15 @@
             onLike={() => onLike(comment.id)}
             class="ml-auto"
           />
+        {:else if !isPending && comment.canDelete}
+          <button
+            type="button"
+            onclick={confirmDelete}
+            class="tap-target text-text-muted text-2xs font-bold transition-colors outline-none hover:text-red-500"
+            aria-label={m.common_delete_button()}
+          >
+            <Trash2 size={12} strokeWidth={2.5} />
+          </button>
         {/if}
       </div>
     {/if}
@@ -397,6 +413,7 @@
               {onEdit}
               {onDelete}
               {onReport}
+              {readOnly}
             />
           {/each}
         </div>

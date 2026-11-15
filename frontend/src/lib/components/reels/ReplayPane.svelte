@@ -38,7 +38,6 @@
   import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
   import { m } from '$lib/paraglide/messages';
   import { fetchLiveReplay } from '$lib/live/api';
-  import { isModerationRead } from '$lib/moderation/moderationRead';
 
   interface Props {
     post: PostEntity;
@@ -57,10 +56,12 @@
   let { post, active, playerSafeBottom, onReady, deps, loadCover }: Props = $props();
 
   /**
-   * Under the reported-content preview judging THIS post, the replay is read to be moderated
-   * (`?moderation=true`, lead 2026-11-14); anywhere else it is a viewer's read.
+   * THE MODERATION READ (lead, 2026-11-15): a post served with `canParticipate` false is, by
+   * construction, one only a platform admin outside its audience is served (`participableIds`), so
+   * its replay is asked with `?moderation=true` - the read the server opens to a platform admin
+   * alone - on every screen that draws it. Anywhere else it is a viewer's read.
    */
-  const moderationRead = isModerationRead(untrack(() => post.id));
+  const moderationRead = $derived(post.canParticipate === false);
 
   const cover = $derived(replayCoverOf(post));
 
@@ -122,13 +123,10 @@
       onState: (s) => (replayState = s),
       onMeta: (facts) => (meta = { expiresAt: facts.expiresAt, serverNow: facts.serverNow }),
       deps: {
-        ...(moderationRead
-          ? {
-              fetchReplay: (id: string, from?: number) =>
-                fetchLiveReplay(id, from, { moderation: true }),
-            }
-          : {}),
         ...deps,
+        // The one fetcher (a test's or the real one), told which read this page asks.
+        fetchReplay: (id: string, from?: number) =>
+          (deps?.fetchReplay ?? fetchLiveReplay)(id, from, { moderation: moderationRead }),
         attach: (source) => {
           const url = URL.createObjectURL(source as unknown as MediaSource);
           src = url;

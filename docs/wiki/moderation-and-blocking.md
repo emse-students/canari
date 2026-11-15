@@ -176,6 +176,26 @@ another BDE's or an institution's post), the agenda rights over an institution's
 Proved in `bde-moderation.integration.spec.ts` ("the owner's rule of 2026-11-03"). A student's
 content inside an institution's or another BDE's post or live: [the place decides](#decided-by-the-owner-2026-11-04).
 
+#### Who may read a live replay to moderate it (2026-11-15)
+
+**A platform admin alone** - the same people as a post's moderation read (`getById` with
+`allowHidden`). `GET /api/lives/:id/replay?moderation=true` widens the replay's gate for a caller the
+gateway marks `x-global-admin`, and for nobody else: a BDE moderator sending the flag, in scope or not,
+meets exactly the ordinary gate (a viewer the broadcaster removed, a blocked one, one outside the
+audience or the "Entre etudiants" gate is refused). The table of every by-id intent is in
+[profiles-and-access](profiles-and-access.md#by-id-what-a-platform-admin-may-do-2026-11-14).
+
+**Why.** The read hands out the KEY that decrypts the replay's segments, usable until the replay is
+purged - not a view of one row. Opening it to every holder of `MODERATE` in its governed spaces, with
+no open report, let a moderator the broadcaster had removed or blocked play the replay by a hand-made
+request. The charter's first principle, **1. "Vos messages sont à vous"**
+([principes](../principes.md)), puts a key in the fewest hands that need it.
+
+**Widening it** - to a BDE moderator holding an open report on that replay in their scope, say - is a
+product choice left to the owner, queued for them in
+[backlog](backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks). Decided by the lead,
+2026-11-15, reversible (owner's absence delegation).
+
 #### Decided by the owner (2026-11-04)
 
 - **The place decides.** A student's comment under an institution's or another BDE's post, and a
