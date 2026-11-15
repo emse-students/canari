@@ -320,8 +320,9 @@ export class PostsController {
   }
 
   /**
-   * Returns a single post by its ID. Global admins may load moderation-hidden posts; the author
-   * may load their own post before its scheduled publication date, nobody else can.
+   * Returns a single post by its ID. Whoever MODERATES it (a platform admin, a BDE moderator in
+   * scope - `getById` asks `mayModeratePost`) reads it to moderate, hidden or outside their audience
+   * included; the author may load their own post before its scheduled publication date.
    */
   @UseGuards(NginxAuthGuard, FeedAudienceGuard)
   @Get(':postId')
@@ -332,7 +333,6 @@ export class PostsController {
     @Query('withReplays') withReplays?: string
   ) {
     return this.service.getById(postId, {
-      allowHidden: xGlobalAdmin === 'true',
       viewerId: userId,
       isGlobalAdmin: xGlobalAdmin === 'true',
       withReplays: withReplays === 'true',

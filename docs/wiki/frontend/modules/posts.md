@@ -2312,12 +2312,12 @@ Before 2026-11-02 the write paths asked the audience term alone, so they honoure
   copy of part of it. A reaction on a post its author's block hides, or a comment on a hidden post,
   was accepted until then. The route hands the row it loaded to the write, so a reaction reads the
   post once.
-- **`allowHidden` is the platform admin's (`x-global-admin`), on the read by id and the comment page
-  only.** A platform admin reads a hidden post and its comments, and never reacts, comments or likes
-  a comment on it: no write route passes the flag, by intent - a hidden post is held for review, not
-  for conversation. A scoped BDE moderator predicate (`mayModeratePost` or its equivalent) is being
-  built on a separate branch; **whichever of the two pull requests lands second derives
-  `allowHidden` on `getById` and `listComments` from that predicate** instead of the header alone.
+- **`allowHidden` is the moderation read, on the read by id and the comment page only**, derived
+  from `AssociationsService.mayModeratePost` by `getById` and `listComments` (owner, 2026-11-15,
+  *"Oui, dans ses espaces"*: a platform admin, a BDE `MODERATE` holder within its scope). Its holder
+  reads a hidden post and its comments, and never reacts, comments or likes a comment on it: no
+  write route passes the flag, by intent - a hidden post is held for review, not for conversation
+  ([moderation-and-blocking](../../moderation-and-blocking.md#the-moderation-read-of-a-post-its-comments-and-its-replay-owner-2026-11-15)).
 - **A mention** (a post's, or a comment's) is told only to a recipient who may open the post, and
   with no block either way with whoever wrote the mentioning text
   (`PostNotificationsService.mentionRecipientsOf`). It reached anyone but the review cohort - a reader

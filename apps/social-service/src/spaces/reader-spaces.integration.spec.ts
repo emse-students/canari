@@ -363,17 +363,9 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
     }
   });
 
-  it('a global admin may open ANY post by its id, but browsing never shows it to them', async () => {
-    for (const post of POSTS) {
-      const { rows } = await client.query(
-        `SELECT ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: true })} AS visible FROM posts WHERE posts.id = $1`,
-        [post.id, 'admin']
-      );
-      expect({ post: post.label, openByIdAsAdmin: rows[0].visible }).toEqual({
-        post: post.label,
-        openByIdAsAdmin: true,
-      });
-    }
+  it('the predicate has no admin door: browsing shows a global admin only what is theirs', async () => {
+    // The moderation read of one post is `mayModeratePost` handed to `readPostOpenVerdict`
+    // (post-openable.integration.spec.ts), never a disjunct here (owner, 2026-11-15).
     const { rows } = await client.query(
       `SELECT posts.id FROM posts WHERE ${postVisibleToViewerSql('posts', '$1')} ORDER BY posts.id`,
       ['admin']
@@ -381,12 +373,6 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
     // Nothing: the two A2 rows they wrote are A2's, and they are not a member of A2 (the author's door
     // of an entity's post, 2026-11-14) - an admin's personal post would be theirs, as anyone's.
     expect(rows.map((r) => r.id as string)).toEqual([]);
-    // A non-admin never gets the opening by id (staff shares no space with icmSe, nor follows them).
-    const outsider = await client.query(
-      `SELECT ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: true })} AS visible FROM posts WHERE posts.id = $1`,
-      [POSTS[4].id, 'staff']
-    );
-    expect(outsider.rows[0].visible).toBe(false);
   });
 
   it('an absent viewer (NULL) sees nothing at all', async () => {

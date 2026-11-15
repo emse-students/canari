@@ -238,9 +238,10 @@ interface PostViewerContext {
   /**
    * Ids, among the batch, of the posts the reader may ACT on as a reader - open to them by the
    * audience predicate with no admin widening (`postVisibleToViewerSql`, grants counted, as a reaction
-   * asks). `null` means every post of the batch: a reader who is not a platform admin is only ever
-   * served a post they see. Read for an admin, who may be served one through the moderation read
-   * (2026-11-14). Served as `canParticipate`.
+   * asks). `null` means every post of the batch: a reader who moderates none of it is only ever
+   * served a post they see. Read for a platform admin and for a BDE moderator of a post of the
+   * batch, who may be served it through the moderation read (2026-11-14; owner, 2026-11-15).
+   * Served as `canParticipate`.
    */
   participableIds: Set<string> | null;
 }
@@ -614,12 +615,21 @@ export class PostsService {
         memberRepostContext(this.postRepo.manager, postIds, viewerId),
         this.pinContext(postIds, viewerId, false),
       ]);
+    // A BDE moderator may be served a post they moderate through the moderation read (owner,
+    // 2026-11-15: "Oui, dans ses espaces"), never to act on it outside their own audience: those
+    // posts alone are asked the ordinary reader's predicate. `null` when they moderate none of the
+    // page - every post served is then one they see, and no query is made.
+    const participableIds =
+      moderatedIds.size > 0 ? await this.participableAmong(postIds, moderatedIds, viewerId) : null;
     // Only a post the reader does NOT see without a grant can have its comments withheld (the
     // predicate's own last term), so the predicate is asked of those alone: none on an ordinary
-    // reader's page, and no query for it at all.
+    // reader's page, and no query for it at all. A post read as its moderator is not withheld.
     const commentsWithheldIds = await commentsWithheldPostIds(
       this.postRepo.manager,
-      postIds.filter((id) => !grantFree.grantFreeIds.has(id)),
+      postIds.filter(
+        (id) =>
+          !grantFree.grantFreeIds.has(id) && (participableIds === null || participableIds.has(id))
+      ),
       viewerId
     );
     return {
@@ -633,7 +643,7 @@ export class PostsService {
       grantFreeIds: grantFree.grantFreeIds,
       firstHandIds: grantFree.firstHandIds,
       commentsWithheldIds,
-      participableIds: null,
+      participableIds,
       ...(await this.personalRequestContext(personalIds, viewerId, memberships.personal)),
     };
   }
@@ -664,7 +674,8 @@ export class PostsService {
   /**
    * Of `postIds`, those `viewerId` sees as an ORDINARY READER - the audience predicate, grants
    * counted, no admin widening: what a reaction or a comment asks (`readPostOpenVerdict` without
-   * `allowHidden`). One query for the page; asked for a platform admin only (`participableIds`).
+   * `allowHidden`). One query for the page; asked of whoever may be served a post through the
+   * moderation read - a platform admin, a BDE moderator (`participableIds`).
    */
   private async readerVisibleIds(postIds: string[], viewerId: string): Promise<Set<string>> {
     if (postIds.length === 0) return new Set();
@@ -676,10 +687,25 @@ export class PostsService {
     const ids = new Set((Array.isArray(rows) ? (rows as { id: string }[]) : []).map((r) => r.id));
     if (ids.size < postIds.length) {
       this.logger.debug(
-        `[VISIBILITY] admin ${viewerId.slice(0, 8)}: ${postIds.length - ids.size} of ${postIds.length} post(s) served by the moderation read only`
+        `[VISIBILITY] moderator ${viewerId.slice(0, 8)}: ${postIds.length - ids.size} of ${postIds.length} post(s) served by the moderation read only`
       );
     }
     return ids;
+  }
+
+  /**
+   * A BDE moderator's `participableIds`: every post of the page they do not moderate (served to
+   * them by the ordinary predicate, so seen), plus those they moderate AND see as a reader. Only
+   * the moderated ones are queried.
+   */
+  private async participableAmong(
+    postIds: string[],
+    moderatedIds: Set<string>,
+    viewerId: string
+  ): Promise<Set<string>> {
+    const moderated = postIds.filter((id) => moderatedIds.has(id));
+    const seen = await this.readerVisibleIds(moderated, viewerId);
+    return new Set(postIds.filter((id) => !moderatedIds.has(id) || seen.has(id)));
   }
 
   /**
@@ -777,7 +803,7 @@ export class PostsService {
             AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= now())
             AND (posts."expiresAt" IS NULL OR posts."expiresAt" > now())
             AND posts.kind <> 'replay'
-            AND ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: false, readGrants: false, memberReposts: false })}
+            AND ${postVisibleToViewerSql('posts', '$2', { readGrants: false, memberReposts: false })}
             AND NOT EXISTS (SELECT 1 FROM user_blocks req_block
               WHERE (req_block."blockerId" = $2 AND req_block."blockedId" = posts."authorId")
                  OR (req_block."blockerId" = posts."authorId" AND req_block."blockedId" = $2))`,
@@ -2673,6 +2699,10 @@ export class PostsService {
   async getById(
     id: string,
     opts?: {
+      /**
+       * An already-decided moderation read. Absent, it is asked here of the one predicate,
+       * `mayModeratePost` (owner, 2026-11-15: a platform admin, a BDE moderator in scope).
+       */
       allowHidden?: boolean;
       viewerId?: string;
       isGlobalAdmin?: boolean;
@@ -2688,12 +2718,33 @@ export class PostsService {
       );
       throw new NotFoundException('Post not found');
     }
-    const blockedIds = await this.assertOpenable(post, opts ?? {}, 'READ_OR_REACT');
+    const allowHidden = opts?.allowHidden ?? (await this.moderatesPost(post.id, opts));
+    const blockedIds = await this.assertOpenable(
+      post,
+      { viewerId: opts?.viewerId, allowHidden },
+      'READ_OR_REACT'
+    );
     return this.serveToReader(
       post,
       { viewerId: opts?.viewerId, isGlobalAdmin: opts?.isGlobalAdmin === true },
       blockedIds
     );
+  }
+
+  /**
+   * THE MODERATION READ'S ONE QUESTION (owner, 2026-11-15: "Oui, dans ses espaces"): does this reader
+   * moderate this post - a platform admin, a BDE `MODERATE` holder within its scope
+   * (`AssociationsService.mayModeratePost`, the one predicate). Asked by the reads that may open a
+   * post to moderate it - by id, its comment page - never by a write.
+   */
+  private async moderatesPost(
+    postId: string,
+    reader: { viewerId?: string; isGlobalAdmin?: boolean } | undefined
+  ): Promise<boolean> {
+    if (!reader?.viewerId && reader?.isGlobalAdmin !== true) return false;
+    return this.associationsService.mayModeratePost(reader?.viewerId, postId, {
+      isGlobalAdmin: reader?.isGlobalAdmin === true,
+    });
   }
 
   /**
@@ -2834,11 +2885,14 @@ export class PostsService {
     viewerId: string | undefined,
     opts: { cursor?: number; limit?: number; order?: CommentOrder; isGlobalAdmin?: boolean }
   ) {
-    // `getById`'s gate, `allowHidden` included: a platform admin reads a hidden post's comments as
-    // they read the post itself.
+    // `getById`'s gate, the moderation read included: whoever moderates the post reads its comments
+    // as they read the post itself (owner, 2026-11-15).
     // `'COMMENT'`: a named reader from whom the comments are withheld gets the 404 of a missing post.
     const { post, blockedIds } = await this.assertVisible(postId, viewerId, 'COMMENT', {
-      allowHidden: opts.isGlobalAdmin === true,
+      allowHidden: await this.moderatesPost(postId, {
+        viewerId,
+        isGlobalAdmin: opts.isGlobalAdmin === true,
+      }),
     });
     const page = pageComments((post.comments ?? []) as any[], { ...opts, blockedIds });
     const isGlobalAdmin = opts.isGlobalAdmin === true;

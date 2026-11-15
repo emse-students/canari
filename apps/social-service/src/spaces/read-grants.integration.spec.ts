@@ -277,7 +277,7 @@ maybe('nominative read grants against PostgreSQL (migration 078 included)', () =
     for (const post of personal) {
       for (const id of GRANTEES) {
         const { rows } = await client.query(
-          `SELECT ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: true })} AS visible
+          `SELECT ${postVisibleToViewerSql('posts', '$2')} AS visible
              FROM posts WHERE posts.id = $1`,
           [post.id, id]
         );
@@ -292,10 +292,10 @@ maybe('nominative read grants against PostgreSQL (migration 078 included)', () =
 
   it('READ, REACT and COMMENT open on an in-scope post; a VOTE and a REPUBLICATION never do', async () => {
     // `assertVisible('READ_OR_REACT')` is the default predicate, `assertVisible('VOTE')` and the
-    // republication gate pass `readGrants: false`. Both with `adminSeesAll`, as the services do.
+    // republication gate pass `readGrants: false`.
     const open = async (postId: string, id: UserId, readGrants?: boolean) => {
       const { rows } = await client.query(
-        `SELECT ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: true, readGrants })} AS visible
+        `SELECT ${postVisibleToViewerSql('posts', '$2', { readGrants })} AS visible
            FROM posts WHERE posts.id = $1`,
         [postId, id]
       );

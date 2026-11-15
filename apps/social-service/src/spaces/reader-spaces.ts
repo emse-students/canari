@@ -348,7 +348,6 @@ function acceptedFollowerOfAuthorSql(author: string, user: string): string {
  * - for a personal post - not through a carrier the author accepted (no second hop, 2026-11-02).
  */
 const REPOSTER_FIRST_HAND = {
-  adminSeesAll: false,
   readGrants: false,
   memberReposts: false,
   personalRepublications: false,
@@ -618,12 +617,13 @@ export function institutionReachNotForStudentsSql(item: string): string {
 /**
  * Post row `post` is visible to user row `user` (decision 3 of WP6b, D38):
  * - the post's author ({@link authorDoorHoldsSql}: for an entity's post, only while they still hold a
- *   membership of that entity), and a global admin ONLY when `adminSeesAll` (the MODERATION READ: opening one
- *   post by its id, its comment page, the way a report or a moderation link does) - never when
- *   BROWSING, so the feed, the search and the announcements show an admin what they would show an
- *   ordinary reader (user, 2026-10-04: an admin reading everyone's personal posts would be a mess,
- *   and a wrong thing to be able to do), and never to PARTICIPATE: a reaction, a comment, a vote, a
- *   republication ask an admin the ordinary reader's right (2026-11-14, profiles-and-access.md);
+ *   membership of that entity). NO ADMIN DOOR: the feed, the search and the announcements show a
+ *   platform admin what they would show an ordinary reader (user, 2026-10-04: an admin reading
+ *   everyone's personal posts would be a mess, and a wrong thing to be able to do), and a reaction, a
+ *   comment, a vote, a republication ask them the ordinary reader's right (2026-11-14). The
+ *   MODERATION READ - one post by its id, its comments, its replay - is not a door of this
+ *   predicate: it is `AssociationsService.mayModeratePost`, asked where the read is made and handed
+ *   to `readPostOpenVerdict` as `allowHidden` (owner, 2026-11-15: "Oui, dans ses espaces");
  * - with `adminSeesCohort`, a platform admin on a REVIEW ACCOUNT's post - the live's own exception
  *   (`liveVisibleToUserSql`), passed by a live replay's watch alone, so a replay is never wider than
  *   its live;
@@ -649,20 +649,17 @@ export function institutionReachNotForStudentsSql(item: string): string {
  *   `memberRepostReachesUserSql`), left out with `followers: false` like the author's followers.
  *   Monotone in reposts too, so a repost's newly-reached set is "after and not before".
  *
- * EVERY DOOR BUT THE AUTHOR'S AND THE MODERATING ADMIN'S IS NARROWED BY THE "ENTRE ÉTUDIANTS" GATE
+ * EVERY DOOR BUT THE AUTHOR'S IS NARROWED BY THE "ENTRE ÉTUDIANTS" GATE
  * ({@link studentsOnlyAdmitsUserSql}, owner 2026-11-04). It reads no republication and no repost, so
  * the predicate stays monotone in both, and the newly-reached rules restate it on their "after" side.
- * Two narrowings more on such a post (the lead's decisions, 2026-11-04, reversible):
- * - A READ GRANT NEVER OPENS IT: the grant door carries `grantGuard` = "not students-only", so a
- *   student who also holds a grant on another campus does not read that campus's post through it;
- * - `adminSeesAll` opens it to a platform admin ONLY with `adminModerates` - the moderation read
- *   (`allowHidden`: the post by id, its comments, a comment's moderation). Reacting, commenting,
- *   voting and browsing it ask the gate of an admin like of anyone.
+ * One narrowing more on such a post (the lead's decision, 2026-11-04, reversible): A READ GRANT
+ * NEVER OPENS IT - the grant door carries `grantGuard` = "not students-only", so a student who also
+ * holds a grant on another campus does not read that campus's post through it.
  *
  * AN INSTITUTION'S REACH (owner, 2026-11-10, amending D19 for institutions only; migration 162):
  * - its PUBLIC is a second gate beside the switch ({@link institutionReachAdmitsUserSql}, both in
  *   {@link postPublicAdmitsUserSql}), over every door but the author's; 'students' closes the grant
- *   and browsing-admin doors exactly as the switch does;
+ *   door exactly as the switch does;
  * - its SPACES narrow the post's OWN association door - rules and read grant alike - to the ticked
  *   spaces ({@link institutionReachHoldsSpaceSql}), ANDed with the institution's rules, so never wider than
  *   its audience. A membership is not narrowed (D21), and a republisher reaches its own readers (G4);
@@ -673,18 +670,12 @@ export function institutionReachNotForStudentsSql(item: string): string {
 export function postVisibleToUserSql(
   post: string,
   user: string,
-  opts: { adminSeesAll?: boolean; adminModerates?: boolean; adminSeesCohort?: boolean } & ReadOpts &
-    FollowerOpts = {}
+  opts: { adminSeesCohort?: boolean } & ReadOpts & FollowerOpts = {}
 ): string {
-  // "For students" in either form - the switch, or an institution's public - closes the grant door
-  // and the browsing admin's, as the lead decided for the switch (S1, S2 of #3010).
+  // "For students" in either form - the switch, or an institution's public - closes the grant door,
+  // as the lead decided for the switch (S1 of #3010).
   const notStudentsOnly = `(NOT COALESCE(${post}."studentsOnly", false)
       AND ${institutionReachNotForStudentsSql(post)})`;
-  const adminClause = opts.adminSeesAll
-    ? opts.adminModerates
-      ? `${isAdminSql(user)}\n    OR `
-      : `(${isAdminSql(user)} AND ${notStudentsOnly})\n    OR `
-    : '';
   const cohortClause = opts.adminSeesCohort
     ? `(${isAdminSql(user)} AND ${inReviewCohortSql(`${post}."authorId"`)})\n    OR `
     : '';
@@ -714,7 +705,7 @@ export function postVisibleToUserSql(
       ? ''
       : `
       OR ${republicationReachesUserSql(post, user)}`;
-  return `(${adminClause}${cohortClause}${authorDoorHoldsSql(post, `${user}.id`)}
+  return `(${cohortClause}${authorDoorHoldsSql(post, `${user}.id`)}
     OR (${postPublicAdmitsUserSql(post, user)} AND (
     (${post}."associationId" IS NULL AND (
       ${sharesSpaceWithAuthorSql(`${post}."authorId"`, user)}${personalCarrierClause}${followerClause}${repostClause}))
@@ -866,8 +857,6 @@ export function postVisibleToViewerSql(
   post: string,
   viewer: string,
   opts: {
-    adminSeesAll?: boolean;
-    adminModerates?: boolean;
     adminSeesCohort?: boolean;
     readGrants?: boolean;
   } & FollowerOpts = {}

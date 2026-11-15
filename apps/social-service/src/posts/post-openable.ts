@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import type { EntityManager } from 'typeorm';
 import { blockedUserIdsFor } from '../common/blocked-user-ids';
 import {
@@ -45,6 +46,9 @@ const refuse = (refusal: 'not-found' | 'hidden', why: string): PostOpenVerdict =
   blockedIds: [],
 });
 
+/** The moderation read's one log line (`readPostOpenVerdict`). */
+const moderationReadLog = new Logger('PostModerationRead');
+
 /**
  * WHETHER ONE READER MAY OPEN ONE POST - THE ONE PREDICATE every path that acts on a post asks:
  * the read by id (`PostsService.getById`), a vote, a reaction, a comment, a comment like, the
@@ -55,18 +59,20 @@ const refuse = (refusal: 'not-found' | 'hidden', why: string): PostOpenVerdict =
  *
  * The terms, IN THIS ORDER (the order is the read's, and it matters for what a refusal reveals):
  * 1. a reel past its month is gone for everyone (`isExpiredPost`);
- * 2. the audience - `postVisibleToViewerSql`. A platform admin is widened past it ONLY with
- *    `allowHidden`, the moderation read (the post by id, its comment page): every other caller - a
- *    reaction, a comment, a comment like or edit, a vote, a report, a mention - asks an admin the
- *    ordinary reader's right, so an admin reads by id to moderate and never participates outside
- *    their own audience (2026-11-14, profiles-and-access.md). `adminSeesCohort` is a live replay's
+ * 2. the audience - `postVisibleToViewerSql`. Every term below it is passed ONLY by `allowHidden`,
+ *    the MODERATION READ: the caller moderates this post (`AssociationsService.mayModeratePost`,
+ *    asked by the read that passes it - the post by id, its comment page, a replay's moderation
+ *    read; owner 2026-11-15, "Oui, dans ses espaces"). Every other caller - a reaction, a comment, a
+ *    comment like or edit, a vote, a report, a mention - asks the ordinary reader's right, so a
+ *    moderator reads by id and never participates outside their own audience (2026-11-14,
+ *    profiles-and-access.md). Each read it opened past a term is logged `[MODERATION_READ]`. `adminSeesCohort` is a live replay's
  *    watch, the live's own exception (a review account's replay, to judge a report);
  *    a read grant counts for `'READ_OR_REACT'` and `'COMMENT'`, never for `'VOTE'`. BEFORE the
  *    moderation term, whose 403 would otherwise confirm the id to someone outside the audience;
  *    for `'COMMENT'`, also: the comments are not withheld from this reader (a named reader whose
  *    only door is the grant, switch off - `commentsWithheldPostIds`, owner 2026-11-04), else a 404:
  *    for that reader the comments do not exist;
- * 3. hidden by moderation, unless `allowHidden` (a platform admin doing platform work);
+ * 3. hidden by moderation, unless `allowHidden` (the moderation read);
  * 4. scheduled later, unless the reader holds its author's door (`authorDoorHoldsSql`: wrote it, and
  *    for an entity's post is still a member there) or `allowHidden`: an unpublished post's existence
  *    is itself what is hidden;
@@ -83,22 +89,28 @@ export async function readPostOpenVerdict(
   intent: PostAccessIntent
 ): Promise<PostOpenVerdict> {
   if (isExpiredPost(post)) return refuse('not-found', `reel expired at ${String(post.expiresAt)}`);
-  // The admin's widening is the MODERATION READ alone (`allowHidden`): a platform admin opens any
-  // post by id to moderate it - an "Entre étudiants" one included (lead, 2026-11-04) - and never
-  // reacts, comments, votes or reports outside their own audience (2026-11-14).
+  // THE MODERATION READ (`allowHidden`): the caller MODERATES this post - decided by the one
+  // predicate, `AssociationsService.mayModeratePost`, where the read is asked (owner, 2026-11-15:
+  // "Oui, dans ses espaces": a platform admin, a BDE `MODERATE` holder within its scope). It reads
+  // past every term of a viewer's gate; it never reacts, comments, votes or reports outside the
+  // reader's own audience (2026-11-14) - no write route passes it.
   const moderates = opts.allowHidden === true;
+  /** The viewer's terms the moderation read passed, for its log line. */
+  const passed: string[] = [];
   const rows: { visible: boolean }[] = await manager.query(
     `SELECT ${postVisibleToViewerSql('posts', '$2', {
-      adminSeesAll: moderates,
-      adminModerates: moderates,
       adminSeesCohort: opts.adminSeesCohort === true,
       readGrants: intent !== 'VOTE',
     })} AS visible FROM posts WHERE posts.id = $1`,
     [post.id, opts.viewerId ?? null]
   );
-  if (rows[0]?.visible !== true) return refuse('not-found', 'outside its audience');
+  if (rows[0]?.visible !== true) {
+    if (!moderates) return refuse('not-found', 'outside its audience');
+    passed.push('outside its audience');
+  }
   if (post.kind === 'replay' && (await removedFromReplayLive(manager, post, opts.viewerId))) {
-    return refuse('not-found', 'removed from the live by its broadcaster');
+    if (!moderates) return refuse('not-found', 'removed from the live by its broadcaster');
+    passed.push('removed from the live');
   }
   // The moderation read is not withheld: it reads the comments to judge them (2026-11-14).
   if (
@@ -108,15 +120,18 @@ export async function readPostOpenVerdict(
   ) {
     return refuse('not-found', 'comments withheld from a grant-only reader');
   }
-  if (post.hiddenByModeration && !opts.allowHidden) return refuse('hidden', 'hidden by moderation');
+  if (post.hiddenByModeration) {
+    if (!moderates) return refuse('hidden', 'hidden by moderation');
+    passed.push('hidden by moderation');
+  }
   const scheduledAt = post.scheduledAt ? new Date(post.scheduledAt) : null;
   if (
     scheduledAt &&
     scheduledAt.getTime() > Date.now() &&
-    !opts.allowHidden &&
     !(await viewerHoldsAuthorDoor(manager, post, opts.viewerId))
   ) {
-    return refuse('not-found', `scheduled for ${scheduledAt.toISOString()}`);
+    if (!moderates) return refuse('not-found', `scheduled for ${scheduledAt.toISOString()}`);
+    passed.push('scheduled later');
   }
   const blockedIds = await blockedUserIdsFor(manager, opts.viewerId);
   // A live replay is the broadcaster on screen: a block hides it as it hid the live, an
@@ -124,12 +139,18 @@ export async function readPostOpenVerdict(
   if (
     (!post.associationId || post.kind === 'replay') &&
     !post.anonymous &&
-    blockedIds.includes(post.authorId) &&
-    !opts.allowHidden
+    blockedIds.includes(post.authorId)
   ) {
-    return refuse('not-found', 'a block stands between the reader and its author');
+    if (!moderates) return refuse('not-found', 'a block stands between the reader and its author');
+    passed.push('a block with its author');
   }
-  return { refusal: null, why: 'open', blockedIds };
+  if (passed.length > 0) {
+    // An expected event, one line per moderation read that opened what the reader's gate refuses.
+    moderationReadLog.log(
+      `[MODERATION_READ] ${intent} post ${post.id.slice(0, 8)} opened to ${String(opts.viewerId).slice(0, 8)} as its moderator, past: ${passed.join(', ')}`
+    );
+  }
+  return { refusal: null, why: moderates ? 'open (moderation read)' : 'open', blockedIds };
 }
 
 /**
