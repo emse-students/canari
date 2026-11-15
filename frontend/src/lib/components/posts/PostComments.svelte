@@ -90,6 +90,12 @@
     focusCommentId?: string;
     /** Put the caret in the box when the thread opens (the "write a comment" tap, an empty thread). */
     autofocusComposer?: boolean;
+    /**
+     * READ-ONLY: the reader may read the thread but not act in it - a platform admin reading a post
+     * outside their own audience to moderate it (`canParticipate` false, 2026-11-14). No composer, and every
+     * comment drawn read-only (`CommentItem`).
+     */
+    readOnly?: boolean;
   }
 
   let {
@@ -115,6 +121,7 @@
     pendingCommentIds,
     focusCommentId,
     autofocusComposer = false,
+    readOnly = false,
   }: Props = $props();
 
   /** The focus id already acted on, so a later redraw (a new comment, a like) never scrolls again. */
@@ -306,6 +313,7 @@
               onEdit={onEditComment}
               onDelete={onDeleteComment}
               {onReport}
+              {readOnly}
             />
           </div>
         {/each}
@@ -325,26 +333,28 @@
     {/if}
   </div>
 
-  <!-- Input area. -->
-  <div class="shrink-0 pt-2">
-    <CommentComposer
-      bind:this={composer}
-      {postId}
-      value={commentText}
-      onChange={(text) => onCommentTextChange(text)}
-      placeholder={replyingToId
-        ? m.post_reply_placeholder()
-        : comments.length === 0
-          ? m.post_first_comment_placeholder()
-          : m.post_comment_placeholder()}
-      submitting={submittingComment}
-      {currentUserId}
-      replyTo={replyingToId ? { id: replyingToId, name: replyingToName } : null}
-      onCancelReply={cancelReply}
-      onRestoreReply={restoreReply}
-      onSubmit={handleSend}
-      {sendError}
-      {onKeyDown}
-    />
-  </div>
+  <!-- Input area: none on a read-only thread. -->
+  {#if !readOnly}
+    <div class="shrink-0 pt-2">
+      <CommentComposer
+        bind:this={composer}
+        {postId}
+        value={commentText}
+        onChange={(text) => onCommentTextChange(text)}
+        placeholder={replyingToId
+          ? m.post_reply_placeholder()
+          : comments.length === 0
+            ? m.post_first_comment_placeholder()
+            : m.post_comment_placeholder()}
+        submitting={submittingComment}
+        {currentUserId}
+        replyTo={replyingToId ? { id: replyingToId, name: replyingToName } : null}
+        onCancelReply={cancelReply}
+        onRestoreReply={restoreReply}
+        onSubmit={handleSend}
+        {sendError}
+        {onKeyDown}
+      />
+    </div>
+  {/if}
 </div>

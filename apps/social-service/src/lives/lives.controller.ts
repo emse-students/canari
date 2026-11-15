@@ -239,8 +239,8 @@ export class LivesController {
    * One page of a live's three-day REPLAY (docs/wiki/live-replays.md): the key, the segments from
    * `from` with their place on the time line, `nextFrom`. No seat. 404 `LIVE_NOT_FOUND` to anyone the
    * replay post is not visible to, and once it has expired. `?moderation=true` is the moderation
-   * read the reported-content preview asks (`LivesService.replay`): it opens the replay to whoever
-   * moderates its post, and changes nothing for anyone else.
+   * read (`LivesService.replay`): it opens the replay to a platform admin, and changes nothing for
+   * anyone else.
    */
   @Get(':id/replay')
   @Header('Cache-Control', 'no-store')

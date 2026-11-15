@@ -861,7 +861,7 @@
 
         <PostForms {formInfos} />
 
-        {#if canSeeComments && !scheduled && participates}
+        {#if canSeeComments && !scheduled}
           <div data-no-double-tap>
             <CommentsPreview
               {comments}
@@ -871,6 +871,7 @@
               pendingCommentIds={thread.pending}
               onLike={(id) => void thread.like(id)}
               onOpen={openCommentsSheet}
+              readOnly={!participates}
             />
           </div>
         {/if}
@@ -902,6 +903,7 @@
       {authToken}
       {focusCommentId}
       autofocusComposer={sheetWrite}
+      readOnly={!participates}
       onCommentTextChange={async (text) => {
         commentText = text;
         commentError = '';

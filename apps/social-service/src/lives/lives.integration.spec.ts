@@ -346,8 +346,6 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
   let seats: MemorySeats;
   const muted = new Set<string>();
   const mayActAs = new Set<string>();
-  /** `user:postId` pairs a BDE moderator moderates (`mayModeratePost`'s scope, stubbed). */
-  const moderatesPost = new Set<string>();
   const q = (sql: string, params: unknown[] = []) => ds.query(sql, params);
 
   beforeAll(async () => {
@@ -502,7 +500,6 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
     process.env.LIVE_ENABLED = 'true';
     muted.clear();
     mayActAs.clear();
-    moderatesPost.clear();
     store = new MemoryStore();
     announcer = new LiveAnnouncer(ds, notifications);
     seats = new MemorySeats();
@@ -512,13 +509,6 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       {
         mayAct: async (userId: string, associationId: string) =>
           mayActAs.has(`${userId}:${associationId}`),
-        // The post moderation scope, as `AssociationsService.mayModeratePost` answers it: a
-        // platform admin always, a BDE moderator on the posts its governed spaces hold.
-        mayModeratePost: async (
-          userId: string,
-          postId: string,
-          opts?: { isGlobalAdmin?: boolean }
-        ) => opts?.isGlobalAdmin === true || moderatesPost.has(`${userId}:${postId}`),
       } as unknown as AssociationsService,
       { isUserMuted: async (userId: string) => muted.has(userId) } as unknown as ModerationService,
       seats as unknown as LiveSeats,
@@ -1027,22 +1017,23 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       }
     });
 
-    it('THE MODERATION READ OF A REPLAY (lead, 2026-11-14): whoever moderates its post plays it with the flag, and nobody gets more without it', async () => {
-      const live = await finishedLive();
+    it("THE MODERATION READ OF A REPLAY is a platform admin's alone (lead, 2026-11-15): anyone else asking it gets the ordinary gate", async () => {
+      const live = await start();
+      await lives.removeViewer(ALICE, live.id, BOB);
+      await q(`UPDATE lives SET "startedAt" = now() - interval '10 minutes' WHERE id = $1`, [
+        live.id,
+      ]);
+      await lives.ingest(ALICE, live.id, 0, segment(0));
+      await lives.ingest(ALICE, live.id, 1, segment(1));
       await lives.end(ALICE, live.id);
-      const [{ id: postId }] = (await q(
-        `SELECT id FROM posts WHERE "liveId" = $1 AND kind = 'replay'`,
-        [live.id]
-      )) as { id: string }[];
+      await q(`INSERT INTO user_blocks ("blockerId", "blockedId") VALUES ($1, $2)`, [ALICE, DAVE]);
       const viewerPage = await lives.replay(CAROL, live.id);
+      const asked = { moderate: true };
       await q(`UPDATE users SET admin = true WHERE id = $1`, [FRANK]);
       try {
-        // A platform admin outside the audience: the moderation read opens the replay, and serves
-        // exactly the page a viewer gets; the ordinary route stays the ordinary reader's answer.
-        const moderated = await lives.replay(FRANK, live.id, 0, {
-          moderate: true,
-          isGlobalAdmin: true,
-        });
+        // A platform admin outside the audience: the flag opens the page a viewer gets, and
+        // without it they are the ordinary reader they are.
+        const moderated = await lives.replay(FRANK, live.id, 0, { ...asked, isGlobalAdmin: true });
         expect(moderated).toEqual({ ...viewerPage, serverNow: moderated.serverNow });
         expect((await refusal(lives.replay(FRANK, live.id))).code).toBe('LIVE_NOT_FOUND');
         expect((await refusal(lives.replay(FRANK, live.id, 0, { isGlobalAdmin: true }))).code).toBe(
@@ -1051,23 +1042,17 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       } finally {
         await q(`UPDATE users SET admin = false WHERE id = $1`, [FRANK]);
       }
-      // FRANK, no longer an admin, is an ordinary reader outside the audience: refused on both.
-      for (const read of [undefined, { moderate: true }]) {
-        expect((await refusal(lives.replay(FRANK, live.id, 0, read))).code).toBe('LIVE_NOT_FOUND');
+      // Anyone else with the flag - a BDE moderator included, whose scope the read never asks -
+      // meets exactly the ordinary gate: removed by the broadcaster (BOB), blocked (DAVE), outside
+      // the audience (FRANK) are refused; a viewer (CAROL) reads as before. The flag adds nothing to
+      // `readPostOpenVerdict` for them, so every other term of it ("Entre etudiants" included)
+      // holds as on the ordinary route.
+      for (const who of [BOB, DAVE, FRANK]) {
+        expect((await refusal(lives.replay(who, live.id, 0, asked))).code).toBe('LIVE_NOT_FOUND');
       }
-      // A BDE moderator outside its scope (another post): the flag changes nothing.
-      moderatesPost.add(`${FRANK}:00000000-0000-4000-8000-000000000000`);
-      expect((await refusal(lives.replay(FRANK, live.id, 0, { moderate: true }))).code).toBe(
-        'LIVE_NOT_FOUND'
-      );
-      // Within its scope it plays - with the flag only.
-      moderatesPost.add(`${FRANK}:${postId}`);
-      await expect(lives.replay(FRANK, live.id, 0, { moderate: true })).resolves.toMatchObject({
+      await expect(lives.replay(CAROL, live.id, 0, asked)).resolves.toMatchObject({
         liveId: live.id,
-        postId,
-        key: viewerPage.key,
       });
-      expect((await refusal(lives.replay(FRANK, live.id))).code).toBe('LIVE_NOT_FOUND');
     });
 
     it('THE TRIM KEEPS THREE HOURS on a live that keeps a replay, and the window alone on one that does not (D1)', async () => {

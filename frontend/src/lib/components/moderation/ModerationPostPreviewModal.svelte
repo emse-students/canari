@@ -10,7 +10,6 @@
   import { LoaderCircle, FileX, Copy } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { copyId } from '$lib/utils/copyId';
-  import { provideModerationRead } from '$lib/moderation/moderationRead';
 
   interface Props {
     open: boolean;
@@ -19,9 +18,6 @@
   }
 
   let { open, postId, onClose }: Props = $props();
-
-  // A replay previewed here is read to be judged: its pane asks the moderation read (lead, 2026-11-14).
-  provideModerationRead(() => (open ? postId : null));
 
   let loading = $state(false);
   let error = $state('');
