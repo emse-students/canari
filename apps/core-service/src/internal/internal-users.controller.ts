@@ -55,10 +55,10 @@ export class InternalUsersController {
    * still counts, and a person counts once per formation however many places name it.
    *
    * Called by social-service to populate a form's "filtrer par formation" picker. It offers what
-   * EXISTS rather than a hard-coded list, because `formation` comes from Authentik and the next
-   * value arrives with no deploy - prod holds ICM, ISMIN and Master today (measured 2026-08-23),
-   * and an enum in code would silently stop matching the fourth. The counts are there so a manager
-   * can see a criterion reaches 3 people before building a price around it.
+   * is IN USE, a subset of `FORMATIONS` since a cursus may name nothing else (D4), so a manager is
+   * not offered a formation nobody carries; what a criterion may NAME is the full list, enforced by
+   * social-service where the form is saved. The counts are there so a manager can see a criterion
+   * reaches 3 people before building a price around it.
    *
    * Aggregate only: no id, no name, nothing about any individual.
    */

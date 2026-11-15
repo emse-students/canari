@@ -34,8 +34,6 @@ through its event's card). What is left, each a defect to fix or a decision alre
 
 ### Dead zones and inconsistencies
 
-- **A stored formation criterion can match nobody**: a form's `formation.values` accepts any string,
-  so one saved with the legacy `Master` refuses every submitter.
 - **A default audience may be "everyone" on an association**: `smallestRules` collapses "all ten
   spaces" to the (NULL, NULL) rule, which `setAudiences` refuses for the same type - latent, no BDE
   governs ten spaces.
