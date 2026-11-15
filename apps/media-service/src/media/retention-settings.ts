@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Injectable,
   Logger,
   ServiceUnavailableException,
@@ -18,11 +19,18 @@ import {
  * WHEN IT READS - three events, no clock:
  *  - at BOOT (`RetentionBootstrap`), before the routes listen;
  *  - on a NOTICE (`POST /api/media/internal/retention-changed`): core-service sends one when an admin
- *    changes a duration, and social-service one at its own boot - the deploy replaces social-service
- *    AFTER media-service (`depends_on`), so a media-service that booted beside an older social-service
- *    is told as soon as the new one is up;
+ *    changes a duration (a bare notice: media reads);
  *  - on DEMAND, once, when an upload finds nothing held (a failed boot read): that upload is refused
  *    with a 503 the client retries, and the read runs beside it, never in its path.
+ *
+ * AND WHEN IT IS HANDED THEM (2026-11-15, the alpha.1 rolling deploy on dev): social-service's boot
+ * notice CARRIES the two durations it has just read from `platform_config`. A notice that only says
+ * "read again" sends the read through the mesh, which at that instant still routes to the RETIRING
+ * social-service replica - the new one is not listening yet, and enters the mesh's targets only once
+ * healthy - so on the release that adds the relay the read answered 404 from the replica that predates
+ * it, while the replica that sent the notice had the values. The proof of availability and the data
+ * now travel together: {@link MediaRetentionHolder.notice}. A handed snapshot only ever fills an EMPTY
+ * holder, so it can never replace what a read produced (the reads keep their ordering, below).
  * A failed re-read KEEPS the last values and accuses itself with their age. The value in force is
  * stamped on the file's index entry at its upload, so a lowered duration applies to new files only.
  */
@@ -82,6 +90,24 @@ export async function fetchMediaRetention(): Promise<MediaRetentionDays> {
   };
 }
 
+/**
+ * The durations a notice's body hands over, or null for a bare notice (core-service's, which carries
+ * none). Both fields or neither: a body naming one, or a value that is not a positive whole number,
+ * is a 400 naming it - a defect in the sender, never a value to hold.
+ */
+export function handedRetention(body: unknown): MediaRetentionDays | null {
+  const fields = (body ?? {}) as { chatReelDays?: unknown; idleFileDays?: unknown };
+  if (fields.chatReelDays === undefined && fields.idleFileDays === undefined) return null;
+  try {
+    return {
+      chatReelDays: wholeDays(fields.chatReelDays, 'chatReelDays'),
+      idleFileDays: wholeDays(fields.idleFileDays, 'idleFileDays'),
+    };
+  } catch (e) {
+    throw new BadRequestException(e instanceof Error ? e.message : String(e));
+  }
+}
+
 /** Why a read was asked: named in every line it writes. */
 export type RetentionReadReason = 'boot' | 'notice' | 'demand';
 
@@ -110,6 +136,12 @@ export type RetentionReadReason = 'boot' | 'notice' | 'demand';
  */
 export class MediaRetentionHolder {
   private held: { values: MediaRetentionDays; readAt: number } | null = null;
+  /**
+   * How many times values were held (read or handed). A read notes it at its start: a read that fails
+   * after values were held behind it opens no outage - what it failed to refresh is newer than it.
+   * A sequence and not a timestamp, so equal clock readings cannot confuse the two.
+   */
+  private holds = 0;
   private inFlight: Promise<boolean> | null = null;
   /** When the current run of failed reads began, or null while reads succeed. */
   private outageSince: number | null = null;
@@ -168,6 +200,25 @@ export class MediaRetentionHolder {
     return this.queued.promise;
   }
 
+  /**
+   * A notice (`POST internal/retention-changed`); resolves true when the holder holds what the
+   * notice stands for. Never rejects.
+   *
+   * HANDED VALUES FILL AN EMPTY HOLDER, AND NOTHING ELSE: the sender read them from the column it
+   * owns, so they are as good as a read - and they arrive with the proof that the sender is up, which
+   * a read through the mesh does not have during a rolling deploy (the file comment). Held values are
+   * NOT replaced by them: the snapshot was taken before it travelled, and an admin change committed
+   * in between would be overwritten by an older value - so once anything is held, values change only
+   * by a read, ordered as {@link refresh} orders them, and a notice with values is a bare notice.
+   */
+  notice(handed: MediaRetentionDays | null): Promise<boolean> {
+    if (handed && !this.held) {
+      this.hold(handed, 'handed', 'held as handed by the notice (no read)');
+      return Promise.resolve(true);
+    }
+    return this.refresh('notice');
+  }
+
   /** Starts a read and makes it {@link inFlight}; it hands over to the queued read as it settles. */
   private start(reason: RetentionReadReason): Promise<boolean> {
     const read: Promise<boolean> = this.readOnce(reason).then(
@@ -203,29 +254,45 @@ export class MediaRetentionHolder {
     next.adopt(this.start(next.reason));
   }
 
-  private async readOnce(reason: RetentionReadReason): Promise<boolean> {
-    try {
-      const values = await this.read();
-      const before = this.held?.values;
-      this.held = { values, readAt: this.now() };
-      if (this.outageSince !== null) {
-        this.logger.log(
-          `[RETENTION] the retention durations are readable again (${reason}) after ${Math.round((this.now() - this.outageSince) / 1000)} s: ${this.refusedInOutage} upload(s) refused meanwhile`
-        );
-        this.outageSince = null;
-      }
-      this.refusedInOutage = 0;
+  /**
+   * Holds values a read produced or a notice handed (`why` names the event, `line` the source), and closes
+   * an open outage with its length and the uploads it refused.
+   */
+  private hold(values: MediaRetentionDays, why: string, line: string): void {
+    const before = this.held?.values;
+    this.held = { values, readAt: this.now() };
+    this.holds += 1;
+    if (this.outageSince !== null) {
       this.logger.log(
-        `[RETENTION] read (${reason}): chat reels ${values.chatReelDays} days, idle files ${values.idleFileDays} days` +
-          (before &&
-          (before.chatReelDays !== values.chatReelDays ||
-            before.idleFileDays !== values.idleFileDays)
-            ? ` (was ${before.chatReelDays} and ${before.idleFileDays})`
-            : '')
+        `[RETENTION] the retention durations are readable again (${why}) after ${Math.round((this.now() - this.outageSince) / 1000)} s: ${this.refusedInOutage} upload(s) refused meanwhile`
       );
+      this.outageSince = null;
+    }
+    this.refusedInOutage = 0;
+    this.logger.log(
+      `[RETENTION] ${line}: chat reels ${values.chatReelDays} days, idle files ${values.idleFileDays} days` +
+        (before &&
+        (before.chatReelDays !== values.chatReelDays || before.idleFileDays !== values.idleFileDays)
+          ? ` (was ${before.chatReelDays} and ${before.idleFileDays})`
+          : '')
+    );
+  }
+
+  private async readOnce(reason: RetentionReadReason): Promise<boolean> {
+    const holdsAtStart = this.holds;
+    try {
+      this.hold(await this.read(), reason, `read (${reason})`);
       return true;
     } catch (e) {
       const cause = e instanceof Error ? e.message : String(e);
+      if (this.holds !== holdsAtStart) {
+        // Values were held while this read ran (a notice handed them, 2026-11-15 review of #3645):
+        // they are newer than anything this read could have brought, so its failure opens no outage.
+        this.logger.debug(
+          `[RETENTION] read (${reason}) failed (${cause}) after newer values were held; nothing to report`
+        );
+        return false;
+      }
       if (this.outageSince !== null) {
         this.logger.debug(`[RETENTION] read (${reason}) still failing: ${cause}`);
         return false;
