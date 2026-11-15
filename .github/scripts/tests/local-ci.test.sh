@@ -222,10 +222,16 @@ check "origin/main moved: the push is refused once, asking for the same push aga
 parents=$(git -C "$p" rev-list --parents -n1 HEAD | wc -w | tr -d ' ')
 check "the branch now carries a merge commit of origin/main" "no merge commit was made" test "$parents" -eq 3
 check "the checks ran on the merged result" "the merge was not checked: $out" has "PLAN control-characters:" "$out"
+# main moves again before the push the hook asked for: that push is still sent as it is, unfetched.
+echo "main moves on" >"$other/main-later.txt"
+git -C "$other" add main-later.txt
+git -C "$other" commit -qm main-later
+git -C "$other" push -q origin main
 rc=0
 out=$(push_hook "$merged_head") || rc=$?
-check "the second push sends the verified merge at once" "the second push did not pass (rc=$rc): $out" \
-  test "$rc" -eq 0 -a -n "$(grep -F 'already passed' <<<"$out" || true)"
+check "the second push sends the verified merge at once, though main moved since" "the second push did not pass (rc=$rc): $out" \
+  test "$rc" -eq 0 -a -n "$(grep -F 'merged by the last run' <<<"$out" || true)" -a -z "$(grep -F 'fetching origin/main' <<<"$out" || true)"
+check "and nothing was merged for it" "the asked-for push merged main again" test "$(git -C "$p" rev-parse HEAD)" = "$merged_head"
 
 # A conflict: aborted, the branch exactly as it was, and the files named.
 echo "theirs" >"$other/shared.txt"

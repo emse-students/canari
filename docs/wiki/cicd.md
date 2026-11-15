@@ -3494,7 +3494,11 @@ push `shellcheck`, `cargo`, `node` or `java` as the planned checks need them.
    and stops.
 4. On success it stamps the verified commit. **If it merged, it refuses once**: git chose the
    pushed commits before the hook ran, so the merge cannot ride this push - *"Run the same git push
-   again"*. The second push finds HEAD stamped and passes at once.
+   again"*. The second push finds HEAD is the merge it asked for (`resend-head`, beside the stamp) and
+   passes at once - **before any fetch**, so main moving during the run does not start a third: CI
+   tests the pull request merged onto the current main regardless (measured 2026-11-15: with that
+   check after the fetch, three runs in a row were each refused because main had moved meanwhile).
+   A stamped commit the hook did NOT just merge is still fetched and merged when main moved.
 
 **A hook's environment is not CI's.** Git hands a hook `GIT_DIR` (and, at commit, `GIT_INDEX_FILE`),
 and every check inherits it. The first push run on 2026-11-15 ran `local-ci.test.sh`, whose

@@ -78,6 +78,10 @@ mkdir -p "$STATE_DIR"
 # The commit a push run verified, per worktree. It answers ONE question - "did every local check
 # pass on exactly this commit" - and a commit is immutable, so it cannot go stale.
 STAMP="$STATE_DIR/verified-head"
+# The merge commit THIS hook made, verified, and asked to be pushed again. It answers a different
+# question from the stamp - "is this the push I asked for" - so it is its own file: a stamped
+# commit that fell behind main is merged again, the commit this hook asked for is sent as it is.
+RESEND="$STATE_DIR/resend-head"
 ZERO=0000000000000000000000000000000000000000
 
 say() { printf '%s\n' "$*"; }
@@ -318,6 +322,15 @@ mode_push() {
     refuse "the working tree has uncommitted changes, and the checks would read them instead of the commit being pushed. Commit or stash them, then push."
   fi
 
+  # THE PUSH THIS HOOK ASKED FOR IS SENT BEFORE ANY FETCH. Its merge of origin/main passed every
+  # check, and CI tests the pull request merged onto the current main anyway; fetching again would
+  # merge whatever main took during the run, and a branch whose plan outlasts main's merge rate
+  # would never be sent (measured 2026-11-15: three runs in a row, main moved during each).
+  if [ "$(cat "$RESEND" 2>/dev/null)" = "$head" ] && [ "$(cat "$STAMP" 2>/dev/null)" = "$head" ]; then
+    say "[push] ${head:0:12} already passed every local check here, merged by the last run - sending it; CI merges the current main"
+    return 0
+  fi
+
   say "[push] fetching origin/main"
   git fetch --quiet origin main
   local base merged=0
@@ -364,6 +377,7 @@ commit, and push again."
   printf '%s\n' "$head" >"$STAMP"
 
   if [ "$merged" -eq 1 ]; then
+    printf '%s\n' "$head" >"$RESEND"
     refuse "origin/main was merged into this branch as ${head:0:12} and every local check passed on it - but git had already chosen the commit to send before this hook ran, so this push would not carry the merge. Run the same git push again: it finds this commit verified and sends it at once."
   fi
   say "[push] every local check passed on ${head:0:12}"
