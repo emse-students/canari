@@ -157,7 +157,7 @@ const SAFE_LOCALS = new Set(
   remove_proposals external unattended unattributed_kept unattributed_dropped left_to_the_app
   channels_dropped parked_files leftovers flags unrecorded winner first_index unreadable_lines
   waiting uncropped lockscreenVisibility importance appSounds vibrate sound done files held_channel
-  hasVideo callEnded unlabelled domain locality bgStatus refusal fingerprint key_fingerprint current stated document dropped_ids declaredGroup serverSaysMentioned kind data_dir db_dir locale groupTag closedAs`.split(
+  hasVideo callEnded unlabelled domain locality bgStatus refusal fingerprint key_fingerprint current stated document dropped_ids declaredGroup serverSaysMentioned kind data_dir db_dir locale groupTag closedAs quiet`.split(
     /\s+/
   )
 );
