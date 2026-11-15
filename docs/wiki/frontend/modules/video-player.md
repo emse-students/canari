@@ -37,7 +37,9 @@ draws the `footer` snippet as an absolute `z-20` strip over the bottom of the pi
 safe inset - and `MediaLightbox` ALWAYS hands it a footer (the gallery dots), empty when a viewer has no
 dots (a conversation's has none: `dotCount={0}`). That strip sat on the lower half of the line's touch
 zone, exactly where a thumb lands, and took the touch for itself. **Fix**: the immersive footer is
-`pointer-events-none` (its dots already opted back in with `pointer-events-auto`), and a test
+`pointer-events-none`; the gallery dots' WRAPPER was the same full-width strip with `pointer-events-auto`
+(review: it too covered a lightbox video's seek line), so only the dot buttons opt in, and a hidden footer is
+`inert` (invisible dots are neither tappable nor focusable). A test
 (`MediaLightbox.seekLine.svelte.test.ts`) pins both the overlay and a touch press-then-drag that seeks
 inside the real viewer.
 

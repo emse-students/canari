@@ -211,11 +211,13 @@
              (`pointer-events-none`) and its controls opt back in (`pointer-events-auto`: the gallery
              dots). Without it this strip - at least the bottom safe inset tall, empty when a viewer has
              no dots - covered the lower half of a video's 32 px seek line and swallowed the finger
-             that meant to scrub it (owner, 2026-11-15, the conversation's viewer). -->
+             that meant to scrub it (owner, 2026-11-15, the conversation's viewer). Hidden, the footer is `inert`:
+             invisible dots are neither tappable nor focusable. -->
         <div
           class="shrink-0 {immersive
             ? 'pointer-events-none absolute inset-x-0 bottom-0 z-20 transition-opacity duration-200'
             : ''} {immersive && chromeHidden ? 'opacity-0' : ''}"
+          inert={immersive && chromeHidden}
           data-viewer-footer
           style="padding-bottom: max(0.5rem, var(--safe-area-inset-bottom, 0.5rem)); {immersive
             ? sideSafePadding()
