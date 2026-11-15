@@ -204,8 +204,7 @@ require_tools() {
   need() { command -v "$1" >/dev/null 2>&1 || missing="$missing $1"; }
   need bun
   need git
-  # deploy-rolling.test.sh, in the recipe, drives a compose fixture and fails without a daemon.
-  case "$plan" in *test-ci-scripts*) need shellcheck && need docker ;; esac
+  case "$plan" in *test-ci-scripts*) need shellcheck ;; esac
   case "$plan" in *"rust "* | *frontend-generated* | *mls-forward-compat*) need cargo ;; esac
   case "$plan" in *"ts "*) need node ;; esac
   case "$plan" in *android-unit*) need java ;; esac

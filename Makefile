@@ -350,7 +350,9 @@ test-ci-scripts: lint-ci-scripts
 	@bun .github/scripts/tests/migration-numbers.test.mjs
 	@bash .github/scripts/tests/deploy-registry-retry.test.sh
 	@bash .github/scripts/tests/deploy-replace.test.sh
-	@bash .github/scripts/tests/deploy-rolling.test.sh
+	@if [ "$$(docker info --format '{{.OperatingSystem}}' 2>/dev/null)" = "Docker Desktop" ]; then \
+	echo "deploy-rolling.test.sh: NOT RUN under Docker Desktop - it measures a Linux engine's reload timing and fails here on it; CI runs it (docs/wiki/cicd.md#checks-at-commit-at-push-and-in-ci-only)"; \
+	else bash .github/scripts/tests/deploy-rolling.test.sh; fi
 	@bash .github/scripts/tests/dependency-ceiling.test.sh
 	@bash .github/scripts/tests/mls-forward-compat.test.sh
 	@bun .github/scripts/tests/changes-outputs.test.mjs
