@@ -319,16 +319,18 @@
            server, and a pending row's id is local. The reader sees the comment; they simply cannot
            act on it until it exists. `tap-target` gives each small control a 44px hit box on a touch
            screen without changing how it is drawn. -->
-        {#if !isPending && !readOnly}
-          <button
-            type="button"
-            onclick={() => onReply(comment)}
-            class="tap-target text-text-muted hover:text-text-main text-2xs font-bold transition-colors outline-none focus-visible:underline"
-          >
-            {m.post_reply_label()}
-          </button>
+        {#if !isPending}
+          {#if !readOnly}
+            <button
+              type="button"
+              onclick={() => onReply(comment)}
+              class="tap-target text-text-muted hover:text-text-main text-2xs font-bold transition-colors outline-none focus-visible:underline"
+            >
+              {m.post_reply_label()}
+            </button>
+          {/if}
 
-          {#if comment.canEdit && !editing}
+          {#if comment.canEdit && !editing && !readOnly}
             <button
               type="button"
               onclick={startEdit}
@@ -348,7 +350,7 @@
               <Trash2 size={12} strokeWidth={2.5} />
             </button>
           {/if}
-          {#if !comment.canEdit && onReport}
+          {#if !comment.canEdit && onReport && !readOnly}
             <button
               type="button"
               onclick={() => onReport?.(comment.id)}
@@ -360,21 +362,14 @@
             </button>
           {/if}
 
-          <CommentLikeButton
-            {liked}
-            count={likeCount}
-            onLike={() => onLike(comment.id)}
-            class="ml-auto"
-          />
-        {:else if !isPending && comment.canDelete}
-          <button
-            type="button"
-            onclick={confirmDelete}
-            class="tap-target text-text-muted text-2xs font-bold transition-colors outline-none hover:text-red-500"
-            aria-label={m.common_delete_button()}
-          >
-            <Trash2 size={12} strokeWidth={2.5} />
-          </button>
+          {#if !readOnly}
+            <CommentLikeButton
+              {liked}
+              count={likeCount}
+              onLike={() => onLike(comment.id)}
+              class="ml-auto"
+            />
+          {/if}
         {/if}
       </div>
     {/if}
