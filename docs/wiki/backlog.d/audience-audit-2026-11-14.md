@@ -43,7 +43,9 @@ through its event's card). What is left, each a defect to fix or a decision alre
   the server answers a typed refusal.
 - **A nickname report reaches no BDE moderator** (`reportInBdeScopeSql` has no branch for it): the
   platform admin alone sees it.
-- **A follower's own unfollow and a profile correction do not drop the feed cache** (30 s).
+- **A profile correction does not drop the feed cache** (30 s, the bound
+  [profiles-and-access](../profiles-and-access.md) states); a follow that begins or ends now drops
+  its reader's pages.
 
 ### Closed by the owner, 2026-11-14
 

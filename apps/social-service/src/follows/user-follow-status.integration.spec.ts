@@ -155,7 +155,12 @@ maybe('FollowsService against PostgreSQL: the request is ONE idempotent insert',
       extra: { options: `-c search_path=${schema}` },
     });
     await ds.initialize();
-    follows = new FollowsService({} as never, ds.getRepository(UserFollow), {} as never);
+    follows = new FollowsService(
+      {} as never,
+      ds.getRepository(UserFollow),
+      {} as never,
+      {} as never
+    );
   });
 
   afterAll(async () => {

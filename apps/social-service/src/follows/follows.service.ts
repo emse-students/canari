@@ -14,6 +14,8 @@ import { ReviewCohortBoundaryException, sameSideOfReviewCohort } from '../review
 import { AssociationFollow } from './entities/association-follow.entity';
 import { UserFollow } from './entities/user-follow.entity';
 import { Association } from '../associations/entities/association.entity';
+import { RedisService } from '../common/redis/redis.service';
+import { dropFeedPagesOfReader } from './follow-feed-cache';
 import { FOLLOW_ACCEPTED, FOLLOW_PENDING, type FollowStatus } from './follow-status';
 import type { FollowNoticeKind } from './entities/user-follow-notice.entity';
 import { resetBellOnNewFollowSql, resetLegacyMuteOnNewFollowSql } from './account-bells.service';
@@ -118,7 +120,8 @@ export class FollowsService {
     @InjectRepository(UserFollow)
     private readonly userFollowRepo: Repository<UserFollow>,
     @InjectRepository(Association)
-    private readonly assoRepo: Repository<Association>
+    private readonly assoRepo: Repository<Association>,
+    private readonly redis: RedisService
   ) {}
 
   // --- Association follows ---
@@ -155,6 +158,10 @@ export class FollowsService {
       `[FOLLOW] ${followerUserId.slice(0, 8)} -> association ${associationId.slice(0, 8)}: ` +
         `${row?.created ? 'followed' : 'already following'}${row?.reset ? ', bell reset' : ''}`
     );
+    // On EVERY successful call, a repeat included: a first call whose drop failed is retried by the
+    // client, finds the follow already there, and must still leave the reader's pages right - never
+    // the cache's TTL to heal it.
+    await dropFeedPagesOfReader(this.redis, this.logger, followerUserId, 'a follow');
     return { ok: true };
   }
 
@@ -167,6 +174,7 @@ export class FollowsService {
     if (!res.affected) {
       throw new NotFoundException('Follow relationship not found');
     }
+    await dropFeedPagesOfReader(this.redis, this.logger, followerUserId, 'an unfollow');
     return { ok: true };
   }
 
