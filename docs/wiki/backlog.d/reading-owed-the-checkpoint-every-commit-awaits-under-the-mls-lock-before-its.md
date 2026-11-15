@@ -16,3 +16,5 @@ target: 1.7.0
 - The seven Welcome deliveries that followed each paid one checkpoint of 0-3 ms + 4-13 ms.
 
 **So a commit costs the iPhone about 11-16 ms of checkpoint, not the 1.4-2 s of the Mi 9T DEBUG capture.** Left: the Mi 9T half, and LEAF-REFRESH-1..4 on the local estate. The test group was deleted afterwards.
+
+**Web and rig sitting 2026-11-15: LEAF-REFRESH-1..4 LEFT.** The four rows are `pending - no runner` and the closest runners (CC-4, KILL, DEV-2/3, NET-2) drive W1 and W2, ports 9224 and 9223 (the latter another sitting's); nothing was run ([device-verification](../device-verification.md#where-the-pass-stands)). Naming the missing runner is the lift: a runner per row in `tools/cross-client-harness`.
