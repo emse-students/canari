@@ -2810,7 +2810,7 @@ are left as they are (no row is rewritten).
   answer where it already had to ask it). **Stored posts are masked at read, never rewritten, and
   how many there are is NOT MEASURED** - neither the anonymous posts carrying a form nor the posts
   naming a foreign form. The count is one read-only statement on production, waiting for the owner:
-  `SELECT anonymous, ("attachedFormId" IS NOT NULL) AS has_form_id, (jsonb_array_length(forms) > 0)
+  `SELECT anonymous, ("attachedFormId" IS NOT NULL) AS has_form_id, (forms <> '[]'::jsonb)
   AS has_inline_forms, count(*) FROM posts GROUP BY 1, 2, 3`. Its `has_inline_forms` column also
   says whether the retired list was ever stored, which git history cannot say for a client outside
   this repository.
