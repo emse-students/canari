@@ -1081,6 +1081,23 @@ Notification Center over an open app was lost. The fix:
 - **Mark-as-read from the banner over an open app is still native.** Its watermark goes through the
   same outbox mirror, so the same refusal and erasure apply to it. It is OPEN
   ([backlog](../backlog.d/p2-ios-mark-as-read-from-a-banner-over-an-open-app.md)).
+- **A notification response is completed ON THE MAIN THREAD (2026-11-15).** Read on the iPhone 12
+  (TestFlight `1.6.12-alpha.2`): "Marquer comme lu" from a KILLED app did all its work - the
+  conversation's notification cleared, the badge at 0, the watermark at the sender's instant drained -
+  then the app aborted 1 ms later, `NSInternalInconsistencyException` "Call must be made on main
+  thread" (`UIApplication.m`): the mark-read branch called `completionHandler()` on the global queue
+  it worked on, and iOS asserts the main thread inside it. The quick reply had the same flaw on every
+  path it completes off main (a refused or natively sent reply, a lost hand-over, the page's
+  settlement arriving from Rust). Both branches now keep their work off main and hand out
+  `CanariFinishOnMain(completionHandler, what)` instead of the raw handler: it runs at once on the
+  main thread, else is queued onto the main queue - no timer, no call counting, each path calling it
+  once by construction (the reply's hold is removed under a lock by whoever releases it first). Every
+  other `completionHandler` in `didReceiveNotificationResponse` and `willPresentNotification` is
+  called synchronously in the callback iOS delivers on main. `iosNotificationDelegate.test.ts` holds
+  it on the source: no block that can run off main names the raw handler, every registered action has
+  a branch finishing through the wrapper, and the wrapper hops with no timer. **Code fixed, not yet
+  shipped: the reading is the same gesture on the FIRST pre-release carrying it - no crash, no
+  "Canari Crashed" prompt at the next open, and the read mark observed on the peer.**
 
 Source-shape tests: `iosNotificationDelegate.test.ts`.
 

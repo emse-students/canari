@@ -5790,6 +5790,29 @@ static BOOL CanariIsShareNotification(NSDictionary *userInfo) {
          [userInfo[@"canariLocal"] isEqualToString:@"incoming_share"];
 }
 
+/**
+ * The completion handler of a notification response, made callable from ANY thread: it runs at once
+ * on the main thread, else is queued onto the main queue - never a timer. iOS asserts the main
+ * thread inside it ("Call must be made on main thread", `UIApplication.m`), so a handler called from
+ * the global queue an action works on aborted the app relaunched for it (iPhone 12,
+ * `1.6.12-alpha.2`, "Marquer comme lu" from a killed app). Every action branch that leaves the main
+ * thread hands this out instead of the raw handler; `iosNotificationDelegate.test.ts` holds that.
+ * It does not count calls: each path calls it exactly once by construction (the quick reply's hold
+ * is removed under a lock by whoever releases it first).
+ */
+static void (^CanariFinishOnMain(void (^handler)(void), NSString *what))(void) {
+  return ^{
+    if ([NSThread isMainThread]) {
+      handler();
+      return;
+    }
+    dispatch_async(dispatch_get_main_queue(), ^{
+      NSLog(@"[CanariPush] %@: the notification response is completed on the main queue", what);
+      handler();
+    });
+  };
+}
+
 @implementation CanariNotificationDelegate
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center
        willPresentNotification:(UNNotification *)notification
@@ -5899,12 +5922,15 @@ static BOOL CanariIsShareNotification(NSDictionary *userInfo) {
                                 ? userInfo[kCanariRecipientKey]
                                 : @"";
     // The handler is passed on, never called here: a reply handed to the page holds it until the
-    // page settles the reply (`CanariHoldQuickReply`).
+    // page settles the reply (`CanariHoldQuickReply`). Passed WRAPPED: every path that completes it
+    // runs off the main thread (the native send here, the page's settlement from Rust), and the
+    // wrapper finishes on main.
+    void (^finish)(void) = CanariFinishOnMain(completionHandler, @"quick reply");
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
       CanariHandleQuickReplyAction(recipientId, groupId,
                                    [text stringByTrimmingCharactersInSet:
                                              [NSCharacterSet whitespaceAndNewlineCharacterSet]],
-                                   notifiedAt, completionHandler);
+                                   notifiedAt, finish);
     });
     return;
   }
@@ -5912,9 +5938,13 @@ static BOOL CanariIsShareNotification(NSDictionary *userInfo) {
     NSString *groupId =
         [userInfo[@"groupId"] isKindOfClass:[NSString class]] ? userInfo[@"groupId"] : @"";
     long long notifiedAt = CanariNotifiedSentAt(userInfo);
+    // The work (file writes, the outbox drain's network round trip) stays off main; the response is
+    // completed back ON MAIN. Called from the global queue it aborted the app relaunched in the
+    // background - "Call must be made on main thread" - after the read had already gone out.
+    void (^finish)(void) = CanariFinishOnMain(completionHandler, @"mark read");
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
       CanariHandleMarkReadAction(groupId, notifiedAt);
-      completionHandler();
+      finish();
     });
     return;
   }
