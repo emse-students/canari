@@ -188,6 +188,36 @@ describe('PostInteractionsService.addComment notifications', () => {
     expect(sent.map(([to]) => to).sort()).toEqual(['author', 'mentioned', 'parent-author']);
   });
 
+  it("a reply to the author's own comment, or a mention of them, rings of its own, outside the fold (owner, 2026-11-15)", async () => {
+    const reply = makeService({
+      id: 'p1',
+      authorId: 'author',
+      associationId: null,
+      comments: [{ id: 'parent', userId: 'author', parentId: null }],
+    });
+    await reply.service.addComment('p1', { userId: 'reader', text: 'hi', parentId: 'parent' });
+    await flush();
+    expect(reply.notifications.notifyPostActivity).not.toHaveBeenCalled();
+    expect(reply.created).toEqual([
+      expect.objectContaining({ recipientId: 'author', type: 'reply' }),
+    ]);
+    expect(reply.push.notifyContent).toHaveBeenCalledTimes(1);
+
+    const mention = makeService({
+      id: 'p1',
+      authorId: 'author',
+      associationId: null,
+      comments: [],
+    });
+    mention.notifications.resolveMentionedUserIds.mockReturnValue(['author']);
+    await mention.service.addComment('p1', { userId: 'reader', text: '@[author]' });
+    await flush();
+    expect(mention.notifications.notifyPostActivity).not.toHaveBeenCalled();
+    expect(mention.created).toEqual([
+      expect.objectContaining({ recipientId: 'author', type: 'mention' }),
+    ]);
+  });
+
   it("asks the read's gate who of the mentioned may be told, as the writer, and tells only them", async () => {
     const post = { id: 'p1', authorId: 'author', associationId: null, comments: [] };
     const { service, push, notifications } = makeService(post);

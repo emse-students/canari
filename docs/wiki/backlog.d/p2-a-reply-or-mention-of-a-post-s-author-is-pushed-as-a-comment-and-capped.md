@@ -31,3 +31,7 @@ is answered, this entry stays for that half.
 them (a reply to their comment is a `reply`, a mention of them a `mention`, else a `comment`; the most
 specific wins, not first-come); `post-interactions.comment-notify.spec.ts` gains the author-is-the-parent and
 author-is-mentioned cases.
+
+**2026-11-15, the owner said yes and it is done in this change** ([engagement](../engagement.md)): the author's
+notice is a `reply` / `mention` when the comment is one to them, and rings outside the fold. What is left is
+the reading on both phones, then this entry is deleted.

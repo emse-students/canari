@@ -34,6 +34,7 @@ import {
 } from './comment-removal';
 import { forgetCommentNotices, writeComments } from './comment-write';
 import { announceCampusTrend } from './campus-trend';
+import { authorNoticeKind } from './post-activity-notice';
 import { COMMENT_DELETE_FORBIDDEN, COMMENT_EDIT_AUTHOR_ONLY } from '../spaces/bde-moderation';
 import { PostMediaRetentionService, commentMediaIds } from './post-media-retention.service';
 import { isExpiredPost } from './reel.constants';
@@ -335,8 +336,21 @@ export class PostInteractionsService {
 
       if (post.authorId && !alreadyNotified.has(post.authorId)) {
         alreadyNotified.add(post.authorId);
+        // A reply to the author's own comment, or a mention of them, rings of its own and is never
+        // folded into the post's live notification (owner, 2026-11-15); the rest keeps the fold.
+        const kind = authorNoticeKind({
+          authorId: post.authorId,
+          parentWriterId: parent?.userId,
+          mentionedIds: data.text ? this.notifications.resolveMentionedUserIds(data.text) : [],
+        });
+        this.logger.log(
+          `[NOTIFY] post=${postId.slice(0, 8)} author notice kind=${kind} ` +
+            (kind === 'comment'
+              ? '(folded into the post activity notification)'
+              : '(targets the author: rings of its own, outside the fold)')
+        );
         try {
-          await send(post.authorId, 'comment');
+          await send(post.authorId, kind);
         } catch (e) {
           this.logger.warn(
             `[NOTIFY] comment notification failed for post.authorId=${post.authorId}`,

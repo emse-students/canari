@@ -2546,6 +2546,7 @@ seed. That assertion could not hold on any wording, because the only line it cou
 the path a mid-salon grant never takes.
 
 **A re-granted member gets the seed by the history ask, and that is the design (decided 2026-11-15, reversible; WP-REGRANT-2 closed).**
+**Confirmed by the owner on 2026-11-15** (decided under delegation in #3588): no longer pending.
 A seed travels WITH the message that needs it ([section 19](#19-design-the-seed-travels-with-the-message---decided-by-the-user-2026-09-27)),
 so a member granted mid-salon holds no seed until it meets a row it cannot open; it then asks and absorbs the answer
 ([section 25](#25-a-member-hands-the-past-only-to-an-admission-it-can-verify-decided-by-the-user-2026-10-22)). That is the
