@@ -1,7 +1,7 @@
 import type { BookingPerson, BookingView } from './api';
 
 /** How many faces the stack draws before the rest become a `+N` pill. */
-export const MAX_BOOKING_FACES = 3;
+const MAX_BOOKING_FACES = 3;
 
 /**
  * THE PEOPLE A VIEWER SHARES A BOOKING WITH: the server's `others` (holder then invitees, the

@@ -3,8 +3,7 @@
  * scheduleReconnect, attemptReconnect, pauseConnection, resumeConnection,
  * startConnectionWatchdog, stopConnectionWatchdog, runGroupDiscovery.
  */
-import { goto } from '$app/navigation';
-import { resolve } from '$app/paths';
+import { gotoLoginAfterExpiry } from '$lib/navigation/gotoLoginAfterExpiry';
 import { appendLog } from '$lib/utils/sessionLog';
 import { discoverMissingGroups } from '$lib/utils/chat/actions';
 import type { AbsentGroupVerdicts } from '$lib/utils/chat/groupSweep';
@@ -199,7 +198,7 @@ export async function attemptReconnectImpl(
       ctx.setIsLoggedIn(false);
       cb.log('[AUTH] Session expired - redirecting to /login.');
       console.warn('[WS] Session expired, stopping reconnect loop');
-      void goto(resolve('/login'), { replace: true });
+      void gotoLoginAfterExpiry();
       return;
     }
     if (err instanceof IdentitySplitError) {
