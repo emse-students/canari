@@ -47,6 +47,15 @@ describe('what the type of an entity allows its audience to be (decisions 3 and 
     }
   );
 
+  it('refuses a stored two-campus audience written back UNCHANGED: the rule is about what an entity holds, not about what changed', () => {
+    // No such entity exists (measured on production, 2026-11-15). Were one to appear - a row
+    // written before the rule, a restore - its editor would be answered the typed refusal until
+    // the audience is brought to one campus: it is never kept by resubmitting it.
+    const stored = [seIcm, gaIcm];
+    expect(codeOf('association', stored)).toBe(AUDIENCE_ERROR.ONE_CAMPUS_ONLY);
+    expect(codeOf('association', [seIcm])).toBeNull();
+  });
+
   it('lets an institution address two campuses, or everyone', () => {
     expect(codeOf('institution', [seIcm, gaIcm])).toBeNull();
     expect(codeOf('institution', [{ formation: null, campus: null }])).toBeNull();

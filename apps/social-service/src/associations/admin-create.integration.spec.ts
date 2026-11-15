@@ -396,4 +396,34 @@ maybe('platform admin create and catalogue against PostgreSQL', () => {
       });
     }
   });
+
+  it('a BDE governing spaces of two campuses: its child gets the creator campus, and a creator of neither is refused with nothing kept', async () => {
+    await ds.query(`INSERT INTO users (id, campus, cursus) VALUES ('two-campus-star', NULL, '[]')`);
+    const bde = await adminCreate('BDE Des Deux Campus', {
+      firstAdmin: {
+        userId: 'two-campus-star',
+        permissions: ADMIN_PRESET | AssociationPermissionFlag.MANAGE_ASSO,
+      },
+    });
+    await ds.query(
+      `INSERT INTO spaces (formation, campus, "bdeAssociationId") VALUES
+         ('ISMIN', 'gardanne', $1), ('ISMIN', 'saint-etienne', $1), ('PDIS', 'saint-etienne', $1)`,
+      [bde.id]
+    );
+    // No profile campus yet: the default cannot pick, and the creation leaves NOTHING behind.
+    const before = await assos.count();
+    await expect(
+      service.create({ name: 'Club Indecis' } as never, 'two-campus-star', false)
+    ).rejects.toMatchObject({ response: { code: AUDIENCE_ERROR.DEFAULT_CAMPUS_UNDECIDED } });
+    expect(await assos.count()).toBe(before);
+    expect(await assos.count({ where: { name: 'Club Indecis' } })).toBe(0);
+
+    await ds.query(`UPDATE users SET campus = 'saint-etienne' WHERE id = 'two-campus-star'`);
+    const club = await service.create({ name: 'Club Decide' } as never, 'two-campus-star', false);
+    const rules = await audiences.find({ where: { associationId: club.id } });
+    expect(rules.map((r) => `${r.formation}|${r.campus}`).sort()).toEqual([
+      'ISMIN|saint-etienne',
+      'PDIS|saint-etienne',
+    ]);
+  });
 });

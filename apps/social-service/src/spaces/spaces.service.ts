@@ -123,11 +123,14 @@ export function normaliseRules(rules: AudienceRuleDto[]): AudienceRule[] {
 }
 
 /**
- * The SMALLEST rule set reaching exactly `pairs`: everyone when every pair is in, a campus rule
- * when a whole campus is in, a pair rule otherwise - the server twin of the admin grid's `toRules`
- * (`frontend/src/lib/associations/audienceRules.ts`), so a default written here reads back in the
- * grid exactly as if an admin had ticked it. Every pair of D4 x D6 exists (D17 relaxed), so the
- * constants are the universe. Pairs outside it are ignored.
+ * The SMALLEST rule set reaching exactly `pairs` WITHOUT EVER CROSSING A CAMPUS: a campus rule when
+ * a whole campus is in, a pair rule otherwise. It never collapses every pair into the `everyone`
+ * rule (taken by the lead under the owner's absence rule, 2026-11-15, reversible): this builds the
+ * DEFAULT of a new association or list, which no type but an institution may hold (decision 6), so
+ * a default that is refused where it is written was a creation nobody could finish. The admin
+ * grid's `toRules` (`frontend/src/lib/associations/audienceRules.ts`) still collapses to everyone,
+ * for the institutions it is offered to; short of that the two read back alike. Every pair of
+ * D4 x D6 exists (D17 relaxed), so the constants are the universe. Pairs outside it are ignored.
  */
 export function smallestRules(
   pairs: readonly Pick<Space, 'formation' | 'campus'>[]
@@ -135,7 +138,6 @@ export function smallestRules(
   const has = (formation: SpaceFormation, campus: SpaceCampus) =>
     pairs.some((p) => p.formation === formation && p.campus === campus);
   const wholeCampus = (campus: SpaceCampus) => SPACE_FORMATIONS.every((f) => has(f, campus));
-  if (SPACE_CAMPUSES.every(wholeCampus)) return [{ formation: null, campus: null }];
   const rules: AudienceRule[] = [];
   for (const campus of SPACE_CAMPUSES) {
     if (wholeCampus(campus)) {

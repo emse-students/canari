@@ -81,13 +81,16 @@ describe('smallestRules', () => {
     ]);
   });
 
-  it('collapses every pair into the one everyone rule, duplicates ignored', () => {
+  it('never crosses a campus: every pair is one rule per campus, not everyone - duplicates ignored', () => {
     const all = [
       ...pairs(SPACE_FORMATIONS, 'saint-etienne'),
       ...pairs(SPACE_FORMATIONS, 'gardanne'),
       ...pairs(['ICM'], 'gardanne'),
     ];
-    expect(smallestRules(all)).toEqual([{ formation: null, campus: null }]);
+    expect(smallestRules(all)).toEqual([
+      { formation: null, campus: 'saint-etienne' },
+      { formation: null, campus: 'gardanne' },
+    ]);
   });
 
   it('reaches exactly the pairs it was given', () => {

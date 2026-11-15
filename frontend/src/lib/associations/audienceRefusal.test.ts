@@ -8,7 +8,7 @@ import {
 } from './audienceRefusal';
 
 describe('audience refusals are classified by code, never by message', () => {
-  it('reads each of the seven server codes', () => {
+  it('reads each of the server codes', () => {
     for (const code of Object.values(AUDIENCE_REFUSAL)) {
       expect(audienceRefusalCode(new SocialApiError('english prose', code, 403))).toBe(code);
     }

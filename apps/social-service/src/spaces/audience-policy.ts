@@ -34,6 +34,11 @@ export const AUDIENCE_ERROR = {
   ADMIN_OR_BDE_REQUIRED: 'AUDIENCE_ADMIN_OR_BDE_REQUIRED',
   /** Rules on two campuses on anything but an institution (decision 3). */
   ONE_CAMPUS_ONLY: 'AUDIENCE_ONE_CAMPUS_ONLY',
+  /**
+   * A creation under a parent that governs spaces of two campuses, by a creator whose profile names
+   * neither: the default cannot pick the campus. A platform admin creates it with a placement.
+   */
+  DEFAULT_CAMPUS_UNDECIDED: 'AUDIENCE_DEFAULT_CAMPUS_UNDECIDED',
 } as const;
 
 /**
@@ -64,12 +69,38 @@ export function assertAudienceAllowedForType(type: string, rules: readonly RuleL
         'Only an institution may address everyone; an association or a list addresses a campus.',
     });
   }
-  if (new Set(rules.map((r) => r.campus)).size > 1) {
+  // Past the check above no rule has a null campus; the filter keeps this count right whatever
+  // order the two checks are ever put in.
+  if (new Set(rules.map((r) => r.campus).filter((c) => c !== null)).size > 1) {
     throw new BadRequestException({
       code: AUDIENCE_ERROR.ONE_CAMPUS_ONLY,
       message: 'An association or a list addresses one campus; present on two, it is two entities.',
     });
   }
+}
+
+/**
+ * The spaces a new entity's default audience is derived from, out of the spaces its PARENT governs:
+ * all of them when they lie on one campus; when they span two, the ones of the CREATOR's campus -
+ * an association or a list addresses one campus (decision 3), and the creation form asks for none,
+ * so the creator's own campus is the one fact that decides (taken by the lead under the owner's
+ * absence rule, 2026-11-15, reversible). A creator whose profile names neither campus is refused,
+ * typed, with what to do: the default is never guessed.
+ */
+export function defaultSpacesFromParent<T extends { campus: string }>(
+  governed: readonly T[],
+  creatorCampus: string | null
+): T[] {
+  const campuses = new Set(governed.map((s) => s.campus));
+  if (campuses.size <= 1) return [...governed];
+  if (creatorCampus !== null && campuses.has(creatorCampus)) {
+    return governed.filter((s) => s.campus === creatorCampus);
+  }
+  throw new BadRequestException({
+    code: AUDIENCE_ERROR.DEFAULT_CAMPUS_UNDECIDED,
+    message:
+      'This BDE governs spaces on two campuses and your profile names neither: ask a platform admin to create it on the campus it belongs to.',
+  });
 }
 
 /**
