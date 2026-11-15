@@ -4,15 +4,22 @@
  * announcement (`imeTarget.ts`), the one source there - and exposes the reactive snapshot and every
  * CSS variable a screen lays itself out by. No screen computes its own:
  *
- * - `--app-viewport-height`: the shell's height while the keyboard is open. The visible height where
- *   the keyboard shrinks the WebView (iOS) or the visual viewport (a phone browser); the FULL height
- *   in the Android app, whose WebView the keyboard covers without resizing.
+ * - `--app-viewport-height`: the shell's height while the keyboard is open, the visible height, where
+ *   the keyboard shrinks the WebView (iOS) or the visual viewport (a phone browser). Never written in
+ *   the Android app, whose WebView the keyboard covers without resizing: the shell keeps `100dvh`.
  * - `--keyboard-layout-inset-bottom`: what the keyboard covers of the shell's bottom. Non-zero only
  *   in the Android app; a screen inside the shell adds it where it relied on the shell shrinking.
  * - `--keyboard-occlusion-bottom`: what the keyboard covers of the WINDOW's bottom, for `position:
  *   fixed` elements. 0 wherever the WebView itself was resized (the web, iOS, an older shell).
  * - `--keyboard-inset-bottom`, `--visual-viewport-offset-top`, `--keyboard-free-viewport-height`:
  *   below.
+ *
+ * ONE WRITER, TWO TARGETS. `:root`, which every screen reads; and, for an Android announcement that
+ * is ridden, the riding pieces themselves (`[data-keyboard-leaf]`), through non-inherited twins of the
+ * variables they read (`--keyboard-leaf-*`, `app.css`). Both are written from ONE computation
+ * (`keyboardVariables`, `keyboardLeafValues`): the pieces in the announcement's task, the root once
+ * the ride's first frame is out - any `:root` write restyles the whole document, 17-30 ms on the
+ * Mi 9T, against 0.1-0.2 ms for a twin on one element.
  */
 
 import { detectRuntimeDeviceOs } from '$lib/mls-client/mlsPlatform';
@@ -444,51 +451,131 @@ export function pinSafeAreaBottom(root: CSSStyleDeclaration, value: string | nul
   }
 }
 
-function applyCssVars(
+/**
+ * Every keyboard variable of one state, computed ONCE for both of the store's targets: `root`, each
+ * `:root` custom property and its value (null: removed), and `safeAreaPin`, the bottom safe area to
+ * pin (null: the platform's own) - which `pinSafeAreaBottom` writes, because it puts back what it
+ * replaced.
+ */
+type KeyboardVariables = {
+  root: [name: string, value: string | null][];
+  safeAreaPin: string | null;
+};
+
+/**
+ * The keyboard variables of a snapshot: see {@link KeyboardVariables}. Reads nothing.
+ *
+ * `--app-viewport-height` pins the shell only where the keyboard SHRINKS the viewport (iOS, a phone
+ * browser): an overlay keyboard (the Android app) leaves the shell the window's own height, which
+ * the stylesheet's `100dvh` already is. Pinning it there to `innerHeight` (a whole CSS px) moved
+ * every piece by the fraction `100dvh` is not, a frame after the ride had started from the
+ * announcement's layout (the leaf channel, `keyboardLeafValues`).
+ */
+function keyboardVariables(
   snapshot: KeyboardViewportSnapshot,
   m: ViewportMeasurement,
-  baselineHeight: number
-): void {
-  const root = document.documentElement.style;
+  baselineHeight: number,
+  os: string
+): KeyboardVariables {
+  const overlay = m.overlayPx !== undefined;
   // Fix 2: only pin the shell height (in px) while the keyboard is actually open. Otherwise
   // remove the override so the shell falls back to the stable `100dvh` from `:root` - a bare
   // pan (URL-bar slide) or a pinch-zoom must NOT be allowed to collapse the shell into a white gap.
-  if (snapshot.isOpen) {
-    root.setProperty('--app-viewport-height', `${snapshot.shellHeight}px`);
-  } else {
-    root.removeProperty('--app-viewport-height');
-  }
-  // Inline on the root, so it outranks the `:root` declaration. `app.html` already pins the same
-  // property inline outside Tauri, so what was there is put BACK on release, never just removed.
-  pinSafeAreaBottom(
-    root,
-    keyboardSafeAreaBottomOverride(
-      snapshot.isOpen,
-      detectRuntimeDeviceOs(),
-      snapshot.occlusionBottom
-    )
-  );
-  root.setProperty('--keyboard-inset-bottom', `${snapshot.insetBottom}px`);
-  root.setProperty('--keyboard-layout-inset-bottom', `${snapshot.layoutInsetBottom}px`);
-  root.setProperty('--keyboard-occlusion-bottom', `${snapshot.occlusionBottom}px`);
-  root.setProperty('--visual-viewport-offset-top', `${snapshot.offsetTop}px`);
+  const shell = snapshot.isOpen && !overlay ? `${snapshot.shellHeight}px` : null;
   // An overlay keyboard (the Android app) never takes room from the layout viewport: a window
   // shorter than the baseline there is a window resized for another reason (split screen), which
   // plain `svh` follows.
-  const keyboardFree =
-    m.overlayPx !== undefined
-      ? null
-      : keyboardFreeViewportHeight(snapshot.isOpen, m.winH, baselineHeight);
-  if (keyboardFree !== null) {
-    if (root.getPropertyValue(KEYBOARD_FREE_HEIGHT_PROPERTY) !== `${keyboardFree}px`) {
-      Log.d(
-        'keyboardViewport',
-        `media held at the keyboard-free height ${keyboardFree} (layout ${m.winH})`
-      );
+  const keyboardFree = overlay
+    ? null
+    : keyboardFreeViewportHeight(snapshot.isOpen, m.winH, baselineHeight);
+  return {
+    root: [
+      ['--app-viewport-height', shell],
+      ['--keyboard-inset-bottom', `${snapshot.insetBottom}px`],
+      [LAYOUT_INSET_PROPERTY, `${snapshot.layoutInsetBottom}px`],
+      [OCCLUSION_PROPERTY, `${snapshot.occlusionBottom}px`],
+      ['--visual-viewport-offset-top', `${snapshot.offsetTop}px`],
+      [KEYBOARD_FREE_HEIGHT_PROPERTY, keyboardFree === null ? null : `${keyboardFree}px`],
+    ],
+    safeAreaPin: keyboardSafeAreaBottomOverride(snapshot.isOpen, os, snapshot.occlusionBottom),
+  };
+}
+
+const LAYOUT_INSET_PROPERTY = '--keyboard-layout-inset-bottom';
+const OCCLUSION_PROPERTY = '--keyboard-occlusion-bottom';
+
+/**
+ * The twin each root variable a riding piece reads has in the leaf channel (`app.css`, the
+ * `@property --keyboard-leaf-*` block): registered NOT inherited, so writing one on a piece restyles
+ * that element alone. The bottom safe area's twin is {@link LEAF_SAFE_AREA_PROPERTY}.
+ */
+const LEAF_TWINS: Readonly<Record<string, string>> = {
+  [LAYOUT_INSET_PROPERTY]: '--keyboard-leaf-layout-inset-bottom',
+  [OCCLUSION_PROPERTY]: '--keyboard-leaf-occlusion-bottom',
+};
+const LEAF_SAFE_AREA_PROPERTY = '--keyboard-leaf-safe-area-inset-bottom';
+
+/** What `--safe-area-inset-bottom` is when nothing pins it inline (`app.css`). */
+const UNPINNED_SAFE_AREA = 'var(--safe-area-inset-bottom-unpinned)';
+
+/**
+ * The leaf channel's values for `vars`: the twin of every root variable a riding piece reads, at the
+ * value the ROOT will hold once `vars` is written there - so a piece reads the same length before the
+ * root is written (through its twin) and after (through the root, its twins removed), and moves once.
+ *
+ * The safe area's twin is the pin, or - released - what the root goes back to: the inline value the
+ * pin replaced (`app.html`'s, outside Tauri), else the stylesheet's own, named
+ * `--safe-area-inset-bottom-unpinned`. Reads the root's INLINE style only, never a computed one.
+ *
+ * @param rootStyle the root's inline style, as it stands before `vars` is written.
+ */
+function keyboardLeafValues(
+  vars: KeyboardVariables,
+  rootStyle: CSSStyleDeclaration
+): [name: string, value: string][] {
+  const leaves: [string, string][] = [];
+  for (const [name, value] of vars.root) {
+    const twin = LEAF_TWINS[name];
+    if (twin && value !== null) leaves.push([twin, value]);
+  }
+  const unpinned = pinnedSafeBottom
+    ? pinnedSafeBottom.previous
+    : rootStyle.getPropertyValue(SAFE_BOTTOM_PROPERTY);
+  leaves.push([LEAF_SAFE_AREA_PROPERTY, vars.safeAreaPin ?? (unpinned || UNPINNED_SAFE_AREA)]);
+  return leaves;
+}
+
+/** Writes `vars` on the root (`:root`, which every screen reads). */
+function writeRootVariables(vars: KeyboardVariables): void {
+  const root = document.documentElement.style;
+  // Inline on the root, so it outranks the `:root` declaration. `app.html` already pins the same
+  // property inline outside Tauri, so what was there is put BACK on release, never just removed.
+  pinSafeAreaBottom(root, vars.safeAreaPin);
+  for (const [name, value] of vars.root) {
+    if (value === null) {
+      root.removeProperty(name);
+      continue;
     }
-    root.setProperty(KEYBOARD_FREE_HEIGHT_PROPERTY, `${keyboardFree}px`);
-  } else {
-    root.removeProperty(KEYBOARD_FREE_HEIGHT_PROPERTY);
+    if (name === KEYBOARD_FREE_HEIGHT_PROPERTY && root.getPropertyValue(name) !== value) {
+      Log.d('keyboardViewport', `media held at the keyboard-free height ${value}`);
+    }
+    root.setProperty(name, value);
+  }
+}
+
+/** Writes the leaf channel's values on each riding piece (`[data-keyboard-leaf]`). */
+function writeLeafVariables(
+  pieces: readonly HTMLElement[],
+  leaves: readonly [string, string][]
+): void {
+  for (const el of pieces) for (const [name, value] of leaves) el.style.setProperty(name, value);
+}
+
+/** Takes the leaf channel's values off each piece: it reads the root's variables again. */
+function clearLeafVariables(pieces: readonly HTMLElement[]): void {
+  for (const el of pieces) {
+    for (const twin of Object.values(LEAF_TWINS)) el.style.removeProperty(twin);
+    el.style.removeProperty(LEAF_SAFE_AREA_PROPERTY);
   }
 }
 
@@ -578,40 +665,47 @@ export type KeyboardViewportSeams = {
   afterLayout?: (targets: Element[], start: () => void) => () => void;
   /** The clock a ride is phased on (`performance.now`): see `startKeyboardRide`. */
   now?: () => number;
+  /** The next rendering update's animation frame (`requestAnimationFrame`): the root's write after a ride's first frame. */
+  nextFrame?: (run: () => void) => void;
 };
 
-/**
- * Who is told when the keyboard's band changes: see {@link onKeyboardInsetChange}. A plain list, not
- * reactive state: it is called, never rendered.
- */
-const insetListeners: (() => void)[] = [];
+/** A `position: fixed` panel placed above the keyboard by script: see {@link placeOnKeyboardMove}. */
+type PlacedPanel = { el: HTMLElement; place: () => void };
+
+/** The panels placed on every keyboard move. A plain list, not reactive state: called, never rendered. */
+const placedPanels: PlacedPanel[] = [];
 
 /**
- * Calls `listener` every time the keyboard's band at the bottom of the window changes, from the
- * store's own update - the one moment every platform shares. A `position: fixed` panel placed above
- * the keyboard needs it: in the Android app the keyboard covers the WebView without resizing it, so
- * neither `resize` nor a `visualViewport` resize ever fires for it (review of #3556, F4).
+ * Re-places `panel` (with `place`) every time the keyboard's band at the bottom of the window moves.
+ * A `position: fixed` panel placed above the keyboard by script needs it (`bindFixedPopover`): in the
+ * Android app the keyboard covers the WebView without resizing it, so neither `resize` nor a
+ * `visualViewport` resize ever fires for it (review of #3556, F4).
  *
- * Called AFTER the store has written its variables, in the same task: a listener that reads layout
- * must wait for a frame (`requestAnimationFrame`), or it forces the style and layout pass those
- * writes left dirty. Returns the unsubscribe.
+ * `place` runs once the new layout is in - after the layout reactions of the rendering update that
+ * lays the keyboard out, before that frame is painted - so it reads a clean layout and the panel lands
+ * in the same frame as everything else. In the Android ride it is also a RIDING PIECE (#3556, N2): its
+ * drawn top is captured with the others in the announcement, it is placed before the ride reads where
+ * the pieces went, and it rides from where it was drawn to its new place on the keyboard's own curve -
+ * it used to be placed on the next animation frame and jump there while the keyboard was half-way.
+ * Returns the unsubscribe.
  */
-export function onKeyboardInsetChange(listener: () => void): () => void {
-  insetListeners.push(listener);
+export function placeOnKeyboardMove(panel: HTMLElement, place: () => void): () => void {
+  const entry: PlacedPanel = { el: panel, place };
+  placedPanels.push(entry);
   return () => {
-    const at = insetListeners.indexOf(listener);
-    if (at >= 0) insetListeners.splice(at, 1);
+    const at = placedPanels.indexOf(entry);
+    if (at >= 0) placedPanels.splice(at, 1);
   };
 }
 
-/** Tells every inset listener, each in its own `try`: one failing must not silence the next. */
-function notifyInsetListeners(): void {
-  // A copy: a listener may unsubscribe itself while the list is walked.
-  for (const listener of insetListeners.slice()) {
+/** Places every panel, each in its own `try`: one failing must not leave the next in the old place. */
+function placePanels(): void {
+  // A copy: a placement may unbind its panel while the list is walked.
+  for (const panel of placedPanels.slice()) {
     try {
-      listener();
+      panel.place();
     } catch (error) {
-      Log.w('keyboardViewport', `a keyboard inset listener threw: ${String(error)}`);
+      Log.w('keyboardViewport', `a panel placed on the keyboard threw: ${String(error)}`);
     }
   }
 }
@@ -783,15 +877,60 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
   let keyboardWasCovering = false;
   const afterLayout = seams.afterLayout ?? afterLayoutReactions;
   const now = seams.now ?? (() => performance.now());
+  const nextFrame = seams.nextFrame ?? ((run: () => void) => void requestAnimationFrame(run));
   /** A fall the iOS shell announced, captured before its resize (`keyboardRide.ts`), or null. */
   let pendingRide: KeyboardRideCapture | null = null;
   /** The ride waiting for the resize's layout reactions: cancels that wait. */
   let cancelArmedRide: (() => void) | null = null;
   /** The ride running now, cancelled by a rise or a press (`keyboardRide.ts` says why). */
   let runningRide: KeyboardRide | null = null;
+  /** The panels' placement waiting for the layout reactions: cancels that wait. */
+  let cancelPlacement: (() => void) | null = null;
 
-  /** Ends every ride, pending, armed or running: each piece jumps to its own place. */
-  const endRides = (why: string) => {
+  /**
+   * THE ROOT WAITS FOR THE RIDE'S FIRST FRAME (the leaf channel, `app.css`'s `@property` block). The
+   * variables an Android announcement computed, held off `:root` while the riding pieces read them
+   * from their own twins (`leafPieces`), or null. Any write on `:root` restyles the whole document
+   * (17-30 ms on the Mi 9T); held, that pass lands a frame after the ride has started, while the
+   * compositor runs it, instead of in front of its first frame.
+   */
+  let heldRoot: KeyboardVariables | null = null;
+  /** The riding pieces carrying the leaf channel's values, while the root is held. */
+  let leafPieces: HTMLElement[] = [];
+
+  /**
+   * Writes `vars` on the root, and in the same task takes the leaf values off the pieces - the same
+   * lengths, so no piece moves.
+   */
+  const writeRoot = (vars: KeyboardVariables) => {
+    writeRootVariables(vars);
+    clearLeafVariables(leafPieces);
+    leafPieces = [];
+    heldRoot = null;
+  };
+
+  /** Writes `vars` on the riding pieces only, and holds them for the root (see {@link heldRoot}). */
+  const holdRoot = (vars: KeyboardVariables, pieces: HTMLElement[]) => {
+    const leaves = keyboardLeafValues(vars, document.documentElement.style);
+    clearLeafVariables(leafPieces.filter((el) => !pieces.includes(el)));
+    writeLeafVariables(pieces, leaves);
+    leafPieces = pieces;
+    heldRoot = vars;
+  };
+
+  /** Writes the held variables on the root, if any are held. */
+  const releaseRoot = (why: string) => {
+    if (heldRoot === null) return;
+    Log.d('keyboardViewport', `keyboard variables written on the root: ${why}`);
+    writeRoot(heldRoot);
+  };
+
+  /**
+   * Ends every ride, pending, armed or running: each piece jumps to its own place. The held root is
+   * written with it (`release`), except by a new Android announcement, whose own variables replace
+   * the held ones.
+   */
+  const endRides = (why: string, release = true) => {
     const had = pendingRide !== null || cancelArmedRide !== null || runningRide !== null;
     pendingRide = null;
     cancelArmedRide?.();
@@ -799,24 +938,58 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
     for (const a of runningRide?.animations ?? []) a.cancel();
     runningRide = null;
     if (had) Log.d('keyboardViewport', `keyboard ride ended: ${why}`);
+    if (release) releaseRoot(why);
+  };
+
+  /**
+   * Places every panel once the layout reactions of the coming rendering update have run. Observes
+   * the document's root, the shallowest element there is: a panel whose size its new place changes is
+   * then still notified to its own `ResizeObserver` in the same frame, never reported as a loop.
+   */
+  const schedulePlacement = () => {
+    if (cancelPlacement !== null || placedPanels.length === 0) return;
+    cancelPlacement = afterLayout([document.documentElement], () => {
+      cancelPlacement = null;
+      placePanels();
+    });
   };
 
   /**
    * The new layout is applied (the resize of an announced iOS fall landed, or an Android announcement
-   * was taken): ride once its layout reactions have run. `what` names the ride in its log line.
+   * was taken): ride once its layout reactions have run - the panels' placement among them, scheduled
+   * first. `what` names the ride in its log line. The held root is written once the ride's first frame
+   * is out: in the next rendering update's animation frame - an event, never a clock (not the
+   * animations' `ready`: a `startTime` set on them settles it at once) - or at once when nothing rides.
    */
   const armRide = (capture: KeyboardRideCapture, what: string) => {
     cancelArmedRide = afterLayout(
       capture.riders.map((r) => r.el),
       () => {
         cancelArmedRide = null;
-        runningRide = startKeyboardRide(capture, now);
+        const ride = startKeyboardRide(capture, now);
+        runningRide = ride;
         Log.d(
           'keyboardViewport',
-          runningRide === null
+          ride === null
             ? `${what}: nothing to ride`
-            : `${what} ridden over ${capture.durationMs} ms from ${Math.round(runningRide.phaseMs)} ms in: ${runningRide.distances.map(Math.round).join(', ')}px`
+            : `${what} ridden over ${capture.durationMs} ms from ${Math.round(ride.phaseMs)} ms in: ${ride.distances.map(Math.round).join(', ')}px`
         );
+        if (ride === null) {
+          releaseRoot(`${what}: nothing rode`);
+          return;
+        }
+        // This runs in a rendering update's layout reactions, after its animation frames: a frame
+        // requested now is the NEXT rendering update's, so the one carrying the ride's first frame
+        // has been produced by the time it runs.
+        nextFrame(() => {
+          // A press or a new announcement ended this ride first: the press wrote the root, the new
+          // announcement holds its own variables for its own ride.
+          if (runningRide !== ride) {
+            Log.d('keyboardViewport', `${what}: ended before its first frame was out`);
+            return;
+          }
+          releaseRoot(`${what}: the ride's first frame is out`);
+        });
       }
     );
   };
@@ -824,8 +997,14 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
   /**
    * Applies the keyboard's state. `w` is the window as it stood BEFORE the caller wrote anything
    * (`WindowReading`): nothing below reads the window or the layout after the variables are written.
+   *
+   * `hold`: the riding pieces of an Android ride (`[data-keyboard-leaf]`) - the variables are written
+   * on them and held off the root until the ride's first frame is out. `'root'`: written on the root
+   * now, whatever was held. Absent: on the root, unless a ride's first frame is still to come - then
+   * on the pieces it holds, and held with them (the WebView's `resize` ~15 ms after an announcement,
+   * N3, must not bring the whole-document pass back in front of that frame).
    */
-  const update = (w: WindowReading = readWindow()) => {
+  const update = (w: WindowReading = readWindow(), hold?: HTMLElement[] | 'root') => {
     if (w.scale <= ZOOM_SCALE_EPSILON) {
       if (w.winW !== baselineWidth) {
         Log.d('keyboardViewport', `window width ${baselineWidth} -> ${w.winW}: a new baseline`);
@@ -850,10 +1029,15 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
     const insetMoved = next.insetBottom !== snapshot.insetBottom;
     const moved = keyboardMoved(snapshot, next);
     snapshot = next;
-    applyCssVars(next, m, baselineHeight);
+    const vars = keyboardVariables(next, m, baselineHeight, detectRuntimeDeviceOs());
+    if (Array.isArray(hold)) holdRoot(vars, hold);
+    else if (hold !== 'root' && heldRoot !== null) holdRoot(vars, leafPieces);
+    else writeRoot(vars);
     if (next.keyboardHeight > 0) {
       rememberKeyboardHeight(next.keyboardHeight, orientationOf(w.winW, w.winH));
     }
+    // Before any ride is armed: the panels are placed before the ride reads where its pieces went.
+    if (insetMoved) schedulePlacement();
 
     if (closedNow && pendingRide) {
       const capture = pendingRide;
@@ -876,7 +1060,6 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
     if (!next.isOpen) {
       baselineHeight = Math.max(baselineHeight, w.winH);
     }
-    if (insetMoved) notifyInsetListeners();
   };
   /** `update` as an event listener: the event is not a window reading. */
   const onViewportEvent = () => update();
@@ -931,7 +1114,8 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
       animation.durationMs,
       animation.easing,
       'rows',
-      announcedAt
+      announcedAt,
+      placedPanels.map((p) => p.el)
     );
   };
 
@@ -979,10 +1163,19 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
     );
     const reading = readWindow();
     const capture = captureAnnouncedRide(target.px, target.animation, announcedAt);
-    endRides('a new keyboard announcement');
+    // A query, not a layout read: the pieces whose stylesheet reads the leaf channel.
+    const pieces =
+      capture === null
+        ? []
+        : Array.from(document.querySelectorAll<HTMLElement>('[data-keyboard-leaf]'));
+    endRides('a new keyboard announcement', false);
     if (capture !== null) releaseThreadGlides(capture);
     imeTarget = target;
-    update(reading);
+    // Ridden: the pieces take the layout from their own twins in this task, and the root waits for
+    // the ride's first frame. Not ridden, or ridden by no piece that reads the leaf channel (a
+    // popover panel alone, placed from the root's variables): the root now, as every screen reads it
+    // - holding it would delay that panel's placement for no style pass saved.
+    update(reading, pieces.length > 0 ? pieces : 'root');
     if (capture !== null) armRide(capture, `keyboard to ${target.px}`);
     return true;
   };
@@ -1058,6 +1251,8 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
     }
     imeTarget = null;
     endRides('teardown');
+    cancelPlacement?.();
+    cancelPlacement = null;
     pinSafeAreaBottom(document.documentElement.style, null);
     document.documentElement.style.removeProperty('--keyboard-inset-bottom');
     document.documentElement.style.removeProperty('--keyboard-layout-inset-bottom');

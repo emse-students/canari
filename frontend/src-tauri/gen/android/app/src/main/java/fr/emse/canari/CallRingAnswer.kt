@@ -85,7 +85,7 @@ internal object CallRingAnswer {
         val entry = try {
             JSONObject(raw)
         } catch (e: Exception) {
-            Log.e(TAG, "takeAnswer: the record of call=$callId is unreadable - nothing answered: ${e.message}")
+            Log.e(TAG, "takeAnswer: the record of call=$callId is unreadable - nothing answered: ${e.javaClass.simpleName}")
             forget(context, callId)
             return false
         }
@@ -112,7 +112,7 @@ internal object CallRingAnswer {
             Log.i(TAG, "takeAnswer: call=$callId answered on the ring - pending accept written")
             true
         } catch (e: Exception) {
-            Log.e(TAG, "takeAnswer: the pending accept of call=$callId could not be written: ${e.message}")
+            Log.e(TAG, "takeAnswer: the pending accept of call=$callId could not be written: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
             false
         }
     }

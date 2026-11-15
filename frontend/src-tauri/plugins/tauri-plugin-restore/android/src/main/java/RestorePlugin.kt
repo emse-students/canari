@@ -91,7 +91,7 @@ class RestorePlugin(private val activity: Activity) : Plugin(activity) {
                         create(invoke, requestJson, cloudBackup = false)
                         return
                     }
-                    Log.e(TAG, "create: refused (${e.type}): ${e.message}")
+                    Log.e(TAG, "create: refused (${e.type}): ${e.message}") // log-safe: a Credential Manager refusal in the platform's own words; it never quotes the request
                     invoke.reject("createRestoreCredential failed (${e.type}): ${e.message}")
                 }
             }
@@ -136,7 +136,7 @@ class RestorePlugin(private val activity: Activity) : Plugin(activity) {
                         invoke.resolve(answer)
                         return
                     }
-                    Log.e(TAG, "get: refused (${e.type}): ${e.message}")
+                    Log.e(TAG, "get: refused (${e.type}): ${e.message}") // log-safe: a Credential Manager refusal in the platform's own words; it never quotes the request
                     invoke.reject("getRestoreCredential failed (${e.type}): ${e.message}")
                 }
             }
@@ -159,7 +159,7 @@ class RestorePlugin(private val activity: Activity) : Plugin(activity) {
                 }
 
                 override fun onError(e: ClearCredentialException) {
-                    Log.e(TAG, "clear: refused (${e.type}): ${e.message}")
+                    Log.e(TAG, "clear: refused (${e.type}): ${e.message}") // log-safe: a Credential Manager refusal in the platform's own words; it never quotes the request
                     invoke.reject("clearRestoreCredential failed (${e.type}): ${e.message}")
                 }
             }

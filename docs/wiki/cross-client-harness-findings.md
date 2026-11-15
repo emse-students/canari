@@ -60,7 +60,8 @@ one is a known shape with an unknown cause. `GRP --repeat 5` pass 1: ten rows, n
   (a 25 s hold after the DM opens): no `Network.webSocketClosed` in any of the five captures, every GRP-3 product assertion held
   (the removed device keeps what it read and receives nothing after the Remove). Each GRP-3 run was `PASS-DIRTY` for other reasons only: seven
   `POST /api/mls/send -> 400` on the remover, which are the documented `addressed_unsupported` refusals of a history bundle addressed to
-  the account's stale devices ([history-answer-addressing](protocols/history-answer-addressing.md)), and debug/info lines the classifier has not
+  the account's stale devices ([history-answer-addressing](protocols/history-answer-addressing.md); the join push no longer sends them
+  since the Welcome's answer says which devices cannot be addressed), and debug/info lines the classifier has not
   met. The cause stays unknown and is not guessed; the instrument (`wsOpened` and the timeline in `report()`) stays, so the next GRP run
   that closes a socket places it on its own, and THAT is the day to file a defect.
 
