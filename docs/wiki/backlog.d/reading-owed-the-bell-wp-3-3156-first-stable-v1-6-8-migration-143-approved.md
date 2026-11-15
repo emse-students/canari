@@ -14,3 +14,5 @@ target: 1.7.0
 - **A mute set before the bell.** Club d'Echecs Fictif (`f1ddbfe2`, muted before migration 143) is listed under "Notifications reduites" with "Rien". READ.
 
 **Left on the iPhone: "Lives seulement" then a live, and a followed person at "Lives seulement".** Both need a live from the other side.
+
+**Attempt of 2026-11-15 (iPhone, second sitting): not read.** The bell of Club randonnee was set to "Lives seulement" on the phone (the page showed it). The fourth account's web seat was relaunched with the fake-device flags (without them `getUserMedia` is refused and "Demarrer le live" stays disabled), the live was started as the club, and the seat's Chrome stopped answering on its debugging port right after "Demarrer le live", with no push seen on the phone. A live that never reached the server proves nothing, so the row stays. Next time: start the live from a seat whose browser survives the start (note the crash, with the fake camera, as the thing to explain first).
