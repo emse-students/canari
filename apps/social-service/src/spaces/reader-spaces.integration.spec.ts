@@ -109,10 +109,10 @@ const POSTS: {
   {
     id: '00000000-0000-4000-8000-000000000002',
     label:
-      'an A2 post (the whole Gardanne campus), written by a platform admin who holds no role in A2',
+      'an A2 post (the whole Gardanne campus), written by a platform admin who is not a member of A2',
     authorId: 'admin',
     associationId: A2,
-    // The author's door of an entity's post is held only with a role in it (2026-11-14): the admin
+    // The author's door of an entity's post is held only with a membership of it (2026-11-14): the admin
     // wrote it through the admin tier, is no member, and has no space - browsing shows them nothing.
     seenBy: ['isminGa'],
   },
@@ -378,7 +378,7 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
       `SELECT posts.id FROM posts WHERE ${postVisibleToViewerSql('posts', '$1')} ORDER BY posts.id`,
       ['admin']
     );
-    // Nothing: the two A2 rows they wrote are A2's, and they hold no role in A2 (the author's door
+    // Nothing: the two A2 rows they wrote are A2's, and they are not a member of A2 (the author's door
     // of an entity's post, 2026-11-14) - an admin's personal post would be theirs, as anyone's.
     expect(rows.map((r) => r.id as string)).toEqual([]);
     // A non-admin never gets the opening by id (staff shares no space with icmSe, nor follows them).

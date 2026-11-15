@@ -833,6 +833,11 @@ list, institution) holds it only while they still have an `association_members` 
 the membership the own-entity branch already reads. An officer who left keeps nothing a former member
 does not have: they read the post only if the audience still reaches them.
 
+**OWNER DECISION, 2026-11-14 (choice 13, "Tant qu'il est membre"):** the author's door on an entity's
+post holds on ANY membership row of the entity, whatever its role; a demoted officer still reads it
+but cannot edit it (editing asks `POST_AS_ASSO`); leaving the entity loses it. This supersedes the
+earlier reversible "decision 3" of the students-only switch.
+
 **Every place "the author" is special asks it:**
 
 | Where | What it does now |
@@ -841,17 +846,19 @@ does not have: they read the post only if the audience still reaches them.
 | `readPostOpenVerdict` term 4 (scheduled later) | "unless the reader wrote it" is the author's door, asked of a scheduled post only |
 | a comment and a reaction notice to the author (push and bell row) | `PostNotificationsService.postAuthorIsTold`, one statement; a departed writer stays reachable as a parent comment's writer or by a mention, under those rules |
 | the bell rows already written to the author (`comment`, `reaction`) | `bellRowShownSql` re-asks the door at every read, so they leave the departed writer's bell (nothing deleted; a rejoin shows them again) |
-| editing and deleting the post | unchanged: already role-gated - `isPublisherOf` asks `POST_AS_ASSO` in the entity, never `authorId` |
+| the author's own live reels, with their keys (`GET /api/posts/my-reels`, `getMyReels`) | an entity's reel is listed only while the door holds: a member who left gets neither its row nor its key |
+| editing and deleting the post | unchanged: already permission-gated - `isPublisherOf` asks `POST_AS_ASSO` in the entity, never `authorId` |
 
-**Taken by default, to confirm**: a platform admin who publishes in an entity's name through the
-admin tier, without a membership row there, holds no author's door on that post either - they read
+**Decided by the lead, 2026-11-14, reversible (owner's absence delegation)**: a platform admin who
+publishes in an entity's name through the admin tier, without a membership row there, holds no
+author's door on that post either - they read
 it as the reader they are, or by id through the moderation read (`reader-spaces.integration.spec.ts`
 asserts it). The newly-reached and announce sweeps keep leaving out `authorId` itself, so a departed
 writer is not announced their own old post.
 
 A push already delivered cannot be recalled. Proof: `posts/entity-author-door.integration.spec.ts`
-(real PostgreSQL: before and after the role, an officer outside and one inside the audience, a
-personal post's writer with no space, the scheduled exemption, the notice and the bell),
+(real PostgreSQL: before and after the membership, an officer outside and one inside the audience, a
+personal post's writer with no space, the scheduled exemption, the notice, the bell, the own reels),
 `post-interactions.comment-notify.spec.ts` (the notices are not sent).
 
 **PRODUCTION CONSEQUENCES - THE RELEASE ORDER IS FORCED.** The migration gave every existing
@@ -2859,8 +2866,9 @@ see nothing of it. OFF by default, for every author.
 2. The platform admin keeps the MODERATION read only (see the lead's decision S2 below); browsing
    (feed, search, bell) shows an admin without a cursus nothing of it, like any staff member.
 3. ~~The post's author always reads it, even after leaving the association.~~ Superseded 2026-11-14 by
-   [the author's door](#the-authors-door-an-entitys-post-belongs-to-the-entity-2026-11-14): the writer
-   of an entity's post keeps it only while they hold a role in that entity.
+   the owner's decision (choice 13, "Tant qu'il est membre",
+   [the author's door](#the-authors-door-an-entitys-post-belongs-to-the-entity-2026-11-14)): the writer
+   of an entity's post keeps it only while they are a member of that entity.
 4. "Members" are the members of the PUBLISHING association only (decision 2 says so); a republisher's
    members without a cursus do not read it.
 5. Reopening a post announces nothing new (above).

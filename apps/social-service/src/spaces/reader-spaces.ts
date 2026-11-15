@@ -122,7 +122,7 @@ function isMemberIdSql(association: string, userId: string): string {
 /**
  * THE AUTHOR'S DOOR of post row `post`, for the user whose id is the expression `userId` (2026-11-14,
  * profiles-and-access.md): the writer of a PERSONAL post always; the writer of a post in an ENTITY's
- * name (an association, a list, an institution) only while they still hold a role in that entity -
+ * name (an association, a list, an institution) only while they are still a member of that entity -
  * any `association_members` row, the membership the own-entity branch of `postVisibleToUserSql`
  * already reads. An entity's post belongs to the entity: an officer who left it keeps no door the
  * other former members do not have.
@@ -618,7 +618,7 @@ export function institutionReachNotForStudentsSql(item: string): string {
 /**
  * Post row `post` is visible to user row `user` (decision 3 of WP6b, D38):
  * - the post's author ({@link authorDoorHoldsSql}: for an entity's post, only while they still hold a
- *   role in that entity), and a global admin ONLY when `adminSeesAll` (the MODERATION READ: opening one
+ *   membership of that entity), and a global admin ONLY when `adminSeesAll` (the MODERATION READ: opening one
  *   post by its id, its comment page, the way a report or a moderation link does) - never when
  *   BROWSING, so the feed, the search and the announcements show an admin what they would show an
  *   ordinary reader (user, 2026-10-04: an admin reading everyone's personal posts would be a mess,

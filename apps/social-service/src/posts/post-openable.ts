@@ -68,7 +68,7 @@ const refuse = (refusal: 'not-found' | 'hidden', why: string): PostOpenVerdict =
  *    for that reader the comments do not exist;
  * 3. hidden by moderation, unless `allowHidden` (a platform admin doing platform work);
  * 4. scheduled later, unless the reader holds its author's door (`authorDoorHoldsSql`: wrote it, and
- *    for an entity's post still holds a role there) or `allowHidden`: an unpublished post's existence
+ *    for an entity's post is still a member there) or `allowHidden`: an unpublished post's existence
  *    is itself what is hidden;
  * 5. a block either way between the reader and the author of a PERSONAL, NON-ANONYMOUS post (or
  *    `allowHidden`). An association or anonymous post is exempt, as in every feed: filtering it on
@@ -134,7 +134,7 @@ export async function readPostOpenVerdict(
 
 /**
  * The viewer holds the post's AUTHOR'S DOOR (`authorDoorHoldsSql`): its writer, and for a post in an
- * entity's name only while they still hold a role there - what "unless the reader wrote it" means
+ * entity's name only while they are still a member there - what "unless the reader wrote it" means
  * for a post scheduled later. Asked of a scheduled post alone, so an ordinary read pays no query.
  */
 async function viewerHoldsAuthorDoor(

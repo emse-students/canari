@@ -8,6 +8,7 @@
  * what the media service did not confirm gone, because the worker will never come back for a row
  * that no longer exists.
  */
+import { authorDoorHoldsSql } from '../spaces/reader-spaces';
 import { pinnedForViewerSql } from './space-pins';
 import {
   BadRequestException,
@@ -772,7 +773,10 @@ describe('getMyReels - the expiry signal', () => {
     expect(out.serverNow).toBe(new Date(NOW).toISOString());
     expect(out.warningWindowDays).toBe(7);
     const reels = queries.find((q) => /FROM posts/.test(q.sql));
-    expect(reels?.sql).toContain(`"authorId" = $1 AND kind = 'reel' AND "expiresAt" > $3`);
+    // The author's door (`authorDoorHoldsSql`, proven in `entity-author-door.integration.spec.ts`):
+    // the caller's own reels, an entity's only while they are a member of it.
+    expect(reels?.sql).toContain(authorDoorHoldsSql('posts', '$1'));
+    expect(reels?.sql).toContain(`AND kind = 'reel' AND "expiresAt" > $3`);
     expect(reels?.sql).toContain('"expiringSoon"');
     // The author's id is the only identity in the query: nobody else's reels, and the same instant
     // for the filter and the flag.

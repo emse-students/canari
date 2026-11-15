@@ -1,7 +1,7 @@
 /**
  * AN ENTITY'S POST BELONGS TO THE ENTITY (2026-11-14, profiles-and-access.md) - against a REAL
  * PostgreSQL. The author's door (`authorDoorHoldsSql`) opens a PERSONAL post to its writer always,
- * and a post in an entity's name to its writer only while they still hold a role in that entity.
+ * and a post in an entity's name to its writer only while they are still a member of that entity.
  * Every place "the author" opens or is told something asks it: the visibility predicate, the by-id
  * gate's "scheduled later, unless the reader wrote it", the comment and reaction notices to the
  * author (`postAuthorIsTold`), and the bell rows those wrote (`bellRowShownSql`).
@@ -9,7 +9,7 @@
  * The cast: an association reaching (ICM, Saint-Etienne) only; `away` is its officer in Gardanne
  * (outside its audience but for the membership), `near` its officer in Saint-Etienne ICM (in its
  * audience either way), `staffAuthor` a member of staff with no space who writes a personal post.
- * Each case is read while the officer holds the role, then after the role is removed.
+ * Each case is read while the officer is a member, then after their membership is removed.
  *
  * GATED ON `SOCIAL_IT_DATABASE_URL`, like every `*.integration.spec.ts`; CI's
  * `test-social-integration` sets it. Everything happens in a throwaway schema, dropped at the end.
@@ -23,7 +23,11 @@ import type { EntityManager } from 'typeorm';
 import { postVisibleToViewerSql } from '../spaces/reader-spaces';
 import { readPostOpenVerdict, type OpenablePost } from './post-openable';
 import { bellRowShownSql, PostNotificationsService } from './post-notifications.service';
-import { createPostNotificationsTable } from './post-notifications.it-schema';
+import {
+  createBellTargetTables,
+  createPostNotificationsTable,
+} from './post-notifications.it-schema';
+import { PostsService } from './posts.service';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -41,8 +45,12 @@ const P_AWAY = id(701);
 const P_NEAR_SCHEDULED = id(702);
 /** Written by `staffAuthor` in their own name: no space, no association. */
 const P_PERSONAL = id(703);
+/** A live reel `away` published in the association's name. */
+const R_AWAY = id(704);
+/** A live reel `away` published in their own name. */
+const R_AWAY_OWN = id(705);
 
-maybe("an entity's post: the author's door follows the role, against PostgreSQL", () => {
+maybe("an entity's post: the author's door follows the membership, against PostgreSQL", () => {
   const schema = `author_door_it_${Math.random().toString(36).slice(2, 10)}`;
   let client: Client;
   let manager: EntityManager;
@@ -106,7 +114,9 @@ maybe("an entity's post: the author's door follows the role, against PostgreSQL"
         "reachPublic" varchar(16), "reachSpaces" jsonb, anonymous boolean NOT NULL DEFAULT false,
         "hiddenByModeration" boolean NOT NULL DEFAULT false, "scheduledAt" timestamp,
         kind varchar NOT NULL DEFAULT 'post', "expiresAt" timestamp,
-        mentions text NOT NULL DEFAULT '', comments jsonb NOT NULL DEFAULT '[]');
+        mentions text NOT NULL DEFAULT '', comments jsonb NOT NULL DEFAULT '[]',
+        "createdAt" timestamptz NOT NULL DEFAULT now(), "durationMs" int, markdown text,
+        images jsonb NOT NULL DEFAULT '[]');
       CREATE TABLE association_members (id serial PRIMARY KEY, "associationId" uuid NOT NULL,
         "userId" varchar(255) NOT NULL);
       CREATE TABLE user_follows ("followerUserId" varchar(255), "followedUserId" varchar(255),
@@ -135,6 +145,8 @@ maybe("an entity's post: the author's door follows the role, against PostgreSQL"
     await client.query(
       `CREATE TABLE IF NOT EXISTS user_moderation ("userId" varchar(255) PRIMARY KEY, "isMuted" boolean NOT NULL DEFAULT false)`
     );
+    // The bell's one statement reads its target gates' tables (`bell-row-gates.ts`).
+    await createBellTargetTables((sql) => client.query(sql));
     await q(`INSERT INTO associations (id, name) VALUES ($1, 'Asso')`, [ASSO]);
     await q(
       `INSERT INTO association_audiences ("associationId", formation, campus) VALUES ($1, 'ICM', 'saint-etienne')`,
@@ -159,7 +171,13 @@ maybe("an entity's post: the author's door follows the role, against PostgreSQL"
          VALUES ($1, 'away', $4, NULL), ($2, 'near', $4, now() + interval '1 day'), ($3, 'staffAuthor', NULL, NULL)`,
       [P_AWAY, P_NEAR_SCHEDULED, P_PERSONAL, ASSO]
     );
-    // What the author was told while they held the role, and a mention that is not theirs as author.
+    await q(
+      `INSERT INTO posts (id, "authorId", "associationId", kind, "expiresAt")
+         VALUES ($1, 'away', $3, 'reel', now() + interval '2 days'),
+                ($2, 'away', NULL, 'reel', now() + interval '2 days')`,
+      [R_AWAY, R_AWAY_OWN, ASSO]
+    );
+    // What the author was told while they were a member, and a mention that is not theirs as author.
     for (const [recipient, type, postId] of [
       ['away', 'comment', P_AWAY],
       ['away', 'reaction', P_AWAY],
@@ -185,7 +203,7 @@ maybe("an entity's post: the author's door follows the role, against PostgreSQL"
     await client.end();
   });
 
-  it('an officer outside the audience reads their entity post while they hold the role, and not after', async () => {
+  it('an officer outside the audience reads their entity post while they are a member, and not after', async () => {
     expect(await sees(P_AWAY, 'away')).toBe(true);
     expect(await opens(P_AWAY, 'away')).toBeNull();
     await leave('away');
@@ -199,13 +217,13 @@ maybe("an entity's post: the author's door follows the role, against PostgreSQL"
     }
   });
 
-  it('the writer of a personal post keeps their door with no space and no role', async () => {
+  it('the writer of a personal post keeps their door with no space and no membership', async () => {
     expect(await sees(P_PERSONAL, 'staffAuthor')).toBe(true);
     expect(await opens(P_PERSONAL, 'staffAuthor')).toBeNull();
     expect(await sees(P_PERSONAL, 'reader')).toBe(false);
   });
 
-  it("a post scheduled later opens to its writer while they hold the role, and is the audience's 404 after", async () => {
+  it("a post scheduled later opens to its writer while they are a member, and is the audience's 404 after", async () => {
     // `near` stays in the audience as a reader: only the author's exemption is in question.
     expect(await opens(P_NEAR_SCHEDULED, 'near')).toBeNull();
     expect(await opens(P_NEAR_SCHEDULED, 'reader')).toBe('not-found');
@@ -218,12 +236,32 @@ maybe("an entity's post: the author's door follows the role, against PostgreSQL"
     }
   });
 
-  it('the author is told of a comment or a reaction: always on a personal post, on an entity post only while holding the role', async () => {
+  it('the author is told of a comment or a reaction: always on a personal post, on an entity post only while a member', async () => {
     expect(await notifications().postAuthorIsTold(P_PERSONAL)).toBe(true);
     expect(await notifications().postAuthorIsTold(P_AWAY)).toBe(true);
     await leave('away');
     try {
       expect(await notifications().postAuthorIsTold(P_AWAY)).toBe(false);
+    } finally {
+      await join_('away');
+    }
+  });
+
+  it("a member's own reels (`getMyReels`, with their keys) list an entity's reel only while they are a member", async () => {
+    const posts = new PostsService(
+      { manager } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never
+    );
+    const listed = async () =>
+      ((await posts.getMyReels('away')).reels as { id: string }[]).map((r) => r.id).sort();
+    expect(await listed()).toEqual([R_AWAY, R_AWAY_OWN]);
+    await leave('away');
+    try {
+      expect(await listed()).toEqual([R_AWAY_OWN]);
     } finally {
       await join_('away');
     }

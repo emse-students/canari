@@ -139,6 +139,7 @@ interface RankedArm {
   banded: boolean;
 }
 import {
+  authorDoorHoldsSql,
   commentsWithheldFromViewerSql,
   postVisibleToViewerSql,
   readInFeedAudience,
@@ -3150,8 +3151,10 @@ export class PostsService {
    * and `expiringSoon` is decided HERE from the server's clock, so the one definition of "about to
    * expire" is `REEL_EXPIRY_WARNING_DAYS` and not a number each client chose. The row carries the
    * media key and IV - which is why this is the author's route and no one else's: it is what a
-   * client needs to decrypt and save the video before the worker deletes it. Association and
-   * anonymous reels are included, they are the caller's. A reel past its expiry is not listed.
+   * client needs to decrypt and save the video before the worker deletes it. Anonymous reels are
+   * included, they are the caller's; an association's reel only while the caller holds its author's
+   * door (`authorDoorHoldsSql`: a membership of the association, 2026-11-14) - a member who left
+   * gets neither its key nor its row. A reel past its expiry is not listed.
    */
   async getMyReels(userId: string) {
     // ONE clock for both questions: the database's. `expiringSoon` and the row filter are computed
@@ -3162,10 +3165,11 @@ export class PostsService {
       `SELECT id, "createdAt", "expiresAt", "durationMs", markdown, images AS media,
               (("expiresAt" - $3::timestamptz) <= make_interval(days => $2)) AS "expiringSoon"
          FROM posts
-        WHERE "authorId" = $1 AND kind = 'reel' AND "expiresAt" > $3::timestamptz
+        WHERE ${authorDoorHoldsSql('posts', '$1')} AND kind = 'reel' AND "expiresAt" > $3::timestamptz
         ORDER BY "expiresAt" ASC`,
       [userId, REEL_EXPIRY_WARNING_DAYS, now]
     );
+    this.logger.debug(`[REEL] own reels of ${userId.slice(0, 8)}: ${reels.length} listed`);
     return {
       serverNow: new Date(now).toISOString(),
       warningWindowDays: REEL_EXPIRY_WARNING_DAYS,

@@ -92,7 +92,7 @@ describe('PostInteractionsService.addComment notifications', () => {
     }
   });
 
-  it("tells nothing to the writer of an entity's post who no longer holds a role there, and nothing in the bell either", async () => {
+  it("tells nothing to the writer of an entity's post who is no longer a member there, and nothing in the bell either", async () => {
     const { service, created, push, notifications } = makeService(
       { id: 'p1', authorId: 'author', associationId: 'asso-1', comments: [] },
       false

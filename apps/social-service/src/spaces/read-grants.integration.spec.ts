@@ -52,7 +52,7 @@ const migration = (name: string) => readFileSync(join(__dirname, '..', 'migratio
 
 /**
  * The cast: students, a poster (author of every entity post) and four named readers. The poster
- * holds no role in any of those entities, so the author's door of an entity's post does not open
+ * is a member of none of those entities, so the author's door of an entity's post does not open
  * to them (2026-11-14): they read none of those posts, as a former officer would not.
  */
 const USERS = {

@@ -99,7 +99,7 @@ export class PostInteractionsService {
 
     // Notify post author of a new reaction (not for self-reactions or changes), never across the
     // review cohort's boundary (review-cohort.ts), and for an entity's post only while its writer
-    // still holds a role there (`postAuthorIsTold`, 2026-11-14).
+    // is still a member there (`postAuthorIsTold`, 2026-11-14).
     if (
       isNew &&
       post.authorId &&
@@ -337,7 +337,7 @@ export class PostInteractionsService {
 
       if (post.authorId && !alreadyNotified.has(post.authorId)) {
         try {
-          // An entity's post tells its writer only while they still hold a role there (2026-11-14);
+          // An entity's post tells its writer only while they are still a member there (2026-11-14);
           // one it no longer tells stays reachable as a parent's writer or a mention below.
           if (await this.notifications.postAuthorIsTold(postId)) {
             alreadyNotified.add(post.authorId);

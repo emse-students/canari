@@ -514,7 +514,7 @@ export class PostNotificationsService {
   /**
    * WHETHER POST `postId`'S AUTHOR IS STILL TOLD of a comment or a reaction on it - its author's door
    * holds (`authorDoorHoldsSql`, 2026-11-14): always for a personal post; for a post in an entity's
-   * name only while its writer still holds a role in that entity. An officer who left it is told
+   * name only while its writer is still a member of that entity. An officer who left it is told
    * nothing more about the entity's post, as the bell stops showing them what was written before
    * (`bellRowShownSql`). Read from state in one statement, whatever the post's size.
    */
@@ -526,7 +526,7 @@ export class PostNotificationsService {
     const told = rows[0]?.told === true;
     if (!told) {
       this.logger.debug(
-        `[NOTIFY] post ${postId.slice(0, 8)}: its author no longer holds a role in its entity, not told`
+        `[NOTIFY] post ${postId.slice(0, 8)}: its author is no longer a member of its entity, not told`
       );
     }
     return told;
