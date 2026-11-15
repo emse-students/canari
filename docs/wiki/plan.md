@@ -64,6 +64,7 @@ earliest version, as a checklist.
 - [P2 - the retention durations a sweep applies are not yet admin settings](backlog.d/retention-durations-not-yet-settings.md)
 - [P2 - what the keyboard readings of 2026-11-14 filed: a photo DM still jumps to older messages, a short thread loads history on close, a 12 px step](backlog.d/what-the-keyboard-readings-of-2026-11-14-filed.md)
 - [P2 - a push tapped after the session ended can sign in to the wrong page: a bare `/login` on a cold start, a stale `returnTo` on a mounted login page (Mi 9T, 2026-11-15)](backlog.d/p2-a-push-tapped-after-the-session-ended-can-sign-in-to-the-wrong-page.md)
+- [P2 - picking a conversation suggested in the iOS share sheet offers nothing in Canari](backlog.d/p2-picking-a-share-sheet-suggestion-offers-nothing-in-canari-on-ios.md)
 
 **P3 - hygiene**
 
