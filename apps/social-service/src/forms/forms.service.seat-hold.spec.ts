@@ -240,6 +240,9 @@ describe('FormsService - the seat a pending payment holds', () => {
           const releases: (() => void)[] = [];
           const manager = {
             query: async (sql: string, [formId]: string[]) => {
+              // The association's archive, read FOR SHARE before the seat lock: never archived
+              // here (the archive itself is proven on PostgreSQL, answer-edit.integration).
+              if (sql.includes('FROM associations')) return [];
               expect(sql).toBe('SELECT 1 FROM forms WHERE id = $1 FOR UPDATE');
               while (locks.has(formId)) await locks.get(formId);
               let release!: () => void;

@@ -25,6 +25,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Client } from 'pg';
+import { PG_SESSION_OPTIONS } from '../common/pg-session-options';
 import { DataSource } from 'typeorm';
 import { ReviewCohortBoundaryException } from '../review-cohort';
 import { UserFollow } from './entities/user-follow.entity';
@@ -45,7 +46,10 @@ import { PostNotification } from '../posts/entities/post-notification.entity';
 import { POST_LIST_CACHE_PREFIX } from '../posts/post-list-cache';
 import { FOLLOW_CURSOR_INVALID } from './follow-cursor';
 import { PostNotificationsService } from '../posts/post-notifications.service';
-import { createPostNotificationsTable } from '../posts/post-notifications.it-schema';
+import {
+  createPostNotificationsTable,
+  createBellTargetTables,
+} from '../posts/post-notifications.it-schema';
 import type { PushContent } from '../push/push-content';
 import { FOLLOW_REQUESTS_TARGET, NOTIFICATIONS_TARGET } from '../push/push-target';
 
@@ -195,7 +199,8 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
       url: URL,
       entities: [UserFollow, PostNotification],
       synchronize: false,
-      extra: { options: `-c search_path=${schema}` },
+      // The service's own session settings (`PG_SESSION_OPTIONS`), as `AppModule` opens its pool.
+      extra: { options: `${PG_SESSION_OPTIONS} -c search_path=${schema}` },
     });
     await ds.initialize();
     follows = new FollowsService({} as never, ds.getRepository(UserFollow), {} as never);
@@ -208,6 +213,8 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
     requests = new FollowRequestsService(follows, notifications, ds, redis as never);
     secretBefore = process.env.INTERNAL_SECRET;
     process.env.INTERNAL_SECRET = IT_SECRET;
+    // The bell's one statement reads what its target gates name (`bell-row-gates.ts`).
+    await createBellTargetTables(q);
   });
 
   afterAll(async () => {

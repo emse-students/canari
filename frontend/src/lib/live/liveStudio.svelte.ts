@@ -74,7 +74,7 @@ export interface LiveStudioDeps {
 }
 
 /** The real dependencies. */
-export function defaultLiveStudioDeps(): LiveStudioDeps {
+function defaultLiveStudioDeps(): LiveStudioDeps {
   return {
     cameraOpener: (facing, switching) => openLiveCamera(facing, switching, false),
     openMicrophone: openLiveMicrophone,
