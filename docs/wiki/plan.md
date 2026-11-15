@@ -90,7 +90,6 @@ earliest version, as a checklist.
 ### Readings owed
 
 - [ ] [the CanaReels composer, viewer and editor on real content](backlog.d/reading-owed-the-canareels-composer-viewer-and-editor-on-real-content.md)
-- [ ] [the named readers' live chat switch on dev](backlog.d/named-readers-comments-switch-readings-owed.md)
 - [ ] [the in-session community join through the deep link on the phones](backlog.d/p1-owed-one-live-reading-of-the-in-session-join-fix-2026-10-08.md)
 - [ ] [a 13 MB attachment: the bytes out of the outbox row, an evicted blob parked as `upload_error`](backlog.d/reading-owed-a-13-mb-attachment-the-bytes-out-of-the-outbox-row-an-evicted-blob.md)
 - [ ] [a notification tap to a usable conversation: F1](backlog.d/reading-owed-a-notification-tap-to-a-usable-conversation-f1.md)
@@ -98,10 +97,8 @@ earliest version, as a checklist.
 - [ ] [a reply swipe along a thumb's arc](backlog.d/reading-owed-a-reply-swipe-along-a-thumb-s-arc.md)
 - [ ] [every menu is a fixed segmented control or a hub of route sections](backlog.d/reading-owed-every-menu-is-a-fixed-segmented-control-or-a-hub-of-route-sections.md)
 - [ ] [a HISTORY ask answered "I hold nothing" is final for its roster](backlog.d/reading-owed-a-history-ask-answered-i-hold-nothing-is-final-for-its-roster.md)
-- [ ] [a mention names its author from the phone's copy of names, and the push sentences come from Rust in the app language](backlog.d/reading-owed-a-mention-names-its-author-from-the-phone-s-copy-of-names-and-the.md)
 - [ ] [the push of a request to republish a post](backlog.d/reading-owed-the-push-of-a-request-to-republish-a-post.md)
 - [ ] [a call survives the app leaving the screen: the Android microphone foreground service](backlog.d/reading-owed-a-call-survives-the-app-leaving-the-screen-the-android-microphone.md)
-- [ ] [a blind salon banner draws no author, no mention and no mention route, and a held mention's redraw does not sound twice](backlog.d/reading-owed-a-blind-salon-banner-draws-no-author-no-mention-and-no-mention.md)
 - [ ] [the native caches sealed at rest (2026-10-22): the upgrade readings on both phones](backlog.d/reading-owed-the-native-caches-sealed-at-rest-2026-10-22-the-upgrade-readings.md)
 - [ ] [the stricter script policy and the iOS 16 minimum](backlog.d/reading-owed-the-stricter-script-policy-and-the-ios-16-minimum.md)
 - [ ] [sharing into Canari on iOS](backlog.d/reading-owed-sharing-into-canari-on-ios.md)
@@ -115,7 +112,6 @@ earliest version, as a checklist.
 - [ ] [an institution chooses each post's spaces and public](backlog.d/reading-owed-an-institution-chooses-each-post-s-spaces-and-public.md)
 - [ ] [campus trends and the daily cap, WP-8, WP-10 and the quieter batch](backlog.d/reading-owed-campus-trends-and-the-daily-cap-wp-8-wp-10-and-the-quieter-batch.md)
 - [ ] [CanaReels "Voir plus" clears the seek line](backlog.d/reading-owed-canareels-voir-plus-clears-the-seek-line.md)
-- [ ] [the camera keeps its layout and the volume keys are its shutter (Mi 9T, iPhone 12)](backlog.d/camera-keeps-its-layout-and-volume-shutter.md)
 - [ ] [rotation on the video, live and camera screens on both phones](backlog.d/rotation-on-video-and-camera-screens.md)
 - [ ] [overlays stacked by open order, not by rung](backlog.d/reading-owed-overlays-stacked-by-open-order-not-by-rung.md)
 - [ ] [a FIRST message from someone with no conversation yet notifies, end to end](backlog.d/reading-owed-a-first-message-from-someone-with-no-conversation-yet-notifies-end.md)

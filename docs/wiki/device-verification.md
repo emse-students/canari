@@ -110,7 +110,7 @@ The total is about 1640 minutes, 27 hours.
 | SC. Cancelling the iOS sign-in sheet (#2995) | **PASS** | The system sheet cancelled three times in a row: each time the button read "Se connecter" again at once and the next tap reopened the sheet; never the stuck "Redirection..." |
 | T. The native tab bar under the tour (#2997) | **PASS** | Tour replayed from Settings: taps on the four tab icons and the bar's band at steps 1, 3 and the last left the tour on its step and the route on the feed; after "Terminer" the chat tab worked; after a terminate and relaunch mid-tour the bar worked at once |
 | Guided help, batch 2 (#2996) | **PASS** | Both phones: the feed-tabs hint (1/3 to 3/3), then CanaReels alone at the next visit, then the chats hint; one help per visit. Mi 9T: "Revoir les aides" lists the four hints and replays one; a hint left at 2/3 by navigating away came back at 1/3 |
-| Named readers' comment switch (#2998), the procedure of [its backlog entry](backlog.d/named-readers-comments-switch-readings-owed.md) | **PASS** | Through the app's routes on dev, a throwaway association, post, comment, reaction and named poll: switch OFF - post 200 with `canSeeComments:false` and no comments, reactions as delta's own plus `otherReactionCounts`, the poll as tallies, `GET`/`POST /comments` 404, `POST /reactions` 201; switch ON - the comment and the names back, `GET /comments` 200, `POST` 201; the journal shows the grant and the switch. Every fixture removed |
+| Named readers' comment switch (#2998), the procedure of its backlog entry (entry deleted 2026-11-15) | **PASS** | Through the app's routes on dev, a throwaway association, post, comment, reaction and named poll: switch OFF - post 200 with `canSeeComments:false` and no comments, reactions as delta's own plus `otherReactionCounts`, the poll as tallies, `GET`/`POST /comments` 404, `POST /reactions` 201; switch ON - the comment and the names back, `GET /comments` 200, `POST` 201; the journal shows the grant and the switch. Every fixture removed |
 | The moderation tombstone (#2999) | **PASS** | delta (a non-admin BDE moderator) deleted a student's comment under the BDE's post that carried an institution's reply: 200 with one tombstone; the list shows "Commentaire retiré par la modération" with the institution's reply kept under it and the badge counting 1; a reply and a heart to the tombstone answer 409 `COMMENT_REMOVED_BY_MODERATION`; delta's delete of the institution's reply answers 403 `MODERATION_RESERVED_TO_PLATFORM_ADMIN` on both delete routes. Every fixture removed |
 
 **The dev bench accounts (owner, 2026-11-04).** Their rights live in DEV's own database, never in the
@@ -173,7 +173,7 @@ needs real video, so it cannot be left standing as a fixture; to take the readin
    --use-fake-ui-for-media-stream`), which the launcher does not set.
 
 Then write a line in the live's chat from a native viewer (a student account) and read beta's view
-against [the entry's procedure](backlog.d/named-readers-comments-switch-readings-owed.md).
+against the entry's procedure (entry deleted 2026-11-15).
 
 **Recipes** (token = `POST /api/auth/refresh` from the account's signed-in dev page, field
 `access_token`; every call carries `Authorization: Bearer` and, for `/api/lives`,
@@ -471,7 +471,7 @@ batch 7). Evidence is outside the repository.
 | A comment push, app killed | **`PASS`** | NC row, `hold`, tap the card: PIN gate, then the post with the comments sheet open and the comment ringed; a banner tap did the same |
 | The bell row of a comment | **`PASS`** | The post opens with the sheet open and the comment ringed |
 | A comment push, app backgrounded | **`PASS`, explained 2026-11-15** | Comments 3 to 7 raised no banner because they were the daily cap (read in social-service `[NOTIFY] ... withheld`); a backgrounded reply then opened the post at the comment: [entry](engagement.md) |
-| A salon mention, app killed, known author ([entry](backlog.d/reading-owed-a-mention-names-its-author-from-the-phone-s-copy-of-names-and-the.md)) | **`PASS`** | Title "nse banc communaute - #general", subtitle "Canari Test Delta vous a mentionne", body "@vous reading M mention", `TIME SENSITIVE`, the author's face |
+| A salon mention, app killed, known author (entry (entry deleted 2026-11-15)) | **`PASS`** | Title "nse banc communaute - #general", subtitle "Canari Test Delta vous a mentionne", body "@vous reading M mention", `TIME SENSITIVE`, the author's face |
 
 Not staged this batch: the readings of Android-only code (the Mi 9T half of each entry stays), the F1 iPhone runs
 (they need an `ios.yml` bench build with `local_url`, not a store build), the new-device notice (a gamma web seat
@@ -3484,3 +3484,39 @@ console is read over CDP. The seat W5 (`delta`, fake camera) was the third party
 | Backup, Mi ([entry](backlog.d/reading-owed-the-native-caches-sealed-at-rest-2026-10-22-the-upgrade-readings.md)) | **`PASS`** (part) | First export: `[BACKUP_CODE] a recovery code is generated (new)`, the system save dialog, a 3.97 MB `.canari`, the code shown with its explanation; second export: `the device recovery code is reused` and "Le meme code que vos sauvegardes precedentes de cet appareil", the code identical to the first; import of the first file with a wrong code: `wrong_code: AES-GCM tag did not verify`; with the right code: "Sauvegarde restauree : 21 conversations, 463 messages". Not read: the file opened on the OTHER phone (the iPhone runs `gamma`, a backup of `alpha` is another account's) and the new-backup notice after an upgrade |
 
 Dev data written: lives `eb5a0d47` (Mi), `4159bf20` (iPhone), `2a1c8879` and `c5736502` (`delta`), all ended; two calls between `alpha` and `gamma`; one follow request of `alpha` to `delta` accepted; two backup files on the Mi (deleted). Ids are in the harness folder's `WRITTEN-IDS.txt`.
+
+
+## The phones readings of 2026-11-15, afternoon
+
+`1.6.12-alpha.2` on dev. The Mi 9T is the `alpha` account (Android build 100601202), the iPhone 12 the `gamma` account (TestFlight, WDA and `pymobiledevice3`). Web seats: `gamma` on W4 (restarted with a fake camera), `delta` on W5, `alpha`'s second device on W3, `beta` on W1. Evidence (screenshots, logcat, the WebView console read over CDP) is outside the repository. Rows already read earlier today (birthdays on the iPhone, the group join (c) half, live titles) were not redone.
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| The named readers' live chat  (entry deleted 2026-11-15) | **not read, DELETED by the owner** | `beta` holds the grant (Saint-Etienne, whole campus, comments hidden) but joined the chat of two association lives with its composer and a "joined" line, as a viewer who reaches the live without the grant. The bench has four accounts and none is without a space, so the withheld branch cannot be staged. Owner: "Supprimer cette lecture". Two lives (BDE Fictif by `gamma`, Club d'Echecs Fictif by `delta`) were used and ended |
+| A group joined in the background, PK2 ([entry](backlog.d/reading-owed-a-group-joined-in-the-background-before-its-row-existed-the.md)) | **`PASS`** | App killed with `am kill` after an MCS heartbeat; a group created by `alpha`'s other device: `isWelcome=true ... background join`, then `processReceivedWelcomeBackground: group joined` 0.6 s later and `markMembershipActive: HTTP 201`. Two messages sent while killed; the next cold start decrypted both (`[MLS] Message decrypted ... addMessageToChat`) with no `LOST frame`, no `past epoch` and no `Message for absent conversation` |
+| A group joined in the background, (b) the sub-second window | **DELETED by the owner** | Owner, "Supprimer les trois": the window cannot be hit on purpose. Not read |
+| A HISTORY ask answered "I hold nothing" ([entry](backlog.d/reading-owed-a-history-ask-answered-i-hold-nothing-is-final-for-its-roster.md)) | **not read** | Two cold starts with the console captured: nine communities logged `the history of community ... is not asked: no other member, and none of our other devices on its key group is online to receive the request`, and no ask followed. Staging needs a member online on the key group who joined after the history; the web seats left on `/communities` were not on those key groups. The no-answerer branch behaved (no spurious ask, no re-ask), the answering branch is unread |
+| iPhone lightbox, rotate button ([entry](backlog.d/rotation-on-video-and-camera-screens.md)) | **`PASS`** | A DM with a photo and two landscape videos from `delta`: the photo drew no rotate button and stayed 390x844 pt; on a video "Passer en paysage" turned the app to 844x390 with the back control at x 59 pt, "Revenir en portrait" returned; turned, a swipe to the next item came back to 390x844 |
+| iPhone reel pager, a landscape video | **`PASS`** | A post with a landscape video: the pager opened portrait with the rotate button; turned, 844x390 with the close control at x 55, the rotate button at x 745-789, the caption at x 138 and the action column right of the picture, all clear of the notch and the picture whole; back to 390x844; a swipe up while turned paged and returned to portrait; closing returned to 390x844 |
+| Birthdays on the iPhone | already read | The sitting 5 reading stands (a row written by hand and removed); the morning notice is tomorrow's |
+| Bench build `ios.yml` with `local_url` ([entry](backlog.d/reading-owed-a-notification-tap-to-a-usable-conversation-f1.md)) | **not taken** | A bench build replaces the TestFlight app the `1.7.0-alpha.1` readings need, and its dispatch is a CI run. It stays owed |
+| The blind salon banner  (entry deleted 2026-11-15) | **DELETED by the owner** | It needs a debuggable APK (`run-as` removes the seed mirror); owner, "Supprimer les trois". Its "Marquer comme lu" half was read on the Mi earlier |
+| The initials of a named author with no photo (the mention entry, entry deleted 2026-11-15; the birthday ring on initials) | **DELETED by the owner** | No bench account is without a photo; owner, "Supprimer la lecture" |
+| The native caches' legacy-format pass | **DELETED by the owner** | No device holds the old format; owner, "Supprimer les trois". The other halves of that entry stay |
+
+Dev data this sitting wrote: the lives above (ended), a DM from `delta` to `gamma` with a photo and two videos, a post of `delta` with a landscape video, the group `PK2-1115h` of `alpha` with two messages. Every id is in the harness folder's `WRITTEN-IDS.txt`. End state: the Mi 9T on the feed, the iPhone on the feed, rotation lock left as the owner set it, no live or call open.
+
+## The owner's hands-on sitting of 2026-11-15
+
+About 14:12-14:30, dev `1.6.12-alpha.2`. The owner held both phones and the lead read the logs. Rotation lock OFF unless said.
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| Mi 9T, a photo in the lightbox | **`PASS`** | `requestedOrientation` stays PORTRAIT: photos stay portrait by design |
+| Mi 9T, a landscape CanaReel | **`PASS`**, one defect | It turns with the phone both ways, in place (activity not recreated, the app redraws 36 ms after the system's decision). Defect, filed by the lead elsewhere: about 0.5 s of stale, garbled frame after the system rotation animation, both directions |
+| Mi 9T, the feed turned | **`PASS`** | It stays portrait |
+| iPhone 12, a landscape reel | **`PASS`**, same defect | The first toggle had turned the lock ON (syslog `CC user locked orientation`); with it OFF the reel turns both ways, the notch on the left and on the right, nothing under it. The same stale frame as on Android |
+| Mi 9T, the camera | **`PASS`** | The glyphs turn with the sensor with the lock ON or OFF, the layout stays portrait; a sideways photo comes out landscape and right way up (owner: "ca me semble tres bien") |
+| iPhone 12, the camera | **`PASS`** | The same (owner: "Idem") |
+| A Mi 9T to iPhone 12 call, noise suppression ON | **`PASS`** (the owner's ears) | One minute, the owner tested it himself: "dans l'ensemble ca a l'air bien". The default stays OFF |
+| Reel tabs moving with a landscape video, the action rail clipped | owed | Fixed by #3537 (merged 2026-11-14, after `alpha.2`): read on `1.7.0-alpha.1` |
