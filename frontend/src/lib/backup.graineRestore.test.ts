@@ -1,8 +1,13 @@
 // happy-dom ships no IndexedDB: the real backend, as `graineStore.test.ts` runs it.
 import 'fake-indexeddb/auto';
 import { exportBackup, importBackup } from './backup';
-import { formatRecoveryCode, generateRecoveryCodeBytes } from './crypto/backupRecoveryCode';
+import {
+  deriveBackupKeyB64,
+  formatRecoveryCode,
+  generateRecoveryCodeBytes,
+} from './crypto/backupRecoveryCode';
 import { IndexedDbStorage } from './db/indexeddb';
+import { openSealedBytes, sealBytes } from './encryption';
 import type { StoredGraineSession } from './db/types';
 import type { GraineRunReading } from './mls-client/IMlsService';
 import { reserveOutboundSlot } from './utils/graine/sessionManager';
@@ -81,7 +86,47 @@ beforeEach(() => {
 });
 afterEach(() => vi.restoreAllMocks());
 
+/**
+ * A v3 file as builds before 2026-11-15 wrote it: the same envelope, every Graine row carrying the
+ * `sentCount` it had at export. Opened with the file's own salt and code, edited, sealed again.
+ */
+async function withSentCount(file: Uint8Array, code: Uint8Array, sent: number) {
+  const salt = file.slice(4, 20);
+  const key = await deriveBackupKeyB64(code, salt);
+  const plain = await openSealedBytes(file.slice(32), file.slice(20, 32), key);
+  if (!plain) throw new Error('the exported file did not open under its own code');
+  const backup = JSON.parse(new TextDecoder().decode(plain));
+  for (const row of backup.graine) row.sentCount = sent;
+  const sealed = await sealBytes(new TextEncoder().encode(JSON.stringify(backup)), key);
+  const out = new Uint8Array(32 + sealed.cipherText.length);
+  out.set(file.slice(0, 20));
+  out.set(sealed.iv, 20);
+  out.set(sealed.cipherText, 32);
+  return out;
+}
+
 describe('a Graine session restored from a backup', () => {
+  it('drops the `sentCount` an older file carries: the first send mints a new session', async () => {
+    // EVERY FILE WRITTEN BEFORE THE FIX CARRIES THE COUNT, so the import is where it must stop.
+    const before = await freshStorage();
+    await before.saveGraineSession(outbound(3), KEY);
+    const code = generateRecoveryCodeBytes();
+    const file = await withSentCount(
+      await exportBackup(before, 'alice', KEY, 'device-1', undefined, code),
+      code,
+      3
+    );
+
+    const after = await freshStorage();
+    await importBackup(file, KEY, after, 'device-1', formatRecoveryCode(code));
+
+    expect((await after.getGraineSession('sess-outbound', KEY))?.sentCount).toBeUndefined();
+    const slot = await reserveOutboundSlot(deps(after), SCOPE);
+    expect(slot.minted).toBe(true);
+    expect(slot.session.sessionId).not.toBe('sess-outbound');
+    expect(slot.index).toBe(0);
+  });
+
   it('is never sealed under again: the first send after the restore mints a new session', async () => {
     // Exported at 3 sent, then 4 more sealed (indices 3..6), then the device was wiped.
     const before = await freshStorage();

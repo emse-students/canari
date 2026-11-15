@@ -61,7 +61,7 @@ A Graine session this device minted is its OUTBOUND session: the next message is
 A backup's count is the one at export, so every message sealed after the export is behind it.
 Until 2026-11-15 the import wrote that count back; after a wipe, with the MLS state restored from
 the same file, the key group's run still matched the session's anchor, so `graineOutboundVerdict`
-answered `reuse` and the device sealed again at indices it had already used. The server refuses a
+answered `reuse` or `redistribute` - both seal at `firstIndex` plus the stale count - and the device sealed again at indices it had already used. The server refuses a
 second row under one `(senderSessionId, messageIndex)` (409 `CHANNEL_MESSAGE_KEY_REUSED`), so those
 sends failed.
 
