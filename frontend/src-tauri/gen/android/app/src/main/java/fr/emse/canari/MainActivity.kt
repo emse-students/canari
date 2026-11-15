@@ -24,6 +24,10 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsAnimationCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
+import androidx.webkit.WebViewRenderProcess
+import androidx.webkit.WebViewRenderProcessClient
 import com.google.firebase.messaging.FirebaseMessaging
 import fr.emse.canari.camera.CameraKeyAction
 import fr.emse.canari.camera.angleWorthSending
@@ -40,8 +44,17 @@ import fr.emse.canari.keyboard.imeCssPx
 import fr.emse.canari.keyboard.rideableImeAnimation
 import fr.emse.canari.keyboard.sampleImeCurve
 import fr.emse.canari.orientation.OrientationMode
+import fr.emse.canari.orientation.TURN_SIZE_STOP_SCRIPT
+import fr.emse.canari.orientation.TurnAbandon
+import fr.emse.canari.orientation.TurnFrameGate
+import fr.emse.canari.orientation.isTurn
+import fr.emse.canari.orientation.isUnrotatedFlip
+import fr.emse.canari.orientation.turnSizeScript
 import fr.emse.canari.orientation.requestedOrientationFor
 import java.io.File
+
+/** Whether the WebView's turn capabilities were logged: once per process, not per WebView or activity. */
+private var turnCapabilitiesLogged = false
 
 class MainActivity : TauriActivity() {
     companion object {
@@ -329,6 +342,123 @@ class MainActivity : TauriActivity() {
             Log.d("MainActivity", "canariCall bridge registered (the call service is in this build)")
         }
         webView.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> applyEdgeExclusions() }
+        holdDrawAcrossTurns(webView)
+    }
+
+    /** The draw hold across a turn ([TurnFrameGate]); UI thread only. */
+    private val turnFrameGate = TurnFrameGate()
+
+    /** The display's rotation at the WebView's last layout, so [isTurn] sees a rotation change. */
+    private var lastLayoutRotation = -1
+
+    /**
+     * A TURN SHOWS NO STALE FRAME (owner, Mi 9T, 2026-11-15: "Garder l'ancienne image jusqu'a la
+     * nouvelle"; screen-orientation.md). When the display rotated AND the WebView's box flipped shape
+     * ([isTurn]) the window's draw is held (a pre-draw listener answering false); the page reports its
+     * size ([turnSizeScript], through `window.canariTurn`), and once it IS the box ([pageMatchesBox])
+     * `postVisualStateCallback` is posted, so the frame it waits for is laid out at the new size. The
+     * window manager waits for the window's first draw in the new rotation, so the screen keeps the
+     * old picture until then and turns straight onto the laid-out page. Every event that proves no
+     * answer can come ([TurnAbandon]: a new document, the WebView detached, the activity paused or
+     * stopped, the renderer unresponsive) releases at ERROR. No clock anywhere.
+     */
+    private fun holdDrawAcrossTurns(webView: WebView) {
+        webView.addJavascriptInterface(TurnBridge(), "canariTurn")
+        val documentStart = WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)
+        if (documentStart) {
+            WebViewCompat.addDocumentStartJavaScript(webView, "window.canariTurn&&canariTurn.newDocument();", setOf("*"))
+        }
+        val unresponsive = WebViewFeature.isFeatureSupported(WebViewFeature.WEB_VIEW_RENDERER_CLIENT_BASIC_USAGE)
+        if (unresponsive) {
+            WebViewCompat.setWebViewRenderProcessClient(webView, object : WebViewRenderProcessClient() {
+                override fun onRenderProcessUnresponsive(view: WebView, renderer: WebViewRenderProcess?) =
+                    abandonTurn(TurnAbandon.UNRESPONSIVE)
+
+                override fun onRenderProcessResponsive(view: WebView, renderer: WebViewRenderProcess?) = Unit
+            })
+        }
+        if (!turnCapabilitiesLogged) {
+            turnCapabilitiesLogged = true
+            Log.i("MainActivity", "turn: this WebView reports new documents=$documentStart, an unresponsive renderer=$unresponsive (otherwise a held turn ends at the next pause)")  // log-safe: two capability booleans
+        }
+        webView.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: View) = Unit
+            override fun onViewDetachedFromWindow(v: View) = abandonTurn(TurnAbandon.DETACHED)
+        })
+        webView.viewTreeObserver.addOnPreDrawListener { !turnFrameGate.holding }
+        lastLayoutRotation = webView.display?.rotation ?: -1
+        webView.addOnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
+            val width = right - left
+            val height = bottom - top
+            val rotation = webView.display?.rotation ?: -1
+            val turned = isTurn(lastLayoutRotation, rotation, oldRight - oldLeft, oldBottom - oldTop, width, height)
+            if (isUnrotatedFlip(lastLayoutRotation, rotation, oldRight - oldLeft, oldBottom - oldTop, width, height)) {
+                // A split screen, a freeform window or a fold - or a turn whose rotation was read stale
+                // (the display's cached rotation lagging the layout), shown unheld. This line tells them apart.
+                Log.w("MainActivity", "turn: the WebView flipped to ${width}x$height with the display rotation still $rotation - NOT held; a stale frame may show if this was a turn")  // log-safe: a box and a rotation
+            }
+            lastLayoutRotation = rotation
+            if (turned) {
+                val turn = turnFrameGate.hold(width, height, System.nanoTime())
+                Log.i("MainActivity", "turn ${turn.number} laid out at ${width}x$height (rotation $rotation): draw held until the page has a frame at that size")  // log-safe: a turn counter, a box and a rotation
+                webView.evaluateJavascript(turnSizeScript(turn.number), null)
+            } else if (turnFrameGate.rebox(width, height)) {
+                val turn = turnFrameGate.held ?: return@addOnLayoutChangeListener
+                Log.i("MainActivity", "turn ${turn.number}: the box moved to ${width}x$height while held - waiting for the page at that size")  // log-safe: a turn counter and a box
+                webView.evaluateJavascript(turnSizeScript(turn.number), null)
+            }
+        }
+    }
+
+    private fun msSince(turn: TurnFrameGate.Turn): Long = (System.nanoTime() - turn.startedAtNanos) / 1_000_000
+
+    /** Ends a held turn on an event proving no answer can come: at ERROR, since the old frame may show. */
+    private fun abandonTurn(why: TurnAbandon) {
+        val turn = turnFrameGate.abandon() ?: return
+        Log.e("MainActivity", "turn ${turn.number}: released WITHOUT its frame after ${msSince(turn)} ms - ${why.reason}")  // log-safe: a turn counter, a duration and a fixed reason
+        liveWebView?.let {
+            it.evaluateJavascript(TURN_SIZE_STOP_SCRIPT, null)
+            it.invalidate()
+        }
+    }
+
+    /**
+     * `window.canariTurn`: the page's size for a held turn ([turnSizeScript]) and its new documents.
+     * Typed parameters: the bridge coerces whatever the page passes to numbers before this code runs
+     * (a non-finite one never matches a box), so a page can neither put text into a log nor log per call.
+     */
+    private inner class TurnBridge {
+        @JavascriptInterface
+        fun size(turn: Long, cssWidth: Double, cssHeight: Double, devicePixelRatio: Double) {
+            runOnUiThread { pageReportedSize(turn, cssWidth, cssHeight, devicePixelRatio) }
+        }
+
+        @JavascriptInterface
+        fun newDocument() {
+            runOnUiThread { abandonTurn(TurnAbandon.NEW_DOCUMENT) }
+        }
+    }
+
+    private fun pageReportedSize(number: Long, cssWidth: Double, cssHeight: Double, devicePixelRatio: Double) {
+        val turn = turnFrameGate.held ?: return
+        val proof = turnFrameGate.pageSize(number, cssWidth, cssHeight, devicePixelRatio) ?: return
+        val webView = liveWebView ?: run {
+            abandonTurn(TurnAbandon.DETACHED)
+            return
+        }
+        Log.i("MainActivity", "turn ${turn.number}: the page is at the new size after ${msSince(turn)} ms - waiting for its frame")  // log-safe: a turn counter and a duration
+        webView.postVisualStateCallback(proof, object : WebView.VisualStateCallback() {
+            override fun onComplete(requestId: Long) {
+                val released = turnFrameGate.frameReady(requestId)
+                if (released != null) {
+                    Log.i("MainActivity", "turn ${released.number}: the page's frame at the new size is ready after ${msSince(released)} ms - draw released")  // log-safe: a turn counter and a duration
+                    webView.evaluateJavascript(TURN_SIZE_STOP_SCRIPT, null)
+                    webView.invalidate()
+                } else {
+                    Log.d("MainActivity", "turn ${turn.number}: its frame proof came after ${msSince(turn)} ms, superseded - nothing released")  // log-safe: a turn counter and a duration
+                }
+            }
+        })
     }
 
     /**
@@ -841,6 +971,7 @@ class MainActivity : TauriActivity() {
         pushForeground(false)
         CallForegroundService.appOnScreenChanged(false)
         Log.d("MainActivity", "onPause: isInForeground=false")
+        abandonTurn(TurnAbandon.PAUSED)
         CookieManager.getInstance().flush()
     }
 
@@ -853,6 +984,7 @@ class MainActivity : TauriActivity() {
         // user turns it off.
         val screenOff = !(getSystemService(POWER_SERVICE) as PowerManager).isInteractive
         CallRingPlayer.leftScreen(screenOff)
+        abandonTurn(TurnAbandon.STOPPED)
         CookieManager.getInstance().flush()
     }
 

@@ -34,13 +34,8 @@ through its event's card). What is left, each a defect to fix or a decision alre
 
 ### Dead zones and inconsistencies
 
-- **A default audience may be "everyone" on an association**: `smallestRules` collapses "all ten
-  spaces" to the (NULL, NULL) rule, which `setAudiences` refuses for the same type - latent, no BDE
-  governs ten spaces.
-- **Decision 3 (one campus per association or list) is half enforced** (P5 of the reform): two
-  whole-campus rules pass.
-- **`/admin/spaces` offers "everyone" to associations and lists** and shows a generic error where
-  the server answers a typed refusal.
+- **`/admin/spaces` offers "everyone" to associations and lists**, which the server refuses with a
+  typed code the page now words.
 - **A nickname report reaches no BDE moderator** (`reportInBdeScopeSql` has no branch for it): the
   platform admin alone sees it.
 - **A profile correction does not drop the feed cache** (30 s, the bound
