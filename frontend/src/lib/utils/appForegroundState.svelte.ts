@@ -29,7 +29,7 @@ export function createAppForegroundState(
   let current = $state(isAppInForeground());
   const off = onAppForegroundChange((foreground, opening) => {
     if (foreground === current) return;
-    Log.d(`[FOREGROUND] app ${foreground ? 'back in the foreground' : 'in the background'}`);
+    Log.d('FOREGROUND', `app ${foreground ? 'back in the foreground' : 'in the background'}`);
     if (foreground) hooks.onResume?.(opening);
     current = foreground;
   });

@@ -54,7 +54,7 @@
       console.warn('[BOOKINGS] "Contact" pressed with no contact or no signed-in account');
       return;
     }
-    Log.d(`[BOOKINGS] "Contact": asking the chat page for the DM with the space's responsible`);
+    Log.d('BOOKINGS', `"Contact": asking the chat page for the DM with the space's responsible`);
     requestDirectConversationWith(owner, contact.userId, sessionStorage);
     goto(resolve('/chat'));
   }

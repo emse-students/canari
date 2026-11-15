@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync, statSync } from 'node:fs';
-import { dirname, join, normalize, relative, resolve } from 'node:path';
+import { dirname, join, normalize } from 'node:path/posix';
+
+import { hasSource, readSource, relativeTo } from '../../test/sourceTree';
 
 /**
  * NOTHING THE SINGLETON BUILDS MAY IMPORT THE SINGLETON BACK - except through the one door that
@@ -17,7 +18,8 @@ import { dirname, join, normalize, relative, resolve } from 'node:path';
  * The scan is static and reads value imports only (`import type` is erased). `ALLOWED` is a
  * cycle whose closing module is reachable ONLY through the singleton, so it cannot be entered first.
  */
-const SRC = resolve(process.cwd(), 'src');
+// POSIX, frontend-root-relative paths throughout: the keys of the run's source snapshot.
+const SRC = 'src';
 const SINGLETON = 'lib/stores/globalChatSingleton.svelte.ts';
 const COMPOSABLES = [
   'lib/composables/useChatSession.svelte.ts',
@@ -47,9 +49,8 @@ function resolveSpec(spec: string, from: string): string | null {
     `${base}.svelte`,
     join(base, 'index.ts'),
   ]) {
-    // A stat, not a read: the walk visits hundreds of modules five times, and reading each
-    // candidate whole to learn it is a file is what made this test outrun its budget under load.
-    if (statSync(c, { throwIfNoEntry: false })?.isFile()) return c;
+    // Membership of the run's source snapshot: no filesystem call per candidate.
+    if (hasSource(c)) return c;
   }
   return null;
 }
@@ -60,7 +61,7 @@ const importsOf = new Map<string, string[]>();
 function valueImports(file: string): string[] {
   const known = importsOf.get(file);
   if (known) return known;
-  const source = readFileSync(file, 'utf8');
+  const source = readSource(file);
   const deps = [...source.matchAll(IMPORT_RE)]
     .map((m) => resolveSpec(m[1] ?? m[2], file))
     .filter((f): f is string => f !== null);
@@ -78,8 +79,7 @@ function closersFrom(start: string): string[] {
     const file = queue.shift()!;
     for (const dep of valueImports(file)) {
       if (dep === singleton) {
-        // POSIX separators, or `ALLOWED` never matches on Windows, where `relative` uses `\`.
-        closers.push(relative(SRC, file).replaceAll('\\', '/'));
+        closers.push(relativeTo(file, SRC));
         continue;
       }
       if (!seen.has(dep)) {
@@ -92,6 +92,12 @@ function closersFrom(start: string): string[] {
 }
 
 describe('globalChatSingleton import cycles', () => {
+  it('reads the tree it thinks it does: the singleton and every composable are in the snapshot', () => {
+    for (const path of [SINGLETON, ...COMPOSABLES, ...ALLOWED]) {
+      expect(hasSource(join(SRC, path)), path).toBe(true);
+    }
+  });
+
   it.each(COMPOSABLES)('%s never imports the singleton back', (composable) => {
     const closers = closersFrom(join(SRC, composable)).filter((f) => !ALLOWED.has(f));
     expect(closers).toEqual([]);

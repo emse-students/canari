@@ -8,6 +8,7 @@
  * cost seven DEL rows a clean window on 2026-09-05.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { relativeTo, sourceFiles } from '../../test/sourceTree';
 import { Log } from './Log';
 
 /** The rendered part of the one console.debug call, with the `[timestamp] [tag] ` prefix removed. */
@@ -81,5 +82,77 @@ describe('Log.d', () => {
   it('renders a value JSON cannot express rather than dropping the payload', () => {
     Log.d('fn', () => 1);
     expect(payloadOf(debug)).toContain('=>');
+  });
+});
+
+describe('Log with a message and a detail', () => {
+  it('renders `[tag] message detail` for all three levels, the two-argument form unchanged', () => {
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      Log.d('dir', 'search failed', { n: 2 });
+      Log.i('dir', 'search failed', { n: 2 });
+      Log.w('dir', 'search failed', { n: 2 });
+      expect(debug.mock.calls[0]).toEqual(['[dir] search failed {"n":2}']);
+      expect(info.mock.calls[0]).toEqual(['[dir] search failed {"n":2}']);
+      expect(warn.mock.calls[0]).toEqual(['[dir] search failed {"n":2}']);
+
+      Log.d('dir', 'search failed');
+      Log.d('dir');
+      expect(debug.mock.calls[1]).toEqual(['[dir] search failed']);
+      expect(debug.mock.calls[2]).toEqual(['[dir]']);
+    } finally {
+      debug.mockRestore();
+      info.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
+  it('hands an Error detail to the console as the same object, so its stack survives', () => {
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const err = new RangeError('boom');
+      Log.d('cal', 'link candidates failed', err);
+      expect(debug.mock.calls[0][0]).toBe('[cal] link candidates failed RangeError: boom');
+      expect(debug.mock.calls[0][1]).toBe(err);
+      // The tag is never the sentence: the first bracket pair closes right after the tag.
+      expect(String(debug.mock.calls[0][0])).not.toMatch(/^\[\[/);
+      Log.w('cal', 'link candidates failed', err);
+      expect(warn.mock.calls[0][0]).toBe('[cal] link candidates failed RangeError: boom');
+    } finally {
+      debug.mockRestore();
+      warn.mockRestore();
+    }
+  });
+});
+
+// Read from the run's shared source snapshot at module scope, never walked in a test body.
+const APP_SOURCES = sourceFiles({
+  under: 'src',
+  extensions: ['ts', 'svelte'],
+  tests: 'exclude',
+  skipDirs: ['proto'],
+}).map(({ path, text }) => ({ file: relativeTo(path, 'src'), text }));
+
+/** Files calling `Log.d|i|w('[...` : the tag is the FIRST argument and Log wraps it in brackets itself. */
+function bracketedTagCalls(files: ReadonlyArray<{ file: string; text: string }>) {
+  return files.filter((f) => /\bLog\.[diw]\(\s*['"`]\[/.test(f.text)).map((f) => f.file);
+}
+
+describe('no Log call writes its own brackets', () => {
+  it("finds none in the source (`Log.d('[tag] text')` renders `[[tag] text]`)", () => {
+    expect(APP_SOURCES.length).toBeGreaterThan(100);
+    expect(bracketedTagCalls(APP_SOURCES)).toEqual([]);
+  });
+
+  it('names the file of a planted offender', () => {
+    const planted = [
+      { file: 'bad.ts', text: "Log.d('[tag] text');" },
+      { file: 'bad2.ts', text: "Log.w(\n  '[tag] text', err);" },
+      { file: 'good.ts', text: "Log.d('tag', 'text', err);" },
+    ];
+    expect(bracketedTagCalls(planted)).toEqual(['bad.ts', 'bad2.ts']);
   });
 });

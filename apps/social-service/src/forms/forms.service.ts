@@ -1129,7 +1129,8 @@ export class FormsService {
       this.logger.debug(`get: form ${id} not found`);
       throw new NotFoundException('Form not found');
     }
-    if (!(await this.readableBy(form, viewer))) {
+    const read = await this.readVerdict(form, viewer);
+    if (!read.readable) {
       this.logger.debug(
         `get: form ${id.slice(0, 8)} is a draft or of an archived association, not served to a non-manager`
       );
@@ -1150,8 +1151,9 @@ export class FormsService {
     const names = await this.associationNamesOf([form]);
     const associationName = form.associationId ? (names.get(form.associationId) ?? null) : null;
     // Who created the form is its managers' to read: a respondent is shown the form, never its
-    // creator (an anonymous post's form would otherwise name a candidate author).
-    const manages = await this.managesForm(form, viewer);
+    // creator (an anonymous post's form would otherwise name a candidate author). Asked ONCE: the
+    // read verdict already holds the answer where it had to ask it (a draft, an archived association).
+    const manages = read.manages ?? (await this.managesForm(form, viewer));
     const { ownerId, ...served } = form;
     return {
       ...served,
@@ -1166,12 +1168,12 @@ export class FormsService {
   /**
    * Whether `viewer` may read form `id` at all - what `get` serves and what the form's agenda link
    * (`GET /forms/:id/calendar-link`) answers by: false for a form that does not exist (a deleted one
-   * included), and see {@link readableBy}.
+   * included), and see {@link readVerdict}.
    */
   async mayRead(id: string, viewer: { userId: string; isGlobalAdmin: boolean }): Promise<boolean> {
     const form = await this.formRepo.findOne({ where: { id, deletedAt: IsNull() } });
     if (!form) return false;
-    return this.readableBy(form, viewer);
+    return (await this.readVerdict(form, viewer)).readable;
   }
 
   /**
@@ -1179,18 +1181,24 @@ export class FormsService {
    * alone: anyone else is answered what an absent form answers, so the id cannot be probed. Judged
    * by the ONE respondent `where` (`respondentFormWhere`), never a second copy of its clauses.
    * Managers keep reading it, to export.
+   *
+   * `manages` is the management answer WHERE THE VERDICT HAD TO ASK IT (the form no respondent
+   * reaches), and `undefined` where it did not: a caller that needs it too (`get`, for `ownerId`)
+   * reuses it instead of asking a second time.
    */
-  private async readableBy(
+  private async readVerdict(
     form: Form,
     viewer: { userId: string; isGlobalAdmin: boolean } | undefined
-  ): Promise<boolean> {
+  ): Promise<{ readable: boolean; manages?: boolean }> {
     const reachable =
       form.status !== FORM_DRAFT &&
       !!(await this.formRepo.findOne({
         select: { id: true },
         where: respondentFormWhere(form.id),
       }));
-    return reachable || (await this.managesForm(form, viewer));
+    if (reachable) return { readable: true };
+    const manages = await this.managesForm(form, viewer);
+    return { readable: manages, manages };
   }
 
   /**

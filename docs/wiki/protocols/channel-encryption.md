@@ -2546,6 +2546,7 @@ seed. That assertion could not hold on any wording, because the only line it cou
 the path a mid-salon grant never takes.
 
 **A re-granted member gets the seed by the history ask, and that is the design (decided 2026-11-15, reversible; WP-REGRANT-2 closed).**
+**Confirmed by the owner on 2026-11-15** (decided under delegation in #3588): no longer pending.
 A seed travels WITH the message that needs it ([section 19](#19-design-the-seed-travels-with-the-message---decided-by-the-user-2026-09-27)),
 so a member granted mid-salon holds no seed until it meets a row it cannot open; it then asks and absorbs the answer
 ([section 25](#25-a-member-hands-the-past-only-to-an-admission-it-can-verify-decided-by-the-user-2026-10-22)). That is the
@@ -3671,9 +3672,12 @@ nothing verifies anything. That is G2-4.
   - `storeIncomingSeed` extends G2-0's refusal: a copy whose endorsement, key, device or minter
     differs from the one held is `[GRAINE] REFUSED` (`'endorsement'`), as a different seed already
     was. So a relayed copy cannot downgrade a v2 session, nor re-attribute it.
-- **The restored secret cannot reuse a key.** A backup import carries no `distributionEpoch`, so a
-  restored session always rotates before it seals again, and the same index is never signed twice
-  from two installs.
+- **The restored secret cannot reuse a key.** A backup import writes no `sentCount` (2026-11-15), so
+  a restored session is one this device READS and the first send after a restore mints a new
+  session; the same index is never signed twice from two installs. The argument this bullet made
+  before - "no `distributionEpoch`, so it rotates" - stopped holding on 2026-10-22, when the verdict
+  moved to the rotation anchor, which the backup carries inside the sealed blob
+  ([backup](../frontend/backup.md#a-seed-comes-back-to-read-never-to-seal-under---2026-11-15)).
 - **In the native mirror.** A `graine_seeds.json` entry becomes
   `{seed, createdAt, firstIndex[, version: 2, minterUserId, signingPk]}` - and since 2026-11-07
   `accounts[, unattributed]`, its writers' labels

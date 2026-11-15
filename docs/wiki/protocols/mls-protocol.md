@@ -3345,7 +3345,8 @@ web device. Now:
 
 - `BaseMlsService.sendMessage` refuses in a tab that does not own the state, BEFORE the catch-up wait
   and the settle (which may resubmit a commit): `FollowerTabSendError`, at `error` - every path a
-  follower reaches is routed, so reaching it is a caller that was not.
+  follower reaches is routed, so reaching it is a caller that was not. A document that LED and lost
+  the lead is refused `lead-lost` at `warn` instead (see the leader's run below).
 - **One frame a gesture awaits** goes through `sendFrameFromThisTab` (`mls-client/frameFromAnyTab.ts`):
   `sendMessage` in the leader, the gesture handover (`tabCommitDelegation.ts`, kind `emit-frame`) in a
   follower - the leader sends it on its own state and answers the server's time. Used by the media
@@ -3399,6 +3400,28 @@ leader will not serve ([backlog](../backlog.d/p2-the-tab-leader-lock-is-per-brow
 - **A device-key change between seal and open is an answer**, `{ unopened: 'device-key-changed' }`,
   not an executor throw logged at `error`: the frame is `FrameNotHandedError('device-key-changed')`,
   the seal `main-tab-key-changed` ("the PIN changed while sending").
+- **A leader that loses the lead WHILE it runs a follower's request answers `{ unsent: 'lead-lost' }`,
+  and never delegates** (review of #2515, 2026-11-15). The loss is monotonic (`lostLeadSinceLoad`: a
+  demoted document with a session reloads and never takes the lead back), so it is met as a TYPE at
+  every await of the run, never as an executor throw at `error` and never as a second request:
+  - `sendMessage` raises `FollowerTabSendError('lead-lost')` at its entry (a document that LED and
+    lost it, told apart from a copy loaded as a follower, which is still the routing defect at
+    `error`), after a kept commit's settlement the loss left unfinished, before the encrypt and after
+    the count. A loss during the post is a frame on the wire: sent. `sendMessage` never delegates.
+  - The salon seal, run `asExecutor`, refuses at its entry instead of handing on; the reservation's
+    write refuses at the put (`saveGraineSession`'s `onlyWhile`, `StoreWriteRefusedError`); a seal that
+    completed is read against the lead once, at its end, and dropped if it was lost.
+  - The follower reads it as `FrameNotHandedError('lead-lost')` / seal reason `main-tab-lead-lost`, and
+    hands nothing on: one gesture is one request, so the handover terminates whatever the lead does.
+- **The Graine session store is written only while leading, read AT the write.** A reservation is a
+  read-modify-write serialized within one document only; a leader frozen inside it and resumed after
+  the new leader sealed would write back a count read before those seals, rolling the index back to
+  one already used - two messages under one key. `reserveOutboundSlot`'s `mayWrite` reaches the put
+  itself (after the encrypt's await), so a write issued while leading is ordered before every read of
+  the next leader, and one issued after is refused, nothing written. The leader's OWN seal meeting
+  that refusal (or its seed's distribution refused `lead-lost`) is the typed seal refusal
+  `main-tab-lead-lost` - nothing sealed, nothing posted, its Retry safe - never a raw refusal the
+  salon send path would read as an outcome unknown (second review of #2515).
 - `sendHistoryBundleForIds` and `sendHistoryRangeBundle` are gated like the other history senders.
 - `GraineSealHandoverRefusedError` with `leader-gone` is NOT "nothing happened": the leader may have
   minted and distributed a seed before it died. A retry is safe - the message keeps its `messageId`

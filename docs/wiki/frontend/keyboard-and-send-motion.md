@@ -1,8 +1,8 @@
 # Keyboard and send motion - Messenger measured, frame by frame (2026-11-13)
 
-The owner's request (2026-11-13): watch Messenger and Canari *"fraction de seconde apres fraction de
-seconde"* - sending a message, and above all the keyboard opening, *"un probleme general (adaptation
-de l'interface a l'ouverture du clavier)"* - and bring Canari as close as possible to Messenger. Then
+The owner's request (2026-11-13): watch Messenger and Canari _"fraction de seconde apres fraction de
+seconde"_ - sending a message, and above all the keyboard opening, _"un probleme general (adaptation
+de l'interface a l'ouverture du clavier)"_ - and bring Canari as close as possible to Messenger. Then
 (same day) the composer bar's LAYOUT and DIMENSIONS as Messenger's, in Canari's own look.
 
 This page holds the numbers, what was changed for each difference, and what is owed on a phone.
@@ -10,12 +10,12 @@ Numbers only: the recordings show private conversations and stay out of the repo
 
 ## Sources
 
-| Recording | Device | Capture | What it shows |
-| --- | --- | --- | --- |
-| owner, Messenger | owner's Android phone | 576 x 1280, variable frame rate, frames 16-18 ms apart while anything moves | keyboard open / close, two sends |
-| owner, Canari `1.6.x` | same phone, light theme | same | keyboard open / close, three sends, delivery |
-| bench, Messenger | Mi 9T, Android 16, LatinIME, `adb screenrecord` | 1080 x 2340, ~60 fps | keyboard close then open, composer geometry (screenshots) |
-| bench, Canari `1.6.11` | same, dark theme, a test account | same, plus a per-frame CDP probe of the page | keyboard open then close, composer geometry (`getBoundingClientRect`) |
+| Recording              | Device                                          | Capture                                                                     | What it shows                                                         |
+| ---------------------- | ----------------------------------------------- | --------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| owner, Messenger       | owner's Android phone                           | 576 x 1280, variable frame rate, frames 16-18 ms apart while anything moves | keyboard open / close, two sends                                      |
+| owner, Canari `1.6.x`  | same phone, light theme                         | same                                                                        | keyboard open / close, three sends, delivery                          |
+| bench, Messenger       | Mi 9T, Android 16, LatinIME, `adb screenrecord` | 1080 x 2340, ~60 fps                                                        | keyboard close then open, composer geometry (screenshots)             |
+| bench, Canari `1.6.11` | same, dark theme, a test account                | same, plus a per-frame CDP probe of the page                                | keyboard open then close, composer geometry (`getBoundingClientRect`) |
 
 Method: every frame extracted with its presentation timestamp (`ffmpeg -vsync 0`, `ffprobe
 pts_time`), then measured per frame by a script: the keyboard's top edge (its background colour from
@@ -25,12 +25,12 @@ CSS px in the app's WebView is one dp.
 
 ## 1. The keyboard opening
 
-| | Messenger | Canari before |
-| --- | --- | --- |
-| Keyboard motion | slides the full height, OPAQUE, on a decelerating curve: 281 ms on the bench (2340 -> 1454 px), 265 ms in the owner's capture. Share of the way per 16.7 ms frame: 4, 22, 43, 57, 67, 75, 80, 85, 89, 92, 94, 96 ... % - Android's SYNCED IME animation (285 ms, `PathInterpolator(0.2, 0, 0, 1)`) | FADES IN from a short offset, translucent over the page: ~200 ms on the bench, ~120 ms of visible ramp in the owner's capture - Android's UNSYNCED IME animation (200 ms, alpha twice as fast as the travel, an 80 dp offset) |
-| Content (composer, list) | jumps to its final place in ONE frame, 35 ms BEFORE the keyboard's first move (bench 3.575 s vs 3.610 s; owner 2.035 s vs 2.051 s) | the WebView shrinks at the keyboard's first frame, but shows its LAST frame cropped to the new size until the page draws again: the composer is cut off for **128 ms (8 frames) on the bench, 120 ms (7 frames) in the owner's capture**, then the page jumps to its final layout |
-| Band between the content and the rising keyboard | the page's ground (black) | the launch background: a dark navy strip under a light page (owner's capture, 7 frames) |
-| Composer over the keyboard | rides on it from the first frame, field bottom 9.3 dp above the keyboard's top | 12 px above it once laid out |
+|                                                  | Messenger                                                                                                                                                                                                                                                                                          | Canari before                                                                                                                                                                                                                                                                     |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Keyboard motion                                  | slides the full height, OPAQUE, on a decelerating curve: 281 ms on the bench (2340 -> 1454 px), 265 ms in the owner's capture. Share of the way per 16.7 ms frame: 4, 22, 43, 57, 67, 75, 80, 85, 89, 92, 94, 96 ... % - Android's SYNCED IME animation (285 ms, `PathInterpolator(0.2, 0, 0, 1)`) | FADES IN from a short offset, translucent over the page: ~200 ms on the bench, ~120 ms of visible ramp in the owner's capture - Android's UNSYNCED IME animation (200 ms, alpha twice as fast as the travel, an 80 dp offset)                                                     |
+| Content (composer, list)                         | jumps to its final place in ONE frame, 35 ms BEFORE the keyboard's first move (bench 3.575 s vs 3.610 s; owner 2.035 s vs 2.051 s)                                                                                                                                                                 | the WebView shrinks at the keyboard's first frame, but shows its LAST frame cropped to the new size until the page draws again: the composer is cut off for **128 ms (8 frames) on the bench, 120 ms (7 frames) in the owner's capture**, then the page jumps to its final layout |
+| Band between the content and the rising keyboard | the page's ground (black)                                                                                                                                                                                                                                                                          | the launch background: a dark navy strip under a light page (owner's capture, 7 frames)                                                                                                                                                                                           |
+| Composer over the keyboard                       | rides on it from the first frame, field bottom 9.3 dp above the keyboard's top                                                                                                                                                                                                                     | 12 px above it once laid out                                                                                                                                                                                                                                                      |
 
 Why Canari got the other animation: Android plays the synced IME animation only when a
 `WindowInsetsAnimation` callback exists in the window's view hierarchy. `MainActivity` pads its
@@ -39,80 +39,48 @@ WebView registers none either - so the keyboard faded.
 
 ## 2. The keyboard closing
 
-| | Messenger | Canari before |
-| --- | --- | --- |
-| Keyboard motion | slides down, opaque, decelerating: 252 ms (owner), ~200 ms to 98 % (bench) | fades out nearly in place: ~180 ms (owner), ~85 ms of visible change (bench) |
-| Content | jumps to the full-height layout at the first frame; the keyboard slides off over the composer | the page relays out 100-117 ms after the keyboard starts; meanwhile the composer stays where it was and the page's ground shows under the fading keyboard |
+|                 | Messenger                                                                                     | Canari before                                                                                                                                             |
+| --------------- | --------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Keyboard motion | slides down, opaque, decelerating: 252 ms (owner), ~200 ms to 98 % (bench)                    | fades out nearly in place: ~180 ms (owner), ~85 ms of visible change (bench)                                                                              |
+| Content         | jumps to the full-height layout at the first frame; the keyboard slides off over the composer | the page relays out 100-117 ms after the keyboard starts; meanwhile the composer stays where it was and the page's ground shows under the fading keyboard |
 
 ## 3. Sending a message
 
-| | Messenger | Canari before |
-| --- | --- | --- |
-| Field | cleared on the next frame | cleared on the next frame |
-| The thread making room | GLIDES up by the new row's height: 70 px (one line) over ~217 ms, 16 / 46 / 83 % of the way at a quarter / half / three quarters - a symmetric ease-in-out. Same on both sends | JUMPS by the new row's height in one frame |
-| The new bubble | invisible during the glide, then FADES IN where it lands: ~130 ms, no slide (its top stays on the same pixel), no scale. Glide + fade: ~370 ms | fades in AND rises ~10 px (`riseIn`, 260 ms `ease`, 12 px): visible ramp ~165 ms, starting with the jump |
-| Status | an "Envoye" line under the last own message moves under the new one; the bubble never changes size | "En attente..." then "Envoi..." INSIDE the bubble (two lines tall, its width changing at the switch), then at delivery (~680 ms after the tap) the bubble SHRINKS to one line in one frame and a check appears under it |
-| Composer | the folded icons come back in one frame when the field empties | the microphone comes back in one frame |
+|                        | Messenger                                                                                                                                                                      | Canari before                                                                                                                                                                                                           |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Field                  | cleared on the next frame                                                                                                                                                      | cleared on the next frame                                                                                                                                                                                               |
+| The thread making room | GLIDES up by the new row's height: 70 px (one line) over ~217 ms, 16 / 46 / 83 % of the way at a quarter / half / three quarters - a symmetric ease-in-out. Same on both sends | JUMPS by the new row's height in one frame                                                                                                                                                                              |
+| The new bubble         | invisible during the glide, then FADES IN where it lands: ~130 ms, no slide (its top stays on the same pixel), no scale. Glide + fade: ~370 ms                                 | fades in AND rises ~10 px (`riseIn`, 260 ms `ease`, 12 px): visible ramp ~165 ms, starting with the jump                                                                                                                |
+| Status                 | an "Envoye" line under the last own message moves under the new one; the bubble never changes size                                                                             | "En attente..." then "Envoi..." INSIDE the bubble (two lines tall, its width changing at the switch), then at delivery (~680 ms after the tap) the bubble SHRINKS to one line in one frame and a check appears under it |
+| Composer               | the folded icons come back in one frame when the field empties                                                                                                                 | the microphone comes back in one frame                                                                                                                                                                                  |
 
 ## 4. The composer bar (bench, dp)
 
-| | Messenger at rest | Messenger, keyboard up | Canari before (keyboard up) |
-| --- | --- | --- | --- |
-| Left controls | +, camera, gallery, microphone: glyphs centred at 20, 60, 100, 140 - a 40 dp pitch from the edge, no gap | one chevron, centred at 21 | margin 12; "+" 44 at 12-56; gap 8; microphone 44 at 64-108 |
-| Field | 160 -> 392, 42 tall, corner ~20, emoji inside at 374 | 40 -> 392 (396 while typing), 42 tall | 116 -> 368, 44 tall, corner 20 |
-| Right control | like, centred at 412 (4 dp from the edge to its box) | like, or send (centred 417) while typing | gap 8; send 44 at 376-420, plus 4 of padding; margin 12 |
-| What folds | - | all four left controls fold into the chevron as soon as the field has focus | the microphone folds when the first character is typed; "+" stays |
-| Vertical | field bottom 33 dp above the screen's bottom (navigation inset + 9) | field bottom 9.3 dp above the keyboard | field bottom = navigation inset at rest; 12 above the keyboard |
+|               | Messenger at rest                                                                                        | Messenger, keyboard up                                                      | Canari before (keyboard up)                                       |
+| ------------- | -------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Left controls | +, camera, gallery, microphone: glyphs centred at 20, 60, 100, 140 - a 40 dp pitch from the edge, no gap | one chevron, centred at 21                                                  | margin 12; "+" 44 at 12-56; gap 8; microphone 44 at 64-108        |
+| Field         | 160 -> 392, 42 tall, corner ~20, emoji inside at 374                                                     | 40 -> 392 (396 while typing), 42 tall                                       | 116 -> 368, 44 tall, corner 20                                    |
+| Right control | like, centred at 412 (4 dp from the edge to its box)                                                     | like, or send (centred 417) while typing                                    | gap 8; send 44 at 376-420, plus 4 of padding; margin 12           |
+| What folds    | -                                                                                                        | all four left controls fold into the chevron as soon as the field has focus | the microphone folds when the first character is typed; "+" stays |
+| Vertical      | field bottom 33 dp above the screen's bottom (navigation inset + 9)                                      | field bottom 9.3 dp above the keyboard                                      | field bottom = navigation inset at rest; 12 above the keyboard    |
 
 ## What was changed (PR `feat/keyboard-and-send-motion`)
 
-**The keyboard animation (Android).** `MainActivity.applyKeyboardInsets` registers
-`ImeAnimationLog`, a `WindowInsetsAnimationCompat.Callback` (`DISPATCH_MODE_STOP`) that only logs.
-Its presence selects the synced animation: the same 285 ms opaque slide Messenger gets on the same
-phone. This removes the ghost keyboard on open and close.
+**The keyboard animation (Android).** `MainActivity.applyKeyboardInsets` registers a
+`WindowInsetsAnimationCompat.Callback` (`DISPATCH_MODE_STOP`). Its presence selects the synced
+animation: the same 285 ms opaque slide Messenger gets on the same phone. This removes the ghost
+keyboard on open and close. Since 2026-11-14 the same callback also hands the animation to the page -
+section 6.
 
-**The rise is handed to the page before the WebView is resized (Android).** One mechanism for every
-screen with a text field, because it acts on the viewport every screen already reads:
-
-1. The insets listener asks `imeStep` (`keyboard/ImeHandoff.kt`, pure, `ImeHandoffTest`) what to do.
-   A rise from no keyboard, with a page present, is a HAND-OFF; anything else (a fall, a height change
-   while open, no page) pads at once as before and ends any hand-off still in flight. The hand-off in
-   flight is one `ImeHandoff` object: a number per hand-off, and only the current number's answers
-   decide anything.
-2. Hand-off: `window.canariImeTarget(<keyboard height in CSS px>)` is evaluated. The page
-   (`keyboardViewport.svelte.ts` + `imeTarget.ts`, `imeTarget.test.ts`) answers by laying itself out
-   as the resize WILL measure - layout and visual viewport both `baseline - target` - synchronously,
-   and returns `true`.
-3. `WebView.postVisualStateCallback` reports when that frame is drawn - a proof, not a delay - and
-   only then is the content padded. The crop that follows removes only the band the keyboard is
-   sliding over; the frames before and after the resize are the same picture.
-4. The target is spent as soon as either viewport gives up height of its own (the padding landed, or
-   the WebView shrank its visual viewport itself), or when the shell announces 0 on a fall - which it
-   does only for a hand-off whose padding never landed (a landed one is already spent).
-5. A hand-off ends when its page goes away. A new WebView ends it (`onWebViewCreate`), and so does a
-   new document in the same WebView: `initKeyboardViewport` calls `window.canariIme.pageReady()`, the
-   shell ends the hand-off and dispatches the insets again, so a keyboard still up is handed to the new
-   page. Without this, a reload that swallowed the answer left the hand-off pending and the keyboard
-   over the composer until it closed (review S1). Wry's generated client offers no page-start hook,
-   and a gone renderer takes the process with it (wry does not override `onRenderProcessGone`).
-6. The opening is two updates on the page - the announced layout, then the real resize that spends
-   the target - and both reveal the focused field at once (`auto`), never smoothly under the keyboard
-   (`keyboardRevealOnUpdate`, review S3: a modal, the PIN dialog, a payment overlay).
-
-One logcat line per padding change: `IME inset: <px> -> content padding (<why>)`, the why being
-`rise #n: the page drew its keyboard layout`, `applied at once`, `hand-off to <px> superseded`,
-`rise #n, target refused` or `no page to hand off to`.
-
-A page that does not answer `true` (not hydrated yet, an older bundle) is said at WARN in logcat
-(`the page did not take the target`) and the padding lands at once, as before.
-
-**The band under the page (Android).** When the page takes a keyboard target it sends
-`canariTheme.setGround` the first opaque background painted where the keyboard will sit
-(`imeGround.ts`: `elementFromPoint` at the bottom edge, up through its ancestors, a translucent glass
-composer looked through, the colour converted by the engine on a one-pixel canvas), and `MainActivity`
-paints it on the content view, under the transparent WebView. A conversation's band is its grey, a
-full-bleed CanaReels, live or camera screen's is black (review N1). Read once per rise, when the layout
-changes anyway - never on a theme apply at boot (review N5).
+**The keyboard's room on Android: the hand-off of 2026-11-13 is GONE (2026-11-14).** It announced a
+rise to the page (`canariImeTarget(<px>)`), waited for `postVisualStateCallback`, then padded the
+content by the IME inset, and the fall padded at once. A padded WebView shows its LAST frame cropped or
+stretched to the new size until the page has drawn at that size: 8 frames on the rise (Mi 9T,
+2026-11-13) and 13 on the fall (Pixel 6a, 2026-11-14, the composer stuck up for ~220 ms while the keys
+slid away). No order of announcing and padding hides that, and padding at the end of a fall leaves the
+composer nowhere to ride. `ImeHandoff`, `imeStep`, `handOffIme`, `setImePadding`, the
+`postVisualStateCallback` use and their tests were deleted with the resize; section 6 is what replaced
+them.
 
 **The send.** `threadGrowthObserver` keeps its instant pin to the bottom, then plays the distance it
 jumped as a compositor transform from where the rows were (`appendGlidePx`, `threadAppendGlide.test.ts`):
@@ -163,14 +131,14 @@ the safe area: it is positioned in `ChatArea`'s root, inside the app shell that 
 
 - **What folds - DECIDED, kept as it is (owner, 2026-11-13).** Messenger folds every action into a
   chevron as soon as the field has focus; Canari hides the microphone at the first character typed and
-  keeps "+", which already IS the group of actions (the owner's rule of 2026-09-08: *"les icones sur
-  les bords disparaissent quand tu commences a taper"*). No chevron fold.
+  keeps "+", which already IS the group of actions (the owner's rule of 2026-09-08: _"les icones sur
+  les bords disparaissent quand tu commences a taper"_). No chevron fold.
 - **The gap above the keyboard**: 12 px against Messenger's 9.3 dp, and at rest the field sits 9 dp
   lower than Messenger's (Canari pads `max(0.75rem, inset)`, Messenger `inset + 9`). Kept: the GIF
   panel's hand-off is built on the same 0.75rem (chat.md), and iOS's home indicator makes `inset +
   gap` a different decision there.
-- **The fall still resizes before the page redraws** (100-117 ms measured). With the synced animation
-  the keyboard now covers that band while it slides, as Messenger's covers its composer.
+- **The fall no longer resizes anything on Android** (section 6): the composer and the thread ride
+  down on the keyboard's own curve, Google Messages' motion rather than Messenger's jump.
 - **iOS** had the rise defect in another shape and takes the same hand-off; its fall now rides the
   keys like Messenger iOS's - section 5 below. The composer's dimensions and the send motion are CSS
   and apply there too.
@@ -189,14 +157,14 @@ start with the keyboard already moving.
 **The keyboard opening, Canari** (`CanariApplyKeyboardLayout` animating the WebView frame on the
 keyboard's duration and curve):
 
-| frame (ms) | keyboard top still to travel | page content still to travel | web composer |
-| --- | --- | --- | --- |
-| 1251 | 240 | 275 | half covered |
-| 1288 | 148 | 269 | hidden behind the keyboard |
-| 1325 | 82 | 209 | hidden |
-| 1364 | 48 | 127 | hidden |
-| 1419 | 23 | 55 | half covered |
-| 1474 | 2 | 5 | visible, in place |
+| frame (ms) | keyboard top still to travel | page content still to travel | web composer               |
+| ---------- | ---------------------------- | ---------------------------- | -------------------------- |
+| 1251       | 240                          | 275                          | half covered               |
+| 1288       | 148                          | 269                          | hidden behind the keyboard |
+| 1325       | 82                           | 209                          | hidden                     |
+| 1364       | 48                           | 127                          | hidden                     |
+| 1419       | 23                           | 55                           | half covered               |
+| 1474       | 2                            | 5                            | visible, in place          |
 
 On the first frame that moves, the page is ALREADY laid out for the keyboard (the video in the
 thread is already its keyboard-up size, and the native "+" twin, placed from the page's rects,
@@ -225,8 +193,8 @@ Messenger's, so the fall now rides (below).
 synchronously, inside the still full-size WebView. Then the PROOF that this layout is on screen,
 `CanariAfterScreenUpdates`: `takeSnapshotWithConfiguration:` with `afterScreenUpdates = YES` on a 1 pt
 rect, which WebKit takes "after incorporating any pending screen updates" - and the page's change is
-pending once the script has returned. It is the public form of Android's `postVisualStateCallback`; the
-private `_doAfterNextPresentationUpdate:` would say the same and is never called in a store build, and
+pending once the script has returned. It is the public form of what Android's `postVisualStateCallback` did for the hand-off of 2026-11-13 (gone
+since 2026-11-14, section 6); the private `_doAfterNextPresentationUpdate:` would say the same and is never called in a store build, and
 a `CADisplayLink` watching commits sees the UI process's frames, not WebKit's. Only in the proof's
 completion is the frame set, WITHOUT animation, since the page already is that picture.
 
@@ -256,8 +224,8 @@ reports twice.
 **The fall rides the keys** (`keyboardRide.ts`, `CanariHandKeyboardFallToPage`). Before resizing,
 the shell calls `window.canariKeyboardFall({ durationMs, curve, fromPx })` with the keyboard's own
 `UIKeyboardAnimationDurationUserInfoKey` and `UIKeyboardAnimationCurveUserInfoKey` and the overlap it
-had. The page records, for each `[data-keyboard-ride]` piece, the top of its probe: the composer band
-itself (`"box"`), the thread's last row (`"last-row"` - a scroll container's box does not move when it
+had. The page records, for each `[data-keyboard-ride]` piece, the bottom edge of its probe: the composer
+footer itself (`"box"`), the thread's last row (`"last-row"` - a scroll container's box does not move when it
 grows, its content does, and only by what the bottom pin scrolls). Then the frame is set without
 animation. On the resize the page lays itself out full height as before, and the ride is armed: a
 `ResizeObserver` created then is notified in the next rendering update after every observer created
@@ -283,22 +251,237 @@ already full height when the announcement arrives - the order broke.
 (`cubic-bezier(0.38, 0.7, 0.125, 1)`) is the ecosystem's stand-in for it, named in one place and NOT
 measured here; the fall reading below confirms or replaces it. Curves 0-3 map to their CSS names.
 Height changes while open keep the frame animated on the keyboard's curve, unmeasured against
-Messenger. Android is unchanged.
+Messenger. Android rides both directions since 2026-11-14 (section 6), with the same
+`keyboardRide.ts`; the iOS fall above is unchanged by it - its thread still rides its box.
 
 Tests: `iosKeyboardRiseHandoff.test.ts` reads the native contract against the page's hooks,
 `iosKeyboardSettledReport.test.ts` the settle's place behind a proof, `keyboardRide.test.ts` the
 parsing, the refusals, each piece's own move and the frame follower, `keyboardViewport.ride.test.ts`
 the wiring (the close arming the ride, a rise or a press ending it, the refusals).
 
+## 6. Android since 2026-11-14 - the keyboard covers the WebView, and the page rides it
+
+The owner, 2026-11-14: Messenger stays the reference for the layout, Google Messages for the motion -
+the thread and the composer rise and fall WITH the keys, frame by frame
+(the study and its build specification: the backlog entry `keyboard-motion-like-android-messages`, merged with its own docs PR). On Android that needed a new
+contract, because no ride can hide a WebView resize (above).
+
+**The native half (`MainActivity`, `keyboard/ImeAnnouncement.kt`).**
+
+- The content is NEVER padded for the IME. The WebView keeps its full height in both directions -
+  below Android 15 as well: on an API 34 emulator (WebView 113, `enableEdgeToEdge`, 2026-11-14)
+  `innerHeight` and `visualViewport.height` stayed 915 open and closed, the listener read an 883 px IME
+  inset, `onPrepare` announced 285 ms with a `PathInterpolator`, and the page took `336.38` (F6).
+- `ImeAnimationCapture` (the insets-animation callback, `DISPATCH_MODE_STOP`) keeps what `onPrepare`
+  says about an IME animation - before the keys move: its duration, and its interpolator sampled at 24
+  evenly spaced points over `[0..1]` (`sampleImeCurve`; a null interpolator is linear, a non-finite
+  sample sends no curve). `onEnd` drops what no inset change took. A NEGATIVE duration is a
+  CONTROLLED animation (`getDurationMillis()` is -1 when a gesture drives the inset: the
+  predictive-back IME dismissal of targetSdk 36) and is announced as no animation at all
+  (`rideableImeAnimation`); `ImeAnimationSpec` cannot even be built with one. The page refused a
+  negative duration, and the refusal used to leave a keyboard-sized inset for good (review F2).
+- The insets listener announces each CHANGE of the IME inset once:
+  `window.canariImeTarget({ px, durationMs, curve })` (`imeAnnouncementScript`), `px` in CSS px
+  (`imeCssPx`), `durationMs` and `curve` absent for a change with no animation (a rotation). One logcat
+  line each: `IME inset: <px> px -> page told <css> (<ms> | no animation; <why>)`.
+- An inset counts as told only once the page TOOK it (`ImeAnnouncements`); an announcement in flight
+  is not sent twice (a second one would end the first one's ride). It used to be marked told BEFORE
+  `evaluateJavascript` ran, so a refused value was never re-sent. The script answers which of three it
+  is (`ImeAnswer`, classified by `imeAnswerOf`): `taken`; `not-ready` (no hook yet - `pageReady`
+  announces); `refused` (anything else, a script error included): a broken contract, `Log.e`, and NOT
+  re-sent by the next insets pass (the same page refuses the same way, and with a steady keyboard no
+  pass came, so the page stayed desynced - second review). It is re-sent on the page's next ready
+  signal: the page calls `pageReady` right after refusing an ANIMATED announcement, and is told the
+  inset without one, which it always takes - so it asks at most once per refusal.
+- `window.canariIme.pageReady()` (a new document, or the page after a refusal) forgets what the page
+  held and re-announces the current inset, without animation. An answer from before it is stale
+  (`ImeTicket.page`) and changes nothing, whichever reaches the UI thread first.
+- The insets are passed on UNTOUCHED, the navigation bar's included (review D2, below). Kept:
+  `canariTheme.setGround` still paints the page's ground under the transparent WebView (no band opens
+  any more; the readings say whether a transparent strip ever shows it).
+
+**The page's half: ONE module owns every keyboard variable** (`keyboardViewport.svelte.ts`, with the
+pure `imeTarget.ts` and `keyboardRide.ts`). An object announcement is an OVERLAY target: never spent by
+the viewport, 0 included, so the shell is the one source of the keyboard's room for as long as the page
+lives (what the WebView reports of its own visual viewport is not read). Its measurement keeps the
+layout at the window's REAL height (`innerHeight`, `overlayPx`) - never the baseline, which only grows:
+a window made shorter for another reason (split screen, a freeform window, DeX, a fold) left the shell
+870 px tall in a 450 px window (review F1). The snapshot gives every screen:
+
+| variable                             | the Android app                                                                            | the web, iOS, an older shell  |
+| ------------------------------------ | ------------------------------------------------------------------------------------------ | ----------------------------- |
+| `--app-viewport-height` (while open) | the window's height: the shell does NOT shrink                                             | the visible height, as before |
+| `--keyboard-layout-inset-bottom`     | the keyboard's height, from its first pixel (a keyboard under the open threshold included) | 0, as it always was           |
+| `--keyboard-occlusion-bottom` (new)  | the keyboard's height: what it covers of the WINDOW, for `fixed` elements                  | 0                             |
+
+`--safe-area-inset-bottom` is pinned to `0px` while the overlay keyboard covers the window
+(`keyboardSafeAreaBottomOverride`, from its first pixel), and `--keyboard-free-viewport-height` is never
+written for an overlay. `isOpen` keeps the threshold every platform reads it with (it hides the bars and
+remembers the keyboard's height). The web and iOS compute exactly what they computed before:
+`keyboardViewport.overlay.test.ts` keeps the previous `computeSnapshot` as an oracle and checks every
+measurement the suites hold, plus a grid of 1080 shapes around them.
+
+**The ride, both directions.** `canariImeTarget` with an animation captures every `[data-keyboard-ride]`
+piece where it stands, applies the layout at once, and - once the layout reactions have run (the
+thread's bottom pin first, `afterLayoutReactions`) - rides each piece from where it stood to its place
+on `linear(<points>)` (`linearEasing`, built from the numbers: 2 to 64 finite points, no CSS crosses
+the bridge). `rideDistancePx` is signed: up on a rise, down on a fall. The composer rides its box. The
+thread (`last-row`) rides its ROWS, the scroller's children as `createThreadGlide` moves them, never its
+box: the box keeps its height, its room for the keyboard is its bottom padding
+(`.chat-messages-scroll`), so a box ridden up would open a gap under the header and a box shrunk at
+once would clip the band the keyboard has not covered yet. A send's glide still in flight is taken off
+the rows (`takeThreadGlideOff`) after their drawn top is read. No ride: reduced motion, no animation, an
+instant one. A press or a new announcement ends a running ride (`endRides`) - AFTER the new capture
+has read where the pieces are DRAWN (`getBoundingClientRect` includes the transform), so a Back
+mid-rise starts the fall from where the composer stood on screen, not from the rise's end (review F3).
+The iOS hooks (`canariImeTarget(<number>)`, `canariKeyboardFall`) keep their own paths.
+
+**The ride IS the keyboard's timeline (review D1).** Measured on the Mi 9T (debug build, 2026-11-14,
+`screenrecord` at 60 fps + a per-frame CDP probe): the target arrives 2-10 ms after `onPrepare`, but the
+ride started 60-75 ms later (the frame the layout reactions run in) and then ran its full 285 ms -
+the keyboard at 62% of its rise with the thread unmoved, the composer under the keys for 4 frames; on
+the fall the keyboard gone (180 ms) before the thread moved, a band of nothing, then the thread alone.
+So `takeImeTarget` records the arrival (`now()`, the Android object path only) in the capture
+(`announcedAt`), and each ride animation's `startTime` IS that arrival (`document.timeline` shares
+`performance.now`'s origin): whatever frame first draws it draws the keyboard's phase there, and both
+end together. A negative `delay` measured when the ride was created landed up to a frame late - a
+pending animation starts on the NEXT frame, from 0 plus the delay (second review). `ridePhaseMs` only
+says where the first frame is, and whether the keyboard has already landed. A ride that could only start after the
+keyboard landed does not animate - the pieces stand at their place. This is phase alignment to an
+animation whose duration and curve are known, not a timeout: the animation's own end still ends it.
+The iOS fall has no arrival time and starts at 0, as before.
+
+**One writer of the thread's bottom (review D2).** The probe saw `scrollTop` 3727 -> 4085 at the
+ride's first frame, then 4073 one frame later (3715 then 3727 on the fall): the rows moved 7-12 px
+under the ride. The two writers: the shell withdrew the navigation bar's inset while the keyboard was
+up, and Chromium applies a changed inset to `env(safe-area-inset-bottom)` a frame or more AFTER the
+announcement - the composer's floor `max(0.75rem, 23.8px)` fell to `0.75rem`, 12 px, one frame late;
+and `--chat-composer-height`, published one frame after any footer resize (`composerHeight.ts`),
+followed it a frame later still, the thread's padding shrinking and `scrollTop` clamping under the
+ride. Now: the shell passes the insets on untouched; the page pins `--safe-area-inset-bottom` to 0 in the
+announcement's own task; the footer's floor is ONE custom property, `--chat-composer-floor`, which
+the thread's padding composes in CSS (`composer height without its floor + floor + keyboard room`), so
+the floor and the padding change in the same style pass, and a keyboard move changes nothing the
+publisher sees. No component reads `env(safe-area-inset-bottom)` but `app.css`'s definition of the
+variable (the media viewer's info sheet and the video controls did, and kept the bar's strip under the
+keyboard; `safeAreaBottomPin.test.ts` guards it, second review). The shell's half is guarded by
+`androidWindowLayout.test.ts`, which reads the insets listener's own balanced block, not a lazy match
+that could end in a later one. And `keyboardChangeResponse` no longer scrolls a reader who was at the bottom: the
+thread's observer pins that reader in the keyboard's own layout, before the ride reads where the rows
+went; the ChatArea effect answers only for a reader ABOVE the bottom whose composer the rising keyboard
+is for (the Android "field still focused after Back" case of 2026-10-29), which the observer leaves
+alone.
+
+**Every read before the first write (review D3).** LoAF on the Mi 9T gave the announcement ~38 ms of
+main thread, 28-33 ms of it forced style and layout. `innerWidth`, `innerHeight` and
+`visualViewport.height` bring style and layout up to date on Android (the viewport meta is enabled),
+and two of them ran AFTER the keyboard's `:root` variables were written - `rememberKeyboardHeight`'s
+orientation (rises) and the baseline's `Math.max(..., innerHeight)` (falls) - each forcing a
+whole-document style pass. Now `takeImeTarget` reads in order: the arrival time, the ground under the
+keyboard (`postGroundToNative`: a hit test and computed colours), the window (`readWindow`, one
+`WindowReading`), and every riding piece's drawn top (`captureKeyboardRide` only reads); then writes:
+ends the running ride, takes a glide off (`releaseThreadGlides`), writes the variables (`update(reading)`,
+which reads nothing after). `startKeyboardRide` reads every probe before its first `animate`. What
+could NOT be removed: the ground's hit test is still a read in the announcement (it is first, so it pays
+only what earlier work left dirty - normally nothing), and the style pass the variable writes cause is
+the frame's own, now paid once by the renderer instead of forced in script; the inset listeners
+(fixed popovers, F4) read layout on the NEXT frame, never in the task. Owed: the LoAF reading again on
+this build.
+
+**A message arriving mid-ride (review F8).** The thread's glide and the ride both animate the rows'
+`transform`, and the later one replaces the other: the rows jumped from the ride's offset to the
+glide's. The ride registers its row animations with the thread's observer (`attachThreadRide`); an
+arrival takes them off where they drew the rows (`fromPx` times what is left of the eased progress) and
+the glide starts from that offset plus the new row - negative on a fall, the rows drawn above their
+place. The ride yields: the rows finish on the glide's curve, the composer rides on. A change that
+brings no arrival leaves the ride alone.
+
+**The baseline follows the window width, not a timer (review F1).** The 400 ms timer after
+`orientationchange` that reset the baseline is gone: the overlay no longer reads the baseline at all,
+and for iOS and a phone browser a new `innerWidth` IS a new window (not while pinch-zoomed: WebKit's
+`innerWidth` follows the zoom). A keyboard never changes the width. The new baseline is a SETTLED
+reading's height (second review): each update at the new width replaces it until the layout and the
+visual viewport agree on the size, width and height (`isSettledWindow`), and from then on only `max()`
+raises it. Taken from the first update, a transient taller post-rotation `innerHeight` stuck for good.
+
+**Every keyboard screen is on the module's variables** (the inventory of 2026-11-14 is the PR's
+checklist): inside the shell, the chat's composer is placed by the layout inset and its thread padded
+by it, and every other page's scroller ends above the keyboard (`.page-scroll-wrap` takes the layout
+inset as its `bottom`, the chat's excepted); a `fixed` layer with a field keeps its content clear of
+`--keyboard-occlusion-bottom` (`[data-keyboard-aware-overlay]` and its panel cap, `ModalOverlay`, the
+comments drawer, the live, broadcaster and CanaReels editor bars, the publish and send sheets, the carte
+editor, `.side-panel`, the navigation drawer, the message actions, the tablet toasts, the GIF picker's
+full screen). `[data-keyboard-aware-toast]` had no user and was deleted. After review: a panel inside
+`ModalOverlay` is capped by the overlay's box, `min(<n>vh,100%)` (the poll composer, the GIF picker;
+guarded by `ModalOverlay.test.ts`), the live chat by `0.38 x (100vh - occlusion)`, and every
+`bindFixedPopover` panel (emoji pickers, mentions, `FloatingSurface`) re-places on the store's
+`onKeyboardInsetChange` - neither viewport fires anything for an overlay keyboard (F4, F5). The unused
+`--keyboard-baseline-height` was deleted.
+
+**Read on the Mi 9T at f364f3c47 (2026-11-14, debug sideload; the numbers are on the PR).** Once
+moving, the thread and the composer follow the keys frame by frame in both directions (D1). One
+`scrollTop` write per keyboard move (D2), and no forced style or layout in the announcement's script
+(D3). Still owed: the ride starts 40-105 ms after the announcement (161 ms in the emoji picker), because
+the announcement frame recalculates the whole document's style. Any custom-property write on `:root`
+costs 17-30 ms on 1156 elements, against 0.2 ms on one leaf. That latency, and the emoji picker that
+jumps rather than rides (N2), are the stacked follow-up's.
+
+**Two fixes from that reading.** N3: the Android WebView fires a window `resize` and a visual-viewport
+`resize`, with no size changed, ~15 ms after every overlay announcement. Each one re-ran `update()`,
+which revealed the focused field again (`smooth`): three reveals per rise. A later update now reveals
+only when the keyboard MOVED (`keyboardMoved`): its inset OR the visible height changed. The inset alone
+regressed iOS and resizes-content browsers (second review): there the WebView is resized, `insetBottom`
+is always 0 (the hand-off included), and a keyboard changing height while open (the emoji keyboard, the
+predictive bar) no longer revealed a modal's field. The Android no-op resizes change neither. N4: the comments
+drawer is a riding piece (`data-keyboard-ride="box"`), where it used to jump 68 ms (rise) and 138 ms
+(fall) after the announcement. It rides by its BOTTOM edge, like every rider (`rideEdgeOf`, second review): its cap subtracts the
+keyboard, so it also shrinks (~567 to ~510 px on the Mi), and ridden by its top its bottom stood ~57 px
+above the keys at the rise's start. For a piece that keeps its height (the composer footer, the newest
+row) both edges ride the same distance. `.keyboard-aware-bottom` lost its 180 ms `ease` transition: the sheet's
+inline `transition: none` overrode it, and a clock of its own could only disagree with the keyboard's.
+The sheet also rides the iOS fall, through the same `canariKeyboardFall` capture as the composer footer.
+
+**The composer rides by its FOOTER (Mi 9T reading of 2026-11-14).** The marker sat on ChatArea's
+composer band (`absolute inset-x-0 bottom-0`, no height of its own). On the Android overlay the band never
+moves - the window keeps its height - and only the `.chat-composer-footer` inside it does (`bottom:
+var(--keyboard-layout-inset-bottom)`), so the ride measured 0 px and the composer jumped to the keys at
+the end while the thread glided. The marker is now on the footer (`ChatComposer.svelte`); on iOS the
+footer moves with its band, so that reading is unchanged, and exactly one of the two may carry it or
+the footer rides twice (`iosKeyboardRiseHandoff.test.ts`).
+
+**The Android app declares the keyboard an OVERLAY to the engine (Mi 9T reading of 2026-11-15).** With
+the footer riding, the first re-read showed the composer a whole keyboard ABOVE the keys and the header
+off the screen. The WebView (152) receives the IME inset and shrinks its visual viewport (945 to 588
+CSS px) without resizing the layout; on the keyboard's show Chromium scrolls the focused field into
+that shrunk viewport, and while the footer rides its caret is still DRAWN at its old place under the
+keys - so it panned the visual viewport by the keyboard (`visualViewport.offsetTop` 357.58), on top of
+the page's own move. Removing the marker live removed the pan, which is how the cause was named.
+`initKeyboardViewport` now sets `navigator.virtualKeyboard.overlaysContent = true` when the shell's
+bridge `canariIme` is present (`declareKeyboardOverlay`): 0 pans in 6 taps against 6 in 6 without it,
+on the same build. The WebView still shrinks the visual viewport (its `boundingRect` stays empty, so
+the API is honoured only as far as the pan), and a field outside a ride is still revealed by the page
+(`keyboardRevealOnUpdate`): a poll option under the keys scrolled above them with the declaration on.
+The browser and the iOS app never declare it - there the engine's own keyboard handling is the contract.
+
+**A reveal follows what COVERS, not what is OPEN (review of #3556).** With Chromium no longer revealing
+the field, the page's reveal is the only one, and it was gated on `isOpen` - over the open threshold
+(160 px on Android). A one-row IME, a floating or split keyboard or the ADB keyboard stays under it
+while the overlay still lifts the shell by its height, so a field under it stayed covered.
+`keyboardCovers` answers the reveal's own question: under the overlay any inset above 0 covers;
+elsewhere the engine resizes for the keyboard and `isOpen` stays the answer. `isOpen` keeps its own
+jobs (the bars, the remembered height).
+
 ## Owed on a phone (nothing here is measured after the change - it needs a build)
 
 On the Mi 9T, a pre-release, the same three recordings (`adb screenrecord`, the frame script):
 
-1. Keyboard open: a 285 ms opaque slide; logcat `IME animation: 285 ms` and `IME inset: <px> ->
-   content padding (rise #n: the page drew its keyboard layout)`; the composer above the keyboard
-   from its first frames, no cropped frame; the band the page's ground (grey in a conversation,
-   black on a CanaReel's comment field); and never `the page did not take the target`.
-2. Keyboard close: an opaque slide down, no fade.
+1. Keyboard open, on a debug sideload of the ride (section 6), frames counted: a 285 ms opaque slide;
+   logcat `IME animation: 285 ms` then `IME inset: <px> px -> page told <css> (285 ms; the keyboard
+   moved)` and the page's `keyboard to <css> ridden over 285 ms from <N> ms in`; the composer on the keys' top on every
+   frame (no frame of the old layout under a half-risen keyboard, none of the final layout before the
+   keys), the last bubble following it, the header still; no cropped or stretched frame; never `the
+   page did not take the keyboard`.
+2. Keyboard close: an opaque slide down, no fade, the composer and the thread riding down with it.
 3. Send: the thread glides ~220 ms, then the bubble fades in; the bubble's box unchanged from the tap
    to the check. In a salon, no second fade at delivery. Two sends in a row, and a send with the
    keyboard closing mid-glide: no row rising past its place, `scrollTop` against `scrollHeight` per
@@ -306,7 +489,10 @@ On the Mi 9T, a pre-release, the same three recordings (`adb screenrecord`, the 
 4. The composer's boxes read through CDP against the expected numbers above, light and dark.
 5. A field in a modal (the PIN change dialog): revealed at once when the keyboard opens, no smooth
    scroll under it. A pull-to-refresh reload with the keyboard up: the composer still lifts
-   (`IME hand-off to <px> ended: the page started a new document`).
+   (`IME inset: <px> px -> page told <css> (no animation; the page started a new document)`). Then
+   every screen of the ride's checklist with its keyboard up and down: a salon, the comments drawer
+   (post and CanaReel), a form, the search, a `ModalOverlay` prompt, the live chat, and the GIF panel
+   swapping with the keyboard in one frame.
 
 And on the iPhone 12, a pre-release carrying both PRs (the store build cannot be inspected, so the
 MJPEG stream and the syslog are the instruments, as in section 5):

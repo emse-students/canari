@@ -7,9 +7,10 @@
  * tab is opened before the request and cut from its opener; and no registered origin is opened by
  * any other module of the app.
  */
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, relative, resolve } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { sourceFiles } from '../../test/sourceTree';
 
 const openUrl = vi.fn(async (_url: string) => {});
 const apiFetch = vi.fn();
@@ -189,19 +190,15 @@ describe('no module but the site list writes a sibling origin', () => {
   ) as { sites: Array<{ origin: string }> };
   const allowed = new Set(['src/lib/navigation/ecosystemSites.ts']);
 
-  const walk = (dir: string): string[] =>
-    readdirSync(dir).flatMap((name) => {
-      const path = join(dir, name);
-      if (statSync(path).isDirectory()) return name === 'paraglide' ? [] : walk(path);
-      return /\.(ts|svelte)$/.test(name) && !name.endsWith('.test.ts') ? [path] : [];
-    });
-
   it('finds every origin only in ecosystemSites.ts', () => {
+    // The run's source snapshot, no disk walk (the site list itself is outside `src`, read above).
+    const files = sourceFiles({ under: 'src', extensions: ['ts', 'svelte'], tests: 'exclude' });
+    // The tree the scan thinks it reads: the one allowed file is in it, and so is much more.
+    expect(files.map((f) => f.path)).toContain('src/lib/navigation/ecosystemSites.ts');
+    expect(files.length).toBeGreaterThan(100);
     const offenders: string[] = [];
-    for (const file of walk(resolve('src'))) {
-      const rel = relative(resolve('.'), file).replace(/\\/g, '/');
+    for (const { path: rel, text } of files) {
       if (allowed.has(rel)) continue;
-      const text = readFileSync(file, 'utf8');
       for (const { origin } of contract.sites) {
         if (text.includes(origin)) offenders.push(`${rel}: ${origin}`);
       }

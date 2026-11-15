@@ -28,19 +28,14 @@
  * cell, this class of layer is found by reading, which is how this one was found.
  */
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { allMarkup } from './markupSources';
+import { allMarkup } from './markupTree';
+import { readSource } from '../../test/sourceTree';
 import { OVERLAY_Z_BASE, OVERLAY_Z_LIMIT } from '$lib/utils/overlayStack';
 
-const src = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const cssPath = join(src, 'app.css');
-// THE TREE IS READ ONCE, HERE, AND NOT INSIDE A TEST. Six bodies below each walked and re-read every
-// `.svelte` file, and a test body is charged against vitest's 5 s timeout: under the full suite, with
-// every worker reading the disk at once, a walk costs seconds. Module scope is collection time, which
-// no per-test timeout measures. `flat` collapses whitespace so an attribute spanning lines is one value.
-const markup = allMarkup(src).map(({ file, body }) => ({
+const cssPath = 'src/app.css';
+// The markup comes from the run's source snapshot (no disk walk), filtered once here. `flat`
+// collapses whitespace so an attribute spanning lines is one value.
+const markup = allMarkup().map(({ file, body }) => ({
   file,
   body,
   flat: body.replace(/\s+/g, ' '),
@@ -48,7 +43,7 @@ const markup = allMarkup(src).map(({ file, body }) => ({
 
 /** The rungs, in the order they are declared - which must also be their numeric order. */
 function readLadder(): { name: string; value: number }[] {
-  const css = readFileSync(cssPath, 'utf8');
+  const css = readSource(cssPath);
   const rungs: { name: string; value: number }[] = [];
   for (const match of css.matchAll(/--z-([a-z-]+):\s*(\d+);/g)) {
     rungs.push({ name: match[1], value: Number(match[2]) });
@@ -58,6 +53,11 @@ function readLadder(): { name: string; value: number }[] {
 
 describe('the layer ladder', () => {
   const ladder = readLadder();
+
+  it('reads the tree it thinks it does: the root layout is in the markup', () => {
+    expect(markup.length).toBeGreaterThan(200);
+    expect(markup.map(({ file }) => file)).toContain('routes/+layout.svelte');
+  });
 
   it('declares its rungs in ascending order, so reading the file IS reading the stack', () => {
     expect(ladder.length).toBeGreaterThan(10);

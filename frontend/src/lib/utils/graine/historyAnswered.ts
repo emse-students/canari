@@ -18,8 +18,8 @@
  * from the lowest member - the same version `historyUnanswerableAt` keys "nobody to ask" on. No
  * clock is involved anywhere.
  *
- * In `localStorage` per account, like `sendRatchetLedger`: a few bytes, read synchronously, and
- * it survives a restart, which is the whole point. A storage that refuses the read is logged and
+ * In `localStorage` per account: a few bytes, read synchronously, and it survives a restart, which
+ * is the whole point. A storage that refuses the read is logged and
  * read as no record, which ASKS - the reading that costs a request rather than a past.
  */
 

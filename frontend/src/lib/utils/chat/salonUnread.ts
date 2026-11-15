@@ -115,7 +115,7 @@ function mergeMuted(answerMuted: readonly string[], token: number): Set<string> 
   const next = new Set(answerMuted);
   for (const [id, tick] of levelNotedAtTick) {
     if (tick <= token) continue;
-    Log.d(`[UNREAD] salon ${id}: level chosen after the counts were asked - kept over the answer`);
+    Log.d('UNREAD', `salon ${id}: level chosen after the counts were asked - kept over the answer`);
     if (mutedSalons.has(id)) next.add(id);
     else next.delete(id);
   }

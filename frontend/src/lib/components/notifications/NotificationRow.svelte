@@ -278,7 +278,7 @@
   );
   $effect(() => {
     if (notif.type === 'booking_reminder' && !notif.associationId) {
-      Log.d('[NOTIF] booking reminder without an association: neutral avatar', {
+      Log.d('NOTIF', 'booking reminder without an association: neutral avatar', {
         id: notif.id,
       });
     }

@@ -365,10 +365,14 @@ export class FollowerTabSendError extends Error {
   /**
    * @param refusal `follower`: the tab follows - its caller was not routed to the leader (a defect);
    *   `reload-owed`: the tab was promoted in place and reloads - an expected refusal, the gesture is
-   *   refused rather than lost; `lead-lost`: a send begun while this document led reached its last
-   *   synchronous step after the lead left it (a leader suspended by the browser, or one that handed
-   *   the lead to a visible tab, releases the lock - `tabLeader.ts`) - expected, nothing was sealed
-   *   and the leader sends it.
+   *   refused rather than lost; `lead-lost`: a send begun while this document led found that the
+   *   lead had left it (a leader suspended by the browser, or one that handed the lead to a visible
+   *   tab, releases the lock - `tabLeader.ts`) - expected, nothing was posted and the leader sends it.
+   *   Raised at every point of `BaseMlsService.sendMessage` the loss can be met before the post: at
+   *   its entry (`lostLeadSinceLoad`), after the settlement of a kept commit the loss left unfinished,
+   *   at the last synchronous step before the encrypt (nothing sealed), and after the send's count is
+   *   durable (sealed and counted, so no reload re-issues its generation). A loss met during the post
+   *   is a frame on the wire: sent.
    */
   constructor(
     readonly groupId: string,
@@ -379,8 +383,8 @@ export class FollowerTabSendError extends Error {
         ? `an MLS frame of ${groupId.slice(0, 8)}... was asked of a tab that has just become the ` +
             'leader and reloads - nothing was encrypted'
         : refusal === 'lead-lost'
-          ? `an MLS frame of ${groupId.slice(0, 8)}... reached the encrypt after this tab stopped ` +
-            'leading - nothing was encrypted, the leader sends it'
+          ? `an MLS frame of ${groupId.slice(0, 8)}... was not posted: the lead left this tab ` +
+            'during the send - the leader sends it'
           : `an MLS frame of ${groupId.slice(0, 8)}... was asked of a follower tab - only the leader tab ` +
             'sends, so nothing was encrypted'
     );

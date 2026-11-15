@@ -1102,7 +1102,7 @@ category tab, an emoji - then reads as "outside" and closes it a frame before th
 
 ### Every keyboard rise moves the composer for a moment, on both phones (measured 2026-10-02, FIXED 2026-10-09, reading owed)
 
-> Since 2026-11-13 the Android shell announces the keyboard to the page before resizing the WebView, and the keyboard's own animation is the synced one: [keyboard-and-send-motion](../keyboard-and-send-motion.md).
+> Since 2026-11-14 (#3556) the Android shell never resizes the WebView for the keyboard: it announces each keyboard change with its duration and curve, and the page lays itself out over the keyboard and rides the composer and the thread on the keyboard's own timeline: [keyboard-and-send-motion](../keyboard-and-send-motion.md#6-android-since-2026-11-14---the-keyboard-covers-the-webview-and-the-page-rides-it).
 
 Found while reading the GIF panel (#1345). The composer's top was recorded on every animation frame
 via CDP, with the keyboard opened by tapping the text field. **Both happen on a plain keyboard open
@@ -5014,10 +5014,12 @@ the picture showed LESS of itself, cut top and bottom, and the end of the thread
 **Not a scroll defect: the frame itself shrank.** A chat photo is a `MediaFrame` `fill` box,
 `max-height: var(--media-max-height)`, its `<img>` `object-cover object-center`, and the ceiling was
 `60svh` - chosen as "the stable unit" (`app.css`). It is stable in a phone browser, where the
-keyboard shrinks only the visual viewport. **In the app it is not: Android pads the WebView by the IME
-inset (`MainActivity.applyKeyboardInsets`) and iOS shrinks its frame (`CanariApplyKeyboardLayout`),
-so the LAYOUT viewport shrinks and every viewport unit with it - `svh`, `lvh`, `dvh` and `vh` alike.**
-`lvh` is therefore no answer.
+keyboard shrinks only the visual viewport. **In the app it was not: Android padded the WebView by the
+IME inset (`MainActivity.applyKeyboardInsets`, until #3556) and iOS shrinks its frame
+(`CanariApplyKeyboardLayout`), so the LAYOUT viewport shrank and every viewport unit with it - `svh`,
+`lvh`, `dvh` and `vh` alike.** `lvh` is therefore no answer. Since #3556 the Android app's keyboard
+covers the WebView without resizing it, so `svh` holds there and `--keyboard-free-viewport-height` is
+written for iOS only ([keyboard-and-send-motion](../keyboard-and-send-motion.md#6-android-since-2026-11-14---the-keyboard-covers-the-webview-and-the-page-rides-it)).
 
 Measured on the Mi 9T (`1.6.11-alpha.5` release build on dev, over the WebView's DevTools socket,
 a probe element sized in each unit):
@@ -5540,7 +5542,7 @@ than a page unread shows a page's worth until it is opened. A store count would 
 backends over encrypted rows for a badge that reads "many" either way.
 
 **Logs:** ONE census line per load, `[RESTORE] unread census: N conversation(s) counted from the
-upgrade's local read seed, N with a badge, N unread in all`; per row, at debug only, the count and
+upgrade's local read seed, N with a badge, N unread in all, N removed or pending (they take no mark)`; per row, at debug only, the count and
 the point that decided it (`saved`, `seed`, `own`, `none`). The migrations say once how many rows they
 seeded (`[SQLITE] Migration v19->v20: ...`, `[IDB] Migration v13->v14: ...`). `[FCM_CACHE] message
 <id> is already covered by the read point - no badge` when a push row is not counted. Tests:
