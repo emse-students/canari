@@ -176,33 +176,53 @@ another BDE's or an institution's post), the agenda rights over an institution's
 Proved in `bde-moderation.integration.spec.ts` ("the owner's rule of 2026-11-03"). A student's
 content inside an institution's or another BDE's post or live: [the place decides](#decided-by-the-owner-2026-11-04).
 
-#### Who may read a live replay to moderate it (2026-11-15)
+#### The moderation read of a post, its comments and its replay (owner, 2026-11-15)
 
-**OWNER DECISION, 2026-11-15:** *"La moderation des lives doit avoir le meme regulateur que les
-posts. Donc ouvrir."* (it replaces the lead's "platform admins alone" of the same morning).
+**THE RULE - OWNER, 2026-11-15:** *"Oui, dans ses espaces"*, answering "may a BDE moderator read a
+hidden post, its comments, a replay?". It follows the owner's decision of the same morning on the
+replay, *"La moderation des lives doit avoir le meme regulateur que les posts. Donc ouvrir."*, and
+replaces the lead's "platform admins alone" for all three.
 
-What it means. `GET /api/lives/:id/replay?moderation=true` (`LivesService.replay`) opens the replay to
-whoever MODERATES its post - `AssociationsService.mayModeratePost`, the one post moderation scope
-([who may read the queue](#who-may-read-the-queue)): a platform admin anywhere, a BDE `MODERATE`
-holder over what its governed spaces hold (a person's replay in one of its spaces, an association's
-it governs; never an institution's or another BDE's). In that scope the read passes the viewer's
-gate entirely: a moderator the broadcaster REMOVED from the live, one the broadcaster BLOCKED, one the
-"Entre etudiants" switch would refuse - each reads the replay to judge it. Anyone else sending the
-flag, a moderator outside its scope included, meets the ordinary gate unchanged. Every such read is
-logged (`[LIVE_REPLAY] ... MODERATION READ by ... (platform admin | BDE moderator in scope)`).
+What it means. Whoever MODERATES a post reads it to judge it, and nobody else: the platform admin
+anywhere, a BDE `MODERATE` holder over what its governed spaces hold (a person's post in one of its
+spaces, an association's it governs; never an institution's or another BDE's) - one predicate,
+`AssociationsService.mayModeratePost` ([who may read the queue](#who-may-read-the-queue)), asked where
+each read is made and never learned by failing the ordinary read first:
 
-**What it hands out.** The read serves the page a viewer gets: the replay's KEY and its segment list,
-which decrypt the replay until it is purged. The charter's first principle, **1. "Vos messages sont
-à vous"** ([principes](../principes.md)), is why this is a regulator's decision and not a widening a
-screen may take on its own.
+| Read | Where the predicate is asked | Then |
+| --- | --- | --- |
+| The post by id (`GET /api/posts/:id`) | `PostsService.getById` | `readPostOpenVerdict` with `allowHidden` |
+| Its comments (`GET /api/posts/:id/comments`) | `PostsService.listComments` | the same, intent `'COMMENT'` |
+| Its replay (`GET /api/lives/:id/replay?moderation=true`) | `LivesService.replay` | the viewer's gate skipped |
 
-**Not changed by it:** the post's own by-id moderation read (`getById` with `allowHidden`) stays a
-platform admin's (the owner wants a full review of who regulates what first). So a BDE moderator in
-scope may read a reported replay through this route while the post that carries it can still answer
-them 404 (outside its audience, a block) - and the client asks the moderation read only for a post
-served `canParticipate` false, which only a platform admin is served
-([profiles-and-access](profiles-and-access.md#by-id-what-a-platform-admin-may-do-2026-11-14)).
-Proved on the real scope predicate over PostgreSQL in `lives/lives.integration.spec.ts`.
+In that scope the read passes every term of a viewer's gate: outside the moderator's audience, hidden
+by moderation, scheduled later, a block with the author, the "Entre etudiants" switch, comments
+withheld from a grant-only reader, a viewer the broadcaster REMOVED from the live. Out of scope - a
+BDE moderator of other spaces, a member without `MODERATE` - the read is the ordinary one, unchanged.
+Every read the moderation opened past a term is logged as the expected event it is
+(`[MODERATION_READ] <intent> post ... opened to ... as its moderator, past: ...`; the replay's
+`[LIVE_REPLAY] ... MODERATION READ by ...`). The SQL visibility predicate has no admin door left
+(`adminSeesAll` / `adminModerates` are deleted): the moderation read is `mayModeratePost`, nothing else.
+
+**PARTICIPATION IS UNCHANGED (2026-11-14).** Outside their own audience a moderator - admin or BDE -
+reacts, comments, votes, reports and republishes as the reader they are: the 404 an ordinary reader
+gets, since no write route asks the moderation read. The page tells the client so: `canParticipate`
+and `canReport` are false for a post served by the moderation read (`participableIds`, asked for an
+admin's page and for a BDE moderator's page holding a post they moderate), so the card is read-only
+and `ReplayPane` asks the replay's moderation read exactly then - no client test of "is admin". The
+moderation preview (`ModerationPostPreviewModal`) and "Voir le post" (`/posts/{id}`) ask the plain
+`getPost`, so both work for a BDE moderator in scope as for an admin.
+
+**What it hands out.** A replay's moderation read serves the page a viewer gets: the replay's KEY and
+its segment list, which decrypt the replay until it is purged. The charter's first principle,
+**1. "Vos messages sont à vous"** ([principes](../principes.md)), is why this is a regulator's
+decision and not a widening a screen may take on its own.
+
+Proved on the real scope predicate over PostgreSQL: `posts/post-openable.integration.spec.ts` (a BDE
+moderator in scope opens a hidden post and one outside its audience and lists their comments; out of
+scope and without `MODERATE`, the ordinary 404; outside its audience, refused a reaction, a comment
+and a vote) and `lives/lives.integration.spec.ts` (the replay, removed and blocked moderators
+included).
 
 #### Decided by the owner (2026-11-04)
 
@@ -423,7 +443,7 @@ window and count), `getById` and `pageComments` all apply it. The identity rules
 | --- | --- |
 | `listPosts` (4 feed arms) | the clause in the `WHERE`, never on the page after `LIMIT` - filtering a rendered page would hand back short pages |
 | `searchPosts` | same clause |
-| `getById` | `404`, not `403` - the refusal never says a block caused it. **A platform admin passes** (`allowHidden`, the flag that already opens a moderation-hidden post), so a reported post never 404s for the moderator who has to read it |
+| `getById` | `404`, not `403` - the refusal never says a block caused it. **Whoever moderates the post passes** (`mayModeratePost`, handed to the gate as `allowHidden`: [the moderation read](#the-moderation-read-of-a-post-its-comments-and-its-replay-owner-2026-11-15)), so a reported post never 404s for the moderator who has to read it |
 | `findPostLinkedToCalendarEvent` | same card, same clause |
 
 The **comment window and the comment count are both filtered in SQL**, in `postSelectBody`. They

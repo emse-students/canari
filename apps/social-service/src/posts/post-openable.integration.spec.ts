@@ -23,13 +23,17 @@
  *
  * Everything happens in a throwaway schema, dropped at the end.
  */
+import { Logger } from '@nestjs/common';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { Client } from 'pg';
 import type { EntityManager } from 'typeorm';
 import { readPostOpenVerdict, type OpenablePost } from './post-openable';
 import { PostNotificationsService } from './post-notifications.service';
+import { PostsService } from './posts.service';
 import { ModerationService } from '../moderation/moderation.service';
+import { AssociationsService } from '../associations/associations.service';
+import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -95,14 +99,14 @@ maybe("writes and notifications on a post follow the read's gate, against Postgr
         "displayName" varchar, "firstName" varchar, "lastName" varchar);
       CREATE TABLE associations (id uuid PRIMARY KEY, name varchar NOT NULL,
         type varchar NOT NULL DEFAULT 'association', "isBDE" boolean NOT NULL DEFAULT false,
-        archived boolean NOT NULL DEFAULT false);
+        archived boolean NOT NULL DEFAULT false, "parentAssociationId" uuid);
       CREATE TABLE posts (id uuid PRIMARY KEY, "authorId" varchar(255) NOT NULL,
         "associationId" uuid, "studentsOnly" boolean NOT NULL DEFAULT false, "reachPublic" varchar(16), "reachSpaces" jsonb, anonymous boolean NOT NULL DEFAULT false,
         "hiddenByModeration" boolean NOT NULL DEFAULT false, "scheduledAt" timestamp,
         kind varchar NOT NULL DEFAULT 'post', "expiresAt" timestamp,
         mentions text NOT NULL DEFAULT '', comments jsonb NOT NULL DEFAULT '[]');
       CREATE TABLE association_members (id serial PRIMARY KEY, "associationId" uuid NOT NULL,
-        "userId" varchar(255) NOT NULL);
+        "userId" varchar(255) NOT NULL, permissions int NOT NULL DEFAULT 0);
       CREATE TABLE user_follows ("followerUserId" varchar(255), "followedUserId" varchar(255),
         "createdAt" timestamp NOT NULL DEFAULT now(), id uuid NOT NULL DEFAULT gen_random_uuid());
       CREATE TABLE user_blocks ("blockerId" varchar(255), "blockedId" varchar(255));
@@ -285,6 +289,111 @@ maybe("writes and notifications on a post follow the read's gate, against Postgr
       ).rejects.toMatchObject({ status: 404 });
       expect(save).not.toHaveBeenCalled();
     });
+  });
+
+  describe('a BDE moderator by id: moderates within its spaces, never participates (owner, 2026-11-15)', () => {
+    // "Oui, dans ses espaces": the moderation read follows `mayModeratePost` - here the REAL one, the
+    // statement `AssociationsService.moderatedPostIds` runs, on this schema.
+    const BDE_SE = id(801);
+    const BDE_GA = id(802);
+    const MODERATE = AssociationPermissionFlag.MODERATE;
+    // All three live in Gardanne: outside every post's audience as readers.
+    const CAST = {
+      // MODERATE in the BDE governing the author's space (ICM x Saint-Etienne): in scope.
+      modInScope: BDE_SE,
+      // MODERATE in the BDE governing Gardanne ISMIN: out of scope for the author's posts.
+      modOutOfScope: BDE_GA,
+      // A member of the author's BDE with no MODERATE right.
+      plainMember: BDE_SE,
+    } as const;
+    let service: PostsService;
+
+    beforeAll(async () => {
+      await client.query(
+        `INSERT INTO associations (id, name) VALUES ($1, 'BDE SE'), ($2, 'BDE GA')`,
+        [BDE_SE, BDE_GA]
+      );
+      await client.query(
+        `UPDATE spaces SET "bdeAssociationId" = $1 WHERE formation = 'ICM' AND campus = 'saint-etienne'`,
+        [BDE_SE]
+      );
+      await client.query(
+        `UPDATE spaces SET "bdeAssociationId" = $1 WHERE formation = 'ISMIN' AND campus = 'gardanne'`,
+        [BDE_GA]
+      );
+      for (const [userId, bde] of Object.entries(CAST)) {
+        await client.query(`INSERT INTO users (id, campus, cursus) VALUES ($1, 'gardanne', $2)`, [
+          userId,
+          JSON.stringify(ISMIN_GA),
+        ]);
+        await client.query(
+          `INSERT INTO association_members ("associationId", "userId", permissions) VALUES ($1, $2, $3)`,
+          [bde, userId, userId === 'plainMember' ? 0 : MODERATE]
+        );
+      }
+      const scope = Object.assign(Object.create(AssociationsService.prototype), {
+        memberRepo: { query: (sql: string, params?: unknown[]) => manager.query(sql, params) },
+        logger: new Logger('post-openable-it-moderation-scope'),
+      }) as AssociationsService;
+      service = new PostsService(
+        {
+          manager,
+          findOne: async ({ where }: { where: { id: string } }) =>
+            (await client.query(`SELECT * FROM posts WHERE id = $1`, [where.id])).rows[0] ?? null,
+        } as never,
+        {} as never,
+        {} as never,
+        scope,
+        {} as never,
+        {} as never
+      );
+      // What is served is not this spec's question: whether the read opens is.
+      jest
+        .spyOn(service, 'serveToReader')
+        .mockImplementation(async (post) => ({ id: post.id }) as never);
+      Object.assign(service, { commentIdentityService: { serve: async (c: unknown[]) => c } });
+    });
+
+    afterAll(async () => {
+      await client.query(`UPDATE spaces SET "bdeAssociationId" = NULL`);
+    });
+
+    /** The HTTP answer of a call; anything that is not one (a SQL error) fails the test as itself. */
+    const status = (p: Promise<unknown>) =>
+      p.then(
+        () => 'open',
+        (e: { status?: number }) => {
+          if (typeof e.status !== 'number') throw e;
+          return e.status;
+        }
+      );
+
+    it('in scope, it opens by id a hidden post and one outside its audience, and lists their comments', async () => {
+      for (const postId of [P_PERSONAL, P_HIDDEN]) {
+        expect(await service.getById(postId, { viewerId: 'modInScope' })).toEqual({ id: postId });
+        await expect(service.listComments(postId, 'modInScope', {})).resolves.toMatchObject({
+          comments: expect.any(Array),
+        });
+      }
+      expect((await service.listComments(P_PERSONAL, 'modInScope', {})).comments).toHaveLength(2);
+    });
+
+    it.each(['modOutOfScope', 'plainMember'])(
+      '%s gets the ordinary answer: the 404 of an outsider, by id and on the comments',
+      async (who) => {
+        for (const postId of [P_PERSONAL, P_HIDDEN]) {
+          expect(await status(service.getById(postId, { viewerId: who }))).toBe(404);
+          expect(await status(service.listComments(postId, who, {}))).toBe(404);
+        }
+      }
+    );
+
+    it.each(['READ_OR_REACT', 'COMMENT', 'VOTE'] as const)(
+      'outside its audience, the moderator is refused a write of intent %s (no write asks the moderation read)',
+      async (intent) => {
+        expect(await status(service.assertVisible(P_PERSONAL, 'modInScope', intent))).toBe(404);
+      }
+    );
   });
 
   describe('a mention (`mentionRecipientsOf`)', () => {

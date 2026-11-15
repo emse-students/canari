@@ -246,7 +246,8 @@ describe('PostsService post management rights', () => {
    */
   describe('the content moderator tier (BDE MODERATE, scoped)', () => {
     it('may delete and pin a post of its spaces, may report it, and never edit it', async () => {
-      const { service } = makeService(assoPost, {}, ['bde']);
+      // A reader of the post too: a report is a reader's act (owner, 2026-11-15).
+      const { service } = makeService(assoPost, {}, ['bde'], [], ['bde']);
       await expect(service.getById('p1', { viewerId: 'bde' })).resolves.toMatchObject({
         canManage: true,
         canEdit: false,
@@ -410,6 +411,22 @@ describe('PostsService post management rights', () => {
       await expect(
         service.getById('p1', { viewerId: 'admin', isGlobalAdmin: true })
       ).resolves.toMatchObject({ canParticipate: true, canReport: true });
+    });
+
+    it('a BDE moderator outside the audience (moderation read only): no participation, no report (owner, 2026-11-15)', async () => {
+      const { service } = makeService(assoPost, {}, ['bdeMod']);
+      await expect(service.getById('p1', { viewerId: 'bdeMod' })).resolves.toMatchObject({
+        canParticipate: false,
+        canReport: false,
+      });
+    });
+
+    it('a BDE moderator inside their own audience participates and reports as the reader they are', async () => {
+      const { service } = makeService(assoPost, {}, ['bdeMod'], [], ['bdeMod']);
+      await expect(service.getById('p1', { viewerId: 'bdeMod' })).resolves.toMatchObject({
+        canParticipate: true,
+        canReport: true,
+      });
     });
   });
 
