@@ -987,19 +987,28 @@ export function reviewCohortAuthorFilterSql(
  * review account's live. No admin ever shares the review cohort's space (`review-cohort.ts`), so
  * without it a reported live of the cohort could be judged by nobody - moderation needs it. The
  * "Live now" list never passes it: browsing, an admin still sees only their own spaces.
+ *
+ * `followers: false` leaves the accepted followers of a member's live OUT: the part of the audience
+ * read from PROFILE facts alone. For an answer that goes back to someone else about an account they
+ * chose (`liveMentionRecipientsSql('suggest')`): who follows a person is that person's and the
+ * follower's to know, and nobody else's.
  */
 export function liveVisibleToUserSql(
   live: string,
   user: string,
-  opts: ReadOpts & { adminSeesCohort?: boolean } = {}
+  opts: ReadOpts & { adminSeesCohort?: boolean; followers?: boolean } = {}
 ): string {
   const cohortClause = opts.adminSeesCohort
     ? `
     OR (${isAdminSql(user)} AND ${inReviewCohortSql(`${live}."broadcasterId"`)})`
     : '';
+  const followerClause =
+    opts.followers === false
+      ? ''
+      : `
+      OR ${acceptedFollowerOfAuthorSql(`${live}."broadcasterId"`, user)}`;
   return `(${live}."broadcasterId" = ${user}.id${cohortClause}
-    OR (${live}."associationId" IS NULL AND (${sharesSpaceWithAuthorSql(`${live}."broadcasterId"`, user)}
-      OR ${acceptedFollowerOfAuthorSql(`${live}."broadcasterId"`, user)}))
+    OR (${live}."associationId" IS NULL AND (${sharesSpaceWithAuthorSql(`${live}."broadcasterId"`, user)}${followerClause}))
     OR (${live}."associationId" IS NOT NULL AND ${associationVisibleToUserSql(`${live}."associationId"`, user, { readGrants: opts.readGrants })}))`;
 }
 

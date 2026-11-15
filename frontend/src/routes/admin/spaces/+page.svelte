@@ -22,6 +22,7 @@
     campusCells,
     cellOf,
     coverage,
+    offersEveryone,
     reachedCells,
     toggleGroup,
     toRules,
@@ -35,6 +36,7 @@
   import AdminEntityCreateForm from '$lib/components/admin/spaces/AdminEntityCreateForm.svelte';
   import AdminDependenciesPanel from '$lib/components/admin/spaces/AdminDependenciesPanel.svelte';
   import { dependencyRefusalMessage } from '$lib/associations/dependencies';
+  import { audienceRefusalMessage } from '$lib/associations/audienceRefusal';
   import Picker from '$lib/components/ui/Picker.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
   import Button from '$lib/components/ui/Button.svelte';
@@ -221,7 +223,8 @@
       return true;
     } catch (e) {
       Log.d('admin.spaces.saveReach failed', e);
-      error = m.admin_audiences_save_error();
+      // The server's typed refusal says WHY (one campus only, everyone on an institution only).
+      error = audienceRefusalMessage(e) ?? m.admin_audiences_save_error();
       return false;
     } finally {
       busy = null;
@@ -443,17 +446,20 @@
                   </span>
                 </th>
                 <td class="px-1.5 py-2 text-center">
-                  <button
-                    type="button"
-                    disabled={busy === `${association.id}:all`}
-                    aria-pressed={everyone === 'all'}
-                    aria-label={m.admin_spaces_everyone_aria({ association: association.name })}
-                    onclick={() =>
-                      toggleReachGroup(association, ALL_CELLS, `${association.id}:all`)}
-                    class="{cellButton} {boxClass(everyone)}"
-                  >
-                    {#if everyone === 'some'}<Minus size={14} />{:else}<Check size={14} />{/if}
-                  </button>
+                  <!-- Institutions only: the server refuses `everyone` on anything else. -->
+                  {#if offersEveryone(association.type)}
+                    <button
+                      type="button"
+                      disabled={busy === `${association.id}:all`}
+                      aria-pressed={everyone === 'all'}
+                      aria-label={m.admin_spaces_everyone_aria({ association: association.name })}
+                      onclick={() =>
+                        toggleReachGroup(association, ALL_CELLS, `${association.id}:all`)}
+                      class="{cellButton} {boxClass(everyone)}"
+                    >
+                      {#if everyone === 'some'}<Minus size={14} />{:else}<Check size={14} />{/if}
+                    </button>
+                  {/if}
                 </td>
                 {#each CAMPUSES as campus (campus)}
                   {@const group = campusCells(campus)}

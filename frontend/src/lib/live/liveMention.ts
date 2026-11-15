@@ -47,7 +47,7 @@ let audienceFailing = false;
 
 /**
  * The picker's filter for a NAME SEARCH: the accounts the directory found, narrowed to those the live
- * lets a mention reach (`audienceOf` is the server's `mention-audience`). A failed ask offers
+ * lets the picker offer (`audienceOf` is the server's `mention-audience`). A failed ask offers
  * NOBODY from the directory - never an unfiltered list - and says so; the roster rows stay.
  */
 export function liveAudienceFilter(

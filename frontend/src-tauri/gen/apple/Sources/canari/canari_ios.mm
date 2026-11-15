@@ -716,7 +716,135 @@ static void CanariSafeAreaDidChange(id self, SEL _cmd) {
   CanariPublishSafeAreaInsets();
 }
 
-/// Installs both hooks on tao's controller, each once: the orientation mask and the safe-area change.
+/// A TURN SHOWS NO STALE LAYOUT (owner, iPhone 12 and Mi 9T, 2026-11-15: "Garder l'ancienne image
+/// jusqu'a la nouvelle"; screen-orientation.md, "A turn shows no stale frame"). UIKit turns the
+/// WebView's frame inside its rotation animation, but WebKit keeps drawing the page laid out at the
+/// OLD size until the web process commits one at the new size, so the turn ended on the old layout
+/// pinned to a corner beside empty space. Safari hides that with a private animated-resize API; the
+/// public form is to HOLD THE OLD PICTURE: the root view as it was (`snapshotViewAfterScreenUpdates:NO`)
+/// is laid over everything and counter-rotated by the inverse of the coordinator's `targetTransform`
+/// alongside UIKit's own animation, so it stays exactly where it was on the glass while the interface
+/// turns under it. It is released by two proofs, the Android mechanism's, never by a delay:
+///
+/// 1. the PAGE has the new width (`CanariTurnPageAtWidth`: `callAsyncJavaScript` resolving once
+///    `innerWidth` is the WebView's width within one CSS px, now or on a `resize`) - a screen-update
+///    proof alone can be answered before the web process has the new size, which Android measured
+///    (2 turns in 8 answered by an old-size frame). Only the width: the keyboard path moves the
+///    WebView's height, never its width, so the height is not a size this proof can wait for;
+/// 2. then WebKit has put its pending updates on screen (`CanariAfterScreenUpdates`, the keyboard
+///    path's proof).
+///
+/// THE LIMIT, stated: no public iOS event says the web process is hung (Android has
+/// `onRenderProcessUnresponsive`), so a WebContent process that stops answering without crashing
+/// keeps the old picture until it answers - a crash or a navigation does end the script with an error.
+///
+/// A failed script (a navigation or a WebContent crash ends it with an error) releases at ERROR: no
+/// answer can come. Only a turn is held: the shape flips AND the interface rotates (a non-identity
+/// `targetTransform`) - a keyboard, an iPad Split View or a Stage Manager resize is not one. ANY transition while a picture is held drops it first, with a line - a 180-degree turn or an
+/// interrupting one would otherwise leave it counter-rotated by the wrong angle - and supersedes the
+/// held turn's proofs.
+typedef void (*CanariWillTransitionIMP)(id, SEL, CGSize, id<UIViewControllerTransitionCoordinator>);
+static CanariWillTransitionIMP CanariOrigWillTransition = NULL;
+static UIView *g_canariTurnHold = nil;
+static NSUInteger g_canariTurnSeq = 0;
+
+/// Calls `then` once the page's layout viewport is `width` CSS px wide (within one), or with the
+/// script's error. One shared definition with Android's `pageMatchesBox`: within one CSS px.
+static void CanariTurnPageAtWidth(WKWebView *webView, CGFloat width, void (^then)(NSError *error)) {
+  NSString *body =
+      @"return await new Promise(function (done) {"
+       "  function check() {"
+       "    if (Math.abs(innerWidth - width) <= 1) { removeEventListener('resize', check); done(innerWidth); }"
+       "  }"
+       "  addEventListener('resize', check);"
+       "  check();"
+       "});";
+  [webView callAsyncJavaScript:body
+                     arguments:@{@"width" : @(width)}
+                       inFrame:nil
+                inContentWorld:WKContentWorld.pageWorld
+             completionHandler:^(__unused id result, NSError *error) {
+               then(error);
+             }];
+}
+
+static void CanariWillTransitionToSize(id self, SEL _cmd, CGSize size,
+                                       id<UIViewControllerTransitionCoordinator> coordinator) {
+  CanariOrigWillTransition(self, _cmd, size, coordinator);
+  if (g_canariTurnHold != nil) {
+    NSLog(@"[CanariOrientation] turn %lu: a new transition began while its old picture was held - dropped",
+          (unsigned long)g_canariTurnSeq);
+    [g_canariTurnHold removeFromSuperview];
+    g_canariTurnHold = nil;
+    g_canariTurnSeq += 1;
+  }
+  UIView *root = ((UIViewController *)self).view;
+  WKWebView *webView = CanariFindWebView();
+  CGSize old = root.bounds.size;
+  if (webView == nil || root == nil || old.width <= 0 || old.height <= 0 || size.width <= 0 ||
+      size.height <= 0 || (old.width > old.height) == (size.width > size.height)) {
+    return;
+  }
+  if (CGAffineTransformIsIdentity(coordinator.targetTransform)) {
+    // The shape flipped with no rotation: an iPad Split View or Stage Manager resize, Android's
+    // `isUnrotatedFlip`. Not a turn, so not held - and said, since a missed turn would look the same.
+    NSLog(@"[CanariOrientation] %.0fx%.0f -> %.0fx%.0f pt with no rotation (a window resize) - not held",
+          old.width, old.height, size.width, size.height);
+    return;
+  }
+  NSUInteger seq = ++g_canariTurnSeq;
+  UIView *hold = [root snapshotViewAfterScreenUpdates:NO];
+  if (hold == nil) {
+    NSLog(@"[CanariOrientation] ERROR turn %lu: no snapshot of the screen - the turn shows WebKit's old layout",
+          (unsigned long)seq);
+    return;
+  }
+  hold.userInteractionEnabled = NO;
+  hold.bounds = CGRectMake(0, 0, old.width, old.height);
+  hold.center = CGPointMake(old.width / 2.0, old.height / 2.0);
+  [root addSubview:hold];
+  g_canariTurnHold = hold;
+  NSLog(@"[CanariOrientation] turn %lu: %.0fx%.0f -> %.0fx%.0f pt, the old picture held until WebKit has its new layout on screen",
+        (unsigned long)seq, old.width, old.height, size.width, size.height);
+  CFTimeInterval started = CACurrentMediaTime();
+  CGAffineTransform counter = CGAffineTransformInvert(coordinator.targetTransform);
+  void (^release)(NSString *) = ^(NSString *how) {
+    if (seq != g_canariTurnSeq) return;
+    [hold removeFromSuperview];
+    if (g_canariTurnHold == hold) g_canariTurnHold = nil;
+    NSLog(@"[CanariOrientation] turn %lu: %@ %.0f ms after the turn began - old picture released", (unsigned long)seq,
+          how, (CACurrentMediaTime() - started) * 1000.0);  // log-safe: a turn counter, a fixed phrase and a duration
+  };
+  [coordinator
+      animateAlongsideTransition:^(__unused id<UIViewControllerTransitionCoordinatorContext> context) {
+        hold.transform = counter;
+        hold.center = CGPointMake(CGRectGetMidX(root.bounds), CGRectGetMidY(root.bounds));
+      }
+      completion:^(__unused id<UIViewControllerTransitionCoordinatorContext> context) {
+        if (seq != g_canariTurnSeq) return;
+        CanariTurnPageAtWidth(webView, webView.bounds.size.width, ^(NSError *pageError) {
+          if (seq != g_canariTurnSeq) return;
+          if (pageError != nil) {
+            NSLog(@"[CanariOrientation] ERROR turn %lu: the page could not answer its width (%@) - released WITHOUT the proof",
+                  (unsigned long)seq, CanariErrorReason(pageError));
+            release(@"no answer can come,");
+            return;
+          }
+          NSLog(@"[CanariOrientation] turn %lu: the page is at the new width %.0f ms after the turn began - waiting for the screen",
+                (unsigned long)seq, (CACurrentMediaTime() - started) * 1000.0);  // log-safe: a turn counter and a duration
+          CanariAfterScreenUpdates(webView, ^(__unused double proofMs, NSError *error) {
+            if (error != nil) {
+              NSLog(@"[CanariOrientation] ERROR turn %lu: the screen-update proof failed (%@) - released on its answer",
+                    (unsigned long)seq, CanariErrorReason(error));
+            }
+            release(@"new layout on screen");
+          });
+        });
+      }];
+}
+
+/// Installs the hooks on tao's controller, each once: the orientation mask, the safe-area change and
+/// the turn's held picture.
 static void CanariInstallOrientationHook(NSString *where) {
   if (CanariOrigSupportedOrientations == NULL) {
     CanariOrigSupportedOrientations = (CanariSupportedOrientationsIMP)CanariHookTaoController(
@@ -726,6 +854,11 @@ static void CanariInstallOrientationHook(NSString *where) {
   if (CanariOrigSafeAreaDidChange == NULL) {
     CanariOrigSafeAreaDidChange = (CanariSafeAreaDidChangeIMP)CanariHookTaoController(
         @selector(viewSafeAreaInsetsDidChange), (IMP)CanariSafeAreaDidChange, @"safe-area", where);
+  }
+  if (CanariOrigWillTransition == NULL) {
+    CanariOrigWillTransition = (CanariWillTransitionIMP)CanariHookTaoController(
+        @selector(viewWillTransitionToSize:withTransitionCoordinator:), (IMP)CanariWillTransitionToSize,
+        @"turn-hold", where);
   }
 }
 

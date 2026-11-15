@@ -32,6 +32,13 @@ export const AUDIENCE_ERROR = {
   RULE_BEYOND_BDE_SPACES: 'AUDIENCE_RULE_BEYOND_BDE_SPACES',
   /** Neither a global admin nor the holder of MANAGE_ASSO in any BDE. */
   ADMIN_OR_BDE_REQUIRED: 'AUDIENCE_ADMIN_OR_BDE_REQUIRED',
+  /** Rules on two campuses on anything but an institution (decision 3). */
+  ONE_CAMPUS_ONLY: 'AUDIENCE_ONE_CAMPUS_ONLY',
+  /**
+   * A creation under a parent that governs spaces of two campuses, by a creator whose profile names
+   * neither: the default cannot pick the campus. A platform admin creates it with a placement.
+   */
+  DEFAULT_CAMPUS_UNDECIDED: 'AUDIENCE_DEFAULT_CAMPUS_UNDECIDED',
 } as const;
 
 /**
@@ -44,9 +51,14 @@ export function isEveryoneRule(rule: RuleLike): boolean {
 }
 
 /**
- * Refuses an `everyone` rule on any entity that is not an institution (decision 6). The UI hiding
- * the preset is not the rule: this runs on EVERY audience write, so a hand-written request is
- * refused here.
+ * What the TYPE of an entity allows its audience to be, on EVERY audience write and at creation, for
+ * a platform admin too - the UI hiding a preset is not the rule, so a hand-written request is
+ * refused here. Anything that is not an institution (an association, a list, whatever type comes
+ * next) addresses ONE campus:
+ * - no `everyone` rule (decision 6);
+ * - no rules on two campuses (decision 3: an association present on two campuses is TWO
+ *   associations, partners on a shared event - never one entity with a multi-campus audience).
+ * An institution may hold both.
  */
 export function assertAudienceAllowedForType(type: string, rules: readonly RuleLike[]): void {
   if (type === 'institution') return;
@@ -57,6 +69,38 @@ export function assertAudienceAllowedForType(type: string, rules: readonly RuleL
         'Only an institution may address everyone; an association or a list addresses a campus.',
     });
   }
+  // Past the check above no rule has a null campus; the filter keeps this count right whatever
+  // order the two checks are ever put in.
+  if (new Set(rules.map((r) => r.campus).filter((c) => c !== null)).size > 1) {
+    throw new BadRequestException({
+      code: AUDIENCE_ERROR.ONE_CAMPUS_ONLY,
+      message: 'An association or a list addresses one campus; present on two, it is two entities.',
+    });
+  }
+}
+
+/**
+ * The spaces a new entity's default audience is derived from, out of the spaces its PARENT governs:
+ * all of them when they lie on one campus; when they span two, the ones of the CREATOR's campus -
+ * an association or a list addresses one campus (decision 3), and the creation form asks for none,
+ * so the creator's own campus is the one fact that decides (taken by the lead under the owner's
+ * absence rule, 2026-11-15, reversible). A creator whose profile names neither campus is refused,
+ * typed, with what to do: the default is never guessed.
+ */
+export function defaultSpacesFromParent<T extends { campus: string }>(
+  governed: readonly T[],
+  creatorCampus: string | null
+): T[] {
+  const campuses = new Set(governed.map((s) => s.campus));
+  if (campuses.size <= 1) return [...governed];
+  if (creatorCampus !== null && campuses.has(creatorCampus)) {
+    return governed.filter((s) => s.campus === creatorCampus);
+  }
+  throw new BadRequestException({
+    code: AUDIENCE_ERROR.DEFAULT_CAMPUS_UNDECIDED,
+    message:
+      'This BDE governs spaces on two campuses and your profile names neither: ask a platform admin to create it on the campus it belongs to.',
+  });
 }
 
 /**

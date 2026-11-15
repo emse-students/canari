@@ -350,6 +350,9 @@ early costs one re-walk per account that had not migrated - never a lost message
 `DailySightings` in `associations.controller.ts`), `POST calendar/feed-signature` and
 `AssociationsService.signAgendaFeedSelection`, and `legacyAgendaLinkShape` / `logDigest`
 (`agenda-signature.ts`).
+**What a `sig` read is answered:** a link names no holder, so the JSON feed answers it the events
+with every field naming an account (`createdBy`, `validatedBy`, `rejectedBy`) at `null`
+(`withoutAccountIds`); the `.ics` never carried one.
 **What it humours:** a calendar subscription saved from a selection link (`?campus=..&formation=..`,
 `?campus=..`, `?associationId=..` with `&sig=`, D40 amended 2026-10-06), and a store build older than
 the token link, whose modal still asks `feed-signature` and builds such links. Since 2026-11-14 a link

@@ -103,6 +103,7 @@ import {
   logDigest,
   verifiedAgendaSubscriptionId,
   withEventIcsSig,
+  withoutAccountIds,
 } from './agenda-signature';
 import type { AgendaSubscriptionRow } from './associations.service';
 
@@ -424,13 +425,15 @@ export class AssociationsController {
         (await this.service.canViewPendingCalendarEvents(userId.trim())) ||
         (await this.service.isUserBdeAdmin(userId.trim()));
     }
-    return withEventIcsSig(
+    const events = withEventIcsSig(
       await this.service.listAggregatedCalendarFeed(from, to, associationId, {
         includePending: include,
         viewer: { userId: userId?.trim(), isGlobalAdmin: ga === 'true' },
         selection,
       })
     );
+    // A read with no holder (a legacy `sig` link) is answered the events and no account.
+    return signedIn ? events : withoutAccountIds(events);
   }
 
   /**

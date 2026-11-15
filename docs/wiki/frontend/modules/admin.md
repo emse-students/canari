@@ -166,6 +166,11 @@ write, a click while busy is put back and sends nothing, a switch line of the jo
 refused here: its `MANAGE_ASSO` creates through `POST /associations`, in its own campus
 ([association-permissions](../../association-permissions.md#creating-an-entity-two-routes-two-tiers)).
 
+- **The grid offers the `everyone` box to institutions only** (taken by the lead under the owner's
+  absence rule, 2026-11-15, reversible): the server refuses that rule on an association or a list for
+  a platform admin too (decision 6), so the box was a control that could only fail. `offersEveryone`
+  (`audienceRules.ts`) decides; the cell stays in the row, empty, so the columns keep their place.
+  The campus and formation boxes are unchanged.
 - **Every row has two links**: the public page and the management hub, both under the base of its kind
   (`entityBase`: `/lists` for a list, `/associations` otherwise). The management page admits a non-member
   platform admin (`canEdit = isGlobalAdmin() || ...`, then `editRights`, which reads `isGlobalAdmin`

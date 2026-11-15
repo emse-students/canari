@@ -4,6 +4,7 @@ import {
   campusCells,
   cellOf,
   coverage,
+  offersEveryone,
   reachChoiceToRules,
   reachedCells,
   toggleGroup,
@@ -61,6 +62,15 @@ describe('audience rules as pairs', () => {
     const some = new Set([cellOf('ICM', 'gardanne')]);
     expect(coverage(campus, some)).toBe('some');
     expect(coverage(campus, toggleGroup(some, campus))).toBe('all');
+  });
+});
+
+describe('who a grid offers the everyone box to', () => {
+  it('offers it to an institution alone: what the server would refuse is not offered', () => {
+    expect(offersEveryone('institution')).toBe(true);
+    for (const type of ['association', 'list', 'a type added later']) {
+      expect(offersEveryone(type)).toBe(false);
+    }
   });
 });
 

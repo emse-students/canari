@@ -34,18 +34,11 @@ through its event's card). What is left, each a defect to fix or a decision alre
 
 ### Dead zones and inconsistencies
 
-- **A stored formation criterion can match nobody**: a form's `formation.values` accepts any string,
-  so one saved with the legacy `Master` refuses every submitter.
-- **A default audience may be "everyone" on an association**: `smallestRules` collapses "all ten
-  spaces" to the (NULL, NULL) rule, which `setAudiences` refuses for the same type - latent, no BDE
-  governs ten spaces.
-- **Decision 3 (one campus per association or list) is half enforced** (P5 of the reform): two
-  whole-campus rules pass.
-- **`/admin/spaces` offers "everyone" to associations and lists** and shows a generic error where
-  the server answers a typed refusal.
 - **A nickname report reaches no BDE moderator** (`reportInBdeScopeSql` has no branch for it): the
   platform admin alone sees it.
-- **A follower's own unfollow and a profile correction do not drop the feed cache** (30 s).
+- **A profile correction does not drop the feed cache** (30 s, the bound
+  [profiles-and-access](../profiles-and-access.md) states); a follow that begins or ends now drops
+  its reader's pages.
 
 ### Closed by the owner, 2026-11-14
 
