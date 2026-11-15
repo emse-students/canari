@@ -41,12 +41,17 @@ Quoted as given; the grids below apply them. 1 to 11 were taken first; 12 to 18 
 questions the first draft of this page left open, the same day.
 
 1. **The principle above**, "Chaque lieu se regule seul".
-2. **The moderation READ follows `mayModeratePost`.** A hidden post, its comments, a replay: a BDE
-   moderator reads them within its scope, every read logged; the platform admin participates only as
-   an ordinary reader. **Being built by [PR #3561](https://github.com/emse-students/canari/pull/3561)
-   (post, comments, replay)**, open on 2026-11-15 (owner, on the replay: *"La moderation des lives doit
-   avoir le meme regulateur que les posts. Donc ouvrir."*) - not planned again here; the gap stays
-   tracked under the tag `[3561]` until it merges.
+2. **The moderation READ follows the post's own regulator.** A hidden post, its comments, a replay:
+   a BDE moderator reads them within its scope, every read logged; the platform admin participates
+   only as an ordinary reader. A replay is not a case apart (owner, 2026-11-15: *"La moderation des
+   lives doit avoir le meme regulateur que les posts. Donc ouvrir."*, then *"Une rediff de live est un
+   post/CanaReel comme les autres"*): its `?moderation=true` read asks the SAME predicate as the
+   post's, `AssociationsService.mayReadToModeratePost`, and hands out the replay's key under it. One
+   exclusion, the same everywhere (owner, 2026-11-15: *"Exclure les posts programmes"*): a BDE
+   moderator does not read a post scheduled later until it is published, unless an OPEN report
+   targets it; the platform admin's read is unchanged. Built by
+   [PR #3561](https://github.com/emse-students/canari/pull/3561); the mechanism is in
+   [moderation-and-blocking](moderation-and-blocking.md#the-moderation-read-of-a-post-its-comments-and-its-replay-owner-2026-11-15).
 3. **An institution's `MODERATE` member does NOT moderate students.** The door and the scope count
    only governors of type `association` (`governorIsAnAssociationSql`); a space with no BDE stays with
    the platform admin. [WP](backlog.d/p1-institution-moderators-moderate-their-own-content-not-students.md).
@@ -139,8 +144,8 @@ questions the first draft of this page left open, the same day.
 ## The grids
 
 Cell legend: **yes** / **no** / **-** (does not apply). **A cell is a GAP if and only if it carries a
-bracketed tag** (`[IM]`, `[3561]`, ...): its text gives the target and `today: ...`, and the tag names
-the work package - or, for `[3561]`, the open pull request - that closes it. A tag is upper-case
+bracketed tag** (`[IM]`, `[WR]`, ...): its text gives the target and `today: ...`, and the tag names
+the work package that closes it. A tag is upper-case
 letters or digits between square brackets that are not the text of a link (a link's text is followed
 by its target in parentheses, a tag never is); no other cell of a grid holds one. `in scope` means the scope of the role, as
 the table above defines it.
@@ -149,9 +154,9 @@ the table above defines it.
 
 | Action | AP | BM | IM (own institution's post) | HO | AU (personal) | RD |
 | --- | --- | --- | --- | --- | --- | --- |
-| Moderation read: a hidden or out-of-audience post, its comments, its replay - logged | yes (P1) | **yes in scope** (today: no, P1) [3561] | **yes** (today: no) [IM] | no | no | no |
+| Moderation read: a hidden or out-of-audience post, its comments, its replay - logged | yes (P1) | yes in scope (P1) | **yes** (today: no) [IM] | no | no | no |
 | Read one's own hidden post, CanaReel or replay, read-only (principle 1: it is theirs) - the lead's reading, reversible | no | no | no | **yes**, a post in its name (today: no, P1) [NOTICE] | **yes** (today: no, P1) [NOTICE] | no |
-| Participate (react, comment, vote, report) outside the audience | **no** (today: yes, P2) [3561] | no | no | no | - | no |
+| Participate (react, comment, vote, report) outside the audience | no (P2) | no | no | no | - | no |
 | Hide / unhide | yes | yes in scope (P3) | **yes** (today: no, AP only, P4) [IM] | no | no | no |
 | Delete | yes | yes in scope (P5) | **yes** (today: only if HO too) [IM] | yes | yes | no |
 | Unmask an anonymous post (one-way) | yes | yes in scope (P6) | - | - | no | no |
@@ -161,8 +166,8 @@ the table above defines it.
 | Pin in a space (a promotion, not moderation) | yes | yes in its BDE's spaces, any publisher (P10) | no | no | no | no |
 | Auto-hide | - | - | - | - | - | 5 pending reports hide it (P11) |
 
-- (P1) `SS/posts/posts.controller.ts` `getPost` passes `allowHidden` for `x-global-admin` only; `SS/posts/post-openable.ts` refuses `hidden` otherwise. A BM judges from the 250-character preview of the queue and the bare markdown of `GET /posts/hidden`. Being built by [PR #3561](https://github.com/emse-students/canari/pull/3561) (post, comments, replay), open (decision 2).
-- (P2) `readPostOpenVerdict` passes `adminSeesAll: true` for every intent (`SS/posts/post-openable.ts`); #3561 keeps it to the moderation read.
+- (P1) `SS/posts/posts.service.ts` `moderatesPost` asks `AssociationsService.mayReadToModeratePost` and hands the answer to `readPostOpenVerdict` as `allowHidden`, logged `[MODERATION_READ]`; the hidden-posts list and a reported post's preview in the queue ask the same term (`bdeModerationReadsPostSql`). A BM does not read a post scheduled later unless it is published or an open report targets it (decision 2). Asserted in `SS/posts/post-openable.integration.spec.ts`.
+- (P2) No write passes `allowHidden`: outside its audience a moderator, the AP included, is refused a reaction, a comment, a vote and a report like any reader (`SS/posts/post-openable.ts`; same spec).
 - (P3) `assertModeratesPost` -> `mayModeratePost` (`SS/posts/posts.controller.ts`, hide/unhide/unmask routes).
 - (P4) `bdeModeratesPublisherSql` is false for an institution (`governingBdeJoinSql`: `child.type <> 'institution'`), so `refuseModeration` answers `MODERATION_RESERVED_TO_PLATFORM_ADMIN`.
 - (P5) `assertMayManage` (`SS/posts/posts.service.ts`): AP, `isPublisherOf`, or `mayModeratePost`.
@@ -179,7 +184,7 @@ the table above defines it.
 
 | Action | AP | BM (post AND comment's publisher in scope) | IM (under its own post, or in its name) | Place owner | HO of the comment's association | AU of the comment | RD |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Moderation read under a hidden post | yes (C1) | **yes in scope** (today: no, C1) [3561] | **yes** (today: no) [IM] | no | no | no | no |
+| Moderation read under a hidden post | yes (C1) | yes in scope (C1) | **yes** (today: no) [IM] | no | no | no | no |
 | See the real writer (anonymous, association) | yes (C2) | yes in scope (C2) | **yes** (today: no) [IM] | no, never | no | yes, their own | no |
 | Hide another's comment, silently (decisions 5, 15) | (delete covers it) | (delete covers it) | (delete covers it) | **yes** (today: no, C3) [HIDE] | - | - | no |
 | Restore a comment the place owner hid, silently (decision 15) | **yes** (today: no hide exists) [HIDE] | **yes in scope** (today: the same) [HIDE] | **yes** (today: the same) [HIDE] | **yes** (today: the same) [HIDE] | - | no | no |
@@ -188,7 +193,7 @@ the table above defines it.
 | Delete from the reports queue | yes | yes in scope (C7) | **yes** (today: no) [IM] | - | - | - | - |
 | Auto-hide | - | - | - | - | - | - | **5 pending reports hide it**; a moderator restores it, the lead's reading (today: never, C8) [AUTOHIDE] |
 
-- (C1) `SS/posts/posts.service.ts` `listComments`: `allowHidden` = `opts.isGlobalAdmin`. Being built by #3561 (decision 2).
+- (C1) `SS/posts/posts.service.ts` `listComments` asks the post's own moderation read (`moderatesPost`, decision 2); the thread is served read-only where the moderator may not participate.
 - (C2) `seesAccount` (`SS/posts/comment-identity.ts`); the post's author has no reveal right.
 - (C3) `commentRights` (`SS/posts/comment-identity.ts`) knows only the comment's author and its moderators; no column and no route hide a comment.
 - (C4) `commentRights.canDelete`, `bdeModeratesCommentSql`, `planCommentRemoval` (`SS/posts/comment-removal.ts`).
@@ -202,7 +207,7 @@ the table above defines it.
 | Action | AP | BM | IM (own institution's live) | HO (association / institution live, not broadcasting) | BC | RD |
 | --- | --- | --- | --- | --- | --- | --- |
 | Watch outside the audience | no (review cohort only, L1) | no | no | no | yes | no |
-| Moderation read of a replay | **yes** (today: yes outside the audience, never once hidden, L7) [3561] | **yes in scope** (today: no, L7) [3561] | **yes** (today: no) [IM] | no | no | no |
+| Moderation read of a replay | yes (L7) | yes in scope (L7) | **yes** (today: no) [IM] | no | no | no |
 | Read one's own hidden replay, read-only (principle 1: it is theirs) - the lead's reading, reversible, as for a post | no | no | no | **yes**, a live in its name (today: no, L7) [NOTICE] | **yes** (today: no, L7) [NOTICE] | no |
 | End the live | via a cut | via a cut | via a cut | **yes** (today: no, L2) [LIVE] | yes | no |
 | Cut (ends it, records a strike) | yes | yes in scope (L3) | **yes** (today: no) [IM] | no | - | no |
@@ -219,7 +224,7 @@ the table above defines it.
 - (L4) `LiveChatService` hide: `own || isStaff`, refused 410 once `endedAt` is set, staff included.
 - (L5) `POST /lives/:id/removed-viewers`: `LivesService.removeViewer` answers 404 to anyone but the broadcaster.
 - (L6) `POST /lives/broadcasters/:userId/withdrawal`: `assertStaff`, then `mayModerateUser`.
-- (L7) The replay read (`SS/lives/lives.service.ts`) calls `readPostOpenVerdict` without `allowHidden` (a hidden replay is refused to everyone) and with `adminSeesAll` (the AP passes the audience). Being built by #3561 (decision 2).
+- (L7) The replay read (`SS/lives/lives.service.ts` `replay`, `?moderation=true`) asks `mayReadToModeratePost` on the replay's post - the predicate of a post by id, decision 2 - past a removal, a block and the audience, logged `[LIVE_REPLAY] ... MODERATION READ`; without the flag, or for someone who does not moderate the post, the ordinary gate decides. Asserted in `SS/lives/lives.integration.spec.ts` (a BM in scope reads, one out of scope does not).
 
 ### Agenda events
 
@@ -346,7 +351,6 @@ moderation read (`allowHidden` passes it, `SS/posts/post-openable.ts`). Unchange
 
 | Tag | Gap | Closed by | Target |
 | --- | --- | --- | --- |
-| `3561` | a BM cannot read what it moderates (a hidden post, its comments, a replay); the AP participates outside its audience | [PR #3561](https://github.com/emse-students/canari/pull/3561), open - if it stalls, this row becomes a work package | - |
 | `GRID` | nothing asserts this page | [the grid as table-driven specs](backlog.d/the-moderation-authority-grid-is-asserted-by-table-driven-specs.md) | `1.8.0` |
 | `IM` | an institution's MODERATE moderates students, and not its own content | [institution moderators](backlog.d/p1-institution-moderators-moderate-their-own-content-not-students.md) | `1.8.0` |
 | `WR` | an association post's writer: hidden from moderators on the card, raw on `/posts/hidden` | [the writer and the hidden list](backlog.d/p1-hidden-posts-list-serves-an-association-post-s-raw-writer.md) | `1.8.0` |
@@ -391,5 +395,5 @@ after a row and a column of this page, run on the real predicates:
   adds and removes; a platform admin is refused like any non-member.
 
 **A gap is countable**: every grid cell carrying a bracketed tag is one `it.todo` naming that tag (a
-cell with two tags is one row per tag), and the work package - or #3561 - turns its rows into
+cell with two tags is one row per tag), and the work package turns its rows into
 assertions in the pull request that closes it.

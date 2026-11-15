@@ -72,6 +72,12 @@
     onEdit: (commentId: string, text: string) => Promise<void>;
     onDelete: (commentId: string) => Promise<void>;
     onReport?: (commentId: string) => void;
+    /**
+     * READ-ONLY: the reader may read this thread but not act in it - a platform admin reading a post
+     * outside their own audience to moderate it (`canParticipate` false, 2026-11-14). No reply, like,
+     * edit or report control; a delete the server grants (moderation) stays.
+     */
+    readOnly?: boolean;
   }
 
   let {
@@ -88,6 +94,7 @@
     onEdit,
     onDelete,
     onReport,
+    readOnly = false,
   }: Props = $props();
 
   const authorName = $derived(commentAuthorName(comment));
@@ -313,15 +320,17 @@
            act on it until it exists. `tap-target` gives each small control a 44px hit box on a touch
            screen without changing how it is drawn. -->
         {#if !isPending}
-          <button
-            type="button"
-            onclick={() => onReply(comment)}
-            class="tap-target text-text-muted hover:text-text-main text-2xs font-bold transition-colors outline-none focus-visible:underline"
-          >
-            {m.post_reply_label()}
-          </button>
+          {#if !readOnly}
+            <button
+              type="button"
+              onclick={() => onReply(comment)}
+              class="tap-target text-text-muted hover:text-text-main text-2xs font-bold transition-colors outline-none focus-visible:underline"
+            >
+              {m.post_reply_label()}
+            </button>
+          {/if}
 
-          {#if comment.canEdit && !editing}
+          {#if comment.canEdit && !editing && !readOnly}
             <button
               type="button"
               onclick={startEdit}
@@ -341,7 +350,7 @@
               <Trash2 size={12} strokeWidth={2.5} />
             </button>
           {/if}
-          {#if !comment.canEdit && onReport}
+          {#if !comment.canEdit && onReport && !readOnly}
             <button
               type="button"
               onclick={() => onReport?.(comment.id)}
@@ -353,12 +362,14 @@
             </button>
           {/if}
 
-          <CommentLikeButton
-            {liked}
-            count={likeCount}
-            onLike={() => onLike(comment.id)}
-            class="ml-auto"
-          />
+          {#if !readOnly}
+            <CommentLikeButton
+              {liked}
+              count={likeCount}
+              onLike={() => onLike(comment.id)}
+              class="ml-auto"
+            />
+          {/if}
         {/if}
       </div>
     {/if}
@@ -397,6 +408,7 @@
               {onEdit}
               {onDelete}
               {onReport}
+              {readOnly}
             />
           {/each}
         </div>
