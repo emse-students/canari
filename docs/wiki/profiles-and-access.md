@@ -3093,5 +3093,5 @@ opening reaches nobody it no longer admits. **Break-proof, run 2026-11-13**: wit
 `institutionReachHoldsSpaceSql` always true, 11 of 11 fail; with `institutionReachAdmitsUserSql`
 always true, 11 of 11; with the selection exemption put back in the anonymous clause, the
 selection-feed test fails. The readings owed on a phone are in
-[the backlog](backlog.d/institution-event-reach.md).
+the readings were all read on 2026-11-14 (the entry is deleted).
 

@@ -35,8 +35,18 @@ describe('PostInteractionsService - comment identity', () => {
       ),
       // The daily cap, proven in `engagement-push-cap.integration.spec.ts`: open here.
       withinPushBudget: jest.fn((_type: string, ids: string[]) => Promise.resolve(ids)),
+      // The post's author is told through the per-post notice (owner, 2026-11-14), proven in
+      // `post-activity-notice.integration.spec.ts`: its row and its push are recorded here.
+      notifyPostActivity: jest.fn(),
     };
-    const push = { notifyContent: jest.fn(() => Promise.resolve()) };
+    const push = { notifyContent: jest.fn((..._args: unknown[]) => Promise.resolve()) };
+    notifications.notifyPostActivity.mockImplementation(
+      async (n: Record<string, unknown> & { content: (others: number) => unknown }) => {
+        created.push(n);
+        await push.notifyContent(n.recipientId, n.content(0), {});
+        return { alert: true, others: 0 };
+      }
+    );
     const query = jest.fn((sql: string) =>
       Promise.resolve(sql.includes('FROM associations') ? [{ name: 'BDE' }] : [])
     );

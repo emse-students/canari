@@ -228,6 +228,26 @@ describe('fetchUserProfile', () => {
   );
 
   it(
+    'an id the server names as malformed is a defect: not deleted, not absent, asked again',
+    async () => {
+      const apiFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ users: [], deleted: [], malformed: ['Jean Dupont'] }),
+      });
+      const mod = await load(apiFetch);
+
+      const first = await mod.fetchUserProfile('Jean Dupont').catch((e: unknown) => e);
+      await mod.fetchUserProfile('Jean Dupont').catch(() => undefined);
+
+      expect(first).toBeInstanceOf(mod.MalformedUserIdError);
+      expect(mod.isDeletedAccountError(first)).toBe(false);
+      expect(mod.isAbsentUserError(first)).toBe(false);
+      expect(apiFetch).toHaveBeenCalledTimes(2);
+    },
+    IMPORT_HEAVY_MS
+  );
+
+  it(
     'an older server with no `deleted` field answers an absent id as a quiet, cached 404',
     async () => {
       // Rolling deploy, rollback, or a store build live before production: the old answer shape.

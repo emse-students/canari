@@ -62,6 +62,7 @@ import { DeviceSessionsNotEndedError, endDeviceSessions } from '../internal/devi
 import type { RevocationReason } from '../entities/revoked-device.entity';
 import { RefusalCode } from '../utils/refusal-codes';
 import { upsertDeviceKeyPackage } from '../utils/device-key-package';
+import { RouteParams } from '../common/route-params';
 
 /**
  * Why a device cannot be handed a KeyPackage right now - and whether that is for ever.
@@ -78,6 +79,7 @@ export type KeyPackageRefusal = 'revoked' | 'unregistered' | 'expired';
 export type KeyPackageResolution = { keyPackage: string } | { refusal: KeyPackageRefusal };
 
 /** Device registration, key packages, device metadata, and device deletion. */
+@RouteParams({ userId: 'opaque', deviceId: 'opaque' })
 @Controller()
 export class DevicesController {
   private readonly logger = new Logger(DevicesController.name);

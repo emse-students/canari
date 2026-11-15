@@ -7,6 +7,7 @@ vi.mock('$lib/stores/user', () => ({
   getSavedDisplayName: vi.fn(() => null),
   fetchUserProfile: vi.fn(),
   isAbsentUserError: () => false,
+  MalformedUserIdError: class MalformedUserIdError extends Error {},
 }));
 
 import { flushSync } from 'svelte';

@@ -41,12 +41,14 @@ import {
 } from '../entities/group-member.entity';
 import { cutUserId } from '../utils/log-repeat';
 import { RefusalCode, refusalBody } from '../utils/refusal-codes';
+import { RouteParams } from '../common/route-params';
 
 /**
  * The account's notification categories - what a client reads to draw the settings and to gate its
  * OWN local notifications, and what it writes when the user flips a switch. The server applies the
  * same set before sending a push (`MessagingService`), so this is the one source of truth.
  */
+@RouteParams({ groupId: 'uuid' })
 @Controller()
 export class NotificationPreferencesController {
   private readonly logger = new Logger(NotificationPreferencesController.name);

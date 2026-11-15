@@ -1110,6 +1110,9 @@ an unknown id by its absence, so an answer with the field MISSING is read the ol
 `UserProfileFetchError(404)`, cached, rendered as the unknown-user label, one `console.debug` per
 chunk. Without it every absent id counted as a contract breach (`console.error`, 502, never cached)
 and `displayName.ts` warned, backed off 120 s and asked again.
+**Since 2026-11-14 the answer is `{ users, deleted, malformed }`** (a string that is not an account id
+is named in `malformed`, never `deleted`); a missing `malformed` is read as empty and needs no shim of
+its own, because only an older server omits it and such a server never classified an id.
 **Removal condition:** every estate's core-service sends `deleted` (dev and production both deployed
 past #2022, and no rollback below it planned); then the `legacyAnswer` branch goes and a missing
 field becomes the breach. A server version, not a client floor.
