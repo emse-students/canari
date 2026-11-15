@@ -1,14 +1,14 @@
 import type { AssociationPayoutAccount, LydiaReadinessCause } from './api';
 
 /** The four steps of a Lydia enrolment, in the order a manager walks them. */
-export type LydiaEnrolmentStepId = 'details' | 'responsable' | 'activate' | 'validation';
+type LydiaEnrolmentStepId = 'details' | 'responsable' | 'activate' | 'validation';
 
 /**
  * Where a step stands. `in-flight` (details only): a `business/create` was started and its outcome
  * is unknown. `paused` (validation only): Lydia refused or blocked after the Business was ready.
  * `unconfirmed` (responsable only): Lydia answered the add but did not confirm every right.
  */
-export type LydiaEnrolmentStepState =
+type LydiaEnrolmentStepState =
   | 'done'
   | 'current'
   | 'upcoming'
@@ -23,7 +23,7 @@ export interface LydiaEnrolmentStep {
 }
 
 /** The pause a Lydia refusal or block put on a Business, with its date. */
-export interface LydiaEnrolmentPause {
+interface LydiaEnrolmentPause {
   cause: Extract<LydiaReadinessCause, 'request-refused' | 'request-blocked'>;
   /** ISO instant of the readiness change. */
   at: string;
