@@ -207,8 +207,14 @@ export interface PostEntity {
   canPin?: boolean;
   /** WP-PIN: the spaces the pin menu lists for this reader, each with the pin's state there. */
   pinSpaces?: PinSpace[];
-  /** The flag: any logged-in reader who is not the post's own publisher. */
+  /** The flag: a logged-in reader who is not the post's own publisher and may act on it. */
   canReport?: boolean;
+  /**
+   * The reader may react to and comment on the post. False only for a platform admin shown it by the
+   * moderation read outside their own audience (2026-11-14): no reaction or comment control is drawn.
+   * Absent is true (an older server).
+   */
+  canParticipate?: boolean;
   /** Clears `anonymous`, revealing the author again: a moderator of this post or a platform admin. */
   canUnmaskAnonymous?: boolean;
   /**

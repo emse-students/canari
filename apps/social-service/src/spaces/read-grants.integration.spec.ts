@@ -23,6 +23,7 @@
  * Everything happens in a throwaway schema, dropped at the end.
  */
 import { readFileSync } from 'fs';
+import { createBellTargetTables } from '../posts/post-notifications.it-schema';
 import { join } from 'path';
 import { Client } from 'pg';
 import type { DataSource, EntityManager } from 'typeorm';
@@ -256,6 +257,8 @@ maybe('nominative read grants against PostgreSQL (migration 078 included)', () =
          ('00000000-0000-4000-8000-0000000000e1', $1), ('00000000-0000-4000-8000-0000000000e2', $2)`,
       [A1, A2]
     );
+    // The bell's one statement reads what its target gates name (`bell-row-gates.ts`).
+    await createBellTargetTables((sql) => client.query(sql));
   });
 
   afterAll(async () => {
@@ -669,7 +672,8 @@ maybe('nominative read grants against PostgreSQL (migration 078 included)', () =
       (
         await client.query(
           `SELECT ${bellRowShownSql('n')} AS shown FROM (VALUES ($1::varchar, $2::varchar,
-             $3::varchar, $4::varchar, $5::varchar)) AS n(type, "postId", "recipientId", "actorId", "commentId")`,
+             $3::varchar, $4::varchar, $5::varchar, NULL::jsonb))
+             AS n(type, "postId", "recipientId", "actorId", "commentId", meta)`,
           [type, POST, recipientId, actorId, commentId]
         )
       ).rows[0].shown;

@@ -212,7 +212,7 @@ handed out cannot be taken back. A client that sends no `draft` gets a published
 `create without draft` ([legacy-compatibility](../../legacy-compatibility.md)).
 
 **A draft is invisible to every respondent read.** One `where`, `respondentFormWhere` (`form-status.ts`:
-id, not archived, `status = 'published'`), answers each of them, and a draft answers exactly what an
+id, not archived, `status = 'published'`, its association not archived - [2026-11-14](#an-archived-associations-form-is-closed-by-its-link-2026-11-14)), answers each of them, and a draft answers exactly what an
 absent form answers, so its id cannot be probed:
 
 | Read path | What a draft answers |
@@ -1985,6 +1985,17 @@ Found while scoping it, so it is not re-derived (Lydia is live in production sin
   A leftover `stripe` or `disabled` provider shows an explicit "unavailable" line, an unknown one a
   neutral line without description - never a default. Saved cards stay Stripe-only via
   `supportsSavedCards` until the backend batch (see [payments](payments.md)).
+
+## An archived association's form is closed by its link (2026-11-14)
+
+`respondentFormWhere` carries one more clause: the form's association, when it has one, is not
+ARCHIVED (`associationArchivedSql`). So every respondent path above answers a form of an archived
+association exactly as it answers a draft - 404, or the absent-form shape on `check` - and
+`GET /forms/:id` serves it to its managers alone, judged by that same `where`. A submit and an answer
+edit read the association again `FOR SHARE` before the form's seat lock. A submitter's own answer,
+its cancellation, `confirm-payment` and the payment callbacks never read the archive, so money issued
+before it settles. The rule, the defaults taken and the proof are in
+[associations](associations.md#what-an-archive-closes).
 
 ## A form with submissions is archived, never removed (2026-10-11)
 

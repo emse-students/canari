@@ -173,7 +173,7 @@ export interface PublishedCarteUnit {
 }
 
 /** One member of a directory roster: what the server checks and an erasure finds by id. */
-export interface PublishedCarteDirectoryMember {
+interface PublishedCarteDirectoryMember {
   userId: string;
   name: string;
   /** The member's role as held, generic or not; the line drops a generic one. */

@@ -34,11 +34,11 @@ export class FakeMediaStream extends StreamBase {
 }
 
 /** A track with a kind, as the studio's streams are filtered by it. */
-export function kindTrack(kind: 'video' | 'audio'): FakeTrack & { kind: string } {
+function kindTrack(kind: 'video' | 'audio'): FakeTrack & { kind: string } {
   return Object.assign(new FakeTrack(), { kind });
 }
 
-export function fakeStudio() {
+function fakeStudio() {
   const compositorTrack = kindTrack('video');
   const mixerTrack = kindTrack('audio');
   const compositor = {

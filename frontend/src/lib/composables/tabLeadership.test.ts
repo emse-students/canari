@@ -40,6 +40,14 @@ describe('a change of tab leadership never leaves a stale ratchet sending', () =
   it('still reloads on demotion, so a released leader restarts read-only', () => {
     expect(handlerBody('setTabLeaderDemotedHandler')).toContain('window.location.reload()');
   });
+
+  it('reloads on demotion only behind the ingest windows open then (review of #3321)', () => {
+    // A reload while a drain still buffers its rows loses a message a landed checkpoint already
+    // spent; the wait itself is pinned in `BaseMlsService.leadLostAck.test.ts`.
+    const body = handlerBody('setTabLeaderDemotedHandler');
+    expect(body).toContain('.whenBulkIngestsClosed()');
+    expect(body).toContain('settled.then(reload)');
+  });
 });
 
 describe('only the leader tab encrypts', () => {

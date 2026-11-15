@@ -34,6 +34,7 @@ import {
   fetchLiveLimits,
   fetchLiveRules,
   fetchLiveManifest,
+  fetchLiveReplay,
   fetchLivePoster,
   fetchLiveSegment,
   isLiveCut,
@@ -94,6 +95,27 @@ describe('the routes', () => {
     await leaveLiveSeat(LIVE);
     expect(sentVersions).toHaveLength(3);
     for (const version of sentVersions) expect(version).toMatch(/^\d+\.\d+\.\d+/);
+  });
+
+  it('a replay page is a GET; the moderation read is asked by its flag alone (lead, 2026-11-14)', async () => {
+    apiFetch.mockImplementation(async () => json(200, { liveId: LIVE, segments: [] }));
+    await fetchLiveReplay(LIVE);
+    expect(apiFetch).toHaveBeenLastCalledWith(`https://social.test/api/lives/${LIVE}/replay`, {});
+    await fetchLiveReplay(LIVE, 3);
+    expect(apiFetch).toHaveBeenLastCalledWith(
+      `https://social.test/api/lives/${LIVE}/replay?from=3`,
+      {}
+    );
+    await fetchLiveReplay(LIVE, 3, { moderation: true });
+    expect(apiFetch).toHaveBeenLastCalledWith(
+      `https://social.test/api/lives/${LIVE}/replay?from=3&moderation=true`,
+      {}
+    );
+    await fetchLiveReplay(LIVE, undefined, { moderation: true });
+    expect(apiFetch).toHaveBeenLastCalledWith(
+      `https://social.test/api/lives/${LIVE}/replay?moderation=true`,
+      {}
+    );
   });
 
   it('limits and list are GETs on /api/lives', async () => {

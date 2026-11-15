@@ -3,28 +3,28 @@ import { SocialApiError } from '$lib/associations/api';
 import { formatAmount } from '$lib/forms/fillAnswers';
 
 /** The body `code` of a write that sells or collects money on an institution. */
-export const ASSOCIATION_KIND_DOES_NOT_SELL = 'ASSOCIATION_KIND_DOES_NOT_SELL';
+const ASSOCIATION_KIND_DOES_NOT_SELL = 'ASSOCIATION_KIND_DOES_NOT_SELL';
 
 /** The body `code` of a paid write on a list with no APPROVED payment delegation (owner, 2026-11-02). */
-export const LIST_DELEGATE_REQUIRED = 'LIST_DELEGATE_REQUIRED';
+const LIST_DELEGATE_REQUIRED = 'LIST_DELEGATE_REQUIRED';
 
 /** The body `code` refusing a Lydia account of a list's own: it collects through a delegate. */
-export const LIST_NO_OWN_LYDIA_ACCOUNT = 'LIST_NO_OWN_LYDIA_ACCOUNT';
+const LIST_NO_OWN_LYDIA_ACCOUNT = 'LIST_NO_OWN_LYDIA_ACCOUNT';
 
 /** The body `code` refusing an acceptance by anyone but the receiver's own managers or the admin. */
-export const DELEGATION_ACCEPT_RECEIVER_ONLY = 'DELEGATION_ACCEPT_RECEIVER_ONLY';
+const DELEGATION_ACCEPT_RECEIVER_ONLY = 'DELEGATION_ACCEPT_RECEIVER_ONLY';
 
 /** The body `code` refusing a reject or revoke by anyone but the receiver's own managers or the admin. */
-export const DELEGATION_REVOKE_RECEIVER_ONLY = 'DELEGATION_REVOKE_RECEIVER_ONLY';
+const DELEGATION_REVOKE_RECEIVER_ONLY = 'DELEGATION_REVOKE_RECEIVER_ONLY';
 
 /**
  * The body `code` of the 409 refusing an acceptance that would chain delegations: the receiver
  * itself delegates, or the requester already receives one (review of #2967).
  */
-export const DELEGATION_CHAIN_REFUSED = 'DELEGATION_CHAIN_REFUSED';
+const DELEGATION_CHAIN_REFUSED = 'DELEGATION_CHAIN_REFUSED';
 
 /** The body `code` social-service sets when the payment provider itself declined a payment. */
-export const PAYMENT_PROVIDER_REFUSED = 'PAYMENT_PROVIDER_REFUSED';
+const PAYMENT_PROVIDER_REFUSED = 'PAYMENT_PROVIDER_REFUSED';
 
 /**
  * The sentence for a refusal BY THE PAYMENT PROVIDER, or `null` when `err` is anything else.
@@ -144,27 +144,27 @@ export const PAYMENTS_BLOCKED = 'PAYMENTS_BLOCKED';
  * range, or a product's own bounds). Mirrors social-service's `core-payment-error.ts`; its
  * `minCents` / `maxCents` ride beside it and become {@link SocialApiError.amountBounds}.
  */
-export const AMOUNT_OUT_OF_RANGE = 'AMOUNT_OUT_OF_RANGE';
+const AMOUNT_OUT_OF_RANGE = 'AMOUNT_OUT_OF_RANGE';
 
 /**
  * The body `code` of social-service's 409 when a single-answer form already holds an answer for
  * this person (paid, free, cash, or an online one still pending): no second answer is written and
  * no payment is requested (`seat-hold.ts`).
  */
-export const ALREADY_ANSWERED = 'ALREADY_ANSWERED';
+const ALREADY_ANSWERED = 'ALREADY_ANSWERED';
 
 /**
  * The body `code` of social-service's 429 when one visitor (one network address) already has three
  * paid answers waiting for payment on a public form (`guest-visitor.ts`, decision PP5). The
  * sentence says how the place comes back: a payment, or the 30-minute hold ending.
  */
-export const GUEST_PENDING_LIMIT = 'GUEST_PENDING_LIMIT';
+const GUEST_PENDING_LIMIT = 'GUEST_PENDING_LIMIT';
 
 /**
  * The body `code` of social-service's 409 when the buyer already bought this non-repeatable
  * product: decided by Canari from its purchase records, before any payment request is issued.
  */
-export const PRODUCT_ALREADY_PURCHASED = 'PRODUCT_ALREADY_PURCHASED';
+const PRODUCT_ALREADY_PURCHASED = 'PRODUCT_ALREADY_PURCHASED';
 
 /**
  * The body `code` of social-service's 403 when the product is reserved to the association's
@@ -172,44 +172,44 @@ export const PRODUCT_ALREADY_PURCHASED = 'PRODUCT_ALREADY_PURCHASED';
  * it. The card already greys its button from `viewerIsCotisant`; this is the sentence for the click
  * that the listing could not foresee (a cotisation that ended since the page was drawn).
  */
-export const PRODUCT_COTISANTS_ONLY = 'PRODUCT_COTISANTS_ONLY';
+const PRODUCT_COTISANTS_ONLY = 'PRODUCT_COTISANTS_ONLY';
 
 /**
  * The body `code` of social-service's 409 when the buyer holds, active, a sibling cotisation tier
  * priced at least as high as this one: buying it would replace the held tier (`product-checkout.ts`).
  */
-export const TIER_NOT_A_RISE = 'TIER_NOT_A_RISE';
+const TIER_NOT_A_RISE = 'TIER_NOT_A_RISE';
 
 /**
  * The body `code` of social-service's 409 when the buyer holds a sibling cotisation tier and one of
  * the two has no fixed price (a grid or a free amount), so no rank can be established online.
  */
-export const TIER_NOT_RANKABLE = 'TIER_NOT_RANKABLE';
+const TIER_NOT_RANKABLE = 'TIER_NOT_RANKABLE';
 
 /**
  * The body `code` of social-service's 409 when a membership product is bought (or sold for cash)
  * while its association's cotisations are disabled: nothing could be granted, so nothing is taken.
  */
-export const COTISATION_DISABLED = 'COTISATION_DISABLED';
+const COTISATION_DISABLED = 'COTISATION_DISABLED';
 
 /**
  * The body `code` of social-service's 409 for a membership product that stores no tag (a legacy
  * row): it could grant nothing. Worded like `COTISATION_DISABLED`: the buyer can do nothing else.
  */
-export const MEMBERSHIP_PRODUCT_UNGRANTABLE = 'MEMBERSHIP_PRODUCT_UNGRANTABLE';
+const MEMBERSHIP_PRODUCT_UNGRANTABLE = 'MEMBERSHIP_PRODUCT_UNGRANTABLE';
 
 /**
  * The body `code` of social-service's 409 when the product's association is ARCHIVED: its page and
  * its products stay reachable by link, and the purchase is what refuses it, before any money.
  */
-export const ASSOCIATION_ARCHIVED = 'ASSOCIATION_ARCHIVED';
+const ASSOCIATION_ARCHIVED = 'ASSOCIATION_ARCHIVED';
 
 /**
  * The body `code` of social-service's 400 when a product or a partnership card is saved reserved to
  * cotisants (`membersOnly`) by an association with no cotisation mode: no tier exists to hold, so it
  * would be offered to nobody (`members-only-gate.ts`).
  */
-export const MEMBERS_ONLY_WITHOUT_COTISATION = 'MEMBERS_ONLY_WITHOUT_COTISATION';
+const MEMBERS_ONLY_WITHOUT_COTISATION = 'MEMBERS_ONLY_WITHOUT_COTISATION';
 
 /**
  * The sentence for a refusal of a product or partnership-card SAVE that the admin can act on, or
@@ -242,14 +242,14 @@ export function cotisationModeInUseMessage(err: unknown): string | null {
  * The body `code` of social-service's 409 when a paid answer's form grants the cotisation tier the
  * submitter already holds (`tier-pricing.ts`): a form words it apart from a product already bought.
  */
-export const FORM_TIER_ALREADY_HELD = 'FORM_TIER_ALREADY_HELD';
+const FORM_TIER_ALREADY_HELD = 'FORM_TIER_ALREADY_HELD';
 
 /**
  * The body `code` of social-service's 409 when a paid answer's form grants a cotisation tier that
  * no longer exists (its product was deleted): refused to everybody, a holder of no membership included, so the
  * sentence speaks of the form, not of the submitter's membership.
  */
-export const FORM_TIER_NOT_SOLD = 'FORM_TIER_NOT_SOLD';
+const FORM_TIER_NOT_SOLD = 'FORM_TIER_NOT_SOLD';
 
 /**
  * The body `code` of social-service's 403 when the form is reserved to people who do NOT hold a
@@ -259,37 +259,37 @@ export const FORM_TIER_NOT_SOLD = 'FORM_TIER_NOT_SOLD';
 export const FORM_COTISATION_HELD = 'FORM_COTISATION_HELD';
 
 /** The body `code` of the same 403 for any other criterion of the form's `submitCondition`. */
-export const FORM_NOT_OPEN_TO_YOU = 'FORM_NOT_OPEN_TO_YOU';
+const FORM_NOT_OPEN_TO_YOU = 'FORM_NOT_OPEN_TO_YOU';
 
 /**
  * The body `code` of social-service's 400 when a saved condition names a cotisation both as held
  * and as not held (`pricing/validate.ts`) - what an older editor sends after ticking a held tier on
  * a "ne detient pas" condition; this editor moves the tiers instead.
  */
-export const AUDIENCE_COTISATION_BOTH_MODES = 'AUDIENCE_COTISATION_BOTH_MODES';
+const AUDIENCE_COTISATION_BOTH_MODES = 'AUDIENCE_COTISATION_BOTH_MODES';
 
 /**
  * The body `code` of social-service's 409 when the association's payment account changed while
  * the checkout was being opened: nothing was opened, and trying again uses the new account.
  */
-export const PAYMENT_ROUTING_CHANGED = 'PAYMENT_ROUTING_CHANGED';
+const PAYMENT_ROUTING_CHANGED = 'PAYMENT_ROUTING_CHANGED';
 
 /**
  * The body `code` of social-service's 409 when the product's price grid came to depend on the
  * buyer's profile while the checkout was being opened: nothing was opened, and trying again prices
  * it from the profile it now needs.
  */
-export const PURCHASE_PRICING_CHANGED = 'PURCHASE_PRICING_CHANGED';
+const PURCHASE_PRICING_CHANGED = 'PURCHASE_PRICING_CHANGED';
 
 /**
  * The body `code` of the 409 a boutique checkout gets while the buyer's previous attempt of that
  * product is still payable or unproven (`product-checkout.ts`). social-service stops refusing 35
  * minutes after that attempt was opened (its 30-minute expiry plus a margin), so the sentence says 35.
  */
-export const PREVIOUS_CHECKOUT_OPEN = 'PREVIOUS_CHECKOUT_OPEN';
+const PREVIOUS_CHECKOUT_OPEN = 'PREVIOUS_CHECKOUT_OPEN';
 
 /** The body `code` of the 409 a second click gets while the first one's payment is being opened. */
-export const CHECKOUT_IN_PROGRESS = 'CHECKOUT_IN_PROGRESS';
+const CHECKOUT_IN_PROGRESS = 'CHECKOUT_IN_PROGRESS';
 
 /**
  * The body `code` of social-service's 409 when a form answer's previous payment request could not

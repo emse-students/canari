@@ -797,6 +797,15 @@ request anyway, which is now gone. The own-publication read asks `?peek=1`, whic
 refusals and the static row and touches no one-time row. A server without `peek` ignores the query
 and claims, as before, so no client floor is needed and nothing falls back.
 
+**A device that never published does not ask (2026-11-15).** `awaitOwnKeyPackagePublished` skips the
+peek on its first pass when the device id was minted in this process (`stateWasExpected` false) and no
+key package round has settled: the server cannot hold a package of it, so the read could only answer 404
+and a freshly enrolled web device logged three of them before its first publication (HEAL-NEW-0 of the
+cross-client rig reported it as FAIL). The skip used to apply only while the first round was running; a
+join landing before the round started asked anyway. The fact is read from durable state (the id was or was
+not stored), not from the server, so it is the "client knows" branch of NEVER LEARN BY FAILING, and the
+404 stays what it is for a returning device (a real "no package yet" answer there). Pass 2 onward reads.
+
 **What a static-row serve costs, and why it stays a WARN.** The row carries `last_resort`, so a
 device can join every group built on it (see the section above). The cost is in MLS: one HPKE init
 key opens every Welcome built on that row until the device mints a new last-resort package, which

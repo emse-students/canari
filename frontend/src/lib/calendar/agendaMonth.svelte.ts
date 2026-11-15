@@ -23,7 +23,7 @@ export interface MonthRangeISO {
  * draw, and in a positive offset a UTC month start is the previous month's last evening - an event
  * the user can see a square for would be missing from the answer.
  */
-export function monthRangeISO(d: Date): MonthRangeISO {
+function monthRangeISO(d: Date): MonthRangeISO {
   // Both are pure locals: they are read once, immediately, and never reach state or a template, so
   // `prefer-svelte-reactivity` has nothing to protect here.
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local, never stored, never mutated

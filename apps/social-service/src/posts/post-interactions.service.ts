@@ -110,30 +110,24 @@ export class PostInteractionsService {
         try {
           if (!(await this.notifications.postAuthorIsTold(postId))) return;
           const actorName = await this.notifications.resolveActorName(userId);
-          await this.notifications.createNotification({
+          // ONE NOTIFICATION PER POST, never counted (owner, 2026-11-14): it alerts when the post had
+          // no unread row, and updates silently otherwise. THE ACTOR'S FACE, AND THE EMOJI RATHER
+          // THAN THE STORED LABEL (user, 2026-10-08 - six faceless "a réagi Marteau" for one post).
+          await this.notifications.notifyPostActivity({
             recipientId: post.authorId,
             type: 'reaction',
             postId,
             actorId: userId,
+            actorName,
             text: reactionType,
-            skipPush: true,
+            content: (others) =>
+              reactionContent(
+                actorName,
+                reactionTypeToEmoji(reactionType),
+                { kind: 'user', userId },
+                others
+              ),
           });
-          // THE DAILY CAP (engagement WP-8, owner 2026-11-10): a reaction counts against it.
-          const [pushTo] = await this.notifications.withinPushBudget('reaction', [post.authorId]);
-          if (!pushTo) return;
-          // THE ACTOR'S FACE, AND THE EMOJI RATHER THAN THE STORED LABEL: this push carried
-          // neither (user, 2026-10-08 - six faceless "a réagi Marteau" for one post).
-          await this.push.notifyContent(
-            post.authorId,
-            reactionContent(actorName, reactionTypeToEmoji(reactionType), {
-              kind: 'user',
-              userId,
-            }),
-            {
-              type: 'social',
-              postId,
-            }
-          );
         } catch (e) {
           this.logger.warn(
             `[NOTIFY] reaction notification failed for post.authorId=${post.authorId}`,
@@ -291,7 +285,7 @@ export class PostInteractionsService {
         actorName = await this.notifications.resolveActorName(data.userId);
       }
       const alreadyNotified = new Set<string>([data.userId]);
-      const notify = (recipientId: string, type: 'comment' | 'reply' | 'mention') =>
+      const notify = (recipientId: string, type: 'reply' | 'mention') =>
         this.notifications.createNotification({
           recipientId,
           type,
@@ -303,7 +297,6 @@ export class PostInteractionsService {
           skipPush: true,
         });
       const pushContentFor = {
-        comment: commentContent,
         reply: replyContent,
         mention: mentionContent,
       };
@@ -314,9 +307,25 @@ export class PostInteractionsService {
           this.logger.log(`[NOTIFY] ${type} not sent: across the review cohort's boundary`);
           return;
         }
+        if (type === 'comment') {
+          // ONE NOTIFICATION PER POST, never counted (owner, 2026-11-14): the post's author is told
+          // of every comment, alerting only when the post had no unread row.
+          await this.notifications.notifyPostActivity({
+            recipientId,
+            type,
+            postId,
+            actorId,
+            actorName,
+            text: preview,
+            commentId: comment.id,
+            content: (others) => commentContent(actorName, pushPreview, undefined, others),
+            pushData: { commentId: comment.id },
+          });
+          return;
+        }
         await notify(recipientId, type);
-        // THE DAILY CAP (engagement WP-8, owner 2026-11-10): a comment counts, a reply and a
-        // mention do not (`PUSH_BUDGET`) - one table answers, so this asks it for every type.
+        // Replies and mentions are never counted (`PUSH_BUDGET`); asked all the same, so the one
+        // table stays the one answer.
         const [pushTo] = await this.notifications.withinPushBudget(type, [recipientId]);
         if (!pushTo) return;
         await this.push.notifyContent(recipientId, pushContentFor[type](actorName, pushPreview), {

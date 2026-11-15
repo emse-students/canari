@@ -9,7 +9,6 @@ import {
   Headers,
   HttpCode,
   Param,
-  ParseUUIDPipe,
   Patch,
   Post,
   Put,
@@ -30,6 +29,7 @@ import {
   type LiveReplayPage,
 } from './lives.service';
 import { readBoundedBody } from './read-bounded-body';
+import { RouteParams } from '../common/route-params';
 
 /** The caller nginx authenticated, as every account id is compared: trimmed, lower case. */
 export const callerOf = (userId: string): string => userId.trim().toLowerCase();
@@ -53,6 +53,7 @@ function seqOf(value: string, field: string): number {
  * stable release reaches nothing here and every route is a 404), then a signed-in account - a live is
  * the network's (L2), never a signed-out visitor's.
  */
+@RouteParams({ id: 'uuid', userId: 'opaque', index: 'opaque' })
 @Controller('lives')
 @UseGuards(LiveEnabledGuard, NginxAuthGuard)
 export class LivesController {
@@ -190,7 +191,7 @@ export class LivesController {
   @Patch(':id')
   @HttpCode(200)
   setTitle(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Headers('x-user-id') userId: string,
     @Body() body: { title?: unknown }
   ) {
@@ -205,7 +206,7 @@ export class LivesController {
    */
   @Put(':id/poster')
   async putPoster(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Headers('x-user-id') userId: string,
     @Req() req: Request
   ) {
@@ -224,7 +225,7 @@ export class LivesController {
    */
   @Get(':id')
   @Header('Cache-Control', 'no-store')
-  get(@Param('id', ParseUUIDPipe) id: string, @Headers('x-user-id') userId: string) {
+  get(@Param('id') id: string, @Headers('x-user-id') userId: string) {
     return this.lives.get(callerOf(userId), id);
   }
 
@@ -237,26 +238,31 @@ export class LivesController {
   /**
    * One page of a live's three-day REPLAY (docs/wiki/live-replays.md): the key, the segments from
    * `from` with their place on the time line, `nextFrom`. No seat. 404 `LIVE_NOT_FOUND` to anyone the
-   * replay post is not visible to, and once it has expired.
+   * replay post is not visible to, and once it has expired. `?moderation=true` is the moderation
+   * read the reported-content preview asks (`LivesService.replay`): it opens the replay to whoever
+   * moderates its post, and changes nothing for anyone else.
    */
   @Get(':id/replay')
   @Header('Cache-Control', 'no-store')
   async replay(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Headers('x-user-id') userId: string,
-    @Query('from') from?: string
+    @Headers('x-global-admin') globalAdmin: string | undefined,
+    @Query('from') from?: string,
+    @Query('moderation') moderation?: string
   ): Promise<LiveReplayPage> {
     return this.lives.replay(
       callerOf(userId),
       id,
-      from === undefined ? 0 : indexOf(from, 'REPLAY_FROM')
+      from === undefined ? 0 : indexOf(from, 'REPLAY_FROM'),
+      { moderate: moderation === 'true', isGlobalAdmin: globalAdmin === 'true' }
     );
   }
 
   @Get(':id/manifest')
   @Header('Cache-Control', 'no-store')
   async manifest(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Headers('x-user-id') userId: string,
     @Query('from') from?: string,
     @Query('chat') chat?: string,
@@ -304,7 +310,7 @@ export class LivesController {
    */
   @Put(':id/segments/:index')
   async putSegment(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Param('index') index: string,
     @Headers('x-user-id') userId: string,
     @Req() req: Request
@@ -317,17 +323,14 @@ export class LivesController {
   /** The viewer leaves: its seat goes back to the host's cap now rather than when its lease lapses. */
   @Delete(':id/seat')
   @HttpCode(204)
-  async leave(
-    @Param('id', ParseUUIDPipe) id: string,
-    @Headers('x-user-id') userId: string
-  ): Promise<void> {
+  async leave(@Param('id') id: string, @Headers('x-user-id') userId: string): Promise<void> {
     await this.lives.leave(callerOf(userId), id);
   }
 
   /** Ends the live, by its broadcaster: idempotent while the row exists, 404 once it is deleted. */
   @Post(':id/end')
   @HttpCode(200)
-  end(@Param('id', ParseUUIDPipe) id: string, @Headers('x-user-id') userId: string) {
+  end(@Param('id') id: string, @Headers('x-user-id') userId: string) {
     return this.lives.end(callerOf(userId), id);
   }
 
@@ -335,7 +338,7 @@ export class LivesController {
   @Post(':id/removed-viewers')
   @HttpCode(200)
   removeViewer(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Headers('x-user-id') userId: string,
     @Body() body: { viewerId?: unknown }
   ) {
@@ -353,7 +356,7 @@ export class LivesController {
   @Post(':id/cut')
   @HttpCode(200)
   async cut(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') globalAdmin: string | undefined,
     @Body() body: { reason?: unknown; details?: unknown }

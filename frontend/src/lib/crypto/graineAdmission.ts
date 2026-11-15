@@ -30,11 +30,11 @@ import { GraineFieldWriter, type GraineSignatureEngine } from '$lib/crypto/grain
 import { GRAINE_PUBLIC_KEY_BYTES, GRAINE_SIGNATURE_BYTES } from '$lib/crypto/graineConstants';
 
 /** `A`'s label: a member's device admitted somebody directly. */
-export const ADMISSION_DIRECT_LABEL = 'canari-graine-admit-direct-v1';
+const ADMISSION_DIRECT_LABEL = 'canari-graine-admit-direct-v1';
 /** `L`'s label: a member's device stands behind an invite link's key. */
-export const ADMISSION_LINK_LABEL = 'canari-graine-admit-link-v1';
+const ADMISSION_LINK_LABEL = 'canari-graine-admit-link-v1';
 /** `R`'s label: the holder of an invite link's key admits one person with it. */
-export const ADMISSION_REDEEM_LABEL = 'canari-graine-admit-redeem-v1';
+const ADMISSION_REDEEM_LABEL = 'canari-graine-admit-redeem-v1';
 /** The voucher's own label - never signed, it only names the encoding. */
 const VOUCHER_LABEL = 'canari-graine-admission-v1';
 /** The invite fragment's label - never signed, it only names the encoding. */

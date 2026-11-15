@@ -189,6 +189,7 @@ export function createMlsServiceStub(
     sendTyping: vi.fn(),
     onChannelEvent: undefined,
     addBulkIngestObserver: vi.fn(),
+    whenBulkIngestsClosed: vi.fn(async () => {}),
     beginBulkIngest: vi.fn(),
     endBulkIngest: vi.fn().mockResolvedValue(undefined),
     destroy: vi.fn(),

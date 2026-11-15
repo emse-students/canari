@@ -1397,7 +1397,7 @@ frames and silence in the Android WebView's and WKWebView's recorders is a phone
 the others.
 
 **Owed - the owner's real-browser reading**, one entry:
-[reading-owed-broadcasting-the-screen-in-a-live-from-a-desktop-browser](../../backlog.d/reading-owed-broadcasting-the-screen-in-a-live-from-a-desktop-browser.md).
+the entry deleted 2026-11-14 (a reading of unshipped scenes; the screen picker cannot be driven on the bench): re-file it on the pre-release that first carries the scenes.
 
 ## Why a desktop browser cannot broadcast, and Firefox (2026-10-31)
 

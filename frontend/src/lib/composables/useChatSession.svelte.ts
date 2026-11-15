@@ -351,8 +351,28 @@ export function useChatSession() {
     isTabLeaderState = false;
     tabLeaderSessionCb?.log('[TAB] Leadership released - reloading as follower.');
     if (tabLeaderSessionCb) rememberSelectionForReload(tabLeaderSessionCb.log);
+    // THE SOCKET GOES NOW, not with the reload: a lock released by a FREEZE (`tabLeader.ts`) reloads
+    // only once the page is resumed, and the frames queued meanwhile must reach the new leader, never
+    // this copy. The pause detaches the handlers, so nothing more is read or acknowledged here.
+    if (isLoggedIn) pauseConnectionImpl(ctx);
     if (typeof window === 'undefined') return;
-    setTimeout(() => window.location.reload(), 50);
+    const reload = () => setTimeout(() => window.location.reload(), 50);
+    // NOT WHILE A DRAIN STILL HOLDS ROWS IN ITS UI BUFFER (second review of #3321). A checkpoint that
+    // landed before the lead left may hold a frame's ratchet advance and its seen mark while the
+    // frame's row is only stored when the drain's window closes: reloading in between loses the
+    // message for good - the new leader can neither decrypt it again nor replay it. The socket is
+    // paused, so the open windows only close; nothing this copy does meanwhile is written as state.
+    let settled: Promise<void> | null = null;
+    if (isLoggedIn) {
+      try {
+        settled = ctx.ensureMls().whenBulkIngestsClosed();
+      } catch (e) {
+        // No service built yet: nothing was drained, so nothing is buffered.
+        tabLeaderSessionCb?.log(`[TAB] No MLS service to wait for before the reload: ${String(e)}`);
+      }
+    }
+    if (settled === null) reload();
+    else void settled.then(reload);
     // Said, so this document neither queues nor accepts the lead on its way out.
     return 'reloads';
   });

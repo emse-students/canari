@@ -88,7 +88,7 @@ export function formStateLabel(
  * typed not-found of the form readers), as opposed to nobody answering. An answer is final and
  * cached; a transport failure is retried by the next card.
  */
-export function isUnreadableAnswer(err: unknown): boolean {
+function isUnreadableAnswer(err: unknown): boolean {
   if (err instanceof FormNotFoundError) return true;
   if (err instanceof PublicFormUnavailableError) return err.notFound;
   const status = refusalStatus(err);

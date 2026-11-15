@@ -1023,8 +1023,12 @@ pub(crate) fn graine_seed_held(
     }
 }
 
-/// How many Graine sessions per channel the mirror keeps. Mirrors
-/// `GRAINE_NATIVE_MIRROR_SESSIONS_PER_CHANNEL` in `graineConstants.ts`.
+/// How many Graine sessions per channel the mirror keeps, the durable store holding the rest. The
+/// mirror exists for one job - decrypting an incoming push before any WebView runs - so it only
+/// needs the recent end; seeds accumulate for ever in an app-private JSON file rewritten on every
+/// rotation. A seed too old to be mirrored degrades the notification to a generic "new message",
+/// which is the existing behaviour. The TypeScript side never reads this number (it had a copy in
+/// `graineConstants.ts`, deleted as unused 2026-11-07).
 const GRAINE_MIRROR_SESSIONS_PER_CHANNEL: usize = 20;
 
 /// Merges one Graine seed into {app_data_dir}/graine_seeds.json so the background push service can

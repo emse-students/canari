@@ -774,8 +774,23 @@ export class LivesService implements OnModuleDestroy {
    * (a review account's, `adminSeesCohort`) - moderation, a block with a personal author. A replay
    * past its `expiresAt` (database clock), absent, or refused for any reason is the same 404
    * `LIVE_NOT_FOUND`, asked before anything else, so an id lifted from a link learns nothing.
+   *
+   * THE MODERATION READ (lead, 2026-11-14, reversible): `read.moderate` is the explicit intent the
+   * reported-content preview sends, the replay's twin of a post's `allowHidden`. It opens the replay
+   * to whoever MODERATES its post - a platform admin, a BDE `MODERATE` holder within its governed
+   * spaces (`AssociationsService.mayModeratePost`, the post moderation scope, nothing wider) - and
+   * serves exactly the page a viewer gets. Without the intent, or to anyone outside that scope, the
+   * ordinary gate above decides, so a feed, a listing or a plain open stays closed to them.
+   *
+   * @param read.moderate the caller asks to judge this replay (the moderation preview).
+   * @param read.isGlobalAdmin the gateway's `x-global-admin`, as every moderation route reads it.
    */
-  async replay(viewerId: string, liveId: string, from = 0): Promise<LiveReplayPage> {
+  async replay(
+    viewerId: string,
+    liveId: string,
+    from = 0,
+    read: { moderate?: boolean; isGlobalAdmin?: boolean } = {}
+  ): Promise<LiveReplayPage> {
     const rows: (StoredLiveKey & {
       postId: string;
       authorId: string;
@@ -799,26 +814,44 @@ export class LivesService implements OnModuleDestroy {
       this.logger.debug(`[LIVE_REPLAY] ${liveId}: no replay alive for ${short(viewerId)}`);
       throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
     }
-    const verdict = await readPostOpenVerdict(
-      this.db.manager,
-      {
-        id: found.postId,
-        authorId: found.authorId,
-        associationId: found.associationId,
-        anonymous: found.anonymous,
-        hiddenByModeration: found.hiddenByModeration,
-        scheduledAt: found.scheduledAt,
-        kind: 'replay',
-        expiresAt: found.expiresAt,
-      },
-      // The live's own gate (`WATCH_ONLY`): a platform admin is an ordinary viewer, but for a review
-      // account's replay, opened to judge a report - never wider than the live was.
-      { viewerId, adminSeesCohort: true },
-      'READ_OR_REACT'
-    );
-    if (verdict.refusal !== null) {
-      this.logger.debug(`[LIVE_REPLAY] ${liveId} withheld from ${short(viewerId)}: ${verdict.why}`);
-      throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
+    const moderates =
+      read.moderate === true &&
+      (await this.associations.mayModeratePost(viewerId, found.postId, {
+        isGlobalAdmin: read.isGlobalAdmin === true,
+      }));
+    if (moderates) {
+      this.logger.log(
+        `[LIVE_REPLAY] ${liveId} (post ${short(found.postId)}) MODERATION READ by ${short(viewerId)}${read.isGlobalAdmin === true ? ' (platform admin)' : ''}`
+      );
+    } else {
+      if (read.moderate === true) {
+        this.logger.debug(
+          `[LIVE_REPLAY] ${liveId}: ${short(viewerId)} asked a moderation read outside their scope, the ordinary gate decides`
+        );
+      }
+      const verdict = await readPostOpenVerdict(
+        this.db.manager,
+        {
+          id: found.postId,
+          authorId: found.authorId,
+          associationId: found.associationId,
+          anonymous: found.anonymous,
+          hiddenByModeration: found.hiddenByModeration,
+          scheduledAt: found.scheduledAt,
+          kind: 'replay',
+          expiresAt: found.expiresAt,
+        },
+        // The live's own gate (`WATCH_ONLY`): a platform admin is an ordinary viewer, but for a
+        // review account's replay, opened to judge a report - never wider than the live was.
+        { viewerId, adminSeesCohort: true },
+        'READ_OR_REACT'
+      );
+      if (verdict.refusal !== null) {
+        this.logger.debug(
+          `[LIVE_REPLAY] ${liveId} withheld from ${short(viewerId)}: ${verdict.why}`
+        );
+        throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
+      }
     }
     const key = openLiveKeyOr503(liveId, found);
     const listed: { index: number; name: string; bytes: number; atMs: string }[] =

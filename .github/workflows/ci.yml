@@ -301,6 +301,8 @@ jobs:
              has '^apps/social-service/src/channels/channel-retention\.scheduler\.ts$' || \
              has '^frontend/package\.json' || has '^frontend/bun\.lock' || has '^frontend/patches/' || \
              has '^frontend/svelte\.config' || \
+             has '^frontend/messages/' || has '^frontend/knip\.json' || has '^frontend/dead-code-' || \
+             has '^\.github/scripts/dead-code-ratchet\.mjs' || \
              has '^frontend/vite\.config' || has '^frontend/vitest\.config' || \
              has '^frontend/tsconfig' || has '^frontend/\.oxlintrc' || has '^oxfmt\.json' || has '^\.oxlintrc' || has '^rust-toolchain\.toml' || has '^scripts/install-oxvelte\.sh' || \
              has '^frontend/mls-wasm/' || has '^frontend/mls-core/' || has '^libs/proto/' || has '^libs/contracts/' ||              has '^infrastructure/local/Dockerfile.frontend$'; then
@@ -427,7 +429,11 @@ jobs:
           # composer, `channel_poll_add_option` and `channel_poll_option_placeholder` went with it,
           # and the rig could no longer compose a poll at all. Nothing said so until an unrelated
           # workflow edit made CI run everything.
-          if has '^tools/cross-client-harness/' ||
+          # AND THE RECIPE LINTS ALL OF `tools/`, not the rig alone: #3568 edited `tools/ios-device/`,
+          # the gate did not run on it, and its lint warning then failed every later pull request
+          # that did trigger it. The trigger is what the recipe reads, so it is `tools/` whole.
+          if has '^tools/' ||
+             has '^[.]oxlintrc[.]json$' ||
              has '^frontend/messages/' ||
              has '^frontend/src/lib/styles/markupSources[.]ts'; then
             echo "harness=true" >> "$GITHUB_OUTPUT"
@@ -1201,6 +1207,12 @@ jobs:
           bun run lint
           bun run check
           bun run format:check
+
+      # THE DEAD-CODE RATCHET (2026-11-07): knip's unused files, exports and types, and the
+      # translation keys no source names, may only go DOWN against `frontend/dead-code-baseline.json`.
+      # A new unused export fails here; a gain must be locked with `--update`. docs/wiki/dead-code.md.
+      - name: Dead-code ratchet
+        run: bun .github/scripts/dead-code-ratchet.mjs frontend
 
       # THE VITEST SUITE RUNS IN `test-frontend-shards`, below.
 

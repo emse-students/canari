@@ -728,13 +728,15 @@ is deleted, and the client no longer decides from `formation === 'ICM'`.
   The feed, the search, the announcements and the agenda give a global admin exactly what their own
   spaces and memberships give: an admin who is an ICM Saint-Etienne student sees what an ICM
   Saint-Etienne student sees, and an admin with no space sees only what they wrote. What an admin
-  keeps is OPENING one post BY ITS ID (a report or moderation link: `assertVisible`, option
-  `adminSeesAll`) and the gate (they can reach the feed to moderate). Nobody else gets that.
+  keeps is OPENING one post BY ITS ID to moderate it (a report or moderation link: `getById` and
+  `listComments` with `allowHidden`, and a replay's moderation read) and the gate (they can reach
+  the feed to moderate). Nobody else gets that.
   **BY ID, AN ADMIN MODERATES AND NEVER PARTICIPATES (2026-11-14, generalising the lead's S2 of
   #3010 to every post)**: the widening is the moderation read alone - `readPostOpenVerdict` with
   `allowHidden`, which only the post by id (`getById`) and its comment page (`listComments`) pass for
   a platform admin. Every participating intent asks an admin the ordinary reader's right, see
-  [the table](#by-id-what-a-platform-admin-may-do-2026-11-14).
+  [the table](#by-id-what-a-platform-admin-may-do-2026-11-14). The rule: **by id, an admin reads to
+  moderate, and never participates**.
 - **A post is visible** (`postVisibleToUserSql`) to its author ([the author's door](#the-authors-door-an-entitys-post-belongs-to-the-entity-2026-11-14)), to a member of its association (D21: any
   `association_members` row - there is no pending state), and otherwise when its association's
   rules reach one of the reader's spaces - or, since D38, when a REPUBLISHING association is
@@ -789,18 +791,28 @@ the announce sweep's recipient counts.
 | React, and the reactions served back | `POST/DELETE /:id/reactions`, `serveReactionsTo` | 404 - an ordinary reader's right; the answer lists their own entry only |
 | Comment, like a comment | `POST /:id/comments`, `POST .../like` (`'COMMENT'`) | 404 |
 | Edit their own comment | `PATCH /:id/comments/:cid` | 404 - no longer passes `allowHidden` (a write) |
+| A grant-only post with "voit les commentaires" off | `commentsWithheldFromViewerSql` (`'COMMENT'`) | withheld as from any named reader: no admin exemption; the moderation read (`allowHidden`) still reads the comments |
 | Vote in a poll | `assertMayVote` (`'VOTE'`), served `canVote` | 404; `canVote` false |
 | Republish into an association | `RepublicationsService.assertVisibleTo`, served `canRepublish` | 404; `canRepublish` false |
 | Member repost, personal republication request | `FIRST_HAND` / `assertVisibleWithoutGrant` | 404 (already: `adminSeesAll: false`) |
-| Report the post or a comment | `ModerationService.createReport` | 404 `CONTENT_NOT_FOUND` - taken by default, to confirm: an admin acts on it directly instead |
+| Report the post or a comment | `ModerationService.createReport`, served `canReport` | 404 `CONTENT_NOT_FOUND`; `canReport` false - an admin acts on it directly instead |
 | Be mentioned (push, bell) | `mentionRecipientsOf` | not told - a mention is a notice, not moderation |
-| Calendar link of the post | `GET /:id/calendar-link` | 404 - taken by default, to confirm: it does not pass `allowHidden`, and moderating a post does not need its event |
+| Calendar link of the post | `GET /:id/calendar-link` | 404 - the participation gate: it does not pass `allowHidden`, and moderating a post does not need its event |
+| The controls a card draws | served `canParticipate` | false: the card draws no reaction, comment or double-tap like (`PostCard.svelte`); only an admin's page asks it (`participableIds`), every other reader is served `true` when signed in |
 | Pin in a space | `SpacePinsService` | unchanged: governing a space, judged on the post reaching that space, never on the admin's sight |
-| Watch a live replay | `LivesService.replay` | the LIVE's own gate: refused outside its audience; a review account's replay opened (`adminSeesCohort`, as the live's key and manifest) |
+| Watch a live replay, as a viewer | `GET /api/lives/:id/replay` (`LivesService.replay`) | the LIVE's own gate: refused outside its audience; a review account's replay opened (`adminSeesCohort`, as the live's key and manifest) |
+| Watch a live replay, to moderate it | `GET /api/lives/:id/replay?moderation=true` | opens it to whoever MODERATES its post (`AssociationsService.mayModeratePost`: a platform admin, a BDE `MODERATE` holder within its governed spaces - the post moderation scope, nothing wider); the same key and segment list a viewer gets; logged `[LIVE_REPLAY] ... MODERATION READ by ...`. Only the reported-content preview asks it (`ModerationPostPreviewModal` -> `moderationRead.ts` context -> `ReplayPane`, for the judged post alone). Without the flag, or outside that scope, the viewer's row above decides. A live in progress keeps its own rule |
 
 Inside their own audience an admin does all of these as the reader they are. Proof:
-`post-openable.integration.spec.ts` (the gate, a mention, a report), `republications.integration.spec.ts`,
-`lives.integration.spec.ts` (the replay), `students-only` and `institution-reach` integration specs.
+`post-openable.integration.spec.ts` (the gate, a grant-only admin's comments, a mention, a report),
+`republications.integration.spec.ts`, `lives.integration.spec.ts` (the replay, both reads),
+`posts.service.can-manage.spec.ts` (`canParticipate`, `canReport`), `students-only` and
+`institution-reach` integration specs, the client's `live/api.test.ts` and `PostCard.served`.
+
+**Decided by the lead, 2026-11-14, reversible (owner's absence delegation):** an admin's own report
+of content outside their audience is refused; the calendar link of a post by id follows the
+participation gate; a mention of an admin outside the audience is not notified; a replay has an
+explicit moderation read (option A above), open to the post moderation scope and to nobody else.
 
 **Judgement calls (the most conservative where it changed who sees what):**
 
@@ -995,11 +1007,11 @@ booking space its owner's campus - no new column, no migration:
 | Shop (`/shop`) | `listAllActive` keeps the products whose association is visible to the reader (`associationVisibleToViewerSql`: a member of it, D21, its rules reach one of their spaces, or a nominative read grant of theirs reaches it - owner, 2026-11-14) | `products.service.ts` |
 | A purchase by id | NOT scoped (owner, 2026-10-31: buying by link is allowed, as with forms): whoever holds the association page's link may pay for what it lists | `products.service.ts` (`preparePurchase` asks no campus) |
 | Partnerships | `listAllActive` and `listActiveByAssoc` keep the cards whose association is visible (read grants included, 2026-11-14); `claimCard` answers 404 `PARTNERSHIP_NOT_FOUND` outside it, by the same predicate | `partnerships.service.ts` |
-| Booking spaces | an ASSOCIATION space follows its association (listing and every use by id); a PERSONAL space opens only to those whose `users.campus` is its owner's (`sameCampusAsViewerSql`: the campus, NOT a formation x campus space - owner, 2026-10-31: *"people without a formation still have a campus"*; the review cohort matches only itself) - outside it, 404 `space-not-found` on read and on booking; the account linked to one of its resources (D10) passes the campus check on a READ by id only (`getSpace`, `spaceSlots`; the audience still holds), never to book or upload | `bookings.service.ts` (`listedSpaces`, `assertSpaceVisible`) |
+| Booking spaces | an ASSOCIATION space follows its association (listing and every use by id); a PERSONAL space opens only to those whose `users.campus` is its owner's (`sameCampusAsViewerSql`: the campus, NOT a formation x campus space - owner, 2026-10-31: *"people without a formation still have a campus"*; the review cohort matches only itself) - outside it, 404 `space-not-found` on read and on booking; the account linked to one of its resources (D10) passes the campus check on a READ by id only (`getSpace`, `spaceSlots`; the audience still holds), never to book or upload; an ARCHIVED association's space opens to its managers alone, by id too (2026-11-14, [what an archive closes](frontend/modules/associations.md#what-an-archive-closes)) | `bookings.service.ts` (`listedSpaces`, `assertSpaceVisible`) |
 
 **Unchanged on purpose:** the association's page reached by its link (D37) keeps listing its
 products (`listByAssoc`); the manager paths (`grantProductPurchase`, `quoteCashSale`, the space
-organiser) are not scoped; forms are not (the link is enough); a personal booking space is still
+organiser) are not scoped; forms are not (the link is enough) - except that an ARCHIVED association's form answers no respondent ([what an archive closes](frontend/modules/associations.md#what-an-archive-closes)); a personal booking space is still
 LISTED to its owner alone (D43). A global admin is an ordinary reader here (D41), and the review
 cohort's narrowing (`review-cohort-reach.ts`) still runs - it composes, since a review account has no
 real space and the predicate is membership alone for it (a read grant's door keeps its own
@@ -1766,6 +1778,10 @@ reaches the personnel side"), the latter **for this consented path only**.
   delivered to a device cannot be recalled. A mention is held to the read's gate when written
   (#2947, `mentionRecipientsOf`), a post's mentions told at its announce. The bell's cost and query
   shape are on [posts](frontend/modules/posts.md#the-bell-re-checks-the-post-review-of-2965-2026-11-03).
+  A row naming something ELSE is re-asked against that, in the same statement (`BELL_ROW_GATE`,
+  2026-11-14): an event's opening by `eventVisibleToViewerSql`, a booking opening by the listing's
+  predicate, a proposal or an officer's notice by the role that made its reader a recipient
+  ([posts](frontend/modules/posts.md#the-bell-re-checks-what-a-row-points-at-audit-of-2026-11-14)).
 - **The client**:
   - `personalRequestCandidates` offers the same three kinds;
   - `republishCandidates` and `proposalCandidates` now also offer a LIST, which the server has
@@ -2035,7 +2051,7 @@ The seven decisions of [the decisions](#the-nominative-read-grants---the-decisio
 - **UI**: `/admin/read-access` replaces `/admin/document-reviewers`. Since 2026-10-16 it is two tabs drawn by one template - a card per named reader with their campuses and formations as chips, edited in a sheet (ISTP is FSSS, noted there), each change saved at once with an undo toast, the journal folded under the list - and the document reviewers in the other tab ([admin](frontend/modules/admin.md#read-access-adminread-access)). It was first built as a person x (campus x whole-campus/ICM/ISMIN/FSSS/PDIS/Autre) grid of checkboxes; the document-reviewer list stayed a separate capability (its `document_reviewer_grants` rows were NOT moved: it is a different capability - public documents - and still open to BDE super-admins, who do not see the grid).
 - **Proof**: `spaces/read-grants.integration.spec.ts` (real PostgreSQL, `SOCIAL_IT_DATABASE_URL`): per-post matrix over four named readers, personal posts never visible (even with `adminSeesAll`), no-grant readers unchanged, gate, agenda, no notification, the directory per grantee and the plain predicate unwidened, revocation, unique key, idempotent migration; `read-grants.service.spec.ts` for the writes.
 - **THE WRITE BOUNDARY (review of 2026-10-08, user decision "read + react/comment")**: a grant lets its holder **read and react: YES; comment and like a comment: YES only with their switch "voit les commentaires" on (2026-11-04, next bullet); vote in a poll, republish, publish: NO.** `postVisibleToViewerSql` counts the grant by default (every read) and takes an explicit `readGrants: false` for the writes a grant never opened. `PostsService.assertVisible(postId, viewer, intent)` has a REQUIRED intent: `'READ_OR_REACT'` (post by id, calendar link, reaction), `'COMMENT'` (list, write, edit and like a comment, report a comment - the grant counts, then the comments predicate of the next bullet) or `'VOTE'` (the poll vote, grant-free). `RepublicationsService.assertVisibleTo` is grant-free: a grantee who also publishes as some association X cannot republish into X a post only the grant shows them (404, like any post they cannot see). Publishing a post is unchanged and stays through an institution (D31). Proof: `read-grants.integration.spec.ts` (read-or-react vs vote over every post and reader), `republications.integration.spec.ts` (a grantee who is POST_AS of an association is refused, no row written), `posts.service.visibility.spec.ts` (the SQL of `'VOTE'` has no `read_grants`), `posts.controller.visibility.spec.ts` (each route passes its intent). **Narrowed on 2026-11-04 for comments** - next bullet.
-- **COMMENTS AND PEOPLE OF A GRANT-ONLY POST (the 2026-11-04 amendment, [decisions](#the-nominative-read-grants---the-decisions-user-2026-10-07-moved-from-the-backlog-2026-10-08))**. ONE predicate, `commentsWithheldFromViewerSql(post, viewer)` in `spaces/reader-spaces.ts`, the posts' half of the ONE definition of "withheld" (`withheldFromGrantOnlyReaderSql`, shared with the live chat - next bullet): the viewer is no global admin, holds a grant, their switch is OFF (`readerSeesGrantCommentsSql`: no `read_grant_readers` row with `sees_comments`), the post is visible WITH grants and NOT visible WITHOUT them (both arms `adminSeesAll`, as the by-id gate does, and a reader who also reaches the post natively - own space, membership, republication, accepted follow, member repost - keeps everything). It composes with the "Entre étudiants" gate ([as built](#the-students-only-switch-as-built-owner-2026-11-04)) with no term of its own: the gate sits INSIDE `postVisibleToUserSql` and closes the grant door on such a post, so there the two visibility arms agree (no grant door either way) and the predicate is never true: a named reader who reaches it only through a grant - a student holding a grant on another cell included - never opens it, and one who reaches it natively keeps everything; a live has no students-only column, so the live half below is unaffected. Its consumers, each asking it and nothing else:
+- **COMMENTS AND PEOPLE OF A GRANT-ONLY POST (the 2026-11-04 amendment, [decisions](#the-nominative-read-grants---the-decisions-user-2026-10-07-moved-from-the-backlog-2026-10-08))**. ONE predicate, `commentsWithheldFromViewerSql(post, viewer)` in `spaces/reader-spaces.ts`, the posts' half of the ONE definition of "withheld" (`withheldFromGrantOnlyReaderSql`, shared with the live chat - next bullet): the viewer holds a grant, their switch is OFF (`readerSeesGrantCommentsSql`: no `read_grant_readers` row with `sees_comments`), the post is visible WITH grants and NOT visible WITHOUT them (neither arm widened for an admin since 2026-11-14: a platform admin is withheld from as any named reader, and reads the comments only by the moderation read, which skips this term; the live chat's half keeps its admin exemption, and a reader who also reaches the post natively - own space, membership, republication, accepted follow, member repost - keeps everything). It composes with the "Entre étudiants" gate ([as built](#the-students-only-switch-as-built-owner-2026-11-04)) with no term of its own: the gate sits INSIDE `postVisibleToUserSql` and closes the grant door on such a post, so there the two visibility arms agree (no grant door either way) and the predicate is never true: a named reader who reaches it only through a grant - a student holding a grant on another cell included - never opens it, and one who reaches it natively keeps everything; a live has no students-only column, so the live half below is unaffected. Its consumers, each asking it and nothing else:
   1. **list, write, edit and like a comment, and report one** - `assertVisible(.., 'COMMENT')` (the edit's answer serves the comment, who liked it included; deleting one's own comment stays open), and `ModerationService` asks `readPostOpenVerdict(.., 'COMMENT')` for a comment report - a third `PostAccessIntent` (`post-openable.ts`: the grant opens the audience term, then a withheld reader is `not-found`, the 404 of an invisible resource);
   2. **the served post** - feed, search, reels, one post by id, a vote's and a write's answer - through `PostViewerContext.commentsWithheldIds` (`commentsWithheldPostIds`, `posts/comments-withheld.ts`, asked only of the page's posts NOT in `grantFreeIds` - the predicate's own last term - so an ordinary reader's page and an administrator's cost no query for it) and the two shaping points (`shapeListRow`, `toPublicPostFromEntity`): `canSeeComments: false`, no `comments`, no `commentCount`, `reactions` = the reader's own entry plus `otherReactionCounts` (a tally by type), named polls served as tallies (`votes: number`, `votesByUser` = the reader's own) - never another id;
   3. **the reaction routes' answer** - `PostsService.serveReactionsTo`, for the add AND the removal (which is not gated, so it also stopped listing a post's reactors to whoever held its id: an outsider gets their own entry only);
@@ -3155,5 +3171,5 @@ opening reaches nobody it no longer admits. **Break-proof, run 2026-11-13**: wit
 `institutionReachHoldsSpaceSql` always true, 11 of 11 fail; with `institutionReachAdmitsUserSql`
 always true, 11 of 11; with the selection exemption put back in the anonymous clause, the
 selection-feed test fails. The readings owed on a phone are in
-[the backlog](backlog.d/institution-event-reach.md).
+the readings were all read on 2026-11-14 (the entry is deleted).
 

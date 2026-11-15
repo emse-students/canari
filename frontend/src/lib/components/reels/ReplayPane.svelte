@@ -37,6 +37,8 @@
   import { replayTimeLeftText } from '$lib/live/replayLabels';
   import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
   import { m } from '$lib/paraglide/messages';
+  import { fetchLiveReplay } from '$lib/live/api';
+  import { isModerationRead } from '$lib/moderation/moderationRead';
 
   interface Props {
     post: PostEntity;
@@ -53,6 +55,12 @@
   }
 
   let { post, active, playerSafeBottom, onReady, deps, loadCover }: Props = $props();
+
+  /**
+   * Under the reported-content preview judging THIS post, the replay is read to be moderated
+   * (`?moderation=true`, lead 2026-11-14); anywhere else it is a viewer's read.
+   */
+  const moderationRead = isModerationRead(untrack(() => post.id));
 
   const cover = $derived(replayCoverOf(post));
 
@@ -114,6 +122,12 @@
       onState: (s) => (replayState = s),
       onMeta: (facts) => (meta = { expiresAt: facts.expiresAt, serverNow: facts.serverNow }),
       deps: {
+        ...(moderationRead
+          ? {
+              fetchReplay: (id: string, from?: number) =>
+                fetchLiveReplay(id, from, { moderation: true }),
+            }
+          : {}),
         ...deps,
         attach: (source) => {
           const url = URL.createObjectURL(source as unknown as MediaSource);

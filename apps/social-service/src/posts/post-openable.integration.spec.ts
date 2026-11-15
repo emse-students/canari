@@ -228,6 +228,33 @@ maybe("writes and notifications on a post follow the read's gate, against Postgr
       }
     );
 
+    it('an admin whose only door is a named grant with the comments off: no comment through it, the moderation read still reads them', async () => {
+      const asso = id(701);
+      const post = id(702);
+      await client.query(
+        `INSERT INTO users (id, campus, cursus, admin) VALUES ('grantAdmin', 'gardanne', $1, true)`,
+        [JSON.stringify(ISMIN_GA)]
+      );
+      await client.query(`INSERT INTO associations (id, name) VALUES ($1, 'it')`, [asso]);
+      await client.query(
+        `INSERT INTO association_audiences ("associationId", formation, campus)
+           VALUES ($1, 'ICM', 'saint-etienne')`,
+        [asso]
+      );
+      await client.query(
+        `INSERT INTO posts (id, "authorId", "associationId") VALUES ($1, 'author', $2)`,
+        [post, asso]
+      );
+      // A grant on ICM x saint-etienne, and no `read_grant_readers` row: "voit les commentaires" off.
+      await client.query(
+        `INSERT INTO read_grants (user_id, campus, formation, granted_by)
+           VALUES ('grantAdmin', 'saint-etienne', 'ICM', 'it')`
+      );
+      expect(await verdict(post, 'grantAdmin', 'READ_OR_REACT')).toBeNull();
+      expect(await verdict(post, 'grantAdmin', 'COMMENT')).toBe('not-found');
+      expect(await verdict(post, 'grantAdmin', 'COMMENT', true)).toBeNull();
+    });
+
     it('a mention never reaches an admin outside the audience, nor a report from one files', async () => {
       expect(
         await new PostNotificationsService(

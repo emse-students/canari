@@ -897,17 +897,23 @@ export function readerSeesGrantCommentsSql(user: string): string {
  * them and NOT visible WITHOUT them - so a reader who also reaches it natively (their own space, a
  * membership, a republication, an accepted follow, a member repost) keeps everything.
  *
- * A global admin is never withheld. A reader with no grant at all answers `false` on the grant
+ * A global admin is withheld like anyone from a post's comments (2026-11-14: an admin participates
+ * only as the reader they are; the by-id moderation read skips this term instead), and never from a
+ * live's chat (`exemptAdmin`, unchanged). A reader with no grant at all answers `false` on the grant
  * conjunct, before either visibility arm is asked. The two consumers are
  * {@link commentsWithheldFromViewerSql} (a post's comments and people) and
  * {@link liveChatWithheldFromViewerSql} (a live's chat); neither restates any of this.
  */
 function withheldFromGrantOnlyReaderSql(
   viewer: string,
-  visibleTo: (user: string, readGrants: boolean) => string
+  visibleTo: (user: string, readGrants: boolean) => string,
+  exemptAdmin: boolean
 ): string {
-  return `EXISTS (SELECT 1 FROM users cw_viewer WHERE cw_viewer.id = ${viewer}
-    AND NOT ${isAdminSql('cw_viewer')}
+  const admin = exemptAdmin
+    ? `
+    AND NOT ${isAdminSql('cw_viewer')}`
+    : '';
+  return `EXISTS (SELECT 1 FROM users cw_viewer WHERE cw_viewer.id = ${viewer}${admin}
     AND EXISTS (SELECT 1 FROM read_grants cw_grant WHERE cw_grant.user_id = cw_viewer.id)
     AND NOT ${readerSeesGrantCommentsSql('cw_viewer')}
     AND ${visibleTo('cw_viewer', true)}
@@ -919,14 +925,18 @@ function withheldFromGrantOnlyReaderSql(
  * is the placeholder `viewer` ({@link withheldFromGrantOnlyReaderSql}). Such a reader still reads the
  * post and reacts to it, but its COMMENTS - the students' own expression, like their personal posts,
  * which a grant never opens - and every list of PEOPLE on it (who reacted, who voted what) are
- * withheld: totals only. Both arms take `adminSeesAll`, as the by-id gate does.
+ * withheld: totals only. Neither arm widens a platform admin: an admin whose only door is a grant is
+ * withheld like any named reader, and the by-id MODERATION read (`readPostOpenVerdict` with
+ * `allowHidden`) does not ask this term at all (2026-11-14).
  *
  * Every consumer asks THIS - `commentsWithheldPostIds` (`posts/comments-withheld.ts`) for a page, the
  * `'COMMENT'` intent of the by-id gate, the bell - so none of them can drift from the others.
  */
 export function commentsWithheldFromViewerSql(post: string, viewer: string): string {
-  return withheldFromGrantOnlyReaderSql(viewer, (user, readGrants) =>
-    postVisibleToUserSql(post, user, { adminSeesAll: true, readGrants })
+  return withheldFromGrantOnlyReaderSql(
+    viewer,
+    (user, readGrants) => postVisibleToUserSql(post, user, { readGrants }),
+    false
   );
 }
 
@@ -941,8 +951,10 @@ export function commentsWithheldFromViewerSql(post: string, viewer: string): str
  * so on every open and every manifest poll) and by the report of a chat line (`ModerationService`).
  */
 export function liveChatWithheldFromViewerSql(live: string, viewer: string): string {
-  return withheldFromGrantOnlyReaderSql(viewer, (user, readGrants) =>
-    liveVisibleToUserSql(live, user, { readGrants })
+  return withheldFromGrantOnlyReaderSql(
+    viewer,
+    (user, readGrants) => liveVisibleToUserSql(live, user, { readGrants }),
+    true
   );
 }
 

@@ -175,11 +175,6 @@ export function stackedLines(heightRem: number): StackedLines {
   return 0;
 }
 
-/** The container width (rem) under which a booking's avatar and text stack instead of sitting in a row. */
-export const STACK_BELOW_REM = 7;
-/** The container width (rem) under which the hours go on two lines, the start and then the end. */
-export const SPLIT_TIME_BELOW_REM = 5;
-
 /** Rem thresholds: two text lines need about 2.75rem with padding, one line about 1.5rem. */
 export function blockDensity(heightRem: number): BlockDensity {
   if (heightRem >= 2.75) return 'full';

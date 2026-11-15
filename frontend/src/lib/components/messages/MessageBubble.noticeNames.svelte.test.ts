@@ -17,6 +17,7 @@ vi.mock('$lib/stores/user', () => ({
   fetchUserProfile: vi.fn(),
   isAbsentUserError: () => false,
   isDeletedAccountError: () => false,
+  MalformedUserIdError: class MalformedUserIdError extends Error {},
 }));
 
 import MessageBubble from './MessageBubble.svelte';

@@ -27,12 +27,15 @@ describe('PostsService post management rights', () => {
    * `flagHolders` maps a user id to the associations where they hold POST_AS_ASSO; `moderators`
    * lists the users holding MODERATE in a BDE whose governed spaces hold the post; `elsewhere` those
    * holding it in a BDE that does NOT govern the post (owner, 2026-11-02: MODERATE is scoped).
+   * `ordinaryReaders` are the platform admins who see the post as an ORDINARY reader (the
+   * `participableIds` read, 2026-11-14); any other admin reaches it by the moderation read alone.
    */
   function makeService(
     post: Partial<Post>,
     flagHolders: Record<string, string[]> = {},
     moderators: string[] = [],
-    elsewhere: string[] = []
+    elsewhere: string[] = [],
+    ordinaryReaders: string[] = []
   ) {
     const postRepo = {
       findOne: jest.fn(() => Promise.resolve(post)),
@@ -54,6 +57,13 @@ describe('PostsService post management rights', () => {
                     campus: 'saint-etienne',
                     rank: null,
                   }))
+                : []
+            );
+          }
+          if (sql.startsWith('SELECT posts.id FROM posts WHERE posts.id = ANY')) {
+            return Promise.resolve(
+              ordinaryReaders.includes(params[1] as string)
+                ? (params[0] as string[]).map((id) => ({ id }))
                 : []
             );
           }
@@ -378,6 +388,28 @@ describe('PostsService post management rights', () => {
       await expect(
         service.getById('p1', { viewerId: 'admin', isGlobalAdmin: true })
       ).resolves.toMatchObject({ canManage: true, canPin: true });
+    });
+
+    it('serves the participation of every signed-in reader, and refuses an anonymous one', async () => {
+      const { service } = makeService(assoPost, {});
+      await expect(service.getById('p1', { viewerId: 'reader' })).resolves.toMatchObject({
+        canParticipate: true,
+      });
+      await expect(service.getById('p1')).resolves.toMatchObject({ canParticipate: false });
+    });
+
+    it('a platform admin outside the audience (moderation read only): no participation, no report (2026-11-14)', async () => {
+      const { service } = makeService(assoPost, {});
+      await expect(
+        service.getById('p1', { viewerId: 'admin', isGlobalAdmin: true })
+      ).resolves.toMatchObject({ canParticipate: false, canReport: false });
+    });
+
+    it('a platform admin inside their own audience participates and reports as the reader they are', async () => {
+      const { service } = makeService(assoPost, {}, [], [], ['admin']);
+      await expect(
+        service.getById('p1', { viewerId: 'admin', isGlobalAdmin: true })
+      ).resolves.toMatchObject({ canParticipate: true, canReport: true });
     });
   });
 

@@ -321,6 +321,7 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/compose-wiring.test.sh
 	@bash .github/scripts/tests/compose-logging.test.sh
 	@bun .github/scripts/tests/image-user.test.mjs
+	@bun .github/scripts/tests/route-params-wired.test.mjs
 	@bash .github/scripts/tests/log-retention.test.sh
 	@bash .github/scripts/tests/resolver-report.test.sh
 	@bash .github/scripts/tests/upstream-reachability-report.test.sh
@@ -351,6 +352,7 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/vendored-upstream-report.test.sh
 	@bash .github/scripts/tests/arm-auto-merge-app.test.sh
 	@bash .github/scripts/tests/github-alerts-report.test.sh
+	@bash .github/scripts/tests/sibling-arming-bypass.test.sh
 	@bash .github/scripts/tests/bump-version.test.sh
 	@bash .github/scripts/tests/bump-staging.test.sh
 	@bash .github/scripts/tests/release-preflight.test.sh
@@ -374,6 +376,7 @@ test-ci-scripts: lint-ci-scripts
 	@bun .github/scripts/tests/docs-merge-artefacts.test.mjs
 	@bun .github/scripts/tests/line-endings.test.mjs
 	@bun .github/scripts/tests/assert-frontend-build.test.mjs
+	@bun .github/scripts/tests/dead-code-ratchet.test.mjs
 	@bun .github/scripts/tests/wiki-links.test.mjs
 	@bun .github/scripts/tests/docs-private-guard.test.mjs
 	@bun .github/scripts/tests/pipefail-early-reader.test.mjs

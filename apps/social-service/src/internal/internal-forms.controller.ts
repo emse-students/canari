@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import * as crypto from 'crypto';
 import { FormsService } from '../forms/forms.service';
+import { RouteParams } from '../common/route-params';
 
 /**
  * Internal form-submission endpoints for core-service (payment callbacks).
@@ -18,6 +19,7 @@ import { FormsService } from '../forms/forms.service';
  * There is no `mark-paid` here any more (2026-10-16): a callback is a TRIGGER, and what records a
  * payment is Lydia's own answer about the row's stored request (`provider-confirm`).
  */
+@RouteParams({ submissionId: 'uuid' })
 @Controller('internal/forms')
 export class InternalFormsController {
   private readonly logger = new Logger(InternalFormsController.name);

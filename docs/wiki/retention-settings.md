@@ -58,15 +58,53 @@ it did not answer) - so a social-service restart refused every chat file for its
     at its own boot (`RetentionBootNotice`).
   - **Demand:** once, when an upload finds nothing held.
 - **Every read** asks social-service's relay `GET /api/internal/retention` (`InternalRetentionController`),
-  which reads `platform_config`. The read is single-flight: a notice arriving during a read shares it.
+  which reads `platform_config`. **A notice never joins a read already running** (review of #3554):
+  that read may have asked before the admin's `UPDATE` committed, and joining it answered
+  `refreshed: true` with the old values. A notice (or the boot) gets a FRESH read started after the
+  running one - one queued read, shared by every notice that arrives before it starts. An upload's
+  demand only needs some value and joins whatever runs. **One read at a time, always** (delta
+  review): the running read hands `inFlight` to the queued one in the callback that settles it, so a
+  demand arriving in between joins rather than starting a second read, and an older read can never
+  overwrite what a newer one wrote.
 - **A failed re-read keeps the last values.** It logs `[RETENTION] re-read (notice) FAILED (...):
   uploads keep the values read N s ago`, naming their age. It never falls back to a default.
+- **An outage is logged by state, twice** (re-review of #3521): the first failed read opens it -
+  the WARN above, or an ERROR when nothing is held - and the first successful read after it closes
+  it, `readable again (...) after N s: M upload(s) refused meanwhile`. Every read and refusal in
+  between is a debug line, so a social-service outage is not an ERROR per upload. Nothing held always
+  means an outage is open and already logged: `RetentionBootstrap` awaits the boot read before the
+  routes listen (tested), and a failed boot read opens the outage. The count resets on every
+  successful read, so it never carries into a later outage.
 - **Nothing held at all** (the boot read failed, and nothing has succeeded since) **refuses** the
   upload with a `503`, before a byte is stored. That upload asks for the read, which runs beside the
   refusal and never in its path. The client's outbox retries a 503, and its next try finds the values.
 - **A notice that fails** is an ERROR on the sender's side, and the admin's save stands. Media-service
   keeps stamping the values it read last until its next read: the next change, its own next boot, or
   social-service's next boot.
+- **The admin page SEES a lost notice** (re-review of #3521). `GET /api/users/admin/platform/retention-applied`
+  compares what media-service holds (`GET /api/media/internal/retention`, behind the secret) with the
+  columns (`retentionAppliedState`); while they differ, `/admin/platform` shows "pas encore appliqué
+  aux fichiers" with "Renvoyer" (`RetentionAppliedNotice`), which sends the notice again
+  (`POST .../retention-applied/resend`). **The version is the values themselves**: the lead asked for
+  a counter or an `updatedAt`; the values answer the admin's actual question - "are new files
+  stamped with what I set" - with no new column, and a change and its undo (30 -> 7 -> 30, the 7
+  lost) cannot read as behind. No timer and no retry: the state is read when the page loads or saves.
+  **Each cause is said apart** (review of #3554), because a status code is an answer and a transport
+  failure is not: `behind`; `refused` with the status media-service answered and why - `secret`
+  (401/403, the internal secret is misconfigured), `route` (404, an older media-service during a
+  deploy), `malformed` (a body not of the shape), `status` (anything else); `unreachable` (no
+  answer - a body cut after a 2xx included, and the cause names Node's system code, e.g.
+  `fetch failed (ECONNREFUSED)`); and, on the page only, `failed` - the page's OWN request to core-service failed, which
+  claims nothing about media-service and offers no "Renvoyer". Only the newest answer is
+  shown (a sequence number): a late answer to an older read is dropped, a failed newer read leaves
+  the last good answer in place, and a "Renvoyer" answer is numbered on arrival, so no read started
+  before the notice completed can replace it; a shown answer clears a failed resend's alert. A
+  `refused` without its status and reason is a failed read, never worded "HTTP 0". Core and the page
+  each log a CHANGE of the state (WARN, or a line on the return to `applied`), never each page view.
+- **The social-service boot notice may land before social-service listens** - `onApplicationBootstrap`
+  runs before `listen` - so the read it triggers can fail. State heals it, not a retry: a
+  media-service holding nothing re-reads at its next upload, by then social-service listens; one
+  already holding values keeps them, and they are the same columns.
 
 **The deploy window - stated, retried, no fallback.** The deploy replaces services in `depends_on`
 order, and social-service depends on media-service, so media-service boots first.
@@ -102,7 +140,9 @@ in order:
 2. an answer read EARLIER in this session (`sessionStorage`, `canari:retention_read`, stored with
    the moment it was read) - offline, or a probe that failed. It is never presented as current:
    a notice above the table says the server could not be reached and gives the date, "valeurs du
-   <date>" (`legal_privacy_retention_cached_notice`; review of #3521);
+   <date>" (`legal_privacy_retention_cached_notice`; review of #3521). The cache is `sessionStorage`,
+   so it is always THIS tab's session - but a session can be long (an app left open for days), so
+   the notice gives the date, which says how old the values are, and nothing more (re-review);
 3. with neither - the first launch offline - the values each column is created with
    (`RETENTION_DEFAULTS`), and a notice above the table saying they could not be confirmed and may
    differ, logged at WARN. Never a blank.

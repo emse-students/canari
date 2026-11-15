@@ -470,3 +470,10 @@ it('older threads the reader read are kept over a fresher feed row', async () =>
   expect(sheet().textContent).toContain('note-c-22');
   expect(fetchComments).toHaveBeenCalledTimes(1);
 });
+
+it('a post the reader may not act on (`canParticipate` false, 2026-11-14) draws no reaction or comment control', () => {
+  const open = mountCard(row({}));
+  expect(open.target.querySelector('button[data-post-react-picker-open]')).not.toBeNull();
+  const closed = mountCard(row({ id: 'p-moderated', canParticipate: false }));
+  expect(closed.target.querySelector('button[data-post-react-picker-open]')).toBeNull();
+});

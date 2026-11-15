@@ -326,9 +326,24 @@ const alog = (msg: string) => console.log('[A] ' + msg);
 const awarn = (msg: string) => console.warn('[A] ' + msg);
 
 /** Fires once when the refresh cookie is proven dead. Set by the app shell. */
-type SessionExpiredHandler = () => void;
+/**
+ * Where the user was (or was going) when the verdict was reached - the target a sign-in must bring
+ * them back to. Captured AT the verdict, because a handler that registers later reads a location a
+ * redirect may already have moved.
+ */
+export type SessionExpiredTarget = { pathname: string; search: string; hash: string };
+type SessionExpiredHandler = (target: SessionExpiredTarget | null) => void;
 let _sessionExpiredHandler: SessionExpiredHandler | null = null;
 let _sessionExpiredNotified = false;
+/** The target of the verdict, kept for a handler that registers after it. */
+let _sessionExpiredTarget: SessionExpiredTarget | null = null;
+
+/** The page in flight when a verdict lands (`window.location`), or null where there is none. */
+function currentTarget(): SessionExpiredTarget | null {
+  if (typeof window === 'undefined') return null;
+  const { pathname, search, hash } = window.location;
+  return { pathname, search, hash };
+}
 
 /**
  * Latched the moment the SERVER proves the refresh credential is dead (401/403 on `/api/auth/refresh`).
@@ -421,6 +436,7 @@ function noteRefreshCredentialAlive(): void {
   _refreshCredentialProvenDead = false;
   _sessionEndedByDeviceRevocation = null;
   _sessionExpiredNotified = false;
+  _sessionExpiredTarget = null;
 }
 
 /**
@@ -435,13 +451,14 @@ function noteRefreshCredentialAlive(): void {
 export function setSessionExpiredHandler(fn: SessionExpiredHandler | null): void {
   _sessionExpiredHandler = fn;
   // The verdict can be reached before anything is listening: on a cold start the first refresh
-  // runs before the app shell mounts, so the fallback below is what reacts - and a bare redirect
-  // is NOT the same reaction. It leaves the PIN modal open over `/login`, covering the sign-in
-  // button, and never clears the stale auth state. Measured on Android 2026-08-06. So a handler
-  // that arrives late is told immediately; running it twice is the handler's own problem to guard.
+  // runs before the app shell mounts. It is QUEUED with its target and the handler - the ONE place
+  // that decides the login redirect - is told the moment it registers. A bare redirect here was the
+  // other reaction: it left the PIN modal open over `/login`, never cleared the stale auth state
+  // (Android, 2026-08-06) and dropped the page a tapped push was going to (Mi 9T, 2026-11-15).
+  // Running it twice is the handler's own problem to guard.
   if (fn && _sessionExpiredNotified) {
     awarn('session-expired handler registered after the verdict - replaying it');
-    fn();
+    fn(_sessionExpiredTarget);
   }
 }
 
@@ -454,19 +471,19 @@ export function setSessionExpiredHandler(fn: SessionExpiredHandler | null): void
 function notifySessionExpired(): void {
   if (_sessionExpiredNotified || !currentUserId()) return;
   _sessionExpiredNotified = true;
+  _sessionExpiredTarget = currentTarget();
   awarn(
     _sessionEndedByDeviceRevocation
       ? 'session dead: a device was revoked by its owner → reset if it is this one'
       : 'session dead → logout'
   );
   if (_sessionExpiredHandler) {
-    _sessionExpiredHandler();
+    _sessionExpiredHandler(_sessionExpiredTarget);
     return;
   }
-  // No handler wired is exactly the silent failure this exists to prevent - say so, and redirect
-  // anyway rather than leave the user on a shell that can no longer load anything.
-  awarn('no session-expired handler registered - redirecting directly');
-  void import('$app/navigation').then(({ goto }) => goto('/login', { replace: true }));
+  // No handler yet is the cold start: the verdict stays queued and `setSessionExpiredHandler`
+  // replays it. There is deliberately NO redirect of our own - a fallback is a signal, never a path.
+  awarn('no session-expired handler registered yet - verdict queued with its target');
 }
 
 /**

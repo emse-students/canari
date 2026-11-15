@@ -37,8 +37,10 @@ import {
   sanitizeQueryValue,
 } from '../utils/sanitize';
 import { MessagingService } from '../services/messaging.service';
+import { RouteParams } from '../common/route-params';
 
 /** MLS group lifecycle: create, read, rename, delete, and epoch management. */
+@RouteParams({ groupId: 'uuid' })
 @Controller()
 export class GroupsController {
   private readonly logger = new Logger(GroupsController.name);
