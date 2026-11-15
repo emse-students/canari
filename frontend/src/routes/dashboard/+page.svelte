@@ -26,7 +26,7 @@
 
   async function signOut() {
     if (signingOut) {
-      Log.d('[dashboard] sign-out ignored: one is already running');
+      Log.d('dashboard', 'sign-out ignored: one is already running');
       return;
     }
     signingOut = true;
@@ -38,7 +38,7 @@
   }
 
   onMount(() => {
-    Log.d('[dashboard] mount: probing memberships, admin tier and reviewer access');
+    Log.d('dashboard', 'mount: probing memberships, admin tier and reviewer access');
     // The unread count is the store's. Its only other loader is the bell, mounted on the Feed
     // alone on a phone, so a cold open here would show no count and a later visit a stale one.
     // `load()` drops a call while one is in flight; no timer of our own.
@@ -62,7 +62,7 @@
           );
         }
       }
-      Log.d('[dashboard] probes settled', { mayOpenAdmin, isReviewer, n: memberships.length });
+      Log.d('dashboard', 'probes settled', { mayOpenAdmin, isReviewer, n: memberships.length });
       probesSettled = true;
     });
   });

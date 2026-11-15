@@ -70,8 +70,18 @@ export function renderLogPayload(payload: unknown): string {
   }
 }
 
-/** Logs a debug-level entry with an optional payload. */
-function d(tag: string, payload?: unknown): void {
+/**
+ * The sentence of a line: the message alone, or `message detail` when a third argument carries the
+ * subject the message is about (an error, a count, an id). `Log.d('tag', 'what happened', err)`
+ * is the form for a line that has BOTH a sentence and a payload - the tag is never the sentence.
+ */
+function sentence(message: unknown, detail: unknown): string {
+  const text = typeof message === 'string' ? message : renderLogPayload(message);
+  return detail === undefined ? text : `${text} ${renderLogPayload(detail)}`;
+}
+
+/** Logs a debug-level entry with an optional payload (and an optional detail after a message). */
+function d(tag: string, payload?: unknown, detail?: unknown): void {
   if (typeof window === 'undefined') return;
   if (payload === undefined) {
     console.debug(`[${tag}]`);
@@ -80,11 +90,10 @@ function d(tag: string, payload?: unknown): void {
   // THE OBJECT IS PASSED AS WELL FOR AN ERROR ALONE, because the stack is the one thing the text
   // cannot carry and the one thing a developer opens an error for. Everything else is rendered and
   // not repeated: a payload printed twice is a line twice as wide for no second reader.
-  if (payload instanceof Error) {
-    console.debug(`[${tag}] ${renderLogPayload(payload)}`, payload);
-    return;
-  }
-  console.debug(`[${tag}] ${renderLogPayload(payload)}`);
+  const error = detail instanceof Error ? detail : payload instanceof Error ? payload : undefined;
+  const line = `[${tag}] ${sentence(payload, detail)}`;
+  if (error) console.debug(line, error);
+  else console.debug(line);
 }
 
 /**
@@ -92,26 +101,26 @@ function d(tag: string, payload?: unknown): void {
  * enters the in-app log (`appLog.ts` records no debug), so it is for one line per user gesture or
  * per state change, never per function entry. The in-app log stamps the line itself.
  */
-function i(tag: string, payload?: unknown): void {
+function i(tag: string, payload?: unknown, detail?: unknown): void {
   if (typeof window === 'undefined') return;
   if (payload === undefined) {
     console.info(`[${tag}]`);
     return;
   }
-  console.info(`[${tag}] ${typeof payload === 'string' ? payload : renderLogPayload(payload)}`);
+  console.info(`[${tag}] ${sentence(payload, detail)}`);
 }
 
 /**
  * Logs a WARNING: a path that should not have been taken, or a recovery from one, which a reader of
  * the in-app log must see (it records warnings). One line per occurrence, never per function entry.
  */
-function w(tag: string, payload?: unknown): void {
+function w(tag: string, payload?: unknown, detail?: unknown): void {
   if (typeof window === 'undefined') return;
   if (payload === undefined) {
     console.warn(`[${tag}]`);
     return;
   }
-  console.warn(`[${tag}] ${typeof payload === 'string' ? payload : renderLogPayload(payload)}`);
+  console.warn(`[${tag}] ${sentence(payload, detail)}`);
 }
 
 export const Log = { d, i, w } as const;

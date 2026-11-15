@@ -199,7 +199,7 @@
     } catch (e) {
       // An empty picker is what the editor sees; without this line it is also all anyone would
       // ever know about it.
-      Log.d('[asso-calendar] link candidates failed', e);
+      Log.d('asso-calendar', 'link candidates failed', e);
       linkCandidates = { forms: [] };
     }
   }
@@ -338,7 +338,7 @@
       }))
     )
       return;
-    Log.d('[asso-calendar] withdrawing from event', editingId);
+    Log.d('asso-calendar', 'withdrawing from event', editingId);
     await updateAssociationCalendarEvent(associationId, editingId, {
       coOwnerIds: withdrawalCoOwnerIds(formValues.coOwnerStates, associationId),
     });

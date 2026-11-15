@@ -107,7 +107,7 @@ export interface LandingState {
 
 /** The app left the screen: the last open is over, and what is counted from now on is the next one's. */
 function noteLeave(): void {
-  if (opening) Log.d('[RESUME-OPEN] the app left - the hold ends');
+  if (opening) Log.d('RESUME-OPEN', 'the app left - the hold ends');
   opening = null;
   atLeave = { landing: notifNav.landing, nowhere: nowhereSeq, navigated: navigatedSeq };
 }
@@ -141,7 +141,7 @@ export function noteResumeOpening(
   if (!link || !selected) return;
   const landedSinceLeave = nav.landing !== atLeave.landing;
   const nothing = (why: string) =>
-    Log.d(`[RESUME-OPEN] resume opens ${describeDeepLink(link)} - nothing held: ${why}`);
+    Log.d('RESUME-OPEN', `resume opens ${describeDeepLink(link)} - nothing held: ${why}`);
   if (nowhereSeq !== atLeave.nowhere) return nothing('the open was already routed nowhere');
 
   let kind: ResumeOpening['kind'];
@@ -189,7 +189,8 @@ export function noteResumeOpening(
     resolve,
   };
   Log.d(
-    `[RESUME-OPEN] resume opens ${describeDeepLink(link)}: ${selected.slice(0, 12)} is not read until it lands`
+    'RESUME-OPEN',
+    `resume opens ${describeDeepLink(link)}: ${selected.slice(0, 12)} is not read until it lands`
   );
 }
 
@@ -227,7 +228,7 @@ export function resumeOpeningHolds(key: string, nav: LandingState = notifNav): b
  */
 export function followResumeSelection(selected: string | null | undefined): void {
   if (opening && selected !== opening.heldKey) {
-    Log.d('[RESUME-OPEN] the selection moved - the hold ends');
+    Log.d('RESUME-OPEN', 'the selection moved - the hold ends');
     opening = null;
   }
 }
@@ -244,7 +245,7 @@ export function noteOpenNavigated(): void {
  */
 export function noteOpenRoutedNowhere(why: string): void {
   nowhereSeq += 1;
-  Log.d(`[RESUME-OPEN] an open routes nowhere (${why})${opening ? ' - the hold ends' : ''}`);
+  Log.d('RESUME-OPEN', `an open routes nowhere (${why})${opening ? ' - the hold ends' : ''}`);
 }
 
 /**
@@ -253,7 +254,7 @@ export function noteOpenRoutedNowhere(why: string): void {
  */
 export function notePageTapsRoutable(): void {
   pageTapsRoutable = true;
-  Log.d('[RESUME-OPEN] the page notification tap listener is registered');
+  Log.d('RESUME-OPEN', 'the page notification tap listener is registered');
 }
 
 /**
