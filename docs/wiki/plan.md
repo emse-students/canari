@@ -66,8 +66,8 @@ earliest version, as a checklist.
 - [P2 - a frame read before a browser kill is called "never read here" on the next cold start](backlog.d/reading-owed-the-live-seen-cipher-mark-written-at-the-checkpoint.md)
 - [P2 - the retention durations a sweep applies are not yet admin settings](backlog.d/retention-durations-not-yet-settings.md)
 - [P2 - what the keyboard readings of 2026-11-14 filed: a photo DM still jumps to older messages, a short thread loads history on close, a 12 px step](backlog.d/what-the-keyboard-readings-of-2026-11-14-filed.md)
-- [P2 - on iOS an edited VIDEO take cannot leave the reel editor ("La capture n'a pas pu etre preparee")](backlog.d/p2-ios-edited-video-take-cannot-export-in-the-reel-editor.md)
 - [P2 - no gate proves that an older build reads, and writes back, the MLS state this build writes](backlog.d/p2-no-gate-proves-an-older-build-reads-the-mls-state-this-build-writes.md)
+- [P2 - the reply swipe along a thumb's arc does nothing on WebKit: the thread scrolls instead](backlog.d/p2-the-reply-swipe-along-a-thumb-s-arc-does-nothing-on-webkit.md)
 
 **P3 - hygiene**
 
@@ -169,7 +169,6 @@ earliest version, as a checklist.
 - [P2 - an answer whose Lydia request is still OPEN shows "pending" with no button for up to 28 minutes (2026-10-21)](backlog.d/p2-an-answer-whose-lydia-request-is-still-open-shows-pending-with-no-button-for.md)
 - [P2 - Graine rotates on every key-group epoch, so a growing community mints a seed per message (measured 2026-10-21)](backlog.d/p2-graine-rotates-on-every-key-group-epoch-so-a-growing-community-mints-a-seed.md)
 - [P2 - one tap from Canari signs the user into its MiConnect sites, and MiGallery's notifications go through Canari (owner, 2026-11-07: decided; Canari's half of the handoff built 2026-11-08, MiGallery's flag ON 2026-11-14, the others OFF)](backlog.d/sign-in-handoff-to-the-ecosystem-sites-and-migallery-notifications.md)
-- [P2 - a reply or a mention aimed at a post's AUTHOR is sent as a "comment" (it read "a commente" and the daily cap swallowed it; the cap half is fixed by #3579)](backlog.d/p2-a-reply-or-mention-of-a-post-s-author-is-pushed-as-a-comment-and-capped.md)
 - [P2 - iOS: a quick reply from a suspended app is not sent in the background time, it waits for the next open](backlog.d/p2-ios-quick-reply-from-a-suspended-app-waits-for-the-next-open.md)
 - [P2 - the web catch-up decrypt session marks frames seen before its state is installed in the live client](backlog.d/p2-web-catch-up-marks-frames-seen-before-its-state-is-live.md)
 
@@ -196,6 +195,7 @@ earliest version, as a checklist.
 - [P3 - the identity provider's PostgreSQL pin moves by hand, in its own window](backlog.d/the-identity-providers-postgres-pin-moves-by-hand.md)
 - [P3 - the conversation rises with the keyboard in one block; Android Messages rises with it frame by frame (owner, 2026-11-14) - a study, not built](backlog.d/keyboard-motion-like-android-messages.md)
 - [P3 - Minesweeper: the first dig's generation blocks the main thread (2026-11-14)](backlog.d/p3-minesweeper-generation-off-the-main-thread.md)
+- [P3 - two tests that are not source scans still time out at 5 s under full-suite load](backlog.d/p3-two-non-scan-tests-time-out-under-full-suite-load.md)
 - [P3 - a comment push tapped while its post is the page left open lands on the post, not on the comment](backlog.d/p3-a-comment-push-for-the-post-already-open-does-not-open-the-comment.md)
 - [P3 - a publisher whose live was cut by a reload or a crash cannot go live again for a minute](backlog.d/p3-a-publisher-restart-closes-its-own-open-live.md)
 - [P3 - iOS: a foreground ring flashes the CallKit banner over the in-app ring, because the server still sends the VoIP push](backlog.d/p3-ios-a-foreground-ring-flashes-the-callkit-banner-over-the-in-app-ring.md)

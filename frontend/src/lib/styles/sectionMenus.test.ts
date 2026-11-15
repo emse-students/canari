@@ -19,13 +19,11 @@
  *    entry state, which is what the overlay stack and the router's Back both read.
  */
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { join, dirname, relative, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { allMarkup, shippedSourceFiles, withoutAnyComments } from './markupSources';
+import { withoutAnyComments } from './markupSources';
+import { allMarkup, shippedSources } from './markupTree';
+import { relativeTo } from '../../test/sourceTree';
 
-const src = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const posix = (file: string) => file.split(sep).join('/');
+const src = 'src';
 
 /** Files allowed to declare a tablist, each with the reason it is not a menu. */
 const TABLIST_OWNERS: Record<string, string> = {
@@ -57,19 +55,22 @@ describe('the gate reads what it claims', () => {
   });
 });
 
-// THE TREE IS READ ONCE, HERE, AND NOT INSIDE A TEST. A test body is charged against vitest's 5 s
-// timeout, and under the full suite, with every worker reading the disk at once, the walk of every
-// shipped `.ts` and `.svelte` file took seconds on its own. Module scope is collection time, which
-// no per-test timeout measures.
-const markup = allMarkup(src).map(({ file, body }) => ({ file: posix(file), body }));
-const code = shippedSourceFiles(join(src, 'lib'))
-  .concat(shippedSourceFiles(join(src, 'routes')))
-  .map((file) => ({
-    file: posix(relative(src, file)),
-    body: withoutAnyComments(readFileSync(file, 'utf8')),
-  }));
+// The tree comes from the run's source snapshot (no disk walk), comment-stripped once here. It was
+// hoisted to module scope when the walk itself still cost seconds under the full suite; the hoist
+// stays because the stripping is shared by every case below, not because the disk is slow any more.
+const markup = allMarkup();
+const code = shippedSources(`${src}/lib`, `${src}/routes`).map(({ path, text }) => ({
+  file: relativeTo(path, src),
+  body: withoutAnyComments(text),
+}));
 
 describe('every menu is a segmented control or a hub', () => {
+  it('reads the tree it thinks it does: the owners are in the scan', () => {
+    const markupFiles = markup.map(({ file }) => file);
+    for (const owner of Object.keys(TABLIST_OWNERS)) expect(markupFiles).toContain(owner);
+    expect(code.map(({ file }) => file)).toContain(HISTORY_OWNER);
+  });
+
   it('no variable is switched between string literals by inline handlers (a hand-drawn tab row)', () => {
     const offenders = markup.flatMap(({ file, body }) =>
       [...inlineTabAssignments(body)]

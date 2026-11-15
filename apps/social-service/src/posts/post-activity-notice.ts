@@ -76,6 +76,31 @@ SELECT (SELECT count(*) FROM prior) = 0 AS alert,
        (SELECT id FROM written) AS id`;
 }
 
+/**
+ * WHAT A NEW COMMENT IS TO THE POST'S AUTHOR (owner, 2026-11-15): a reply to THEIR comment or a
+ * mention of THEM rings of its own - a `reply` / `mention` notice, never folded into the post's one
+ * live notification, so it keeps its sound while the post's activity row is unread. Any other comment
+ * is plain `comment` activity and keeps the fold. The discriminator is decided from the ids the
+ * writer already holds (the parent comment's writer, the text's mentions), as a type: the most
+ * specific wins, a reply before a mention before a comment.
+ */
+export type AuthorNoticeKind = 'comment' | 'reply' | 'mention';
+
+/** The kind of notice the post's author gets for a comment, see {@link AuthorNoticeKind}. */
+export function authorNoticeKind(args: {
+  authorId: string;
+  parentWriterId: string | null | undefined;
+  /** The parent comment was written for an association the author holds (speaks for). */
+  authorHoldsParentAssociation?: boolean;
+  /** Lowercased, as `resolveMentionedUserIds` returns them. */
+  mentionedIds: readonly string[];
+}): AuthorNoticeKind {
+  if (args.authorHoldsParentAssociation) return 'reply';
+  if (args.parentWriterId && args.parentWriterId === args.authorId) return 'reply';
+  if (args.mentionedIds.includes(args.authorId.toLowerCase())) return 'mention';
+  return 'comment';
+}
+
 /** One comment or reaction row about to be written for the post's author. */
 export interface PostActivityRow {
   recipientId: string;

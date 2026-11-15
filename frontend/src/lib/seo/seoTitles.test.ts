@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { join } from 'node:path';
 
-import { allMarkup } from '$lib/styles/markupSources';
+import { allMarkup } from '$lib/styles/markupTree';
 import { PRIVATE_PREFIXES, resolveSeoForPath } from '$lib/seo/resolve';
 import { PUBLIC_SITEMAP_ENTRIES } from '$lib/seo/sitemap';
 import { SITE } from '$lib/seo/site';
@@ -21,7 +20,6 @@ import { STATIC_PAGE_ROUTES } from '$lib/seo/staticRoutes';
  * The route set is DERIVED from the route tree, so a page added tomorrow is asked the same question
  * without anybody adding it here.
  */
-const ROOT = process.cwd();
 
 /**
  * The two routes whose title is `SITE.defaultTitle`, deliberately.
@@ -66,13 +64,12 @@ describe('every static route resolves a title of its own', () => {
 });
 
 describe('nothing but SeoHead writes a document title', () => {
-  // Read at collection time, not inside the test: a body is charged against vitest's 5 s timeout,
-  // and under the full suite a walk of every `.svelte` file took seconds on its own.
-  const markup = allMarkup(join(ROOT, 'src'));
+  // From the run's source snapshot: no disk walk, so no body can be charged for one.
+  const markup = allMarkup();
 
   it('no page or component renders its own <title>', () => {
     const offenders = markup
-      .filter(({ file }) => file !== join('lib', 'components', 'seo', 'SeoHead.svelte'))
+      .filter(({ file }) => file !== 'lib/components/seo/SeoHead.svelte')
       .filter(({ body }) => /<title[\s>]/.test(body))
       .map(({ file }) => file);
 

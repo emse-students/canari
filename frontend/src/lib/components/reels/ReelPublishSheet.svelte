@@ -279,7 +279,7 @@
 </script>
 
 <div
-  class="bg-cn-bg text-text-main absolute inset-0 z-20 flex flex-col"
+  class="bg-cn-bg text-text-main absolute inset-0 z-20 flex flex-col pb-(--keyboard-occlusion-bottom,0px)"
   in:fade={{ duration: 150 }}
   data-reel-publish
 >

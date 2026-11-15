@@ -187,7 +187,8 @@ export interface KeyboardChange {
 }
 
 /**
- * WHETHER A KEYBOARD RISING OR FALLING TAKES THE THREAD TO ITS LAST MESSAGE.
+ * WHETHER A KEYBOARD RISING OR FALLING TAKES THE THREAD TO ITS LAST MESSAGE - for the ONE reader the
+ * thread's own observer does not already hold there.
  *
  * **A KEYBOARD RISING FOR THE COMPOSER IS THE COMPOSER BEING TAKEN UP, whether or not a focus event
  * came with it.** Focusing the field already goes to the end (`ChatArea`), from any distance. But an
@@ -199,10 +200,21 @@ export interface KeyboardChange {
  * 483 after; the owner's report on 1.5.0). So the rise answers like the focus does.
  *
  * A keyboard FALLING moves only a reader at the bottom - one reading history is left where they are.
+ *
+ * **A READER AT THE BOTTOM IS THE OBSERVER'S, AND ONLY THE OBSERVER'S (review of #3556, D2).** Every
+ * keyboard move changes the thread's reach - its box (iOS, a browser) or its bottom padding (the
+ * Android app) - and `observeThreadGrowth` pins a reader who was at the bottom in the very layout
+ * that changed it, before the keyboard ride reads where the rows went. A second scroll to the bottom
+ * a frame later was a second writer of the same pixel: harmless while both agreed, a step under the
+ * ride the moment they did not (Mi 9T: scrollTop 4085 then 4073). So this answers `follow-bottom`
+ * only for the reader the observer leaves alone - one ABOVE the bottom whose composer the rising
+ * keyboard is for - and a fall, which only ever follows a reader at the bottom, is the observer's
+ * entirely.
  */
 export function keyboardChangeResponse(change: KeyboardChange): 'follow-bottom' | 'stay' {
-  if (!change.wasOpen && change.isOpen && change.composerFocused) return 'follow-bottom';
-  if (change.wasOpen && !change.isOpen && change.isNearBottom) return 'follow-bottom';
+  if (!change.wasOpen && change.isOpen && change.composerFocused && !change.isNearBottom) {
+    return 'follow-bottom';
+  }
   return 'stay';
 }
 
