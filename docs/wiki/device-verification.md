@@ -44,7 +44,7 @@ plays any peer.
 
 | Sitting | What it holds | Minutes |
 | --- | --- | --- |
-| Web and rig, no phone | pseudos 30, script policy (web) 10, waiting-seat ring 20, LEAF-REFRESH rows 10, NOTIF-17b 5, staging the institution reel and post 20, live titles on a web seat 10 | 155 |
+| Web and rig, no phone | pseudos 30, script policy (web) 10, waiting-seat ring 20, LEAF-REFRESH rows 10, NOTIF-17b 5, staging the institution reel and post 20, live titles on a web seat 10 | 105 |
 | Bench build | F1 on the iPhone (`ios.yml` with `local_url`) 40, seeds mirrored before the label (old APK, Mi 9T) 30, sealed caches upgrade (v1.4.0 APK, Mi 9T) 30 | 100 |
 | Both phones together | noise suppression routes 30, the call that survives the app leaving the screen and the audio focus 50, the deploy drill 40, campus trends 30, new-device notices 30 | 180 |
 | Mi 9T alone | see the list below | 735 |
@@ -69,7 +69,7 @@ CanaReels 35, in-session join 15, 13 MB 20, reply swipe 15, menus 10, live title
 Entre etudiants 25, Voir plus 10, camera volume buttons 15, rotation (lock ON) 20, overlays 15, microphone channel
 10, tab swipe class A 10, sharing banner tap 10.
 
-The total is about 1700 minutes, 28 hours.
+The total is about 1640 minutes, 27 hours.
 
 ## Where the pass stands
 

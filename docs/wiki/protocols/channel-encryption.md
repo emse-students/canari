@@ -2551,7 +2551,7 @@ so a member granted mid-salon holds no seed until it meets a row it cannot open;
 ([section 25](#25-a-member-hands-the-past-only-to-an-admission-it-can-verify-decided-by-the-user-2026-10-22)). That is the
 route every COMM-8 pass in the ledger has taken (`seedAfterTheGrant: repaired`, never `distributed`), and the one COMM-22's four
 grant/revoke cycles read green on. COMM-8 asserts the seed was STORED (`distributed` or `repaired`), not which route brought it, and
-it was re-run on dev on 2026-11-15: every assertion held, `repaired`. A grant that left a member unable to read would still fail the row.
+it was re-run on dev on 2026-11-15: every assertion held, `repaired`. A grant that left a member unable to read would still fail the row. Charter ([principes](../../principes.md)): principle 1 holds because the ask and its answer travel as ciphertext between members and the server learns nothing new; principle 2 holds because the row still fails if the member cannot read what was said. Reverting means restoring the `distributed` expectation in `archive/comm8.mjs` and the grant's seed frame, which section 19 already describes.
 
 ### The creator prepared nothing, so the first message in a new community was refused - FIXED 2026-08-20
 
