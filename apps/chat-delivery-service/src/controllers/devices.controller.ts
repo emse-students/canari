@@ -27,6 +27,7 @@ import {
   lastResortDeadline,
 } from '../entities/key-package.entity';
 import { OneTimeKeyPackage, usableOneTimePackage } from '../entities/one-time-key-package.entity';
+import { parsePushOutcome, pushPresenceLine } from '../utils/push-coverage';
 import { GroupMember } from '../entities/group-member.entity';
 import { Group } from '../entities/group.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
@@ -323,6 +324,8 @@ export class DevicesController {
       deviceName?: string;
       deviceOs?: string;
       deviceAppVersion?: string;
+      /** What the device's last push registration came to - see `parsePushOutcome`. */
+      pushOutcome?: unknown;
     },
     @Headers('x-user-id') headerUserId?: string
   ) {
@@ -463,7 +466,21 @@ export class DevicesController {
     this.logger.log(
       `[REGISTER_DEVICE][${traceId}] DONE user=${userId} device=${deviceId} isNew=${isNew} pendingGroups=${pendingGroups}`
     );
-    return { status: 'registered' };
+    // WHETHER THIS DEVICE CAN BE WOKEN, answered on the call it makes at every unlock and key-package
+    // renewal: the `push_token` row is the fact, and the client re-registers on `false` instead of
+    // trusting its own copy of it (`reconcilePushRegistration`). A row missing from a phone is said
+    // here with what the device states its last attempt came to - see `utils/push-coverage.ts`.
+    const pushRegistered = await this.pushTokenRepo.existsBy({ userId, deviceId });
+    const presence = pushPresenceLine({
+      userId,
+      deviceId,
+      deviceOs,
+      build: deviceAppVersion,
+      held: pushRegistered,
+      outcome: parsePushOutcome(body.pushOutcome),
+    });
+    if (presence) this.logger[presence.level](presence.line);
+    return { status: 'registered', push: { registered: pushRegistered } };
   }
 
   @UseGuards(HeaderAuthGuard)

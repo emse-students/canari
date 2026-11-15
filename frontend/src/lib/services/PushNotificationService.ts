@@ -122,6 +122,100 @@ export class PushSecretNotStoredError extends Error {
 }
 
 /**
+ * What this install's push registration last came to, kept across processes and stated to the
+ * delivery service with every `register-device` (`pushOutcomeForReport`), which prints it when it
+ * holds no push registration for the device (`[PUSH_MISSING]`).
+ *
+ * - `registered`: the server answered a registration, or the skip key said one already stood;
+ * - a {@link PushRegistrationFailure}: the last attempt's failure;
+ * - `deferred`: a sign-out's token deletion is still owed, so nothing may register;
+ * - `no-user`: the service started with no signed-in user;
+ * - `started`: a registration began and nothing came of it before the process ended.
+ *
+ * WHY IT IS DURABLE: the branches that end a registration without a request - an `unauthorized`
+ * ladder, an owed deletion, a process killed inside the four-minute ladder - leave no trace on the
+ * server, and a device in that state looked exactly like one that was never opened (production,
+ * 2026-11-15: 25 of 65 `1.6.12` devices held no row and had said nothing). The next authenticated
+ * call this device makes anyway carries the evidence; no new request is spent on it.
+ */
+export type PushOutcomeRecord =
+  | 'registered'
+  | PushRegistrationFailure
+  | 'deferred'
+  | 'no-user'
+  | 'started';
+
+/** localStorage key of {@link PushOutcomeRecord}; cleared at sign-out with the registration. */
+export const PUSH_OUTCOME_STORAGE_KEY = 'canari_push_outcome';
+
+/** Records this install's latest {@link PushOutcomeRecord}. A store that refuses is logged. */
+function recordPushOutcome(outcome: PushOutcomeRecord): void {
+  try {
+    localStorage.setItem(PUSH_OUTCOME_STORAGE_KEY, outcome);
+  } catch (err) {
+    console.warn(`[Push] could not record the registration outcome (${outcome})`, err);
+  }
+}
+
+/**
+ * The outcome `register-device` states (`none`: this install never started a registration since its
+ * last sign-out). A store that cannot be read says `unreadable`, never a guess.
+ */
+export function pushOutcomeForReport(): string {
+  try {
+    return localStorage.getItem(PUSH_OUTCOME_STORAGE_KEY) ?? 'none';
+  } catch (err) {
+    console.warn('[Push] could not read the registration outcome', err);
+    return 'unreadable';
+  }
+}
+
+/**
+ * Where `startPushService` was last started, so the delivery service's answer can drive a
+ * registration it owes ({@link reconcilePushRegistration}) without a second copy of these arguments.
+ */
+let startedWith: { apiBaseUrl: string; auth: PushAuth; deviceId: string } | null = null;
+
+/**
+ * Acts on the delivery service's answer to `register-device`: whether it HOLDS a push registration
+ * for this device (`push_token`, keyed by the account and the device).
+ *
+ * THE SERVER'S ROW IS THE FACT, THE SKIP KEY ONLY A LOCAL COPY OF IT. The skip key
+ * (`FCM_TOKEN_STORAGE_KEY`) says "this token was registered once in this WebView", and a row can go
+ * after that (a terminal send error, a session end, a purge) or never have come (a ladder that ended
+ * without a request): the device then skipped, or never retried, for as long as the WebView lived.
+ * `register-device` runs at every unlock and every key-package renewal, so this answer re-drives the
+ * registration deterministically from the durable state, never from a timer.
+ *
+ * `null` - a delivery service that does not say (a rolling deploy) - changes nothing and is said.
+ */
+export function reconcilePushRegistration(serverHolds: boolean | null): void {
+  if (serverHolds === null) {
+    console.warn('[Push] register-device did not say whether a push registration is held');
+    return;
+  }
+  if (serverHolds) return;
+  if (!pushPlatform()) return;
+  console.warn(
+    `[Push] the delivery service holds no push registration for this device (last outcome: ${pushOutcomeForReport()}) - registering again`
+  );
+  try {
+    sessionStorage.removeItem(FCM_TOKEN_STORAGE_KEY);
+  } catch (err) {
+    console.error(
+      '[Push] could not drop the registration skip key - the registration may skip',
+      err
+    );
+  }
+  // Not started yet: the start this login owes registers, the skip key being gone.
+  if (!startedWith) return;
+  const { apiBaseUrl, auth, deviceId } = startedWith;
+  void startPushService(apiBaseUrl, auth, deviceId).catch((err) =>
+    console.error('[Push] the registration the delivery service owed failed to start', err)
+  );
+}
+
+/**
  * Asks the native layer WHY there is no token, and falls back to the symptom when it has no answer.
  *
  * `no-token` is the honest limit of what this layer can see, and it is not enough: on iOS it covers
@@ -290,17 +384,29 @@ export async function startPushService(
     return;
   }
 
+  startedWith = { apiBaseUrl, auth, deviceId };
+
   const userId = currentUserId();
   if (!userId) {
-    console.warn('[Push] startPushService aborted: missing currentUserId');
+    console.error('[Push] startPushService aborted: missing currentUserId - nothing registers');
+    recordPushOutcome('no-user');
     return;
   }
 
   // THE TOKEN A SIGN-OUT STILL OWES THE DELETION OF IS NEVER REGISTERED FOR THE NEXT SESSION: the
   // deletion completes first, or nothing registers (see `endPushRegistration`).
-  if (!(await completeOwedPushTokenDeletion())) return;
+  if (!(await completeOwedPushTokenDeletion())) {
+    recordPushOutcome('deferred');
+    return;
+  }
 
   const registerOnce = async (): Promise<PushRegistrationOutcome> => {
+    const outcome = await registerAttempt();
+    recordPushOutcome(outcome.ok ? 'registered' : outcome.reason);
+    return outcome;
+  };
+
+  const registerAttempt = async (): Promise<PushRegistrationOutcome> => {
     return await registerPushToken(async (pushToken) => {
       // PushKit VoIP token (iOS only, WP-C6): written by the native PKPushRegistry callback, which
       // exists only in a binary with the native ring. Sent at registration so CallKit rings from the
@@ -413,6 +519,8 @@ export async function startPushService(
   }
 
   pushAttempted = true;
+  // Overwritten by the first attempt's outcome; read as `started` only when this process ended first.
+  recordPushOutcome('started');
 
   console.info(
     `[Push] startPushService device=${deviceId} (platform will be confirmed by FCM token)`
@@ -508,9 +616,12 @@ async function reportGaveUp(
 ): Promise<void> {
   // NOT SENT WITHOUT A TOKEN THE SERVER TAKES: the registration just learned that this session has
   // none, and the report would be refused with the same bearer - a request whose answer is known.
+  // NOT SILENT EITHER: the outcome is recorded (`recordPushOutcome`), and the next `register-device`
+  // states it, where the server prints `[PUSH_MISSING] ... last=unauthorized` and answers that it
+  // holds no registration - which drives the next attempt (`reconcilePushRegistration`).
   if (reason === 'unauthorized') {
-    console.warn(
-      '[Push] gave up with no accepted token - the unavailable report is not sent (it would be refused too)'
+    console.error(
+      '[Push] gave up with no accepted token - no registration; the next register-device reports it'
     );
     return;
   }
@@ -595,6 +706,14 @@ export async function endPushRegistration(): Promise<void> {
   } catch (err) {
     console.error('[Push] could not forget the registration skip key at sign-out', err);
   }
+  // The outcome is the session's: the next account starts at `none`, and a registration this
+  // sign-out ends is never stated as `registered` for a device the server no longer holds.
+  try {
+    localStorage.removeItem(PUSH_OUTCOME_STORAGE_KEY);
+  } catch (err) {
+    console.error('[Push] could not forget the registration outcome at sign-out', err);
+  }
+  startedWith = null;
   const platform = pushPlatform();
   if (!platform) {
     console.info('[Push] endPushRegistration noop (no push registration on this platform)');

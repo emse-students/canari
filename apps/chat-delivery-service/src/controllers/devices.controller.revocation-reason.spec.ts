@@ -80,7 +80,10 @@ describe('DevicesController - the cause of a ban', () => {
         { provide: getRepositoryToken(GroupMember), useValue: { find: jest.fn(() => []) } },
         { provide: getRepositoryToken(Group), useValue: {} },
         { provide: getRepositoryToken(DeviceGroupMembership), useValue: {} },
-        { provide: getRepositoryToken(PushToken), useValue: {} },
+        {
+          provide: getRepositoryToken(PushToken),
+          useValue: { existsBy: jest.fn(async () => true) },
+        },
         { provide: getRepositoryToken(RevokedDevice), useValue: revokedDeviceRepo },
         { provide: 'REDIS_CLIENT', useValue: {} },
         { provide: DataSource, useValue: { query } },

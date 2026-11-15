@@ -54,7 +54,10 @@ describe('DevicesController - a refusal says which of the three it is', () => {
         { provide: getRepositoryToken(GroupMember), useValue: { find: jest.fn(() => []) } },
         { provide: getRepositoryToken(Group), useValue: { find: jest.fn(() => []) } },
         { provide: getRepositoryToken(DeviceGroupMembership), useValue: {} },
-        { provide: getRepositoryToken(PushToken), useValue: {} },
+        {
+          provide: getRepositoryToken(PushToken),
+          useValue: { existsBy: jest.fn(async () => true) },
+        },
         {
           provide: getRepositoryToken(RevokedDevice),
           useValue: {

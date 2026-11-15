@@ -1971,6 +1971,56 @@ be refused with the same bearer). Any other `4xx` ends it as `refused`, reported
 transport failure or a renewal that got no verdict is retried. Tests:
 `PushNotificationService.refusal.test.ts`.
 
+#### The server's row decides whether a registration is owed (2026-11-15)
+
+**Measured on production, read-only, 2026-11-15.** 25 of the 65 `1.6.12` phones that used a session
+that day held no `push_token` row (Android 14 of 43, iOS 11 of 22); every one of 209 phones on an
+older build held one. **That comparison was unsound, and is re-measured here.** A row is sticky - it
+says "this device registered once and nothing deleted it since" - so the older builds' zero proved
+only that their rows were written before. The predicate written for the question "did this build
+register after it ran" is the key package: `register-device` resets `key_package.createdAt` at every
+unlock and every renewal, and the registration follows it within the ladder. By that predicate
+(`utils/push-coverage.ts`, the same SQL the daily report runs) every older build read **0**, and
+`1.6.12` read **14 of 38 Android, 10 of 20 iOS**. And by the server's own lines over the same day:
+21 of the 24 tokenless phones launched (one to more than five `[REGISTER_DEVICE]`) and sent **no**
+`[PUSH_REGISTER]`, no `[PUSH_UNAVAILABLE]` and met no `[AUTH_GUARD]` denial; nothing deleted their rows
+in the window (no `[PUSH_SESSION_END]`, no invalid-token deletion, no purge naming them), and 16 of
+them were signed in before `1.6.12` existed. On every older build, each phone that launched sent a
+registration. So the loss is real (no row, no push of any kind to that phone) and on the CLIENT, and
+the only change on that path in `1.6.12` is `#3464` above, whose `unauthorized` branch ends the
+ladder **without a request and without a report**. Which of its sub-branches fired could not be read
+from the server - and that is the defect this section closes.
+
+**What was missing, twice.** The client trusted its own copy of a server fact - the skip key
+(`canari_fcm_token` in `sessionStorage`) says "this token was registered once in this WebView" - and
+a ladder that ended in silence was never re-driven for as long as the WebView lived. And nothing on
+the server could say a phone was silent, which is how a third of a build went unseen.
+
+**The fix: the fact travels on a call the phone already makes.**
+
+- `POST /api/mls/register-device` (every unlock, every key-package renewal) answers
+  `{status, push: {registered}}` - whether a `push_token` row exists for `(userId, deviceId)`. On
+  `false` the client drops the skip key and runs the registration again
+  (`reconcilePushRegistration`, called from `TauriMlsService.publishKeyPackage`). Deterministic,
+  from durable state, never a timer; a server that does not say answers `null` and changes nothing,
+  said at warn.
+- The phone states what its last registration came to, `pushOutcome`, kept in `localStorage`
+  (`canari_push_outcome`) across processes: `registered`, a `PushRegistrationFailure`, `deferred`
+  (an owed sign-out deletion), `no-user`, `started` (the process ended inside the ladder), `none`
+  (nothing since the sign-out, which clears it). An allowlist on the server; anything else prints
+  `invalid`, an older build `unstated`.
+- When a phone holds no row, `register-device` prints `[PUSH_MISSING] user device os build last=<outcome>`:
+  at `log` for `last=none` (a fresh sign-in, the registration follows), at WARN otherwise, naming the
+  side - `registered` accuses a server-side deletion, any failure the client's attempt.
+- `[PUSH_COVERAGE]` (daily, and in the initial sweep): one line for the fleet, and one WARN per
+  `(os, build)` whose phones ran and hold no row ten minutes after - zero is the steady state.
+
+Tests: `PushNotificationService.reconcile.test.ts`, `mlsDeliveryApi.pushRegistered.test.ts`,
+`TauriMlsService.pushReconcile.test.ts` (client); `devices.controller.push-presence.spec.ts`,
+`utils/push-coverage.spec.ts` (server). **What closes the incident** is the `[PUSH_COVERAGE]` WARN
+lines reading zero for the build that ships this, and the `[PUSH_MISSING] last=` terms naming the
+branch if they do not (backlog entry `p1-a-third-of-the-1-6-12-native-devices-hold-no-push-token-row`).
+
 #### Transport — single gateway (FCM)
 
 Both platforms are delivered through **Firebase Cloud Messaging**; there is no direct
