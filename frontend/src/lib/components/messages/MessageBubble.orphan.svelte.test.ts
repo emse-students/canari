@@ -49,7 +49,10 @@ const file: MediaRef = {
   fileName: 'a.pdf',
 };
 
-async function render(props: { isOwn: boolean; status?: 'pending' | 'sent' }) {
+async function render(
+  props: { isOwn: boolean; status?: 'pending' | 'sent' },
+  ref: MediaRef = file
+) {
   const target = document.createElement('div');
   document.body.appendChild(target);
   const app = mount(MessageBubble, {
@@ -59,7 +62,7 @@ async function render(props: { isOwn: boolean; status?: 'pending' | 'sent' }) {
       senderId: props.isOwn ? 'u-me' : 'u-other',
       currentUserId: 'u-me',
       authToken: 'tok',
-      content: serializeEnvelope(mkMediaEnvelope(file)),
+      content: serializeEnvelope(mkMediaEnvelope(ref)),
       timestamp: new Date('2026-10-05T10:00:00Z'),
       ...props,
     },
@@ -181,5 +184,42 @@ describe('MessageBubble - a retired attachment after a reload', () => {
     await render({ isOwn: true });
     await settle();
     expect(stored).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * AN OWN PHOTO STILL IN THE QUEUE WHOSE STATUS WAS LOST (owner, web 1.6.9, 2026-11-10): a follower
+ * tab's photo, its stored page drawn over the row after the login re-marked it pending. The bubble
+ * drew the bare image placeholder - a picture "loading" for ever, with a check mark - over a file
+ * nobody had sent. The durable queue holds the entry, so the bubble says QUEUED, with its cancel.
+ */
+describe('MessageBubble - a queued photo whose status was lost says it is queued', () => {
+  const photo: MediaRef = {
+    type: 'image',
+    mediaId: '',
+    key: '',
+    iv: '',
+    mimeType: 'image/jpeg',
+    size: 1000,
+    fileName: 'p.jpg',
+    width: 400,
+    height: 300,
+  };
+  for (const status of [undefined, 'sent'] as const) {
+    it(`status ${String(status)}, entry present: the queued upload view, not the placeholder`, async () => {
+      queued.mockResolvedValue(true);
+      await render({ isOwn: true, ...(status ? { status } : {}) }, photo);
+      await settle();
+      expect(document.body.textContent).toContain(m.upload_queued());
+      expect(document.querySelector('[role="status"]')).not.toBeNull();
+      expect(orphanShown()).toBe(false);
+    });
+  }
+  it('entry absent: the orphan, as before', async () => {
+    queued.mockResolvedValue(false);
+    await render({ isOwn: true, status: 'sent' }, photo);
+    await settle();
+    expect(orphanShown()).toBe(true);
+    expect(document.body.textContent).not.toContain(m.upload_queued());
   });
 });
