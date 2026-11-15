@@ -1637,6 +1637,9 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       await follow(BOB);
       const first = await start();
       await lives.ingest(ALICE, first.id, 0, segment(0));
+      // The announcement is read before the end: a live this short is purged at its end, and one
+      // purged before its announcement was read is not announced (the case pinned below).
+      await lives.announcementsSettled();
       await lives.end(ALICE, first.id);
       const second = await start();
       await lives.ingest(ALICE, second.id, 0, segment(0));
@@ -1704,10 +1707,15 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         mayActAs.add(`${ALICE}:${ASSO}`);
         await follow(BOB);
       };
-      /** Starts a live as the association, stores its segment 0, and ends it. */
+      /**
+       * Starts a live as the association, stores its segment 0, lets its announcement be read, and
+       * ends it. The announcement FIRST: the end purges a live this short, and one purged before its
+       * announcement was read is not announced - these cases are about the slot, not that race.
+       */
       const assoLive = async () => {
         const live = await lives.start(ALICE, { key: KEY, associationId: ASSO });
         await lives.ingest(ALICE, live.id, 0, segment(0));
+        await lives.announcementsSettled();
         await lives.end(ALICE, live.id);
         return live;
       };
@@ -1936,6 +1944,23 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         index: 0,
       });
       expect(await pushed()).toEqual([]);
+    });
+
+    it('a live ended and purged before its announcement is read is not announced, to nobody', async () => {
+      await follow(BOB);
+      const live = await start();
+      await lives.ingest(ALICE, live.id, 0, segment(0));
+      await lives.announcementsSettled();
+      notices.length = 0;
+      await lives.end(ALICE, live.id);
+      // Too short for a replay: its end purged it, row included.
+      expect(await q(`SELECT 1 FROM lives WHERE id = $1`, [live.id])).toEqual([]);
+      // The announcement as the background send runs it when the end wins: the claim it was handed
+      // at segment 0, read against a row that is gone.
+      await expect(
+        announcer.announce(live.id, { broadcasterId: ALICE, associationId: null })
+      ).resolves.toBeNull();
+      expect(notices).toEqual([]);
     });
 
     it('a failing announcement never fails the segment, and is not retried', async () => {

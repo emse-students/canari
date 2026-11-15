@@ -98,7 +98,8 @@ export class LiveAnnouncer {
   /**
    * Pushes a CLAIMED live's start to its audience (`liveAudienceSql`), and NEVER throws: a failure is
    * logged, and the live is not retried (its claim is committed). Returns how many accounts of its
-   * audience were addressed, or `null` when nothing was sent (switched off, or a failure).
+   * audience were addressed, or `null` when nothing was sent (switched off, a failure, or a live
+   * whose row is already gone - see {@link send}).
    */
   async announce(liveId: string, live: ClaimedLive): Promise<number | null> {
     if (!isLiveEnabled()) {
@@ -116,14 +117,42 @@ export class LiveAnnouncer {
     }
   }
 
-  /** Reads the audience and the broadcaster's name, then hands the push to the one pipeline. */
-  private async send(liveId: string, live: ClaimedLive): Promise<number> {
+  /**
+   * Reads the live, its audience and the broadcaster's name, then hands the push to the one pipeline.
+   *
+   * THE LIVE AND ITS AUDIENCE ARE READ FROM ONE SNAPSHOT. The send follows segment 0's commit, so the
+   * live can end in between, and a live too short for a replay is PURGED at its end (its row
+   * deleted, `LivesService.purgeEnded`). The audience joins the live's row: read on its own, a row
+   * that had just gone answered ZERO recipients, which is indistinguishable from a live nobody can
+   * see - a push to nobody, logged as an announcement. One REPEATABLE READ transaction makes the
+   * two reads agree: either the row is there for both, or it is gone and the live is NOT announced,
+   * said as such. Nothing is locked, so the end never waits for an announcement.
+   */
+  private async send(liveId: string, live: ClaimedLive): Promise<number | null> {
     const asAssociation = live.associationId !== null;
-    const rows: { id: string }[] = await this.db.query(liveAudienceSql(asAssociation), [
-      live.broadcasterId,
-      liveId,
-    ]);
-    const recipientIds = rows.map((r) => String(r.id));
+    const read = await this.db.transaction('REPEATABLE READ', async (tx) => {
+      // The title as it stands at the first stored segment (owner, 2026-11-07): read here rather
+      // than carried by the claim, so the claim's transaction is unchanged. None is an empty body.
+      const titled: { title: string | null }[] = await tx.query(
+        `SELECT title FROM lives WHERE id = $1`,
+        [liveId]
+      );
+      if (titled.length === 0) return null;
+      const rows: { id: string }[] = await tx.query(liveAudienceSql(asAssociation), [
+        live.broadcasterId,
+        liveId,
+      ]);
+      return { title: titled[0].title ?? '', recipientIds: rows.map((r) => String(r.id)) };
+    });
+    if (!read) {
+      // Not a failure: the broadcaster ended at once and nothing is left to watch, so a push would
+      // open a 404. The claim stays (an association's slot included, taken with segment 0).
+      this.logger.log(
+        `[LIVE_ANNOUNCE] ${liveId} not announced: ended and purged before its announcement was read`
+      );
+      return null;
+    }
+    const { title, recipientIds } = read;
 
     let actorName: string;
     let associationLogoMediaId: string | null = null;
@@ -146,14 +175,6 @@ export class LiveAnnouncer {
       if (!name) throw new Error(`broadcaster ${short(live.broadcasterId)} has no display name`);
       actorName = name;
     }
-
-    // The title as it stands at the first stored segment (owner, 2026-11-07): read here rather than
-    // carried by the claim, so the claim's transaction is unchanged. None is an empty body.
-    const titled: { title: string | null }[] = await this.db.query(
-      `SELECT title FROM lives WHERE id = $1`,
-      [liveId]
-    );
-    const title = titled[0]?.title ?? '';
 
     const addressed = await this.notifications.pushNotice({
       recipientIds,
