@@ -77,6 +77,11 @@ describe('FormsService - drafts', () => {
       if (want && typeof want === 'object' && (want as { _type?: string })._type === 'isNull') {
         return have === null || have === undefined;
       }
+      // The association's archive clause (a raw SQL condition): no association here is archived,
+      // and the clause itself is proven on PostgreSQL (form-status.integration).
+      if (want && typeof want === 'object' && (want as { _type?: string })._type === 'raw') {
+        return true;
+      }
       return have === want;
     });
   }
@@ -160,7 +165,15 @@ describe('FormsService - drafts', () => {
       associations,
       { listCotisationTiers: jest.fn(() => Promise.resolve([])) } as any,
       {} as any,
-      { build: jest.fn(() => Promise.resolve({ answers: {} })) } as any,
+      {
+        build: jest.fn(() =>
+          Promise.resolve({
+            cursus: [{ promo: null, formation: null }],
+            cotisationTiers: [],
+            answers: {},
+          })
+        ),
+      } as any,
       { count: jest.fn() } as any,
       {} as any,
       { enabled: () => false } as any,

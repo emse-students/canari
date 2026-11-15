@@ -18,6 +18,7 @@ import {
   DirectoryUserRow,
 } from './dto/user.dto';
 import { applyFuzzyNameSearch } from './userSearch';
+import { cursusEntryFilter } from './cursus-filter';
 import { UserBlocksService } from './user-blocks.service';
 import {
   EMPTY_PROFILE,
@@ -511,15 +512,11 @@ export class UsersService implements OnModuleInit {
       applyFuzzyNameSearch(qb, q);
     }
 
-    if (query.promo != null) {
-      qb.andWhere('user.promo = :promo', { promo: query.promo });
-    }
-
-    if (formation.length > 0) {
-      qb.andWhere('unaccent(LOWER(user.formation)) LIKE unaccent(LOWER(:formation))', {
-        formation: `%${formation}%`,
-      });
-    }
+    // Promo and formation are read from EVERY cursus entry OR the legacy columns (D32, the union a
+    // price reads), and from the SAME place when both are asked: "ICM 2024" finds an ICM 2024
+    // student, never someone in ICM since 2021 and in another cursus since 2024.
+    const cursusFilter = cursusEntryFilter(query.promo, formation);
+    if (cursusFilter) qb.andWhere(cursusFilter.sql, cursusFilter.params);
 
     if (query.campus) {
       qb.andWhere('user.campus = :campus', { campus: query.campus });

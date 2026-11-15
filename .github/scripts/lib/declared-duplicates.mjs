@@ -59,6 +59,17 @@ export const DECLARED_GROUPS = [
     ],
   },
   {
+    what: 'the declaration of path parameters and the global guard that reads it',
+    compare: 'exact',
+    why: 'no shared TS package, for the reason the CORS allowlist below gives; each service provides the guard in its own AppModule (route-params-wired.test.mjs), and the one spec sits beside the first copy',
+    files: [
+      'apps/social-service/src/common/route-params.ts',
+      'apps/core-service/src/common/route-params.ts',
+      'apps/media-service/src/common/route-params.ts',
+      'apps/chat-delivery-service/src/common/route-params.ts',
+    ],
+  },
+  {
     what: 'the CORS origin allowlist every service applies',
     compare: 'exact',
     why: 'no shared TS package; one would add a build stage and the --install-links trap to four production images (see the docblock in any copy)',

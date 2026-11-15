@@ -614,4 +614,47 @@ maybe('PosterService on the migrated schema (scope, publication, legacy read)', 
       'CARTE_ALREADY_ATTACHED'
     );
   });
+
+  // The platform admin's roster shows the review accounts; no public roster may carry one, and the
+  // carte is served without an account - so the server drops them at publish, as non-members.
+  it('drops a review account from what a platform admin publishes; the other members stay', async () => {
+    const before = process.env.SERVICE_ACCOUNT_USER_ID;
+    process.env.SERVICE_ACCOUNT_USER_ID = 'review-account';
+    try {
+      await db.query(
+        `INSERT INTO association_members ("associationId", "userId") VALUES ($1, 'review-account'), ($1, 'a1-member')`,
+        [ID.a1]
+      );
+      const person = (userId: string) => ({ userId, name: `Name ${userId}`, role: 'Bureau' });
+      const doc = {
+        ...carte([ID.a1]),
+        units: carte([ID.a1]).units.map((u) => ({
+          ...u,
+          cards: [person('review-account'), person('a1-member')],
+        })),
+        directory: {
+          zones: [
+            {
+              label: 'Z',
+              assos: [{ assoId: ID.a1, members: [person('review-account'), person('a1-member')] }],
+            },
+          ],
+        },
+      };
+      const map = await service.create({ name: 'Carte revue', spaceId: ID.icm }, ADMIN);
+      await service.publish(map.id, { carte: doc, fingerprint: FP }, ADMIN);
+      const stored = (
+        await db.query(`SELECT publication FROM poster_projects WHERE id = $1`, [map.id])
+      ).rows[0].publication;
+      expect(JSON.stringify(stored)).not.toContain('review-account');
+      expect(JSON.stringify(stored)).toContain('a1-member');
+      const served = await service.getPublished({ formation: 'ICM', campus: 'saint-etienne' });
+      expect(JSON.stringify(served)).not.toContain('review-account');
+      expect(served?.units[0].cards.map((c) => c.userId)).toEqual(['a1-member']);
+      expect(served?.directory?.zones[0].assos[0].line).toBe('Name a1-member (Bureau)');
+    } finally {
+      if (before === undefined) delete process.env.SERVICE_ACCOUNT_USER_ID;
+      else process.env.SERVICE_ACCOUNT_USER_ID = before;
+    }
+  });
 });

@@ -3,14 +3,26 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { assertInternalSecret } from './internal-secret.util';
 import { User } from '../users/entities/user.entity';
+import { cursusViewsOf, type CursusView } from '../users/miconnect-profile';
+import { cursusEntriesSql, WELL_FORMED_ENTRY_SQL } from '../users/cursus-filter';
 import { isInReviewCohort } from '../review-cohort';
+import { RouteParams } from '../common/route-params';
 
-/** The minimum a `/profile/:id` share needs to render a preview, and nothing else. */
+/**
+ * The minimum a `/profile/:id` share needs to render a preview, plus what social-service prices on.
+ *
+ * `cursusViews` is every cursus social-service evaluates a price grid, a question's condition and a
+ * form's audience through (D32 - two cursus pay the most favourable price), built by
+ * `cursusViewsOf`: the well-formed entries plus the legacy pair when no entry carries it, so
+ * social-service reconciles nothing. `promo`/`formation` are the legacy columns, kept for the readers
+ * that still take them.
+ */
 export interface InternalPublicProfile {
   id: string;
   displayName: string | null;
   promo: number | null;
   formation: string | null;
+  cursusViews: CursusView[];
 }
 
 /**
@@ -26,6 +38,7 @@ export interface InternalPublicProfile {
  * NOT reachable through nginx: `/api/internal` has no location, so this is Docker-network only,
  * and gated on INTERNAL_SECRET on top of that.
  */
+@RouteParams({ id: 'opaque' })
 @Controller('internal')
 export class InternalUsersController {
   private readonly logger = new Logger(InternalUsersController.name);
@@ -36,7 +49,10 @@ export class InternalUsersController {
   ) {}
 
   /**
-   * Distinct non-null `formation` values in use, with how many users carry each.
+   * Distinct formation values in use, with how many users carry each - read from EVERY well-formed
+   * cursus entry AND the legacy `formation` column (D32, the same union as `cursusViewsOf`), so a
+   * formation followed only as a second cursus is offered, a person the backfill has not reached
+   * still counts, and a person counts once per formation however many places name it.
    *
    * Called by social-service to populate a form's "filtrer par formation" picker. It offers what
    * EXISTS rather than a hard-coded list, because `formation` comes from Authentik and the next
@@ -51,15 +67,7 @@ export class InternalUsersController {
     @Headers('x-internal-secret') secret?: string
   ): Promise<{ value: string; count: number }[]> {
     assertInternalSecret(secret);
-    const rows: { value: string; count: string }[] = await this.userRepo
-      .createQueryBuilder('u')
-      .select('u.formation', 'value')
-      .addSelect('COUNT(*)', 'count')
-      .where('u.formation IS NOT NULL')
-      .andWhere("u.formation <> ''")
-      .groupBy('u.formation')
-      .orderBy('COUNT(*)', 'DESC')
-      .getRawMany();
+    const rows: { value: string; count: string }[] = await this.userRepo.query(FORMATIONS_SQL);
     this.logger.debug(`internal formations listing rows=${rows.length}`);
     return rows.map((r) => ({ value: r.value, count: Number(r.count) }));
   }
@@ -88,6 +96,27 @@ export class InternalUsersController {
       displayName: user.displayName ?? null,
       promo: user.promo ?? null,
       formation: user.formation ?? null,
+      cursusViews: cursusViewsOf(user),
     };
   }
 }
+
+/**
+ * Every formation named by a well-formed cursus entry or by the legacy `formation` column, and how
+ * many DISTINCT people name it; the most used first, then by name so equal counts list in a stable
+ * order. A `cursus` that is not a list (a JSON null, an object) contributes no entry instead of
+ * failing the query for everyone (`cursusEntriesSql`).
+ */
+export const FORMATIONS_SQL = `
+  SELECT named.value AS value, COUNT(DISTINCT named.id) AS count
+  FROM (
+    SELECT u.id, entry->>'formation' AS value
+    FROM users u
+    CROSS JOIN LATERAL ${cursusEntriesSql('u.cursus')} AS entry
+    WHERE ${WELL_FORMED_ENTRY_SQL}
+    UNION ALL
+    SELECT u.id, u.formation AS value FROM users u
+  ) AS named
+  WHERE COALESCE(named.value, '') <> ''
+  GROUP BY named.value
+  ORDER BY COUNT(DISTINCT named.id) DESC, named.value ASC`;

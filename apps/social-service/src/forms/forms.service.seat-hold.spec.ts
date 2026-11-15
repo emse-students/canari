@@ -240,6 +240,9 @@ describe('FormsService - the seat a pending payment holds', () => {
           const releases: (() => void)[] = [];
           const manager = {
             query: async (sql: string, [formId]: string[]) => {
+              // The association's archive, read FOR SHARE before the seat lock: never archived
+              // here (the archive itself is proven on PostgreSQL, answer-edit.integration).
+              if (sql.includes('FROM associations')) return [];
               expect(sql).toBe('SELECT 1 FROM forms WHERE id = $1 FOR UPDATE');
               while (locks.has(formId)) await locks.get(formId);
               let release!: () => void;
@@ -304,8 +307,7 @@ describe('FormsService - the seat a pending payment holds', () => {
     const formRepo: any = { findOne: jest.fn(async () => ({ ...form })) };
     const pricingFacts: any = opts.pricingFacts ?? {
       build: jest.fn(async (input: { answers?: Record<string, string[]> }) => ({
-        promo: null,
-        formation: null,
+        cursus: [{ promo: null, formation: null }],
         cotisationTiers: [],
         answers: input.answers ?? {},
       })),

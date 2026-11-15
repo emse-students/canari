@@ -331,7 +331,7 @@ export async function getFormDraft(id: string): Promise<FormDraft> {
  * keepalive requests in flight at 64 KiB together. A larger revision is not lost - the device copy
  * holds it until the next send (`draftCopies.ts`).
  */
-export const KEEPALIVE_BODY_MAX = 60_000;
+const KEEPALIVE_BODY_MAX = 60_000;
 
 /**
  * The autosave: stores `document` as the revision after `baseRevision`, under the client's `saveId`.
@@ -513,14 +513,29 @@ export interface PricingView {
   ignoredModifierQuestionIds: string[];
 }
 
+/**
+ * The page's pricing through ONE of the person's cursus (D32): its grid row and its grid prices.
+ * `/check` and the public read serve one per distinct cursus, and the page shows the cheapest
+ * (`fillPriceState`).
+ */
+export interface CursusSlice {
+  pricing: PricingView | null;
+  productGridPrices: ProductGridPrices;
+}
+
 export async function checkSubmission(formId: string): Promise<{
   hasSubmitted: boolean;
   paymentStatus?: string;
   /** The id of the caller's own answer when there is one (a `pending` one is confirmed on load). */
   submissionId?: string;
   formFull: boolean;
-  /** Null when the form has one price for everybody. */
+  /**
+   * [LEGACY] The FIRST cursus slice alone, read only from a server older than D32
+   * (`cursusSlicesOf`). Null when the form has one price for everybody.
+   */
   pricing: PricingView | null;
+  /** Every distinct cursus slice (D32). Absent from a server older than it. */
+  cursusSlices?: CursusSlice[];
   /** Questions hidden from this submitter by a profile criterion, answers aside. */
   hiddenItemIds: string[];
   /** False when a `submitCondition` excludes them. */
@@ -951,7 +966,10 @@ export type PublicForm = Pick<
   /** What the page asks a guest about who they are; [] asks nothing (`guestIdentity.ts`). */
   guestFields: GuestIdentityField[];
   formFull: boolean;
+  /** [LEGACY] the one slice, read only from a server older than D32 (`cursusSlicesOf`). */
   pricing: PricingView | null;
+  /** A guest's slices - one, a guest having no cursus. Absent from a server older than D32. */
+  cursusSlices?: CursusSlice[];
   /** Question id -> a guest's prices on that priced grid ("everyone else", or the one list). */
   productGridPrices?: ProductGridPrices;
 };

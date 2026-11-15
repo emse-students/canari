@@ -97,7 +97,9 @@ import {
 import { assertInternalSecret } from './internal-secret.util';
 import { subjectOfAccessToken } from './access-token';
 import { fetchLivesMode } from './lives-mode';
+import { mediaRetention, type MediaRetentionDays } from './retention-settings';
 import { requireUploadedFile, uploadedFileBuffer, uploadedFileMime } from './uploaded-file';
+import { RouteParams } from '../common/route-params';
 
 const POLICY_MAX_MEDIA_MB = 100;
 const CONFIGURED_MAX_MB = parseInt(process.env.MEDIA_MAX_SIZE_MB ?? '100', 10);
@@ -163,6 +165,7 @@ export function clientRetentionClass(value: unknown): RetentionClass | undefined
   return isRetentionClass(value) ? value : undefined;
 }
 
+@RouteParams({ id: 'opaque', index: 'opaque', liveId: 'opaque', name: 'opaque', userId: 'opaque' })
 @Controller('media')
 export class MediaController {
   private readonly logger = new Logger(MediaController.name);
@@ -546,6 +549,43 @@ export class MediaController {
   ): Promise<MediaStorageStats> {
     assertInternalSecret(internalSecret);
     return this.mediaService.getStorageStats(await this.liveSegments.listSegments());
+  }
+
+  /**
+   * The retention durations this process HOLDS and when it read them - what core-service compares
+   * with `platform_config` to tell an admin whether a change reached the files
+   * (docs/wiki/retention-settings.md). `held` is null before the first successful read.
+   */
+  @Get('internal/retention')
+  retentionHeld(@Headers('x-internal-secret') internalSecret: string | undefined): {
+    held: MediaRetentionDays | null;
+    readAt: string | null;
+  } {
+    assertInternalSecret(internalSecret);
+    const held = mediaRetention.snapshot();
+    this.logger.debug(
+      `[RETENTION] asked which durations are held: ${held ? `${held.values.chatReelDays} / ${held.values.idleFileDays} days` : 'none yet'}`
+    );
+    return {
+      held: held?.values ?? null,
+      readAt: held ? new Date(held.readAt).toISOString() : null,
+    };
+  }
+
+  /**
+   * THE RETENTION DURATIONS CHANGED, OR MAY HAVE (docs/wiki/retention-settings.md): core-service
+   * calls this when an admin moves one, social-service at its boot. Media-service re-reads them from
+   * social-service's relay and holds them; a failed re-read keeps the values held (and says so).
+   * Answers what is held after the read, so the caller logs whether its change was taken.
+   */
+  @Post('internal/retention-changed')
+  async retentionChanged(
+    @Headers('x-internal-secret') internalSecret: string | undefined
+  ): Promise<{ refreshed: boolean; readAt: string | null }> {
+    assertInternalSecret(internalSecret);
+    const refreshed = await mediaRetention.refresh('notice');
+    const held = mediaRetention.snapshot();
+    return { refreshed, readAt: held ? new Date(held.readAt).toISOString() : null };
   }
 
   // ---------------------------------------------------------------------------

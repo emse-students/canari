@@ -130,8 +130,15 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
   }[] = [];
   /** `account:association` pairs holding MANAGE_BOOKINGS. */
   const grants = new Set<string>();
-  /** The audience facts of an account, as `PricingFactsService` would build them. */
+  /**
+   * The audience facts of an account, as `PricingFactsService` would build them: `promo`/`formation`
+   * for one cursus, `cursus` for several (D32) - `cursusOf` turns either into the list.
+   */
   const facts = new Map<string, Record<string, unknown>>();
+  const cursusOf = (f: Record<string, unknown> = {}) =>
+    (f.cursus as { promo: number | null; formation: string | null }[] | undefined) ?? [
+      { promo: (f.promo as number) ?? null, formation: (f.formation as string) ?? null },
+    ];
   /** Runs while the facts are built - i.e. between `book`'s first read of the space and its lock. */
   let duringFacts: (() => Promise<void>) | null = null;
   /** The answers each facts build was handed, in order. */
@@ -188,6 +195,11 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
     await q(
       `CREATE TABLE user_blocks ("blockerId" varchar NOT NULL, "blockedId" varchar NOT NULL)`
     );
+    // The grants table (migration 078), with the columns the visibility predicate reads.
+    await q(
+      `CREATE TABLE read_grants (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+         user_id varchar(255) NOT NULL, campus varchar(32) NOT NULL, formation varchar(16) NULL)`
+    );
     await q(MIGRATION);
     // A listed space tells its association's followers of its opening (engagement WP-4): the
     // follows, in the shape the follow writes them, and the opening reminders 151 creates.
@@ -233,13 +245,17 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       build: async ({ userId, answers }: { userId: string; answers: Record<string, string[]> }) => {
         builtAnswers.push(answers);
         await duringFacts?.();
-        return facts.get(userId) ?? {};
-      },
-      profileFor: async (userId: string, needProfile: boolean) => {
-        if (!needProfile) return { promo: null, formation: null };
-        if (profileDown) throw new ServiceUnavailableException('core-service is down');
         const f = facts.get(userId) ?? {};
-        return { promo: f.promo ?? null, formation: f.formation ?? null };
+        return {
+          cursus: cursusOf(f),
+          cotisationTiers: f.cotisationTiers ?? [],
+          answers: f.answers ?? {},
+        };
+      },
+      cursusFor: async (userId: string, needProfile: boolean) => {
+        if (!needProfile) return cursusOf();
+        if (profileDown) throw new ServiceUnavailableException('core-service is down');
+        return cursusOf(facts.get(userId));
       },
       cotisationTiersByAssociation: async (userId: string, ids: string[]) =>
         new Map(ids.map((id) => [id, (facts.get(userId)?.cotisationTiers as never) ?? []])),
@@ -1309,6 +1325,34 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       await expect(service.getSpace(space.id, as(ORGA))).resolves.toBeDefined();
     });
 
+    it('a nominative read grant opens an association space of its cell, and nothing without it (owner, 2026-11-14)', async () => {
+      const { space, resourceIds } = await setup({ name: 'granted asso' });
+      await q(
+        `UPDATE association_audiences SET campus = 'gardanne', formation = NULL WHERE "associationId" = $1`,
+        [space.associationId]
+      );
+      // Staff of Saint-Etienne have no space: a Gardanne association is closed to them...
+      expect(await listedTo(STAFF, space.id)).toBe(false);
+      expect(await refusal(service.getSpace(space.id, as(STAFF)))).toEqual({
+        code: 'space-not-found',
+      });
+      // ...until they are granted the Gardanne cell.
+      await q(`INSERT INTO read_grants (user_id, campus) VALUES ($1, 'gardanne')`, [STAFF]);
+      try {
+        expect(await listedTo(STAFF, space.id)).toBe(true);
+        await expect(service.getSpace(space.id, as(STAFF))).resolves.toBeDefined();
+        await expect(
+          book(space.id, resourceIds[0], '10:00', '10:30', STAFF)
+        ).resolves.toBeDefined();
+        // A student of the other campus, with no grant, stays out.
+        expect(await listedTo(ALICE, space.id)).toBe(false);
+      } finally {
+        await q(`DELETE FROM read_grants WHERE user_id = $1`, [STAFF]);
+      }
+      // The revocation holds on the next read.
+      expect(await listedTo(STAFF, space.id)).toBe(false);
+    });
+
     /**
      * THE ACCOUNT LINKED TO A RESOURCE (D10) IS NAMED BY THE SPACE ITSELF, so the campus never
      * stands between it and its own column: an alumnus holding a column of an association space it
@@ -1532,6 +1576,85 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       ).toEqual([]);
     });
 
+    /**
+     * AN ARCHIVED ASSOCIATION'S SPACE IS CLOSED BY ITS LINK TOO (2026-11-14), not only left out of
+     * the listing: every reader and booker is answered `space-not-found` - the account linked to a
+     * column included - while its managers keep the space, and a booking already made keeps its
+     * people's exits (their list, a withdrawal, a cancellation), as for a holder the audience no
+     * longer admits.
+     */
+    it("opens an archived association's space by its link to its managers alone, its bookings keeping their exits", async () => {
+      const { space, resourceIds } = await setup({ name: '0005 archived link' });
+      const r = resourceIds[0];
+      const made = await book(space.id, r, '10:00', '10:30', ALICE, { participantIds: [BOB] });
+      await q(`UPDATE booking_resources SET "linkedUserId" = $2 WHERE id = $1`, [r, CAROL]);
+      await q(`UPDATE associations SET archived = true WHERE id = $1`, [space.associationId]);
+      try {
+        const gone = { code: 'space-not-found' };
+        for (const viewer of [ALICE, CAROL]) {
+          expect(await refusal(service.getSpace(space.id, as(viewer)))).toEqual(gone);
+          expect(
+            await refusal(service.spaceSlots(space.id, '2026-11-02', '2026-11-02', as(viewer)))
+          ).toEqual(gone);
+        }
+        expect(await refusal(book(space.id, r, '11:00', '11:30', ALICE))).toEqual(gone);
+        const pdf = Buffer.from('%PDF-1.4');
+        expect(
+          await refusal(
+            service.uploadFile(space.id, 'cv', { buffer: pdf, size: pdf.length }, as(ALICE))
+          )
+        ).toEqual(gone);
+        expect(
+          await refusal(
+            service.edit(
+              made.id,
+              { startsAt: on('10:00'), endsAt: on('11:00'), participantIds: [BOB], revision: 'x' },
+              as(ALICE),
+              NOW
+            )
+          )
+        ).toEqual(gone);
+
+        // Its managers keep the space: they read it, list its bookings and book on someone's behalf.
+        await expect(service.getSpace(space.id, as(ORGA))).resolves.toHaveProperty('id', space.id);
+        expect(
+          (await service.spaceBookings(space.id, as(ORGA))).items.map((b: { id: string }) => b.id)
+        ).toContain(made.id);
+        await expect(
+          book(space.id, r, '12:00', '12:30', ORGA, { holderId: DAN })
+        ).resolves.toHaveProperty('id');
+
+        // The booking made keeps its people's exits.
+        expect((await service.mine(as(ALICE))).map((b) => b.id)).toContain(made.id);
+        await expect(service.withdraw(made.id, as(BOB), NOW)).resolves.toEqual({ ok: true });
+        await expect(service.cancel(made.id, as(ALICE), NOW)).resolves.toEqual({ ok: true });
+      } finally {
+        await q(`UPDATE associations SET archived = false WHERE id = $1`, [space.associationId]);
+      }
+      // Un-archived, the link opens again: read from state, nothing was rewritten.
+      await expect(service.getSpace(space.id, as(ALICE))).resolves.toHaveProperty('id', space.id);
+    });
+
+    it('refuses a booking whose association is archived between its first read and its locks', async () => {
+      const items = [{ id: 'q', label: 'Promo', required: false, type: 'short_text' }];
+      const { space, resourceIds } = await setup({ name: '0006 archived meanwhile', items });
+      duringFacts = () =>
+        q(`UPDATE associations SET archived = true WHERE id = $1`, [space.associationId]).then(
+          () => undefined
+        );
+      try {
+        expect(await refusal(book(space.id, resourceIds[0], '10:00', '10:30', ALICE))).toEqual({
+          code: 'space-not-found',
+        });
+        expect(await q(`SELECT 1 FROM bookings WHERE "resourceId" = $1`, [resourceIds[0]])).toEqual(
+          []
+        );
+      } finally {
+        duringFacts = null;
+        await q(`UPDATE associations SET archived = false WHERE id = $1`, [space.associationId]);
+      }
+    });
+
     it('lists a review account only the cohort spaces, and a member never one (review-cohort.ts)', async () => {
       const previous = process.env.SERVICE_ACCOUNT_USER_ID;
       process.env.SERVICE_ACCOUNT_USER_ID = DAN;
@@ -1609,6 +1732,38 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       } finally {
         profileDown = false;
       }
+    });
+
+    // D32: a space open to either of a person's cursus is open to them - listed and usable - and
+    // the promo of one cursus never pairs with the formation of the other.
+    it('lists and opens a space through the SECOND cursus', async () => {
+      const icm24 = await setup({
+        name: '0009 icm 2024',
+        audience: { formation: { values: ['ICM'] }, promo: { values: [2024] } },
+      });
+      const mine = [icm24.space.id];
+      facts.set(BOB, {
+        cursus: [
+          { formation: 'ISMIN', promo: 2021 },
+          { formation: 'ICM', promo: 2024 },
+        ],
+        cotisationTiers: [],
+        answers: {},
+      });
+      expect(await listedAmong(BOB, mine)).toEqual(mine);
+      await expect(service.getSpace(icm24.space.id, as(BOB))).resolves.toBeDefined();
+      facts.set(BOB, {
+        cursus: [
+          { formation: 'ICM', promo: 2021 },
+          { formation: 'ISMIN', promo: 2024 },
+        ],
+        cotisationTiers: [],
+        answers: {},
+      });
+      expect(await listedAmong(BOB, mine)).toEqual([]);
+      expect(await refusal(service.getSpace(icm24.space.id, as(BOB)))).toEqual({
+        code: 'audience',
+      });
     });
 
     // Owner, 2026-10-30: the forms' "ne detient pas" reaches a space through the same predicate - a

@@ -10,9 +10,9 @@
  *    they saw before;
  *  - a grant NEVER notifies: the announcement recipients and the republication's newly reached
  *    readers are computed without it;
- *  - the association directory, the shop and the partnerships follow the grant (owner,
- *    2026-11-14: a grant opens everything of its cell); a booking space and the anonymous agenda
- *    selection are NOT widened;
+ *  - the association directory, the shop, the partnerships and the association booking spaces
+ *    follow the grant (owner, 2026-11-14: a grant opens everything of its cell); who is notified
+ *    and the anonymous agenda selection are NOT widened;
  *  - a revocation takes effect on the next read.
  *
  * GATED ON `SOCIAL_IT_DATABASE_URL`, like `reel-retention.integration.spec.ts` and for its reason;
@@ -23,6 +23,7 @@
  * Everything happens in a throwaway schema, dropped at the end.
  */
 import { readFileSync } from 'fs';
+import { createBellTargetTables } from '../posts/post-notifications.it-schema';
 import { join } from 'path';
 import { Client } from 'pg';
 import type { DataSource, EntityManager } from 'typeorm';
@@ -37,6 +38,7 @@ import {
   IN_FEED_AUDIENCE_SQL,
   NEWLY_REACHED_BY_REPUBLICATION_SQL,
   announceRecipientsSql,
+  associationVisibleToUserSql,
   associationVisibleToViewerSql,
   eventReachesSpaceMatchingSql,
   eventVisibleToViewerSql,
@@ -251,6 +253,8 @@ maybe('nominative read grants against PostgreSQL (migration 078 included)', () =
          ('00000000-0000-4000-8000-0000000000e1', $1), ('00000000-0000-4000-8000-0000000000e2', $2)`,
       [A1, A2]
     );
+    // The bell's one statement reads what its target gates name (`bell-row-gates.ts`).
+    await createBellTargetTables((sql) => client.query(sql));
   });
 
   afterAll(async () => {
@@ -391,7 +395,7 @@ maybe('nominative read grants against PostgreSQL (migration 078 included)', () =
     expect(newly.rows.map((r) => r.id as string)).toEqual(['isminGa']);
   });
 
-  it('the directory, the shop and the partnerships list the entities of the ticked cells (owner, 2026-11-14)', async () => {
+  it('the directory, the shop, the partnerships and the booking spaces follow the ticked cells (owner, 2026-11-14)', async () => {
     const directory: Record<string, string[]> = {
       grantGa: ['A2', 'ME Gardanne', 'School'],
       grantIcmSe: ['A1', 'School'],
@@ -404,7 +408,7 @@ maybe('nominative read grants against PostgreSQL (migration 078 included)', () =
     for (const [id, expected] of Object.entries(directory)) {
       const { rows } = await client.query(
         `SELECT a.name FROM associations a
-          WHERE ${associationVisibleToViewerSql('a.id', '$1', { readGrants: true })} ORDER BY a.name`,
+          WHERE ${associationVisibleToViewerSql('a.id', '$1')} ORDER BY a.name`,
         [id]
       );
       expect({ id, directory: rows.map((r) => r.name as string) }).toEqual({
@@ -414,14 +418,15 @@ maybe('nominative read grants against PostgreSQL (migration 078 included)', () =
     }
   });
 
-  it('a booking space and the anonymous selection are not widened by a grant', async () => {
-    // The plain predicate (a booking space's) counts no grant.
+  it('who is notified or suggested an association, and the anonymous selection, are not widened by a grant', async () => {
+    // The plain predicate (opening reminders, follow suggestions) counts no grant.
     for (const id of GRANTEES) {
       const { rows } = await client.query(
-        `SELECT a.name FROM associations a WHERE ${associationVisibleToViewerSql('a.id', '$1')}`,
+        `SELECT a.name FROM associations a JOIN users plain_user ON plain_user.id = $1
+          WHERE ${associationVisibleToUserSql('a.id', 'plain_user')}`,
         [id]
       );
-      expect({ id, bookable: rows }).toEqual({ id, bookable: [] });
+      expect({ id, notified: rows }).toEqual({ id, notified: [] });
     }
     // The anonymous agenda per selection has no reader at all, so no grant can enter it.
     expect(eventReachesSpaceMatchingSql('e', { campus: '$1', formation: null })).not.toContain(
@@ -663,7 +668,8 @@ maybe('nominative read grants against PostgreSQL (migration 078 included)', () =
       (
         await client.query(
           `SELECT ${bellRowShownSql('n')} AS shown FROM (VALUES ($1::varchar, $2::varchar,
-             $3::varchar, $4::varchar, $5::varchar)) AS n(type, "postId", "recipientId", "actorId", "commentId")`,
+             $3::varchar, $4::varchar, $5::varchar, NULL::jsonb))
+             AS n(type, "postId", "recipientId", "actorId", "commentId", meta)`,
           [type, POST, recipientId, actorId, commentId]
         )
       ).rows[0].shown;

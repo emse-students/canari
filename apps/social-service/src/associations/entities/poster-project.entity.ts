@@ -28,8 +28,10 @@ export class PosterProject {
   name: string;
 
   /**
-   * Opaque layout document: bubbles (assoId, x/y, radius, overrides, polaroids, roster
-   * lines), doodles, free texts, theme preset and background. Never holds resolved rosters.
+   * Opaque layout document: bubbles (assoId, x/y, radius, overrides, and `selectedBureau` - the
+   * ACCOUNT IDS the author picked for the crown), doodles, free texts, theme preset and background.
+   * Never holds resolved rosters or names. A save keeps only picks that are current members
+   * (`PosterService.update`), and an account erasure removes its id (`scrubCarteDocument`).
    */
   @Column({ type: 'jsonb', default: () => "'{}'::jsonb" })
   layout: Record<string, unknown>;
@@ -42,6 +44,9 @@ export class PosterProject {
    * the contract portail-etu reads. A partial unique index on {@link spaceId} among published rows
    * (migration 147, replacing 035's single global one) allows at most one live map PER SPACE, and a
    * CHECK refuses a live map with no space.
+   *
+   * It names people: member cards (account id, name, role) and per-association directory rosters
+   * (`members`, account ids - stored, never served; see `publicCarte`).
    */
   @Column({ type: 'jsonb', nullable: true })
   publication: Record<string, unknown> | null;

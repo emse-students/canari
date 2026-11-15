@@ -348,8 +348,10 @@ holds the viewer's promo and formation), so `listAllActive` and `listByAssoc` an
 with `{ kind: 'fixed' | 'grid', amountCents, dependsOnProfile }`. `kind` is the discriminator and not
 a nicety: "there is no grid" and "the grid closed this combination" would otherwise both arrive as a
 null price, and only the second must stop the sale. `frontend/src/lib/pricing/viewerPrice.ts` is the
-only reader of it. Profiles are batched - one `profileFor` call per distinct user across the whole
-listing, skipped entirely when no product on the page rests on promo or formation.
+only reader of it. Profiles are batched - one `cursusFor` call per distinct user across the whole
+listing, skipped entirely when no product on the page rests on promo or formation. A buyer with two
+cursus pays the cheaper cell of the two (D32, `cheapestCell`), at checkout, at the till and in the
+listing alike, and the log of a grid price names the cursus it came from.
 
 **Upgrade pricing (`memberPriceTag`)**: a tier-upgrade product can set `memberPriceTag` to a sibling
 tier's tag name and `amountCentsMember` to the price delta. The reduced price then applies **iff the

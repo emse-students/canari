@@ -1,4 +1,4 @@
-## Reading owed - the uninvited-entry count on production and a waiting-seat ring on dev
+## Reading owed - a waiting-seat ring on dev (the uninvited-entry count moves to the build that carries #3519)
 
 target: 1.7.0
 
@@ -32,6 +32,23 @@ own tree (a departure epoch it saw), never from the roster the server holds. The
 line so far (above) is the evidence: the entrant held a roster seat for two months and the commit
 was that member's own new web device, so a MEMBER's new device with no leaf in the reporter's tree
 was reported as `new-person`. After the `1.6.12` deploy (09:11 UTC) production has 0
-`[UNINVITED_ENTRY]` lines in its live log, dev 0. Left: the classification from the server's
-roster (a seat held by the entrant before the commit means `returning` or `unvouched-device`,
-never `new-person`), then the count.
+`[UNINVITED_ENTRY]` lines in its live log, dev 0.
+
+**Owner's decisions, 2026-11-14: *"Oui, corriger"*, then, after the review of #3519 named the
+roster's trust trade-off, *"Preuve sur l'appareil"* - the DEVICE decides. Built on #3519:** every
+tree a device accepts records, per group and per user, the first epoch it saw the user hold a leaf
+(`mls-core/src/member_sightings.rs`, sealed state), and `decideUninvitedEntry` calls an entrant
+`returning` only when that record shows them before the entering epoch and no other member's
+commit removed every leaf of theirs since (owner, 2026-11-14: *"Retiré = non prouvé"*, which in
+practice makes every such entry `new-person`); anything else is a NOT
+PROVEN `new-person`, with no fallback to the roster. The report carries `watchedFromEpoch`
+(`watched_from=` on the server line) and the server prints one line per (entry, kind). The mechanism,
+what it survives and what it cannot prove are in
+[mls-protocol](../protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23). **Left: the
+`[UNINVITED_ENTRY] kind=new-person` count once this build serves both stores, read with
+`watched_from` against the entrant's last departure** (a device not there yet is the known gap; the
+member's signed vouch designed there is built only if that count is a population), and the
+waiting-seat ring on dev.
+ring on dev.
+
+**Triage 2026-11-14 - left: the waiting-seat ring on dev only, about 20 min, web seats (a link joiner held outside by `awaitingAdmission`, a call rung in the group, the waiting seat excluded from it).** The `[UNINVITED_ENTRY] kind=new-person` count with `watched_from` is DELETED as a reading: it reads #3519, which is NOT in `v1.6.12` (owner, 2026-11-14: a reading of unshipped code is deleted), and a production count is not a reading anyway - it is a population measurement that the classification fix makes meaningful only after it ships. What replaces it is a standing rule, not a sitting: the first `[UNINVITED_ENTRY]` line production writes after the stable carrying #3519 is read against its `watched_from=`, as the line arrives, and a population of them files a P2 then.

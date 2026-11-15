@@ -1,4 +1,4 @@
-## Reading owed - an accepted but unannounced Add on the rig
+## P3 - an accepted but unannounced Add: audit the adder paths, then one rig row
 
 target: 1.7.0
 

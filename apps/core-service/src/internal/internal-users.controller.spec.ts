@@ -31,7 +31,16 @@ describe('InternalUsersController.publicProfile and the review cohort', () => {
 
   function makeController() {
     const findOne = jest.fn(({ where }: { where: { id: string } }) =>
-      Promise.resolve({ id: where.id, displayName: 'Name', promo: 2024, formation: 'F' } as User)
+      Promise.resolve({
+        id: where.id,
+        displayName: 'Name',
+        promo: 2024,
+        formation: 'F',
+        cursus: [
+          { formation: 'F', promo: 2024 },
+          { formation: 'G', promo: 2025 },
+        ],
+      } as User)
     );
     const controller = new InternalUsersController({ findOne } as unknown as Repository<User>);
     return { controller, findOne };
@@ -45,13 +54,18 @@ describe('InternalUsersController.publicProfile and the review cohort', () => {
     expect(findOne).not.toHaveBeenCalled();
   });
 
-  it("answers a member's preview as before", async () => {
+  // D32: social-service prices on EVERY cursus, so the whole list is served beside the first entry.
+  it("answers a member's preview, with every cursus entry", async () => {
     const { controller } = makeController();
     await expect(controller.publicProfile('member', SECRET)).resolves.toEqual({
       id: 'member',
       displayName: 'Name',
       promo: 2024,
       formation: 'F',
+      cursusViews: [
+        { promo: 2024, formation: 'F' },
+        { promo: 2025, formation: 'G' },
+      ],
     });
   });
 });

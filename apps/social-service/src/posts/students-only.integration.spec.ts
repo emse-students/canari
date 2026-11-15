@@ -43,6 +43,8 @@
 import '../spaces/review-cohort.it-fixture';
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { PG_SESSION_OPTIONS } from '../common/pg-session-options';
+import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import { DataSource, type EntityManager, type Repository } from 'typeorm';
 import { PostsService } from './posts.service';
 import type { Post } from './entities/post.entity';
@@ -51,7 +53,10 @@ import type { FollowsService } from '../follows/follows.service';
 import type { AssociationsService } from '../associations/associations.service';
 import { bellRowShownSql, PostNotificationsService } from './post-notifications.service';
 import { PostNotification } from './entities/post-notification.entity';
-import { createPostNotificationsTable } from './post-notifications.it-schema';
+import {
+  createPostNotificationsTable,
+  createBellTargetTables,
+} from './post-notifications.it-schema';
 import type { PostMediaRetentionService } from './post-media-retention.service';
 import type { ListPostsFeed, ListPostsParams } from './list-feed';
 import { readPostOpenVerdict, type OpenablePost } from './post-openable';
@@ -115,6 +120,27 @@ maybe('"Entre étudiants" against PostgreSQL (migration 133)', () => {
     q(`UPDATE posts SET "studentsOnly" = $1 WHERE id = ANY($2::uuid[])`, [on, [P, R]]);
 
   /** Runs `body` with the switch OFF then ON, and hands back both answers. */
+  /**
+   * Runs `body` with each (association, user) pair holding POST_AS_ASSO through a membership row of
+   * its own, removed afterwards: the officers a repost proposal is announced to (`holdersOf`).
+   */
+  async function withOfficers(pairs: [string, string][], body: () => Promise<void>) {
+    const ids: number[] = [];
+    for (const [associationId, userId] of pairs) {
+      const [row] = await q(
+        `INSERT INTO association_members ("associationId", "userId", permissions)
+           VALUES ($1, $2, $3) RETURNING id`,
+        [associationId, userId, AssociationPermissionFlag.POST_AS_ASSO]
+      );
+      ids.push(row.id);
+    }
+    try {
+      await body();
+    } finally {
+      await q(`DELETE FROM association_members WHERE id = ANY($1::int[])`, [ids]);
+    }
+  }
+
   async function bothWays<T>(body: () => Promise<T>): Promise<{ off: T; on: T }> {
     await setSwitch(false);
     const off = await body();
@@ -199,7 +225,8 @@ maybe('"Entre étudiants" against PostgreSQL (migration 133)', () => {
       // The bell is read through its entity (`getNotifications`), so that one is mapped.
       entities: [PostNotification],
       synchronize: false,
-      extra: { options: `-c search_path=${schema},public` },
+      // The service's own session settings (`PG_SESSION_OPTIONS`), as `AppModule` opens its pool.
+      extra: { options: `${PG_SESSION_OPTIONS} -c search_path=${schema},public` },
     });
     await ds.initialize();
     manager = ds.manager;
@@ -340,6 +367,8 @@ maybe('"Entre étudiants" against PostgreSQL (migration 133)', () => {
       {} as PostNotificationsService,
       {} as PostMediaRetentionService
     );
+    // The bell's one statement reads what its target gates name (`bell-row-gates.ts`).
+    await createBellTargetTables(q);
   });
 
   afterAll(async () => {
@@ -558,8 +587,8 @@ maybe('"Entre étudiants" against PostgreSQL (migration 133)', () => {
       (
         await q(
           `SELECT ${bellRowShownSql('n')} AS shown FROM (VALUES ('association_post'::varchar,
-             $1::varchar, $2::varchar, 'off'::varchar, NULL::varchar))
-             AS n(type, "postId", "recipientId", "actorId", "commentId")`,
+             $1::varchar, $2::varchar, 'off'::varchar, NULL::varchar, NULL::jsonb))
+             AS n(type, "postId", "recipientId", "actorId", "commentId", meta)`,
           [P, reader]
         )
       )[0].shown === true;
@@ -638,13 +667,23 @@ maybe('"Entre étudiants" against PostgreSQL (migration 133)', () => {
     );
     const textOf = async (reader: string) =>
       (await bell.getNotifications(reader)).find((n) => n.type === 'repost_proposed')?.text;
-    const { off, on } = await bothWays(async () => ({
-      staff: await textOf('s2'),
-      student: await textOf('sg'),
-    }));
-    expect(off).toEqual({ staff: 'la soirée des promos', student: 'la soirée des promos' });
-    // The row stays in the staff officer's bell - the proposal is still theirs to decide - textless.
-    expect(on).toEqual({ staff: '', student: 'la soirée des promos' });
+    // Both readers are C2's officers, whom `announce` tells: the bell shows the row only while
+    // they hold POST_AS_ASSO there (`BELL_ROW_GATE`).
+    await withOfficers(
+      [
+        [C2, 's2'],
+        [C2, 'sg'],
+      ],
+      async () => {
+        const { off, on } = await bothWays(async () => ({
+          staff: await textOf('s2'),
+          student: await textOf('sg'),
+        }));
+        expect(off).toEqual({ staff: 'la soirée des promos', student: 'la soirée des promos' });
+        // The row stays in the staff officer's bell - the proposal is still theirs to decide - textless.
+        expect(on).toEqual({ staff: '', student: 'la soirée des promos' });
+      }
+    );
   });
 
   it("FAILS CLOSED: a proposal's bell row loses its text once its post is deleted or hidden (review of #3019)", async () => {
@@ -684,15 +723,24 @@ maybe('"Entre étudiants" against PostgreSQL (migration 133)', () => {
       );
       return Object.fromEntries(rows.map((n) => [n.postId, n.text]));
     };
-    // The switch is ON and sg is a student: both texts are theirs to read.
-    expect(await texts()).toEqual({ [C2]: 'le post supprimé', [C]: 'le post masqué' });
+    // sg is an officer of both receiving associations, as `announce` addressed it.
+    await withOfficers(
+      [
+        [C2, 'sg'],
+        [C, 'sg'],
+      ],
+      async () => {
+        // The switch is ON and sg is a student: both texts are theirs to read.
+        expect(await texts()).toEqual({ [C2]: 'le post supprimé', [C]: 'le post masqué' });
 
-    // Deleted: `proposals_drop_deleted_post` takes the proposal with it - nothing matches any more.
-    await q(`DELETE FROM posts WHERE id = $1`, [gone]);
-    expect(await q(`SELECT 1 FROM proposals WHERE "subjectId" = $1`, [gone])).toHaveLength(0);
-    // Hidden by moderation, the proposal still there: the post it leads to is not one to quote.
-    await q(`UPDATE posts SET "hiddenByModeration" = true WHERE id = $1`, [hidden]);
+        // Deleted: `proposals_drop_deleted_post` takes the proposal with it - nothing matches any more.
+        await q(`DELETE FROM posts WHERE id = $1`, [gone]);
+        expect(await q(`SELECT 1 FROM proposals WHERE "subjectId" = $1`, [gone])).toHaveLength(0);
+        // Hidden by moderation, the proposal still there: the post it leads to is not one to quote.
+        await q(`UPDATE posts SET "hiddenByModeration" = true WHERE id = $1`, [hidden]);
 
-    expect(await texts()).toEqual({ [C2]: '', [C]: '' });
+        expect(await texts()).toEqual({ [C2]: '', [C]: '' });
+      }
+    );
   });
 });

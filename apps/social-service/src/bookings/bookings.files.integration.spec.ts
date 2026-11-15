@@ -137,7 +137,10 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
       extra: { options: `-c search_path=${schema}`, max: 8 },
     });
     await ds.initialize();
-    await q(`CREATE TABLE associations (id uuid PRIMARY KEY)`);
+    // `archived`: a space's visibility gate reads the association's archive (`assertSpaceVisible`).
+    await q(
+      `CREATE TABLE associations (id uuid PRIMARY KEY, archived boolean NOT NULL DEFAULT false)`
+    );
     // The profile columns the campus predicate reads (`reader-spaces.ts`): every account here is an
     // ICM Saint-Etienne student, and every association reaches every space - the campus border is
     // `bookings.service.integration.spec.ts`'s subject, not this file's.
@@ -159,6 +162,11 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
     await q(
       `CREATE TABLE user_blocks ("blockerId" varchar NOT NULL, "blockedId" varchar NOT NULL)`
     );
+    // The grants table (migration 078), with the columns the visibility predicate reads.
+    await q(
+      `CREATE TABLE read_grants (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+         user_id varchar(255) NOT NULL, campus varchar(32) NOT NULL, formation varchar(16) NULL)`
+    );
     await q(MIGRATION);
     // Applied twice, as a deploy may replay it.
     await q(MIGRATION);
@@ -176,7 +184,13 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
         flag === AssociationPermissionFlag.MANAGE_BOOKINGS &&
         grants.has(`${userId}:${associationId}`),
     } as unknown as AssociationsService;
-    const pricingFacts = { build: async () => ({}) } as unknown as PricingFactsService;
+    const pricingFacts = {
+      build: async () => ({
+        cursus: [{ promo: null, formation: null }],
+        cotisationTiers: [],
+        answers: {},
+      }),
+    } as unknown as PricingFactsService;
     const formFiles = {
       storeBlob: async (data: Buffer, owner: string) => {
         const mediaId = randomUUID();

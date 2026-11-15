@@ -25,6 +25,18 @@ export const CARTE_ERROR = {
   NOT_ATTACHED: 'CARTE_NOT_ATTACHED',
   /** A published unit names an association the map does not show (switched off, or outside its space). */
   UNIT_OUTSIDE_MAP: 'CARTE_UNIT_OUTSIDE_MAP',
+  /**
+   * A published directory entry prints a roster line with no `members` behind it - a client older
+   * than the structured roster (2026-11-14). Such a line names people by name only, so the server
+   * can neither check it against the membership table nor scrub an erased account out of it.
+   */
+  ROSTER_UNSTRUCTURED: 'CARTE_ROSTER_UNSTRUCTURED',
+  /**
+   * A published directory entry carries an EMPTY roster for an association that has members: the
+   * editor did not load that roster (a transport failure is not an empty association), and the
+   * publish would print it empty on the live map.
+   */
+  ROSTER_MISSING: 'CARTE_ROSTER_MISSING',
   /** A zone id that is not one of this map's zones. */
   ZONE_UNKNOWN: 'CARTE_ZONE_UNKNOWN',
   /** A switch written for an association that is not of the map's space. */

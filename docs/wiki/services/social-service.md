@@ -141,6 +141,91 @@ The numbers and what they imply are in
 
 ## Routes
 
+### Path parameters are declared, and one global guard reads the declaration (2026-11-14)
+
+**The rule.** A controller says what each of its path parameters IS, once, with
+`@RouteParams({ id: 'uuid', userId: 'opaque', ... })` (`src/common/route-params.ts`), on the class
+or on one handler (which adds to its class and wins over it). `RouteParamsGuard`, registered through
+`APP_GUARD` in `AppModule`, answers `400` naming the parameter when a `uuid` is not one. It reads the
+declaration and the path, never the database. **"A uuid" means what the column takes** - the
+canonical 8-4-4-4-12 text, whatever its version and variant bits (`isUuidShaped`): Postgres stores
+any 128 bits, and a stricter RFC check would put an existing row out of reach behind a `400`.
+
+**Why not `ParseUUIDPipe` on each `@Param`.** Nest runs guards BEFORE pipes.
+`GlobalAdminOrAssociationRoleGuard` reads `:id` and asks the service whether the caller may act on
+that association, so on its routes the raw string reached a Postgres `uuid` column from inside the
+guard, whatever pipe the handler carried: a `QueryFailedError`, answered `500`. A global guard runs
+before every guard a controller names, which is the earliest point that covers them. A filter turning
+that database error into a `400` was refused: it would learn by failing what the route already knows.
+
+**Why a declaration and not a convention on names.** `id` means a uuid in one controller and may
+not in the next, and a user id is NOT a uuid in this service (see
+[below](#a-user-id-is-not-a-uuid-and-one-partnership-column-said-it-was)). `opaque` is therefore
+written down too: an unvalidated parameter is a choice somebody made, never an omission.
+
+**`400` comes before `401`, on purpose (decided 2026-11-14).** The global guard runs before
+`NginxAuthGuard`, so an unsigned request with a malformed id is answered `400`. A malformed path
+reveals nothing about any row, and nginx authenticates before the service is reached.
+
+**One status changed that was not a `500`.** `GET /api/associations/<not a uuid>` was a `404` (the
+service checked the id itself); it is a `400` now, like every other route of the controller. The
+frontend's and core-service's callers pass row ids and treat any failure alike.
+
+**The declaration is the ONE mechanism (2026-11-14).** No path parameter carries a `ParseUUIDPipe`
+any more: every controller of the service declares its parameters, and the per-parameter pipes the
+declaration made redundant are gone. A `ParseUUIDPipe` on a QUERY parameter stays (two exist); the
+guard reads the path only.
+
+**What holds it** - specs that need no database:
+
+- `src/route-params.coverage.spec.ts` walks `AppModule`'s own module graph and fails on a path
+  parameter no declaration names, on a declaration naming a parameter its routes do not have (a typo
+  would otherwise validate nothing while looking like it does), on a path parameter that carries a
+  `ParseUUIDPipe` again (two mechanisms would drift), on a name declared `uuid` in one controller
+  and `opaque` in another (the spec cannot read a column, it can read a contradiction; the two
+  decided exceptions are listed in it), and on `AppModule` not providing the guard. It
+  judges EVERY controller: the list of controllers not converted yet is gone.
+- `src/common/route-params.spec.ts` holds the guard alone: what it refuses, that `opaque` is never
+  looked at, and that a handler's declaration wins over its class's.
+- `src/associations/associations.route-params.http.spec.ts` boots the real controller and the real
+  guards over HTTP: a malformed association id is a `400` and none of the role guard's questions
+  (`mayAct`, `isMember`, `isAssociationSuperAdminOf`) was asked; the same route with a uuid reaches
+  the role guard, then its handler. `channels.route-params.http.spec.ts` and
+  `booking-calendar.controller.spec.ts` do the same for their routes. **A spec that boots a
+  controller by itself and expects the `400` provides `ROUTE_PARAMS_GUARD`**, as `AppModule` does.
+
+**What `opaque` names, so nobody "fixes" it.** A user id (never a uuid in this service, see
+[below](#a-user-id-is-not-a-uuid-and-one-partnership-column-said-it-was)), a slug, an invite token,
+a follow `kind`, a seat `index`, and the ids of a poll and of a comment, which are keys inside a
+`jsonb` document and not rows. **Two are opaque although they name a uuid row, by decision
+(2026-11-14):** `memberId` and `postId` of `PublicController`, the anonymous surface (a member's
+avatar, a post's link preview). Their service already answers a malformed id with the same bodyless
+`404` as an unknown one, so a caller with no session learns nothing from the shape of what it sent;
+a `400` naming the parameter would tell the two apart for no reader.
+
+**Routes whose malformed id was a `500` and is a `400` since every controller declares
+(2026-11-14):** the internal channel read, the internal routes taking an association id, the
+internal form-submission route, a minesweeper score submission, a moderation report, a post's
+calendar link, and the public member list. No request that worked changed status. One refusal
+moved: the guard takes any canonical 8-4-4-4-12 text where `ParseUUIDPipe` also read the version
+bits, so an id of that shape with bits the pipe refused is a `404` from the query, no longer a `400`.
+And a malformed id is answered before the per-address throttles a handler names, which no longer
+count it: the answer is a `400` built from the path alone, with no query behind it.
+
+**Where it stands.** social-service is whole: 32 controllers with a path parameter, all declared.
+[core-service](core-service.md#path-parameters-are-declared-2026-11-14),
+[media-service](media-service.md#path-parameters-are-declared-2026-11-14) and
+[chat-delivery](chat-delivery.md#path-parameters-are-declared-2026-11-15) carry the same guard and
+a coverage spec of their own: the four Nest services are whole (call-service and chat-gateway are
+Rust). Query parameters are not covered: they are optional and typed by their DTOs.
+
+**One file, one copy per service.** The Nest services share no TypeScript package, and their common
+guards have always been a copy each, so `src/common/route-params.ts` is copied and declared in
+`.github/scripts/lib/declared-duplicates.mjs`: `declared-duplicates.test.mjs` holds the copies
+byte-identical, and the one spec of the guard sits beside the first copy, here. What is per service
+is the wiring, held by `.github/scripts/tests/route-params-wired.test.mjs`: a service that carries
+the guard provides it in its `AppModule`, has its own coverage spec, and is in the declared group.
+
 ### Posts (`/api/posts`)
 
 | Method | Path | Description |

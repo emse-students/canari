@@ -71,6 +71,8 @@
   import { getKeyboardViewport, initKeyboardViewport } from '$lib/stores/keyboardViewport.svelte';
   import {
     classifySwipeRelease,
+    bindSwipeNavTouchListeners,
+    standDownForDndDrag,
     createSwipeNavGestureState,
     isSwipeNavActive,
     isSwipeNavArmed,
@@ -505,6 +507,17 @@
       return;
     }
 
+    const standing = standDownForDndDrag(swipeGesture);
+    if (standing !== swipeGesture) {
+      // A reorder picked the finger up: release whatever the swipe had already claimed.
+      swipeGesture = standing;
+      if (pageScrollWrap.classList.contains('swipe-nav-dragging')) {
+        pageScrollWrap.classList.remove('swipe-nav-dragging');
+        snapSwipeBack();
+      }
+      return;
+    }
+
     const updated = updateSwipeNavGesture(swipeGesture, e.touches[0].clientX, e.touches[0].clientY);
     swipeGesture = updated;
 
@@ -725,14 +738,12 @@
     const node = appShell;
     if (!node || !swipeNavArmed) return;
 
-    node.addEventListener('touchstart', handleTouchStart, { passive: true });
-    node.addEventListener('touchmove', handleTouchMove, { passive: false });
+    const unbindTouch = bindSwipeNavTouchListeners(node, handleTouchStart, handleTouchMove);
     const stopSelectionWatch = onTextSelectionActive(abandonSwipeForSelection);
 
     return () => {
       stopSelectionWatch();
-      node.removeEventListener('touchstart', handleTouchStart);
-      node.removeEventListener('touchmove', handleTouchMove);
+      unbindTouch();
       releaseGestureEnd?.();
       releaseGestureEnd = null;
       // DISARMING MID-GESTURE NEVER SEES ITS `touchend`, so the state that handler would have

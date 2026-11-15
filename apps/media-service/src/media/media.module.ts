@@ -5,6 +5,7 @@ import { StorageService } from './storage.service';
 import { UploadSessionService } from './upload-session.service';
 import { LiveSegmentsService } from './live-segments.service';
 import { LiveSegmentStore } from './live-segment-store';
+import { RetentionBootstrap } from './retention-settings';
 
 @Module({
   controllers: [MediaController],
@@ -14,6 +15,7 @@ import { LiveSegmentStore } from './live-segment-store';
     UploadSessionService,
     LiveSegmentStore,
     LiveSegmentsService,
+    RetentionBootstrap,
   ],
 })
 export class MediaModule {}

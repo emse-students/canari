@@ -551,6 +551,18 @@ impl MlsManager {
         self.device_trust.removal_epochs(group_id, user_id)
     }
 
+    /// What THIS DEVICE can prove, alone, about `user_id` having been a member of `group_id`: the
+    /// first epoch it saw the user hold a leaf of the group's tree, and the first epoch its record of
+    /// the group covers ([`crate::member_sightings`]). Read from trees this device accepted - a
+    /// Welcome, a GroupInfo it joined by, a commit it merged, a tree it held at load - and from the
+    /// departures it recorded; never from the delivery service.
+    ///
+    /// `first_seen_epoch: None` is NOT SEEN, never "never a member": a device that joined after the
+    /// user's every leaf left has no sighting of them. The caller says so rather than guessing.
+    pub fn membership_evidence(&self, group_id: &str, user_id: &str) -> crate::MembershipEvidence {
+        self.device_trust.membership_evidence(group_id, user_id)
+    }
+
     /// The trust a leaf with `identity` and `key` would get, without pinning anything.
     pub fn device_key_trust(&self, identity: &str, key: &[u8]) -> LeafTrust {
         self.device_trust.verdict(identity, key)
@@ -584,7 +596,11 @@ impl MlsManager {
             log::info!(
                 "clear_pending_commit_for: {group_id} was not seeded at load - seeding the tree it falls back to"
             );
-            self.device_trust.seed_from_tree(&leaf_keys(group));
+            let leaves = leaf_keys(group);
+            self.device_trust.seed_from_tree(&leaves);
+            let door = self.admission.get(group_id).copied();
+            self.device_trust
+                .record_sightings(group_id, group.epoch().as_u64(), &leaves, door);
         }
         self.drop_pending_submission(group_id);
         self.mark_state_dirty();

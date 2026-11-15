@@ -3,7 +3,7 @@ import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
 import type { AuthorVerdict } from '$lib/crypto/messageAuthorship';
 import type { DatedKeyPackage } from './keyPackages';
 import type { SkippedDevice } from './skippedKeyPackage';
-import type { DeviceEvent, DevicePin, KeyPackageVerdict } from './deviceTrust';
+import type { DeviceEvent, DevicePin, KeyPackageVerdict, MembershipEvidence } from './deviceTrust';
 import type {
   DeviceKeyPackageAnswer,
   DeviceSignatureKeys,
@@ -1050,6 +1050,13 @@ export interface IMlsService {
    */
   removalEpochs(groupId: string, userId: string): Promise<number[]>;
   /**
+   * What this device can prove, ALONE, about `userId` having been a member of `groupId`: the first
+   * epoch it saw the user hold a leaf of a tree it accepted, and the first epoch its record covers
+   * (`MembershipEvidence`). Per USER, kept in the sealed state, never asked of the server. See
+   * `BaseMlsService.membershipEvidence`.
+   */
+  membershipEvidence(groupId: string, userId: string): Promise<MembershipEvidence>;
+  /**
    * Adds multiple devices to a group in a single STAGED MLS commit (C7-A unified regime): stages
    * the commit, validates server-side, merges on accept / rolls back on reject (throws), broadcasts
    * the commit (skipping `excludeDeviceIds`), and returns the Welcome + post-merge ratchet tree.
@@ -1903,6 +1910,16 @@ export interface IMlsService {
    * none multiplexes the others' parameters.
    */
   addBulkIngestObserver(observer: BulkIngestObserver): void;
+
+  /**
+   * Resolves once every bulk-ingest window open or closing AT THE CALL has closed - each one's
+   * observers have returned, so the rows a drain buffered are stored. At once when none is; a
+   * window opened after the call does not hold it. A document leaving the lead
+   * reloads behind it (`useChatSession`): a checkpoint that landed before the lead left may already
+   * hold the ratchet advance and the seen mark of a frame whose row is still buffered, and a reload
+   * there would lose the message for good.
+   */
+  whenBulkIngestsClosed(): Promise<void>;
 
   /**
    * Opens a bulk-ingest window with the given {@link BulkIngestPhase} and returns the handle that

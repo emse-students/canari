@@ -203,6 +203,14 @@ Both on DEV (`dev.canari-emse.fr`, a pre-release carrying the switch), the switc
 
 Either one failing keeps the switch `off` and reopens this section.
 
+### DECIDED 2026-11-14 - a member's removal by another member cancels the device proof
+
+Owner, 2026-11-14: *"Retiré = non prouvé"*. A commit by ANOTHER user that removes every leaf of a
+user cancels that user's sighting (`member_sightings.rs`), so an entry of theirs afterwards with no
+member's Add is NOT proven; a commit by the user's own device removing their own leaves cancels
+nothing. Built on #3519, with real-MLS tests both ways
+([mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23)).
+
 ### QUESTION - can an identity provider that stops answering exhaust anything in core-service? (2026-11-12)
 
 The OIDC callback (`auth.controller.ts`, `oidcCallback`) makes two calls to the identity provider,

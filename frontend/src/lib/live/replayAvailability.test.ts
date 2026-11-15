@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { replayFollows, replaysAvailable } from './replayAvailability';
-import { LIVE_REPLAY_MIN_MS, LIVE_REPLAY_RETENTION_DAYS } from './constants';
+import { LIVE_REPLAY_MIN_MS } from './constants';
 
 describe('replaysAvailable', () => {
   it('is on only when the server says on', () => {
@@ -26,12 +26,10 @@ describe('the client copies of the server numbers', () => {
     join(repo, 'apps/social-service/src/lives/live.constants.ts'),
     'utf8'
   );
-  it('the minimum length and the retention are the servers', () => {
+  it("the minimum length is the server's (the retention is no longer a constant: an admin setting)", () => {
     const min = /LIVE_REPLAY_MIN_MS = ([\d_]+);/.exec(server);
     expect(min).not.toBeNull();
     expect(Number(min![1].replaceAll('_', ''))).toBe(LIVE_REPLAY_MIN_MS);
-    const days = /LIVE_REPLAY_RETENTION_DAYS = (\d+);/.exec(server);
-    expect(days).not.toBeNull();
-    expect(Number(days![1])).toBe(LIVE_REPLAY_RETENTION_DAYS);
+    expect(server).not.toMatch(/LIVE_REPLAY_RETENTION_DAYS/);
   });
 });

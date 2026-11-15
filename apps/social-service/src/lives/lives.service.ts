@@ -13,6 +13,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
+import { readRetentionDays } from '../common/retention-settings';
 import { createHash, randomUUID } from 'crypto';
 import type { DataSource, EntityManager } from 'typeorm';
 import { AssociationsService } from '../associations/associations.service';
@@ -42,7 +43,6 @@ import {
   LIVE_REPLAY_MAX_MS,
   LIVE_REPLAY_MIN_MS,
   LIVE_REPLAY_PAGE,
-  LIVE_REPLAY_RETENTION_DAYS,
   LIVE_REPLAY_EVICTION_KEEP_DAYS,
   liveReplayTotalMaxBytes,
   LIVE_TRIM_BATCH,
@@ -2363,8 +2363,8 @@ export class LivesService implements OnModuleDestroy {
    * - long enough: `lastSegmentAt - startedAt >= LIVE_REPLAY_MIN_MS` (D4) and a segment stored.
    *
    * The post: the broadcaster as author, the live's association, its title as the text, `publishedAt`
-   * = the end, `expiresAt` = the end + {@link LIVE_REPLAY_RETENTION_DAYS} days (the database clock,
-   * written once), `durationMs` from the first to the last kept segment, never "Entre étudiants" (D8),
+   * = the end, `expiresAt` = the end + `retention_live_replay_days` days (the admin setting in force
+   * now, the database clock, written once), `durationMs` from the first to the last kept segment, never "Entre étudiants" (D8),
    * no member repost, and `feedNotifiedAt` set so the announcement sweep never pushes it (no push,
    * lead decision). The arrival keys are forgotten after the commit, as at a purge.
    */
@@ -2403,6 +2403,9 @@ export class LivesService implements OnModuleDestroy {
           return 'ineligible';
         }
         const spanMs = Math.min(Number(live.spanMs), 2_147_483_647);
+        // The replay's lifetime IN FORCE NOW, read in this transaction and stamped once (owner,
+        // 2026-11-14): a duration an admin changes later never moves a replay already published.
+        const { liveReplayDays } = await readRetentionDays(tx, this.logger);
         const inserted: { id: string; expiresAt: Date }[] = await tx.query(
           `INSERT INTO posts ("authorId", "associationId", markdown, kind, "durationMs", "expiresAt",
                               "liveId", "publishedAt", "feedNotifiedAt", anonymous, "studentsOnly",
@@ -2412,14 +2415,7 @@ export class LivesService implements OnModuleDestroy {
              FROM lives l WHERE l.id = $1
            ON CONFLICT ("liveId") WHERE "liveId" IS NOT NULL DO NOTHING
            RETURNING id, "expiresAt"`,
-          [
-            liveId,
-            live.broadcasterId,
-            live.associationId,
-            live.title ?? '',
-            spanMs,
-            LIVE_REPLAY_RETENTION_DAYS,
-          ]
+          [liveId, live.broadcasterId, live.associationId, live.title ?? '', spanMs, liveReplayDays]
         );
         await tx.query(`UPDATE lives SET "replayPostedAt" = now() WHERE id = $1`, [liveId]);
         await tx.query(`DELETE FROM live_chat_messages WHERE "liveId" = $1`, [liveId]);

@@ -14,3 +14,10 @@ Owed: a decision on the lock's scope - one lock per account (`canari-tab-leader.
 account's tabs elect their own leader, at the cost of one socket per signed-in account; every
 `getTabLeadership` reader and the delegation's account check would be re-read against it. A reading
 first: how often two accounts are open in one profile (a `[TAB-COMMIT] ... not-delegable` count).
+
+**Re-read against the hand-over (#3321, 2026-11-14):** `leader_handover_request` carries a tab id and
+no account, so a VISIBLE tab of account B with a queued message takes the lead from a HIDDEN leader
+of account A - B can then send, and A's tab is the one left with no leader of its account until it is
+shown and asks back (each move reloads both tabs). No MLS state is shared between the two accounts
+(one store per user), so this is no second writer; it moves the per-browser defect from the visible
+tab to the hidden one. The lock-scope decision owed here decides the ask's scope with it.

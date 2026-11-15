@@ -8,7 +8,6 @@ import {
   Headers,
   Param,
   ParseIntPipe,
-  ParseUUIDPipe,
   Patch,
   Post,
   Query,
@@ -34,6 +33,7 @@ import {
   ReminderDto,
   ZONED_INSTANT,
 } from './dto/booking.dto';
+import { RouteParams } from '../common/route-params';
 
 /** The caller nginx authenticated. */
 export const actorOf = (userId: string, globalAdmin: string | undefined): Actor => ({
@@ -83,6 +83,13 @@ export function parseFrom(raw: string | undefined): number | undefined {
  * (D6: no guest access). Ids are validated at the boundary, so a malformed one is a 400, never a
  * 500 from the query layer. The clock is read ONCE per request, here, and handed down.
  */
+@RouteParams({
+  bookingId: 'uuid',
+  spaceId: 'uuid',
+  resourceId: 'uuid',
+  blockId: 'uuid',
+  fileId: 'uuid',
+})
 @Controller('bookings')
 @UseGuards(NginxAuthGuard)
 export class BookingsController {
@@ -103,7 +110,7 @@ export class BookingsController {
   /** The signed `.ics` path of one booking (D13), for its people and its organiser. */
   @Get(':bookingId/calendar-link')
   calendarLink(
-    @Param('bookingId', ParseUUIDPipe) bookingId: string,
+    @Param('bookingId') bookingId: string,
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga?: string
   ) {
@@ -113,7 +120,7 @@ export class BookingsController {
   /** A space and its resources, as a booker reads them. */
   @Get('spaces/:spaceId')
   space(
-    @Param('spaceId', ParseUUIDPipe) spaceId: string,
+    @Param('spaceId') spaceId: string,
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga?: string
   ) {
@@ -123,7 +130,7 @@ export class BookingsController {
   /** The grid over local dates `from`..`to` (YYYY-MM-DD, both included, at most 62 days). */
   @Get('spaces/:spaceId/slots')
   slots(
-    @Param('spaceId', ParseUUIDPipe) spaceId: string,
+    @Param('spaceId') spaceId: string,
     @Query('from') from: string,
     @Query('to') to: string,
     @Headers('x-user-id') userId: string,
@@ -139,7 +146,7 @@ export class BookingsController {
    */
   @Get('spaces/:spaceId/bookings')
   spaceBookings(
-    @Param('spaceId', ParseUUIDPipe) spaceId: string,
+    @Param('spaceId') spaceId: string,
     @Headers('x-user-id') userId: string,
     @Query('offset', new DefaultValuePipe(0), ParseIntPipe) offset: number,
     @Query('limit', new DefaultValuePipe(SPACE_BOOKINGS_PAGE), ParseIntPipe) limit: number,
@@ -161,7 +168,7 @@ export class BookingsController {
   /** Books a range; an organiser may book on behalf of an account. */
   @Post('spaces/:spaceId/bookings')
   book(
-    @Param('spaceId', ParseUUIDPipe) spaceId: string,
+    @Param('spaceId') spaceId: string,
     @Body() dto: CreateBookingDto,
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga?: string
@@ -175,7 +182,7 @@ export class BookingsController {
    */
   @Post(':bookingId/cancel')
   cancel(
-    @Param('bookingId', ParseUUIDPipe) bookingId: string,
+    @Param('bookingId') bookingId: string,
     @Body() dto: CancelBookingDto,
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga?: string
@@ -192,7 +199,7 @@ export class BookingsController {
   @UseGuards(UserResourceThrottlerGuard)
   @Throttle({ default: { limit: BOOKING_EDITS_PER_MINUTE, ttl: 60_000 } })
   edit(
-    @Param('bookingId', ParseUUIDPipe) bookingId: string,
+    @Param('bookingId') bookingId: string,
     @Body() dto: EditBookingDto,
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga?: string
@@ -203,7 +210,7 @@ export class BookingsController {
   /** Sets the caller's own reminder delay on a booking they are one of the people of (Q-R1). */
   @Patch(':bookingId/reminder')
   reminder(
-    @Param('bookingId', ParseUUIDPipe) bookingId: string,
+    @Param('bookingId') bookingId: string,
     @Body() dto: ReminderDto,
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga?: string
@@ -214,7 +221,7 @@ export class BookingsController {
   /** A participant leaves a coming booking. */
   @Post(':bookingId/withdraw')
   withdraw(
-    @Param('bookingId', ParseUUIDPipe) bookingId: string,
+    @Param('bookingId') bookingId: string,
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga?: string
   ) {
@@ -224,7 +231,7 @@ export class BookingsController {
   /** "Indisponible" over a range of a resource: the organiser or the resource's linked account. */
   @Post('resources/:resourceId/blocks')
   addBlock(
-    @Param('resourceId', ParseUUIDPipe) resourceId: string,
+    @Param('resourceId') resourceId: string,
     @Body() dto: CreateBlockDto,
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga?: string
@@ -235,7 +242,7 @@ export class BookingsController {
   /** Lifts a block that has not ended. */
   @Delete('blocks/:blockId')
   removeBlock(
-    @Param('blockId', ParseUUIDPipe) blockId: string,
+    @Param('blockId') blockId: string,
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga?: string
   ) {
@@ -250,7 +257,7 @@ export class BookingsController {
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: FORM_FILE_MAX_BYTES + 1 } }))
   @Post('spaces/:spaceId/files')
   uploadFile(
-    @Param('spaceId', ParseUUIDPipe) spaceId: string,
+    @Param('spaceId') spaceId: string,
     @UploadedFile() file: Express.Multer.File | undefined,
     @Body('itemId') itemId: string | undefined,
     @Headers('x-user-id') userId: string,
@@ -266,8 +273,8 @@ export class BookingsController {
    */
   @Get(':bookingId/files/:fileId')
   async downloadFile(
-    @Param('bookingId', ParseUUIDPipe) bookingId: string,
-    @Param('fileId', ParseUUIDPipe) fileId: string,
+    @Param('bookingId') bookingId: string,
+    @Param('fileId') fileId: string,
     @Res() res: Response,
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga?: string
@@ -293,7 +300,7 @@ export class BookingsController {
    */
   @Get('spaces/:spaceId/export')
   async export(
-    @Param('spaceId', ParseUUIDPipe) spaceId: string,
+    @Param('spaceId') spaceId: string,
     @Res() res: Response,
     @Headers('x-user-id') userId: string,
     @Query('labels') rawLabels?: string,

@@ -32,7 +32,7 @@ export const FORM_NO_PAYMENT_METHOD = 'FORM_NO_PAYMENT_METHOD';
 export const FORM_CREATE_KEY_REUSED = 'FORM_CREATE_KEY_REUSED';
 
 /** The 410 refusing a create key whose form was deleted since. */
-export const FORM_CREATE_KEY_GONE = 'FORM_CREATE_KEY_GONE';
+const FORM_CREATE_KEY_GONE = 'FORM_CREATE_KEY_GONE';
 
 /**
  * The 400 refusing to move a PUBLISHED form to another association: its answers, payments and

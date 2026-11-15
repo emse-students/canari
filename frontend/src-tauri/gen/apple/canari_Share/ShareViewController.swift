@@ -25,6 +25,9 @@ final class ShareViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        // First line of the extension's life: its absence means the system never started it (a suggestion
+        // row that launches nothing); its presence without the `opened` line below means it never appeared.
+        log.notice("[CanariShare] share extension launched, intent=\(extensionContext?.intent != nil)")
         // A copy in progress holds the App Group lock; a swipe-down would end the extension mid-copy.
         isModalInPresentation = true
         view.backgroundColor = UIColor.black.withAlphaComponent(0.3)
@@ -65,10 +68,11 @@ final class ShareViewController: UIViewController {
         started = true
         let items = (extensionContext?.inputItems as? [NSExtensionItem]) ?? []
         let intent = extensionContext?.intent
+        let isSendMessage = intent is INSendMessageIntent
         let target = suggestedTarget()
         // The line a reading of the share sheet's suggestion row looks for (no id, no name): which path
         // the sheet took - an intent handed over or not, of what shape, and whether it became a target.
-        log.notice("[CanariShare] share extension opened with \(items.count) item(s), intent=\(intent != nil), send_message_intent=\(intent is INSendMessageIntent), suggestion=\(target != nil)")
+        log.notice("[CanariShare] share extension opened with \(items.count) item(s), intent=\(intent != nil), send_message_intent=\(isSendMessage), suggestion=\(target != nil)")
         DispatchQueue.global(qos: .userInitiated).async {
             let outcome = ShareCapture().run(items: items, target: target)
             DispatchQueue.main.async {

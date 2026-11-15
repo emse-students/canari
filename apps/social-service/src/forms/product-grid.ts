@@ -3,8 +3,8 @@ import {
   bucketFor,
   dimensionsNeedProfile,
   findOverlappingBuckets,
+  type CursusFacts,
   type Dimension,
-  type PricingFacts,
 } from '../pricing/audience';
 import { parseDimension, type CriteriaContext } from '../pricing/validate';
 import {
@@ -216,10 +216,12 @@ export function normaliseProductGridItems<T extends { type?: string }>(
  * The prices ONE person pays on a grid: the category their profile places them in - every guest,
  * and anybody no category claims, in "everyone else" - and that category's list. A list missing
  * is a grid that broke the save-time completeness rule: it THROWS rather than price at 0.
+ *
+ * Read through ONE cursus: which one is the form's quote's choice (`form-quote.ts`, D32).
  */
 export function viewerPricesFor(
   item: ProductGridItem,
-  facts: PricingFacts
+  facts: CursusFacts
 ): ProductGridViewerPrices {
   const tiers = item.productGrid.pricing.tiers;
   const tierId = tiers ? bucketFor(tiers as unknown as Dimension, facts) : PRODUCT_GRID_ALL_TIER;
@@ -234,7 +236,7 @@ export function viewerPricesFor(
 /** What a respondent's page is told of a form's grids: each one's prices for THIS person only. */
 export function productGridPricesFor(
   items: readonly { type?: string }[] | null | undefined,
-  facts: PricingFacts
+  facts: CursusFacts
 ): ProductGridPrices {
   const view: ProductGridPrices = {};
   for (const item of productGridItems(items)) view[item.id] = viewerPricesFor(item, facts);
@@ -257,7 +259,7 @@ export function respondentItems<T extends { type?: string }>(items: readonly T[]
 export function priceProductGridAnswer(
   item: ProductGridItem,
   raw: unknown,
-  facts: PricingFacts
+  facts: CursusFacts
 ): { answer: ProductGridAnswer; lines: ProductGridLine[]; units: number } {
   const parsed = parseProductGridAnswer(item.productGrid, raw);
   // Narrowed by hand: this package compiles without strictNullChecks, where a boolean discriminant

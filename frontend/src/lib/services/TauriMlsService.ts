@@ -37,7 +37,12 @@ import {
   type OwedWelcome,
   type PendingSubmissionRead,
 } from '$lib/mls-client/commitSubmission';
-import type { DeviceEvent, DevicePin, KeyPackageVerdict } from '$lib/mls-client/deviceTrust';
+import type {
+  DeviceEvent,
+  DevicePin,
+  KeyPackageVerdict,
+  MembershipEvidence,
+} from '$lib/mls-client/deviceTrust';
 import type { DatedKeyPackage } from '$lib/mls-client/keyPackages';
 import { liveMlsFrameMessage } from '$lib/mls-client/liveFrame';
 import { gatewaySocketUrl } from '$lib/mls-client/frameDelivery';
@@ -1579,6 +1584,14 @@ export class TauriMlsService extends BaseMlsService {
   /** Tauri-native `invoke` wrapper - `epoques_departs`, the epochs as JSON numbers. */
   protected async removalEpochsNative(groupId: string, userId: string): Promise<number[]> {
     return invoke<number[]>('epoques_departs', { groupId, userId });
+  }
+
+  /** Tauri-native `invoke` wrapper - `preuves_appartenance` (`MembershipEvidence`, camelCase). */
+  protected async membershipEvidenceNative(
+    groupId: string,
+    userId: string
+  ): Promise<MembershipEvidence> {
+    return invoke<MembershipEvidence>('preuves_appartenance', { groupId, userId });
   }
 
   /** Tauri-native `invoke` wrapper - `prendre_evenements_appareils` (`DeviceEvent`, camelCase). */

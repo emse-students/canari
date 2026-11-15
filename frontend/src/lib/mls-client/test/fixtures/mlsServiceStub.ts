@@ -26,6 +26,8 @@ export function createMlsServiceStub(
     pinnedSignatureKeys: vi.fn().mockResolvedValue(null),
     // Default: no departure seen.
     removalEpochs: vi.fn().mockResolvedValue([]),
+    // Default: this device never saw the user in the group, and holds no record of it.
+    membershipEvidence: vi.fn().mockResolvedValue({ firstSeenEpoch: null, watchedFromEpoch: null }),
     // Default: every group drained - a test about a held commit overrides it.
     isGroupDrained: vi.fn().mockReturnValue(true),
     whenGroupDrained: vi.fn().mockResolvedValue(undefined),
@@ -187,6 +189,7 @@ export function createMlsServiceStub(
     sendTyping: vi.fn(),
     onChannelEvent: undefined,
     addBulkIngestObserver: vi.fn(),
+    whenBulkIngestsClosed: vi.fn(async () => {}),
     beginBulkIngest: vi.fn(),
     endBulkIngest: vi.fn().mockResolvedValue(undefined),
     destroy: vi.fn(),

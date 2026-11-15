@@ -1,0 +1,1 @@
+### Changed - the iPhone 12 salon banner for a session started while the phone was shut is read on TestFlight 1.6.12-alpha.2 ([readings](docs/wiki/device-verification.md#the-iphone-12-batch-6-readings-of-2026-11-14)); the deploy-rolling test passes 44 of 44 when run alone.

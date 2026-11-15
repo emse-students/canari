@@ -60,6 +60,10 @@ maybe('one Lydia order_ref per request of a form answer, against PostgreSQL', ()
       extra: { options: `-c search_path=${schema},public` },
     });
     await ds.initialize();
+    // The respondent `where` reads the form's association's archive (`respondentFormWhere`).
+    await ds.query(
+      `CREATE TABLE associations (id uuid PRIMARY KEY, archived boolean NOT NULL DEFAULT false)`
+    );
     const associationsService: any = {
       assertPaymentsReady: async () => undefined,
       canTakePaymentsNow: async () => true,
@@ -76,7 +80,13 @@ maybe('one Lydia order_ref per request of a form answer, against PostgreSQL', ()
       associationsService,
       { grantCotisant: jest.fn() } as any,
       new PurchaseRecordService(ds.getRepository(PurchaseRecord)),
-      { build: async () => ({ answers: {} }) } as any,
+      {
+        build: async () => ({
+          cursus: [{ promo: null, formation: null }],
+          cotisationTiers: [],
+          answers: {},
+        }),
+      } as any,
       ds.getRepository(FormRespondent),
       {} as any,
       // FormOrganiserAlertService: switched off, as it ships.

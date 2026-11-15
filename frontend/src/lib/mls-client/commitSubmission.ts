@@ -365,17 +365,23 @@ export class FollowerTabSendError extends Error {
   /**
    * @param refusal `follower`: the tab follows - its caller was not routed to the leader (a defect);
    *   `reload-owed`: the tab was promoted in place and reloads - an expected refusal, the gesture is
-   *   refused rather than lost.
+   *   refused rather than lost; `lead-lost`: a send begun while this document led reached its last
+   *   synchronous step after the lead left it (a leader suspended by the browser, or one that handed
+   *   the lead to a visible tab, releases the lock - `tabLeader.ts`) - expected, nothing was sealed
+   *   and the leader sends it.
    */
   constructor(
     readonly groupId: string,
-    readonly refusal: 'follower' | 'reload-owed' = 'follower'
+    readonly refusal: 'follower' | 'reload-owed' | 'lead-lost' = 'follower'
   ) {
     super(
       refusal === 'reload-owed'
         ? `an MLS frame of ${groupId.slice(0, 8)}... was asked of a tab that has just become the ` +
             'leader and reloads - nothing was encrypted'
-        : `an MLS frame of ${groupId.slice(0, 8)}... was asked of a follower tab - only the leader tab ` +
+        : refusal === 'lead-lost'
+          ? `an MLS frame of ${groupId.slice(0, 8)}... reached the encrypt after this tab stopped ` +
+            'leading - nothing was encrypted, the leader sends it'
+          : `an MLS frame of ${groupId.slice(0, 8)}... was asked of a follower tab - only the leader tab ` +
             'sends, so nothing was encrypted'
     );
     this.name = 'FollowerTabSendError';

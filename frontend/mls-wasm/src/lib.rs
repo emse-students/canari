@@ -682,6 +682,21 @@ impl WasmMlsClient {
             .collect()
     }
 
+    /// What this device can prove, alone, about `user_id` having been a member of `group_id`, as JSON
+    /// `{ firstSeenEpoch, watchedFromEpoch }` (each a number or `null`). See
+    /// `MlsManager::membership_evidence`.
+    #[wasm_bindgen]
+    pub fn membership_evidence(
+        &self,
+        group_id: String,
+        user_id: String,
+    ) -> Result<String, JsValue> {
+        mls_core::member_sightings::evidence_json(
+            &self.manager.membership_evidence(&group_id, &user_id),
+        )
+        .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
     /// Every device event recorded since the last call, as a JSON array of
     /// `{ groupId, epoch, identity, keyFingerprint, trust, addedBy }`, and forgets them. See
     /// `mls_core::device_trust::DeviceEvent`.

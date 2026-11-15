@@ -1,4 +1,4 @@
-## P2 - one tap from Canari signs the user into its MiConnect sites, and MiGallery's notifications go through Canari (owner, 2026-11-07: decided; Canari's half of the handoff built 2026-11-08, every site's flag OFF)
+## P2 - one tap from Canari signs the user into its MiConnect sites, and MiGallery's notifications go through Canari (owner, 2026-11-07: decided; Canari's half of the handoff built 2026-11-08, MiGallery's flag ON 2026-11-14, the others OFF)
 
 target: 1.8.0
 
@@ -37,8 +37,22 @@ the mint `POST /api/auth/handoff`, the JWKS `GET /api/auth/handoff/jwks`, the re
 `libs/contracts/ecosystem-sites.json`, the vectors `libs/contracts/handoff-token.cases.json`
 (written by `bun tools/handoff-vectors/generate.ts`), the one opener `openEcosystemSite`, and the
 secret `HANDOFF_SIGNING_KEY` (the production secret was provisioned by the lead, with the owner's
-approval, on 2026-11-08; PKCS#8 verified). **Every site's `handoff` flag is OFF**, so nothing
+approval, on 2026-11-08; PKCS#8 verified). **MiGallery's `handoff` flag is ON since 2026-11-14 (owner: merged now, shipped with the next stable once the readings reach 0); every other site's is OFF**, so nothing else
 changes for a user.
+
+**MiGallery's three conditions, measured 2026-11-14 before its flag went on** (owner's yes the same
+day): (1) F3-bound (#3364) is in the `v1.6.12` stable, `MICONNECT_READER_TOKEN` is set on
+production, and core-service logged no `MICONNECT_READER_TOKEN is unset` line over 72 h; (2)
+`miconnect-migallery`'s `sub_mode` is `hashed_user_id` (section 9); (3) MiGallery's redemption
+(its #461) ships in its `v2.24.1`, `/auth/handoff` answers 200, and its `hooks.server.ts` refuses
+a state-changing request of a `viaHandoff` session until a fresh MiConnect sign-in. The flag acts
+only from the next Canari stable.
+
+Two notes from the review of the flip (#3575), neither blocking: MiGallery's admin
+`login-as` / `stop-impersonating` are GET routes, so the step-up (which guards every non-GET of a
+handoff session) does not cover them - admin-only, they set an impersonation cookie and write no
+user data; and at the stable that ships the flag, confirm Canari's `iss` (the first `FRONTEND_URL`)
+equals MiGallery's `CANARI_HANDOFF_ISSUER`, then open MiGallery from Canari once and read it signed in.
 
 **A site's flag goes on only when ALL of these hold** (security review of #3155, 2026-11-08; the
 same list heads `libs/contracts/ecosystem-sites.json`):
@@ -684,7 +698,7 @@ for these three today is "the account exists and is active"; Sky's ICM rule live
 users, negation, mode, the empty-result flag), so evaluating it from Canari would duplicate
 MiConnect's decision - rejected for the reason F2 was.
 
-**Condition 1 of section 0 therefore cannot be met as written**, and no flag goes on. The
+**Condition 1 of section 0 therefore cannot be met as written**, and no flag goes on (superseded: F3-bound, #3364, meets it from `v1.6.12`). The
 alternatives, for the lead/owner to choose (not taken here):
 
 - **F3-bound (recommended):** read-only account with `view_user`, `view_application` and

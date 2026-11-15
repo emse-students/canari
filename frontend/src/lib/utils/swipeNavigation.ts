@@ -215,6 +215,24 @@ export function updateSwipeNavGesture(
   return state;
 }
 
+/** The id svelte-dnd-action gives the clone it drags (its `DRAGGED_ELEMENT_ID`); present only while a drag is live. */
+export const DND_DRAGGED_ELEMENT_ID = 'dnd-action-dragged-el';
+
+/**
+ * A SWIPE NEVER OUTLIVES A REORDER. Hearing the touch start in the capture phase (see
+ * {@link bindSwipeNavTouchListeners}) means a drag of a channel row or a community-rail icon is also
+ * a touch the shell tracks; once svelte-dnd-action has picked an item up, the finger belongs to the
+ * reorder, so the swipe stands down ('ignored') and cannot navigate mid-drag. Before any drag starts
+ * (a quick swipe over a row, a swipe over a rail icon that was not picked up) it is untouched and
+ * navigates like on every other surface.
+ */
+export function standDownForDndDrag(state: SwipeNavGestureState): SwipeNavGestureState {
+  if (typeof document === 'undefined' || document.getElementById(DND_DRAGGED_ELEMENT_ID) === null) {
+    return state;
+  }
+  return { startX: 0, startY: 0, startedAt: 0, phase: 'ignored', dragPx: 0 };
+}
+
 export type SwipeNavContext = {
   pathname: string;
   mobileConvoOpen: boolean;
@@ -303,4 +321,26 @@ export function transformTranslateXPx(transform: string): number {
   const values = m[2].split(',').map((v) => Number.parseFloat(v));
   const tx = values[m[1] ? 12 : 4];
   return Number.isFinite(tx) ? Math.abs(tx) : 0;
+}
+
+/**
+ * Wires the swipe-nav touch listeners on the shell. THE START IS HEARD IN THE CAPTURE PHASE:
+ * svelte-dnd-action calls `stopPropagation()` on the `touchstart` of every draggable row it owns
+ * (the channel rows of a community the viewer manages), so a bubble-phase listener on the shell
+ * never saw a swipe that began on one - no gesture state, no claim, the page stood still while the
+ * browser's own pan took the move (#84). Capture runs before any descendant can stop it, and the
+ * start is passive so it cannot cost a scroll. The move stays non-passive so it can be claimed.
+ * @returns a function that removes both listeners.
+ */
+export function bindSwipeNavTouchListeners(
+  node: HTMLElement,
+  onStart: (e: TouchEvent) => void,
+  onMove: (e: TouchEvent) => void
+): () => void {
+  node.addEventListener('touchstart', onStart, { passive: true, capture: true });
+  node.addEventListener('touchmove', onMove, { passive: false });
+  return () => {
+    node.removeEventListener('touchstart', onStart, { capture: true });
+    node.removeEventListener('touchmove', onMove);
+  };
 }
