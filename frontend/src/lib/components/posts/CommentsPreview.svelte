@@ -35,6 +35,11 @@
     onLike: (commentId: string) => void;
     /** Opens the sheet; `write` puts the caret in its box. */
     onOpen: (opts: { write: boolean }) => void;
+    /**
+     * READ-ONLY (`canParticipate` false: a platform admin reading outside their audience, 2026-11-14):
+     * no like, no "write a comment" line; the sheet still opens, to read.
+     */
+    readOnly?: boolean;
   }
 
   let {
@@ -45,6 +50,7 @@
     pendingCommentIds,
     onLike,
     onOpen,
+    readOnly = false,
   }: Props = $props();
 
   /** The newest top-level comment: the one a reader opening the post would see first. */
@@ -73,7 +79,7 @@
     class="border-t border-black/5 bg-white/30 px-4 pt-2 pb-3 dark:border-white/10 dark:bg-black/10"
     data-comments-preview
   >
-    {#if commentCount > 1}
+    {#if commentCount > (readOnly ? 0 : 1)}
       <button
         type="button"
         onclick={() => onOpen({ write: false })}
@@ -114,7 +120,7 @@
             <CommentMedia media={latest.media} {authToken} compact />
           {/if}
         </div>
-        {#if !pendingCommentIds?.has(latest.id)}
+        {#if !readOnly && !pendingCommentIds?.has(latest.id)}
           <!-- A control of its own, outside the tappable text: a like never opens the sheet. -->
           <CommentLikeButton
             liked={latest.likes?.includes(currentUserId) ?? false}
@@ -127,17 +133,19 @@
     {/if}
 
     <!-- The line that opens the sheet with the caret in its box. -->
-    <button
-      type="button"
-      onclick={() => onOpen({ write: true })}
-      class="focus-visible:ring-accent-icon mt-3 flex w-full items-center gap-2.5 text-left outline-none focus-visible:ring-2"
-    >
-      <span class="block h-8 w-8 shrink-0"><Avatar userId={currentUserId} fill /></span>
-      <span
-        class="text-text-muted min-w-0 flex-1 truncate rounded-3xl bg-black/5 px-3.5 py-2.5 text-sm dark:bg-white/10"
+    {#if !readOnly}
+      <button
+        type="button"
+        onclick={() => onOpen({ write: true })}
+        class="focus-visible:ring-accent-icon mt-3 flex w-full items-center gap-2.5 text-left outline-none focus-visible:ring-2"
       >
-        {m.post_comment_placeholder()}
-      </span>
-    </button>
+        <span class="block h-8 w-8 shrink-0"><Avatar userId={currentUserId} fill /></span>
+        <span
+          class="text-text-muted min-w-0 flex-1 truncate rounded-3xl bg-black/5 px-3.5 py-2.5 text-sm dark:bg-white/10"
+        >
+          {m.post_comment_placeholder()}
+        </span>
+      </button>
+    {/if}
   </div>
 {/if}

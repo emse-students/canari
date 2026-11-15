@@ -19,10 +19,10 @@ on the REAL predicates (never a mock of `mayModeratePost`):
 
 **This entry lands the spec with TODAY's answers wherever today already meets the target**, and
 writes every GAP as an `it.todo` naming its tag. A gap is defined on the page, countably: **every grid
-cell carrying a bracketed tag** (`[3561]`, `[IM]`, `[WR]`, `[HIDE]`, `[NICK]`, `[LIVE]`, `[AGENDA]`,
+cell carrying a bracketed tag** (`[IM]`, `[WR]`, `[HIDE]`, `[NICK]`, `[LIVE]`, `[AGENDA]`,
 `[MUTE]`, `[JOURNAL]`, `[NOTICE]`, `[BIO]`, `[AUTOHIDE]`, `[MLS]`; the page defines what a tag is),
 one `it.todo` per tag of the cell. So a gap is visible in the test report, never a silent pass.
-Each work package - or #3561 for the `[3561]` cells - turns its rows into real assertions in the pull
+Each work package turns its rows into real assertions in the pull
 request that closes it, and removes the tag from the page in the same pull request.
 
 **A parity guard**: `.github/scripts/tests/moderation-grid-parity.test.mjs` reads the `Action` column

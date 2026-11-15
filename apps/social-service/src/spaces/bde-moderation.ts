@@ -219,6 +219,30 @@ export const BDE_MODERATED_POST_IDS_SQL = `SELECT mp.id::text AS id FROM posts m
   WHERE mp.id = ANY($2::uuid[]) AND ${bdeModeratesContentSql('$1', 'mp."associationId"', 'mp."authorId"')}`;
 
 /**
+ * THE BDE MODERATOR'S MODERATION READ of post row `post` by user `moderator`: the post is in its
+ * scope (`bdeModeratesContentSql`, as every BDE act), AND it is published - or an OPEN report
+ * targets it. Owner, 2026-11-15: *"Exclure les posts programmes"* - an unpublished scheduled post is
+ * not a BDE moderator's to read until it is published, unless it was reported. The post's scheduled
+ * state and the open report are both read in the statement that decides, so no read learns them by
+ * failing. Every read that shows a BDE moderator a post's content asks THIS - one post by id, its
+ * comments and its replay (`BDE_MODERATION_READ_OPENS_POST_SQL`), the hidden-posts list
+ * (`PostsService.getHiddenPosts`), a reported post's preview in the queue
+ * (`ModerationService.listAllReports`). The writes (hide, delete) keep `BDE_MODERATED_POST_IDS_SQL`,
+ * unnarrowed. The platform admin is not asked it: their read is unchanged.
+ */
+export function bdeModerationReadsPostSql(moderator: string, post: string): string {
+  return `(${bdeModeratesContentSql(moderator, `${post}."associationId"`, `${post}."authorId"`)}
+    AND (${post}."scheduledAt" IS NULL OR ${post}."scheduledAt" <= now()
+      OR EXISTS (SELECT 1 FROM content_reports read_report
+        WHERE read_report."contentType" = 'post' AND read_report."contentId" = ${post}.id::text
+          AND read_report.status = 'pending')))`;
+}
+
+/** {@link bdeModerationReadsPostSql} asked of post `$2` (uuid) by user `$1`. Answers `reads`. */
+export const BDE_MODERATION_READ_OPENS_POST_SQL = `SELECT EXISTS (SELECT 1 FROM posts rp
+  WHERE rp.id = $2::uuid AND ${bdeModerationReadsPostSql('$1', 'rp')}) AS "reads"`;
+
+/**
  * The TEXT expression `text` as a uuid, or NULL when it is not one - so a report's free-text
  * `contentId` is cast on ITS side and the uuid primary keys it is compared with keep their indexes,
  * and a value that is not a uuid matches nothing instead of raising. The CASE is what guards the

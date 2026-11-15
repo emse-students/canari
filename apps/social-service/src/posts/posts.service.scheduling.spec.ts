@@ -37,6 +37,7 @@ describe('PostsService.getById scheduling', () => {
         isContentModerator: () => Promise.resolve(false),
         moderatedPostIds: () => Promise.resolve(new Set<string>()),
         mayModeratePost: () => Promise.resolve(false),
+        mayReadToModeratePost: () => Promise.resolve(false),
       } as unknown as AssociationsService,
       {} as PostNotificationsService,
       { release: jest.fn() } as unknown as PostMediaRetentionService

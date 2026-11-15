@@ -315,13 +315,22 @@ export async function fetchLive(liveId: string): Promise<LiveView> {
  * `GET /api/lives/:id/replay[?from=<index>]` - one page of a finished live's three-day REPLAY: the
  * key, the segments from `from` with their place on the time line, `nextFrom`. Takes NO seat. Every
  * refusal is the same `not-found` (an outsider, a block, a removed viewer, an expired replay).
+ * `moderation` is the moderation read the reported-content preview asks (`?moderation=true`, lead
+ * 2026-11-14): the server opens the replay to whoever moderates its post, and to nobody else.
  */
-export async function fetchLiveReplay(liveId: string, from?: number): Promise<LiveReplayPage> {
-  console.debug(`[LIVE_REPLAY] page of ${liveId} from ${from ?? 0}`);
-  return liveJson<LiveReplayPage>(
-    `${livePath(liveId)}/replay${from === undefined ? '' : `?from=${from}`}`,
-    'Live replay'
+export async function fetchLiveReplay(
+  liveId: string,
+  from?: number,
+  opts: { moderation?: boolean } = {}
+): Promise<LiveReplayPage> {
+  console.debug(
+    `[LIVE_REPLAY] page of ${liveId} from ${from ?? 0}${opts.moderation ? ' (moderation read)' : ''}`
   );
+  const query = new URLSearchParams();
+  if (from !== undefined) query.set('from', String(from));
+  if (opts.moderation) query.set('moderation', 'true');
+  const qs = query.toString();
+  return liveJson<LiveReplayPage>(`${livePath(liveId)}/replay${qs ? `?${qs}` : ''}`, 'Live replay');
 }
 
 /**
