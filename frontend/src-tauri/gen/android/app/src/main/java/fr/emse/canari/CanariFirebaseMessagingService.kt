@@ -50,7 +50,6 @@ import fr.emse.canari.push.GenericBannerLedger
 import fr.emse.canari.push.GroupLocality
 import fr.emse.canari.push.KeyGroupPushJoin
 import fr.emse.canari.push.NotificationLevelGate
-import fr.emse.canari.push.PostReactionGroup
 import fr.emse.canari.push.PushRecoveryLadder
 import fr.emse.canari.push.QueuedSendAnswer
 import fr.emse.canari.push.RepostAlert
@@ -772,43 +771,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         internal fun reactionNotifKey(groupId: String): String = "reaction:$groupId"
 
         /**
-         * The [getStableNotifId] key for the ONE notification all reactions to a POST share. A
-         * namespace of its own so a post id can never collide with a conversation's.
+         * The [getStableNotifId] key for the ONE notification a post's comments and reactions share
+         * (owner, 2026-11-14): the server's `collapseId` (`post_activity_<postId>`), in a namespace of
+         * its own so it can never collide with a conversation's.
          */
-        internal fun postReactionNotifKey(postId: String): String = "postreaction:$postId"
-
-        private const val POST_REACTION_PREFS = "canari_post_reactions"
-        private const val POST_REACTION_KEY = "ledgers"
-        private const val MAX_POST_REACTION_LEDGERS = 50
-        private val POST_REACTION_LOCK = Any()
-
-        /**
-         * Draws up to three already-circular faces into ONE icon: two side by side, three in a
-         * triangle, the newest (first) on top. Each is scaled to 62 % of the edge, so the overlap
-         * is small and every face stays recognisable at notification size.
-         */
-        private fun composeFaceCollage(faces: List<Bitmap>): Bitmap {
-            val edge = faces.maxOf { maxOf(it.width, it.height) }
-            val output = Bitmap.createBitmap(edge, edge, Bitmap.Config.ARGB_8888)
-            val canvas = Canvas(output)
-            val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
-            val d = (edge * 0.62f).toInt()
-            val near = 0
-            val far = edge - d
-            val mid = (edge - d) / 2
-            // Top-left corner of each face, newest first; drawn in reverse so the newest is on top.
-            val corners = if (faces.size == 2) {
-                listOf(far to mid, near to mid)
-            } else {
-                listOf(mid to near, near to far, far to far)
-            }
-            for (i in faces.indices.reversed()) {
-                val (x, y) = corners[i]
-                canvas.drawBitmap(faces[i], null, Rect(x, y, x + d, y + d), paint)
-                faces[i].recycle()
-            }
-            return output
-        }
+        internal fun collapsedNotifKey(collapseId: String): String = "collapse:$collapseId"
 
         /**
          * The messages this device has ALREADY ALERTED FOR, newest last, bounded.
@@ -1116,7 +1083,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                         byGroup[g] = ShadeReadMark(maxOf(held?.at ?: 0L, a), maxOf(held?.serverAt ?: 0L, s))
                     }
                 } catch (e: Exception) {
-                    Log.w(TAG, "parseReadWatermarks: unparsable line dropped: ${e.message}")
+                    Log.w(TAG, "parseReadWatermarks: unparsable line dropped: ${e.javaClass.simpleName}")
                 }
             }
             return byGroup
@@ -1171,7 +1138,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * @property unusable null when the file names this account; otherwise the token
          *   [ChannelBannerAuthor.NameBook.Unusable] carries: `no-account`, `no-name-file`,
          *   `other-account`, `no-names`, `unreadable`.
-         * @property detail the exception message of an `unreadable` file, for its log line.
+         * @property detail the exception CLASS of (never its message: org.json quotes the whole file) an `unreadable` file, for its log line.
          */
         internal class DisplayNamesRead(val names: JSONObject?, val unusable: String?, val detail: String? = null)
 
@@ -1195,7 +1162,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                         ?: DisplayNamesRead(null, "no-names")
                 }
             } catch (e: Exception) {
-                DisplayNamesRead(null, "unreadable", e.message)
+                DisplayNamesRead(null, "unreadable", e.javaClass.simpleName)
             }
         }
 
@@ -1228,7 +1195,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 }
                 ConversationNicknames.Book(root.optString("userId").lowercase(), scopes, channels)
             } catch (e: Exception) {
-                Log.w(TAG, "$label conversation_nicknames.json unreadable: ${e.message}")
+                Log.w(TAG, "$label conversation_nicknames.json unreadable: ${e.javaClass.simpleName}")
                 null
             }
         }
@@ -3525,26 +3492,22 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 else                                   -> "fr.emse.canari://posts"
             }
             val channel = if (msgType == "form_reminder") CHANNEL_FORMS else CHANNEL_SOCIAL
-            // REACTIONS TO ONE POST ARE ONE NOTIFICATION, UPDATED IN PLACE (user, 2026-10-08: six
-            // faceless "a reagi" stacked in the shade for a single post). Keyed on the post, so it
-            // needs the post id; a reaction push without one is logged and drawn ungrouped.
-            if (msgType == "social" && data["contentKey"] == "social_reaction") {
-                if (postId.isNotEmpty()) {
-                    runWithWakeLock("fcm_post_reaction") {
-                        showPostReactionNotification(data, postId, deepLink, channel)
-                    }
-                    return
-                }
-                Log.w(TAG, "social_reaction push without postId - nothing to group it under, drawn alone")
-            }
-            Log.d(TAG, "showSimpleNotification: type=$msgType channel=$channel titleChars=${title.length} deepLink=$deepLink")
+            // ONE LIVE NOTIFICATION PER POST (owner, 2026-11-14): the comments and reactions on MY
+            // post carry the server's `collapseId`, so each one REPLACES the post's notification
+            // (the stable-id mechanism of a conversation), and `quiet` - the post still has an unread
+            // bell row, the server decided - updates it without sound or heads-up. The server's
+            // unread state is the one decider; the shade's is not asked.
+            val collapseId = data["collapseId"].orEmpty()
+            val stableId = if (collapseId.isNotEmpty()) getStableNotifId(this, collapsedNotifKey(collapseId)) else null
+            val quiet = collapseId.isNotEmpty() && data["quiet"] == "true"
+            Log.d(TAG, "showSimpleNotification: type=$msgType channel=$channel titleChars=${title.length} deepLink=$deepLink collapsed=${stableId != null} quiet=$quiet")
             // A THREAD, because this branch now fetches a picture. Everything above is a map lookup
             // and stays here; [socialLargeIcon] may touch the disk cache, the Keystore and the
             // network, and `onMessageReceived` must return promptly or Android stops delivering to
             // this process. The WakeLock is what [handleReactionNotification] already takes for the
             // same reason, one line below.
             runWithWakeLock("fcm_social") {
-                showSimpleNotification(title, body, deepLink, channel, socialLargeIcon(data))
+                showSimpleNotification(title, body, deepLink, channel, socialLargeIcon(data), stableId, quiet)
             }
             return
         }
@@ -3852,7 +3815,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     enqueueRefusedFrameWorker()
                 }
                 buildFallbackText(appLocaleContext(this), shownName, groupName, isGroup)
-                    .also { Log.w(TAG, "Fallback notification: $it") }
+                    .also { Log.w(TAG, "Fallback notification: shown chars=${it.length} named=${shownName != null && shownName.isNotEmpty()} group=${groupId.take(8)}") }
             }
 
         if (silent) {
@@ -5658,6 +5621,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         largeIcon: Bitmap? = null,
         /** A stable id makes this notification UPDATE in place; null is a fresh one each time. */
         stableId: Int? = null,
+        /** An update the server decided must not alert: no sound, no vibration, no heads-up. */
+        quiet: Boolean = false,
     ) {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         ensureNotificationChannels(manager)
@@ -5681,108 +5646,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setContentIntent(pendingIntent)
             .apply { largeIcon?.let { setLargeIcon(it) } }
-            // A call holds the sound ([CallSoundHold]): shown, without its sound.
-            .setSilent(callHolds)
+            // A call holds the sound ([CallSoundHold]): shown, without its sound. A quiet update of a
+            // post's notification (owner, 2026-11-14) is shown the same way.
+            .setSilent(callHolds || quiet)
             .build()
-        Log.d(TAG, "showSimpleNotification: notifId=$notifId channel=$channel largeIcon=${largeIcon != null} silentForCall=$callHolds")
+        Log.d(TAG, "showSimpleNotification: notifId=$notifId channel=$channel largeIcon=${largeIcon != null} silentForCall=$callHolds quiet=$quiet")
         manager.notify(notifId, notification)
-    }
-
-    // --- Reactions to a POST, one notification each ------------------------------
-
-    /**
-     * Draws the reactions to ONE post as ONE notification that every new reaction updates.
-     *
-     * Reported by the user on 2026-10-08, from a Pixel 6a: six notifications "Nouvelle reaction -
-     * X a reagi Marteau a votre publication" for a single post, each alone and each without a
-     * face. The server now names the actor's picture and sends the emoji; this keys the
-     * notification on the POST (the way [reactionNotifKey] keys a conversation's), so the next
-     * reaction replaces the last, accumulating who reacted.
-     *
-     * **THE LEDGER IS DURABLE STATE AND THE SHADE DECIDES WHEN IT ENDS - NO CLOCK.** Actors are kept
-     * in SharedPreferences per post. A reaction joins the existing group only when that
-     * notification is still posted; once it was swiped or opened, the next reaction starts a new
-     * one ("A a reagi", not "A, B et 4 autres" about reactions the user has already seen).
-     * [PostReactionGroup] holds the pure half (ledger, sentence shape, faces) and is unit-tested.
-     *
-     * The picture is the actor's for one person and a small collage of up to three faces for
-     * several; a face that cannot be had is the initials disc the message path draws, logged.
-     */
-    private fun showPostReactionNotification(
-        data: Map<String, String>,
-        postId: String,
-        deepLink: String,
-        channel: String,
-    ) {
-        // THE LOCK COVERS THE POST AS WELL AS THE LEDGER. Each push runs on a thread of its own, and
-        // the join-or-restart decision reads "is the notification still shown": with the lock
-        // released before `notify`, a burst (six reactions at once - the very case this exists for)
-        // found the shade still empty, restarted the ledger each time and kept only the last
-        // reactor. Held across the face fetch, the second push waits and then finds the first one
-        // posted; faces are cached for 24 h, so the wait is one fetch per new face.
-        synchronized(POST_REACTION_LOCK) {
-            showPostReactionNotificationLocked(data, postId, deepLink, channel)
-        }
-    }
-
-    private fun showPostReactionNotificationLocked(
-        data: Map<String, String>,
-        postId: String,
-        deepLink: String,
-        channel: String,
-    ) {
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        val notifId = getStableNotifId(this, postReactionNotifKey(postId))
-        val newcomer = PostReactionGroup.Actor(data["iconUserId"].orEmpty(), data["actorName"].orEmpty())
-        val emoji = data["contentArg"].orEmpty()
-
-        val actors = synchronized(POST_REACTION_LOCK) {
-            val prefs = getSharedPreferences(POST_REACTION_PREFS, Context.MODE_PRIVATE)
-            val ledger = JSONObject(prefs.getString(POST_REACTION_KEY, "{}") ?: "{}")
-            val stillShown = manager.activeNotifications.any { it.id == notifId }
-            val previous = if (stillShown) PostReactionGroup.decode(ledger.optString(postId)) else emptyList()
-            if (!stillShown && ledger.has(postId)) {
-                Log.d(TAG, "post reaction: post=${postId.take(8)} notification no longer shown -> a new group")
-            }
-            val updated = PostReactionGroup.add(previous, newcomer)
-            // Re-inserted last, so the oldest posts are the ones the bound drops.
-            ledger.remove(postId)
-            ledger.put(postId, PostReactionGroup.encode(updated))
-            while (ledger.length() > MAX_POST_REACTION_LEDGERS) {
-                ledger.remove(ledger.keys().next())
-            }
-            prefs.edit().putString(POST_REACTION_KEY, ledger.toString()).commit()
-            updated
-        }
-
-        val res = appLocaleContext(this).resources
-        val body = when (val shape = PostReactionGroup.shape(actors)) {
-            is PostReactionGroup.Shape.One ->
-                res.getString(R.string.notif_social_reaction_body, shape.a.name, emoji)
-            is PostReactionGroup.Shape.Two ->
-                res.getString(R.string.notif_social_reaction_body_two, shape.a.name, shape.b.name)
-            is PostReactionGroup.Shape.Three ->
-                res.getString(R.string.notif_social_reaction_body_three, shape.a.name, shape.b.name, shape.c.name)
-            is PostReactionGroup.Shape.Many ->
-                res.getString(R.string.notif_social_reaction_body_many, shape.a.name, shape.b.name, shape.others)
-            null -> {
-                Log.e(TAG, "post reaction: empty ledger after adding actor=${newcomer.id.take(8)} - nothing to say")
-                return
-            }
-        }
-
-        val faces = PostReactionGroup.faces(actors).map { actor ->
-            val photo = if (actor.id.isNotEmpty()) fetchAvatar(actor.id) else null
-            if (photo == null) {
-                Log.d(TAG, "post reaction: no picture for ${actor.identity.take(8)} -> initials")
-            }
-            photo ?: generateInitialsBitmap(actor.name)
-        }
-        val icon = if (faces.size == 1) faces[0] else composeFaceCollage(faces)
-        Log.d(TAG, "post reaction: post=${postId.take(8)} actors=${actors.size} faces=${faces.size}")
-        showSimpleNotification(
-            res.getString(R.string.notif_social_reaction_title), body, deepLink, channel, icon, notifId,
-        )
     }
 
     // --- Reaction push -----------------------------------------------------------
@@ -5864,14 +5733,31 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 res.getString(R.string.notif_social_reply_title, actor),
                 arg.ifEmpty { res.getString(R.string.notif_social_reply_body) }
             )
+            // A comment or a reaction on MY post (owner, 2026-11-14): `contentCount` is how many OTHER
+            // people did the same while the post's notification stayed unread - one sentence per
+            // count form, mirroring the bell's "et 1 autre" / "et N autres".
             "social_comment" -> Pair(
-                res.getString(R.string.notif_social_comment_title, actor),
+                when (val others = (data["contentCount"]?.toIntOrNull() ?: 0).coerceAtLeast(0)) {
+                    0 -> res.getString(R.string.notif_social_comment_title, actor)
+                    1 -> res.getString(R.string.notif_social_comment_title_others_one, actor)
+                    else -> res.getString(R.string.notif_social_comment_title_others_many, actor, others)
+                },
                 arg.ifEmpty { res.getString(R.string.notif_social_comment_body) }
             )
-            "social_reaction" -> Pair(
-                res.getString(R.string.notif_social_reaction_title),
-                res.getString(R.string.notif_social_reaction_body, actor, arg)
-            )
+            "social_reaction" -> when (val others = (data["contentCount"]?.toIntOrNull() ?: 0).coerceAtLeast(0)) {
+                0 -> Pair(
+                    res.getString(R.string.notif_social_reaction_title),
+                    res.getString(R.string.notif_social_reaction_body, actor, arg)
+                )
+                1 -> Pair(
+                    res.getString(R.string.notif_social_reaction_title_count, others + 1),
+                    res.getString(R.string.notif_social_reaction_body_others_one, actor)
+                )
+                else -> Pair(
+                    res.getString(R.string.notif_social_reaction_title_count, others + 1),
+                    res.getString(R.string.notif_social_reaction_body_others_many, actor, others)
+                )
+            }
             // The two publication notices. `actor` is the ASSOCIATION's name for the first and
             // the author's for the second; `arg` is the opening of the post, empty when the post
             // is images only, which is why the body falls back to a fixed sentence.

@@ -8558,6 +8558,8 @@ export class MessagingService {
               headers: {
                 'apns-push-type': ios.payload.pushType,
                 'apns-priority': String(ios.payload.priority),
+                // One live notification per post: the new alert replaces the delivered one.
+                ...(ios.payload.collapseId ? { 'apns-collapse-id': ios.payload.collapseId } : {}),
               },
             },
           });

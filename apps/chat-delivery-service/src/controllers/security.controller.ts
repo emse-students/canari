@@ -51,6 +51,7 @@ import { checkSafeBrowsing } from '../utils/safe-browsing';
 import { TtlCache } from '../utils/ttl-cache';
 import { activeRevocationWhere } from '../utils/revocation';
 import { RefusalCode, refusalBody } from '../utils/refusal-codes';
+import { RouteParams } from '../common/route-params';
 
 /** A preview we managed to build, or the fact that we could not. */
 type CachedPreview = { ok: true; payload: LinkPreviewPayload } | { ok: false; message: string };
@@ -80,6 +81,7 @@ const IMAGE_MAX_BYTES = 3_000_000;
 const IMAGE_CACHEABLE_BYTES = 256_000;
 
 /** PIN verifier and link-preview (SSRF-protected) endpoints. */
+@RouteParams({ userId: 'opaque' })
 @Controller()
 export class SecurityController {
   private readonly logger = new Logger(SecurityController.name);

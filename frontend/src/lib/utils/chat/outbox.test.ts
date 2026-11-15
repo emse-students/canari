@@ -12,6 +12,8 @@ const isTabLeaderMock = vi.hoisted(() => vi.fn(() => true));
 const leadershipMock = vi.hoisted(() =>
   vi.fn((): 'undecided' | 'leader' | 'follower' => (isTabLeaderMock() ? 'leader' : 'follower'))
 );
+// The hand-over ask a visible follower posts (`tabLeader.ts`); recorded, never sent here.
+const handoverAskMock = vi.hoisted(() => vi.fn());
 const decidedMock = vi.hoisted(() => ({
   promise: Promise.resolve('leader') as Promise<'leader' | 'follower'>,
 }));
@@ -32,6 +34,7 @@ vi.mock('$lib/mls-client/tabLeader', async (importOriginal) => ({
   getIsTabLeader: () => isTabLeaderMock(),
   getTabLeadership: () => leadershipMock(),
   whenTabLeadershipDecided: () => decidedMock.promise,
+  requestLeaderHandover: (log: (msg: string) => void) => handoverAskMock(log),
 }));
 vi.mock('$lib/mls-client/tabMessageSync', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/mls-client/tabMessageSync')>()),
@@ -1649,6 +1652,68 @@ describe('outbox flusher - tab leadership (WP-MULTITAB-1)', () => {
     expect(mlsService.sendMessage).not.toHaveBeenCalled();
     expect(storage._map.get('m1')!.attempts).toBe(0);
     expect(tabOutboxMock.requestLeaderOutboxFlush).toHaveBeenCalledTimes(1);
+  });
+
+  it('a follower says ONCE that it hands its flushes over, however often it asks', async () => {
+    // Owner's log, 2026-11-10: twenty identical "Flush skipped - follower tab" lines in three
+    // minutes, one per trigger. The fact is the role, which only a reload changes.
+    isTabLeaderMock.mockReturnValue(false);
+    const log = vi.fn();
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const outbox = createOutbox(makeDeps({ mlsService: makeMls(), storage, log }));
+
+    await outbox.flush();
+    await outbox.flush();
+    await outbox.flush();
+
+    expect(tabOutboxMock.requestLeaderOutboxFlush).toHaveBeenCalledTimes(3);
+    const said = log.mock.calls.filter(([l]) =>
+      String(l).includes('every flush is asked of the leader tab')
+    );
+    expect(said).toHaveLength(1);
+  });
+
+  it('a follower asks a hidden leader for the lead for a due entry - never while offline', async () => {
+    // Review of #3321: offline, the entry waits on the link, not on the leader; a lead taken would
+    // not send it, and both tabs would reload with no network to load the app from.
+    isTabLeaderMock.mockReturnValue(false);
+    handoverAskMock.mockClear();
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const outbox = createOutbox(makeDeps({ mlsService: makeMls(), storage }));
+
+    connectivity.notifyServerUnreachable();
+    await outbox.flush();
+    await outboxIdle();
+    expect(tabOutboxMock.requestLeaderOutboxFlush).toHaveBeenCalled();
+    expect(handoverAskMock).not.toHaveBeenCalled();
+
+    connectivity.notifyServerReachable();
+    await outbox.flush();
+    await outboxIdle();
+    expect(handoverAskMock).toHaveBeenCalled();
+  });
+
+  it('a send whose tab stopped leading during its gates is not sealed here, and stays queued', async () => {
+    // The browser froze the leader, the freeze released the lock (`tabLeader.ts`), and this page
+    // resumed mid-flush: sealing now would use a ratchet behind the new leader's (WP-MULTITAB-1).
+    const log = vi.fn();
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const mlsService = makeMls({
+      active: async () => {
+        isTabLeaderMock.mockReturnValue(false);
+        return true;
+      },
+    });
+    const outbox = createOutbox(makeDeps({ mlsService, storage, log }));
+
+    await outbox.flush();
+
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(storage._map.has('m1')).toBe(true);
+    expect(storage._map.get('m1')!.attempts).toBe(0);
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining('this tab stopped leading during the send')
+    );
   });
 
   it('queues from a follower and still nudges the leader (the queue is shared storage)', async () => {

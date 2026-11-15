@@ -161,11 +161,14 @@ describe('HandoffService', () => {
     }
   );
 
-  it('ships every site with its flag off: the contract registry mints nothing yet', async () => {
+  it('the contract registry mints for MiGallery only (owner, 2026-11-14); every other flag is off', async () => {
     const service = new HandoffService(undefined, OPEN);
-    await expect(service.mint('user-a', 'migallery', '/')).rejects.toBeInstanceOf(
-      BadRequestException
-    );
+    await expect(service.mint('user-a', 'migallery', '/')).resolves.toMatchObject({
+      url: expect.stringMatching(/^https:\/\/gallery\.mitv\.fr\/auth\/handoff#/),
+    });
+    for (const aud of ['le-cercle', 'sky']) {
+      await expect(service.mint('user-a', aud, '/')).rejects.toBeInstanceOf(BadRequestException);
+    }
   });
 
   describe("MiConnect's door (F3-bound)", () => {
