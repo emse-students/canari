@@ -14,4 +14,4 @@ target: 1.7.0
 
 **Triage 2026-11-14: iPhone about 10 min (a finger-like tap on the banner after a suggestion pick: `ios.mjs hold` then `tap`, as in batch 8), Mi 9T about 30 min (the leftovers of the list above).**
 
-**Read 2026-11-15 (iPhone 12, `1.6.12-alpha.2`): the suggestion-row finding is REPRODUCED, and filed as [a P2](p2-picking-a-share-sheet-suggestion-offers-nothing-in-canari-on-ios.md).** Five picks from Safari, nothing offered. The finger-tap on the banner could not be read because no banner appeared. The rest of the iPhone half is read; what stays is the Mi 9T list.
+**Read 2026-11-15 (iPhone 12, `1.6.12-alpha.2`): the suggestion-row finding is REPRODUCED, and filed as [a P2](p2-picking-a-share-sheet-suggestion-offers-nothing-in-canari-on-ios.md).** Five picks from Safari, nothing offered. The finger-tap on the banner could not be read because no banner appeared. The finger-tap on the banner therefore stays owed on the iPhone (it can be read once the suggestion path offers a banner); what else stays is the Mi 9T list.
