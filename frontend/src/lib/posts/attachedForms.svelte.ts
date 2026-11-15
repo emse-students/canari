@@ -75,7 +75,7 @@ export function attachedFormSources(
 export function attachedFormsLoader(
   sources: () => AttachedFormSource[],
   reads: AttachedFormReads
-): { readonly infos: AttachedFormInfo[]; readonly pending: string[] } {
+): { readonly infos: AttachedFormInfo[] } {
   const answered = new SvelteMap<string, AttachedFormInfo>();
   // NOT REACTIVE ON PURPOSE: the effect below must not re-run because it recorded an ask.
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- a record of asks nothing draws
@@ -115,7 +115,7 @@ export function attachedFormsLoader(
     answered.set(src.id, { id: src.id, title, submitted, opensAt });
   }
 
-  // Derived ONCE: the effect and both derived values below share it.
+  // Derived ONCE: the effect and the derived value below share it.
   const list = $derived(sources());
 
   $effect(() => {
@@ -133,14 +133,10 @@ export function attachedFormsLoader(
       return info ? [info] : [];
     })
   );
-  const pending = $derived(list.map((s) => s.id).filter((id) => !answered.has(id)));
 
   return {
     get infos() {
       return infos;
-    },
-    get pending() {
-      return pending;
     },
   };
 }

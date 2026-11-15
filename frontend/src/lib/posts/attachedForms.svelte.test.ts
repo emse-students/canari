@@ -70,7 +70,6 @@ describe('attachedFormsLoader', () => {
 
     expect(reads.checkSubmission).toHaveBeenCalledTimes(2);
     expect(loader.infos.map((fi) => fi.id)).toEqual(['A', 'B']);
-    expect(loader.pending).toEqual([]);
     cleanup();
   });
 
@@ -111,7 +110,6 @@ describe('attachedFormsLoader', () => {
     answerAll('B');
     await settle();
     expect(loader.infos.map((fi) => fi.id)).toEqual(['B']);
-    expect(loader.pending).toEqual(['A']);
     answerAll('A');
     await settle();
     expect(loader.infos.map((fi) => fi.id)).toEqual(['A', 'B']);
@@ -127,7 +125,6 @@ describe('attachedFormsLoader sources', () => {
     const cleanup = $effect.root(() => {
       const loader = attachedFormsLoader(build, reads);
       void loader.infos;
-      void loader.pending;
     });
     await settle();
     expect(build).toHaveBeenCalledTimes(1);

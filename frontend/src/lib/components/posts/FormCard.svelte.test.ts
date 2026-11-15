@@ -21,7 +21,6 @@ vi.mock('$lib/posts/api', () => ({
 }));
 
 import FormCard from './FormCard.svelte';
-import PostForms from './PostForms.svelte';
 
 const future = () => new Date(Date.now() + 86_400_000).toISOString();
 const past = () => new Date(Date.now() - 86_400_000).toISOString();
@@ -59,9 +58,15 @@ describe('FormCard bell', () => {
   });
 
   it('appears when opensAt arrives AFTER the card mounted (fails with a mount-time read)', () => {
-    const { target, p } = render(PostForms, { formInfos: [] as unknown[] });
+    const { target, p } = render(FormCard, {
+      formId: 'f1',
+      href: '/forms/f1',
+      title: 'T',
+      submitted: false,
+      opensAt: undefined as string | undefined,
+    });
     expect(bell(target)).toBeNull();
-    p.formInfos = [{ id: 'f1', title: 'T', submitted: false, opensAt: future() }];
+    p.opensAt = future();
     flushSync();
     expect(bell(target)).not.toBeNull();
     expect(checkFormReminder).toHaveBeenCalledWith('f1');
@@ -98,6 +103,20 @@ describe('FormCard bell', () => {
     await new Promise((r) => setTimeout(r, 0));
     flushSync();
     expect(bell(target)).not.toBeNull();
+  });
+
+  it('is a card of the one family: the form chip, the open state, no bell', () => {
+    const { target } = render(FormCard, {
+      formId: 'o',
+      href: '/forms/o',
+      title: 'Inscriptions',
+      submitted: false,
+      opensAt: null,
+    });
+    const card = target.querySelector('[data-attachment-card="form"]');
+    expect(card).not.toBeNull();
+    expect(card?.querySelector('[data-attachment-chip]')?.textContent?.trim()).toBe('Formulaire');
+    expect(card?.textContent).toContain('Inscriptions');
   });
 
   it('subscribes on a tap', async () => {

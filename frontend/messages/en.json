@@ -767,7 +767,6 @@
   "settings_notif_bookings_desc": "A booking cancelled, left, made for you, or starting soon.",
   "settings_notif_switch_aria": "Notifications: {category}",
   "post_unable_to_report": "Could not report",
-  "post_event_label": "Event:",
   "post_view_association_label": "View {name} association",
   "post_view_profile_label": "View {name}'s profile",
   "post_view_anonymous_label": "Anonymous author",
@@ -6441,5 +6440,9 @@
   "settings_video_autoplay_desc": "Feed videos start by themselves when they come into view. Otherwise, a still frame and a play button.",
   "settings_video_autoplay_always": "Always",
   "settings_video_autoplay_wifi": "Wi-Fi",
-  "settings_video_autoplay_never": "Never"
+  "settings_video_autoplay_never": "Never",
+  "attachment_chip_pdf": "PDF",
+  "attachment_chip_event": "Event",
+  "attachment_event_open": "See the event",
+  "pdf_open_named_document_label": "Open {name}"
 }

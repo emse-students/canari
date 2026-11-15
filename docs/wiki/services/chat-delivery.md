@@ -2745,9 +2745,9 @@ host, text and preview card.
 `frontend/src/lib/utils/ecosystemHosts.ts` maps the four hosts we share users with -
 `gallery.mitv.fr`, `sky.mitv.fr`, `cercle.canari-emse.fr`, `portail-etu.emse.fr` - to the name the
 reader knows them by. The badge rule below is unchanged; `sky.mitv.fr` simply names the destination
-to nobody but whoever deployed it. The registry also carries the paths worth a cover-first card
-(`EcosystemCoverPreview.svelte`, a MiGallery album today), which is what the hostname compared in
-place used to decide. Adding a fifth site is one entry there. It carries no bundled logos on
+to nobody but whoever deployed it. The registry also carries the paths worth a cover-first card (a
+MiGallery album today: its square cover is the tile, and the hero's banner, of the one card family,
+`AttachmentCard`), which is what the hostname compared in place used to decide. Adding a fifth site is one entry there. It carries no bundled logos on
 purpose: the card already resolves each site's own favicon, which survives a rebrand.
 
 #### Favicons come from the site, never from an icon service
