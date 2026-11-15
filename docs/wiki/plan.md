@@ -83,9 +83,7 @@ earliest version, as a checklist.
 
 - [ ] [every route fits on REAL hardware](backlog.d/reading-owed-every-route-fits-on-real-hardware.md)
 - [ ] [the twelve emoji-picture rows on real devices, the iPhone first](backlog.d/emoji-pictures-the-campaign-rows-which-need-real-devices.md)
-- [ ] [Graine v2: the unsigned-row count, the rig re-run and one native refusal](backlog.d/p1-graine-v2-an-author-that-is-proven-and-a-ciphertext-bound-to-its-place.md)
 - [ ] [the CanaReels composer, viewer and editor on real content](backlog.d/reading-owed-the-canareels-composer-viewer-and-editor-on-real-content.md)
-- [ ] [the GRP-3 socket close placed with `ws1.mjs`](backlog.d/p2-a-live-socket-dies-in-the-middle-of-grp-3-and-no-navigation-explains-it-2026.md)
 - [ ] [the named readers' live chat switch on dev](backlog.d/named-readers-comments-switch-readings-owed.md)
 - [ ] [the in-session community join through the deep link on the phones](backlog.d/p1-owed-one-live-reading-of-the-in-session-join-fix-2026-10-08.md)
 - [ ] [a 13 MB attachment: the bytes out of the outbox row, an evicted blob parked as `upload_error`](backlog.d/reading-owed-a-13-mb-attachment-the-bytes-out-of-the-outbox-row-an-evicted-blob.md)
@@ -125,7 +123,6 @@ earliest version, as a checklist.
 - [ ] [the bell, WP-3 (#3156, first stable `v1.6.8`, migration 143 approved; engagement)](backlog.d/reading-owed-the-bell-wp-3-3156-first-stable-v1-6-8-migration-143-approved.md)
 - [ ] [the checkpoint every commit awaits under the MLS lock before its first request](backlog.d/reading-owed-the-checkpoint-every-commit-awaits-under-the-mls-lock-before-its.md)
 - [ ] [the push sentences are worded in Rust from the app language and a voice note is announced as one](backlog.d/reading-owed-the-push-sentences-are-worded-in-rust-from-the-app-language-and-a.md)
-- [ ] [WP-REGRANT-2, a re-granted member's seed by distribution, never by repair](backlog.d/reading-owed-wp-regrant-2-a-re-granted-member-s-re-join.md)
 
 ## 1.8.0
 
