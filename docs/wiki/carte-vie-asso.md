@@ -681,9 +681,10 @@ Three things to know before changing the contract:
   change (`w`, `photo`, `nameSize`, `roleSize`) travels instead. Redesigning the member card means
   updating both.
 
-Avatars are not in the payload: the showcase already proxies MiGallery at
-`/api/users/:id/avatar`, so only `userId` travels. That also keeps a publication small enough to
-serve from one row.
+Avatars are not in the STORED payload: a card stores its `userId`, the join to the public roster
+row. The SERVED carte carries no account id: each card is answered with `avatarUrl`, the photo
+address of that roster row ([anonymous-surface](anonymous-surface.md#the-avatarurl-contract)), and
+its `userId` is dropped. That also keeps a publication small enough to serve from one row.
 
 ## After the release that carries #3526: republish every live carte once
 
