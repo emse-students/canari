@@ -72,12 +72,40 @@ export interface CreateReportData {
   contentId: string;
   reason: string;
   details?: string;
-  /** User ID of the content author, used to enable quick moderation actions. */
-  reportedUserId?: string | null;
   /** `live_chat` only: the live the line was read on, checked against the message's own. */
   liveId?: string;
   /** `live_chat` only: the line's plaintext as the reporter's client opened it. */
   message?: string;
+}
+
+/**
+ * A report as it is stored: what the reporter said, plus WHO IT IS ABOUT, which is never theirs to
+ * say. `reportedUserId` is the account a moderator's mute acts on from the queue, so it is read from
+ * the content by the server, for every type: a comment's writer, a personal post's author (an
+ * anonymous one included - the queue is the moderators'), a live's broadcaster, a chat line's
+ * author, a nickname's setter, and the reported account itself for `user`. Null where the content
+ * names no person: an association's post, whose writer is not the moderators' to read here.
+ */
+type FiledReport = CreateReportData & { reportedUserId: string | null };
+
+/**
+ * What the REPORTER is answered: that the report exists. Never the stored row - it carries
+ * `reportedUserId`, the real account behind content the reporter may have been shown anonymously.
+ */
+export type ReportReceipt = Pick<
+  ContentReport,
+  'id' | 'contentType' | 'contentId' | 'status' | 'createdAt'
+>;
+
+/** The receipt of a stored report ({@link ReportReceipt}). */
+export function receiptOf(report: ContentReport): ReportReceipt {
+  return {
+    id: report.id,
+    contentType: report.contentType,
+    contentId: report.contentId,
+    status: report.status,
+    createdAt: report.createdAt,
+  };
 }
 
 /** The unique index that holds one report per reporter per thing (migration 099). */
@@ -172,6 +200,8 @@ export class ModerationService {
    */
   async createReport(data: CreateReportData): Promise<ContentReport> {
     if (data.contentType === 'live_chat') return this.createChatLineReport(data);
+    // Who the report is about ({@link FiledReport}): set by the branch of its type, from the content.
+    let reportedUserId: string | null = null;
     if (data.contentType === 'live') {
       // The broadcaster is read from the live, never taken from the client: it is who a moderator's
       // cut and mute act on.
@@ -181,32 +211,33 @@ export class ModerationService {
         data.reporterId,
         data.contentId
       );
-      data = {
-        ...data,
-        contentId: data.contentId.toLowerCase(),
-        reportedUserId: live.broadcasterId,
-      };
+      data = { ...data, contentId: data.contentId.toLowerCase() };
+      reportedUserId = live.broadcasterId;
     }
     if (data.contentType === 'post') {
       // Stored in the form the post's own id is compared in (`posts.id::text`, lowercase), as a
       // live's and a nickname's are: a report is matched to its post by text.
       data = { ...data, contentId: data.contentId.toLowerCase() };
-      await this.assertReportablePost(data.reporterId, data.contentId);
+      // The author is read from the post, never taken from the client.
+      reportedUserId = await this.assertReportablePost(data.reporterId, data.contentId);
+    }
+    if (data.contentType === 'user') {
+      // A report on a person is about that person: the subject, not a second id a client names.
+      reportedUserId = data.contentId;
     }
     if (data.contentType === 'nickname') {
       // The setter is read from the membership row, never taken from the client: it is who a mute
       // that follows the report acts on.
-      const setBy = await this.assertReportableNickname(data.reporterId, data.contentId);
-      data = { ...data, contentId: data.contentId.toLowerCase(), reportedUserId: setBy };
+      reportedUserId = await this.assertReportableNickname(data.reporterId, data.contentId);
+      data = { ...data, contentId: data.contentId.toLowerCase() };
     }
     if (data.contentType === 'comment') {
       // The writer is read from the stored comment, never taken from the client: an anonymous
       // comment is served WITHOUT its account, so the reporter cannot name it - and the mute that
       // follows a report needs it. It is held for moderators and never served to anyone else.
-      const writerId = await this.assertReportableComment(data.reporterId, data.contentId);
-      data = { ...data, reportedUserId: writerId };
+      reportedUserId = await this.assertReportableComment(data.reporterId, data.contentId);
     }
-    const saved = await this.insertReport(this.reportRepo, data);
+    const saved = await this.insertReport(this.reportRepo, { ...data, reportedUserId });
 
     // Auto-hide posts that accumulate too many pending reports.
     if (data.contentType === 'post') {
@@ -238,8 +269,11 @@ export class ModerationService {
    * so a report by someone who was never shown it would be a way to hide what one cannot read.
    * Every refusal is the same 404 `CONTENT_NOT_FOUND`, a hidden post's included: the route is no
    * oracle for a post the reporter could not open. A lives' twin is `reportableLive`.
+   *
+   * @returns the author of a personal post, read in the same row, for the report's
+   *   `reportedUserId`; `null` for a post in an association's name ({@link FiledReport}).
    */
-  private async assertReportablePost(reporterId: string, postId: string): Promise<void> {
+  private async assertReportablePost(reporterId: string, postId: string): Promise<string | null> {
     if (!UUID_RE.test(postId)) throw this.unreportable('post', postId, reporterId, 'not a post id');
     const rows: OpenablePost[] = await this.reportRepo.manager.query(
       `SELECT ${OPENABLE_POST_COLUMNS} FROM posts p WHERE p.id = $1`,
@@ -247,6 +281,7 @@ export class ModerationService {
     );
     if (!rows[0]) throw this.unreportable('post', postId, reporterId, 'no such post');
     await this.assertOpenableBy(rows[0], reporterId, 'post', postId);
+    return rows[0].associationId ? null : rows[0].authorId || null;
   }
 
   /**
@@ -348,7 +383,7 @@ export class ModerationService {
    */
   private async insertReport(
     repo: Repository<ContentReport>,
-    data: CreateReportData
+    data: FiledReport
   ): Promise<ContentReport> {
     const existing = await repo.findOne({
       where: {
@@ -371,7 +406,7 @@ export class ModerationService {
       contentId: data.contentId,
       reason: data.reason,
       details: data.details ?? null,
-      reportedUserId: data.reportedUserId ?? null,
+      reportedUserId: data.reportedUserId,
     });
     try {
       return await repo.save(report);
@@ -639,7 +674,11 @@ export class ModerationService {
    * (`bdeModerationReadsPostSql`; owner, 2026-11-15: "Exclure les posts programmes"): the queue
    * lists reports of every status, and the text of a post scheduled later is shown only while an
    * OPEN report targets it, or once it is published - `contentPreview` is null otherwise, the row
-   * itself stays. A platform admin's preview is unchanged.
+   * itself stays. A reported COMMENT's preview follows the read of the post it sits under, as the
+   * comments read does (its `postId` is kept: it names the thread, not its text). A platform admin's
+   * preview is unchanged. A preview served of a post still scheduled later is a moderation read of
+   * something unpublished, so it is logged `[MODERATION_READ]`, post ids only - when a TEXT was
+   * served (a comment with media only has none) and the report it sits under is still OPEN.
    */
   async listAllReports(
     scope: ModerationScope,
@@ -672,28 +711,63 @@ export class ModerationService {
     const commentIds = reports.filter((r) => r.contentType === 'comment').map((r) => r.contentId);
     const reportedUserIds = reports.filter((r) => r.contentType === 'user').map((r) => r.contentId);
 
+    // The caller's read of post row `p`: every post for a platform admin, the moderation read for a
+    // BDE moderator. `$2` is the admin flag, `$3` the caller.
+    const readsPost = `($2::boolean OR ${bdeModerationReadsPostSql('$3', 'p')})`;
+    const scheduledLater = `(p."scheduledAt" IS NOT NULL AND p."scheduledAt" > now())`;
+    const reader = [scope.isGlobalAdmin, scope.userId];
+    /**
+     * Posts still scheduled later whose text this page served UNDER AN OPEN REPORT: a moderation
+     * read, logged below. A report already handled stays listed for as long as it is kept, and a
+     * platform admin's page still shows its text: that is the same read repeated at every load,
+     * about nothing left to decide, so it is not logged a second time and a third.
+     */
+    const unpublishedServed = new Set<string>();
+    const openSubjects = new Set(
+      reports.filter((r) => r.status === 'pending').map((r) => r.contentId)
+    );
+
     const postPreviews = new Map<string, string>();
     if (postIds.length > 0) {
-      const rows: { id: string; markdown: string }[] = await this.reportRepo.manager.query(
-        `SELECT p.id::text, LEFT(p.markdown, 250) AS markdown FROM posts p
-          WHERE p.id = ANY($1)
-            AND ($2::boolean OR ${bdeModerationReadsPostSql('$3', 'p')})`,
-        [postIds, scope.isGlobalAdmin, scope.userId]
-      );
-      for (const row of rows) postPreviews.set(row.id, row.markdown);
+      const rows: { id: string; markdown: string; unpublished: boolean }[] =
+        await this.reportRepo.manager.query(
+          `SELECT p.id::text, LEFT(p.markdown, 250) AS markdown, ${scheduledLater} AS unpublished
+             FROM posts p
+            WHERE p.id = ANY($1) AND ${readsPost}`,
+          [postIds, ...reader]
+        );
+      for (const row of rows) {
+        postPreviews.set(row.id, row.markdown);
+        if (row.unpublished && openSubjects.has(row.id)) unpublishedServed.add(row.id);
+      }
     }
 
-    const commentPreviews = new Map<string, { text: string; postId: string }>();
+    const commentPreviews = new Map<string, { text: string | null; postId: string }>();
     if (commentIds.length > 0) {
-      const rows: { post_id: string; comment_id: string; text: string }[] =
-        await this.reportRepo.manager.query(
-          `SELECT p.id::text AS post_id, elem->>'id' AS comment_id, elem->>'text' AS text
+      const rows: {
+        post_id: string;
+        comment_id: string;
+        text: string | null;
+        unpublished: boolean;
+      }[] = await this.reportRepo.manager.query(
+        `SELECT p.id::text AS post_id, elem->>'id' AS comment_id,
+                  CASE WHEN ${readsPost} THEN elem->>'text' END AS text,
+                  (${readsPost} AND ${scheduledLater} AND elem->>'text' IS NOT NULL) AS unpublished
            FROM posts p, jsonb_array_elements(COALESCE(p.comments, '[]'::jsonb)) elem
            WHERE elem->>'id' = ANY($1)`,
-          [commentIds]
-        );
-      for (const row of rows)
+        [commentIds, ...reader]
+      );
+      for (const row of rows) {
         commentPreviews.set(row.comment_id, { text: row.text, postId: row.post_id });
+        if (row.unpublished && openSubjects.has(row.comment_id)) unpublishedServed.add(row.post_id);
+      }
+    }
+    if (unpublishedServed.size > 0) {
+      this.logger.log(
+        `[MODERATION_READ] queue preview by ${short(scope.userId)}` +
+          `${scope.isGlobalAdmin ? ' (platform admin)' : ' (BDE moderator in scope, open report)'}` +
+          ` of post(s) scheduled later: ${[...unpublishedServed].map(short).join(', ')}`
+      );
     }
 
     // A report on a person carries no text, so the preview is who they are. Without it a moderator

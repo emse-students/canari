@@ -56,6 +56,7 @@ import { bellRowShownSql, type PostNotificationsService } from './post-notificat
 import { PostsService } from './posts.service';
 import { dropRepublicationsOf } from './republication-sql';
 import { RepublicationsService } from './republications.service';
+import { ACTIVITY_DUMP_SQL, untilWaiting } from '../common/lock-wait.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -222,21 +223,19 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
    * knows a transaction has REACHED its wait, rather than guessing a duration.
    */
   async function lockWaiters(n: number): Promise<void> {
-    // Each round is a real query, never a sleep; the bound only turns a wait that never comes
-    // into the dump below instead of a bare timeout.
-    for (let i = 0; i < 10_000; i++) {
-      const rows: { n: number }[] = await q(
-        `SELECT count(*)::int AS n FROM pg_stat_activity
-          WHERE application_name = $1 AND wait_event_type = 'Lock'`,
-        [schema]
-      );
-      if (rows[0].n >= n) return;
-    }
-    const seen: unknown[] = await q(
-      `SELECT pid, state, wait_event_type, wait_event, left(query, 120) AS query FROM pg_stat_activity
-        WHERE datname = current_database() AND pid <> pg_backend_pid()`
-    );
-    throw new Error(`never ${n} backend(s) waiting on a lock: ${JSON.stringify(seen)}`);
+    await untilWaiting({
+      what: 'the transaction',
+      atLeast: n,
+      waiting: async () => {
+        const rows: { n: number }[] = await q(
+          `SELECT count(*)::int AS n FROM pg_stat_activity
+            WHERE application_name = $1 AND wait_event_type = 'Lock'`,
+          [schema]
+        );
+        return rows[0].n;
+      },
+      dump: () => q(ACTIVITY_DUMP_SQL),
+    });
   }
 
   async function sees(postId: string, userId: string): Promise<boolean> {

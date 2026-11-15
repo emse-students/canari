@@ -2733,7 +2733,7 @@ Plan: a full-screen sheet from the comment icon, the composer pinned above the k
 - Edit/delete: the author alone edits (the writer; any `POST_AS_ASSO` holder for an association's comment); the author, a platform admin or a moderator of the post deletes, whatever the kind of comment (2026-11-02, [profiles-and-access](../../profiles-and-access.md#d23-amended---moderate-is-scoped-and-only-the-author-edits-a-post-2026-11-02)).
 - Served in every path: feed windows and count (`serveRows`, BEFORE the post's own shaping since `byPostAuthor` reads `authorId`), `getById`, the paged route, and the like/edit/add responses.
 - Notices are masked at the WRITE: anonymous -> actor `''` / "Anonyme", association -> its name. A reply to an association comment notifies every holder (`listFlagHolders`), to an anonymous one the real account.
-- A report on a comment takes `reportedUserId` from the stored comment, never from the client.
+- A report takes `reportedUserId` from the stored content, never from the client - a comment's from the stored comment, a post's from the post - and the reporter is answered a receipt without it ([moderation-and-blocking](../../moderation-and-blocking.md)).
 - Account erasure keeps an association comment (writer detached, `userId: ''`).
 - Privacy policy and register of processing say moderation can identify an anonymous author (dated 21/10/2026).
 
@@ -2810,7 +2810,7 @@ are left as they are (no row is rewritten).
   answer where it already had to ask it). **Stored posts are masked at read, never rewritten.
   Measured read-only on production on 2026-11-15** with
   `SELECT anonymous, ("attachedFormId" IS NOT NULL) AS has_form_id, (forms <> '[]'::jsonb)
-  AS has_inline_forms, count(*) FROM posts GROUP BY 1, 2, 3`: 299 posts with neither, 14
+  AS has_inline_forms, count(*) FROM posts GROUP BY 1, 2, 3` (recounted the same day, ~14:20): 301 posts with neither, 14
   non-anonymous posts with an attached form, 16 anonymous posts with none - ZERO anonymous posts
   carrying a form, and ZERO posts with a non-empty inline `forms` list in any group. So the read-side
   mask covers no stored post today, and the retired inline list was never stored: for stored data,

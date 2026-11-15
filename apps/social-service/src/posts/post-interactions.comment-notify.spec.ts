@@ -14,7 +14,7 @@ import { PostMediaRetentionService } from './post-media-retention.service';
  * is the author of the row either way.
  */
 describe('PostInteractionsService.addComment notifications', () => {
-  function makeService(post: Record<string, unknown>) {
+  function makeService(post: Record<string, unknown>, authorTold = true) {
     const created: Array<{ recipientId: string; type: string }> = [];
     const notifications = {
       createNotification: jest.fn((n: { recipientId: string; type: string }) => {
@@ -30,6 +30,8 @@ describe('PostInteractionsService.addComment notifications', () => {
       ),
       // The daily cap, proven in `engagement-push-cap.integration.spec.ts`: open here.
       withinPushBudget: jest.fn((_type: string, ids: string[]) => Promise.resolve(ids)),
+      // The author's door, proven in `entity-author-door.integration.spec.ts`.
+      postAuthorIsTold: jest.fn(() => Promise.resolve(authorTold)),
       // The post's author: ONE notification per post (owner, 2026-11-14), its alert-or-quiet claim
       // proven in `post-activity-notice.integration.spec.ts`. Here it writes the row and pushes as
       // the first comment of an unread post does (the collapse fields are that spec's).
@@ -89,6 +91,30 @@ describe('PostInteractionsService.addComment notifications', () => {
         expect.objectContaining({ recipientId: 'author', type: 'comment' }),
       ]);
     }
+  });
+
+  it("tells nothing to the writer of an entity's post who is no longer a member there, and nothing in the bell either", async () => {
+    const { service, created, push, notifications } = makeService(
+      { id: 'p1', authorId: 'author', associationId: 'asso-1', comments: [] },
+      false
+    );
+    await service.addComment('p1', { userId: 'reader', text: 'hello' });
+    await flush();
+    expect(notifications.postAuthorIsTold).toHaveBeenCalledWith('p1');
+    expect(created).toEqual([]);
+    expect(push.notifyContent).not.toHaveBeenCalled();
+  });
+
+  it("a reaction tells the departed writer of an entity's post nothing either", async () => {
+    const { service, created, push } = makeService(
+      { id: 'p1', authorId: 'author', associationId: 'asso-1', comments: [], reactions: {} },
+      false
+    );
+    (service as unknown as { evaluateTrend: () => void }).evaluateTrend = () => undefined;
+    await service.addReaction('p1', 'reader', 'like');
+    await flush();
+    expect(created).toEqual([]);
+    expect(push.notifyContent).not.toHaveBeenCalled();
   });
 
   it('never notifies the author of their own comment', async () => {
@@ -392,6 +418,8 @@ describe('PostInteractionsService.addReaction across the review cohort', () => {
         notifyPostActivity: jest.fn(() => Promise.resolve({ alert: true, others: 0 })),
         resolveActorName: jest.fn(() => Promise.resolve('Actor')),
         withinPushBudget: jest.fn((_type: string, ids: string[]) => Promise.resolve(ids)),
+        // A personal post: its author's door holds (`entity-author-door.integration.spec.ts`).
+        postAuthorIsTold: jest.fn(() => Promise.resolve(true)),
       };
       const push = { notifyContent: jest.fn(() => Promise.resolve()) };
       const post = { id: 'p1', authorId: 'author', reactions: {} };

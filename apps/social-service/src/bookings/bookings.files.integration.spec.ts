@@ -54,6 +54,7 @@ import {
   runErasureStatements,
 } from '../internal/account-erasure';
 import type { BookingExportLabels } from './booking-export';
+import { ACTIVITY_DUMP_SQL, settledFlag, untilWaiting } from '../common/lock-wait.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -914,26 +915,30 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
           JSON.stringify(mine),
           space.id,
         ]);
-        let settled = false;
-        const release = posterMedia
-          .releaseUncited([mine.mediaId], 'raced')
-          .finally(() => (settled = true));
+        const release = posterMedia.releaseUncited([mine.mediaId], 'raced');
         // The writer commits only once the release has either finished or is WAITING on the lock -
         // read from the server, never from a clock - so an unlocked release reads "uncited" first.
         // Only a waiter on THIS poster's lock counts: `pg_locks` is database-wide, and a sibling
         // spec waiting on its own advisory lock must never end this wait early. A bigint key is
-        // split by PostgreSQL into classid (high 32 bits) and objid (low 32 bits).
-        for (;;) {
-          const [{ n }] = (
-            await admin.query(
-              `SELECT count(*)::int AS n FROM pg_locks
-                WHERE locktype = 'advisory' AND NOT granted
-                  AND ((classid::bigint << 32) | objid::bigint) = hashtextextended($1, 0)`,
-              [`booking-poster:${mine.mediaId}`]
-            )
-          ).rows as { n: number }[];
-          if (n > 0 || settled) break;
-        }
+        // split by PostgreSQL into classid (high 32 bits) and objid (low 32 bits). A release that
+        // finished without waiting, or never waited, FAILS here with a message; the `finally` below
+        // ends the writer's connection, which frees the lock either way.
+        await untilWaiting({
+          what: 'the release',
+          settled: settledFlag(release),
+          waiting: async () => {
+            const [{ n }] = (
+              await admin.query(
+                `SELECT count(*)::int AS n FROM pg_locks
+                  WHERE locktype = 'advisory' AND NOT granted
+                    AND ((classid::bigint << 32) | objid::bigint) = hashtextextended($1, 0)`,
+                [`booking-poster:${mine.mediaId}`]
+              )
+            ).rows as { n: number }[];
+            return n;
+          },
+          dump: async () => (await admin.query(ACTIVITY_DUMP_SQL)).rows,
+        });
         await writer.query('COMMIT');
         await release;
       } finally {

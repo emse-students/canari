@@ -31,6 +31,7 @@ import { ChannelMessage } from './entities/channel-message.entity';
 import { WorkspaceInvite } from './entities/workspace-invite.entity';
 import { RECORD_CANCELLED_SQL, RECORD_DEPARTED_SQL } from './distribution-departures';
 import type { RedisService } from '../common/redis';
+import { ACTIVITY_DUMP_SQL, settledFlag, untilWaiting } from '../common/lock-wait.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -92,18 +93,25 @@ maybe('a key-group departure against the drain asking how it ended (PostgreSQL)'
    * was long enough. The suites share one database, a schema each, so the question names this
    * suite's sessions (`application_name`, set on the pool and on every `holder`): asked of the
    * whole database, another suite's parked session answered for this one in a parallel run.
-   * Each round is a real query, never a sleep; jest's timeout bounds it.
+   * Each round is a real query, never a sleep. `operation` is the call that must park: when it
+   * settles first, or a bound of reads goes by, the wait fails with a message
+   * ({@link untilWaiting}) - never a bare jest timeout.
    */
-  const parked = async (count: number) => {
-    for (;;) {
-      const [row]: { n: string }[] = await q(
-        `SELECT count(*) AS n FROM pg_stat_activity
-         WHERE application_name = $1 AND cardinality(pg_blocking_pids(pid)) > 0`,
-        [schema]
-      );
-      if (Number(row.n) >= count) return;
-    }
-  };
+  const parked = (count: number, operation: Promise<unknown>) =>
+    untilWaiting({
+      what: 'the call under test',
+      atLeast: count,
+      settled: settledFlag(operation),
+      waiting: async () => {
+        const [row]: { n: string }[] = await q(
+          `SELECT count(*) AS n FROM pg_stat_activity
+           WHERE application_name = $1 AND cardinality(pg_blocking_pids(pid)) > 0`,
+          [schema]
+        );
+        return Number(row.n);
+      },
+      dump: () => q(ACTIVITY_DUMP_SQL),
+    });
 
   /** A raw client in the test schema, holding a transaction the test ends when it chooses. */
   const holder = async (): Promise<Client> => {
@@ -185,10 +193,10 @@ maybe('a key-group departure against the drain asking how it ended (PostgreSQL)'
     try {
       await salonLock.query(`SELECT id FROM channels WHERE id = $1 FOR UPDATE`, [SALON]);
       const departing = service.leaveChannel(SALON, { userId: 'leaver-a' } as never);
-      await parked(1);
+      await parked(1, departing);
       // The drain asks now: its insert parks on the departure's uncommitted record.
       const asked = service.decideDistributionDeparture(GROUP, 'leaver-a', 7);
-      await parked(2);
+      await parked(2, asked);
       await salonLock.query('COMMIT');
 
       await expect(departing).resolves.toEqual({ success: true });
@@ -206,7 +214,7 @@ maybe('a key-group departure against the drain asking how it ended (PostgreSQL)'
     try {
       await rosterWrite.query(RECORD_DEPARTED_SQL, [GROUP, 'leaver-b', 8]);
       const asked = service.decideDistributionDeparture(GROUP, 'leaver-b', 8);
-      await parked(1);
+      await parked(1, asked);
       await rosterWrite.query('ROLLBACK');
 
       await expect(asked).resolves.toBe('cancelled');
@@ -225,7 +233,7 @@ maybe('a key-group departure against the drain asking how it ended (PostgreSQL)'
       const departing = service
         .leaveChannel(SALON, { userId: 'leaver-c' } as never)
         .catch((e: unknown) => e);
-      await parked(1);
+      await parked(1, departing);
       await question.query('COMMIT');
 
       expect(await departing).toMatchObject({ response: { code: 'DEPARTURE_SUPERSEDED' } });
@@ -284,7 +292,7 @@ maybe('a key-group departure against the drain asking how it ended (PostgreSQL)'
           );
         }
       ).catch((e: unknown) => e);
-      await parked(1);
+      await parked(1, departing);
       await removal.query('COMMIT');
 
       expect(await departing).toMatchObject({ message: 'REMOVAL_EXCEEDS_ACTOR' });

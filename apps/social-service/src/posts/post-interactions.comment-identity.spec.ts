@@ -35,6 +35,8 @@ describe('PostInteractionsService - comment identity', () => {
       ),
       // The daily cap, proven in `engagement-push-cap.integration.spec.ts`: open here.
       withinPushBudget: jest.fn((_type: string, ids: string[]) => Promise.resolve(ids)),
+      // The author's door, proven in `entity-author-door.integration.spec.ts`: open here.
+      postAuthorIsTold: jest.fn(() => Promise.resolve(true)),
       // The post's author is told through the per-post notice (owner, 2026-11-14), proven in
       // `post-activity-notice.integration.spec.ts`: its row and its push are recorded here.
       notifyPostActivity: jest.fn(),

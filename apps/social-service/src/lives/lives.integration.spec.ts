@@ -58,6 +58,7 @@ import type { UserModeration } from '../moderation/entities/user-moderation.enti
 import type { Repository } from 'typeorm';
 import type { PostNotificationsService } from '../posts/post-notifications.service';
 import type { RedisService } from '../common/redis';
+import { ACTIVITY_DUMP_SQL, settledFlag, untilWaiting } from '../common/lock-wait.it-fixture';
 import {
   DELETED_ACCOUNT,
   ERASURE_LIVES_LOCK_SQL,
@@ -2249,13 +2250,18 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
           }[];
           const ingesting = lives.ingest(ALICE, live.id, 0, segment(0));
           // Proved by the server's own state, not a delay: the confirm is WAITING on this session.
-          for (;;) {
-            const [{ n }] = await q(
-              `SELECT count(*)::int AS n FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`,
-              [pid]
-            );
-            if (n > 0) break;
-          }
+          await untilWaiting({
+            what: 'the confirm',
+            settled: settledFlag(ingesting),
+            waiting: async () => {
+              const [{ n }] = await q(
+                `SELECT count(*)::int AS n FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`,
+                [pid]
+              );
+              return n;
+            },
+            dump: () => q(ACTIVITY_DUMP_SQL),
+          });
           // With the inverted order the confirm would hold the live here, and this would be 40P01.
           await erasure.query(`UPDATE lives SET "lastSegmentAt" = now() WHERE id = $1`, [live.id]);
           await erasure.commitTransaction();
@@ -3038,14 +3044,13 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
     it('a viewer REPORTS a live through content_reports; once each; staff read its state', async () => {
       await q(`UPDATE users SET "displayName" = 'Alice' WHERE id = $1`, [ALICE]);
       const live = await start();
-      // `reportedUserId` from the client is ignored: the broadcaster comes from the live row.
+      // The broadcaster comes from the live row: no client names who a report is about.
       await expect(
         reports().createReport({
           reporterId: BOB,
           contentType: 'live',
           contentId: live.id.toUpperCase(),
           reason: 'harassment',
-          reportedUserId: CAROL,
         })
       ).resolves.toMatchObject({ contentId: live.id, reportedUserId: ALICE, status: 'pending' });
       expect(await refusal(report(BOB, live.id))).toEqual({
@@ -4265,14 +4270,19 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         );
         // A proof, not a delay: wait until PostgreSQL reports a session of THIS suite's pool (its
         // `application_name`; the suites share one database) waiting on a lock.
-        for (;;) {
-          const [{ n }] = await q(
-            `SELECT count(*)::int AS n FROM pg_stat_activity
-              WHERE application_name = $1 AND wait_event_type = 'Lock'`,
-            [schema]
-          );
-          if (n > 0) break;
-        }
+        await untilWaiting({
+          what: 'the withdrawal',
+          settled: settledFlag(withdrawal),
+          waiting: async () => {
+            const [{ n }] = await q(
+              `SELECT count(*)::int AS n FROM pg_stat_activity
+                WHERE application_name = $1 AND wait_event_type = 'Lock'`,
+              [schema]
+            );
+            return n;
+          },
+          dump: () => q(ACTIVITY_DUMP_SQL),
+        });
         await erasure.commitTransaction();
         expect(await withdrawal).toBe('LIVE_WITHDRAWAL_NOT_DUE');
       } finally {

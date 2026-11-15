@@ -19,6 +19,7 @@
  *
  * Everything happens in a throwaway schema, dropped at the end.
  */
+import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ConflictException, ForbiddenException, Logger } from '@nestjs/common';
@@ -36,11 +37,17 @@ import { UserTag } from '../users/entities/user-tag.entity';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import { UserTagService } from '../users/user-tag.service';
 import { ProductsService } from './products.service';
+import { untilWaiting } from '../common/lock-wait.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
 
-const ASSO = '00000000-0000-4000-8000-0000000000b7';
+/**
+ * FRESH PER RUN: the lock probed below is `tier:<this id>`, an advisory lock - database-wide, in a
+ * database every integration suite shares. A fixed id is a key another suite (a form grid reuses
+ * this one) could take or probe, and answer for this test.
+ */
+const ASSO = randomUUID();
 const SLUG = 'orph-it';
 const LOW = '00000000-0000-4000-8000-0000000000d1';
 const HIGH = '00000000-0000-4000-8000-0000000000d2';
@@ -290,28 +297,33 @@ maybe('a tier deleted while people still hold it (PostgreSQL)', () => {
 
   /**
    * Reads `pg_locks` until `n` OTHER sessions wait on the advisory lock of `key` (its one-key 64-bit
-   * form: `classid` the high half, `objid` the low half, `objsubid` 1), or a bounded number of reads
-   * has gone by; answers the last count. Filtered on the key and on another backend, so a parallel
-   * spec waiting on some other lock cannot stand in for the wait under test. A read loop, never a
-   * clock.
+   * form: `classid` the high half, `objid` the low half, `objsubid` 1); answers the last count.
+   * Filtered on the key and on another backend, so a parallel spec waiting on some other lock cannot
+   * stand in for the wait under test. It RETURNS when the bound of reads is spent ({@link
+   * untilWaiting}, `onAbsent: 'return'`): the caller commits `admin`'s lock first, so the delete is
+   * never left blocked, and asserts the count after.
    */
   async function advisoryWaiters(key: string, n: number): Promise<number> {
-    let waiting = 0;
-    for (let i = 0; i < 10_000 && waiting < n; i++) {
-      const [row] = (
-        await admin.query(
-          `WITH k AS (SELECT hashtextextended($1, 0) AS h)
-           SELECT count(*)::int AS n FROM pg_locks, k
-            WHERE NOT granted AND locktype = 'advisory' AND pid <> pg_backend_pid()
-              AND objsubid = 1
-              AND classid::bigint = ((k.h >> 32) & 4294967295)
-              AND objid::bigint = (k.h & 4294967295)`,
-          [key]
-        )
-      ).rows as { n: number }[];
-      waiting = row.n;
-    }
-    return waiting;
+    const { seen } = await untilWaiting({
+      what: 'the delete',
+      atLeast: n,
+      onAbsent: 'return',
+      waiting: async () => {
+        const [row] = (
+          await admin.query(
+            `WITH k AS (SELECT hashtextextended($1, 0) AS h)
+             SELECT count(*)::int AS n FROM pg_locks, k
+              WHERE NOT granted AND locktype = 'advisory' AND pid <> pg_backend_pid()
+                AND objsubid = 1
+                AND classid::bigint = ((k.h >> 32) & 4294967295)
+                AND objid::bigint = (k.h & 4294967295)`,
+            [key]
+          )
+        ).rows as { n: number }[];
+        return row.n;
+      },
+    });
+    return seen;
   }
 
   it('refuses to delete a tier people hold: 409 TIER_HAS_HOLDERS with the count, nothing deleted', async () => {

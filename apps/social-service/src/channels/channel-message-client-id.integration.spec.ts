@@ -29,6 +29,7 @@ import { ChannelMember } from './entities/channel-member.entity';
 import { ChannelMessage } from './entities/channel-message.entity';
 import { WorkspaceInvite } from './entities/workspace-invite.entity';
 import type { RedisService } from '../common/redis';
+import { ACTIVITY_DUMP_SQL, settledFlag, untilWaiting } from '../common/lock-wait.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -147,17 +148,21 @@ maybe('a repeated salon send against PostgreSQL (migration 090)', () => {
   /**
    * Resolves once some backend is WAITING on a lock `holder` (a backend pid) holds - read from the
    * server's own lock table, so the test knows the other side is parked rather than hoping a pause
-   * was long enough. Each round is a real query, never a sleep; jest's timeout bounds it.
+   * was long enough. Each round is a real query, never a sleep. `operation` settling first, or a
+   * bound of reads, fails it with a message ({@link untilWaiting}) - never a bare jest timeout.
    */
-  const blockedBy = async (holder: number) => {
-    for (;;) {
-      const waiting: unknown[] = await q(
-        `SELECT 1 FROM pg_stat_activity WHERE $1::int = ANY (pg_blocking_pids(pid))`,
-        [holder]
-      );
-      if (waiting.length > 0) return;
-    }
-  };
+  const blockedBy = (holder: number, operation: Promise<unknown>) =>
+    untilWaiting({
+      what: 'the call under test',
+      settled: settledFlag(operation),
+      waiting: async () =>
+        (
+          await q(`SELECT 1 FROM pg_stat_activity WHERE $1::int = ANY (pg_blocking_pids(pid))`, [
+            holder,
+          ])
+        ).length,
+      dump: () => q(ACTIVITY_DUMP_SQL),
+    });
   /** The backend pid of a raw client, the holder `blockedBy` waits on. */
   const pidOf = async (client: Client): Promise<number> =>
     Number((await client.query('SELECT pg_backend_pid() AS pid')).rows[0].pid);
@@ -298,7 +303,7 @@ maybe('a repeated salon send against PostgreSQL (migration 090)', () => {
       const before = await rows();
       const repeat = send(ME, racing).catch((e: unknown) => e);
       // The repeat is parked on the lock, not past it: nothing landed while the delete is open.
-      await blockedBy(await pidOf(deleter));
+      await blockedBy(await pidOf(deleter), repeat);
       expect(await rows()).toBe(before);
       await deleter.query('COMMIT');
       const error = await repeat;
@@ -326,7 +331,7 @@ maybe('a repeated salon send against PostgreSQL (migration 090)', () => {
       await eraser.query('BEGIN');
       await eraser.query(statement('channel_messages'), [ERASED]);
       const deleting = service.deleteChannelMessage(SALON, sent.id, ERASED);
-      await blockedBy(await pidOf(eraser));
+      await blockedBy(await pidOf(eraser), deleting);
       await eraser.query(statement('channel_message_client_tombstones'), [ERASED]);
       await eraser.query('COMMIT');
       await deleting;
