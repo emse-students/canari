@@ -43,6 +43,8 @@ import {
   signOutCount,
   PAGE_BOOT_NARRATION,
   SALON_SESSION_NARRATION,
+  GROUP_REMOVAL_ROW_NARRATION,
+  FRESH_DEVICE_FIRST_SESSION_NARRATION,
   REFUSED_FOR_LACK_OF_ROW_NARRATION,
   stripStamp,
   ignoringExpectedRefusal,
@@ -1541,6 +1543,61 @@ const FORGIVE_CASES = [
     ],
     SALON_SESSION_NARRATION,
     { clean: true, unmatched: 5 },
+  ],
+  [
+    // GRP-3 against dev.78988dd: seven devices pushed and vouched, one member removed.
+    'a group created with a seven-device member and one removed is forgiven under GRP-3 narration',
+    [
+      ['log', '[05:00:01.000] [JOIN_PUSH] a821373f... join push -> 43319a65…:tauri-43319a65…-mwgarhii-nm30'],
+      ['log', '[05:00:01.100] [PENDING] web-43319a65…-mw9dyf60-chex already in tree for a821373f… - invitation fulfilled, vouching'],
+      ['log', '[05:00:02.000] [REMOVE_MEMBER] c71e1a5b removed from the group (committed)'],
+      ['debug', "[05:00:02.100] [NOTICE] memberRemoved written on the acting device in a821373f… as 41fb1be6 - the id every member's device writes"],
+      ['info', '[05:00:02.200] [CHAT_VIEW] a821373f entry settled: pinned=true isNearBottom=true newestVisible=false rows=0 fromBottom=0'],
+      ['debug', '[05:00:03.000] [overlayStack] register ModalOverlay#2, depth 1'],
+      ['debug', '[05:00:03.100] [historyOverlay] a navigation closes 1 open overlay(s)'],
+      ['debug', '[05:00:03.200] [MLS] Bulk ingest checkpoint landed - committing its progress markers.'],
+    ],
+    GROUP_REMOVAL_ROW_NARRATION,
+    { clean: true, unmatched: 0 },
+  ],
+  [
+    // CONTROL: a push that never arrived is a finding, not the setup narrating.
+    'a Welcome pushed for twice is not forgiven',
+    [['log', '[JOIN_PUSH] a821373f... this Welcome to 43319a65…:web-x was pushed for already - not again']],
+    GROUP_REMOVAL_ROW_NARRATION,
+    { clean: false, unmatched: 8 },
+  ],
+  [
+    // HEAL-NEW-0 against dev.78988dd: a freshly minted device's first session.
+    'a minted device waiting for its KeyPackage, restoring unproven history and mounting the feed is forgiven',
+    [
+      ['log', '[05:01:00.000] Initialising MLS...'],
+      ['log', '[05:01:00.100] [PIN] Keypad shown (open) - the unlock is owed to the member'],
+      ['debug', '[05:01:00.200] [overlayStack] register gate PinModal (Modal), z 306'],
+      ['debug', '[05:01:00.300] [CallView] held under the PIN lock'],
+      ['log', "[05:01:01.000] [MLS] externalJoin 5aa9345d... waits for the server to hold this device's KeyPackage (first publication running, not read, a round is running): the commit gate refuses an activation without one"],
+      ['log', '[05:01:01.100] [MLS] externalJoin 5aa9345d... woken by a settled key package round - reading the fact again'],
+      ['log', "[05:01:01.200] [MLS] externalJoin 58db171e... the tree holds this account's other device and not this one - not built, a member's Add is its door"],
+      ['log', '[05:01:01.300] [DISCOVERY] Placeholder 58db171e… created.'],
+      ['log', '[05:01:02.000] [AUTHORSHIP] restored 82ea8bf4 not provable here: f7a9bb80…:tauri-f7a9bb80…-mvwm6ma6-kgxl has no leaf in the tree and no pin - no trusted key'],
+      ['log', '[05:01:02.100] [AUTHORSHIP] 7 restored message(s) in 58db171e… relayed by f7a9bb80 carry no author proof - kept, marked unverified'],
+      ['info', '[05:01:02.200] [GRAINE] the history of community 37f78f9f is not asked: no other member, and none of our other devices on its key group is online to receive the request'],
+      ['debug', '[05:01:03.000] [LIVE] feed card: 0 open live(s)'],
+      ['debug', '[05:01:03.100] [VideoPlayer] intrinsic 1280x720 in a 678x381 box'],
+      ['debug', '[05:01:03.200] [media-seg] stream b40fe78c… (video/mp4; codecs="avc1.64001f, mp4a.40.2") through MediaSource, paced (2 head, 10 s ahead)'],
+      ['debug', '[05:01:03.300] [progressive-mount] all 17 mounted'],
+      ['log', '[05:01:03.400] [DevicePanel] Found 5 device(s)'],
+      ['debug', '[05:01:03.500] [seenHelps] server answered: 7 seen, 0 owed'],
+    ],
+    FRESH_DEVICE_FIRST_SESSION_NARRATION,
+    { clean: true, unmatched: 49 },
+  ],
+  [
+    // CONTROL: an authorship that cannot be proven for ANOTHER reason is a finding.
+    'an authorship unprovable for another reason is not forgiven',
+    [['log', '[AUTHORSHIP] restored 82ea8bf4 not provable here: the signature header is malformed']],
+    FRESH_DEVICE_FIRST_SESSION_NARRATION,
+    { clean: false, unmatched: 66 },
   ],
   [
     // CONTROL: an echo that failed is a finding.

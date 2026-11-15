@@ -2795,6 +2795,15 @@ export const AUTH_TEARDOWN_NARRATION = [/^\[A\] clear$/, /^\[A\] ws-$/];
  */
 export const BLOCK_LIST_READ_NARRATION = [/^\[blocks\.listBlockedUsers\]$/];
 
+
+/** The overlay stack registering and releasing the panels a check opens, and a navigation closing them. */
+export const OVERLAY_STACK_NARRATION = [
+  /^\[overlayStack\] (?:register|release) \w+#\d+, depth \d+$/,
+  /^\[historyOverlay\] a navigation closes \d+ open overlay\(s\)$/,
+];
+
+/** The drain's checkpoint of progress markers: a boot step, said once per ingest. */
+export const BULK_INGEST_CHECKPOINT = /^\[MLS\] Bulk ingest checkpoint landed - committing its progress markers\.$/;
 /**
  * WHAT ANY PAGE LOAD SAYS ABOUT ITSELF, so a row that RELOADS a client names it instead of widening
  * the classifier. Each is a function-entry or restore log the project's standard requires and none
@@ -2824,7 +2833,7 @@ export const PAGE_BOOT_NARRATION = [
   /^\[UNREAD\] communities loaded: joined the counts request already in flight$/,
   /^\[AvatarPresence\] \d+ of \d+ have no photo - not requested$/,
   /^\[RoutePreload\] \{"pathname":"\/[a-z]*","first":true\}$/,
-  /^\[MLS\] Bulk ingest checkpoint landed - committing its progress markers\.$/,
+  BULK_INGEST_CHECKPOINT,
   /^\[STRAY\] compared \d+ tree\(s\): \d+ roster\(s\) in one read, 0 refused, 0 not answered \(nobody removed in them\)$/,
   /^\[CHAT_VIEW\] channel_ messages \d+ \(hasNewMessage=(?:true|false), response=[a-z/-]+\)$/,
   // THREE MORE, read on the first live FLOOR draw on dev (1.4.1-alpha.3, 2026-10-25): the device
@@ -2889,8 +2898,7 @@ export const PAGE_BOOT_NARRATION = [
  */
 export const SALON_SESSION_NARRATION = [
   /^\[nav\] gotoAppPath -> \/[a-z]*$/,
-  /^\[overlayStack\] (?:register|release) \w+#\d+, depth \d+$/,
-  /^\[historyOverlay\] a navigation closes \d+ open overlay\(s\)$/,
+  ...OVERLAY_STACK_NARRATION,
   /^Joined channel [0-9a-f]{8}…$/,
   /^\[CHAT_VIEW\] channel_ entry settled: pinned=(?:true|false) isNearBottom=(?:true|false) newestVisible=(?:true|false) rows=\d+ fromBottom=\d+$/,
   /^\[CHAT_VIEW\] channel_ messages \d+ \(hasNewMessage=(?:true|false), response=[a-z/-]+\)$/,
@@ -2916,6 +2924,81 @@ export const SALON_SESSION_NARRATION = [
   // a second door by external commit. The sibling saying the owed-ness could not be READ is not
   // matched and stays dirt.
   /^\[GRAINE\] salon [0-9a-f]{8} of [0-9a-f]{8}: a Welcome is owed to this device \((?:welcome-queued|add-in-flight)\) - not joining by external commit, the admitter's Welcome is the door$/,
+];
+
+/**
+ * WHAT GRP-3 (a member removed from a group) SAYS ABOUT ITS OWN SETUP AND ITS REMOVAL, per row.
+ *
+ * Read on GRP-3 against `dev.78988dd` (2026-11-15). The group is created with a member whose seven
+ * devices all take the Add, so each device is announced, pushed its history (`join push ->`, one per
+ * Welcome delivered: a push is a per-device act, not a repeat) and then found already in the tree by
+ * the pending-invitation sync, which vouches and retires the row (`already in tree`, the line the
+ * 2026-09-15 fix made fire ONCE per device instead of on every sync). The Remove itself is narrated
+ * on the acting device (`removed from the group (committed)`) and writes the notice under the id
+ * every member's device writes. The overlay stack is the panel the check opens, and the group view
+ * settling is the group form of the `channel_` line.
+ *
+ * NOTHING HERE FORGIVES AN OUTCOME: a push that was NOT DELIVERED, a Welcome pushed twice, a refused
+ * Remove and any warn/error have other spellings and stay dirt. GRP-3 still asserts the removed
+ * device's eviction and the absence of a way back by name.
+ */
+export const GROUP_REMOVAL_ROW_NARRATION = [
+  ...OVERLAY_STACK_NARRATION,
+  BULK_INGEST_CHECKPOINT,
+  /^\[JOIN_PUSH\] [0-9a-f]{8}\.\.\. join push -> [0-9a-f]{8}…:\S+$/,
+  /^\[PENDING\] \S+ already in tree for [0-9a-f]{8}… - invitation fulfilled, vouching$/,
+  /^\[REMOVE_MEMBER\] [0-9a-f]{8} removed from the group \(committed\)$/,
+  /^\[NOTICE\] memberRemoved written on the acting device in [0-9a-f]{8}… as [0-9a-f]{8} - the id every member's device writes$/,
+  /^\[CHAT_VIEW\] [0-9a-f]{8} entry settled: pinned=(?:true|false) isNearBottom=(?:true|false) newestVisible=(?:true|false) rows=\d+ fromBottom=\d+$/,
+];
+
+/**
+ * WHAT A FRESHLY MINTED DEVICE'S FIRST SESSION SAYS (HEAL-NEW-0, the W3 mint), per row.
+ *
+ * Read on HEAL-NEW-0 against `dev.78988dd` (2026-11-15). A device with no state boots, shows the PIN
+ * keypad and asks the salt, publishes its first KeyPackage, finds the groups it is already a leaf of
+ * and the ones it must wait to be Added to, restores what its sibling relays and mounts the feed.
+ * Every line is a decision the coding standard asks the app to log, and each is the ONLY trace of
+ * why the device is in the state it is in:
+ *  - the commit gate refusing an external join until the server holds this device's KeyPackage, and
+ *    the wake when the round settles (`externalJoin ... waits`, `woken`, `round waits`); the tree
+ *    holding the account's OTHER device is "a member's Add is its door", not a join built here;
+ *  - a restored message marked unverified because its author's device has no leaf and no pin yet:
+ *    the sentences are pinned to THAT cause (`no leaf in the tree and no pin - no trusted key`),
+ *    any other reason an authorship cannot be proven stays dirt, and a FORGED proof is refused
+ *    elsewhere with its own line;
+ *  - the history of a community not asked because nobody could answer (info, with its reason);
+ *  - the PIN keypad's own sequence, the overlay gate it registers, and the call view held under it;
+ *  - the feed and its video player mounting (`[LIVE]`, `[VideoPlayer]`, `[media-seg]`,
+ *    `[progressive-mount]`), the device panel listing, the placeholder of a group discovered.
+ * The boot's own lines come with it (`PAGE_BOOT_NARRATION`), the mint being a boot.
+ */
+export const FRESH_DEVICE_FIRST_SESSION_NARRATION = [
+  ...PAGE_BOOT_NARRATION,
+  ...OVERLAY_STACK_NARRATION,
+  /^Initialising MLS\.\.\.$/,
+  /^\[PIN\] (?:Asking the salt while the keypad is up\.|Salt asked while the keypad was up\.|Keypad shown \(open\) - the unlock is owed to the member)$/,
+  /^\[overlayStack\] (?:register|release) gate PinModal \(Modal\)(?:, z \d+)?$/,
+  /^\[CallView\] (?:held under the PIN lock|PIN lock gone)$/,
+  /^\[VAULT\] persistence already off - every slot kept$/,
+  /^\[POSTS\] first page not stored - the device key is not in hand for this account$/,
+  /^\[LIVE\] feed card: \d+ open live\(s\)$/,
+  /^\[VIDEO\] network link changed: now \w+$/,
+  /^\[VideoPlayer\] (?:mounted as feed|load \d+ started|intrinsic \d+x\d+ in a \d+x\d+ box)$/,
+  /^\[media-seg\] open: \d+ bytes, \d+ segment\(s\) of \d+$/,
+  /^\[media-seg\] stream \S+ \(video\/mp4; codecs="[^"]+"\) through MediaSource, paced \(\d+ head, \d+ s ahead\)$/,
+  /^\[media-seg\] stream \S+: holding at segment \d+ \(paced\)$/,
+  /^\[progressive-mount\] all \d+ mounted$/,
+  /^\[DevicePanel\] Found \d+ device\(s\)$/,
+  /^\[DISCOVERY\] Placeholder [0-9a-f]{8}… created\.$/,
+  /^\[GRAINE\] the history of community [0-9a-f]{8} is not asked: no other member, and none of our other devices on its key group is online to receive the request$/,
+  /^\[MLS\] externalJoin [0-9a-f]{8}\.\.\. waits for the server to hold this device's KeyPackage \((?:absent|first publication running, not read), a round is running\): the commit gate refuses an activation without one$/,
+  /^\[MLS\] externalJoin [0-9a-f]{8}\.\.\. woken by a settled key package round - reading the fact again$/,
+  /^\[MLS\] externalJoin [0-9a-f]{8}\.\.\. the tree holds this account's other device and not this one - not built, a member's Add is its door$/,
+  /^\[MLS\] fresh key package round waits for the round in flight to settle$/,
+  /^\[AUTHORSHIP\] restored (?:deletion of )?[0-9a-f]{8} not provable (?:here|now): \S+ has no leaf in the tree and no pin - no trusted key$/,
+  /^\[AUTHORSHIP\] restored [0-9a-f]{8} carries a proof signed in another group$/,
+  /^\[AUTHORSHIP\] \d+ restored message\(s\) in [0-9a-f]{8}… relayed by [0-9a-f]{8} carry no author proof - kept, marked unverified$/,
 ];
 
 /**
