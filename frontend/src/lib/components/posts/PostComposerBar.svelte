@@ -72,7 +72,11 @@
     pollActive: boolean;
     onTogglePoll: () => void;
     formActive: boolean;
-    onToggleForm: () => void;
+    /**
+     * Toggles the form section. Absent, no "Formulaire" chip is drawn: an anonymous post carries no
+     * form (`attachableForms`).
+     */
+    onToggleForm?: () => void;
     /** `datetime-local` value, `''` for "publish now". */
     scheduledAt?: string;
     /** Short status next to the formatting toggle (e.g. the draft was just saved). */
@@ -287,19 +291,21 @@
           <ChartColumn size={16} strokeWidth={2.25} class="text-accent-text" />
           {m.post_poll_section_title()}
         </button>
-        <button
-          type="button"
-          class="{chipClass} {formActive ? activeChip : idleChip}"
-          aria-pressed={formActive}
-          onclick={onToggleForm}
-        >
-          <ClipboardList
-            size={16}
-            strokeWidth={2.25}
-            class="text-violet-600 dark:text-violet-400"
-          />
-          {m.post_form_fallback_title()}
-        </button>
+        {#if onToggleForm}
+          <button
+            type="button"
+            class="{chipClass} {formActive ? activeChip : idleChip}"
+            aria-pressed={formActive}
+            onclick={onToggleForm}
+          >
+            <ClipboardList
+              size={16}
+              strokeWidth={2.25}
+              class="text-violet-600 dark:text-violet-400"
+            />
+            {m.post_form_fallback_title()}
+          </button>
+        {/if}
         <label class="{chipClass} {idleChip} {full ? fullChip : ''}">
           <Paperclip size={16} strokeWidth={2.25} class="text-text-muted" />
           {m.post_composer_file()}
