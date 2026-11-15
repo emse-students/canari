@@ -67,7 +67,9 @@ check_rust() {
     echo "--- rust $crate: $s"
     case "$s" in
       lockfile)
-        if [ ! -f "$crate/Cargo.lock" ]; then
+        # COMMITTED, not present: a workstation's build leaves an ignored lock in mls-core, which a
+        # version bump then makes stale - and a clean CI checkout has none (2026-11-15).
+        if ! git ls-files --error-unmatch "$crate/Cargo.lock" >/dev/null 2>&1; then
           echo "no committed Cargo.lock here by design - asserted through this crate's consumers"
         else
           (cd "$crate" && cargo metadata --locked --format-version 1 >/dev/null)
