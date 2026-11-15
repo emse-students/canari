@@ -9,6 +9,36 @@ a corner speaker. The history of the player before this page (the bar, the fade,
 arbiter, the lightbox's zoom) is in [posts](posts.md#a-video-is-canaris-to-play-videoplayer-never-controls-2026-10-01).
 
 
+## A tap on a chat video opens the viewer (owner, 2026-11-15)
+
+*"le lecteur video de messages n'est pas homogene avec celui des posts/CanaReels : quand je clique
+dessus ca coupe et met le son alors qu'on avait statue la dessus."* Asked what the tap should do, the
+owner chose **"Ouvrir le plein ecran"**. The `chat` row of `utils/videoTapAction.ts` is now the feed's:
+
+- **The tap opens the conversation viewer** (`variant="conversation"`), on the time the bubble had
+  reached, and **never touches the sound**. With no viewer handed down (`onOpen` absent) it plays or
+  pauses. Enter on the focused picture opens it too, as on the feed. **Supersedes** "the first tap
+  plays it, audible, and once started the tap is its sound" below.
+- **The expand chip is removed (`VideoExpandButton` deleted, `video_expand_label` with it)**: the tap
+  does its job, and a second control for one action is what the owner called not homogeneous. The
+  accessible name `openLabel` now sits on the picture itself, as the feed's does.
+- **The pause chip is removed**: a hold on the picture pauses (the feed's rule, unchanged). A chip
+  beside it would be a second way to do the same thing, and the feed has none.
+- **The big play triangle is a POSTER in a chat, not a button** (review, 2026-11-15): it carries no
+  `data-video-controls`, so a tap on it is a tap on the picture and opens the viewer, which plays. An
+  inline chat video therefore starts from the keyboard (Space) or the viewer; with no viewer handed
+  down the triangle is the play button again.
+- **Assistive technology**: the inline picture is `role="button"` with the `openLabel` name, and a click
+  with `detail` 0 (a VoiceOver or TalkBack activation, which `videoGestures` never reads as a tap)
+  opens the viewer too. `MessageMediaRenderer.openViewer` is idempotent, so a double tap opens one.
+- **The speaker is the ONLY inline control for the sound** and is the feed's: a bare `quiet` glyph,
+  drawn once the video has started (the feed's: while it plays). **The message's actions chip
+  (`onActions`) stays**: a hold is taken by the pause, so a bubble that is nothing but its video would
+  otherwise have no way to its sheet; it is not a video control.
+- **What stays different, on purpose**: the feed autoplays muted while on screen, a chat video is
+  played when asked, audible, never looped (user, 2026-10-02) - a conversation is a place where the
+  reader chose to press play, a feed is a place where videos arrive by scrolling.
+
 ## A tap in full screen never mutes (owner, 2026-11-10)
 
 *"c'est insupportable que le clic coupe le son en plein ecran ... n'importe quel clic sur l'interface coupe le son."*
@@ -44,7 +74,7 @@ sources: [9to5Google](https://9to5google.com/2026/03/19/instagram-finally-settle
    the video for discoverability (feed: bottom-right, Instagram's ~24 dp). The lightbox and full
    screen keep a scrubber (a time bubble, no frame thumbnail) and a play/pause button. Where a tap used
    to OPEN the lightbox (feed, chat), an expand chip takes that job. **Amended 2026-11-10**: a feed tap
-   opens full screen again, and a conversation's viewer taps to pause -
+   opens full screen again (**and the chat's, 2026-11-15, with no expand chip at all**), and a conversation's viewer taps to pause -
    [the decisions of 2026-11-10](#the-owners-decisions-of-2026-11-10---full-screen-is-canareels).
 4. **The sound is remembered per device** (this replaces the 2026-09-29 rule "muted at every start,
    in memory only"): across videos, sessions and cold starts; never audible on the first ever run;
@@ -252,7 +282,7 @@ allows them ([controls](../controls.md)).
 | --- | --- |
 | `VideoChipButton` | the kit's one button: a transparent 44 px `.ui-icon-button` holding a 28 px round `glass-video` chip (`glass` off inside a glass bar, so blurs never stack); stops its press from the player's tap |
 | `VideoSoundButton` | the speaker: state by shape (struck / waves) and `aria-pressed`; the sound-on glyph is the only yellow glyph |
-| `VideoExpandButton` | opens the full-screen viewer where a tap used to |
+| ~~`VideoExpandButton`~~ | DELETED 2026-11-15: a tap opens the viewer, with no chip |
 | `VideoPlayGlyph` | the play button: a rounded triangle that IS the glass, no disc, in an invisible 64 px (72 px `lg`) hit square; shown only when it answers "is this playing?" |
 | `VideoGlassGlyph` | the shape itself - play triangle or pause bars - clipped out of a `.glass-video-shape` layer, with an SVG rim and a sibling shadow; also the feedback glyph's play/pause and the poster's triangle |
 | `VideoScrubber` | `line` (2 px, 32 px to touch, thickens with a handle while touched) and `bar` (4 px with buffered); the played part is yellow; a glass time bubble above the handle while dragged |
@@ -732,7 +762,8 @@ poster and the unplayable notice are the same code.
   disc** until it is started, and again on a pause or at its end; **the first tap plays it**, audible,
   as the disc does, and **once started the tap is its sound**. Once started, **a pause/play chip
   bottom-left, its speaker bottom-right and the `line` scrubber stay**. The expand chip (top-right)
-  opens the viewer, which resumes where it was (`videoResume`); on a phone **the message's actions
+  opens the viewer, which resumes where it was (`videoResume`). **SUPERSEDED 2026-11-15: the tap opens
+  the viewer, no expand chip, no pause chip; see the top of this page.** On a phone **the message's actions
   chip** (top-left, `onActions`, the bubble's sheet) sits opposite it - see the next bullet.
 - **What the expand chip changed**: the whole picture was the viewer's button
   (`data-double-tap-defers`, the click held for the double-tap window). The picture's tap is now the
@@ -769,7 +800,7 @@ judge) and it is not a clip with a duration - and takes the kit around it:
 | A | tokens, fallback, the kit, the gestures, the remembered sound | built |
 | B | lightbox (`VideoPlayer` full mode) on the kit; the measurement protocol | built - readings owed ([the glass budget](#the-glass-budget)) |
 | C | CanaReels (`variant="reel"`): tap = sound, hold = pause, the rail's speaker is the kit's | built - readings owed (a reel tap, a hold, a double-tap like on both phones) |
-| D | feed (`variant="feed"`) and chat (`variant="chat"`); `InlineVideo` deleted | built - readings owed (a feed tap and the expand chip, a chat disc, a hold that opens no sheet) |
+| D | feed (`variant="feed"`) and chat (`variant="chat"`); `InlineVideo` deleted | built - readings owed (a feed tap, a chat tap that opens the viewer (2026-11-15), a hold that opens no sheet) |
 | E | the live viewer: the kit's speaker, tap = sound, no hold; a refused audible start no longer remembered as "off" | built - readings owed (a live tap and the speaker on both phones) |
 
 ## A link slower than the video: one honest load (2026-11-11)

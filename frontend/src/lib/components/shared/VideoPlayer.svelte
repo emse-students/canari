@@ -19,7 +19,6 @@
   import VideoScrubber from '$lib/components/ui/player/VideoScrubber.svelte';
   import { applyVideoLevel } from '$lib/utils/videoVolume';
   import VideoSoundButton from '$lib/components/ui/player/VideoSoundButton.svelte';
-  import VideoExpandButton from '$lib/components/ui/player/VideoExpandButton.svelte';
   import VideoFeedbackGlyph, {
     type VideoFeedbackKind,
   } from '$lib/components/ui/player/VideoFeedbackGlyph.svelte';
@@ -142,11 +141,13 @@
      * WHICH SURFACE THIS PLAYER IS (owner, 2026-11-09: one player, a `variant` each):
      *
      * - `lightbox` (the default): the full-screen viewer's glass bar, disc and fade;
-     * - `feed`: a post's video, playing while on screen, muted by the app's answer: a speaker chip
-     *   bottom-right and an expand chip top-right, no bar, no disc (Instagram's);
+     * - `feed`: a post's video, playing while on screen, muted by the app's answer: a bare quiet
+     *   speaker bottom-right while it plays, no chip, no bar, no disc (Instagram's); the tap opens
+     *   the viewer;
      * - `chat`: a conversation's video, played when asked (user, 2026-10-02, Discord's way): the
-     *   glass disc until started, then its own speaker and progress line; never looped, its sound
-     *   its own;
+     *   play triangle until started, then its bare quiet speaker (the feed's, owner 2026-11-15)
+     *   and progress line; never looped, its sound its own. THE TAP OPENS THE VIEWER (owner,
+     *   2026-11-15), as the feed's does; the hold pauses; no expand chip, no pause chip;
      * - `conversation`: a conversation's MEDIA VIEWER (owner, 2026-11-10: "moche et casse", make it
      *   minimal like the CanaReels): the line on the bottom edge (dragged to seek), its speaker in
      *   the bottom-right corner, the glass play glyph while paused - no bar, no time, no fade. The
@@ -171,12 +172,12 @@
     /** `src` is a segmented stream's MSE URL, which must reach the element exactly as minted. */
     streamed?: boolean;
     /**
-     * Opens the full-screen viewer: an inline video's expand chip (`feed`, `chat`), which replaced the
-     * tap that used to open it - the tap is the sound now. Where it is, the viewer resumes
-     * (`videoResume`). Without it, no chip.
+     * Opens the full-screen viewer: an inline video's tap (`feed`, `chat`; the expand chip is gone,
+     * owner 2026-11-15) and Enter / `f`. Where it is, the viewer resumes (`videoResume`). Without
+     * it, the chat's tap plays or pauses.
      */
     onOpen?: () => void;
-    /** The expand chip's accessible name (the surface's own "open in full screen"). */
+    /** The picture's accessible name when its tap opens the viewer ("open in full screen"). */
     openLabel?: string;
     /**
      * A conversation's video: opens the MESSAGE's actions (the bubble's long-press sheet). A hold on
@@ -332,7 +333,7 @@
   });
 
   /**
-   * Opens the viewer from a tap, the expand chip or `f`, noting where this video had got to, and
+   * Opens the viewer from a tap, Enter, a screen reader's activation or `f`, noting where this video had got to, and
    * waiting for the viewer to hand back where it left it (owner, 2026-11-10: entering and leaving
    * full screen never restart at 0).
    */
@@ -579,7 +580,6 @@
       variant,
       canOpen: !!onOpen,
       paused: video.paused,
-      started,
       muted: video.muted,
     });
     Log.d('VideoPlayer', `${variant}: tap -> ${action}`);
@@ -681,11 +681,25 @@
     }
   }
 
+  /**
+   * A SCREEN READER'S ACTIVATION OPENS THE VIEWER (review, 2026-11-15): VoiceOver and TalkBack answer a
+   * double tap on a `button` with a click whose `detail` is 0, which `videoGestures` never reads as a tap
+   * (the keyboard map answers those). The inline picture, whose tap opens the viewer, is that button; an
+   * inner control's own activation (the speaker, a click it stops itself) never reaches here.
+   */
+  function onActivate(e: MouseEvent) {
+    if (e.detail !== 0 || !inline || !onOpen) return;
+    if ((e.target as HTMLElement).closest('button, [data-video-controls]')) return;
+    e.stopPropagation();
+    Log.d('VideoPlayer', `${variant}: assistive activation`);
+    openViewer();
+  }
+
   function onKeydown(e: KeyboardEvent) {
     // A focused button answers its own space bar: the sound button must not play the video.
     if (e.key === ' ' && (e.target as HTMLElement).closest('button')) return;
     // A feed card's tap is the viewer, so its keyboard twin is Enter on the focused card.
-    if (e.key === 'Enter' && variant === 'feed' && onOpen && e.target === root) {
+    if (e.key === 'Enter' && inline && onOpen && e.target === root) {
       e.preventDefault();
       e.stopPropagation();
       openViewer();
@@ -906,12 +920,13 @@
   class="relative flex items-center justify-center overflow-hidden outline-none select-none [-webkit-touch-callout:none] focus-visible:ring-2 focus-visible:ring-white {inline
     ? ''
     : 'bg-black'} {klass}"
-  role="group"
-  aria-label={variant === 'feed' && onOpen && openLabel ? openLabel : m.video_player_label()}
+  role={inline && onOpen ? 'button' : 'group'}
+  aria-label={inline && onOpen && openLabel ? openLabel : m.video_player_label()}
   tabindex="0"
   data-video-player={variant}
   use:videoGestures={{ onTap: onPictureTap, onHoldStart, onHoldEnd }}
   onkeydown={onKeydown}
+  onclick={onActivate}
   onfocusin={onFocusIn}
   onpointermove={onPointerMove}
 >
@@ -1027,7 +1042,15 @@
            minimal player draws it on a decided outcome only, with or without a first frame; the
            feed's only when the reader's "Lecture automatique des vidéos" keeps it from starting
            (`video/autoplayPolicy.ts`) - otherwise it plays by being on screen, as Instagram's does. -->
-      <VideoPlayGlyph onclick={togglePlay} size={minimal ? 'lg' : 'md'} tabindex={-1} />
+      <!-- THE CHAT'S TRIANGLE IS A POSTER, NOT A BUTTON (owner, 2026-11-15, "tap = open full screen"): a
+           centre tap opens the viewer like the rest of the picture, which plays it; Space still plays
+           inline from the keyboard. -->
+      <VideoPlayGlyph
+        onclick={togglePlay}
+        size={minimal ? 'lg' : 'md'}
+        tabindex={-1}
+        decorative={variant === 'chat' && !!onOpen}
+      />
     {/if}
 
     {#if minimal && buffering}
@@ -1039,25 +1062,18 @@
     <VideoFeedbackGlyph {feedback} />
 
     {#if inline}
-      <!-- AN INLINE VIDEO'S CHROME (owner, 2026-11-10: minimal, as Instagram and CanaReels). The
-           CHAT's expand chip top-right (its tap is the sound, not the viewer); the FEED has none,
-           its tap opens the viewer and the root carries `openLabel` (Enter and `f` open it from the
-           keyboard). The speaker bottom-right: the feed's a bare quiet glyph drawn only while the
-           video plays (nothing on a poster that is not playing), a conversation's a chip once
-           started, with its progress line. No bar: there is nothing to fade. -->
-      {#if onOpen && variant !== 'feed'}
-        <VideoExpandButton
-          label={openLabel}
-          onclick={openViewer}
-          class="absolute top-0.5 right-0.5 z-20"
-        />
-      {/if}
+      <!-- AN INLINE VIDEO'S CHROME (owner, 2026-11-10: minimal, as Instagram and CanaReels; owner,
+           2026-11-15: the chat's is the feed's). NO EXPAND CHIP: the tap opens the viewer and the
+           root carries `openLabel` (Enter and `f` open it from the keyboard). The speaker
+           bottom-right is a bare quiet glyph in both, drawn only while the feed's video plays
+           (nothing on a poster that is not playing) and once a chat's has started, the chat's
+           with its progress line. No bar: there is nothing to fade. -->
       {#if variant === 'feed' ? !paused : started}
         <VideoSoundButton
           {muted}
           onToggle={toggleMute}
           onLevel={changeLevel}
-          quiet={variant === 'feed'}
+          quiet
           class="absolute right-0.5 bottom-0.5 z-20"
         />
       {/if}
@@ -1073,19 +1089,8 @@
         </VideoChipButton>
       {/if}
       {#if variant === 'chat' && started}
-        <!-- Pause and play again without the keyboard: the tap is the sound once started. -->
-        <VideoChipButton
-          label={paused ? m.video_play_label() : m.video_pause_label()}
-          onclick={togglePlay}
-          class="absolute bottom-0.5 left-0.5 z-20"
-          data-video-toggle
-        >
-          {#if paused}
-            <Play size={14} strokeWidth={2.5} fill="currentColor" class="ml-0.5 drop-shadow" />
-          {:else}
-            <Pause size={14} strokeWidth={2.5} fill="currentColor" class="drop-shadow" />
-          {/if}
-        </VideoChipButton>
+        <!-- No pause chip (owner, 2026-11-15): a hold pauses, and a paused video draws the
+             play triangle that plays it again - the feed's rule, with no second control. -->
         <div class="absolute inset-x-0 bottom-0 z-10" data-video-line-slot>
           <VideoScrubber
             variant="line"

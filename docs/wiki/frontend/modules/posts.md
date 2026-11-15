@@ -1706,15 +1706,15 @@ nor sized to a 44 px target. ONE component now carries every video the app shows
 
 | Where | Component | What it is |
 | --- | --- | --- |
-| Feed card | `VideoPlayer variant="feed"` | Instagram-style: muted autoplay while on screen, the kit's speaker chip, a tap is the sound, the expand chip opens the viewer |
+| Feed card | `VideoPlayer variant="feed"` | Instagram-style: muted autoplay while on screen, the kit's speaker chip, its tap opens the viewer (2026-11-10; no expand chip) |
 | Chat bubble | `VideoPlayer variant="chat"` | Discord-style: the glass play disc, no autoplay, its own sound (see below) |
 | Single-media viewer, gallery viewer, chat viewer, conversation media panel | `VideoPlayer` | The full player |
 
 - **A conversation's video plays when asked, not when scrolled to** (user, 2026-10-02, *"comme sur
   Discord"*): `VideoPlayer variant="chat"`. It shows its first frame with the glass **play
   disc**; **the disc starts the video where it is, with sound of its own**;
-  **the expand chip opens the viewer, whose player starts it too** (a tap on the picture used to;
-  since 2026-11-09 it is this video's own sound, and a press held pauses it). No `playWhileVisible`, no
+  **a tap on the picture opens the viewer, whose player starts it** (owner, 2026-11-15; the expand chip
+  of 2026-11-09 and the tap-is-the-sound rule are SUPERSEDED, and a press held pauses it). No `playWhileVisible`, no
   loop (it stops on its last frame and offers play again).
   **A conversation has NO app-wide sound button, and its videos never touch `videoSound`** (user,
   2026-10-02: *"le bouton mute ne devrait pas apparaitre dans les conversations ... quand on appuie,
@@ -1753,7 +1753,7 @@ nor sized to a 44 px target. ONE component now carries every video the app shows
   two `<video>` elements, so the viewer started at 0. Several places open the viewer from an inline
   video (a chat bubble, a post, a post's gallery, a reel), so the position is not a prop threaded through
   each: the inline `VideoPlayer` (`feed`, `chat`) writes `currentTime` to `utils/videoResume.ts` as
-  the reader opens it from the expand chip, keyed by
+  the reader opens it from the picture's tap, keyed by
   the media URL (both are handed the same decrypted blob URL), and `VideoPlayer` TAKES it when it
   mounts and seeks once on `loadedmetadata`, when there is a duration to seek in. **Taken, not read**:
   once the viewer has it, it is gone, so opening the same file later from somewhere that never played
@@ -2281,7 +2281,8 @@ the same fix; the media viewer already used `timeStamp`. `doubleTapLike.test.ts`
   full-screen viewer: a picture (`PostMedia`'s image button) and the gallery's "+N" cell carry
   `data-double-tap-defers`. A feed video and a reel card no longer do (2026-11-09): their picture's
   tap is the sound, which waits for the window itself (`videoGestures`, `data-double-tap-likes`), and
-  the viewer is the expand chip's, a button that acts at once. Their click
+  the viewer was an expand chip's, a button that acted at once (SUPERSEDED 2026-11-10 and 2026-11-15: the
+  tap opens the viewer and there is no chip). Their click
   is stopped in capture and replayed (`element.click()`) once the window has passed with no second
   tap; a double spends it on the like. **That wait is `createTapDisambiguator`'s one timer and its
   stated reason: whether a second tap will come is not a fact any event carries before it comes.**

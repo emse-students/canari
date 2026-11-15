@@ -5,7 +5,6 @@ const base: VideoTapState = {
   variant: 'feed',
   canOpen: false,
   paused: false,
-  started: false,
   muted: false,
 };
 
@@ -44,8 +43,18 @@ describe('videoTapAction - the owner decisions of 2026-11-10', () => {
     expect(videoTapAction({ ...base, variant: 'conversation', muted: true })).toBe('sound-on');
   });
 
-  it('a conversation inline video: the first tap plays, then the tap is the sound', () => {
+  it('a conversation inline video: the tap opens the viewer and never the sound (owner, 2026-11-15)', () => {
+    for (const paused of [false, true]) {
+      for (const muted of [false, true]) {
+        expect(videoTapAction({ ...base, variant: 'chat', canOpen: true, paused, muted })).toBe(
+          'open-viewer'
+        );
+      }
+    }
+  });
+
+  it('a conversation inline video with no viewer plays or pauses, never the sound', () => {
     expect(videoTapAction({ ...base, variant: 'chat' })).toBe('toggle-play');
-    expect(videoTapAction({ ...base, variant: 'chat', started: true })).toBe('toggle-sound');
+    expect(videoTapAction({ ...base, variant: 'chat', paused: true })).toBe('toggle-play');
   });
 });
