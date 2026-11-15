@@ -63,7 +63,6 @@ earliest version, as a checklist.
 - [P2 - a frame read before a browser kill is called "never read here" on the next cold start](backlog.d/reading-owed-the-live-seen-cipher-mark-written-at-the-checkpoint.md)
 - [P2 - the retention durations a sweep applies are not yet admin settings](backlog.d/retention-durations-not-yet-settings.md)
 - [P2 - what the keyboard readings of 2026-11-14 filed: a photo DM still jumps to older messages, a short thread loads history on close, a 12 px step](backlog.d/what-the-keyboard-readings-of-2026-11-14-filed.md)
-- [P2 - iOS: "Marquer comme lu" from a killed app does its work, then crashes the app off the main thread](backlog.d/p2-ios-mark-as-read-from-a-killed-app-crashes-off-the-main-thread.md)
 
 **P3 - hygiene**
 
