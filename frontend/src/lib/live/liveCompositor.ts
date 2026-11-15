@@ -34,7 +34,7 @@ import {
 import type { FrameClock } from './liveFrameClock';
 
 /** The frames between two `[LIVE-STUDIO] drew` summary lines (30 s at 30 fps). */
-export const COMPOSITOR_SUMMARY_FRAMES = 900;
+const COMPOSITOR_SUMMARY_FRAMES = 900;
 
 /** The panel colour of a card (the pause screen, a camera switched off). */
 const CARD_FILL = 'rgb(28 28 30)';

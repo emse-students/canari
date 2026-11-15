@@ -3,3 +3,7 @@
 target: 1.7.0
 
 WP-Q2 added a seventh social content key (a partner joined a validated event, which went back to the queue): Android `values` and `values-en`, the iOS app and NSE `Localizable.strings` (fr, en), the Android service, the NSE and `canari_push.mm`. The server-side parity test passes; no device has received one. The bodies are audience-neutral ("une association a accepté de co-organiser"), since the same key now reaches the organiser, the partners and the validators. Owed: one acceptance on a validated event on a bench phone and an iPhone, reading the pushed title and body in both languages ([profiles-and-access](../profiles-and-access.md#wp-q2-an-acceptance-on-a-validated-event-reopens-it-2026-11-03)).
+
+**Triage 2026-11-14: Mi 9T about 25 min (staging the validated event with a partner acceptance on dev, once), iPhone about 10 min on the same acceptance, both languages.**
+
+**Mi 9T, French, READ 2026-11-15 on dev (`1.6.12-alpha.2`, build 100601202, the alpha account):** the acceptance staged by the iPhone sitting reached the Mi 9T. The shade showed the title "Événement à revalider" and the body "« Banc coorg 1115 » doit être revalidé : une association a accepté de co-organiser". The invitation that came before it read "Club randonnée propose de co-organiser un événement". **Left: the Mi 9T in English, and the iPhone.**

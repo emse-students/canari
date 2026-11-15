@@ -379,7 +379,16 @@ export interface ApnsRequest {
   pushType: 'alert' | 'background';
   /** APNs priority: 10 for alerts, 5 for background pushes. */
   priority: number;
+  /**
+   * The `apns-collapse-id` header: a new alert with the same id REPLACES the delivered one. Set from
+   * the data map's `collapseId` (one live notification per post, owner 2026-11-14) when it fits the
+   * 64 bytes APNs accepts; absent otherwise.
+   */
+  collapseId?: string;
 }
+
+/** The most bytes APNs accepts in `apns-collapse-id`. */
+export const APNS_COLLAPSE_ID_MAX_BYTES = 64;
 
 /**
  * Builds the APNs request for a queued message.
@@ -721,14 +730,19 @@ export function buildInternalApnsRequest(
   // does NOT - iOS may skip it under memory pressure, and a reaction filed under `canari_social`
   // there is the stray notification this whole change removes.
   //
-  // A reaction to a POST stacks under that post (`post_reaction_<id>`), the iOS half of the one
-  // notification Android keeps per post. The NSE does not rewrite it, so this line is what applies.
+  // ONE LIVE NOTIFICATION PER POST (owner, 2026-11-14): a comment or a reaction on the reader's
+  // post carries `collapseId`, the identity every platform replaces by - here the thread AND the
+  // `apns-collapse-id`, so the new alert replaces the delivered one instead of stacking. `quiet`
+  // is the update while the post still has an unread bell row: no sound and `passive`, filed in
+  // Notification Center without lighting the screen. The NSE does not rewrite either.
+  const collapseId = data.collapseId || undefined;
+  const quiet = data.quiet === 'true';
   const threadId = data.channelId
     ? `channel_${data.channelId}`
     : data.reaction === 'true' && data.groupId
       ? data.groupId
-      : data.contentKey === 'social_reaction' && data.postId
-        ? `post_reaction_${data.postId}`
+      : collapseId
+        ? collapseId
         : data.type === 'form_reminder'
           ? 'canari_forms'
           : 'canari_social';
@@ -738,13 +752,16 @@ export function buildInternalApnsRequest(
       aps: {
         'mutable-content': 1,
         alert: { title: title || 'Canari', body: body || apnsFallbackBody(locale) },
-        sound: internalApnsSound(data),
+        ...(quiet ? { 'interruption-level': 'passive' } : { sound: internalApnsSound(data) }),
         'thread-id': threadId,
       },
       ...data,
     },
     pushType: 'alert',
     priority: 10,
+    ...(collapseId && Buffer.byteLength(collapseId) <= APNS_COLLAPSE_ID_MAX_BYTES
+      ? { collapseId }
+      : {}),
   };
 }
 

@@ -25,8 +25,7 @@ import {
   LydiaCashierAddedUnconfirmedException,
   type LydiaCashierRole,
 } from './lydia-payment-provider';
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+import { RouteParams } from '../common/route-params';
 
 /** The two roles a manager adds or switches between; the Responsable is lot 2's own step. */
 function addableRole(value: unknown): Exclude<LydiaCashierRole, 'responsable'> | null {
@@ -41,6 +40,7 @@ function addableRole(value: unknown): Exclude<LydiaCashierRole, 'responsable'> |
  * called from here only. Adding and changing a role are behind {@link LYDIA_CASHIER_ADD_ENABLED}
  * (OFF until one production removal has been observed); removing is live.
  */
+@RouteParams({ associationId: 'uuid', cashierId: 'uuid' })
 @Controller('payments')
 export class LydiaCashiersController {
   private readonly logger = new Logger(LydiaCashiersController.name);
@@ -79,7 +79,6 @@ export class LydiaCashiersController {
     @Body() body: { userId?: unknown; phone?: unknown; role?: unknown },
     @Req() req: Request
   ) {
-    if (!UUID_RE.test(associationId)) throw new BadRequestException('Invalid associationId');
     await assertCanManageAssociation(req, associationId, this.logger);
     this.assertAddEnabled(associationId);
     const actorId = (req.headers['x-user-id'] as string | undefined)?.trim() ?? '';
@@ -132,9 +131,6 @@ export class LydiaCashiersController {
     @Body() body: { role?: unknown },
     @Req() req: Request
   ) {
-    if (!UUID_RE.test(associationId) || !UUID_RE.test(cashierId)) {
-      throw new BadRequestException('Invalid id');
-    }
     await assertCanManageAssociation(req, associationId, this.logger);
     this.assertAddEnabled(associationId);
     const actorId = (req.headers['x-user-id'] as string | undefined)?.trim() ?? '';
@@ -226,9 +222,6 @@ export class LydiaCashiersController {
     @Body() body: { number?: unknown },
     @Req() req: Request
   ) {
-    if (!UUID_RE.test(associationId) || !UUID_RE.test(cashierId)) {
-      throw new BadRequestException('Invalid id');
-    }
     await assertCanManageAssociation(req, associationId, this.logger);
     const actorId = (req.headers['x-user-id'] as string | undefined)?.trim() ?? '';
     const number: LydiaCashierNumber = body?.number === 'previous' ? 'previous' : 'current';

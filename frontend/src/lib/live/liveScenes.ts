@@ -71,17 +71,17 @@ export const DEFAULT_OVERLAY: Readonly<OverlaySettings> = Object.freeze({
 });
 
 /** The overlay's height as a share of the frame's height, per size. */
-export const OVERLAY_HEIGHT_SHARE: Readonly<Record<OverlaySize, number>> = Object.freeze({
+const OVERLAY_HEIGHT_SHARE: Readonly<Record<OverlaySize, number>> = Object.freeze({
   small: 0.22,
   medium: 0.3,
   large: 0.4,
 });
 
 /** The gap between the overlay and the frame's edges, as a share of the frame's height. */
-export const OVERLAY_MARGIN_SHARE = 0.035;
+const OVERLAY_MARGIN_SHARE = 0.035;
 
 /** The share of the frame's width the screen takes in `side-by-side`; the camera has the rest. */
-export const SIDE_BY_SIDE_SCREEN_SHARE = 0.7;
+const SIDE_BY_SIDE_SCREEN_SHARE = 0.7;
 
 /** Whether `scene` draws the shared screen (and lets the share's own sound be heard). */
 export function sceneShowsScreen(scene: LiveScene): boolean {

@@ -26,6 +26,7 @@ vi.mock('$lib/stores/user', async () => {
     isAbsentUserError: actual.isAbsentUserError,
     isDeletedAccountError: actual.isDeletedAccountError,
     DeletedAccountError: actual.DeletedAccountError,
+    MalformedUserIdError: actual.MalformedUserIdError,
   };
 });
 
@@ -476,6 +477,28 @@ describe('formatProfileDisplayName (indirect)', () => {
     expect(await mod.resolveUserDisplayName('usr_erased')).toBe('Compte supprimé');
     expect(await mod.resolveUserDisplayName('usr_erased')).toBe('Compte supprimé');
     expect(vi.mocked(userModule.fetchUserProfile)).toHaveBeenCalledTimes(1);
+  });
+
+  it('settles a malformed id for the session: not deleted, asked once, said once, the string never logged', async () => {
+    vi.resetModules();
+    const noteDeletedAccount = vi.fn();
+    vi.doMock('./nameMirror', () => ({ noteResolvedName: vi.fn(), noteDeletedAccount }));
+    const userModule = await import('$lib/stores/user');
+    const mod = await import('./displayName');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.mocked(userModule.fetchUserProfile).mockClear();
+    vi.mocked(userModule.fetchUserProfile).mockRejectedValue(new userModule.MalformedUserIdError());
+
+    const first = await mod.resolveUserDisplayName('Jean Dupont');
+    await mod.resolveUserDisplayName('Jean Dupont');
+    await mod.resolveUserDisplayName('Marie Curie');
+
+    expect(first).not.toBe('Compte supprimé');
+    expect(noteDeletedAccount).not.toHaveBeenCalled();
+    expect(vi.mocked(userModule.fetchUserProfile)).toHaveBeenCalledTimes(2);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(warn.mock.calls)).not.toMatch(/Jean|Marie/);
+    vi.doUnmock('./nameMirror');
   });
 
   it("drops a deleted account from the phone's native names, so no banner names it (WP-MENTION-NAME)", async () => {

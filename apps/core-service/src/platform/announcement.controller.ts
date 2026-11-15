@@ -1,6 +1,7 @@
 import { Controller, Get, Headers, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { AnnouncementService, type AnnouncementForClient } from './announcement.service';
+import { RouteParams } from '../common/route-params';
 
 /**
  * What a signed-in account is shown at the next app opening, and its dismissal.
@@ -22,6 +23,7 @@ import { AnnouncementService, type AnnouncementForClient } from './announcement.
  * path rather than of the configuration. `users/me/...` is also what `users/me/notes` already uses
  * for the same "this account, whoever is asking" meaning.
  */
+@RouteParams({ announcementId: 'uuid' })
 @Controller('users/me/announcement')
 export class AnnouncementController {
   constructor(private readonly announcements: AnnouncementService) {}
