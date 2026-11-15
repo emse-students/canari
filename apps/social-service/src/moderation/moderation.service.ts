@@ -9,7 +9,11 @@ import {
 import { createHash } from 'crypto';
 import { isBlockedBetween } from '../common/user-blocks';
 import { liveChatWithheldFromViewerSql, liveVisibleToViewerSql } from '../spaces/reader-spaces';
-import { bdeModeratesUserSql, reportInBdeScopeSql } from '../spaces/bde-moderation';
+import {
+  bdeModerationReadsPostSql,
+  bdeModeratesUserSql,
+  reportInBdeScopeSql,
+} from '../spaces/bde-moderation';
 import type { StoredComment as RemovableComment } from '../posts/comment-identity';
 import { idsOfRows, planCommentRemoval, rowsReleasedBy } from '../posts/comment-removal';
 import { forgetCommentNotices, writeComments } from '../posts/comment-write';
@@ -184,6 +188,9 @@ export class ModerationService {
       };
     }
     if (data.contentType === 'post') {
+      // Stored in the form the post's own id is compared in (`posts.id::text`, lowercase), as a
+      // live's and a nickname's are: a report is matched to its post by text.
+      data = { ...data, contentId: data.contentId.toLowerCase() };
       await this.assertReportablePost(data.reporterId, data.contentId);
     }
     if (data.contentType === 'nickname') {
@@ -627,6 +634,12 @@ export class ModerationService {
    * NARROWED TO THE CALLER'S SCOPE (owner, 2026-11-02): a platform admin reads every report; a BDE
    * `MODERATE` holder reads those about something in the spaces its BDE governs
    * (`reportInBdeScopeSql`), in SQL so the page bounds stay true.
+   *
+   * A POST'S PREVIEW IS A READ OF THE POST, so a BDE moderator's follows their moderation read
+   * (`bdeModerationReadsPostSql`; owner, 2026-11-15: "Exclure les posts programmes"): the queue
+   * lists reports of every status, and the text of a post scheduled later is shown only while an
+   * OPEN report targets it, or once it is published - `contentPreview` is null otherwise, the row
+   * itself stays. A platform admin's preview is unchanged.
    */
   async listAllReports(
     scope: ModerationScope,
@@ -662,8 +675,10 @@ export class ModerationService {
     const postPreviews = new Map<string, string>();
     if (postIds.length > 0) {
       const rows: { id: string; markdown: string }[] = await this.reportRepo.manager.query(
-        `SELECT id::text, LEFT(markdown, 250) AS markdown FROM posts WHERE id = ANY($1)`,
-        [postIds]
+        `SELECT p.id::text, LEFT(p.markdown, 250) AS markdown FROM posts p
+          WHERE p.id = ANY($1)
+            AND ($2::boolean OR ${bdeModerationReadsPostSql('$3', 'p')})`,
+        [postIds, scope.isGlobalAdmin, scope.userId]
       );
       for (const row of rows) postPreviews.set(row.id, row.markdown);
     }

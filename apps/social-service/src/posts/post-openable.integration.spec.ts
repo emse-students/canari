@@ -450,7 +450,8 @@ maybe("writes and notifications on a post follow the read's gate, against Postgr
           [post]
         );
         expect(await listed('modInScope')).toBe(true);
-        await client.query(`DELETE FROM content_reports`);
+        // Dealt with, the report opens nothing any more: the row stays, its status changed.
+        await client.query(`UPDATE content_reports SET status = 'dismissed'`);
         expect(await listed('modInScope')).toBe(false);
         await client.query(
           `UPDATE posts SET "scheduledAt" = now() - interval '1 minute' WHERE id = $1`,
@@ -462,6 +463,48 @@ maybe("writes and notifications on a post follow the read's gate, against Postgr
       } finally {
         await client.query(`DELETE FROM content_reports`);
         await client.query(`DELETE FROM posts WHERE id = $1`, [post]);
+      }
+    });
+
+    it("the queue's preview of a reported post asks the same read: the text of a post scheduled later is shown to the BDE moderator only while the report is open, or once published; always to a platform admin", async () => {
+      await client.query(`ALTER TABLE posts ADD COLUMN IF NOT EXISTS markdown text`);
+      await client.query(`UPDATE posts SET markdown = 'not out yet' WHERE id = $1`, [P_SCHEDULED]);
+      await client.query(
+        `INSERT INTO content_reports ("contentType", "contentId", status) VALUES ('post', $1, 'pending')`,
+        [P_SCHEDULED]
+      );
+      // The queue's own listing, its page read from the suite's table: every status is listed.
+      const page = {
+        orderBy: () => page,
+        take: () => page,
+        skip: () => page,
+        where: () => page,
+        getMany: async () => (await client.query(`SELECT * FROM content_reports`)).rows,
+      };
+      const moderation = new ModerationService(
+        { manager, createQueryBuilder: () => page } as never,
+        {} as never,
+        {} as never
+      );
+      const preview = async (userId: string, isGlobalAdmin = false) =>
+        (await moderation.listAllReports({ userId, isGlobalAdmin })).map((r) => r.contentPreview);
+      try {
+        expect(await preview('modInScope')).toEqual(['not out yet']);
+        await client.query(`UPDATE content_reports SET status = 'dismissed'`);
+        // The report is still listed; the text it is about is no longer the moderator's to read.
+        expect(await preview('modInScope')).toEqual([null]);
+        expect(await preview('adminOutside', true)).toEqual(['not out yet']);
+        await client.query(
+          `UPDATE posts SET "scheduledAt" = now() - interval '1 minute' WHERE id = $1`,
+          [P_SCHEDULED]
+        );
+        expect(await preview('modInScope')).toEqual(['not out yet']);
+      } finally {
+        await client.query(`DELETE FROM content_reports`);
+        await client.query(
+          `UPDATE posts SET "scheduledAt" = now() + interval '1 day' WHERE id = $1`,
+          [P_SCHEDULED]
+        );
       }
     });
 

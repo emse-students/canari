@@ -200,6 +200,11 @@ scheduled later.** Hiding and deleting keep their unnarrowed scope (`mayModerate
 read is excluded. The hidden-posts list (`GET /api/posts/hidden`, `getHiddenPosts`) is a read of the
 same content and asks the same term (`bdeModerationReadsPostSql`): it lists a hidden post scheduled
 later to a BDE moderator only while an open report targets it, and every one to a platform admin.
+The report queue's preview of a reported post (`ModerationService.listAllReports`) is the third such
+read and asks the term too: the queue lists reports of every status, and the 250-character preview of
+a post scheduled later is null for a BDE moderator unless the report is still open or the post is
+published; the report's row stays listed. A post report's `contentId` is stored lowercase, the form
+the term compares it in.
 
 | Read | Where the predicate is asked | Then |
 | --- | --- | --- |
