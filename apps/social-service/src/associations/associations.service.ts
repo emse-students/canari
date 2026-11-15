@@ -4030,27 +4030,49 @@ ${rejectionReason}`
     this.logger.log(
       `[EVENT_REOPENED] ${sanitizeLog(ev.id.slice(0, 8))} back to pending: ${reason} (by ${sanitizeLog(actorId.slice(0, 8))})`
     );
+    // The parties are read ONCE, before anything is written, and that one set decides both writes
+    // below: which validators' rows replace a party's (`toldAsParty`), and who is left to tell.
+    let partyIds: ReadonlySet<string>;
+    try {
+      partyIds = await this.eventPartyIds(ev);
+    } catch (err) {
+      this.logger.warn(
+        `[EVENT_REOPENED] ${sanitizeLog(ev.id.slice(0, 8))} (${reason}): the parties could not be read, not announced`,
+        err instanceof Error ? err.stack : String(err)
+      );
+      return;
+    }
     // Validators FIRST, and the parties exclude them: somebody who is both a validator and a party
     // gets ONE notice, the validator's - the one that is actionable. A push that fails AFTER the
     // rows were saved still counts as told (typed, NotificationPushFailedError). DEGRADED CASE: when
     // the validators' notice wrote NOTHING (logged inside, the function never rejects), it returns
     // nobody, so nobody is excluded and that person is told once as a party instead - a notice with
     // the reason, but not the actionable one.
-    const validatorIds: string[] = await (async () => {
-      // An ACCEPTANCE is not a proposal: the acceptor must not be shown as proposing, so it has its
-      // own typed notice; a date move keeps the proposal's.
-      return reason === 'coorganiser_joined'
-        ? this.notifyEventValidatorsOfProposal(ev.associationId, actorId, ev.title, {
-            type: EVENT_REOPEN_NOTIFICATION_TYPE[reason],
-            meta: { reason, audience: 'validators' },
-            // 'proposed' IS THE QUEUE TARGET of the push deep link (socialDeepLink): a validator lands
-            // on the validation queue, as for a proposal, never on the plain agenda.
-            pushData: { associationId: ev.associationId, action: 'proposed', reason },
-          })
-        : this.notifyEventValidatorsOfProposal(ev.associationId, actorId, ev.title);
-    })();
+    const validatorIds: string[] = await this.notifyEventValidatorsOfProposal(
+      ev.associationId,
+      actorId,
+      ev.title,
+      {
+        // An ACCEPTANCE is not a proposal: the acceptor must not be shown as proposing, so it has
+        // its own typed notice; a date move keeps the proposal's.
+        type:
+          reason === 'coorganiser_joined'
+            ? EVENT_REOPEN_NOTIFICATION_TYPE[reason]
+            : 'event_proposed',
+        // `eventId` on EVERY reopening: the row of a validator the dedupe took out of the parties
+        // (`toldAsParty`, added per recipient) stays while either right holds (`BELL_ROW_GATE`).
+        meta: { reason, audience: 'validators', eventId: ev.id },
+        // 'proposed' IS THE QUEUE TARGET of the push deep link (socialDeepLink): a validator lands
+        // on the validation queue, as for a proposal, never on the plain agenda.
+        pushData:
+          reason === 'coorganiser_joined'
+            ? { associationId: ev.associationId, action: 'proposed', reason }
+            : { associationId: ev.associationId, action: 'proposed' },
+      },
+      partyIds
+    );
     try {
-      await this.notifyEventReopenedParties(ev, reason, actorId, new Set(validatorIds));
+      await this.notifyEventReopenedParties(ev, reason, actorId, partyIds, new Set(validatorIds));
     } catch (err) {
       this.logger.warn(
         `[EVENT_REOPENED] ${sanitizeLog(ev.id.slice(0, 8))} (${reason}): the parties were not told`,
@@ -4070,32 +4092,42 @@ ${rejectionReason}`
     ev: ReopenedEvent,
     reason: EventReopenReason,
     actorId: string,
+    partyIds: ReadonlySet<string>,
     alreadyTold: ReadonlySet<string>
   ): Promise<void> {
-    const coOwners = await this.coOwnerRepo.find({ where: { eventId: ev.id } });
-    const associationIds = [ev.associationId, ...coOwners.map((c) => c.associationId)];
-    const members = await this.memberRepo.find({
-      where: { associationId: In(associationIds) },
-      select: { userId: true, permissions: true },
-    });
-    const recipientIds = [
-      ...new Set(
-        members
-          .filter((m) => (m.permissions & AssociationPermissionFlag.PROPOSE_EVENT) !== 0)
-          .map((m) => m.userId)
-      ),
-    ].filter((id) => !alreadyTold.has(id));
+    const recipientIds = [...partyIds].filter((id) => !alreadyTold.has(id));
     const written = await this.notifications.createNotifications({
       recipientIds,
       type: EVENT_REOPEN_NOTIFICATION_TYPE[reason],
       postId: ev.associationId,
       actorId,
       text: ev.title,
-      meta: { reason },
+      // `eventId`: what the bell re-asks at every read - a partner's row is shown while its reader
+      // still holds PROPOSE_EVENT in an accepted co-organiser of THIS event (`BELL_ROW_GATE`).
+      meta: { reason, eventId: ev.id },
       pushData: { associationId: ev.associationId, action: 'pending', reason },
     });
     this.logger.debug(
       `[EVENT_REOPENED] ${sanitizeLog(ev.id.slice(0, 8))} (${reason}): ${written} organiser/partner notice(s) written`
+    );
+  }
+
+  /**
+   * AN EVENT'S PARTIES: the `PROPOSE_EVENT` holders of its organiser and of each ACCEPTED partner -
+   * the people `notifyEventReopenedParties` tells, read once by `announceEventReopened` so the
+   * validators' write and the parties' write agree on who is both.
+   */
+  private async eventPartyIds(ev: ReopenedEvent): Promise<ReadonlySet<string>> {
+    const coOwners = await this.coOwnerRepo.find({ where: { eventId: ev.id } });
+    const associationIds = [ev.associationId, ...coOwners.map((c) => c.associationId)];
+    const members = await this.memberRepo.find({
+      where: { associationId: In(associationIds) },
+      select: { userId: true, permissions: true },
+    });
+    return new Set(
+      members
+        .filter((m) => (m.permissions & AssociationPermissionFlag.PROPOSE_EVENT) !== 0)
+        .map((m) => m.userId)
     );
   }
 
@@ -4117,6 +4149,11 @@ ${rejectionReason}`
    * at all (`TARGETS_AN_UNGOVERNED_SPACE_SQL`): for that slice of the audience they are the only
    * validators, and a proposal they are not told of waits on a page nobody opens. The warning stays
    * for the one case where nobody at all could be told.
+   *
+   * `parties` (a reopening only): the event's parties. A validator among them is told HERE and not as
+   * a party, so their row records it (`meta.toldAsParty`) - the fact the bell's gate reads to keep
+   * that row while either right holds, and to serve it as the party notice it replaced once only the
+   * party right is left (`PostNotificationsService.getNotifications`).
    */
   private async notifyEventValidatorsOfProposal(
     associationId: string,
@@ -4126,22 +4163,27 @@ ${rejectionReason}`
       type: NotificationType;
       meta: Record<string, unknown>;
       pushData: Record<string, string>;
-    }
+    },
+    parties?: ReadonlySet<string>
   ): Promise<string[]> {
     // NEVER REJECTS, and that is the contract of this function - not of its callers: it runs after a
     // commit and is mostly fire-and-forget (`void`), where a rejection is an unhandled rejection
     // (social-service has no handler) and a notice's failure must never fail a committed write.
-    // Every failure is logged at WARN with its stack; it then told NOBODY, and returns no ids.
+    // Every failure is logged at WARN with its stack, and it returns no ids. THE NOTICE IS TWO WRITES
+    // (validators who are also parties, then the others), so a failure may have told one group and
+    // not the other: returning no ids makes the parties' notice tell every party, and the log says
+    // "not all", which is what is known here.
     try {
       return await this.notifyEventValidatorsOfProposalOrThrow(
         associationId,
         actorId,
         eventTitle,
-        notice
+        notice,
+        parties
       );
     } catch (err) {
       this.logger.warn(
-        `[notify] the validators of asso ${sanitizeLog(associationId)} were not told about an event waiting for validation`,
+        `[notify] the validators of asso ${sanitizeLog(associationId)} were not all told about an event waiting for validation`,
         err instanceof Error ? err.stack : String(err)
       );
       return [];
@@ -4157,7 +4199,8 @@ ${rejectionReason}`
       type: NotificationType;
       meta: Record<string, unknown>;
       pushData: Record<string, string>;
-    }
+    },
+    parties?: ReadonlySet<string>
   ): Promise<string[]> {
     const validators: { userId: string }[] = await this.memberRepo.query(
       BDE_AGENDA_RIGHT_HOLDERS_OVER_SQL,
@@ -4173,28 +4216,47 @@ ${rejectionReason}`
       `[notify] event proposed for asso ${sanitizeLog(associationId)}: ${validators.length} BDE validator(s), ${admins.length} platform admin(s) for an ungoverned space`
     );
 
-    let written: number;
-    try {
-      written = await this.notifications.createNotifications({
-        recipientIds,
-        type: notice?.type ?? 'event_proposed',
-        postId: associationId,
-        actorId,
-        text: eventTitle,
-        ...(notice ? { meta: notice.meta } : {}),
-        pushData: notice?.pushData ?? { associationId, action: 'proposed' },
-      });
-    } catch (err) {
-      // The rows are saved and only the push failed: the validators HAVE their notice in the bell,
-      // so they are still returned (a validator who is also a party must not get a second row).
-      // Anything else wrote nothing and propagates, and then nobody is excluded.
-      if (!(err instanceof NotificationPushFailedError)) throw err;
-      this.logger.warn(
-        `[notify] event waiting for validation (asso ${sanitizeLog(associationId)}): the validators' rows are saved, their push failed`,
-        err.stack
+    // Two groups, one notice: the validators who are also parties carry `toldAsParty` (see the doc
+    // above); a first proposal names no parties, so it is one group.
+    const asParty = recipientIds.filter((id) => parties?.has(id) === true);
+    const onlyValidators = recipientIds.filter((id) => parties?.has(id) !== true);
+    const write = async (ids: string[], meta?: Record<string, unknown>): Promise<number> => {
+      try {
+        return await this.notifications.createNotifications({
+          recipientIds: ids,
+          type: notice?.type ?? 'event_proposed',
+          postId: associationId,
+          actorId,
+          text: eventTitle,
+          ...(meta ? { meta } : {}),
+          pushData: notice?.pushData ?? { associationId, action: 'proposed' },
+        });
+      } catch (err) {
+        // The rows are saved and only the push failed: the validators HAVE their notice in the
+        // bell, so they are still returned (a validator who is also a party must not get a second
+        // row). Anything else wrote nothing and propagates, and then nobody is excluded.
+        if (!(err instanceof NotificationPushFailedError)) throw err;
+        this.logger.warn(
+          `[notify] event waiting for validation (asso ${sanitizeLog(associationId)}): the validators' rows are saved, their push failed`,
+          err.stack
+        );
+        return err.recipientIds.length;
+      }
+    };
+    if (asParty.length > 0) {
+      this.logger.debug(
+        `[notify] event proposed for asso ${sanitizeLog(associationId)}: ${asParty.length} validator(s) told in place of their party notice`
       );
-      written = err.recipientIds.length;
     }
+    // One write per non-empty group, and always one (an empty notice is how "nobody could be told"
+    // reaches the warning below).
+    const written =
+      (onlyValidators.length > 0 || asParty.length === 0
+        ? await write(onlyValidators, notice?.meta)
+        : 0) +
+      (asParty.length > 0
+        ? await write(asParty, notice ? { ...notice.meta, toldAsParty: true } : undefined)
+        : 0);
     if (written === 0) {
       // Nobody at all could be told: no BDE governs a targeted space AND no platform admin exists,
       // or the only one is the proposer. The exact shape of the defect this method was written for.

@@ -11,6 +11,7 @@ import { clearConversationAnchors } from '$lib/utils/chat/scrollAnchors';
 import { noteMlsStateLoaded, promotedSinceLoad } from '$lib/mls-client/stateAuthority';
 import type { EventTime } from '$lib/utils/chat/visibleNotices';
 import { goto } from '$app/navigation';
+import { gotoLoginAfterExpiry } from '$lib/navigation/gotoLoginAfterExpiry';
 import { resolve } from '$app/paths';
 import { internalPath, loginReturningTo } from '$lib/utils/internalPath';
 import { reportRejectionOnce } from '$lib/utils/reportRejectionOnce';
@@ -393,6 +394,8 @@ function announceGroupReady(
  * `promoteOfflineSession` takes in one (`initializeConnection`) because by then the conversations
  * are already loaded. ONE bag for all three - a second, hand-copied version would drift the moment
  * any of them gained a callback.
+ *
+ * @public Exported for the source-scanning test `offlineUnlock.test.ts`, which reads the text.
  */
 export function makeConnectionDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
   return {
@@ -546,7 +549,7 @@ function releaserFor(ownerId: string): SessionReleaser {
  * came from and in nothing else, so they are one call with one deferral policy; what that policy is,
  * and why a drain must be able to re-defer, is on {@link serveWelcomeRequest}.
  */
-export function makeWelcomeRequestContext(
+function makeWelcomeRequestContext(
   ctx: SessionContext,
   cb: ChatSessionCallbacks
 ): WelcomeRequestContext {
@@ -1599,7 +1602,7 @@ export async function loginImpl(
         // The redirect first, the preview after it (synchronous), the flag last: nothing here may
         // wait on the store, and a second login must not start while this one's preview is up.
         if (cb.onSessionExpired) cb.onSessionExpired();
-        else void goto(resolve('/login'), { replace: true });
+        else void gotoLoginAfterExpiry();
         withdrawLandingPreview('session expired');
         releaseLoginFlag();
         return;
@@ -2986,7 +2989,7 @@ export async function loginImpl(
       markRestoreAttempted();
       void clearRestoreKey('session expired');
       if (cb.onSessionExpired) cb.onSessionExpired();
-      else void goto(resolve('/login'), { replace: true });
+      else void gotoLoginAfterExpiry();
     } else if (cb.onLoginFailed) {
       cb.onLoginFailed(shown, code);
     } else {
@@ -3628,6 +3631,8 @@ async function recoverPinSteps(
  * It deliberately does NOT clear the auth token or the storage handle: `clearAuth` needs the token
  * to revoke the refresh credential, and the wipe needs the handle to close the connection that
  * would otherwise defer every delete. Each caller owns its own erasure, in its own order.
+ *
+ * @public Exported for `signOutEndsLiveSession.test.ts`, which reads this function's text.
  */
 export function tearDownLiveSession(
   ctx: SessionContext,

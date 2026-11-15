@@ -756,7 +756,78 @@ A bell row about a post is shown only while its recipient still SEES that post: 
 (`post-notifications.service.ts`) re-checks `postVisibleToViewerSql` for every type in
 `POST_BOUND_NOTIFICATION_TYPES`, so a withdrawn republication, a member who left, an archived
 carrier or a hidden post takes the row out on the next read. A push already delivered to a device
-cannot be recalled. A row bound to no post is left alone.
+cannot be recalled. A row bound to something else is re-asked against THAT, below.
+
+### The bell re-checks what a row points at (audit of 2026-11-14)
+
+**The rule: a bell row is served while the predicate of the thing it names still admits its
+reader** - a post's rows above, and every other kind the same way, in the same statement. Until
+2026-11-14 a row naming no post was re-asked against nothing, so an event's title or a form's
+title outlived its reader's right to it for the row's whole 90-day life.
+
+`BELL_ROW_GATE` (`apps/social-service/src/posts/bell-row-gates.ts`) gives EVERY kind its gate and is
+exhaustive over `NotificationType`, so a new kind does not compile until it says what its row is
+re-asked against; `bell-row-gates.spec.ts` holds it to `POST_BOUND_NOTIFICATION_TYPES`. The
+target-bound kinds become one `CASE` over the row's type (`targetBoundRowShownSql`), spliced into
+`bellRowShownSql`: each row runs its own kind's correlated subquery, on about one page of rows (the
+plan above, unchanged; asserted again by `bell-target-rows.integration.spec.ts`).
+
+| Kind | What `postId` names | Shown while |
+| --- | --- | --- |
+| `repost_proposed`, `coorganise_proposed` | the receiving association | the reader holds `POST_AS_ASSO` there (who `holdersOf` told) |
+| `event_validated`, `event_updated`, `event_deleted`, `event_rejected` | the organiser | the reader holds `PROPOSE_EVENT` there |
+| `event_proposed` | the organiser | the reader holds the BDE agenda right over it (`holdsBdeAgendaRightOverSql`), or is a platform admin; a row that REPLACED its reader's party notice (`meta.toldAsParty`) also while they are a party as `event_pending` (see below) |
+| `event_pending` | the organiser | `PROPOSE_EVENT` in the organiser, or in an ACCEPTED co-organiser of `meta.eventId` (written since 2026-11-14; an older row names no event, and only the organiser's holders keep it) |
+| `event_pending_coorganiser` | the organiser | `meta.audience = 'validators'`: as `event_proposed`; otherwise as `event_pending` |
+| `event_open` | the event | the event is validated, its organiser not archived, and `eventVisibleToViewerSql` admits the reader - the VIEWER predicate, which counts read grants and an institution's reach, while the writer chose followers with the plain user predicate (a read grant never notifies). So a row once written stays while its reader can still see the event by ANY read door; the gate does not re-ask the follow (unfollowing keeps the row) |
+| `booking_open` | the booking space | the space is listed, has no audience (L25), its association is not archived and is visible to the reader (`associationVisibleToViewerSql`, `listedSpaces`' predicate) - the VIEWER predicate, read grants counted, as `event_open`, and the follow is not re-asked either |
+| `form_paid_over_capacity` | the form | the reader owns the form or holds `MANAGE_FORMS` in its association |
+| `lydia_payments_*`, `delegation_*` | the association | the reader holds `MANAGE_PAYOUT_ACCOUNT`, resp. `MANAGE_PRODUCTS`, there |
+| post-bound kinds | a post | the section above |
+| `birthday` | - | `birthdayRowShownSql` |
+| `form_reminder`, `booking_*` (the reader's own place), `profile_correction_*`, `follow_*`, `lydia_refund_issued`, `lydia_cashier_added`, `live_cut`/`_suspended`/`_withdrawn` | - | always: about the reader's own account, booking, payment or live (a fixed sentence for `form_reminder`); a follow request withdrawn deletes its row |
+
+A role is read through the reader's OWN membership row - the member tier the writers chose the
+recipients with - so a row is shown exactly while its reader would be told again. A row that fails
+is not served, so it is not counted unread either (the count is the served page's); it is not
+deleted by the read and goes with the 90-day sweep, as a post-bound row. Rows are SERVED by this
+statement alone. The other reads of `post_notifications` serve nothing of their own: the campus-trend
+writer's dedupe (`campus-trend.ts`, "has this reader already had a row for this post"), and the two
+post-read passes of `getNotifications` - `resolveTrendLikedBy` and `repostProposalTextWithheldSql` -
+which only narrow rows this statement already admitted; the mark-read routes write `read`.
+
+**A validator told in place of their party notice keeps that row by EITHER right, and reads it as
+the party notice once only the party right is left** (decided 2026-11-14). `announceEventReopened`
+reads the event's parties ONCE (`eventPartyIds`), writes the validators' notice, then the parties'
+notice to the parties it did not reach - so someone who both validates and holds `PROPOSE_EVENT` in
+the organiser or an accepted co-organiser gets the validators' row only. The writer KNOWS which
+validators those are, and records it on their row: `meta.toldAsParty` (written apart from the other
+validators' rows, same notice), with `meta.eventId` on every reopening's validators' notice, a date
+move's included.
+
+- The gate (`validatorRowSql`): the validator's right, OR `toldAsParty` AND the party's right
+  (`eventPartySql`: the organiser, or a co-organiser of `meta.eventId`). A first proposal, or a
+  reopening row that replaced nothing, follows the validator's right alone - so a validator who
+  loses the right while holding `PROPOSE_EVENT` somewhere is not kept a row they were never sent as a
+  party. A row written before the flag carries none, and fails closed the same way.
+- The link: a validators' row opens the validation queue (`/admin/agenda`), which a non-validator is
+  turned away from. So a `toldAsParty` row whose reader no longer validates
+  (`validatorRowServedAsPartySql`, one statement per page in `getNotifications`) is SERVED as the
+  party notice it replaced - type `EVENT_REOPEN_NOTIFICATION_TYPE[meta.reason]`, meta
+  `{reason, eventId}`, no `audience` - which every client, an old build included, opens on the
+  agenda.
+
+**Decided by the lead, 2026-11-14, reversible (owner's absence delegation):**
+
+- a row that fails its gate is HIDDEN, never deleted: it returns with the right, and only the 90-day
+  sweep removes it;
+- an `event_pending` row written before `meta.eventId` names no event, so a partner association's
+  members lose it (fail closed); the organiser's holders keep it;
+- a validators' row keeps its party arm only when the writer recorded that it replaced a party
+  notice (`meta.toldAsParty`); every other validators' row, older ones included, follows the
+  validator's right alone (fail closed);
+- `event_open` and `booking_open` rows stay while the reader can still see the target by ANY read
+  door, read grants and an institution's reach included, and do not re-check the follow.
 
 A mention is held to the read's rule when it is WRITTEN, since #2947: only who may open the post
 (`mentionRecipientsOf`, the read's gate), a post's mentions told by `PostAnnounceScheduler` alone
@@ -774,6 +845,51 @@ at most a page read) on a reader seeded with 600 rows among 6,000. The page is b
 `NOTIFICATIONS_LIMIT_INVALID` for anything not a whole number. The entity declares the index under
 the migration's name, so a `TYPEORM_SYNCHRONIZE=1` boot keeps it (TypeORM cannot say DESC, and
 does not compare order).
+
+**The target gates, measured against `origin/main` (2026-11-14, local, `jit=off`).** A throwaway
+PostgreSQL 18 database with the bell spec's schema: 3,000 users, 150 associations with audience
+rules, 3,000 memberships with mixed flags, 3,000 events (500 co-organised), 200 booking spaces, 500
+forms, 5,000 posts, 30,000 background `association_post` rows; and three heavy readers - an
+ex-officer with 5,000 rows, 70 % of them gated kinds that FAIL (`repost_proposed`,
+`coorganise_proposed`, `event_validated`) interleaved with visible posts; the same ex-officer with
+5,000 rows that ALL fail; a BDE validator with 4,000 `event_proposed` and 1,000 `event_open` rows;
+and a FORMER validator with 2,000 `event_proposed` rows written in place of a party notice
+(`toldAsParty`), a party now only through one co-organiser, so about 1 row in 65 passes.
+`EXPLAIN (ANALYZE, BUFFERS)` of the bell statement, minimum of 8 runs (first discarded). Two
+sessions:
+
+| Reader, page | `main` plan / exec | branch plan / exec | branch buffers |
+| --- | --- | --- | --- |
+| ex-officer, 30 | 24.7 / 6.8 ms | 26.7 / 7.3 ms | 632 |
+| ex-officer, 50 | 27.7 / 6.7 ms | 28.7 / 8.2 ms | 1,053 |
+| validator, 30 | 26.8 / 6.3 ms | 30.3 / 8.5 ms | 302 |
+| validator, 50 | 21.0 / 5.3 ms | 31.0 / 10.0 ms | 502 |
+| all-failing, 30 | 22.4 / 5.6 ms (serves 30 stale rows) | 30.5 / 19.8 ms (serves 0, walks all 5,000) | 15,030 |
+| former validator, 30 (second session) | 40.7 / 7.8 ms (serves 30, stale) | 92.3 / 237.2 ms (walks 1,950 rows for 30) | 29,232 |
+
+The first five rows: the role checks as scalar subqueries on a column; the final `bit_or` form,
+re-run on a fresh seed, read the same buffers. The last row: the final code (`toldAsParty` and the
+re-read of the parties), a second session on a busier machine whose `main` timings ran 20-60 %
+above the first's; its other rows read the same buffers as above (validator 317 / 527 with the
+extra `meta` test). Index walk and no sort in every case. Caveat: a Windows workstation running
+PostgreSQL in Docker, planning time swinging by 15 ms or more between identical runs; the deltas on
+a normal page are inside that noise. A reader whose rows nearly all FAIL pays for walking a history
+`main` served stale: about 0.1 ms per row walked, bounded by the 90-day retention (production
+2026-11-03: max 149 rows per recipient, so at most about 15 ms).
+
+**What is hashed and what is not, read on the plans.** The first draft read a role with an
+`EXISTS`, and the planner turned it into a HASHED subplan: one scan of every flag holder in
+`association_members` per kind met on the page, a cost that grows with the estate rather than with
+the reader. The role and admin checks are scalar aggregates on the unique key instead
+(`holdsFlagSql`, `bit_or`/`bool_or` so any number of rows stays defined), which the planner never
+hashes. `holdsBdeAgendaRightOverSql` (the validator's right, an `EXISTS` with joins) stays an
+`EXISTS`: on both the validator's and the former validator's plan it is a correlated subplan, an
+index probe of `association_members` by user per row walked (loops = rows walked), never hashed;
+the co-organiser arm probes the estates' unique key (`event_id`, `association_id`, migration 074;
+the bell's spec schema now creates it too, without which it was a sequential scan per row). The
+hashed subplans that remain on those plans all belong to the reused visibility predicates
+(`vis_member_*` hashes the READER's own memberships by the user index, `sc_rule_*` an
+association's audience rules) - none to a target gate.
 
 **The 1-13 s bell was JIT compilation, not the walk (measured 2026-11-09).** Production answered
 `GET /api/posts/notifications` in 1.1-3.6 s for one account and 12.8-13.8 s for another while other
