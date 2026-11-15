@@ -278,21 +278,40 @@ export async function sealChannelMessage(
   }
   const distributionEpoch = reading.epoch;
 
-  const slot = await reserveOutboundSlot(
-    {
-      storage,
-      deviceKeyB64: deviceKey(),
-      distributionEpoch,
-      readRun: () => readKeyGroupRun(mlsService, scope),
-      distribute: (session) => distributeGraineSeed(mlsService, scope, session),
-      endorse: (session) => endorseNewSession(mlsService, session),
-      // ONLY THE LEADER WRITES THE SHARED SESSION STORE, and that is read at the write itself: a
-      // reservation begun while leading and resumed after the lead left must not roll back a count
-      // the new leader has advanced since (two messages at one index).
-      mayWrite: () => !refusesCommitsHere(),
-    },
-    { workspaceId, channelId: channel, senderId: userId }
-  );
+  let slot;
+  try {
+    slot = await reserveOutboundSlot(
+      {
+        storage,
+        deviceKeyB64: deviceKey(),
+        distributionEpoch,
+        readRun: () => readKeyGroupRun(mlsService, scope),
+        distribute: (session) => distributeGraineSeed(mlsService, scope, session),
+        endorse: (session) => endorseNewSession(mlsService, session),
+        // ONLY THE LEADER WRITES THE SHARED SESSION STORE, and that is read at the write itself: a
+        // reservation begun while leading and resumed after the lead left must not roll back a count
+        // the new leader has advanced since (two messages at one index).
+        mayWrite: () => !refusesCommitsHere(),
+      },
+      { workspaceId, channelId: channel, senderId: userId }
+    );
+  } catch (e) {
+    // THIS TAB'S OWN SEAL, ITS LEAD LOST DURING THE RESERVATION: the write refused at the put, or
+    // the seed's distribution refused by `sendMessage` - nothing was sealed and the message never
+    // leaves. Classified HERE, as the seal's typed "nothing sent", so the send path answers it as
+    // one (`messaging.ts`: `error`, its Retry safe) instead of an outcome unknown. An executor's run
+    // keeps the raw types: `salonSealExecutors` answers its follower `unsent` from them.
+    if (!options.asExecutor && isLeadLostDuringReservation(e)) {
+      console.warn(
+        `[GRAINE] seal for channel ${channel.slice(0, 8)} not made: the lead left this tab during the reservation - nothing sealed`
+      );
+      throw new GraineSealUnavailableError(
+        `[GRAINE] cannot seal for channel ${channel.slice(0, 8)}: the lead left this tab during the reservation`,
+        'main-tab-lead-lost'
+      );
+    }
+    throw e;
+  }
   // A re-distributed session carries a new frame; the cache must not hand the old one back.
   if (slot.redistributed) cacheGraineSession(slot.session);
   if (slot.minted) {
@@ -660,6 +679,17 @@ class SealRunLeadLostError extends Error {
   }
 }
 
+/**
+ * Whether a reservation failed because this tab stopped leading inside it: its session write was
+ * refused at the put, or the seed it distributes was refused by `sendMessage` as `lead-lost`.
+ */
+function isLeadLostDuringReservation(e: unknown): boolean {
+  return (
+    e instanceof StoreWriteRefusedError ||
+    (e instanceof FollowerTabSendError && e.refusal === 'lead-lost')
+  );
+}
+
 /** The follower half of {@link sealChannelMessage}: the leader seals, this tab posts. */
 async function sealOnLeaderTab(
   channel: string,
@@ -763,11 +793,7 @@ export const salonSealExecutors: Pick<DelegatedCommitExecutors, 'seal-salon-mess
       // A seal this tab cannot make is an ANSWER (typed, already said where it was decided), never
       // the request's `failed`.
       if (e instanceof GraineSealUnavailableError) return { unavailable: e.reason };
-      if (
-        e instanceof SealRunLeadLostError ||
-        e instanceof StoreWriteRefusedError ||
-        (e instanceof FollowerTabSendError && e.refusal === 'lead-lost')
-      ) {
+      if (e instanceof SealRunLeadLostError || isLeadLostDuringReservation(e)) {
         return leadLeft();
       }
       throw e;

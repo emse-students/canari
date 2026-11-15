@@ -3418,7 +3418,10 @@ leader will not serve ([backlog](../backlog.d/p2-the-tab-leader-lock-is-per-brow
   the new leader sealed would write back a count read before those seals, rolling the index back to
   one already used - two messages under one key. `reserveOutboundSlot`'s `mayWrite` reaches the put
   itself (after the encrypt's await), so a write issued while leading is ordered before every read of
-  the next leader, and one issued after is refused, nothing written.
+  the next leader, and one issued after is refused, nothing written. The leader's OWN seal meeting
+  that refusal (or its seed's distribution refused `lead-lost`) is the typed seal refusal
+  `main-tab-lead-lost` - nothing sealed, nothing posted, its Retry safe - never a raw refusal the
+  salon send path would read as an outcome unknown (second review of #2515).
 - `sendHistoryBundleForIds` and `sendHistoryRangeBundle` are gated like the other history senders.
 - `GraineSealHandoverRefusedError` with `leader-gone` is NOT "nothing happened": the leader may have
   minted and distributed a seed before it died. A retry is safe - the message keeps its `messageId`

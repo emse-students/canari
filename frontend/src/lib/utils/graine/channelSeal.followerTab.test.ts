@@ -307,3 +307,41 @@ describe("the leader's seal of a follower's message when the lead leaves at each
     await expect(run()).rejects.toThrow('disk full');
   });
 });
+
+/**
+ * THE LEADER'S OWN SEAL, ITS LEAD LOST INSIDE THE RESERVATION: nothing was sealed and nothing posted,
+ * so the seal answers the typed "nothing sent" - never a raw store or send refusal the salon send
+ * path would read as an outcome unknown.
+ */
+describe("the leader's OWN seal when the lead leaves during the reservation", () => {
+  beforeEach(() => {
+    state.follower = false;
+    state.promoted = false;
+    vi.clearAllMocks();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    expect(delegateCommitToLeader).not.toHaveBeenCalled();
+    expect(sealWithGraineV2).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['its write refused at the put', () => new StoreWriteRefusedError('the Graine session sess-1')],
+    ["its seed's distribution refused", () => new FollowerTabSendError('dist-group', 'lead-lost')],
+  ])('%s: a typed seal refusal, main-tab-lead-lost', async (_, refusal) => {
+    reserveOutboundSlot.mockImplementation(async () => {
+      state.follower = true;
+      throw refusal();
+    });
+    const sealing = sealChannelMessage('abcdef123456', new Uint8Array([1]));
+    await expect(sealing).rejects.toBeInstanceOf(GraineSealUnavailableError);
+    await expect(sealing).rejects.toMatchObject({ reason: 'main-tab-lead-lost' });
+  });
+
+  it('a failure that is not the lead leaving still throws as itself', async () => {
+    reserveOutboundSlot.mockRejectedValue(new Error('disk full'));
+    await expect(sealChannelMessage('abcdef123456', new Uint8Array([1]))).rejects.toThrow(
+      'disk full'
+    );
+  });
+});
