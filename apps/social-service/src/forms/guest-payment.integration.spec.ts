@@ -94,6 +94,10 @@ maybe('a guest who pays, against PostgreSQL (migrations 103, 104 and 105)', () =
       extra: { options: `-c search_path=${schema},public` },
     });
     await ds.initialize();
+    // The respondent `where` reads the form's association's archive (`respondentFormWhere`).
+    await ds.query(
+      `CREATE TABLE associations (id uuid PRIMARY KEY, archived boolean NOT NULL DEFAULT false)`
+    );
     // The column as production has it BEFORE 103 (`synchronize` builds it from the entity, which is
     // already nullable), then the migration file itself, twice: it must be idempotent.
     await ds.query(`ALTER TABLE purchase_records ALTER COLUMN "userId" SET NOT NULL`);

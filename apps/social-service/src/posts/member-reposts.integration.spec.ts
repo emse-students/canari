@@ -17,7 +17,9 @@
 import { REVIEW_A } from '../spaces/review-cohort.it-fixture';
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { PG_SESSION_OPTIONS } from '../common/pg-session-options';
 import { DataSource } from 'typeorm';
+import { createBellTargetTables } from './post-notifications.it-schema';
 import { HttpException } from '@nestjs/common';
 import type { RedisService } from '../common/redis/redis.service';
 import {
@@ -186,7 +188,8 @@ maybe('member reposts against PostgreSQL (migrations 121, 123)', () => {
       url: URL,
       entities: [MemberRepost],
       synchronize: false,
-      extra: { options: `-c search_path=${schema},public` },
+      // The service's own session settings (`PG_SESSION_OPTIONS`), as `AppModule` opens its pool.
+      extra: { options: `${PG_SESSION_OPTIONS} -c search_path=${schema},public` },
     });
     await ds.initialize();
     await q(`CREATE SCHEMA ${schema}`);
@@ -294,6 +297,8 @@ maybe('member reposts against PostgreSQL (migrations 121, 123)', () => {
       },
     } as unknown as RedisService;
     reposts = new MemberRepostsService(ds.getRepository(MemberRepost), notifications, redis);
+    // The bell's one statement reads what its target gates name (`bell-row-gates.ts`).
+    await createBellTargetTables(q);
   });
 
   afterAll(async () => {

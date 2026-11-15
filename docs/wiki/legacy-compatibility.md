@@ -286,7 +286,7 @@ REST: those rows need a count, then a migration.
 | Reaction push keeps wire type `social` + a generic `body` (`notify-reaction`; had no entry here) | clients knowing `reaction: 'true'` (2026-08-15) | version YES (`v0.14.0`) | none | server + Kotlin dispatch | NOT removed, same iOS-alert question as the row above |
 | Post `images` field (in and out, `posts.service.ts`; had no entry here) | clients sending `media` | not established | `posts.images` is the column itself | DTO + normaliser | NOT removed: the client switch is undated; find it before judging |
 | Pre-MLS send path + `queued_message.content` | log silence (`LEGACY_CONTENT_PATH`/`_ROW`), dated 2026-11-19 | not a version question | the column | `else` arm + migration | owed: log read + count + migration |
-| Graine v1 reader | 0 unsigned rows | NO | 373 rows (2026-10-14) | - | revisit 2027-10-13 |
+| Graine v1 reader | 0 unsigned rows | NO | 373 rows (2026-10-14; re-read 2026-11-14: unchanged, newest 2026-10-09, 0 unsigned rows written since) | - | revisit 2027-10-13 |
 | `read_receipt` (both entries), `remove_reaction`, `pin`/`unpin` undated, no `sender_device_id`, no `message_id` | live peers (met) AND archive retention | live half YES, archive NO | Redis history streams | per entry | dates 2026-11-13 to 2026-12-15 stand |
 | Refresh cookie on `tauri://localhost` | floor AND a desktop measurement | floor YES, measurement NO | none | - | unchanged |
 | MiConnect `formation`/`promo` claims | WP9 | NO (not a version) | Authentik attributes | - | unchanged |

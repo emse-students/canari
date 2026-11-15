@@ -60,6 +60,10 @@ maybe('one Lydia order_ref per request of a form answer, against PostgreSQL', ()
       extra: { options: `-c search_path=${schema},public` },
     });
     await ds.initialize();
+    // The respondent `where` reads the form's association's archive (`respondentFormWhere`).
+    await ds.query(
+      `CREATE TABLE associations (id uuid PRIMARY KEY, archived boolean NOT NULL DEFAULT false)`
+    );
     const associationsService: any = {
       assertPaymentsReady: async () => undefined,
       canTakePaymentsNow: async () => true,

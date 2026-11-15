@@ -1576,6 +1576,85 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       ).toEqual([]);
     });
 
+    /**
+     * AN ARCHIVED ASSOCIATION'S SPACE IS CLOSED BY ITS LINK TOO (2026-11-14), not only left out of
+     * the listing: every reader and booker is answered `space-not-found` - the account linked to a
+     * column included - while its managers keep the space, and a booking already made keeps its
+     * people's exits (their list, a withdrawal, a cancellation), as for a holder the audience no
+     * longer admits.
+     */
+    it("opens an archived association's space by its link to its managers alone, its bookings keeping their exits", async () => {
+      const { space, resourceIds } = await setup({ name: '0005 archived link' });
+      const r = resourceIds[0];
+      const made = await book(space.id, r, '10:00', '10:30', ALICE, { participantIds: [BOB] });
+      await q(`UPDATE booking_resources SET "linkedUserId" = $2 WHERE id = $1`, [r, CAROL]);
+      await q(`UPDATE associations SET archived = true WHERE id = $1`, [space.associationId]);
+      try {
+        const gone = { code: 'space-not-found' };
+        for (const viewer of [ALICE, CAROL]) {
+          expect(await refusal(service.getSpace(space.id, as(viewer)))).toEqual(gone);
+          expect(
+            await refusal(service.spaceSlots(space.id, '2026-11-02', '2026-11-02', as(viewer)))
+          ).toEqual(gone);
+        }
+        expect(await refusal(book(space.id, r, '11:00', '11:30', ALICE))).toEqual(gone);
+        const pdf = Buffer.from('%PDF-1.4');
+        expect(
+          await refusal(
+            service.uploadFile(space.id, 'cv', { buffer: pdf, size: pdf.length }, as(ALICE))
+          )
+        ).toEqual(gone);
+        expect(
+          await refusal(
+            service.edit(
+              made.id,
+              { startsAt: on('10:00'), endsAt: on('11:00'), participantIds: [BOB], revision: 'x' },
+              as(ALICE),
+              NOW
+            )
+          )
+        ).toEqual(gone);
+
+        // Its managers keep the space: they read it, list its bookings and book on someone's behalf.
+        await expect(service.getSpace(space.id, as(ORGA))).resolves.toHaveProperty('id', space.id);
+        expect(
+          (await service.spaceBookings(space.id, as(ORGA))).items.map((b: { id: string }) => b.id)
+        ).toContain(made.id);
+        await expect(
+          book(space.id, r, '12:00', '12:30', ORGA, { holderId: DAN })
+        ).resolves.toHaveProperty('id');
+
+        // The booking made keeps its people's exits.
+        expect((await service.mine(as(ALICE))).map((b) => b.id)).toContain(made.id);
+        await expect(service.withdraw(made.id, as(BOB), NOW)).resolves.toEqual({ ok: true });
+        await expect(service.cancel(made.id, as(ALICE), NOW)).resolves.toEqual({ ok: true });
+      } finally {
+        await q(`UPDATE associations SET archived = false WHERE id = $1`, [space.associationId]);
+      }
+      // Un-archived, the link opens again: read from state, nothing was rewritten.
+      await expect(service.getSpace(space.id, as(ALICE))).resolves.toHaveProperty('id', space.id);
+    });
+
+    it('refuses a booking whose association is archived between its first read and its locks', async () => {
+      const items = [{ id: 'q', label: 'Promo', required: false, type: 'short_text' }];
+      const { space, resourceIds } = await setup({ name: '0006 archived meanwhile', items });
+      duringFacts = () =>
+        q(`UPDATE associations SET archived = true WHERE id = $1`, [space.associationId]).then(
+          () => undefined
+        );
+      try {
+        expect(await refusal(book(space.id, resourceIds[0], '10:00', '10:30', ALICE))).toEqual({
+          code: 'space-not-found',
+        });
+        expect(await q(`SELECT 1 FROM bookings WHERE "resourceId" = $1`, [resourceIds[0]])).toEqual(
+          []
+        );
+      } finally {
+        duringFacts = null;
+        await q(`UPDATE associations SET archived = false WHERE id = $1`, [space.associationId]);
+      }
+    });
+
     it('lists a review account only the cohort spaces, and a member never one (review-cohort.ts)', async () => {
       const previous = process.env.SERVICE_ACCOUNT_USER_ID;
       process.env.SERVICE_ACCOUNT_USER_ID = DAN;
