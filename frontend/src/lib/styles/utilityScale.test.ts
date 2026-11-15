@@ -23,20 +23,21 @@
  * number (CLAUDE.md, "COLOUR, TYPE AND RADIUS ARE ALL SCALED SINCE #447").
  */
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { join, dirname, relative } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { allMarkup } from './markupSources';
+import { allMarkup } from './markupTree';
+import { readSource } from '../../test/sourceTree';
 
-const src = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const cssPath = join(src, 'app.css');
+const cssPath = 'src/app.css';
 
-const ALL_MARKUP = allMarkup(src);
+const ALL_MARKUP = allMarkup();
 
 describe('the radius scale', () => {
+  it('reads the tree it thinks it does: the markup holds the root layout', () => {
+    expect(ALL_MARKUP.length).toBeGreaterThan(200);
+    expect(ALL_MARKUP.map(({ file }) => file)).toContain('routes/+layout.svelte');
+  });
   /** Every `--radius-*` the theme declares, as a set of CSS lengths. */
   function declaredRadii(): Map<string, string> {
-    const css = readFileSync(cssPath, 'utf8');
+    const css = readSource(cssPath);
     const out = new Map<string, string>();
     for (const m of css.matchAll(/--radius-([a-z0-9]+):\s*([^;]+);/g)) out.set(m[1], m[2].trim());
     return out;
@@ -88,7 +89,7 @@ describe('utility spellings Tailwind itself renamed', () => {
       // Word-boundary-led so `decoration-clone` does not match inside `box-decoration-clone`, the
       // very spelling it asks for.
       for (const m of body.matchAll(new RegExp(`(?<![a-z-])${legacy}[a-z0-9]*`, 'g'))) {
-        offenders.push(`${relative('', file)}: ${m[0]}`);
+        offenders.push(`${file}: ${m[0]}`);
       }
     }
 

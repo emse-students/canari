@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 
 import { afterAll, describe, expect, it } from 'vitest';
 
-import { readSource, relativeTo, selectSources, sourceFiles } from './sourceTree';
+import { hasSource, readSource, relativeTo, selectSources, sourceFiles } from './sourceTree';
 import { SNAPSHOT_FLOOR, snapshotSourceTree } from './sourceTreeWalk';
 
 const FIXTURE = new Map<string, string>([
@@ -63,6 +63,9 @@ describe('the shared snapshot', () => {
     });
     expect(staticFiles.length).toBeGreaterThan(0);
     expect(() => readSource('src/lib/wasm/nothing.ts')).toThrow(/not in the source snapshot/);
+    expect(hasSource('src/lib/db.ts')).toBe(true);
+    expect(hasSource('src/lib')).toBe(false);
+    expect(hasSource('src/lib/wasm/nothing.ts')).toBe(false);
     const everything = sourceFiles({
       under: 'src',
       extensions: ['ts', 'svelte', 'js'],

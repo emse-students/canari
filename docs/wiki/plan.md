@@ -196,6 +196,7 @@ earliest version, as a checklist.
 - [P3 - the identity provider's PostgreSQL pin moves by hand, in its own window](backlog.d/the-identity-providers-postgres-pin-moves-by-hand.md)
 - [P3 - the conversation rises with the keyboard in one block; Android Messages rises with it frame by frame (owner, 2026-11-14) - a study, not built](backlog.d/keyboard-motion-like-android-messages.md)
 - [P3 - Minesweeper: the first dig's generation blocks the main thread (2026-11-14)](backlog.d/p3-minesweeper-generation-off-the-main-thread.md)
+- [P3 - two tests that are not source scans still time out at 5 s under full-suite load](backlog.d/p3-two-non-scan-tests-time-out-under-full-suite-load.md)
 - [P3 - a comment push tapped while its post is the page left open lands on the post, not on the comment](backlog.d/p3-a-comment-push-for-the-post-already-open-does-not-open-the-comment.md)
 - [P3 - a publisher whose live was cut by a reload or a crash cannot go live again for a minute](backlog.d/p3-a-publisher-restart-closes-its-own-open-live.md)
 - [P3 - iOS: a foreground ring flashes the CallKit banner over the in-app ring, because the server still sends the VoIP push](backlog.d/p3-ios-a-foreground-ring-flashes-the-callkit-banner-over-the-in-app-ring.md)

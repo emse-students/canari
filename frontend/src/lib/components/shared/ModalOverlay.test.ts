@@ -24,18 +24,20 @@
  * disagreed, which is the same reason `associations/accent.test.ts` walks the tree.
  */
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { join, relative } from 'node:path';
-import { svelteFiles, withoutAnyComments } from '$lib/styles/markupSources';
+import { withoutAnyComments } from '$lib/styles/markupSources';
+import { svelteSources } from '$lib/styles/markupTree';
+import { readSource, relativeTo } from '../../../test/sourceTree';
 
-const dir = join(process.cwd(), 'src');
-const code = (body: string) => withoutAnyComments(readFileSync(body, 'utf8'));
-// The tree is read once, here, and not inside a test: a test body is charged against vitest's 5 s
-// timeout, and under the full suite a walk of `src` took seconds on its own.
-const markup = svelteFiles(dir).map((file) => ({ file, body: code(file) }));
+const dir = 'src';
+const code = (path: string) => withoutAnyComments(readSource(path));
+// The tree comes from the run's source snapshot (no disk walk), filtered once here.
+const markup = svelteSources(dir).map(({ path, text }) => ({
+  file: path,
+  body: withoutAnyComments(text),
+}));
 
 /** The overlay itself, and the two full-page surfaces that are deliberately NOT modals. */
-const OVERLAY = join(dir, 'lib/components/shared/ModalOverlay.svelte');
+const OVERLAY = `${dir}/lib/components/shared/ModalOverlay.svelte`;
 /**
  * AN ALLOWLIST, NAMED, WITH A REASON EACH - never a denylist.
  *
@@ -45,8 +47,8 @@ const OVERLAY = join(dir, 'lib/components/shared/ModalOverlay.svelte');
  * call-sites error in CSS: the same markup does not make them the same thing.
  */
 const NOT_MODALS = [
-  join(dir, 'lib/components/chat/CallOverlay.svelte'),
-  join(dir, 'lib/components/shared/FullScreenViewer.svelte'),
+  `${dir}/lib/components/chat/CallOverlay.svelte`,
+  `${dir}/lib/components/shared/FullScreenViewer.svelte`,
 ];
 
 /** A panel CENTRED on a full-viewport plate - which is what "a modal" means in markup. */
@@ -54,11 +56,17 @@ const centresAPanel = (body: string) =>
   /class="[^"]*\bfixed inset-0\b[^"]*\bjustify-center\b/.test(body);
 
 describe('one overlay for every modal', () => {
+  it('reads the tree it thinks it does: the overlay and both non-modals are in the scan', () => {
+    const files = markup.map(({ file }) => file);
+    expect(files).toContain(OVERLAY);
+    for (const notModal of NOT_MODALS) expect(files).toContain(notModal);
+  });
+
   it('is the only thing that centres a panel on a full-viewport plate', () => {
     const offenders = markup
       .filter(({ file }) => file !== OVERLAY && !NOT_MODALS.includes(file))
       .filter(({ body }) => centresAPanel(body))
-      .map(({ file }) => relative(dir, file));
+      .map(({ file }) => relativeTo(file, dir));
 
     expect(
       offenders,
@@ -126,7 +134,7 @@ describe('one overlay for every modal', () => {
         const labelled = body.match(/<ModalOverlay\b[\s\S]{0,800}?(?<![\w-])label=/g)?.length ?? 0;
         return labelled < tags;
       })
-      .map(({ file }) => relative(dir, file));
+      .map(({ file }) => relativeTo(file, dir));
     expect(unnamed, `these open a dialog with no accessible name: ${unnamed.join(', ')}`).toEqual(
       []
     );
