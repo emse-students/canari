@@ -5,7 +5,7 @@
  * The Mi 9T measured a 12 px backdrop blur over a playing 1080p video at 98-99 % janky frames against
  * 38-44 % flat (`docs/wiki/frontend/modules/video-player.md`, "the glass budget"). The transient pieces
  * (the raised bar, the volume slider, the time bubble, the pops) are FAKE GLASS: a translucent dark fill,
- * a hairline, an inner highlight and a shadow, with no `backdrop-filter`. The blur lives in ONE rule,
+ * a hairline, an inner highlight and a bottom shade, with no outer shadow and no `backdrop-filter`. The blur lives in ONE rule,
  * `[data-glass='blur']`, which `utils/videoGlass.ts` gives to iOS alone. Each rule below is one line a
  * later edit could change without any other test noticing.
  */
@@ -33,11 +33,13 @@ describe('the video fake glass', () => {
     expect(rule).toContain('var(--glass-video-sheen)');
   });
 
-  it('has a hairline, a rim and a shadow, all from tokens', () => {
+  it('has a hairline, a rim and an inset shade from tokens, and NO outer shadow', () => {
     const recipe = block('.glass-video {');
-    for (const token of ['--glass-video-edge', '--glass-video-rim', '--glass-video-shadow']) {
+    for (const token of ['--glass-video-edge', '--glass-video-rim', '--glass-video-shade']) {
       expect(recipe).toContain(`var(${token})`);
     }
+    expect(css).not.toContain('--glass-video-shadow');
+    expect(css).toMatch(/--glass-video-shade: inset /);
   });
 
   it("the blur is one rule, on `[data-glass='blur']`, over the same recipe with a lighter fill", () => {

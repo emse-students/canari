@@ -94,12 +94,15 @@ So the build is **progressive enhancement over ONE recipe**:
   in `chat-video-1115/legibility-{white,green}-old-fake-flat.png` (old shipped glass at 28 % black,
   the new fake glass, the old flat chip): the old 28 % glass left a white glyph weak on white; the
   56 % fill reads on both frames and keeps the highlight.
-- **The fake glass's own cost on the Mi 9T** (same blob method, three pairs, 30 s, vs the old flat solid
-  chip): flat 28.48 / 23.31 / 29.42 % janky (median 12 ms), fake glass 37.12 / 28.93 / 30.73 % (median
-  13 / 12 / 13 ms). Mean +5.2 points of janky frames and +0.7 ms median - the median is inside the 1 ms
-  budget, the janky share is about 2 points over the +3 mark on average (+8.6, +5.6, +1.3 per pair; the
-  flat baseline itself moves 6 points between runs, so this is noisy and not a collapse like the blur's
-  +56). Tell the owner; the cheapest lever, if wanted, is dropping the outer shadow.
+- **The fake glass's own cost on the Mi 9T** (same blob method, three pairs alternating order, 30 s,
+  vs the old flat solid chip). **First recipe, WITH an outer shadow** (`0 2px 10px` black 40 %): flat
+  28.48 / 23.31 / 29.42 % janky (median 12 ms), fake 37.12 / 28.93 / 30.73 % (13 / 12 / 13 ms): mean
+  +5.2 points, +0.7 ms - over the +3 budget, so the owner had the shadow dropped. **Final recipe, NO
+  outer shadow** (depth is an inset 1 px bottom shade drawn inside the same box): flat 27.24 / 34.30 /
+  31.87 % (median 12 / 13 / 12 ms), fake 26.11 / 28.90 / 28.63 % (12 / 12 / 12 ms): mean -3.3 points
+  (fake 27.9 % against flat 31.1 %, the baseline moving 7 points between runs) and 0 ms - **within the
+  +3 points / +1 ms budget, so it ships**. Legibility of the final recipe over white and green:
+  `chat-video-1115/lite-white-green.png`.
 - **iOS cost: OWED, a check and not a gate** (the iPhone was busy): the procedure is "The iPhone 12 - a
   check, not a gate" below. A visible stutter or FPS under 55 with the bar up would send iOS to the base
   recipe too, by changing `decideVideoGlass` to `false`.
