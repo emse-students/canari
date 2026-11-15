@@ -63,6 +63,7 @@ earliest version, as a checklist.
 - [P2 - a frame read before a browser kill is called "never read here" on the next cold start](backlog.d/reading-owed-the-live-seen-cipher-mark-written-at-the-checkpoint.md)
 - [P2 - the retention durations a sweep applies are not yet admin settings](backlog.d/retention-durations-not-yet-settings.md)
 - [P2 - what the keyboard readings of 2026-11-14 filed: a photo DM still jumps to older messages, a short thread loads history on close, a 12 px step](backlog.d/what-the-keyboard-readings-of-2026-11-14-filed.md)
+- [P2 - a push tapped after the session ended can sign in to the wrong page: a bare `/login` on a cold start, a stale `returnTo` on a mounted login page (Mi 9T, 2026-11-15)](backlog.d/p2-a-push-tapped-after-the-session-ended-can-sign-in-to-the-wrong-page.md)
 
 **P3 - hygiene**
 
@@ -81,17 +82,13 @@ earliest version, as a checklist.
 
 ### Readings owed
 
-- [ ] [the resume reload and the send-side rewind on the Mi 9T](backlog.d/p1-the-resume-reload-and-the-receive-ratchet-fixed-owed-one-device-reading-a.md)
 - [ ] [every route fits on REAL hardware](backlog.d/reading-owed-every-route-fits-on-real-hardware.md)
 - [ ] [the twelve emoji-picture rows on real devices, the iPhone first](backlog.d/emoji-pictures-the-campaign-rows-which-need-real-devices.md)
-- [ ] [a shut phone one commit behind catches up in any community](backlog.d/reading-owed-a-shut-phone-one-commit-behind-catches-up-in-any-community.md)
 - [ ] [Graine v2: the unsigned-row count, the rig re-run and one native refusal](backlog.d/p1-graine-v2-an-author-that-is-proven-and-a-ciphertext-bound-to-its-place.md)
 - [ ] [the CanaReels composer, viewer and editor on real content](backlog.d/reading-owed-the-canareels-composer-viewer-and-editor-on-real-content.md)
 - [ ] [the GRP-3 socket close placed with `ws1.mjs`](backlog.d/p2-a-live-socket-dies-in-the-middle-of-grp-3-and-no-navigation-explains-it-2026.md)
 - [ ] [the named readers' live chat switch on dev](backlog.d/named-readers-comments-switch-readings-owed.md)
 - [ ] [the in-session community join through the deep link on the phones](backlog.d/p1-owed-one-live-reading-of-the-in-session-join-fix-2026-10-08.md)
-- [ ] [a post push tapped with the session dead lands on `/login?returnTo=` the post](backlog.d/reading-owed-a-post-push-tapped-with-the-session-dead-lands-on-login-returnto.md)
-- [ ] [NOTIF-10: a refused push after real banners leaves no generic line](backlog.d/reading-owed-notif-10-a-refused-push-after-real-banners-leaves-no-generic-line.md)
 - [ ] [a 13 MB attachment: the bytes out of the outbox row, an evicted blob parked as `upload_error`](backlog.d/reading-owed-a-13-mb-attachment-the-bytes-out-of-the-outbox-row-an-evicted-blob.md)
 - [ ] [a notification tap to a usable conversation: F1](backlog.d/reading-owed-a-notification-tap-to-a-usable-conversation-f1.md)
 - [ ] [a group joined in the background before its row existed: the "already held" Welcome writes and announces the row, the...](backlog.d/reading-owed-a-group-joined-in-the-background-before-its-row-existed-the.md)
@@ -101,7 +98,6 @@ earliest version, as a checklist.
 - [ ] [a mention names its author from the phone's copy of names, and the push sentences come from Rust in the app language](backlog.d/reading-owed-a-mention-names-its-author-from-the-phone-s-copy-of-names-and-the.md)
 - [ ] [the push of a request to republish a post](backlog.d/reading-owed-the-push-of-a-request-to-republish-a-post.md)
 - [ ] [a call survives the app leaving the screen: the Android microphone foreground service](backlog.d/reading-owed-a-call-survives-the-app-leaving-the-screen-the-android-microphone.md)
-- [ ] [NOTIF-6c / NOTIF-6d: the quick reply from a BACKGROUNDED shade, and a reply that fails to send](backlog.d/reading-owed-notif-6c-notif-6d-the-quick-reply-from-a-backgrounded-shade-and-a.md)
 - [ ] [the tab swipe to the camera on a slow start: the 8 px lock](backlog.d/reading-owed-the-tab-swipe-to-the-camera-on-a-slow-start-the-8-px-lock.md)
 - [ ] [a blind salon banner draws no author, no mention and no mention route, and a held mention's redraw does not sound twice](backlog.d/reading-owed-a-blind-salon-banner-draws-no-author-no-mention-and-no-mention.md)
 - [ ] [new-device notices (#2278, every stable since `1.5.0`; mls-protocol)](backlog.d/reading-owed-new-device-notices-2278-every-stable-since-1-5-0-mls-protocol.md)
@@ -120,20 +116,16 @@ earliest version, as a checklist.
 - [ ] [campus trends and the daily cap, WP-8, WP-10 and the quieter batch](backlog.d/reading-owed-campus-trends-and-the-daily-cap-wp-8-wp-10-and-the-quieter-batch.md)
 - [ ] [CanaReels "Voir plus" clears the seek line](backlog.d/reading-owed-canareels-voir-plus-clears-the-seek-line.md)
 - [ ] [the camera keeps its layout and the volume keys are its shutter (Mi 9T, iPhone 12)](backlog.d/camera-keeps-its-layout-and-volume-shutter.md)
-- [ ] [a comment, reply or mention opens the post AT the comment - the push since #2000, the bell row since the backlog triage...](backlog.d/reading-owed-a-comment-reply-or-mention-opens-the-post-at-the-comment-the-push.md)
 - [ ] [rotation on the video, live and camera screens on both phones](backlog.d/rotation-on-video-and-camera-screens.md)
 - [ ] [overlays stacked by open order, not by rung](backlog.d/reading-owed-overlays-stacked-by-open-order-not-by-rung.md)
 - [ ] [a FIRST message from someone with no conversation yet notifies, end to end](backlog.d/reading-owed-a-first-message-from-someone-with-no-conversation-yet-notifies-end.md)
 - [ ] [a live or a reel asks the microphone for one channel](backlog.d/reading-owed-a-live-or-a-reel-asks-the-microphone-for-one-channel.md)
-- [ ] [a notification shows the sender's face, not the app's bird](backlog.d/reading-owed-a-notification-shows-the-sender-s-face-not-the-app-s-bird.md)
-- [ ] [a push carries its ciphertext once, not twice](backlog.d/reading-owed-a-push-carries-its-ciphertext-once-not-twice.md)
 - [ ] [a salon carries read receipts, seen in a real community](backlog.d/reading-owed-a-salon-carries-read-receipts.md)
 - [ ] [follow suggestions and Suivre, WP-2, WP-5, WP-6, WP-7](backlog.d/reading-owed-follow-suggestions-and-suivre-wp-2-wp-5-wp-6-wp-7.md)
 - [ ] [openings for followers, WP-4](backlog.d/reading-owed-openings-for-followers-wp-4.md)
 - [ ] [the bell, WP-3 (#3156, first stable `v1.6.8`, migration 143 approved; engagement)](backlog.d/reading-owed-the-bell-wp-3-3156-first-stable-v1-6-8-migration-143-approved.md)
 - [ ] [the checkpoint every commit awaits under the MLS lock before its first request](backlog.d/reading-owed-the-checkpoint-every-commit-awaits-under-the-mls-lock-before-its.md)
 - [ ] [the push sentences are worded in Rust from the app language and a voice note is announced as one](backlog.d/reading-owed-the-push-sentences-are-worded-in-rust-from-the-app-language-and-a.md)
-- [ ] [the row a push creates carries the GROUP's name](backlog.d/reading-owed-the-row-a-push-creates-carries-the-group-s-name.md)
 - [ ] [WP-REGRANT-2, a re-granted member's seed by distribution, never by repair](backlog.d/reading-owed-wp-regrant-2-a-re-granted-member-s-re-join.md)
 
 ## 1.8.0
