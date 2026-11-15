@@ -68,6 +68,7 @@ earliest version, as a checklist.
 - [P2 - what the keyboard readings of 2026-11-14 filed: a photo DM still jumps to older messages, a short thread loads history on close, a 12 px step](backlog.d/what-the-keyboard-readings-of-2026-11-14-filed.md)
 - [P2 - no gate proves that an older build reads, and writes back, the MLS state this build writes](backlog.d/p2-no-gate-proves-an-older-build-reads-the-mls-state-this-build-writes.md)
 - [P2 - the first message posted in a salon right after an in-session join raised no unread badge on the iPhone](backlog.d/p2-the-first-message-after-an-in-session-join-raised-no-badge-on-the-iphone.md)
+- [P2 - the booking and event opening pushes are counted against the daily cap, while the engagement page says they are never capped](backlog.d/p2-the-opening-pushes-count-against-the-daily-cap-but-the-docs-say-never-capped.md)
 - [P2 - the reply swipe along a thumb's arc does nothing on WebKit: the thread scrolls instead](backlog.d/p2-the-reply-swipe-along-a-thumb-s-arc-does-nothing-on-webkit.md)
 
 **P3 - hygiene**
