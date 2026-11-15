@@ -19,7 +19,7 @@ is letterboxed in the vertical pager.
    the app stays portrait: the only change a member can see is none.
 3. **The surfaces not being rewritten by the video-player stack**: the camera (`CameraScreen`; since
    2026-11-11 it keeps its layout portrait and turns its glyphs instead -
-   [its own entry](camera-keeps-its-layout-and-volume-shutter.md)) and the live broadcaster (chosen in
+   its own entry (entry deleted 2026-11-15)) and the live broadcaster (chosen in
    the preview, frozen on air, the rotate button; and the owner's double tap on the preview to switch
    the lens, 2026-11-09). The button is `ui/player/RotateButton.svelte`, the sides' padding
    `utils/sideSafeArea.ts` - both for step 4 to reuse.
@@ -62,7 +62,7 @@ running. Owed on the **Mi 9T** and the **iPhone 12**, each with the rotation loc
   with the phone sideways (lock off). A cold start with the phone held sideways opens in portrait
   (iOS: no landscape launch screen, `supported-orientations hook installed ... at launch` in the log
   before the first scene).
-- **The camera**: replaced by [its own entry's readings](camera-keeps-its-layout-and-volume-shutter.md)
+- **The camera**: replaced by its own entry's readings (entry deleted 2026-11-15)
   (2026-11-11: the layout no longer turns).
 - **The broadcaster**: turned in the preview, `[LIVE-CAM] opened` then a landscape track size; the
   orientation stays put once on air; a viewer in portrait sees the whole picture with bars; the
@@ -112,3 +112,5 @@ The broadcaster's preview turned to 844x390 pt with "Passer en paysage" (form in
 - **Left: the iPhone 12, the lock-OFF rows (a human holds the phone), the lightbox and reel pager rows, the iOS notch.**
 
 **Mi 9T, 2026-11-15 (both-phones sitting): nothing left on the Mi bench.** Every row it can stage was read by the earlier sittings; what remains is the lock-OFF turn (a human holds the phone) and the iPhone 12's lightbox, reel pager, broadcaster and notch rows.
+
+**2026-11-15, afternoon (owner's hands-on sitting, then an iPhone 12 bench sitting): every row on the list is now READ.** The owner held both phones with the rotation lock OFF: the lightbox photo stays portrait, a landscape CanaReel turns both ways in place, the feed stays portrait (Mi 9T), the iPhone reel turns both ways with nothing under the notch. The bench read the iPhone lightbox (photo with no rotate button; a video item turned to 844x390 with its back control at 59 pt, back to 390x844; a swipe while turned returns to portrait) and the reel pager (a landscape video post: rotate button, caption and action column clear of the notch, back to portrait, closed at 390x844). The camera's glyph and file-orientation rows are in [device-verification](../device-verification.md#the-owners-hands-on-sitting-of-2026-11-15). **Left, and why this entry is not deleted:** the reel tabs and the action rail on a landscape video were fixed by #3537 (merged 2026-11-14 after `alpha.2`) and are read on `1.7.0-alpha.1`. The stale frame after the system rotation animation (about 0.5 s, both phones) is being fixed elsewhere.
