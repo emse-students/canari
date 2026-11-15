@@ -165,7 +165,7 @@ export async function pushForDeliveredWelcome(
     return;
   }
   deps.log(
-    `[JOIN_PUSH] ${short}... join push -> ${userId}:${deviceId} (${delivered.addressability === 'addressable' ? 'addressable when its Welcome was answered' : 'its Welcome answer did not say whether it is addressable - an older delivery service; the send decides'})`
+    `[JOIN_PUSH] ${short}... join push -> ${userId}:${deviceId} (${delivered.addressability === 'addressable' ? 'addressable when its Welcome was answered' : 'its Welcome answer did not say whether it is addressable (a delivery service that predates the field, a verdict the server could not read, or a value this client does not know); the send decides'})`
   );
   try {
     const outcome = await sendFullHistoryBundle(groupId, {

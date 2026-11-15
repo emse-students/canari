@@ -272,19 +272,30 @@ export class AddressedUnsupportedError extends Error {
  * presence key) or `undeclared` (online, with a live session that did not declare
  * `addressed-history-1`). The two refusals are the ones `addressed_unsupported` would name at the
  * send - read once, by the server's own script, so the inviter's join push does not make a request
- * the server would refuse (docs/wiki/protocols/history-answer-addressing.md, rule 6).
+ * the server would refuse (docs/wiki/protocols/history-answer-addressing.md, rule 3).
  */
 export type WelcomeAddressability = 'addressable' | 'offline' | 'undeclared';
 
 /**
  * Reads `addressability` out of a Welcome's answer. `null` when the answer carries none - a delivery
- * service that predates the field, or one that could not read it - or an unknown value, which a
- * caller must treat as "not said", never as a verdict.
+ * service that predates the field, or one that could not read it (said at error on the server) - or
+ * an unknown value, which a caller must treat as "not said", never as a verdict. An unknown value is
+ * a contract this client does not know, said at error HERE, where it is met.
  */
-export function parseWelcomeAddressability(raw: unknown): WelcomeAddressability | null {
-  if (raw === null || typeof raw !== 'object') return null;
+function parseWelcomeAddressability(raw: unknown, where: string): WelcomeAddressability | null {
+  if (raw === null || typeof raw !== 'object') {
+    console.error(
+      `[DELIVERY] ${where}: the Welcome's answer is not an object - addressability not said`
+    );
+    return null;
+  }
   const value = (raw as { addressability?: unknown }).addressability;
-  return value === 'addressable' || value === 'offline' || value === 'undeclared' ? value : null;
+  if (value === undefined) return null;
+  if (value === 'addressable' || value === 'offline' || value === 'undeclared') return value;
+  console.error(
+    `[DELIVERY] ${where}: the Welcome's answer carries an unknown addressability ${JSON.stringify(value).slice(0, 40)} - read as not said`
+  );
+  return null;
 }
 
 /**
@@ -1853,7 +1864,10 @@ export class MlsDeliveryApi {
       );
       return null;
     }
-    return parseWelcomeAddressability(answered);
+    return parseWelcomeAddressability(
+      answered,
+      `Welcome to ${targetDeviceId} in ${groupId.slice(0, 8)}...`
+    );
   }
 
   /**

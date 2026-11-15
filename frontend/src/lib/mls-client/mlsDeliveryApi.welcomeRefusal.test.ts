@@ -34,12 +34,21 @@ describe('sendWelcome and the refusal of its target', () => {
     }
   });
 
-  it('returns null when the answer does not say - an older delivery service, or a value it does not know', async () => {
-    for (const body of [{ status: 'queued' }, { status: 'queued', addressability: 'maybe' }]) {
-      await expect(
-        send(api(new Response(JSON.stringify(body), { status: 201, headers: json })))
-      ).resolves.toBeNull();
-    }
+  it('returns null, silently, when the answer carries no field - an older delivery service', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await expect(
+      send(api(new Response(JSON.stringify({ status: 'queued' }), { status: 201, headers: json })))
+    ).resolves.toBeNull();
+    expect(error).not.toHaveBeenCalled();
+    error.mockRestore();
+  });
+
+  it('returns null and accuses it at error when the answer carries a value this client does not know', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const body = JSON.stringify({ status: 'queued', addressability: 'maybe' });
+    await expect(send(api(new Response(body, { status: 201, headers: json })))).resolves.toBeNull();
+    expect(error.mock.calls.some(([l]) => String(l).includes('unknown addressability'))).toBe(true);
+    error.mockRestore();
   });
 
   it('returns null, and accuses it at error, when the stored Welcome answered a body that cannot be read', async () => {
