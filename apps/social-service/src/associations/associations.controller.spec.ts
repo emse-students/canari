@@ -777,6 +777,10 @@ describe('AssociationsController feed.ics eventId and the signed selection', () 
     endsAt: null,
     associationName: 'BDE',
     associationSlug: 'bde',
+    status: 'validated',
+    createdBy: `proposer-${n}`,
+    validatedBy: `validator-${n}`,
+    rejectedBy: null,
   }));
 
   function makeController() {
@@ -817,7 +821,7 @@ describe('AssociationsController feed.ics eventId and the signed selection', () 
       args.sig,
       args.token
     );
-  const json = (args: { campus?: string; userId?: string; sig?: string }) =>
+  const json = (args: { campus?: string; formation?: string; userId?: string; sig?: string }) =>
     makeController().aggregatedCalendarFeed(
       undefined,
       undefined,
@@ -826,9 +830,27 @@ describe('AssociationsController feed.ics eventId and the signed selection', () 
       args.userId,
       undefined,
       args.campus,
-      undefined,
+      args.formation,
       args.sig
     );
+
+  it('answers a read with NO holder the events and no account; a signed-in reader keeps them', async () => {
+    const pair = { campus: 'gardanne', formation: 'ICM', sig: sigOf('gardanne', 'ICM') };
+    const anonymous = (await json(pair)) as Record<string, unknown>[];
+    expect(anonymous.map((e) => e.id)).toEqual(['ev1', 'ev2']);
+    for (const event of anonymous) {
+      expect(event).toMatchObject({ createdBy: null, validatedBy: null, rejectedBy: null });
+      expect(event.title).toEqual(expect.any(String));
+      expect(event.icsSig).toEqual(expect.any(String));
+    }
+    expect(JSON.stringify(anonymous)).not.toMatch(/proposer-|validator-/);
+
+    const signedIn = (await json({ ...pair, userId: 'reader' })) as Record<string, unknown>[];
+    expect(signedIn.map((e) => [e.createdBy, e.validatedBy])).toEqual([
+      ['proposer-1', 'validator-1'],
+      ['proposer-2', 'validator-2'],
+    ]);
+  });
 
   it('hands a SIGNED selection to the feed, and refuses an unknown campus with a 400 (D40)', async () => {
     const controller = makeController();
