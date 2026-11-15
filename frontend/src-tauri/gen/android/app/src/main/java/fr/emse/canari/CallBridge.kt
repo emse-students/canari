@@ -19,6 +19,7 @@ import fr.emse.canari.call.OngoingCallSpec
 import fr.emse.canari.call.RingFacts
 import fr.emse.canari.call.SpecResult
 import fr.emse.canari.call.StartRefusal
+import fr.emse.canari.push.throwableSite
 import org.json.JSONException
 import org.json.JSONObject
 
@@ -328,7 +329,7 @@ object CallBridge {
                     )
                 }
             } catch (e: JSONException) {
-                SpecResult.Refused("not the call description: ${e.message}")
+                SpecResult.Refused("not the call description: ${throwableSite(e)}")
             }
             return when (result) {
                 is SpecResult.Valid -> Described(callId!!, result.spec)

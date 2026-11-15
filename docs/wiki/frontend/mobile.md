@@ -3449,8 +3449,16 @@ loggers it reads stdout and stderr (`println`, `print!`, `dbg!`, `printStackTrac
 and the app's line-taking wrappers (`output.log`, the ladders' `log` lambda, `sayOnce`), and a line
 handed in as a local (`val line = "..."` then `Log.w(TAG, line)`) is read where it was assembled.
 A table key carries its line count (`3x file|expr`), so the next line spelling a reviewed word in
-that file fails. **Two gaps no regex closes**: a value laundered through a parameter whose NAME is
-trusted (`why`, `reason`, `detail` filled with a message by a caller), and a wrapper with a new
+that file fails. A throwable handed to a logger (a Kotlin `Log.*`'s third argument,
+`x.printStackTrace()`) is judged by its POSITION, whatever the local is called. A second review
+(same day) closed the shapes that still walked past: a measure ending a concatenation
+(`body + body.length`), a `var` reassigned after its literal, a statement continued on the next
+line, Rust's `{{{text}}}` and `'"'`, a ternary written tight (`ok ? body:"none"`), an annotation
+spelled inside the logged string, a name merely ending in "id" (`said`), and the restore plugin and
+the plugins' Rust, which were not read at all. **Two gaps no regex closes**: a value laundered
+through a NAME that is trusted (`why`, `reason`, `detail` - a parameter filled with a message by a
+caller, as `CallBridge.parse` did with an org.json message until that review, or a local assigned
+one; following every such local to its right-hand side flags 18 safe lines), and a wrapper with a new
 name - both are review questions, and a new wrapper is added to `CALL_START`. **A catch-all over a
 body that parses** (a push lane, a notification redraw, a broadcast receiver) cannot vouch for an
 exception's message, so it logs `throwableSite(e)` (`push/ThrowableSite.kt`: the class and the
