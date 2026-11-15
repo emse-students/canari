@@ -15,3 +15,5 @@ target: 1.7.0
 **Triage 2026-11-14: iPhone about 10 min (a finger-like tap on the banner after a suggestion pick: `ios.mjs hold` then `tap`, as in batch 8), Mi 9T about 30 min (the leftovers of the list above).**
 
 **Read 2026-11-15 (iPhone 12, `1.6.12-alpha.2`): the suggestion-row finding is REPRODUCED, and filed as [a P2](p2-the-ios-share-sheet-suggestion-row-offers-nothing-in-canari.md).** Five picks from Safari, nothing offered. The finger-tap on the banner could not be read because no banner appeared. The finger-tap on the banner therefore stays owed on the iPhone (it can be read once the suggestion path offers a banner); what else stays is the Mi 9T list.
+
+**iPhone 12, 2026-11-15 (`1.7.0-alpha.1`): the finger-like tap on the banner PASSES through the app row** (`share banner tapped - the share is imported on activation`, the picker opened on the item; [readings](#the-iphone-12-readings-of-2026-11-15-170-alpha1-second-sitting)). The suggestion-row path was not observed in that capture (no launch with `intent=true`), so [the P2](p2-the-ios-share-sheet-suggestion-row-offers-nothing-in-canari.md) stands unchanged. **Left: the Mi 9T list above.**
