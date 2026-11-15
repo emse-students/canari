@@ -2,6 +2,7 @@
   import { appPathFromPathname, safeInternalPath } from '$lib/utils/internalPath';
   import { gotoAppPath } from '$lib/navigation/gotoAppPath';
   import { onMount } from 'svelte';
+  import { page } from '$app/state';
   import {
     startOidcLogin,
     hasStoredSession,
@@ -30,12 +31,27 @@
   let busyLabel = $state<string | null>(null);
   let loginError = $state('');
   let biometricAvailable = $state(false);
-  let requestedReturnTo = '';
+  /**
+   * Where the sign-in goes back to, read from the URL REACTIVELY: the route is reused when a second
+   * redirect reaches `/login` with a new `?returnTo=` (a push tapped while this page is mounted),
+   * and a value read once in `onMount` signed in to the previous page (Mi 9T, 2026-11-15).
+   */
+  const requestedReturnTo = $derived(page.url.searchParams.get('returnTo') ?? '');
   /** Store badges: a phone-sized WEB visitor, never the native app itself. */
   let showStoreBadges = $state(false);
   let openInAppHref = $state<string | null>(null);
   /** The app's link to the payment this login stands in front of (`paymentReturnAppLink`). */
   let paymentReturnHref = $state<string | null>(null);
+
+  /** The payer's link back to the app, when this login stands in front of a payment return. */
+  $effect(() => {
+    const paidAppLink = isTauriRuntime() ? null : paymentReturnAppLink(requestedReturnTo);
+    if (paidAppLink) {
+      // The payer paid in the phone's browser and has no session here: say where the payment went.
+      console.info('[auth] login in front of a payment return, offering the app');
+    }
+    paymentReturnHref = paidAppLink;
+  });
 
   const platformInfo = $derived(getAppVersionCheck());
   const loginDisabled = $derived(isBelowMinClientVersion());
@@ -107,20 +123,6 @@
     const unsubscribeForeground = onAppForegroundChange((foreground) => {
       if (foreground) onVisible();
     });
-
-    // 1. Safely extract the return URL from query params.
-    try {
-      const url = new URL(window.location.href);
-      requestedReturnTo = url.searchParams.get('returnTo') ?? '';
-    } catch {
-      requestedReturnTo = '';
-    }
-    const paidAppLink = isTauriRuntime() ? null : paymentReturnAppLink(requestedReturnTo);
-    if (paidAppLink) {
-      // The payer paid in the phone's browser and has no session here: say where the payment went.
-      console.info('[auth] login in front of a payment return, offering the app');
-      paymentReturnHref = paidAppLink;
-    }
 
     // 2. Unified session + biometric check.
     const initAuth = async () => {

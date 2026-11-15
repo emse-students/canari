@@ -604,6 +604,23 @@ handler now reads `navigating.to?.url` (else the current location) through `logi
 redirect would have built survives; the root and the sign-in pages stay bare. Source guard:
 `sessionExpiredRelease.test.ts`. The hardware reading is [check H](device-verification.md#h-deep-link-from-an-os-notification-tap---re-opened-on-android), step 4.
 
+### Two ways that target was still lost (Mi 9T, 2026-11-15: 2 of 4 taps signed in to the wrong page)
+
+- **The verdict before its handler (a race).** On a cold start the first refresh 401s before the shell
+  registers `setSessionExpiredHandler`. `notifySessionExpired` used to `goto('/login')` bare as a
+  fallback, and the late handler replayed from a location that was already `/login`, so `returnTo`
+  was gone. Now the verdict is QUEUED with the page in flight, captured AT the verdict
+  (`SessionExpiredTarget` in `stores/auth.ts`), and the handler - the ONE place that decides the login
+  redirect - is handed it on registration (`navigating.to`, else the verdict's target, else the
+  location). The fallback is deleted: a fallback is a signal, never a path. The two other bare
+  `/login` jumps of the session composables (no `onSessionExpired` wired, a socket reconnect that met
+  a dead session) go through `gotoLoginAfterExpiry` and carry the target too. Tests:
+  `auth.test.ts` ("a verdict that arrives before its handler").
+- **A login page already mounted.** A second redirect to `/login?returnTo=<new>` reuses the mounted
+  `LoginPage`, which read `returnTo` once in `onMount` and signed in to the PREVIOUS page. It is now
+  `$derived` from `page.url`, so the sign-in carries the url of the moment (still through
+  `safeInternalPath`, the same-origin gate below). Test: `LoginPage.returnToFollowsUrl.svelte.test.ts`.
+
 ## A return target is held to the page's origin (2026-10-28)
 
 A `returnTo` or `redirect` query parameter is of unknown origin, and its consumers include a plain

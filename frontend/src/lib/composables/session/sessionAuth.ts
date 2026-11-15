@@ -11,6 +11,7 @@ import { clearConversationAnchors } from '$lib/utils/chat/scrollAnchors';
 import { noteMlsStateLoaded, promotedSinceLoad } from '$lib/mls-client/stateAuthority';
 import type { EventTime } from '$lib/utils/chat/visibleNotices';
 import { goto } from '$app/navigation';
+import { gotoLoginAfterExpiry } from '$lib/navigation/gotoLoginAfterExpiry';
 import { resolve } from '$app/paths';
 import { internalPath, loginReturningTo } from '$lib/utils/internalPath';
 import { reportRejectionOnce } from '$lib/utils/reportRejectionOnce';
@@ -1599,7 +1600,7 @@ export async function loginImpl(
         // The redirect first, the preview after it (synchronous), the flag last: nothing here may
         // wait on the store, and a second login must not start while this one's preview is up.
         if (cb.onSessionExpired) cb.onSessionExpired();
-        else void goto(resolve('/login'), { replace: true });
+        else void gotoLoginAfterExpiry();
         withdrawLandingPreview('session expired');
         releaseLoginFlag();
         return;
@@ -2986,7 +2987,7 @@ export async function loginImpl(
       markRestoreAttempted();
       void clearRestoreKey('session expired');
       if (cb.onSessionExpired) cb.onSessionExpired();
-      else void goto(resolve('/login'), { replace: true });
+      else void gotoLoginAfterExpiry();
     } else if (cb.onLoginFailed) {
       cb.onLoginFailed(shown, code);
     } else {
