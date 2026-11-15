@@ -135,6 +135,24 @@ export function withEventIcsSig<T extends { id: string; status?: string }>(
   );
 }
 
+/** The fields of a served event that name an ACCOUNT: who proposed it, who judged it. */
+const EVENT_ACCOUNT_FIELDS = ['createdBy', 'validatedBy', 'rejectedBy'] as const;
+
+/**
+ * `rows` as a read that names NO HOLDER is answered (a verified legacy `sig` link on the JSON feed):
+ * every field naming an account is `null`. A link is not a person, so its answer says what happens
+ * and where, never which account proposed or validated it - that is for a signed-in reader, who
+ * meets those accounts in the app anyway. The keys stay, so a consumer reading the row keeps its
+ * shape.
+ */
+export function withoutAccountIds<T extends object>(rows: T[]): T[] {
+  return rows.map((row) => {
+    const served = { ...row } as Record<string, unknown>;
+    for (const field of EVENT_ACCOUNT_FIELDS) if (field in served) served[field] = null;
+    return served as T;
+  });
+}
+
 /** `withEventIcsSig` for one event a route answers on its own (a post's or a form's linked event). */
 export function withOneEventIcsSig<T extends { id: string; status?: string }>(
   row: T | null
