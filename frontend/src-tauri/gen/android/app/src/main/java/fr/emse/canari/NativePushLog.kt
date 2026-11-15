@@ -35,7 +35,7 @@ object NativePushLog {
             }
         } catch (e: Throwable) {
             // UnsatisfiedLinkError included: a library without the symbol must not take the push with it.
-            sayOnce("${e.javaClass.simpleName}: ${e.message}")
+            sayOnce("${e.javaClass.simpleName}: ${e.message}") // log-safe: the JNI append (a missing symbol) or the line format; neither quotes the line
         }
     }
 

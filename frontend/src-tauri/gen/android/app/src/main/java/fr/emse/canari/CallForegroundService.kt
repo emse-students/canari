@@ -144,7 +144,7 @@ class CallForegroundService : Service() {
             try {
                 context.startService(intentFor(context, CallServiceCommand.Stop(null, "the page that held the call is gone")))
             } catch (e: IllegalStateException) {
-                Log.e(TAG, "stop for a gone page not delivered: ${e.message}")
+                Log.e(TAG, "stop for a gone page not delivered: ${e.message}") // log-safe: message of a system or native call (IllegalStateException); this try parses and names no user input
             }
         }
 
@@ -300,7 +300,7 @@ class CallForegroundService : Service() {
             // The service was started with a plain `startService`, so stopping here is an ordinary
             // stop - logged and reported, never a process kill - and the call goes on in the
             // foreground only. Not papered over by dropping the microphone type.
-            val why = "startForeground: ${e.javaClass.simpleName}: ${e.message}"
+            val why = "startForeground: ${e.javaClass.simpleName}: ${e.message}" // log-safe: the message of startForeground, a system call handed no user input
             val offScreenKind = e is SecurityException ||
                 (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && e is ForegroundServiceStartNotAllowedException)
             when (classifyStartRefusal(offScreenKind, MainActivity.isInForeground)) {

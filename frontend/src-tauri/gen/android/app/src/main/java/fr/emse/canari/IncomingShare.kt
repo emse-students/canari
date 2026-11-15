@@ -68,7 +68,7 @@ object IncomingShare {
             try {
                 if (runCapture(appContext, text, uris, intent.type, epoch, target)) onReady()
             } catch (e: Exception) {
-                Log.e(TAG, "share capture failed: ${e.message}", e)
+                Log.e(TAG, "share capture failed: ${e.javaClass.simpleName}")
             }
         }.start()
     }
@@ -196,7 +196,7 @@ object IncomingShare {
         return try {
             file.readText().trim().toLong()
         } catch (e: Exception) {
-            Log.e(TAG, "the share epoch is unreadable: ${e.message}")
+            Log.e(TAG, "the share epoch is unreadable: ${e.javaClass.simpleName}")
             null
         }
     }
@@ -214,7 +214,7 @@ object IncomingShare {
         return try {
             JSONObject(claimed.readText())
         } catch (e: Exception) {
-            Log.w(TAG, "the waiting share manifest is unreadable: ${e.message}")
+            Log.w(TAG, "the waiting share manifest is unreadable: ${e.javaClass.simpleName}")
             null
         } finally {
             if (!claimed.delete()) Log.w(TAG, "the claimed manifest ${claimed.name} was not deleted")
@@ -232,7 +232,7 @@ object IncomingShare {
             val file = pendingFile(context)
             if (file.exists()) JSONObject(file.readText()) else return null
         } catch (e: Exception) {
-            Log.w(TAG, "the waiting share manifest is unreadable: ${e.message}")
+            Log.w(TAG, "the waiting share manifest is unreadable: ${e.javaClass.simpleName}")
             return null
         }
         val current = shareEpoch(context)
@@ -399,7 +399,7 @@ object IncomingShare {
             )
         } catch (e: Exception) {
             target.delete()
-            Log.w(TAG, "stream $index refused: ${e.message}")
+            Log.w(TAG, "stream $index refused: ${e.javaClass.simpleName}")
             null
         }
     }
@@ -409,7 +409,7 @@ object IncomingShare {
             if (cursor.moveToFirst()) cursor.getString(0) else null
         }
     } catch (e: Exception) {
-        Log.w(TAG, "display name unreadable: ${e.message}")
+        Log.w(TAG, "display name unreadable: ${e.javaClass.simpleName}")
         null
     }
 }
