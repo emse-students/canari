@@ -50,7 +50,7 @@
   } as const;
 
   async function load() {
-    Log.d('[admin.lydia] loading the contract');
+    Log.d('admin.lydia', 'loading the contract');
     loadError = false;
     try {
       form = toLydiaContractForm(await fetchLydiaContract());

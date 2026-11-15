@@ -48,13 +48,13 @@ export async function fetchLydiaFeeSchedule(): Promise<LydiaFeeScheduleAnswer> {
       const refusal = await socialRefusal(res);
       if (res.status === 403 && refusalCode(refusal) === LYDIA_FEES_NOT_A_PRICE_EDITOR) {
         // A screen offered a price editor to someone who edits no price: the screen is wrong.
-        Log.w('[Payments] the fee schedule was refused: this reader edits no price');
+        Log.w('Payments', 'the fee schedule was refused: this reader edits no price');
         return { value: 'not-a-price-editor' as const };
       }
       throw refusal;
     }
     const data = (await res.json()) as { schedule: LydiaFeeSchedule | null };
-    if (!data.schedule) Log.w('[Payments] the fee schedule is NOT CONFIGURED: no payout estimate');
+    if (!data.schedule) Log.w('Payments', 'the fee schedule is NOT CONFIGURED: no payout estimate');
     return { value: data.schedule };
   });
   return held.value;

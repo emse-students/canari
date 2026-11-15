@@ -226,7 +226,7 @@ async function pollPresence(): Promise<void> {
   unknownRouteAnnounced = false;
   if (!postServed && !legacyRouteAnnounced) {
     legacyRouteAnnounced = true;
-    Log.d('[presence] this estate predates POST /api/presence - asking with the legacy GET');
+    Log.d('presence', 'this estate predates POST /api/presence - asking with the legacy GET');
   }
   try {
     const data: Record<string, boolean> = {};

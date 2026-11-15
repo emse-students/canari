@@ -1600,6 +1600,19 @@ const FORGIVE_CASES = [
     { clean: false, unmatched: 66 },
   ],
   [
+    // CONTROL: a seed lost on the way (absorbed short of the bundle, none already held) is a finding.
+    'a salon absorb that fell short of its bundle is not forgiven',
+    [['debug', "[05:08:06.000] [GRAINE] absorbed 2/3 seed(s) (0 already held; endorsements verified: 2 from the tree, 0 from the server's published keys) from c71e1a5b in community d21b475f - salon(s) 03fb2686"]],
+    SALON_SESSION_NARRATION,
+    { clean: false, unmatched: 23 },
+  ],
+  [
+    'a salon absorb of seeds all already held is forgiven',
+    [['debug', '[05:08:06.000] [GRAINE] absorbed 0/3 seed(s) (3 already held) from c71e1a5b in community d21b475f - salon(s) none']],
+    SALON_SESSION_NARRATION,
+    { clean: true, unmatched: 22 },
+  ],
+  [
     // CONTROL: an echo that failed is a finding.
     'a salon echo that failed is not forgiven',
     [['log', '[05:26:22.279] [SALON-ECHO] ab82c4f0… failed']],

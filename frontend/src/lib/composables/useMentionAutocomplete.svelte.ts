@@ -214,11 +214,11 @@ export function useMentionAutocomplete(opts: {
     if (found) searchFailing = false;
     searching = false;
     if (disposed) {
-      Log.d('[mention] a search answer arrived after the picker was destroyed - dropped');
+      Log.d('mention', 'a search answer arrived after the picker was destroyed - dropped');
       return;
     }
     if (req.generation !== generation) {
-      Log.d('[mention] a search answer for an earlier query dropped');
+      Log.d('mention', 'a search answer for an earlier query dropped');
     } else if (req.kind === 'search' && rosterLoaded()) {
       Log.d(
         '[mention] a directory answer arrived after the roster loaded - dropped, the members stay'
@@ -235,11 +235,11 @@ export function useMentionAutocomplete(opts: {
     waiting = null;
     if (!next) return;
     if (next.generation !== generation) {
-      Log.d('[mention] the waiting query was overtaken - not sent');
+      Log.d('mention', 'the waiting query was overtaken - not sent');
       return;
     }
     if (next.kind === 'search' && rosterLoaded()) {
-      Log.d('[mention] the waiting directory query is moot - the roster loaded, not sent');
+      Log.d('mention', 'the waiting directory query is moot - the roster loaded, not sent');
       return;
     }
     Log.d(`[mention] the waiting ${next.kind} query sent (${next.q.length} char(s))`);
@@ -392,7 +392,7 @@ export function useMentionAutocomplete(opts: {
       // A MENTION ENDED WHILE ITS NAMES WERE STILL ON THEIR WAY (review of #3402): on a slow link
       // "@Camille " can be typed before the batch names Camille, and the space found nobody. The
       // names that just landed are a new fact, so the end is undone and the caret read again.
-      Log.d('[mention] roster names landed after a mention ended - reading the caret again');
+      Log.d('mention', 'roster names landed after a mention ended - reading the caret again');
       ended = null;
       const text = opts.getText();
       detectMentionAtCursor(text, readCursor(text));
@@ -458,7 +458,7 @@ export function useMentionAutocomplete(opts: {
       else if (!open && hasSpace(query))
         endMention('no member matches the words typed', 'no-match');
     } else if (query.length > 0) {
-      if (roster) Log.d('[mention] roster not loaded, falling back to the server search');
+      if (roster) Log.d('mention', 'roster not loaded, falling back to the server search');
       // The rows on screen answer an earlier query: hidden until this one's answer, so Enter or Tab
       // can never pick a row that no longer matches what is typed.
       open = false;

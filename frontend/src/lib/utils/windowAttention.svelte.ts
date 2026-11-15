@@ -120,7 +120,7 @@ export function createAttentionSignal(source: AttentionSource): AttentionSignal 
     },
     noteGesture,
     reset() {
-      Log.d('[ATTENTION] reset - this window is idle until its next gesture');
+      Log.d('ATTENTION', 'reset - this window is idle until its next gesture');
       lastGestureAt = null;
     },
     destroy() {

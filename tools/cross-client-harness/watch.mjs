@@ -2916,7 +2916,9 @@ export const SALON_SESSION_NARRATION = [
   /^\[GRAINE\] ADMIT salon grantee [0-9a-f]{8} to [0-9a-f]{8} \(community [0-9a-f]{8}\)$/,
   /^\[JOIN_PUSH\] [0-9a-f]{8}\.\.\. is a key group - no join push to \S+$/,
   /^\[GRAINE\] answered [0-9a-f]{8}…:\S+ with \d+ seed\(s\) in \d+ page\(s\)$/,
-  /^\[GRAINE\] absorbed \d+\/\d+ seed\(s\) \(\d+ already held(?:; endorsements verified: \d+ from the tree, \d+ from the server's published keys)?\) from \S+ in community [0-9a-f]{8} - salon\(s\) .+$/,
+  // ALL ABSORBED OR ALL ALREADY HELD, never a shortfall: \`absorbed 2/3 (0 already held)\` is the shape
+  // of an answer whose seeds were refused (the app's own comment over the line says so).
+  /^\[GRAINE\] absorbed (?:(\d+)\/\1 seed\(s\) \(\d+ already held|0\/(\d+) seed\(s\) \(\2 already held)(?:; endorsements verified: \d+ from the tree, \d+ from the server's published keys)?\) from \S+ in community [0-9a-f]{8} - salon\(s\) .+$/,
   /^\[GRAINE\] drain over - re-reading \d+ salon\(s\) once for the seeds it brought$/,
   /^\[QUEUE\] Welcome for key group [0-9a-f]{8}\.\.\. - not announced to the conversation layer$/,
   /^\[WELCOME\] [0-9a-f]{8}\S* is a KEY-DISTRIBUTION group \(server row\) - installing it as a seed carrier$/,
