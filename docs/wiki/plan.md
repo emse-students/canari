@@ -31,6 +31,7 @@ earliest version, as a checklist.
 - [P1 - blind salon banners: the seed is absent when the push lands](backlog.d/p1-blind-salon-banners-the-failing-branch-is-unnamed.md)
 - [P1 - a backup restore resumed an outbound Graine session at an index it had already used](backlog.d/p1-a-backup-restore-resumed-an-outbound-graine-session-at-a-spent-index.md)
 - [P1 - rows before ratchet: a live drain stores its rows only when its window closes, after a checkpoint may already hold their ratchet advance (raised by the second review of #3321, 2026-11-15)](backlog.d/p1-rows-before-ratchet.md)
+- [P1 - media-service holds the retention durations after the deploy that adds the relay (the boot notice carries them)](backlog.d/p3-media-retention-boot-read-404-through-the-mesh-on-a-first-deploy-of-the-route.md)
 
 **Chantiers, decisions and questions (no severity)**
 

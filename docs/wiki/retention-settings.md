@@ -54,9 +54,17 @@ it did not answer) - so a social-service restart refused every chat file for its
 - **It reads on three events, and on no clock.**
   - **Boot:** `RetentionBootstrap` reads before the routes listen.
   - **Notice:** `POST /api/media/internal/retention-changed`, behind `X-Internal-Secret`. Core-service
-    sends it after an admin moves a duration (`notifyMediaRetentionChanged`). Social-service sends it
-    at its own boot (`RetentionBootNotice`).
+    sends it after an admin moves a duration (`notifyMediaRetentionChanged`), bare.
   - **Demand:** once, when an upload finds nothing held.
+- **And it is HANDED them once, by social-service's boot** (2026-11-15, below). `RetentionBootNotice`
+  reads the two durations from `platform_config` and sends them in the notice's body
+  (`{ chatReelDays, idleFileDays }`, parsed by `handedRetention`: both or neither, a malformed body a
+  `400`). `MediaRetentionHolder.notice` holds handed values **only when it holds nothing**, with no
+  read; once anything is held, a notice with values is a bare notice and a READ decides. So a handed
+  snapshot ends the "nothing held" state and can never replace a value a read produced: it was taken
+  before it travelled, and an admin change committed meanwhile would be overwritten by an older value.
+  The reads keep the ordering below. A social-service that cannot read the columns at its boot sends
+  no notice (ERROR on its side): there is nothing to hand over.
 - **Every read** asks social-service's relay `GET /api/internal/retention` (`InternalRetentionController`),
   which reads `platform_config`. **A notice never joins a read already running** (review of #3554):
   that read may have asked before the admin's `UPDATE` committed, and joining it answered
@@ -101,19 +109,43 @@ it did not answer) - so a social-service restart refused every chat file for its
   before the notice completed can replace it; a shown answer clears a failed resend's alert. A
   `refused` without its status and reason is a failed read, never worded "HTTP 0". Core and the page
   each log a CHANGE of the state (WARN, or a line on the return to `applied`), never each page view.
-- **The social-service boot notice may land before social-service listens** - `onApplicationBootstrap`
-  runs before `listen` - so the read it triggers can fail. State heals it, not a retry: a
-  media-service holding nothing re-reads at its next upload, by then social-service listens; one
-  already holding values keeps them, and they are the same columns.
+- **The social-service boot notice lands before social-service listens** - `onApplicationBootstrap`
+  runs before `listen` - which is why it carries the values rather than asking for a read (below).
 
 **The deploy window - stated, retried, no fallback.** The deploy replaces services in `depends_on`
 order, and social-service depends on media-service, so media-service boots first.
 
-- **On the release that introduced the relay** (this one), the new media-service booted beside the
-  old social-service, which has no relay route. Its boot read failed (ERROR), and conversation uploads
-  answered `503` until the new social-service booted and sent its notice. That window is the time
-  between the two replacements, seconds to a minute or two. The client retried those uploads; none
-  was stamped with a guessed value.
+- **On the release that introduced the relay** (`1.7.0`), the new media-service boots beside the
+  old social-service, which has no relay route. Its boot read fails (ERROR), and conversation uploads
+  answer `503` until the new social-service boots and HANDS it the values. That window is the time
+  between the two replacements, seconds to a minute or two. The client retries those uploads; none
+  is stamped with a guessed value.
+- **Why the notice carries the values (P1 found on dev at the `1.7.0-alpha.1` deploy, 2026-11-15).**
+  The first build's notice said only "read again", and the read goes through the mesh
+  ([cicd](cicd.md#service-to-service-calls-go-through-the-mesh)). While a replica of social-service is
+  replaced, the mesh's target for it is the service's DNS name - both the retiring replica and the
+  booting one - until the new one is HEALTHY and `rotation_take_out` names it alone
+  (`infrastructure/lib/rolling.sh`). The notice is sent from `onApplicationBootstrap`, before `listen`:
+  the new replica refuses the connect (`connect() failed (111)` in the mesh at 17:08:08), the mesh
+  hands it to the next address (`proxy_next_upstream error`), and the retiring replica, which predates
+  the route, answered `404` (17:08:10, `read (notice) still failing`; social:
+  `HTTP 201, refreshed=false`). **The overlap: the notice is proof that the NEW replica is up, the
+  read is answered by whichever replica the mesh's rotation holds, and at that instant the rotation
+  holds the old one.** No upload was tried before the restart that unblocked dev, so the demand read
+  never ran; it would have cost one refused upload per media-service, and an ERROR at every deploy
+  that adds a relay route. Now the proof of availability and the data travel together.
+- **What ends "nothing held", in every order.** *media first, social second* (the release adding the
+  relay): the new social-service's boot hands the values. *Social first, then media restarts*: the
+  boot read reaches a social-service that answers the relay. *Both rolling* (media is replaced first,
+  `depends_on`): the boot read lands on the retiring social replica, which answers the relay on every
+  release after `1.7.0`, and the new one's boot hands the values anyway. *Social rolled back*: a
+  rollback restores the whole release, and a media-service from before `1.7.0` holds no durations; a
+  `1.7.0` media-service beside a social-service from before the relay holds nothing until a
+  social-service that has it boots and hands them - refusing is the designed answer to an unreadable
+  value, never a default. In every order, a read that still fails is retried by the next conversation
+  upload's demand (one `503`), never by a timer
+  ([`retention-settings.rolling-deploy.spec.ts`](../../apps/media-service/src/media/retention-settings.rolling-deploy.spec.ts)
+  reproduces the 404-from-the-old-replica ordering).
 - **On every later release**, the old social-service already answers the relay, so the boot read
   succeeds and the window is zero.
 - The deploy never waits on this read: media-service's health is its liveness. A health gated on the
