@@ -398,7 +398,6 @@ const REVIEWED_GROUPS: [string, string[]][] = [
       '2x IncomingCallActivity.kt|sdk',
       'IncomingShare.kt|ceiling / 1024 / 1024',
       'IncomingShare.kt|waiting.optLong("epoch", 0)',
-      'MainActivity.kt|bounds.upperBound.bottom',
       'canari_ios.mm|(CACurrentMediaTime() - g_keyboardRiseAsked) * 1000.0',
       'canari_ios.mm|(unsigned long)webActivities',
       'canari_ios.mm|[UIApplication sharedApplication].preferredContentSizeCategory',

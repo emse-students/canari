@@ -235,18 +235,18 @@ class MainActivity : TauriActivity() {
         val webView = liveWebView ?: return
         val css = imeCssPx(ime, resources.displayMetrics.density)
         val timing = if (animation != null) "${animation.durationMs} ms" else "no animation"
-        Log.d("MainActivity", "IME inset: $ime px -> page told $css ($timing; $why)")
+        Log.d("MainActivity", "IME inset: $ime px -> page told $css ($timing; $why)")  // log-safe: a CSS pixel count and an animation duration, numbers the shell computed
         val ticket = imeAnnouncements.sent(ime)
         webView.evaluateJavascript(imeAnnouncementScript(css, animation)) { raw ->
             val answer = imeAnswerOf(raw)
             if (!imeAnnouncements.answered(ticket, answer)) {
-                Log.d("MainActivity", "IME inset $ime: answer $raw is stale - the page said it was ready since")
+                Log.d("MainActivity", "IME inset $ime: answer $raw is stale - the page said it was ready since")  // log-safe: raw is the JSON answer of a fixed script, one of three literals or null
                 return@evaluateJavascript
             }
             when (answer) {
                 ImeAnswer.TAKEN -> Unit
                 ImeAnswer.NOT_READY -> Log.d("MainActivity", "IME inset $ime: the page has no keyboard hook yet - announced when it says it is ready")
-                ImeAnswer.REFUSED -> Log.e("MainActivity", "IME inset $ime: the page REFUSED the keyboard (answered $raw) - a broken contract; announced again on the page's next ready signal")
+                ImeAnswer.REFUSED -> Log.e("MainActivity", "IME inset $ime: the page REFUSED the keyboard (answered $raw) - a broken contract; announced again on the page's next ready signal")  // log-safe: raw is the JSON answer of a fixed script, one of three literals or null
             }
         }
     }
@@ -283,7 +283,7 @@ class MainActivity : TauriActivity() {
             if (animation.durationMillis < 0) {
                 Log.d("MainActivity", "IME animation: controlled (no duration, a gesture drives it) - announced without an animation")
             } else {
-                Log.d("MainActivity", "IME animation: ${animation.durationMillis} ms, interpolator ${interpolator?.javaClass?.simpleName ?: "none (linear)"}")
+                Log.d("MainActivity", "IME animation: ${animation.durationMillis} ms, interpolator ${interpolator?.javaClass?.simpleName ?: "none (linear)"}")  // log-safe: a duration and a framework class name
             }
         }
 
