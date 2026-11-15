@@ -39,7 +39,7 @@ export function parseChatMentions(
 /**
  * Which recipient question {@link liveMentionRecipientsSql} answers: `send`, who a line TELLS (the
  * whole rule, under the live's lock, with the per-person window), or `suggest`, who the `@` picker
- * may OFFER (the live's audience and the author's own blocks only).
+ * may OFFER (what a chatter can already see, and the author's own blocks).
  */
 export type LiveMentionQuestion = 'send' | 'suggest';
 
@@ -56,9 +56,16 @@ export type LiveMentionQuestion = 'send' | 'suggest';
  * `suggest` (`LiveChatService.mentionAudience`) asks NOTHING about third parties. Its answer goes back
  * to the caller for ids the caller chose, so every clause it carries is a question anyone who may
  * chat can ask of anyone: a removal, or a block between a stranger and the broadcaster, would be read
- * off it twenty ids at a time (review of #3233). The audience is what the picker exists to narrow,
- * and the author's own blocks are already hidden by the name search it narrows. A person the picker
- * offers and `send` then skips is told nothing, which says nothing either.
+ * off it twenty ids at a time (review of #3233). So THE PICKER OFFERS WHAT A CHATTER CAN ALREADY SEE
+ * (charter, principle 1), in ONE statement with no branch on who the candidate is:
+ * - the part of the audience read from profile facts - an association's reach, the spaces a
+ *   member's live shares (`liveVisibleToUserSql` with `followers: false`): who FOLLOWS the
+ *   broadcaster is never in the answer;
+ * - whoever has a line in this live's chat that still stands: every chatter reads its author.
+ * A follower from outside the broadcaster's spaces is therefore offered only once they have
+ * written; `send` still tells them when mentioned, and that answer never returns to the caller.
+ * The author's own blocks are already hidden by the name search the picker narrows. A person the
+ * picker offers and `send` then skips is told nothing, which says nothing either.
  *
  * Parameters: `$1` the author, `$2` the live, `$3` the candidate ids (text[]), and for `send` `$4` the
  * window in ms.
@@ -77,11 +84,18 @@ export function liveMentionRecipientsSql(question: LiveMentionQuestion = 'send')
                          AND prior."mentionedUserIds" @> ARRAY[cand.id]
                          AND prior."createdAt" + $4 * interval '1 millisecond' > now())`
       : '';
+  const mayBeNamed =
+    question === 'send'
+      ? liveVisibleToUserSql('m_live', 'cand_user')
+      : `(${liveVisibleToUserSql('m_live', 'cand_user', { followers: false })}
+        OR EXISTS (SELECT 1 FROM live_chat_messages spoke
+                    WHERE spoke."liveId" = $2 AND spoke."authorId" = cand.id
+                      AND spoke."hiddenAt" IS NULL))`;
   return `SELECT DISTINCT cand.id FROM unnest($3::text[]) AS cand(id)
     JOIN users cand_user ON cand_user.id = cand.id
     JOIN lives m_live ON m_live.id = $2
     WHERE cand.id <> $1
-      AND ${liveVisibleToUserSql('m_live', 'cand_user')}
+      AND ${mayBeNamed}
       AND NOT EXISTS (SELECT 1 FROM user_blocks b
                        WHERE (b."blockerId" = $1 AND b."blockedId" = cand.id)
                           OR (b."blockerId" = cand.id AND b."blockedId" = $1))${sendOnly}`;

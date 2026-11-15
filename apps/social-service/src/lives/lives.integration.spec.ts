@@ -3606,6 +3606,57 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         expect(await chat.mentionAudience(BOB, live.id, [CAROL])).toEqual([CAROL]);
       });
 
+      it("offers what a chatter can already see on a member's live: who shares its spaces, who has written - never who follows", async () => {
+        // Two accounts of another campus, sharing no space with the broadcaster: one follows her
+        // (accepted) and so watches and may be told; the other does not. Nobody else may tell them
+        // apart.
+        const STRANGER = '9'.repeat(64);
+        await q(
+          `INSERT INTO users (id, campus, cursus) VALUES ($1, ${GA}, '[{"formation":"ISMIN"}]')`,
+          [STRANGER]
+        );
+        await q(
+          `INSERT INTO user_follows ("followerUserId", "followedUserId", status) VALUES ($1, $2, 'accepted')`,
+          [FRANK, ALICE]
+        );
+        try {
+          const live = await start();
+          await lives.mayWatch(FRANK, live.id);
+          // A probe of twenty chosen ids: the follower among nineteen that are not, by an account
+          // of the broadcaster's space, then by the follower's own neighbour in the audience.
+          const filler = Array.from({ length: 17 }, (_, i) => i.toString(16).padStart(64, '7'));
+          const probe = [FRANK, STRANGER, CAROL, ...filler];
+          expect(probe).toHaveLength(20);
+          for (const asker of [BOB, DAVE]) {
+            expect(await chat.mentionAudience(asker, live.id, probe)).toEqual([CAROL]);
+          }
+          // The follower alone and the stranger alone answer the same: nothing.
+          expect(await chat.mentionAudience(BOB, live.id, [FRANK])).toEqual(
+            await chat.mentionAudience(BOB, live.id, [STRANGER])
+          );
+          expect(await chat.mentionAudience(BOB, live.id, [FRANK])).toEqual([]);
+          // A line still TELLS the follower: that answer never returns to its author.
+          await sayTo(BOB, live.id, [FRANK, STRANGER]);
+          expect(mentionNotices().map((n) => n.recipientIds)).toEqual([[FRANK]]);
+          expect(await chat.mentionAudience(BOB, live.id, [FRANK, STRANGER])).toEqual([]);
+          // Once the follower has written, every chatter reads the author of that line: offered.
+          await say(FRANK, live.id, 'hello from Gardanne');
+          expect(await chat.mentionAudience(BOB, live.id, probe)).toEqual(
+            expect.arrayContaining([FRANK, CAROL])
+          );
+          expect(await chat.mentionAudience(BOB, live.id, probe)).toHaveLength(2);
+          // ... and no longer once that line is hidden: nothing of theirs stands in the chat.
+          await q(
+            `UPDATE live_chat_messages SET sealed = NULL, "hiddenAt" = now() WHERE "liveId" = $1 AND "authorId" = $2`,
+            [live.id, FRANK]
+          );
+          expect(await chat.mentionAudience(BOB, live.id, probe)).toEqual([CAROL]);
+        } finally {
+          await q(`DELETE FROM user_follows WHERE "followerUserId" = $1`, [FRANK]);
+          await q(`DELETE FROM users WHERE id = $1`, [STRANGER]);
+        }
+      });
+
       it('the suggestion says nothing about a third party: a removal, a block with the broadcaster', async () => {
         const live = await start();
         // DAVE removed by the broadcaster, CAROL and the broadcaster blocked: facts between OTHER

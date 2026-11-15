@@ -67,7 +67,11 @@ describe('the audience of a mention', () => {
     expect(send).toContain('b2."blockerId" = m_live."broadcasterId"');
     expect(send).toContain('"mentionedUserIds"');
     expect(send).toContain('$4');
-    // The suggestion is an oracle for ids the caller picks: no third party's removal or block.
+    // The suggestion is an oracle for ids the caller picks: no third party's removal or block,
+    // and nothing read from who follows whom - only `send`, whose answer stays here, reads that.
+    expect(send).toContain('user_follows');
+    expect(suggest).not.toContain('user_follows');
+    expect(suggest).toContain('spoke."hiddenAt" IS NULL');
     expect(suggest).not.toContain('live_removed_viewers');
     expect(suggest).not.toContain('b2.');
     expect(suggest).not.toContain('"mentionedUserIds"');
