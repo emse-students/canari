@@ -188,7 +188,7 @@
 </script>
 
 <section
-  class="pointer-events-auto relative flex max-h-[38vh] w-full max-w-md flex-col gap-2"
+  class="pointer-events-auto relative flex max-h-[calc((100vh_-_var(--keyboard-occlusion-bottom,0px))_*_0.38)] w-full max-w-md flex-col gap-2"
   aria-label={m.live_chat_label()}
   data-live-chat
 >

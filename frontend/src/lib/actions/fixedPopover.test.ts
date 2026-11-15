@@ -573,4 +573,29 @@ describe('an anchor with no box', () => {
     teardown();
     platform.os = 'linux';
   });
+
+  it("follows the Android app's overlay keyboard, which fires no viewport event at all (F4)", () => {
+    platform.os = 'android';
+    vi.stubGlobal('innerHeight', 945);
+    const vv = Object.assign(new EventTarget(), { height: 945, offsetTop: 0, scale: 1 });
+    vi.stubGlobal('visualViewport', vv);
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => frames.push(cb));
+    vi.stubGlobal('cancelAnimationFrame', () => {});
+    const teardown = initKeyboardViewport();
+    const panel = panelNode();
+    const unbind = bindFixedPopover(panel, { anchor: () => anchorWith(300, 40), dockBottom: true });
+    expect(panel.style.top).toBe(`${945 - 8 - 360}px`);
+    // The shell announces the keyboard; the WebView keeps 945, nothing fires on `window`.
+    const take = (window as unknown as { canariImeTarget: (v: unknown) => boolean })
+      .canariImeTarget;
+    expect(take({ px: 357 })).toBe(true);
+    // Not inside the announcement - the placement reads layout - but on the next frame.
+    expect(panel.style.top).toBe(`${945 - 8 - 360}px`);
+    for (const frame of frames.splice(0)) frame(0);
+    expect(panel.style.top).toBe(`${945 - 357 - 8 - 360}px`);
+    unbind();
+    teardown();
+    platform.os = 'linux';
+  });
 });

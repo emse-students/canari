@@ -23,6 +23,35 @@ const mainActivity = readFileSync(
 );
 const manifest = readFileSync(resolve(ANDROID_MAIN, 'AndroidManifest.xml'), 'utf8');
 
+/**
+ * The body of the brace block opened by the first `{` at or after `opener` in `source`, its braces
+ * balanced - so an assertion about a listener reads THAT listener and never runs on into a later
+ * block (a lazy match up to some `insets }` could end in any block below it). Null when `opener` is
+ * absent or its block never closes. Kotlin string templates (`${...}`) balance too.
+ */
+function blockBody(source: string, opener: string): string | null {
+  const at = source.indexOf(opener);
+  if (at < 0) return null;
+  const open = source.indexOf('{', at);
+  if (open < 0) return null;
+  let depth = 0;
+  for (let i = open; i < source.length; i++) {
+    if (source[i] === '{') depth++;
+    else if (source[i] === '}' && --depth === 0) return source.slice(open + 1, i);
+  }
+  return null;
+}
+
+/** The guard this replaced, kept to show what it let through (second review of #3556). */
+const OLD_LAZY_GUARD =
+  /setOnApplyWindowInsetsListener\(content\) \{ _, insets ->[\s\S]*?\n\s*insets\n\s*\}/;
+
+/** Whether the insets listener of `source` hands back the `insets` it was given, untouched. */
+function listenerReturnsItsInsets(source: string): boolean {
+  const body = blockBody(source, 'setOnApplyWindowInsetsListener(content)');
+  return body !== null && /\n\s*insets\s*$/.test(body) && !body.includes('Builder(insets)');
+}
+
 describe('Android window layout (anti-regression)', () => {
   it('lets the page set the bar icon appearance, because enableEdgeToEdge() only decides once', () => {
     // `uiMode` is in configChanges, so a live OS theme switch never recreates the activity and the
@@ -93,16 +122,36 @@ describe('Android window layout (anti-regression)', () => {
     expect(mainActivity).toContain('WindowInsetsCompat.Type.ime()');
   });
 
-  it('withdraws the navigation-bar inset while the keyboard is up, and only then', () => {
-    // The web layer reserves a strip for the navigation bar through env(safe-area-inset-bottom).
-    // Correct when the bar is at the bottom of the app; wrong once the keyboard is, because the
-    // bar is then behind it - the strip becomes an empty band the page can be scrolled by.
-    // The early return is what keeps the strip when the keyboard is down.
-    expect(mainActivity).toMatch(/if \(ime == 0\) return@setOnApplyWindowInsetsListener insets/);
-    expect(mainActivity).toContain('WindowInsetsCompat.Builder(insets)');
-    expect(mainActivity).toMatch(/Insets\.of\(bars\.left, bars\.top, bars\.right, 0\)/);
-    // The status bar is NOT withdrawn: it is still on screen with the keyboard open.
-    expect(mainActivity).not.toContain('WindowInsetsCompat.Type.statusBars()');
+  it('passes the insets on untouched - the PAGE drops the navigation-bar strip under an overlay keyboard', () => {
+    // The navigation bar is behind the keyboard while it is up, so its env(safe-area-inset-bottom)
+    // strip must not be reserved then. The shell used to withdraw it (`Insets.of(bars.left,
+    // bars.top, bars.right, 0)`), but Chromium applies a new env() a frame or more after the
+    // keyboard's announcement, so the composer's floor stepped 12 px a frame late and the thread's
+    // bottom was written twice (#3556, D2, measured on the Mi 9T). The page now pins
+    // --safe-area-inset-bottom to 0 in the announcement's own task (keyboardSafeAreaBottomOverride),
+    // and the shell must not withdraw anything, or the two would fight again.
+    expect(listenerReturnsItsInsets(mainActivity)).toBe(true);
+    expect(mainActivity).not.toContain('WindowInsetsCompat.Builder(insets)');
+    expect(mainActivity).not.toMatch(/Insets\.of\(bars\.left, bars\.top, bars\.right, 0\)/);
+  });
+
+  it("the listener guard reads the listener's own block, never a later one", () => {
+    // A listener that withdraws the bar, followed by an unrelated block ending in `insets`: the lazy
+    // match used to run on to that second block and pass.
+    const withdrawn = [
+      'ViewCompat.setOnApplyWindowInsetsListener(content) { _, insets ->',
+      '    val ime = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom',
+      '    insets.withdrawn()',
+      '}',
+      'fun later(insets: WindowInsetsCompat): WindowInsetsCompat {',
+      '    log("${insets}")',
+      '    insets',
+      '  }',
+    ].join('\n');
+    expect(OLD_LAZY_GUARD.test(withdrawn)).toBe(true);
+    expect(listenerReturnsItsInsets(withdrawn)).toBe(false);
+    const untouched = withdrawn.replace('    insets.withdrawn()', '    insets');
+    expect(listenerReturnsItsInsets(untouched)).toBe(true);
   });
 
   it('starts a phone in portrait and lets a tablet rotate', () => {

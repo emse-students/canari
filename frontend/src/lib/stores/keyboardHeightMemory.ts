@@ -16,10 +16,19 @@ const STORAGE_KEY = 'canari.keyboardHeight.v1';
 
 export type Orientation = 'portrait' | 'landscape';
 
-/** The orientation of the current window, from its shape. */
+/** The orientation of a window of this size, from its shape. */
+export function orientationOf(width: number, height: number): Orientation {
+  return width > height ? 'landscape' : 'portrait';
+}
+
+/**
+ * The orientation of the current window, from its shape. Reads `innerWidth` / `innerHeight`, which
+ * on Android force a style and layout pass when anything is dirty: a caller that has just written
+ * styles passes the size it read before writing to {@link orientationOf} instead.
+ */
 export function currentOrientation(): Orientation {
   if (typeof window === 'undefined') return 'portrait';
-  return window.innerWidth > window.innerHeight ? 'landscape' : 'portrait';
+  return orientationOf(window.innerWidth, window.innerHeight);
 }
 
 let memory: Partial<Record<Orientation, number>> | null = null;

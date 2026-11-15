@@ -300,7 +300,7 @@ static void CanariKeyboardLayoutSettled(WKWebView *webView) {
 /// Calls `then` once WebKit has put on screen every update pending NOW - the page's reaction to a
 /// call that has returned, or to a resize that was just set: `takeSnapshotWithConfiguration:` with
 /// `afterScreenUpdates`, which WebKit takes "after incorporating any pending screen updates", on a
-/// 1 pt rect whose image is dropped. The public form of Android's `postVisualStateCallback`;
+/// 1 pt rect whose image is dropped (the public form of a WebView visual-state callback);
 /// `_doAfterNextPresentationUpdate:` is the private one and is never used in a store build. `then`
 /// receives the proof's own duration and its error, if any.
 static void CanariAfterScreenUpdates(WKWebView *webView, void (^then)(double proofMs, NSError *error)) {
@@ -349,8 +349,9 @@ static void CanariEndPendingRise(NSString *why) {
         why);
 }
 
-/// A KEYBOARD RISE, IN THE ORDER THAT SHOWS NO TRAILING FRAME - the iOS half of the hand-off Android
-/// takes in `MainActivity.handOffIme` (keyboard-and-send-motion.md), on the same page contract.
+/// A KEYBOARD RISE, IN THE ORDER THAT SHOWS NO TRAILING FRAME, on the page contract Android also
+/// announces to (`window.canariImeTarget`; Android no longer resizes its WebView at all since #3556 -
+/// keyboard-and-send-motion.md).
 ///
 /// 1. The page is told the keyboard's height (`window.canariImeTarget`, `keyboardViewport.svelte.ts`
 ///    + `imeTarget.ts`; a WKWebView CSS px is a point) and lays itself out for it, synchronously,
