@@ -17,7 +17,10 @@ import {
   ANONYMOUS_NOTIFICATION_ACTOR_ID,
   PostNotificationsService,
 } from './post-notifications.service';
-import { createPostNotificationsTable } from './post-notifications.it-schema';
+import {
+  createBellTargetTables,
+  createPostNotificationsTable,
+} from './post-notifications.it-schema';
 import {
   MIN_APP_VERSION_DATA_KEY,
   POST_ACTIVITY_QUIET_MIN_CLIENT_VERSION,
@@ -113,6 +116,8 @@ maybe('one live notification per post (owner, 2026-11-14) against PostgreSQL', (
     ]) {
       await q(readFileSync(join(__dirname, '..', 'migrations', file), 'utf8'));
     }
+    // The bell's one statement reads what its target gates name (`bell-row-gates.ts`).
+    await createBellTargetTables((sql) => q(sql));
     pool = new Pool({ connectionString: URL, max: 16, options: `-c search_path=${schema},public` });
   });
 
