@@ -256,6 +256,26 @@ export function legacyAgendaLinkShape(sel: SpaceSelection): LegacyAgendaLinkShap
 }
 
 /**
+ * HOW A SUBSCRIPTION ROW NARROWS ITS HOLDER'S AGENDA (owner, 2026-11-15: a staff account's
+ * subscription shows exactly what its in-app agenda shows). A link serves its holder's own agenda;
+ * a row naming a space (a campus AND a formation) or an association keeps the events of that
+ * selection. A row naming a CAMPUS ALONE - the one link an account with no space can ask, the staff
+ * link - narrows NOTHING: such a holder reads through memberships and nominative grants, which no
+ * campus bounds, so a campus filter only took away events the app shows them.
+ */
+export function subscriptionNarrowing(row: {
+  campus: string | null;
+  formation: string | null;
+  associationId: string | null;
+}): SpaceSelection {
+  const selection = { campus: row.campus, formation: row.formation } as SpaceSelection;
+  if (row.associationId === null && legacyAgendaLinkShape(selection) === 'campus') {
+    return { campus: null, formation: null };
+  }
+  return selection;
+}
+
+/**
  * May a reader whose spaces are `spaces` be handed a signature for `sel`? Only one of
  * their spaces, a campus AND a formation (user, 2026-10-07). An association adds
  * no condition of its own - membership does not matter (user, 2026-10-06) and its page is public;

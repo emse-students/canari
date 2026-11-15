@@ -340,6 +340,58 @@ maybe('the agenda subscription link against PostgreSQL (migration 173)', () => {
     expect(await servedLegacy({ campus: SE, formation: 'ICM', associationId: N })).toEqual([EN]);
   });
 
+  it('(f) a staff holder is served EXACTLY its in-app agenda: its grants and memberships, and nothing of its campus otherwise', async () => {
+    await q(`INSERT INTO users (id, campus, cursus) VALUES ('st', $1, '[]')`, [SE]);
+    const inApp = async () =>
+      (
+        (await service.listAggregatedCalendarFeed(undefined, undefined, undefined, {
+          viewer: { userId: 'st' },
+        })) as { id: string }[]
+      )
+        .map((e) => e.id)
+        .sort();
+    const grant = (campus: string) =>
+      q(
+        `INSERT INTO read_grants (user_id, campus, formation, granted_by) VALUES ('st', $1, 'ICM', 'admin')`,
+        [campus]
+      );
+    // The one link a staff account can ask: its own campus, no formation.
+    const { token } = await controller.subscribeCalendarFeed('st', { campus: SE });
+    try {
+      // No grant, no membership: nothing on either surface - the School and the associations of
+      // its campus address spaces, and staff have none.
+      expect(await inApp()).toEqual([]);
+      expect(await served(token)).toEqual([]);
+
+      // One grant on its own campus: exactly that grant's events, on both.
+      await grant(SE);
+      expect(await inApp()).toEqual([EI, EN, EW].sort());
+      expect(await served(token)).toEqual(await inApp());
+
+      // One grant on the OTHER campus: the app shows it, and so does the link - the link's campus
+      // is not a filter on what a grant opens.
+      await q(`DELETE FROM read_grants WHERE user_id = 'st'`);
+      await grant(GA);
+      expect(await inApp()).toEqual([EG, EW].sort());
+      expect(await served(token)).toEqual(await inApp());
+
+      // A membership on the other campus, alone: the same.
+      await q(`DELETE FROM read_grants WHERE user_id = 'st'`);
+      await q(
+        `INSERT INTO association_members ("associationId", "userId", role, permissions)
+               VALUES ($1, 'st', 'member', 0)`,
+        [G]
+      );
+      expect(await inApp()).toEqual([EG]);
+      expect(await served(token)).toEqual([EG]);
+    } finally {
+      await q(`DELETE FROM read_grants WHERE user_id = 'st'`);
+      await q(`DELETE FROM association_members WHERE "userId" = 'st'`);
+      await controller.revokeCalendarSubscriptions('st');
+      await q(`DELETE FROM users WHERE id = 'st'`);
+    }
+  });
+
   it('(e) the erasure deletes the holder rows, and the token then answers 403', async () => {
     const { token } = await controller.subscribeCalendarFeed('si', {
       campus: SE,

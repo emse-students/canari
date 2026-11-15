@@ -19,14 +19,13 @@ through its event's card). What is left, each a defect to fix or a decision alre
   feeds `PricingFactsService.fetchProfile`, and nothing in `forms/` or `pricing/` reads
   `users.cursus`. Same leftover: the directory's `formation` filter and `GET
   forms/criteria/formations` see the first cursus only.
-- **Staff in the app.** A staff account (a campus, an empty cursus) has no space: the in-app agenda
-  shows it memberships and read grants only, while the signed subscription gives its whole campus
-  (`campusWideReaderCampus` is called by the signature alone); the shop, the partnerships and the
-  association directory are empty for it. NOT opened by campus (owner, 2026-11-14): the door is a
+- **Staff in the app.** A staff account (a campus, an empty cursus) has no space: the agenda shows
+  it memberships and read grants only, in the app and through its subscription link alike
+  ([owner, 2026-11-15](../profiles-and-access.md#a-staff-accounts-subscription-shows-its-in-app-agenda-owner-2026-11-15));
+  the shop, the partnerships and the association directory are empty for it. NOT opened by campus (owner, 2026-11-14): the door is a
   nominative read grant, which now opens the directory, the shop and the partnerships of its cell
   beside the posts and the agenda
   ([as built](../profiles-and-access.md#a-grant-opens-everything-of-its-cell-owner-2026-11-14)).
-  What is left of this line: the in-app agenda and the signed subscription disagree for staff.
 - **The campus and formation admin (G5, WP-D1b)** is not built. Adding a formation or a campus today
   means changing together: `SPACE_FORMATIONS` / `SPACE_CAMPUSES`, the CHECK constraints of
   migrations 071 and 078, `FORMATIONS` / `CAMPUSES` in core-service and the frontend, the enrolment
