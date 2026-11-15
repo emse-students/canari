@@ -154,11 +154,10 @@
   const isKeyboardOpen = $derived(keyboardViewport.isOpen);
 
   beforeNavigate(({ from, to, shallow, type }) => {
-    // A SHALLOW navigation (SvelteKit 3 runs the lifecycle hooks for them too) is a tab or query
-    // change on the same page: not a page the hook is about.
-    if (shallow) return;
-    // The entry being left keeps its offset for a Back to it (`lib/navigation/navigationMemory.ts`).
+    // The entry being left keeps its offset for a Back to it (`lib/navigation/navigationMemory.ts`,
+    // which ignores a shallow navigation of any type itself).
     onLeavingEntry({ type, shallow, from, to }, pageScrollWrap?.scrollTop ?? 0);
+    if (shallow && type === 'goto') return;
     // A membership probe that failed is owed one retry on the next navigation (never a timer).
     void retryFailedMyAssociationsProbe();
     drainHistoryOverlayStack();
@@ -714,11 +713,10 @@
    */
   afterNavigate((nav) => {
     const { shallow, type } = nav;
-    // A SHALLOW navigation (SvelteKit 3 runs the lifecycle hooks for them too) is a tab or query
-    // change on the same page: not a page the hook is about.
-    if (shallow) return;
-    // The entry remembers where it came from (Back arrow) and where it was left (offset).
+    // The entry remembers where it came from (Back arrow) and where it was left (offset); the hook
+    // ignores a shallow navigation of any type itself.
     onArrivedAtEntry(nav, pageScrollWrap);
+    if (shallow && type === 'goto') return;
     if (!swipeEnterClass || !pageScrollWrap) return;
     const cls = swipeEnterClass;
     const wrap = pageScrollWrap;

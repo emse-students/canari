@@ -24,8 +24,11 @@ vi.mock('$lib/utils/historyOverlayStack', () => ({
 }));
 
 import { handleAppLinkClick } from '$lib/utils/openExternal';
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 import {
   BACK_LINK_ATTRIBUTE,
+  ONE_SHOT_FORM_ROUTES,
   backDecision,
   backLinkTaken,
   recordArrival,
@@ -116,24 +119,66 @@ describe('backDecision(current, from, up) - the table of shapes', () => {
       '/associations',
       'up',
     ],
-    [
-      'list created from the association form (another section)',
-      '/lists/new-list',
-      '/associations/new',
-      '/lists',
-      'up',
-    ],
-    ['page reached from a creation form', '/forms/abc', '/forms/create', '/forms', 'up'],
-    [
-      'page reached from an edit form of another section',
-      '/lists/x',
-      '/associations/x/edit/profile',
-      '/lists',
-      'up',
-    ],
   ];
   it.each(cases)('%s', (_name, current, from, up, expected) => {
     expect(backDecision(current, from, up)).toBe(expected);
+  });
+});
+
+describe('one-shot forms are declared by route id, never read off the URL (review #2 of #3648)', () => {
+  it.each([
+    ['/lists/new-list', '/associations/new', '/associations/new', '/lists'],
+    ['/forms/abc', '/forms/create', '/forms/create', '/forms'],
+    ['/associations/x', '/institutions/new', '/institutions/new', '/associations'],
+  ])('a form (%s from %s) is not a destination', (current, from, id, up) => {
+    expect(backDecision(current, from, up, id)).toBe('up');
+  });
+
+  it('a durable edit hub IS a destination, whatever its URL says', () => {
+    expect(
+      backDecision(
+        '/posts/9',
+        '/associations/bde/edit/members',
+        '/posts',
+        '/associations/[slug]/edit/[[section]]'
+      )
+    ).toBe('history');
+    expect(
+      backDecision('/posts/9', '/lists/a/edit', '/posts', '/lists/[slug]/edit/[[section]]')
+    ).toBe('history');
+  });
+
+  it('a slug named new, edit or create is not a form', () => {
+    expect(
+      backDecision('/events/1', '/associations/new', '/calendar', '/associations/[slug]')
+    ).toBe('history');
+    expect(
+      backDecision('/events/1', '/associations/edit', '/calendar', '/associations/[slug]')
+    ).toBe('history');
+  });
+
+  it('every declared id is a route directory that exists', () => {
+    for (const id of ONE_SHOT_FORM_ROUTES) {
+      expect(existsSync(resolve(__dirname, '../../routes', `.${id}`)), id).toBe(true);
+    }
+  });
+
+  it('the route id travels from the navigation to the arrow decision', () => {
+    history.replaceState({ [HISTORY_METADATA_KEY]: { navigationIndex: 1 } }, '');
+    route.url = new URL('http://x/associations/new');
+    recordArrival({ type: 'enter', from: null, to: { url: route.url } });
+    history.replaceState({ [HISTORY_METADATA_KEY]: { navigationIndex: 2 } }, '');
+    route.url = new URL('http://x/lists/mine');
+    recordArrival({
+      type: 'goto',
+      from: { url: new URL('http://x/associations/new'), route: { id: '/associations/new' } },
+      to: { url: route.url },
+    });
+    expect(memoryOf(2)?.fromRouteId).toBe('/associations/new');
+    const back = vi.spyOn(history, 'back').mockImplementation(() => {});
+    document.body.innerHTML = `<a href="/lists" ${BACK_LINK_ATTRIBUTE}>x</a>`;
+    expect(backLinkTaken(document.querySelector('a')!)).toBe(false);
+    expect(back).not.toHaveBeenCalled();
   });
 });
 

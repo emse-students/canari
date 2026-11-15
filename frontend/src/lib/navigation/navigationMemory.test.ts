@@ -116,6 +116,15 @@ describe('the layout calls these hooks and nothing else of the memory', () => {
     const layout = readFileSync(resolve(__dirname, '../../routes/+layout.svelte'), 'utf8');
     expect(layout).toContain('onLeavingEntry({ type, shallow, from, to }');
     expect(layout).toContain('onArrivedAtEntry(nav, pageScrollWrap)');
-    expect(layout).not.toContain("shallow && type === 'goto'");
+    // The memory hooks run for every navigation (they skip shallow ones themselves), and the old
+    // shallow-goto early return still guards the overlay drain and the rest, so a shallow POPSTATE
+    // keeps draining the overlay stack as before.
+    const before = layout.slice(layout.indexOf('beforeNavigate(('));
+    expect(before.indexOf('onLeavingEntry(')).toBeLessThan(
+      before.indexOf("if (shallow && type === 'goto') return;")
+    );
+    expect(before.indexOf("if (shallow && type === 'goto') return;")).toBeLessThan(
+      before.indexOf('drainHistoryOverlayStack()')
+    );
   });
 });

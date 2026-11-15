@@ -15,7 +15,7 @@ import { PAGE_SCROLLER_SELECTOR } from './scrollToTop';
  *
  * A feed draws after the page is on screen, so the offset may not exist yet, and a skeleton is as tall
  * as the cards it stands for. The restore therefore applies the offset only once the box is tall
- * enough AND shows no placeholder (the app's one skeleton convention is `animate-pulse`), and it
+ * enough AND shows no placeholder (a list skeleton declares itself with `data-loading-skeleton`), and it
  * ENDS at the first of, all events and none a clock: the offset applied; the first change of the
  * page after which no placeholder is left AND two frames pass with no further change (it has
  * settled: applied, clamped by the browser when the page came back shorter); ANY scroll event while it waits (it never scrolls the box before it
@@ -45,9 +45,16 @@ export function cancelRestore(): void {
   stopRestore = null;
 }
 
-/** Whether the box still shows a loading placeholder. */
+/**
+ * The marker a LIST skeleton carries (`data-loading-skeleton`): an explicit declaration by the page
+ * that draws it, because `animate-pulse` and `aria-busy` are also worn by things that are never gone
+ * (a live dot that pulses for ever, a per-image loader stuck on a failed image, a busy button).
+ */
+export const LOADING_SKELETON_ATTRIBUTE = 'data-loading-skeleton';
+
+/** Whether the box still shows a list skeleton. */
 function placeholderShown(scroller: HTMLElement): boolean {
-  return scroller.querySelector('.animate-pulse, [aria-busy="true"]') !== null;
+  return scroller.querySelector(`[${LOADING_SKELETON_ATTRIBUTE}]`) !== null;
 }
 
 /**

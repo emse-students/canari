@@ -24,6 +24,8 @@ export const HISTORY_METADATA_KEY = 'sveltekit:metadata';
 export interface EntryMemory {
   /** The page (path and query) the reader left to reach this entry by a link or a goto. */
   from?: string;
+  /** SvelteKit's route id of that page, which decides whether it may be a destination. */
+  fromRouteId?: string;
   /** The offset of the page scroller when the entry was last left. */
   top?: number;
 }

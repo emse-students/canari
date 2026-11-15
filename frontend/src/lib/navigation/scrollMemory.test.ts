@@ -7,9 +7,17 @@
  * placeholders to leave, and that always ends - applied, settled shorter, scrolled by the reader, or
  * cancelled by the next navigation - with no clock anywhere.
  */
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { resetEntryMemory } from './historyEntry';
-import { cancelRestore, recallScroll, rememberLeaving, restoreOnReturn } from './scrollMemory';
+import {
+  LOADING_SKELETON_ATTRIBUTE,
+  cancelRestore,
+  recallScroll,
+  rememberLeaving,
+  restoreOnReturn,
+} from './scrollMemory';
 
 /** A scroller whose scrollable height the test controls. */
 function scroller(height: { scroll: number }) {
@@ -83,12 +91,34 @@ describe('restoreOnReturn', () => {
   it('does NOT trust a tall skeleton: it waits until the placeholders are gone', async () => {
     rememberLeaving(1, 1200);
     const el = scroller({ scroll: 5000 });
-    el.innerHTML = '<div class="animate-pulse"></div>';
+    el.innerHTML = '<div data-loading-skeleton class="animate-pulse"></div>';
     restoreOnReturn(1, el);
     expect(el.scrollTop).toBe(0);
     el.innerHTML = '<article>cards</article>';
     await flush();
     expect(el.scrollTop).toBe(1200);
+  });
+
+  it('is NOT held by a live card, a stuck image loader or a busy button (review #2 of #3648)', () => {
+    rememberLeaving(1, 1200);
+    const el = scroller({ scroll: 5000 });
+    el.innerHTML =
+      '<article><span class="animate-pulse"></span><img aria-busy="true"><button aria-busy="true"></button></article>';
+    expect(restoreOnReturn(1, el)).toBe(true);
+    expect(el.scrollTop).toBe(1200);
+  });
+
+  it('every list skeleton of the app declares the marker', () => {
+    const read = (f: string) => readFileSync(resolve(__dirname, '../../routes', f), 'utf8');
+    for (const f of [
+      'posts/+page.svelte',
+      'notifications/+page.svelte',
+      'directory/+page.svelte',
+      'admin/moderation/+page.svelte',
+      'posts/[postId]/+page.svelte',
+    ]) {
+      expect(read(f), f).toContain(LOADING_SKELETON_ATTRIBUTE);
+    }
   });
 
   it('waits for the content to grow, then applies', () => {

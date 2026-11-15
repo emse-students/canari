@@ -36,30 +36,41 @@ function bare(path: string): string {
 export type BackDecision = 'history' | 'up';
 
 /**
- * A page that is gone once it has done its job: a creation or edit form. A Back to it would reopen a
- * form whose submission just produced the page the reader is on (review of #3648: a list created at
- * `/associations/new` lands on `/lists/<slug>`, another section, so `from` is the filled form).
- * The origin is refused as a destination, and the arrow follows its structural link.
+ * THE ONE-SHOT FORMS: routes that are gone once they have done their job, declared by SvelteKit
+ * `route.id` (never by looking at the URL). A Back to one would reopen a form whose submission just
+ * produced the page the reader is on (review of #3648: a list created at `/associations/new` lands on
+ * `/lists/<slug>`, another section, so `from` is the filled form). Such an origin is refused as a
+ * destination and the arrow follows its structural link.
+ *
+ * Only CREATION forms are listed. The edit routes are durable pages a reader returns to
+ * (`/associations/[slug]/edit/[[section]]` and `/lists/[slug]/edit/[[section]]` are the management
+ * hubs). The composer of a post is an overlay on `/posts`, not a route, so post creation never
+ * enters history and has nothing to declare. A new creation route is added HERE;
+ * `backToOrigin.test.ts` fails on an id that no route directory carries.
  */
-const TRANSIENT_SEGMENTS = new Set(['create', 'new', 'edit']);
-
-function isTransient(path: string): boolean {
-  return bare(path)
-    .split('/')
-    .some((segment) => TRANSIENT_SEGMENTS.has(segment));
-}
+export const ONE_SHOT_FORM_ROUTES: readonly string[] = [
+  '/associations/new',
+  '/institutions/new',
+  '/lists/new',
+  '/forms/create',
+];
 
 /**
  * Where the arrow of the page at `current` goes, given the page it was reached from (`from`, absent
  * on a cold open, a shared link, a reload or an entry a replace overwrote) and its structural parent
- * `up`. `history`: the previous entry IS a place the arrow may lead to. `up`: follow the link.
+ * `up`; `fromRouteId` is the SvelteKit route id of `from`. `history`: the previous entry IS a place the arrow may lead to. `up`: follow the link.
  */
-export function backDecision(current: string, from: string | undefined, up: string): BackDecision {
+export function backDecision(
+  current: string,
+  from: string | undefined,
+  up: string,
+  fromRouteId?: string | null
+): BackDecision {
   if (!from) return 'up';
   const fromPath = bare(from);
   if (fromPath === bare(current)) return 'up';
   if (fromPath === bare(up)) return 'history';
-  if (isTransient(fromPath)) return 'up';
+  if (fromRouteId && ONE_SHOT_FORM_ROUTES.includes(fromRouteId)) return 'up';
   return sectionOf(fromPath) !== sectionOf(current) ? 'history' : 'up';
 }
 
@@ -72,7 +83,7 @@ export function backDecision(current: string, from: string | undefined, up: stri
 export function recordArrival(nav: {
   type: string;
   shallow?: boolean;
-  from: { url: URL } | null;
+  from: { url: URL; route?: { id: string | null } } | null;
   to: { url: URL } | null;
 }): void {
   if (nav.shallow) return;
@@ -92,7 +103,9 @@ export function recordArrival(nav: {
   const from = nav.from.url.pathname + nav.from.url.search;
   const to = nav.to.url.pathname + nav.to.url.search;
   if (from === to) return;
-  memoryFor(key).from = from;
+  const memory = memoryFor(key);
+  memory.from = from;
+  memory.fromRouteId = nav.from.route?.id ?? undefined;
   Log.d('backToOrigin', `entry ${key} (${to}) arrived from ${from}`);
 }
 
@@ -118,9 +131,10 @@ export const BACK_LINK_ATTRIBUTE = 'data-back-link';
 export function backLinkTaken(anchor: Element): boolean {
   const up = anchor.getAttribute('href') ?? '';
   const here = page.url.pathname + page.url.search;
-  const from = memoryOf(currentEntryKey())?.from;
+  const memory = memoryOf(currentEntryKey());
+  const from = memory?.from;
   const overlays = historyOverlayStackDepth();
-  const decision = overlays > 0 ? 'up' : backDecision(here, from, up);
+  const decision = overlays > 0 ? 'up' : backDecision(here, from, up, memory?.fromRouteId);
   Log.d(
     'backToOrigin',
     `arrow on ${here}: ${decision} (from ${from ?? 'unknown'}, up ${up}, overlays ${overlays})`

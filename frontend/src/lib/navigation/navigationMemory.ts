@@ -14,7 +14,7 @@ import { cancelRestore, rememberLeaving, restoreOnReturn } from './scrollMemory'
 export interface MemoryNavigation {
   type: string;
   shallow?: boolean;
-  from: { url: URL } | null;
+  from: { url: URL; route?: { id: string | null } } | null;
   to: { url: URL } | null;
 }
 
