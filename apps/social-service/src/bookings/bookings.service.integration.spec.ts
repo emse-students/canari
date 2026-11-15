@@ -166,7 +166,8 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       url: URL,
       entities: [...BOOKING_ENTITIES, Association],
       synchronize: false,
-      extra: { options: `-c search_path=${schema}`, max: 12 },
+      // Named after the suite's schema: a lock wait is looked for among THIS suite's sessions.
+      extra: { options: `-c search_path=${schema}`, application_name: schema, max: 12 },
     });
     await ds.initialize();
     // The tables of other owners the API reads, in the shape it reads them.
@@ -480,17 +481,27 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       ...BOOKINGS_ERASURE_STATEMENTS.filter((s) => LINKED_FIRST.has(s.label)),
     ];
 
-    /** Resolves once some backend of this database waits on a lock. */
-    async function someoneWaitsOnALock() {
-      for (let i = 0; i < 500; i++) {
+    /**
+     * Resolves once a session of THIS suite's pool (its `application_name`, the schema) waits on a
+     * lock - the booking has reached the erasure's lock. The integration suites share ONE database,
+     * a schema each: asked of the whole database, another suite's waiting session answered for this
+     * one when the suites ran in parallel, the erasure went on before the booking waited, no
+     * deadlock formed and the booking landed (the intermittent failure of "a writer that breaks
+     * the order", 2026-11-15). It ends on an event, never a count of reads: the wait is seen, or
+     * the booking settled without ever waiting, which is said as the failure it is.
+     */
+    async function theBookingWaitsOnALock(booking: Promise<unknown>) {
+      let settled = false;
+      void booking.then(() => (settled = true));
+      while (!settled) {
         const { rows } = await admin.query<{ n: number }>(
           `SELECT count(*)::int AS n FROM pg_stat_activity
-            WHERE datname = current_database() AND wait_event_type = 'Lock'`
+            WHERE application_name = $1 AND wait_event_type = 'Lock'`,
+          [schema]
         );
         if (rows[0].n > 0) return;
-        await new Promise((r) => setTimeout(r, 20));
       }
-      throw new Error('no backend ever waited on a lock');
+      throw new Error('the booking settled without ever waiting on a lock');
     }
 
     /**
@@ -525,7 +536,7 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
             booking = Promise.allSettled([
               service.book(space.id, slot(r), as(ALICE), DAY_NOW),
             ]).then(([o]) => o);
-            await someoneWaitsOnALock();
+            await theBookingWaitsOnALock(booking);
           }
         }
         await c.query('COMMIT');
