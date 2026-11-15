@@ -19,12 +19,10 @@
  * themselves, and they are surfaces checked here like any other.
  */
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { join, dirname, relative } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { svelteFiles, withoutComments } from './markupSources';
+import { svelteSources, withoutComments } from './markupSources';
+import { readSource, relativeTo } from '../../test/sourceTree';
 
-const src = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const src = 'src';
 
 /**
  * Surfaces that hold no history entry of their own, each with the reason. `registeredBy` names the
@@ -87,19 +85,25 @@ const REGISTERS = /\b(?:bindHistoryOverlay|pushHistoryOverlay)\(/;
 
 /** Whether a source file (any extension) calls the history stack. */
 function fileRegisters(path: string): boolean {
-  return REGISTERS.test(withoutComments(readFileSync(join(src, path), 'utf8')));
+  return REGISTERS.test(withoutComments(readSource(`${src}/${path}`)));
 }
 
-const surfaces = svelteFiles(src).map((file) => {
-  const body = withoutComments(readFileSync(file, 'utf8'));
+const surfaces = svelteSources(src).map(({ path: file, text }) => {
+  const body = withoutComments(text);
   return {
-    path: relative(src, file).replaceAll('\\', '/'),
+    path: relativeTo(file, src),
     marks: surfaceMarks(body),
     registers: REGISTERS.test(body),
   };
 });
 
 describe('every screen-covering surface answers the system Back', () => {
+  it('reads the tree it thinks it does: the surfaces and every exemption are in the scan', () => {
+    expect(surfaces.length).toBeGreaterThan(200);
+    const paths = surfaces.map((s) => s.path);
+    for (const path of Object.keys(EXEMPT)) expect(paths, path).toContain(path);
+  });
+
   it('registers a history entry, or is exempt with a reason', () => {
     const missing = surfaces
       .filter((s) => s.marks.length > 0 && !s.registers && !(s.path in EXEMPT))

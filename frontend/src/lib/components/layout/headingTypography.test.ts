@@ -11,7 +11,7 @@ import { allMarkup, withoutComments } from '$lib/styles/markupSources';
  * Fredoka rule would compile and look only slightly off.
  */
 const ROOT = process.cwd();
-const markup = allMarkup(join(ROOT, 'src'));
+const markup = allMarkup();
 
 describe('heading typography', () => {
   it('app.css gives the display face to h1 and the opt-in classes only', () => {

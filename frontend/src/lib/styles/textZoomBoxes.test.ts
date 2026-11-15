@@ -13,18 +13,16 @@
  * refuse to shrink.
  */
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { join, dirname, relative } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { svelteFiles, withoutComments } from './markupSources';
+import { svelteSources, withoutComments } from './markupSources';
+import { readSource, relativeTo } from '../../test/sourceTree';
 
-const src = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const src = 'src';
 
 const AGENDA_DIRS = ['lib/components/calendar', 'routes/calendar'];
 
 /** Every static `class="..."` value of a file, comments removed. */
 function classValues(file: string): string[] {
-  const body = withoutComments(readFileSync(file, 'utf8'));
+  const body = withoutComments(readSource(file));
   return [...body.matchAll(/class="([^"]*)"/g)].map((m) => m[1]);
 }
 
@@ -32,13 +30,19 @@ const FIXED_SQUARE = /(?:^|\s)(?:size-\d+(?:\.\d+)?|h-(\d+(?:\.\d+)?)\s(?:[^"]*\
 const TYPE_SIZE = /(?:^|\s)text-(?:2xs|xs|sm|base|lg|xl|2xl|3xl)(?:\s|$)/;
 
 describe('the agenda at 200 % text', () => {
+  it('reads the tree it thinks it does: the agenda directories are in the scan', () => {
+    const files = AGENDA_DIRS.flatMap((dir) => svelteSources(`${src}/${dir}`).map((f) => f.path));
+    expect(files).toContain(`${src}/lib/components/calendar/CalendarScheduleList.svelte`);
+    expect(files).toContain(`${src}/routes/calendar/+page.svelte`);
+  });
+
   it('sizes every fixed box that holds type-scale text by the text zoom', () => {
     const offenders: string[] = [];
     for (const dir of AGENDA_DIRS) {
-      for (const file of svelteFiles(join(src, dir))) {
+      for (const { path: file } of svelteSources(`${src}/${dir}`)) {
         for (const value of classValues(file)) {
           if (FIXED_SQUARE.test(value) && TYPE_SIZE.test(value)) {
-            offenders.push(`${relative(src, file)}: ${value.trim()}`);
+            offenders.push(`${relativeTo(file, src)}: ${value.trim()}`);
           }
         }
       }
@@ -47,13 +51,13 @@ describe('the agenda at 200 % text', () => {
   });
 
   it('draws the day number in a circle that grows with it', () => {
-    const values = classValues(join(src, 'lib/components/calendar/CalendarScheduleList.svelte'));
+    const values = classValues(`${src}/lib/components/calendar/CalendarScheduleList.svelte`);
     expect(values.some((v) => /text-zoom-size-9/.test(v) && /rounded-full/.test(v))).toBe(true);
     expect(values.some((v) => /(?:^|\s)text-zoom-w-11(?:\s|$)/.test(v))).toBe(true);
   });
 
   it('lets the page actions shrink and wrap their label rather than leave their card', () => {
-    const values = classValues(join(src, 'routes/calendar/+page.svelte')).filter(
+    const values = classValues(`${src}/routes/calendar/+page.svelte`).filter(
       (v) => /(?:^|\s)rounded-xl(?:\s|$)/.test(v) && /(?:^|\s)inline-flex(?:\s|$)/.test(v)
     );
     expect(values.length).toBeGreaterThanOrEqual(3);
@@ -68,7 +72,7 @@ describe('the post comment controls at 200 % text', () => {
   it('wraps the sort row instead of widening the page', () => {
     // The show/hide toggle left this row with the inline thread (the thread is a sheet now): what
     // remains is the three sort buttons, which must still wrap when the text is doubled.
-    const values = classValues(join(src, 'lib/components/posts/PostComments.svelte'));
+    const values = classValues(`${src}/lib/components/posts/PostComments.svelte`);
     const row = values.find(
       (v) => /(?:^|\s)justify-end(?:\s|$)/.test(v) && /(?:^|\s)mb-2(?:\s|$)/.test(v)
     );

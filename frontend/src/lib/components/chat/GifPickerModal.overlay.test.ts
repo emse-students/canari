@@ -24,11 +24,10 @@
  * overlay is the same fact in a different spelling, and this one was not in that family.
  */
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { join, relative } from 'node:path';
-import { svelteFiles, withoutAnyComments } from '$lib/styles/markupSources';
+import { svelteSources, withoutAnyComments } from '$lib/styles/markupSources';
+import { readSource, relativeTo } from '../../../test/sourceTree';
 
-const dir = join(process.cwd(), 'src');
+const dir = 'src';
 
 /**
  * **A SOURCE CHECK THAT READS ITS OWN PROSE IS A TEST THAT LIES, AND THIS ONE DID.** The first
@@ -77,7 +76,7 @@ describe('a transformed ancestor claims a `fixed` descendant', () => {
   it('the card that claimed it still carries the transform, so the fix is the portal and not its removal', () => {
     // The lift is a deliberate hover affordance on every feed card and is not the thing to delete.
     // If it ever goes, this test says so rather than letting the portal look unnecessary.
-    const card = readFileSync(join(dir, 'lib/components/posts/PostCard.svelte'), 'utf8');
+    const card = readSource(`${dir}/lib/components/posts/PostCard.svelte`);
     expect(card).toContain('hover:-translate-y-0.5');
   });
 });
@@ -100,21 +99,19 @@ describe('an overlay opened from a POST is portalled, because that tree provably
    * is above the call site, so no test that mounts the component alone can ever see it.
    */
   it('refuses an overlay reachable from components/posts that an ancestor could claim', () => {
-    const posts = join(dir, 'lib/components/posts');
+    const posts = svelteSources(`${dir}/lib/components/posts`);
+    // The tree the scan thinks it reads: a wrong root would leave both loops below empty.
+    expect(posts.map((f) => f.path)).toContain(`${dir}/lib/components/posts/PostCard.svelte`);
     const imported = new Set<string>();
-    for (const file of svelteFiles(posts)) {
-      const body = readFileSync(file, 'utf8');
-      for (const [, spec] of body.matchAll(/from\s+'(\$lib\/components\/[^']+\.svelte)'/g)) {
-        imported.add(join(dir, spec.replace('$lib/', 'lib/')));
+    for (const { text } of posts) {
+      for (const [, spec] of text.matchAll(/from\s+'(\$lib\/components\/[^']+\.svelte)'/g)) {
+        imported.add(`${dir}/${spec.replace('$lib/', 'lib/')}`);
       }
     }
 
-    const offenders = [...imported, ...svelteFiles(posts)]
-      .filter((file) => {
-        const body = readFileSync(file, 'utf8');
-        return declaresOverlay(code(body)) && !isPortalled(body);
-      })
-      .map((file) => relative(dir, file));
+    const offenders = [...[...imported].map((path) => ({ path, text: readSource(path) })), ...posts]
+      .filter(({ text }) => declaresOverlay(code(text)) && !isPortalled(text))
+      .map(({ path }) => relativeTo(path, dir));
 
     expect(
       offenders,
@@ -126,7 +123,7 @@ describe('an overlay opened from a POST is portalled, because that tree provably
   });
 
   it('the picker itself is portalled, and still closes on a click outside the panel', () => {
-    const body = readFileSync(join(dir, 'lib/components/chat/GifPickerModal.svelte'), 'utf8');
+    const body = readSource(`${dir}/lib/components/chat/GifPickerModal.svelte`);
 
     expect(isPortalled(body), 'the portal ACTION, not the word in the docblock').toBe(true);
     // THE SCRIM WENT, THE TARGET DID NOT (user: "pas besoin de fond fonce"). Dropping the plate
@@ -141,7 +138,7 @@ describe('an overlay opened from a POST is portalled, because that tree provably
   });
 
   it('ModalOverlay portals unconditionally, which is the other half of following the property', () => {
-    const overlay = readFileSync(join(dir, 'lib/components/shared/ModalOverlay.svelte'), 'utf8');
+    const overlay = readSource(`${dir}/lib/components/shared/ModalOverlay.svelte`);
 
     expect(/\buse:portal\b/.test(code(overlay)), 'the ACTION, not the docblock').toBe(true);
     // AND NO PROP TURNS IT OFF. A portal a caller may decline is a portal a caller WILL decline -

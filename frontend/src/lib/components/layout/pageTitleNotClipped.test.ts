@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { join } from 'node:path';
 
 import { allMarkup } from '$lib/styles/markupSources';
 
@@ -32,7 +31,6 @@ import { allMarkup } from '$lib/styles/markupSources';
  * line, where wrapping moves those actions and the layout jumps on every selection. That is a
  * different question from this one, and a guard that answered both would be answering neither.
  */
-const ROOT = process.cwd();
 
 /** `class="..."` values with whitespace collapsed, so an attribute spanning lines is still one. */
 function headingClasses(body: string): string[] {
@@ -51,7 +49,7 @@ function headingClasses(body: string): string[] {
 const CLIPS = /\b(truncate|line-clamp-\d+)\b/;
 
 describe('a page never clips its own name', () => {
-  const markup = allMarkup(join(ROOT, 'src'));
+  const markup = allMarkup();
 
   it('reads the whole markup tree, so the guard is not guarding an empty set', () => {
     expect(markup.length).toBeGreaterThan(200);

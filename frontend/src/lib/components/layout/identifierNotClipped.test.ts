@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { join } from 'node:path';
 
 import { allMarkup } from '$lib/styles/markupSources';
 
@@ -29,7 +28,6 @@ import { allMarkup } from '$lib/styles/markupSources';
  * reading order, and clipping its tail loses the least important part. Asserting both with one rule
  * would answer neither, which is the reason the `<h1>` guard beside this one is narrow too.
  */
-const ROOT = process.cwd();
 
 /** `truncate` and `line-clamp-N` both clip; only the direction differs. */
 const CLIPS = /\b(truncate|line-clamp-\d+)\b/;
@@ -54,7 +52,7 @@ function soleExpressionElements(body: string): { attrs: string; expr: string }[]
 const IS_IDENTIFIER = /^[A-Za-z_$][\w.$?]*(\bid|Id|ID)$/;
 
 describe('an opaque identifier is never clipped', () => {
-  const markup = allMarkup(join(ROOT, 'src'));
+  const markup = allMarkup();
 
   it('reads the whole markup tree, so the guard is not guarding an empty set', () => {
     expect(markup.length).toBeGreaterThan(200);

@@ -13,22 +13,17 @@
  * control reads.
  */
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { join, dirname, relative } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { svelteFiles, withoutComments } from './markupSources';
+import { svelteSources, withoutComments } from './markupSources';
 import { OVERLAY_Z_LIMIT } from '$lib/utils/overlayStack';
+import { readSource, relativeTo } from '../../test/sourceTree';
 
-const src = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const src = 'src';
 // A Windows checkout reads CRLF, and every pattern below is written in LF.
-const css = readFileSync(join(src, 'app.css'), 'utf8').replace(/\r\n/g, '\n');
-// THE TREE IS READ ONCE, HERE, AND NOT INSIDE A TEST. Reading every `.svelte` file is the slow part
-// of this file, and a test body is charged against vitest's 5 s timeout: under the full suite, with
-// every worker reading the disk at once, two bodies that each walked the tree timed out while
-// asserting nothing wrong. Module scope is collection time, which no per-test timeout measures.
-const markup = svelteFiles(src).map((path) => ({
+const css = readSource(`${src}/app.css`).replace(/\r\n/g, '\n');
+// The markup comes from the run's source snapshot (no disk walk), comment-stripped once here.
+const markup = svelteSources(src).map(({ path, text }) => ({
   path,
-  text: withoutComments(readFileSync(path, 'utf8')),
+  text: withoutComments(text),
 }));
 
 const rung = (name: string): number => {
@@ -43,13 +38,18 @@ function coveringRungs(): { file: string; name: string }[] {
   for (const { path, text } of markup) {
     if (!text.includes('use:coversScreen')) continue;
     for (const match of text.matchAll(/--z-([a-z-]+)/g)) {
-      out.push({ file: relative(src, path).replace(/\\/g, '/'), name: match[1] });
+      out.push({ file: relativeTo(path, src), name: match[1] });
     }
   }
   return out;
 }
 
 describe('the call bar and the layers that cover the screen', () => {
+  it('reads the tree it thinks it does: the root layout is in the scan', () => {
+    expect(markup.length).toBeGreaterThan(200);
+    expect(markup.map(({ path }) => path)).toContain('src/routes/+layout.svelte');
+  });
+
   it('every rung a covering surface uses is below --z-call, and the overlay stack ends below it', () => {
     const call = rung('call');
     const found = coveringRungs();
@@ -65,7 +65,7 @@ describe('the call bar and the layers that cover the screen', () => {
     expect(css).toMatch(
       /:root\[data-call-bar\] \.app-banner-column \{\s*z-index: var\(--z-call\);\s*\}/
     );
-    const layout = readFileSync(join(src, 'routes', '+layout.svelte'), 'utf8');
+    const layout = readSource(`${src}/routes/+layout.svelte`);
     expect(layout).toMatch(/bind:this=\{bannerColumn\}\s+class="app-banner-column /);
   });
 
@@ -96,7 +96,7 @@ describe('the call bar and the layers that cover the screen', () => {
   it('no component reads the top inset from env() - that one would not move below the bar', () => {
     const readers = markup
       .filter(({ text }) => /env\(safe-area-inset-top/.test(text))
-      .map(({ path }) => relative(src, path).replace(/\\/g, '/'));
+      .map(({ path }) => relativeTo(path, src));
     expect(readers).toEqual([]);
   });
 });

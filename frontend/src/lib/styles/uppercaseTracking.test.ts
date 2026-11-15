@@ -19,12 +19,10 @@
  * allowed file fails, and so does an entry whose uses have gone.
  */
 import { describe, it, expect } from 'vitest';
-import { join, dirname, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { readdirSync, readFileSync } from 'node:fs';
 import { allMarkup, withoutComments } from './markupSources';
+import { relativeTo, sourceFiles } from '../../test/sourceTree';
 
-const src = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const src = 'src';
 
 /** A transformed or letter-spaced class token, `first-letter:` excluded. */
 const TOKEN =
@@ -40,15 +38,8 @@ const TOKEN =
 const CSS_TOKEN =
   /text-transform\s*:\s*uppercase|letter-spacing\s*:\s*\+?(?:0?\.(?:0[5-9]|[1-9]\d*)|[1-9]\d*(?:\.\d+)?)(?:em|rem|px)/g;
 
-/** Every `.css` file under `dir`, recursively (generated Paraglide modules hold none). */
-function cssFiles(dir: string, out: string[] = []): string[] {
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) cssFiles(full, out);
-    else if (entry.name.endsWith('.css')) out.push(full);
-  }
-  return out;
-}
+/** Every `.css` file under `src`, from the run's source snapshot (generated Paraglide modules hold none). */
+const cssFiles = () => sourceFiles({ under: src, extensions: ['css'], tests: 'include' });
 
 const ALLOWED: Record<string, { count: number; why: string }> = {
   'lib/components/posts/CreatePostForm.svelte': {
@@ -71,28 +62,27 @@ const ALLOWED: Record<string, { count: number; why: string }> = {
 
 describe('uppercase and letter-spacing', () => {
   const found = new Map<string, number>();
-  for (const { file, body } of allMarkup(src)) {
+  const markup = allMarkup();
+  const css = cssFiles();
+  for (const { file, body } of markup) {
     const n = (body.match(TOKEN) ?? []).length;
-    if (n > 0) found.set(file.split(sep).join('/'), n);
+    if (n > 0) found.set(file, n);
   }
 
   // The wordmark (`CanariBrand`) sets no letter-spacing or capitals, so it needs no entry here.
-  for (const file of cssFiles(src)) {
-    const n = (withoutComments(readFileSync(file, 'utf8')).match(CSS_TOKEN) ?? []).length;
-    if (n > 0)
-      found.set(
-        file
-          .slice(src.length + 1)
-          .split(sep)
-          .join('/'),
-        n
-      );
+  for (const { path, text } of css) {
+    const n = (withoutComments(text).match(CSS_TOKEN) ?? []).length;
+    if (n > 0) found.set(relativeTo(path, src), n);
   }
-  for (const { file, body } of allMarkup(src)) {
+  for (const { file, body } of markup) {
     const n = (body.match(CSS_TOKEN) ?? []).length;
-    if (n > 0)
-      found.set(file.split(sep).join('/'), (found.get(file.split(sep).join('/')) ?? 0) + n);
+    if (n > 0) found.set(file, (found.get(file) ?? 0) + n);
   }
+
+  it('reads the tree it thinks it does: the markup and the stylesheet are in the scan', () => {
+    expect(markup.length).toBeGreaterThan(200);
+    expect(css.map(({ path }) => path)).toContain('src/app.css');
+  });
 
   it('no component sets text in capitals or spaces its letters outside the allowlist', () => {
     const offenders = [...found].filter(([f]) => !(f in ALLOWED)).map(([f, n]) => `${f} (${n})`);

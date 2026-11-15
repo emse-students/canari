@@ -28,55 +28,40 @@
  * does is visible rather than inferred from a quantifier - which is the honest answer to a rule
  * that cannot tell a lazy regex from a greedy one.
  *
- * Test-only, deliberately: no runtime code reads its own source tree.
+ * Test-only, deliberately: no runtime code reads its own source tree. The walk is the snapshot's
+ * (`../../test/sourceTree.ts`); this module only filters it and strips the comments.
  */
-import { readFileSync, readdirSync } from 'node:fs';
-import { basename, join, relative } from 'node:path';
+import { relativeTo, sourceFiles, type SourceFile } from '../../test/sourceTree';
 
 /**
- * Every `.svelte` file under `dir`, recursively.
+ * Every `.svelte` file under `dirs` (frontend-root paths such as `src/lib`), from the run's source
+ * snapshot, texts included: a gate no longer reads a file twice, and none touches the disk.
  *
- * THE DIRECTORY LISTING SAYS WHAT EACH ENTRY IS (`withFileTypes`), SO NOTHING IS `stat`-ED. The walk
- * used to `statSync` every entry, and `src` holds some 6 000 files - 4 000 of them generated
- * Paraglide modules no gate reads. On Windows each `stat` is a filesystem call the antivirus
- * inspects: a walk cost ~0.8 s alone and over 10 s with other workers reading the disk, which made
- * the tree-reading gates (`callBarLayer`, `pageColumn`) time out under the full suite while
- * asserting nothing wrong.
+ * THE DISK WALK THIS REPLACES WAS THE SLOW PART, AND THE REGEX WORK NEVER WAS. Walking and reading
+ * the ~1,700 shipped sources costs 12 s cold and 150 ms warm on Windows, where the antivirus inspects
+ * every filesystem call, against 26-36 ms for the matching on the same strings. Every attempt to dodge
+ * the 5 s test timeout (`withFileTypes`, skipping the generated trees, hoisting the walk to module
+ * scope) only shaved the walk; the snapshot (`test/sourceTreeSetup.ts`, one walk per RUN) removes it.
  */
-export function svelteFiles(dir: string, out: string[] = []): string[] {
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) svelteFiles(full, out);
-    else if (entry.name.endsWith('.svelte')) out.push(full);
-  }
-  return out;
+export function svelteSources(...dirs: string[]): SourceFile[] {
+  return sourceFiles({ under: dirs, extensions: ['svelte'], tests: 'include' });
 }
 
 /**
- * The GENERATED trees under `src/lib`, never written by hand and not in git: the Paraglide message
- * modules (some 5 600 `.ts` files, nine in ten of the whole tree), the WASM binding and the
- * protobuf module. A gate about what the code declares has nothing to read there.
- */
-const GENERATED_LIB_DIRS = new Set(['paraglide', 'wasm', 'proto']);
-
-/**
- * Every shipped source file under `dir`, recursively: `.svelte` and `.ts`, tests excluded (a test
- * may quote the very idiom a gate forbids). For the gates that read CODE as well as markup.
+ * Every shipped source under `dirs`, recursively: `.svelte` and `.ts`, tests excluded (a test may
+ * quote the very idiom a gate forbids). For the gates that read CODE as well as markup.
  *
- * THE GENERATED TREES ARE SKIPPED ({@link GENERATED_LIB_DIRS}). Read, they were nine files in ten of
- * every sweep: `accentTokens.test.ts` read and comment-stripped some 6 500 files per test, ran
- * 10-21 s each under the full suite and timed out three tests while asserting nothing wrong.
+ * THE GENERATED TREES ARE NOT READ: Paraglide's 5,600 modules were nine files in ten of every sweep
+ * (`accentTokens.test.ts` once timed out three tests on them). The snapshot never holds them, and
+ * `proto` is skipped by name for the same reason.
  */
-export function shippedSourceFiles(dir: string, out: string[] = []): string[] {
-  const inLib = basename(dir) === 'lib';
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) {
-      if (!(inLib && GENERATED_LIB_DIRS.has(entry.name))) shippedSourceFiles(full, out);
-    } else if (/\.(svelte|ts)$/.test(entry.name) && !entry.name.endsWith('.test.ts'))
-      out.push(full);
-  }
-  return out;
+export function shippedSources(...dirs: string[]): SourceFile[] {
+  return sourceFiles({
+    under: dirs,
+    extensions: ['svelte', 'ts'],
+    tests: 'exclude',
+    skipDirs: ['paraglide', 'wasm', 'proto'],
+  });
 }
 
 /**
@@ -113,14 +98,12 @@ export function withoutComments(source: string): string {
   return stripRegions(stripRegions(source, '<!--', '-->'), '/*', '*/');
 }
 
-/** One entry per `.svelte` file under `lib` and `routes`, comment-free, path relative to `src`. */
-export function allMarkup(src: string): { file: string; body: string }[] {
-  return svelteFiles(join(src, 'lib'))
-    .concat(svelteFiles(join(src, 'routes')))
-    .map((file) => ({
-      file: relative(src, file),
-      body: withoutComments(readFileSync(file, 'utf8')),
-    }));
+/** One entry per `.svelte` file under `lib` and `routes`, comment-free, POSIX path relative to `src`. */
+export function allMarkup(): { file: string; body: string }[] {
+  return svelteSources('src/lib', 'src/routes').map(({ path, text }) => ({
+    file: relativeTo(path, 'src'),
+    body: withoutComments(text),
+  }));
 }
 
 /**

@@ -30,13 +30,11 @@
  * unswept button in one of these files fails, and so does an entry whose buttons have gone.
  */
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { join, dirname, relative } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { svelteFiles, withoutComments } from './markupSources';
+import { svelteSources, withoutComments } from './markupSources';
+import { readSource, relativeTo } from '../../test/sourceTree';
 
-const src = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const cssPath = join(src, 'app.css');
+const src = 'src';
+const cssPath = `${src}/app.css`;
 
 /**
  * Boxed icon buttons whose size is dictated by what they sit on, by file and exact count.
@@ -117,7 +115,7 @@ const BOXED_CLASSES = [
   'chat-search-action',
 ];
 
-const ALL_FILES = svelteFiles(join(src, 'lib')).concat(svelteFiles(join(src, 'routes')));
+const ALL_FILES = svelteSources(`${src}/lib`, `${src}/routes`);
 
 /** A `<button>` opening tag with the span of its body. */
 interface ButtonTag {
@@ -216,9 +214,8 @@ interface Site {
 }
 
 /** Every icon-only button in the tree, with its class tokens. */
-const ICON_BUTTONS: Site[] = ALL_FILES.flatMap((full) => {
-  const source = readFileSync(full, 'utf8');
-  const file = relative(src, full).replace(/\\/g, '/');
+const ICON_BUTTONS: Site[] = ALL_FILES.flatMap(({ path: full, text: source }) => {
+  const file = relativeTo(full, src);
   return (
     buttonsIn(source)
       // A SWITCH IS NOT AN ICON BUTTON. Its box is the track the thumb slides in, sized with every
@@ -295,7 +292,7 @@ describe('the icon-button box', () => {
     // COMMENTS OUT FIRST. The block above `.ui-icon-button` explains the 2.25rem the composer used
     // to declare, and a rule about declared widths that counts the ones in its own explanation is
     // measuring prose - it reported a fifth size that did not exist until this line was added.
-    const css = withoutComments(readFileSync(cssPath, 'utf8'));
+    const css = withoutComments(readSource(cssPath));
     const rules = iconButtonWidths(css);
 
     expect(rules.length, 'no .ui-icon-button rule declares a width - the class was gutted').toBe(4);
@@ -312,7 +309,7 @@ describe('the icon-button box', () => {
     // - under a POINTER (`pointer: fine`), or the hover strip's `--sm`, which only a pointer shows;
     // - the owner's ONE phone exception (2026-11-13, design-reference.md): the chat composer's 40px
     //   row, Messenger's pitch, and only below 768px - a touch tablet keeps 44px.
-    const css = withoutComments(readFileSync(cssPath, 'utf8'));
+    const css = withoutComments(readSource(cssPath));
     for (const rule of iconButtonWidths(css)) {
       const where = `${rule.selector} { width: ${rule.width} } in @media ${rule.media || '(none)'}`;
       if (rule.width === '2.75rem') {
