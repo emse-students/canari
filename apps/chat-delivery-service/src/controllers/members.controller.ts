@@ -74,6 +74,7 @@ import { RepeatCounter, cutUserId } from '../utils/log-repeat';
 import { announceJoinAskSettled } from '../utils/join-ask-announce';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import { RefusalCode, refusalBody } from '../utils/refusal-codes';
+import { RouteParams } from '../common/route-params';
 
 /**
  * The most groups `POST /api/mls/group-rosters` answers in one request.
@@ -122,6 +123,7 @@ export interface UserMemberRow {
 }
 
 /** Group membership management: add/remove members, list members, list user groups. */
+@RouteParams({ userId: 'opaque', groupId: 'uuid', dismissedGroupId: 'opaque' })
 @Controller()
 export class MembersController {
   private readonly logger = new Logger(MembersController.name);
@@ -543,11 +545,11 @@ export class MembersController {
   }
 
   @UseGuards(HeaderAuthGuard)
-  @Delete('mls/users/:userId/dismissed-groups/:groupId')
+  @Delete('mls/users/:userId/dismissed-groups/:dismissedGroupId')
   /** Un-dismisses a group (called when the user is re-added via a fresh Welcome - they want it back). */
   async undismissGroup(
     @Param('userId') userId: string,
-    @Param('groupId') groupId: string,
+    @Param('dismissedGroupId') groupId: string,
     @Headers('x-user-id') headerUserId?: string
   ): Promise<{ status: string }> {
     const safeUserId = sanitizeQueryValue(userId, 'userId');

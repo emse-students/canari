@@ -47,6 +47,7 @@ import { SentFrameReceipt } from './entities/sent-frame-receipt.entity';
 import { ReportAccusation } from './entities/report-accusation.entity';
 import Redis from 'ioredis';
 import { typeormSynchronize } from './typeorm-synchronize';
+import { ROUTE_PARAMS_GUARD } from './common/route-params';
 
 const RedisProvider: Provider = {
   provide: 'REDIS_CLIENT',
@@ -157,6 +158,7 @@ class RedisShutdown implements OnModuleDestroy {
     CallsController,
   ],
   providers: [
+    ROUTE_PARAMS_GUARD,
     RedisProvider,
     RedisShutdown,
     MessagingService,

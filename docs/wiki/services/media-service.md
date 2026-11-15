@@ -130,6 +130,28 @@ present - and it is declared BEFORE the catch-all `:id` for the same reason `int
 the one exception is a REEL file, on its sender's release or a salon moderator's purge
 ([holds](#holds-one-file-for-the-feed-and-the-chats-rc-14-2026-11-01)).
 
+## Path parameters are declared (2026-11-14)
+
+The guard and the coverage spec are social-service's ([there](social-service.md#path-parameters-are-declared-and-one-global-guard-reads-the-declaration-2026-11-14)). **Every path
+parameter of this service is declared `opaque`, and that is the decision, not an omission.** None
+of them is a database key, and the service already judges each one itself, more strictly than the
+guard would:
+
+- a media id, a chunked-upload id and an upload-session id are checked against a version-4 uuid
+  pattern in `media.service.ts` and `upload-session.service.ts` before anything is looked up or any
+  path is built: a malformed one is a `400` (`Invalid mediaId`, `Invalid uploadId`), a well-formed
+  unknown one a `404`, a purged one a `410`. The paths built from them are also resolved and
+  confined to their directory;
+- a live id and a segment name are uuids checked by `live-segments.service.ts`, in lower-case
+  canonical form only on the public read, because that route is cached by its exact spelling;
+- a part `index` is digits only, and the `userId` of the internal erasure route is only compared
+  with the owners recorded in the index.
+
+Declaring the ids `uuid` would put a looser check (any canonical shape, either case) in front of
+stricter ones and change which layer writes the `400`, for nothing it protects. So what the
+mechanism gives here is the other half: `route-params.coverage.spec.ts` fails on a new route whose
+parameter nobody declared, and whoever adds a parameter that IS a database key writes `uuid`.
+
 ## The upload ceiling is ONE number, and the box publishes it (2026-09-24)
 
 `GET /api/media/limits` answers `{ "maxBytes": <number> }` and takes no token. It exists because the

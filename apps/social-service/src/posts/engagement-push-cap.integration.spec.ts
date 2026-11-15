@@ -74,7 +74,7 @@ maybe('the daily engagement push cap against PostgreSQL (engagement WP-8)', () =
   it('the claim past the cap is refused, the ones before it are taken', async () => {
     const answers: boolean[] = [];
     for (let i = 0; i <= ENGAGEMENT_DAILY_PUSH_CAP; i++) {
-      answers.push((await claimEngagementPushes(manager, ['r'], 'posts')).has('r'));
+      answers.push((await claimEngagementPushes(manager, ['r'], 'posts')).allowed.has('r'));
     }
     expect(answers).toEqual([...times(ENGAGEMENT_DAILY_PUSH_CAP, true), false]);
     expect(await counter('r')).toBe(ENGAGEMENT_DAILY_PUSH_CAP);
@@ -91,17 +91,20 @@ maybe('the daily engagement push cap against PostgreSQL (engagement WP-8)', () =
     );
     await givePushDevices(q, ['unknown'], 'garbage');
     await turnSuggestionPushOn(q, ['old', 'mixed', 'unknown', 'none']);
-    const allowed = await claimEngagementPushes(
+    const claim = await claimEngagementPushes(
       manager,
       ['old', 'mixed', 'unknown', 'none'],
       'suggestions',
       '1.6.10'
     );
-    expect([...allowed].sort()).toEqual(['mixed', 'unknown']);
+    expect([...claim.allowed].sort()).toEqual(['mixed', 'unknown']);
+    // Each refusal carries its own cause: the floor, never the cap.
+    expect(claim.noDevice.sort()).toEqual(['none', 'old']);
+    expect(claim.capped).toEqual([]);
     expect(await counter('old')).toBeNull();
     expect(await counter('none')).toBeNull();
     // With no floor, every device counts - and so does a reader with none, as before.
-    expect([...(await claimEngagementPushes(manager, ['old'], 'reactions'))]).toEqual(['old']);
+    expect([...(await claimEngagementPushes(manager, ['old'], 'posts')).allowed]).toEqual(['old']);
   });
 
   it('two dozen concurrent fan-outs over the same readers never exceed the cap', async () => {
@@ -117,7 +120,7 @@ maybe('the daily engagement push cap against PostgreSQL (engagement WP-8)', () =
       )
     );
     for (const r of readers) {
-      expect(results.filter((s) => s.has(r))).toHaveLength(ENGAGEMENT_DAILY_PUSH_CAP);
+      expect(results.filter((s) => s.allowed.has(r))).toHaveLength(ENGAGEMENT_DAILY_PUSH_CAP);
       expect(await counter(r)).toBe(ENGAGEMENT_DAILY_PUSH_CAP);
     }
   });
@@ -127,8 +130,9 @@ maybe('the daily engagement push cap against PostgreSQL (engagement WP-8)', () =
       `INSERT INTO notification_preference ("userId", "disabledCategories")
        VALUES ('off', '["posts"]'), ('other', '["comments"]')`
     );
-    const allowed = await claimEngagementPushes(manager, ['off', 'other'], 'posts');
-    expect([...allowed]).toEqual(['other']);
+    const claim = await claimEngagementPushes(manager, ['off', 'other'], 'posts');
+    expect([...claim.allowed]).toEqual(['other']);
+    expect(claim.categoryOff).toEqual(['off']);
     expect(await counter('off')).toBeNull();
   });
 
@@ -142,12 +146,12 @@ maybe('the daily engagement push cap against PostgreSQL (engagement WP-8)', () =
     await q(
       `UPDATE notification_preference SET "disabledCategories" = '["suggestions"]' WHERE "userId" = 'muted'`
     );
-    const allowed = await claimEngagementPushes(
+    const claim = await claimEngagementPushes(
       manager,
       ['other', 'fresh', 'full', 'muted'],
       'suggestions'
     );
-    expect([...allowed]).toEqual(['full']);
+    expect([...claim.allowed]).toEqual(['full']);
     expect(await counter('fresh')).toBeNull();
     expect(await counter('other')).toBeNull();
     expect(await counter('muted')).toBeNull();
@@ -225,7 +229,7 @@ maybe('the daily engagement push cap against PostgreSQL (engagement WP-8)', () =
       actorName: 'Actor',
       text: 'hello',
     });
-    /** The singular path (`createNotification`): a reaction, a comment, an opening. */
+    /** The singular path (`createNotification`): an opening, a reply, a mention. */
     const single = (svc: PostNotificationsService, type: NotificationType) =>
       svc.createNotification({
         recipientId: 'r',
@@ -233,7 +237,7 @@ maybe('the daily engagement push cap against PostgreSQL (engagement WP-8)', () =
         postId: 'p',
         actorId: 'actor',
         actorName: 'Actor',
-        text: type === 'reaction' ? 'Rire' : 'hello',
+        text: 'hello',
       });
 
     /** The fan-out is fire-and-forget: let its sends land. */
@@ -255,11 +259,9 @@ maybe('the daily engagement push cap against PostgreSQL (engagement WP-8)', () =
       expect(await counter('r')).toBe(ENGAGEMENT_DAILY_PUSH_CAP);
     });
 
-    it('ONE budget across every counted kind: a trend, a reaction and a comment spend it, an opening finds it gone', async () => {
+    it('ONE budget across every counted kind: a trend and two openings spend it, a followed post finds it gone', async () => {
       const svc = service();
       await svc.pushNotice(notice(CAMPUS_TREND_NOTIFICATION, ['r']));
-      await single(svc, 'reaction');
-      await single(svc, 'comment');
       await single(svc, 'booking_open');
       await single(svc, 'event_open');
       await svc.pushNotice(notice('followed_post', ['r']));
@@ -271,7 +273,7 @@ maybe('the daily engagement push cap against PostgreSQL (engagement WP-8)', () =
 
     it('a birthday and an association post beyond the cap still push, and so does every uncounted kind', async () => {
       const svc = service();
-      for (let i = 0; i < ENGAGEMENT_DAILY_PUSH_CAP; i++) await single(svc, 'reaction');
+      for (let i = 0; i < ENGAGEMENT_DAILY_PUSH_CAP; i++) await single(svc, 'booking_open');
       await settle();
       expect(pushed).toHaveLength(ENGAGEMENT_DAILY_PUSH_CAP);
       const uncounted = [
@@ -306,7 +308,7 @@ maybe('the daily engagement push cap against PostgreSQL (engagement WP-8)', () =
       expect((await q(`SELECT count(*)::int AS n FROM engagement_push_days`)).rows[0].n).toBe(0);
     });
 
-    it('withinPushBudget answers the readers left, in ONE line per call', async () => {
+    it('withinPushBudget answers the readers left, and accuses EACH cause on its own line', async () => {
       const svc = service();
       const log = jest.spyOn(Logger.prototype, 'log');
       log.mockClear();
@@ -315,16 +317,44 @@ maybe('the daily engagement push cap against PostgreSQL (engagement WP-8)', () =
          VALUES ('full', (now() AT TIME ZONE 'Europe/Paris')::date, $1)`,
         [ENGAGEMENT_DAILY_PUSH_CAP]
       );
-      expect(await svc.withinPushBudget('reaction', ['full', 'fresh', 'r'])).toEqual([
+      await q(
+        `INSERT INTO notification_preference ("userId", "disabledCategories") VALUES ('off', '["posts"]')`
+      );
+      expect(await svc.withinPushBudget('followed_post', ['full', 'off', 'fresh', 'r'])).toEqual([
         'fresh',
         'r',
       ]);
       expect(log.mock.calls.map(([m]) => String(m))).toEqual([
-        expect.stringContaining('type=reaction withheld 1 of 3'),
+        expect.stringContaining(
+          `type=followed_post cap reached for 1 of 4 - the bell rows stay (cap=${ENGAGEMENT_DAILY_PUSH_CAP}, pushedToday=${ENGAGEMENT_DAILY_PUSH_CAP})`
+        ),
+        expect.stringContaining('type=followed_post category posts off for 1 of 4'),
       ]);
-      // An uncounted type is answered untouched, with no statement and no line.
+      // An uncounted type - a comment on your own post included - is answered untouched, no line.
       expect(await svc.withinPushBudget('birthday', ['full'])).toEqual(['full']);
-      expect(log).toHaveBeenCalledTimes(1);
+      expect(await svc.withinPushBudget('comment', ['full'])).toEqual(['full']);
+      expect(log).toHaveBeenCalledTimes(2);
+    });
+
+    it('a reader whose every device is below the floor is accused as such, never as the cap', async () => {
+      const svc = service();
+      await givePushDevices(q, ['ancient'], '1.0.0');
+      await turnSuggestionPushOn(q, ['ancient']);
+      const log = jest.spyOn(Logger.prototype, 'log');
+      log.mockClear();
+      expect(await svc.withinPushBudget(CAMPUS_TREND_NOTIFICATION, ['ancient'])).toEqual([]);
+      expect(log.mock.calls.map(([m]) => String(m))).toEqual([
+        expect.stringMatching(/type=campus_trend no device at build >= [0-9.]+ for 1 of 1/),
+      ]);
+    });
+
+    it('a comment or a reaction is never pushed through the ordinary paths: it is one per post', async () => {
+      const svc = service();
+      await expect(single(svc, 'comment')).rejects.toThrow('one per post');
+      await expect(
+        svc.createNotifications({ ...notice('reaction', ['r']), type: 'reaction', postId: 'p' })
+      ).rejects.toThrow('one per post');
+      expect(pushed).toEqual([]);
     });
 
     it('a failed claim pushes nobody and reaches the caller', async () => {

@@ -20,6 +20,58 @@ here and nothing else.**
 
 **The bench is the Mi 9T and the iPhone 12. The Pixel 6a is the user's personal phone: observation only** (user, 2026-10-11) - no agent installs, resets, signs in over or drives it; a reading on it is the user's own look.
 
+## The readings triage of 2026-11-14 - what is kept, what each needs, and the sittings
+
+**The rule (owner, 2026-11-14):** the readings owed reach ZERO before a release; each is READ with evidence or
+DELETED with a measured reason; a reading of code not shipped in a STABLE is deleted outright. The latest stable is
+`v1.6.12` (it ships the `alpha.2` commit; everything merged after `#3500`, from the group calls `#3489`-`#3502`
+onward, is NOT in it). The triage kept 55 of the 77 entries (21 files removed, 1 turned into a defect entry), each
+below naming a reading this bench can do. Every entry carries its own "Triage 2026-11-14" paragraph in
+[plan](plan.md#readings-owed). **Deleted, with the reason in the entry's changelog line:** the GIF relay (every half
+read), the iOS launch logo (no outcome changes anything), the desktop screen broadcast and the three group-call
+entries (unshipped, `#3508` and `#3489`-`#3502`; the group-call readings are carried in
+[the group-call decision](backlog.d/group-calls-p2p-mesh-up-to-4-audio-3-video-decided-2026-10-31.md)), the
+institution event reach (all nine read, row 3's staff half pinned by an integration spec). **Merged:** the salon
+banner readings, the shade and quick-reply readings, the killed-phone background joins, the two iPhone ring
+readings, the two Android call-service readings, the two sealed-at-rest readings, the two CanaReels camera
+readings, the two chip-and-switch readings, the mention and speaker readings. **Deleted halves:** whatever needs an
+ear, a hand turning a phone, a shaped link, an iOS 16 device, a screen picker, an older iOS build, or a state only
+production holds.
+
+**Needs a state the bench has: dev sends push to a KILLED phone since 2026-10-21** (the old "WAITS: no Firebase
+sender" lines were wrong), the iPhone's banners are read and tapped with `ios.mjs nc`, `hold`, `tap`, and a web seat
+plays any peer.
+
+| Sitting | What it holds | Minutes |
+| --- | --- | --- |
+| Web and rig, no phone | pseudos 30, script policy (web) 10, waiting-seat ring 20, Graine rig 20, GRP-3 `ws1.mjs` 15, WP-REGRANT-2 (decide, then COMM-8) 15, LEAF-REFRESH rows 10, NOTIF-17b 5, staging the institution reel and post 20, live titles on a web seat 10 | 155 |
+| Production, read-only | the WP-5 EXPLAIN 5, the birthdays `profile_birthdays` count 5 | 10 |
+| Bench build | F1 on the iPhone (`ios.yml` with `local_url`) 40, seeds mirrored before the label (old APK, Mi 9T) 30, sealed caches upgrade (v1.4.0 APK, Mi 9T) 30 | 100 |
+| Both phones together | noise suppression routes 30, the call that survives the app leaving the screen and the audio focus 50, the deploy drill 40, campus trends 30, new-device notices 30 | 180 |
+| Mi 9T alone | see the list below | 735 |
+| iPhone 12 alone | see the list below | 520 |
+
+**Mi 9T alone (735 min), one push sitting then one UI sitting.** Push sitting (dev push, web seat as the peer):
+resume reload (2) 15, shut phone catches up 15, post push with a dead session 15, NOTIF-10 15, killed-phone
+background joins 30, history ask 20, mention and speaker 20, republish push 25, co-organiser push 25, comment and
+reply opens at the comment 15, first message from nobody 25, notification face 5, ciphertext once 10, Rust push
+sentences 10, row carries the group name 15, blind salon banner and Marquer comme lu 25, the shade (6b/6c/6d, K,
+D2, D3) 40, F1 killed 10, openings WP-4 20, bell WP-3 15, checkpoint
+durations 15. UI sitting: follow suggestions 25, routes sweep 10, CanaReels 30, in-session join 15, 13 MB 15, reply swipe 15, menus 10,
+live chat of named readers 40, live titles 25, birthdays 15, institution and Entre etudiants 25, Voir plus 10,
+camera volume keys 20, rotation (lock ON) 20, overlays 15, read receipts 10, microphone channel 10, script policy
+10, sharing 30.
+
+**iPhone 12 alone (520 min), the same two sittings.** Push sitting (`ios.mjs nc`/`hold`): mention unknown author 15,
+republish push 15, co-organiser push 10, comment and mention replies 10, ciphertext once 10, Rust push sentences 10,
+group name 15, the shade 20, killed-phone join foreground half 10, follow 25, openings 20, bell 15, native ring and
+foreground ring 25, caches (b)(c)(d) and hardware key 20, checkpoint 15. UI sitting: routes by eye 25, emoji rows 10,
+CanaReels 35, in-session join 15, 13 MB 20, reply swipe 15, menus 10, live titles 25, birthdays 15, institution and
+Entre etudiants 25, Voir plus 10, camera volume buttons 15, rotation (lock ON) 20, overlays 15, microphone channel
+10, tab swipe class A 10, sharing banner tap 10.
+
+The total is about 1700 minutes, 28 hours.
+
 ## Where the pass stands
 
 **2026-11-09, the bench readings of `v1.6.9-alpha.1` (dev answering `1.6.9-alpha.1`, build `100600901`): Mi 9T `canari-test-alpha` (the release `app-universal-release.apk` sideloaded with `adb install -r`: Play had not been asked, the install carries no installer), iPhone 12 `canari-test-gamma` (TestFlight offered `1.6.9 (100600901)`, taken from the TestFlight app), the harness Chrome slots as beta, gamma and delta (W5 started for delta).** Screenshots are kept out of the repo.
@@ -398,6 +450,24 @@ the dev-signed bench build only.
 a WDA session left on another app answers "not running" until it is deleted; a tap on a CanaReel card
 in a DM opens the viewer.
 
+## The iPhone 12 batch 8 readings of 2026-11-14
+
+TestFlight `1.6.12-alpha.2`, dev estate, `canari-test-gamma`; the peer is the `delta` web seat (CDP 9227);
+notifications read and tapped with `tools/ios-device/ios.mjs` `nc`, `hold` and `tap` (see the notes at the end of
+batch 7). Evidence is outside the repository.
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| A comment push, app killed ([entry](backlog.d/reading-owed-a-comment-reply-or-mention-opens-the-post-at-the-comment-the-push.md)) | **`PASS`** | NC row, `hold`, tap the card: PIN gate, then the post with the comments sheet open and the comment ringed; a banner tap did the same |
+| The bell row of a comment | **`PASS`** | The post opens with the sheet open and the comment ringed |
+| A comment push, app backgrounded | **not read** | Comments 3 to 7 raised no banner and no NC row: [entry](backlog.d/p3-comment-pushes-after-the-first-on-one-post-raised-no-banner-on-the-iphone.md) |
+| A salon mention, app killed, known author ([entry](backlog.d/reading-owed-a-mention-names-its-author-from-the-phone-s-copy-of-names-and-the.md)) | **`PASS`** | Title "nse banc communaute - #general", subtitle "Canari Test Delta vous a mentionne", body "@vous reading M mention", `TIME SENSITIVE`, the author's face |
+
+Not staged this batch: the readings of Android-only code (the Mi 9T half of each entry stays), the F1 iPhone runs
+(they need an `ios.yml` bench build with `local_url`, not a store build), the new-device notice (a gamma web seat
+was not available: seat w2 is another account and seat w3 is a signed-in profile of an unknown account at a PIN gate,
+neither touched), the republish request push and the co-organiser push (each needs a staged event or consent flow).
+
 ## The iPhone 12 batch 7 readings of 2026-11-14
 
 TestFlight `1.6.12-alpha.2`, dev estate, `canari-test-gamma` (no passcode), driven over WDA
@@ -412,15 +482,25 @@ Evidence is outside the repository.
 | Share in from Photos, Notes, Files ([entry](backlog.d/reading-owed-sharing-into-canari-on-ios.md)) | **`PASS`** | Card, banner, and the "Envoyer a..." picker carrying the item. Notes defaults to an iCloud collaboration link: choose "Envoyer une copie" |
 | A share, then a sign-out | **`PASS`** | Nothing offered after signing back in |
 | Share sheet suggestion row | **not reproduced** | A pick opens the card and banner, and Canari opened by hand shows the picker with the suggested conversation highlighted. A finger tap on the banner is not read (a Notification Center banner tap does not open the app over WDA) |
-| GIF relay, iPhone ([entry](backlog.d/reading-owed-a-gif-never-reaches-static-klipy-com-from-a-reader-s-browser-the.md)) | **`PASS`** | Picker thumbnails and a sent GIF drew; an 11 MB packet capture holds zero `klipy` and 46 `dev.canari-emse.fr`; two `cloudflare-ech.com` names are the stated caveat |
+| GIF relay, iPhone (entry deleted 2026-11-14, every half read) | **`PASS`** | Picker thumbnails and a sent GIF drew; an 11 MB packet capture holds zero `klipy` and 46 `dev.canari-emse.fr`; two `cloudflare-ech.com` names are the stated caveat |
 | Institution post chip and composer, light and dark ([entry](backlog.d/reading-owed-an-institution-chooses-each-post-s-spaces-and-public.md)) | **`PASS`** | Picker, hint, disabled "Publier", chip "Etudiants - 5 espaces" with the spaces in its title, both themes |
-| Institution event chip, reading 7 ([entry](backlog.d/institution-event-reach.md)) | **`PASS`** | "Tous - 5 espaces" on the event detail, both themes |
+| Institution event chip, reading 7 ([as built](profiles-and-access.md#an-institutions-reach-per-calendar-event-as-built-owner-2026-11-13)) | **`PASS`** | "Tous - 5 espaces" on the event detail, both themes |
 
 **Bench notes.** Changing the iPhone language restarts SpringBoard and kills the WDA runner, and the old
 `wda-daemon.py` keeps port 8100: kill it before starting a new one. The app's own theme (Settings >
 Preferences > Theme) is independent of the phone's appearance. In the feed, a card's actions menu is
 longer than the screen: scroll inside it to reach "Supprimer le post". `ios.mjs swipe` takes four
 separate numbers (`x1 y1 x2 y2`), `long` takes `x y ms`.
+
+**Notifications over WDA (read 2026-11-14, `tools/ios-device/ios.mjs`).** A BANNER opens the app with a plain
+`tap x,y` within about 4 s of its arrival. A ROW in Notification Center or on the lock screen does not answer a
+plain tap (a stack expands, a lone row slides to an "Open" button that does nothing): `ios.mjs hold <label>`
+(an XCUI element touch-and-hold, 1 s) expands it into its card, and a tap on that card opens the app, while
+"Repondre" and "Marquer comme lu" are plain taps. `ios.mjs nc` opens Notification Center (a W3C pull from
+y=1; `swipe` does not start the gesture). A coordinate `long` press on a banner falls through to the home
+screen and starts the icons' jiggle mode (`button home` ends it). The display sleeps 8-10 s after a push
+wakes it and a `tree` costs about 1 s, so do wake, find and tap in ONE process, a couple of seconds after the
+send. `tools/ios-device` has no README: the usage lives in the header of `ios.mjs`.
 
 ## The layout pass of 2026-09-09, and the sixth check that ran later the same day
 

@@ -39,8 +39,8 @@ import {
   PAYMENT_PROVIDER_REFUSED,
   businessCreatedUnlinked,
 } from './lydia-payment-provider';
+import { RouteParams, isUuidShaped } from '../common/route-params';
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Deliberately loose: the provider is the authority on deliverability, this only refuses junk. */
 /**
  * Shape of a payer e-mail. Domain labels exclude the dot so every dot has ONE reading (the old
@@ -134,6 +134,7 @@ function alreadyLinked(): ConflictException {
 }
 
 /** Controller handling Lydia Business onboarding and checkout sessions. */
+@RouteParams({ associationId: 'uuid' })
 @Controller('payments')
 export class PaymentController {
   private readonly logger = new Logger(PaymentController.name);
@@ -200,7 +201,7 @@ export class PaymentController {
     if (!assocId) {
       throw new BadRequestException('associationId is required');
     }
-    if (!UUID_RE.test(assocId)) {
+    if (!isUuidShaped(assocId)) {
       throw new BadRequestException('Invalid associationId');
     }
     // Every step below has its own bound, summing under nginx's timeout, so a slow call ends as a
@@ -432,9 +433,6 @@ export class PaymentController {
   @UseGuards(NginxAuthGuard, GlobalAdminGuard)
   @HttpCode(200)
   async clearEnrolmentInFlight(@Param('associationId') associationId: string) {
-    if (!UUID_RE.test(associationId)) {
-      throw new BadRequestException('Invalid associationId');
-    }
     this.logger.log(`Lydia enrolment marker cleared by a global admin on ${associationId}`);
     await this.releaseEnrolmentMarker(associationId, 'admin');
     return { ok: true };
@@ -470,9 +468,6 @@ export class PaymentController {
     @Body() body: { userId?: unknown; phone?: unknown; mode?: unknown },
     @Req() req: Request
   ) {
-    if (!UUID_RE.test(associationId)) {
-      throw new BadRequestException('Invalid associationId');
-    }
     await this.assertCanManageAssociation(req, associationId);
     const actorId = (req.headers['x-user-id'] as string | undefined)?.trim() ?? '';
     const globalAdmin = req.headers['x-global-admin'] === 'true';
@@ -797,9 +792,6 @@ export class PaymentController {
   @UseGuards(NginxAuthGuard, GlobalAdminGuard)
   @HttpCode(200)
   async disconnectLydiaAccount(@Param('associationId') associationId: string) {
-    if (!UUID_RE.test(associationId)) {
-      throw new BadRequestException('Invalid associationId');
-    }
     this.logger.log(`Lydia Business unlinked by a global admin for association ${associationId}`);
 
     try {
@@ -837,9 +829,6 @@ export class PaymentController {
   @UseGuards(NginxAuthGuard, GlobalAdminGuard)
   @HttpCode(200)
   async completeLydiaAccount(@Param('associationId') associationId: string) {
-    if (!UUID_RE.test(associationId)) {
-      throw new BadRequestException('Invalid associationId');
-    }
     this.logger.log(`Lydia onboarding validated by hand for association ${associationId}`);
 
     const assoRes = await axios.get<{ lydiaAccountId?: string | null }>(
