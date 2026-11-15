@@ -63,6 +63,33 @@ a member of any age, and that push is filtered for its own reader like every oth
    or `did-not-declare` (online, a live session without the capability). The Lua check returns `2` for
    the first and `0` for the second (`addressabilityOf`), so nothing reads Redis a second time to
    classify it; the behaviour is the same for both.
+   **The inviter's join push does not learn that refusal by failing (2026-11-15).** The one addressed
+   send nobody asked for is the join push that follows every delivered Welcome (`joinPush.ts`); every
+   other addressed answer replies to an ask, whose asker was online to make it. On dev, an Add of ten
+   devices of one account, eight of them stale rig devices, cost eight `400 addressed_unsupported`
+   (the [rig run](../cross-client-harness-findings.md)). **Decided: the Welcome's answer carries the
+   verdict** - `POST /api/mls/welcome` answers `{ status: 'queued', addressability }`, read by the SAME
+   script in check-only mode (`MessagingService.welcomeAnswer`), and the join push sends nothing to a
+   device answered `offline` or `undeclared` (still counted at warn, `[JOIN_PUSH] NOT DELIVERED`). Why
+   this and not the two alternatives:
+   - **The client holds no per-device presence or capability.** `presenceStore` polls per USER, every
+     10 s, and nothing hands a client the capabilities another device declared; teaching it would be a
+     second copy of a fact only chat-delivery reads (`addressing:sessions:*`), with its own staleness.
+   - **A batch answer with a typed "unaddressable" outcome** would still MAKE the request, and a
+     refusal of an expected case renamed is the demotion the noise rule forbids.
+   - **The Welcome is a request the inviter makes anyway**, one per admitted device, already answered
+     `201`, and chat-delivery is where presence and capability are known: the fact rides an answer that
+     exists. No new route, no new round trip.
+
+   **The race, and why it stays explainable.** The verdict is read when the Welcome is answered; the
+   push leaves later (the pushes run one at a time, each decrypting the store). A device that DISCONNECTS
+   in between is still refused at the send - the send's check is unchanged and stays the authority, the
+   refusal stays a `400`, and the inviter's warn line names it (`addressable when its Welcome was
+   answered, gone since`). A device that CONNECTS in between is not pushed: it is the offline newcomer of
+   the [backlog](../backlog.d/p2-an-offline-newcomer-receives-no-join-push.md), whose fix is the
+   newcomer asking. A server that predates the field answers without it (`null` on the client): the push
+   is sent and the send decides, as before. A verdict the server could not read is said at error there
+   and left out, with the same effect.
 4. **The server marks an addressed row.** `queued_message.addressed` (migration `035`, which sets a
    `lock_timeout` so it fails rather than queue every send behind a long transaction), set when the
    send was addressed ON A CONVERSATION - the flag is what rule 5 and the gateway's edge filter (rule

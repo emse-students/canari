@@ -23,6 +23,34 @@ describe('sendWelcome and the refusal of its target', () => {
   }
   const send = (a: MlsDeliveryApi) => a.sendWelcome(new Uint8Array([1]), 'bob', 'group-1', 'd-b');
 
+  const json = { 'content-type': 'application/json' };
+
+  it("returns the server's word on whether the device can be addressed a history answer", async () => {
+    for (const addressability of ['addressable', 'offline', 'undeclared'] as const) {
+      const body = JSON.stringify({ status: 'queued', addressability });
+      await expect(send(api(new Response(body, { status: 201, headers: json })))).resolves.toBe(
+        addressability
+      );
+    }
+  });
+
+  it('returns null when the answer does not say - an older delivery service, or a value it does not know', async () => {
+    for (const body of [{ status: 'queued' }, { status: 'queued', addressability: 'maybe' }]) {
+      await expect(
+        send(api(new Response(JSON.stringify(body), { status: 201, headers: json })))
+      ).resolves.toBeNull();
+    }
+  });
+
+  it('returns null, and says so, when the stored Welcome answered a body that cannot be read', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await expect(
+      send(api(new Response('{not json', { status: 201, headers: json })))
+    ).resolves.toBeNull();
+    expect(warn.mock.calls.some(([l]) => String(l).includes('could not be read'))).toBe(true);
+    warn.mockRestore();
+  });
+
   it('throws WelcomeTargetNotMemberError on a 403 carrying WELCOME_TARGET_NOT_MEMBER', async () => {
     const body = JSON.stringify({
       code: 'WELCOME_TARGET_NOT_MEMBER',

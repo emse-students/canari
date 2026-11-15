@@ -47,6 +47,7 @@ import {
   isTerminalWelcomeRefusal,
   whyWelcomeUndeliverable,
   type RefusedAdmit,
+  type WelcomeAddressability,
   ADD_LOCK_WAIT_BOUND_MS,
   boundAddLockWait,
 } from '$lib/mls-client/mlsDeliveryApi';
@@ -3884,8 +3885,9 @@ export abstract class BaseMlsService implements IMlsService {
       return inFlight.done;
     }
     const done = (async () => {
+      let addressability: WelcomeAddressability | null;
       try {
-        await this.delivery.sendWelcome(
+        addressability = await this.delivery.sendWelcome(
           welcomeBytes,
           targetUserId,
           groupId,
@@ -3915,6 +3917,8 @@ export abstract class BaseMlsService implements IMlsService {
         userId: targetUserId,
         deviceId: targetDeviceId,
         welcome: welcomeBytes,
+        // `?? null`: a delivery double that answers nothing is a server that did not say.
+        addressability: addressability ?? null,
       });
     })();
     const entry = { welcome: welcomeBytes, done };

@@ -267,6 +267,27 @@ export class AddressedUnsupportedError extends Error {
 }
 
 /**
+ * Whether the device a Welcome was just delivered to can be ADDRESSED a history answer, as the
+ * delivery service read it when it answered `POST /api/mls/welcome`: `addressable`, `offline` (no
+ * presence key) or `undeclared` (online, with a live session that did not declare
+ * `addressed-history-1`). The two refusals are the ones `addressed_unsupported` would name at the
+ * send - read once, by the server's own script, so the inviter's join push does not make a request
+ * the server would refuse (docs/wiki/protocols/history-answer-addressing.md, rule 6).
+ */
+export type WelcomeAddressability = 'addressable' | 'offline' | 'undeclared';
+
+/**
+ * Reads `addressability` out of a Welcome's answer. `null` when the answer carries none - a delivery
+ * service that predates the field, or one that could not read it - or an unknown value, which a
+ * caller must treat as "not said", never as a verdict.
+ */
+export function parseWelcomeAddressability(raw: unknown): WelcomeAddressability | null {
+  if (raw === null || typeof raw !== 'object') return null;
+  const value = (raw as { addressability?: unknown }).addressability;
+  return value === 'addressable' || value === 'offline' || value === 'undeclared' ? value : null;
+}
+
+/**
  * Parses the body of `GET /api/mls/groups/:groupId/exclusions`.
  *
  * Strict on purpose: a window that cannot be read is a window that would not be withheld, so a
@@ -1779,6 +1800,9 @@ export class MlsDeliveryApi {
    * ever be addressed to that device. Every caller (the Add's sender, the pending sweep, the
    * `welcome_request` answer, the admission, the owed-Welcome drain) knows it; a fan-out to the
    * account's roster had no caller left and was deleted (2026-11-06).
+   *
+   * @returns whether the server can address the device a history answer now
+   *   ({@link WelcomeAddressability}), or `null` when its answer did not say.
    */
   async sendWelcome(
     welcomeBytes: Uint8Array,
@@ -1786,7 +1810,7 @@ export class MlsDeliveryApi {
     groupId: string,
     targetDeviceId: string,
     ratchetTreeBytes?: Uint8Array
-  ): Promise<void> {
+  ): Promise<WelcomeAddressability | null> {
     const response = await this.f(`${this.historyUrl}/api/mls/welcome`, {
       method: 'POST',
       headers: await this.auth({ 'Content-Type': 'application/json' }),
@@ -1816,6 +1840,19 @@ export class MlsDeliveryApi {
       response,
       `Welcome delivery to ${targetUserId}:${targetDeviceId} (group ${groupId})`
     );
+    // THE WELCOME IS STORED from here: a body that cannot be read loses only the addressability,
+    // which is then "not said" - the join push is sent and the server's own check decides.
+    let answered: unknown;
+    try {
+      answered = await response.json();
+    } catch (e) {
+      console.warn(
+        `[DELIVERY] Welcome to ${targetDeviceId} in ${groupId.slice(0, 8)}... stored, but its answer could not be read - its addressability is not known:`,
+        e
+      );
+      return null;
+    }
+    return parseWelcomeAddressability(answered);
   }
 
   /**

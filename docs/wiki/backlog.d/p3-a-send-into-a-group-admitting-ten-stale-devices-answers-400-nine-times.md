@@ -1,5 +1,0 @@
-## A send into a group that admits ten of alpha's devices answered `400` nine times on `/api/mls/send`
-
-target: 1.7.0
-
-**Seen 2026-11-15** on dev (`1.6.12-alpha.2`) by `bun archive/notif17b.mjs` (rig log kept out of the repository): beta's web seat minted a group, added alpha, and logged `POST /api/mls/send -> 400` nine times in the minute that followed, around `[COMMIT] ... admits 10 device(s) at epoch 2` (alpha has ten enrolled devices, most of them stale rig devices) and `[HISTORY_BUNDLE] ... cannot be addressed ... pushing it nothing`. The group still worked (the push, the conversation on the phone), so the `400`s are noise upstream of something: a send addressed to a device that cannot take it, or a duplicate. **To do:** read the response body and the request kind of those nine sends (Welcome per device? a duplicate commit?) on a dev run with the network tab open, then either make the sender skip what it knows will be refused or name the expected refusal and stop logging it; a stale device that stays on the roster for ever is a second question (device lifecycle). Per the repository's noise rule it is not to be demoted.
