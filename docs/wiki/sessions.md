@@ -152,15 +152,17 @@ Two rules come out of it, and they generalise past Android:
   unauthenticated, which turns "you are logged out" into "there is nothing here" - the app rendered
   its ordinary shell, empty, with no login screen. Only a TRANSPORT failure now earns the anonymous
   attempt.
-- **A verdict reached before anything is listening must be REPLAYED, not dropped.** The reaction is
-  owned by the app shell, which registers it on mount - and on a cold start the first refresh 401s
-  before that, so the fallback redirect was the entire reaction. A redirect is not the reaction: it
-  skips `dismissAuthPrompts()` and `clearAuth()`, so Android landed on `/login` with the encryption
-  PIN modal still open OVER the sign-in button, and the user could not get back in at all (measured
-  2026-08-06, on the build that had just fixed the two faults above). `setSessionExpiredHandler`
-  therefore fires a handler that arrives after the verdict. The general form: a one-shot announcement
-  and a late subscriber are a race, and the fallback that "covers" it is only equivalent if it does
-  everything the real handler does - which it never does, or it would BE the handler.
+- **A verdict reached before anything is listening is QUEUED WITH ITS TARGET, never answered by a
+  redirect of its own.** The reaction is owned by the app shell, which registers it on mount - and on
+  a cold start the first refresh 401s before that. `notifySessionExpired` latches the verdict and
+  keeps the page in flight (`SessionExpiredTarget`); `setSessionExpiredHandler` hands both to a
+  handler that arrives after it. There is no fallback redirect: it skipped `dismissAuthPrompts()` and
+  `clearAuth()`, so Android landed on `/login` with the encryption PIN modal still open OVER the
+  sign-in button (measured 2026-08-06), and it dropped the page a tapped push was going to (Mi 9T,
+  2026-11-15, see [two ways that target was still lost](#two-ways-that-target-was-still-lost-mi-9t-2026-11-15-2-of-4-taps-signed-in-to-the-wrong-page)). The general form: a
+  one-shot announcement and a late subscriber are a race, and a fallback that "covers" it is only
+  equivalent if it does everything the real handler does - which it never does, or it would BE the
+  handler. So the announcement is queued, and the one handler decides.
 
 Both halves were verified on an Android device on 2026-08-06, against production. Persistence: two
 rounds of rotate -> `am force-stop` -> wait past 60 s -> relaunch, and in both the row's
