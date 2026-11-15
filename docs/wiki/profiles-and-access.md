@@ -767,7 +767,12 @@ is deleted, and the client no longer decides from `formation === 'ICM'`.
   through a republication.
 - **Cache**: `SpacesService.setAudiences`/`setBde` and `addMember`/`removeMember` drop the
   feed cache (keyed per reader; no TTL was added). A change to a user's campus or cursus is
-  served stale for at most the existing 30 s TTL.
+  served stale for at most the existing 30 s TTL. **A follow that begins or ends drops ITS READER'S
+  pages and nobody else's** (`dropFeedPagesOfReader`, `follows/follow-feed-cache.ts`, 2026-11-15):
+  an association followed (on every successful call, a repeat included, so the retry of a call whose drop failed still leaves the pages right) or unfollowed, a request accepted (the new follower's pages). What a
+  reader follows decides their own pages only, so the per-reader generation moves
+  (`invalidatePostListCacheFor`) and every other reader keeps their cache. A person unfollowed, a
+  follower removed and a block still drop the whole keyspace, as before.
 - **Client**: `GET /api/posts/audience` -> `{ inAudience }`, the guard's own SQL. The verdict stays
   remembered per account for first paint and is revalidated behind it; only a boolean answer
   changes it.

@@ -181,7 +181,9 @@ maybe('the bell against PostgreSQL (engagement WP-3)', () => {
     follows = new FollowsService(
       ds.getRepository(AssociationFollow),
       ds.getRepository(UserFollow),
-      assoRepo as never
+      assoRepo as never,
+      // The feed cache is not this suite's subject: a follow's drop of the reader's pages lands here.
+      { incrEach: async () => undefined, deleteMatching: async () => 0 } as never
     );
     notifications = new PostNotificationsService(
       ds.getRepository(PostNotification),

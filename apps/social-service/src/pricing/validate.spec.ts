@@ -1,6 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import {
   AUDIENCE_COTISATION_BOTH_MODES,
+  AUDIENCE_FORMATION_UNKNOWN,
   FIRST_PROMO_YEAR,
   parseAudienceCondition,
   parsePriceMatrix,
@@ -104,6 +105,50 @@ describe('criteria validation', () => {
         code: AUDIENCE_COTISATION_BOTH_MODES,
       });
     });
+  });
+
+  // A formation a profile cannot name matches nobody: refused where it is written, on both paths.
+  describe('a formation criterion', () => {
+    const codeOf = (parse: () => unknown): string | null => {
+      try {
+        parse();
+        return null;
+      } catch (e) {
+        if (!(e instanceof BadRequestException)) throw e;
+        return (e.getResponse() as { code?: string }).code ?? 'untyped';
+      }
+    };
+    const condition = (values: unknown) =>
+      codeOf(() => parseAudienceCondition({ formation: { values } }, ctx, 'showIf'));
+    const dimension = (values: unknown) =>
+      codeOf(() =>
+        parsePriceMatrix(
+          {
+            dimensions: [
+              { id: 'd1', kind: 'formation', buckets: [{ id: 'b1', label: 'F', values }] },
+            ],
+            cells: { b1: 1000, _others: 2000 },
+          },
+          ctx
+        )
+      );
+
+    it.each([['a condition', condition] as const, ['a grid dimension', dimension] as const])(
+      'accepts every formation a profile may name, on %s',
+      (_path, parse) => {
+        expect(parse(['ICM', 'ISMIN', 'FSSS', 'PDIS', 'Autre'])).toBeNull();
+      }
+    );
+
+    it.each([['a condition', condition] as const, ['a grid dimension', dimension] as const])(
+      'refuses a formation no profile carries, typed, on %s',
+      (_path, parse) => {
+        // The legacy name of what a cursus now calls `Autre`, a case variant, one bad among good.
+        expect(parse(['Master'])).toBe(AUDIENCE_FORMATION_UNKNOWN);
+        expect(parse(['icm'])).toBe(AUDIENCE_FORMATION_UNKNOWN);
+        expect(parse(['ICM', 'Doctorat'])).toBe(AUDIENCE_FORMATION_UNKNOWN);
+      }
+    );
   });
 
   // The dimension path shares the promo parser, so the bound cannot be bypassed by pricing on it.

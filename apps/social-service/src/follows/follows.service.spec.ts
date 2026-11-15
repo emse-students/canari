@@ -1,4 +1,5 @@
-import { NotFoundException } from '@nestjs/common';
+import { Logger, NotFoundException } from '@nestjs/common';
+import { POST_LIST_GENERATION_KEY } from '../posts/post-list-cache';
 import { FollowsService } from './follows.service';
 
 /**
@@ -106,11 +107,20 @@ describe('FollowsService', () => {
     ),
   };
 
+  /** The feed cache: the per-reader generations moved are whose pages were dropped. */
+  const redis = {
+    incrEach: jest.fn((_keys: readonly string[]) => Promise.resolve()),
+    deleteMatching: jest.fn(() => Promise.resolve(0)),
+  };
+  const readersDropped = () => redis.incrEach.mock.calls.flatMap(([keys]) => [...keys]);
+  const pagesOf = (reader: string) => `${POST_LIST_GENERATION_KEY}:${reader}`;
+
   function service() {
     return new FollowsService(
       fakeRepo(assoRows) as never,
       fakeRepo(userRows) as never,
-      assoRepo as never
+      assoRepo as never,
+      redis as never
     );
   }
 
@@ -141,6 +151,44 @@ describe('FollowsService', () => {
       await expect(service().unfollowAssociation('u1', 'a1')).rejects.toBeInstanceOf(
         NotFoundException
       );
+    });
+
+    it("drops the reader's own feed pages when a follow begins or ends, and nothing on a refusal", async () => {
+      await service().followAssociation('u1', 'a1');
+      expect(readersDropped()).toEqual([pagesOf('u1')]);
+      await service().unfollowAssociation('u1', 'a1');
+      expect(readersDropped()).toEqual([pagesOf('u1'), pagesOf('u1')]);
+      await expect(service().unfollowAssociation('u1', 'a1')).rejects.toBeInstanceOf(
+        NotFoundException
+      );
+      expect(readersDropped()).toHaveLength(2);
+      await expect(service().followAssociation('u1', 'nope')).rejects.toBeInstanceOf(
+        NotFoundException
+      );
+      expect(readersDropped()).toHaveLength(2);
+    });
+
+    it('drops them again on a REPEATED follow: the retry of a call whose drop failed leaves the pages right', async () => {
+      const warned = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      redis.incrEach.mockRejectedValueOnce(new Error('redis down'));
+      // The follow is written, its drop failed ...
+      expect(await service().followAssociation('u1', 'a1')).toEqual({ ok: true });
+      expect(warned).toHaveBeenCalledWith(expect.stringContaining('not dropped after a follow'));
+      // ... and the retry, which creates nothing, drops them all the same.
+      redis.incrEach.mockClear();
+      expect(await service().followAssociation('u1', 'a1')).toEqual({ ok: true });
+      expect(assoRows).toHaveLength(1);
+      expect(readersDropped()).toEqual([pagesOf('u1')]);
+      warned.mockRestore();
+    });
+
+    it('still answers the unfollow when the cache cannot be dropped: the row is gone, the page ages out', async () => {
+      const warned = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      await service().followAssociation('u1', 'a1');
+      redis.incrEach.mockRejectedValueOnce(new Error('redis down'));
+      expect(await service().unfollowAssociation('u1', 'a1')).toEqual({ ok: true });
+      expect(warned).toHaveBeenCalledWith(expect.stringContaining('not dropped after an unfollow'));
+      warned.mockRestore();
     });
 
     it('keeps each follower apart: one user unfollowing never removes another follow', async () => {
