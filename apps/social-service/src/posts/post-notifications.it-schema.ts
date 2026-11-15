@@ -38,6 +38,50 @@ export async function createPostNotificationsTable(
 }
 
 /**
+ * Makes sure what the bell's TARGET gates read exists (`bell-row-gates.ts`, `targetBoundRowShownSql`):
+ * the bell's one statement names the events, their co-organisers, the booking spaces and the forms
+ * whatever kinds a reader holds, so a spec that reads the bell needs them even when it writes none.
+ * Run AFTER the spec's own tables and migrations (071 and 078 among them, which the event predicate
+ * reads), over the `users` and `association_members` tables the spec built (and its `post_notifications`,
+ * when it has one rather than reading rows from a `VALUES` list): every table is `IF NOT EXISTS` and every column `ADD COLUMN IF NOT EXISTS`, so a spec that
+ * built one of them richer keeps it, and the reach columns come from migration 165, the file every
+ * estate ran.
+ */
+export async function createBellTargetTables(q: (sql: string) => Promise<unknown>): Promise<void> {
+  await q(`
+    ALTER TABLE IF EXISTS post_notifications ADD COLUMN IF NOT EXISTS meta jsonb;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS admin boolean NOT NULL DEFAULT false;
+    ALTER TABLE association_members ADD COLUMN IF NOT EXISTS permissions int NOT NULL DEFAULT 0;
+    CREATE TABLE IF NOT EXISTS association_calendar_events (id uuid PRIMARY KEY);
+    ALTER TABLE association_calendar_events
+      ADD COLUMN IF NOT EXISTS id uuid,
+      ADD COLUMN IF NOT EXISTS "associationId" uuid,
+      ADD COLUMN IF NOT EXISTS title varchar(200),
+      ADD COLUMN IF NOT EXISTS status varchar(16) NOT NULL DEFAULT 'validated';
+    CREATE TABLE IF NOT EXISTS association_calendar_event_co_owners (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), event_id uuid NOT NULL, association_id uuid NOT NULL);
+    -- The estates' key (migration 074): the bell's party gate probes it per row.
+    CREATE UNIQUE INDEX IF NOT EXISTS "UQ_calendar_event_co_owner"
+      ON association_calendar_event_co_owners (event_id, association_id);
+    CREATE TABLE IF NOT EXISTS booking_spaces (id uuid PRIMARY KEY);
+    ALTER TABLE booking_spaces
+      ADD COLUMN IF NOT EXISTS "associationId" uuid,
+      ADD COLUMN IF NOT EXISTS "ownerId" varchar,
+      ADD COLUMN IF NOT EXISTS name varchar,
+      ADD COLUMN IF NOT EXISTS discoverability varchar NOT NULL DEFAULT 'listed',
+      ADD COLUMN IF NOT EXISTS audience jsonb;
+    CREATE TABLE IF NOT EXISTS forms (id uuid PRIMARY KEY);
+    ALTER TABLE forms
+      ADD COLUMN IF NOT EXISTS "ownerId" varchar(255),
+      ADD COLUMN IF NOT EXISTS "associationId" uuid,
+      ADD COLUMN IF NOT EXISTS title varchar;
+  `);
+  await q(
+    readFileSync(join(__dirname, '..', 'migrations', '165_institution_event_reach.sql'), 'utf8')
+  );
+}
+
+/**
  * Builds chat-delivery's `notification_preference` from the files the estates ran - its migration
  * 028 and 047 (the opt-in categories, "Suggestions" off until turned on), the same database on every
  * estate. Idempotent, so a spec may build it through more than one helper.

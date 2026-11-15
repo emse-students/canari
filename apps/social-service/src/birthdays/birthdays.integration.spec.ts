@@ -16,10 +16,14 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { Client } from 'pg';
+import { PG_SESSION_OPTIONS } from '../common/pg-session-options';
 import { DataSource } from 'typeorm';
 import { PostNotification } from '../posts/entities/post-notification.entity';
 import { PostNotificationsService } from '../posts/post-notifications.service';
-import { createPostNotificationsTable } from '../posts/post-notifications.it-schema';
+import {
+  createPostNotificationsTable,
+  createBellTargetTables,
+} from '../posts/post-notifications.it-schema';
 import { AccountBell } from '../follows/entities/account-bell.entity';
 import { AccountBellsService } from '../follows/account-bells.service';
 import { ERASURE_STATEMENTS } from '../internal/account-erasure';
@@ -153,7 +157,8 @@ maybe('birthdays against PostgreSQL (migration 148)', () => {
       url: URL,
       entities: [PostNotification, AccountBell],
       synchronize: false,
-      extra: { options: `-c search_path=${schema}` },
+      // The service's own session settings (`PG_SESSION_OPTIONS`), as `AppModule` opens its pool.
+      extra: { options: `${PG_SESSION_OPTIONS} -c search_path=${schema}` },
     });
     await ds.initialize();
     bells = new AccountBellsService(ds.getRepository(AccountBell), {} as never);
@@ -165,6 +170,8 @@ maybe('birthdays against PostgreSQL (migration 148)', () => {
     );
     birthdays = new BirthdaysService(ds);
     notifier = new BirthdayNotifier(ds, notifications);
+    // The bell's one statement reads what its target gates name (`bell-row-gates.ts`).
+    await createBellTargetTables(q);
   });
 
   afterAll(async () => {
