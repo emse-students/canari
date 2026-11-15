@@ -22,29 +22,45 @@
     size?: 'md' | 'lg';
     /** Out of the tab order where the bar repeats it for the keyboard. */
     tabindex?: number;
+    /**
+     * A poster, not a control: no button, no `data-video-controls`, so a tap on it is a tap on the
+     * picture behind (the chat's: it opens the viewer).
+     */
+    decorative?: boolean;
   }
 
-  let { onclick, size = 'md', tabindex }: Props = $props();
+  let { onclick, size = 'md', tabindex, decorative = false }: Props = $props();
 
   const side = $derived(size === 'lg' ? 72 : 64);
 </script>
 
-<button
-  type="button"
-  class="video-play-glyph absolute top-1/2 left-1/2 z-10 flex -translate-x-1/2 -translate-y-1/2 items-center justify-center text-white outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-1 focus-visible:ring-offset-black active:scale-95 motion-reduce:transition-none"
-  style="width: {side}px; height: {side}px"
-  aria-label={m.video_play_label()}
-  data-video-controls
-  data-video-play-glyph
-  {tabindex}
-  onpointerdown={(e) => e.stopPropagation()}
-  onclick={(e) => {
-    e.stopPropagation();
-    onclick();
-  }}
->
-  <VideoGlassGlyph kind="play" size={side} />
-</button>
+{#if decorative}
+  <span
+    class="video-play-glyph pointer-events-none absolute top-1/2 left-1/2 z-10 flex -translate-x-1/2 -translate-y-1/2 items-center justify-center text-white"
+    style="width: {side}px; height: {side}px"
+    aria-hidden="true"
+    data-video-play-glyph
+  >
+    <VideoGlassGlyph kind="play" size={side} />
+  </span>
+{:else}
+  <button
+    type="button"
+    class="video-play-glyph absolute top-1/2 left-1/2 z-10 flex -translate-x-1/2 -translate-y-1/2 items-center justify-center text-white outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-1 focus-visible:ring-offset-black active:scale-95 motion-reduce:transition-none"
+    style="width: {side}px; height: {side}px"
+    aria-label={m.video_play_label()}
+    data-video-controls
+    data-video-play-glyph
+    {tabindex}
+    onpointerdown={(e) => e.stopPropagation()}
+    onclick={(e) => {
+      e.stopPropagation();
+      onclick();
+    }}
+  >
+    <VideoGlassGlyph kind="play" size={side} />
+  </button>
+{/if}
 
 <style>
   /* Pops in where it appears, so a pause reads as a change rather than a sticker; none when the
