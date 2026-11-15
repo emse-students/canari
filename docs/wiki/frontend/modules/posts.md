@@ -2806,7 +2806,17 @@ are left as they are (no row is rewritten).
   posts: an anonymous post's form (`attachedFormId`, the legacy `forms`) is withheld from every
   reader its author is withheld from (`withholdFormsOfHiddenAuthor`, on the same branch that strips
   `authorId`; the author and moderators still see it), and `GET /api/forms/:id` serves `ownerId`
-  to the form's managers only. How many stored posts carry a foreign form was not measured.
+  to the form's managers only, asking management ONCE per read (`readVerdict` hands `get` the
+  answer where it already had to ask it). **Stored posts are masked at read, never rewritten, and
+  how many there are is NOT MEASURED** - neither the anonymous posts carrying a form nor the posts
+  naming a foreign form. The count is one read-only statement on production, waiting for the owner:
+  `SELECT anonymous, ("attachedFormId" IS NOT NULL) AS has_form_id, (jsonb_array_length(forms) > 0)
+  AS has_inline_forms, count(*) FROM posts GROUP BY 1, 2, 3`. Its `has_inline_forms` column also
+  says whether the retired list was ever stored, which git history cannot say for a client outside
+  this repository.
+- **`POST_FORMS_RETIRED` has no client wording, deliberately**: no screen can send the list, so the
+  refusal reaches only a hand-made request, which reads the typed code. A string no user can be
+  shown would be dead text.
 - Proof: `posts.service.attached-form.spec.ts` (each post kind, the anonymous post, the retired
   list, an edit changing, keeping, removing and a personal post's author),
   `posts.service.anonymous-list.spec.ts` (the withheld form), `forms.service.draft.spec.ts`
