@@ -3671,9 +3671,12 @@ nothing verifies anything. That is G2-4.
   - `storeIncomingSeed` extends G2-0's refusal: a copy whose endorsement, key, device or minter
     differs from the one held is `[GRAINE] REFUSED` (`'endorsement'`), as a different seed already
     was. So a relayed copy cannot downgrade a v2 session, nor re-attribute it.
-- **The restored secret cannot reuse a key.** A backup import carries no `distributionEpoch`, so a
-  restored session always rotates before it seals again, and the same index is never signed twice
-  from two installs.
+- **The restored secret cannot reuse a key.** A backup import writes no `sentCount` (2026-11-15), so
+  a restored session is one this device READS and the first send after a restore mints a new
+  session; the same index is never signed twice from two installs. The argument this bullet made
+  before - "no `distributionEpoch`, so it rotates" - stopped holding on 2026-10-22, when the verdict
+  moved to the rotation anchor, which the backup carries inside the sealed blob
+  ([backup](../frontend/backup.md#a-seed-comes-back-to-read-never-to-seal-under---2026-11-15)).
 - **In the native mirror.** A `graine_seeds.json` entry becomes
   `{seed, createdAt, firstIndex[, version: 2, minterUserId, signingPk]}` - and since 2026-11-07
   `accounts[, unattributed]`, its writers' labels
