@@ -158,9 +158,10 @@ export class FollowsService {
       `[FOLLOW] ${followerUserId.slice(0, 8)} -> association ${associationId.slice(0, 8)}: ` +
         `${row?.created ? 'followed' : 'already following'}${row?.reset ? ', bell reset' : ''}`
     );
-    if (row?.created) {
-      await dropFeedPagesOfReader(this.redis, this.logger, followerUserId, 'a new follow');
-    }
+    // On EVERY successful call, a repeat included: a first call whose drop failed is retried by the
+    // client, finds the follow already there, and must still leave the reader's pages right - never
+    // the cache's TTL to heal it.
+    await dropFeedPagesOfReader(this.redis, this.logger, followerUserId, 'a follow');
     return { ok: true };
   }
 

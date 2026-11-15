@@ -153,10 +153,7 @@ describe('FollowsService', () => {
       );
     });
 
-    it("drops the reader's own feed pages when a follow begins or ends, and nothing on a repeat or a refusal", async () => {
-      await service().followAssociation('u1', 'a1');
-      expect(readersDropped()).toEqual([pagesOf('u1')]);
-      // A second ask writes nothing: no page changed.
+    it("drops the reader's own feed pages when a follow begins or ends, and nothing on a refusal", async () => {
       await service().followAssociation('u1', 'a1');
       expect(readersDropped()).toEqual([pagesOf('u1')]);
       await service().unfollowAssociation('u1', 'a1');
@@ -165,6 +162,24 @@ describe('FollowsService', () => {
         NotFoundException
       );
       expect(readersDropped()).toHaveLength(2);
+      await expect(service().followAssociation('u1', 'nope')).rejects.toBeInstanceOf(
+        NotFoundException
+      );
+      expect(readersDropped()).toHaveLength(2);
+    });
+
+    it('drops them again on a REPEATED follow: the retry of a call whose drop failed leaves the pages right', async () => {
+      const warned = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      redis.incrEach.mockRejectedValueOnce(new Error('redis down'));
+      // The follow is written, its drop failed ...
+      expect(await service().followAssociation('u1', 'a1')).toEqual({ ok: true });
+      expect(warned).toHaveBeenCalledWith(expect.stringContaining('not dropped after a follow'));
+      // ... and the retry, which creates nothing, drops them all the same.
+      redis.incrEach.mockClear();
+      expect(await service().followAssociation('u1', 'a1')).toEqual({ ok: true });
+      expect(assoRows).toHaveLength(1);
+      expect(readersDropped()).toEqual([pagesOf('u1')]);
+      warned.mockRestore();
     });
 
     it('still answers the unfollow when the cache cannot be dropped: the row is gone, the page ages out', async () => {
