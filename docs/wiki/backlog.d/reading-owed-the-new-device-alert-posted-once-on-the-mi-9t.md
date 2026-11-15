@@ -13,3 +13,5 @@ line in the log. **And, right after the update and before the app's first open**
 commit naming an OLD device of the account: no "new device" notification may appear, and the log
 must show the service's `new-device key(s) held - the app has not pre-claimed this account` line
 until the first open writes the pre-claim marker. Closes with that reading.
+
+**2026-11-14: the block that read #3550 (the revoked device's alert, deferred check at registration) left this entry** - #3550 is not in `v1.6.12`, and a reading of unshipped code is deleted (owner); it is refiled when #3550 ships in a pre-release. The 2026-11-14 defect reading (alert kept after a forced restart, a SPA navigation and a reload) stays the baseline ([mls-protocol](../protocols/mls-protocol.md)).

@@ -8,6 +8,7 @@ import { AssociationCalendarEvent } from './entities/association-calendar-event.
 import { AssociationCalendarEventCoOwner } from './entities/association-calendar-event-co-owner.entity';
 import { AssociationDocument } from './entities/association-document.entity';
 import { DocumentReviewerGrant } from './entities/document-reviewer-grant.entity';
+import { AgendaSubscription } from './entities/agenda-subscription.entity';
 import { PosterZone } from './entities/poster-zone.entity';
 import { PosterEntry } from './entities/poster-entry.entity';
 import { PosterProject } from './entities/poster-project.entity';
@@ -80,6 +81,7 @@ import { RefundsController } from './refunds/refunds.controller';
       Space,
       AssociationAudience,
       LydiaRefund,
+      AgendaSubscription,
     ]),
     FollowsModule,
     UserTagModule,

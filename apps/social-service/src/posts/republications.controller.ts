@@ -6,7 +6,6 @@ import {
   Get,
   Headers,
   Param,
-  ParseUUIDPipe,
   Post as HttpPost,
   UseGuards,
 } from '@nestjs/common';
@@ -15,6 +14,7 @@ import { ModerationService } from '../moderation/moderation.service';
 import { RepublicationsService } from './republications.service';
 import { PersonalRepublicationsService } from './personal-republications.service';
 import { RepublicationTargetDto } from './dto/post.dto';
+import { RouteParams } from '../common/route-params';
 
 /**
  * Republication (D38, D38b) under `/api/posts/...`. Its own controller rather than more routes on
@@ -23,6 +23,7 @@ import { RepublicationTargetDto } from './dto/post.dto';
  * rights are the republication services' alone. Accepting, refusing and withdrawing a proposal are
  * generic and live in `proposals/proposals.controller.ts`.
  */
+@RouteParams({ postId: 'uuid', associationId: 'uuid' })
 @Controller('posts')
 @UseGuards(NginxAuthGuard)
 export class RepublicationsController {
@@ -62,7 +63,7 @@ export class RepublicationsController {
   async republish(
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
-    @Param('postId', ParseUUIDPipe) postId: string,
+    @Param('postId') postId: string,
     @Body() body: RepublicationTargetDto
   ) {
     await this.assertNotMuted(xUserId);
@@ -82,8 +83,8 @@ export class RepublicationsController {
   unrepublish(
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
-    @Param('postId', ParseUUIDPipe) postId: string,
-    @Param('associationId', ParseUUIDPipe) associationId: string
+    @Param('postId') postId: string,
+    @Param('associationId') associationId: string
   ) {
     return this.republications.unrepublish(postId, associationId, xUserId, xGlobalAdmin === 'true');
   }
@@ -93,7 +94,7 @@ export class RepublicationsController {
   async propose(
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
-    @Param('postId', ParseUUIDPipe) postId: string,
+    @Param('postId') postId: string,
     @Body() body: RepublicationTargetDto
   ) {
     await this.assertNotMuted(xUserId);
@@ -113,7 +114,7 @@ export class RepublicationsController {
   @HttpPost(':postId/republication-requests')
   async requestPersonal(
     @Headers('x-user-id') xUserId: string,
-    @Param('postId', ParseUUIDPipe) postId: string,
+    @Param('postId') postId: string,
     @Body() body: RepublicationTargetDto
   ) {
     await this.assertNotMuted(xUserId);

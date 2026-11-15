@@ -59,6 +59,15 @@ impl MlsManager {
 
         match result {
             Ok(group) => {
+                // The creator watches the group from its first epoch: its tree holds this device
+                // alone (`crate::member_sightings`).
+                let door = self.admission.get(&group_id_str).copied();
+                self.device_trust.record_sightings(
+                    &group_id_str,
+                    group.epoch().as_u64(),
+                    &crate::device_trust::leaf_keys(&group),
+                    door,
+                );
                 self.groups.insert(group_id_str, group);
                 self.mark_state_dirty();
                 Ok(())
@@ -76,6 +85,9 @@ impl MlsManager {
                                 "create_group: {} recovered from orphan OpenMLS storage",
                                 group_id_str
                             );
+                            // NO SIGHTING from this tree: it is whatever storage kept (a refused
+                            // external join's GroupInfo tree included), not a tree this device
+                            // accepted (`crate::member_sightings`).
                             self.groups.insert(group_id_str.clone(), recovered);
                             self.mark_state_dirty();
                         }
@@ -207,6 +219,10 @@ impl MlsManager {
         self.drop_owed_welcome(group_id);
         self.pending_external_joins.remove(group_id);
         self.device_trust.forget_unseeded(group_id);
+        // The lineage this device held is gone: its sightings are no evidence for the next one
+        // (`crate::member_sightings`). The pins and departures stay (below).
+        self.device_trust
+            .forget_sightings(group_id, "the group was forgotten");
         // NO PRUNING HERE: a forget is also the first half of a forget-and-re-Welcome HEAL, and a pin
         // dropped now would be re-written from whatever tree the re-Welcome brings. The pins and the
         // departures are bounded at load, past their cap only (`load_or_create`).

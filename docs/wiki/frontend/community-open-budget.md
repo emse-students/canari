@@ -909,9 +909,11 @@ still deliverable in that step.
   phone seed. A few ms of desktop gesture do not pay for that.
 - **The thread observer's reads are where the layout is paid, not extra layouts.** Removing them
   hands the same layout to the fill's measure. Its `MutationObserver` judgement outside an entry
-  must stay synchronous anyway: a prepend (`loadOlderGroups`, a widen step) restores `scrollTop` by
-  absolute assignment after its own `await tick()` in the same task, so a judgement deferred to the
-  layout step always runs after that restore and adds the prepend's height a second time.
+  must stay synchronous anyway: a widen step restores `scrollTop` by absolute assignment after its
+  own `await tick()` in the same task, so a judgement deferred to the layout step always runs after
+  that restore and adds the prepend's height a second time. (`loadOlderGroups` made the same write
+  for the store's page until 2026-11-14; it now leaves the prepend to the observer's row anchor -
+  [chat](modules/chat.md#a-short-thread-sits-at-the-bottom-and-asks-for-its-past-at-entry-2026-11-14).)
 
 **Where the mount's time is, then:** the template pass (Svelte creating the rows, `MessageBubble`
 and `MessageTextBody` first), and the style recalculations that each write of a measured value

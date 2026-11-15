@@ -117,6 +117,16 @@ describe('publishFailureMessage - the reach of an institution post (owner, 2026-
   });
 });
 
+describe('publishFailureMessage - the form a post attaches (2026-11-14)', () => {
+  it.each([
+    ['FORM_NOT_OF_ENTITY', () => m.post_form_not_of_entity()],
+    ['FORM_NOT_ON_ANONYMOUS_POST', () => m.post_form_not_on_anonymous()],
+  ])('words the typed %s refusal in the reader language', (code, sentence) => {
+    const refusal = new ApiRefusalError(400, code, 'Form must belong to this association');
+    expect(publishFailureMessage(refusal, FALLBACK)).toBe(sentence());
+  });
+});
+
 describe("publishFailureMessage - the member's daily upload bound", () => {
   it('words the typed refusal with the sentence the chat thread shows', () => {
     const refusal = new MediaUploadError(422, 'server prose', 'gateway', false, false, true);

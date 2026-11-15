@@ -617,6 +617,29 @@ millisecond. The durable record of WHICH document went live is `publicationFinge
   line sent without a roster cannot be checked, so the publish is refused `CARTE_ROSTER_UNSTRUCTURED`;
   the editor adopts whatever a save or a publish dropped (`adoptDroppedPeople`), so it does not send
   the same ids again.
+- **A roster that failed to load is not an empty roster** (2026-11-14). The editor keeps each
+  roster with its load state (`$lib/carte/rosterLoads.ts`: `loading`, `loaded`, `failed`, `stale`),
+  typed at the catch; an answer that is not a list is `failed` too. The model is drawn from LOADED
+  rosters only. A roster not loaded is shown in an alert naming the association, with its own retry
+  (`RosterLoadAlert.svelte`), and is not counted among the memberless associations. While any DRAWN
+  association's roster is not loaded, or a switched-on association of the space is missing from the
+  catalogue the editor read (read fresh on open, never from the shared five-minute cache),
+  publishing, the publication update and the PDF export are refused with a notice naming what is
+  missing: both actions go through ONE gate, `runUnlessBlocked`, and the notice is derived from the
+  block, so it goes by itself once a retry lifts it. A save is not blocked: it persists the layout
+  only, and an association's bureau picks are kept as they were (a failed roster offers nothing to
+  untick). **The server checks it too, from durable state**: a directory entry sent with an EMPTY
+  roster (`members: []`) for an association that has members in `association_members` is refused
+  `CARTE_ROSTER_MISSING` (`400`, WARN, the association ids in the body). The editor marks those
+  rosters `stale` and offers their retry - the usual cause is a member who joined after the editor
+  opened. A map published with its directory HIDDEN carries no roster, so there the client's refusal
+  is the only guard.
+- **No public roster carries a review-cohort account** (2026-11-14), and the carte is public. The
+  membership check of a publish and a save (`PosterService.currentMembership`) treats such an account
+  as a non-member - the predicate the roster route applies, `isInReviewCohort` - so it is dropped from
+  the cards, the rosters and the bureau picks, and never counted by `CARTE_ROSTER_MISSING`. The
+  roster route marks those rows `reviewAccount` for a caller allowed to see them (the platform
+  admin), and the editor leaves them out of what it sends, so a publish has nothing to drop.
 - **The payload is re-validated server-side**, field by field, even though the publisher is an
   admin - it is about to be served to anonymous visitors. Unknown keys are dropped rather than
   echoed, geometry is clamped, arrays and strings are capped, and the background must be a
@@ -664,6 +687,11 @@ serve from one row.
 
 ## After the release that carries #3526: republish every live carte once
 
+**PREREQUISITE: the release the republication is made on must carry #3542 as well as #3526.** From
+#3542 on, the server drops from a publication every account no public roster may carry, whoever
+publishes ([rules](#rules)). A carte published before that release keeps its stored document until it
+is republished, so the republication is also what brings every live carte under that rule.
+
 **Owed by the lead, once, right after the stable carrying #3526 is in production** (owner,
 2026-11-14, [decisions](backlog.d/owner-decisions-of-2026-11-14.md)). Delete this section when the
 checks of step 4 read zero on production.
@@ -690,22 +718,30 @@ checks of step 4 read zero on production.
      layout and the rosters it fetches now (`listMembers`, current members only), so legacy lines and
      erased accounts are simply not in what it would publish. `adoptDroppedPeople` acts only on the
      ANSWER of a save or a publish, removing whomever the server dropped.
-   - **Check before publishing.** Every association's roster is shown in the directory panel: a
-     roster that failed to load is drawn EMPTY (logged `admin.carte.id.loadData roster failed`) and
-     would be published empty - reload if one is unexpectedly empty. The bar shows "Mettre a jour la
-     publication": every carte published by an older client reads as changed, since the fingerprint
-     now covers the roster.
+   - **Before publishing.** A roster that fails to load is no longer drawn empty: the editor shows
+     an alert naming the association with a retry, and refuses the publish until it is loaded (the
+     server refuses an empty roster for an association with members too, `CARTE_ROSTER_MISSING`;
+     [rules](#rules)). The bar shows "Mettre a jour la publication": every carte published by an
+     older client reads as changed, since the fingerprint now covers the roster.
    - **Publish.** One click on "Mettre a jour la publication": the editor saves, then publishes
      (`publishAfterSave`); the live carte is replaced in place.
    - **If it is refused `CARTE_ROSTER_UNSTRUCTURED`** (`carte_publish_refused_roster`, "... Rechargez
      l'editeur puis republiez"): the tab runs a bundle older than #3526. Reload the page
      (a native app: update it, or use the web) and publish again. `CARTE_UNIT_OUTSIDE_MAP` means an
      association of the map was switched off or left the space since: reload, then publish.
-4. **Verify.** The anonymous document, `GET /api/public/carte?space=<the space's id>`, carries no
-   `members` key anywhere (it never does: `publicCarte` strips it) and, after the republish, the
-   stored row has no line-only entry: the two counts of the
+   - **If it is refused `CARTE_ROSTER_MISSING`**: an association has members the editor sent as
+     nobody (usually someone who joined after the editor opened). The editor does it by itself: it
+     marks those rosters stale, names them in its alert with a retry each; retry, then publish. If it
+     repeats, the social service's WARN `[CARTE] publish of map <id> refused: CARTE_ROSTER_MISSING`
+     carries the association ids.
+4. **Verify.** The anonymous document, `GET /api/public/carte?space=<formation>:<campus>` (the
+   space's natural key, as above), carries no `members` key anywhere (it never does: `publicCarte`
+   strips it) and, after the republish, the stored row has no line-only entry: the two counts of the
    [legacy-compatibility entry](legacy-compatibility.md) (no card or roster member without a
-   `users` row; no non-empty line-only entry) read `0` on production.
+   `users` row; no non-empty line-only entry) read `0` on production. And the stored publication
+   names no account outside the current public rosters: every `userId` of its cards and its
+   directory rosters appears on the roster of its association as a non-admin member reads it
+   (`GET /api/associations/<id>/members`).
 
 ## Rendering traps
 

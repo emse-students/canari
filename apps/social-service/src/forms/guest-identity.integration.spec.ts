@@ -51,6 +51,10 @@ maybe("a guest's name and e-mail, against PostgreSQL (migration 138)", () => {
       extra: { options: `-c search_path=${schema},public` },
     });
     await ds.initialize();
+    // The respondent `where` reads the form's association's archive (`respondentFormWhere`).
+    await ds.query(
+      `CREATE TABLE associations (id uuid PRIMARY KEY, archived boolean NOT NULL DEFAULT false)`
+    );
     // The tables as production has them BEFORE 138 (`synchronize` built the columns from the
     // entities), then the migration file itself, twice: it must be idempotent.
     await ds.query(`ALTER TABLE forms DROP COLUMN "guestFields"`);

@@ -231,7 +231,7 @@ export async function graineSeedCommitment(seed: Uint8Array): Promise<Uint8Array
 }
 
 /** What the session key signs: `H || nonce || ciphertext` - `H` delimits itself and the nonce is fixed-width. */
-export function graineSignedBytesV2(
+function graineSignedBytesV2(
   header: Uint8Array,
   nonce: Uint8Array,
   ciphertext: Uint8Array

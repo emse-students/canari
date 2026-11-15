@@ -6,6 +6,7 @@ import { User } from '../users/entities/user.entity';
 import { cursusViewsOf, type CursusView } from '../users/miconnect-profile';
 import { cursusEntriesSql, WELL_FORMED_ENTRY_SQL } from '../users/cursus-filter';
 import { isInReviewCohort } from '../review-cohort';
+import { RouteParams } from '../common/route-params';
 
 /**
  * The minimum a `/profile/:id` share needs to render a preview, plus what social-service prices on.
@@ -37,6 +38,7 @@ export interface InternalPublicProfile {
  * NOT reachable through nginx: `/api/internal` has no location, so this is Docker-network only,
  * and gated on INTERNAL_SECRET on top of that.
  */
+@RouteParams({ id: 'opaque' })
 @Controller('internal')
 export class InternalUsersController {
   private readonly logger = new Logger(InternalUsersController.name);

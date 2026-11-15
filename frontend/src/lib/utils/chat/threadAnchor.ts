@@ -27,8 +27,14 @@ export interface ThreadGrowth {
    * content growing under a stationary reader fires none.
    */
   wasNearBottom: boolean;
-  /** Older messages are being prepended - `loadOlderGroups` restores the position itself. */
+  /** Older messages are being prepended - the row at the top of the viewport is kept. */
   isLoadingOlder: boolean;
+  /**
+   * The pane's own box changed height in this change (the keyboard, a resize) - measured apart from
+   * the content, so a box change landing in the same mutation as a prepend is still seen. Optional: a
+   * caller that cannot tell says nothing, and the change is treated as content alone.
+   */
+  boxChanged?: boolean;
   /** The conversation is still being entered - its position is the bottom, whatever moves under it. */
   isEntering: boolean;
 }
@@ -86,10 +92,15 @@ export type ThreadGrowthResponse = 'follow-bottom' | 'hold-bottom' | 'keep-row';
  * `wasNearBottom` says, since a scroll measured while the list is hidden is not the reader's.
  */
 export function threadGrowthResponse(growth: ThreadGrowth): ThreadGrowthResponse {
-  // PREPENDING IS GROWTH THAT MEANS THE OPPOSITE. `loadOlderGroups` adds height ABOVE the reader and
-  // restores `scrollTop` by exactly that much; following the bottom here would throw away the
-  // history it had just fetched and land them where they already were.
-  if (growth.isLoadingOlder) return 'keep-row';
+  // PREPENDING IS GROWTH THAT MEANS THE OPPOSITE. `loadOlderGroups` adds height ABOVE the reader,
+  // and the row anchor keeps their row; following the bottom here would throw away the history it
+  // had just fetched.
+  // EXCEPT A BOX CHANGE UNDER A READER AT THE BOTTOM (review of #3545): a keyboard moving while the
+  // store is read moved the bottom, and that reader follows it - whatever the content did in the same
+  // change, since a prepend above a reader at the bottom leaves them at the bottom anyway.
+  if (growth.isLoadingOlder) {
+    return growth.wasNearBottom && growth.boxChanged === true ? 'follow-bottom' : 'keep-row';
+  }
   if (!growth.wasNearBottom && !growth.isEntering) return 'keep-row';
   return growth.currentReach === growth.previousReach ? 'hold-bottom' : 'follow-bottom';
 }
@@ -236,8 +247,27 @@ export interface NewMessageState {
   catchupActive: boolean;
   /** Whether the reader was at the live end BEFORE this message. */
   isNearBottom: boolean;
-  /** The message that just landed is the reader's own, which always follows. */
+  /** The message that just landed is the reader's own, which always follows ({@link ownMessageAppended}). */
   ownMessageAdded: boolean;
+}
+
+/**
+ * WHETHER THE READER'S OWN MESSAGE WAS JUST ADDED AT THE END of the list: the newest message is
+ * theirs AND it is not the one that was newest before the list grew.
+ *
+ * 'The newest message is mine' is not that question. A list also grows at the TOP - an older page
+ * from the device, a peer's scrollback answer - and under a reader whose last message was their own
+ * every such page read as 'I just sent': the pane followed the bottom and threw them out of the
+ * history they were reading. The newest id is what tells an append from a prepend.
+ *
+ * @param previousNewestId the id of the newest message before this growth, `undefined` for an empty list
+ * @param newest the newest message now
+ */
+export function ownMessageAppended(
+  previousNewestId: string | undefined,
+  newest: { id: string; isOwn?: boolean } | undefined
+): boolean {
+  return newest?.isOwn === true && newest.id !== previousNewestId;
 }
 
 export function respondToNewMessage(state: NewMessageState): NewMessageResponse {

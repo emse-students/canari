@@ -217,6 +217,48 @@ describe('the slow state is derived from observed answers, and never stacks on o
     }
   });
 
+  it('an answer from before a Wi-Fi cut is not "answers arrived meanwhile" (Mi 9T, 2026-11-14)', async () => {
+    vi.useFakeTimers();
+    try {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const waiting = connectivity.trackRequest();
+      await vi.advanceTimersByTimeAsync(100);
+      connectivity.trackRequest().answered();
+      // The radio goes down here: the offline transition opens a new link epoch.
+      window.dispatchEvent(new Event('offline'));
+      await vi.advanceTimersByTimeAsync(20_000);
+      waiting.failed(new RequestDeadlineError('read', 20000, 'GET', '/a', 0));
+      const lines = warn.mock.calls.map((c) => String(c[0]));
+      expect(lines.some((l) => l.includes('answers arrived meanwhile'))).toBe(false);
+      expect(lines.some((l) => l.includes('(stall 1/2)'))).toBe(true);
+      warn.mockRestore();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a narrow link answering every 8 s through two 20 s reads is slow, never unreachable', async () => {
+    vi.useFakeTimers();
+    try {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      for (let read = 0; read < 2; read++) {
+        const waiting = connectivity.trackRequest();
+        for (let i = 0; i < 2; i++) {
+          await vi.advanceTimersByTimeAsync(8_000);
+          connectivity.trackRequest().answered();
+        }
+        await vi.advanceTimersByTimeAsync(4_000);
+        waiting.failed(new RequestDeadlineError('read', 20000, 'GET', '/a', 0));
+      }
+      expect(connectivity.isOffline).toBe(false);
+      const lines = warn.mock.calls.map((c) => String(c[0]));
+      expect(lines.filter((l) => l.includes('slow, not unreachable'))).toHaveLength(2);
+      warn.mockRestore();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   // Read on Android 1.5.3 (2026-10-31): "(stall 3/2)", "(stall 4/2)" - a count past its own limit.
   it('never counts past its limit: a stall once unreachable is said as such, and the count restarts with the server', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});

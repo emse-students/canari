@@ -23,7 +23,7 @@ export interface MonthRangeISO {
  * draw, and in a positive offset a UTC month start is the previous month's last evening - an event
  * the user can see a square for would be missing from the answer.
  */
-export function monthRangeISO(d: Date): MonthRangeISO {
+function monthRangeISO(d: Date): MonthRangeISO {
   // Both are pure locals: they are read once, immediately, and never reach state or a template, so
   // `prefer-svelte-reactivity` has nothing to protect here.
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local, never stored, never mutated
@@ -38,9 +38,9 @@ export function monthRangeISO(d: Date): MonthRangeISO {
  *
  * A scroll that never terminates cannot tell "nothing more is planned" from "still loading", so the
  * window has a stated end and the list says so in words when it reaches it. Twelve months is the
- * range the `.ics` subscription already publishes (`icsSubscriptionRangeISO`) and the one the
- * backend falls back to when a feed URL carries no window - so this is the horizon the app already
- * had, now visible to the reader rather than only to the calendar app.
+ * window the backend falls back to when a feed URL carries none - which the `.ics` subscription link
+ * never does - so this is the horizon the app already had, now visible to the reader rather than
+ * only to the calendar app.
  */
 export const ROLLING_HORIZON_MONTHS = 12;
 

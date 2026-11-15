@@ -1,0 +1,117 @@
+// @vitest-environment happy-dom
+/**
+ * THE BELL BELONGS TO THE CARD, WHENEVER THE FORM IS NOT OPEN YET AND NOT ANSWERED.
+ *
+ * Production, 2026-11-14: a post's attached form that opened later drew no "Notify me" bell. The
+ * card used to look at its forms ONCE, on mount, and the form (with its `opensAt`) is read after the
+ * post is drawn - so the bell was decided on an empty list and never reconsidered. Here the props
+ * change after mount, which is exactly that order.
+ */
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { flushSync, mount, unmount } from 'svelte';
+
+const checkFormReminder = vi.fn(async (_id: string) => ({ subscribed: false }));
+const subscribeFormReminder = vi.fn(async (_id: string) => undefined);
+const unsubscribeFormReminder = vi.fn(async (_id: string) => undefined);
+
+vi.mock('$lib/posts/api', () => ({
+  checkFormReminder: (id: string) => checkFormReminder(id),
+  subscribeFormReminder: (id: string) => subscribeFormReminder(id),
+  unsubscribeFormReminder: (id: string) => unsubscribeFormReminder(id),
+}));
+
+import FormCard from './FormCard.svelte';
+import PostForms from './PostForms.svelte';
+
+const future = () => new Date(Date.now() + 86_400_000).toISOString();
+const past = () => new Date(Date.now() - 86_400_000).toISOString();
+
+const mounted: Array<() => void> = [];
+afterEach(() => {
+  for (const u of mounted.splice(0)) u();
+  document.body.innerHTML = '';
+  vi.clearAllMocks();
+});
+
+function render(Component: unknown, props: Record<string, unknown>) {
+  const target = document.createElement('div');
+  document.body.appendChild(target);
+  const p = $state(props);
+  const c = mount(Component as never, { target, props: p });
+  mounted.push(() => void unmount(c));
+  flushSync();
+  return { target, p };
+}
+
+const bell = (t: HTMLElement) => t.querySelector('[data-testid="form-card-bell"]');
+
+describe('FormCard bell', () => {
+  it('is drawn on a form that is not open yet, and the reminder state is asked once', async () => {
+    const { target } = render(FormCard, {
+      formId: 'f1',
+      href: '/forms/f1',
+      title: 'T',
+      submitted: false,
+      opensAt: future(),
+    });
+    expect(bell(target)).not.toBeNull();
+    expect(checkFormReminder).toHaveBeenCalledTimes(1);
+  });
+
+  it('appears when opensAt arrives AFTER the card mounted (fails with a mount-time read)', () => {
+    const { target, p } = render(PostForms, { formInfos: [] as unknown[] });
+    expect(bell(target)).toBeNull();
+    p.formInfos = [{ id: 'f1', title: 'T', submitted: false, opensAt: future() }];
+    flushSync();
+    expect(bell(target)).not.toBeNull();
+    expect(checkFormReminder).toHaveBeenCalledWith('f1');
+  });
+
+  it('is absent on an open form and on an answered one', () => {
+    const open = render(FormCard, {
+      formId: 'a',
+      href: '/x',
+      title: 'T',
+      submitted: false,
+      opensAt: past(),
+    });
+    expect(bell(open.target)).toBeNull();
+    const done = render(FormCard, {
+      formId: 'b',
+      href: '/x',
+      title: 'T',
+      submitted: true,
+      opensAt: future(),
+    });
+    expect(bell(done.target)).toBeNull();
+  });
+
+  it('still draws the bell when the reminder state cannot be read', async () => {
+    checkFormReminder.mockRejectedValueOnce(new Error('offline'));
+    const { target } = render(FormCard, {
+      formId: 'f9',
+      href: '/x',
+      title: 'T',
+      submitted: false,
+      opensAt: future(),
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    flushSync();
+    expect(bell(target)).not.toBeNull();
+  });
+
+  it('subscribes on a tap', async () => {
+    const { target } = render(FormCard, {
+      formId: 'f2',
+      href: '/x',
+      title: 'T',
+      submitted: false,
+      opensAt: future(),
+    });
+    (bell(target) as HTMLButtonElement).click();
+    await new Promise((r) => setTimeout(r, 0));
+    flushSync();
+    expect(subscribeFormReminder).toHaveBeenCalledWith('f2');
+    expect(bell(target)?.getAttribute('aria-pressed')).toBe('true');
+  });
+});

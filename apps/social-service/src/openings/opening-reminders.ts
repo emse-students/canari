@@ -1,4 +1,5 @@
 import { Logger } from '@nestjs/common';
+import { associationArchivedSql } from '../associations/association-archived';
 import { associationVisibleToUserSql, eventVisibleToUserSql } from '../spaces/reader-spaces';
 
 /**
@@ -167,7 +168,8 @@ function announceOpeningToFollowersSql(kind: OpeningKind): string {
     (kind, "targetId", "userId", "opensAt", origin, "notified5min")
   SELECT $1, $2::uuid, op_user.id, COALESCE($4::timestamptz, now()), 'followed', true
     FROM association_follows op_follow
-    JOIN associations op_asso ON op_asso.id = op_follow."associationId" AND NOT op_asso.archived
+    JOIN associations op_asso ON op_asso.id = op_follow."associationId"
+     AND NOT ${associationArchivedSql('op_asso.id')}
     JOIN users op_user ON op_user.id = op_follow."followerUserId"
    WHERE op_follow."associationId" = $3::uuid AND op_user.id <> $5
      AND ${associationVisibleToUserSql('op_asso.id', 'op_user')}
@@ -252,16 +254,15 @@ export async function followOpeningMove(
  * #3188).
  */
 export const DUE_HEADS_UP_SQL = `SELECT o.id, o.kind, o."targetId", o."userId",
-         (f."deletedAt" IS NULL AND f.status = 'published' AND NOT COALESCE(a.archived, false))
-           AS "targetLive"
+         (f."deletedAt" IS NULL AND f.status = 'published'
+           AND NOT ${associationArchivedSql('f."associationId"')}) AS "targetLive"
     FROM opening_reminders o
     LEFT JOIN forms f ON f.id = o."targetId"
-    LEFT JOIN associations a ON a.id = f."associationId"
    WHERE o.kind = 'form' AND NOT o."notified5min" AND NOT o."notifiedOnOpen"
      AND o."opensAt" >= $1::timestamptz
      AND o."opensAt" <= $1::timestamptz + make_interval(mins => ${OPENING_HEADS_UP_MINUTES})
      AND (f.id IS NULL OR (f."deletedAt" IS NULL AND f.status = 'published')
-          OR f."deletedAt" IS NOT NULL OR COALESCE(a.archived, false))`;
+          OR f."deletedAt" IS NOT NULL OR ${associationArchivedSql('f."associationId"')})`;
 
 /** One row owed its opening, with what the push needs to know about its target. */
 export interface DueOpening {
@@ -313,7 +314,7 @@ export interface DueOpening {
  * bounded by the 30-day purge of rows whose opening is that old (`PURGE_STALE_OPENINGS_SQL`).
  */
 export const DUE_OPENINGS_SQL = `SELECT o.id, o.kind, o."targetId", o."userId", o.origin,
-         (COALESCE(t.live, false) AND NOT COALESCE(a.archived, false)) AS "targetLive",
+         (COALESCE(t.live, false) AND NOT ${associationArchivedSql('t."associationId"')}) AS "targetLive",
          COALESCE((o.origin = 'asked' OR (
            t."associationId" IS NOT NULL AND t."followersTold" AND op_user.id IS NOT NULL
            AND EXISTS (SELECT 1 FROM association_follows op_follow
@@ -345,7 +346,7 @@ export const DUE_OPENINGS_SQL = `SELECT o.id, o.kind, o."targetId", o."userId", 
     LEFT JOIN associations a ON a.id = t."associationId"
     LEFT JOIN users op_user ON op_user.id = o."userId"
    WHERE NOT o."notifiedOnOpen" AND o."opensAt" <= $1::timestamptz
-     AND (t.live IS NULL OR t.live OR t.gone OR COALESCE(a.archived, false))
+     AND (t.live IS NULL OR t.live OR t.gone OR ${associationArchivedSql('t."associationId"')})
    ORDER BY o."opensAt"`;
 
 /**

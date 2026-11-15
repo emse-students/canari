@@ -677,6 +677,19 @@ Objective-C was not compiled at all** (written on Windows; the iOS CI job is its
 | K6 - screen locked mid-call keeps the audio | the call service | the `audio` mode |
 | Logs | `IncomingCallActivity` and `canUseFullScreenIntent` lines | `[CanariCallKit] voip credentials updated`, `ringing call=` |
 
+**iPhone 12 column READ on 2026-11-15** (TestFlight `1.6.12-alpha.2`, dev, a web seat calling):
+- **K7**: the CallKit banner named the caller. Answer, then the app PIN, joined in about 12 s
+  (`an answer waits - the page was told`), and the caller received live audio.
+- **K6**: the phone was locked 25 s mid-call. The caller's inbound track stayed live and unmuted.
+- **K8**: full-screen CallKit on the lock screen. Slide to answer, then "More > Open in Canari", then
+  the PIN, joined. The bench phone has no device passcode, so no Face ID step showed. An answer
+  opened 42 s late lost the call
+  ([P3](../../backlog.d/p3-ios-an-answer-on-the-locked-callkit-screen-is-lost-if-the-app-opens-after-the-ring-deadline.md)).
+- **K8b**: the caller's cancel ended the CallKit ring within a second (`ended (reason=2)`), better
+  than the named limitation.
+- **The foreground ring** flashed a CallKit banner over the in-app ring
+  ([P3](../../backlog.d/p3-ios-a-foreground-ring-flashes-the-callkit-banner-over-the-in-app-ring.md)).
+
 **Operator actions (the owner's):**
 - **Play Console**: Android 14+ grants `USE_FULL_SCREEN_INTENT` by default only to calling and alarm
   apps; the App content -> Full-screen intent declaration must say "calling". Without it the ring
@@ -2980,7 +2993,7 @@ notification (`useNotifications.notifyIncomingCall`) is now DEFERRED while the p
 posted if the app leaves the screen while the call still rings, dropped when the ring ends; logged
 `[NOTIF] incoming call in <group> rings in-app - no OS notification while the app is on screen`.
 If a banner still shows in the foreground on the next reading, it is not this path - see
-[backlog](../../backlog.d/p3-an-os-incoming-call-banner-over-the-in-app-ring-if-it-outlives-the-web-fix.md).
+[backlog](../../backlog.d/p3-ios-a-foreground-ring-flashes-the-callkit-banner-over-the-in-app-ring.md).
 
 ### One call screen on every platform (2026-10-23)
 
@@ -3366,7 +3379,7 @@ answer, and the one every calling app holds.
 | The transition table | `call/OngoingCall.kt` (`decide`) | start / update / stop / hang-up against the CALL ID in the foreground (null when none); every command is logged with its effect. A start of the running call is a refresh; a start of ANOTHER call while one runs takes the foreground over and logs an ERROR (the earlier call's stop was lost); an update or a stop of a call that is not the running one is an earlier call's command landing late, or one in flight when the service had left - EXPECTED, logged at INFO with that cause; a stop naming no call (the page gone, a new page) stops whatever runs; the notification's hang-up makes the service LEAVE THE FOREGROUND ITSELF and then tells the page, which ends the call - the service's end never waits on a page being there |
 | The bridge | `CallBridge.kt` (`window.canariCall`: `start(json)`, `update(json)` - the description plus the `callId` the page draws per call -, `stop(callId, reason)`, `pageLoaded()`) and one DOM event up, `canari:call-native` (`started`, `failed` with a `code` - `off-screen` or `refused` -, `stopped`, `hangup`, `mute`, `foreground`), every one naming its `callId`; the page DROPS an event of another call | registered by `MainActivity` ONLY when the service is in the merged manifest. `start` is refused BEFORE it is attempted when the activity is not RESUMED (`off-screen`) or `RECORD_AUDIO` is not granted (`refused`) - the two preconditions of a microphone service, known here, never learnt from a crash. The start is a PLAIN `startService` (legal: the app is on screen), and the service calls `startForeground` in `onStartCommand`: a refusal is then a logged exception and a `failed` event, where after `startForegroundService` a service stopping without `startForeground` is counted as a crash of the process. A `SecurityException` or `ForegroundServiceStartNotAllowedException` met while the app is NOT on screen (HOME pressed between the bridge's check and `startForeground` on the main thread) is `off-screen`, not `refused` (`classifyStartRefusal`). Every `stopSelf` names its `startId`, so a start delivered before a preceding stop was handled is not destroyed with it |
 | The page's side | `lib/mobile/androidCallService.ts`, opened by `CallOverlay` once per call | `ongoingCallSpec` turns the call's status kind into the description (a Paraglide word, never the running timer); `start` once the call HOLDS the microphone and is the caller's `ringing` or the callee's `connecting` - seconds after the tap, so on screen with the grant answered; `update` only on a change; `stop` at `ended`. An `off-screen` refusal is a WARN and is asked ONCE more, with the call's current description, when native sends `foreground` (the activity resumed with that refusal pending) - an EVENT, never a clock; a second refusal, or any `refused`, is an ERROR and final for the call. A build without the bridge logs `ERROR this Android build has no ongoing-call service` once per call. The speaker toggle is shown on Android only when the bridge exists - the route IS the service's - and is DISABLED, labelled "output unavailable for now", while a start waits for `foreground` and once the service is refused or gone for the call |
-| Teardown | `MainActivity.onDestroy`, `onTaskRemoved`, `onBackPressed`, `+layout.svelte` | a destroyed activity (its WebView is destroyed with it, and the call) stops the service; a swipe from Recents stops it; a page that LOADS calls `pageLoaded()` once (see "Every end path"); Back at the root during a call moves the task back on API 28-30 (API 31+ does that itself) |
+| Teardown | `MainActivity.onDestroy`, `onTaskRemoved`, `onBackPressed`, `+layout.svelte` | a destroyed activity (its WebView is destroyed with it, and the call) stops the service; a swipe from Recents stops it; a page that LOADS calls `pageLoaded()` once (see "Every end path"); Back at the root moves the task to the background on every API level (owner, 2026-11-14, [mobile](../mobile.md#back-at-a-root-tab-goes-to-the-background-owner-2026-11-14)); during a call on API 28-30 the call branch logs it first |
 
 **The mode has another owner (review F1).** Chromium's `AudioManagerAndroid` may set
 `MODE_IN_COMMUNICATION` itself when the page opens a capture for a call, and put the mode back when

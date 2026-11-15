@@ -1081,6 +1081,28 @@ Notification Center over an open app was lost. The fix:
 - **Mark-as-read from the banner over an open app is still native.** Its watermark goes through the
   same outbox mirror, so the same refusal and erasure apply to it. It is OPEN
   ([backlog](../backlog.d/p2-ios-mark-as-read-from-a-banner-over-an-open-app.md)).
+- **A notification response is completed ON THE MAIN THREAD (2026-11-15).** Read on the iPhone 12
+  (TestFlight `1.6.12-alpha.2`): "Marquer comme lu" from a KILLED app did all its work - the
+  conversation's notification cleared, the badge at 0, the watermark at the sender's instant drained -
+  then the app aborted 1 ms later, `NSInternalInconsistencyException` "Call must be made on main
+  thread" (`UIApplication.m`): the mark-read branch called `completionHandler()` on the global queue
+  it worked on, and iOS asserts the main thread inside it. The quick reply had the same flaw on every
+  path it completes off main (a refused or natively sent reply, a lost hand-over, the page's
+  settlement arriving from Rust). Both branches now keep their work off main and hand out
+  `CanariFinishOnMain(completionHandler, what)` instead of the raw handler: it runs at once on the
+  main thread, else is queued onto the main queue - no timer, no call counting, each path calling it
+  once by construction (the reply's hold is removed under a lock by whoever releases it first). Every
+  other `completionHandler` in `didReceiveNotificationResponse` and `willPresentNotification` is
+  called synchronously in the callback iOS delivers on main. `iosNotificationDelegate.test.ts` holds
+  it on the source: no block that can run off main names the raw handler, every registered action has
+  a branch finishing through the wrapper, and the wrapper hops with no timer. Two orderings were
+  tightened in review: a held reply's completion is now taken and run ON MAIN in the same step that
+  ends its background task (`CanariEndQuickReplyTaskOnMain`), so an expiry racing a settlement off
+  main can no longer end the task with the response outstanding; and mark read completes only once
+  the conversation's notification removal has run (`CanariCancelConversationNotification`'s `done`,
+  joined with the watermark drain by a dispatch group), never before it. **Code fixed, not yet
+  shipped: the reading is the same gesture on the FIRST pre-release carrying it - no crash, no
+  "Canari Crashed" prompt at the next open, and the read mark observed on the peer.**
 
 Source-shape tests: `iosNotificationDelegate.test.ts`.
 
@@ -3073,25 +3095,23 @@ and none with a face. Three defects, three fixes:
   (`push-content.ts`) converts once on the server; a spec reads the frontend's `REACTIONS` and
   fails if the two lists drift, and an unknown type logs at `warn` and is drawn as the heart the app
   draws.
-- **Six notifications**: `showPostReactionNotification` (Kotlin) keys ONE notification on the post
-  (`postReactionNotifKey`, stable id like `reactionNotifKey` does for a conversation). The actors
-  accumulate in SharedPreferences (`canari_post_reactions`, bounded to 50 posts and 50 actors) and
-  the sentence is `A a reagi 🔨 ...` / `A et B ...` / `A, B et C ...` / `A, B et N autres ...`
-  (newest first, `N >= 2`). **The group ends on the SHADE, not on a clock**: a reaction joins the
-  ledger only when that notification is still posted, so a swipe or a tap starts a fresh group.
-  The large icon is the actor's face for one person and a collage of up to three faces for several,
-  through the same `fetchAvatar` and the same initials disc (logged) as every other path. The pure
-  half - ledger, sentence shape, faces, encoding - is `push/PostReactionGroup.kt`, compiled by the
-  JVM test project (`PostReactionGroupTest`).
+- **Six notifications**: since 2026-11-14 the SERVER decides it, for reactions and comments alike
+  ([one live notification per post](../engagement.md#the-owners-decision-of-2026-11-14---what-concerns-you-directly-is-never-dropped-one-live-notification-per-post)): every push about the
+  reader's own post carries `collapseId = post_activity_<postId>`, `quiet` while the post's bell rows
+  stay unread, and `contentCount` (the other people of the same kind). Android keys the notification
+  on `collapsedNotifKey(collapseId)` and posts a quiet one with `setSilent(true)`; the title reads
+  "A et N autres ont commenté" / "N réactions". The client ledger of 2026-10-08
+  (`PostReactionGroup.kt`, SharedPreferences `canari_post_reactions`, the face collage) is DELETED:
+  it grouped on the shade, a second source of truth, and the bell's read state is now the only one.
+  A device that ran the old build keeps an orphan `canari_post_reactions` preferences file, never
+  read again.
 
-An un-react does not shrink an already-shown group: removing a reaction sends no push, so "A, B et 4 autres" stays until the notification is swiped or opened.
-
-**iOS** gets the cheap half only: `buildInternalApnsRequest` files a `social_reaction` under the
-thread `post_reaction_<postId>`, so the notification centre stacks the reactions to one post, and
-`attachSocialIcon` already draws the one actor's face from `iconUserId`. What it does not get is ONE
-banner updated in place with "A, B et N autres": that needs the NSE to read the delivered
-notifications of the thread and rewrite its text and a face collage, which is new native code that
-nothing here can run without an iPhone ([backlog](../backlog.md)).
+**iOS** gets the same identity: chat-delivery sends the push with the `apns-collapse-id` header and
+the `thread-id` both set to the `collapseId`, so a later push REPLACES the delivered one; a quiet one
+carries `interruption-level: passive` and no sound. The NSE writes the count line and keeps a quiet
+one passive; with the app alive, `canari_push.mm` posts its local twin under the same identifier
+(`CanariPostLocalNotification`) and files a passive one in the list only. **Inferred, not yet read on
+an iPhone**: that a local request whose identifier equals the collapse id replaces the remote one.
 
 **"NO PICTURE" IS REMEMBERED ON ANDROID, AND NOTHING ELSE THAT IS NOT A PICTURE IS (2026-10-01).**
 `cachedRemoteIcon` used to write its file only on a `200`, so a person with no photo - every bench
@@ -4642,3 +4662,7 @@ width. The `@md` forms also apply to a phone panel wider than 28rem (up to 767 p
 - [`frontend/modules/calls.md`](modules/calls.md) — CallKit and call signaling
 - [`services/chat-delivery.md`](../services/chat-delivery.md) — Push notification backend (FCM, APNs VoIP)
 - [`cicd.md`](../cicd.md) — Mobile build workflows
+
+## Back at a root tab goes to the background (owner, 2026-11-14)
+
+Back at a root tab with no history used to reach `super.onBackPressed()`, which finishes `MainActivity`; tao's Android event loop then ends with `std::process::exit`, so the process died about 400 ms later and the next launch was a cold start (read on the Mi 9T, 2026-11-14). The owner chose "Arriere-plan, comme Messenger": `MainActivity.onBackPressed` now calls `moveTaskToBack(true)` on every API level once the page has no overlay left to close, and logs the decision (`Back at the root with no history ... moving the task to the background`). The overlay hand-over to the page and the pre-Android-12 call branch are unchanged. `MainActivity.kt` is compiled by no PR gate: the reading (Back at a root tab, the app listed in Recents, the process alive, a warm reopen) is taken on a phone after the next pre-release.

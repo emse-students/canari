@@ -218,7 +218,7 @@ and the picker still opens**. What differs is only what the platform holds.
   `speakableGroupName` feeds Siri suggestions BEYOND the share sheet: the names may appear in
   Spotlight, the Siri suggestions widget and possibly the lock screen (while Canari's "Show on Lock
   Screen" is on in iOS Settings). The owner kept the Android default (ON) and asked that it be said
-  plainly: the setting's own text (`settings_share_suggestions_desc`), the privacy policy's iPhone
+  plainly: the setting's own text (`settings_share_suggestions_desc_ios` and `_android`, one per platform), the privacy policy's iPhone
   row and register row C22 name those places and say that the setting turns it off. Turning it off
   deletes the donation group (`clear_share_targets`). No behaviour differs from Android's.
 - **What is never donated**: a message. The intent's `content`, `recipients`, `sender` and

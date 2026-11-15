@@ -37,7 +37,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { connect, evaluate, listTargets, realClick, reloadAndWait } from './cdp.mjs';
-import { BROWSERS, isUp, startBrowser } from './launch.mjs';
+import { BROWSERS, FAKE_MEDIA_FLAGS, isUp, startBrowser } from './launch.mjs';
 import { SITE } from './site.mjs';
 
 const args = process.argv.slice(2);
@@ -175,7 +175,7 @@ async function main() {
       throw new Error(`${WHICH} is already up - close it first (bun launch.mjs close ${WHICH})`);
     }
     // fps=30: Chrome's fake camera defaults to 20, which reads as a slow phone on the other end.
-    const mic = ['--use-fake-device-for-media-stream=fps=30', '--use-fake-ui-for-media-stream'];
+    const mic = [...FAKE_MEDIA_FLAGS];
     if (WAV) mic.push(`--use-file-for-fake-audio-capture=${WAV}`);
     say(`starting ${WHICH} with a fake microphone (${WAV || "Chrome's beep"}) on ${URL_}`);
     await startBrowser(WHICH, URL_, mic);

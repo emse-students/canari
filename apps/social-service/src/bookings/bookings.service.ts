@@ -17,6 +17,7 @@ import { frontendBaseUrl } from '../common/frontend-url';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
 import { associationVisibleToViewerSql } from '../spaces/reader-spaces';
 import { associationVisibleTo, sameCampusAs } from '../spaces/viewer-visibility';
+import { isAssociationArchived } from '../associations/association-archived';
 import { matchesCondition, needsProfile, NO_CURSUS, type PricingFacts } from '../pricing/audience';
 import {
   answerSelections,
@@ -304,6 +305,20 @@ export class BookingsService {
    * (`resource.linkedUserId`), and it books nothing, so no campus rule is crossed.
    */
   private async assertSpaceVisible(space: BookingSpace, userId: string, use: 'read' | 'write') {
+    // An ARCHIVED association's space opens to nobody but its managers, whoever holds its link -
+    // the linked account of a column included: the archive ended the association's active life, as
+    // it already took the space out of the listing (`listedSpaces`). A booking already made is
+    // still its people's to read and cancel (`mine`, `cancel`, `withdraw`, the calendar link),
+    // as for a holder the audience no longer admits.
+    if (
+      space.associationId !== null &&
+      (await isAssociationArchived(this.spaces.manager, space.associationId))
+    ) {
+      this.logger.log(
+        `[BOOKINGS] space=${space.id.slice(0, 8)} refused to ${userId.slice(0, 8)}: its association is archived`
+      );
+      throw new NotFoundException({ code: 'space-not-found' });
+    }
     const visible =
       space.associationId !== null
         ? await associationVisibleTo(this.spaces.manager, space.associationId, userId)
@@ -322,6 +337,26 @@ export class BookingsService {
     this.logger.log(
       `[BOOKINGS] space=${space.id.slice(0, 8)} refused: outside the spaces of ${userId.slice(0, 8)} ` +
         `(${space.associationId !== null ? 'association' : 'personal'} space)`
+    );
+    throw new NotFoundException({ code: 'space-not-found' });
+  }
+
+  /**
+   * Inside a booker's write (`book`, a holder's `edit`), before the space's lock: reads the space's
+   * association `FOR SHARE` and refuses (404 `space-not-found`, what `assertSpaceVisible` answered
+   * before the lock) one ARCHIVED since. `AssociationsService.update` writes `archived` under
+   * `FOR UPDATE` on that row, so a booking is decided either before the archive commits or after
+   * it, never across it (`isAssociationArchived`). A personal space has no association.
+   */
+  private async assertAssociationLiveUnderLock(
+    m: EntityManager,
+    space: Pick<BookingSpace, 'id' | 'associationId'>,
+    what: string
+  ): Promise<void> {
+    if (space.associationId === null) return;
+    if (!(await isAssociationArchived(m, space.associationId, 'share'))) return;
+    this.logger.log(
+      `[BOOKINGS] ${what} refused under the lock: space=${space.id.slice(0, 8)} its association was archived`
     );
     throw new NotFoundException({ code: 'space-not-found' });
   }
@@ -717,7 +752,9 @@ export class BookingsService {
     }
     if (booking.cancelledAt) throw new GoneException({ code: 'booking-cancelled' });
     return bookingIcs({
-      bookingId,
+      // The row's own id, never the request's spelling of it: what is written into the file comes
+      // from the database, and an id asked for in upper case yields the same calendar entry.
+      bookingId: booking.id,
       spaceId: space.id,
       spaceName: space.name,
       resourceName: resource.name,
@@ -1093,6 +1130,9 @@ export class BookingsService {
 
     try {
       const booked = await this.bookings.manager.transaction(async (m) => {
+        // A booker's archive check, again under the association's row lock, BEFORE the space's
+        // (the association first, as its delete takes them): ordered against the archive.
+        if (!canManage) await this.assertAssociationLiveUnderLock(m, before, 'book');
         const { space, resource } = await this.lockResource(m, spaceId, dto.resourceId);
         if (JSON.stringify(space.items ?? []) !== JSON.stringify(before.items ?? [])) {
           throw new ConflictException({ code: 'space-changed' });
@@ -1307,6 +1347,7 @@ export class BookingsService {
 
     try {
       const outcome = await this.bookings.manager.transaction(async (m) => {
+        if (!manages) await this.assertAssociationLiveUnderLock(m, before, 'edit');
         const { space, resource } = await this.lockResource(m, place.spaceId, place.resourceId);
         const [booking]: Booking[] = await m.query(
           `SELECT * FROM bookings WHERE id = $1 FOR UPDATE`,

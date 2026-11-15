@@ -405,7 +405,10 @@
             {@const latest = row.sessions[0]}
             {@const browser = sessionBrowserLabel(row)}
 
+            <!-- `data-device-id`: the rig's hook for the row (purge-devices.mjs); no visible effect, absent
+                 on a login-only row, which holds no device. -->
             <div
+              data-device-id={row.device?.deviceId}
               class="rounded-3xl border p-4 transition-all duration-300 hover:shadow-md sm:p-5 {row.isCurrentDevice
                 ? 'border-accent/30 bg-accent/5 shadow-inner'
                 : row.device === null

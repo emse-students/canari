@@ -286,7 +286,7 @@ REST: those rows need a count, then a migration.
 | Reaction push keeps wire type `social` + a generic `body` (`notify-reaction`; had no entry here) | clients knowing `reaction: 'true'` (2026-08-15) | version YES (`v0.14.0`) | none | server + Kotlin dispatch | NOT removed, same iOS-alert question as the row above |
 | Post `images` field (in and out, `posts.service.ts`; had no entry here) | clients sending `media` | not established | `posts.images` is the column itself | DTO + normaliser | NOT removed: the client switch is undated; find it before judging |
 | Pre-MLS send path + `queued_message.content` | log silence (`LEGACY_CONTENT_PATH`/`_ROW`), dated 2026-11-19 | not a version question | the column | `else` arm + migration | owed: log read + count + migration |
-| Graine v1 reader | 0 unsigned rows | NO | 373 rows (2026-10-14) | - | revisit 2027-10-13 |
+| Graine v1 reader | 0 unsigned rows | NO | 373 rows (2026-10-14; re-read 2026-11-14: unchanged, newest 2026-10-09, 0 unsigned rows written since) | - | revisit 2027-10-13 |
 | `read_receipt` (both entries), `remove_reaction`, `pin`/`unpin` undated, no `sender_device_id`, no `message_id` | live peers (met) AND archive retention | live half YES, archive NO | Redis history streams | per entry | dates 2026-11-13 to 2026-12-15 stand |
 | Refresh cookie on `tauri://localhost` | floor AND a desktop measurement | floor YES, measurement NO | none | - | unchanged |
 | MiConnect `formation`/`promo` claims | WP9 | NO (not a version) | Authentik attributes | - | unchanged |
@@ -333,6 +333,39 @@ SELECT count(*) FROM lives WHERE "liveKey" IS NOT NULL;
 ---
 
 ## The diary
+
+### Removal when fewer than 10 distinct pair links are seen over 7 days, floor at the token release - the `sig` agenda link (owner, 2026-11-14)
+
+**Site:** the `sig` branch of `GET /api/associations/calendar/feed.ics` and of the anonymous
+`calendar/feed` (`assertAgendaAccess`, `assertAgendaSignature`, `legacySelectionRead` and its
+`DailySightings` in `associations.controller.ts`), `POST calendar/feed-signature` and
+`AssociationsService.signAgendaFeedSelection`, and `legacyAgendaLinkShape` / `logDigest`
+(`agenda-signature.ts`).
+**What it humours:** a calendar subscription saved from a selection link (`?campus=..&formation=..`,
+`?campus=..`, `?associationId=..` with `&sig=`, D40 amended 2026-10-06), and a store build older than
+the token link, whose modal still asks `feed-signature` and builds such links. Since 2026-11-14 a link
+is its holder's (`?token=`, [D40 re-decided](profiles-and-access.md#d40-re-decided-2026-11-14---the-link-is-its-holders));
+a `sig` names no one, so it serves only what EVERY reader who could hold it sees: a PAIR (campus AND
+formation, with or without an association) as before - every legitimate holder was in that space -
+and ANY OTHER SHAPE (a campus alone, a formation alone, an association alone) a valid EMPTY calendar
+(200, no event): the link still resolves, the app keeps it, it shows nothing. `feed-signature` signs
+pairs only; any other shape is the typed 403 `AGENDA_SELECTION_FORBIDDEN` the old modal already shows.
+**The cost while it stands:** a second agenda link that names no holder and cannot be revoked alone
+(only a key rotation ends it).
+**Measured by:** ONE WARN line per distinct link per process per UTC day,
+`[AGENDA_LEGACY_LINK] shape=pair|campus|formation|association link=<8 hex>` - the link is named by the
+first 8 hex characters of SHA-256 of its `sig`, which names no one and cannot be turned back into the
+link. **Count distinct `link=` values, never lines:** N replicas log one link up to N times a day, and
+a calendar app that polls a hundred times a day is still one link.
+**Removal condition:** fewer than 10 distinct `link=` values of `shape=pair` over 7 consecutive days
+(the other shapes already serve nothing, so they do not hold the shim up), AND NOT BEFORE
+`minClientVersion` is at least the store version that ships the token link (the floor rule above).
+Why 10 and not zero: a saved subscription is polled for as long as the calendar app lives, by people
+who never open Canari again, so zero may never come; under 10, ten people re-subscribing once costs
+less than keeping a second, unrevocable link kind alive. Then, in one pull request: the `sig` branch of
+both feeds (a `sig` is then the 403 it was without a signature), `feed-signature`,
+`signAgendaFeedSelection`, `legacySelectionRead`, `DailySightings`, `logDigest`, their
+specs, and this entry. The one-event link (`eventId` + its own `sig`) is NOT part of it.
 
 ### A tolerated degradation: ranked Minesweeper for a build older than generator 2 (owner, 2026-11-13)
 
@@ -1077,6 +1110,9 @@ an unknown id by its absence, so an answer with the field MISSING is read the ol
 `UserProfileFetchError(404)`, cached, rendered as the unknown-user label, one `console.debug` per
 chunk. Without it every absent id counted as a contract breach (`console.error`, 502, never cached)
 and `displayName.ts` warned, backed off 120 s and asked again.
+**Since 2026-11-14 the answer is `{ users, deleted, malformed }`** (a string that is not an account id
+is named in `malformed`, never `deleted`); a missing `malformed` is read as empty and needs no shim of
+its own, because only an older server omits it and such a server never classified an id.
 **Removal condition:** every estate's core-service sends `deleted` (dev and production both deployed
 past #2022, and no rollback below it planned); then the `legacyAnswer` branch goes and a missing
 field becomes the breach. A server version, not a client floor.
@@ -1713,11 +1749,13 @@ a subscription is restricted to the reader's own spaces by a signed URL, and the
 - **Who is affected:** every calendar subscription saved from `/calendar` between the D40 release
   (selection URLs `?campus=..&formation=..`) and this one, and any association subscription saved
   before (`?associationId=..`). The calendar app shows an error or an empty calendar until the reader
-  subscribes again from `/calendar` or the association's page; the modal says so (`calendar_subscribe_old_links_notice`).
+  subscribes again from `/calendar` or the association's page; the modal said so until 2026-11-14
+  (`calendar_subscribe_old_links_notice`, removed when the link became its holder's).
   The single-event link (`?eventId=`) is NOT affected. An installed app embeds the old frontend, so its
   modal builds unsigned links until it updates: they are refused.
 - **Why nothing is removed later:** the signature IS the rule. Rotating `AGENDA_SIGNING_KEY` repeats this
-  break on purpose (it is the revocation) and needs no code.
+  break on purpose and needs no code. Since 2026-11-14 a holder also revokes their own links alone, and
+  the `sig` link itself is a dated shim (the diary entry above).
 
 ## Nothing to remove - an UNSIGNED single-event calendar link now gets a 403 (2026-11-02)
 

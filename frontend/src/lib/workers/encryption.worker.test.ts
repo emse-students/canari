@@ -5,7 +5,7 @@
  * encryption. The worker is loaded for real; only the transform streams and the frame class are
  * stand-ins, because no test engine has `RTCRtpScriptTransform`.
  */
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 type Metadata = { payloadType?: number; mimeType?: string; rtpTimestamp?: number };
 const OPUS_METADATA = (): Metadata => ({ payloadType: 111, mimeType: 'audio/opus' });
@@ -681,6 +681,27 @@ describe('encryption.worker - one key per direction, the kind bound to every fra
       return Array.from({ length: n }, () => frame);
     }
     const undecryptable = () => posted.filter((m) => m.type === 'undecryptable');
+    /**
+     * The COUNTING rules (once per receiver, at the 100th failure, epoch and kind) do not depend on
+     * AES-GCM, only on `decrypt` rejecting. Each real attempt is a libuv thread-pool round trip,
+     * 249 of them in the first test, and under a starved pool (the whole suite in parallel) that
+     * pushed it past 5 s. So `decrypt` rejects in a microtask here; that a wrong key really fails
+     * real AES-GCM is proved by the reflected-frame and kind tests above, which stay unstubbed.
+     */
+    let decryptSpy: ReturnType<typeof vi.spyOn>;
+    /** How many of the next `decrypt` calls stay REAL (a test that needs one frame to open). */
+    let realDecrypts = 0;
+    beforeEach(() => {
+      realDecrypts = 0;
+      const real = crypto.subtle.decrypt.bind(crypto.subtle);
+      decryptSpy = vi
+        .spyOn(crypto.subtle, 'decrypt')
+        .mockImplementation(((...args: Parameters<typeof real>) =>
+          realDecrypts-- > 0
+            ? real(...args)
+            : Promise.reject(new DOMException('', 'OperationError'))) as typeof real);
+    });
+    afterEach(() => decryptSpy.mockRestore());
 
     it('is reported ONCE per receiver, at its 100th failure, with its epoch and kind', async () => {
       await run('receiver', await foreignFrames(99), 21);
@@ -693,6 +714,7 @@ describe('encryption.worker - one key per direction, the kind bound to every fra
 
     it('is never reported by a receiver that opened a frame first', async () => {
       const good = await run('sender', [opus()]);
+      realDecrypts = 1; // the good frame opens for real; the 120 foreign ones are rejected
       await run('receiver', [...good, ...(await foreignFrames(120))], 23);
       expect(undecryptable()).toEqual([]);
     });

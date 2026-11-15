@@ -14,6 +14,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
+import { RouteParams } from '../common/route-params';
 import { Throttle } from '@nestjs/throttler';
 import { UserResourceThrottlerGuard } from '../common/guards/user-resource-throttler.guard';
 import { COMMUNITY_BOOT_READS_MAX, ChannelService, roleLabelOfBody } from './channel.service';
@@ -52,6 +53,15 @@ import { CHANNEL_MESSAGE_RETENTION_DAYS } from './channel-retention.scheduler';
 export const REMOVAL_RELEASES_PER_MINUTE = 60;
 
 /** Manages workspace and channel resources including membership and messages. */
+@RouteParams({
+  channelId: 'uuid',
+  workspaceId: 'uuid',
+  messageId: 'uuid',
+  roleId: 'uuid',
+  userId: 'opaque',
+  slug: 'opaque',
+  token: 'opaque',
+})
 @Controller('channels')
 export class ChannelsController {
   private readonly logger = new Logger(ChannelsController.name);

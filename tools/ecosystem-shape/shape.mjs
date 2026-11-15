@@ -250,9 +250,20 @@ function codeOnly(raw) {
  * right above Canari's own: the comparison reads the declared line in its place. Three lines use it
  * since 2026-11-01, all for the guard on the owner's files (reviews of #2873): `types:` gains
  * `auto_merge_enabled`, so an arming made by hand is judged; the concurrency group gains that
- * event, so the run it raises cannot cancel the run that armed; and the arming gains
- * `--match-head-commit`, so it arms only the head the guard judged. A region cannot carry them: a
+ * event, so the run it raises cannot cancel the run that armed; and the arming is the
+ * `enablePullRequestAutoMerge` mutation with `expectedHeadOid` (2026-11-14), so it arms only the
+ * head the guard judged and can never merge by itself. A region cannot carry them: a
  * YAML key is not repeatable, and a command is one line, so the line must be REPLACED, not added.
+ *
+ * WHY THE SIBLINGS KEEP `gh pr merge --auto`, AND WHAT HOLDS THAT (decided 2026-11-14). `gh` merges
+ * by itself when a pull request looks mergeable to it. In Canari the arming App is a bypass actor
+ * of the ruleset (22152902), so that merge was judged by `gh` alone - hence the mutation. In Sky
+ * (22233778), MiGallery (22233779) and Portail-etu (10687261, which also requires signed commits)
+ * the only bypass actor is the admin role, read from the API on 2026-11-14: the ruleset judges
+ * whatever `gh` chooses, so the short step is correct there and porting the mutation alone would
+ * leave an already-mergeable pull request unmerged. A ruleset is a setting, not a file, so this
+ * comparison cannot see it change: `.github/scripts/sibling-arming-bypass.sh`, run daily by
+ * `scheduled.yml`, re-reads it and fails if the App ever bypasses a sibling that still arms so.
  */
 const SHARED_MARKER = '# canari-only:shared ';
 function withoutCanariOnly(raw) {

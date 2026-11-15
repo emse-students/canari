@@ -245,6 +245,9 @@ jobs:
           REPO: ${{ github.repository }}
           VERSION: ${{ steps.resolve.outputs.version }}
           TARGET_SHA: ${{ steps.resolve.outputs.target_sha }}
+          # The commit the release's tag named AT PUBLICATION - the one GitHub took this run's
+          # workflow files from. Gate 4 refuses a stable where it is not the latest alpha's commit.
+          PUBLISHED_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
 
