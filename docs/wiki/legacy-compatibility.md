@@ -286,7 +286,7 @@ REST: those rows need a count, then a migration.
 | Reaction push keeps wire type `social` + a generic `body` (`notify-reaction`; had no entry here) | clients knowing `reaction: 'true'` (2026-08-15) | version YES (`v0.14.0`) | none | server + Kotlin dispatch | NOT removed, same iOS-alert question as the row above |
 | Post `images` field (in and out, `posts.service.ts`; had no entry here) | clients sending `media` | not established | `posts.images` is the column itself | DTO + normaliser | NOT removed: the client switch is undated; find it before judging |
 | Pre-MLS send path + `queued_message.content` | log silence (`LEGACY_CONTENT_PATH`/`_ROW`), dated 2026-11-19 | not a version question | the column | `else` arm + migration | owed: log read + count + migration |
-| Graine v1 reader | 0 unsigned rows | NO | 373 rows (2026-10-14) | - | revisit 2027-10-13 |
+| Graine v1 reader | 0 unsigned rows | NO | 373 rows (2026-10-14; re-read 2026-11-14: unchanged, newest 2026-10-09, 0 unsigned rows written since) | - | revisit 2027-10-13 |
 | `read_receipt` (both entries), `remove_reaction`, `pin`/`unpin` undated, no `sender_device_id`, no `message_id` | live peers (met) AND archive retention | live half YES, archive NO | Redis history streams | per entry | dates 2026-11-13 to 2026-12-15 stand |
 | Refresh cookie on `tauri://localhost` | floor AND a desktop measurement | floor YES, measurement NO | none | - | unchanged |
 | MiConnect `formation`/`promo` claims | WP9 | NO (not a version) | Authentik attributes | - | unchanged |
@@ -333,6 +333,15 @@ SELECT count(*) FROM lives WHERE "liveKey" IS NOT NULL;
 ---
 
 ## The diary
+
+### Removal once every account has opened its state on a build with KILL-2 - the `localStorage` ledger migration (#2515)
+
+`mls-client/stateLedgerMigration.ts` moves the seen-ciphertext marks
+(`history_seen_cipher:<user>:*` and its index) and the send ledger (`mls_send_ledger_<user>`) from
+`localStorage` into the MLS state, once per state without the `ledger-format` key. A count of states
+without the format is not measurable server-side (the state is sealed), so the condition is the
+floor (`minClientVersion`) at the first stable carrying #2515, plus one release cycle. Removing it
+early costs one re-walk per account that had not migrated - never a lost message.
 
 ### Removal when fewer than 10 distinct pair links are seen over 7 days, floor at the token release - the `sig` agenda link (owner, 2026-11-14)
 

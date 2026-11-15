@@ -41,7 +41,7 @@ sourceSets {
         kotlin.srcDir("../gen/android/app/src/main/java/fr/emse/canari/orientation")
         // The camera's volume shutter and angle filter (screen-orientation.md), same rule.
         kotlin.srcDir("../gen/android/app/src/main/java/fr/emse/canari/camera")
-        // The keyboard hand-off decision (keyboard-and-send-motion.md), same rule.
+        // The keyboard announcement to the page (keyboard-and-send-motion.md), same rule.
         kotlin.srcDir("../gen/android/app/src/main/java/fr/emse/canari/keyboard")
     }
 }

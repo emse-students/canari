@@ -19,7 +19,7 @@ import {
   byNewestSession,
 } from './graineCodec';
 import { decryptData } from '$lib/encryption';
-import type { StoredGraineSession } from './types';
+import { StoreWriteRefusedError, type StoredGraineSession } from './types';
 
 const KEY = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
 const OTHER_KEY = 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=';
@@ -52,6 +52,21 @@ describe('Graine sessions in IndexedDB', () => {
     await storage.saveGraineSession(s, KEY);
 
     expect(await storage.getGraineSession('sess-1', KEY)).toEqual(s);
+  });
+
+  it('a write whose condition stopped holding during its encrypt is refused, typed, and never lands', async () => {
+    const storage = await freshStorage();
+    await storage.saveGraineSession(session({ sentCount: 5 }), KEY);
+    // The condition (this tab leads) holds when the write is asked and is gone by the put - the
+    // lead left inside the encrypt's await.
+    let leads = true;
+    const write = storage.saveGraineSession(session({ sentCount: 2 }), KEY, () => leads);
+    leads = false;
+    await expect(write).rejects.toBeInstanceOf(StoreWriteRefusedError);
+    expect((await storage.getGraineSession('sess-1', KEY))?.sentCount).toBe(5);
+    // Held at the put: written.
+    await storage.saveGraineSession(session({ sentCount: 6 }), KEY, () => true);
+    expect((await storage.getGraineSession('sess-1', KEY))?.sentCount).toBe(6);
   });
 
   it('round-trips the distribution frame a sender keeps with its session', async () => {

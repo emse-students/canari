@@ -5,22 +5,11 @@
  * a step can resolve on. The geometry itself (the ring hugging the control) is pinned by
  * `GuideOverlay.svelte.test.ts` and `guideAnchorFollow.test.ts`.
  */
-import { readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { GUIDES } from './guides';
 import { byLayout } from './guideEngine.svelte';
 import type { GuideLayout } from './guideTypes';
-
-const SRC = join(__dirname, '..', '..');
-
-function sourceFiles(dir: string): string[] {
-  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-    const path = join(dir, entry.name);
-    if (entry.isDirectory()) return sourceFiles(path);
-    return /\.(svelte|ts)$/.test(entry.name) && !entry.name.endsWith('.test.ts') ? [path] : [];
-  });
-}
+import { sourceFiles } from '../../test/sourceTree';
 
 const LAYOUTS: GuideLayout[] = [
   { phone: true, swipe: true, nativeTabBar: false },
@@ -29,10 +18,18 @@ const LAYOUTS: GuideLayout[] = [
 ];
 
 describe('the anchors the guides name', () => {
-  const corpus = sourceFiles(SRC)
-    .filter((file) => !file.includes(`${join('lib', 'guidance', 'guides')}`))
-    .map((file) => readFileSync(file, 'utf8'))
-    .join('\n');
+  // The run's source snapshot: hand-written code only (the generated trees mark no control).
+  const files = sourceFiles({
+    under: 'src',
+    extensions: ['svelte', 'ts'],
+    tests: 'exclude',
+  }).filter(({ path }) => !path.includes('lib/guidance/guides'));
+  const corpus = files.map(({ text }) => text).join('\n');
+
+  it('reads the tree it thinks it does: a control that marks an anchor is in the corpus', () => {
+    expect(files.length).toBeGreaterThan(1000);
+    expect(files.map((f) => f.path)).toContain('src/lib/guidance/guideEngine.svelte.ts');
+  });
 
   const named = new Set<string>();
   for (const guide of GUIDES) {

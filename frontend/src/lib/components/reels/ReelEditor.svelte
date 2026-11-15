@@ -39,7 +39,7 @@
   import { TAP_SLOP_PX, TransformGesture, pointInRect } from '$lib/gestures/transformGesture';
   import type { ReelClip } from '$lib/reels/reelCapture';
   import ReelFrame from './ReelFrame.svelte';
-  import { renderEditedReelMedia } from '$lib/reels/reelEditor';
+  import { ReelExportError, renderEditedReelMedia } from '$lib/reels/reelEditor';
   import {
     controlBands,
     keptInFrame,
@@ -509,7 +509,10 @@
       const edited = await renderEditedReelMedia(clip.blob, { overlays }, fontFamily);
       onnext(edited.blob);
     } catch (cause) {
-      console.error('[reel-editor] export failed', cause);
+      console.error(
+        `[reel-editor] export failed (${cause instanceof ReelExportError ? cause.fault : 'unclassified'})`,
+        cause
+      );
       error = true;
       busy = false;
     }
@@ -671,7 +674,7 @@
   <div
     bind:this={tray}
     data-reel-tray
-    class="from-cn-scrim/70 pointer-events-none absolute inset-x-0 bottom-0 z-10 flex flex-col gap-2 bg-gradient-to-t to-transparent px-3 pt-6 pb-[calc(var(--safe-area-inset-bottom,0px)+0.5rem)] [&>*]:pointer-events-auto"
+    class="from-cn-scrim/70 pointer-events-none absolute inset-x-0 bottom-(--keyboard-occlusion-bottom,0px) z-10 flex flex-col gap-2 bg-gradient-to-t to-transparent px-3 pt-6 pb-[calc(var(--safe-area-inset-bottom,0px)+0.5rem)] [&>*]:pointer-events-auto"
   >
     {#if composing}
       <form

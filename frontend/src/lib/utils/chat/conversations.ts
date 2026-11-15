@@ -1066,10 +1066,11 @@ function bootUnreadCount(
     'messages' | 'readWatermarks' | 'serverReadWatermarks' | 'localReadSeed' | 'lifecycle'
   >,
   userId: string
-): { count: number; source: ReturnType<typeof countingReadPoint>['source'] } {
+): { count: number; source: ReturnType<typeof countingReadPoint>['source']; inactive?: true } {
   if (convo.lifecycle !== 'active') {
-    console.debug(`[RESTORE] ${id.slice(0, 8)} is ${convo.lifecycle} - unread 0, it takes no mark`);
-    return { count: 0, source: 'none' };
+    // NO LINE PER ROW: it was said twice per removed conversation on every boot (stored page, then
+    // replay). The decision is counted into the ONE census line (`inactive`) by its caller.
+    return { count: 0, source: 'none', inactive: true };
   }
   const userNorm = userId.toLowerCase();
   const point = countingReadPoint(convo, userNorm);
@@ -1508,8 +1509,9 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
           publishBootCount(meta.id, 'failed load');
         }
       }
-      const census = { seeded: 0, withBadge: 0, total: 0 };
-      for (const { count, source } of published.values()) {
+      const census = { seeded: 0, withBadge: 0, total: 0, inactive: 0 };
+      for (const { count, source, inactive } of published.values()) {
+        if (inactive) census.inactive += 1;
         if (source === 'seed') census.seeded += 1;
         if (count > 0) {
           census.withBadge += 1;
@@ -1518,7 +1520,8 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
       }
       ctx.log(
         `[RESTORE] unread census: ${census.seeded} conversation(s) counted from the upgrade's local read seed, ` +
-          `${census.withBadge} with a badge, ${census.total} unread in all`
+          `${census.withBadge} with a badge, ${census.total} unread in all, ` +
+          `${census.inactive} removed or pending (they take no mark)`
       );
       // Nothing to commit is said as `undefined`, so the helper owes no checkpoint for it.
       return pendingCommits.length > 0 ? pendingCommits : undefined;

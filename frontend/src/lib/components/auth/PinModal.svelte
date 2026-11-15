@@ -193,7 +193,7 @@
 
   /** Switches between the keypad and the text field, clearing what was typed in the other one. */
   function switchInputMode(toKeypad: boolean) {
-    Log.d('[pin-modal] input mode ->', toKeypad ? 'keypad' : 'manual');
+    Log.d('pin-modal', 'input mode ->', toKeypad ? 'keypad' : 'manual');
     pin = '';
     useNumpad = toKeypad;
   }

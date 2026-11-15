@@ -13,7 +13,7 @@
        (the bottom nav is hidden there), so a toast above it covered the very bubble just acted
        on. Below the conversation header when one is open (`--chat-chrome-bottom`, published by ChatArea), else below the safe area. Desktop keeps its corner. -->
   <div
-    class="pointer-events-none fixed top-[calc(var(--chat-chrome-bottom,var(--safe-area-inset-top,0px))+0.75rem)] right-4 left-4 z-(--z-toast) flex flex-col gap-2 md:top-auto md:right-6 md:bottom-6 md:left-auto md:w-96"
+    class="pointer-events-none fixed top-[calc(var(--chat-chrome-bottom,var(--safe-area-inset-top,0px))+0.75rem)] right-4 left-4 z-(--z-toast) flex flex-col gap-2 md:top-auto md:right-6 md:bottom-[calc(1.5rem+var(--keyboard-occlusion-bottom,0px))] md:left-auto md:w-96"
     aria-live="assertive"
     aria-atomic="false"
   >

@@ -27,6 +27,7 @@ import {
   publishPaymentRefusal,
 } from './payment-offer';
 import { FORM_DRAFT, FORM_PUBLISHED, respondentFormWhere, type FormStatus } from './form-status';
+import { managesForm } from './form-ownership';
 import {
   FORM_CHANGED_SINCE_REVISION,
   FORM_DRAFT_CONFLICT,
@@ -1115,7 +1116,8 @@ export class FormsService {
   }
 
   /**
-   * Returns a single form by ID with its current submission count and `cotisationDisabled`.
+   * Returns a single form by ID with its current submission count and `cotisationDisabled`;
+   * `ownerId` only to a manager of the form.
    *
    * A form that does not exist (a deleted one included) is a 404, never `null`: Nest serialises a
    * returned `null` as a `200` with an EMPTY body, which the client could only read as a raw
@@ -1127,7 +1129,8 @@ export class FormsService {
       this.logger.debug(`get: form ${id} not found`);
       throw new NotFoundException('Form not found');
     }
-    if (!(await this.readableBy(form, viewer))) {
+    const read = await this.readVerdict(form, viewer);
+    if (!read.readable) {
       this.logger.debug(
         `get: form ${id.slice(0, 8)} is a draft or of an archived association, not served to a non-manager`
       );
@@ -1147,18 +1150,30 @@ export class FormsService {
     // The name too (the SAME lookup as the list): a link-preview card says "Ouvert · <association>".
     const names = await this.associationNamesOf([form]);
     const associationName = form.associationId ? (names.get(form.associationId) ?? null) : null;
-    return { ...form, submissionCount, cotisationDisabled, paymentsPaused, associationName };
+    // Who created the form is its managers' to read: a respondent is shown the form, never its
+    // creator (an anonymous post's form would otherwise name a candidate author). Asked ONCE: the
+    // read verdict already holds the answer where it had to ask it (a draft, an archived association).
+    const manages = read.manages ?? (await this.managesForm(form, viewer));
+    const { ownerId, ...served } = form;
+    return {
+      ...served,
+      ...(manages ? { ownerId } : {}),
+      submissionCount,
+      cotisationDisabled,
+      paymentsPaused,
+      associationName,
+    };
   }
 
   /**
    * Whether `viewer` may read form `id` at all - what `get` serves and what the form's agenda link
    * (`GET /forms/:id/calendar-link`) answers by: false for a form that does not exist (a deleted one
-   * included), and see {@link readableBy}.
+   * included), and see {@link readVerdict}.
    */
   async mayRead(id: string, viewer: { userId: string; isGlobalAdmin: boolean }): Promise<boolean> {
     const form = await this.formRepo.findOne({ where: { id, deletedAt: IsNull() } });
     if (!form) return false;
-    return this.readableBy(form, viewer);
+    return (await this.readVerdict(form, viewer)).readable;
   }
 
   /**
@@ -1166,18 +1181,24 @@ export class FormsService {
    * alone: anyone else is answered what an absent form answers, so the id cannot be probed. Judged
    * by the ONE respondent `where` (`respondentFormWhere`), never a second copy of its clauses.
    * Managers keep reading it, to export.
+   *
+   * `manages` is the management answer WHERE THE VERDICT HAD TO ASK IT (the form no respondent
+   * reaches), and `undefined` where it did not: a caller that needs it too (`get`, for `ownerId`)
+   * reuses it instead of asking a second time.
    */
-  private async readableBy(
+  private async readVerdict(
     form: Form,
     viewer: { userId: string; isGlobalAdmin: boolean } | undefined
-  ): Promise<boolean> {
+  ): Promise<{ readable: boolean; manages?: boolean }> {
     const reachable =
       form.status !== FORM_DRAFT &&
       !!(await this.formRepo.findOne({
         select: { id: true },
         where: respondentFormWhere(form.id),
       }));
-    return reachable || (await this.managesForm(form, viewer));
+    if (reachable) return { readable: true };
+    const manages = await this.managesForm(form, viewer);
+    return { readable: manages, manages };
   }
 
   /**
@@ -1305,14 +1326,8 @@ export class FormsService {
     form: Form,
     viewer: { userId: string; isGlobalAdmin: boolean } | undefined
   ): Promise<boolean> {
-    if (!viewer?.userId) return false;
-    if (viewer.isGlobalAdmin) return true;
-    if (!form.associationId) return form.ownerId === viewer.userId;
-    return this.associationsService.mayAct(
-      viewer.userId,
-      form.associationId,
-      AssociationPermissionFlag.MANAGE_FORMS,
-      { isGlobalAdmin: viewer.isGlobalAdmin }
+    return managesForm(form, viewer, (userId, associationId, flag, opts) =>
+      this.associationsService.mayAct(userId, associationId, flag, opts)
     );
   }
 

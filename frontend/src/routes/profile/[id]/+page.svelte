@@ -276,7 +276,7 @@
       console.warn('[PROFILE] "Message" pressed with no signed-in account - nothing is asked');
       return;
     }
-    Log.d('[PROFILE] "Message": asking the chat page for the DM with this person');
+    Log.d('PROFILE', '"Message": asking the chat page for the DM with this person');
     requestDirectConversationWith(owner, profile.id, sessionStorage);
     goto(resolve('/chat'));
   }

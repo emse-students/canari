@@ -309,7 +309,7 @@ describe('the unread count a load derives', () => {
     expect(seen.filter((count, i) => i === 0 || count !== seen[i - 1])).toEqual([0, 1, 0]);
     expect(conversations.get('g-1')?.unreadCount).toBe(0);
     expect(log).toHaveBeenCalledWith(
-      "[RESTORE] unread census: 0 conversation(s) counted from the upgrade's local read seed, 0 with a badge, 0 unread in all"
+      "[RESTORE] unread census: 0 conversation(s) counted from the upgrade's local read seed, 0 with a badge, 0 unread in all, 0 removed or pending (they take no mark)"
     );
   });
 });
@@ -337,7 +337,7 @@ describe("the upgrade's local read seed, read by the restore", () => {
 
     expect(await coldStart(store, { log })).toBe(0);
     expect(log).toHaveBeenCalledWith(
-      "[RESTORE] unread census: 1 conversation(s) counted from the upgrade's local read seed, 0 with a badge, 0 unread in all"
+      "[RESTORE] unread census: 1 conversation(s) counted from the upgrade's local read seed, 0 with a badge, 0 unread in all, 0 removed or pending (they take no mark)"
     );
   });
 

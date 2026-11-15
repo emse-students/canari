@@ -75,6 +75,6 @@ export function replyCaption(i: ReplyCaptionInput): string {
     text = m.msg_reply_caption_other_to_other({ name: i.replierName, quoted: i.quotedName });
   }
   // Only the name-less fallback is a decision worth a line: the quoted author could not be named.
-  if (key.endsWith('nameless')) Log.d('[replyCaption] quoted author unknown, name-less form', key);
+  if (key.endsWith('nameless')) Log.d('replyCaption', 'quoted author unknown, name-less form', key);
   return text;
 }

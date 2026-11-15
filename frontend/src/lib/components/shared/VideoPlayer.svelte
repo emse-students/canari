@@ -1145,7 +1145,7 @@
       <div
         data-video-controls
         class="video-controls-in from-cn-scrim/60 absolute inset-x-0 bottom-0 bg-linear-to-t to-transparent px-3 pt-10 {safeBottom
-          ? 'pb-[max(0.75rem,env(safe-area-inset-bottom))]'
+          ? 'pb-[max(0.75rem,var(--safe-area-inset-bottom,0px))]'
           : 'pb-3'}"
         onpointerdown={(e) => e.stopPropagation()}
         onclick={(e) => e.stopPropagation()}

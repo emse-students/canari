@@ -10,12 +10,14 @@
  * profile is persistent, so a relaunched browser is still logged in (only the PIN is re-asked).
  *
  * Usage:  bun launch.mjs kill w1     bun launch.mjs close w1     bun launch.mjs start w1
+ *         bun launch.mjs start w5 --fake-media [--log-dir <dir>]   (publishes a live without a camera)
  *
  * `kill` is a CRASH and `close` is a QUIT - they are not interchangeable, and `killBrowser`
  * says what the difference costs.
  */
 import { spawn, execSync } from "node:child_process";
-import { join } from "node:path";
+import { mkdirSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { connect, listTargets } from "./cdp.mjs";
 import { EstateRefusedError, refuseForeignPage } from "./estate-target.mjs";
 import { STATE_DIR } from "./names.mjs";
@@ -51,6 +53,31 @@ export const BROWSERS = {
   w7: { port: 9229, profile: join(STATE_DIR, "chrome-w7") },
   w8: { port: 9230, profile: join(STATE_DIR, "chrome-w8") },
 };
+
+/**
+ * The flags a browser needs to PUBLISH media (a live, a reel camera, a call) without a camera or a
+ * microphone. Read at start: they cannot be given to a browser that is already up.
+ *
+ * Without them `getUserMedia` is refused on this box and the live's "Demarrer le live" stays
+ * disabled. With them it starts and holds (measured 2026-11-15: W5 as the fourth account, a live
+ * kept 65 s twice, Chrome 157 alive throughout, no renderer or GPU crash). `fps=30` because the
+ * fake camera defaults to 20, which reads as a slow publisher on the other end.
+ */
+export const FAKE_MEDIA_FLAGS = [
+  "--use-fake-device-for-media-stream=fps=30",
+  "--use-fake-ui-for-media-stream",
+];
+
+/**
+ * The flags that make a start leave evidence: Chrome's own log and its crash dumps, in `dir`.
+ * A browser that "stopped answering" is otherwise indistinguishable from one another run killed.
+ */
+export function chromeLogFlags(dir) {
+  // Absolute (Chrome resolves a relative path against ITS cwd, not ours) and created up front.
+  dir = resolve(dir);
+  mkdirSync(join(dir, "dumps"), { recursive: true });
+  return ["--enable-logging", "--v=1", `--log-file=${join(dir, "chrome.log")}`, `--crash-dumps-dir=${join(dir, "dumps")}`];
+}
 
 /** True when something still answers on that debugging port. */
 export async function isUp(which) {
@@ -230,7 +257,10 @@ if (process.argv[1] && process.argv[1].endsWith("launch.mjs")) {
   } else if (action === "close") {
     console.log(`${which} closed in ${await closeBrowser(which)}ms`);
   } else if (action === "start") {
-    console.log(`${which} up in ${await startBrowser(which)}ms`);
+    const args = process.argv.slice(4);
+    const logDir = args.includes("--log-dir") ? args[args.indexOf("--log-dir") + 1] : null;
+    const extra = [...(args.includes("--fake-media") ? FAKE_MEDIA_FLAGS : []), ...(logDir ? chromeLogFlags(logDir) : [])];
+    console.log(`${which} up in ${await startBrowser(which, undefined, extra)}ms`);
   } else {
     console.log(`usage: bun launch.mjs kill|close|start ${Object.keys(BROWSERS).join("|")}`);
   }

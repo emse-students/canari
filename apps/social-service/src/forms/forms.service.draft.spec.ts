@@ -633,6 +633,30 @@ describe('FormsService - drafts', () => {
       ).resolves.toMatchObject({ id: 'f1' });
     });
 
+    it('get: who created a published form is served to its managers alone', async () => {
+      const published = { form: { status: FORM_PUBLISHED } };
+      const toStranger = await makeService(published).service.get('f1', {
+        userId: STRANGER,
+        isGlobalAdmin: false,
+      });
+      expect(toStranger).toMatchObject({ id: 'f1' });
+      expect(toStranger).not.toHaveProperty('ownerId');
+      await expect(
+        makeService(published).service.get('f1', { userId: OWNER, isGlobalAdmin: false })
+      ).resolves.toMatchObject({ ownerId: OWNER });
+    });
+
+    it('get: management is asked once, whether or not the read verdict needed it', async () => {
+      // A draft: the verdict asks (nobody else reaches it) and `get` reuses its answer for `ownerId`.
+      const draft = makeService({ mayAct: true });
+      await draft.service.get('f1', { userId: STRANGER, isGlobalAdmin: false });
+      expect(draft.associations.mayAct).toHaveBeenCalledTimes(1);
+      // A published form: the verdict does not ask, `get` does, for `ownerId` alone.
+      const published = makeService({ form: { status: FORM_PUBLISHED }, mayAct: true });
+      await published.service.get('f1', { userId: STRANGER, isGlobalAdmin: false });
+      expect(published.associations.mayAct).toHaveBeenCalledTimes(1);
+    });
+
     it('getPublic (the guest link): 404', async () => {
       await expect(makeService().service.getPublic('f1')).rejects.toThrow(NotFoundException);
     });

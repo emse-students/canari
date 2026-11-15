@@ -111,7 +111,7 @@
       aria-modal="true"
       aria-label={label}
       tabindex="-1"
-      class="bg-surface-elevated absolute inset-x-0 bottom-0 flex max-h-[85dvh] flex-col rounded-t-2xl pb-[max(0.5rem,var(--safe-area-inset-bottom,0px))] shadow-2xl"
+      class="bg-surface-elevated absolute inset-x-0 bottom-0 flex max-h-[calc(85dvh-var(--keyboard-occlusion-bottom,0px))] flex-col rounded-t-2xl pb-[calc(max(0.5rem,var(--safe-area-inset-bottom,0px))+var(--keyboard-occlusion-bottom,0px))] shadow-2xl"
       transition:fly={{ y: 32, duration: 200 }}
     >
       <div class="mx-auto mt-2 h-1 w-10 shrink-0 rounded-full bg-black/15 dark:bg-white/20"></div>

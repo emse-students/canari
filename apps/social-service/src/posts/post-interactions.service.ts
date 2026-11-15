@@ -34,6 +34,7 @@ import {
 } from './comment-removal';
 import { forgetCommentNotices, writeComments } from './comment-write';
 import { announceCampusTrend } from './campus-trend';
+import { authorNoticeKind } from './post-activity-notice';
 import { COMMENT_DELETE_FORBIDDEN, COMMENT_EDIT_AUTHOR_ONLY } from '../spaces/bde-moderation';
 import { PostMediaRetentionService, commentMediaIds } from './post-media-retention.service';
 import { isExpiredPost } from './reel.constants';
@@ -333,10 +334,39 @@ export class PostInteractionsService {
         });
       };
 
+      // The parent comment's association holders, read ONCE for both uses below: the author's notice
+      // kind (a reply to a comment spoken for an association the author holds) and the reply's
+      // recipients. null = unreadable or no association.
+      let parentHolders: string[] | null = null;
+      if (parent?.associationId) {
+        try {
+          parentHolders = await this.identity.holdersOf(parent.associationId);
+        } catch (e) {
+          this.logger.warn(
+            `[NOTIFY] holders of association ${String(parent.associationId)} unreadable: the author's notice stays a comment and the reply goes to no holder`,
+            e
+          );
+        }
+      }
+
       if (post.authorId && !alreadyNotified.has(post.authorId)) {
         alreadyNotified.add(post.authorId);
+        // A reply to the author's own comment, or a mention of them, rings of its own and is never
+        // folded into the post's live notification (owner, 2026-11-15); the rest keeps the fold.
+        const kind = authorNoticeKind({
+          authorId: post.authorId,
+          parentWriterId: parent?.userId,
+          authorHoldsParentAssociation: parentHolders?.includes(post.authorId) ?? false,
+          mentionedIds: data.text ? this.notifications.resolveMentionedUserIds(data.text) : [],
+        });
+        this.logger.log(
+          `[NOTIFY] post=${postId.slice(0, 8)} author notice kind=${kind} ` +
+            (kind === 'comment'
+              ? '(folded into the post activity notification)'
+              : '(targets the author: rings of its own, outside the fold)')
+        );
         try {
-          await send(post.authorId, 'comment');
+          await send(post.authorId, kind);
         } catch (e) {
           this.logger.warn(
             `[NOTIFY] comment notification failed for post.authorId=${post.authorId}`,
@@ -349,17 +379,7 @@ export class PostInteractionsService {
         // A reply to an association's comment reaches everyone who speaks for it; to an anonymous
         // one, the real account behind it - the replier never learns who that is.
         let recipients: string[] = parent?.userId ? [parent.userId] : [];
-        if (parent?.associationId) {
-          try {
-            recipients = await this.identity.holdersOf(parent.associationId);
-          } catch (e) {
-            this.logger.warn(
-              `[NOTIFY] holders of association ${String(parent.associationId)} unreadable, reply not delivered`,
-              e
-            );
-            recipients = [];
-          }
-        }
+        if (parent?.associationId) recipients = parentHolders ?? [];
         // A reply pushes ITS text: only to who may read this post's comments, through the same gate
         // as a mention (`'COMMENT'`) - a named reader whose comments are withheld (owner,
         // 2026-11-04), or a parent's writer who has lost the post since, is told nothing. The post's

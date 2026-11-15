@@ -61,6 +61,21 @@ export function promotedSinceLoad(): boolean {
   return getTabLeadership() === 'leader' && loadedAs === 'follower';
 }
 
+/**
+ * Whether this document loaded its MLS state as the leader and has since LOST the lead (a freeze
+ * released the lock, the lead was handed to a visible tab). An expected event, unlike a copy loaded
+ * as a follower reaching a leader-only path, which is a routing defect - the two are told apart
+ * here, where the fact is known, so a refusal is classified at its throw.
+ *
+ * MONOTONIC for a document with a live session: its demotion reloads it, and it neither queues again
+ * nor takes the lead back (`tabLeader.ts`). So a run begun while leading that reads this (or
+ * {@link refusesCommitsHere}) true at any later point lost the lead at SOME await in between, and one
+ * read at the end of the run answers for every await before it.
+ */
+export function lostLeadSinceLoad(): boolean {
+  return getTabLeadership() === 'follower' && loadedAs === 'leader';
+}
+
 /** Test seam: back to the state of a document that has loaded nothing. */
 export function resetStateAuthorityForTests(): void {
   loadedAs = 'unknown';

@@ -54,6 +54,25 @@ only "restored" would read the silence that follows as a bug.
 unclassified failure on a path this deliberate is the visible end of something upstream - a storage
 write that failed, an out-of-memory - and it gets the generic sentence AND an accusing line.
 
+## A seed comes back to READ, never to seal under - 2026-11-15
+
+A Graine session this device minted is its OUTBOUND session: the next message is sealed at
+`firstIndex + sentCount` ([channel-encryption](../protocols/channel-encryption.md#213-the-data-model-carries-the-minter-and-its-key-wp-g2-3)).
+A backup's count is the one at export, so every message sealed after the export is behind it.
+Until 2026-11-15 the import wrote that count back; after a wipe, with the MLS state restored from
+the same file, the key group's run still matched the session's anchor, so `graineOutboundVerdict`
+answered `reuse` or `redistribute` - both seal at `firstIndex` plus the stale count - and the device sealed again at indices it had already used. The server refuses a
+second row under one `(senderSessionId, messageIndex)` (409 `CHANNEL_MESSAGE_KEY_REUSED`), so those
+sends failed.
+
+The structural answer: **the file carries no `sentCount`, and the import writes none** (`importBackup`).
+`sentCount` is the one fact that makes a session this device's outbound one, so a restored session
+is a session the device reads, and the first send after a restore mints a new one. A session the
+device still holds is never touched (`importEncryptedGraineRow` is non-destructive), so its live
+count stays. Older files still carry the field; it is not read. Pinned by
+`backup.graineRestore.test.ts` against the real IndexedDB backend: export, seal past the export,
+wipe, import, send.
+
 ## What is NOT here
 
 - **Cross-device history is pooled automatically**, as a manifest diff between an account's own
