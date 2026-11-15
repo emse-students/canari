@@ -198,6 +198,74 @@ pads its sides with `utils/sideSafeArea.ts`.
     or down still pages to the next or previous post (the 100 % track offset is the new viewport
     height). Chosen as the simplest defined behaviour; a landscape-only paging model was not built.
 
+## A turn shows no stale frame (2026-11-15)
+
+**The owner's decision (2026-11-15, after the Mi 9T and iPhone 12 sittings): "Garder l'ancienne image
+jusqu'a la nouvelle".** The system turns the screen, then the page is shown laid out at the new size;
+at worst the previous picture is held a little longer. Never a black area, never the old layout
+pinned to a corner, and no crossfade or animation of ours.
+
+**The defect, measured.** Turning over a landscape CanaReel (`1.6.12-alpha.2`, rotation lock off), both
+phones showed, after the system's rotation, about half a second of the OLD layout at its OLD size in
+the new orientation: the portrait page at the left of a landscape screen beside black, or the
+landscape picture at the top of a black portrait screen. Classified frame by frame (every 10 ms of a
+screen recording; the script reads which side of the screen is lit):
+
+| Build, Mi 9T | Turns | Turns showing the stale frame | Its duration (median, range) |
+| --- | --- | --- | --- |
+| `1.6.12-alpha.2`, the owner turning the phone | 11 | 11 | 510 ms (440-680) |
+| `1.6.12-alpha.2`, turns forced over adb (`user_rotation`, lock on) | 8 | 8 | 405 ms (330-490) |
+| first cut: visual-state callback posted at the resize | 8 | 2 | 340 ms, 600 ms |
+| this mechanism (the page's shape, then the frame) | 16 | 0 | - (the old picture held 304-371 ms, then the turn) |
+
+**The cause, on both engines: the web view's content is its last frame until the web process
+commits one at the new size.** Android logged the window ready 43-53 ms after the configuration
+change (`finishDrawing of orientation change ... MainActivity`), so the window manager animated the
+rotation onto a WebView still drawing its old-size frame, unscaled from the top-left corner. The
+renderer needed 300-650 ms to commit the new layout: on `1.6.12-alpha.2` its main thread ran 2-3 long
+tasks per turn (150-330 ms each: the keyboard viewport's resize handler forcing whole-document style
+recalculations, and its 400 ms timer after `orientationchange`), which `main` had already rewritten
+(#3556: one window reading before any write, no timer). On `main` a turn costs the renderer one style
+recalculation of the whole document (~100 ms for ~1300 elements on the Mi 9T, the `landscape:` /
+`portrait:` variants and the viewport units invalidating everything) and a layout (~45 ms), then two
+short frames - about 300 ms in all, which is now how long the old picture is held. WebKit does the
+same on iOS: UIKit turns the WKWebView's frame inside its rotation animation, and the page keeps the
+old layout until the web process commits (Safari hides it with a private animated-resize API).
+
+**Android: the window's draw is held until the page has a frame at the new size**
+(`MainActivity.holdDrawAcrossTurns`, the pure state in `orientation/TurnFrameGate.kt`,
+`TurnFrameGateTest`). Two proofs, no clock:
+
+1. The WebView's own box flips shape (`isTurn`: the longer side changes axis - a keyboard resize never
+   does) and a pre-draw listener answers false from then on.
+2. The page is asked when IT has that shape (`turnLaidOutScript`: `innerWidth > innerHeight` against
+   the turn, at once or on the `resize` that makes it so, answered through `window.canariTurn`).
+   Only then is `WebView.postVisualStateCallback` posted. The first cut posted it at the resize and 2
+   turns in 8 were answered 24-31 ms later by a frame at the OLD size: the WebView may hand the new
+   size to the renderer after its own resize, so a frame proof asked too early is answered by an old
+   frame.
+3. The callback releases the draw; the window manager, which waits for the window's first draw in
+   the new rotation (`finishDrawing` now 362-473 ms after the change), keeps the old screen until
+   then and turns straight onto the laid-out page.
+
+Over 16 turns on the Mi 9T the page had its shape 241-342 ms after the turn (the renderer's
+style and layout of the whole document, above) and its frame 29-70 ms later.
+
+Each turn takes a token and only the newest moves the hold, so turning back before the first frame
+keeps it until the second turn's frame; a new document during a hold is asked again (`pageReady`). The
+log tells a turn from end to end: `turn N laid out at WxH: draw held`, `the page has its shape after N
+ms`, `the page's frame at the new size is ready after N ms - draw released`.
+
+**iOS: the old picture is held over the turning interface** (`CanariWillTransitionToSize` in
+`canari_ios.mm`, hooked on tao's root controller like the mask). At `viewWillTransitionToSize` of a
+turn, the root view's snapshot (`snapshotViewAfterScreenUpdates:NO`) is laid over everything and
+counter-rotated by the inverse of the coordinator's `targetTransform` alongside UIKit's animation, so
+it stays still on the glass while the interface turns under it; it is removed once WebKit has the new
+layout on screen (`CanariAfterScreenUpdates`, the keyboard path's proof). The syslog says
+`[CanariOrientation] turn N: ... old picture held` then `new layout on screen N ms after the turn
+began ... released`. **Not run on an iPhone yet** - the reading is owed (below): the picture must not
+move during the turn, no black corner may show, and the release must land on the laid-out page.
+
 ## Known and accepted
 
 Found by the adversarial review of 2026-11-09 and accepted as they are (no code):

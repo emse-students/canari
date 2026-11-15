@@ -73,6 +73,12 @@ running. Owed on the **Mi 9T** and the **iPhone 12**, each with the rotation loc
   (`safe area published to the page: ... left N pt, right N pt` in the syslog).
 - **A reload while turned** (Android: kill the WebView renderer; iOS: a WebContent kill) comes back
   portrait.
+- **A turn shows no stale frame** ([the owner's decision of 2026-11-15](../frontend/screen-orientation.md#a-turn-shows-no-stale-frame-2026-11-15)):
+  over a landscape CanaReel, ten turns each way, recorded; no frame shows the old layout beside black.
+  Android: measured on the Mi 9T before the merge (the table on that page); the log shows `draw
+  released` for every turn. **iOS: never run** - the old picture must stay still while the interface
+  turns (no black corner during the animation: tao's root view must not clip it), and the syslog shows
+  `old picture released` for every turn.
 
 ### iPhone 12 reading of 2026-11-15 (second sitting): the live viewer, landscape live from the rig seat
 
