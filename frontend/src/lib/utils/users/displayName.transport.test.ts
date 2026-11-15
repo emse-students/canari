@@ -16,6 +16,7 @@ vi.mock('$lib/stores/user', () => ({
   fetchUserProfile: (...args: unknown[]) => fetchUserProfile(...args),
   getSavedDisplayName: () => null,
   isAbsentUserError: () => false,
+  MalformedUserIdError: class MalformedUserIdError extends Error {},
 }));
 
 const { resolveUserDisplayName, displayNameLookupStats } = await import('./displayName');

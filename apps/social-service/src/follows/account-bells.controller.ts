@@ -6,6 +6,7 @@ import {
   type BellTargetKind,
   type ReducedBell,
 } from './account-bells.service';
+import { RouteParams } from '../common/route-params';
 
 /**
  * THE CALLER'S BELL on one account (engagement WP-3): `GET` reads it, `PUT { level }` sets it -
@@ -14,6 +15,7 @@ import {
  * CALLER's row (the header, never an id from the URL), and no route answers another reader's level:
  * the followed account never learns it.
  */
+@RouteParams({ kind: 'opaque', targetId: 'opaque' })
 @Controller('posts')
 @UseGuards(NginxAuthGuard)
 export class AccountBellsController {

@@ -24,6 +24,8 @@ import type { BulkIngestObserver, BulkIngestPhase } from '$lib/mls-client/IMlsSe
 type BulkIngestApi = {
   bulkIngestObservers: BulkIngestObserver[];
   openBulkIngests: Map<number, BulkIngestPhase>;
+  closingBulkIngests: Set<number>;
+  bulkIngestsClosedWaiters: unknown[];
   nextBulkIngestHandle: number;
   beginBulkIngest(phase?: BulkIngestPhase): number;
   endBulkIngest(handle: number): Promise<void>;
@@ -37,6 +39,8 @@ function makeHost(observers: BulkIngestObserver[]): BulkIngestApi {
   return {
     bulkIngestObservers: observers,
     openBulkIngests: new Map(),
+    closingBulkIngests: new Set(),
+    bulkIngestsClosedWaiters: [],
     nextBulkIngestHandle: 1,
     beginBulkIngest: proto.beginBulkIngest,
     endBulkIngest: proto.endBulkIngest,

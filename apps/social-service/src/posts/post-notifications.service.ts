@@ -8,7 +8,9 @@ import { AccountBellsService, bellTargetOf } from '../follows/account-bells.serv
 import {
   CAMPUS_TREND_NOTIFICATION,
   CAPPED_PUSH_TYPES,
+  ENGAGEMENT_DAILY_PUSH_CAP,
   FRIEND_COMMENT_NOTIFICATION,
+  ONE_PER_POST_TYPES,
   FRIEND_REACTION_NOTIFICATION,
   claimEngagementPushes,
 } from './engagement-push-cap';
@@ -60,6 +62,8 @@ import {
   type TrendMedia,
 } from '../push/push-content';
 import {
+  MIN_APP_VERSION_DATA_KEY,
+  POST_ACTIVITY_QUIET_MIN_CLIENT_VERSION,
   notificationTypesRenderableBy,
   type NotificationType,
   type PushOnlyNotificationType,
@@ -79,6 +83,35 @@ import { recipientsWithCategoryOn } from '../push/notification-category';
 import { readPostOpenVerdict, type OpenablePost } from './post-openable';
 import { birthdayDateVisibleToSql } from '../birthdays/birthday-sql';
 import { BIRTHDAY_NOTIFICATION } from '../birthdays/birthday-notification';
+import {
+  markReadUnderLock,
+  postActivityCollapseId,
+  writePostActivityRow,
+  type PostActivityRow,
+  type PostActivityVerdict,
+} from './post-activity-notice';
+import {
+  asUuidSql,
+  targetBoundRowShownSql,
+  UUID_SHAPE,
+  validatorRowServedAsPartySql,
+} from './bell-row-gates';
+import {
+  EVENT_REOPEN_NOTIFICATION_TYPE,
+  type EventReopenReason,
+} from '../associations/event-reopen';
+
+/**
+ * A comment or a reaction on the reader's own post is ONE live notification per post (owner,
+ * 2026-11-14), and only {@link PostNotificationsService.notifyPostActivity} keeps that state: pushed
+ * through the ordinary paths it would ring once per event and bypass the bell's unread state. A
+ * caller that tries is a defect, refused loudly at the call rather than shipped as noise.
+ */
+function refuseOnePerPostPush(type: string, skipPush: boolean | undefined): void {
+  if (!skipPush && ONE_PER_POST_TYPES.includes(type as NotificationType)) {
+    throw new Error(`type=${type} is one per post: push it through notifyPostActivity`);
+  }
+}
 
 /** The bell's page when the caller names none: what the bell dropdown asks. */
 export const BELL_PAGE_DEFAULT = 30;
@@ -183,10 +216,13 @@ export function birthdayRowShownSql(n: string): string {
 }
 
 /**
- * Bell row `n` may be shown: a row of a type that names no post, or a row of a post-bound type
- * (`POST_BOUND_NOTIFICATION_TYPES`) whose post exists, is not hidden by moderation, and its
- * recipient still sees (`getNotifications` says why) - with its comments, for a comment-borne row
- * (`commentBorneNotificationSql`). The types are constants of this module.
+ * Bell row `n` may be shown: a row of a post-bound type (`POST_BOUND_NOTIFICATION_TYPES`) whose post
+ * exists, is not hidden by moderation, and its recipient still sees (`getNotifications` says why) -
+ * with its comments, for a comment-borne row (`commentBorneNotificationSql`); a row naming something
+ * else - an association's queue, an event, a form, a booking space - whose own predicate still admits
+ * its recipient (`targetBoundRowShownSql`, `BELL_ROW_GATE`); a birthday its recipient may still read;
+ * and a row about the recipient's own account. The types are constants of this module and of
+ * `bell-row-gates.ts`.
  *
  * `postId` is a `varchar` that other types fill with ids of their own, so it is cast to `uuid`
  * inside a CASE - evaluated for a post-bound row only, and only when it has a uuid's shape, so a
@@ -195,7 +231,7 @@ export function birthdayRowShownSql(n: string): string {
  */
 export function bellRowShownSql(n: string): string {
   const types = POST_BOUND_NOTIFICATION_TYPES.map((t) => `'${t}'`).join(', ');
-  return `(${birthdayRowShownSql(n)}) AND (${n}.type NOT IN (${types}) OR EXISTS (SELECT 1 FROM posts notif_post
+  return `(${birthdayRowShownSql(n)}) AND ${targetBoundRowShownSql(n)} AND (${n}.type NOT IN (${types}) OR EXISTS (SELECT 1 FROM posts notif_post
     WHERE notif_post.id = (CASE WHEN ${n}.type IN (${types})
         AND ${n}."postId" ~* '${UUID_SHAPE}'
       THEN ${n}."postId"::uuid END)
@@ -224,18 +260,6 @@ export function trendLikedByOfMeta(meta: Record<string, unknown> | null | undefi
   if (!likedBy || typeof likedBy.name !== 'string' || !likedBy.name) return null;
   const others = typeof likedBy.others === 'number' ? Math.max(0, Math.floor(likedBy.others)) : 0;
   return { name: likedBy.name, others };
-}
-
-/** The shape of a uuid, which a varchar column must have before it is cast to one. */
-const UUID_SHAPE = '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
-
-/**
- * `column` (a VARCHAR) as a uuid, or NULL when it does not have the shape of one. Never for a column
- * that already is a `uuid` (`associationId` is, since migration 061): `uuid ~* text` has no operator
- * and fails the whole bell with a 500 (#3019 on dev).
- */
-function asUuidSql(column: string): string {
-  return `(CASE WHEN ${column} ~* '${UUID_SHAPE}' THEN ${column}::uuid END)`;
 }
 
 /**
@@ -644,6 +668,7 @@ export class PostNotificationsService {
    */
   async createNotification(data: {
     recipientId: string;
+    /** A comment or a reaction on the reader's post goes through {@link notifyPostActivity}. */
     type: NotificationType;
     postId: string;
     actorId: string;
@@ -658,6 +683,7 @@ export class PostNotificationsService {
     pushData?: Record<string, string>;
   }) {
     if (data.recipientId === data.actorId) return;
+    refuseOnePerPostPush(data.type, data.skipPush);
     // Suggestion and engagement content whose category the reader switched off writes no row
     // (`BELL_ROW_GATE`), and so no push either - chat-delivery would drop it. Every other notice is
     // written; its push still follows its category in chat-delivery.
@@ -698,6 +724,63 @@ export class PostNotificationsService {
   }
 
   /**
+   * A COMMENT OR A REACTION ON THE READER'S OWN POST (owner, 2026-11-14): ONE live notification per
+   * post, never counted by the daily cap. The bell row and the alert-or-silent decision are ONE
+   * transaction (`writePostActivityRow`): the push ALERTS when the post had no unread row of these
+   * kinds, and otherwise updates the same notification silently - `collapseId` names it on every
+   * platform (APNs collapse id, Android stable id), `quiet` silences the update. The category
+   * switches still apply at the send (chat-delivery); a row is written whatever they say, as before.
+   *
+   * @param content the push for this event, given how many OTHER people did the same among the
+   *   post's unread rows ("Alice et 4 autres ont commenté").
+   * @returns the verdict, or null when nothing was written (the actor is the recipient, or the
+   *   type's bell category withholds the row).
+   */
+  async notifyPostActivity(data: {
+    recipientId: string;
+    type: PostActivityRow['type'];
+    postId: string;
+    actorId: string;
+    actorName: string;
+    text: string;
+    commentId?: string;
+    content: (others: number) => PushContent;
+    pushData?: Record<string, string>;
+  }): Promise<PostActivityVerdict | null> {
+    if (data.recipientId === data.actorId) return null;
+    const [stillOn] = await recipientsWithCategoryOn(this.notifRepo.manager, data.type, [
+      data.recipientId,
+    ]);
+    if (!stillOn) return null;
+    const verdict = await writePostActivityRow(this.notifRepo.manager, {
+      recipientId: data.recipientId,
+      type: data.type,
+      postId: data.postId,
+      actorId: data.actorId,
+      actorName: data.actorName,
+      text: data.text,
+      commentId: data.commentId ?? null,
+      anonymousActorId: ANONYMOUS_NOTIFICATION_ACTOR_ID,
+    });
+    this.logger.log(
+      `[NOTIFY] type=${data.type} post=${data.postId.slice(0, 8)} to=${data.recipientId.slice(0, 8)} ` +
+        `${verdict.alert ? 'alert (no unread row for the post)' : 'quiet update (the post has unread rows)'} ` +
+        `others=${verdict.others}`
+    );
+    await this.push.notifyContent(data.recipientId, data.content(verdict.others), {
+      type: 'social',
+      postId: data.postId,
+      ...data.pushData,
+      collapseId: postActivityCollapseId(data.postId),
+      // A quiet update reaches only a build that honours `quiet`: an older one would ring it.
+      ...(verdict.alert
+        ? {}
+        : { quiet: 'true', [MIN_APP_VERSION_DATA_KEY]: POST_ACTIVITY_QUIET_MIN_CLIENT_VERSION }),
+    });
+    return verdict;
+  }
+
+  /**
    * `createNotification` for a SET of recipients: one actor lookup, one insert, one push each.
    *
    * The agenda notifies whole groups - every proposer in an association, every calendar manager -
@@ -733,6 +816,7 @@ export class PostNotificationsService {
      */
     skipPush?: boolean;
   }): Promise<number> {
+    refuseOnePerPostPush(data.type, data.skipPush);
     // A category the reader switched off writes no row and is not pushed ("Nos principes").
     const recipients = await recipientsWithCategoryOn(
       this.notifRepo.manager,
@@ -838,9 +922,11 @@ export class PostNotificationsService {
    * them, untouched; a counted one takes one unit of each reader's daily budget in ONE statement
    * (`claimEngagementPushes`) and answers the readers who got one - a reader past the cap, who
    * switched the type's category off, or with no device able to show the type's push (its floor),
-   * keeps the in-app row and is not pushed; ONE line per call says how many. EVERY SEND OF A COUNTED
-   * TYPE GOES THROUGH HERE: the batch fan-out, the singular
-   * notice, and the reaction and comment pushes that `PostInteractionsService` composes itself.
+   * keeps the in-app row and is not pushed. EACH CAUSE HAS ITS OWN LINE (2026-11-14: one line lumped
+   * the three, so a withheld push could not say which it was), the cap's with the cap and the count
+   * the reader was already pushed today. EVERY SEND OF A COUNTED TYPE GOES THROUGH HERE: the batch
+   * fan-out and the singular notice. Comments and reactions on the reader's own post are not counted
+   * since 2026-11-14 ({@link notifyPostActivity}).
    *
    * FAIL CLOSED, LOUDLY, as the bell: a failed claim pushes nobody (pushing everyone would ignore the
    * cap) - it is logged here and rethrown, so the caller's own warning names the notice.
@@ -848,7 +934,7 @@ export class PostNotificationsService {
   async withinPushBudget(type: string, recipients: readonly string[]): Promise<string[]> {
     const capped = CAPPED_PUSH_TYPES.get(type);
     if (!capped || recipients.length === 0) return [...recipients];
-    const allowed = await claimEngagementPushes(
+    const claim = await claimEngagementPushes(
       this.notifRepo.manager,
       recipients,
       capped.category,
@@ -860,15 +946,25 @@ export class PostNotificationsService {
       );
       throw e;
     });
-    const kept = recipients.filter((id) => allowed.has(id));
-    if (kept.length < recipients.length) {
+    const of = `of ${recipients.length} - the bell rows stay`;
+    if (claim.capped.length > 0) {
+      const counts = [...new Set(claim.capped.map((c) => c.pushedToday ?? 'concurrent'))].join(',');
       this.logger.log(
-        `[NOTIFY] type=${type} withheld ${recipients.length - kept.length} of ${recipients.length} ` +
-          `(cap, category ${capped.category} off, or no device at ${capped.floor ?? 'any build'}) - ` +
-          'the bell rows stay'
+        `[NOTIFY] type=${type} cap reached for ${claim.capped.length} ${of} ` +
+          `(cap=${ENGAGEMENT_DAILY_PUSH_CAP}, pushedToday=${counts})`
       );
     }
-    return kept;
+    if (claim.categoryOff.length > 0) {
+      this.logger.log(
+        `[NOTIFY] type=${type} category ${capped.category} off for ${claim.categoryOff.length} ${of}`
+      );
+    }
+    if (claim.noDevice.length > 0) {
+      this.logger.log(
+        `[NOTIFY] type=${type} no device at build >= ${capped.floor} for ${claim.noDevice.length} ${of}`
+      );
+    }
+    return recipients.filter((id) => claim.allowed.has(id));
   }
 
   /**
@@ -980,6 +1076,9 @@ export class PostNotificationsService {
    * the read is the one answer every one of those paths shares (Opus review of #2859, 2026-11-01,
    * for member reposts; every post-bound type since the review of #2965, 2026-11-02); the row
    * itself is left to the 90-day sweep. A PUSH already delivered to a device cannot be recalled.
+   * A row naming something else is re-asked the same way, against what it names
+   * (`targetBoundRowShownSql`): an event's opening against the event's visibility, a proposal or an
+   * officer's notice against the role that made its reader a recipient (audit of 2026-11-14).
    *
    * ONLY THE TYPES THE READER'S BUILD CAN DRAW are served (`notification-client-floor.ts`):
    * `clientVersion` is what the read's `X-Canari-Client-Version` names, `undefined` when it names
@@ -989,6 +1088,7 @@ export class PostNotificationsService {
   async getNotifications(userId: string, limit = 30, clientVersion?: string) {
     const rows = await this.bellPageQuery(userId, limit, clientVersion).getMany();
     await this.resolveTrendLikedBy(rows);
+    await this.serveReplacedPartyNotices(rows);
     const proposed = rows.filter((r) => r.type === 'repost_proposed' && r.text);
     if (proposed.length === 0) return rows;
     // A repost proposal's preview is re-asked here, at the read (`repostProposalTextWithheldSql`).
@@ -1004,6 +1104,46 @@ export class PostNotificationsService {
     );
     for (const row of rows) if (ids.has(row.id)) row.text = '';
     return rows;
+  }
+
+  /**
+   * A VALIDATORS' ROW WHOSE READER IS NOW ONLY A PARTY, SERVED AS THE PARTY NOTICE IT REPLACED: a
+   * reopening tells a validator who is also a party once, as a validator (`meta.toldAsParty`), and
+   * the bell keeps that row while either right holds (`BELL_ROW_GATE`). Once the validator's right is
+   * gone (`validatorRowServedAsPartySql`), the row is served under the type and facts the party
+   * notice would have carried (`EVENT_REOPEN_NOTIFICATION_TYPE[meta.reason]`, no `audience`), so every
+   * client - an old build included - opens the agenda, never a validation queue its reader can no
+   * longer open. One statement for the page; a page with no such row reads nothing.
+   */
+  private async serveReplacedPartyNotices(rows: PostNotification[]): Promise<void> {
+    const candidates = rows.filter((r) => r.meta?.toldAsParty === true);
+    if (candidates.length === 0) return;
+    const asParty: { id: string }[] = await this.notifRepo.manager.query(
+      `SELECT n.id FROM post_notifications n
+        WHERE n.id = ANY($1::uuid[]) AND ${validatorRowServedAsPartySql('n')}`,
+      [candidates.map((r) => r.id)]
+    );
+    const ids = new Set(asParty.map((r) => r.id));
+    for (const row of candidates) {
+      if (!ids.has(row.id)) continue;
+      const reason = row.meta?.reason;
+      if (
+        typeof reason !== 'string' ||
+        !Object.prototype.hasOwnProperty.call(EVENT_REOPEN_NOTIFICATION_TYPE, reason)
+      ) {
+        // The writer sets `toldAsParty` only with a reason (`announceEventReopened`): a row without
+        // one was not written by it, and is served as stored.
+        this.logger.warn(
+          `[EVENT_REOPENED] bell row ${row.id.slice(0, 8)}: told as a party with no reopen reason, served as stored`
+        );
+        continue;
+      }
+      row.type = EVENT_REOPEN_NOTIFICATION_TYPE[reason as EventReopenReason];
+      row.meta = { reason, eventId: row.meta?.eventId };
+    }
+    if (ids.size > 0) {
+      this.logger.debug(`[EVENT_REOPENED] ${ids.size} validators' row(s) served as a party notice`);
+    }
   }
 
   /**
@@ -1096,13 +1236,14 @@ export class PostNotificationsService {
 
   /** Marks every notification for a user as read (called when the bell dropdown is opened). */
   async markAllRead(userId: string) {
-    await this.notifRepo.update({ recipientId: userId }, { read: true });
+    // Under the reader's lock: the per-post claim (`notifyPostActivity`) reads this state.
+    await markReadUnderLock(this.notifRepo.manager, userId, null);
     return { ok: true };
   }
 
-  /** Marks every notification about one post as read for a user. */
+  /** Marks every notification about one post as read for a user, under the same lock. */
   async markPostRead(userId: string, postId: string) {
-    await this.notifRepo.update({ recipientId: userId, postId }, { read: true });
+    await markReadUnderLock(this.notifRepo.manager, userId, postId);
     return { ok: true };
   }
 }

@@ -966,11 +966,11 @@ booking space its owner's campus - no new column, no migration:
 | Shop (`/shop`) | `listAllActive` keeps the products whose association is visible to the reader (`associationVisibleToViewerSql`: a member of it, D21, its rules reach one of their spaces, or a nominative read grant of theirs reaches it - owner, 2026-11-14) | `products.service.ts` |
 | A purchase by id | NOT scoped (owner, 2026-10-31: buying by link is allowed, as with forms): whoever holds the association page's link may pay for what it lists | `products.service.ts` (`preparePurchase` asks no campus) |
 | Partnerships | `listAllActive` and `listActiveByAssoc` keep the cards whose association is visible (read grants included, 2026-11-14); `claimCard` answers 404 `PARTNERSHIP_NOT_FOUND` outside it, by the same predicate | `partnerships.service.ts` |
-| Booking spaces | an ASSOCIATION space follows its association (listing and every use by id); a PERSONAL space opens only to those whose `users.campus` is its owner's (`sameCampusAsViewerSql`: the campus, NOT a formation x campus space - owner, 2026-10-31: *"people without a formation still have a campus"*; the review cohort matches only itself) - outside it, 404 `space-not-found` on read and on booking; the account linked to one of its resources (D10) passes the campus check on a READ by id only (`getSpace`, `spaceSlots`; the audience still holds), never to book or upload | `bookings.service.ts` (`listedSpaces`, `assertSpaceVisible`) |
+| Booking spaces | an ASSOCIATION space follows its association (listing and every use by id); a PERSONAL space opens only to those whose `users.campus` is its owner's (`sameCampusAsViewerSql`: the campus, NOT a formation x campus space - owner, 2026-10-31: *"people without a formation still have a campus"*; the review cohort matches only itself) - outside it, 404 `space-not-found` on read and on booking; the account linked to one of its resources (D10) passes the campus check on a READ by id only (`getSpace`, `spaceSlots`; the audience still holds), never to book or upload; an ARCHIVED association's space opens to its managers alone, by id too (2026-11-14, [what an archive closes](frontend/modules/associations.md#what-an-archive-closes)) | `bookings.service.ts` (`listedSpaces`, `assertSpaceVisible`) |
 
 **Unchanged on purpose:** the association's page reached by its link (D37) keeps listing its
 products (`listByAssoc`); the manager paths (`grantProductPurchase`, `quoteCashSale`, the space
-organiser) are not scoped; forms are not (the link is enough); a personal booking space is still
+organiser) are not scoped; forms are not (the link is enough) - except that an ARCHIVED association's form answers no respondent ([what an archive closes](frontend/modules/associations.md#what-an-archive-closes)); a personal booking space is still
 LISTED to its owner alone (D43). A global admin is an ordinary reader here (D41), and the review
 cohort's narrowing (`review-cohort-reach.ts`) still runs - it composes, since a review account has no
 real space and the predicate is membership alone for it (a read grant's door keeps its own
@@ -1737,6 +1737,10 @@ reaches the personnel side"), the latter **for this consented path only**.
   delivered to a device cannot be recalled. A mention is held to the read's gate when written
   (#2947, `mentionRecipientsOf`), a post's mentions told at its announce. The bell's cost and query
   shape are on [posts](frontend/modules/posts.md#the-bell-re-checks-the-post-review-of-2965-2026-11-03).
+  A row naming something ELSE is re-asked against that, in the same statement (`BELL_ROW_GATE`,
+  2026-11-14): an event's opening by `eventVisibleToViewerSql`, a booking opening by the listing's
+  predicate, a proposal or an officer's notice by the role that made its reader a recipient
+  ([posts](frontend/modules/posts.md#the-bell-re-checks-what-a-row-points-at-audit-of-2026-11-14)).
 - **The client**:
   - `personalRequestCandidates` offers the same three kinds;
   - `republishCandidates` and `proposalCandidates` now also offer a LIST, which the server has
@@ -3124,5 +3128,5 @@ opening reaches nobody it no longer admits. **Break-proof, run 2026-11-13**: wit
 `institutionReachHoldsSpaceSql` always true, 11 of 11 fail; with `institutionReachAdmitsUserSql`
 always true, 11 of 11; with the selection exemption put back in the anonymous clause, the
 selection-feed test fails. The readings owed on a phone are in
-[the backlog](backlog.d/institution-event-reach.md).
+the readings were all read on 2026-11-14 (the entry is deleted).
 

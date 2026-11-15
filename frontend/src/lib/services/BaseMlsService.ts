@@ -55,6 +55,7 @@ import {
   persistMlsStructuralCheckpoint,
   scheduleOutboundMlsPersist,
   noteInboundMlsFrame,
+  activeMlsStatePersister,
 } from '$lib/mls-client/mlsStatePersisterRegistry';
 import {
   MAX_BURN_GENERATIONS,
@@ -472,6 +473,32 @@ function oneDeviceAddResult(
     : { welcome: result.welcome, ratchetTree: result.ratchetTree };
 }
 
+/**
+ * A DRAIN'S IDS, HELD UNTIL THE CHECKPOINT THAT COVERS THEM, WHERE THE DISK IS THEIR ONLY COPY
+ * (review of #3321, 2026-11-14).
+ *
+ * An ack deletes the row from the server. For a COMMIT or a WELCOME that row is the only way back to
+ * the epoch it moves to, so it is acknowledged only once a landed checkpoint holds it: a kill, a
+ * hand-over or a freeze between the ack and the checkpoint used to reload a state behind a commit
+ * the server no longer had. For an APPLICATION frame the history archive is a second copy (the replay
+ * reads it), so it is acknowledged at the drain's end as it always was - unless this document no
+ * longer owns the MLS state by then (a hand-over, a freeze, a promotion reload): its checkpoints are
+ * refused (`persistCheckpoint`), so it too waits for coverage, which then never comes. Withheld, a row
+ * stays on the server and the tab that writes the state reads it; an id a LANDED checkpoint already
+ * holds is acknowledged whatever the lead, so the new leader never meets a frame its disk has spent.
+ */
+interface DrainAckHold {
+  /** Per id, {@link BaseMlsService.inboundApplied} once it was applied; absent = changed nothing. */
+  applied: Map<string, number>;
+  /** The commits and Welcomes among the ids. */
+  structural: Set<string>;
+  /**
+   * The drain's checkpoint, asked only by an id that needs it (memoised, and only once the drain's
+   * window has closed): resolves when it lands, rejects when it is refused or fails.
+   */
+  covered: () => Promise<void>;
+}
+
 export abstract class BaseMlsService implements IMlsService {
   // ── Platform identity ─────────────────────────────────────────────────────
   protected readonly platform: 'web' | 'tauri';
@@ -769,6 +796,11 @@ export abstract class BaseMlsService implements IMlsService {
       via: DeliveryChannel;
       /** The {@link ackSerial} of the request that acknowledged it; absent until one is issued. */
       ackSerial?: number;
+      /**
+       * Set while a drain's hold WITHHELD its ack for want of a landed checkpoint covering it
+       * ({@link DrainAckHold}): what it had applied, and whether it was a commit or a Welcome.
+       */
+      heldForDisk?: { applied: number; structural: boolean };
     }
   >();
 
@@ -1742,6 +1774,32 @@ export abstract class BaseMlsService implements IMlsService {
     return handle;
   }
 
+  /** Windows removed from {@link openBulkIngests} whose observers are still closing. */
+  private readonly closingBulkIngests = new Set<BulkIngestHandle>();
+
+  /**
+   * Waiters of {@link whenBulkIngestsClosed}, each with the windows it is still behind. Released by
+   * the close of the last of THOSE windows - never held by one opened after it asked.
+   */
+  private bulkIngestsClosedWaiters: Array<{ behind: Set<BulkIngestHandle>; release: () => void }> =
+    [];
+
+  whenBulkIngestsClosed(): Promise<void> {
+    // THE WINDOWS OPEN NOW, NOT THE ONES TO COME (third review of #3321). The caller is behind rows a
+    // window already holds; a window opened after it asked holds rows it never asked about, and
+    // waiting for "none open" would let a drain that restarts behind each close hold it for good.
+    const behind = new Set<BulkIngestHandle>([
+      ...this.openBulkIngests.keys(),
+      ...this.closingBulkIngests,
+    ]);
+    if (behind.size === 0) return Promise.resolve();
+    // Said only when it waits: the line names what the caller is behind.
+    console.log(
+      `[QUEUE] waiting for ${behind.size} open ingest window(s) to close before going on`
+    );
+    return new Promise<void>((release) => this.bulkIngestsClosedWaiters.push({ behind, release }));
+  }
+
   async endBulkIngest(handle: BulkIngestHandle): Promise<void> {
     const phase = this.openBulkIngests.get(handle);
     if (!phase) {
@@ -1751,22 +1809,33 @@ export abstract class BaseMlsService implements IMlsService {
       return;
     }
     this.openBulkIngests.delete(handle);
-    // Replay the exact phase the matching open used: start and end can never disagree.
-    //
-    // PER OBSERVER, and that is the whole point. These are independent subscribers - the encrypted
-    // state persister and the UI render buffer - and they were being awaited in one bare loop, so
-    // the FIRST to reject cancelled every one after it. The persister is registered first and
-    // rethrows when a checkpoint fails, which would have left the UI observer's window open
-    // forever: `messageCatchupDepth` never comes back down (the sync banner stays up for the rest
-    // of the session) and `bulkIngestActive` stays raised, so every later inbound message is
-    // buffered instead of rendered and is then discarded by the next drain. A failed disk write
-    // must cost a checkpoint, never the message pipeline.
-    for (const observer of this.bulkIngestObservers) {
-      try {
-        await observer.onBulkIngestEnd(phase);
-      } catch (e) {
-        console.error('[QUEUE] bulk-ingest observer failed to end (window closed anyway):', e);
+    this.closingBulkIngests.add(handle);
+    try {
+      // Replay the exact phase the matching open used: start and end can never disagree.
+      //
+      // PER OBSERVER, and that is the whole point. These are independent subscribers - the encrypted
+      // state persister and the UI render buffer - and they were being awaited in one bare loop, so
+      // the FIRST to reject cancelled every one after it. The persister is registered first and
+      // rethrows when a checkpoint fails, which would have left the UI observer's window open
+      // forever: `messageCatchupDepth` never comes back down (the sync banner stays up for the rest
+      // of the session) and `bulkIngestActive` stays raised, so every later inbound message is
+      // buffered instead of rendered and is then discarded by the next drain. A failed disk write
+      // must cost a checkpoint, never the message pipeline.
+      for (const observer of this.bulkIngestObservers) {
+        try {
+          await observer.onBulkIngestEnd(phase);
+        } catch (e) {
+          console.error('[QUEUE] bulk-ingest observer failed to end (window closed anyway):', e);
+        }
       }
+    } finally {
+      this.closingBulkIngests.delete(handle);
+      this.bulkIngestsClosedWaiters = this.bulkIngestsClosedWaiters.filter((waiter) => {
+        waiter.behind.delete(handle);
+        if (waiter.behind.size > 0) return true;
+        waiter.release();
+        return false;
+      });
     }
   }
 
@@ -1820,6 +1889,91 @@ export abstract class BaseMlsService implements IMlsService {
   private ackInFlight: Promise<void> | null = null;
 
   /**
+   * How many inbound frames this document has APPLIED to its MLS state (a drained frame whose handler
+   * returned). Each drained id is tagged with the count after it ({@link DrainAckHold.applied}).
+   */
+  private inboundApplied = 0;
+
+  /**
+   * The highest {@link inboundApplied} a LANDED checkpoint of this document holds: read before the
+   * checkpoint exports (so what it claims is in the export, never more) and raised once its write
+   * lands (`persistCheckpoint`). A refused or failed write raises nothing.
+   */
+  private durableApplied = 0;
+
+  /**
+   * Of a drain's ids, the ones that may be acknowledged now - waiting, where one needs it, for the
+   * drain's own checkpoint ({@link DrainAckHold}). The rest are withheld: left on the server, noted
+   * unacknowledged, and said in ONE line.
+   */
+  private async idsDurableEnoughToAck(ids: string[], hold: DrainAckHold): Promise<string[]> {
+    const covered = (id: string) => (hold.applied.get(id) ?? 0) <= this.durableApplied;
+    const needsDisk = (id: string) => hold.structural.has(id) || refusesCommitsHere();
+    if (ids.some((id) => !covered(id) && needsDisk(id))) {
+      try {
+        await hold.covered();
+      } catch {
+        // A refused or failed checkpoint has said so itself; what it did not cover is read below.
+      }
+    }
+    const withheld = new Set(ids.filter((id) => !covered(id) && needsDisk(id)));
+    for (const id of ids) {
+      const known = this.deliveries.get(id);
+      if (!known) continue;
+      // REMEMBERED ON THE DELIVERY, so the re-ack of its repeat waits for the same coverage
+      // ({@link reAckHold}); forgotten once it is acknowledged.
+      if (withheld.has(id)) {
+        known.heldForDisk = {
+          applied: hold.applied.get(id) ?? 0,
+          structural: hold.structural.has(id),
+        };
+      } else {
+        delete known.heldForDisk;
+      }
+    }
+    if (withheld.size === 0) return ids;
+    for (const id of withheld) this.unacknowledged.add(id);
+    console.info(
+      `[ACK] ${withheld.size} id(s) not acknowledged: no landed checkpoint holds what they changed (` +
+        (refusesCommitsHere()
+          ? `this tab no longer owns the MLS state, ${getTabLeadership()}`
+          : 'the checkpoint covering them did not land') +
+        ') - the rows stay on the server for the tab that writes the state'
+    );
+    return ids.filter((id) => !withheld.has(id));
+  }
+
+  /**
+   * Resolves once a checkpoint holding everything applied so far has landed; rejects when it could
+   * not land. Through the session's persister when there is one - it coalesces with the drain's own
+   * flush, which `endBulkIngest` has just started - and the checkpoint itself before the pipeline
+   * exists.
+   */
+  private checkpointCoveringNow(): Promise<void> {
+    const persister = activeMlsStatePersister();
+    return persister ? persister.flushEncrypted() : this.persistCheckpoint();
+  }
+
+  /**
+   * The hold a REPEAT of a withheld id is re-acknowledged under (second review of #3321).
+   *
+   * A withheld row stays on the server, so the next pull lists it again; the drain had settled it
+   * `done`, so {@link admitDelivery} drops the repeat and acknowledges it once more. Without a hold
+   * that re-ack deleted the row while still no landed checkpoint held the commit it carried - the
+   * very window the drain's hold had just refused. It waits for a checkpoint covering it, asked now.
+   */
+  private reAckHold(
+    queuedMessageId: string,
+    held: { applied: number; structural: boolean }
+  ): DrainAckHold {
+    return {
+      applied: new Map([[queuedMessageId, held.applied]]),
+      structural: held.structural ? new Set([queuedMessageId]) : new Set(),
+      covered: () => this.checkpointCoveringNow(),
+    };
+  }
+
+  /**
    * Acknowledges message ids and announces the request, so a pull can refuse to overtake it.
    *
    * Every ack in this class goes through here. Callers keep `void`-ing it - the drain must not wait
@@ -1828,8 +1982,10 @@ export abstract class BaseMlsService implements IMlsService {
    *
    * @param messageIds the ids to acknowledge; EMPTY is meaningful - `ackMessagesWithRetry` merges
    *   the ids persisted by a failed earlier attempt, so an empty call is the flush of those.
+   * @param hold a drain's ids, held until the checkpoint that covers them where they need it
+   *   ({@link DrainAckHold}); absent for an ack whose row changes no state (a repeat, the flush).
    */
-  private announceAck(messageIds: string[]): Promise<void> {
+  private announceAck(messageIds: string[], hold?: DrainAckHold): Promise<void> {
     const previous = this.ackInFlight;
     // NUMBERED IN THE TICK IT IS ASKED FOR, like the chaining below, so a pull's flush and the rows
     // of a drain ack are ordered exactly as their requests will be.
@@ -1860,11 +2016,19 @@ export abstract class BaseMlsService implements IMlsService {
         for (const id of messageIds) this.unacknowledged.add(id);
         return;
       }
+      // AN ACK NEVER RUNS AHEAD OF THE DISK WHERE THE DISK IS THE ONLY COPY ({@link DrainAckHold}).
+      let ids = messageIds;
+      if (hold) {
+        ids = await this.idsDurableEnoughToAck(messageIds, hold);
+        if (ids.length === 0) return;
+      }
       try {
-        await this.delivery.ackMessages(messageIds);
+        await this.delivery.ackMessages(ids);
         // One success covers every id a failed attempt had persisted, because the retry merged them
         // into this payload - so the whole set goes, not just the ids named here.
         this.unacknowledged.clear();
+        // ...except the ids this call WITHHELD, which no request has carried.
+        for (const id of messageIds) if (!ids.includes(id)) this.unacknowledged.add(id);
       } catch (e) {
         for (const id of messageIds) this.unacknowledged.add(id);
         throw e;
@@ -2713,9 +2877,11 @@ export abstract class BaseMlsService implements IMlsService {
       console.log(`${line}. Further ones of this shape are counted, not printed`);
     }
     if (reAck) {
-      void this.announceAck([queuedMessageId]).catch((e) =>
-        console.warn('[ACK] re-ack of a repeated delivery failed:', e)
-      );
+      const held = known.heldForDisk;
+      void this.announceAck(
+        [queuedMessageId],
+        held ? this.reAckHold(queuedMessageId, held) : undefined
+      ).catch((e) => console.warn('[ACK] re-ack of a repeated delivery failed:', e));
     }
     return false;
   }
@@ -2885,6 +3051,9 @@ export abstract class BaseMlsService implements IMlsService {
     }
 
     const ackIds: string[] = [];
+    /** What each acknowledged id had applied, and which changed the group ({@link DrainAckHold}). */
+    const ackApplied = new Map<string, number>();
+    const ackStructural = new Set<string>();
     /** Groups whose Welcome landed in this drain: the one event that unblocks an unknown group. */
     const welcomedGroups: string[] = [];
     /** This drain's own window, closed by handle so an overlapping window cannot be closed instead. */
@@ -2940,10 +3109,14 @@ export abstract class BaseMlsService implements IMlsService {
             isCommit: msg.isCommit,
             hasQueuedId: Boolean(msg.queuedMessageId),
           };
+          // APPLIED: the handler returned, so its change is in this document's MLS state now.
+          this.inboundApplied += 1;
           const acked = shouldAckAfterSuccess(cbResult, flags) && !!msg.queuedMessageId;
           this.settleDelivery(msg.queuedMessageId, acked, msg.channel);
           if (acked) {
             ackIds.push(msg.queuedMessageId!);
+            ackApplied.set(msg.queuedMessageId!, this.inboundApplied);
+            if (msg.isCommit || msg.isWelcome) ackStructural.add(msg.queuedMessageId!);
           } else if (flags.hasQueuedId && cbResult === false) {
             // The handler already recorded WHY, against the group, in `unackedFrames`. Nothing to
             // note here: what discharges it is an event, not this drain ending.
@@ -3040,39 +3213,56 @@ export abstract class BaseMlsService implements IMlsService {
           drainIngest = this.beginBulkIngest({ bufferUi: true, showOverlay: pendingCount > 1 });
         },
         onDrainEnd: async () => {
-          if (ackIds.length > 0) {
-            logMlsMetric({ kind: 'queue_ack', platform: this.platform, count: ackIds.length });
-            // ANNOUNCED, still not awaited: the drain must not block on a round trip, and the
-            // pull `refetchFramesLeftBehind` starts a few lines below must not overtake it.
-            void this.announceAck(ackIds).catch((e) => console.warn('[ACK] drain ack failed:', e));
-          }
+          // THE DRAIN'S CHECKPOINT, asked only by an id that needs it and only once the window has
+          // closed (the `finally` below), so it coalesces with the flush `endBulkIngest` started.
+          // The id waits for it inside the ack chain, never here: the drain never waits on a disk.
+          let windowClosed!: () => void;
+          const closed = new Promise<void>((resolve) => {
+            windowClosed = resolve;
+          });
+          let checkpoint: Promise<void> | null = null;
+          const covered = () => (checkpoint ??= closed.then(() => this.checkpointCoveringNow()));
+          try {
+            if (ackIds.length > 0) {
+              logMlsMetric({ kind: 'queue_ack', platform: this.platform, count: ackIds.length });
+              // ANNOUNCED, still not awaited: the drain must not block on a round trip, and the
+              // pull `refetchFramesLeftBehind` starts a few lines below must not overtake it.
+              void this.announceAck(ackIds, {
+                applied: ackApplied,
+                structural: ackStructural,
+                covered,
+              }).catch((e) => console.warn('[ACK] drain ack failed:', e));
+            }
 
-          // A Welcome landing is the proof that frames buffered for an unknown group can now be
-          // read. `releaseWelcomeBuffer` replays the ones this session buffered in memory; this
-          // asks the server for the ones it left unacknowledged in earlier drains.
-          if (welcomedGroups.length > 0) {
-            this.refetchFramesLeftBehind('unknown-group', 'welcome processed');
-          }
-          // THE OWED PULL, IN THE TICK THE DRAIN'S ACK WAS ANNOUNCED: its flush chains behind that
-          // ack, so the server cannot list again a row this drain applied. Not while a pull is still
-          // fetching (its end issues it), nor while a row a pull listed is still queued here - a
-          // commit holding it, or a Welcome it is parked behind: unacknowledged, it would be listed
-          // again. The drain that applies it ends here once more, and issues it then.
-          this.issueOwedPull('drain end');
+            // A Welcome landing is the proof that frames buffered for an unknown group can now be
+            // read. `releaseWelcomeBuffer` replays the ones this session buffered in memory; this
+            // asks the server for the ones it left unacknowledged in earlier drains.
+            if (welcomedGroups.length > 0) {
+              this.refetchFramesLeftBehind('unknown-group', 'welcome processed');
+            }
+            // THE OWED PULL, IN THE TICK THE DRAIN'S ACK WAS ANNOUNCED: its flush chains behind that
+            // ack, so the server cannot list again a row this drain applied. Not while a pull is still
+            // fetching (its end issues it), nor while a row a pull listed is still queued here - a
+            // commit holding it, or a Welcome it is parked behind: unacknowledged, it would be listed
+            // again. The drain that applies it ends here once more, and issues it then.
+            this.issueOwedPull('drain end');
 
-          finishQueueDrainBench(ackIds.length);
-          if (drainIngest === null) {
-            // AT A LEVEL THAT ACCUSES: the scheduler pairs the two callbacks, so an end without its
-            // start is a scheduler that broke that contract - and there is no window to close.
-            console.error('[QUEUE] drain ended without having opened its bulk-ingest window');
-            return;
+            finishQueueDrainBench(ackIds.length);
+            if (drainIngest === null) {
+              // AT A LEVEL THAT ACCUSES: the scheduler pairs the two callbacks, so an end without its
+              // start is a scheduler that broke that contract - and there is no window to close.
+              console.error('[QUEUE] drain ended without having opened its bulk-ingest window');
+              return;
+            }
+            const closing = drainIngest;
+            drainIngest = null;
+            await this.endBulkIngest(closing);
+            // AFTER the window closes: a contact line is a row like any other, and the rows of the
+            // drain are flushed first. Not awaited - a notice must never hold the next drain.
+            void this.handOverDeviceEvents('drain end');
+          } finally {
+            windowClosed();
           }
-          const closing = drainIngest;
-          drainIngest = null;
-          await this.endBulkIngest(closing);
-          // AFTER the window closes: a contact line is a row like any other, and the rows of the
-          // drain are flushed first. Not awaited - a notice must never hold the next drain.
-          void this.handOverDeviceEvents('drain end');
         },
       }
     );
@@ -4154,17 +4344,16 @@ export abstract class BaseMlsService implements IMlsService {
       const settledBefore = this.keyPackageRoundsSettled;
       // NEVER LEARN BY A 404 WHAT THE CLIENT ALREADY KNOWS: this device's id was MINTED in this
       // process (`stateWasExpected` false - no id was stored before this boot, read from durable
-      // state by `resolveDeviceId`), so its whole life is this process, no round of it has settled
-      // yet and one is running: its FIRST publication is in flight and the server cannot hold a
-      // package of it. A RETURNING device (an id stored before this boot) is never skipped - its
+      // state by `resolveDeviceId`), so its whole life is this process and no round of it has settled
+      // yet: it has never published and the server cannot hold a package of it - whether its
+      // FIRST round is running (the read is made when it settles) or has not started yet (a join
+      // landing in that gap used to ask anyway: one 404 per attempt, and the pass below starts the
+      // round). A RETURNING device (an id stored before this boot) is never skipped - its
       // package may well be published already, and waiting on its boot round would make a failed
-      // round fail a join that a read would have let through. The read is made when the round settles.
-      const firstPublicationRunning =
-        pass === 1 &&
-        !this.stateWasExpected &&
-        this.keyPackageRoundsActive > 0 &&
-        this.keyPackageRoundsSettled === 0;
-      const answer = firstPublicationRunning
+      // round fail a join that a read would have let through.
+      const neverPublished =
+        pass === 1 && !this.stateWasExpected && this.keyPackageRoundsSettled === 0;
+      const answer = neverPublished
         ? null
         : // A PEEK: this reads a fact, and a claim would spend one of this device's own one-time
           // packages per join attempt - production 2026-11-06, a device retrying seven unjoinable
@@ -5097,8 +5286,12 @@ export abstract class BaseMlsService implements IMlsService {
     // The replay marks are captured BEFORE the write for the same reason as `emitted`: a page
     // decrypted while the seal runs is marked in memory, and this write does not hold its advance.
     const replayMarks = snapshotPendingHistoryMarks(this.userId);
+    // What this write holds of the inbound frames, read BEFORE it exports: a frame applied while it
+    // seals is not in it ({@link durableApplied}).
+    const appliedAtExport = this.inboundApplied;
     await this.writeCheckpoint(this.currentDeviceKeyB64, {
       isEnded: () => this.stateWritesEnded === true,
+      holdsNoLead: refusesCommitsHere,
       endOnRefusal: options?.endsDocumentOnRefusal
         ? () => {
             this.stateWritesEnded = true;
@@ -5106,6 +5299,7 @@ export abstract class BaseMlsService implements IMlsService {
         : undefined,
     });
     commitPersisted(this.userId, emitted);
+    if (appliedAtExport > this.durableApplied) this.durableApplied = appliedAtExport;
     // TWO LEDGERS, ONE WRITE, AND THE SECOND ONE WAS BOUND TO THE WRONG EVENT UNTIL 2026-09-08.
     //
     // The send ledger above declares what this checkpoint made durable. The history replay's marks
@@ -5402,6 +5596,14 @@ export abstract class BaseMlsService implements IMlsService {
     for (;;) {
       if (this.owedSendBurns.has(groupId) || this.owedBurnInFlight.has(groupId)) {
         await this.settleOwedBurns(groupId);
+      }
+      // THE LAST SYNCHRONOUS STEP BEFORE THE RATCHET MOVES: a send begun while this document led may
+      // resume after a freeze handed the lock on (`tabLeader.ts`), on a copy now behind the leader's.
+      if (refusesCommitsHere()) {
+        console.warn(
+          `[MLS] ${groupId.slice(0, 8)}... a send reached the encrypt in a tab that no longer holds the leader copy - refused, nothing sealed`
+        );
+        throw new FollowerTabSendError(groupId, 'lead-lost');
       }
       const frame = await this.encryptForSend(groupId, messageBytes);
       const epoch = sealedFrameEpoch(frame.sealed);

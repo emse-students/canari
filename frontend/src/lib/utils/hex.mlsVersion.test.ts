@@ -208,6 +208,26 @@ describe('saveMlsStateEncrypted write-if-newer (IndexedDB)', () => {
     }
   );
 
+  it('stores nothing when the lead left the tab while the checkpoint was sealing - read at the put', async () => {
+    // A hidden leader handed the lead to a visible tab (or was frozen) between the capture and the
+    // put: the tab that leads now loads the state on disk, so this put landing after would fork it.
+    store.set(MLS_STATE_ENCRYPTED_KEY, new Uint8Array([9]));
+    store.set(MLS_STATE_VERSION_KEY, 1);
+    let leads = true;
+    const capture = tagMlsSnapshot(new Uint8Array([1]));
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const write = saveMlsStateEncrypted('user-1', capture, {
+      isEnded: () => false,
+      holdsNoLead: () => !leads,
+    });
+    leads = false; // the lead leaves after the write started, before its transaction reads the latch
+    expect(await write).toBe('follower-tab');
+    expect(store.get(MLS_STATE_ENCRYPTED_KEY)).toEqual(new Uint8Array([9]));
+    expect(store.get(MLS_STATE_VERSION_KEY)).toBe(1);
+    expect(info).toHaveBeenCalledWith(expect.stringContaining('the lead left this tab'));
+    info.mockRestore();
+  });
+
   it('forgets its own version after an untagged write, whose bytes it cannot vouch for', async () => {
     const older = tagMlsSnapshot(new Uint8Array([1]));
     const newer = tagMlsSnapshot(new Uint8Array([2]));

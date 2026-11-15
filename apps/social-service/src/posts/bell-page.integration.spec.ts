@@ -17,7 +17,10 @@ import { join } from 'path';
 import { DataSource } from 'typeorm';
 import { PostNotification } from './entities/post-notification.entity';
 import { PostNotificationsService } from './post-notifications.service';
-import { createPostNotificationsTable } from './post-notifications.it-schema';
+import {
+  createPostNotificationsTable,
+  createBellTargetTables,
+} from './post-notifications.it-schema';
 import { PG_SESSION_OPTIONS } from '../common/pg-session-options';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
@@ -138,6 +141,8 @@ maybe('the bell page against PostgreSQL (migration 126)', () => {
       {} as never,
       {} as never
     );
+    // The bell's one statement reads what its target gates name (`bell-row-gates.ts`).
+    await createBellTargetTables(q);
   });
 
   afterAll(async () => {

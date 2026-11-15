@@ -677,6 +677,19 @@ Objective-C was not compiled at all** (written on Windows; the iOS CI job is its
 | K6 - screen locked mid-call keeps the audio | the call service | the `audio` mode |
 | Logs | `IncomingCallActivity` and `canUseFullScreenIntent` lines | `[CanariCallKit] voip credentials updated`, `ringing call=` |
 
+**iPhone 12 column READ on 2026-11-15** (TestFlight `1.6.12-alpha.2`, dev, a web seat calling):
+- **K7**: the CallKit banner named the caller. Answer, then the app PIN, joined in about 12 s
+  (`an answer waits - the page was told`), and the caller received live audio.
+- **K6**: the phone was locked 25 s mid-call. The caller's inbound track stayed live and unmuted.
+- **K8**: full-screen CallKit on the lock screen. Slide to answer, then "More > Open in Canari", then
+  the PIN, joined. The bench phone has no device passcode, so no Face ID step showed. An answer
+  opened 42 s late lost the call
+  ([P3](../../backlog.d/p3-ios-an-answer-on-the-locked-callkit-screen-is-lost-if-the-app-opens-after-the-ring-deadline.md)).
+- **K8b**: the caller's cancel ended the CallKit ring within a second (`ended (reason=2)`), better
+  than the named limitation.
+- **The foreground ring** flashed a CallKit banner over the in-app ring
+  ([P3](../../backlog.d/p3-ios-a-foreground-ring-flashes-the-callkit-banner-over-the-in-app-ring.md)).
+
 **Operator actions (the owner's):**
 - **Play Console**: Android 14+ grants `USE_FULL_SCREEN_INTENT` by default only to calling and alarm
   apps; the App content -> Full-screen intent declaration must say "calling". Without it the ring
@@ -2980,7 +2993,7 @@ notification (`useNotifications.notifyIncomingCall`) is now DEFERRED while the p
 posted if the app leaves the screen while the call still rings, dropped when the ring ends; logged
 `[NOTIF] incoming call in <group> rings in-app - no OS notification while the app is on screen`.
 If a banner still shows in the foreground on the next reading, it is not this path - see
-[backlog](../../backlog.d/p3-an-os-incoming-call-banner-over-the-in-app-ring-if-it-outlives-the-web-fix.md).
+[backlog](../../backlog.d/p3-ios-a-foreground-ring-flashes-the-callkit-banner-over-the-in-app-ring.md).
 
 ### One call screen on every platform (2026-10-23)
 

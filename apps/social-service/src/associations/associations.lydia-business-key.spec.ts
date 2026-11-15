@@ -1,6 +1,7 @@
-import { Logger, Module, ParseUUIDPipe, type INestApplication } from '@nestjs/common';
-import { GUARDS_METADATA, ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
-import { NestFactory } from '@nestjs/core';
+import { Logger, Module, type INestApplication } from '@nestjs/common';
+import { GUARDS_METADATA } from '@nestjs/common/constants';
+import { NestFactory, Reflector } from '@nestjs/core';
+import { routeParamKindsOf } from '../common/route-params';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { UserResourceThrottlerGuard } from '../common/guards/user-resource-throttler.guard';
 import { SECRET_BOX_ENV } from '../common/secret-box';
@@ -312,18 +313,15 @@ describe('AssociationsController - the retired paste route and the status route'
   }
 
   it.each(['retiredLydiaBusinessKeyPaste', 'lydiaBusinessKeyStatus'] as const)(
-    '%s is behind the sign-in guard and parses :id as a UUID',
+    '%s is behind the sign-in guard and declares :id as a uuid',
     (handler) => {
       const guards = Reflect.getMetadata(
         GUARDS_METADATA,
         AssociationsController.prototype[handler]
       ) as unknown[];
       expect(guards).toContain(NginxAuthGuard);
-      const meta = Reflect.getMetadata(ROUTE_ARGS_METADATA, AssociationsController, handler) as
-        | Record<string, { data?: unknown; pipes?: unknown[] }>
-        | undefined;
-      const id = Object.values(meta ?? {}).find((arg) => arg.data === 'id');
-      expect(id?.pipes).toContain(ParseUUIDPipe);
+      const fn = Reflect.get(AssociationsController.prototype, handler) as object;
+      expect(routeParamKindsOf(new Reflector(), AssociationsController, fn).id).toBe('uuid');
     }
   );
 

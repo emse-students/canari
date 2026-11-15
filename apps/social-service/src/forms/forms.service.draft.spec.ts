@@ -77,6 +77,11 @@ describe('FormsService - drafts', () => {
       if (want && typeof want === 'object' && (want as { _type?: string })._type === 'isNull') {
         return have === null || have === undefined;
       }
+      // The association's archive clause (a raw SQL condition): no association here is archived,
+      // and the clause itself is proven on PostgreSQL (form-status.integration).
+      if (want && typeof want === 'object' && (want as { _type?: string })._type === 'raw') {
+        return true;
+      }
       return have === want;
     });
   }

@@ -25,6 +25,7 @@ import { parsePublicSpaceParam } from '../spaces/public-space';
 import { internalCoreRequestConfig } from '../internal/core-request';
 import { coreUrl } from '../internal/service-urls';
 import { PostPreviewService, type PostSharePreview } from '../posts/post-preview.service';
+import { RouteParams } from '../common/route-params';
 
 /**
  * Public projection of an association/list for the read-only showcase.
@@ -120,6 +121,7 @@ function answerNoPhoto(res: Response): void {
  * The listing of recent posts that used to sit here was closed then. Route by route:
  * docs/wiki/anonymous-surface.md.
  */
+@RouteParams({ id: 'uuid', slug: 'opaque', memberId: 'opaque', postId: 'opaque' })
 @Controller('public')
 export class PublicController {
   private readonly logger = new Logger(PublicController.name);

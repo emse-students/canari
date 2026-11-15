@@ -137,7 +137,10 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
       extra: { options: `-c search_path=${schema}`, max: 8 },
     });
     await ds.initialize();
-    await q(`CREATE TABLE associations (id uuid PRIMARY KEY)`);
+    // `archived`: a space's visibility gate reads the association's archive (`assertSpaceVisible`).
+    await q(
+      `CREATE TABLE associations (id uuid PRIMARY KEY, archived boolean NOT NULL DEFAULT false)`
+    );
     // The profile columns the campus predicate reads (`reader-spaces.ts`): every account here is an
     // ICM Saint-Etienne student, and every association reaches every space - the campus border is
     // `bookings.service.integration.spec.ts`'s subject, not this file's.

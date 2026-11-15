@@ -37,6 +37,7 @@ import '../spaces/review-cohort.it-fixture';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { BadRequestException } from '@nestjs/common';
+import { PG_SESSION_OPTIONS } from '../common/pg-session-options';
 import { DataSource, type EntityManager, type Repository } from 'typeorm';
 import { PostsService } from './posts.service';
 import type { Post } from './entities/post.entity';
@@ -44,7 +45,10 @@ import type { RedisService } from '../common/redis/redis.service';
 import type { FollowsService } from '../follows/follows.service';
 import type { AssociationsService } from '../associations/associations.service';
 import { bellRowShownSql, type PostNotificationsService } from './post-notifications.service';
-import { createPostNotificationsTable } from './post-notifications.it-schema';
+import {
+  createPostNotificationsTable,
+  createBellTargetTables,
+} from './post-notifications.it-schema';
 import type { PostMediaRetentionService } from './post-media-retention.service';
 import type { ListPostsFeed, ListPostsParams } from './list-feed';
 import { readPostOpenVerdict, type OpenablePost } from './post-openable';
@@ -217,7 +221,8 @@ maybe("an institution's reach against PostgreSQL (migration 162)", () => {
       type: 'postgres',
       url: URL,
       synchronize: false,
-      extra: { options: `-c search_path=${schema},public` },
+      // The service's own session settings (`PG_SESSION_OPTIONS`), as `AppModule` opens its pool.
+      extra: { options: `${PG_SESSION_OPTIONS} -c search_path=${schema},public` },
     });
     await ds.initialize();
     manager = ds.manager;
@@ -328,6 +333,8 @@ maybe("an institution's reach against PostgreSQL (migration 162)", () => {
       {} as PostNotificationsService,
       {} as PostMediaRetentionService
     );
+    // The bell's one statement reads what its target gates name (`bell-row-gates.ts`).
+    await createBellTargetTables(q);
   });
 
   afterEach(async () => {
@@ -421,8 +428,8 @@ maybe("an institution's reach against PostgreSQL (migration 162)", () => {
         (
           await q(
             `SELECT ${bellRowShownSql('n')} AS shown FROM (VALUES ('association_post'::varchar,
-             $1::varchar, $2::varchar, 'off'::varchar, NULL::varchar))
-             AS n(type, "postId", "recipientId", "actorId", "commentId")`,
+             $1::varchar, $2::varchar, 'off'::varchar, NULL::varchar, NULL::jsonb))
+             AS n(type, "postId", "recipientId", "actorId", "commentId", meta)`,
             [P, reader]
           )
         )[0].shown === true;

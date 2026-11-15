@@ -21,7 +21,7 @@ import type {
 } from './api';
 
 /** The integer settings, each a text field in the editor; `''` is "none". */
-export const NUMBER_FIELDS = [
+const NUMBER_FIELDS = [
   'stepMinutes',
   'minNoticeMinutes',
   'horizonDays',

@@ -52,6 +52,7 @@ import { parseGroupCallVersion } from '../utils/group-calls-mode';
 import { serveEnvelope, sweepDeviceEnvelopes } from '../utils/push-envelope';
 import { cutDeviceId } from '../utils/log-repeat';
 import { coreUrl, mediaUrl, socialUrl } from '../internal/service-urls';
+import { RouteParams } from '../common/route-params';
 
 /**
  * Max size of an encrypted media blob the push proxy will relay for a notification thumbnail
@@ -153,6 +154,7 @@ const QUEUED_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 type AvatarPushOutcome = 'served' | 'absent' | 'unavailable' | 'unreachable' | 'rejected';
 
 /** Push notification token management and Firebase Cloud Messaging dispatch. */
+@RouteParams({ targetUserId: 'opaque', mediaId: 'opaque', deviceId: 'opaque' })
 @Controller()
 export class PushController {
   private readonly logger = new Logger(PushController.name);

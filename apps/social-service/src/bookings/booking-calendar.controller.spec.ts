@@ -1,14 +1,16 @@
 import type { AddressInfo } from 'net';
 import { ForbiddenException, Module, type INestApplication } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import { ROUTE_PARAMS_GUARD } from '../common/route-params';
 import { BookingCalendarController } from './booking-calendar.controller';
 import { BookingsService } from './bookings.service';
 
 /**
  * THE ONE ROUTE WITH NO SESSION, AT THE HTTP LAYER: what a calendar app receives. The rules behind
  * it are `bookings.service.integration.spec.ts`'s; here, its headers and the order of its checks -
- * a malformed id, or a repeated `u`/`sig` that Express would hand over as an array, is a 400 from
- * a pipe, before any signature is computed.
+ * a malformed id is a 400 from the global guard that reads the route's declaration, and a repeated
+ * `u`/`sig` that Express would hand over as an array a 400 from a pipe, before any signature is
+ * computed.
  */
 describe('GET bookings/:id/calendar.ics', () => {
   const ID = '11111111-2222-4333-8444-555555555555';
@@ -26,7 +28,7 @@ describe('GET bookings/:id/calendar.ics', () => {
     };
     @Module({
       controllers: [BookingCalendarController],
-      providers: [{ provide: BookingsService, useValue: service }],
+      providers: [ROUTE_PARAMS_GUARD, { provide: BookingsService, useValue: service }],
     })
     class HttpModule {}
     app = await NestFactory.create(HttpModule, { logger: false });
