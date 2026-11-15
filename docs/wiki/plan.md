@@ -117,7 +117,6 @@ earliest version, as a checklist.
 - [ ] [the camera keeps its layout and the volume keys are its shutter (Mi 9T, iPhone 12)](backlog.d/camera-keeps-its-layout-and-volume-shutter.md)
 - [ ] [rotation on the video, live and camera screens on both phones](backlog.d/rotation-on-video-and-camera-screens.md)
 - [ ] [overlays stacked by open order, not by rung](backlog.d/reading-owed-overlays-stacked-by-open-order-not-by-rung.md)
-- [ ] [a FIRST message from someone with no conversation yet notifies, end to end](backlog.d/reading-owed-a-first-message-from-someone-with-no-conversation-yet-notifies-end.md)
 - [ ] [a live or a reel asks the microphone for one channel](backlog.d/reading-owed-a-live-or-a-reel-asks-the-microphone-for-one-channel.md)
 - [ ] [a salon carries read receipts, seen in a real community](backlog.d/reading-owed-a-salon-carries-read-receipts.md)
 - [ ] [follow suggestions and Suivre, WP-2, WP-5, WP-6, WP-7](backlog.d/reading-owed-follow-suggestions-and-suivre-wp-2-wp-5-wp-6-wp-7.md)
