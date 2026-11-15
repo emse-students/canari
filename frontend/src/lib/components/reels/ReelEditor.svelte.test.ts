@@ -117,7 +117,8 @@ it('lays the editor out full-bleed: the stage is the whole box, the header and t
   expect(stage.parentElement).toBe(root);
   const tools = target.querySelector('[data-reel-tool-text]')!.closest('div.flex-col')!;
   expect(tools.className).toContain('absolute');
-  expect(tools.className).toContain('bottom-0');
+  // Flush with the bottom, lifted by what the keyboard covers (0 off Android - keyboard ride).
+  expect(tools.className).toContain('bottom-(--keyboard-occlusion-bottom,0px)');
   expect(tools.className).toContain('safe-area-inset-bottom');
   expect(tools.parentElement).toBe(root);
   expect(stage.contains(tools)).toBe(false);

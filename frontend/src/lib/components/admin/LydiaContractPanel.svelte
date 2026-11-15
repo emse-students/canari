@@ -50,12 +50,12 @@
   } as const;
 
   async function load() {
-    Log.d('[admin.lydia] loading the contract');
+    Log.d('admin.lydia', 'loading the contract');
     loadError = false;
     try {
       form = toLydiaContractForm(await fetchLydiaContract());
     } catch (e) {
-      Log.w('[admin.lydia] the contract could not be loaded', e);
+      Log.w('admin.lydia', 'the contract could not be loaded', e);
       loadError = true;
     }
     await loadCounter();
@@ -66,7 +66,7 @@
     try {
       counter = await fetchLydiaContractCounter();
     } catch (e) {
-      Log.w('[admin.lydia] the counter could not be read', e);
+      Log.w('admin.lydia', 'the counter could not be read', e);
       counter = null;
       counterError = true;
     }
@@ -85,7 +85,7 @@
       if (e instanceof LydiaContractFormInvalid || e instanceof LydiaContractRefused) {
         saveError = m.admin_lydia_invalid({ field: e.field ?? '-' });
       } else {
-        Log.w('[admin.lydia] the contract could not be saved', e);
+        Log.w('admin.lydia', 'the contract could not be saved', e);
         saveError = m.admin_lydia_save_failed();
       }
     } finally {

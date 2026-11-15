@@ -71,7 +71,7 @@ else moved.)
 **D - the seat script (B6).** Today: O(log S) per call, N calls a second. With #2202's count: each
 call reads the whole set, S members, so N viewers polling once a second cost N x S = N^2 member reads
 a second inside Redis's single thread: 576 at 24, 10 000 at 100, **250 000 at 500**. The release of an
-ended live (`RELEASE_LIVE_SEATS_LUA`) already walks the whole set, once per end. Both stop growing
+ended live (`CLOSE_LIVE_LUA`) already walks the whole set, once per end. Both stop growing
 with one sorted set PER LIVE (`ZCARD` is O(1), the end is a `DEL`) - follow-up F1 below, owned by
 whoever lands after #2202, since #2202 owns `live-seats.ts`.
 

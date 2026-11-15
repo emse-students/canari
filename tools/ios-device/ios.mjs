@@ -33,6 +33,10 @@
  *   bun tools/ios-device/ios.mjs nc                     open Notification Center (a W3C pull from y=1; a second call closes it)
  *   bun tools/ios-device/ios.mjs webview                the app's WKWebView rectangle, in points
  *   bun tools/ios-device/ios.mjs url <url>              open a URL / deep link without launching anything first
+ *                                                       an https URL of the DEV host opens SAFARI, never the app: the app's
+ *                                                       entitlements claim only the production hosts (`applinks:` in
+ *                                                       frontend/src-tauri/gen/apple/canari_iOS/canari_iOS.entitlements), so dev is
+ *                                                       reached by tapping inside the app (read 2026-11-15)
  *
  * NOTIFICATIONS (read on the iPhone 12, 2026-11-14, `docs/wiki/device-verification.md#the-iphone-12-batch-7-readings-of-2026-11-14`):
  *   - a BANNER is opened by a plain `tap x,y` within about 4 s of its arrival (it opens the app);

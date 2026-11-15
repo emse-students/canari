@@ -2998,7 +2998,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // row is already withdrawn (`cancelPending` deleted it before aborting), so this is only the
     // flush learning of it. Retry: not a failure at all - the member asked for another attempt
     // now, so the backoff is skipped and the lane re-runs at once.
-    // THIS DOCUMENT STOPPED LEADING MID-SEND: nothing was sealed, the entry is the leader's to send.
+    // THIS DOCUMENT STOPPED LEADING MID-SEND: nothing was posted (a frame sealed before the lead left
+    // is counted and dropped, `BaseMlsService.emitFrame`), so the entry is the leader's to send.
     // No attempt is counted and nothing is written - a follower never flushes, so nothing here would
     // ever read it.
     if (e instanceof FollowerTabSendError) {

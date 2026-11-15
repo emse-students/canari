@@ -34,7 +34,15 @@ Infrastructure:
   postgres:5432    <- auth_db (core, chat-delivery, social)
   redis:6379       <- presence, pub/sub, history streams
   garage:3900/3903 <- media blobs (S3 API / admin API)
+  mesh:3010/3012/3014 <- every call one service makes to chat-delivery, core or social
 ```
+
+**On the two deployed estates a service never calls another by its name**: it calls `mesh` on the
+peer's own port (`http://mesh:3012` for core-service), a pinned nginx (`infrastructure/edge/mesh.conf`)
+the release takes a retiring replica out of before it stops, as it does the frontend's
+([cicd](../cicd.md#service-to-service-calls-go-through-the-mesh)). `replace-modes.py` refuses a compose
+value naming a rotated service directly. The workstation stack (`local/`) has no mesh and no rolling
+deploy, so its services keep naming each other.
 
 **Migrated from MinIO to [Garage](https://garagehq.deuxfleurs.fr/) on 2026-08-14** (MinIO is no
 longer maintained upstream). `apps/media-service` talks to it through the same generic `minio`

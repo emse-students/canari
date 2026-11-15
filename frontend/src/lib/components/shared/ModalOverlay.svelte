@@ -130,7 +130,7 @@
       role="presentation"
       use:coversScreen
       style:z-index={layer.z}
-      class="fixed inset-0 flex items-end justify-center p-4 pb-[max(1rem,var(--safe-area-inset-bottom,0px))] sm:items-center {scrim
+      class="fixed inset-0 flex items-end justify-center p-4 pb-[calc(max(1rem,var(--safe-area-inset-bottom,0px))+var(--keyboard-occlusion-bottom,0px))] sm:items-center {scrim
         ? 'bg-black/40'
         : ''}"
       onclick={(e) => e.target === e.currentTarget && onClose()}

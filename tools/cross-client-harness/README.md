@@ -594,12 +594,14 @@ reported FAIL against a page that was visibly rendering posts, because it counte
 
 `burn.mjs` is the one to copy the SHAPE of. It reproduces a RACE - send, reload inside the
 unawaited-checkpoint window, send again - and a run that loses that race delivers the second message
-exactly like a run that wins it. So it reads the premise separately from the result (the durable
-send-ledger's deficit, before and after the reload) and answers `INCONCLUSIVE` rather than `PASS`
-when the window was never entered. It does NOT rest its verdict on the repair's log line either: a
-reload that skips the PIN gate initialises before a session can attach, and on the passing run that
-line was missed entirely while the repair had plainly happened. The reload is gated on the ledger
-actually showing a deficit, because a fixed delay cannot reliably enter a window ~58 ms wide on web.
+exactly like a run that wins it. So it reads the premise separately from the result and answers
+`INCONCLUSIVE` rather than `PASS` when the window was never entered. Since KILL-2 (#2515) the send
+ledger's `persisted` half is sealed inside the MLS state, so the deficit is no longer readable from
+the page: the reload is fired the instant the `emitted` count in IndexedDB moves (the frame is
+counted, after its encrypt and before its POST, because a fixed delay cannot reliably enter a window
+~58 ms wide on web), and the premise is the repair's own line on the load (`Restored state for ... was
+N generation(s) behind`). A reload that skips the PIN gate initialises before the session re-attaches
+and can miss that line; such a run is `INCONCLUSIVE`, never a pass.
 
 **Tools** - `launch.mjs` `reload.mjs` `bundle-id.mjs` `cleanup.mjs` `dismiss.mjs` `shot.mjs` `navstack.mjs` `state.mjs` `results.mjs` `verdicts.mjs`
 
@@ -985,6 +987,7 @@ other: the phone that sounds wrong FROM it, or makes it conceal, is the faulty o
 - `--launch` starts the profile with a FAKE microphone (Chrome's beep, or `--wav`). The flags are
   read at start, so a profile already up is refused: `bun launch.mjs close w3` first.
 - Without `--launch` it attaches to the running profile, microphone as is.
+- A web-seat DIAL must be started with `--launch` (a fresh browser with the fake-media flags): against an already-running seat without them the caller waits on the microphone prompt for ever, sits at "Appel..." and never rings (measured on dev, 2026-11-15).
 - It installs a peer-connection tracker before the app loads, then reloads.
 - `--dial` presses the header's audio-call button, `--accept` presses Accept when the phone rings.
   Both labels are read from `frontend/messages/fr.json`.

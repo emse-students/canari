@@ -1353,7 +1353,10 @@ const ROW_RULES = [
         String.raw`\[HttpLiveSegmentStore\] \[LIVE\] storing segment [0-9a-f-]{36} of live [0-9a-f-]{36} \(\d+ B\)`,
         String.raw`\[HttpLiveSegmentStore\] \[LIVE\] purging the segments of live [0-9a-f-]{36}`,
         String.raw`\[InternalLivesModeController\] \[LIVE\] lives_mode relayed to media-service: on`,
-        String.raw`\[LiveAnnouncer\] \[LIVE_ANNOUNCE\] [0-9a-f-]{36} by [0-9a-f]{8} kind=member followers=\d+`,
+        // The WHOLE line: every shape here is anchored at its end, and the line has carried
+        // ` titled=` after `followers=` since #3135, so the shape that stopped at `followers=\d+`
+        // matched no announcement at all. An association's live prints `kind=association`.
+        String.raw`\[LiveAnnouncer\] \[LIVE_ANNOUNCE\] [0-9a-f-]{36} by [0-9a-f]{8} kind=(?:member|association) followers=\d+ titled=(?:true|false)`,
         String.raw`\[LivesService\] \[LIVE_GC\] [0-9a-f-]{36} deleted \(\d+ segment object\(s\)\)`,
         // The end's purge WAITS for the viewers still seated (#2689, read on LIVE-WEB-2, `1.5.1-alpha.8`):
         // a viewer keeps the segments its last manifest named. One or more seated; zero is another sentence.

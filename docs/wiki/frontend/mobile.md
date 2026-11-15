@@ -276,9 +276,11 @@ and why this won:
 | WebView `fetch` for binary bodies to first-party origins | **Chosen.** One predicate, no native code, the same path web users run today (including the 401-refresh retry in `fetchUpload`), and no copy at all. |
 
 **Which origin the release builds bake (read from the workflows and the relay, 2026-10-10).** `android.yml` and
-`ios.yml` write the SAME `APP_URL` into every `VITE_*_URL`: the `BASE_URL` secret for a stable (the classifier
-accepts `canari.emse.fr` or `canari-emse.fr`; `BASE_URL` moved to `canari.emse.fr` on 2026-09-25) and
-`DEV_BASE_URL` for a pre-release, which must be `dev.canari-emse.fr` (the only dev name the classifier knows).
+`ios.yml` write the SAME `APP_URL` into every `VITE_*_URL`: the `BASE_URL` secret, read from the `production`
+environment for a stable (the classifier accepts `canari.emse.fr` or `canari-emse.fr`; `BASE_URL` moved to
+`canari.emse.fr` on 2026-09-25) and from the `development` environment for a pre-release, where it must be
+`dev.canari-emse.fr` (the only dev name the classifier knows; it was the `DEV_BASE_URL` secret until 2026-11-13,
+[cicd](../cicd.md#where-a-secret-lives-and-why)).
 Measured with a 2 MB POST to `/api/media/upload`: `canari.emse.fr` answers `401` (straight to the Portail-etu
 host, no cap), while `dev.canari-emse.fr` and `canari-emse.fr` answer **`413`** - both still go through the old
 VM's nginx relay (`canari-relay-dev.conf`, `canari-relay-prod.conf`), which sets no `client_max_body_size` and
@@ -2437,32 +2439,43 @@ off-screen, the intersection is empty, and the overlap is zero. One path, both d
 
 #### `android:windowSoftInputMode="adjustResize"` IS INERT, and the manifest still carries it
 
-Since Android 15 an edge-to-edge window is never resized for the IME. The attribute is not an error
-and not a warning; `dumpsys window` states the outcome plainly, printing `EDGE_TO_EDGE_ENFORCED`
-right next to the `adjust=resize` that was asked for. It is kept in the manifest because it still
-works below 15, and the listener below is a no-op there (the IME inset reads 0 once the window has
-already been resized).
+An edge-to-edge window is not resized for the IME. From Android 15 the attribute is not an error and
+not a warning; `dumpsys window` states the outcome plainly, printing `EDGE_TO_EDGE_ENFORCED` right
+next to the `adjust=resize` that was asked for. **Below 15 it is just as inert for this window**, which
+this page used to deny (it said the attribute "still works below 15" and the listener was a no-op
+there). Measured by the lead on 2026-11-14 on an API 34 emulator (Android 14, `google_apis` x86_64,
+Android System WebView 113.0.5672.136), the keyboard-ride debug build at `16dd910d7`, with
+`enableEdgeToEdge`, an injected fixed input on `/login`, a per-frame CDP probe and logcat: with the
+keyboard open the WebView does NOT resize - `innerHeight` and `visualViewport.height` both stay 915
+CSS px, open and closed; the listener reads an 883 px IME inset; `onPrepare` announces the compat
+animation as 285 ms with a `PathInterpolator`; the page takes the target (`keyboard over the window:
+336.38`), reveals the focused field, and the field sits above the keys; on close the inset is 0 and
+the page takes 0. So the overlay contract below holds on 14 exactly as on 15+. The attribute stays in
+the manifest as a statement of intent that nothing reads.
 
 ONE cause wore two faces, which is why they were one item: the composer sat under the keyboard, and
 the page could be scrolled onto a white band. Nothing resized, so the WebView's own scroll-the-focused-
 field-into-view ran the document past the end of its content onto the Activity background - visible
 because `onWebViewCreate` makes the WebView transparent on purpose (that is the startup-flash fix).
 
-`applyKeyboardInsets()` sets an `OnApplyWindowInsetsListener` on `android.R.id.content` and pads it by
-the IME inset. **It also withdraws the navigation-bar inset while the keyboard is up, and that half is
-not cosmetic**: the web layer reserves a strip through `env(safe-area-inset-bottom)`, which is right
-when the bar is at the bottom of the app and wrong the moment the keyboard is - the bar is then behind
-the keyboard and the strip is an empty band the page can be scrolled by, revealing the reserved footer
-while hiding part of the header. "The keyboard is up" is known here and nowhere else, so the inset is
-zeroed on the way down rather than left for CSS to guess at. The status bar is deliberately untouched:
-it is still on screen. The early `if (ime == 0) return ... insets` is what gives the strip back.
-
-Verified on hardware 2026-08-17 (v0.14.0 debug build, Android 15): `IME inset: 988 -> content padding`
-in logcat with the composer focused, and the user confirmed the band is gone.
+`applyKeyboardInsets()` sets an `OnApplyWindowInsetsListener` on `android.R.id.content`. **Since
+2026-11-14 (#3556) it pads nothing and withdraws nothing**: it announces each change of the IME inset to
+the page (`window.canariImeTarget({ px, durationMs, curve })`) and passes the insets on untouched, and
+the page lays itself out over the keyboard and rides it
+([keyboard-and-send-motion](keyboard-and-send-motion.md#6-android-since-2026-11-14---the-keyboard-covers-the-webview-and-the-page-rides-it)).
+Before that it padded the content by the IME inset (a resize that showed a cropped or stretched last
+frame for 8 to 13 frames) and withdrew the navigation-bar inset while the keyboard was up, because the
+web layer's `env(safe-area-inset-bottom)` strip is wrong the moment the bar is behind the keyboard -
+an empty band the page could be scrolled by (verified 2026-08-17, v0.14.0, Android 15: the band gone).
+That fact still holds; it is now said by the PAGE, which pins `--safe-area-inset-bottom` to 0 while the
+keyboard covers the window (`keyboardSafeAreaBottomOverride`), in the announcement's own task. The
+native withdrawal reached `env()` a frame or more after the announcement, and that frame was a 12 px
+step under the keyboard ride (Mi 9T, review D2). The status bar is untouched: it is still on screen.
 
 #### A floating panel follows the keyboard from the VISUAL viewport (2026-11-10)
 
-The padding above has a cost the composer never shows: **the layout viewport learns about the
+(Measured while the app still padded the WebView - the overlay note closes this section.) The
+padding had a cost the composer never shows: **the layout viewport learns about the
 keyboard late.** The inset listener pads the content once the IME's inset is dispatched; the
 WebView's visual viewport has already shrunk by then. Read on the Mi 9T (`1.6.9` dev pre-release,
 Android 16, over the WebView's DevTools socket), focusing the reaction picker's search field:
@@ -2488,8 +2501,13 @@ a fresh `innerHeight` with a stale inset. It is the same geometry as the snapsho
 not 343) and a pinch-zoom is not a keyboard. The action also re-runs on `visualViewport` `resize`.
 Every panel it places gains it: both emoji pickers, the reactor list, the menus, the autocomplete.
 `fixedPopover.test.ts` drives the four events above and asserts the panel's `top` after each.
-**Owed: one reading on a phone** - the picker's search focused, the panel above the keyboard as it
-lands.
+
+**Since #3556 the Android app's keyboard fires none of those events**: the WebView is never resized
+and its visual viewport never shrinks, so the action also re-places on the keyboard store's own
+`onKeyboardInsetChange`, on the next frame (the placement reads layout, and the store has just written
+its variables) - review F4, `fixedPopover.test.ts` drives an overlay announcement. In the app the band
+is the announced height (`keyboardInsetBottom` returns `overlayPx`). **Owed: one reading on a phone** -
+the picker's search focused, the panel above the keyboard as it lands.
 
 #### The bottom nav reserves nothing
 
@@ -3538,7 +3556,7 @@ id": the envelope was logged as `Duplicate ignored during a bulk ingest`, droppe
 answered `true`. The frame was acknowledged and deleted server-side, and all three recovery routes
 shut in the same instant - the queue row gone, the generation spent, and the archive replay
 skipping the fingerprint for ever because the drain had marked it consumed
-(`saveSeenCipherHashes` is durable). The bubble reads `📷 Photo` for good, on a device that
+(the seen marks are durable - inside the MLS state since KILL-2). The bubble reads `📷 Photo` for good, on a device that
 never missed anything. The live path below it had always asked `shouldUpgradeMessage`; the bulk
 path now asks too, and an upgrade **falls through to that live path** rather than being buffered -
 buffering exists to stop a drain re-rendering the list once per message, and an upgrade adds no

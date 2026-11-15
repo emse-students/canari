@@ -898,8 +898,9 @@ export interface IMlsService {
    *
    * CONCRETE IN `BaseMlsService`, and platforms supply only the write itself (`writeCheckpoint`),
    * because a checkpoint is not just a write: it is also the moment this device may declare how much
-   * of its send ratchet is now durable. That count is read before the write and committed after it,
-   * and the ordering is what makes a restored snapshot repairable at all - see `sendRatchetLedger`.
+   * of its send ratchet is now durable. That count is read before the export and staged INTO the
+   * state the write exports (KILL-2), so a restored snapshot always carries the count true of it -
+   * see `sendRatchetLedger` and `stateLedgers`.
    */
   persistCheckpoint(): Promise<void>;
   /**

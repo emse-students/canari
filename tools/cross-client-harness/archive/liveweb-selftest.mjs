@@ -252,7 +252,7 @@ const LIVE_LINES = [
   `${NEST('DEBUG', 'HttpLiveSegmentStore')}[LIVE] storing segment ${N2} of live ${L} (52342 B)`,
   `${NEST('DEBUG', 'HttpLiveSegmentStore')}[LIVE] purging the segments of live ${L}`,
   `${NEST('DEBUG', 'InternalLivesModeController')}[LIVE] lives_mode relayed to media-service: on`,
-  `${NEST('LOG', 'LiveAnnouncer')}[LIVE_ANNOUNCE] ${L} by 0a1b2c3d kind=member followers=1`,
+  `${NEST('LOG', 'LiveAnnouncer')}[LIVE_ANNOUNCE] ${L} by 0a1b2c3d kind=member followers=1 titled=false`,
   `${NEST('DEBUG', 'LiveSegmentsService')}[LIVE] storing live/${L}/${N2} (52342 B)`,
   `${NEST('DEBUG', 'MediaController')}[LIVE] segment ${L}/${N2} served to the edge cache (52342 B)`,
   `${NEST('DEBUG', 'LivesService')}[LIVE_GC] ${L} deleted (9 segment object(s))`,
