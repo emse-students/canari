@@ -197,7 +197,9 @@ it. Both facts are read in the one statement that decides (`BDE_MODERATION_READ_
 so the post, its comments and its replay are excluded from ONE place. **The ruling names the BDE
 moderator: the platform admin's read is deliberately left as it was - it still opens a post
 scheduled later.** Hiding and deleting keep their unnarrowed scope (`mayModeratePost`): only the
-read is excluded.
+read is excluded. The hidden-posts list (`GET /api/posts/hidden`, `getHiddenPosts`) is a read of the
+same content and asks the same term (`bdeModerationReadsPostSql`): it lists a hidden post scheduled
+later to a BDE moderator only while an open report targets it, and every one to a platform admin.
 
 | Read | Where the predicate is asked | Then |
 | --- | --- | --- |
@@ -239,7 +241,9 @@ included).
 database of 3,000 users, 200 associations, ~6,200 memberships, 20,000 posts):** every by-id read and
 comment page now runs the scope statement once, ~0.22 ms and 11 shared buffers, all index probes
 (`posts_pkey`, `users_pkey`, `association_members ("userId")`); the visibility statement is
-unchanged (~1.16 ms before and after). Not measured on dev or production.
+unchanged (~1.16 ms before and after). That figure is a published post's, which never runs the
+open-report sub-select; for a post scheduled later it runs, and the same seed measured ~0.30 ms with
+`content_reports` (500 rows) scanned sequentially. Not measured on dev or production.
 
 #### Decided by the owner (2026-11-04)
 
