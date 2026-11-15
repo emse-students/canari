@@ -14,6 +14,7 @@ import { resetEntryMemory } from './historyEntry';
 import {
   LOADING_SKELETON_ATTRIBUTE,
   cancelRestore,
+  SCROLL_ANCHOR_ATTRIBUTE,
   recallScroll,
   rememberLeaving,
   restoreOnReturn,
@@ -121,6 +122,11 @@ describe('restoreOnReturn', () => {
     }
   });
 
+  it('the feed marks each card with its post id as the anchor', () => {
+    const page = readFileSync(resolve(__dirname, '../../routes/posts/+page.svelte'), 'utf8');
+    expect(page).toContain(`${SCROLL_ANCHOR_ATTRIBUTE}={post.id}`);
+  });
+
   it('waits for the content to grow, then applies', () => {
     rememberLeaving(1, 1200);
     const height = { scroll: 800 };
@@ -182,5 +188,132 @@ describe('restoreOnReturn', () => {
     height.scroll = 3000;
     resized();
     expect(el.scrollTop).toBe(0);
+  });
+});
+
+/**
+ * A feed with real geometry: card `i` is `heights[i]` tall, the box's top is at 100, and a card's
+ * rect follows the box's `scrollTop` the way a browser's does.
+ */
+function feed(heights: number[]) {
+  const model = { heights };
+  const el = document.createElement('div');
+  Object.defineProperty(el, 'clientHeight', { get: () => 800 });
+  Object.defineProperty(el, 'scrollHeight', {
+    get: () => model.heights.reduce((a, b) => a + b, 0),
+  });
+  el.getBoundingClientRect = () => ({ top: 100, bottom: 900 }) as DOMRect;
+  document.body.appendChild(el);
+  const cards: HTMLElement[] = [];
+  const draw = (count: number) => {
+    for (let i = cards.length; i < count; i++) {
+      const card = document.createElement('div');
+      card.setAttribute(SCROLL_ANCHOR_ATTRIBUTE, `p${i}`);
+      card.getBoundingClientRect = () => {
+        const above = model.heights.slice(0, i).reduce((a, b) => a + b, 0);
+        const top = 100 + above - el.scrollTop;
+        return { top, bottom: top + model.heights[i] } as DOMRect;
+      };
+      el.appendChild(card);
+      cards.push(card);
+    }
+  };
+  /** Distance of card `i` from the top of the box. */
+  const offsetOf = (i: number) => cards[i].getBoundingClientRect().top - 100;
+  return { el, model, draw, offsetOf };
+}
+
+describe('the place is an anchor, not only a distance (1.7.0-alpha.2: left at 1500, back at 1726)', () => {
+  it('records the first card whose bottom is below the top of the box, and its distance', () => {
+    const f = feed(Array(20).fill(300));
+    f.draw(20);
+    f.el.scrollTop = 1560; // 60 px into card 5
+    rememberLeaving(2, 1560, f.el);
+    const g = feed(Array(20).fill(300));
+    g.draw(20);
+    restoreOnReturn(2, g.el);
+    expect(g.el.scrollTop).toBe(1560);
+    expect(g.offsetOf(5)).toBe(-60);
+  });
+
+  it('puts the SAME post back when the content above it is taller than when it was left', () => {
+    const left = feed(Array(20).fill(300));
+    left.draw(20);
+    left.el.scrollTop = 1500;
+    rememberLeaving(1, 1500, left.el);
+    const seenAt = left.offsetOf(5);
+    document.body.innerHTML = '';
+    // Back: the five cards above arrive 45 px taller (225 px in all), as images and posters settle.
+    const back = feed([345, 345, 345, 345, 345, ...Array(15).fill(300)]);
+    back.draw(20);
+    restoreOnReturn(1, back.el);
+    expect(back.el.scrollTop).toBe(1725); // the offset alone would have been 1500
+    expect(back.offsetOf(5)).toBe(seenAt);
+  });
+
+  it('waits for the anchor to be drawn, even when the page is already tall enough', async () => {
+    const left = feed(Array(20).fill(300));
+    left.draw(20);
+    left.el.scrollTop = 1500;
+    rememberLeaving(1, 1500, left.el);
+    document.body.innerHTML = '';
+    const back = feed(Array(20).fill(300));
+    back.draw(3); // tall (6000 px of model) but card 5 is not mounted yet
+    restoreOnReturn(1, back.el);
+    expect(back.el.scrollTop).toBe(0);
+    back.draw(8);
+    await flush();
+    expect(back.offsetOf(5)).toBe(0);
+  });
+
+  it('keeps the anchor aligned while the content above it still changes, then ends when quiet', async () => {
+    const left = feed(Array(20).fill(300));
+    left.draw(20);
+    left.el.scrollTop = 1500;
+    rememberLeaving(1, 1500, left.el);
+    document.body.innerHTML = '';
+    const back = feed(Array(20).fill(300));
+    back.draw(20);
+    restoreOnReturn(1, back.el);
+    expect(back.offsetOf(5)).toBe(0);
+    back.model.heights[0] = 526; // a poster above settles AFTER the first alignment
+    resized();
+    expect(back.offsetOf(5)).toBe(0);
+    frame();
+    frame();
+    expect(live.every((o) => !o.active)).toBe(true);
+    const quiet = back.el.scrollTop;
+    back.model.heights[0] = 700;
+    resized(); // the restore is over: a later change is not followed
+    expect(back.el.scrollTop).toBe(quiet);
+  });
+
+  it('a wheel, touch or key from the reader ends the following', () => {
+    const left = feed(Array(20).fill(300));
+    left.draw(20);
+    left.el.scrollTop = 1500;
+    rememberLeaving(1, 1500, left.el);
+    document.body.innerHTML = '';
+    const back = feed(Array(20).fill(300));
+    back.draw(20);
+    restoreOnReturn(1, back.el);
+    back.el.dispatchEvent(new Event('touchstart'));
+    expect(live.every((o) => !o.active)).toBe(true);
+  });
+
+  it('falls back to the offset when the anchored post is gone (deleted meanwhile)', () => {
+    const left = feed(Array(20).fill(300));
+    left.draw(20);
+    left.el.scrollTop = 1500;
+    rememberLeaving(1, 1500, left.el);
+    document.body.innerHTML = '';
+    const back = feed(Array(20).fill(300));
+    back.draw(20);
+    back.el.querySelector(`[${SCROLL_ANCHOR_ATTRIBUTE}="p5"]`)?.remove();
+    restoreOnReturn(1, back.el);
+    resized();
+    frame();
+    frame();
+    expect(back.el.scrollTop).toBe(1500);
   });
 });
