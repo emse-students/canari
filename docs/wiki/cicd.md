@@ -3369,14 +3369,14 @@ pushed range touches its area, exactly as CI would.
 | Job | Tier | Runs locally as | Measured | Why |
 | --- | --- | --- | --- | --- |
 | `changes` | push | `ci-scopes.sh <merge-base> HEAD` | < 1 s | the same filters, read from the same script |
-| `test-rust` | push | `checks.sh rust <crate>` per crate in scope: lockfile, fmt, clippy, task | MEASURE_RUST | the gateway's Redis-backed half needs a Redis service: CI only |
-| `test-typescript-backend` | push | `checks.sh ts <svc>` per service in scope: install, lint, format, typecheck, build, unit specs | MEASURE_TS | - |
+| `test-rust` | push | `checks.sh rust <crate>` per crate in scope: lockfile, fmt, clippy, task | cold, from an empty target: mls-core 165 s, call-service 117 s, chat-gateway 119 s, mls-wasm 39 s; src-tauri not measured | the gateway's Redis-backed half needs a Redis service: CI only |
+| `test-typescript-backend` | push | `checks.sh ts <svc>` per service in scope: install, lint, format, typecheck, build, unit specs | core 29 s, media 28 s, chat-delivery 80 s, social 208 s | - |
 | `test-frontend` | push | `local-ci.sh generated` (install, sync, proto, wasm), `checks.sh frontend-lint`, `dead-code`, `frontend-build` | lint 13 s, `svelte-check` 53 s, format 4 s, dead-code 24 s, wasm build 1 min 55 s when its source changed (0 s otherwise), install 24 s | - |
-| `test-frontend-shards` | push | `checks.sh frontend-test`, the four shards as one run | MEASURE_VITEST | - |
-| `test-android` | push | `android-unit-tests.sh` (a JDK) | MEASURE_ANDROID | - |
-| `test-harness` | push | `make test-harness` | MEASURE_HARNESS | - |
-| `test-ci-scripts` | push | `make test-ci-scripts`, then `ratchet-not-raised.mjs` against the merge base | MEASURE_CISCRIPTS | needs `shellcheck` and a running Docker daemon (`deploy-rolling.test.sh`) |
-| `mls-forward-compat` | push | `mls-forward-compat.sh` | MEASURE_MLSCOMPAT | - |
+| `test-frontend-shards` | push | `checks.sh frontend-test`, the four shards as one run | 15 min (1786 files, 19165 tests; ~6-7 min per shard on a CI runner) | - |
+| `test-android` | push | `android-unit-tests.sh` (a JDK) | 75 s (272 tests) | - |
+| `test-harness` | push | `make test-harness` | 41 s | - |
+| `test-ci-scripts` | push | `make test-ci-scripts`, then `ratchet-not-raised.mjs` against the merge base | 46 min here (6 min on a CI runner): `deploy-rolling.test.sh`, a compose fixture under Docker Desktop, is most of it | needs `shellcheck` and a running Docker daemon (`deploy-rolling.test.sh`) |
+| `mls-forward-compat` | push | `mls-forward-compat.sh` | 107 s | - |
 | `security` | split | the lockfile and Tauri-parity guards at push (`checks.sh lockfile-version`, `tauri-parity`, < 1 s each) | - | CodeQL and the secret scan are GitHub services: CI only |
 | `boot-nest-apps` | CI only | - | - | boots each service on PostgreSQL, Redis and an S3 endpoint |
 | `test-social-integration` | CI only | - | - | integration specs on PostgreSQL and Redis |
@@ -3416,7 +3416,7 @@ matches it; a commit touching none of them pays nothing.
 | a native source under `src-tauri` | vitest `nativeLogContent.test.ts` | ~2.5 s |
 | a `.svelte` file or the ratchet | vitest `controlsGuard.test.ts` | ~2.5 s |
 | a frontend module | its sibling tests (`x.test.ts`, `x.*.test.ts`) in one vitest run | ~2.5 s per file |
-| a service module | its sibling unit specs under jest (integration specs are CI's) | MEASURE_JEST |
+| a service module | its sibling unit specs under jest (integration specs are CI's) | ~9 s for one spec (ts-jest start-up) |
 
 **What is NOT at commit, and why**: `vitest related` (65-114 s for one file - it walks the whole
 import graph) and the dead-code ratchet (24 s, a whole-program scan) are at push. A merge commit
@@ -3458,7 +3458,14 @@ without it makes git skip the hook silently. **`core.hooksPath` is now `.husky`,
 directory itself** - `pre-commit` and `pre-push` are committed with mode 100755 and git calls them
 directly, so every worktree of the clone has them. `frontend/scripts/install-husky.js` (run by the
 frontend `bun install`) sets and asserts that value; it no longer runs the husky binary.
-`husky-hookspath.test.mjs` asserts the value and the tracked modes.
+`husky-hookspath.test.mjs` asserts the value and the tracked modes. **And both tiers refuse to run
+unless `core.hooksPath` is exactly `.husky`** (`assert_hooks_path` in `local-ci.sh`): the same day
+the shared value was found UNSET (no hook ran in any worktree) and then `.husky/_` again, written by
+an older branch's install. A hook that runs is the only place able to see it, so it refuses with
+`git config core.hooksPath .husky` - safe for every branch, since an older branch's
+`.husky/pre-commit` runs from there too. `local-ci.test.sh` refuses both wrong values at both tiers.
+Until this merges, an older branch's `bun install` writes `.husky/_` back; after it, every install
+writes `.husky`.
 
 A hook that runs but lacks its toolchain FAILS, naming what to install: `bun` not on PATH, a
 package's `node_modules` missing (with its `bun install` line), `cargo` for a staged crate, and at

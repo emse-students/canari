@@ -85,7 +85,8 @@ configure() {
   git -C "$1" config user.name t
   git -C "$1" config user.email t@t.invalid
   git -C "$1" config commit.gpgsign false
-  git -C "$1" config core.hooksPath /dev/null
+  # The value local-ci.sh insists on; a scratch repository has no `.husky/`, so git runs nothing.
+  git -C "$1" config core.hooksPath .husky
   git -C "$1" config core.autocrlf false
 }
 
@@ -231,6 +232,26 @@ check ".husky/pre-push runs the push tier" ".husky/pre-push does not run local-c
   grep -q 'local-ci.sh push' "$repo_root/.husky/pre-push"
 run_ci=$(sed -n '/^run-ci:/,/^$/p' "$repo_root/Makefile")
 check "make run-ci runs the same plan" "make run-ci does not call local-ci.sh all" has "local-ci.sh all" "$run_ci"
+# core.hooksPath: the shell and the JS copies agree, and a wrong value refuses both tiers.
+js_path=$(sed -n "s/^export const HOOKS_PATH = '\(.*\)';$/\1/p" "$repo_root/frontend/scripts/hooks-path.js")
+sh_path=$(sed -n 's/^HOOKS_PATH=//p' "$repo_root/.github/scripts/local-ci.sh")
+check "local-ci.sh and hooks-path.js name the same hooks path ($sh_path)" \
+  "local-ci.sh says '$sh_path', hooks-path.js says '$js_path'" test -n "$sh_path" -a "$sh_path" = "$js_path"
+h="$scratch/hooks"
+make_repo "$h"
+for wrong in .husky/_ ""; do
+  if [ -n "$wrong" ]; then git -C "$h" config core.hooksPath "$wrong"; else git -C "$h" config --unset core.hooksPath; fi
+  rc=0
+  out=$(cd "$h" && echo x >>shared.txt && git add shared.txt && LOCAL_CI_DRY_RUN=1 bash .github/scripts/local-ci.sh commit 2>&1) || rc=$?
+  check "commit refuses core.hooksPath='${wrong:-<unset>}'" "commit ran with core.hooksPath='${wrong:-<unset>}'" \
+    test "$rc" -ne 0 -a -n "$(grep -F 'git config core.hooksPath .husky' <<<"$out" || true)"
+  rc=0
+  out=$(cd "$h" && git reset -q --hard && printf 'refs/heads/main %s refs/heads/main %s\n' "$(git rev-parse HEAD)" "$ZERO" |
+    LOCAL_CI_DRY_RUN=1 bash .github/scripts/local-ci.sh push origin 2>&1) || rc=$?
+  check "push refuses core.hooksPath='${wrong:-<unset>}'" "push ran with core.hooksPath='${wrong:-<unset>}'" \
+    test "$rc" -ne 0 -a -n "$(grep -F 'git config core.hooksPath .husky' <<<"$out" || true)"
+done
+
 # The commit tier lints only the staged scripts, and only those of the set CI lints.
 narrowed=$(make -s -n -C "$repo_root" lint-ci-scripts FILES=".github/scripts/local-ci.sh frontend/not-linted.sh")
 check "FILES narrows shellcheck to the staged scripts CI lints" "FILES does not narrow the shellcheck run" \

@@ -66,6 +66,20 @@ refuse() {
   exit 1
 }
 
+# THE HOOKS ARE THE TRACKED `.husky/`, AND THIS IS WHERE THAT IS ASSERTED (2026-11-15).
+# `core.hooksPath` lives in the git directory every worktree shares. Unset, or `.husky/_` (husky's
+# generated wrappers, absent from a fresh worktree), it disarms the hooks of some checkouts with no
+# message at all - both were found on this workstation that day. A hook that runs is the one place
+# that can see it, so both tiers refuse until it is fixed. The value is HOOKS_PATH in
+# frontend/scripts/hooks-path.js; local-ci.test.sh asserts the two agree.
+HOOKS_PATH=.husky
+assert_hooks_path() {
+  local value
+  value="$(git config core.hooksPath || true)"
+  [ "$value" = "$HOOKS_PATH" ] && return 0
+  refuse "core.hooksPath is '${value:-<unset>}', not '$HOOKS_PATH' (the tracked hooks). Every worktree shares it, and any other value leaves some checkout with no hook and no message. Fix it once: git config core.hooksPath $HOOKS_PATH  - an older branch's .husky/pre-commit runs from there too."
+}
+
 # ── Running one check ────────────────────────────────────────────────────────────────────────────
 CHECK_INDEX=0
 CHECK_TOTAL=0
@@ -205,6 +219,7 @@ require_tools() {
 # ── push ─────────────────────────────────────────────────────────────────────────────────────────
 mode_push() {
   local head lref lsha pushing=0
+  assert_hooks_path
   head="$(git rev-parse HEAD)"
   while read -r lref lsha _; do
     [ -n "${lref:-}" ] || continue
@@ -361,6 +376,7 @@ commit_rules() {
 
 mode_commit() {
   local staged all_changed plan merging=0
+  assert_hooks_path
   staged="$(git diff --cached --name-only --diff-filter=ACMR)"
   all_changed="$(git diff --cached --name-only --diff-filter=ACMRD)"
   [ -n "$all_changed" ] || return 0
