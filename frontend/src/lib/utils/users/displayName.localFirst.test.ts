@@ -12,6 +12,7 @@ vi.mock('$lib/stores/user', () => ({
   getSavedDisplayName: () => null,
   isAbsentUserError: () => absent.answer,
   isDeletedAccountError: () => absent.answer,
+  MalformedUserIdError: class MalformedUserIdError extends Error {},
 }));
 vi.mock('$lib/paraglide/messages', () => ({
   m: { user_unknown_label: () => 'Utilisateur inconnu', user_deleted_label: () => 'Supprime' },

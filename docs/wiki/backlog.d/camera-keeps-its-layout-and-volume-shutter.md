@@ -53,3 +53,5 @@ Compile iOS is the first compile of the iOS half.
   shutter; the call's volume works again as soon as the camera is closed.
 - **The sensor ignores the rotation lock**: with the lock ON, the glyphs still turn (Android
   `OrientationEventListener`, iOS `CMMotionManager`).
+
+**Triage 2026-11-14 - what can be read on the bench, and what is DELETED.** Left: Android volume keys through `adb shell input keyevent` (KEYCODE_VOLUME_DOWN, `--longpress` for the held key), the hold cut short by Home, the gallery picker, during a call: Mi 9T about 20 min; iOS volume buttons (WDA button press, the open question whether WebKit's capture counts, syslog `volume button down`), about 15 min on the iPhone. **DELETED: every reading that needs the phone physically turned** (the layout holding while turned, the glyphs turning from the accelerometer, a file made sideways with `turn=90`, the sensor ignoring the rotation lock): the bench has no hand to turn a phone and `adb`/WDA rotation does not move the accelerometer the code reads; if a regression is ever reported the unit tests of the turn mapping are the guard.
