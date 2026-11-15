@@ -114,7 +114,7 @@ class GalleryPlugin(private val activity: Activity) : Plugin(activity) {
         } catch (e: Exception) {
             // A half-written row must not stay in the gallery as a broken video.
             resolver.delete(uri, null, null)
-            Log.e(TAG, "saveVideo failed", e)
+            Log.e(TAG, "saveVideo failed: ${e.javaClass.simpleName}")
             invoke.reject("saveVideo failed: ${e.message}")
         }
     }
@@ -134,7 +134,7 @@ class GalleryPlugin(private val activity: Activity) : Plugin(activity) {
             Log.d(TAG, "saveVideo: saved to ${target.absolutePath}")
             invoke.resolve(JSObject().put("status", "saved"))
         } catch (e: Exception) {
-            Log.e(TAG, "saveVideo failed", e)
+            Log.e(TAG, "saveVideo failed: ${e.javaClass.simpleName}")
             invoke.reject("saveVideo failed: ${e.message}")
         }
     }
@@ -172,7 +172,7 @@ class GalleryPlugin(private val activity: Activity) : Plugin(activity) {
         val uri = try {
             FileProvider.getUriForFile(activity, "${activity.packageName}.fileprovider", File(args.path))
         } catch (e: IllegalArgumentException) {
-            Log.e(TAG, "shareFile: the file is outside the FileProvider's paths", e)
+            Log.e(TAG, "shareFile: the file is outside the FileProvider's paths: ${e.javaClass.simpleName}")
             invoke.reject("shareFile: the file is not shareable")
             return
         }
@@ -219,7 +219,7 @@ class GalleryPlugin(private val activity: Activity) : Plugin(activity) {
                 Log.d(TAG, "writeDocument: $written bytes written, stream closed")
                 invoke.resolve(JSObject().put("written", written))
             } catch (e: Exception) {
-                Log.e(TAG, "writeDocument failed", e)
+                Log.e(TAG, "writeDocument failed: ${e.javaClass.simpleName}")
                 invoke.reject("writeDocument failed: ${e.message}")
             }
         }
@@ -232,7 +232,7 @@ class GalleryPlugin(private val activity: Activity) : Plugin(activity) {
                 activity.startActivity(Intent.createChooser(send, null))
                 invoke.resolve()
             } catch (e: Exception) {
-                Log.e(TAG, "the share sheet did not open", e)
+                Log.e(TAG, "the share sheet did not open", e) // log-safe: message of a system or native call (Exception); this try parses and names no user input
                 invoke.reject("the share sheet did not open: ${e.message}")
             }
         }
@@ -267,7 +267,7 @@ class GalleryPlugin(private val activity: Activity) : Plugin(activity) {
                 val published = ShareTargets.publish(activity, targets)
                 invoke.resolve(JSObject().put("present", published.present).put("leftover", published.leftover))
             } catch (e: Exception) {
-                Log.e(TAG, "publishShareTargets failed", e)
+                Log.e(TAG, "publishShareTargets failed", e) // log-safe: message of a system or native call (Exception); this try parses and names no user input
                 invoke.reject("publishShareTargets failed: ${e.message}")
             }
         }
@@ -282,7 +282,7 @@ class GalleryPlugin(private val activity: Activity) : Plugin(activity) {
                 val removed = ShareTargets.clear(activity)
                 invoke.resolve(JSObject().put("removed", removed))
             } catch (e: Exception) {
-                Log.e(TAG, "clearShareTargets failed", e)
+                Log.e(TAG, "clearShareTargets failed", e) // log-safe: message of a system or native call (Exception); this try parses and names no user input
                 invoke.reject("clearShareTargets failed: ${e.message}")
             }
         }
@@ -301,7 +301,7 @@ class GalleryPlugin(private val activity: Activity) : Plugin(activity) {
                 val removed = ConversationShortcuts.clear(activity)
                 invoke.resolve(JSObject().put("removed", removed))
             } catch (e: Exception) {
-                Log.e(TAG, "clearConversationShortcuts failed", e)
+                Log.e(TAG, "clearConversationShortcuts failed", e) // log-safe: message of a system or native call (Exception); this try parses and names no user input
                 invoke.reject("clearConversationShortcuts failed: ${e.message}")
             }
         }
@@ -319,7 +319,7 @@ class GalleryPlugin(private val activity: Activity) : Plugin(activity) {
             activity.startActivity(intent)
             invoke.resolve()
         } catch (e: Exception) {
-            Log.e(TAG, "openAppSettings failed", e)
+            Log.e(TAG, "openAppSettings failed", e) // log-safe: message of a system or native call (Exception); this try parses and names no user input
             invoke.reject("openAppSettings failed: ${e.message}")
         }
     }

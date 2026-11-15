@@ -25,6 +25,12 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
 
 import MessageBubble from './MessageBubble.svelte';
 import { REPLY_SWIPE_TRIGGER_PX } from '$lib/utils/messageSwipeReply';
+vi.mock('$lib/utils/touchClaim', async (orig) => {
+  const real = await orig<typeof import('$lib/utils/touchClaim')>();
+  return { ...real, claimTouchMove: vi.fn(real.claimTouchMove) };
+});
+import { Log } from '$lib/utils/Log';
+import { claimTouchMove } from '$lib/utils/touchClaim';
 
 const mounted: (() => void)[] = [];
 
@@ -284,6 +290,158 @@ describe('MessageBubble - a thumb ARCS, and an armed bubble replies (Mi 9T, 2026
     arc(bubble(), 100, 110, 140);
 
     expect(h.reply).not.toHaveBeenCalled();
+  });
+});
+
+describe('MessageBubble - a WebKit thumb arc is CLAIMED, not left to the scroller (iPhone 12, 2026-11-15)', () => {
+  /**
+   * A MODEL OF WHAT WEBKIT DOES, because happy-dom has no scroller. Under `touch-action: pan-y` the
+   * engine applies the vertical component of a stroke to the thread UNLESS the page cancels the
+   * move: the first `touchmove` that carries vertical travel and is not `defaultPrevented` hands
+   * the stroke to the scroller. From then on its moves are not cancelable and the page's
+   * `pointerup` becomes a `pointercancel` - exactly the iPhone's "thread scrolled 35 px, no reply".
+   * Chromium decides on the first direction instead, which is why the same stroke worked on the
+   * Mi 9T; this model is the stricter engine, so a pass here holds for both.
+   */
+  function webkitStroke(
+    el: HTMLElement,
+    x0: number,
+    dx: number,
+    dy: number,
+    steps = 12
+  ): { scrolled: boolean; unclaimedMoves: number } {
+    let scrolled = false;
+    let unclaimedMoves = 0;
+    el.dispatchEvent(pointer('pointerdown', x0, 200));
+    el.dispatchEvent(touch('touchstart', x0, 200));
+    flushSync();
+    let prevY = 200;
+    for (let i = 1; i <= steps; i++) {
+      const x = x0 + (dx * i) / steps;
+      const y = 200 + (dy * i) / steps;
+      if (!scrolled) {
+        el.dispatchEvent(pointer('pointermove', x, y));
+        const move = touch('touchmove', x, y);
+        el.dispatchEvent(move);
+        if (!move.defaultPrevented && Math.abs(y - prevY) > 0) scrolled = true;
+        if (!move.defaultPrevented) unclaimedMoves++;
+      }
+      prevY = y;
+      flushSync();
+    }
+    if (scrolled) {
+      el.dispatchEvent(pointer('pointercancel', 0, 0));
+      el.dispatchEvent(touch('touchcancel', 0, 0));
+    } else {
+      el.dispatchEvent(pointer('pointerup', x0 + dx, 200 + dy));
+      el.dispatchEvent(touch('touchend', x0 + dx, 200 + dy));
+    }
+    flushSync();
+    return { scrolled, unclaimedMoves };
+  }
+
+  it.each([45, 60, -45, -60])(
+    'replies to a RECEIVED message along a 110px stroke with %ipx of drift, the thread untouched',
+    (drift) => {
+      const h = mountBubble();
+      const { scrolled } = webkitStroke(bubble(), 100, 110, drift);
+
+      expect(scrolled).toBe(false);
+      expect(h.reply).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it.each([45, 60, -45, -60])('and for an OWN message swiped left with %ipx of drift', (drift) => {
+    const h = mountBubble({ isOwn: true, senderId: 'u-me' });
+    const { scrolled } = webkitStroke(bubble(), 300, -110, drift);
+
+    expect(scrolled).toBe(false);
+    expect(h.reply).toHaveBeenCalledTimes(1);
+  });
+
+  it('claims from the FIRST delivered move: a 12-step stroke moves 9px first, under the old 10px lock', () => {
+    mountBubble();
+    const { unclaimedMoves } = webkitStroke(bubble(), 100, 110, 45);
+
+    expect(unclaimedMoves).toBe(0);
+  });
+
+  it('KNOWN LIMIT: a first delivered move under the 8px lock is not claimed, and the model hands the stroke to the scroller', () => {
+    // Not claiming before the lock is deliberate: a vertical scroll's first move is just as small,
+    // and cancelling it would stop the thread from scrolling. The cost is a stroke whose first
+    // delivered move is 2-4 px: under this (stricter than real) model WebKit takes it. Whether the
+    // iPhone does is the reading owed on the pre-release (design-reference, same section).
+    const h = mountBubble();
+    const el = bubble();
+    el.dispatchEvent(pointer('pointerdown', 100, 200));
+    el.dispatchEvent(touch('touchstart', 100, 200));
+    const first = touch('touchmove', 103, 201);
+    el.dispatchEvent(pointer('pointermove', 103, 201));
+    el.dispatchEvent(first);
+    expect(first.defaultPrevented).toBe(false);
+    const second = touch('touchmove', 140, 215);
+    el.dispatchEvent(pointer('pointermove', 140, 215));
+    el.dispatchEvent(second);
+    el.dispatchEvent(pointer('pointercancel', 0, 0));
+    el.dispatchEvent(touch('touchcancel', 0, 0));
+    flushSync();
+
+    expect(h.reply).not.toHaveBeenCalled();
+  });
+
+  it('still lets a vertical drag scroll the thread: not one move is cancelled', () => {
+    const h = mountBubble();
+    const el = bubble();
+    el.dispatchEvent(pointer('pointerdown', 100, 200));
+    el.dispatchEvent(touch('touchstart', 100, 200));
+    const moves: Event[] = [];
+    for (let i = 1; i <= 8; i++) {
+      el.dispatchEvent(pointer('pointermove', 100 + i, 200 + 20 * i));
+      const m = touch('touchmove', 100 + i, 200 + 20 * i);
+      el.dispatchEvent(m);
+      moves.push(m);
+    }
+    el.dispatchEvent(touch('touchend', 108, 360));
+    flushSync();
+
+    expect(moves.every((m) => !m.defaultPrevented)).toBe(true);
+    expect(h.reply).not.toHaveBeenCalled();
+  });
+
+  it('keeps the gesture when the engine already owns the stroke, claims once, logs once, and the next stroke claims again', () => {
+    const warn = vi.spyOn(Log, 'w').mockImplementation(() => {});
+    vi.mocked(claimTouchMove).mockClear();
+    const h = mountBubble();
+    const el = bubble();
+    el.dispatchEvent(pointer('pointerdown', 100, 200));
+    el.dispatchEvent(touch('touchstart', 100, 200));
+    for (let i = 1; i <= 6; i++) {
+      el.dispatchEvent(pointer('pointermove', 100 + 20 * i, 200));
+      const m = new Event('touchmove', { bubbles: true, cancelable: false });
+      const list = [{ clientX: 100 + 20 * i, clientY: 200 }];
+      Object.defineProperty(m, 'touches', { value: list });
+      Object.defineProperty(m, 'changedTouches', { value: list });
+      el.dispatchEvent(m);
+    }
+    el.dispatchEvent(pointer('pointerup', 220, 200));
+    el.dispatchEvent(touch('touchend', 220, 200));
+    flushSync();
+
+    // Behaviour is unchanged from before the claim existed (Android kept replying); after the
+    // first loss the bubble stops claiming AND stops logging: one of each per stroke.
+    expect(h.reply).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(claimTouchMove).toHaveBeenCalledTimes(1);
+
+    // The flag is per stroke: a fresh touch start claims again.
+    vi.mocked(claimTouchMove).mockClear();
+    el.dispatchEvent(pointer('pointerdown', 100, 200));
+    el.dispatchEvent(touch('touchstart', 100, 200));
+    const move = touch('touchmove', 130, 200);
+    el.dispatchEvent(pointer('pointermove', 130, 200));
+    el.dispatchEvent(move);
+    expect(claimTouchMove).toHaveBeenCalledTimes(1);
+    expect(move.defaultPrevented).toBe(true);
   });
 });
 

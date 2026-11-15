@@ -157,15 +157,19 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
   };
 
   /**
-   * Resolves once at least `count` backends are WAITING on a lock - read from the server's own lock
-   * table, so the test knows the other side is parked rather than hoping a pause was long enough.
+   * Resolves once at least `count` sessions OF THIS SUITE are WAITING on a lock - read from the
+   * server's own lock table, so the test knows the other side is parked rather than hoping a pause
+   * was long enough. The suites share one database, a schema each, so the question names this
+   * suite's sessions (`application_name`, set on the pool and on every `holder`): asked of the
+   * whole database, another suite's parked session answered for this one in a parallel run.
    * Each round is a real query, never a sleep; jest's timeout bounds it.
    */
   const parked = async (count: number) => {
     for (;;) {
       const [row]: { n: string }[] = await q(
         `SELECT count(*) AS n FROM pg_stat_activity
-         WHERE datname = current_database() AND cardinality(pg_blocking_pids(pid)) > 0`
+         WHERE application_name = $1 AND cardinality(pg_blocking_pids(pid)) > 0`,
+        [schema]
       );
       if (Number(row.n) >= count) return;
     }
@@ -173,7 +177,7 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
 
   /** A raw client in the test schema holding the group's seat lock in an open transaction. */
   const holder = async (mode: 'exclusive' | 'shared'): Promise<Client> => {
-    const client = new Client({ connectionString: URL });
+    const client = new Client({ connectionString: URL, application_name: schema });
     await client.connect();
     await client.query(`SET search_path TO ${schema}`);
     await client.query('BEGIN');
@@ -279,7 +283,7 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
       synchronize: false,
       uuidExtension: 'pgcrypto',
       installExtensions: false,
-      extra: { options: `-c search_path=${schema}` },
+      extra: { options: `-c search_path=${schema}`, application_name: schema },
     });
     await ds.initialize();
     await ds.synchronize();

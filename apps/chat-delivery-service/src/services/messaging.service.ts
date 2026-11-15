@@ -29,6 +29,7 @@ import {
   devicePresenceKey,
   addressabilityOf,
   publishIfAddressable,
+  type Addressability,
 } from './addressing';
 import { getApps } from 'firebase-admin/app';
 import { getMessaging, type Message } from 'firebase-admin/messaging';
@@ -535,6 +536,20 @@ export interface SendWelcomeBody {
   welcomePayload: string;
   ratchetTreePayload?: string;
   groupId: string;
+}
+
+/**
+ * What `POST /api/mls/welcome` answers once the Welcome is stored and handed to its device.
+ *
+ * `addressability` is whether that device can be ADDRESSED a history answer at the time of the
+ * answer (`addressabilityOf`): `addressable`, `offline` (no presence key) or `undeclared` (a live
+ * session did not declare `addressed-history-1`). The inviter's join push reads it and sends nothing
+ * where the send would be refused (`MessagingService.welcomeAnswer`). Absent when it could not be
+ * read - the shape every older server answers.
+ */
+export interface WelcomeAnswer {
+  status: 'queued';
+  addressability?: Addressability;
 }
 
 /**
@@ -5527,7 +5542,7 @@ export class MessagingService {
   async sendWelcome(
     authUserIdRaw: string | undefined,
     body: SendWelcomeBody
-  ): Promise<{ status: string }> {
+  ): Promise<WelcomeAnswer> {
     const traceId = this.makeTraceId('welcome-send');
     const targetDeviceId = sanitizeQueryValue(body.targetDeviceId, 'targetDeviceId');
     const targetUserId = sanitizeOptionalQueryValue(body.targetUserId, 'targetUserId');
@@ -5629,7 +5644,7 @@ export class MessagingService {
           `group=${safeGroupId} - the same Welcome is already queued, nothing stored again; its row is delivered again`
       );
       await this.deliverWelcome(stored, traceId);
-      return { status: 'queued' };
+      return this.welcomeAnswer(group, deviceInfo.userId, targetDeviceId, safeGroupId, traceId);
     }
     this.logger.log(
       `[WELCOME][${traceId}] QUEUED id=${queuedWelcome.id} recipient=${deviceInfo.userId}:${targetDeviceId} group=${safeGroupId}`
@@ -5656,7 +5671,56 @@ export class MessagingService {
       `[WELCOME][${traceId}] DONE group=${safeGroupId} target=${deviceInfo.userId}:${targetDeviceId}`
     );
 
-    return { status: 'queued' };
+    return this.welcomeAnswer(group, deviceInfo.userId, targetDeviceId, safeGroupId, traceId);
+  }
+
+  /**
+   * The answer to a stored Welcome, carrying whether its device can be ADDRESSED a history answer
+   * now ({@link WelcomeAnswer.addressability}).
+   *
+   * WHY THE WELCOME SAYS IT. The inviter follows every delivered Welcome with a join push, an
+   * addressed transport frame, which {@link assertConversationAddressable} refuses for a device that
+   * is offline or holds a session that did not declare the capability. Only this service knows
+   * either fact, so the inviter used to learn it by failing: one `400 addressed_unsupported` per
+   * stale device of every Add (nine in one rig run, 2026-11-15). The verdict is read HERE by the
+   * same script that decides the send (check only, nothing published), so the inviter does not make
+   * a request this service would refuse. The send's own check is unchanged and stays the authority:
+   * a device that disconnects between the two reads is still refused there.
+   *
+   * A verdict that cannot be read is said at error and left OUT of the answer: the Welcome is
+   * stored and delivered whatever this read does, and an answer without the field is what every
+   * older server gives - the inviter then pushes and the send's check decides.
+   *
+   * NOT READ FOR A KEY GROUP: a community's key group gets no join push (it carries no history), so
+   * the verdict would answer a question nobody asks there.
+   */
+  private async welcomeAnswer(
+    group: Group | null,
+    userId: string,
+    deviceId: string,
+    groupId: string,
+    traceId: string
+  ): Promise<WelcomeAnswer> {
+    if (distributionScopeOf(group) !== null) {
+      this.logger.log(
+        `[WELCOME][${traceId}] group=${groupId} is a key group - no join push follows, addressability of ${cutUserId(userId)}:${deviceId} not read`
+      );
+      return { status: 'queued' };
+    }
+    let addressability: Addressability;
+    try {
+      addressability = await addressabilityOf(this.redis, userId, deviceId);
+    } catch (e) {
+      this.logger.error(
+        `[WELCOME][${traceId}] addressability of ${cutUserId(userId)}:${deviceId} in group=${groupId} could not be read - answered without it, the join push's own send decides: ${String(e).slice(0, 160)}`
+      );
+      return { status: 'queued' };
+    }
+    this.logger.log(
+      `[WELCOME][${traceId}] ADDRESSABILITY group=${groupId} target=${cutUserId(userId)}:${deviceId} ` +
+        `is ${addressability}${addressability === 'addressable' ? '' : ' - the inviter sends it no addressed answer'}`
+    );
+    return { status: 'queued', addressability };
   }
 
   /**

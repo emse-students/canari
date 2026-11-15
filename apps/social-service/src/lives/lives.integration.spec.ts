@@ -401,7 +401,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       // `content_reports`: a live is reported through the posts' one report store (WP-L8, D6).
       entities: [...LIVE_ENTITIES, ContentReport],
       synchronize: false,
-      extra: { options: `-c search_path=${schema}` },
+      // Named after the suite's schema: a lock wait is looked for among THIS suite's sessions.
+      extra: { options: `-c search_path=${schema}`, application_name: schema },
     });
     await ds.initialize();
     // The one other table the service reads, in the shape it reads it (core-service owns it).
@@ -4145,11 +4146,13 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
           () => 'withdrawn',
           (e: unknown) => (e as { getResponse: () => { code: string } }).getResponse().code
         );
-        // A proof, not a delay: wait until PostgreSQL reports a backend waiting on a lock.
+        // A proof, not a delay: wait until PostgreSQL reports a session of THIS suite's pool (its
+        // `application_name`; the suites share one database) waiting on a lock.
         for (;;) {
           const [{ n }] = await q(
             `SELECT count(*)::int AS n FROM pg_stat_activity
-              WHERE wait_event_type = 'Lock' AND datname = current_database()`
+              WHERE application_name = $1 AND wait_event_type = 'Lock'`,
+            [schema]
           );
           if (n > 0) break;
         }

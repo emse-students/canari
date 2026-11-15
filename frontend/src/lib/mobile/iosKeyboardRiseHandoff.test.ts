@@ -115,8 +115,12 @@ describe('the iOS keyboard hand-off (canari_ios.mm)', () => {
     expect(footerTag).toContain('data-keyboard-ride="box"');
     expect(chatArea).not.toContain('data-keyboard-ride="box"');
     const footerRule = appCss.slice(appCss.indexOf('.chat-composer-footer {'));
+    // It moves by the keyboard's room: the leaf twin when the announcement wrote it, else the layout
+    // inset (#3569's leaf channel).
     expect(footerRule.slice(0, footerRule.indexOf('}'))).toContain(
-      'bottom: var(--keyboard-layout-inset-bottom'
+      'bottom: var(--chat-keyboard-room)'
     );
+    const room = appCss.slice(appCss.indexOf('--chat-keyboard-room: var('));
+    expect(room.slice(0, room.indexOf(';'))).toContain('--keyboard-layout-inset-bottom');
   });
 });
