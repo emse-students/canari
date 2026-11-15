@@ -163,7 +163,7 @@ rm -f "$c/docs/wiki/backlog.d/new.md"
 # ── 4. the push ─────────────────────────────────────────────────────────────────────────────────
 echo "the push tier merges origin/main, and refuses what it cannot vouch for:"
 origin="$scratch/origin.git"
-git init -q --bare "$origin"
+git init -q --bare -b main "$origin"
 p="$scratch/push"
 other="$scratch/other"
 make_repo "$p"
@@ -245,7 +245,7 @@ check "the working tree is clean" "the refused merge left changes behind" test -
 # ── 4b. the push runs what CI would run for its range, and nothing more ─────────────────────────
 echo "the push plan follows the range, through the same scopes as CI:"
 s_origin="$scratch/scope-origin.git"
-git init -q --bare "$s_origin"
+git init -q --bare -b main "$s_origin"
 s="$scratch/scope"
 make_repo "$s"
 git -C "$s" remote add origin "$s_origin"
