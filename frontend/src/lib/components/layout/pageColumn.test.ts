@@ -40,7 +40,7 @@
  * beside them had to say the root was never read.
  */
 import { describe, it, expect } from 'vitest';
-import { allMarkup } from '$lib/styles/markupSources';
+import { allMarkup } from '$lib/styles/markupTree';
 import { PAGE_WIDTHS } from './pageWidth';
 
 /**

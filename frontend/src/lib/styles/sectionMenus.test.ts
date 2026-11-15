@@ -19,7 +19,8 @@
  *    entry state, which is what the overlay stack and the router's Back both read.
  */
 import { describe, it, expect } from 'vitest';
-import { allMarkup, shippedSources, withoutAnyComments } from './markupSources';
+import { withoutAnyComments } from './markupSources';
+import { allMarkup, shippedSources } from './markupTree';
 import { relativeTo } from '../../test/sourceTree';
 
 const src = 'src';

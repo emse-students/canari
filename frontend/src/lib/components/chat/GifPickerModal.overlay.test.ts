@@ -24,7 +24,8 @@
  * overlay is the same fact in a different spelling, and this one was not in that family.
  */
 import { describe, it, expect } from 'vitest';
-import { svelteSources, withoutAnyComments } from '$lib/styles/markupSources';
+import { withoutAnyComments } from '$lib/styles/markupSources';
+import { svelteSources } from '$lib/styles/markupTree';
 import { readSource, relativeTo } from '../../../test/sourceTree';
 
 const dir = 'src';

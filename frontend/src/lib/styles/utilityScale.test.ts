@@ -23,7 +23,7 @@
  * number (CLAUDE.md, "COLOUR, TYPE AND RADIUS ARE ALL SCALED SINCE #447").
  */
 import { describe, it, expect } from 'vitest';
-import { allMarkup } from './markupSources';
+import { allMarkup } from './markupTree';
 import { readSource } from '../../test/sourceTree';
 
 const cssPath = 'src/app.css';

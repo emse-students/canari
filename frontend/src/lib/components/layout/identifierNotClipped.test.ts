@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { allMarkup } from '$lib/styles/markupSources';
+import { allMarkup } from '$lib/styles/markupTree';
 
 /**
  * AN OPAQUE IDENTIFIER IS SHORTENED, NEVER TRUNCATED - and the difference is not cosmetic.

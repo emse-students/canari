@@ -13,7 +13,8 @@
  * control reads.
  */
 import { describe, it, expect } from 'vitest';
-import { svelteSources, withoutComments } from './markupSources';
+import { withoutComments } from './markupSources';
+import { svelteSources } from './markupTree';
 import { OVERLAY_Z_LIMIT } from '$lib/utils/overlayStack';
 import { readSource, relativeTo } from '../../test/sourceTree';
 

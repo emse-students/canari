@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { allMarkup, withoutComments } from '$lib/styles/markupSources';
+import { withoutComments } from '$lib/styles/markupSources';
+import { allMarkup } from '$lib/styles/markupTree';
 
 /**
  * THE HEADING TYPE RULE (owner, 2026-11-09): the display face (Fredoka) is for the page title (`h1`),

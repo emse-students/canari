@@ -24,7 +24,8 @@
  * disagreed, which is the same reason `associations/accent.test.ts` walks the tree.
  */
 import { describe, it, expect } from 'vitest';
-import { svelteSources, withoutAnyComments } from '$lib/styles/markupSources';
+import { withoutAnyComments } from '$lib/styles/markupSources';
+import { svelteSources } from '$lib/styles/markupTree';
 import { readSource, relativeTo } from '../../../test/sourceTree';
 
 const dir = 'src';

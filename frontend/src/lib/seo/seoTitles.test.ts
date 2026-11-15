@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { allMarkup } from '$lib/styles/markupSources';
+import { allMarkup } from '$lib/styles/markupTree';
 import { PRIVATE_PREFIXES, resolveSeoForPath } from '$lib/seo/resolve';
 import { PUBLIC_SITEMAP_ENTRIES } from '$lib/seo/sitemap';
 import { SITE } from '$lib/seo/site';

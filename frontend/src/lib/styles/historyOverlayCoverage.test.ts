@@ -19,7 +19,8 @@
  * themselves, and they are surfaces checked here like any other.
  */
 import { describe, it, expect } from 'vitest';
-import { svelteSources, withoutComments } from './markupSources';
+import { withoutComments } from './markupSources';
+import { svelteSources } from './markupTree';
 import { readSource, relativeTo } from '../../test/sourceTree';
 
 const src = 'src';

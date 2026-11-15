@@ -30,7 +30,8 @@
  * unswept button in one of these files fails, and so does an entry whose buttons have gone.
  */
 import { describe, it, expect } from 'vitest';
-import { svelteSources, withoutComments } from './markupSources';
+import { withoutComments } from './markupSources';
+import { svelteSources } from './markupTree';
 import { readSource, relativeTo } from '../../test/sourceTree';
 
 const src = 'src';

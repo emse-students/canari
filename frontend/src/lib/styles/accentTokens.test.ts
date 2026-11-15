@@ -21,7 +21,8 @@
  *    ratios the wiki quotes: text 4.5:1, glyph and border 3:1, ink on the fill 4.5:1.
  */
 import { describe, it, expect } from 'vitest';
-import { shippedSources, withoutAnyComments } from './markupSources';
+import { withoutAnyComments } from './markupSources';
+import { shippedSources } from './markupTree';
 import { readSource, relativeTo } from '../../test/sourceTree';
 
 const src = 'src';

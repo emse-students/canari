@@ -19,7 +19,8 @@
  * allowed file fails, and so does an entry whose uses have gone.
  */
 import { describe, it, expect } from 'vitest';
-import { allMarkup, withoutComments } from './markupSources';
+import { withoutComments } from './markupSources';
+import { allMarkup } from './markupTree';
 import { relativeTo, sourceFiles } from '../../test/sourceTree';
 
 const src = 'src';

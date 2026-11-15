@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { allMarkup } from '$lib/styles/markupSources';
+import { allMarkup } from '$lib/styles/markupTree';
 
 /**
  * TRUNCATION IS A LIST AFFORDANCE. A PAGE'S OWN NAME IS NOT A LIST ROW.

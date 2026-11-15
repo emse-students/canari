@@ -28,7 +28,7 @@
  * cell, this class of layer is found by reading, which is how this one was found.
  */
 import { describe, it, expect } from 'vitest';
-import { allMarkup } from './markupSources';
+import { allMarkup } from './markupTree';
 import { readSource } from '../../test/sourceTree';
 import { OVERLAY_Z_BASE, OVERLAY_Z_LIMIT } from '$lib/utils/overlayStack';
 
