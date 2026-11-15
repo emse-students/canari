@@ -83,7 +83,6 @@ earliest version, as a checklist.
 ### Readings owed
 
 - [ ] [every route fits on REAL hardware](backlog.d/reading-owed-every-route-fits-on-real-hardware.md)
-- [ ] [the twelve emoji-picture rows on real devices, the iPhone first](backlog.d/emoji-pictures-the-campaign-rows-which-need-real-devices.md)
 - [ ] [the CanaReels composer, viewer and editor on real content](backlog.d/reading-owed-the-canareels-composer-viewer-and-editor-on-real-content.md)
 - [ ] [the named readers' live chat switch on dev](backlog.d/named-readers-comments-switch-readings-owed.md)
 - [ ] [the in-session community join through the deep link on the phones](backlog.d/p1-owed-one-live-reading-of-the-in-session-join-fix-2026-10-08.md)
