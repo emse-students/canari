@@ -90,6 +90,16 @@ import {
   type PostActivityRow,
   type PostActivityVerdict,
 } from './post-activity-notice';
+import {
+  asUuidSql,
+  targetBoundRowShownSql,
+  UUID_SHAPE,
+  validatorRowServedAsPartySql,
+} from './bell-row-gates';
+import {
+  EVENT_REOPEN_NOTIFICATION_TYPE,
+  type EventReopenReason,
+} from '../associations/event-reopen';
 
 /**
  * A comment or a reaction on the reader's own post is ONE live notification per post (owner,
@@ -206,10 +216,13 @@ export function birthdayRowShownSql(n: string): string {
 }
 
 /**
- * Bell row `n` may be shown: a row of a type that names no post, or a row of a post-bound type
- * (`POST_BOUND_NOTIFICATION_TYPES`) whose post exists, is not hidden by moderation, and its
- * recipient still sees (`getNotifications` says why) - with its comments, for a comment-borne row
- * (`commentBorneNotificationSql`). The types are constants of this module.
+ * Bell row `n` may be shown: a row of a post-bound type (`POST_BOUND_NOTIFICATION_TYPES`) whose post
+ * exists, is not hidden by moderation, and its recipient still sees (`getNotifications` says why) -
+ * with its comments, for a comment-borne row (`commentBorneNotificationSql`); a row naming something
+ * else - an association's queue, an event, a form, a booking space - whose own predicate still admits
+ * its recipient (`targetBoundRowShownSql`, `BELL_ROW_GATE`); a birthday its recipient may still read;
+ * and a row about the recipient's own account. The types are constants of this module and of
+ * `bell-row-gates.ts`.
  *
  * `postId` is a `varchar` that other types fill with ids of their own, so it is cast to `uuid`
  * inside a CASE - evaluated for a post-bound row only, and only when it has a uuid's shape, so a
@@ -218,7 +231,7 @@ export function birthdayRowShownSql(n: string): string {
  */
 export function bellRowShownSql(n: string): string {
   const types = POST_BOUND_NOTIFICATION_TYPES.map((t) => `'${t}'`).join(', ');
-  return `(${birthdayRowShownSql(n)}) AND (${n}.type NOT IN (${types}) OR EXISTS (SELECT 1 FROM posts notif_post
+  return `(${birthdayRowShownSql(n)}) AND ${targetBoundRowShownSql(n)} AND (${n}.type NOT IN (${types}) OR EXISTS (SELECT 1 FROM posts notif_post
     WHERE notif_post.id = (CASE WHEN ${n}.type IN (${types})
         AND ${n}."postId" ~* '${UUID_SHAPE}'
       THEN ${n}."postId"::uuid END)
@@ -247,18 +260,6 @@ export function trendLikedByOfMeta(meta: Record<string, unknown> | null | undefi
   if (!likedBy || typeof likedBy.name !== 'string' || !likedBy.name) return null;
   const others = typeof likedBy.others === 'number' ? Math.max(0, Math.floor(likedBy.others)) : 0;
   return { name: likedBy.name, others };
-}
-
-/** The shape of a uuid, which a varchar column must have before it is cast to one. */
-const UUID_SHAPE = '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
-
-/**
- * `column` (a VARCHAR) as a uuid, or NULL when it does not have the shape of one. Never for a column
- * that already is a `uuid` (`associationId` is, since migration 061): `uuid ~* text` has no operator
- * and fails the whole bell with a 500 (#3019 on dev).
- */
-function asUuidSql(column: string): string {
-  return `(CASE WHEN ${column} ~* '${UUID_SHAPE}' THEN ${column}::uuid END)`;
 }
 
 /**
@@ -1075,6 +1076,9 @@ export class PostNotificationsService {
    * the read is the one answer every one of those paths shares (Opus review of #2859, 2026-11-01,
    * for member reposts; every post-bound type since the review of #2965, 2026-11-02); the row
    * itself is left to the 90-day sweep. A PUSH already delivered to a device cannot be recalled.
+   * A row naming something else is re-asked the same way, against what it names
+   * (`targetBoundRowShownSql`): an event's opening against the event's visibility, a proposal or an
+   * officer's notice against the role that made its reader a recipient (audit of 2026-11-14).
    *
    * ONLY THE TYPES THE READER'S BUILD CAN DRAW are served (`notification-client-floor.ts`):
    * `clientVersion` is what the read's `X-Canari-Client-Version` names, `undefined` when it names
@@ -1084,6 +1088,7 @@ export class PostNotificationsService {
   async getNotifications(userId: string, limit = 30, clientVersion?: string) {
     const rows = await this.bellPageQuery(userId, limit, clientVersion).getMany();
     await this.resolveTrendLikedBy(rows);
+    await this.serveReplacedPartyNotices(rows);
     const proposed = rows.filter((r) => r.type === 'repost_proposed' && r.text);
     if (proposed.length === 0) return rows;
     // A repost proposal's preview is re-asked here, at the read (`repostProposalTextWithheldSql`).
@@ -1099,6 +1104,46 @@ export class PostNotificationsService {
     );
     for (const row of rows) if (ids.has(row.id)) row.text = '';
     return rows;
+  }
+
+  /**
+   * A VALIDATORS' ROW WHOSE READER IS NOW ONLY A PARTY, SERVED AS THE PARTY NOTICE IT REPLACED: a
+   * reopening tells a validator who is also a party once, as a validator (`meta.toldAsParty`), and
+   * the bell keeps that row while either right holds (`BELL_ROW_GATE`). Once the validator's right is
+   * gone (`validatorRowServedAsPartySql`), the row is served under the type and facts the party
+   * notice would have carried (`EVENT_REOPEN_NOTIFICATION_TYPE[meta.reason]`, no `audience`), so every
+   * client - an old build included - opens the agenda, never a validation queue its reader can no
+   * longer open. One statement for the page; a page with no such row reads nothing.
+   */
+  private async serveReplacedPartyNotices(rows: PostNotification[]): Promise<void> {
+    const candidates = rows.filter((r) => r.meta?.toldAsParty === true);
+    if (candidates.length === 0) return;
+    const asParty: { id: string }[] = await this.notifRepo.manager.query(
+      `SELECT n.id FROM post_notifications n
+        WHERE n.id = ANY($1::uuid[]) AND ${validatorRowServedAsPartySql('n')}`,
+      [candidates.map((r) => r.id)]
+    );
+    const ids = new Set(asParty.map((r) => r.id));
+    for (const row of candidates) {
+      if (!ids.has(row.id)) continue;
+      const reason = row.meta?.reason;
+      if (
+        typeof reason !== 'string' ||
+        !Object.prototype.hasOwnProperty.call(EVENT_REOPEN_NOTIFICATION_TYPE, reason)
+      ) {
+        // The writer sets `toldAsParty` only with a reason (`announceEventReopened`): a row without
+        // one was not written by it, and is served as stored.
+        this.logger.warn(
+          `[EVENT_REOPENED] bell row ${row.id.slice(0, 8)}: told as a party with no reopen reason, served as stored`
+        );
+        continue;
+      }
+      row.type = EVENT_REOPEN_NOTIFICATION_TYPE[reason as EventReopenReason];
+      row.meta = { reason, eventId: row.meta?.eventId };
+    }
+    if (ids.size > 0) {
+      this.logger.debug(`[EVENT_REOPENED] ${ids.size} validators' row(s) served as a party notice`);
+    }
   }
 
   /**
