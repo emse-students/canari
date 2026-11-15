@@ -226,7 +226,8 @@ export const BDE_MODERATED_POST_IDS_SQL = `SELECT mp.id::text AS id FROM posts m
  * state and the open report are both read in the statement that decides, so no read learns them by
  * failing. Every read that shows a BDE moderator a post's content asks THIS - one post by id, its
  * comments and its replay (`BDE_MODERATION_READ_OPENS_POST_SQL`), the hidden-posts list
- * (`PostsService.getHiddenPosts`). The writes (hide, delete) keep `BDE_MODERATED_POST_IDS_SQL`,
+ * (`PostsService.getHiddenPosts`), a reported post's preview in the queue
+ * (`ModerationService.listAllReports`). The writes (hide, delete) keep `BDE_MODERATED_POST_IDS_SQL`,
  * unnarrowed. The platform admin is not asked it: their read is unchanged.
  */
 export function bdeModerationReadsPostSql(moderator: string, post: string): string {
