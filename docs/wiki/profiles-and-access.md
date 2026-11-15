@@ -787,12 +787,14 @@ the announce sweep's recipient counts.
 #### By id, what a platform admin may do (2026-11-14)
 
 The same table holds for a BDE `MODERATE` holder on a post within its scope (owner, 2026-11-15,
-*"Oui, dans ses espaces"*); out of scope they are an ordinary reader.
+*"Oui, dans ses espaces"*), except a post scheduled later, which their read opens only once
+published or while an open report targets it (owner, 2026-11-15, *"Exclure les posts programmes"*;
+the platform admin's read is unchanged); out of scope they are an ordinary reader.
 
 | Intent | Route / caller | A platform admin outside the post's audience |
 | --- | --- | --- |
-| Read the post | `GET /api/posts/:id` (`getById` asks `mayModeratePost`, then `allowHidden`) | opens it - hidden, scheduled, a block, "Entre étudiants" included (the moderation read, logged) |
-| Read its comments | `GET /api/posts/:id/comments` (`listComments` asks `mayModeratePost`, then `allowHidden`) | opens them (the moderation read, logged) |
+| Read the post | `GET /api/posts/:id` (`getById` asks `mayReadToModeratePost`, then `allowHidden`) | opens it - hidden, scheduled, a block, "Entre étudiants" included (the moderation read, logged) |
+| Read its comments | `GET /api/posts/:id/comments` (`listComments` asks `mayReadToModeratePost`, then `allowHidden`) | opens them (the moderation read, logged) |
 | Hide, unhide, delete, unmask, delete a comment | `mayModeratePost` / `commentRights` | unchanged: moderation, never a visibility question |
 | React, and the reactions served back | `POST/DELETE /:id/reactions`, `serveReactionsTo` | 404 - an ordinary reader's right; the answer lists their own entry only |
 | Comment, like a comment | `POST /:id/comments`, `POST .../like` (`'COMMENT'`) | 404 |
@@ -807,7 +809,7 @@ The same table holds for a BDE `MODERATE` holder on a post within its scope (own
 | The controls a card draws | served `canParticipate` | false: the card draws no reaction and no double-tap like, and its comment preview and thread are READ-ONLY - no box, like, reply or report, a delete the server grants kept (`CommentsPreview`, `PostComments`, `CommentItem` `readOnly`), so a reported comment is read in context (`/posts/{id}`, the moderation preview). Asked for an admin's page and for a BDE moderator's page holding a post they moderate (`participableIds`); every other signed-in reader is served `true` |
 | Pin in a space | `SpacePinsService` | unchanged: governing a space, judged on the post reaching that space, never on the admin's sight |
 | Watch a live replay, as a viewer | `GET /api/lives/:id/replay` (`LivesService.replay`) | the LIVE's own gate: refused outside its audience; a review account's replay opened (`adminSeesCohort`, as the live's key and manifest) |
-| Watch a live replay, to moderate it | `GET /api/lives/:id/replay?moderation=true` | whoever MODERATES its post (`mayModeratePost`: a platform admin, a BDE `MODERATE` holder within its scope), past the viewer's gate (a removal, a block, the "Entre etudiants" switch), the same key and segment list a viewer gets, logged - the owner's decision of 2026-11-15, [moderation-and-blocking](moderation-and-blocking.md#the-moderation-read-of-a-post-its-comments-and-its-replay-owner-2026-11-15). The client asks it exactly when the post was served with `canParticipate` false - by construction a post only its moderator outside its audience is served (`ReplayPane`), so it plays on `/posts/{id}` and in the moderation preview. Anyone else sending the flag meets the ordinary gate. A live in progress keeps its own rule |
+| Watch a live replay, to moderate it | `GET /api/lives/:id/replay?moderation=true` | whoever MODERATES its post (`mayReadToModeratePost`: a platform admin, a BDE `MODERATE` holder within its scope, a post scheduled later excepted for the latter), past the viewer's gate (a removal, a block, the "Entre etudiants" switch), the same key and segment list a viewer gets, logged - the owner's decision of 2026-11-15, [moderation-and-blocking](moderation-and-blocking.md#the-moderation-read-of-a-post-its-comments-and-its-replay-owner-2026-11-15). The client asks it exactly when the post was served with `canParticipate` false - by construction a post only its moderator outside its audience is served (`ReplayPane`), so it plays on `/posts/{id}` and in the moderation preview. Anyone else sending the flag meets the ordinary gate. A live in progress keeps its own rule |
 
 Inside their own audience a moderator does all of these as the reader they are. Proof:
 `post-openable.integration.spec.ts` (the gate, a grant-only admin's comments, a mention, a report, a
@@ -2690,7 +2692,7 @@ review account. A READ across the boundary returns nothing, as for anything outs
 **AN ADMIN BROWSES LIKE ANY READER, AND THE COHORT IS NOT ONE OF THEIR SPACES.** The house rule holds:
 browsing the feed, the "Live now" list or the agenda, a platform admin sees their own spaces and
 nothing of the cohort. An admin reaches the cohort only by an id: a post opened by its id
-to moderate it (`mayModeratePost`, the moderation read), a profile, and **a review account's live opened by its id (`adminSeesCohort`,
+to moderate it (`mayReadToModeratePost`, the moderation read), a profile, and **a review account's live opened by its id (`adminSeesCohort`,
 `get` and `manifest` only)** - no admin ever shares the cohort's space, so without it a reported live
 of the cohort could be judged by nobody. It opens the key and the manifest and nothing else: the
 admin's chat lines and reactions on that live are refused (`mayWatch`).

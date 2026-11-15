@@ -186,8 +186,18 @@ replaces the lead's "platform admins alone" for all three.
 What it means. Whoever MODERATES a post reads it to judge it, and nobody else: the platform admin
 anywhere, a BDE `MODERATE` holder over what its governed spaces hold (a person's post in one of its
 spaces, an association's it governs; never an institution's or another BDE's) - one predicate,
-`AssociationsService.mayModeratePost` ([who may read the queue](#who-may-read-the-queue)), asked where
-each read is made and never learned by failing the ordinary read first:
+`AssociationsService.mayReadToModeratePost` (the scope of `mayModeratePost`,
+[who may read the queue](#who-may-read-the-queue), with the exclusion below), asked where each read
+is made and never learned by failing the ordinary read first:
+
+**A POST SCHEDULED LATER - OWNER, 2026-11-15:** *"Exclure les posts programmes"*. A BDE moderator's
+moderation read does NOT open a post still waiting for its publication date: it becomes readable to
+them once it is published, or while an OPEN report (`content_reports.status = 'pending'`) targets
+it. Both facts are read in the one statement that decides (`BDE_MODERATION_READ_OPENS_POST_SQL`),
+so the post, its comments and its replay are excluded from ONE place. **The ruling names the BDE
+moderator: the platform admin's read is deliberately left as it was - it still opens a post
+scheduled later.** Hiding and deleting keep their unnarrowed scope (`mayModeratePost`): only the
+read is excluded.
 
 | Read | Where the predicate is asked | Then |
 | --- | --- | --- |
@@ -202,7 +212,7 @@ BDE moderator of other spaces, a member without `MODERATE` - the read is the ord
 Every read the moderation opened past a term is logged as the expected event it is
 (`[MODERATION_READ] <intent> post ... opened to ... as its moderator, past: ...`; the replay's
 `[LIVE_REPLAY] ... MODERATION READ by ...`). The SQL visibility predicate has no admin door left
-(`adminSeesAll` / `adminModerates` are deleted): the moderation read is `mayModeratePost`, nothing else.
+(`adminSeesAll` / `adminModerates` are deleted): the moderation read is `mayReadToModeratePost`, nothing else.
 
 **PARTICIPATION IS UNCHANGED (2026-11-14).** Outside their own audience a moderator - admin or BDE -
 reacts, comments, votes, reports and republishes as the reader they are: the 404 an ordinary reader
@@ -221,8 +231,15 @@ decision and not a widening a screen may take on its own.
 Proved on the real scope predicate over PostgreSQL: `posts/post-openable.integration.spec.ts` (a BDE
 moderator in scope opens a hidden post and one outside its audience and lists their comments; out of
 scope and without `MODERATE`, the ordinary 404; outside its audience, refused a reaction, a comment
-and a vote) and `lives/lives.integration.spec.ts` (the replay, removed and blocked moderators
+and a vote; a post scheduled later refused to them, opened by an open report and once published,
+still opened to a platform admin; a hidden post in a reader's audience answers a non-moderator 403) and `lives/lives.integration.spec.ts` (the replay, removed and blocked moderators
 included).
+
+**Its cost, measured locally (2026-11-15, PostgreSQL 18, jit off, minimum of 9 runs, a throwaway
+database of 3,000 users, 200 associations, ~6,200 memberships, 20,000 posts):** every by-id read and
+comment page now runs the scope statement once, ~0.22 ms and 11 shared buffers, all index probes
+(`posts_pkey`, `users_pkey`, `association_members ("userId")`); the visibility statement is
+unchanged (~1.16 ms before and after). Not measured on dev or production.
 
 #### Decided by the owner (2026-11-04)
 
@@ -443,7 +460,7 @@ window and count), `getById` and `pageComments` all apply it. The identity rules
 | --- | --- |
 | `listPosts` (4 feed arms) | the clause in the `WHERE`, never on the page after `LIMIT` - filtering a rendered page would hand back short pages |
 | `searchPosts` | same clause |
-| `getById` | `404`, not `403` - the refusal never says a block caused it. **Whoever moderates the post passes** (`mayModeratePost`, handed to the gate as `allowHidden`: [the moderation read](#the-moderation-read-of-a-post-its-comments-and-its-replay-owner-2026-11-15)), so a reported post never 404s for the moderator who has to read it |
+| `getById` | `404`, not `403` - the refusal never says a block caused it. **Whoever moderates the post passes** (`mayReadToModeratePost`, handed to the gate as `allowHidden`: [the moderation read](#the-moderation-read-of-a-post-its-comments-and-its-replay-owner-2026-11-15)), so a reported post never 404s for the moderator who has to read it |
 | `findPostLinkedToCalendarEvent` | same card, same clause |
 
 The **comment window and the comment count are both filtered in SQL**, in `postSelectBody`. They

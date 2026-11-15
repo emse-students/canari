@@ -345,7 +345,7 @@ so with the switch off nothing changes for any live.
   association post, a replay alone not: the live had already named its broadcaster) - and the
   **removed viewer** (a viewer the broadcaster removed from the live never sees the replay). Any
   refusal and an expired replay are the same `404 LIVE_NOT_FOUND`. **`?moderation=true`** is the
-  MODERATION READ (owner, 2026-11-15): whoever moderates the replay's post (`mayModeratePost`)
+  MODERATION READ (owner, 2026-11-15): whoever moderates the replay's post (`mayReadToModeratePost`)
   reads it past that gate, logged - the rule of the post by id and its comments (*"Oui, dans ses
   espaces"*); anyone else gets the gate above
   ([moderation-and-blocking](moderation-and-blocking.md#the-moderation-read-of-a-post-its-comments-and-its-replay-owner-2026-11-15)).

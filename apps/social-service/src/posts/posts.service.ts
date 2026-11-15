@@ -2701,7 +2701,7 @@ export class PostsService {
     opts?: {
       /**
        * An already-decided moderation read. Absent, it is asked here of the one predicate,
-       * `mayModeratePost` (owner, 2026-11-15: a platform admin, a BDE moderator in scope).
+       * `mayReadToModeratePost` (owner, 2026-11-15: a platform admin, a BDE moderator in scope).
        */
       allowHidden?: boolean;
       viewerId?: string;
@@ -2733,16 +2733,16 @@ export class PostsService {
 
   /**
    * THE MODERATION READ'S ONE QUESTION (owner, 2026-11-15: "Oui, dans ses espaces"): does this reader
-   * moderate this post - a platform admin, a BDE `MODERATE` holder within its scope
-   * (`AssociationsService.mayModeratePost`, the one predicate). Asked by the reads that may open a
-   * post to moderate it - by id, its comment page - never by a write.
+   * moderate this post - a platform admin, a BDE `MODERATE` holder within its scope, a scheduled post
+   * excepted for the latter (`AssociationsService.mayReadToModeratePost`, the one predicate). Asked
+   * by the reads that may open a post to moderate it - by id, its comment page - never by a write.
    */
   private async moderatesPost(
     postId: string,
     reader: { viewerId?: string; isGlobalAdmin?: boolean } | undefined
   ): Promise<boolean> {
     if (!reader?.viewerId && reader?.isGlobalAdmin !== true) return false;
-    return this.associationsService.mayModeratePost(reader?.viewerId, postId, {
+    return this.associationsService.mayReadToModeratePost(reader?.viewerId, postId, {
       isGlobalAdmin: reader?.isGlobalAdmin === true,
     });
   }

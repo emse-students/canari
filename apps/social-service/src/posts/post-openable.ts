@@ -60,7 +60,7 @@ const moderationReadLog = new Logger('PostModerationRead');
  * The terms, IN THIS ORDER (the order is the read's, and it matters for what a refusal reveals):
  * 1. a reel past its month is gone for everyone (`isExpiredPost`);
  * 2. the audience - `postVisibleToViewerSql`. Every term below it is passed ONLY by `allowHidden`,
- *    the MODERATION READ: the caller moderates this post (`AssociationsService.mayModeratePost`,
+ *    the MODERATION READ: the caller moderates this post (`AssociationsService.mayReadToModeratePost`,
  *    asked by the read that passes it - the post by id, its comment page, a replay's moderation
  *    read; owner 2026-11-15, "Oui, dans ses espaces"). Every other caller - a reaction, a comment, a
  *    comment like or edit, a vote, a report, a mention - asks the ordinary reader's right, so a
@@ -90,7 +90,7 @@ export async function readPostOpenVerdict(
 ): Promise<PostOpenVerdict> {
   if (isExpiredPost(post)) return refuse('not-found', `reel expired at ${String(post.expiresAt)}`);
   // THE MODERATION READ (`allowHidden`): the caller MODERATES this post - decided by the one
-  // predicate, `AssociationsService.mayModeratePost`, where the read is asked (owner, 2026-11-15:
+  // predicate, `AssociationsService.mayReadToModeratePost`, where the read is asked (owner, 2026-11-15:
   // "Oui, dans ses espaces": a platform admin, a BDE `MODERATE` holder within its scope). It reads
   // past every term of a viewer's gate; it never reacts, comments, votes or reports outside the
   // reader's own audience (2026-11-14) - no write route passes it.

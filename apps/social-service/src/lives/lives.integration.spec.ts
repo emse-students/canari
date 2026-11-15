@@ -562,6 +562,11 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         // database: what the replay's moderation read asks.
         mayModeratePost: (userId: string, postId: string, opts?: { isGlobalAdmin?: boolean }) =>
           realModerationScope.mayModeratePost(userId, postId, opts),
+        mayReadToModeratePost: (
+          userId: string,
+          postId: string,
+          opts?: { isGlobalAdmin?: boolean }
+        ) => realModerationScope.mayReadToModeratePost(userId, postId, opts),
       } as unknown as AssociationsService,
       { isUserMuted: async (userId: string) => muted.has(userId) } as unknown as ModerationService,
       seats as unknown as LiveSeats,

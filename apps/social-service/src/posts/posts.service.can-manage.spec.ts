@@ -95,6 +95,10 @@ describe('PostsService post management rights', () => {
       mayModeratePost: jest.fn((userId: string | undefined) =>
         Promise.resolve(!!userId && moderators.includes(userId))
       ),
+      mayReadToModeratePost: jest.fn(
+        (userId: string | undefined, _postId: string, opts?: { isGlobalAdmin?: boolean }) =>
+          Promise.resolve(opts?.isGlobalAdmin === true || (!!userId && moderators.includes(userId)))
+      ),
       refuseModeration: jest.fn(() =>
         Promise.reject(new ForbiddenException({ code: 'MODERATION_OUT_OF_SCOPE' }))
       ),
