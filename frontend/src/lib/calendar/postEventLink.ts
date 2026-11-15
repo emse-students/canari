@@ -52,7 +52,7 @@ export async function openEventLinkedToPost(
     agenda.openDetail(linkedEvent);
     return true;
   } catch (err) {
-    Log.w('[calendar] opening the event of a post failed', err);
+    Log.w('calendar', 'opening the event of a post failed', err);
     return false;
   }
 }

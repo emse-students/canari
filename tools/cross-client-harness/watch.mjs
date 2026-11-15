@@ -2999,7 +2999,6 @@ export const FRESH_DEVICE_FIRST_SESSION_NARRATION = [
   /^\[MLS\] externalJoin [0-9a-f]{8}\.\.\. the tree holds this account's other device and not this one - not built, a member's Add is its door$/,
   /^\[MLS\] fresh key package round waits for the round in flight to settle$/,
   /^\[AUTHORSHIP\] restored (?:deletion of )?[0-9a-f]{8} not provable (?:here|now): \S+ has no leaf in the tree and no pin - no trusted key$/,
-  /^\[AUTHORSHIP\] restored [0-9a-f]{8} carries a proof signed in another group$/,
   /^\[AUTHORSHIP\] \d+ restored message\(s\) in [0-9a-f]{8}… relayed by [0-9a-f]{8} carry no author proof - kept, marked unverified$/,
 ];
 

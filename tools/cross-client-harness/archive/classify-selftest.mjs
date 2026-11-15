@@ -1590,14 +1590,14 @@ const FORGIVE_CASES = [
       ['debug', '[05:01:03.500] [seenHelps] server answered: 7 seen, 0 owed'],
     ],
     FRESH_DEVICE_FIRST_SESSION_NARRATION,
-    { clean: true, unmatched: 49 },
+    { clean: true, unmatched: 48 },
   ],
   [
     // CONTROL: an authorship that cannot be proven for ANOTHER reason is a finding.
     'an authorship unprovable for another reason is not forgiven',
     [['log', '[AUTHORSHIP] restored 82ea8bf4 not provable here: the signature header is malformed']],
     FRESH_DEVICE_FIRST_SESSION_NARRATION,
-    { clean: false, unmatched: 66 },
+    { clean: false, unmatched: 65 },
   ],
   [
     // CONTROL: a seed lost on the way (absorbed short of the bundle, none already held) is a finding.
@@ -1611,6 +1611,14 @@ const FORGIVE_CASES = [
     [['debug', '[05:08:06.000] [GRAINE] absorbed 0/3 seed(s) (3 already held) from c71e1a5b in community d21b475f - salon(s) none']],
     SALON_SESSION_NARRATION,
     { clean: true, unmatched: 22 },
+  ],
+  [
+    // CONTROL: a proof signed in another group (a replay or a moved row) is a security signal no row is
+    // shown to provoke: it stays dirt on the fresh-device list.
+    'a proof signed in another group is not forgiven',
+    [['log', '[AUTHORSHIP] restored 82ea8bf4 carries a proof signed in another group']],
+    FRESH_DEVICE_FIRST_SESSION_NARRATION,
+    { clean: false, unmatched: 65 },
   ],
   [
     // CONTROL: an echo that failed is a finding.

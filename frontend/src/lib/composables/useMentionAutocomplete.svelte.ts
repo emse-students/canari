@@ -361,7 +361,7 @@ export function useMentionAutocomplete(opts: {
     );
     for (const r of unnamed) namesRequested.add(r.id.toLowerCase());
     if (unnamed.length > 0) {
-      Log.d('[mention] resolving roster names', {
+      Log.d('mention', 'resolving roster names', {
         members: roster.length,
         unnamed: unnamed.length,
       });

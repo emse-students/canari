@@ -62,7 +62,7 @@
           );
         }
       }
-      Log.d('[dashboard] probes settled', { mayOpenAdmin, isReviewer, n: memberships.length });
+      Log.d('dashboard', 'probes settled', { mayOpenAdmin, isReviewer, n: memberships.length });
       probesSettled = true;
     });
   });
