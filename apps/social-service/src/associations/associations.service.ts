@@ -1848,8 +1848,9 @@ export class AssociationsService {
    * WHAT THE SHOWCASE DRAWS (owner, 2026-11-02): the name, the role, the promo, whether they sit
    * on the board, and the photo as a URL reached through the roster row (`avatarUrl`,
    * {@link publicMemberAvatarUrl}) rather than through the account. `id` is the roster row's own
-   * random id, the showcase's list key. `userId` and `createdAt` are still served while the
-   * showcase moves its photos onto `avatarUrl` (`PublicMember`). Never the raw permission bitmask.
+   * random id, the showcase's list key. The account id and the joining date are read
+   * here (the review-cohort filter, the order) and NEVER served (`PublicMember`). Never the raw
+   * permission bitmask.
    * Ordered like the public members grid (sortOrder, then createdAt). See
    * docs/wiki/anonymous-surface.md.
    */
@@ -1872,7 +1873,6 @@ export class AssociationsService {
       .filter((r) => !isInReviewCohort(r.m_userId))
       .map((r) => ({
         id: r.m_id,
-        userId: r.m_userId,
         role: r.m_role,
         isAdmin: Number(r.m_permissions ?? 0) > 0,
         // The same precedence every other surface uses - this line built its own, preferring
@@ -1881,7 +1881,6 @@ export class AssociationsService {
         firstName: r.firstName || null,
         lastName: r.lastName || null,
         promo: r.promo ?? null,
-        createdAt: r.m_createdAt,
         avatarUrl: publicMemberAvatarUrl(r.m_id),
       }));
   }
