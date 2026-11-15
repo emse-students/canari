@@ -29,6 +29,7 @@ earliest version, as a checklist.
 - [P1 - the admission rule's fix-forward: a conversation may refuse an entry no member made only once nothing legitimate produces one](backlog.d/p1-the-admission-rule-fix-forward.md)
 - [P1 - push payloads carry nothing for Google and Apple (owner, recorded 2026-11-01; decided and built 2026-11-02, switch OFF; raised from P2 on 2026-11-10 by principle 1 of the charter)](backlog.d/push-payloads-carry-nothing-for-google-and-apple.md)
 - [P1 - blind salon banners: the seed is absent when the push lands](backlog.d/p1-blind-salon-banners-the-failing-branch-is-unnamed.md)
+- [P1 - a backup restore resumed an outbound Graine session at an index it had already used](backlog.d/p1-a-backup-restore-resumed-an-outbound-graine-session-at-a-spent-index.md)
 - [P1 - rows before ratchet: a live drain stores its rows only when its window closes, after a checkpoint may already hold their ratchet advance (raised by the second review of #3321, 2026-11-15)](backlog.d/p1-rows-before-ratchet.md)
 
 **Chantiers, decisions and questions (no severity)**
@@ -65,6 +66,7 @@ earliest version, as a checklist.
 - [P2 - the retention durations a sweep applies are not yet admin settings](backlog.d/retention-durations-not-yet-settings.md)
 - [P2 - what the keyboard readings of 2026-11-14 filed: a photo DM still jumps to older messages, a short thread loads history on close, a 12 px step](backlog.d/what-the-keyboard-readings-of-2026-11-14-filed.md)
 - [P2 - on iOS an edited VIDEO take cannot leave the reel editor ("La capture n'a pas pu etre preparee")](backlog.d/p2-ios-edited-video-take-cannot-export-in-the-reel-editor.md)
+- [P2 - no gate proves that an older build reads, and writes back, the MLS state this build writes](backlog.d/p2-no-gate-proves-an-older-build-reads-the-mls-state-this-build-writes.md)
 
 **P3 - hygiene**
 
@@ -79,11 +81,11 @@ earliest version, as a checklist.
 - [P3 - A salon is read before the key-group drain has finished, so its rows warn "unreadable - missing seed" and are read again later (1.6.11 logs, 2026-11-14)](backlog.d/p3-a-salon-is-read-before-the-key-group-drain-finishes.md)
 - [P3 - "server already unreachable" is logged once per request instead of once per transition (1.6.11 logs, 2026-11-14)](backlog.d/p3-server-already-unreachable-is-logged-per-request.md)
 - [P3 - EXIT-FORTIFY: closing the app on the Mi 9T logs `FORTIFY: pthread_mutex_lock called on a destroyed mutex` from the render thread](backlog.d/reading-owed-exit-fortify-closing-the-app-on-the-mi-9t-logged-fortify-pthread.md)
+- [P3 - a republication-request push tapped on the Mi 9T landed on the feed, not the request inbox (found by the push reading, 2026-11-15)](backlog.d/p3-a-republication-request-push-tapped-on-the-mi-9t-landed-on-the-feed-2026-11-15.md)
 - [P3 - the gated `video-switch` and `video-off-on` call rows read 19.6-25 fps against a threshold of 27](backlog.d/p3-the-gated-video-switch-and-video-off-on-rig-rows-read-19-6-25-fps-threshold-27.md)
 
 ### Readings owed
 
-- [ ] [every route fits on REAL hardware](backlog.d/reading-owed-every-route-fits-on-real-hardware.md)
 - [ ] [the CanaReels composer, viewer and editor on real content](backlog.d/reading-owed-the-canareels-composer-viewer-and-editor-on-real-content.md)
 - [ ] [the named readers' live chat switch on dev](backlog.d/named-readers-comments-switch-readings-owed.md)
 - [ ] [the in-session community join through the deep link on the phones](backlog.d/p1-owed-one-live-reading-of-the-in-session-join-fix-2026-10-08.md)
@@ -169,6 +171,7 @@ earliest version, as a checklist.
 - [P2 - one tap from Canari signs the user into its MiConnect sites, and MiGallery's notifications go through Canari (owner, 2026-11-07: decided; Canari's half of the handoff built 2026-11-08, MiGallery's flag ON 2026-11-14, the others OFF)](backlog.d/sign-in-handoff-to-the-ecosystem-sites-and-migallery-notifications.md)
 - [P2 - a reply or a mention aimed at a post's AUTHOR is sent as a "comment" (it read "a commente" and the daily cap swallowed it; the cap half is fixed by #3579)](backlog.d/p2-a-reply-or-mention-of-a-post-s-author-is-pushed-as-a-comment-and-capped.md)
 - [P2 - iOS: a quick reply from a suspended app is not sent in the background time, it waits for the next open](backlog.d/p2-ios-quick-reply-from-a-suspended-app-waits-for-the-next-open.md)
+- [P2 - the web catch-up decrypt session marks frames seen before its state is installed in the live client](backlog.d/p2-web-catch-up-marks-frames-seen-before-its-state-is-live.md)
 
 **P3 - hygiene**
 

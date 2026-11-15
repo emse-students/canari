@@ -32,7 +32,7 @@ import type {
   PendingMutationReseal,
   PendingMutationWrite,
 } from './types';
-import { FeedPageUnreadableError } from './types';
+import { FeedPageUnreadableError, StoreWriteRefusedError } from './types';
 import {
   joinPendingMutation,
   pendingMessageTag,
@@ -2326,10 +2326,19 @@ export class IndexedDbStorage implements IStorage {
     return out.sort(byNewestSession);
   }
 
-  async saveGraineSession(session: StoredGraineSession, deviceKeyB64: string): Promise<void> {
+  async saveGraineSession(
+    session: StoredGraineSession,
+    deviceKeyB64: string,
+    onlyWhile?: () => boolean
+  ): Promise<void> {
     const db = this.ensureDb();
     const encrypted = await encryptData(encodeGraineSensitive(session), deviceKeyB64);
     const row = { ...graineClearColumns(session), ...encrypted };
+    // Read in the task that creates the transaction: a transaction created later (another tab's
+    // read) is ordered after this one, so the condition held for everything that reads this write.
+    if (onlyWhile && !onlyWhile()) {
+      throw new StoreWriteRefusedError(`the Graine session ${session.sessionId}`);
+    }
     return new Promise((resolve, reject) => {
       const tx = db.transaction('graine', 'readwrite');
       tx.objectStore('graine').put(row);

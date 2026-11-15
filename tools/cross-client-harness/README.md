@@ -594,12 +594,14 @@ reported FAIL against a page that was visibly rendering posts, because it counte
 
 `burn.mjs` is the one to copy the SHAPE of. It reproduces a RACE - send, reload inside the
 unawaited-checkpoint window, send again - and a run that loses that race delivers the second message
-exactly like a run that wins it. So it reads the premise separately from the result (the durable
-send-ledger's deficit, before and after the reload) and answers `INCONCLUSIVE` rather than `PASS`
-when the window was never entered. It does NOT rest its verdict on the repair's log line either: a
-reload that skips the PIN gate initialises before a session can attach, and on the passing run that
-line was missed entirely while the repair had plainly happened. The reload is gated on the ledger
-actually showing a deficit, because a fixed delay cannot reliably enter a window ~58 ms wide on web.
+exactly like a run that wins it. So it reads the premise separately from the result and answers
+`INCONCLUSIVE` rather than `PASS` when the window was never entered. Since KILL-2 (#2515) the send
+ledger's `persisted` half is sealed inside the MLS state, so the deficit is no longer readable from
+the page: the reload is fired the instant the `emitted` count in IndexedDB moves (the frame is
+counted, after its encrypt and before its POST, because a fixed delay cannot reliably enter a window
+~58 ms wide on web), and the premise is the repair's own line on the load (`Restored state for ... was
+N generation(s) behind`). A reload that skips the PIN gate initialises before the session re-attaches
+and can miss that line; such a run is `INCONCLUSIVE`, never a pass.
 
 **Tools** - `launch.mjs` `reload.mjs` `bundle-id.mjs` `cleanup.mjs` `dismiss.mjs` `shot.mjs` `navstack.mjs` `state.mjs` `results.mjs` `verdicts.mjs`
 
