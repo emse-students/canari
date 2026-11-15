@@ -1,9 +1,11 @@
-import { ConflictException } from '@nestjs/common';
+import { ConflictException, ValidationPipe } from '@nestjs/common';
 import type { Repository } from 'typeorm';
 import { Logger } from '@nestjs/common';
 import * as signature from '../lives/live-report-signature';
 import { LIVE_KEY_ENCRYPTION_SECRET_ENV, sealLiveKey } from '../lives/live-key-at-rest';
 import { ModerationService } from './moderation.service';
+import { ModerationController } from './moderation.controller';
+import { CreateReportDto } from './dto/moderation.dto';
 import { reportInBdeScopeSql } from '../spaces/bde-moderation';
 import type { ContentReport } from './entities/content-report.entity';
 import type { UserModeration } from './entities/user-moderation.entity';
@@ -200,12 +202,84 @@ describe('ModerationService - reports', () => {
         contentType: 'comment',
         contentId: 'c1',
         reason: 'spam',
-        reportedUserId: 'spoofed',
       });
 
       expect(reportRepo.save).toHaveBeenCalledWith(
         expect.objectContaining({ reportedUserId: 'real-writer' })
       );
+    });
+
+    it.each([
+      ['a personal post: its author', {}, 'author'],
+      [
+        'an anonymous personal post: its author still, for the moderators',
+        { anonymous: true },
+        'author',
+      ],
+      ["a post in an association's name: nobody", { associationId: 'asso-1' }, null],
+    ] as const)(
+      'reads who a reported post is about from the post - %s',
+      async (_case, post, about) => {
+        answerGate({ post });
+        await service.createReport({
+          reporterId: 'alice',
+          contentType: 'post',
+          contentId: POST_ID,
+          reason: 'spam',
+        });
+
+        expect(reportRepo.save).toHaveBeenCalledWith(
+          expect.objectContaining({ contentType: 'post', reportedUserId: about })
+        );
+      }
+    );
+
+    describe('what the route takes and answers', () => {
+      const route = () =>
+        new ModerationController(service, { isContentModerator: jest.fn() } as never);
+
+      it('drops a `reportedUserId` a client sends: who a report is about is not the reporter`s to say', async () => {
+        // The service's global pipe (main.ts): unknown fields are stripped, not refused, so a
+        // shipped client that still sends it is answered as before.
+        const pipe = new ValidationPipe({ whitelist: true, transform: true });
+        const dto = (await pipe.transform(
+          { contentType: 'post', contentId: POST_ID, reason: 'spam', reportedUserId: 'mallory' },
+          { type: 'body', metatype: CreateReportDto }
+        )) as CreateReportDto;
+        expect(dto).not.toHaveProperty('reportedUserId');
+
+        await route().createReport('alice', dto);
+        expect(reportRepo.save).toHaveBeenCalledWith(
+          expect.objectContaining({ contentId: POST_ID, reportedUserId: 'author' })
+        );
+      });
+
+      it('answers the reporter a receipt, never the account behind what they reported', async () => {
+        // An anonymous comment is served without its writer; the stored report holds it, for the
+        // moderators. The reporter is told the report exists, and nothing about who it names.
+        answerGate({ comment: { id: 'c1', userId: 'real-writer', anonymous: true } });
+        reportRepo.save.mockImplementation((row) =>
+          Promise.resolve({ id: 'r1', status: 'pending', createdAt: new Date(0), ...row })
+        );
+
+        const answer = await route().createReport('alice', {
+          contentType: 'comment',
+          contentId: 'c1',
+          reason: 'spam',
+        } as CreateReportDto);
+
+        expect(reportRepo.save).toHaveBeenCalledWith(
+          expect.objectContaining({ reportedUserId: 'real-writer' })
+        );
+        expect(answer).toEqual({
+          id: 'r1',
+          contentType: 'comment',
+          contentId: 'c1',
+          status: 'pending',
+          createdAt: new Date(0),
+        });
+        expect(JSON.stringify(answer)).not.toContain('real-writer');
+      });
     });
 
     it('refuses a duplicate with a code, not with a sentence a client would have to read', async () => {
@@ -261,7 +335,6 @@ describe('ModerationService - reports', () => {
         contentType: 'user',
         contentId: 'bob',
         reason: 'harassment',
-        reportedUserId: 'bob',
       });
 
       expect(reportRepo.save).toHaveBeenCalledWith(
@@ -340,7 +413,6 @@ describe('ModerationService - reports', () => {
         contentType: 'live',
         contentId: LIVE.toUpperCase(),
         reason: 'inappropriate',
-        reportedUserId: 'mallory',
       });
 
       expect(reportRepo.save).toHaveBeenCalledWith(

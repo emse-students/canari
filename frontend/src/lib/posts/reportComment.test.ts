@@ -44,12 +44,11 @@ describe.each([
   it('filed: thanks', async () => {
     h.createReport.mockResolvedValue({});
     await expect(report()).resolves.toEqual({ ok: true, message: filed() });
+    // Who it is about is never sent: the server reads it from the content.
     expect(h.createReport).toHaveBeenCalledWith(
       kind,
       kind === 'post' ? POST.id : COMMENT.id,
-      'spam',
-      undefined,
-      kind === 'post' ? 'author' : 'writer'
+      'spam'
     );
   });
 

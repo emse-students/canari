@@ -546,6 +546,27 @@ maybe("writes and notifications on a post follow the read's gate, against Postgr
         expect(await preview('modInScope')).toEqual([null, null]);
         expect(reads()).toEqual([]);
         expect(await preview('adminOutside', true)).toEqual(['not out yet', 'a word under it']);
+        // The admin's page serves both texts; the line is about what an OPEN report served - the
+        // comment's, here - and names the post once.
+        expect(reads()).toHaveLength(1);
+        expect(reads()[0]).toContain(P_SCHEDULED.slice(0, 8));
+        // A comment with media only has no text to serve: nothing was read, nothing is logged.
+        logged.mockClear();
+        await client.query(`UPDATE posts SET comments = $2 WHERE id = $1`, [
+          P_SCHEDULED,
+          JSON.stringify([{ id: 'c-under-scheduled', userId: 'author', media: ['m1'] }]),
+        ]);
+        expect(await preview('adminOutside', true)).toEqual(['not out yet', null]);
+        expect(reads()).toEqual([]);
+        await client.query(`UPDATE posts SET comments = $2 WHERE id = $1`, [
+          P_SCHEDULED,
+          JSON.stringify([{ id: 'c-under-scheduled', userId: 'author', text: 'a word under it' }]),
+        ]);
+        // Every report handled: the rows stay listed and the admin's page shows the same texts at
+        // every load, about nothing left to decide - not logged again and again.
+        await client.query(`UPDATE content_reports SET status = 'dismissed'`);
+        expect(await preview('adminOutside', true)).toEqual(['not out yet', 'a word under it']);
+        expect(reads()).toEqual([]);
         await client.query(
           `UPDATE posts SET "scheduledAt" = now() - interval '1 minute' WHERE id = $1`,
           [P_SCHEDULED]

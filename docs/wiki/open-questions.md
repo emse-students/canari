@@ -745,3 +745,18 @@ all - neither the read grants of 2026-10-07 nor the comments switch that narrows
 C5 already says what they read ([register](compliance/register-of-processing.md)). Whether the public
 policy should say it too is the owner's call. Moved here when its reading entry was deleted on the
 owner's decision of 2026-11-15 ("Supprimer cette lecture"), so the question is not lost with it.
+
+## Should a BDE moderator read a reported COMMENT under a post that is not out yet? (asked 2026-11-15)
+
+**Today**: a BDE moderator's read of a post scheduled later opens only once it is published, or while
+an OPEN report targets the POST (owner, 2026-11-15: *"Exclure les posts programmes"*;
+[the moderation read](moderation-and-blocking.md#the-moderation-read-of-a-post-its-comments-and-its-replay-owner-2026-11-15)).
+A comment reported under such a post is listed in the moderator's queue, in scope, WITHOUT its text
+until then; the platform admin reads it.
+
+**Why it is a question**: the report is theirs to handle and they cannot read what it is about. The
+reading taken, reversible: the [charter](../principes.md)'s first principle wins - the post is not
+published, so nothing under it is the BDE's to read on a comment's report alone - and the platform
+admin is the recourse. The other answer is that an open report on a comment opens that one comment
+(not its post) to the moderator in scope. In practice a comment under an unpublished post is rare:
+only the author's side can write one.
