@@ -57,7 +57,10 @@ maybe('platform admin create and catalogue against PostgreSQL', () => {
     name: string,
     opts: {
       type?: 'association' | 'list' | 'institution';
-      audiences?: { formation: null; campus: 'saint-etienne' | 'gardanne' | null }[];
+      audiences?: {
+        formation: 'ICM' | 'ISMIN' | null;
+        campus: 'saint-etienne' | 'gardanne' | null;
+      }[];
       firstAdmin?: { userId: string; permissions: number };
     } = {}
   ) =>
@@ -260,17 +263,41 @@ maybe('platform admin create and catalogue against PostgreSQL', () => {
   });
 
   it('writes exactly the spaces chosen - never the creator campus default', async () => {
+    // Two formations of ONE campus, and not the creator's: an association addresses one campus.
     const created = await adminCreate('Placee', {
       audiences: [
-        { formation: null, campus: 'saint-etienne' },
-        { formation: null, campus: 'gardanne' },
+        { formation: 'ICM', campus: 'gardanne' },
+        { formation: 'ISMIN', campus: 'gardanne' },
       ],
     });
     const rules = await audiences.find({ where: { associationId: created.id } });
-    expect(rules.map((r) => r.campus).sort()).toEqual(['gardanne', 'saint-etienne']);
+    expect(rules.map((r) => `${r.formation}|${r.campus}`).sort()).toEqual([
+      'ICM|gardanne',
+      'ISMIN|gardanne',
+    ]);
 
     const nowhere = await adminCreate('Nulle Part');
     expect(await audiences.count({ where: { associationId: nowhere.id } })).toBe(0);
+  });
+
+  it('refuses a placement on two campuses for an association or a list, before any write; an institution may hold one', async () => {
+    const twoCampuses = [
+      { formation: null, campus: 'saint-etienne' } as const,
+      { formation: 'ICM', campus: 'gardanne' } as const,
+    ];
+    const before = await assos.count();
+    for (const type of ['association', 'list'] as const) {
+      await expect(
+        adminCreate(`Deux campus ${type}`, { type, audiences: twoCampuses })
+      ).rejects.toMatchObject({ response: { code: AUDIENCE_ERROR.ONE_CAMPUS_ONLY } });
+    }
+    expect(await assos.count()).toBe(before);
+
+    const school = await adminCreate('Ecole des deux campus', {
+      type: 'institution',
+      audiences: twoCampuses,
+    });
+    expect(await audiences.count({ where: { associationId: school.id } })).toBe(2);
   });
 
   it('refuses an everyone rule on an association, before any write', async () => {
@@ -350,9 +377,9 @@ maybe('platform admin create and catalogue against PostgreSQL', () => {
 
   it('a row carries its audience rules; a forged cursor is a typed 400', async () => {
     const page = await service.adminCatalogue({ type: 'association', q: 'placee' });
-    expect(page.rows[0].audiences.map((r) => r.campus).sort()).toEqual([
-      'gardanne',
-      'saint-etienne',
+    expect(page.rows[0].audiences.map((r) => `${r.formation}|${r.campus}`).sort()).toEqual([
+      'ICM|gardanne',
+      'ISMIN|gardanne',
     ]);
 
     const forged = (value: unknown) =>

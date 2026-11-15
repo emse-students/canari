@@ -814,11 +814,16 @@ describe('SpacesService', () => {
           governs: true,
         };
         const { service, manager } = make(o);
+        // Moving the list to the other campus: a space of a BDE the star manages, not the parent's.
+        expect(await code(service.setAudiences('a', [{ campus: 'saint-etienne' }], STAR))).toBe(
+          'AUDIENCE_RULE_BEYOND_BDE_SPACES'
+        );
+        // Both campuses at once is refused for what the entity IS, before any bound is read.
         expect(
           await code(
             service.setAudiences('a', [{ campus: 'gardanne' }, { campus: 'saint-etienne' }], STAR)
           )
-        ).toBe('AUDIENCE_RULE_BEYOND_BDE_SPACES');
+        ).toBe('AUDIENCE_ONE_CAMPUS_ONLY');
         expect(manager.insert).not.toHaveBeenCalled();
         await expect(
           make(o).service.setAudiences('a', [{ formation: 'ICM', campus: 'gardanne' }], STAR)

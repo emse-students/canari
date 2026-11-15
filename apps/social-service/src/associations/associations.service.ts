@@ -969,6 +969,9 @@ export class AssociationsService {
           where: { bdeAssociationId: dependency.parentId },
         });
         const fromParent = smallestRules(governed);
+        // The default is an audience like any other: a parent governing spaces of two campuses
+        // cannot hand both to one child (decision 3). Thrown here, the row saved above rolls back.
+        assertAudienceAllowedForType(dto.type ?? 'association', fromParent);
         this.logger.log(
           `[spaces] ${saved.id} reaches its parent's spaces: ${fromParent.map((r) => `${r.formation ?? '*'}|${r.campus ?? '*'}`).join(', ')}`
         );
