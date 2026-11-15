@@ -31,7 +31,7 @@ export const LIVE_OPEN_KEY = `{${LIVE_SEATS_KEY}}:open`;
  * close INSIDE Redis: the close writes it before it empties {@link LIVE_OPEN_KEY}, and the open
  * refuses a live found here. So a broadcaster's write that read its live open in PostgreSQL and
  * then lost to an end cannot reopen it, whatever order the two reach Redis in. Removed with the
- * live's other keys at its purge ({@link FORGET_CLOSED_LUA}).
+ * live's other keys at its purge ({@link FORGET_LIVE_LUA}).
  */
 export const LIVE_CLOSED_KEY = `{${LIVE_SEATS_KEY}}:closed`;
 
@@ -126,8 +126,8 @@ return redis.call('ZREM', KEYS[1], ARGV[1])
  * its member prefix `<liveId>:`; ARGV[3] `1` to give every seat of the live back too (a cut, an
  * erasure, a row-less folder), `0` to keep them (an ordinary end: its purge waits for them). The
  * live's barred entries go either way - a closed live refuses everybody. Reply: how many seats went.
- * Both sets read whole are bounded (the seats by the cap, the bars by the removals of the lives now
- * open), a few dozen members.
+ * Both sets are read whole: the seats are bounded by the cap, the bars by the viewers removed from
+ * the lives now open.
  */
 export const CLOSE_LIVE_LUA = `
 redis.call('SADD', KEYS[4], ARGV[1])
@@ -148,10 +148,18 @@ return n
 `;
 
 /**
- * Forgets a PURGED live's tombstone. KEYS[1] the closed lives; ARGV[1] the live id. The row is gone
- * by then, so the watch rule refuses the live in PostgreSQL before any take is asked.
+ * Forgets a PURGED live: its tombstone, and whatever an open that crossed the end left of it in the
+ * open lives and the barred viewers. KEYS[1] the open lives, KEYS[2] the barred viewers, KEYS[3] the
+ * closed lives; ARGV[1] the live id, ARGV[2] its member prefix. The row is gone by then, so the
+ * watch rule refuses the live in PostgreSQL before any take is asked.
  */
-export const FORGET_CLOSED_LUA = `return redis.call('SREM', KEYS[1], ARGV[1])`;
+export const FORGET_LIVE_LUA = `
+redis.call('SREM', KEYS[1], ARGV[1])
+for _, m in ipairs(redis.call('SMEMBERS', KEYS[2])) do
+  if string.sub(m, 1, #ARGV[2]) == ARGV[2] then redis.call('SREM', KEYS[2], m) end
+end
+return redis.call('SREM', KEYS[3], ARGV[1])
+`;
 
 /**
  * HOW MANY SEATS ONE LIVE HOLDS, READ ONLY - the broadcaster's viewer count (it takes no seat, so
@@ -522,10 +530,14 @@ export class LiveSeats {
   }
 
   /**
-   * Forgets a purged live's tombstone ({@link FORGET_CLOSED_LUA}), with its other keys. Idempotent;
-   * throws on a Redis failure.
+   * Forgets a purged live in the three sets ({@link FORGET_LIVE_LUA}), with its other keys.
+   * Idempotent; throws on a Redis failure.
    */
-  async forgetClosed(liveId: string): Promise<void> {
-    await this.redis.evalScript(FORGET_CLOSED_LUA, [LIVE_CLOSED_KEY], [liveId.toLowerCase()]);
+  async forget(liveId: string): Promise<void> {
+    await this.redis.evalScript(
+      FORGET_LIVE_LUA,
+      [LIVE_OPEN_KEY, LIVE_BARRED_KEY, LIVE_CLOSED_KEY],
+      [liveId.toLowerCase(), seatMember(liveId, '')]
+    );
   }
 }

@@ -270,7 +270,10 @@ class MemorySeats {
     return gone.length;
   }
 
-  async forgetClosed(liveId: string): Promise<void> {
+  async forget(liveId: string): Promise<void> {
+    const prefix = seatMember(liveId, '');
+    this.openLives.delete(liveId.toLowerCase());
+    for (const m of this.barred) if (m.startsWith(prefix)) this.barred.delete(m);
     this.closedLives.delete(liveId.toLowerCase());
   }
 
@@ -1273,8 +1276,14 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
      * take run - the exact order that used to seat a viewer for a lease on a live that was over.
      */
     describe('a take that lands after an end, a removal, or a loss of Redis', () => {
-      /** Stalls the next takes inside the seat store until `release()`; `entered` resolves at the first. */
-      const stallTakes = () => {
+      /**
+       * Runs `during` while every take is stalled inside the seat store, from the moment the first
+       * one entered it, then lets them go. The store's own `take` is put back whatever happens.
+       */
+      const whileTakesStall = async (
+        requests: () => Promise<unknown>[],
+        during: () => Promise<unknown>
+      ): Promise<unknown[]> => {
         const take = seats.take.bind(seats);
         let enter!: () => void;
         const entered = new Promise<void>((resolve) => (enter = resolve));
@@ -1285,23 +1294,26 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
           await gate;
           return take(liveId, viewerId);
         };
-        return {
-          entered,
-          release: () => {
-            release();
-            seats.take = take;
-          },
-        };
+        try {
+          const pending = requests();
+          await entered;
+          await during();
+          release();
+          return await Promise.all(pending);
+        } finally {
+          release();
+          seats.take = take;
+        }
       };
+      const code = (r: unknown) => (r as { code: string }).code;
 
       it('a CUT that finishes while a key read is between its check and its take: 410, no seat', async () => {
         const live = await start();
-        const stalled = stallTakes();
-        const joining = refusal(lives.get(BOB, live.id));
-        await stalled.entered;
-        await lives.cut('9'.repeat(64), live.id, { reason: 'spam' });
-        stalled.release();
-        expect((await joining).code).toBe('LIVE_ENDED');
+        const [joined] = await whileTakesStall(
+          () => [refusal(lives.get(BOB, live.id))],
+          () => lives.cut('9'.repeat(64), live.id, { reason: 'spam' })
+        );
+        expect(code(joined)).toBe('LIVE_ENDED');
         expect(seats.held.size).toBe(0);
       });
 
@@ -1309,28 +1321,47 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         const live = await start();
         await lives.ingest(ALICE, live.id, 0, segment(0));
         await lives.get(BOB, live.id);
-        const stalled = stallTakes();
-        const joining = refusal(lives.get(CAROL, live.id));
-        const renewing = refusal(lives.manifest(BOB, live.id));
-        await stalled.entered;
-        await lives.end(ALICE, live.id);
-        stalled.release();
-        expect((await joining).code).toBe('LIVE_ENDED');
-        expect((await renewing).code).toBe('LIVE_ENDED');
+        const [joined, renewed] = await whileTakesStall(
+          () => [refusal(lives.get(CAROL, live.id)), refusal(lives.manifest(BOB, live.id))],
+          () => lives.end(ALICE, live.id)
+        );
+        expect(code(joined)).toBe('LIVE_ENDED');
+        expect(code(renewed)).toBe('LIVE_ENDED');
         expect([...seats.held]).toEqual([`${live.id}:${BOB}`]);
       });
 
       it('a REMOVAL that finishes while the removed viewer is between its check and its take: 403, no seat', async () => {
         const live = await start();
-        const stalled = stallTakes();
-        const joining = refusal(lives.get(BOB, live.id));
-        await stalled.entered;
-        await lives.removeViewer(ALICE, live.id, BOB);
-        stalled.release();
-        expect((await joining).code).toBe('LIVE_VIEWER_REMOVED');
+        const [joined] = await whileTakesStall(
+          () => [refusal(lives.get(BOB, live.id))],
+          () => lives.removeViewer(ALICE, live.id, BOB)
+        );
+        expect(code(joined)).toBe('LIVE_VIEWER_REMOVED');
         expect(seats.held.size).toBe(0);
         // Another viewer of the same live is seated as before.
         await expect(lives.get(CAROL, live.id)).resolves.toMatchObject({ id: live.id });
+      });
+
+      it('THE INGEST says the live open WHILE ITS RESERVATION STANDS, so that write cannot follow a purge', async () => {
+        const live = await start();
+        seats.wipe();
+        const open = seats.open.bind(seats);
+        const pendingAtOpen: unknown[] = [];
+        seats.open = async (liveId: string, removed: readonly string[]) => {
+          pendingAtOpen.push(
+            ...(await q(`SELECT "pendingName" IS NOT NULL AS pending FROM lives WHERE id = $1`, [
+              liveId,
+            ]))
+          );
+          return open(liveId, removed);
+        };
+        try {
+          await lives.ingest(ALICE, live.id, 0, segment(0));
+        } finally {
+          seats.open = open;
+        }
+        expect(pendingAtOpen).toEqual([{ pending: true }]);
+        expect(seats.openLives.has(live.id)).toBe(true);
       });
 
       it('a segment whose commit read the live open, then lost to the end, reopens nothing', async () => {

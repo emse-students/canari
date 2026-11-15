@@ -901,15 +901,23 @@ export class LivesService implements OnModuleDestroy {
     if (step.kind === 'ended') throw liveEnded(step.endedAt, step.endReason);
 
     // NO TRANSACTION IS OPEN HERE: the reservation committed, and the store may take its time.
+    // THE LIVE IS SAID OPEN TO REDIS NOW, beside the store and awaited before the reservation is
+    // given up (the confirm, or the release): the reservation just read the live open, and while it
+    // stands the purge keeps the row and its tombstone, so this write can never follow a purge -
+    // an end that crossed it finds the tombstone and is not undone ({@link openToSeats}). It never
+    // rejects, and costs the ingest slot nothing unless Redis answers slower than the store.
+    const opening = this.openToSeats(liveId);
     try {
       await this.store.store(liveId, step.name, data);
     } catch (e) {
       this.logger.warn(
         `[LIVE] segment ${index} of ${liveId} not stored, reservation released: ${causeOf(e)}`
       );
+      await opening;
       await this.release(liveId, step.name);
       throw new ServiceUnavailableException({ code: 'LIVE_STORE_UNAVAILABLE' });
     }
+    await opening;
 
     const outcome = await this.confirm(liveId, index, step.name, data.length, sha256);
     if (outcome.kind === 'ended') {
@@ -918,8 +926,6 @@ export class LivesService implements OnModuleDestroy {
       await this.purgeBestEffort(liveId, 'after an ingest that met the end');
       throw liveEnded(outcome.endedAt, outcome.endReason);
     }
-    // The segment's commit read the live open: said again to Redis, which a wipe may have emptied.
-    await this.openToSeats(liveId);
     // Segment 0 claimed the live's announcement in its own commit (WP-L7): the push goes after that
     // commit, NOT AWAITED - segment 0's answer and this ingest's slot do not wait for the audience
     // query and the fan-out. Once per live still holds: the claim is the commit, not this call.
@@ -2354,10 +2360,8 @@ export class LivesService implements OnModuleDestroy {
     });
     // The row is gone: the watch rule now refuses this live before any take is asked, so the
     // tombstone that refused its reopening has nothing left to order.
-    await this.seats.forgetClosed(liveId).catch((e: unknown) => {
-      this.logger.warn(
-        `[LIVE_SEAT] ${liveId}: purged live's tombstone left in Redis: ${String(e)}`
-      );
+    await this.seats.forget(liveId).catch((e: unknown) => {
+      this.logger.warn(`[LIVE_SEAT] ${liveId}: purged live's entries left in Redis: ${String(e)}`);
     });
     this.logger.debug(`[LIVE_GC] ${liveId} deleted (${result.deleted} segment object(s))`);
     return 'deleted';
@@ -2555,17 +2559,17 @@ export class LivesService implements OnModuleDestroy {
 
   /**
    * Says to Redis that the live is open to seats, with the viewers removed from it
-   * (`LiveSeats.open`): at the start, and after every stored segment - whose commit just read the
-   * live open - so a Redis that lost its data knows the live again within a segment, its removals
-   * re-read from the database.
+   * (`LiveSeats.open`): at the start, and with every segment while its reservation stands - so a
+   * Redis that lost its data knows the live again within a segment, its removals re-read from the
+   * database.
    *
    * NO LOCK AND NO TRANSACTION AROUND THE REDIS CALL: the order against an end is Redis's own. An
    * end closes the live there after its commit, and the open script refuses a closed live, so a
    * write that read the live open and then lost to an end reopens nothing. The removals are added,
    * never replaced: a removal committed after this read has written its own bar.
    *
-   * Best effort - a failure must not fail a start or a segment - and it accuses: until the next
-   * segment's succeeds, no viewer is seated.
+   * Best effort - it never rejects, a failure must not fail a start or a segment - and it accuses:
+   * until the next segment's succeeds, no viewer is seated.
    *
    * @param removedViewers the removals when the caller knows them (none at a start); read otherwise.
    */
@@ -2598,7 +2602,8 @@ export class LivesService implements OnModuleDestroy {
    * only THAT it refused; the row says why, so the watch rule is asked again and throws the typed
    * refusal (410, 403, 404). If the row still allows the viewer, Redis does not know a live that
    * is open - it lost its data, or the start's write failed: 503 `LIVE_SEATS_UNAVAILABLE` and a
-   * line that accuses, until the broadcaster's next segment says it again ({@link openToSeats}).
+   * line that accuses ({@link seatsUnknown}), until the broadcaster's next segment says it again
+   * ({@link openToSeats}).
    * Refusing is the only safe reading of an unknown live: admitting would be the uncounted seat.
    *
    * Answers the live's viewer count as the take counted it, or `null` for the broadcaster (no seat,
@@ -2615,11 +2620,10 @@ export class LivesService implements OnModuleDestroy {
     } catch (e) {
       if (!(e instanceof LiveSeatRefused)) throw e;
       await this.assertMayWatch(this.db.manager, viewerId, row.id, WATCH_ONLY);
-      this.logger.error(
-        `[LIVE_SEAT] ${row.id}: Redis holds the live ${e.why} to ${short(viewerId)} while its row is open and allows them - no seat until the next segment says it again`
-      );
+      this.seatsUnknown(row.id, e.why);
       throw new ServiceUnavailableException({ code: 'LIVE_SEATS_UNAVAILABLE' });
     }
+    this.seatsKnown(row.id);
     // THE ARRIVAL (owner, 2026-11-07): noted once per viewer per live, and NEVER for a reader the
     // chat is withheld from - they take no part in it, so nobody is told they are here - nor for
     // one who watches only through the review cohort's exception (a platform admin judging a report:
@@ -2629,6 +2633,32 @@ export class LivesService implements OnModuleDestroy {
       await this.noteArrival(row.id, viewerId);
     }
     return watching;
+  }
+
+  /**
+   * The lives Redis refuses seats on while their row is open, each with the takes refused since the
+   * first: durable state, no timer, as {@link arrivalOutages}. The FIRST refusal is logged at ERROR
+   * (it accuses); the ones after it - every poll of every viewer until a segment lands - only
+   * count, and the first seat granted again says how many. The purge forgets what is left.
+   */
+  private readonly unknownToRedis = new Map<string, number>();
+
+  private seatsUnknown(liveId: string, why: LiveSeatRefused['why']): void {
+    const refused = this.unknownToRedis.get(liveId);
+    this.unknownToRedis.set(liveId, (refused ?? 0) + 1);
+    if (refused !== undefined) return;
+    this.logger.error(
+      `[LIVE_SEAT] ${liveId}: Redis holds the live ${why} while its row is open and allows the viewer - no seat until its next segment says it again (further refusals are counted, not logged)`
+    );
+  }
+
+  private seatsKnown(liveId: string): void {
+    const refused = this.unknownToRedis.get(liveId);
+    if (refused === undefined) return;
+    this.unknownToRedis.delete(liveId);
+    this.logger.log(
+      `[LIVE_SEAT] ${liveId}: seats are granted again after ${refused} refused take(s)`
+    );
   }
 
   /**
@@ -2677,6 +2707,13 @@ export class LivesService implements OnModuleDestroy {
 
   /** The live is purged: an outage still open on it is reported with its count, then forgotten. */
   private closeArrivalOutages(liveId: string): void {
+    const refused = this.unknownToRedis.get(liveId);
+    if (refused !== undefined) {
+      this.unknownToRedis.delete(liveId);
+      this.logger.warn(
+        `[LIVE_SEAT] ${liveId}: purged while Redis still refused its seats (${refused} refused take(s))`
+      );
+    }
     for (const op of ['note', 'read'] as const) {
       const failed = this.arrivalOutages[op].get(liveId);
       if (failed === undefined) continue;

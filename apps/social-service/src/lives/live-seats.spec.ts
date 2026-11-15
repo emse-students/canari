@@ -30,7 +30,7 @@ import {
   BAR_VIEWER_LUA,
   CLOSE_LIVE_LUA,
   FORGET_ARRIVALS_LUA,
-  FORGET_CLOSED_LUA,
+  FORGET_LIVE_LUA,
   LIVE_BARRED_KEY,
   LIVE_CLOSED_KEY,
   LIVE_OPEN_KEY,
@@ -182,17 +182,21 @@ describe('the viewer cap, as the service types it', () => {
     await expect(closed.seats.open(LIVE, [])).resolves.toBe(false);
   });
 
-  it('bars a viewer and forgets a tombstone with one script each', async () => {
+  it('bars a viewer and forgets a purged live with one script each', async () => {
     const { seats, calls } = seatsAnswering(async () => 1);
     await seats.bar(LIVE, 'bob');
-    await seats.forgetClosed(LIVE);
+    await seats.forget(LIVE);
     expect(calls).toEqual([
       {
         script: BAR_VIEWER_LUA,
         keys: [LIVE_SEATS_KEY, LIVE_BARRED_KEY],
         args: [seatMember(LIVE, 'bob')],
       },
-      { script: FORGET_CLOSED_LUA, keys: [LIVE_CLOSED_KEY], args: [LIVE] },
+      {
+        script: FORGET_LIVE_LUA,
+        keys: [LIVE_OPEN_KEY, LIVE_BARRED_KEY, LIVE_CLOSED_KEY],
+        args: [LIVE, `${LIVE}:`],
+      },
     ]);
   });
 
@@ -407,8 +411,18 @@ maybe('the seat script against a real Redis', () => {
     expect(await redis.sismember(openKey, LIVE)).toBe(0);
     expect(await redis.scard(barredKey)).toBe(0);
     expect(await takeRaw(seatMember(LIVE, 'a'), 5)).toEqual([2]);
-    expect(await redis.eval(FORGET_CLOSED_LUA, 1, closedKey, LIVE)).toBe(1);
+    const forget = () =>
+      redis.eval(FORGET_LIVE_LUA, 3, openKey, barredKey, closedKey, LIVE, `${LIVE}:`);
+    expect(await forget()).toBe(1);
     expect(await redis.scard(closedKey)).toBe(0);
+    // What an open that came after the purge would leave is what the next forget takes away, and
+    // only this live's.
+    const OTHER = '22222222-2222-4222-8222-222222222222';
+    await open(LIVE, seatMember(LIVE, 'x'));
+    await open(OTHER, seatMember(OTHER, 'y'));
+    await forget();
+    expect(await redis.smembers(openKey)).toEqual([OTHER]);
+    expect(await redis.smembers(barredKey)).toEqual([seatMember(OTHER, 'y')]);
   });
 
   it('bars a removed viewer and frees its seat in one script; the bar survives a reopen and goes with the close', async () => {
