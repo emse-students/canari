@@ -213,6 +213,31 @@ describe('reserving a slot', () => {
     spySave.mockRestore();
   });
 
+  it('hands `mayWrite` to EVERY write it makes - mint, reuse and re-distribution - read at the write', async () => {
+    const mayWrite = () => true;
+    const seen: unknown[] = [];
+    const track = (storage: IStorage) =>
+      vi.spyOn(storage, 'saveGraineSession').mockImplementation(async (_s, _k, onlyWhile) => {
+        seen.push(onlyWhile);
+      });
+    // Mint: nothing held.
+    const minting = fakeStorage();
+    track(minting.storage);
+    await reserveOutboundSlot(deps(minting.storage, { mayWrite }), SCOPE);
+    // Reuse: a session at the run and epoch in hand.
+    const reusing = fakeStorage([session()]);
+    track(reusing.storage);
+    await reserveOutboundSlot(deps(reusing.storage, { mayWrite }), SCOPE);
+    // Re-distribution: the epoch moved, the run did not.
+    const moving = fakeStorage([session({ distributionEpoch: 3 })]);
+    track(moving.storage);
+    await reserveOutboundSlot(
+      deps(moving.storage, { mayWrite, readRun: vi.fn().mockResolvedValue(RUN) }),
+      SCOPE
+    );
+    expect(seen).toEqual([mayWrite, mayWrite, mayWrite]);
+  });
+
   it('endorses a minted session BEFORE distributing it, so the seed travels as v2', async () => {
     const { storage } = fakeStorage();
     const d = deps(storage);

@@ -172,7 +172,11 @@ import {
   type GatewaySocketOpen,
 } from '$lib/mls-client/gatewaySocketOpen';
 import { getTabLeadership, leaderLockReleasedForUnload } from '$lib/mls-client/tabLeader';
-import { promotedSinceLoad, refusesCommitsHere } from '$lib/mls-client/stateAuthority';
+import {
+  lostLeadSinceLoad,
+  promotedSinceLoad,
+  refusesCommitsHere,
+} from '$lib/mls-client/stateAuthority';
 import {
   checkpointWroteNothing,
   fromBase64,
@@ -8987,6 +8991,15 @@ export abstract class BaseMlsService implements IMlsService {
         );
         throw new FollowerTabSendError(groupId, 'reload-owed');
       }
+      // A DOCUMENT THAT LED AND LOST THE LEAD is not an unrouted caller either: a send handed to it
+      // as the leader (a follower's frame, a seed its seal distributes) was routed right, and the
+      // lead left before it began - expected, nothing encrypted, the caller answers it by type.
+      if (lostLeadSinceLoad()) {
+        console.warn(
+          `[SEND] ${groupId.slice(0, 8)}... frame refused: the lead left this tab before the send began - nothing encrypted`
+        );
+        throw new FollowerTabSendError(groupId, 'lead-lost');
+      }
       console.error(
         `[SEND] ${groupId.slice(0, 8)}... frame refused in a tab that does not own the MLS state (${getTabLeadership()}) - its caller is not routed to the leader tab`
       );
@@ -9051,6 +9064,14 @@ export abstract class BaseMlsService implements IMlsService {
     if (!(await this.knownUnresolvedGroups()).has(groupId)) return;
     await this.settleUnresolvedCommits([groupId]);
     if ((await this.knownUnresolvedGroups()).has(groupId)) {
+      // A SETTLEMENT LEFT UNFINISHED BECAUSE THE LEAD LEFT DURING IT is that fact, not an unknown
+      // outcome: nothing was sealed, and the leader that took the lead settles the commit itself.
+      if (lostLeadSinceLoad()) {
+        console.warn(
+          `[SEND] ${groupId.slice(0, 8)}... the lead left this tab while the send settled a kept commit - nothing sealed`
+        );
+        throw new FollowerTabSendError(groupId, 'lead-lost');
+      }
       throw new CommitOutcomeUnknownError(
         groupId,
         this.getEpoch(groupId),

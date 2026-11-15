@@ -11,7 +11,11 @@ import {
   type GraineSignatureVerdict,
   type PreparedGraineV2Open,
 } from '$lib/crypto/graineV2';
-import type { StoredGraineSession, StoredGraineV2 } from '$lib/db/types';
+import {
+  StoreWriteRefusedError,
+  type StoredGraineSession,
+  type StoredGraineV2,
+} from '$lib/db/types';
 import {
   cacheGraineSession,
   cachedGraineSession,
@@ -31,6 +35,7 @@ import { endorseNewSession } from './endorseSession';
 import { mirrorGraineSeed } from './graineMirror';
 import { fromBase64 } from '$lib/utils/hex';
 import { refusesCommitsHere } from '$lib/mls-client/stateAuthority';
+import { FollowerTabSendError } from '$lib/mls-client/commitSubmission';
 import {
   openHandedOver,
   promotionReloadOwed,
@@ -227,9 +232,14 @@ export class GraineUnknownChannelError extends GraineSealUnavailableError {
  */
 export async function sealChannelMessage(
   channelId: string,
-  payload: Uint8Array
+  payload: Uint8Array,
+  options: { asExecutor?: boolean } = {}
 ): Promise<SealedChannelMessage> {
   const channel = rawChannelId(channelId);
+  // A LEADER EXECUTOR NEVER DELEGATES: it runs a follower's request, and handing that request on to
+  // whoever leads now would make one gesture two requests. Where a follower hands over, the executor
+  // is told the lead left - by type - and answers its follower (`salonSealExecutors`).
+  if (options.asExecutor && refusesCommitsHere()) throw new SealRunLeadLostError(channel);
   // A FOLLOWER TAB SEALS NOTHING ITSELF (2026-11-11): reserving an index writes the shared Graine
   // store, a rotation mints and DISTRIBUTES a seed with an MLS frame from its forked copy, and the
   // frame bumps the shared send ledger. The leader seals on its own session and hands the sealed
@@ -276,6 +286,10 @@ export async function sealChannelMessage(
       readRun: () => readKeyGroupRun(mlsService, scope),
       distribute: (session) => distributeGraineSeed(mlsService, scope, session),
       endorse: (session) => endorseNewSession(mlsService, session),
+      // ONLY THE LEADER WRITES THE SHARED SESSION STORE, and that is read at the write itself: a
+      // reservation begun while leading and resumed after the lead left must not roll back a count
+      // the new leader has advanced since (two messages at one index).
+      mayWrite: () => !refusesCommitsHere(),
     },
     { workspaceId, channelId: channel, senderId: userId }
   );
@@ -633,6 +647,19 @@ export class GraineSealHandoverRefusedError extends GraineSealUnavailableError {
   }
 }
 
+/**
+ * Thrown by {@link sealChannelMessage} run as a leader's executor in a tab that no longer leads:
+ * module-private, because only the executor catches it - and answers its follower `unsent`.
+ */
+class SealRunLeadLostError extends Error {
+  constructor(readonly channelId: string) {
+    super(
+      `[GRAINE] the seal for channel ${channelId.slice(0, 8)} was run for a follower in a tab that no longer leads - not handed on`
+    );
+    this.name = 'SealRunLeadLostError';
+  }
+}
+
 /** The follower half of {@link sealChannelMessage}: the leader seals, this tab posts. */
 async function sealOnLeaderTab(
   channel: string,
@@ -707,19 +734,27 @@ export const salonSealExecutors: Pick<DelegatedCommitExecutors, 'seal-salon-mess
       );
       return { gate: gate.reason };
     }
-    // THE LEAD CAN LEAVE THIS TAB WHILE IT WAITS ON THE GATE (a freeze, a handover to a visible tab):
-    // read synchronously right before the seal, whose own entry would otherwise hand the payload to
-    // the NEW leader from inside this run - a second request for one gesture. Answered by value,
-    // nothing reserved, nothing sealed; the follower that asked is told (`frameFromAnyTab.ts` does
-    // the same for a frame).
-    if (refusesCommitsHere()) {
+    // THE LEAD CAN LEAVE THIS TAB AT ANY AWAIT OF THE RUN (a freeze, a handover to a visible tab),
+    // and the run then answers `unsent` BY VALUE - nothing handed on, nothing at error:
+    // - before the seal began (the open, the gate): the seal, run AS THE EXECUTOR, refuses at its
+    //   entry instead of delegating (`SealRunLeadLostError`);
+    // - inside it (the reservation, a seed's distribution and endorsement, the mirror, the seal):
+    //   a distribution's `sendMessage` refuses by type (`FollowerTabSendError` `lead-lost`, nothing
+    //   posted), the reservation's write refuses by type (`StoreWriteRefusedError`, nothing written,
+    //   through the seal's `mayWrite`), and a seal that completed is read against the lead ONCE, at
+    //   its end. The loss is monotonic (`lostLeadSinceLoad`), so that read answers for every await: a
+    //   message sealed by a tab that stopped leading somewhere in between is dropped, never handed
+    //   back to be posted. What it reserved or distributed only leaves an index unused or a seed spare.
+    // Every other failure still throws: a defect, said at error.
+    const leadLeft = () => {
       console.warn(
-        `[SEND] a follower's message for channel ${op.channelId.slice(0, 8)} not sealed: the lead left this tab while it waited on the salon gate - nothing sealed, the follower is told`
+        `[SEND] a follower's message for channel ${op.channelId.slice(0, 8)} not sealed for it: the lead left this tab during the run - nothing handed back, the follower is told`
       );
-      return { unsent: 'lead-lost' };
-    }
+      return { unsent: 'lead-lost' as const };
+    };
     try {
-      const sealed = await sealChannelMessage(op.channelId, payload);
+      const sealed = await sealChannelMessage(op.channelId, payload, { asExecutor: true });
+      if (refusesCommitsHere()) return leadLeft();
       console.debug(
         `[SEND] message for channel ${op.channelId.slice(0, 8)} sealed for a follower tab`
       );
@@ -728,6 +763,13 @@ export const salonSealExecutors: Pick<DelegatedCommitExecutors, 'seal-salon-mess
       // A seal this tab cannot make is an ANSWER (typed, already said where it was decided), never
       // the request's `failed`.
       if (e instanceof GraineSealUnavailableError) return { unavailable: e.reason };
+      if (
+        e instanceof SealRunLeadLostError ||
+        e instanceof StoreWriteRefusedError ||
+        (e instanceof FollowerTabSendError && e.refusal === 'lead-lost')
+      ) {
+        return leadLeft();
+      }
       throw e;
     }
   },

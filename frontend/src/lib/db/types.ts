@@ -1126,8 +1126,19 @@ export interface IStorage {
   // Graine sessions (seed encrypted with the device key; everything else clear so a session can be
   // listed, ordered and pruned without it)
 
-  /** Encrypt the seed and upsert one session. Re-saving the same `sessionId` overwrites it. */
-  saveGraineSession(session: StoredGraineSession, deviceKeyB64: string): Promise<void>;
+  /**
+   * Encrypt the seed and upsert one session. Re-saving the same `sessionId` overwrites it.
+   *
+   * `onlyWhile`, when given, is read SYNCHRONOUSLY at the write itself - after the encrypt's await,
+   * in the same task that issues the put - and a `false` refuses the write with
+   * {@link StoreWriteRefusedError}, nothing written. It is how a read-modify-write begun under a
+   * condition (this tab leads) proves the condition held when its write was issued.
+   */
+  saveGraineSession(
+    session: StoredGraineSession,
+    deviceKeyB64: string,
+    onlyWhile?: () => boolean
+  ): Promise<void>;
   /**
    * Every session held for one channel, newest first. Undecryptable rows are skipped and reported
    * rather than dropping the whole read - one unreadable seed must not cost the other nineteen.
@@ -1236,5 +1247,17 @@ export class FeedPageUnreadableError extends Error {
   ) {
     super(`stored feed page ${key} cannot be opened`, options);
     this.name = 'FeedPageUnreadableError';
+  }
+}
+
+/**
+ * A write refused because the condition its caller wrote under no longer held at the write
+ * (`IStorage.saveGraineSession`'s `onlyWhile`): nothing was written. Typed so the caller tells it
+ * from a storage failure without reading a message.
+ */
+export class StoreWriteRefusedError extends Error {
+  constructor(readonly what: string) {
+    super(`${what}: not written - the condition it was written under no longer holds`);
+    this.name = 'StoreWriteRefusedError';
   }
 }

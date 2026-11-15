@@ -11,7 +11,25 @@ vi.mock('./salonSendGate', async (importOriginal) => ({
 }));
 vi.mock('./runtime', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./runtime')>()),
-  requireGraineRuntime: () => ({ deviceKey: () => state.deviceKey }),
+  requireGraineRuntime: () => ({
+    deviceKey: () => state.deviceKey,
+    storage: {},
+    userId: 'alice',
+    mlsService: { graineSignatureEngine: () => ({}) },
+  }),
+  scopeForChannel: (channelId: string) => ({ workspaceId: 'ws-1', channelId }),
+  cacheGraineSession: () => {},
+}));
+// The leader's own seal, past its entry: the key group's epoch is in hand, the seal is a stand-in
+// a test can lose the lead inside.
+vi.mock('./seedDistribution', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./seedDistribution')>()),
+  readDistributionEpoch: () => ({ epoch: 1 }),
+}));
+const sealWithGraineV2 = vi.hoisted(() => vi.fn());
+vi.mock('$lib/crypto/graineV2', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/crypto/graineV2')>()),
+  sealWithGraineV2,
 }));
 // The writes a follower must never reach: an outbound index, a mint, a distribution, a mirror.
 const reserveOutboundSlot = vi.hoisted(() => vi.fn());
@@ -30,6 +48,8 @@ import { GraineSealUnavailableError } from './sealUnavailable';
 import { SalonNotLoadableError, type SalonGateOutcome } from './salonSendGate';
 import { openHandedOver, sealForHandover } from '$lib/mls-client/frameFromAnyTab';
 import { toBase64 } from '$lib/utils/hex';
+import { FollowerTabSendError } from '$lib/mls-client/commitSubmission';
+import { StoreWriteRefusedError } from '$lib/db/types';
 
 /**
  * A FOLLOWER TAB SEALS NO SALON MESSAGE ITSELF (2026-11-11): reserving an index writes the shared
@@ -180,23 +200,110 @@ describe("the leader seals a follower's salon message behind its OWN salon gate"
     ).resolves.toEqual({ unopened: 'device-key-changed' });
     expect(whenSalonSendable).not.toHaveBeenCalled();
   });
+});
 
-  it('the lead leaving during the gate wait is answered unsent - no nested handover, nothing sealed, nothing at error', async () => {
+/**
+ * A LEADER EXECUTOR NEVER DELEGATES, AND THE LEAD CAN LEAVE IT AT ANY AWAIT OF THE RUN (review of
+ * #2515). Each case loses the lead at one await, in the order the run reaches them; every one answers
+ * `unsent` by value - nothing handed on to whoever leads now, no sealed message handed back to be
+ * posted, nothing at error.
+ */
+describe("the leader's seal of a follower's message when the lead leaves at each await", () => {
+  const slot = (minted = false) => ({
+    session: {
+      sessionId: 'sess-1',
+      senderId: 'alice',
+      seedB64: 'AAAA',
+      distributionFrame: { groupId: 'dist-group', protoB64: 'ZnJhbWU=' },
+      v2: { signingSecretKeyB64: 'AAAA' },
+    },
+    index: 3,
+    minted,
+    redistributed: false,
+  });
+  const run = async () =>
+    salonSealExecutors['seal-salon-message']({
+      kind: 'seal-salon-message',
+      channelId: 'abcdef123456',
+      payload: await sealForHandover(new Uint8Array([3])),
+    });
+  const loseTheLead = () => {
+    state.follower = true;
+  };
+  let error: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    state.follower = false;
+    state.promoted = false;
+    state.deviceKey = toBase64(crypto.getRandomValues(new Uint8Array(32)));
+    vi.clearAllMocks();
+    whenSalonSendable.mockResolvedValue({ kind: 'ready' });
+    reserveOutboundSlot.mockResolvedValue(slot());
+    mirrorGraineSeed.mockResolvedValue(undefined);
+    sealWithGraineV2.mockResolvedValue({ ciphertext: 'c', nonce: 'n', signature: 's' });
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+    error = vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    expect(delegateCommitToLeader).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it('with the lead kept throughout, seals and hands the message back', async () => {
+    await expect(run()).resolves.toMatchObject({ sealed: { messageIndex: 3 } });
+  });
+
+  it("during the gate: refused at the seal's entry, nothing reserved", async () => {
     whenSalonSendable.mockImplementation(async () => {
-      state.follower = true;
+      loseTheLead();
       return { kind: 'ready' };
     });
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    await expect(
-      salonSealExecutors['seal-salon-message']({
-        kind: 'seal-salon-message',
-        channelId: 'abcdef123456',
-        payload: await sealForHandover(new Uint8Array([3])),
-      })
-    ).resolves.toEqual({ unsent: 'lead-lost' });
-    expect(delegateCommitToLeader).not.toHaveBeenCalled();
+    await expect(run()).resolves.toEqual({ unsent: 'lead-lost' });
     expect(reserveOutboundSlot).not.toHaveBeenCalled();
-    expect(error).not.toHaveBeenCalled();
+  });
+
+  it('during the reservation, whose write was refused at the put: unsent', async () => {
+    reserveOutboundSlot.mockImplementation(async () => {
+      loseTheLead();
+      throw new StoreWriteRefusedError('the Graine session sess-1');
+    });
+    await expect(run()).resolves.toEqual({ unsent: 'lead-lost' });
+  });
+
+  it("during a seed's distribution, whose send refused it: unsent", async () => {
+    reserveOutboundSlot.mockImplementation(async () => {
+      loseTheLead();
+      throw new FollowerTabSendError('dist-group', 'lead-lost');
+    });
+    await expect(run()).resolves.toEqual({ unsent: 'lead-lost' });
+  });
+
+  it('during the reservation, after its write: the sealed message is dropped, never handed back', async () => {
+    reserveOutboundSlot.mockImplementation(async () => {
+      const reserved = slot();
+      loseTheLead();
+      return reserved;
+    });
+    await expect(run()).resolves.toEqual({ unsent: 'lead-lost' });
+  });
+
+  it('during the mirror of a minted seed: the sealed message is dropped', async () => {
+    reserveOutboundSlot.mockResolvedValue(slot(true));
+    mirrorGraineSeed.mockImplementation(async () => loseTheLead());
+    await expect(run()).resolves.toEqual({ unsent: 'lead-lost' });
+  });
+
+  it('during the seal itself: the sealed message is dropped', async () => {
+    sealWithGraineV2.mockImplementation(async () => {
+      loseTheLead();
+      return { ciphertext: 'c', nonce: 'n', signature: 's' };
+    });
+    await expect(run()).resolves.toEqual({ unsent: 'lead-lost' });
+  });
+
+  it('a failure that is not the lead leaving still throws', async () => {
+    reserveOutboundSlot.mockRejectedValue(new Error('disk full'));
+    await expect(run()).rejects.toThrow('disk full');
   });
 });

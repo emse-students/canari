@@ -19,6 +19,7 @@ vi.mock('$lib/mls-client/sendRatchetLedger', () => ({
   MAX_BURN_GENERATIONS: 2000,
   noteFrameEmitted: async () => {
     ledgerTrace.push('ledger');
+    atLedger.hook?.();
   },
   forgetSendRatchetEntries: vi.fn().mockResolvedValue(undefined),
   readEmitted: async () => ({}),
@@ -31,14 +32,20 @@ vi.mock('$lib/mls-client/sendRatchetLedger', () => ({
 
 /** Whether this document's copy is the leader's - flipped by a test to model a freeze mid-send. */
 let notTheLeaderCopy = false;
+/** Whether this document LED and lost the lead (as opposed to a copy loaded as a follower). */
+let lostTheLead = false;
 vi.mock('$lib/mls-client/stateAuthority', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/mls-client/stateAuthority')>()),
   refusesCommitsHere: () => notTheLeaderCopy,
+  lostLeadSinceLoad: () => lostTheLead,
 }));
+/** Where the send ledger's write lets a test lose the lead - the await between count and post. */
+const atLedger = { hook: null as null | (() => void) };
 
 import { BaseMlsService } from './BaseMlsService';
 import { FollowerTabSendError } from '$lib/mls-client/commitSubmission';
 import { DELIVERY } from '$lib/mls-client/frameDelivery';
+import { runAsEpochAdvance } from '$lib/utils/chat/epochSendBarrier';
 import { sealedFrame } from '$lib/mls-client/test/sealedFrame';
 import type { AuthoredFrame } from '$lib/mls-client/mlsDeliveryApi';
 
@@ -200,5 +207,104 @@ describe('BaseMlsService.sendMessage - the lead that left during the send', () =
     await expect(inFlight).rejects.toMatchObject({ refusal: 'lead-lost' });
     expect(svc.encryptCalls).toBe(0);
     expect(svc.trace).toEqual([]);
+  });
+});
+
+/**
+ * THE LEAD LOST AT EACH AWAIT OF A SEND (review of #2515): a send run for a follower by the leader,
+ * or a seed a leader's seal distributes, meets the loss as `FollowerTabSendError('lead-lost')` -
+ * typed at the throw, never the routing defect `follower` accuses at error, never anything posted -
+ * wherever it lands before the post; and as a SENT frame when it lands during the post. Each case
+ * below loses the lead at one await, in the order the send reaches them.
+ */
+describe('BaseMlsService.sendMessage - the lead lost at each await', () => {
+  /** The freeze: this document led, and is a follower from here on. */
+  const loseTheLead = () => {
+    notTheLeaderCopy = true;
+    lostTheLead = true;
+  };
+  let error: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    error = vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    notTheLeaderCopy = false;
+    lostTheLead = false;
+    atLedger.hook = null;
+  });
+
+  const refusedUnposted = async (svc: SendSeamHarness, inFlight: Promise<unknown>) => {
+    await expect(inFlight).rejects.toBeInstanceOf(FollowerTabSendError);
+    await expect(inFlight).rejects.toMatchObject({ refusal: 'lead-lost' });
+    expect(svc.trace).not.toContain('post');
+    expect(error).not.toHaveBeenCalled();
+  };
+
+  it("before it began (the executor's open, the gate): refused at the entry, nothing encrypted", async () => {
+    const svc = new FakeMlsService();
+    loseTheLead();
+    await refusedUnposted(svc, svc.sendMessage('g1', new Uint8Array([9])));
+    expect(svc.encryptCalls).toBe(0);
+  });
+
+  it('during the wait for a catch-up: refused before the encrypt', async () => {
+    const svc = new FakeMlsService();
+    svc.openCatchUp();
+    const inFlight = svc.sendMessage('g1', new Uint8Array([9]));
+    await Promise.resolve();
+    loseTheLead();
+    svc.closeCatchUp();
+    await refusedUnposted(svc, inFlight);
+    expect(svc.encryptCalls).toBe(0);
+  });
+
+  it("during a kept commit's settlement: refused as lead-lost, not as an unknown outcome", async () => {
+    abstract class Settling extends SendSeamHarness {
+      protected async groupsWithPendingCommit(): Promise<string[]> {
+        return ['g1'];
+      }
+      async settleUnresolvedCommits(): Promise<void> {
+        loseTheLead();
+      }
+    }
+    const svc = new (Settling as unknown as new () => SendSeamHarness)();
+    await refusedUnposted(svc, svc.sendMessage('g1', new Uint8Array([9])));
+    expect(svc.encryptCalls).toBe(0);
+  });
+
+  it("during the wait on an epoch advance's barrier: refused before the encrypt", async () => {
+    const svc = new FakeMlsService();
+    let release: () => void = () => {};
+    const advance = runAsEpochAdvance('g1', () => new Promise<void>((r) => (release = r)));
+    const inFlight = svc.sendMessage('g1', new Uint8Array([9]));
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    loseTheLead();
+    release();
+    await advance;
+    await refusedUnposted(svc, inFlight);
+    expect(svc.encryptCalls).toBe(0);
+  });
+
+  it('during the durable count: sealed and counted, never posted', async () => {
+    const svc = new FakeMlsService();
+    atLedger.hook = loseTheLead;
+    await refusedUnposted(svc, svc.sendMessage('g1', new Uint8Array([9])));
+    expect(svc.encryptCalls).toBe(1);
+  });
+
+  it('during the post: the frame is on the wire - the send resolves', async () => {
+    const svc = new FakeMlsService();
+    (svc as unknown as { delivery: unknown }).delivery = {
+      postApplicationMessage: async () => {
+        svc.trace.push('post');
+        loseTheLead();
+        return 5;
+      },
+    };
+    await expect(svc.sendMessage('g1', new Uint8Array([9]))).resolves.toMatchObject({
+      receivedAt: 5,
+    });
+    expect(error).not.toHaveBeenCalled();
   });
 });

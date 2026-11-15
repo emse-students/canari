@@ -12,10 +12,14 @@ vi.mock('$lib/utils/graine/runtime', () => ({
   requireGraineRuntime: () => ({ deviceKey: () => new Uint8Array(32) }),
 }));
 /** What the leader's open of a handed frame returns (`null`: the device key changed). */
-const opened = vi.hoisted(() => ({ bytes: null as Uint8Array | null }));
+const opened = vi.hoisted(() => ({ bytes: null as Uint8Array | null, lose: false }));
 vi.mock('$lib/encryption', () => ({
   sealBytes: async () => ({ iv: new Uint8Array([1]), cipherText: new Uint8Array([2]) }),
-  openSealedBytes: async () => opened.bytes,
+  openSealedBytes: async () => {
+    // The lead leaving during the leader's open of a handed frame.
+    if (opened.lose) tab.leads = false;
+    return opened.bytes;
+  },
 }));
 
 import {
@@ -27,6 +31,8 @@ import { FollowerTabSendError } from './commitSubmission';
 
 const GROUP = 'group-0123456789';
 const BYTES = new Uint8Array([7, 7, 7]);
+/** The sealed half of a `SentFrame`, which these cases do not read. */
+const FRAME_BYTES = { sealed: new Uint8Array([1]), authorProof: new Uint8Array([2]) };
 
 describe('sendFrameFromThisTab when the lead leaves during the send (review of #2515)', () => {
   beforeEach(() => {
@@ -81,6 +87,7 @@ describe("the leader half when the lead leaves it while it runs a follower's fra
   beforeEach(() => {
     tab.leads = true;
     opened.bytes = BYTES;
+    opened.lose = false;
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'debug').mockImplementation(() => {});
     error = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -99,13 +106,33 @@ describe("the leader half when the lead leaves it while it runs a follower's fra
     expect(error).not.toHaveBeenCalled();
   });
 
-  it('answers unsent without calling the send when the lead left during the open', async () => {
-    tab.leads = false;
-    const svc = { sendMessage: vi.fn() };
+  it('never delegates: a lead lost during the open reaches the send, which refuses it by type', async () => {
+    delegateCommitToLeader.mockReset();
+    opened.lose = true;
+    // As `BaseMlsService.sendMessage` does at its entry for a document that led and lost the lead.
+    const svc = {
+      sendMessage: vi.fn(async () => {
+        if (!tab.leads) throw new FollowerTabSendError(GROUP, 'lead-lost');
+        return { receivedAt: 1, ...FRAME_BYTES };
+      }),
+    };
     await expect(frameHandoverExecutors(() => svc)['emit-frame'](OP)).resolves.toEqual({
       unsent: 'lead-lost',
     });
-    expect(svc.sendMessage).not.toHaveBeenCalled();
+    expect(delegateCommitToLeader).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it('a lead lost during the post is a frame on the wire: answered sent', async () => {
+    const svc = {
+      sendMessage: vi.fn(async () => {
+        tab.leads = false;
+        return { receivedAt: 77, ...FRAME_BYTES };
+      }),
+    };
+    await expect(frameHandoverExecutors(() => svc)['emit-frame'](OP)).resolves.toEqual({
+      receivedAt: 77,
+    });
   });
 
   it('still throws every other failure - a defect stays one', async () => {

@@ -172,11 +172,12 @@ export function frameHandoverExecutors(
         );
         return { unopened: 'device-key-changed' };
       }
-      // THE LEAD CAN LEAVE THIS TAB WHILE IT RUNS THE REQUEST (a freeze, a handover to a visible
-      // tab): an expected event, answered BY VALUE where it is known - here, read synchronously right
-      // before the call (the open above is a task gap), and `sendMessage`'s own `lead-lost` once the
-      // send began. Neither posted anything. Every other failure still throws: a defect, said at error.
-      if (refusesCommitsHere()) return leadLeftDuringRun(op.groupId, 'before the send');
+      // THE LEAD CAN LEAVE THIS TAB AT ANY AWAIT OF THE RUN (a freeze, a handover to a visible tab):
+      // an expected event, answered BY VALUE. `sendMessage` NEVER DELEGATES, and it classifies the
+      // loss at its own throw wherever it is met before the post - at its entry (which covers the
+      // open above), after a kept commit's settlement, before the encrypt, after the count
+      // (`FollowerTabSendError` `lead-lost`, nothing posted). A loss met during the post is a frame
+      // on the wire: sent, and answered as such. Every other failure still throws: a defect.
       let sent;
       try {
         sent = await ensureMls().sendMessage(
@@ -187,18 +188,13 @@ export function frameHandoverExecutors(
         );
       } catch (e) {
         if (!(e instanceof FollowerTabSendError) || e.refusal !== 'lead-lost') throw e;
-        return leadLeftDuringRun(op.groupId, 'during the send');
+        console.warn(
+          `[SEND] ${op.groupId.slice(0, 8)}... a follower's frame was not sent: the lead left this tab during the run - nothing posted, the follower is told`
+        );
+        return { unsent: 'lead-lost' };
       }
       console.debug(`[SEND] ${op.groupId.slice(0, 8)}... frame sent for a follower tab`);
       return { receivedAt: sent.receivedAt };
     },
   };
-}
-
-/** The leader half's typed answer when the lead left it mid-run - see {@link frameHandoverExecutors}. */
-function leadLeftDuringRun(groupId: string, when: string): { unsent: HandoverUnsent } {
-  console.warn(
-    `[SEND] ${groupId.slice(0, 8)}... a follower's frame was not sent: the lead left this tab ${when} - nothing posted, the follower is told`
-  );
-  return { unsent: 'lead-lost' };
 }

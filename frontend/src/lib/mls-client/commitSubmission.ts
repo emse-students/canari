@@ -368,8 +368,11 @@ export class FollowerTabSendError extends Error {
    *   refused rather than lost; `lead-lost`: a send begun while this document led found that the
    *   lead had left it (a leader suspended by the browser, or one that handed the lead to a visible
    *   tab, releases the lock - `tabLeader.ts`) - expected, nothing was posted and the leader sends it.
-   *   Two sites raise it: at the last synchronous step before the encrypt (nothing sealed), and after
-   *   the send's count is durable (sealed and counted, so no reload re-issues its generation).
+   *   Raised at every point of `BaseMlsService.sendMessage` the loss can be met before the post: at
+   *   its entry (`lostLeadSinceLoad`), after the settlement of a kept commit the loss left unfinished,
+   *   at the last synchronous step before the encrypt (nothing sealed), and after the send's count is
+   *   durable (sealed and counted, so no reload re-issues its generation). A loss met during the post
+   *   is a frame on the wire: sent.
    */
   constructor(
     readonly groupId: string,
