@@ -29,6 +29,7 @@ earliest version, as a checklist.
 - [P1 - the admission rule's fix-forward: a conversation may refuse an entry no member made only once nothing legitimate produces one](backlog.d/p1-the-admission-rule-fix-forward.md)
 - [P1 - push payloads carry nothing for Google and Apple (owner, recorded 2026-11-01; decided and built 2026-11-02, switch OFF; raised from P2 on 2026-11-10 by principle 1 of the charter)](backlog.d/push-payloads-carry-nothing-for-google-and-apple.md)
 - [P1 - blind salon banners: the seed is absent when the push lands](backlog.d/p1-blind-salon-banners-the-failing-branch-is-unnamed.md)
+- [P1 - rows before ratchet: a live drain stores its rows only when its window closes, after a checkpoint may already hold their ratchet advance (raised by the second review of #3321, 2026-11-15)](backlog.d/p1-rows-before-ratchet.md)
 
 **Chantiers, decisions and questions (no severity)**
 
@@ -55,6 +56,7 @@ earliest version, as a checklist.
 - [P2 - the audience audit of 2026-11-14: what the campus x formation model leaves open](backlog.d/audience-audit-2026-11-14.md)
 - [P2 - a group call answered into an empty room, and a ring that outlives an outcome-less end](backlog.d/group-call-empty-room-answer-and-outcome-less-ring.md)
 - [P2 - a DM ending in photos and a video lands on OLDER messages when the keyboard opens (`1.6.12`, Pixel 6a, 2026-11-14) - a defect, the 2026-10-30 fix does not hold](backlog.d/p2-a-dm-ending-in-photos-lands-on-older-messages-when-the-keyboard-opens.md)
+- [P2 - A post's attachments follow one standard (owner, 2026-11-14/15)](backlog.d/p2-a-post-s-attachments-follow-one-standard.md)
 - [P2 - an iPhone re-announces what its extension showed after a cold start (2026-11-14; prior attempt: PR #2844, branch kept)](backlog.d/p2-an-iphone-re-announces-what-its-extension-showed-after-a-cold-start.md)
 - [P2 - the group panel lists 22 roster seats that hold no device (18 are departed people, 4 are a join that never completed; counted on production 2026-11-14)](backlog.d/p2-the-group-panel-lists-22-roster-seats-that-hold-no-device.md)
 - [P2 - native devices with no push token stay silent: a fifth cause](backlog.d/reading-owed-a-device-with-no-push-token-now-says-so.md)
@@ -177,7 +179,7 @@ earliest version, as a checklist.
 - [P2 - a crash between a top-up's purchase commit and its Cercle dispatch loses the top-up silently (review of #2218, 2026-10-21)](backlog.d/p2-a-crash-between-a-top-up-s-purchase-commit-and-its-cercle-dispatch-loses-the.md)
 - [P2 - an answer whose Lydia request is still OPEN shows "pending" with no button for up to 28 minutes (2026-10-21)](backlog.d/p2-an-answer-whose-lydia-request-is-still-open-shows-pending-with-no-button-for.md)
 - [P2 - Graine rotates on every key-group epoch, so a growing community mints a seed per message (measured 2026-10-21)](backlog.d/p2-graine-rotates-on-every-key-group-epoch-so-a-growing-community-mints-a-seed.md)
-- [P2 - one tap from Canari signs the user into its MiConnect sites, and MiGallery's notifications go through Canari (owner, 2026-11-07: decided; Canari's half of the handoff built 2026-11-08, every site's flag OFF)](backlog.d/sign-in-handoff-to-the-ecosystem-sites-and-migallery-notifications.md)
+- [P2 - one tap from Canari signs the user into its MiConnect sites, and MiGallery's notifications go through Canari (owner, 2026-11-07: decided; Canari's half of the handoff built 2026-11-08, MiGallery's flag ON 2026-11-14, the others OFF)](backlog.d/sign-in-handoff-to-the-ecosystem-sites-and-migallery-notifications.md)
 
 **P3 - hygiene**
 

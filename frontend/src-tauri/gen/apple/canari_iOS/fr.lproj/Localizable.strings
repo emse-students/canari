@@ -41,6 +41,11 @@
 "notif.social.comment.body" = "Nouveau commentaire";
 "notif.social.reaction.title" = "Nouvelle réaction";
 "notif.social.reaction.body" = "%1$@ a réagi %2$@ à votre publication";
+"notif.social.comment.title_others_one" = "%@ et 1 autre ont commenté";
+"notif.social.comment.title_others_many" = "%1$@ et %2$@ autres ont commenté";
+"notif.social.reaction.title_count" = "%@ réactions";
+"notif.social.reaction.body_others_one" = "%@ et 1 autre ont réagi à votre publication";
+"notif.social.reaction.body_others_many" = "%1$@ et %2$@ autres ont réagi à votre publication";
 "notif.social.association_post.title" = "%@ a publié";
 "notif.social.association_post.body" = "Nouvelle publication";
 "notif.social.followed_post.title" = "%@ a publié";

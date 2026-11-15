@@ -28,7 +28,15 @@ vi.mock('$lib/mls-client/sendRatchetLedger', () => ({
   snapshotEmitted: () => ({}),
 }));
 
+/** Whether this document's copy is the leader's - flipped by a test to model a freeze mid-send. */
+let notTheLeaderCopy = false;
+vi.mock('$lib/mls-client/stateAuthority', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/mls-client/stateAuthority')>()),
+  refusesCommitsHere: () => notTheLeaderCopy,
+}));
+
 import { BaseMlsService } from './BaseMlsService';
+import { FollowerTabSendError } from '$lib/mls-client/commitSubmission';
 import { DELIVERY } from '$lib/mls-client/frameDelivery';
 import { sealedFrame } from '$lib/mls-client/test/sealedFrame';
 import type { AuthoredFrame } from '$lib/mls-client/mlsDeliveryApi';
@@ -163,5 +171,33 @@ describe('BaseMlsService.sendMessage - the one seam every send passes through', 
     const svc = new FakeMlsService();
     await svc.sendMessage('g1', new Uint8Array([9]));
     expect(svc.trace).toContain('post');
+  });
+});
+
+/**
+ * A SEND BEGUN WHILE THIS DOCUMENT LED, RESUMED AFTER IT STOPPED (owner's log, 2026-11-10): the
+ * browser froze the leader tab, the freeze released the lock (`tabLeader.ts`) and another tab took
+ * the lead; when this page resumes, a send that was waiting must not seal on a copy now behind the
+ * leader's - the peers would drop the frame as a replayed generation, silently (WP-MULTITAB-1).
+ */
+describe('BaseMlsService.sendMessage - the lead that left during the send', () => {
+  afterEach(() => {
+    notTheLeaderCopy = false;
+  });
+
+  it('refuses at the encrypt, and nothing is sealed or posted', async () => {
+    const svc = new FakeMlsService();
+    svc.openCatchUp();
+    const inFlight = svc.sendMessage('g1', new Uint8Array([9]));
+    await Promise.resolve();
+    // The freeze: this document is a follower from here on.
+    notTheLeaderCopy = true;
+    svc.closeCatchUp();
+
+    await expect(inFlight).rejects.toBeInstanceOf(FollowerTabSendError);
+    // Classified at the throw: an expected lead loss, never the routing defect `follower` accuses.
+    await expect(inFlight).rejects.toMatchObject({ refusal: 'lead-lost' });
+    expect(svc.encryptCalls).toBe(0);
+    expect(svc.trace).toEqual([]);
   });
 });

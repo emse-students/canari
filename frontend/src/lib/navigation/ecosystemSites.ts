@@ -36,7 +36,7 @@ export interface EcosystemSite {
 export const ECOSYSTEM_SITES: readonly EcosystemSite[] = [
   {
     id: 'migallery',
-    handoff: false,
+    handoff: true,
     href: 'https://gallery.mitv.fr',
     logo: '/ecosystem/migallery.webp',
     label: () => m.ecosystem_site_migallery(),

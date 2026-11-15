@@ -1340,7 +1340,10 @@ const NOTABLE = [
   // `[TAB] Another tab is active`, `[TAB] Race election` or `[TAB] Promoted to leader` - none of them
   // classified anywhere here, so all three still land in `unexplained` and break `clean`. The
   // absence of those lines beside this one is precisely what identified the boot gap.
+  // Since 2026-11-10 the follower says it ONCE per page (`saidFollowerHandsOver`, outbox.ts), in
+  // this wording; the old one is kept for logs of earlier builds.
   /^\[OUTBOX\] Flush skipped - follower tab/,
+  /^\[OUTBOX\] Follower tab - every flush is asked of the leader tab/,
   // THE RESUME DECLINING ON A SOCKET THAT DISAGREES WITH OUR FLAG - and ONLY then. Both answering
   // `true` is the ordinary case (a tab hidden and shown again over a live socket) and sits in
   // `BENIGN`; `socket=false` or `socket=null` beside `flag=true` means our own state lagged the
