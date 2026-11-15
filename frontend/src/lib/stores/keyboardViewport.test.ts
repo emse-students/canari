@@ -7,6 +7,7 @@ import {
   keyboardFreeViewportHeight,
   keyboardInsetBottom,
   keyboardMoved,
+  keyboardCovers,
   keyboardRevealOnUpdate,
   keyboardSafeAreaBottomOverride,
   overlaySettledAroundFocus,
@@ -450,6 +451,25 @@ describe('keyboardFreeViewportHeight - a picture does not shrink because someone
     expect(css).toContain(
       '--media-max-height: calc(var(--keyboard-free-viewport-height, 100svh) * 0.6);'
     );
+  });
+});
+
+describe('keyboardCovers - what a reveal asks, which is not isOpen (review of #3556)', () => {
+  const ANDROID_THRESHOLD = 160;
+  it('under the overlay, any keyboard above 0 covers - a 48 px one-row IME included', () => {
+    const small = computeSnapshot(measure({ overlayPx: 48 }), 900, ANDROID_THRESHOLD);
+    expect(small.isOpen).toBe(false);
+    expect(keyboardCovers(small, true)).toBe(true);
+    const gone = computeSnapshot(measure({ overlayPx: 0 }), 900, ANDROID_THRESHOLD);
+    expect(keyboardCovers(gone, true)).toBe(false);
+  });
+
+  it('where the engine resizes for the keyboard, isOpen stays the answer', () => {
+    const closed = computeSnapshot(measure(), baseline, IOS_THRESHOLD);
+    expect(keyboardCovers(closed, false)).toBe(closed.isOpen);
+    const open = { ...closed, isOpen: true, occlusionBottom: 300 };
+    expect(keyboardCovers(open, false)).toBe(true);
+    expect(keyboardCovers({ ...open, isOpen: false }, false)).toBe(false);
   });
 });
 
