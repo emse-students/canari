@@ -344,7 +344,10 @@ so with the switch off nothing changes for any live.
   association's replay included, as its live was (the feed's `blockedAuthorSql` exempts every other
   association post, a replay alone not: the live had already named its broadcaster) - and the
   **removed viewer** (a viewer the broadcaster removed from the live never sees the replay). Any
-  refusal and an expired replay are the same `404 LIVE_NOT_FOUND`.
+  refusal and an expired replay are the same `404 LIVE_NOT_FOUND`. **`?moderation=true`** is the
+  MODERATION READ (owner, 2026-11-15): whoever moderates the replay's post (`mayModeratePost`)
+  reads it past that gate, logged; anyone else gets the gate above
+  ([moderation-and-blocking](moderation-and-blocking.md#who-may-read-a-live-replay-to-moderate-it-2026-11-15)).
 - **`withReplays`** on `GET /api/posts` (the feed, and `kind=reel` - the CanaReels list) and on
   `GET /api/posts/:id`: a client that does not say it can draw a replay never receives one - a
   replay by id is then `404`. Search, the linked-event post, pins, member-repost cards and the

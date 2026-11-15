@@ -2807,13 +2807,16 @@ are left as they are (no row is rewritten).
   reader its author is withheld from (`withholdFormsOfHiddenAuthor`, on the same branch that strips
   `authorId`; the author and moderators still see it), and `GET /api/forms/:id` serves `ownerId`
   to the form's managers only, asking management ONCE per read (`readVerdict` hands `get` the
-  answer where it already had to ask it). **Stored posts are masked at read, never rewritten, and
-  how many there are is NOT MEASURED** - neither the anonymous posts carrying a form nor the posts
-  naming a foreign form. The count is one read-only statement on production, waiting for the owner:
+  answer where it already had to ask it). **Stored posts are masked at read, never rewritten.
+  Measured read-only on production on 2026-11-15** with
   `SELECT anonymous, ("attachedFormId" IS NOT NULL) AS has_form_id, (forms <> '[]'::jsonb)
-  AS has_inline_forms, count(*) FROM posts GROUP BY 1, 2, 3`. Its `has_inline_forms` column also
-  says whether the retired list was ever stored, which git history cannot say for a client outside
-  this repository.
+  AS has_inline_forms, count(*) FROM posts GROUP BY 1, 2, 3`: 299 posts with neither, 14
+  non-anonymous posts with an attached form, 16 anonymous posts with none - ZERO anonymous posts
+  carrying a form, and ZERO posts with a non-empty inline `forms` list in any group. So the read-side
+  mask covers no stored post today, and the retired inline list was never stored: for stored data,
+  no client outside this repository ever wrote it (the question git history could not answer).
+  **Still not measured:** the posts naming a FOREIGN form - the statement does not look at whose
+  form it is.
 - **`POST_FORMS_RETIRED` has no client wording, deliberately**: no screen can send the list, so the
   refusal reaches only a hand-made request, which reads the typed code. A string no user can be
   shown would be dead text.

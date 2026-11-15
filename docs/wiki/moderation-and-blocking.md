@@ -178,23 +178,31 @@ content inside an institution's or another BDE's post or live: [the place decide
 
 #### Who may read a live replay to moderate it (2026-11-15)
 
-**A platform admin alone** - the same people as a post's moderation read (`getById` with
-`allowHidden`). `GET /api/lives/:id/replay?moderation=true` widens the replay's gate for a caller the
-gateway marks `x-global-admin`, and for nobody else: a BDE moderator sending the flag, in scope or not,
-meets exactly the ordinary gate (a viewer the broadcaster removed, a blocked one, one outside the
-audience or the "Entre etudiants" gate is refused). The table of every by-id intent is in
-[profiles-and-access](profiles-and-access.md#by-id-what-a-platform-admin-may-do-2026-11-14).
+**OWNER DECISION, 2026-11-15:** *"La moderation des lives doit avoir le meme regulateur que les
+posts. Donc ouvrir."* (it replaces the lead's "platform admins alone" of the same morning).
 
-**Why.** The read hands out the KEY that decrypts the replay's segments, usable until the replay is
-purged - not a view of one row. Opening it to every holder of `MODERATE` in its governed spaces, with
-no open report, let a moderator the broadcaster had removed or blocked play the replay by a hand-made
-request. The charter's first principle, **1. "Vos messages sont à vous"**
-([principes](../principes.md)), puts a key in the fewest hands that need it.
+What it means. `GET /api/lives/:id/replay?moderation=true` (`LivesService.replay`) opens the replay to
+whoever MODERATES its post - `AssociationsService.mayModeratePost`, the one post moderation scope
+([who may read the queue](#who-may-read-the-queue)): a platform admin anywhere, a BDE `MODERATE`
+holder over what its governed spaces hold (a person's replay in one of its spaces, an association's
+it governs; never an institution's or another BDE's). In that scope the read passes the viewer's
+gate entirely: a moderator the broadcaster REMOVED from the live, one the broadcaster BLOCKED, one the
+"Entre etudiants" switch would refuse - each reads the replay to judge it. Anyone else sending the
+flag, a moderator outside its scope included, meets the ordinary gate unchanged. Every such read is
+logged (`[LIVE_REPLAY] ... MODERATION READ by ... (platform admin | BDE moderator in scope)`).
 
-**Widening it** - to a BDE moderator holding an open report on that replay in their scope, say - is a
-product choice left to the owner, queued for them in
-[backlog](backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks). Decided by the lead,
-2026-11-15, reversible (owner's absence delegation).
+**What it hands out.** The read serves the page a viewer gets: the replay's KEY and its segment list,
+which decrypt the replay until it is purged. The charter's first principle, **1. "Vos messages sont
+à vous"** ([principes](../principes.md)), is why this is a regulator's decision and not a widening a
+screen may take on its own.
+
+**Not changed by it:** the post's own by-id moderation read (`getById` with `allowHidden`) stays a
+platform admin's (the owner wants a full review of who regulates what first). So a BDE moderator in
+scope may read a reported replay through this route while the post that carries it can still answer
+them 404 (outside its audience, a block) - and the client asks the moderation read only for a post
+served `canParticipate` false, which only a platform admin is served
+([profiles-and-access](profiles-and-access.md#by-id-what-a-platform-admin-may-do-2026-11-14)).
+Proved on the real scope predicate over PostgreSQL in `lives/lives.integration.spec.ts`.
 
 #### Decided by the owner (2026-11-04)
 
