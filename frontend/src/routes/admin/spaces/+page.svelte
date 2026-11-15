@@ -22,6 +22,7 @@
     campusCells,
     cellOf,
     coverage,
+    offersEveryone,
     reachedCells,
     toggleGroup,
     toRules,
@@ -445,17 +446,20 @@
                   </span>
                 </th>
                 <td class="px-1.5 py-2 text-center">
-                  <button
-                    type="button"
-                    disabled={busy === `${association.id}:all`}
-                    aria-pressed={everyone === 'all'}
-                    aria-label={m.admin_spaces_everyone_aria({ association: association.name })}
-                    onclick={() =>
-                      toggleReachGroup(association, ALL_CELLS, `${association.id}:all`)}
-                    class="{cellButton} {boxClass(everyone)}"
-                  >
-                    {#if everyone === 'some'}<Minus size={14} />{:else}<Check size={14} />{/if}
-                  </button>
+                  <!-- Institutions only: the server refuses `everyone` on anything else. -->
+                  {#if offersEveryone(association.type)}
+                    <button
+                      type="button"
+                      disabled={busy === `${association.id}:all`}
+                      aria-pressed={everyone === 'all'}
+                      aria-label={m.admin_spaces_everyone_aria({ association: association.name })}
+                      onclick={() =>
+                        toggleReachGroup(association, ALL_CELLS, `${association.id}:all`)}
+                      class="{cellButton} {boxClass(everyone)}"
+                    >
+                      {#if everyone === 'some'}<Minus size={14} />{:else}<Check size={14} />{/if}
+                    </button>
+                  {/if}
                 </td>
                 {#each CAMPUSES as campus (campus)}
                   {@const group = campusCells(campus)}

@@ -34,8 +34,6 @@ through its event's card). What is left, each a defect to fix or a decision alre
 
 ### Dead zones and inconsistencies
 
-- **`/admin/spaces` offers "everyone" to associations and lists**, which the server refuses with a
-  typed code the page now words.
 - **A nickname report reaches no BDE moderator** (`reportInBdeScopeSql` has no branch for it): the
   platform admin alone sees it.
 - **A profile correction does not drop the feed cache** (30 s, the bound
