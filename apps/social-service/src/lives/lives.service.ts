@@ -56,7 +56,7 @@ import {
   type LiveCutReason,
   type LiveEndReason,
 } from './live.constants';
-import { LiveSeats } from './live-seats';
+import { LiveSeatRefused, LiveSeats } from './live-seats';
 import { LIVE_SEGMENT_STORE, type LiveSegmentStore } from './live-segment-store';
 import { LiveAnnouncer, type ClaimedLive } from './live-announcer';
 import {
@@ -538,6 +538,8 @@ export class LivesService implements OnModuleDestroy {
       }
       throw e;
     }
+    // A live nobody was removed from yet.
+    await this.openToSeats(row.id, []);
     // The title's length, never its text: a log line is no place for what a member wrote.
     this.logger.log(
       `[LIVE] ${row.id} started by ${short(broadcasterId)}, title ${title === null ? 'none' : `${[...title].length} chars`}, replay ${keepsReplay ? 'kept' : 'none'}`
@@ -723,10 +725,10 @@ export class LivesService implements OnModuleDestroy {
 
   /** One live and its key, to a viewer allowed to watch it ({@link assertMayWatch}). */
   async get(viewerId: string, liveId: string): Promise<LiveViewerView> {
-    // The key is opened before the seat is taken: a key that cannot be read (503) seats nobody.
-    const { row, prepared: key } = await this.watchSeated(viewerId, liveId, (watched) =>
-      openLiveKeyOr503(watched.id, watched)
-    );
+    const row = await this.assertMayWatch(this.db.manager, viewerId, liveId, WATCH_ONLY);
+    // Opened before the seat is taken: a key that cannot be read (503) seats nobody.
+    const key = openLiveKeyOr503(row.id, row);
+    await this.takeSeat(row, viewerId);
     const scoped: { moderates: boolean }[] = await this.db.query(BDE_MODERATES_LIVE_SQL, [
       viewerId,
       row.id,
@@ -744,8 +746,8 @@ export class LivesService implements OnModuleDestroy {
    * 410 from the moment the live has ended: the manifest stops at `endedAt`.
    */
   async manifest(viewerId: string, liveId: string, from?: number): Promise<LiveManifestForViewer> {
-    const { row, taken } = await this.watchSeated(viewerId, liveId, () => undefined);
-    const viewers = await this.viewerCount(row, viewerId, taken);
+    const row = await this.assertMayWatch(this.db.manager, viewerId, liveId, WATCH_ONLY);
+    const viewers = await this.viewerCount(row, viewerId, await this.takeSeat(row, viewerId));
     const start = from ?? Math.max(0, row.nextIndex - LIVE_MANIFEST_WINDOW);
     const segments: LiveManifestSegment[] = await this.db.query(
       `SELECT s."index", s.name, s.bytes
@@ -916,6 +918,8 @@ export class LivesService implements OnModuleDestroy {
       await this.purgeBestEffort(liveId, 'after an ingest that met the end');
       throw liveEnded(outcome.endedAt, outcome.endReason);
     }
+    // The segment's commit read the live open: said again to Redis, which a wipe may have emptied.
+    await this.openToSeats(liveId);
     // Segment 0 claimed the live's announcement in its own commit (WP-L7): the push goes after that
     // commit, NOT AWAITED - segment 0's answer and this ingest's slot do not wait for the audience
     // query and the fan-out. Once per live still holds: the claim is the commit, not this call.
@@ -1650,11 +1654,13 @@ export class LivesService implements OnModuleDestroy {
       );
     });
     this.logger.log(`[LIVE] ${liveId}: viewer ${short(viewer)} removed by the broadcaster`);
-    // The removal is the row above; the seat is freed now rather than when its lease lapses, and a
-    // failure here only means it lapses (the removed viewer's next poll is refused 403 anyway).
-    await this.seats.release(liveId, viewer).catch((e: unknown) => {
+    // The removal is the row above. Redis is told now, the bar and the seat's release in ONE script,
+    // so a key read that passed the watch rule before the commit takes no seat after it. A failure
+    // leaves the seat to its lease and the bar to the next segment's {@link openToSeats}; the removed
+    // viewer's next poll is refused 403 by the row either way.
+    await this.seats.bar(liveId, viewer).catch((e: unknown) => {
       this.logger.warn(
-        `[LIVE_SEAT] ${liveId}: removed viewer's seat left to its lease: ${String(e)}`
+        `[LIVE_SEAT] ${liveId}: removed viewer not barred in Redis, its seat left to its lease: ${String(e)}`
       );
     });
     return { liveId, viewerId: viewer };
@@ -2288,6 +2294,17 @@ export class LivesService implements OnModuleDestroy {
       this.logger.warn(`[LIVE_GC] ${liveId} is OPEN: the purge path refuses it`);
       return 'kept';
     }
+    // THE LIVE IS CLOSED TO SEATS FIRST, whatever else this pass decides (lives.md, "No seat is
+    // taken on a closed live"): every end comes through here once its commit is done, and after
+    // this script no take is granted - a request that passed the watch rule before the commit
+    // included. A cut, an erasure or a row-less folder owes nothing to anybody, so its seats go in
+    // the same script and the next live's viewers do not wait a lease for them; an ordinary end
+    // keeps them, they are what the drain below waits for. Idempotent, so every sweep says it again.
+    await this.seats.close(liveId, !row || row.removed).catch((e: unknown) => {
+      this.logger.warn(
+        `[LIVE_SEAT] ${liveId}: ended live NOT closed to seats, a late take would last its lease: ${String(e)}`
+      );
+    });
     if (row?.replayPostId) {
       // THE PURGE WAITS FOR THE REPLAY POST, AND FOR NOTHING ELSE (docs/wiki/live-replays.md): its
       // deletion - by the hourly worker at its expiry, by its author or staff - releases the segments.
@@ -2311,14 +2328,6 @@ export class LivesService implements OnModuleDestroy {
         );
         return 'kept';
       }
-    } else if (!row || row.removed) {
-      // A cut, an erasure or a row-less folder: nothing is owed to anybody, so every seat goes now
-      // and the next live's viewers do not wait a lease for them. Best-effort: a failure is the lease.
-      await this.seats.releaseLive(liveId).catch((e: unknown) => {
-        this.logger.warn(
-          `[LIVE_SEAT] ${liveId}: ended live's seats left to their lease: ${String(e)}`
-        );
-      });
     }
     if (row?.storeInFlight) {
       this.logger.debug(`[LIVE_GC] ${liveId} kept: a segment or its poster is still storing`);
@@ -2342,6 +2351,13 @@ export class LivesService implements OnModuleDestroy {
     // The arrival keys name accounts: they go with the live (best effort - their TTL is the bound).
     await this.seats.forgetArrivals(liveId).catch((e: unknown) => {
       this.logger.warn(`[LIVE_ARRIVAL] ${liveId}: arrivals left to their TTL: ${String(e)}`);
+    });
+    // The row is gone: the watch rule now refuses this live before any take is asked, so the
+    // tombstone that refused its reopening has nothing left to order.
+    await this.seats.forgetClosed(liveId).catch((e: unknown) => {
+      this.logger.warn(
+        `[LIVE_SEAT] ${liveId}: purged live's tombstone left in Redis: ${String(e)}`
+      );
     });
     this.logger.debug(`[LIVE_GC] ${liveId} deleted (${result.deleted} segment object(s))`);
     return 'deleted';
@@ -2538,49 +2554,52 @@ export class LivesService implements OnModuleDestroy {
   }
 
   /**
-   * THE WATCH CHECK AND THE SEAT, ORDERED AGAINST EVERY END BY THE LIVE'S ROW LOCK (lives.md, "A
-   * seat is taken under the row's lock").
+   * Says to Redis that the live is open to seats, with the viewers removed from it
+   * (`LiveSeats.open`): at the start, and after every stored segment - whose commit just read the
+   * live open - so a Redis that lost its data knows the live again within a segment, its removals
+   * re-read from the database.
    *
-   * An end, a cut, an erasure and a viewer's removal all write under the row's `FOR UPDATE` and free
-   * seats only AFTER their commit. A watch check read outside that lock could be followed by one of
-   * them, and the seat then taken AFTER the seats were freed lived until its lease lapsed, counted
-   * against the host's cap: a clock deciding a count. So the check and the take run in ONE
-   * transaction holding the row `FOR SHARE`: viewers share it with each other, a writer waits for
-   * the takes in flight, and a take that comes after a writer's commit reads the ended (or removed)
-   * state under the lock and is refused by {@link assertMayWatch} before any seat exists. READ
-   * COMMITTED is what makes the second half true: the check's statement starts after the lock is
-   * granted, so it sees what the writer it waited for committed.
+   * NO LOCK AND NO TRANSACTION AROUND THE REDIS CALL: the order against an end is Redis's own. An
+   * end closes the live there after its commit, and the open script refuses a closed live, so a
+   * write that read the live open and then lost to an end reopens nothing. The removals are added,
+   * never replaced: a removal committed after this read has written its own bar.
    *
-   * The connection is held across ONE Redis script, which the client bounds
-   * (`RedisService`'s command timeout); the segment store, which nothing bounds, is never called
-   * under it.
+   * Best effort - a failure must not fail a start or a segment - and it accuses: until the next
+   * segment's succeeds, no viewer is seated.
    *
-   * @param prepare what must succeed between the check and the seat (the key read's open), so its
-   *                refusal seats nobody.
+   * @param removedViewers the removals when the caller knows them (none at a start); read otherwise.
    */
-  private async watchSeated<T>(
-    viewerId: string,
-    liveId: string,
-    prepare: (row: LiveRow) => T
-  ): Promise<{
-    row: Awaited<ReturnType<LivesService['assertMayWatch']>>;
-    prepared: T;
-    taken: number | null;
-  }> {
-    return this.db.transaction(async (tx) => {
-      await tx.query(`SELECT 1 FROM lives WHERE id = $1 FOR SHARE`, [liveId]);
-      const row = await this.assertMayWatch(tx, viewerId, liveId, WATCH_ONLY);
-      const prepared = prepare(row);
-      return { row, prepared, taken: await this.takeSeat(row, viewerId) };
-    });
+  private async openToSeats(liveId: string, removedViewers?: readonly string[]): Promise<void> {
+    try {
+      const removed =
+        removedViewers ??
+        (
+          (await this.db.query(`SELECT "viewerId" FROM live_removed_viewers WHERE "liveId" = $1`, [
+            liveId,
+          ])) as { viewerId: string }[]
+        ).map((r) => r.viewerId);
+      await this.seats.open(liveId, removed);
+    } catch (e) {
+      this.logger.error(
+        `[LIVE_SEAT] ${liveId}: NOT opened to seats, viewers are refused until a segment's write succeeds: ${String(e)}`
+      );
+    }
   }
 
   /**
    * THE VIEWER CAP (lives.md, "The viewer cap"): a viewer reading the key or polling the manifest
    * takes or renews a seat, 503 `LIVE_FULL` past the host's cap. Taken AFTER the watch check, so a
-   * removed, blocked or ended answer is never masked as "full", and only by {@link watchSeated},
-   * under the row's lock. The broadcaster takes none: its reads cost the uplink nothing a viewer's
-   * would.
+   * removed, blocked or ended answer is never masked as "full". The broadcaster takes none: its
+   * reads cost the uplink nothing a viewer's would.
+   *
+   * THE WATCH CHECK IS A READ, AND AN END CAN COMMIT AFTER IT. So the take itself refuses a live
+   * that has closed and a viewer that was removed, inside Redis, in the evaluation that grants
+   * (`LiveSeats.take`, {@link LiveSeatRefused}) - no seat exists even for an instant. Redis says
+   * only THAT it refused; the row says why, so the watch rule is asked again and throws the typed
+   * refusal (410, 403, 404). If the row still allows the viewer, Redis does not know a live that
+   * is open - it lost its data, or the start's write failed: 503 `LIVE_SEATS_UNAVAILABLE` and a
+   * line that accuses, until the broadcaster's next segment says it again ({@link openToSeats}).
+   * Refusing is the only safe reading of an unknown live: admitting would be the uncounted seat.
    *
    * Answers the live's viewer count as the take counted it, or `null` for the broadcaster (no seat,
    * no take) - who asks {@link viewerCount} instead, and only where a count is shown.
@@ -2590,7 +2609,17 @@ export class LivesService implements OnModuleDestroy {
     viewerId: string
   ): Promise<number | null> {
     if (row.broadcasterId === viewerId) return null;
-    const watching = await this.seats.take(row.id, viewerId);
+    let watching: number;
+    try {
+      watching = await this.seats.take(row.id, viewerId);
+    } catch (e) {
+      if (!(e instanceof LiveSeatRefused)) throw e;
+      await this.assertMayWatch(this.db.manager, viewerId, row.id, WATCH_ONLY);
+      this.logger.error(
+        `[LIVE_SEAT] ${row.id}: Redis holds the live ${e.why} to ${short(viewerId)} while its row is open and allows them - no seat until the next segment says it again`
+      );
+      throw new ServiceUnavailableException({ code: 'LIVE_SEATS_UNAVAILABLE' });
+    }
     // THE ARRIVAL (owner, 2026-11-07): noted once per viewer per live, and NEVER for a reader the
     // chat is withheld from - they take no part in it, so nobody is told they are here - nor for
     // one who watches only through the review cohort's exception (a platform admin judging a report:

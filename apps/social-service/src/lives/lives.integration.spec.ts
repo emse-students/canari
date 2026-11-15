@@ -38,7 +38,7 @@ import { LiveRetentionScheduler } from './live-retention.scheduler';
 import { LiveReportAgeScheduler } from './live-report-age.scheduler';
 import { LiveAnnouncer, liveAudienceSql } from './live-announcer';
 import { derivePosterKey } from './live-poster-key';
-import { seatMember, type LiveSeats } from './live-seats';
+import { LiveSeatRefused, seatMember, type LiveSeats } from './live-seats';
 import type { LivePurgeResult, LiveSegmentStore, LiveTrimResult } from './live-segment-store';
 import {
   LIVE_INGEST_MAX_CONCURRENT,
@@ -224,13 +224,60 @@ class MemoryStore implements LiveSegmentStore {
  * The viewer seats, in memory, answering as `LiveSeats` does: one seat per (live, viewer), a cap,
  * and the typed 503 `LIVE_FULL` past it. The cap's ATOMICITY is the Lua script's, proven against a
  * real Redis in `live-seats.spec.ts`; this proves where the service takes and gives seats.
+ *
+ * The three sets the take reads or an end writes (`open`, `closed`, `barred`) answer as the Lua
+ * scripts do, proven against a real Redis in the same spec: a take on a live that is not open, or by
+ * a barred viewer, is refused and seats nobody; an open on a closed live opens nothing.
  */
 class MemorySeats {
   cap = Number.POSITIVE_INFINITY;
   readonly held = new Set<string>();
+  /** The lives a seat may be taken on, the ended ones not purged yet, and the removed viewers. */
+  readonly openLives = new Set<string>();
+  readonly closedLives = new Set<string>();
+  readonly barred = new Set<string>();
+
+  /** What a Redis that lost its data holds: nothing. */
+  wipe(): void {
+    this.held.clear();
+    this.openLives.clear();
+    this.closedLives.clear();
+    this.barred.clear();
+  }
+
+  async open(liveId: string, removedViewers: readonly string[]): Promise<boolean> {
+    const id = liveId.toLowerCase();
+    if (this.closedLives.has(id)) return false;
+    this.openLives.add(id);
+    for (const v of removedViewers) this.barred.add(seatMember(liveId, v));
+    return true;
+  }
+
+  async bar(liveId: string, viewerId: string): Promise<void> {
+    this.barred.add(seatMember(liveId, viewerId));
+    this.held.delete(seatMember(liveId, viewerId));
+  }
+
+  async close(liveId: string, releaseSeats: boolean): Promise<number> {
+    const id = liveId.toLowerCase();
+    const prefix = seatMember(liveId, '');
+    this.closedLives.add(id);
+    this.openLives.delete(id);
+    for (const m of this.barred) if (m.startsWith(prefix)) this.barred.delete(m);
+    if (!releaseSeats) return 0;
+    const gone = [...this.held].filter((m) => m.startsWith(prefix));
+    for (const m of gone) this.held.delete(m);
+    return gone.length;
+  }
+
+  async forgetClosed(liveId: string): Promise<void> {
+    this.closedLives.delete(liveId.toLowerCase());
+  }
 
   async take(liveId: string, viewerId: string): Promise<number> {
     const member = seatMember(liveId, viewerId);
+    if (!this.openLives.has(liveId.toLowerCase())) throw new LiveSeatRefused('closed');
+    if (this.barred.has(member)) throw new LiveSeatRefused('barred');
     if (!this.held.has(member) && this.held.size >= this.cap) {
       throw new ServiceUnavailableException({ code: 'LIVE_FULL', viewerCap: this.cap });
     }
@@ -261,13 +308,6 @@ class MemorySeats {
 
   async release(liveId: string, viewerId: string): Promise<void> {
     this.held.delete(seatMember(liveId, viewerId));
-  }
-
-  async releaseLive(liveId: string): Promise<number> {
-    const prefix = seatMember(liveId, '');
-    const gone = [...this.held].filter((m) => m.startsWith(prefix));
-    for (const m of gone) this.held.delete(m);
-    return gone.length;
   }
 
   /** The arrivals log, as the Redis scripts keep it: once per viewer per live, ascending seq. */
@@ -1074,13 +1114,17 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         )) as KeyColumns[]
       )[0];
     /** A row as the previous release wrote it: the key in the clear, nothing sealed. */
-    const legacyLive = async (who: string): Promise<string> =>
-      (
+    const legacyLive = async (who: string): Promise<string> => {
+      const { id } = (
         (await q(`INSERT INTO lives ("broadcasterId", "liveKey") VALUES ($1, $2) RETURNING id`, [
           who,
           KEY,
         ])) as { id: string }[]
-      )[0].id;
+      )[0];
+      // A row written by SQL was opened to seats by no start: said here as its segments would.
+      await seats.open(id, []);
+      return id;
+    };
 
     it('A STARTED LIVE STORES ITS KEY SEALED ONLY - and still serves it to a viewer', async () => {
       const live = await start();
@@ -1223,53 +1267,129 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
     });
 
     /**
-     * A SEAT IS TAKEN UNDER THE LIVE'S ROW LOCK, so no seat can follow the release of an end. The
-     * take is stalled inside the seat store; a cut fired then must WAIT for it (read in the server's
-     * own lock state, not after a delay) - without the lock it completes, frees the seats, and the
-     * stalled take then seats a viewer on a live that is over, for a lease.
+     * NO SEAT IS TAKEN ON A CLOSED LIVE, NOR BY A REMOVED VIEWER (lives.md, "No seat is taken on a
+     * closed live"). The watch rule is a read, and an end can commit after it: each test below
+     * stalls a request BETWEEN its watch rule and its take, lets the writer finish, then lets the
+     * take run - the exact order that used to seat a viewer for a lease on a live that was over.
      */
-    it('RACE: a cut waits for a seat being taken, frees it, and no seat is taken after it', async () => {
-      const live = await start();
-      const take = seats.take.bind(seats);
-      let entered!: () => void;
-      const inTake = new Promise<void>((resolve) => (entered = resolve));
-      let open!: () => void;
-      const gate = new Promise<void>((resolve) => (open = resolve));
-      seats.take = async (liveId: string, viewerId: string) => {
-        entered();
-        await gate;
-        return take(liveId, viewerId);
+    describe('a take that lands after an end, a removal, or a loss of Redis', () => {
+      /** Stalls the next takes inside the seat store until `release()`; `entered` resolves at the first. */
+      const stallTakes = () => {
+        const take = seats.take.bind(seats);
+        let enter!: () => void;
+        const entered = new Promise<void>((resolve) => (enter = resolve));
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => (release = resolve));
+        seats.take = async (liveId: string, viewerId: string) => {
+          enter();
+          await gate;
+          return take(liveId, viewerId);
+        };
+        return {
+          entered,
+          release: () => {
+            release();
+            seats.take = take;
+          },
+        };
       };
-      try {
-        const joining = lives.get(BOB, live.id);
-        await inTake;
-        let cutSettled = false;
-        const cutting = lives.cut('9'.repeat(64), live.id, { reason: 'spam' }).finally(() => {
-          cutSettled = true;
-        });
-        for (;;) {
-          const [{ n }] = await q(
-            `SELECT count(*)::int AS n FROM pg_stat_activity
-              WHERE wait_event_type = 'Lock' AND cardinality(pg_blocking_pids(pid)) > 0`
-          );
-          if (n > 0) break;
-          // The cut finished while the take was still stalled: nothing ordered them.
-          expect(cutSettled).toBe(false);
+
+      it('a CUT that finishes while a key read is between its check and its take: 410, no seat', async () => {
+        const live = await start();
+        const stalled = stallTakes();
+        const joining = refusal(lives.get(BOB, live.id));
+        await stalled.entered;
+        await lives.cut('9'.repeat(64), live.id, { reason: 'spam' });
+        stalled.release();
+        expect((await joining).code).toBe('LIVE_ENDED');
+        expect(seats.held.size).toBe(0);
+      });
+
+      it('an ORDINARY end: the late take is refused 410, and the seats held before it are kept for the drain', async () => {
+        const live = await start();
+        await lives.ingest(ALICE, live.id, 0, segment(0));
+        await lives.get(BOB, live.id);
+        const stalled = stallTakes();
+        const joining = refusal(lives.get(CAROL, live.id));
+        const renewing = refusal(lives.manifest(BOB, live.id));
+        await stalled.entered;
+        await lives.end(ALICE, live.id);
+        stalled.release();
+        expect((await joining).code).toBe('LIVE_ENDED');
+        expect((await renewing).code).toBe('LIVE_ENDED');
+        expect([...seats.held]).toEqual([`${live.id}:${BOB}`]);
+      });
+
+      it('a REMOVAL that finishes while the removed viewer is between its check and its take: 403, no seat', async () => {
+        const live = await start();
+        const stalled = stallTakes();
+        const joining = refusal(lives.get(BOB, live.id));
+        await stalled.entered;
+        await lives.removeViewer(ALICE, live.id, BOB);
+        stalled.release();
+        expect((await joining).code).toBe('LIVE_VIEWER_REMOVED');
+        expect(seats.held.size).toBe(0);
+        // Another viewer of the same live is seated as before.
+        await expect(lives.get(CAROL, live.id)).resolves.toMatchObject({ id: live.id });
+      });
+
+      it('a segment whose commit read the live open, then lost to the end, reopens nothing', async () => {
+        const live = await start();
+        await lives.ingest(ALICE, live.id, 0, segment(0));
+        // The end is over - row ended, Redis closed - and the broadcaster's write arrives last, as
+        // a segment confirmed just before the end would send it. The store refuses the purge, so
+        // the ended row and its tombstone are both still there.
+        store.failPurge = true;
+        await lives.end(ALICE, live.id);
+        expect(await seats.open(live.id, [])).toBe(false);
+        expect(seats.openLives.has(live.id)).toBe(false);
+        expect((await refusal(lives.get(BOB, live.id))).code).toBe('LIVE_ENDED');
+        expect(seats.held.size).toBe(0);
+      });
+
+      it('a PURGED live and a late reopen: the row is gone, so the watch rule refuses before any take', async () => {
+        const live = await start();
+        await lives.end(ALICE, live.id);
+        expect(await q(`SELECT 1 FROM lives WHERE id = $1`, [live.id])).toEqual([]);
+        // The purge forgot the tombstone, so this late write does open the live in Redis...
+        expect(seats.closedLives.has(live.id)).toBe(false);
+        expect(await seats.open(live.id, [])).toBe(true);
+        // ...and nobody is seated on it: the take is never asked.
+        let asked = 0;
+        const take = seats.take.bind(seats);
+        seats.take = async (liveId: string, viewerId: string) => {
+          asked++;
+          return take(liveId, viewerId);
+        };
+        try {
+          expect((await refusal(lives.get(BOB, live.id))).code).toBe('LIVE_NOT_FOUND');
+          expect((await refusal(lives.manifest(BOB, live.id))).code).toBe('LIVE_NOT_FOUND');
+        } finally {
+          seats.take = take;
         }
+        expect(asked).toBe(0);
         expect(seats.held.size).toBe(0);
-        open();
-        // The join began before the cut: it is served, and its seat is one the cut's release frees.
-        await expect(joining).resolves.toMatchObject({ id: live.id });
-        await cutting;
+      });
+
+      it('REDIS LOST ITS DATA while a live runs: nobody is seated (503, never "full"), until the next segment says it again', async () => {
+        const live = await start();
+        await lives.ingest(ALICE, live.id, 0, segment(0));
+        await lives.get(BOB, live.id);
+        await lives.removeViewer(ALICE, live.id, CAROL);
+        seats.wipe();
+        expect(await refusal(lives.get(BOB, live.id))).toEqual({
+          status: HttpStatus.SERVICE_UNAVAILABLE,
+          code: 'LIVE_SEATS_UNAVAILABLE',
+        });
+        expect((await refusal(lives.manifest(BOB, live.id))).code).toBe('LIVE_SEATS_UNAVAILABLE');
         expect(seats.held.size).toBe(0);
-      } finally {
-        open();
-        seats.take = take;
-      }
-      // After the cut, the check under the lock refuses before any seat exists.
-      expect((await refusal(lives.get(BOB, live.id))).code).toBe('LIVE_ENDED');
-      expect((await refusal(lives.manifest(BOB, live.id))).code).toBe('LIVE_ENDED');
-      expect(seats.held.size).toBe(0);
+        // The broadcaster's next segment reopens the live, the removals re-read from the database.
+        await lives.ingest(ALICE, live.id, 1, segment(1));
+        expect([...seats.barred]).toEqual([`${live.id}:${CAROL}`]);
+        await expect(lives.manifest(BOB, live.id)).resolves.toMatchObject({ viewers: 1 });
+        expect((await refusal(lives.get(CAROL, live.id))).code).toBe('LIVE_VIEWER_REMOVED');
+        expect([...seats.held]).toEqual([`${live.id}:${BOB}`]);
+      });
     });
 
     /**

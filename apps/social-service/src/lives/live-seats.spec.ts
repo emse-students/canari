@@ -27,13 +27,20 @@ import {
 import {
   COUNT_LIVE_SEATS_LUA,
   COUNT_MANY_LIVE_SEATS_LUA,
+  BAR_VIEWER_LUA,
+  CLOSE_LIVE_LUA,
   FORGET_ARRIVALS_LUA,
+  FORGET_CLOSED_LUA,
+  LIVE_BARRED_KEY,
+  LIVE_CLOSED_KEY,
+  LIVE_OPEN_KEY,
   LIVE_SEATS_KEY,
+  LiveSeatRefused,
   LiveSeats,
+  OPEN_LIVE_LUA,
   NOTE_ARRIVAL_LUA,
   READ_ARRIVALS_LUA,
   arrivalKeys,
-  RELEASE_LIVE_SEATS_LUA,
   RELEASE_SEAT_LUA,
   TAKE_SEAT_LUA,
   seatMember,
@@ -75,8 +82,8 @@ describe('the viewer cap, as the service types it', () => {
     expect(calls).toEqual([
       {
         script: TAKE_SEAT_LUA,
-        keys: [LIVE_SEATS_KEY],
-        args: [seatMember(LIVE, 'bob'), LIVE_VIEWER_CAP, LIVE_SEAT_LEASE_MS, `${LIVE}:`],
+        keys: [LIVE_SEATS_KEY, LIVE_OPEN_KEY, LIVE_BARRED_KEY],
+        args: [seatMember(LIVE, 'bob'), LIVE_VIEWER_CAP, LIVE_SEAT_LEASE_MS, `${LIVE}:`, LIVE],
       },
     ]);
   });
@@ -150,12 +157,55 @@ describe('the viewer cap, as the service types it', () => {
     );
   });
 
-  it('frees an ended live with ONE script naming its member prefix', async () => {
+  it('closes an ended live with ONE script, its seats given back only when asked', async () => {
+    const keys = [LIVE_SEATS_KEY, LIVE_OPEN_KEY, LIVE_BARRED_KEY, LIVE_CLOSED_KEY];
     const { seats, calls } = seatsAnswering(async () => 2);
-    await expect(seats.releaseLive(LIVE)).resolves.toBe(2);
+    await expect(seats.close(LIVE.toUpperCase(), true)).resolves.toBe(2);
+    await seats.close(LIVE, false);
     expect(calls).toEqual([
-      { script: RELEASE_LIVE_SEATS_LUA, keys: [LIVE_SEATS_KEY], args: [`${LIVE}:`] },
+      { script: CLOSE_LIVE_LUA, keys, args: [LIVE, `${LIVE}:`, '1'] },
+      { script: CLOSE_LIVE_LUA, keys, args: [LIVE, `${LIVE}:`, '0'] },
     ]);
+  });
+
+  it('opens a live with its removed viewers as members, and says when the script refused', async () => {
+    const opened = seatsAnswering(async () => 1);
+    await expect(opened.seats.open(LIVE, ['bob'])).resolves.toBe(true);
+    expect(opened.calls).toEqual([
+      {
+        script: OPEN_LIVE_LUA,
+        keys: [LIVE_OPEN_KEY, LIVE_BARRED_KEY, LIVE_CLOSED_KEY],
+        args: [LIVE, seatMember(LIVE, 'bob')],
+      },
+    ]);
+    const closed = seatsAnswering(async () => 0);
+    await expect(closed.seats.open(LIVE, [])).resolves.toBe(false);
+  });
+
+  it('bars a viewer and forgets a tombstone with one script each', async () => {
+    const { seats, calls } = seatsAnswering(async () => 1);
+    await seats.bar(LIVE, 'bob');
+    await seats.forgetClosed(LIVE);
+    expect(calls).toEqual([
+      {
+        script: BAR_VIEWER_LUA,
+        keys: [LIVE_SEATS_KEY, LIVE_BARRED_KEY],
+        args: [seatMember(LIVE, 'bob')],
+      },
+      { script: FORGET_CLOSED_LUA, keys: [LIVE_CLOSED_KEY], args: [LIVE] },
+    ]);
+  });
+
+  it('types the two refusals of the script, never as "full" and never as an outage', async () => {
+    for (const [reply, why] of [
+      [[2], 'closed'],
+      [[3], 'barred'],
+    ] as const) {
+      const { seats } = seatsAnswering(async () => reply);
+      const refused = await seats.take(LIVE, 'bob').catch((e: unknown) => e);
+      expect(refused).toBeInstanceOf(LiveSeatRefused);
+      expect((refused as LiveSeatRefused).why).toBe(why);
+    }
   });
 
   it('notes an arrival with the live-keyed scripts, and reads it back typed', async () => {
@@ -230,17 +280,51 @@ const maybe = URL ? describe : describe.skip;
 maybe('the seat script against a real Redis', () => {
   const key = `live:seats:it:${Math.random().toString(36).slice(2, 10)}`;
   let redis: Redis;
-  /** The whole reply: `{granted, seated}` refused, `{1, seated, watching}` granted. */
-  const takeReply = async (member: string, cap: number, lease = 30_000) =>
+  const openKey = `${key}:open`;
+  const barredKey = `${key}:barred`;
+  const closedKey = `${key}:closed`;
+  const liveOf = (member: string) => member.split(':')[0];
+  /** The take as sent, on a live in whatever state the test left it. */
+  const takeRaw = async (member: string, cap: number, lease = 30_000) =>
     (await redis.eval(
       TAKE_SEAT_LUA,
-      1,
+      3,
       key,
+      openKey,
+      barredKey,
       member,
       cap,
       lease,
-      `${member.split(':')[0]}:`
+      `${liveOf(member)}:`,
+      liveOf(member)
     )) as number[];
+  const open = async (liveId: string, ...barred: string[]) =>
+    (await redis.eval(
+      OPEN_LIVE_LUA,
+      3,
+      openKey,
+      barredKey,
+      closedKey,
+      liveId,
+      ...barred
+    )) as number;
+  const close = async (liveId: string, release: boolean) =>
+    (await redis.eval(
+      CLOSE_LIVE_LUA,
+      4,
+      key,
+      openKey,
+      barredKey,
+      closedKey,
+      liveId,
+      `${liveId}:`,
+      release ? '1' : '0'
+    )) as number;
+  /** The whole reply on an OPEN live: `{granted, seated}` refused, `{1, seated, watching}` granted. */
+  const takeReply = async (member: string, cap: number, lease = 30_000) => {
+    await open(liveOf(member));
+    return takeRaw(member, cap, lease);
+  };
   /** The grant and the host's count only - what the cap's own tests read. */
   const take = async (member: string, cap: number, lease = 30_000) =>
     (await takeReply(member, cap, lease)).slice(0, 2);
@@ -251,10 +335,10 @@ maybe('the seat script against a real Redis', () => {
     redis = new Redis(URL!);
   });
   beforeEach(async () => {
-    await redis.del(key);
+    await redis.del(key, openKey, barredKey, closedKey);
   });
   afterAll(async () => {
-    await redis.del(key);
+    await redis.del(key, openKey, barredKey, closedKey);
     await redis.quit();
   });
 
@@ -283,14 +367,67 @@ maybe('the seat script against a real Redis', () => {
     expect(await take('c', 1)).toEqual([1, 1]);
   });
 
-  it("gives back every seat of ONE live and no other live's", async () => {
+  it("a close that releases gives back every seat of ONE live and no other live's", async () => {
     const OTHER = '22222222-2222-4222-8222-222222222222';
     await take(seatMember(LIVE, 'a'), 5);
     await take(seatMember(LIVE, 'b'), 5);
     await take(seatMember(OTHER, 'a'), 5);
-    expect(await redis.eval(RELEASE_LIVE_SEATS_LUA, 1, key, seatMember(LIVE, ''))).toBe(2);
+    expect(await close(LIVE, true)).toBe(2);
     expect(await redis.zrange(key, '0', '-1')).toEqual([seatMember(OTHER, 'a')]);
-    expect(await redis.eval(RELEASE_LIVE_SEATS_LUA, 1, key, seatMember(LIVE, ''))).toBe(0);
+    expect(await close(LIVE, true)).toBe(0);
+    // The other live is still open to seats.
+    expect(await takeRaw(seatMember(OTHER, 'b'), 5)).toEqual([1, 2, 2]);
+  });
+
+  it('seats NOBODY on a live Redis does not know: absence refuses, and writes nothing', async () => {
+    expect(await takeRaw(seatMember(LIVE, 'a'), 5)).toEqual([2]);
+    expect(await redis.zcard(key)).toBe(0);
+    // A wipe is the same state: the open set gone, a held seat is not renewed either.
+    await take(seatMember(LIVE, 'a'), 5);
+    await redis.del(openKey);
+    expect(await takeRaw(seatMember(LIVE, 'a'), 5)).toEqual([2]);
+    // The broadcaster's next write opens it again.
+    expect(await open(LIVE)).toBe(1);
+    expect(await takeRaw(seatMember(LIVE, 'a'), 5)).toEqual([1, 1, 1]);
+  });
+
+  it('after a close no take is granted, renewal included, and an ordinary close keeps the seats', async () => {
+    await take(seatMember(LIVE, 'a'), 5);
+    expect(await close(LIVE, false)).toBe(0);
+    expect(await redis.zrange(key, '0', '-1')).toEqual([seatMember(LIVE, 'a')]);
+    expect(await takeRaw(seatMember(LIVE, 'a'), 5)).toEqual([2]);
+    expect(await takeRaw(seatMember(LIVE, 'b'), 5)).toEqual([2]);
+    expect(await redis.zcard(key)).toBe(1);
+  });
+
+  it('an open that reaches Redis AFTER the close reopens nothing, until the purge forgets the tombstone', async () => {
+    await open(LIVE);
+    await close(LIVE, true);
+    expect(await open(LIVE, seatMember(LIVE, 'x'))).toBe(0);
+    expect(await redis.sismember(openKey, LIVE)).toBe(0);
+    expect(await redis.scard(barredKey)).toBe(0);
+    expect(await takeRaw(seatMember(LIVE, 'a'), 5)).toEqual([2]);
+    expect(await redis.eval(FORGET_CLOSED_LUA, 1, closedKey, LIVE)).toBe(1);
+    expect(await redis.scard(closedKey)).toBe(0);
+  });
+
+  it('bars a removed viewer and frees its seat in one script; the bar survives a reopen and goes with the close', async () => {
+    const OTHER = '22222222-2222-4222-8222-222222222222';
+    await take(seatMember(LIVE, 'a'), 5);
+    await take(seatMember(LIVE, 'b'), 5);
+    expect(await redis.eval(BAR_VIEWER_LUA, 2, key, barredKey, seatMember(LIVE, 'a'))).toBe(1);
+    expect(await redis.zrange(key, '0', '-1')).toEqual([seatMember(LIVE, 'b')]);
+    expect(await takeRaw(seatMember(LIVE, 'a'), 5)).toEqual([3]);
+    expect(await redis.zcard(key)).toBe(1);
+    // Barred from ONE live: the same viewer is seated on another.
+    expect(await takeReply(seatMember(OTHER, 'a'), 5)).toEqual([1, 2, 1]);
+    // A wipe, then the broadcaster's write with the removals re-read from the database.
+    await redis.del(openKey, barredKey);
+    expect(await open(LIVE, seatMember(LIVE, 'a'))).toBe(1);
+    expect(await takeRaw(seatMember(LIVE, 'a'), 5)).toEqual([3]);
+    await redis.sadd(barredKey, seatMember(OTHER, 'z'));
+    await close(LIVE, false);
+    expect(await redis.smembers(barredKey)).toEqual([seatMember(OTHER, 'z')]);
   });
 
   it("counts ONE live's viewers, the same from the take and the broadcaster's read", async () => {

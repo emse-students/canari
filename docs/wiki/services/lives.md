@@ -352,11 +352,11 @@ all, and nobody has measured that path.
   (`live-seats.spec.ts`, gated on `SOCIAL_IT_REDIS_URL`, run in CI by `test-social-integration`
   since 2026-10-21 - [cicd](../cicd.md)).
 - The seat is taken AFTER the watch rule, so a blocked, removed or ended answer is never masked as
-  "full"; the broadcaster takes none. The rule and the take run
-  [under the live's row lock](#a-seat-is-taken-under-the-rows-lock-2026-11-15).
+  "full"; the broadcaster takes none. The rule is a read, so the take itself
+  [refuses a closed live and a removed viewer](#no-seat-is-taken-on-a-closed-live-2026-11-15).
 - **Given back by a proof first**: `DELETE /api/lives/:id/seat` when the viewer leaves, the
-  broadcaster's removal of a viewer frees that viewer's seat at once, and **a live CUT or ERASED
-  frees all of its seats** (`releaseLive`, one Lua script over the set, called by `purgeEnded`). An
+  broadcaster's removal of a viewer frees that viewer's seat at once (`bar`), and **a live CUT or
+  ERASED frees all of its seats** (`close`, one Lua script over the set, called by `purgeEnded`). An
   ORDINARY end (broadcaster, silence) keeps them: they are what its purge
   [waits for](#deletion-at-the-end-plus-a-sweep-q10-l3), and each viewer gives its own back on the
   end's `410` (or lets it lapse within the lease - no renewal is possible after the end).
@@ -427,40 +427,69 @@ polling a manifest and fetching a segment every few seconds is ~10-20 requests a
 address, which a crawl scenario could read as abuse. **Unknown, and a question for the DSI before
 the first public live** (not a change: a question).
 
-### A seat is taken under the row's lock (2026-11-15)
+### No seat is taken on a closed live (2026-11-15)
 
-An end, a cut, an erasure and a viewer's removal write under the live's `FOR UPDATE` and free seats
-AFTER their commit. Until 2026-11-15 the watch rule was read outside any lock, so one of them could
-commit and free the seats between a viewer's check and its take: the seat taken then belonged to a
-live that was over (or to a removed viewer), and counted against the host's cap until its 30 s
-lease lapsed. A clock was deciding a count.
+An end, a cut, an erasure and a viewer's removal are written in PostgreSQL, and the seats live in
+Redis. The watch rule is a read: until 2026-11-15 one of those writes could commit, and free the
+seats, between a viewer's check and its take. The seat taken then belonged to a live that was over
+(or to a removed viewer) and counted against the host's cap until its 30 s lease lapsed. A clock
+was deciding a count.
 
-`LivesService.watchSeated` is now the one place a seat is taken. It runs the watch rule and the take
-in ONE transaction that first locks the live's row `FOR SHARE`:
+**The fact is now where the decision is made.** PostgreSQL stays the truth; Redis carries three
+sets derived from it, beside the seats and in their slot (`live-seats.ts`):
 
-- viewers share the lock with each other, so polls do not queue behind polls;
-- a writer's `FOR UPDATE` WAITS for the takes in flight, so every seat taken before its commit is
-  in the set when it frees them;
-- a take that comes after a writer's commit reads the ended or removed state under the lock
-  (READ COMMITTED: the rule's statement starts after the lock is granted) and is refused by the
-  rule - `410`, `403` - before any seat exists.
+| Set | Holds | Written by |
+| --- | --- | --- |
+| `{live:seats}:open` | the lives a seat may be taken on | the broadcaster's side: the start, and every stored segment |
+| `{live:seats}:closed` | the lives that ended and are not purged yet | every end, through `purgeEnded` |
+| `{live:seats}:barred` | `<liveId>:<viewerId>` for each removed viewer | a removal; and the open, from the database |
 
-So after an end commits, the set of that live's seats only shrinks, and no seat follows a release.
-The lease is left with the one job it was given: the viewer that could not say it left.
+- **The take refuses in the evaluation that grants.** `TAKE_SEAT_LUA` answers `{2}` when the live
+  is not in `open` and `{3}` when the viewer is barred, and writes nothing for either: no seat
+  exists even for an instant, so a refused take can never push another viewer over the cap.
+- **An end closes first.** `purgeEnded`, which every end reaches after its commit, begins with
+  `CLOSE_LIVE_LUA`: the live goes into `closed`, then out of `open`, its bars go, and - for a cut, an
+  erasure or a row-less folder - its seats, all in one script. An ordinary end keeps the seats: they
+  are what the drain waits for. The script is idempotent and every sweep sends it again.
+- **A removal bars first.** `BAR_VIEWER_LUA` writes the bar, then frees the seat, in one script.
+- **An open cannot undo a close.** `OPEN_LIVE_LUA` refuses a live found in `closed`. So the
+  broadcaster's write needs no lock and no transaction around Redis: a segment whose commit read
+  the live open and which then lost to an end reopens nothing, whatever order the two reach Redis
+  in. The order is Redis's own.
 
-**What it costs.** Each key read and each manifest poll of a viewer is one transaction and one row
-lock more, and holds its connection across ONE Redis script, which the client bounds
-(`commandTimeout`, one second, in `RedisService`): a Redis that does not answer delays an end by
-that bound, and the take is refused `LIVE_SEATS_UNAVAILABLE` as before. The segment store, which
-nothing bounds, is still never called under a held connection
-([the reservation](#the-end-is-the-rows-state-q5)). The broadcaster's poll takes the same
-shared lock and no seat.
+**Redis says THAT it refused; the row says why.** On `{2}` or `{3}` the service asks the watch rule
+again, which throws the typed refusal: `410`, `403`, `404`. If the row still allows the viewer, the
+live is open and Redis does not know it: `503 LIVE_SEATS_UNAVAILABLE` - never "full" - and an error
+line that accuses.
 
-**Proven on PostgreSQL** (`lives.integration.spec.ts`, "RACE: a cut waits for a seat being taken"):
-the take is stalled inside the seat store, a cut fired then is read WAITING in `pg_stat_activity`
-while no seat exists, the join is served, the cut then frees its seat, and the next key read and
-manifest are `410` with no seat taken. Without the lock the cut completes while the take is
-stalled, which the test refuses.
+**A Redis that lost its data seats nobody, then heals by the broadcaster.** Absence refuses: an
+unknown live is never admitted, because that would be the uncounted seat the cap exists to prevent.
+The next stored segment (about two seconds) sends the open again, with the removals re-read from
+`live_removed_viewers`, and viewers are seated from their next poll. The same holds for a live that
+was running when this shipped. A live whose broadcaster has stalled stays closed to new viewers
+until a segment lands or the silence sweep ends it.
+
+**The tombstone's lifetime is the ended row's.** `closed` is forgotten when the purge deletes the
+row (`FORGET_CLOSED_LUA`), because from then on the watch rule refuses the live in PostgreSQL
+(`404`, or the cut's `410`) before any take is asked. No entry of the three sets expires on a
+timer.
+
+**What is not closed.** (1) A viewer whose check passed before an ORDINARY end and whose take
+reaches Redis before that end's close is seated, as one that polled a moment earlier would be; the
+purge waits for that seat like any other, for at most the lease. (2) A request still between its
+check and its take when the row is PURGED, together with a broadcaster's open delayed past the same
+purge, would be seated on a live that no longer exists, for a lease. Both delays must span an end,
+its close and its purge; nothing proves it impossible. (3) When a close or a bar fails (Redis not
+answering), a warning says so and the old behaviour is what is left: a late seat lasts its lease.
+
+**Proven.** Against a real Redis (`live-seats.spec.ts`): an unknown live and a wiped one refuse and
+write nothing; after a close no take is granted, renewal included; an open after the close reopens
+nothing; a bar frees the seat, survives a reopen and goes with the close. On PostgreSQL
+(`lives.integration.spec.ts`, "a take that lands after an end, a removal, or a loss of Redis"): a
+request is stalled between its check and its take while a cut, an ordinary end or a removal runs to
+completion, and is then refused `410` or `403` with no seat; a late reopen of an ended live is
+refused; a purged live reopened late seats nobody because the take is never asked; a wipe refuses
+with `503` until the next segment, which also restores the bar.
 
 ## The viewer count (2026-10-21)
 
@@ -1017,9 +1046,8 @@ a cut. The cut row is then what answers `410 LIVE_ENDED` with the live's own end
 answers at once, the purge waits for the reservation, the segment then gets `410 cut` and nothing
 outlives the purge; a cut, a segment and a viewer join fired together - whichever ran first, every
 refusal is `410 cut` and nothing is served after it. A viewer whose key read began before the cut
-committed takes its seat BEFORE the cut frees them, and none after: the take holds the row's lock
-the cut waits for ([above](#a-seat-is-taken-under-the-rows-lock-2026-11-15)). The same holds for
-every kind of end and for a viewer's removal.
+committed is refused by the take itself once the cut has closed the live in Redis
+([above](#no-seat-is-taken-on-a-closed-live-2026-11-15)). The same holds for every kind of end and for a viewer's removal.
 
 **Repeat offenders: [the strike ladder](#the-strike-ladder-wp-l8b)**, built 2026-10-21 on the
 decisions of 2026-10-20. Step 1 above records the cut's STRIKE, and the notice after the commit is
