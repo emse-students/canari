@@ -1,5 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
-import { IsNull, type EntityManager } from 'typeorm';
+import { IsNull, Raw, type EntityManager } from 'typeorm';
+import { associationArchivedSql } from '../associations/association-archived';
 
 /**
  * A form's life: a DRAFT is built and seen by its managers only, a PUBLISHED form is answerable
@@ -23,12 +24,21 @@ export const FORM_IS_DRAFT = 'FORM_IS_DRAFT';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * The ONE `where` of every RESPONDENT read: the form exists, is not archived, and is published. A
- * draft answers exactly what an absent form answers (404), so a respondent cannot learn that a draft
- * id exists. Managers read through `assertFormManager`, which ignores the status.
+ * The ONE `where` of every RESPONDENT read: the form exists, is not archived, is published, and its
+ * association (when it has one) is not ARCHIVED. A draft, and a form of an archived association,
+ * answer exactly what an absent form answers (404), so a respondent cannot learn that the id exists:
+ * an archive ends the association's active life, its forms included, whoever holds their link
+ * (owner's archive rule: it already took them out of every list and every reminder). Managers read
+ * through `assertFormManager`, which ignores the status and the archive; a payment already issued
+ * settles through the submission's own paths, which never read this.
  */
 export function respondentFormWhere(id: string) {
-  return { id, deletedAt: IsNull(), status: FORM_PUBLISHED };
+  return {
+    id,
+    deletedAt: IsNull(),
+    status: FORM_PUBLISHED,
+    associationId: Raw((column) => `NOT ${associationArchivedSql(column)}`),
+  };
 }
 
 /**

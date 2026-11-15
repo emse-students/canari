@@ -110,3 +110,40 @@ describe('FormsController - ids are validated at the boundary', () => {
     expect(own).toEqual([]);
   });
 });
+
+/**
+ * A FORM'S AGENDA LINK ANSWERS WHAT ITS READ ANSWERS (2026-11-14): a form the reader may not read -
+ * a draft, one of an archived association - answers no link, exactly as an absent form, and the
+ * agenda is not even asked; a form they may read is looked up as before.
+ */
+describe('FormsController - the agenda link follows the form read', () => {
+  function controllerWith(mayRead: boolean) {
+    const findCalendarEventByLinkedForm = jest.fn(async () => null);
+    const controller = new FormsController(
+      { mayRead: jest.fn(async () => mayRead) } as never,
+      { findCalendarEventByLinkedForm } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never
+    );
+    return { controller, findCalendarEventByLinkedForm };
+  }
+
+  it('answers no link, and asks nothing, for a form the reader may not read', async () => {
+    const { controller, findCalendarEventByLinkedForm } = controllerWith(false);
+    await expect(controller.getFormCalendarLink('f1', 'u1')).resolves.toEqual({
+      linkedEvent: null,
+    });
+    expect(findCalendarEventByLinkedForm).not.toHaveBeenCalled();
+  });
+
+  it('looks the link up for a form the reader may read', async () => {
+    const { controller, findCalendarEventByLinkedForm } = controllerWith(true);
+    await controller.getFormCalendarLink('f1', 'u1', 'false');
+    expect(findCalendarEventByLinkedForm).toHaveBeenCalledWith('f1', {
+      userId: 'u1',
+      isGlobalAdmin: false,
+    });
+  });
+});
