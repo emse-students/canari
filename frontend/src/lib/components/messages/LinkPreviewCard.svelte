@@ -402,7 +402,7 @@
   {:else if isPending}
     <div class="absolute inset-0 animate-pulse bg-black/10 dark:bg-white/10"></div>
   {:else if coverCard}
-    <Images size={24} strokeWidth={1.75} class="text-text-muted opacity-50" />
+    <Images size={24} strokeWidth={2} />
   {:else if showsPreviewImage}
     <img
       src={previewImageUrl}
@@ -415,7 +415,7 @@
          Already proven loadable by the probe above, so it needs no onerror. -->
     <img src={faviconUrl} alt="" class="h-8 w-8 object-contain opacity-70" />
   {:else if faviconSearchDone}
-    <Globe size={20} strokeWidth={2} class="text-text-muted opacity-50" />
+    <Globe size={24} strokeWidth={2} />
   {/if}
 {/snippet}
 

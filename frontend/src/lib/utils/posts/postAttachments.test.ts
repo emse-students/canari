@@ -102,3 +102,60 @@ describe('planPostAttachments - the hero', () => {
     expect(planPostAttachments({ markdown: '', media: [photo] }, []).hero).toBe(false);
   });
 });
+
+describe('stripCardedUrls - markers, runs, code and line endings (review of #3616)', () => {
+  const A = 'https://a.example/x';
+  const B = 'https://b.example/y';
+
+  it('takes a list, quote or heading marker away with the URL it held alone', () => {
+    expect(stripCardedUrls(`Liens\n- ${A}\n> ${A}\n## ${A}\n1. ${A}\nFin`, [A])).toBe('Liens\nFin');
+  });
+
+  it('keeps the marker when words stay on the line', () => {
+    expect(stripCardedUrls(`- Inscription ${A}`, [A])).toBe('- Inscription');
+    expect(stripCardedUrls(`> Voir ${A}.`, [A])).toBe('> Voir.');
+  });
+
+  it("takes a whole trailing run of carded URLs, keeping the last one's punctuation", () => {
+    expect(stripCardedUrls(`Voir ${A} ${B}`, [A, B])).toBe('Voir');
+    expect(stripCardedUrls(`Voir ${A}, ${B}.`, [A, B])).toBe('Voir.');
+    expect(stripCardedUrls(`${A} ${B}\nSuite`, [A, B])).toBe('Suite');
+  });
+
+  it('never touches a tilde fence or an indented code block', () => {
+    const tilde = `~~~\n${A}\n~~~`;
+    expect(stripCardedUrls(tilde, [A])).toBe(tilde);
+    const indented = `Exemple :\n\n    ${A}`;
+    expect(stripCardedUrls(indented, [A])).toBe(indented);
+  });
+
+  it('strips a line that ends in CRLF like any other', () => {
+    expect(stripCardedUrls(`Voir ${A}\r\nSuite\r\n`, [A])).toBe('Voir\nSuite');
+  });
+});
+
+describe('planPostAttachments - the caption counts characters as a reader sees them', () => {
+  it('counts an emoji as one character, so 140 of them still qualify', () => {
+    // A family: three people joined by two zero-width joiners, eight UTF-16 units, ONE character.
+    const family = '\u{1F468}‍\u{1F469}‍\u{1F467}';
+    expect(family.length).toBeGreaterThan(1);
+    expect(
+      planPostAttachments({ markdown: `${family.repeat(HERO_TEXT_MAX)} ${WIKI}` }, []).hero
+    ).toBe(true);
+    expect(
+      planPostAttachments({ markdown: `${family.repeat(HERO_TEXT_MAX + 1)} ${WIKI}` }, []).hero
+    ).toBe(false);
+  });
+});
+
+describe('planPostAttachments - links written as code get no card', () => {
+  it('skips a code span, a fence and an indented block, and draws x and x/ once', () => {
+    const plan = planPostAttachments(
+      {
+        markdown: `\`${WIKI}\`\n\`\`\`\nhttps://in.fence/a\n\`\`\`\n\n    https://in.indent/b\n\nVoir https://x.example et https://x.example/ ici`,
+      },
+      []
+    );
+    expect(plan.cards).toEqual([{ kind: 'link', url: 'https://x.example' }]);
+  });
+});

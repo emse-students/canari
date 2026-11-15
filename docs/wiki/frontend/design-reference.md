@@ -276,7 +276,7 @@ pill, `50%` avatar. Four values with four distinct meanings, replacing fourteen 
 in a post and in a chat bubble - `AttachmentCard`, the `12px` larger-card corner (`rounded-2xl`),
 `p-3`, a `64px` tile on the `8px` corner, an `--text-2xs` chip, an `--text-sm` title (`--text-base`
 when the card is the post's lone attachment, drawn large), one `--text-xs` subtitle line, one
-trailing glyph. The anatomy, the order and the hero rule are in
+arrow (exit out of the app, chevron inside it) on a tile tinted `bg-accent/10`. The anatomy, the order and the hero rule are in
 [posts](modules/posts.md#the-card-zone-one-family-a-fixed-order-owner-2026-11-15), the only copy.
 
 **Surfaces**: opaque. Translucency survives only as a hover/pressed overlay

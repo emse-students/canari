@@ -78,7 +78,9 @@ const settle = async () => {
   flushSync();
 };
 const rowButton = (t: HTMLElement) =>
-  t.querySelector<HTMLButtonElement>(`[aria-label="${m.pdf_open_document_label()}"]`)!;
+  t.querySelector<HTMLButtonElement>(
+    `[aria-label="${m.pdf_open_named_document_label({ name: 'cours.pdf' })}"]`
+  )!;
 const downloadButton = (t: HTMLElement) =>
   t.querySelector<HTMLButtonElement>(`[aria-label="${m.post_download_label()}"]`)!;
 const card = (t: HTMLElement) => t.querySelector<HTMLElement>('[data-file-card]')!;
@@ -226,4 +228,22 @@ it('draws any file but a PDF as a row, even when the full card was asked: only a
   expect(download).not.toHaveBeenCalled();
   expect(card(target)).not.toBeNull();
   expect(target.querySelector('[data-post-media-open]')).toBeNull();
+});
+
+it("names the document in the row's accessible name, not only 'open the document'", () => {
+  const target = mountFile(true);
+  expect(rowButton(target).getAttribute('aria-label')).toContain('cours.pdf');
+});
+
+it("reserves the lone PDF's 4:3 page BEFORE its file is in, so the card does not jump", async () => {
+  const slow = slowDownload();
+  const target = mountFile(false);
+  flushSync();
+  const slot = target.querySelector<HTMLElement>('[data-pdf-page-slot]');
+  expect(slot).not.toBeNull();
+  expect(slot!.className).toContain('aspect-[4/3]');
+  expect(slot!.querySelector('[data-post-media-open]')).toBeNull();
+  slow.finish('blob:late');
+  await settle();
+  expect(target.querySelector('[data-pdf-page-slot] [data-post-media-open]')).not.toBeNull();
 });

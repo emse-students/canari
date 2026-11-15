@@ -1,3 +1,4 @@
+import { codeRanges, insideCode } from '$lib/utils/markdownCode';
 import { formatMentionsForPreview } from '$lib/utils/mentions.parse';
 import { foldForSearch, foldWithIndex } from '$lib/utils/textFold';
 
@@ -103,20 +104,37 @@ export function isAngleBracketAutolink(text: string, urlStart: number, urlEnd: n
 }
 
 /**
- * Every distinct HTTP/HTTPS URL eligible for a link preview, in the order of the text (skips
- * `<url>` autolinks). A post names each of its links once, so a repeated link is previewed once.
+ * The identity of a link for "is it the same link": a trailing slash on the path is not a second
+ * page (`https://x` and `https://x/` are one card). The first spelling met is the one kept.
+ */
+function linkIdentity(url: string): string {
+  return url.replace(/\/+(?=$|[?#])/, '');
+}
+
+/**
+ * Every distinct HTTP/HTTPS URL eligible for a link preview, in the order of the text. Skipped:
+ * `<url>` autolinks, and every URL written as CODE - an inline code span or a fenced or indented
+ * block (`codeRanges`): the reader typed it to be read, not followed, and a span's closing backtick
+ * used to end up inside the URL. A post names each of its links once, so a repeated link - with or
+ * without a trailing slash - is previewed once.
  */
 export function extractPreviewUrls(text: string): string[] {
   const re = new RegExp(HTTP_URL_RE.source, HTTP_URL_RE.flags);
+  const code = codeRanges(text);
   const urls: string[] = [];
+  const seen = new Set<string>();
   let match: RegExpExecArray | null;
 
   while ((match = re.exec(text)) !== null) {
     const raw = match[0];
     const start = match.index;
     if (isAngleBracketAutolink(text, start, start + raw.length)) continue;
+    if (insideCode(code, start)) continue;
     const url = trimUrlTrailingPunctuation(raw);
-    if (!urls.includes(url)) urls.push(url);
+    const identity = linkIdentity(url);
+    if (seen.has(identity)) continue;
+    seen.add(identity);
+    urls.push(url);
   }
 
   return urls;

@@ -1110,21 +1110,29 @@ URL left in full in the text above its own card.
 
 **ONE CARD, `AttachmentCard`** (`components/shared/AttachmentCard.svelte`), modelled on the chat's
 link card, which was already coherent: a 64 px tile, a type chip (the host, "Formulaire", "PDF",
-"Événement", "MiGallery"), a title (two lines), ONE subtitle line, ONE trailing glyph (the exit arrow
-for an external link, the up-right arrow in the app), one border, `rounded-2xl` (12 px, the scale's
-larger card), `p-3`. Every non-media attachment is it:
+"Événement", "MiGallery"; dropped when the title only repeats it), a title (two lines), ONE subtitle
+line, ONE arrow, one border, `rounded-2xl` (12 px, the scale's larger card), `p-3`. Every non-media
+attachment is it.
 
-| Kind | Caller | Tile | Subtitle | Trailing |
+- **The arrow says "this card opens something", and where**: the exit glyph out of the app, a
+  chevron inside it (the up-right arrow it replaced read as "external" too). A card that opens
+  nothing (a file that is not a PDF) has none; a hero showing its call to action has none.
+- **The tile is one treatment**: the accent-tinted surface (`bg-accent/10`), a glyph or a picture on
+  it. The Canari logo stays for an in-app LINK only, where it identifies the destination.
+
+| Kind | Caller | Tile | Subtitle | Arrow, and the control beside it |
 | --- | --- | --- | --- | --- |
-| Link, external | `LinkPreviewCard` | Open Graph picture, favicon, globe | the page's description | exit arrow |
-| Link, in-app (post, form, association...) | `LinkPreviewCard` | the target's picture or the Canari logo | the target's line | up-right arrow |
-| MiGallery album | `LinkPreviewCard` (the old `EcosystemCoverPreview` is deleted) | the square cover | the album's description | exit arrow |
-| Attached form | `FormCard` | the Canari logo | answered / opens on / open (`link_preview_form_open`, the link card's word) | the reminder bell when not open yet, else the arrow |
-| File | `PostMedia` (`fileCard`) | the file glyph | the size | the download button; a tap on a PDF opens the reader |
-| Calendar event | `PostEventCard` (was an amber pill above the text) | a calendar page: month and day | weekday, date, hour | up-right arrow |
+| Link, external | `LinkPreviewCard` | Open Graph picture, favicon, globe | the page's description | exit |
+| Link, in-app (post, form, association...) | `LinkPreviewCard` | the target's picture or the Canari logo | the target's line | chevron |
+| MiGallery album | `LinkPreviewCard` (the old `EcosystemCoverPreview` is deleted) | the square cover once PROVEN to decode, else the album glyph | the album's description | exit |
+| Attached form | `FormCard` | the form glyph, a check once answered | answered / opens on / open (`link_preview_form_open`, the link card's word) | chevron; the reminder bell beside it when not open yet |
+| File | `PostMedia` (`fileCard`) | the file glyph | the size | a PDF: chevron (the row opens the reader, named `pdf_open_named_document_label`); every file: the download beside it |
+| Calendar event | `PostEventCard` (was an amber pill above the text) | a calendar page: month and day | short weekday, date, hour | chevron |
 
-The trailing slot is the ONE control that is not the card's destination (the bell, the download), so
-it sits beside the link and never inside it. The chat keeps the same card: it is the model, and a
+The control beside the arrow is the ONE that is not the card's destination (the bell, the
+download), so it sits beside the link and never inside it. What a banner or the band below shows
+(a link's picture, a post preview's photo with its own zoom button) is `inert` and takes no pointer
+events: it repeats the row's destination and is never a control of its own. The chat keeps the same card: it is the model, and a
 MiGallery album in a conversation is now the same family too.
 
 **THE ORDER IS FIXED: text, media, cards, poll, action bar.** `planPostAttachments`
@@ -1134,36 +1142,52 @@ MiGallery album in a conversation is now the same family too.
 - the **card zone** follows, on the text's 16 px inset, `space-y-2`: the **event**, the **attached
   forms** in the post's order, the **files**, then the **links** of the text in the text's order;
 - the **poll** closes it, just above the action bar (`PostCard`): it is the one attachment the reader
-  acts on in the post, so it sits where the hand already is; it takes the cards' inset, corner and
-  border and keeps its own voting body. Before, it was under the action bar.
+  acts on in the post, so it sits where the hand already is; it takes the cards' corner and border
+  and keeps its own voting body. Before, it was under the action bar. Its inset is the host's
+  (`PostPolls` `inset`): `px-4 pb-3` under the cards of a post, `px-5 py-4` in a channel bubble,
+  where it is the whole bubble.
 
 **A form is drawn once.** A link to `/forms/<id>` or `/f/<id>` whose form is also attached is not a
 second card: the attached form's card stands for both (`linkedFormId`). The moderation preview
 reads no forms, so it draws the link card.
 
-**A URL that has a card leaves the text** where it ends its line - alone on it, or after the words
-introducing it ("inscription ici https://..."): `stripCardedUrls`. In the middle of a sentence it
-stays (taking it out would leave "plus d'infos sur et inscription"), and so do a
-labelled Markdown link (text in brackets, then the URL), an `<url>` autolink and anything in a code block. Sentence punctuation after it stays.
+**A URL that has a card leaves the text** where it ends its line - alone on it, after the words
+introducing it ("inscription ici https://..."), or as a trailing run of several: `stripCardedUrls`.
+In the middle of a sentence it stays (taking it out would leave "plus d'infos sur et inscription"),
+and so do a labelled Markdown link (text in brackets, then the URL) and an `<url>` autolink. The
+punctuation after the last URL of the run stays; a line left with only its list, quote or heading
+marker goes, marker included (no bare `-` or `>`). `\r\n` lines are read like `\n` ones.
+
+**Code is never a link** (`utils/markdownCode.ts`, `codeRanges` / `codeBlockLines`): a URL in an
+inline code span, a backtick or tilde fence, or a 4-space indented block gets no card
+(`extractPreviewUrls`, which the chat shares) and is never taken out of the text. A span's closing
+backtick used to end up inside the URL. `extractPreviewUrls` also draws `https://x` and
+`https://x/` once (the first spelling kept).
 
 **HERO: a lone attachment under a short caption is put forward** (owner, 2026-11-15). The rule,
 `planPostAttachments`: exactly ONE card, NO picture or video, NO poll, not a replay, and at most
 `HERO_TEXT_MAX` = 140 characters of PLAIN text (Markdown marks and the URL the card replaces not
-counted) - a one-sentence caption, two lines on a phone. Then the card is drawn large:
+counted), counted as a reader sees them (`Intl.Segmenter` graphemes: a family emoji is one, not
+eight UTF-16 units) - a one-sentence caption, two lines on a phone. Then the card is drawn large:
 
 - a **link** with a picture runs it full width at 1.91:1 (the Open Graph ratio) above the chip and the
   title; an album its cover; a post preview its own photo. A link with no picture stays a row;
 - a **PDF** shows its first page full width (4:3, top-anchored: a document's top is its identity)
-  above the row; a tap opens the reader. Any other file stays a row;
+  above the row, its box reserved before the file arrives so nothing moves; a tap opens the reader.
+  Any other file stays a row;
 - a **form** or an **event**, which have no picture, keep the row and gain a full-width call to
   action ("Remplir le formulaire", "Voir l'événement") - decorative (`aria-hidden`, `tabindex=-1`),
-  the row being the one tab stop. A form not open yet shows its bell instead.
+  the row being the one tab stop, and the row's arrow is dropped (the button says it). A form not
+  open yet shows its bell instead.
 
 A lone PICTURE needs no rule: it is already drawn at its own shape, full width.
 
-Pinned by `postAttachments.test.ts` (order, the form drawn once, the URL taken out or kept, every
-side of the hero rule), `PostContent.cards.svelte.test.ts` (the combined post of the screenshots,
-rendered: text, photo, event, form, file, link; the form once; the hero flags) and `FormCard.svelte.test.ts`.
+Pinned by `postAttachments.test.ts` (order, the form drawn once, the URL taken out or kept - markers,
+runs, fences, indented code, CRLF - and every side of the hero rule, emoji included),
+`messageDisplay.test.ts` (no card for code, one card for `x` and `x/`), `PostContent.cards.svelte.test.ts`
+(the combined post of the screenshots, rendered), `AttachmentCard.svelte.test.ts` (the arrow, the
+chip, the inert picture), `PostCard.order.test.ts` (the poll between the cards and the action bar),
+`PostMedia.compactFile.svelte.test.ts` (the named row, the reserved page) and `FormCard.svelte.test.ts`.
 
 ### Several media: square cells, and a "+N" past four (2026-10-05)
 

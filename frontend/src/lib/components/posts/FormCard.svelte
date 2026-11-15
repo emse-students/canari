@@ -1,7 +1,6 @@
 <script lang="ts">
-  import { Bell, BellOff } from '@lucide/svelte';
+  import { Bell, BellOff, CircleCheck, ClipboardList } from '@lucide/svelte';
   import AttachmentCard from '$lib/components/shared/AttachmentCard.svelte';
-  import CanariLinkPreviewMedia from '$lib/components/shared/CanariLinkPreviewMedia.svelte';
   import { formatFormOpensAt, formOpensAtIso } from '$lib/posts/postComposerDraft';
   import {
     subscribeFormReminder,
@@ -29,7 +28,7 @@
   let { formId, href, title, submitted, opensAt, hero = false }: Props = $props();
 
   /**
-   * AN ATTACHED FORM, IN THE ONE CARD FAMILY (`AttachmentCard`, owner 2026-11-15): the Canari tile,
+   * AN ATTACHED FORM, IN THE ONE CARD FAMILY (`AttachmentCard`, owner 2026-11-15): a form glyph,
    * the "Formulaire" chip and the state words of a form LINK's card (`formStateLabel`), so a form
    * reads the same whether it was attached or linked - and a post that does both draws it once
    * (`planPostAttachments`). The reminder bell belongs to the card whenever the form is not open
@@ -88,8 +87,13 @@
   }
 </script>
 
+<!-- The tile family's treatment: a glyph on the tinted surface - a check once answered. -->
 {#snippet tile()}
-  <CanariLinkPreviewMedia preview={null} />
+  {#if submitted}
+    <CircleCheck size={26} strokeWidth={2} />
+  {:else}
+    <ClipboardList size={26} strokeWidth={2} />
+  {/if}
 {/snippet}
 
 {#snippet bell()}

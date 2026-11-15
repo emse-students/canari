@@ -38,6 +38,12 @@
      * leaves the options read-only and drops the submit button.
      */
     canVote?: boolean;
+    /**
+     * The block's inset, which is its HOST's: in a post it closes the card zone, on the text's
+     * 16 px and under the cards' own bottom gap (`px-4 pb-3`); in a channel bubble it is the whole
+     * bubble and keeps its own frame on every side (`px-5 py-4`, `ChannelPoll`).
+     */
+    inset?: string;
   }
 
   let {
@@ -47,6 +53,7 @@
     onSubmitVote,
     isOver,
     canVote = true,
+    inset = 'px-4 pb-3',
   }: Props = $props();
 
   // Tooltip state
@@ -155,7 +162,7 @@
      attachment the reader acts on IN the post, so it sits where the hand already is. Same inset,
      corner and border as the cards (`AttachmentCard`); its voting body stays its own. -->
 {#if polls && polls.length > 0}
-  <div class="space-y-2 px-4 pb-3" data-post-polls>
+  <div class="space-y-2 {inset}" data-post-polls>
     {#each polls as poll (poll.id)}
       {@const totalVotes = getTotalVotes(poll)}
       {@const over = isOver(poll)}

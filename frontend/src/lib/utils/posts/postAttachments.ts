@@ -1,6 +1,7 @@
 import type { PostEntity, PostMediaRef } from '$lib/posts/api';
 import { markdownToPlainText } from '$lib/seo/text';
 import { extractPreviewUrls } from '$lib/utils/chat/messageDisplay';
+import { codeBlockLines } from '$lib/utils/markdownCode';
 import { parseCanariLinkTarget } from '$lib/utils/canariLinkPreviewFormat';
 import { resolveMediaType } from '$lib/utils/mediaLayout';
 
@@ -31,7 +32,7 @@ export interface PostAttachmentPlan {
  * article. Counted on the PLAIN text (Markdown marks and the URL the card replaces left out), so
  * "Inscriptions ici" above a form link qualifies and three paragraphs do not. 140 is the length of
  * a one-sentence caption, two lines on a phone card - what Instagram shows under a picture before
- * "plus".
+ * "plus". Counted in characters as a reader sees them (graphemes), never in UTF-16 units.
  */
 export const HERO_TEXT_MAX = 140;
 
@@ -56,34 +57,69 @@ function escapeRegExp(text: string): string {
 }
 
 /**
- * The text with each URL in `carded` removed where it ENDS ITS LINE - alone on it, or after the
- * words that introduce it ("inscription ici https://..."). A URL in the middle of a sentence stays:
- * taking it out would leave "plus d'infos sur et inscription", and the card under the text says
- * where it goes anyway. Only a BARE URL is taken - a labelled `[texte](url)` or an `<url>` autolink
- * is the author's own wording - and nothing inside a fenced code block. Sentence punctuation after
- * the URL stays; a line left empty goes.
+ * A line's block marker - quote, list bullet or number, heading - kept apart from its words so a
+ * stripped URL never leaves a bare `-`, `>`, `1.` or `##` on screen.
+ */
+const MARKER_RE = /^(\s*(?:>\s?)*\s*(?:[-*+]\s+|\d{1,9}[.)]\s+|#{1,6}\s+)?)(.*)$/;
+
+/** What is left of a line once its URLs went: nothing but sentence punctuation is nothing. */
+const ONLY_PUNCTUATION_RE = /^[\s,.!?;:]*$/;
+
+/**
+ * The text with the URLs in `carded` removed where they END THEIR LINE - alone on it, after the words
+ * that introduce them ("inscription ici https://..."), or as a trailing run ("https://a https://b").
+ * A URL in the middle of a sentence stays: taking it out would leave "plus d'infos sur et
+ * inscription", and the card under the text says where it goes anyway. Only a BARE URL is taken - a
+ * labelled link or an `<url>` autolink is the author's own wording - and nothing in code (a code
+ * span cannot match, a fenced or indented block is skipped whole, `codeBlockLines`).
+ *
+ * The punctuation after the LAST URL of the run stays ("Voir https://x." -> "Voir."); a line left
+ * with nothing but its block marker or punctuation goes, marker included. `\r\n` lines are read like
+ * `\n` ones and written back as `\n`.
  */
 export function stripCardedUrls(markdown: string, carded: readonly string[]): string {
   if (carded.length === 0) return markdown;
   const patterns = carded.map(
-    (url) => new RegExp(`(^|[ \\t]+)${escapeRegExp(url)}([,.!?;:]*)[ \\t]*$`)
+    (url) => new RegExp(`(?:^|[ \\t]+)${escapeRegExp(url)}([,.!?;:]*)[ \\t]*$`)
   );
-  let fenced = false;
+  const lines = markdown.split(/\r?\n/);
+  const inCode = codeBlockLines(markdown);
   const out: string[] = [];
-  for (const line of markdown.split('\n')) {
-    if (/^\s*```/.test(line)) fenced = !fenced;
-    if (fenced) {
+  lines.forEach((line, i) => {
+    if (inCode[i]) {
       out.push(line);
-      continue;
+      return;
     }
-    let next = line;
-    for (const re of patterns) next = next.replace(re, (_all, _lead, punct: string) => punct);
-    if (next === line || next.trim() !== '') out.push(next.trimEnd());
-  }
+    const [, marker, words] = line.match(MARKER_RE) ?? ['', '', line];
+    let rest = words;
+    let tail: string | null = null;
+    for (let changed = true; changed;) {
+      changed = false;
+      for (const re of patterns) {
+        const found = rest.match(re);
+        if (!found || found.index === undefined) continue;
+        tail ??= found[1];
+        rest = rest.slice(0, found.index);
+        changed = true;
+      }
+    }
+    if (tail === null) {
+      out.push(line);
+      return;
+    }
+    if (ONLY_PUNCTUATION_RE.test(rest)) return;
+    out.push(`${marker}${rest.replace(/\s+$/, '')}${tail}`);
+  });
   return out
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+}
+
+/** Characters as a reader counts them: a flag or a family emoji is one, not four to eleven. */
+function perceivedLength(text: string): number {
+  return Array.from(new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text))
+    .length;
 }
 
 /**
@@ -135,7 +171,7 @@ export function planPostAttachments(
     media.length === 0 &&
     !replay &&
     !post.polls?.length &&
-    markdownToPlainText(markdown).length <= HERO_TEXT_MAX;
+    perceivedLength(markdownToPlainText(markdown)) <= HERO_TEXT_MAX;
 
   return { markdown, media, cards, hero };
 }

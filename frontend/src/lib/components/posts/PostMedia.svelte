@@ -617,8 +617,9 @@
   {/if}
 {:else}
   <!-- Standalone rendering -->
-  {#if compactFile && !failure && !authMissing}
-    <!-- A compact row never waits on its download: it is drawn from metadata alone. -->
+  {#if mediaType === 'file' && !failure && !authMissing}
+    <!-- A file card never waits on its download: it is drawn from metadata alone, and the hero's
+         first page has its 4:3 box reserved up front, filled once the file is in. -->
     {@render fileCard()}
   {:else if loading}
     {#if mediaType === 'image'}
@@ -662,18 +663,6 @@
       >
         <Mic size={20} class="text-text-muted opacity-20" />
         <div class="ml-3 h-2 flex-1 rounded-full bg-current opacity-10"></div>
-      </div>
-    {:else}
-      <!-- Same footprint as the loaded file card, so nothing jumps on arrival. -->
-      <div
-        class="flex w-full animate-pulse items-center gap-3.5 rounded-3xl bg-black/5 px-3.5 py-3 dark:bg-white/10"
-      >
-        <div
-          class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-black/10 dark:bg-white/10"
-        >
-          <FileText size={22} class="text-text-muted opacity-20" strokeWidth={1.5} />
-        </div>
-        <div class="h-2.5 flex-1 rounded-full bg-black/10 dark:bg-white/10"></div>
       </div>
     {/if}
   {:else if authMissing}
@@ -770,9 +759,8 @@
         <audio use:arbitratePlayback src={blobUrl} controls preload="metadata" class="h-12 w-full"
         ></audio>
       </div>
-    {:else}
-      {@render fileCard()}
     {/if}
+    <!-- A file never reaches here: its card is drawn from metadata, first branch above. -->
   {/if}
 
   <!-- In-app PDF reader -->
@@ -850,14 +838,20 @@
      drawn from metadata alone; the hero is a lone PDF, whose first page runs full width above it. -->
 {#snippet fileCard()}
   {#snippet fileTile()}
-    <FileText size={24} strokeWidth={2} class="text-text-muted" />
+    <FileText size={24} strokeWidth={2} />
   {/snippet}
   {#snippet pdfPage()}
-    <PdfThumbnail
-      url={blobUrl!}
-      maxWidth={640}
-      imgClass="aspect-[4/3] w-full object-cover object-top bg-white"
-    />
+    <div class="aspect-[4/3] w-full overflow-hidden bg-white" data-pdf-page-slot>
+      {#if blobUrl}
+        <PdfThumbnail
+          url={blobUrl}
+          maxWidth={640}
+          imgClass="h-full w-full object-cover object-top bg-white"
+        />
+      {:else}
+        <div class="h-full w-full animate-pulse bg-black/5" aria-hidden="true"></div>
+      {/if}
+    </div>
   {/snippet}
   {#snippet download()}
     <button
@@ -898,12 +892,14 @@
     <AttachmentCard
       kind="file"
       onclick={isPdf ? openPdfViewer : undefined}
-      ariaLabel={isPdf ? m.pdf_open_document_label() : undefined}
+      ariaLabel={isPdf
+        ? m.pdf_open_named_document_label({ name: media.fileName ?? m.post_media_file_label() })
+        : undefined}
       chip={fileChip}
       title={media.fileName ?? m.post_media_file_label()}
       subtitle={saveReady ? m.post_file_ready_to_save() : formatFileSize(media.size)}
       tile={fileTile}
-      hero={isPdf && !compactFile && Boolean(blobUrl)}
+      hero={isPdf && !compactFile}
       banner={pdfPage}
       trailing={download}
     />

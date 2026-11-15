@@ -6444,5 +6444,6 @@
   "settings_video_autoplay_never": "Jamais",
   "attachment_chip_pdf": "PDF",
   "attachment_chip_event": "Événement",
-  "attachment_event_open": "Voir l'événement"
+  "attachment_event_open": "Voir l'événement",
+  "pdf_open_named_document_label": "Ouvrir {name}"
 }
