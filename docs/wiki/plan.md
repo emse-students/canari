@@ -104,7 +104,6 @@ earliest version, as a checklist.
 - [ ] [the tab swipe to the camera on a slow start: the 8 px lock](backlog.d/reading-owed-the-tab-swipe-to-the-camera-on-a-slow-start-the-8-px-lock.md)
 - [ ] [a blind salon banner draws no author, no mention and no mention route, and a held mention's redraw does not sound twice](backlog.d/reading-owed-a-blind-salon-banner-draws-no-author-no-mention-and-no-mention.md)
 - [ ] [new-device notices (#2278, every stable since `1.5.0`; mls-protocol)](backlog.d/reading-owed-new-device-notices-2278-every-stable-since-1-5-0-mls-protocol.md)
-- [ ] [the iPhone native ring (#2305, switched on by #2727 in `1.5.2`: `CALLS_NATIVE_RING_COMPILED`, `kCanariCallsEnabled` and...](backlog.d/reading-owed-the-iphone-native-ring-2305-switched-on-by-2727-in-1-5-2-calls.md)
 - [ ] [the native caches sealed at rest (2026-10-22): the upgrade readings on both phones](backlog.d/reading-owed-the-native-caches-sealed-at-rest-2026-10-22-the-upgrade-readings.md)
 - [ ] [the stricter script policy and the iOS 16 minimum](backlog.d/reading-owed-the-stricter-script-policy-and-the-ios-16-minimum.md)
 - [ ] [a waiting-seat ring on dev (the uninvited-entry count moves to the build that carries #3519)](backlog.d/a-new-person-is-admitted-only-by-a-member-decided-by-the-user-on-2026-10-23.md)
@@ -205,6 +204,8 @@ earliest version, as a checklist.
 - [P3 - the conversation rises with the keyboard in one block; Android Messages rises with it frame by frame (owner, 2026-11-14) - a study, not built](backlog.d/keyboard-motion-like-android-messages.md)
 - [P3 - Minesweeper: the first dig's generation blocks the main thread (2026-11-14)](backlog.d/p3-minesweeper-generation-off-the-main-thread.md)
 - [P3 - a comment push tapped while its post is the page left open lands on the post, not on the comment](backlog.d/p3-a-comment-push-for-the-post-already-open-does-not-open-the-comment.md)
+- [P3 - iOS: a foreground ring flashes the CallKit banner over the in-app ring, because the server still sends the VoIP push](backlog.d/p3-ios-a-foreground-ring-flashes-the-callkit-banner-over-the-in-app-ring.md)
+- [P3 - iOS: an answer on the locked CallKit screen is lost if the app is opened after the ring deadline](backlog.d/p3-ios-an-answer-on-the-locked-callkit-screen-is-lost-if-the-app-opens-after-the-ring-deadline.md)
 - [P3 - the comment route accepts a comment with no text and no media, and pushes "Nouveau commentaire"](backlog.d/p3-the-comment-route-accepts-an-empty-comment-and-pushes-it.md)
 
 ## 1.9.0

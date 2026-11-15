@@ -21,3 +21,5 @@ doing its work, not a coalescing, a presence rule or a refused push.
 their comment is a `reply`, a mention of them a `mention`, else a `comment` - so the uncounted kinds
 stay uncounted; `post-interactions.comment-notify.spec.ts` gains the author-is-the-parent and
 author-is-mentioned cases.
+
+**2026-11-15, the cap half is fixed by #3579**, which takes comment and reaction pushes out of the daily cap and collapses them per post. **What remains is an owner question, held by the lead:** should a reply or a mention aimed at the post's author ring as a `reply` / `mention` of its own, rather than as the author's `comment`? Until it is answered, this entry stays for that half.
