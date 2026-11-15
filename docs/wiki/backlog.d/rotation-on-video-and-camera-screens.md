@@ -74,6 +74,10 @@ running. Owed on the **Mi 9T** and the **iPhone 12**, each with the rotation loc
 - **A reload while turned** (Android: kill the WebView renderer; iOS: a WebContent kill) comes back
   portrait.
 
+### iPhone 12 reading of 2026-11-15 (second sitting): the live viewer, landscape live from the rig seat
+
+TestFlight `1.6.12-alpha.2`, dev; W5 broadcast a landscape live (fake camera, 640x480). In the live viewer the "Passer en paysage" button turned the app to 844x390 pt (WDA `size`), the top bar kept its controls clear of the left side (the first control starts at 60 pt, the chat input and the reaction column sit at the bottom and the right), the picture stayed whole, and the same button ("Passer en portrait") returned to 390x844. When W5 ended the live the viewer drew "Le live est termine" with "Retour au fil". READ for the live viewer in landscape on the iPhone. The log lines (`auto` / `portrait`, `safe area published`) were not read: the TestFlight WebView is not inspectable. **Left: the iPhone's rotation lock OFF (a physical turn), the video lightbox and the reel pager, the broadcaster and the camera on the iPhone, and the whole Mi 9T half.**
+
 ### Defects of the `1.6.10` reading, fixed 2026-11-11
 
 Chrome back around the camera when turned, and the rotate button unlike its siblings: cause and fix in
