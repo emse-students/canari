@@ -114,8 +114,10 @@ jobs:
     # from any estate. The signing secrets are repository-level and the same for both: one identity
     # signs TestFlight and the App Store. `deployment: false`: this job deploys nothing, so it draws
     # no row in the deployments list (docs/wiki/cicd.md#where-a-secret-lives-and-why).
+    # `format()`: `prerelease` is a string from `release.yml` and a boolean from a dispatch, and
+    # GitHub compares `true == 'true'` as numbers (android.yml says why that sent an alpha to production).
     environment:
-      name: ${{ (inputs.local_url == '' && inputs.prerelease == 'true') && 'development' || 'production' }}
+      name: ${{ (inputs.local_url == '' && format('{0}', inputs.prerelease) == 'true') && 'development' || 'production' }}
       deployment: false
     env:
       # READ BY `if:` AS `env.LOCAL_URL`. A release-only step is `env.LOCAL_URL == ''`, a

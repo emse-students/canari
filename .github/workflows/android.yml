@@ -79,8 +79,11 @@ jobs:
     # "true") reads `development`. The signing secrets are repository-level and the same for both:
     # one keystore signs the tester and the store build. `deployment: false`: this job deploys
     # nothing, so it draws no row in the deployments list (docs/wiki/cicd.md#where-a-secret-lives-and-why).
+    # `format()`, because `prerelease` is a STRING from `release.yml` and a BOOLEAN from a dispatch:
+    # GitHub compares `true == 'true'` as numbers (1 against NaN), so a bare `== 'true'` sent every
+    # dispatched alpha to `production` and then refused it on its host check.
     environment:
-      name: ${{ inputs.prerelease == 'true' && 'development' || 'production' }}
+      name: ${{ format('{0}', inputs.prerelease) == 'true' && 'development' || 'production' }}
       deployment: false
 
     steps:
