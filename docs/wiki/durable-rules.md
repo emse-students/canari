@@ -2328,10 +2328,12 @@ Environment and tooling traps that belong to no one subsystem. Each cost a run.
   they run in parallel: the test went on before its own writer waited, no deadlock formed, and
   `bookings.service.integration.spec.ts` "a writer that breaks the order" failed under a full
   local run while CI, which runs them in band, stayed green (2026-11-15). The pool is named after
-  the suite's schema (`extra.application_name`) and the probe asks `application_name = $1`; five
-  suites asked the whole database and now ask their own. And such a wait ends on an EVENT - the
-  wait is seen, or the operation settled without waiting, said as the failure it is - never on a
-  count of reads, which is a clock.
+  the suite's schema (`extra.application_name`, on the pool AND on every raw client that may
+  wait: a probe by name never sees a session that does not carry it) and the probe asks
+  `application_name = $1`; eight suites asked the whole database - seven of social-service, one of
+  chat-delivery - and now ask their own. And such a wait ends on what the SERVER says, each round a
+  real query and never a sleep: the wait is seen, or the operation settled without waiting, said as
+  the failure it is. A pause "long enough for it to get there" is a clock.
 - **A LITERAL DATE IS A WALL CLOCK WHENEVER IT MUST OUT-RANK A SLIDING WINDOW**, and it fails
   on a day nobody chose. `actions.historyRequest.test.ts` pinned `FLOOR = 2026-06-01` under a
   comment reading "well above any device window"; the window is `now - 90 days`, so the claim

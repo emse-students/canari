@@ -119,7 +119,8 @@ maybe('pins per space against PostgreSQL', () => {
       type: 'postgres',
       url: URL,
       synchronize: false,
-      extra: { options: `-c search_path=${schema},public`, max: 4 },
+      // Named after the suite's schema: the gate looks for a blocked session of THIS suite.
+      extra: { options: `-c search_path=${schema},public`, application_name: schema, max: 4 },
     });
     await ds.initialize();
     await q(`CREATE SCHEMA ${schema}`);
@@ -314,7 +315,9 @@ maybe('pins per space against PostgreSQL', () => {
   /**
    * A service whose pin transactions meet at a GATE just before reading the shown count: each waits
    * there until the other has arrived too - or is blocked waiting for an advisory lock (read from
-   * `pg_locks`, never from a clock). Without the space lock both arrive, both read 2 and both insert;
+   * `pg_locks`, never from a clock, and for a session of THIS suite: the suites share one database,
+   * and another suite's advisory waiter would open the gate with nothing proved). Without the space
+   * lock both arrive, both read 2 and both insert;
    * with it the second is blocked before the gate, so the first goes on alone and commits first.
    */
   function gatedService(): SpacePinsService {
@@ -324,7 +327,10 @@ maybe('pins per space against PostgreSQL', () => {
       for (;;) {
         if (arrived >= 2) return;
         const [{ blocked }] = await q<{ blocked: boolean }>(
-          `SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND NOT granted) AS blocked`
+          `SELECT EXISTS (SELECT 1 FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
+                           WHERE l.locktype = 'advisory' AND NOT l.granted
+                             AND a.application_name = $1) AS blocked`,
+          [schema]
         );
         if (blocked) return;
         await new Promise((resolve) => setImmediate(resolve));
