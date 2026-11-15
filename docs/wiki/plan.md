@@ -84,6 +84,7 @@ earliest version, as a checklist.
 - [P3 - EXIT-FORTIFY: closing the app on the Mi 9T logs `FORTIFY: pthread_mutex_lock called on a destroyed mutex` from the render thread](backlog.d/reading-owed-exit-fortify-closing-the-app-on-the-mi-9t-logged-fortify-pthread.md)
 - [P3 - a newcomer's thread reads "Compte supprime a ajoute Compte supprime au groupe" for its own Add](backlog.d/p3-a-newcomer-s-first-added-notice-reads-compte-supprime-for-both-names.md)
 - [P3 - a republication-request push tapped on the Mi 9T landed on the feed, not the request inbox (found by the push reading, 2026-11-15)](backlog.d/p3-a-republication-request-push-tapped-on-the-mi-9t-landed-on-the-feed-2026-11-15.md)
+- [P3 - media-service's boot read of the retention durations answered 404 on the first deploy of the route, and the social boot notice's re-read answered 404 too](backlog.d/p3-media-retention-boot-read-404-through-the-mesh-on-a-first-deploy-of-the-route.md)
 - [P3 - the Emojis preference row squeezes its description into a five-word column on a phone](backlog.d/p3-the-emojis-preference-row-squeezes-its-description-on-a-phone.md)
 - [P3 - the gated `video-switch` and `video-off-on` call rows read 19.6-25 fps against a threshold of 27](backlog.d/p3-the-gated-video-switch-and-video-off-on-rig-rows-read-19-6-25-fps-threshold-27.md)
 

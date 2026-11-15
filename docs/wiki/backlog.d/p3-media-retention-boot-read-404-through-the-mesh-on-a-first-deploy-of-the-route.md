@@ -1,0 +1,11 @@
+## P3 - media-service's boot read of the retention durations answered 404 on the first deploy of the route, and the social boot notice's re-read answered 404 too
+
+target: 1.7.0
+
+Found by the Mi 9T `1.7.0-alpha.1` sitting (2026-11-15, [device-verification](../device-verification.md#the-mi-9t-readings-of-2026-11-15-170-alpha1-first-sitting-on-it)), reading the dev log windows of the rolling deploy that put `alpha.1` on dev.
+
+**What the logs say.** media-service booted at 17:07:59Z, before social-service had its `GET /api/internal/retention` route (the route is new in this release; social mapped it at 17:08:09Z), and logged `ERROR [RETENTION] read (boot) FAILED (social-service answered 404) and nothing is held: conversation uploads are refused (503) until a read succeeds`. That much is the designed first-deploy case ([retention-settings](../retention-settings.md): the deploy replaces social-service AFTER media-service, so a notice at social's boot is meant to heal it). But the notice arrived at 17:08:10Z and its re-read answered `404` again (`DEBUG read (notice) still failing: social-service answered 404`; social logged `media-service did not re-read the retention durations at this boot (HTTP 201, refreshed=false)`). The read goes through the mesh since #3120; the likely cause is that the mesh still routed to the retiring, route-less replica at that instant (the new replica is in the mesh's target list only after its own boot). Nothing later in the window logs a successful read.
+
+**Why it matters.** Until some read succeeds media holds nothing and refuses conversation uploads with a 503; the designed heal is one demand read on the next upload, so the cost is one refused upload per media replica per first deploy of a new relay route. Not confirmed by an upload (not tried), and an ERROR line at every such deploy is noise by the repo's own rule.
+
+**Close it by**: sending the boot notice only once the new social-service replica is in the mesh's targets (or retrying the notice's read a bounded number of times with the answer in the log), and a deploy test that boots media beside a social-service without the route and asserts that the notice's read succeeds after the swap. Read it on the next pre-release that adds an internal route: no `ERROR [RETENTION]` and no refused upload.
