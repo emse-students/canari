@@ -4351,9 +4351,9 @@ export abstract class BaseMlsService implements IMlsService {
       // round). A RETURNING device (an id stored before this boot) is never skipped - its
       // package may well be published already, and waiting on its boot round would make a failed
       // round fail a join that a read would have let through.
-      const firstPublicationRunning =
+      const neverPublished =
         pass === 1 && !this.stateWasExpected && this.keyPackageRoundsSettled === 0;
-      const answer = firstPublicationRunning
+      const answer = neverPublished
         ? null
         : // A PEEK: this reads a fact, and a claim would spend one of this device's own one-time
           // packages per join attempt - production 2026-11-06, a device retrying seven unjoinable

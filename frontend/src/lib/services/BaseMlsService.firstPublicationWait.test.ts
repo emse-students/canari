@@ -62,6 +62,15 @@ describe('awaitOwnKeyPackagePublished while the first publication runs', () => {
     expect(fetchDeviceKeyPackage).toHaveBeenCalledTimes(1);
   });
 
+  it('a device minted in this process whose own first round FAILS is released with that refusal, unread', async () => {
+    const { ctx, fetchDeviceKeyPackage } = makeCtx();
+    const generateKeyPackage = vi.fn().mockRejectedValue(new Error('register-device 502'));
+    Object.assign(ctx, { generateKeyPackage });
+    await expect(wait(ctx)).resolves.toBe('round_failed');
+    expect(generateKeyPackage).toHaveBeenCalledTimes(1);
+    expect(fetchDeviceKeyPackage).not.toHaveBeenCalled();
+  });
+
   it('a RETURNING device still reads at once when no round runs', async () => {
     const { ctx, fetchDeviceKeyPackage } = makeCtx(true);
     await expect(wait(ctx)).resolves.toBe('published');
