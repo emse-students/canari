@@ -44,8 +44,7 @@ plays any peer.
 
 | Sitting | What it holds | Minutes |
 | --- | --- | --- |
-| Web and rig, no phone | pseudos 30, script policy (web) 10, waiting-seat ring 20, Graine rig 20, GRP-3 `ws1.mjs` 15, WP-REGRANT-2 (decide, then COMM-8) 15, LEAF-REFRESH rows 10, NOTIF-17b 5, staging the institution reel and post 20, live titles on a web seat 10 | 155 |
-| Production, read-only | the WP-5 EXPLAIN 5, the birthdays `profile_birthdays` count 5 | 10 |
+| Web and rig, no phone | pseudos 30, script policy (web) 10, waiting-seat ring 20, LEAF-REFRESH rows 10, NOTIF-17b 5, staging the institution reel and post 20, live titles on a web seat 10 | 155 |
 | Bench build | F1 on the iPhone (`ios.yml` with `local_url`) 40, seeds mirrored before the label (old APK, Mi 9T) 30, sealed caches upgrade (v1.4.0 APK, Mi 9T) 30 | 100 |
 | Both phones together | noise suppression routes 30, the call that survives the app leaving the screen and the audio focus 50, the deploy drill 40, campus trends 30, new-device notices 30 | 180 |
 | Mi 9T alone | see the list below | 735 |

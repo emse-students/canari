@@ -780,7 +780,7 @@ Built 2026-11-09 to the shape above, in `follows/suggestions.service.ts` and
   archived, joined, dismissed or outside the reader's audience); `exclude`; a permanent, idempotent
   dismissal that a follow then an unfollow does not clear, and its typed 400s; the erasure both ways;
   155 re-run.
-- **Owed**: the EXPLAIN on dev with the real tables (the cost table above is a fixture's); the phone
+- **EXPLAIN read 2026-11-15 on PRODUCTION, read-only** (564 users, the most-connected viewer): 13.7 ms execution, 18 ms planning, no plan to fix. **Owed**: the phone
   readings come with WP-6, which draws it.
 
 ## Where suggestions appear (decision 3)
