@@ -48,6 +48,17 @@ describing it as a live rival is what made it look like a design decision rather
 | `live_chat` | a live chat MESSAGE's id (with `liveId` and the plaintext `message`) | the kept line's text, plus `liveChat: { text, authorName, keptUntil, integrity, ... }` ([lives](services/lives.md#a-reported-chat-line-wp-l8b)) |
 | `nickname` | ONE version of a community nickname, `<member row id>@<set-at ms>` | that version's text while it is still shown, null once it was changed or cleared ([chat](frontend/modules/chat.md#per-conversation-nicknames-modifier-les-pseudos-2026-11-08)) |
 
+**WHO A REPORT IS ABOUT IS READ BY THE SERVER, AND HELD FOR THE MODERATORS.** `reportedUserId` is
+the account a moderator's mute acts on from the queue, so no client names it: the server reads it
+from the content at report time, for every type - a comment's writer, a personal post's author (an
+anonymous one included), a live's broadcaster, a chat line's author, a nickname's setter, the
+reported account itself for `user` - and stores null for a post in an association's name, whose
+writer is not the moderators' to read here. The request has no such field (a shipped client that
+still sends one has it stripped by the service's validation pipe, `whitelist: true`, and is answered
+as before). And `POST /api/moderation/reports` answers the reporter a RECEIPT - `id`, `contentType`,
+`contentId`, `status`, `createdAt` (`receiptOf`) - never the stored row: what was shown anonymously
+stays anonymous to the one who reported it (charter, principle 1).
+
 `nickname` arrived on 2026-11-08 ("Modifier les pseudos"): reportable by a member of that community
 only, its `reportedUserId` the setter read from the membership row, every refusal the `404
 CONTENT_NOT_FOUND` of a post. Only global admins see it in the queue: a BDE's scope
@@ -220,7 +231,11 @@ a post scheduled later is null for a BDE moderator unless the report is still op
 published; the report's row stays listed. A reported COMMENT's preview follows the read of the post it
 sits under, as the comments read does: its text is null where the post is not the moderator's to
 read, its `postId` kept (a comment's own report does not open its post). A preview served of a post
-still scheduled later is logged `[MODERATION_READ]`, post ids only. A post report's `contentId` is
+still scheduled later is logged `[MODERATION_READ]`, post ids only - when a text was served (a
+comment with media only has none) and the report it sits under is still OPEN: a handled report
+stays listed while it is kept, and a platform admin's page shows its text at every load, which is
+the same read repeated about nothing left to decide, so it is logged once it matters and not at
+every refresh. A post report's `contentId` is
 stored lowercase, the form the term compares it in (production, read-only count of 2026-11-15: no
 stored post report holds a mixed-case id, so nothing was migrated).
 
