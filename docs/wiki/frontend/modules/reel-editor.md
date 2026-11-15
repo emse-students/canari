@@ -16,7 +16,7 @@ the review, the editor and the publish step. **Nothing below ran on a device yet
 
 **Export of a decorated video (since the iOS fix, 2026-11-15).** `renderVideo` in `reelEditor.ts`
 decodes the take with WebCodecs through mediabunny, paints each frame plus the overlays on a canvas
-in `video.process`, and re-encodes to H.264 MP4 (audio carried over), faster than real time.
+in `video.process`, and re-encodes to H.264 MP4 at the publish size at most (720p short side, `editedFrameSize`) (the source audio COPIED, or the render REFUSED: a dropped track is never a quieter video), faster than real time.
 `prepareVideoForUpload` still re-encodes it ONCE MORE at publish (two lossy encodes; WP-E4 below
 removes the second). **Why:** the old path played the clip into a canvas and recorded
 `canvas.captureStream()` through `MediaRecorder`, and WebKit has no `HTMLMediaElement.captureStream`
@@ -24,7 +24,8 @@ removes the second). **Why:** the old path played the clip into a canvas and rec
 on this device", shown as `reels_editor_error`), so on the iPhone 12 EVERY video with an overlay was
 refused. The new path needs only what publishing already needs (WebCodecs H.264 decode and encode,
 measured on both bench phones in [video-preparation](../video-preparation.md)), so no capability fact
-had to be added to the composer: an engine that cannot publish a video cannot get here. A refusal is
+had to be added to the composer: an engine that cannot do this could not publish the edited video
+before this change either. A refusal is
 a typed `ReelExportError` (`unreadable` / `unsupported` / `encode`), logged with its fault. Charter:
 principle 8 (simplicity: one engine-neutral path, the MediaRecorder one deleted). **Owed:** the
 iPhone reading of an edited video take, and of an edited photo take.

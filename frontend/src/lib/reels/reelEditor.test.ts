@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ReelExportError,
   drawDecorations,
+  editedFrameSize,
   renderEditedReelMedia,
   type ReelEdits,
 } from './reelEditor';
@@ -171,6 +172,9 @@ const mbState = vi.hoisted(() => ({
   valid: true,
   track: true as boolean,
   executeError: null as Error | null,
+  discarded: false,
+  initError: null as Error | null,
+  mimeError: null as Error | null,
   process: null as null | ((sample: unknown) => unknown),
   captured: [] as unknown[],
 }));
@@ -196,15 +200,20 @@ vi.mock('mediabunny', () => ({
       buffer: ArrayBuffer | null = new Uint8Array([1, 2, 3]).buffer;
     })();
     async getMimeType() {
+      if (mbState.mimeError) throw mbState.mimeError;
       return 'video/mp4; codecs="avc1.640028"';
     }
   },
   Conversion: {
     init: async (options: { video: { process: (s: unknown) => unknown } }) => {
+      if (mbState.initError) throw mbState.initError;
       mbState.process = options.video.process;
       return {
         isValid: mbState.valid,
-        discardedTracks: [{ track: { type: 'video' }, reason: 'undecodable_source_codec' }],
+        discardedTracks:
+          mbState.discarded || !mbState.valid
+            ? [{ track: { type: 'audio' }, reason: 'no_encodable_target_codec' }]
+            : [],
         execute: async () => {
           if (mbState.executeError) throw mbState.executeError;
         },
@@ -212,6 +221,15 @@ vi.mock('mediabunny', () => ({
     },
   },
 }));
+
+describe('editedFrameSize', () => {
+  it('caps the short side at the publish size, keeps the ratio, never upscales', () => {
+    expect(editedFrameSize(2160, 3840)).toEqual({ width: 720, height: 1280 });
+    expect(editedFrameSize(1080, 1920)).toEqual({ width: 720, height: 1280 });
+    expect(editedFrameSize(480, 854)).toEqual({ width: 480, height: 854 });
+    expect(editedFrameSize(721, 1281)).toEqual({ width: 720, height: 1280 });
+  });
+});
 
 describe('renderEditedReelMedia, video', () => {
   const edits: ReelEdits = { overlays: [] };
@@ -232,7 +250,16 @@ describe('renderEditedReelMedia, video', () => {
   }
   afterEach(() => {
     vi.restoreAllMocks();
-    Object.assign(mbState, { valid: true, track: true, executeError: null, process: null });
+    vi.unstubAllGlobals();
+    Object.assign(mbState, {
+      valid: true,
+      track: true,
+      executeError: null,
+      process: null,
+      discarded: false,
+      initError: null,
+      mimeError: null,
+    });
   });
 
   it('renders on WebCodecs with no captureStream and no MediaRecorder, to even sides', async () => {
@@ -243,7 +270,6 @@ describe('renderEditedReelMedia, video', () => {
     expect(result.height).toBe(1280);
     expect(result.blob.type).toContain('video/mp4');
     expect(canvas.width).toBe(720);
-    vi.unstubAllGlobals();
   });
 
   it('draws each decoded frame, then the overlays, and hands the canvas back', async () => {
@@ -269,6 +295,30 @@ describe('renderEditedReelMedia, video', () => {
     const failure = renderEditedReelMedia(video(), edits);
     await expect(failure).rejects.toBeInstanceOf(ReelExportError);
     await expect(failure).rejects.toMatchObject({ fault: 'unsupported' });
+  });
+
+  it('refuses a conversion that dropped the audio even though it is still valid', async () => {
+    stubCanvas();
+    mbState.discarded = true;
+    await expect(renderEditedReelMedia(video(), edits)).rejects.toMatchObject({
+      fault: 'unsupported',
+    });
+  });
+
+  it('classifies a setup failure, an unreadable output type and a missing picture', async () => {
+    stubCanvas();
+    mbState.initError = new Error('init');
+    await expect(renderEditedReelMedia(video(), edits)).rejects.toMatchObject({
+      fault: 'unsupported',
+    });
+    mbState.initError = null;
+    mbState.mimeError = new Error('mime');
+    await expect(renderEditedReelMedia(video(), edits)).rejects.toMatchObject({ fault: 'encode' });
+    mbState.mimeError = null;
+    const emoji = createEmojiOverlay('x');
+    await expect(
+      renderEditedReelMedia(video(), { overlays: [{ ...emoji, emoji: '' }] })
+    ).rejects.toMatchObject({ fault: 'unreadable' });
   });
 
   it('names an encoder failure as the encode fault', async () => {

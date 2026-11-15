@@ -1,4 +1,5 @@
 import { frameToPixels } from './reelFrame';
+import { VIDEO_MAX_SHORT_SIDE } from '$lib/video/videoEncodingPlan';
 import { canvasToBlob } from '$lib/utils/canvasBlob';
 import { emojiSvgSrc } from '$lib/utils/emojiSvg';
 import {
@@ -163,6 +164,17 @@ export class ReelExportError extends Error {
 }
 
 /**
+ * The frame the edited video is rendered at: the publish size at most (short side
+ * `VIDEO_MAX_SHORT_SIDE`, never upscaled), because the publish re-encodes to it anyway and a 4K
+ * gallery clip would cost a 4K encode some Android encoders refuse. Even sides (H.264 4:2:0).
+ */
+export function editedFrameSize(width: number, height: number): { width: number; height: number } {
+  const scale = Math.min(1, VIDEO_MAX_SHORT_SIDE / Math.min(width, height));
+  const even = (n: number) => Math.max(2, Math.round((n * scale) / 2) * 2);
+  return { width: even(width), height: even(height) };
+}
+
+/**
  * Paints the overlays into the frames of a video, ON THE ENGINE-NEUTRAL PATH: WebCodecs decode and
  * encode driven by mediabunny, the very pair `prepareVideoForUpload` already requires of every
  * member who publishes. The previous path played the clip into a canvas and recorded
@@ -180,7 +192,15 @@ async function renderVideo(
     `[reel-editor] video export start: ${source.type || 'typeless'}, ${source.size} bytes,` +
       ` ${edits.overlays.length} overlay(s)`
   );
-  const images = await loadOverlayImages(edits);
+  let images: OverlayImages;
+  try {
+    images = await loadOverlayImages(edits);
+  } catch (cause) {
+    console.error('[reel-editor] an overlay picture could not be loaded', cause);
+    throw new ReelExportError('unreadable', 'video: an overlay picture could not be loaded', {
+      cause,
+    });
+  }
   const mb = await import('mediabunny');
   const input = new mb.Input({ source: new mb.BlobSource(source), formats: mb.ALL_FORMATS });
   try {
@@ -199,9 +219,7 @@ async function renderVideo(
     if (!(width > 0 && height > 0)) {
       throw new ReelExportError('unreadable', 'video: the track has no frame size');
     }
-    // Even sides: H.264 4:2:0 cannot carry an odd one.
-    width -= width % 2;
-    height -= height % 2;
+    ({ width, height } = editedFrameSize(width, height));
 
     const canvas = document.createElement('canvas');
     canvas.width = width;
@@ -213,31 +231,41 @@ async function renderVideo(
       format: new mb.Mp4OutputFormat(),
       target: new mb.BufferTarget(),
     });
-    const conversion = await mb.Conversion.init({
-      input,
-      output,
-      tracks: 'primary',
-      showWarnings: false,
-      video: {
-        codec: 'avc',
-        width,
-        height,
-        fit: 'fill',
-        // High: the publish re-encodes this file once more (single-pass export is WP-E4).
-        quality: mb.QUALITY_HIGH,
-        allowTransformationMetadata: false,
-        forceTranscode: true,
-        processedWidth: width,
-        processedHeight: height,
-        process: (sample) => {
-          context.clearRect(0, 0, width, height);
-          sample.draw(context, 0, 0, width, height);
-          drawDecorations(context, edits, width, height, fontFamily, images);
-          return canvas;
+    let conversion: Awaited<ReturnType<typeof mb.Conversion.init>>;
+    try {
+      conversion = await mb.Conversion.init({
+        input,
+        output,
+        tracks: 'primary',
+        showWarnings: false,
+        video: {
+          codec: 'avc',
+          width,
+          height,
+          fit: 'fill',
+          // High: the publish re-encodes this file once more (single-pass export is WP-E4).
+          quality: mb.QUALITY_HIGH,
+          allowTransformationMetadata: false,
+          forceTranscode: true,
+          processedWidth: width,
+          processedHeight: height,
+          process: (sample) => {
+            context.clearRect(0, 0, width, height);
+            sample.draw(context, 0, 0, width, height);
+            drawDecorations(context, edits, width, height, fontFamily, images);
+            return canvas;
+          },
         },
-      },
-    });
-    if (!conversion.isValid) {
+      });
+    } catch (cause) {
+      console.error('[reel-editor] the conversion could not be set up', cause);
+      throw new ReelExportError('unsupported', 'video: the conversion could not be set up', {
+        cause,
+      });
+    }
+    // A DROPPED TRACK IS A REFUSAL, never a quieter video: `isValid` stays true when the audio
+    // alone is dropped (no AAC encoder), so the discarded list is the fact, as in prepareVideoForUpload.
+    if (!conversion.isValid || conversion.discardedTracks.length > 0) {
       const why = conversion.discardedTracks.map((d) => `${d.track.type}: ${d.reason}`).join(', ');
       console.warn(`[reel-editor] this engine cannot render the take: ${why}`);
       throw new ReelExportError('unsupported', `video: cannot render on this engine - ${why}`);
@@ -250,7 +278,14 @@ async function renderVideo(
     }
     const buffer = output.target.buffer;
     if (!buffer) throw new ReelExportError('encode', 'video: the muxer produced no bytes');
-    const blob = new Blob([buffer], { type: await output.getMimeType() });
+    let mimeType: string;
+    try {
+      mimeType = await output.getMimeType();
+    } catch (cause) {
+      console.error('[reel-editor] the output type could not be read', cause);
+      throw new ReelExportError('encode', 'video: the output type could not be read', { cause });
+    }
+    const blob = new Blob([buffer], { type: mimeType });
     console.debug(`[reel-editor] video export done: ${blob.size} bytes, ${width}x${height}`);
     return { blob, width, height };
   } finally {
