@@ -129,6 +129,40 @@ describe('NotificationRow avatar', () => {
   });
 });
 
+describe('NotificationRow booking reminder sentence (2026-11-15)', () => {
+  const base = (extra: Partial<PostNotification>): PostNotification => ({
+    id: 'r2',
+    type: 'booking_reminder',
+    postId: 'b-1',
+    actorId: 'system',
+    actorName: 'Canari',
+    text: 'Salle - Salle · 14:00',
+    read: false,
+    createdAt: '2026-11-15T13:00:00.000Z',
+    ...extra,
+  });
+
+  it('says when the booking starts, as of the sending, not "soon"', () => {
+    const row = renderRow(
+      base({
+        meta: {
+          place: 'Salle',
+          startsAt: '2026-11-16T13:00:00.000Z',
+          timeZone: 'Europe/Paris',
+          word: '',
+        },
+      })
+    );
+    expect(row.textContent).toContain(m.notif_booking_reminder_tomorrow_at({ time: '14:00' }));
+    expect(row.textContent).not.toContain(m.notif_booking_reminder_text());
+  });
+
+  it('keeps the old sentence for a row written before the reminder carried meta', () => {
+    const row = renderRow(base({ meta: null }));
+    expect(row.textContent).toContain(m.notif_booking_reminder_text());
+  });
+});
+
 describe('NotificationRow booking reminder avatar (owner, 2026-10-30)', () => {
   const reminder = (extra: Partial<PostNotification> = {}): PostNotification => ({
     id: 'r1',

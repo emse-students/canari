@@ -217,8 +217,12 @@ later to a BDE moderator only while an open report targets it, and every one to 
 The report queue's preview of a reported post (`ModerationService.listAllReports`) is the third such
 read and asks the term too: the queue lists reports of every status, and the 250-character preview of
 a post scheduled later is null for a BDE moderator unless the report is still open or the post is
-published; the report's row stays listed. A post report's `contentId` is stored lowercase, the form
-the term compares it in.
+published; the report's row stays listed. A reported COMMENT's preview follows the read of the post it
+sits under, as the comments read does: its text is null where the post is not the moderator's to
+read, its `postId` kept (a comment's own report does not open its post). A preview served of a post
+still scheduled later is logged `[MODERATION_READ]`, post ids only. A post report's `contentId` is
+stored lowercase, the form the term compares it in (production, read-only count of 2026-11-15: no
+stored post report holds a mixed-case id, so nothing was migrated).
 
 | Read | Where the predicate is asked | Then |
 | --- | --- | --- |
