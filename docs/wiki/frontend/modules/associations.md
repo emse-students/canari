@@ -302,6 +302,45 @@ that removed the per-card year pill under the year heading.
 `buildCampaignShelves` (`lib/associations/listShelves.ts`) is the whole of it, with both orderings
 total so the same data cannot render two ways, and both asserted apart in `listShelves.test.ts`.
 
+## What an archive closes
+
+`associations.archived` (`PATCH :id { archived }`, `MANAGE_MEMBERS`) ends an entity's active life, and
+it is reversible: every rule below is read from state at each query, so un-archiving restores
+everything and nothing is rewritten. An archived entity leaves the directory's "Mes associations",
+every feed it carried (profiles-and-access), the shop (`ASSOCIATION_ARCHIVED`,
+[cotisations](../../cotisations.md)), live (`LIVE_ASSOCIATION_ARCHIVED`), the opening reminders, and -
+since 2026-11-14 - **its forms and booking spaces, by their link as well as in every list**:
+
+- **A form** of an archived association answers its respondents exactly what an absent form answers
+  (404, the existing refusal): read, check, submit (member and guest), answer edit, file upload,
+  reminder. It is a clause of the ONE respondent `where` (`respondentFormWhere`), and `GET
+  /forms/:id` judges a non-manager by that same `where` ([forms](forms.md#an-archived-associations-form-is-closed-by-its-link-2026-11-14)).
+- **A booking space** of an archived association answers every reader and booker `404
+  space-not-found` - the account linked to one of its columns included - through `assertSpaceVisible`;
+  the listing already left it out ([bookings-chantier](../../bookings-chantier.md)).
+- **What stays**: the association's managers keep every path (reading, submissions, export, the
+  space's dashboard); a submitter keeps their own answer, its cancellation and its purchase line; a
+  booking's people keep `mine`, cancelling, withdrawing and the calendar link - as a holder the
+  audience no longer admits does; and **a payment issued before the archive still settles** (the
+  callbacks and `confirm-payment` never read the archive).
+- **Ordered, not raced**: a submit, an answer edit, a booking and a holder's edit read the
+  association row `FOR SHARE` (`isAssociationArchived`, `associations/association-archived.ts`)
+  BEFORE their own lock - the order an association delete takes - while the archive writes it under
+  `FOR UPDATE`. So each is decided either before the archive commits or after it, never across it,
+  as a shop checkout is. What is ordered is the ANSWER: the payment request of
+  an answer decided before the archive is issued after the answer's transaction commits, so it may
+  follow the archive, and it settles as any other payment.
+- **The agenda link of a form** (`GET /forms/:id/calendar-link`) answers by the same read
+  (`FormsService.mayRead`): no link to a reader who may not read the form, so the id is not
+  confirmed there either.
+- **Decided by the lead, 2026-11-14, reversible (the owner's absence delegation)**: a space's managers may still book on
+  someone's behalf in an archived association's space; a manager cannot submit their own archived
+  association's form (as with a draft); respondents get the existing 404, with no new wording.
+
+Proof, on PostgreSQL: `form-status.integration.spec.ts` (the `where`, the `FOR SHARE` order),
+`answer-edit.integration.spec.ts` (every respondent path, the managers, the settled payment, an archive
+landing between the read and the lock), `bookings.service.integration.spec.ts` (the same for spaces).
+
 ## Permissions
 
 Permissions are checked at the component level using the `X-Global-Admin` header and association-level role flags injected by Nginx. The key flags are:

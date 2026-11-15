@@ -4,7 +4,7 @@ import { m } from '$lib/paraglide/messages';
  * Why media-service ANSWERED without the durations it holds (core's `MediaRefusalReason`): a status
  * code is an answer, kept apart from a transport failure.
  */
-export type RetentionRefusalReason = 'secret' | 'route' | 'malformed' | 'status';
+type RetentionRefusalReason = 'secret' | 'route' | 'malformed' | 'status';
 
 /** Core's answer to `GET /api/users/admin/platform/retention-applied` (the fields the page reads). */
 export interface RetentionAppliedAnswer {

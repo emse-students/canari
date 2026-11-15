@@ -195,6 +195,7 @@ import {
   PROVIDER_MIN_AMOUNT_CENTS,
 } from '../common/core-payment-error';
 import { LYDIA_BRIDGE_LOG_TAG } from '../associations/lydia-account-bridge';
+import { isAssociationArchived } from '../associations/association-archived';
 import { PAYMENTS_DISABLED_MESSAGE } from '../associations/payment-delegation.util';
 import { FormOrganiserAlertService } from './organiser-alert.service';
 import {
@@ -1128,11 +1129,10 @@ export class FormsService {
       this.logger.debug(`get: form ${id} not found`);
       throw new NotFoundException('Form not found');
     }
-    // A DRAFT is its managers' alone: anyone else is answered what an absent form answers, so a
-    // draft id cannot be probed (`form-status.ts`).
-    const manages = await this.managesForm(form, viewer);
-    if (form.status === FORM_DRAFT && !manages) {
-      this.logger.debug(`get: form ${id.slice(0, 8)} is a draft, not served to a non-manager`);
+    if (!(await this.readableBy(form, viewer))) {
+      this.logger.debug(
+        `get: form ${id.slice(0, 8)} is a draft or of an archived association, not served to a non-manager`
+      );
       throw new NotFoundException('Form not found');
     }
     const submissionCount = await this.countActiveSubmissions(id);
@@ -1151,6 +1151,7 @@ export class FormsService {
     const associationName = form.associationId ? (names.get(form.associationId) ?? null) : null;
     // Who created the form is its managers' to read: a respondent is shown the form, never its
     // creator (an anonymous post's form would otherwise name a candidate author).
+    const manages = await this.managesForm(form, viewer);
     const { ownerId, ...served } = form;
     return {
       ...served,
@@ -1160,6 +1161,36 @@ export class FormsService {
       paymentsPaused,
       associationName,
     };
+  }
+
+  /**
+   * Whether `viewer` may read form `id` at all - what `get` serves and what the form's agenda link
+   * (`GET /forms/:id/calendar-link`) answers by: false for a form that does not exist (a deleted one
+   * included), and see {@link readableBy}.
+   */
+  async mayRead(id: string, viewer: { userId: string; isGlobalAdmin: boolean }): Promise<boolean> {
+    const form = await this.formRepo.findOne({ where: { id, deletedAt: IsNull() } });
+    if (!form) return false;
+    return this.readableBy(form, viewer);
+  }
+
+  /**
+   * A form no respondent may reach - a DRAFT, or one of an ARCHIVED association - is its managers'
+   * alone: anyone else is answered what an absent form answers, so the id cannot be probed. Judged
+   * by the ONE respondent `where` (`respondentFormWhere`), never a second copy of its clauses.
+   * Managers keep reading it, to export.
+   */
+  private async readableBy(
+    form: Form,
+    viewer: { userId: string; isGlobalAdmin: boolean } | undefined
+  ): Promise<boolean> {
+    const reachable =
+      form.status !== FORM_DRAFT &&
+      !!(await this.formRepo.findOne({
+        select: { id: true },
+        where: respondentFormWhere(form.id),
+      }));
+    return reachable || (await this.managesForm(form, viewer));
   }
 
   /**
@@ -1189,6 +1220,29 @@ export class FormsService {
    */
   private countActiveSubmissions(formId: string): Promise<number> {
     return this.submissionRepo.count({ where: seatHoldingWhere(formId) });
+  }
+
+  /**
+   * Inside an answer's transaction (a submit, an answer edit), BEFORE the form's own lock - the
+   * order `AssociationsService.remove` takes, association first - reads the form's association
+   * `FOR SHARE` and refuses (404, what `respondentFormWhere` answered before the lock) one ARCHIVED
+   * since the first read: the archive and the answer are ordered on the association row, as a shop
+   * checkout is (`isAssociationArchived`), so no ANSWER is decided after the archive committed. The
+   * payment request of an answer decided before it is issued after the answer's transaction commits,
+   * so it may follow the archive - and it settles as any other. A personal form has no association
+   * and is never refused here.
+   */
+  private async assertAssociationLiveUnderLock(
+    manager: EntityManager,
+    form: Pick<Form, 'id' | 'associationId'>,
+    what: string
+  ): Promise<void> {
+    if (!form.associationId) return;
+    if (!(await isAssociationArchived(manager, form.associationId, 'share'))) return;
+    this.logger.log(
+      `[FORMS] ${what} refused under the lock: form=${form.id.slice(0, 8)} its association was archived`
+    );
+    throw new NotFoundException('Form not found');
   }
 
   /**
@@ -2619,6 +2673,8 @@ export class FormsService {
 
     let savedSubmission!: Submission;
     await this.submissionRepo.manager.transaction('READ COMMITTED', async (manager) => {
+      // The association BEFORE the form: the lock order its delete takes (association first).
+      await this.assertAssociationLiveUnderLock(manager, form, 'submit');
       await lockFormSeats(manager, id);
 
       // Looked up BEFORE the capacity check: the row already holds this person's seat, so a retry
@@ -3084,6 +3140,8 @@ export class FormsService {
     const { stored, newFiles } = await this.judgeEdit(form, before, answersIn, tag);
 
     return this.submissionRepo.manager.transaction('READ COMMITTED', async (manager) => {
+      // The association BEFORE the form: the lock order its delete takes (association first).
+      await this.assertAssociationLiveUnderLock(manager, form, 'answer edit');
       await lockFormSeats(manager, formId);
       const row = await manager.findOne(Submission, {
         where: { id: submissionId, formId },

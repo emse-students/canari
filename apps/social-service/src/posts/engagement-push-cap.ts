@@ -13,9 +13,9 @@ import { pushCategoryOffSql } from '../push/notification-category';
  *
  * Beyond {@link ENGAGEMENT_DAILY_PUSH_CAP} non-essential pushes per person per Paris day, the rest
  * stay in the in-app bell with no push. WHAT IS COUNTED IS ONE TABLE, {@link PUSH_BUDGET}: every
- * notification type, classified - the engagement-only kinds count (trends, reactions and comments
- * on your posts, member reposts, followed accounts' posts, openings), and everything a person needs
- * or asked for does not (messages and calls never pass here, bookings, follow requests, mentions and
+ * notification type, classified - the discoveries count (trends, member reposts, followed
+ * accounts' posts, openings), comments and reactions on your own post are collapsed per post
+ * instead (2026-11-14), and everything a person needs or asked for does not count (messages and calls never pass here, bookings, follow requests, mentions and
  * replies, moderation and organiser workflow, birthdays, association posts).
  *
  * DURABLE STATE, NOT A TIMER: one counter row per (person, Paris date read from the DATABASE - L6),
@@ -50,10 +50,17 @@ export const CAMPUS_TREND_NOTIFICATION = 'campus_trend';
  * and a contract test pins it against chat-delivery's `push-category.ts` through EACH key.
  */
 export type PushBudget =
-  | { counted: false }
+  | { counted: false; onePerPost?: false }
+  /**
+   * Direct engagement on the reader's OWN post (owner, 2026-11-14): never counted, never dropped by
+   * a budget, and ONE live notification per post, alerting only when the post had no unread row
+   * (`post-activity-notice.ts`).
+   */
+  | { counted: false; onePerPost: true }
   | { counted: true; contentKeys: readonly PushContentKey[]; category: string };
 
 const FREE: PushBudget = { counted: false };
+const ONE_PER_POST: PushBudget = { counted: false, onePerPost: true };
 const counted = (category: string, ...contentKeys: PushContentKey[]): PushBudget => ({
   counted: true,
   contentKeys,
@@ -64,9 +71,13 @@ const counted = (category: string, ...contentKeys: PushContentKey[]): PushBudget
  * EVERY NOTIFICATION TYPE, CLASSIFIED (owner, 2026-11-10) - a `Record` over the whole union, so a
  * new type does not compile until it is placed here, and a test asserts the same at run time.
  *
- * COUNTED - the lead's list, shown to the owner on 2026-11-10: campus trends, reactions and comments
- * on your posts, member reposts, followed accounts' posts, booking and event openings, and friends'
- * activity (no longer written).
+ * COUNTED - the DISCOVERIES (the lead's list, shown to the owner on 2026-11-10, narrowed by the
+ * owner on 2026-11-14): campus trends, member reposts, followed accounts' posts, booking and event
+ * openings, and friends' activity (no longer written).
+ *
+ * ONE PER POST - comments and reactions on the reader's own post (owner, 2026-11-14: "Tout ce qui me
+ * concerne directement doit m'être notifié"): never counted; one notification per post, updated in
+ * place, alerting only when the post had no unread bell row (`post-activity-notice.ts`).
  *
  * NOT COUNTED, the owner's list: bookings (reminders and changes), follow requests and acceptances,
  * direct mentions and replies, moderation and the organiser workflow, BIRTHDAYS, ASSOCIATION POSTS
@@ -85,14 +96,15 @@ export const PUSH_BUDGET: Readonly<
     'social_campus_trend_photo',
     'social_campus_trend_video'
   ),
-  reaction: counted('reactions', 'social_reaction'),
-  comment: counted('comments', 'social_comment'),
   member_repost: counted('posts', 'social_member_repost'),
   followed_post: counted('posts', 'social_followed_post'),
   booking_open: counted('bookings', 'social_booking_open'),
   event_open: counted('events', 'social_event_open'),
   friend_reaction: counted('posts', 'social_friend_reaction'),
   friend_comment: counted('posts', 'social_friend_comment'),
+  // One per post: comments and reactions on the reader's own post (owner, 2026-11-14).
+  comment: ONE_PER_POST,
+  reaction: ONE_PER_POST,
   // Not counted: addressed to the reader, asked for by them, or the owner's exceptions.
   reply: FREE,
   mention: FREE,
@@ -178,30 +190,46 @@ const DEVICE_CORE_SQL = `substring(kp."deviceAppVersion" from '^[[:space:]]*([0-
  * ONE lock order (two concurrent fan-outs over overlapping readers can then never deadlock, and the
  * row lock orders them on each shared reader, so the cap is exact), skipping a reader who switched
  * the type's category off (`pushCategoryOffSql`: chat-delivery's `notification_preference` in the same
- * database, an opt-in category such as Suggestions not pushed until its push is turned on - they are never pushed, so
- * they must not spend the budget), and skipping a reader with no device
- * able to show the push - when the type has a floor (`$4`), chat-delivery drops the tokens of
- * devices KNOWN to run an older build (`key_package."deviceAppVersion"`), keeping a device of
- * unknown build, so this asks the same of the same tables before a unit is spent - one unit of
- * today's budget is taken while it lasts. `RETURNING` names the readers who got one - the others
- * keep their bell row only.
+ * database, an opt-in category such as Suggestions not pushed until its push is turned on - they are
+ * never pushed, so they must not spend the budget), and skipping a reader with no device able to
+ * show the push - when the type has a floor (`$4`), chat-delivery drops the tokens of devices KNOWN
+ * to run an older build (`key_package."deviceAppVersion"`), keeping a device of unknown build, so
+ * this asks the same of the same tables before a unit is spent - one unit of today's budget is taken
+ * while it lasts.
+ *
+ * IT ANSWERS EVERY RECIPIENT WITH ITS CAUSE (2026-11-14: one line lumped the three together, so a
+ * withheld comment on dev could not say which it was): `off` the category, `noDevice` the floor,
+ * `claimed` a unit taken, and otherwise the cap - with `pushedToday`, the counter as this statement
+ * read it (a concurrent claim may have moved it since; never lower than what this one saw).
  *
  * `$1` the recipients, `$2` the cap, `$3` the category, `$4` the floor (NULL for none).
  */
-export const CLAIM_ENGAGEMENT_PUSHES_SQL = `INSERT INTO engagement_push_days ("userId", day, pushed)
-SELECT ids.r, (now() AT TIME ZONE 'Europe/Paris')::date, 1
-  FROM (SELECT DISTINCT r FROM unnest($1::varchar[]) r) ids
- WHERE NOT ${pushCategoryOffSql('ids.r', '$3::text')}
-   AND ($4::text IS NULL OR EXISTS (
-         SELECT 1 FROM push_token pt
-           LEFT JOIN key_package kp ON kp."userId" = pt."userId" AND kp."deviceId" = pt."deviceId"
-          WHERE pt."userId" = ids.r
-            AND (${DEVICE_CORE_SQL} IS NULL
-                 OR string_to_array(${DEVICE_CORE_SQL}, '.')::int[] >= string_to_array($4::text, '.')::int[])))
- ORDER BY ids.r
-ON CONFLICT ("userId", day) DO UPDATE SET pushed = engagement_push_days.pushed + 1
-  WHERE engagement_push_days.pushed < $2::int
-RETURNING "userId"`;
+export const CLAIM_ENGAGEMENT_PUSHES_SQL = `WITH ids AS (
+  SELECT DISTINCT r FROM unnest($1::varchar[]) r
+), judged AS (
+  SELECT ids.r,
+         ${pushCategoryOffSql('ids.r', '$3::text')} AS off,
+         ($4::text IS NOT NULL AND NOT EXISTS (
+           SELECT 1 FROM push_token pt
+             LEFT JOIN key_package kp ON kp."userId" = pt."userId" AND kp."deviceId" = pt."deviceId"
+            WHERE pt."userId" = ids.r
+              AND (${DEVICE_CORE_SQL} IS NULL
+                   OR string_to_array(${DEVICE_CORE_SQL}, '.')::int[] >= string_to_array($4::text, '.')::int[]))) AS "noDevice"
+    FROM ids
+), claimed AS (
+  INSERT INTO engagement_push_days ("userId", day, pushed)
+  SELECT r, (now() AT TIME ZONE 'Europe/Paris')::date, 1
+    FROM judged
+   WHERE NOT off AND NOT "noDevice"
+   ORDER BY r
+  ON CONFLICT ("userId", day) DO UPDATE SET pushed = engagement_push_days.pushed + 1
+    WHERE engagement_push_days.pushed < $2::int
+  RETURNING "userId"
+)
+SELECT j.r AS "userId", j.off, j."noDevice", (c."userId" IS NOT NULL) AS claimed,
+       (SELECT e.pushed FROM engagement_push_days e
+         WHERE e."userId" = j.r AND e.day = (now() AT TIME ZONE 'Europe/Paris')::date) AS "pushedToday"
+  FROM judged j LEFT JOIN claimed c ON c."userId" = j.r`;
 
 /** Days a `campus_trend_weeks` row is kept after its week ends (register C7, the privacy policy). */
 export const CAMPUS_TREND_WEEKS_KEPT = 14;
@@ -231,23 +259,53 @@ export async function pruneEngagementPushDays(
   return rows[0]?.n ?? 0;
 }
 
+/** What one claim decided, per recipient, by cause - each cause logged on its own line. */
+export interface EngagementClaim {
+  /** The readers who got a unit: these may be pushed. */
+  allowed: Set<string>;
+  /** Readers who switched the type's category off: never pushed, never counted. */
+  categoryOff: string[];
+  /** Readers with no device able to show the type's push (its floor): never counted. */
+  noDevice: string[];
+  /** Readers past the cap, with today's counter as the claim read it (null: a concurrent first row). */
+  capped: { userId: string; pushedToday: number | null }[];
+}
+
 /**
  * Takes one unit of today's budget for each of `recipients` who still has one, has not switched
- * `category` off and has a device able to show a push of `floor`; answers who may be pushed. One
- * statement, whatever the fan-out's size.
+ * `category` off and has a device able to show a push of `floor`; answers who may be pushed, and why
+ * each other one may not. One statement, whatever the fan-out's size.
  */
 export async function claimEngagementPushes(
   manager: Pick<EntityManager, 'query'>,
   recipients: readonly string[],
   category: string,
   floor: string | null = null
-): Promise<Set<string>> {
-  if (recipients.length === 0) return new Set();
-  const rows: { userId: string }[] = await manager.query(CLAIM_ENGAGEMENT_PUSHES_SQL, [
+): Promise<EngagementClaim> {
+  const claim: EngagementClaim = { allowed: new Set(), categoryOff: [], noDevice: [], capped: [] };
+  if (recipients.length === 0) return claim;
+  const rows: {
+    userId: string;
+    off: boolean;
+    noDevice: boolean;
+    claimed: boolean;
+    pushedToday: number | null;
+  }[] = await manager.query(CLAIM_ENGAGEMENT_PUSHES_SQL, [
     recipients,
     ENGAGEMENT_DAILY_PUSH_CAP,
     category,
     floor,
   ]);
-  return new Set(rows.map((r) => r.userId));
+  for (const row of rows) {
+    if (row.off) claim.categoryOff.push(row.userId);
+    else if (row.noDevice) claim.noDevice.push(row.userId);
+    else if (row.claimed) claim.allowed.add(row.userId);
+    else claim.capped.push({ userId: row.userId, pushedToday: row.pushedToday });
+  }
+  return claim;
 }
+
+/** The types collapsed per post (`PUSH_BUDGET`'s ONE PER POST): comments and reactions on your post. */
+export const ONE_PER_POST_TYPES: readonly NotificationType[] = Object.entries(PUSH_BUDGET)
+  .filter(([, budget]) => 'onePerPost' in budget && budget.onePerPost === true)
+  .map(([type]) => type as NotificationType);

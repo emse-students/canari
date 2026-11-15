@@ -2577,6 +2577,27 @@ Every feed arm orders by `pinned DESC, "publishedAt" DESC` and then `posts.id`, 
 tie-breaker, so a page boundary never swaps two posts. The next page's merge (`loadMorePosts`) still
 drops an id it holds.
 
+## The attached form's reminder bell was decided once, at mount (2026-11-14)
+
+**Owner's report, production.** A post with an attached form that opens later showed no "Me prevenir"
+bell.
+
+**The cause.** `PostForms` decided its bells in an `onMount` that looped over `formInfos` ONCE.
+`PostForms` is always mounted and `formInfos` is filled afterwards by `attachedFormsLoader` (each form
+is read after the post is drawn), so the loop ran on an empty list and a form arriving later never got
+its reminder state, so never its bell. Under it sat a second gap: the post's `forms` entry carries a
+title but no `opensAt`, and the loader read the form only when it lacked the title, so a titled form
+could never say when it opens. The loader now reads every form (the post's title stays the one shown).
+
+**The fix.** `FormCard.svelte` (one card per attached form, drawn by `PostForms`): the bell is an
+`$effect` on the form and on "not open yet and not answered" - no mount-time read, no timer - drawn at
+once, its subscribed state filled in when `checkFormReminder` answers; a failed read is LOGGED
+(`FORM_CARD`) and drawn as not subscribed, the old `.catch(() => {})` having said nothing. Pinned by
+`FormCard.svelte.test.ts` (the bell appears when `opensAt` arrives after mount - the old `PostForms`
+fails it) and `attachedForms.svelte.test.ts`. Making a form LINK in a post look like this card is part
+of the wider design entry
+[a post's attachments follow one standard](../../backlog.d/p2-a-post-s-attachments-follow-one-standard.md).
+
 ## Comment sheet rework (2026-10-21)
 
 Plan: a full-screen sheet from the comment icon, the composer pinned above the keyboard, replies folded, a draft per post, and posting as an association or anonymously. It ships in four pull requests; **this section records what is on `main`**.
@@ -2663,8 +2684,8 @@ are left as they are (no row is rewritten).
   A refusal that still reaches the client is worded by its code (`publishFailure.ts`).
 - **At read**: a post serves only the form's id (and, for the legacy list, the title its author
   stored); everything else the card shows is read through `GET /api/forms/:id` and its own gate (a
-  draft is a 404 to a non-manager; what an archived association's form answers is the separate
-  change #3562, not this one). So a stored post naming a foreign form
+  draft, or a form of an archived association, is a 404 to a non-manager -
+  [forms](forms.md#an-archived-associations-form-is-closed-by-its-link-2026-11-14)). So a stored post naming a foreign form
   serves no more than the form's own link does. Two reads close the anonymous case for stored
   posts: an anonymous post's form (`attachedFormId`, the legacy `forms`) is withheld from every
   reader its author is withheld from (`withholdFormsOfHiddenAuthor`, on the same branch that strips

@@ -226,6 +226,30 @@ describe('InternalController - POST internal/push/notify', () => {
     const msg = sentMessage();
     expect(msg.apns.headers['apns-push-type']).toBe('alert');
     expect((msg.apns.payload.aps.alert as { body: string }).body).toBe('Nouveau post');
+    // No identity, no collapse: each such push is its own notification.
+    expect(msg.apns.headers['apns-collapse-id']).toBeUndefined();
+  });
+
+  it("sends a post's activity under ONE apns-collapse-id, quiet when the server says so (owner, 2026-11-14)", async () => {
+    await controller.notifyUser(SECRET, {
+      userId: 'u1',
+      title: 'Alice a commenté',
+      body: 'hello',
+      data: {
+        type: 'social',
+        postId: 'p1',
+        contentKey: 'social_comment',
+        collapseId: 'post_activity_p1',
+        quiet: 'true',
+      },
+    });
+
+    const msg = sentMessage();
+    expect(msg.apns.headers['apns-collapse-id']).toBe('post_activity_p1');
+    expect(msg.apns.headers['apns-push-type']).toBe('alert');
+    expect(msg.apns.payload.aps.sound).toBeUndefined();
+    expect(msg.apns.payload.aps['interruption-level']).toBe('passive');
+    expect(msg.apns.payload).toMatchObject({ collapseId: 'post_activity_p1', quiet: 'true' });
   });
 
   it('refuses a caller without the internal secret, before any send', async () => {

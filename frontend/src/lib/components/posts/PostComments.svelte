@@ -57,7 +57,7 @@
     onDeleteComment: (commentId: string) => Promise<void>;
     /** Called when the user reports a comment. */
     onReport?: (commentId: string) => void;
-    /** Bearer token forwarded to PostImage for decrypting comment media. */
+    /** Bearer token forwarded to the comment media for decrypting comment media. */
     authToken?: string;
     /** Reads the next page of older threads; the "older comments" button and the sorts call it. */
     onLoadOlder?: () => Promise<void>;

@@ -86,6 +86,10 @@ maybe('the priced grid against PostgreSQL (migration 137)', () => {
       extra: { options: `-c search_path=${schema},public` },
     });
     await ds.initialize();
+    // The respondent `where` reads the form's association's archive (`respondentFormWhere`).
+    await ds.query(
+      `CREATE TABLE associations (id uuid PRIMARY KEY, archived boolean NOT NULL DEFAULT false)`
+    );
     // Migration 137 from a table WITHOUT its column, twice: `synchronize` built it from the entity.
     await ds.query(`ALTER TABLE submissions DROP COLUMN lines`);
     const migration = readFileSync(

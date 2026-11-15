@@ -100,10 +100,11 @@ export class FormsController {
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') xGlobalAdmin?: string
   ) {
-    const linkedEvent = await this.associationsService.findCalendarEventByLinkedForm(id, {
-      userId: xUserId,
-      isGlobalAdmin: xGlobalAdmin === 'true',
-    });
+    const viewer = { userId: xUserId, isGlobalAdmin: xGlobalAdmin === 'true' };
+    // A form this reader may not read (a draft, one of an archived association) answers what an
+    // absent form answers - no link - so the id cannot be probed here either (`FormsService.get`).
+    if (!(await this.service.mayRead(id, viewer))) return { linkedEvent: null };
+    const linkedEvent = await this.associationsService.findCalendarEventByLinkedForm(id, viewer);
     return { linkedEvent: withOneEventIcsSig(linkedEvent) };
   }
 
