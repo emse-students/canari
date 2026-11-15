@@ -332,6 +332,16 @@ everything=$(make -s -n -C "$repo_root" lint-ci-scripts)
 check "without FILES, shellcheck lints the whole set" "without FILES, the set is not linted whole" \
   has "scripts/*.sh" "$everything"
 
+# A shellcheck other than the pinned one is refused, naming both versions.
+fake_bin="$scratch/fake-bin"
+mkdir -p "$fake_bin"
+printf '#!/bin/sh\necho "ShellCheck - shell script analysis tool"\necho "version: 9.9.9"\n' >"$fake_bin/shellcheck"
+chmod +x "$fake_bin/shellcheck"
+out=$(cd "$repo_root" && PATH="$fake_bin:$PATH" bash .github/scripts/local-ci.sh shellcheck .github/scripts/local-ci.sh 2>&1) || true
+check "a shellcheck at another version than .shellcheck-version is refused" \
+  "a shellcheck at another version was used: $out" \
+  test -n "$(grep -F 'this machine has v9.9.9' <<<"$out" || true)"
+
 echo "the real repository is untouched:"
 config_after=$(guarded_config)
 check "core.bare, core.hooksPath, user.* and commit.gpgsign are as before the run" \

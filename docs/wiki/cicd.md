@@ -2956,7 +2956,7 @@ scripts went red on 2026-09-01 for two findings a local run would have named in 
 (`SC1091` - `# shellcheck source-path=SCRIPTDIR` is **per-command, not per-file**, so a second
 `source` needs its own copy - and `SC2016` on a `'${'` case pattern that meant the brace literally).
 Since 2026-11-15 a staged `.sh` runs `make lint-ci-scripts`, the invocation CI uses, and a machine
-without `shellcheck` is told to install it (`winget install koalaman.shellcheck` on Windows)
+without `shellcheck`, or with another version than `.shellcheck-version` (0.11 names an indirect call SC2329 where the pinned 0.10 says SC2317, which turned #3623 red in CI after a green push), is refused and told which release to install
 ([the tiers](#checks-at-commit-at-push-and-in-ci-only)).
 
 ### The npm advisory endpoint's silence is not a verdict, and telling them apart is one script

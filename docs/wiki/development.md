@@ -565,7 +565,7 @@ something you learn by failing. Installing 0.11.0 locally once reported two find
 a local run that is *cleaner* than the pipeline is the same defect pointing the other way.
 
 ```sh
-winget install koalaman.shellcheck   # then check `shellcheck --version` against .shellcheck-version
+winget install koalaman.shellcheck --version 0.10.0   # exactly .shellcheck-version: the hooks refuse any other
 make lint-ci-scripts                 # exactly the file set ci.yml lints
 ```
 

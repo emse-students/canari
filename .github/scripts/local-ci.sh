@@ -93,6 +93,16 @@ refuse() {
 # message at all - both were found on this workstation that day. A hook that runs is the one place
 # that can see it, so both tiers refuse until it is fixed. The value is HOOKS_PATH in
 # frontend/scripts/hooks-path.js; local-ci.test.sh asserts the two agree.
+# THE SHELLCHECK CI PINS, OR NONE. Versions name findings differently (0.11's SC2329 is 0.10's
+# SC2317), so a local pass at another version proves nothing: #3623 went red in CI that way.
+# Prints nothing when the installed one is `.shellcheck-version`'s, else a phrase for a refusal.
+shellcheck_version_problem() {
+  local want have
+  want="$(tr -d '[:space:]' <.shellcheck-version)"
+  have="v$(shellcheck --version | sed -n 's/^version: //p' | tr -d '[:space:]')"
+  [ "$have" = "$want" ] || printf ' shellcheck %s (this machine has %s; CI lints with %s, and the finding codes differ between versions - https://github.com/koalaman/shellcheck/releases/tag/%s)' "$want" "$have" "$want" "$want"
+}
+
 HOOKS_PATH=.husky
 assert_hooks_path() {
   local value
@@ -255,6 +265,9 @@ require_tools() {
   case "$plan" in *"rust "* | *frontend-generated* | *mls-forward-compat*) need cargo ;; esac
   case "$plan" in *"ts "*) need node ;; esac
   case "$plan" in *android-unit*) need java ;; esac
+  if [[ "$plan" == *test-ci-scripts* || "$plan" == *shellcheck* ]] && command -v shellcheck >/dev/null 2>&1; then
+    missing="$missing$(shellcheck_version_problem)"
+  fi
   [ -z "$missing" ] || refuse "missing on this machine:$missing. CI has them; install them (docs/wiki/development.md) - a check that cannot run here is not a check that passed."
   # Said before a run of minutes, not three minutes into it: docs-private-guard refuses an unset one.
   if [ -z "${DOCS_PRIVATE_DENYLIST_FILE:-}" ]; then
@@ -563,6 +576,8 @@ case "$mode" in
       echo "shellcheck is not installed, and this commit stages a shell script CI lints with it: winget install koalaman.shellcheck (or your package manager)"
       exit 1
     }
+    problem="$(shellcheck_version_problem)"
+    [ -z "$problem" ] || refuse "this machine needs$problem"
     make lint-ci-scripts FILES="$*"
     ;;
   *)
