@@ -775,11 +775,12 @@ export class LivesService implements OnModuleDestroy {
    * past its `expiresAt` (database clock), absent, or refused for any reason is the same 404
    * `LIVE_NOT_FOUND`, asked before anything else, so an id lifted from a link learns nothing.
    *
-   * THE MODERATION READ (lead, 2026-11-14; narrowed 2026-11-15, reversible): `read.moderate` is the
-   * explicit intent a moderation screen sends, the replay's twin of a post's `allowHidden` and opened
-   * to the same people - a PLATFORM ADMIN alone (`read.isGlobalAdmin`). It widens the gate exactly as
-   * `allowHidden` does and serves the page a viewer gets. Anyone else sending it gets the ordinary
-   * gate: the read hands out the replay's key (docs/wiki/moderation-and-blocking.md).
+   * THE MODERATION READ (owner, 2026-11-15: "La moderation des lives doit avoir le meme regulateur
+   * que les posts"): `read.moderate` is the explicit intent a moderation screen sends. It opens the
+   * replay to whoever moderates its post - `AssociationsService.mayModeratePost`, the post moderation
+   * scope: a platform admin, a BDE `MODERATE` holder within its governed spaces - past the viewer's
+   * gate, and serves the page a viewer gets. Anyone else sending it gets the ordinary gate. The read
+   * hands out the replay's key (docs/wiki/moderation-and-blocking.md).
    *
    * @param read.moderate the caller asks to judge this replay (the moderation preview).
    * @param read.isGlobalAdmin the gateway's `x-global-admin`, as every moderation route reads it.
@@ -813,40 +814,48 @@ export class LivesService implements OnModuleDestroy {
       this.logger.debug(`[LIVE_REPLAY] ${liveId}: no replay alive for ${short(viewerId)}`);
       throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
     }
-    // THE MODERATION READ is a platform admin's alone, as a post's `allowHidden` is (lead,
-    // 2026-11-15): it hands out the key that decrypts the replay. Anyone else asking it gets the
-    // ordinary gate, unchanged.
-    const moderates = read.moderate === true && read.isGlobalAdmin === true;
-    if (read.moderate === true && !moderates) {
-      this.logger.debug(
-        `[LIVE_REPLAY] ${liveId}: ${short(viewerId)} asked a moderation read without the platform admin tier, the ordinary gate decides`
-      );
-    }
-    const verdict = await readPostOpenVerdict(
-      this.db.manager,
-      {
-        id: found.postId,
-        authorId: found.authorId,
-        associationId: found.associationId,
-        anonymous: found.anonymous,
-        hiddenByModeration: found.hiddenByModeration,
-        scheduledAt: found.scheduledAt,
-        kind: 'replay',
-        expiresAt: found.expiresAt,
-      },
-      // The live's own gate (`WATCH_ONLY`): a platform admin is an ordinary viewer, but for a review
-      // account's replay - never wider than the live was - and for the moderation read.
-      { viewerId, adminSeesCohort: true, allowHidden: moderates },
-      'READ_OR_REACT'
-    );
-    if (verdict.refusal !== null) {
-      this.logger.debug(`[LIVE_REPLAY] ${liveId} withheld from ${short(viewerId)}: ${verdict.why}`);
-      throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
-    }
+    // THE MODERATION READ has the post's own regulator (owner, 2026-11-15): whoever MODERATES the
+    // replay's post (`mayModeratePost`: a platform admin, a BDE `MODERATE` holder within its scope)
+    // reads it to judge it, past the viewer's gate - a removal or a block by the broadcaster, the
+    // "Entre etudiants" switch. It hands out the replay's key, so it is logged.
+    const moderates =
+      read.moderate === true &&
+      (await this.associations.mayModeratePost(viewerId, found.postId, {
+        isGlobalAdmin: read.isGlobalAdmin === true,
+      }));
     if (moderates) {
       this.logger.log(
-        `[LIVE_REPLAY] ${liveId} (post ${short(found.postId)}) MODERATION READ by platform admin ${short(viewerId)}`
+        `[LIVE_REPLAY] ${liveId} (post ${short(found.postId)}) MODERATION READ by ${short(viewerId)}: moderates its post${read.isGlobalAdmin === true ? ' (platform admin)' : ' (BDE moderator in scope)'}`
       );
+    } else {
+      if (read.moderate === true) {
+        this.logger.debug(
+          `[LIVE_REPLAY] ${liveId}: ${short(viewerId)} asked a moderation read and does not moderate its post, the ordinary gate decides`
+        );
+      }
+      const verdict = await readPostOpenVerdict(
+        this.db.manager,
+        {
+          id: found.postId,
+          authorId: found.authorId,
+          associationId: found.associationId,
+          anonymous: found.anonymous,
+          hiddenByModeration: found.hiddenByModeration,
+          scheduledAt: found.scheduledAt,
+          kind: 'replay',
+          expiresAt: found.expiresAt,
+        },
+        // The live's own gate (`WATCH_ONLY`): a platform admin is an ordinary viewer, but for a
+        // review account's replay - never wider than the live was.
+        { viewerId, adminSeesCohort: true },
+        'READ_OR_REACT'
+      );
+      if (verdict.refusal !== null) {
+        this.logger.debug(
+          `[LIVE_REPLAY] ${liveId} withheld from ${short(viewerId)}: ${verdict.why}`
+        );
+        throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
+      }
     }
     const key = openLiveKeyOr503(liveId, found);
     const listed: { index: number; name: string; bytes: number; atMs: string }[] =
