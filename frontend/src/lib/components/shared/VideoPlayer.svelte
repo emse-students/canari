@@ -449,6 +449,14 @@
   /** What the reader's last gesture did, for the glyph (`VideoFeedbackGlyph`). */
   let feedback = $state<{ kind: VideoFeedbackKind; n: number } | null>(null);
   let feedbackCount = 0;
+  /**
+   * A play or pause POP is on screen (reported by `VideoFeedbackGlyph`, which owns its lifetime). The
+   * resting play triangle waits for it to end: at a pause both used to be drawn at once, the pop's glass
+   * bars over the resting triangle (owner, 2026-11-15, "c'est moche"). Two elements keyed on two
+   * different states (the gesture, `paused`) drew the same centre; now ONE shows at any instant, the
+   * pop first and the resting triangle after it, sequenced by the pop's own `animationend`.
+   */
+  let transportPopping = $state(false);
   function showFeedback(kind: VideoFeedbackKind) {
     feedback = { kind, n: ++feedbackCount };
   }
@@ -1037,7 +1045,7 @@
            read as "tap to play" on a video that was only loading (owner, 2026-10-31). -->
     {/if}
 
-    {#if (variant !== 'feed' || !feedAutoplayPermitted()) && paused && !holding && (minimal ? autoplayRefused : frameReady)}
+    {#if (variant !== 'feed' || !feedAutoplayPermitted()) && paused && !holding && !transportPopping && (minimal ? autoplayRefused : frameReady)}
       <!-- The one big target while nothing plays; the bar below repeats it for the keyboard. The
            minimal player draws it on a decided outcome only, with or without a first frame; the
            feed's only when the reader's "Lecture automatique des vidéos" keeps it from starting
@@ -1059,7 +1067,7 @@
     {/if}
 
     <!-- THE GLYPH IS THE FEEDBACK OF A GESTURE, NEVER A STATE: a tap's sound, a reel's pause. -->
-    <VideoFeedbackGlyph {feedback} />
+    <VideoFeedbackGlyph {feedback} onTransport={(showing) => (transportPopping = showing)} />
 
     {#if inline}
       <!-- AN INLINE VIDEO'S CHROME (owner, 2026-11-10: minimal, as Instagram and CanaReels; owner,
@@ -1082,10 +1090,11 @@
         <VideoChipButton
           label={m.msg_more_actions_label()}
           onclick={onActions}
+          glass={false}
           class="absolute top-0.5 left-0.5 z-20"
           data-video-actions
         >
-          <Ellipsis size={16} strokeWidth={2.5} class="drop-shadow" />
+          <Ellipsis size={18} strokeWidth={2.25} class="drop-shadow-md" />
         </VideoChipButton>
       {/if}
       {#if variant === 'chat' && started}
@@ -1109,6 +1118,7 @@
         {muted}
         onToggle={toggleMute}
         onLevel={changeLevel}
+        quiet
         disabled={scope === 'silent'}
         class="absolute right-1 z-40 {safeBottom
           ? 'bottom-[calc(var(--safe-area-inset-bottom,0px)+2rem)]'

@@ -39,6 +39,46 @@ owner chose **"Ouvrir le plein ecran"**. The `chat` row of `utils/videoTapAction
   played when asked, audible, never looped (user, 2026-10-02) - a conversation is a place where the
   reader chose to press play, a feed is a place where videos arrive by scrolling.
 
+## One art direction: flat at rest, glass while transient (owner, 2026-11-15)
+
+*"l'icone permanente est plate mais l'icone au survol est glass. On peut imaginer un truc hybride sur
+toutes les plateformes ? Mais coherents dans toutes les parties de l'app ?"* and *"Il faut
+homogeneiser entre les plateformes, je ne veux qu'une DA."* The rule, identical on iOS, Android and the
+web, on every surface:
+
+- **(a) ON SCREEN AT REST = FLAT**: a bare white lucide glyph with a drop shadow, no chip, no blur.
+- **(b) TRANSIENT, SHOWN ON INTERACTION = GLASS**: the raised bar, the volume slider, the time bubble,
+  the gesture's pop.
+
+| Control | Players | Class | Drawn as |
+| --- | --- | --- | --- |
+| Big play triangle (poster, paused, refused autoplay) | chat, conversation, lightbox, reel (refusal), every poster/tile (`VideoPoster`, `SharedMediaThumb`, `ChatReelTile`, `SharedPostCard`, `ReplayCard`) | (a) | `VideoRestingPlay`: lucide `Play`, filled, `drop-shadow-md` (was the glass triangle, SUPERSEDED) |
+| Speaker in a corner | feed (while playing), chat (once started), conversation viewer, live | (a) | `VideoSoundButton quiet`: bare 18 px `Volume2`/`VolumeX` |
+| Speaker on the rail | CanaReels | (a) | `VideoSoundButton rail`: bare 26 px |
+| Message actions `...` | chat | (a) | `VideoChipButton glass={false}`, 18 px `Ellipsis` (was a glass chip) |
+| Seek line (2 px, 32 px target) | chat, conversation, reel | (a) | the kit's `VideoScrubber line`; its time bubble is (b) |
+| Time bubble while dragging | every scrubber | (b) | `.glass-video` pill |
+| Control bar (play/pause, time, scrubber, speaker, full screen) | lightbox | (b) | ONE `.glass-video` pill; its buttons draw no chip of their own |
+| Volume slider rising above the speaker | every player, under a mouse | (b) | `.glass-video` pill |
+| Play/pause pop at the centre (600 ms) | chat-viewer, reel, feed, conversation | (b) | `VideoGlassGlyph` |
+| Sound pop at the centre | same | (b) | `.glass-video` chip, 22 px glyphs |
+
+Removed instead of aligned: the chat's expand chip and pause chip (see the section above).
+
+**ONE GLYPH AT THE CENTRE AT ANY INSTANT** (owner, 2026-11-15: at a pause the pop's glass bars and the
+resting triangle were drawn together, superimposed - *"c'est moche"*). The cause: two elements keyed on
+two different states, the gesture (`feedback`) and `paused`. The resting triangle now waits while a
+play/pause pop is on screen: `VideoFeedbackGlyph` reports `onTransport`, which owns the pop's lifetime
+(its `animationend`, also under `prefers-reduced-motion`, where it is a fade) - no timer. Test:
+`VideoPlayer.svelte.test.ts`, "never two of the play and pause glyphs".
+
+**Android glass is limited to (b), so the budget is narrower**: `ANDROID_VIDEO_GLASS` stays `false`
+for (b) until the Mi 9T reading ([the glass budget](#the-glass-budget)), which measures the WORST CASE -
+the raised bar with the slider open, in the lightbox or the reel viewer. Pass: (b) is glass on Android.
+Fail: the fallback applies to both platforms alike, with the flat tint closest to the glass, and the
+numbers go to the owner before it is chosen. **Not yet measured.** The "Android is flat until a
+measurement" rule below is SUPERSEDED as to resting controls (they are flat everywhere, always).
+
 ## A tap in full screen never mutes (owner, 2026-11-10)
 
 *"c'est insupportable que le clic coupe le son en plein ecran ... n'importe quel clic sur l'interface coupe le son."*
@@ -569,6 +609,8 @@ second meter, no second law, no second route.
 
 ## The glass play glyph - a triangle with no disc (owner, 2026-11-09)
 
+> **SUPERSEDED 2026-11-15 for the RESTING triangle**: it is flat now ([one art direction](#one-art-direction-flat-at-rest-glass-while-transient-owner-2026-11-15)). The glass glyph stays as the gesture's play/pause pop.
+
 > *"J'aurais juste fait le triangle en liquid glass."* The play glyph ITSELF is the glass: no circle
 > behind it, on every surface at once (viewer, reels, feed, chat, live, the poster before a first
 > frame). The pause bars the same way where they are shown (the gesture's feedback glyph).
@@ -628,6 +670,8 @@ disc may take the frame's colour through its blur, the glyph cannot.
 Tests: `styles/videoGlass.test.ts` (each fallback line), `utils/videoGlass.test.ts`.
 
 ## The glass budget
+
+> **Narrowed 2026-11-15**: the budget now covers the TRANSIENT glass only (bar, slider, bubble, pop); resting controls are flat on every platform.
 
 The Android default is flat until a reading on the Mi 9T says the blur costs no janky frames
 (owner, 2026-11-09). **The lead takes the readings, on a pre-release carrying the lightbox migration;

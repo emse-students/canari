@@ -25,13 +25,26 @@
   interface Props {
     /** What just happened, and a counter that makes the same kind twice pop twice. */
     feedback: { kind: VideoFeedbackKind; n: number } | null;
+    /**
+     * Whether a PLAY or PAUSE pop is on screen, reported on every change. The player hides its resting
+     * play triangle meanwhile: one glyph at the centre at any instant (owner, 2026-11-15).
+     */
+    onTransport?: (showing: boolean) => void;
   }
 
-  let { feedback }: Props = $props();
+  let { feedback, onTransport }: Props = $props();
 
   /** The gesture whose glyph has finished: it, and its announcement, are gone. */
   let doneN = $state<number | null>(null);
   const live = $derived(feedback !== null && feedback.n !== doneN ? feedback : null);
+
+  const transportShowing = $derived(live?.kind === 'play' || live?.kind === 'pause');
+  $effect(() => {
+    const showing = transportShowing;
+    onTransport?.(showing);
+    // A player leaving mid-pop must not leave its flag up.
+    return () => onTransport?.(false);
+  });
 
   const announcement = $derived(
     live?.kind === 'sound-on'

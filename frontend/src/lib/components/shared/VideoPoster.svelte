@@ -1,5 +1,5 @@
 <script lang="ts">
-  import VideoGlassGlyph from '$lib/components/ui/player/VideoGlassGlyph.svelte';
+  import VideoRestingPlay from '$lib/components/ui/player/VideoRestingPlay.svelte';
 
   /**
    * WHAT A VIDEO BOX SHOWS UNTIL ITS FIRST FRAME IS DECODED - Canari's colours and a play glyph.
@@ -29,5 +29,5 @@
   class="from-cn-ink to-cn-scrim pointer-events-none absolute inset-0 flex items-center justify-center bg-linear-to-br"
   aria-hidden="true"
 >
-  <VideoGlassGlyph kind="play" size={compact ? 36 : 48} />
+  <VideoRestingPlay size={compact ? 36 : 48} />
 </div>

@@ -1,17 +1,15 @@
 <script lang="ts">
   import { m } from '$lib/paraglide/messages';
-  import VideoGlassGlyph from './VideoGlassGlyph.svelte';
+  import VideoRestingPlay from './VideoRestingPlay.svelte';
 
   /**
    * THE BIG PLAY BUTTON - drawn only when it answers "is this playing?": a chat video before its
    * first play, a paused viewer, an autoplay the engine refused (owner, 2026-11-09).
    *
-   * THE TRIANGLE IS THE GLASS, AND THERE IS NO DISC (owner, 2026-11-09: *"J'aurais juste fait le
-   * triangle en liquid glass"*; before it, the solid `--cn-yellow` sticker that hid the thumbnail and
-   * shouted the brand over every clip, then a glass disc around a white glyph). The shape is
-   * {@link VideoGlassGlyph}: the video's blur and dark tint inside a rounded triangle, a light rim on
-   * its top-left edge, a soft shadow, so the state is carried by the shape and stays legible on a
-   * white frame and a black one.
+   * THE TRIANGLE IS FLAT (owner, 2026-11-15, the one hybrid art direction): it is always on screen
+   * while nothing plays, so it is a RESTING control - a bare white lucide glyph with a drop shadow
+   * ({@link VideoRestingPlay}), no disc, no blur. It was the video's blur inside a triangle
+   * (owner, 2026-11-09) - SUPERSEDED; the glass is the gesture's pop and the raised bar.
    *
    * THE HIT TARGET IS THE SQUARE, NOT THE TRIANGLE: the button is 64 px (72 px `lg`) and invisible,
    * so the 44 px minimum holds whatever the glyph draws. Centred.
@@ -41,7 +39,7 @@
     aria-hidden="true"
     data-video-play-glyph
   >
-    <VideoGlassGlyph kind="play" size={side} />
+    <VideoRestingPlay size={side} />
   </span>
 {:else}
   <button
@@ -58,7 +56,7 @@
       onclick();
     }}
   >
-    <VideoGlassGlyph kind="play" size={side} />
+    <VideoRestingPlay size={side} />
   </button>
 {/if}
 

@@ -414,6 +414,8 @@ it('chat: offers the play triangle once the first frame is in, and not before - 
   expect(glyph()!.tagName, 'a poster: a tap on it is a tap on the picture').not.toBe('BUTTON');
   expect(glyph()!.hasAttribute('data-video-controls')).toBe(false);
   expect(playButton(), 'no play button in the chat').toBeNull();
+  expect(glyph()!.querySelector('[data-video-resting-play]'), 'flat at rest').not.toBeNull();
+  expect(glyph()!.querySelector('.glass-video-shape')).toBeNull();
 });
 
 it('chat: a tap on the triangle opens the viewer like any other point of the picture', () => {
