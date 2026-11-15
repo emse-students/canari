@@ -45,11 +45,7 @@ export function exportEntries(hasProductGrid: boolean): ExportEntry[] {
 }
 
 /** The file name: the form's title, the sheet for a CSV, characters a file system refuses cut. */
-export function exportFileName(
-  formId: string,
-  title: string,
-  format: SubmissionsExportFormat
-): string {
+function exportFileName(formId: string, title: string, format: SubmissionsExportFormat): string {
   const base = title.replace(/[\\/:*?"<>|]+/g, '_').trim() || formId;
   if (format === 'articles-csv') return `${base} - ${m.form_export_grid_articles_sheet()}.csv`;
   if (format === 'totals-csv') return `${base} - ${m.form_export_grid_totals_sheet()}.csv`;

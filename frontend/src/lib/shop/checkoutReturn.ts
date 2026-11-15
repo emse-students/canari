@@ -145,7 +145,7 @@ export const CHECKOUT_RETURN_PARAMS = [
  * for the page in a BROWSER offering "Ouvrir Canari": a tap is a gesture, which a redirect is not.
  * Only the attempt's own parameters are carried (`shopReturnPath` filters them).
  */
-export function shopPaymentReturnDeepLink(params: URLSearchParams): string {
+function shopPaymentReturnDeepLink(params: URLSearchParams): string {
   return checkoutDeepLink('success', shopReturnPath('purchase_success', params).split('?')[1]);
 }
 

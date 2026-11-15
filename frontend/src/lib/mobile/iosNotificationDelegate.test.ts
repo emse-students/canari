@@ -256,7 +256,7 @@ describe('a suspended page gets the time to own a reply (review of #2843, A1)', 
     const r = didReceive();
     const start = r.indexOf('isEqualToString:kCanariReplyActionId');
     const branch = r.slice(start, r.indexOf('isEqualToString:kCanariMarkReadActionId'));
-    expect(branch).toContain('notifiedAt, completionHandler);');
+    expect(branch).toContain('notifiedAt, finish);');
     expect(branch).not.toContain('completionHandler();');
   });
 
@@ -269,7 +269,7 @@ describe('a suspended page gets the time to own a reply (review of #2843, A1)', 
     expect(h).not.toMatch(/dispatch_after|NSTimer|asyncAfter/);
     const release = body('static void CanariReleaseQuickReplyHold(');
     expect(release).toContain('CanariTellQuickReplyOutcome(outcome);');
-    expect(release).toContain('hold.completion();');
+    expect(release).not.toContain('hold.completion');
     expect(release).toContain('CanariEndQuickReplyTask(hold);');
     expect(body('static void CanariEndQuickReplyTaskOnMain(')).toContain('endBackgroundTask:task');
   });
@@ -399,5 +399,96 @@ describe('the add recorder is installed once (review of #2843, A4)', () => {
     const r = body('static void CanariRecordNotificationsPostedThisProcess(void) {');
     expect(r).toContain('dispatch_once(&once');
     expect(push.match(/CanariInstallNotificationRecorder\(\);/g)).toHaveLength(1);
+  });
+});
+
+/**
+ * The block literal (`^{ ... }` or `^(args) { ... }`) whose caret is at `caret` in `src`, braces
+ * matched. Enough for this file: no brace in these methods sits inside a string or a comment.
+ */
+function blockAt(src: string, caret: number): string {
+  const open = src.indexOf('{', caret);
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    if (src[i] === '{') depth++;
+    if (src[i] === '}' && --depth === 0) return src.slice(caret, i + 1);
+  }
+  throw new Error(`unbalanced block at ${caret}`);
+}
+
+/** Every block literal in `src` that is NOT the argument of a main-queue dispatch. */
+function offMainBlocks(src: string): string[] {
+  const blocks: string[] = [];
+  for (const m of src.matchAll(/\^\s*(\([^)]*\)\s*)?\{/g)) {
+    const before = src.slice(Math.max(0, m.index - 60), m.index);
+    if (/dispatch_async\(dispatch_get_main_queue\(\),\s*$/.test(before)) continue;
+    blocks.push(blockAt(src, m.index));
+  }
+  return blocks;
+}
+
+describe('a notification response is completed on the main thread (iPhone 12, 1.6.12-alpha.2)', () => {
+  // "Marquer comme lu" from a killed app did its work, then aborted the app: `completionHandler()`
+  // ran on the global queue the action worked on, and iOS asserts the main thread inside it.
+  const methods = () => [didReceive(), willPresent()];
+
+  it('never lets the raw handler into a block that can run off main', () => {
+    for (const m of methods()) {
+      for (const block of offMainBlocks(m)) {
+        expect(block, block.slice(0, 120)).not.toMatch(/\bcompletionHandler\b/);
+      }
+    }
+  });
+
+  it('calls the raw handler only synchronously, in the delegate callback iOS runs on main', () => {
+    for (const m of methods()) {
+      for (const use of m.matchAll(/\bcompletionHandler\b/g)) {
+        const line = m.slice(m.lastIndexOf('\n', use.index) + 1, m.indexOf('\n', use.index));
+        expect(line.trim(), line).toMatch(
+          /^(completionHandler\(|withCompletionHandler:completionHandler\]|void \(\^finish\)\(void\) = CanariFinishOnMain\(completionHandler,|\(void \(\^\)\(UNNotificationPresentationOptions options\)\)completionHandler \{|withCompletionHandler:\(void \(\^\)\(void\)\)completionHandler \{)/
+        );
+      }
+    }
+  });
+
+  it('gives every registered action a branch that finishes through the main-queue wrapper', () => {
+    const categories = body('void CanariRefreshNotificationCategories(void) {');
+    const actions = [...categories.matchAll(/actionWithIdentifier:(\w+)/g)].map((m) => m[1]);
+    expect(actions).toEqual(['kCanariReplyActionId', 'kCanariMarkReadActionId']);
+    const r = didReceive();
+    for (const id of actions) {
+      const start = r.indexOf(`isEqualToString:${id}]`);
+      expect(start, id).toBeGreaterThan(-1);
+      const branch = blockAt(r, r.indexOf('{', start));
+      expect(branch, id).toContain('CanariFinishOnMain(completionHandler, @"');
+      expect(branch, id).toContain('dispatch_get_global_queue');
+      expect(branch, id).toMatch(/\bfinish[();]/);
+    }
+  });
+
+  it('completes a held reply on main, BEFORE its task ends, in the step the expiry runs too', () => {
+    // A settlement off main used to call the completion there and queue only the end: an expiry
+    // running first ended the task with the response outstanding (review of #3583).
+    const onMain = body('static void CanariEndQuickReplyTaskOnMain(');
+    const taken = onMain.indexOf('hold.completion = nil;');
+    expect(taken).toBeGreaterThan(-1);
+    expect(onMain.indexOf('completion();')).toBeGreaterThan(taken);
+    expect(onMain.indexOf('endBackgroundTask:task')).toBeGreaterThan(
+      onMain.indexOf('completion();')
+    );
+  });
+
+  it('completes mark read only after the notification removal, on main', () => {
+    const action = body('static void CanariHandleMarkReadAction(');
+    expect(action).toContain('dispatch_group_leave(removal);');
+    expect(action).not.toContain('CanariCancelConversationNotification(groupId, nil)');
+    expect(action).toContain('dispatch_group_notify(removal, dispatch_get_main_queue(), done);');
+  });
+
+  it('hops to the main queue in the wrapper, with no timer', () => {
+    const w = body('static void (^CanariFinishOnMain(');
+    expect(w).toContain('if ([NSThread isMainThread]) {');
+    expect(w).toContain('dispatch_async(dispatch_get_main_queue(), ^{');
+    expect(w).not.toMatch(/dispatch_after|NSTimer|dispatch_get_global_queue/);
   });
 });
