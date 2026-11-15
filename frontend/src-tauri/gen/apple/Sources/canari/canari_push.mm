@@ -2624,7 +2624,18 @@ static NSMutableDictionary<NSString *, CanariQuickReplyHold *> *g_quickReplyHold
 /// the handler, calling this synchronously, either takes the id itself and ends it before it
 /// returns, or finds it already ended by an earlier block on the same thread. No end of this task is
 /// ever left queued behind a handler that returned (round-4 review of #2843, L1).
+///
+/// THE NOTIFICATION RESPONSE IS COMPLETED HERE TOO, FIRST, and taken the same way: the completion
+/// is read and cleared on main only, so it runs exactly once and always BEFORE the task ends. A
+/// settlement off main used to call it there and queue only the end - an expiry running before that
+/// queued block ended the task with the response still uncompleted, and iOS could suspend the app
+/// with it outstanding (review of #3583).
 static void CanariEndQuickReplyTaskOnMain(CanariQuickReplyHold *hold) {
+  void (^completion)(void) = hold.completion;
+  hold.completion = nil;
+  if (completion != nil) {
+    completion();
+  }
   UIBackgroundTaskIdentifier task = hold.task;
   hold.task = UIBackgroundTaskInvalid;
   if (task != UIBackgroundTaskInvalid) {
@@ -2702,7 +2713,7 @@ static void CanariReleaseQuickReplyHold(NSString *replyId, int32_t outcome, NSSt
   NSLog(@"[CanariPush] quick reply %@ %@: %@ - the notification response is completed", replyId, why,
         what);
   CanariTellQuickReplyOutcome(outcome);
-  hold.completion();
+  // Completes the response, then ends the task - both on main, in that order.
   CanariEndQuickReplyTask(hold);
 }
 
@@ -2966,13 +2977,25 @@ static void CanariHandleQuickReplyAction(NSString *recipientId, NSString *groupI
  *
  * The notification is cleared FIRST and unconditionally: it is the half the user asked for and can
  * see, and it must not depend on the push context being loadable.
+ *
+ * `done` (the notification response's completion) is called once, on the main queue, only after
+ * BOTH halves: the watermark's drain AND the removal, whose delivered-list read is asynchronous. A
+ * response completed before it let iOS suspend the relaunched app with the removal still queued -
+ * the read went out and the banner stayed (review of #3583).
  */
-static void CanariHandleMarkReadAction(NSString *groupId, long long sentAt) {
+static void CanariHandleMarkReadAction(NSString *groupId, long long sentAt, void (^done)(void)) {
   if (groupId.length == 0) {
+    NSLog(@"[CanariPush] ERROR mark read: the notification names no conversation - nothing done");
+    done();
     return;
   }
-  CanariCancelConversationNotification(groupId, nil);
+  dispatch_group_t removal = dispatch_group_create();
+  dispatch_group_enter(removal);
+  CanariCancelConversationNotification(groupId, ^{
+    dispatch_group_leave(removal);
+  });
   CanariSendReadWatermark(groupId, sentAt);
+  dispatch_group_notify(removal, dispatch_get_main_queue(), done);
 }
 
 /// The `sentAt` a notification carries, or 0. APNs delivers `userInfo` values as `NSNumber` when
@@ -5790,6 +5813,29 @@ static BOOL CanariIsShareNotification(NSDictionary *userInfo) {
          [userInfo[@"canariLocal"] isEqualToString:@"incoming_share"];
 }
 
+/**
+ * The completion handler of a notification response, made callable from ANY thread: it runs at once
+ * on the main thread, else is queued onto the main queue - never a timer. iOS asserts the main
+ * thread inside it ("Call must be made on main thread", `UIApplication.m`), so a handler called from
+ * the global queue an action works on aborted the app relaunched for it (iPhone 12,
+ * `1.6.12-alpha.2`, "Marquer comme lu" from a killed app). Every action branch that leaves the main
+ * thread hands this out instead of the raw handler; `iosNotificationDelegate.test.ts` holds that.
+ * It does not count calls: each path calls it exactly once by construction (the quick reply's hold
+ * is removed under a lock by whoever releases it first).
+ */
+static void (^CanariFinishOnMain(void (^handler)(void), NSString *what))(void) {
+  return ^{
+    if ([NSThread isMainThread]) {
+      handler();
+      return;
+    }
+    dispatch_async(dispatch_get_main_queue(), ^{
+      NSLog(@"[CanariPush] %@: the notification response is completed on the main queue", what);
+      handler();
+    });
+  };
+}
+
 @implementation CanariNotificationDelegate
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center
        willPresentNotification:(UNNotification *)notification
@@ -5899,12 +5945,15 @@ static BOOL CanariIsShareNotification(NSDictionary *userInfo) {
                                 ? userInfo[kCanariRecipientKey]
                                 : @"";
     // The handler is passed on, never called here: a reply handed to the page holds it until the
-    // page settles the reply (`CanariHoldQuickReply`).
+    // page settles the reply (`CanariHoldQuickReply`). Passed WRAPPED: every path that completes it
+    // runs off the main thread (the native send here, the page's settlement from Rust), and the
+    // wrapper finishes on main.
+    void (^finish)(void) = CanariFinishOnMain(completionHandler, @"quick reply");
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
       CanariHandleQuickReplyAction(recipientId, groupId,
                                    [text stringByTrimmingCharactersInSet:
                                              [NSCharacterSet whitespaceAndNewlineCharacterSet]],
-                                   notifiedAt, completionHandler);
+                                   notifiedAt, finish);
     });
     return;
   }
@@ -5912,9 +5961,13 @@ static BOOL CanariIsShareNotification(NSDictionary *userInfo) {
     NSString *groupId =
         [userInfo[@"groupId"] isKindOfClass:[NSString class]] ? userInfo[@"groupId"] : @"";
     long long notifiedAt = CanariNotifiedSentAt(userInfo);
+    // The work (file writes, the outbox drain's network round trip) stays off main; the response is
+    // completed back ON MAIN. Called from the global queue it aborted the app relaunched in the
+    // background - "Call must be made on main thread" - after the read had already gone out. The
+    // action calls it once both halves are done, the notification's removal included.
+    void (^finish)(void) = CanariFinishOnMain(completionHandler, @"mark read");
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-      CanariHandleMarkReadAction(groupId, notifiedAt);
-      completionHandler();
+      CanariHandleMarkReadAction(groupId, notifiedAt, finish);
     });
     return;
   }

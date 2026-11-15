@@ -375,7 +375,7 @@ export interface ListedSpace {
 }
 
 /** The person a booker may write to about a space. */
-export interface SpaceContact {
+interface SpaceContact {
   userId: string;
   displayName: string;
 }

@@ -29,11 +29,11 @@ export function emptyFilters(): DirectoryFilters {
 }
 
 /** The shortest name the server searches (`UsersService.directory`). */
-export const MIN_NAME_LENGTH = 2;
+const MIN_NAME_LENGTH = 2;
 /** Mirrors `DirectoryQueryDto` (core-service `user.dto.ts`): a request outside them is refused with a 400. */
-export const MAX_QUERY_LENGTH = 200;
-export const MAX_FORMATION_LENGTH = 120;
-export const MIN_PROMO = 1816;
+const MAX_QUERY_LENGTH = 200;
+const MAX_FORMATION_LENGTH = 120;
+const MIN_PROMO = 1816;
 
 /** The promo as a number, or `undefined` when the field is empty or not a valid year (integer >= 1816). */
 export function promoOf(filters: DirectoryFilters): number | undefined {
