@@ -131,7 +131,11 @@ jobs:
           git reset --hard "$INPUT_SHA"
           echo "dev checkout at $(git rev-parse --short HEAD)"
 
-      # Renders infrastructure/.env for the dev estate and NOTHING ELSE, from the DEV_ secrets only.
+      # Renders infrastructure/.env for the dev estate and NOTHING ELSE, from the DEV_ secrets only -
+      # secrets of the `development` environment this job declares (2026-11-13). The DEV_ prefix is
+      # KEPT inside the environment: while production's bare names still exist at repository level, a
+      # bare name `development` lacked would be read from there, production's value. The unification
+      # and its precondition: docs/wiki/cicd.md#where-a-secret-lives-and-why.
       # The list is the manifest's own `secret:` rows that dev does not skip; a row added there and
       # not here is caught by `.github/scripts/tests/deploy-env.test.sh`, which derives this block.
       #

@@ -276,9 +276,11 @@ and why this won:
 | WebView `fetch` for binary bodies to first-party origins | **Chosen.** One predicate, no native code, the same path web users run today (including the 401-refresh retry in `fetchUpload`), and no copy at all. |
 
 **Which origin the release builds bake (read from the workflows and the relay, 2026-10-10).** `android.yml` and
-`ios.yml` write the SAME `APP_URL` into every `VITE_*_URL`: the `BASE_URL` secret for a stable (the classifier
-accepts `canari.emse.fr` or `canari-emse.fr`; `BASE_URL` moved to `canari.emse.fr` on 2026-09-25) and
-`DEV_BASE_URL` for a pre-release, which must be `dev.canari-emse.fr` (the only dev name the classifier knows).
+`ios.yml` write the SAME `APP_URL` into every `VITE_*_URL`: the `BASE_URL` secret, read from the `production`
+environment for a stable (the classifier accepts `canari.emse.fr` or `canari-emse.fr`; `BASE_URL` moved to
+`canari.emse.fr` on 2026-09-25) and from the `development` environment for a pre-release, where it must be
+`dev.canari-emse.fr` (the only dev name the classifier knows; it was the `DEV_BASE_URL` secret until 2026-11-13,
+[cicd](../cicd.md#where-a-secret-lives-and-why)).
 Measured with a 2 MB POST to `/api/media/upload`: `canari.emse.fr` answers `401` (straight to the Portail-etu
 host, no cap), while `dev.canari-emse.fr` and `canari-emse.fr` answer **`413`** - both still go through the old
 VM's nginx relay (`canari-relay-dev.conf`, `canari-relay-prod.conf`), which sets no `client_max_body_size` and
