@@ -192,8 +192,10 @@ describe('the byte budget of every ledger the MLS state carries', () => {
 
   it('holds at most the budget once every ledger is full of its longest entries', () => {
     // A state opened with every ledger but one at its caps (the value is one shared string, so the
-    // test holds it once), the send counts of as many groups, and the format key.
-    const full = JSON.stringify(fullLedger());
+    // test holds it once), the send counts of as many groups, and the format key. At its caps means
+    // bounded as every write of this build bounds it: unbounded, each copy is 2 MB, and weighing 255
+    // of them timed the case out on a loaded CI runner while testing nothing a state can hold.
+    const full = JSON.stringify(boundSeenEntries(fullLedger()));
     const opened: Record<string, string> = {};
     const index: string[] = [];
     for (let g = 0; g < MAX_LEDGERS_PER_USER - 1; g++) {

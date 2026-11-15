@@ -202,10 +202,10 @@ describe('BaseMlsService.persistCheckpoint', () => {
     const ctx = makeCtx({ inboundApplied: 3, durableApplied: 1 });
     ctx.writeCheckpoint.mockImplementation(async () => {
       // A frame applied while the write seals is not in it.
-      (ctx as { inboundApplied: number }).inboundApplied = 4;
+      (ctx as unknown as { inboundApplied: number }).inboundApplied = 4;
     });
     await persist(ctx);
-    expect((ctx as { durableApplied: number }).durableApplied).toBe(3);
+    expect((ctx as unknown as { durableApplied: number }).durableApplied).toBe(3);
 
     const failing = makeCtx({
       inboundApplied: 5,
@@ -213,7 +213,7 @@ describe('BaseMlsService.persistCheckpoint', () => {
       writeCheckpoint: vi.fn().mockRejectedValue(new Error('quota exceeded')),
     });
     await expect(persist(failing)).rejects.toThrow('quota exceeded');
-    expect((failing as { durableApplied: number }).durableApplied).toBe(3);
+    expect((failing as unknown as { durableApplied: number }).durableApplied).toBe(3);
   });
 
   /**
@@ -230,7 +230,7 @@ describe('BaseMlsService.persistCheckpoint', () => {
       }
     );
     await expect(persist(ctx)).rejects.toThrow('follower-tab');
-    expect((ctx as { durableApplied: number }).durableApplied).toBe(0);
+    expect((ctx as unknown as { durableApplied: number }).durableApplied).toBe(0);
     // The marks went back to the batch, never into a write that landed.
     expect(takeStagedStateLedgers(U)).toHaveProperty(SEEN);
 

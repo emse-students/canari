@@ -1,5 +1,6 @@
 import type { IMlsService } from './IMlsService';
 import { DELIVERY } from './frameDelivery';
+import { FollowerTabSendError } from './commitSubmission';
 import { promotedSinceLoad, refusesCommitsHere } from './stateAuthority';
 import { openSealedBytes, sealBytes } from '$lib/encryption';
 import { requireGraineRuntime } from '$lib/utils/graine/runtime';
@@ -86,6 +87,11 @@ export async function openHandedOver(sealed: HandedOverBytes): Promise<Uint8Arra
  * Sends one application frame from whichever tab the gesture is made in, and resolves with the
  * server's acceptance time - see the module comment.
  *
+ * A SEND BEGUN WHILE THIS TAB LED AND REFUSED BECAUSE THE LEAD LEFT DURING IT (`sendMessage`'s
+ * `FollowerTabSendError('lead-lost')`: nothing was posted) is handed to the leader like any
+ * follower's - the lead moved, the gesture did not. Rethrown, it reached each caller as a type none
+ * of them names, and a caller that only logs (the channel invitation) lost it.
+ *
  * @throws {FrameNotHandedError} in a follower, when the leader did not send it (closed, locked, a
  *   device key changed, or a failure it met), and in a leader promoted in place before its reload -
  *   the caller's existing failed-send branch.
@@ -98,13 +104,20 @@ export async function sendFrameFromThisTab(
 ): Promise<{ receivedAt: number | null }> {
   const delivery = options.delivery ?? 'visible';
   if (!refusesCommitsHere()) {
-    const sent = await mlsService.sendMessage(
-      groupId,
-      bytes,
-      options.messageId,
-      DELIVERY[delivery]
-    );
-    return { receivedAt: sent.receivedAt };
+    try {
+      const sent = await mlsService.sendMessage(
+        groupId,
+        bytes,
+        options.messageId,
+        DELIVERY[delivery]
+      );
+      return { receivedAt: sent.receivedAt };
+    } catch (e) {
+      if (!(e instanceof FollowerTabSendError) || e.refusal !== 'lead-lost') throw e;
+      console.warn(
+        `[SEND] ${groupId.slice(0, 8)}... the lead left this tab during the send, nothing was posted - the frame is handed to the leader tab`
+      );
+    }
   }
   if (promotionReloadOwed(`the frame of ${groupId.slice(0, 8)}...`)) {
     throw new FrameNotHandedError(groupId, 'reload-owed');
