@@ -33,6 +33,9 @@
  * opens NOTHING and then reports on whatever conversation happened to be on screen.
  */
 
+import { fileURLToPath } from "node:url";
+import { makeNameHelpers } from "./namesderive.mjs";
+
 /**
  * Every account's DISPLAY name, keyed like `test-accounts.json` and `ACCOUNT_OF`. A DISPLAY name,
  * not a login. A third and fourth account are just two more keys here.
@@ -220,6 +223,14 @@ export const VENUE = { community: "Canari Test Venue", channel: "general" };
  * `GET .../api/users/<id> -> 404`.
  */
 export const STRANDED_ABSENT_MENTION_IDS = [];
+
+/**
+ * The derived names and the state directory, so the template alone satisfies every import (the lint
+ * gate resolves them on a fresh clone, where no machine-local copy exists). The real copy replaces
+ * all of this with the lines in the block below.
+ */
+export const { OWNER_NAME, PEER_NAME, displayNameFor, peerNameFor } = makeNameHelpers({ DISPLAY_NAME_OF, ACCOUNT_OF });
+export const STATE_DIR = fileURLToPath(new URL("./.state/", import.meta.url));
 
 /*
  * ---------------------------------------------------------------------------------------------
