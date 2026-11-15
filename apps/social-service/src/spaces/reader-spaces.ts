@@ -886,8 +886,10 @@ function withheldFromGrantOnlyReaderSql(
   visibleTo: (user: string, readGrants: boolean) => string,
   exemptAdmin: boolean
 ): string {
-  const admin = exemptAdmin ? `
-    AND NOT ${isAdminSql('cw_viewer')}` : '';
+  const admin = exemptAdmin
+    ? `
+    AND NOT ${isAdminSql('cw_viewer')}`
+    : '';
   return `EXISTS (SELECT 1 FROM users cw_viewer WHERE cw_viewer.id = ${viewer}${admin}
     AND EXISTS (SELECT 1 FROM read_grants cw_grant WHERE cw_grant.user_id = cw_viewer.id)
     AND NOT ${readerSeesGrantCommentsSql('cw_viewer')}
