@@ -197,7 +197,7 @@ type Rider = { el: HTMLElement; probe: HTMLElement; edgeBefore: number; rows: bo
  * the keys on every frame, and only its new height shows from the start - a sheet that was cut by the
  * cap at its new place.
  */
-export function rideEdgeOf(probe: Element): number {
+function rideEdgeOf(probe: Element): number {
   return probe.getBoundingClientRect().bottom;
 }
 
