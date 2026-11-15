@@ -59,6 +59,7 @@ earliest version, as a checklist.
 - [P2 - A post's attachments follow one standard (owner, 2026-11-14/15)](backlog.d/p2-a-post-s-attachments-follow-one-standard.md)
 - [P2 - an iPhone re-announces what its extension showed after a cold start (2026-11-14; prior attempt: PR #2844, branch kept)](backlog.d/p2-an-iphone-re-announces-what-its-extension-showed-after-a-cold-start.md)
 - [P2 - the group panel lists 22 roster seats that hold no device (18 are departed people, 4 are a join that never completed; counted on production 2026-11-14)](backlog.d/p2-the-group-panel-lists-22-roster-seats-that-hold-no-device.md)
+- [P2 - picking a conversation suggestion in the iOS share sheet offers nothing in Canari](backlog.d/p2-the-ios-share-sheet-suggestion-row-offers-nothing-in-canari.md)
 - [P2 - native devices with no push token stay silent: a fifth cause](backlog.d/reading-owed-a-device-with-no-push-token-now-says-so.md)
 - [P2 - a frame read before a browser kill is called "never read here" on the next cold start](backlog.d/reading-owed-the-live-seen-cipher-mark-written-at-the-checkpoint.md)
 - [P2 - the retention durations a sweep applies are not yet admin settings](backlog.d/retention-durations-not-yet-settings.md)
