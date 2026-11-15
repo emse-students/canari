@@ -457,7 +457,7 @@ export function pinSafeAreaBottom(root: CSSStyleDeclaration, value: string | nul
  * pin (null: the platform's own) - which `pinSafeAreaBottom` writes, because it puts back what it
  * replaced.
  */
-export type KeyboardVariables = {
+type KeyboardVariables = {
   root: [name: string, value: string | null][];
   safeAreaPin: string | null;
 };
@@ -471,7 +471,7 @@ export type KeyboardVariables = {
  * every piece by the fraction `100dvh` is not, a frame after the ride had started from the
  * announcement's layout (the leaf channel, `keyboardLeafValues`).
  */
-export function keyboardVariables(
+function keyboardVariables(
   snapshot: KeyboardViewportSnapshot,
   m: ViewportMeasurement,
   baselineHeight: number,
@@ -529,7 +529,7 @@ const UNPINNED_SAFE_AREA = 'var(--safe-area-inset-bottom-unpinned)';
  *
  * @param rootStyle the root's inline style, as it stands before `vars` is written.
  */
-export function keyboardLeafValues(
+function keyboardLeafValues(
   vars: KeyboardVariables,
   rootStyle: CSSStyleDeclaration
 ): [name: string, value: string][] {
