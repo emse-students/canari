@@ -38,9 +38,23 @@ describe('AttachmentCard arrow', () => {
     expect(arrow(render({ href: '/forms/1' }))).toBe('in-app');
   });
 
-  it('stays beside a trailing control, so a row that opens something still says so', () => {
-    const target = render({ onclick: () => {}, trailing: html('<button>dl</button>') });
+  it('stays beside a trailing control, unless the caller says that control already speaks', () => {
+    const target = render({ onclick: () => {}, trailing: html('<span>bell</span>') });
     expect(arrow(target)).toBe('in-app');
+    const download = render({
+      onclick: () => {},
+      trailing: html('<span>dl</span>'),
+      showArrow: false,
+    });
+    expect(arrow(download)).toBeNull();
+  });
+
+  it('draws a tap-only card through ui/Button: one button, named, the layout inside', () => {
+    const target = render({ onclick: () => {}, ariaLabel: 'Open cours.pdf' });
+    const buttons = target.querySelectorAll('button');
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0].getAttribute('aria-label')).toBe('Open cours.pdf');
+    expect(buttons[0].querySelector('span.flex')).not.toBeNull();
   });
 
   it('is absent on a card that opens nothing, and on a hero showing its call to action', () => {

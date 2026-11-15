@@ -902,6 +902,7 @@
       hero={isPdf && !compactFile}
       banner={pdfPage}
       trailing={download}
+      showArrow={false}
     />
   </div>
 {/snippet}

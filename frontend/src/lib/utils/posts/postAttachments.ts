@@ -1,6 +1,7 @@
 import type { PostEntity, PostMediaRef } from '$lib/posts/api';
 import { markdownToPlainText } from '$lib/seo/text';
-import { extractPreviewUrls } from '$lib/utils/chat/messageDisplay';
+import { extractPreviewUrls, linkIdentity } from '$lib/utils/chat/messageDisplay';
+import { Log } from '$lib/utils/Log';
 import { codeBlockLines } from '$lib/utils/markdownCode';
 import { parseCanariLinkTarget } from '$lib/utils/canariLinkPreviewFormat';
 import { resolveMediaType } from '$lib/utils/mediaLayout';
@@ -52,18 +53,17 @@ function linkedFormId(url: string): string | null {
   return target?.kind === 'form' || target?.kind === 'guest-form' ? target.formId : null;
 }
 
-function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
 /**
  * A line's block marker - quote, list bullet or number, heading - kept apart from its words so a
  * stripped URL never leaves a bare `-`, `>`, `1.` or `##` on screen.
  */
 const MARKER_RE = /^(\s*(?:>\s?)*\s*(?:[-*+]\s+|\d{1,9}[.)]\s+|#{1,6}\s+)?)(.*)$/;
 
-/** What is left of a line once its URLs went: nothing but sentence punctuation is nothing. */
-const ONLY_PUNCTUATION_RE = /^[\s,.!?;:]*$/;
+/**
+ * The LAST word of a line and the sentence punctuation after it. The word is lazy, so the
+ * punctuation ("Voir https://x.") is not read as part of the URL.
+ */
+const LAST_WORD_RE = /(?:^|[ \t]+)(\S+?)([,.!?;:]*)[ \t]*$/;
 
 /**
  * The text with the URLs in `carded` removed where they END THEIR LINE - alone on it, after the words
@@ -73,15 +73,17 @@ const ONLY_PUNCTUATION_RE = /^[\s,.!?;:]*$/;
  * labelled link or an `<url>` autolink is the author's own wording - and nothing in code (a code
  * span cannot match, a fenced or indented block is skipped whole, `codeBlockLines`).
  *
- * The punctuation after the LAST URL of the run stays ("Voir https://x." -> "Voir."); a line left
- * with nothing but its block marker or punctuation goes, marker included. `\r\n` lines are read like
- * `\n` ones and written back as `\n`.
+ * A URL is matched by its LINK IDENTITY (`linkIdentity`), the one the card list was drawn by: the
+ * `https://x/` that shares the card of `https://x` leaves the text with it.
+ *
+ * The punctuation after the LAST URL of the run stays ("Voir https://x." -> "Voir."), and so does
+ * the author's own punctuation before it ("!!! https://x" -> "!!!"). A line left EMPTY goes, its
+ * block marker included (no bare `-` or `>`). `\r\n` lines are read like `\n` ones and written back
+ * as `\n`.
  */
 export function stripCardedUrls(markdown: string, carded: readonly string[]): string {
   if (carded.length === 0) return markdown;
-  const patterns = carded.map(
-    (url) => new RegExp(`(?:^|[ \\t]+)${escapeRegExp(url)}([,.!?;:]*)[ \\t]*$`)
-  );
+  const identities = new Set(carded.map(linkIdentity));
   const lines = markdown.split(/\r?\n/);
   const inCode = codeBlockLines(markdown);
   const out: string[] = [];
@@ -93,21 +95,17 @@ export function stripCardedUrls(markdown: string, carded: readonly string[]): st
     const [, marker, words] = line.match(MARKER_RE) ?? ['', '', line];
     let rest = words;
     let tail: string | null = null;
-    for (let changed = true; changed;) {
-      changed = false;
-      for (const re of patterns) {
-        const found = rest.match(re);
-        if (!found || found.index === undefined) continue;
-        tail ??= found[1];
-        rest = rest.slice(0, found.index);
-        changed = true;
-      }
+    for (;;) {
+      const found = rest.match(LAST_WORD_RE);
+      if (!found || found.index === undefined || !identities.has(linkIdentity(found[1]))) break;
+      tail ??= found[2];
+      rest = rest.slice(0, found.index);
     }
     if (tail === null) {
       out.push(line);
       return;
     }
-    if (ONLY_PUNCTUATION_RE.test(rest)) return;
+    if (rest.trim() === '') return;
     out.push(`${marker}${rest.replace(/\s+$/, '')}${tail}`);
   });
   return out
@@ -116,10 +114,40 @@ export function stripCardedUrls(markdown: string, carded: readonly string[]): st
     .trim();
 }
 
-/** Characters as a reader counts them: a flag or a family emoji is one, not four to eleven. */
-function perceivedLength(text: string): number {
-  return Array.from(new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text))
-    .length;
+/**
+ * The most UTF-16 units one character a reader sees may take, for the cheap bounds below: a
+ * family or a flag-with-modifier emoji is up to eleven.
+ */
+const MAX_UNITS_PER_GRAPHEME = 11;
+
+/** One segmenter for the module; null on an engine without `Intl.Segmenter`. */
+const GRAPHEMES =
+  typeof Intl !== 'undefined' && typeof Intl.Segmenter === 'function'
+    ? new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+    : null;
+let segmenterMissingLogged = false;
+
+/**
+ * Whether `text` is at most `max` characters AS A READER COUNTS THEM: a flag or a family emoji is
+ * one, not four to eleven. Decided without segmenting when the length alone settles it - at most
+ * `max` units is at most `max` characters, more than `max` * 11 units is more than `max` - so only
+ * a text in between pays for the segmenter.
+ */
+function fitsPerceived(text: string, max: number): boolean {
+  if (text.length <= max) return true;
+  if (text.length > max * MAX_UNITS_PER_GRAPHEME) return false;
+  if (!GRAPHEMES) {
+    // Counting code points instead overcounts a joined emoji, so a caption may lose its hero.
+    // Said once per page: the engine does not change between two posts.
+    if (!segmenterMissingLogged) {
+      segmenterMissingLogged = true;
+      Log.w('PostAttachments', 'Intl.Segmenter missing: captions are counted in code points');
+    }
+    return Array.from(text).length <= max;
+  }
+  let count = 0;
+  for (const _ of GRAPHEMES.segment(text)) if (++count > max) return false;
+  return true;
 }
 
 /**
@@ -171,7 +199,7 @@ export function planPostAttachments(
     media.length === 0 &&
     !replay &&
     !post.polls?.length &&
-    perceivedLength(markdownToPlainText(markdown)) <= HERO_TEXT_MAX;
+    fitsPerceived(markdownToPlainText(markdown), HERO_TEXT_MAX);
 
   return { markdown, media, cards, hero };
 }

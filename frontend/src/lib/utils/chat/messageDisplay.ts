@@ -107,7 +107,7 @@ export function isAngleBracketAutolink(text: string, urlStart: number, urlEnd: n
  * The identity of a link for "is it the same link": a trailing slash on the path is not a second
  * page (`https://x` and `https://x/` are one card). The first spelling met is the one kept.
  */
-function linkIdentity(url: string): string {
+export function linkIdentity(url: string): string {
   return url.replace(/\/+(?=$|[?#])/, '');
 }
 

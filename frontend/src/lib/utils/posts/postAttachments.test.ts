@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PostMediaRef } from '$lib/posts/api';
 import { HERO_TEXT_MAX, planPostAttachments, stripCardedUrls } from './postAttachments';
 import { publicAppOrigin } from '$lib/utils/publicAppUrl';
@@ -145,6 +145,50 @@ describe('planPostAttachments - the caption counts characters as a reader sees t
     expect(
       planPostAttachments({ markdown: `${family.repeat(HERO_TEXT_MAX + 1)} ${WIKI}` }, []).hero
     ).toBe(false);
+  });
+});
+
+describe('stripCardedUrls - identity and punctuation (second review of #3616)', () => {
+  it('strips both spellings of one link, as one card stands for both', () => {
+    expect(
+      stripCardedUrls('Voir https://x.example et https://x.example/', ['https://x.example'])
+    ).toBe('Voir https://x.example et');
+    expect(
+      stripCardedUrls('Voir https://x.example https://x.example/', ['https://x.example'])
+    ).toBe('Voir');
+  });
+
+  it("keeps the author's punctuation when only it is left, and drops an emptied line", () => {
+    expect(stripCardedUrls('!!! https://a.example', ['https://a.example'])).toBe('!!!');
+    expect(stripCardedUrls('... https://a.example', ['https://a.example'])).toBe('...');
+    expect(stripCardedUrls('- https://a.example\nFin', ['https://a.example'])).toBe('Fin');
+  });
+
+  it('keeps a word that is not a carded link, whatever it ends with', () => {
+    expect(stripCardedUrls('Voir [ici](https://a.example)', ['https://a.example'])).toBe(
+      'Voir [ici](https://a.example)'
+    );
+  });
+});
+
+describe('the caption count on an engine without Intl.Segmenter', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
+  it('falls back to code points, says so once, and still decides', async () => {
+    vi.stubGlobal('Intl', { ...Intl, Segmenter: undefined });
+    vi.resetModules();
+    const { Log } = await import('$lib/utils/Log');
+    const warn = vi.spyOn(Log, 'w');
+    const plan = await import('./postAttachments');
+    const long = 'é'.repeat(HERO_TEXT_MAX + 1);
+    expect(plan.planPostAttachments({ markdown: `${long} ${WIKI}` }, []).hero).toBe(false);
+    expect(plan.planPostAttachments({ markdown: `${long}${long} ${WIKI}` }, []).hero).toBe(false);
+    expect(plan.planPostAttachments({ markdown: `court ${WIKI}` }, []).hero).toBe(true);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][1]).toContain('Intl.Segmenter');
   });
 });
 

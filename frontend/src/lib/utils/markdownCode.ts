@@ -27,11 +27,43 @@ function linesOf(text: string): { line: string; start: number }[] {
   return out;
 }
 
-const FENCE_RE = /^ {0,3}(`{3,}|~{3,})/;
-const INDENTED_RE = /^(?: {4}|\t)/;
+/**
+ * A fence OPENER: three or more backticks or tildes, then an info string. A backtick fence whose info
+ * string holds a backtick is no fence (CommonMark): "```x``` voir" is a line of text with a code
+ * span, and must not swallow the rest of the post as a block.
+ */
+const FENCE_OPEN_RE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+/** A fence CLOSER: fence characters and nothing else but white space. */
+const FENCE_CLOSE_RE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/;
+/** A list item's marker and the space after it: its width is where the item's content starts. */
+const LIST_ITEM_RE = /^( {0,3}(?:[-*+]|\d{1,9}[.)])[ \t]+)\S/;
+
+/** A line's indentation in columns, a tab counting to the next multiple of four. */
+function indentOf(line: string): number {
+  let column = 0;
+  for (const char of line) {
+    if (char === ' ') column += 1;
+    else if (char === '\t') column += 4 - (column % 4);
+    else break;
+  }
+  return column;
+}
+
+/** The fence a line opens, or null. */
+function fenceOpened(line: string): { char: string; length: number } | null {
+  const open = line.match(FENCE_OPEN_RE);
+  if (!open) return null;
+  if (open[1][0] === '`' && open[2].includes('`')) return null;
+  return { char: open[1][0], length: open[1].length };
+}
 
 /**
  * Which LINES of `text` belong to a fenced or indented code block, fence lines included.
+ *
+ * An indented block needs four columns MORE than the content of the list item it sits in: under
+ * "- item", a line indented by four after a blank line continues the item (a paragraph of it, read
+ * as text, its URL a link), and only eight columns make it code - CommonMark's reading, the one the
+ * renderer draws.
  *
  * @returns One boolean per line, in the order `text.split(/\r?\n/)` gives them.
  */
@@ -41,32 +73,44 @@ export function codeBlockLines(text: string): boolean[] {
   let fence: { char: string; length: number } | null = null;
   let previousBlank = true;
   let inIndented = false;
+  // The column where the current list item's content starts; 0 outside a list.
+  let listContent = 0;
   for (const line of lines) {
     if (fence) {
       out.push(true);
-      const close = line.match(FENCE_RE);
+      const close = line.match(FENCE_CLOSE_RE);
       if (close && close[1][0] === fence.char && close[1].length >= fence.length) fence = null;
       previousBlank = false;
       continue;
     }
-    const open = line.match(FENCE_RE);
-    if (open) {
-      fence = { char: open[1][0], length: open[1].length };
+    const opened = fenceOpened(line);
+    if (opened) {
+      fence = opened;
       out.push(true);
       inIndented = false;
       previousBlank = false;
       continue;
     }
     const blank = line.trim() === '';
-    if (!blank && INDENTED_RE.test(line) && (previousBlank || inIndented)) {
+    if (blank) {
+      // A blank line inside an indented block keeps it open for the next indented line.
+      out.push(inIndented);
+      previousBlank = true;
+      continue;
+    }
+    const indent = indentOf(line);
+    // After a blank line, a line left of the item's content ends the list.
+    if (previousBlank && indent < listContent) listContent = 0;
+    if (indent >= listContent + 4 && (previousBlank || inIndented)) {
       inIndented = true;
       out.push(true);
     } else {
-      // A blank line inside an indented block keeps it open for the next indented line.
-      if (!blank) inIndented = false;
+      inIndented = false;
+      const item = line.match(LIST_ITEM_RE);
+      if (item) listContent = indentOf(item[1].replace(/\S/g, ' '));
       out.push(false);
     }
-    previousBlank = blank;
+    previousBlank = false;
   }
   return out;
 }

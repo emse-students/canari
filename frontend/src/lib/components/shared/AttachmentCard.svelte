@@ -24,6 +24,7 @@
   import type { Snippet } from 'svelte';
   import { ChevronRight, ExternalLink } from '@lucide/svelte';
   import { nearViewport } from '$lib/actions/nearViewport';
+  import Button from '$lib/components/ui/Button.svelte';
 
   interface Props {
     /** Where the card goes. Absent with `onclick` absent too, the card is not interactive. */
@@ -49,8 +50,13 @@
     banner?: Snippet;
     /** The hero's call to action, for a card with no picture to put forward. */
     heroAction?: string;
-    /** A control of its own beside the link (bell, download); replaces the arrow. */
+    /** A control of its own beside the link (bell, download). */
     trailing?: Snippet;
+    /**
+     * Draws the arrow. False where the control beside the row already says what the card is for -
+     * a file's download button, which an arrow beside it would only compete with.
+     */
+    showArrow?: boolean;
     /** Drawn under the row, inside the destination (a post preview's own picture). */
     below?: Snippet;
     /** Called once the card nears the viewport, so its owner fetches then and not on render. */
@@ -75,6 +81,7 @@
     banner,
     heroAction,
     trailing,
+    showArrow = true,
     below,
     onnear,
     kind,
@@ -93,15 +100,18 @@
   /**
    * THE ARROW SAYS "THIS CARD OPENS SOMETHING", and which kind: out of the app (the exit glyph) or
    * inside it (a chevron - the up-right arrow it used to be read as "external" too). A card that
-   * opens nothing (a file that is not a PDF) has none; a hero's call to action already says it.
+   * opens nothing (a file that is not a PDF) has none; a hero's call to action already says it, and
+   * so does a download button beside the row (`showArrow`).
    */
   const arrow = $derived(
-    !(href || onclick) || showsAction ? null : external ? 'external' : 'in-app'
+    !(href || onclick) || showsAction || !showArrow ? null : external ? 'external' : 'in-app'
   );
 </script>
 
-<!-- One destination, drawn by whichever element the card has: a link, a button, or nothing. -->
-{#snippet opener(content: Snippet, cls: string, decorative: boolean)}
+<!-- One destination, drawn by whichever element the card has: a link, a button, or nothing. The
+     button is `ui/Button` (controls.md), its control box reset so the card's own layout (`cls`, on
+     the span inside) is what draws; `outer` is the button's place in the card. -->
+{#snippet opener(content: Snippet, cls: string, decorative: boolean, outer = 'w-full')}
   {#if href}
     <a
       {href}
@@ -116,16 +126,16 @@
       {@render content()}
     </a>
   {:else if onclick}
-    <button
-      type="button"
+    <Button
+      variant="ghost"
       {onclick}
       tabindex={decorative ? -1 : undefined}
       aria-hidden={decorative ? 'true' : undefined}
       aria-label={decorative ? undefined : ariaLabel}
-      class="focus-visible:ring-accent/50 cursor-pointer text-left outline-none focus-visible:ring-4 focus-visible:ring-inset {cls}"
+      class="focus-visible:ring-accent/50 block! h-auto! min-h-0! rounded-none! border-0! bg-transparent! p-0! text-left! font-normal! text-inherit! outline-none hover:bg-transparent! focus-visible:ring-4 focus-visible:ring-inset active:scale-100! {outer}"
     >
-      {@render content()}
-    </button>
+      <span class={cls}>{@render content()}</span>
+    </Button>
   {:else}
     <div class={cls}>{@render content()}</div>
   {/if}
@@ -206,7 +216,12 @@
     )}
   {/if}
   <div class="flex items-center">
-    {@render opener(rowContent, 'flex min-w-0 flex-1 items-center gap-3.5 p-3', false)}
+    {@render opener(
+      rowContent,
+      'flex min-w-0 flex-1 items-center gap-3.5 p-3',
+      false,
+      'min-w-0 flex-1'
+    )}
     {#if trailing}
       <div class="shrink-0 pr-3">{@render trailing()}</div>
     {/if}

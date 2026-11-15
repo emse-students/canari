@@ -23,7 +23,11 @@
   let { postId, event, hero = false }: Props = $props();
 
   const starts = $derived(new Date(event.startsAt));
-  const month = $derived(starts.toLocaleString(intlLocale(), { month: 'short' }));
+  /** The locale's own short month, in sentence case ("Nov." / "nov." -> "Nov."), never shouted. */
+  const month = $derived.by(() => {
+    const text = starts.toLocaleString(intlLocale(), { month: 'short' });
+    return text.charAt(0).toLocaleUpperCase(intlLocale()) + text.slice(1);
+  });
   const day = $derived(starts.toLocaleString(intlLocale(), { day: 'numeric' }));
   const when = $derived(
     starts.toLocaleString(intlLocale(), {
@@ -38,7 +42,7 @@
 
 {#snippet tile()}
   <div class="flex flex-col items-center leading-none" data-event-date-tile>
-    <span class="text-2xs text-accent-text font-bold uppercase">{month}</span>
+    <span class="text-2xs text-accent-text font-bold">{month}</span>
     <span class="text-text-main text-xl font-bold">{day}</span>
   </div>
 {/snippet}

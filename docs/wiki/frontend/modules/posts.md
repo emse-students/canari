@@ -1116,7 +1116,10 @@ attachment is it.
 
 - **The arrow says "this card opens something", and where**: the exit glyph out of the app, a
   chevron inside it (the up-right arrow it replaced read as "external" too). A card that opens
-  nothing (a file that is not a PDF) has none; a hero showing its call to action has none.
+  nothing (a file that is not a PDF) has none; a hero showing its call to action has none, and
+  neither has a file row, whose download button beside it already says what the card is for
+  (`showArrow`). A tap-only card (no address) is `ui/Button`, its control box reset
+  ([controls](../controls.md)).
 - **The tile is one treatment**: the accent-tinted surface (`bg-accent/10`), a glyph or a picture on
   it. The Canari logo stays for an in-app LINK only, where it identifies the destination.
 
@@ -1126,8 +1129,8 @@ attachment is it.
 | Link, in-app (post, form, association...) | `LinkPreviewCard` | the target's picture or the Canari logo | the target's line | chevron |
 | MiGallery album | `LinkPreviewCard` (the old `EcosystemCoverPreview` is deleted) | the square cover once PROVEN to decode, else the album glyph | the album's description | exit |
 | Attached form | `FormCard` | the form glyph, a check once answered | answered / opens on / open (`link_preview_form_open`, the link card's word) | chevron; the reminder bell beside it when not open yet |
-| File | `PostMedia` (`fileCard`) | the file glyph | the size | a PDF: chevron (the row opens the reader, named `pdf_open_named_document_label`); every file: the download beside it |
-| Calendar event | `PostEventCard` (was an amber pill above the text) | a calendar page: month and day | short weekday, date, hour | chevron |
+| File | `PostMedia` (`fileCard`) | the file glyph | the size | none: the download beside it; a PDF's row still opens the reader, named `pdf_open_named_document_label` |
+| Calendar event | `PostEventCard` (was an amber pill above the text) | a calendar page: the locale's short month in sentence case, and the day | short weekday, date, hour | chevron |
 
 The control beside the arrow is the ONE that is not the card's destination (the bell, the
 download), so it sits beside the link and never inside it. What a banner or the band below shows
@@ -1154,21 +1157,27 @@ reads no forms, so it draws the link card.
 **A URL that has a card leaves the text** where it ends its line - alone on it, after the words
 introducing it ("inscription ici https://..."), or as a trailing run of several: `stripCardedUrls`.
 In the middle of a sentence it stays (taking it out would leave "plus d'infos sur et inscription"),
-and so do a labelled Markdown link (text in brackets, then the URL) and an `<url>` autolink. The
-punctuation after the last URL of the run stays; a line left with only its list, quote or heading
-marker goes, marker included (no bare `-` or `>`). `\r\n` lines are read like `\n` ones.
+and so do a labelled Markdown link (text in brackets, then the URL) and an `<url>` autolink. A URL
+is matched by the link identity the cards were drawn by, so `https://x/` leaves with the card of
+`https://x`. The punctuation after the last URL of the run stays, and so does the author's before
+it ("!!! https://x" keeps "!!!"); a line left EMPTY goes, its list, quote or heading marker
+included (no bare `-` or `>`). `\r\n` lines are read like `\n` ones.
 
 **Code is never a link** (`utils/markdownCode.ts`, `codeRanges` / `codeBlockLines`): a URL in an
-inline code span, a backtick or tilde fence, or a 4-space indented block gets no card
+inline code span, a backtick or tilde fence, or an indented block gets no card
 (`extractPreviewUrls`, which the chat shares) and is never taken out of the text. A span's closing
-backtick used to end up inside the URL. `extractPreviewUrls` also draws `https://x` and
+backtick used to end up inside the URL. CommonMark's reading, which the renderer draws: a backtick
+run whose info string holds a backtick ("```x``` voir") opens no fence, a closer is fence characters
+and white space only, and under a list item an indented block needs four columns PAST the item's
+content - four columns under "- item" continue the item, its URL a link. `extractPreviewUrls` also draws `https://x` and
 `https://x/` once (the first spelling kept).
 
 **HERO: a lone attachment under a short caption is put forward** (owner, 2026-11-15). The rule,
 `planPostAttachments`: exactly ONE card, NO picture or video, NO poll, not a replay, and at most
 `HERO_TEXT_MAX` = 140 characters of PLAIN text (Markdown marks and the URL the card replaces not
 counted), counted as a reader sees them (`Intl.Segmenter` graphemes: a family emoji is one, not
-eight UTF-16 units) - a one-sentence caption, two lines on a phone. Then the card is drawn large:
+eight UTF-16 units; the length alone decides below 140 units or above 140 x 11, and an engine without
+`Intl.Segmenter` counts code points and says so once) - a one-sentence caption, two lines on a phone. Then the card is drawn large:
 
 - a **link** with a picture runs it full width at 1.91:1 (the Open Graph ratio) above the chip and the
   title; an album its cover; a post preview its own photo. A link with no picture stays a row;
