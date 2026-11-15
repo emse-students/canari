@@ -250,7 +250,7 @@
     screen is ordered by what the task needs: who is asking (mark + one title + one line), the dots
     that answer "how far am I", then the keypad, which is the centre of the screen. Everything else
     is quiet: two text links, one compact row for the stay-signed-in option whose explanation opens
-    on demand, and the sign-out under the unlock button.
+    on demand, and the sign-out in a quiet row at the top.
 
     THE CLUSTER IS CENTRED WITH `m-auto` INSIDE A SCROLL REGION, which is the safe way to centre:
     when the content is taller than the screen (200 % text on a short phone) the auto margins
@@ -267,6 +267,33 @@
     NO AUTO-SUBMIT: a PIN here is 4 to 8 digits (`isValidPin`) and the code has no notion of a
     complete one, so submitting at the fourth digit would make every longer PIN impossible.
   -->
+  <!--
+    THE SIGN-OUT SITS AT THE TOP, FAR FROM THE TAB BAR (owner, 2026-11-16; no confirmation added).
+    It used to end the footer, which is where the bottom bar's "Discussions" tab is drawn on a phone
+    (Mi 9T: 158-279 x 875-905 over 218-327 x 873-921), so a reflex tap on a tab signed a real person
+    out in one tap whenever the gate returned on a reload the app made itself. A top row is outside
+    the bar's `--bottom-nav-reserve` at every screen size. It stays OUTSIDE the scrolling body, like
+    the footer it left (the way out never scrolls), and the exit stays ONE tap: a gate that cannot be
+    dismissed must not ask twice.
+  -->
+  <div data-pin-signout-bar class="flex shrink-0 justify-end px-3 pt-2">
+    <button
+      type="button"
+      data-pin-signout
+      disabled={signingOut}
+      onclick={() => void handleSignOut()}
+      class="text-text-muted hover:text-text-main tap-target flex items-center justify-center gap-1.5 rounded-full px-3 py-2 text-xs font-medium transition-colors disabled:opacity-50"
+    >
+      {#if signingOut}
+        <LoaderCircle size={14} class="animate-spin" />
+        {m.auth_pin_signing_out()}
+      {:else}
+        <LogOut size={14} />
+        {m.auth_pin_sign_out()}
+      {/if}
+    </button>
+  </div>
+
   <div
     data-pin-scroll
     onfocusin={revealFocused}
@@ -571,7 +598,7 @@
     body's height. The submit reaches the form by `form={FORM_ID}` rather than by nesting.
 
     THE SIGN-OUT IS STILL THE APP'S ORDINARY ONE (`clearAuth` + `/login`): it ends the session and
-    touches neither `mls.bin` nor the message database. It is drawn QUIET now - a text link under the
+    touches neither `mls.bin` nor the message database. It is drawn QUIET now - a text link in the top row (it left the footer 2026-11-16: the tab bar sat under it), not under the
     unlock button - because the destructive reset, not this, is what needed a barrier. NOT disabled by
     `isLoading`: a submit that hangs is one of the states this button exists for.
   -->
@@ -590,21 +617,6 @@
           {m.auth_pin_unlock()}
         {/if}
       </Button>
-
-      <button
-        type="button"
-        disabled={signingOut}
-        onclick={() => void handleSignOut()}
-        class="text-text-muted hover:text-text-main tap-target flex items-center justify-center gap-1.5 rounded-full px-3 py-2 text-xs font-medium transition-colors disabled:opacity-50"
-      >
-        {#if signingOut}
-          <LoaderCircle size={14} class="animate-spin" />
-          {m.auth_pin_signing_out()}
-        {:else}
-          <LogOut size={14} />
-          {m.auth_pin_sign_out()}
-        {/if}
-      </button>
     </div>
   {/snippet}
 </Modal>

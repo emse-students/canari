@@ -239,3 +239,36 @@ describe('ChangePinModal - the submit does not scroll either', () => {
     expect(document.querySelector('[data-pin-lead]')).not.toBeNull();
   });
 });
+
+describe('PinModal - the sign-out is out of the tab bar zone', () => {
+  // The bottom bar is `fixed bottom-0` and spans `--bottom-nav-reserve` (nav row + 1px border + the
+  // safe inset), so ANY control drawn in the footer of a full-screen gate lands on a tab. happy-dom
+  // has no layout, so the decidable form is structural: the sign-out is not in the footer nor in the
+  // scroll body, it sits in a row BEFORE the body, and the footer carries the unlock button alone.
+  // The measured fact (Mi 9T 2026-11-15) is in the backlog entry this closes.
+  it('draws the sign-out in a top row, before the scrolling body, never in the footer', () => {
+    raiseGate();
+    const signOut = document.querySelector<HTMLElement>('[data-pin-signout]')!;
+    const footer = document.querySelector<HTMLElement>('[data-modal-footer]')!;
+    const bar = document.querySelector<HTMLElement>('[data-pin-signout-bar]')!;
+    const body = document.querySelector<HTMLElement>('[data-pin-scroll]')!;
+
+    expect(signOut.textContent).toContain(m.auth_pin_sign_out());
+    expect(bar.contains(signOut)).toBe(true);
+    expect(footer.contains(signOut), 'the footer is where the tab bar is drawn').toBe(false);
+    expect(body.contains(signOut)).toBe(false);
+    expect(
+      bar.compareDocumentPosition(body) & Node.DOCUMENT_POSITION_FOLLOWING,
+      'the row precedes the body, so it is at the top of a column layout'
+    ).toBeTruthy();
+    expect(footer.querySelectorAll('button')).toHaveLength(1);
+  });
+
+  it('is still ONE tap: no confirmation between the tap and the sign-out', () => {
+    const onSignOut = vi.fn();
+    raiseGate({ onSignOut });
+    document.querySelector<HTMLElement>('[data-pin-signout]')!.click();
+    flushSync();
+    expect(onSignOut).toHaveBeenCalledTimes(1);
+  });
+});
