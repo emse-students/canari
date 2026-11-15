@@ -59,13 +59,21 @@ describe('PostsController - the routes ask the per-post visibility first', () =>
         ? [assertMayVote, [POST, 'reader']]
         : name === 'addReaction'
           ? [assertVisible, [POST, 'reader', 'READ_OR_REACT']]
-          : name === 'editComment'
-            ? // Its answer serves the comment, who liked it included (owner, 2026-11-04).
-              [assertVisible, [POST, 'reader', 'COMMENT', { allowHidden: false }]]
-            : // A comment and a comment like ask the comments' gate (owner, 2026-11-04).
-              [assertVisible, [POST, 'reader', 'COMMENT']];
+          : // A comment, a comment like and a comment edit ask the comments' gate (owner,
+            // 2026-11-04) - never `allowHidden`, a write widens no admin (2026-11-14).
+            [assertVisible, [POST, 'reader', 'COMMENT']];
     expect(gate).toHaveBeenCalledWith(...args);
     expect(interactions[name]).not.toHaveBeenCalled();
+  });
+
+  it("a platform admin's comment edit asks the ordinary reader's gate, never the moderation read", async () => {
+    // A write widens no admin (2026-11-14): `allowHidden` is the moderation read alone.
+    const { controller, assertVisible, interactions } = make();
+    await expect(
+      controller.editComment('admin', 'true', POST, 'comment', { text: 'x' } as never)
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(assertVisible).toHaveBeenCalledWith(POST, 'admin', 'COMMENT');
+    expect(interactions.editComment).not.toHaveBeenCalled();
   });
 
   it('a reaction, added or taken back, answers with the reactions served to its reader', async () => {

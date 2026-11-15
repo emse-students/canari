@@ -512,7 +512,7 @@ No entry of the three sets expires on a timer.
 5. The START's open follows its commit with no reservation standing. A live ended AND purged
    inside that one Redis round trip (an account erasure, in practice) would be opened after its
    forget, leaving the same entry as item 2, as harmless.
-6. The outage counts (`unknownToRedis`) are per instance: the purge reports and forgets them on
+6. The outage counts (`unknownToRedis`, and `barredWithoutRow` of item 7) are per instance: the purge reports and forgets them on
    the instance that runs it, and another instance keeps one number per such live until it stops.
 7. A bar outlives its row in ONE case, and it is WANTED BEHAVIOUR, not a defect. No route lifts a
    removal; the only delete of a `live_removed_viewers` row while its live is open is the removed
@@ -520,7 +520,7 @@ No entry of the three sets expires on a timer.
    id, the OIDC subject) and comes back to the same live before it ends, PostgreSQL allows them
    and Redis still bars them: `503 LIVE_SEATS_UNAVAILABLE` for that person on that live until it
    closes. The broadcaster removed that person from that live, and the removal holds for it. The
-   line `Redis bars a viewer the row allows` is nevertheless logged at ERROR, once per live (then
+   line `Redis bars a viewer the row allows` is nevertheless logged at ERROR, once per live PER INSTANCE (then
    counted, the count said at the purge): the service cannot tell this case from a bar a defect
    wrote - the row that would say so is the one the erasure deleted, and social-service keeps no
    record of an erasure - so the level is not lowered on an inference.
@@ -1316,9 +1316,11 @@ What is left:
 
 - **The ladder's screens** (WP-L8b; the three pushes and the two bell rows are
   [built](#the-three-pushes-a-broadcaster-gets-wp-l8b)): the two start refusals (`LIVE_BROADCAST_SUSPENDED` with its date, `LIVE_BROADCAST_WITHDRAWN`) and the
-  pre-live screen reading `GET /api/lives/standing`; in `/admin/moderation`, the standing on a live
-  report and the withdraw / lift buttons, and the `live_chat` row with its integrity - `altered`,
-  `key-rotated` and `unverifiable` shown with ONE weight, "not proven" ([why](#a-reported-chat-line-wp-l8b)).
+  pre-live screen reading `GET /api/lives/standing` are BUILT (2026-11-15,
+  [the pre-live read](../frontend/modules/live.md#the-broadcaster-as-built)); in `/admin/moderation`, the standing on a live
+  report, the withdraw button and the `live_chat` row with its integrity (`altered`, `key-rotated`
+  and `unverifiable` shown with ONE weight, "not proven", [why](#a-reported-chat-line-wp-l8b)) are
+  built too (`ModerationLiveBlock`, `ModerationChatLineBlock`). Left: a control lifting a withdrawal.
 
 ## Decisions of 2026-10-20: moderation, reactions, the audience
 

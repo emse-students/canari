@@ -8,7 +8,7 @@ import { CameraSession } from '$lib/reels/cameraSession.svelte';
 import type { LiveSegmentUploaderOptions } from './api';
 import type { LiveBroadcastDeps } from './liveBroadcast.svelte';
 import type { LiveStudio } from './liveStudio.svelte';
-import type { LiveLimits, LiveRulesStatus, LiveView } from './types';
+import type { LiveLimits, LiveOwnStanding, LiveRulesStatus, LiveView } from './types';
 
 export class FakeTrack extends EventTarget {
   readyState: 'live' | 'ended' = 'live';
@@ -142,6 +142,12 @@ export function fakeDeps() {
       version: 1,
       acceptedVersion: 1,
       acceptedAt: '2026-10-19T09:00:00.000Z',
+    })),
+    // In good standing by default: a test of the ladder overrides it.
+    fetchLiveStanding: vi.fn(async (): Promise<LiveOwnStanding> => ({
+      cutsOnRecord: 0,
+      suspendedUntil: null,
+      withdrawnAt: null,
     })),
     startLive: vi.fn(
       async (_k: string, _a?: string, _r?: number, title?: string | null): Promise<LiveView> => ({

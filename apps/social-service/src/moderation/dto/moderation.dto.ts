@@ -37,11 +37,6 @@ export class CreateReportDto {
   @IsOptional()
   @MaxLength(LIVE_CHAT_REPORT_TEXT_MAX_BYTES)
   message?: string;
-
-  /** The user ID of the content's author (sent by the client, optional). Used to enable quick moderation actions. */
-  @IsString()
-  @IsOptional()
-  reportedUserId?: string;
 }
 
 /** DTO for reviewing a report (dismiss or mark actioned). */

@@ -772,11 +772,27 @@ export class LivesService implements OnModuleDestroy {
    * One page of a live's REPLAY for one viewer (docs/wiki/live-replays.md). NO SEAT: a replay is
    * uncapped like a reel. The gate is the replay POST's own (`readPostOpenVerdict`, the one predicate
    * every path that acts on a post asks): its audience - the live's, with the viewers the broadcaster
-   * removed taken out (`postVisibleToUserSql`) - moderation, a block with a personal author. A replay
+   * removed taken out (`postVisibleToUserSql`), a platform admin widened only as the live widens them
+   * (a review account's, `adminSeesCohort`) - moderation, a block with a personal author. A replay
    * past its `expiresAt` (database clock), absent, or refused for any reason is the same 404
    * `LIVE_NOT_FOUND`, asked before anything else, so an id lifted from a link learns nothing.
+   *
+   * THE MODERATION READ (owner, 2026-11-15: "La moderation des lives doit avoir le meme regulateur
+   * que les posts"): `read.moderate` is the explicit intent a moderation screen sends. It opens the
+   * replay to whoever may read its post to moderate it - `AssociationsService.mayReadToModeratePost`, the post moderation
+   * scope: a platform admin, a BDE `MODERATE` holder within its governed spaces - past the viewer's
+   * gate, and serves the page a viewer gets. Anyone else sending it gets the ordinary gate. The read
+   * hands out the replay's key (docs/wiki/moderation-and-blocking.md).
+   *
+   * @param read.moderate the caller asks to judge this replay (the moderation preview).
+   * @param read.isGlobalAdmin the gateway's `x-global-admin`, as every moderation route reads it.
    */
-  async replay(viewerId: string, liveId: string, from = 0): Promise<LiveReplayPage> {
+  async replay(
+    viewerId: string,
+    liveId: string,
+    from = 0,
+    read: { moderate?: boolean; isGlobalAdmin?: boolean } = {}
+  ): Promise<LiveReplayPage> {
     const rows: (StoredLiveKey & {
       postId: string;
       authorId: string;
@@ -800,24 +816,48 @@ export class LivesService implements OnModuleDestroy {
       this.logger.debug(`[LIVE_REPLAY] ${liveId}: no replay alive for ${short(viewerId)}`);
       throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
     }
-    const verdict = await readPostOpenVerdict(
-      this.db.manager,
-      {
-        id: found.postId,
-        authorId: found.authorId,
-        associationId: found.associationId,
-        anonymous: found.anonymous,
-        hiddenByModeration: found.hiddenByModeration,
-        scheduledAt: found.scheduledAt,
-        kind: 'replay',
-        expiresAt: found.expiresAt,
-      },
-      { viewerId },
-      'READ_OR_REACT'
-    );
-    if (verdict.refusal !== null) {
-      this.logger.debug(`[LIVE_REPLAY] ${liveId} withheld from ${short(viewerId)}: ${verdict.why}`);
-      throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
+    // THE MODERATION READ has the post's own regulator (owner, 2026-11-15): whoever MODERATES the
+    // replay's post (`mayReadToModeratePost`: a platform admin, a BDE `MODERATE` holder within its scope)
+    // reads it to judge it, past the viewer's gate - a removal or a block by the broadcaster, the
+    // "Entre etudiants" switch. It hands out the replay's key, so it is logged.
+    const moderates =
+      read.moderate === true &&
+      (await this.associations.mayReadToModeratePost(viewerId, found.postId, {
+        isGlobalAdmin: read.isGlobalAdmin === true,
+      }));
+    if (moderates) {
+      this.logger.log(
+        `[LIVE_REPLAY] ${liveId} (post ${short(found.postId)}) MODERATION READ by ${short(viewerId)}: moderates its post${read.isGlobalAdmin === true ? ' (platform admin)' : ' (BDE moderator in scope)'}`
+      );
+    } else {
+      if (read.moderate === true) {
+        this.logger.debug(
+          `[LIVE_REPLAY] ${liveId}: ${short(viewerId)} asked a moderation read and does not moderate its post, the ordinary gate decides`
+        );
+      }
+      const verdict = await readPostOpenVerdict(
+        this.db.manager,
+        {
+          id: found.postId,
+          authorId: found.authorId,
+          associationId: found.associationId,
+          anonymous: found.anonymous,
+          hiddenByModeration: found.hiddenByModeration,
+          scheduledAt: found.scheduledAt,
+          kind: 'replay',
+          expiresAt: found.expiresAt,
+        },
+        // The live's own gate (`WATCH_ONLY`): a platform admin is an ordinary viewer, but for a
+        // review account's replay - never wider than the live was.
+        { viewerId, adminSeesCohort: true },
+        'READ_OR_REACT'
+      );
+      if (verdict.refusal !== null) {
+        this.logger.debug(
+          `[LIVE_REPLAY] ${liveId} withheld from ${short(viewerId)}: ${verdict.why}`
+        );
+        throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
+      }
     }
     const key = openLiveKeyOr503(liveId, found);
     const listed: { index: number; name: string; bytes: number; atMs: string }[] =
@@ -2651,7 +2691,8 @@ export class LivesService implements OnModuleDestroy {
   /**
    * The lives on which Redis bars a viewer the row allows, each with the takes refused so: counted
    * apart from {@link unknownToRedis}, because a seat granted to somebody else says nothing about
-   * a bar. Reported and forgotten at the purge, on the instance that runs it.
+   * a bar. PER INSTANCE, as that map: each instance logs its own first refusal, and the purge
+   * reports and forgets the count on the instance that runs it.
    */
   private readonly barredWithoutRow = new Map<string, number>();
 
@@ -2666,7 +2707,7 @@ export class LivesService implements OnModuleDestroy {
       // not closed", 7). IT STAYS AN ERROR ALL THE SAME, because nothing here can tell that case
       // from a bar written by a defect: the row that would say "removed, then erased" is the one
       // the erasure deleted, and social-service keeps no record of an erasure. A level lowered on
-      // an inference would hide the defect; one line per live is what the certainty costs.
+      // an inference would hide the defect; one line per live PER INSTANCE is what the certainty costs.
       this.logger.error(
         `[LIVE_SEAT] ${liveId}: Redis bars a viewer the row allows - expected only for a removed viewer whose account was erased and who came back; no seat for that viewer until the live closes (further refusals are counted, not logged)`
       );

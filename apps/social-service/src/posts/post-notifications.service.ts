@@ -71,6 +71,7 @@ import {
 import { forEachBounded, PUSH_FAN_OUT_LIMIT } from '../push/fan-out';
 import { formatUserDisplayNameFromRaw } from '../utils/user-display-name';
 import {
+  authorDoorHoldsSql,
   commentsWithheldFromViewerSql,
   postVisibleToViewerSql,
   sameSideOfReviewCohortSql,
@@ -238,7 +239,10 @@ export function bellRowShownSql(n: string): string {
       AND NOT notif_post."hiddenByModeration"
       AND ${postVisibleToViewerSql('notif_post', `${n}."recipientId"`)}
       AND NOT (${commentBorneNotificationSql(n, 'notif_post')}
-        AND ${commentsWithheldFromViewerSql('notif_post', `${n}."recipientId"`)})))`;
+        AND ${commentsWithheldFromViewerSql('notif_post', `${n}."recipientId"`)})
+      AND (${n}.type NOT IN (${AUTHOR_ADDRESSED_NOTIFICATION_TYPES.map((t) => `'${t}'`).join(', ')})
+        OR notif_post."authorId" IS DISTINCT FROM ${n}."recipientId"
+        OR ${authorDoorHoldsSql('notif_post', `${n}."recipientId"`)})))`;
 }
 
 /**
@@ -252,6 +256,13 @@ export function bellRowShownSql(n: string): string {
 export function bellRowVisibleSql(n: string): string {
   return `(${bellRowShownSql(n)} AND ${sameSideOfReviewCohortSql(`${n}."actorId"`, `${n}."recipientId"`)})`;
 }
+
+/**
+ * The bell types written TO A POST'S AUTHOR alone (`PostInteractionsService`: a reaction, a comment on
+ * their post). Shown only while the recipient holds the post's author's door (`authorDoorHoldsSql`):
+ * a writer no longer a member of the entity a post speaks for stops seeing them, as they stop being told.
+ */
+export const AUTHOR_ADDRESSED_NOTIFICATION_TYPES: readonly string[] = ['comment', 'reaction'];
 
 /**
  * What a campus trend's post shows when it has no text, as its bell row stores it (`meta.media`,
@@ -510,6 +521,27 @@ export class PostNotificationsService {
       ids.add(match[1].toLowerCase());
     }
     return [...ids].slice(0, 20);
+  }
+
+  /**
+   * WHETHER POST `postId`'S AUTHOR IS STILL TOLD of a comment or a reaction on it - its author's door
+   * holds (`authorDoorHoldsSql`, 2026-11-14): always for a personal post; for a post in an entity's
+   * name only while its writer is still a member of that entity. An officer who left it is told
+   * nothing more about the entity's post, as the bell stops showing them what was written before
+   * (`bellRowShownSql`). Read from state in one statement, whatever the post's size.
+   */
+  async postAuthorIsTold(postId: string): Promise<boolean> {
+    const rows: { told: boolean }[] = await this.postRepo.manager.query(
+      `SELECT ${authorDoorHoldsSql('posts', 'posts."authorId"')} AS told FROM posts WHERE posts.id = $1`,
+      [postId]
+    );
+    const told = rows[0]?.told === true;
+    if (!told) {
+      this.logger.debug(
+        `[NOTIFY] post ${postId.slice(0, 8)}: its author is no longer a member of its entity, not told`
+      );
+    }
+    return told;
   }
 
   /**

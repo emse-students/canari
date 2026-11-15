@@ -38,6 +38,8 @@ import {
   sweepDeviceEnvelopes,
   deleteAccountPushTokens,
 } from '../utils/push-envelope';
+import { settledFlag } from '../testing/lockWait';
+import { untilBlockedBehind } from '../testing/lockBehind';
 
 const URL = process.env.CHAT_DELIVERY_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -91,30 +93,15 @@ maybe('migration 046 (push_envelope) against PostgreSQL', () => {
   /**
    * Resolves once `count` sessions are blocked BEHIND `holder`: the proof that the operations under
    * test have reached their lock and wait on the row the holder keeps. Scoped to the holder's own
-   * blocking tree, so no other session of the database can satisfy it. Transitive, because a second
-   * waiter on one row queues behind the first (`pg_blocking_pids` names the first waiter, not the
-   * holder). Polled, never timed - jest's own timeout ends a hang.
+   * blocking tree, so no other session of the database can satisfy it. Polled, never timed; the
+   * `operation` settling first, or the read bound, fails it with a message.
    */
-  const untilBlockedBy = async (holder: Client, count = 1) => {
-    const [{ pid }] = (await holder.query(`SELECT pg_backend_pid() AS pid`)).rows as Array<{
-      pid: number;
-    }>;
-    for (;;) {
-      const [{ waiting }] = (
-        await admin.query(
-          `WITH RECURSIVE behind AS (
-             SELECT pid FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))
-             UNION
-             SELECT a.pid FROM pg_stat_activity a JOIN behind b ON b.pid = ANY(pg_blocking_pids(a.pid))
-           )
-           SELECT count(*)::int AS waiting FROM behind`,
-          [pid]
-        )
-      ).rows as Array<{ waiting: number }>;
-      if (waiting >= count) return;
-      await new Promise((resolve) => setImmediate(resolve));
-    }
-  };
+  const untilBlockedBy = (holder: Client, operation: Promise<unknown>, count = 1) =>
+    untilBlockedBehind(admin, holder, {
+      what: 'the store',
+      atLeast: count,
+      settled: settledFlag(operation),
+    });
   /**
    * Holds the device's registration row from another session, starts the stores, waits until every
    * one of them is blocked on that row, then releases it: the stores are proven to overlap.
@@ -131,7 +118,7 @@ maybe('migration 046 (push_envelope) against PostgreSQL', () => {
         [deviceId]
       );
       const stores = start();
-      await untilBlockedBy(holder, stores.length);
+      await untilBlockedBy(holder, Promise.all(stores), stores.length);
       await holder.query('COMMIT');
       await Promise.all(stores);
     } finally {
@@ -211,7 +198,7 @@ maybe('migration 046 (push_envelope) against PostgreSQL', () => {
       await other.query(`DELETE FROM push_token WHERE "userId" = 'u1' AND "deviceId" = 'pixel'`);
       // The store's lock waits for the delete in flight - proven by the waiting lock, not a clock.
       const pending = store('u1', ['pixel', 'tablet'], comment);
-      await untilBlockedBy(other);
+      await untilBlockedBy(other, pending);
       await other.query('COMMIT');
       const result = await pending;
       expect(result.notWoken).toEqual(new Map([['pixel', 'registration-gone']]));
@@ -253,9 +240,9 @@ maybe('migration 046 (push_envelope) against PostgreSQL', () => {
         `SELECT 1 FROM push_token WHERE "userId" = 'u1' AND "deviceId" = 'a' FOR UPDATE`
       );
       const pending = store('u1', ['a', 'b'], comment);
-      await untilBlockedBy(holder, 1);
+      await untilBlockedBy(holder, pending, 1);
       const erasure = deleteAccountPushTokens(seqScan.manager, 'u1');
-      await untilBlockedBy(holder, 2);
+      await untilBlockedBy(holder, Promise.all([pending, erasure]), 2);
       await holder.query('COMMIT');
       // Either rejection would be Postgres' deadlock abort.
       const [stored, erased] = await Promise.all([pending, erasure]);

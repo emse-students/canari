@@ -35,6 +35,7 @@ import {
   fetchLive,
   fetchLiveLimits,
   fetchLiveRules,
+  fetchLiveStanding,
   isLiveCut,
   isLiveRefusal,
   LiveRefusalError,
@@ -67,6 +68,7 @@ import {
 import type {
   LiveEndResult,
   LiveLimits,
+  LiveOwnStanding,
   LiveRulesStatus,
   LiveTitleResult,
   LiveView,
@@ -129,6 +131,7 @@ export type LiveUploaderLike = Pick<
 export interface LiveBroadcastDeps {
   fetchLiveLimits: () => Promise<LiveLimits>;
   fetchLiveRules: () => Promise<LiveRulesStatus>;
+  fetchLiveStanding: () => Promise<LiveOwnStanding>;
   startLive: (
     keyHex: string,
     associationId?: string,
@@ -177,6 +180,7 @@ export function defaultLiveBroadcastDeps(): LiveBroadcastDeps {
   return {
     fetchLiveLimits,
     fetchLiveRules,
+    fetchLiveStanding,
     startLive,
     setLiveTitle,
     putLivePoster,
@@ -229,6 +233,12 @@ export class LiveBroadcast {
   limits = $state.raw<LiveLimits | null>(null);
   /** The member's standing with the first-live rules (L11), read with the limits. */
   rules = $state.raw<LiveRulesStatus | null>(null);
+  /**
+   * The member's right to broadcast (`GET /api/lives/standing`), read with the limits: a suspension
+   * or a withdrawal is SAID on this screen and Start is not offered, instead of being learnt from a
+   * refused start. The server still decides at the start; this is the fact it would answer with.
+   */
+  standing = $state.raw<LiveOwnStanding | null>(null);
   /** The member tapped "I accept" on THIS screen: the start then sends the version. */
   rulesAcceptedHere = $state(false);
   limitsProblem = $state<LiveLimitsProblem | null>(null);
@@ -320,20 +330,29 @@ export class LiveBroadcast {
   }
 
   /**
-   * Reads the server's numbers and the member's standing with the rules, together: the Start
-   * button waits for both, and either failing is the same "could not read" with its Retry.
+   * Reads the server's numbers, the member's standing with the rules and their right to broadcast,
+   * together: the Start button waits for the three, and any failing is the same "could not read"
+   * with its Retry. Called again by that Retry and by the standing's own "check again".
    */
   async loadLimits(): Promise<void> {
     this.limitsProblem = null;
     try {
-      const [limits, rules] = await Promise.all([
+      const [limits, rules, standing] = await Promise.all([
         this.#deps.fetchLiveLimits(),
         this.#deps.fetchLiveRules(),
+        this.#deps.fetchLiveStanding(),
       ]);
       this.limits = limits;
       this.rules = rules;
+      this.standing = standing;
+      // A start refused for the standing is now said by the standing itself: one sentence, not two.
+      if (this.startProblem !== null && this.startProblem === this.standingBar) {
+        this.startProblem = null;
+        this.startSuspendedUntil = null;
+      }
       console.debug(
-        `[LIVE-BROADCAST] rules v${rules.version}, accepted v${rules.acceptedVersion ?? '-'}`
+        `[LIVE-BROADCAST] rules v${rules.version}, accepted v${rules.acceptedVersion ?? '-'}; ` +
+          `standing ${this.standingBar ?? 'clear'}, ${standing.cutsOnRecord} cut(s) on record`
       );
     } catch (e) {
       this.limitsProblem = limitsProblemOf(e);
@@ -348,6 +367,17 @@ export class LiveBroadcast {
   get rulesPending(): boolean {
     if (this.rules === null || this.rulesAcceptedHere) return false;
     return (this.rules.acceptedVersion ?? 0) < this.rules.version;
+  }
+
+  /**
+   * What bars the member from broadcasting, as the server answered it: `withdrawn` first (it has no
+   * end), else `suspended` while the server names a running suspension, else null. No clock is read
+   * here - a suspension that ended since the answer is found by reading the standing again.
+   */
+  get standingBar(): 'withdrawn' | 'suspended' | null {
+    if (this.standing === null) return null;
+    if (this.standing.withdrawnAt !== null) return 'withdrawn';
+    return this.standing.suspendedUntil !== null ? 'suspended' : null;
   }
 
   /** The member tapped "I accept the rules": the next start records it with the server. */
@@ -366,6 +396,8 @@ export class LiveBroadcast {
       this.limits !== null &&
       this.rules !== null &&
       !this.rulesPending &&
+      this.standing !== null &&
+      this.standingBar === null &&
       this.#sourcesReady()
     );
   }
@@ -499,6 +531,30 @@ export class LiveBroadcast {
     }
   }
 
+  /**
+   * The server refused the start for the standing (a cut or a withdrawal landed since it was read):
+   * read it again, so the screen says it and stops offering Start. A failed read is the limits'
+   * own "could not read" with its Retry - Start waits for the standing again, never a guess.
+   */
+  async #standingRefused(): Promise<void> {
+    try {
+      this.standing = await this.#deps.fetchLiveStanding();
+    } catch (e) {
+      this.standing = null;
+      this.limitsProblem = limitsProblemOf(e);
+      console.warn(
+        `[LIVE-BROADCAST] standing not re-read after the refusal (${this.limitsProblem})`
+      );
+      return;
+    }
+    // The standing read again says what the refusal said: its sentence replaces the refusal's. If
+    // it does NOT (the suspension ended between the two answers), the refusal's sentence stays.
+    if (this.startProblem === this.standingBar) {
+      this.startProblem = null;
+      this.startSuspendedUntil = null;
+    }
+  }
+
   /** Starts the live on the camera already open. */
   async start(): Promise<void> {
     if (!this.canStart) {
@@ -529,6 +585,9 @@ export class LiveBroadcast {
         this.startSuspendedUntil = e.suspendedUntil;
       }
       if (this.startProblem === 'rules-not-accepted') await this.#rulesRefused();
+      if (this.startProblem === 'suspended' || this.startProblem === 'withdrawn') {
+        await this.#standingRefused();
+      }
       if (this.#disposed) return;
       this.phase = 'preview';
       console.warn(`[LIVE-BROADCAST] start refused (${this.startProblem})`);

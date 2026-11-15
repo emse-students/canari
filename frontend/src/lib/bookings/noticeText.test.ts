@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { formatNoticeSlot, readBookingNoticeMeta } from './noticeText';
+import { m } from '$lib/paraglide/messages';
+import { formatNoticeSlot, readBookingNoticeMeta, reminderWhen } from './noticeText';
 
 describe('readBookingNoticeMeta', () => {
   it('reads place, slot start and zone', () => {
@@ -8,6 +9,17 @@ describe('readBookingNoticeMeta', () => {
       startsAt: '2026-11-03T09:00:00.000Z',
       timeZone: 'Europe/Paris',
       word: 'desole',
+    };
+    expect(readBookingNoticeMeta(meta)).toEqual(meta);
+  });
+
+  it('reads the chosen delay of a reminder when present', () => {
+    const meta = {
+      place: 'Salle',
+      startsAt: '2026-11-03T09:00:00.000Z',
+      timeZone: 'Europe/Paris',
+      word: '',
+      reminderMinutes: 1440,
     };
     expect(readBookingNoticeMeta(meta)).toEqual(meta);
   });
@@ -68,5 +80,73 @@ describe('formatNoticeSlot', () => {
     expect(formatNoticeSlot(instant, 'Mars/Olympus')).toBeNull();
     expect(warn).toHaveBeenCalledOnce();
     warn.mockRestore();
+  });
+});
+
+describe('reminderWhen (said as of the sending, 2026-11-15)', () => {
+  const Z = 'Europe/Paris';
+  const start = '2026-11-16T13:00:00Z'; // 14:00 Paris
+
+  it('says the minutes while under an hour away', () => {
+    expect(reminderWhen(start, '2026-11-16T12:45:10Z', Z)).toBe(
+      m.notif_booking_reminder_in_minutes({ minutes: 15 })
+    );
+  });
+
+  it('says whole hours inside six', () => {
+    expect(reminderWhen(start, '2026-11-16T12:00:00Z', Z)).toBe(
+      m.notif_booking_reminder_in_hours({ hours: 1 })
+    );
+  });
+
+  it('says today at the time when it is later the same day and not a whole hour', () => {
+    expect(reminderWhen(start, '2026-11-16T08:30:00Z', Z)).toBe(
+      m.notif_booking_reminder_today_at({ time: '14:00' })
+    );
+  });
+
+  it('says tomorrow at the time for a 24 h reminder', () => {
+    expect(reminderWhen(start, '2026-11-15T13:00:00Z', Z)).toBe(
+      m.notif_booking_reminder_tomorrow_at({ time: '14:00' })
+    );
+  });
+
+  it('names the day when the start is further than tomorrow', () => {
+    const text = reminderWhen('2026-11-20T13:00:00Z', '2026-11-15T13:00:00Z', Z);
+    expect(text).toContain('14:00');
+    expect(text).not.toBe(m.notif_booking_reminder_tomorrow_at({ time: '14:00' }));
+  });
+
+  it('judges days on the space clock', () => {
+    // 23:30 UTC the 15th is already the 16th in Paris: a 14:00 slot is today.
+    expect(reminderWhen(start, '2026-11-15T23:30:00Z', Z)).toBe(
+      m.notif_booking_reminder_today_at({ time: '14:00' })
+    );
+  });
+
+  it('words from the chosen delay, not from cron jitter (59 min late-by-a-minute reads 1 h)', () => {
+    // Sent 60 s late: the raw gap is 3_540_000 ms.
+    expect(reminderWhen(start, '2026-11-16T12:01:00Z', Z, 60)).toBe(
+      m.notif_booking_reminder_in_hours({ hours: 1 })
+    );
+    // A 2 h reminder sent 60 s late (7_140_000 ms) is still "dans 2 h".
+    expect(reminderWhen(start, '2026-11-16T11:01:00Z', Z, 120)).toBe(
+      m.notif_booking_reminder_in_hours({ hours: 2 })
+    );
+  });
+
+  it('snaps the measured gap when the row has no delay', () => {
+    expect(reminderWhen(start, '2026-11-16T12:01:00Z', Z)).toBe(
+      m.notif_booking_reminder_in_hours({ hours: 1 })
+    );
+    expect(reminderWhen(start, '2026-11-16T11:01:00Z', Z)).toBe(
+      m.notif_booking_reminder_in_hours({ hours: 2 })
+    );
+  });
+
+  it('is null for an unparseable instant or an unknown zone', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(reminderWhen('x', start, Z)).toBeNull();
+    expect(reminderWhen(start, '2026-11-15T13:00:00Z', 'Nowhere/Land')).toBeNull();
   });
 });

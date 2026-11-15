@@ -49,7 +49,8 @@ import {
   LIVE_SEAT_LEASE_MS,
   LIVE_STARTS_PER_HOUR,
 } from './live.constants';
-import type { AssociationsService } from '../associations/associations.service';
+import { AssociationsService } from '../associations/associations.service';
+import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import { ModerationService } from '../moderation/moderation.service';
 import { FollowRequestsService } from '../follows/follow-requests.service';
 import { ContentReport } from '../moderation/entities/content-report.entity';
@@ -57,6 +58,7 @@ import type { UserModeration } from '../moderation/entities/user-moderation.enti
 import type { Repository } from 'typeorm';
 import type { PostNotificationsService } from '../posts/post-notifications.service';
 import type { RedisService } from '../common/redis';
+import { ACTIVITY_DUMP_SQL, settledFlag, untilWaiting } from '../common/lock-wait.it-fixture';
 import {
   DELETED_ACCOUNT,
   ERASURE_LIVES_LOCK_SQL,
@@ -389,6 +391,11 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
   let seats: MemorySeats;
   const muted = new Set<string>();
   const mayActAs = new Set<string>();
+  /** `AssociationsService`'s own moderation-scope methods, over this database and nothing else. */
+  const realModerationScope = Object.assign(Object.create(AssociationsService.prototype), {
+    memberRepo: { query: (sql: string, params: unknown[]) => ds.query(sql, params) },
+    logger: new Logger('lives-it-moderation-scope'),
+  }) as AssociationsService;
   const q = (sql: string, params: unknown[] = []) => ds.query(sql, params);
 
   beforeAll(async () => {
@@ -553,6 +560,15 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       {
         mayAct: async (userId: string, associationId: string) =>
           mayActAs.has(`${userId}:${associationId}`),
+        // The REAL post moderation scope (`moderatedPostIds`, `BDE_MODERATED_POST_IDS_SQL`) on this
+        // database: what the replay's moderation read asks.
+        mayModeratePost: (userId: string, postId: string, opts?: { isGlobalAdmin?: boolean }) =>
+          realModerationScope.mayModeratePost(userId, postId, opts),
+        mayReadToModeratePost: (
+          userId: string,
+          postId: string,
+          opts?: { isGlobalAdmin?: boolean }
+        ) => realModerationScope.mayReadToModeratePost(userId, postId, opts),
       } as unknown as AssociationsService,
       { isUserMuted: async (userId: string) => muted.has(userId) } as unknown as ModerationService,
       seats as unknown as LiveSeats,
@@ -1041,6 +1057,108 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       expect((await refusal(lives.replay(CAROL, live.id))).code).toBe('LIVE_NOT_FOUND');
     });
 
+    it("a platform admin watches a replay only where its live would have let them: never outside its audience, a review account's to judge a report (2026-11-14)", async () => {
+      const live = await finishedLive();
+      await lives.end(ALICE, live.id);
+      const saved = process.env.SERVICE_ACCOUNT_USER_ID;
+      await q(`UPDATE users SET admin = true WHERE id = $1`, [FRANK]);
+      try {
+        // FRANK shares no space with ALICE: the live refused them, and so does its replay.
+        expect((await refusal(lives.replay(FRANK, live.id))).code).toBe('LIVE_NOT_FOUND');
+        await expect(lives.replay(CAROL, live.id)).resolves.toMatchObject({ liveId: live.id });
+        // ALICE a review account: the live's own exception (`adminSeesCohort`), and no member's.
+        process.env.SERVICE_ACCOUNT_USER_ID = ALICE;
+        await expect(lives.replay(FRANK, live.id)).resolves.toMatchObject({ liveId: live.id });
+        expect((await refusal(lives.replay(CAROL, live.id))).code).toBe('LIVE_NOT_FOUND');
+      } finally {
+        await q(`UPDATE users SET admin = false WHERE id = $1`, [FRANK]);
+        if (saved === undefined) delete process.env.SERVICE_ACCOUNT_USER_ID;
+        else process.env.SERVICE_ACCOUNT_USER_ID = saved;
+      }
+    });
+
+    it("THE MODERATION READ OF A REPLAY has the post's own regulator (owner, 2026-11-15): whoever moderates its post reads it, past the viewer's gate", async () => {
+      const BDE_SE = '00000000-0000-4000-8000-0000000bde01';
+      const BDE_GA = '00000000-0000-4000-8000-0000000bde02';
+      const MODERATE = AssociationPermissionFlag.MODERATE;
+      const live = await start();
+      await lives.removeViewer(ALICE, live.id, BOB);
+      await q(`UPDATE lives SET "startedAt" = now() - interval '10 minutes' WHERE id = $1`, [
+        live.id,
+      ]);
+      await lives.ingest(ALICE, live.id, 0, segment(0));
+      await lives.ingest(ALICE, live.id, 1, segment(1));
+      await lives.end(ALICE, live.id);
+      await q(`INSERT INTO user_blocks ("blockerId", "blockedId") VALUES ($1, $2)`, [ALICE, DAVE]);
+      // The BDE governing ALICE's space (ICM x Saint-Etienne), and another governing Gardanne ISMIN.
+      await q(`INSERT INTO associations (id, name) VALUES ($1, 'BDE SE'), ($2, 'BDE GA')`, [
+        BDE_SE,
+        BDE_GA,
+      ]);
+      await q(
+        `UPDATE spaces SET "bdeAssociationId" = $1 WHERE formation = 'ICM' AND campus = ${SE}`,
+        [BDE_SE]
+      );
+      await q(
+        `UPDATE spaces SET "bdeAssociationId" = $1 WHERE formation = 'ISMIN' AND campus = ${GA}`,
+        [BDE_GA]
+      );
+      try {
+        const viewerPage = await lives.replay(CAROL, live.id);
+        const asked = { moderate: true };
+        const refused = async (
+          who: string,
+          read?: { moderate?: boolean; isGlobalAdmin?: boolean }
+        ) => (await refusal(lives.replay(who, live.id, 0, read))).code;
+
+        // Nobody gets anything from the flag alone: removed (BOB), blocked (DAVE), outside (FRANK).
+        for (const who of [BOB, DAVE, FRANK]) {
+          expect(await refused(who)).toBe('LIVE_NOT_FOUND');
+          expect(await refused(who, asked)).toBe('LIVE_NOT_FOUND');
+        }
+
+        // A BDE moderator IN SCOPE reads it with the flag - the one the broadcaster removed and the
+        // one they blocked included - and is the ordinary reader without it.
+        await q(
+          `INSERT INTO association_members ("associationId", "userId", permissions)
+             VALUES ($1, $2, $4), ($1, $3, $4)`,
+          [BDE_SE, BOB, DAVE, MODERATE]
+        );
+        for (const who of [BOB, DAVE]) {
+          const page = await lives.replay(who, live.id, 0, asked);
+          expect(page).toEqual({ ...viewerPage, serverNow: page.serverNow });
+          expect(await refused(who)).toBe('LIVE_NOT_FOUND');
+        }
+
+        // A BDE moderator OUT of scope (Gardanne's BDE): the flag is the ordinary gate.
+        await q(
+          `INSERT INTO association_members ("associationId", "userId", permissions)
+             VALUES ($1, $2, $3)`,
+          [BDE_GA, FRANK, MODERATE]
+        );
+        expect(await refused(FRANK, asked)).toBe('LIVE_NOT_FOUND');
+
+        // A platform admin: reads with the flag, and gets the ordinary answer without it.
+        await q(`UPDATE users SET admin = true WHERE id = $1`, [FRANK]);
+        try {
+          const moderated = await lives.replay(FRANK, live.id, 0, {
+            ...asked,
+            isGlobalAdmin: true,
+          });
+          expect(moderated).toEqual({ ...viewerPage, serverNow: moderated.serverNow });
+          expect(await refused(FRANK, { isGlobalAdmin: true })).toBe('LIVE_NOT_FOUND');
+        } finally {
+          await q(`UPDATE users SET admin = false WHERE id = $1`, [FRANK]);
+        }
+        // A viewer with the flag reads as before.
+        await expect(lives.replay(CAROL, live.id, 0, asked)).resolves.toMatchObject({
+          liveId: live.id,
+        });
+      } finally {
+        await q(`UPDATE spaces SET "bdeAssociationId" = NULL`);
+      }
+    });
+
     it('THE TRIM KEEPS THREE HOURS on a live that keeps a replay, and the window alone on one that does not (D1)', async () => {
       const kept = await start(ALICE);
       await q(`UPDATE platform_config SET live_replays_mode = 'off'`);
@@ -1511,6 +1629,51 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         expect((await refusal(lives.manifest(CAROL, live.id))).code).toBe('LIVE_SEATS_UNAVAILABLE');
         await expect(lives.manifest(BOB, live.id)).resolves.toMatchObject({ viewers: 1 });
         expect([...seats.held]).toEqual([`${live.id}:${BOB}`]);
+      });
+
+      it('a bar the row no longer backs is ONE error line, counted apart from an unknown live, and its count is said at the purge', async () => {
+        const live = await start();
+        await lives.ingest(ALICE, live.id, 0, segment(0));
+        await lives.removeViewer(ALICE, live.id, CAROL);
+        await q(`DELETE FROM live_removed_viewers WHERE "viewerId" = $1`, [CAROL]);
+        const internals = lives as unknown as {
+          logger: { error(m: string): void; log(m: string): void; warn(m: string): void };
+          unknownToRedis: Map<string, number>;
+          barredWithoutRow: Map<string, number>;
+        };
+        const error = jest.spyOn(internals.logger, 'error').mockImplementation(() => {});
+        const log = jest.spyOn(internals.logger, 'log').mockImplementation(() => {});
+        const warn = jest.spyOn(internals.logger, 'warn').mockImplementation(() => {});
+        try {
+          await refusal(lives.get(CAROL, live.id));
+          await refusal(lives.manifest(CAROL, live.id));
+          expect(error).toHaveBeenCalledTimes(1);
+          expect(error).toHaveBeenCalledWith(
+            expect.stringContaining('Redis bars a viewer the row allows')
+          );
+          expect(internals.barredWithoutRow.get(live.id)).toBe(2);
+          expect(internals.unknownToRedis.has(live.id)).toBe(false);
+          // A seat granted to somebody else says nothing about the bar: no recovery line, and
+          // the count stands.
+          await lives.get(BOB, live.id);
+          expect(log).not.toHaveBeenCalledWith(expect.stringContaining('seats are granted again'));
+          expect(internals.barredWithoutRow.get(live.id)).toBe(2);
+          await lives.leave(BOB, live.id);
+          await lives.end(ALICE, live.id);
+          await lives.purgeEnded(live.id);
+          expect(log).toHaveBeenCalledWith(
+            expect.stringContaining('2 take(s) were refused to a viewer Redis barred')
+          );
+          expect(warn).not.toHaveBeenCalledWith(
+            expect.stringContaining('purged while Redis still refused its seats')
+          );
+          expect(internals.barredWithoutRow.has(live.id)).toBe(false);
+          expect(error).toHaveBeenCalledTimes(1);
+        } finally {
+          error.mockRestore();
+          log.mockRestore();
+          warn.mockRestore();
+        }
       });
     });
 
@@ -2087,13 +2250,18 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
           }[];
           const ingesting = lives.ingest(ALICE, live.id, 0, segment(0));
           // Proved by the server's own state, not a delay: the confirm is WAITING on this session.
-          for (;;) {
-            const [{ n }] = await q(
-              `SELECT count(*)::int AS n FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`,
-              [pid]
-            );
-            if (n > 0) break;
-          }
+          await untilWaiting({
+            what: 'the confirm',
+            settled: settledFlag(ingesting),
+            waiting: async () => {
+              const [{ n }] = await q(
+                `SELECT count(*)::int AS n FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`,
+                [pid]
+              );
+              return n;
+            },
+            dump: () => q(ACTIVITY_DUMP_SQL),
+          });
           // With the inverted order the confirm would hold the live here, and this would be 40P01.
           await erasure.query(`UPDATE lives SET "lastSegmentAt" = now() WHERE id = $1`, [live.id]);
           await erasure.commitTransaction();
@@ -2876,14 +3044,13 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
     it('a viewer REPORTS a live through content_reports; once each; staff read its state', async () => {
       await q(`UPDATE users SET "displayName" = 'Alice' WHERE id = $1`, [ALICE]);
       const live = await start();
-      // `reportedUserId` from the client is ignored: the broadcaster comes from the live row.
+      // The broadcaster comes from the live row: no client names who a report is about.
       await expect(
         reports().createReport({
           reporterId: BOB,
           contentType: 'live',
           contentId: live.id.toUpperCase(),
           reason: 'harassment',
-          reportedUserId: CAROL,
         })
       ).resolves.toMatchObject({ contentId: live.id, reportedUserId: ALICE, status: 'pending' });
       expect(await refusal(report(BOB, live.id))).toEqual({
@@ -4103,14 +4270,19 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         );
         // A proof, not a delay: wait until PostgreSQL reports a session of THIS suite's pool (its
         // `application_name`; the suites share one database) waiting on a lock.
-        for (;;) {
-          const [{ n }] = await q(
-            `SELECT count(*)::int AS n FROM pg_stat_activity
-              WHERE application_name = $1 AND wait_event_type = 'Lock'`,
-            [schema]
-          );
-          if (n > 0) break;
-        }
+        await untilWaiting({
+          what: 'the withdrawal',
+          settled: settledFlag(withdrawal),
+          waiting: async () => {
+            const [{ n }] = await q(
+              `SELECT count(*)::int AS n FROM pg_stat_activity
+                WHERE application_name = $1 AND wait_event_type = 'Lock'`,
+              [schema]
+            );
+            return n;
+          },
+          dump: () => q(ACTIVITY_DUMP_SQL),
+        });
         await erasure.commitTransaction();
         expect(await withdrawal).toBe('LIVE_WITHDRAWAL_NOT_DUE');
       } finally {

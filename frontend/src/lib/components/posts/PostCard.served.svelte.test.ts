@@ -8,7 +8,7 @@
  * AND IT DOES NOT TAKE A ROW OLDER THAN ITS OWN WRITE (second review): a feed GET issued before a
  * tap can land after the tap's own POST answered, and adopting that row whole erased the tap.
  */
-import { afterAll, afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import PostCard from './PostCard.svelte';
 import type { PostEntity } from '$lib/posts/api';
@@ -469,4 +469,60 @@ it('older threads the reader read are kept over a fresher feed row', async () =>
   // The older rows stay where the reader put them, and nothing is read again.
   expect(sheet().textContent).toContain('note-c-22');
   expect(fetchComments).toHaveBeenCalledTimes(1);
+});
+
+describe('a post the reader may not act on (`canParticipate` false: a platform admin outside its audience)', () => {
+  const composer = () => sheet().querySelectorAll('[data-testid="comment-image-input"]').length;
+  const likes = () =>
+    sheet().querySelectorAll(`button[aria-label="${m.post_like_label()}"]`).length;
+  const replies = () =>
+    [...sheet().querySelectorAll('button')].filter(
+      (b) => b.textContent?.trim() === m.post_reply_label()
+    ).length;
+
+  it('draws no reaction control, and keeps the comment preview to read, with no like and no box', () => {
+    const open = mountCard(row({ comments: [comment(1)], commentCount: 1 }));
+    expect(open.target.querySelector('button[data-post-react-picker-open]')).not.toBeNull();
+    expect(open.target.querySelector('[data-comments-preview]')).not.toBeNull();
+    expect(likes()).toBe(1);
+    mounted.pop()!();
+    document.body.innerHTML = '';
+
+    const { target } = mountCard(
+      row({ id: 'p-moderated', canParticipate: false, comments: [comment(1)], commentCount: 1 })
+    );
+    expect(target.querySelector('button[data-post-react-picker-open]')).toBeNull();
+    const preview = target.querySelector('[data-comments-preview]');
+    expect(preview?.textContent).toContain('note-c-01');
+    expect(likes()).toBe(0);
+    expect(preview?.textContent).not.toContain(m.post_comment_placeholder());
+    // The thread still opens, to read.
+    const view = [...preview!.querySelectorAll('button')].find(
+      (b) => b.textContent?.trim() === m.post_show_comments_label({ count: 1 })
+    );
+    expect(view).toBeDefined();
+  });
+
+  it('opens its thread read-only - the reported comment in context, no box, no like, no reply', () => {
+    mountCard(
+      row({
+        id: 'p-moderated',
+        canParticipate: false,
+        comments: [comment(1), comment(2, { parentId: 'c-01' })],
+        commentCount: 2,
+      }),
+      true
+    );
+    expect(sheet().textContent).toContain('note-c-01');
+    expect(composer()).toBe(0);
+    expect(likes()).toBe(0);
+    expect(replies()).toBe(0);
+  });
+
+  it('a reader who may act keeps the box, the likes and the replies in the thread', () => {
+    mountCard(row({ comments: [comment(1)], commentCount: 1 }), true);
+    expect(composer()).toBe(1);
+    expect(likes()).toBeGreaterThan(0);
+    expect(replies()).toBe(1);
+  });
 });

@@ -29,6 +29,7 @@ import {
   dependencyRefusalOf,
 } from './dependency-rules';
 import type { EntityType } from './dependency-rules';
+import { ACTIVITY_DUMP_SQL, settledFlag, untilWaiting } from '../common/lock-wait.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -263,136 +264,154 @@ maybe('the dependency axis against PostgreSQL (migrations 129-131)', () => {
     expect(rows[0].n).toBe(0);
   });
 
-  describe('the triggers refuse every hand-written UPDATE that breaks D2', () => {
-    beforeAll(() => client.query('BEGIN'));
-    afterAll(() => client.query('ROLLBACK'));
+  // The triggers exist only once 131 is applied, over the rows 130 validated: apply both here, so
+  // these cases do not depend on the tests above having run (130 and 131 are idempotent; 131 cannot
+  // move to the file-level setup, the test that expects it to REFUSE needs it absent first).
+  describe('with 130 and 131 applied', () => {
+    beforeAll(async () => {
+      await run(client, M130);
+      await run(client, M131);
+    });
 
-    const setParent = (slug: string, parent: string | null) =>
-      refusal(client, `UPDATE associations SET "parentAssociationId" = $1 WHERE slug = $2`, [
-        parent === null ? null : id.get(parent),
-        slug,
-      ]);
-    const govern = (formation: string, campus: string, slug: string) =>
-      refusal(
-        client,
-        `UPDATE spaces SET "bdeAssociationId" = $1 WHERE formation = $2 AND campus = $3`,
-        [id.get(slug), formation, campus]
-      );
+    describe('the triggers refuse every hand-written UPDATE that breaks D2', () => {
+      beforeAll(() => client.query('BEGIN'));
+      afterAll(() => client.query('ROLLBACK'));
 
-    /**
-     * Each case, asked of the trigger, of the TS twin, and - the break-proof - of the database once
-     * the trigger is dropped, where the same write must PASS: the refusal is the trigger's.
-     */
-    it.each([
-      ['an institution given a parent', 'ecole', 'bde', DEPENDENCY_INSTITUTION],
-      ['a BDE given a parent', 'bde-bureau-des-eleves', 'bde', DEPENDENCY_CHILD_IS_A_BDE],
-      ['a parent governing nothing (the BDS)', 'club-libre', 'bds', DEPENDENCY_PARENT_NOT_A_BDE],
-      ['an institution as parent', 'club-libre', 'ecole', DEPENDENCY_PARENT_NOT_A_BDE],
-      ['an association as its own parent', 'bde', 'bde', DEPENDENCY_CHILD_IS_A_BDE],
-    ])('refuses %s', async (_label, child, parent, code) => {
-      expect(await setParent(child, parent)).toBe(code);
-      const facts = async (slug: string) => {
-        const { rows } = await client.query(
-          `SELECT type, EXISTS (SELECT 1 FROM spaces s WHERE s."bdeAssociationId" = a.id) AS governs
+      const setParent = (slug: string, parent: string | null) =>
+        refusal(client, `UPDATE associations SET "parentAssociationId" = $1 WHERE slug = $2`, [
+          parent === null ? null : id.get(parent),
+          slug,
+        ]);
+      const govern = (formation: string, campus: string, slug: string) =>
+        refusal(
+          client,
+          `UPDATE spaces SET "bdeAssociationId" = $1 WHERE formation = $2 AND campus = $3`,
+          [id.get(slug), formation, campus]
+        );
+
+      /**
+       * Each case, asked of the trigger, of the TS twin, and - the break-proof - of the database once
+       * the trigger is dropped, where the same write must PASS: the refusal is the trigger's.
+       */
+      it.each([
+        ['an institution given a parent', 'ecole', 'bde', DEPENDENCY_INSTITUTION],
+        ['a BDE given a parent', 'bde-bureau-des-eleves', 'bde', DEPENDENCY_CHILD_IS_A_BDE],
+        ['a parent governing nothing (the BDS)', 'club-libre', 'bds', DEPENDENCY_PARENT_NOT_A_BDE],
+        ['an institution as parent', 'club-libre', 'ecole', DEPENDENCY_PARENT_NOT_A_BDE],
+        ['an association as its own parent', 'bde', 'bde', DEPENDENCY_CHILD_IS_A_BDE],
+      ])('refuses %s', async (_label, child, parent, code) => {
+        expect(await setParent(child, parent)).toBe(code);
+        const facts = async (slug: string) => {
+          const { rows } = await client.query(
+            `SELECT type, EXISTS (SELECT 1 FROM spaces s WHERE s."bdeAssociationId" = a.id) AS governs
              FROM associations a WHERE slug = $1`,
-          [slug]
-        );
-        return rows[0] as { type: EntityType; governs: boolean };
-      };
-      expect(dependencyRefusal(await facts(child), await facts(parent))).toBe(code);
+            [slug]
+          );
+          return rows[0] as { type: EntityType; governs: boolean };
+        };
+        expect(dependencyRefusal(await facts(child), await facts(parent))).toBe(code);
 
-      await client.query('SAVEPOINT broken');
-      await client.query('DROP TRIGGER trg_associations_dependency ON associations');
-      expect(await setParent(child, parent)).toBeNull();
-      await client.query('ROLLBACK TO SAVEPOINT broken');
+        await client.query('SAVEPOINT broken');
+        await client.query('DROP TRIGGER trg_associations_dependency ON associations');
+        expect(await setParent(child, parent)).toBeNull();
+        await client.query('ROLLBACK TO SAVEPOINT broken');
+      });
+
+      it('allows a club under the BDE, clearing it, and a label naming the BDS', async () => {
+        expect(await setParent('club-libre', 'bde')).toBeNull();
+        expect(await setParent('club-libre', null)).toBeNull();
+        expect(
+          await refusal(
+            client,
+            `UPDATE associations SET "displayParentAssociationId" = $1 WHERE slug = 'club-libre'`,
+            [id.get('bds')]
+          )
+        ).toBeNull();
+      });
+
+      it('refuses designating a parented association as a space governor - and only the trigger does', async () => {
+        expect(await govern('ICM', 'gardanne', 'bds')).toBe(DEPENDENCY_CHILD_IS_A_BDE);
+        expect(await govern('ICM', 'gardanne', 'bde-bureau-des-eleves')).toBeNull();
+        await client.query('SAVEPOINT broken');
+        await client.query('DROP TRIGGER trg_spaces_dependency ON spaces');
+        expect(await govern('ISMIN', 'gardanne', 'bds')).toBeNull();
+        await client.query('ROLLBACK TO SAVEPOINT broken');
+      });
+
+      it('lets an INSTITUTION govern a space (D3): it is never a parent, so nothing depends on it', async () => {
+        expect(await govern('PDIS', 'gardanne', 'ecole')).toBeNull();
+        expect(await setParent('club-libre', 'ecole')).toBe(DEPENDENCY_PARENT_NOT_A_BDE);
+      });
+
+      it('refuses turning a parent with children into a list - and only the trigger does', async () => {
+        const retype = () =>
+          refusal(client, `UPDATE associations SET type = 'list' WHERE slug = 'bde'`);
+        expect(await retype()).toBe(DEPENDENCY_PARENT_NOT_A_BDE);
+        await client.query('SAVEPOINT broken');
+        await client.query('DROP TRIGGER trg_associations_dependency ON associations');
+        expect(await retype()).toBeNull();
+        await client.query('ROLLBACK TO SAVEPOINT broken');
+      });
+
+      it("allows removing a parent's last space while it has children (2.2: a redesignation stays possible)", async () => {
+        await client.query('SAVEPOINT redesign');
+        expect(
+          await refusal(
+            client,
+            `UPDATE spaces SET "bdeAssociationId" = NULL WHERE "bdeAssociationId" = $1`,
+            [id.get('bde')]
+          )
+        ).toBeNull();
+        await client.query('ROLLBACK TO SAVEPOINT redesign');
+      });
     });
 
-    it('allows a club under the BDE, clearing it, and a label naming the BDS', async () => {
-      expect(await setParent('club-libre', 'bde')).toBeNull();
-      expect(await setParent('club-libre', null)).toBeNull();
-      expect(
-        await refusal(
-          client,
-          `UPDATE associations SET "displayParentAssociationId" = $1 WHERE slug = 'club-libre'`,
-          [id.get('bds')]
-        )
-      ).toBeNull();
-    });
-
-    it('refuses designating a parented association as a space governor - and only the trigger does', async () => {
-      expect(await govern('ICM', 'gardanne', 'bds')).toBe(DEPENDENCY_CHILD_IS_A_BDE);
-      expect(await govern('ICM', 'gardanne', 'bde-bureau-des-eleves')).toBeNull();
-      await client.query('SAVEPOINT broken');
-      await client.query('DROP TRIGGER trg_spaces_dependency ON spaces');
-      expect(await govern('ISMIN', 'gardanne', 'bds')).toBeNull();
-      await client.query('ROLLBACK TO SAVEPOINT broken');
-    });
-
-    it('lets an INSTITUTION govern a space (D3): it is never a parent, so nothing depends on it', async () => {
-      expect(await govern('PDIS', 'gardanne', 'ecole')).toBeNull();
-      expect(await setParent('club-libre', 'ecole')).toBe(DEPENDENCY_PARENT_NOT_A_BDE);
-    });
-
-    it('refuses turning a parent with children into a list - and only the trigger does', async () => {
-      const retype = () =>
-        refusal(client, `UPDATE associations SET type = 'list' WHERE slug = 'bde'`);
-      expect(await retype()).toBe(DEPENDENCY_PARENT_NOT_A_BDE);
-      await client.query('SAVEPOINT broken');
-      await client.query('DROP TRIGGER trg_associations_dependency ON associations');
-      expect(await retype()).toBeNull();
-      await client.query('ROLLBACK TO SAVEPOINT broken');
-    });
-
-    it("allows removing a parent's last space while it has children (2.2: a redesignation stays possible)", async () => {
-      await client.query('SAVEPOINT redesign');
-      expect(
-        await refusal(
-          client,
-          `UPDATE spaces SET "bdeAssociationId" = NULL WHERE "bdeAssociationId" = $1`,
+    it('serialises a parent write and a governor designation: the second sees the first (the advisory lock)', async () => {
+      const other = new Client({ connectionString: URL });
+      await other.connect();
+      try {
+        await other.query(`SET search_path TO ${schema}`);
+        const otherPid = (await other.query<{ pid: number }>('SELECT pg_backend_pid() AS pid'))
+          .rows[0].pid;
+        await client.query('BEGIN');
+        await client.query(
+          `UPDATE associations SET "parentAssociationId" = $1 WHERE slug = 'club-libre'`,
           [id.get('bde')]
-        )
-      ).toBeNull();
-      await client.query('ROLLBACK TO SAVEPOINT redesign');
-    });
-  });
-
-  it('serialises a parent write and a governor designation: the second sees the first (the advisory lock)', async () => {
-    const other = new Client({ connectionString: URL });
-    await other.connect();
-    try {
-      await other.query(`SET search_path TO ${schema}`);
-      const otherPid = (await other.query<{ pid: number }>('SELECT pg_backend_pid() AS pid'))
-        .rows[0].pid;
-      await client.query('BEGIN');
-      await client.query(
-        `UPDATE associations SET "parentAssociationId" = $1 WHERE slug = 'club-libre'`,
-        [id.get('bde')]
-      );
-      // The designation waits on the lock the first trigger holds, then reads its committed row.
-      const designation = other
-        .query(
-          `UPDATE spaces SET "bdeAssociationId" = $1 WHERE formation = 'FSSS' AND campus = 'gardanne'`,
-          [id.get('club-libre')]
-        )
-        .then(
-          () => null,
-          (e: unknown) => dependencyRefusalOf(e)
         );
-      // Proven waiting, never slept on: the other backend is parked on the advisory lock.
-      for (;;) {
-        const { rows } = await client.query(
-          `SELECT wait_event FROM pg_stat_activity WHERE pid = $1`,
-          [otherPid]
+        // The designation waits on the lock the first trigger holds, then reads its committed row.
+        const designation = other
+          .query(
+            `UPDATE spaces SET "bdeAssociationId" = $1 WHERE formation = 'FSSS' AND campus = 'gardanne'`,
+            [id.get('club-libre')]
+          )
+          .then(
+            () => null,
+            (e: unknown) => dependencyRefusalOf(e)
+          );
+        // Proven waiting, never slept on: the other backend is parked on the advisory lock. `client`
+        // reads inside the transaction holding the lock, and `pg_stat_activity` is snapshotted once
+        // per transaction: a fresh snapshot each round, or a backend that parked since is unseen.
+        await untilWaiting({
+          what: 'the designation',
+          settled: settledFlag(designation),
+          waiting: async () => {
+            await client.query('SELECT pg_stat_clear_snapshot()');
+            const { rows } = await client.query(
+              `SELECT wait_event FROM pg_stat_activity WHERE pid = $1`,
+              [otherPid]
+            );
+            return rows[0]?.wait_event === 'advisory' ? 1 : 0;
+          },
+          dump: async () => (await client.query(ACTIVITY_DUMP_SQL)).rows,
+        });
+        await client.query('COMMIT');
+        expect(await designation).toBe(DEPENDENCY_CHILD_IS_A_BDE);
+      } finally {
+        await client.query(
+          `UPDATE associations SET "parentAssociationId" = NULL WHERE slug = 'club-libre'`
         );
-        if (rows[0]?.wait_event === 'advisory') break;
+        await other.end();
       }
-      await client.query('COMMIT');
-      expect(await designation).toBe(DEPENDENCY_CHILD_IS_A_BDE);
-    } finally {
-      await client.query(
-        `UPDATE associations SET "parentAssociationId" = NULL WHERE slug = 'club-libre'`
-      );
-      await other.end();
-    }
+    });
   });
 });
