@@ -231,6 +231,7 @@ describe('PostInteractionsService.addComment notifications', () => {
     await flush();
     expect(t.notifications.notifyPostActivity).not.toHaveBeenCalled();
     expect(t.created).toEqual([expect.objectContaining({ recipientId: 'author', type: 'reply' })]);
+    expect(t.holdersOf).toHaveBeenCalledTimes(1);
   });
 
   it('the author mentioned inside a reply to someone else gets exactly one mention', async () => {
