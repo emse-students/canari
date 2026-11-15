@@ -41,6 +41,7 @@ import { derivePosterKey } from './live-poster-key';
 import { LiveSeatRefused, seatMember, type LiveSeats } from './live-seats';
 import type { LivePurgeResult, LiveSegmentStore, LiveTrimResult } from './live-segment-store';
 import {
+  LIVE_CHAT_BACKLOG,
   LIVE_INGEST_MAX_CONCURRENT,
   LIVE_MANIFEST_WINDOW,
   LIVE_RETAINED_SEGMENTS,
@@ -3524,8 +3525,52 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       /** As the controller does it, with the candidates a client declares. */
       const sayTo = async (who: string, liveId: string, mentions: string[], clientId = uuid()) => {
         await lives.mayChat(who, liveId);
-        return chat.post(who, liveId, { clientId, sealed: sealed('hi'), mentions });
+        const posted = await chat.post(who, liveId, { clientId, sealed: sealed('hi'), mentions });
+        // The fan-out is detached from the answer: wait for it to SETTLE before reading the notices.
+        await chat.mentionFanoutsSettled();
+        return posted;
       };
+
+      it("answers a line before telling anyone: the send's answer never depends on who was reached", async () => {
+        const live = await start();
+        // The push is held open: a line that addresses somebody must answer all the same.
+        let release!: () => void;
+        const held = new Promise<void>((resolve) => (release = resolve));
+        const pushes: string[][] = [];
+        chat = new LiveChatService(
+          ds,
+          { isUserMuted: async () => false } as unknown as ModerationService,
+          lives,
+          {
+            resolveDisplayName: async () => 'Bob',
+            pushNotice: async (data: { recipientIds: string[] }) => {
+              await held;
+              pushes.push(data.recipientIds);
+              return data.recipientIds.length;
+            },
+          } as unknown as PostNotificationsService
+        );
+        try {
+          await lives.mayChat(BOB, live.id);
+          const told = await chat.post(BOB, live.id, {
+            clientId: uuid(),
+            sealed: sealed('hi'),
+            mentions: [CAROL],
+          });
+          const toldNobody = await chat.post(BOB, live.id, {
+            clientId: uuid(),
+            sealed: sealed('hi'),
+            mentions: [FRANK],
+          });
+          // Both answered while the push of the first is still held: same shape, nothing waited.
+          expect(pushes).toEqual([]);
+          expect(Object.keys(told).sort()).toEqual(Object.keys(toldNobody).sort());
+        } finally {
+          release();
+          await chat.mentionFanoutsSettled();
+        }
+        expect(pushes).toEqual([[CAROL]]);
+      });
       const mentionNotices = () => notices.filter((n) => n.type === 'live_mention');
 
       it('tells ONE person per mention, once - a retried send tells nobody twice', async () => {
@@ -3649,6 +3694,18 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
           await q(
             `UPDATE live_chat_messages SET sealed = NULL, "hiddenAt" = now() WHERE "liveId" = $1 AND "authorId" = $2`,
             [live.id, FRANK]
+          );
+          expect(await chat.mentionAudience(BOB, live.id, probe)).toEqual([CAROL]);
+          // A line that scrolled out of what a viewer joining now is served is not "seen" either:
+          // the follower writes again, then a whole backlog of other lines lands after it.
+          await say(FRANK, live.id, 'still here');
+          expect(await chat.mentionAudience(BOB, live.id, [FRANK])).toEqual([FRANK]);
+          await q(
+            `INSERT INTO live_chat_messages ("liveId", seq, "authorId", "clientId", sealed)
+             SELECT $1, (SELECT max(seq) FROM live_chat_messages WHERE "liveId" = $1) + n, $2,
+                    gen_random_uuid(), $3
+               FROM generate_series(1, $4::int) AS n`,
+            [live.id, BOB, sealed('filler'), LIVE_CHAT_BACKLOG]
           );
           expect(await chat.mentionAudience(BOB, live.id, probe)).toEqual([CAROL]);
         } finally {

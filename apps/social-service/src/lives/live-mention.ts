@@ -1,6 +1,10 @@
 import { BadRequestException } from '@nestjs/common';
 import { liveVisibleToUserSql } from '../spaces/reader-spaces';
-import { LIVE_CHAT_MENTIONS_DECLARED_MAX, LIVE_CHAT_MENTIONS_MAX } from './live.constants';
+import {
+  LIVE_CHAT_BACKLOG,
+  LIVE_CHAT_MENTIONS_DECLARED_MAX,
+  LIVE_CHAT_MENTIONS_MAX,
+} from './live.constants';
 
 /** A user id as a mention carries it: 64 lower-case hex characters (the client's `@[id]` token). */
 const MENTION_ID_RE = /^[0-9a-f]{64}$/;
@@ -61,7 +65,8 @@ export type LiveMentionQuestion = 'send' | 'suggest';
  * - the part of the audience read from profile facts - an association's reach, the spaces a
  *   member's live shares (`liveVisibleToUserSql` with `followers: false`): who FOLLOWS the
  *   broadcaster is never in the answer;
- * - whoever has a line in this live's chat that still stands: every chatter reads its author.
+ * - whoever wrote one of the newest {@link LIVE_CHAT_BACKLOG} lines still standing in this live's
+ *   chat - the lines a viewer joining now is served, so every chatter reads their authors.
  * A follower from outside the broadcaster's spaces is therefore offered only once they have
  * written; `send` still tells them when mentioned, and that answer never returns to the caller.
  * The author's own blocks are already hidden by the name search the picker narrows. A person the
@@ -88,9 +93,10 @@ export function liveMentionRecipientsSql(question: LiveMentionQuestion = 'send')
     question === 'send'
       ? liveVisibleToUserSql('m_live', 'cand_user')
       : `(${liveVisibleToUserSql('m_live', 'cand_user', { followers: false })}
-        OR EXISTS (SELECT 1 FROM live_chat_messages spoke
-                    WHERE spoke."liveId" = $2 AND spoke."authorId" = cand.id
-                      AND spoke."hiddenAt" IS NULL))`;
+        OR cand.id IN (SELECT spoke."authorId" FROM (
+                         SELECT standing."authorId" FROM live_chat_messages standing
+                          WHERE standing."liveId" = $2 AND standing."hiddenAt" IS NULL
+                          ORDER BY standing.seq DESC LIMIT ${LIVE_CHAT_BACKLOG}) spoke))`;
   return `SELECT DISTINCT cand.id FROM unnest($3::text[]) AS cand(id)
     JOIN users cand_user ON cand_user.id = cand.id
     JOIN lives m_live ON m_live.id = $2

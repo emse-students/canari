@@ -419,8 +419,9 @@ export async function hideLiveMessage(liveId: string, messageId: string): Promis
 
 /**
  * `POST /api/lives/:id/mention-audience` - which of `ids` the `@` picker of the live's chat may
- * suggest (owner, 2026-11-09): the ones who can see the live, with no block either way. The picker
- * asks it of the accounts a name search found, so it never offers someone a mention would not reach.
+ * suggest (owner, 2026-11-09): the accounts a chatter can already see - who shares the live's spaces,
+ * who wrote one of the chat's recent lines - with no block either way. The picker asks it of the
+ * accounts a name search found.
  */
 export async function fetchLiveMentionAudience(
   liveId: string,

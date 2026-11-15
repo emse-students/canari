@@ -1,5 +1,9 @@
 import { liveMentionRecipientsSql, parseChatMentions } from './live-mention';
-import { LIVE_CHAT_MENTIONS_DECLARED_MAX, LIVE_CHAT_MENTIONS_MAX } from './live.constants';
+import {
+  LIVE_CHAT_BACKLOG,
+  LIVE_CHAT_MENTIONS_DECLARED_MAX,
+  LIVE_CHAT_MENTIONS_MAX,
+} from './live.constants';
 
 const AUTHOR = 'a'.repeat(64);
 const id = (c: string) => c.repeat(64);
@@ -71,7 +75,9 @@ describe('the audience of a mention', () => {
     // and nothing read from who follows whom - only `send`, whose answer stays here, reads that.
     expect(send).toContain('user_follows');
     expect(suggest).not.toContain('user_follows');
-    expect(suggest).toContain('spoke."hiddenAt" IS NULL');
+    // ... and only the authors of the lines a joiner is served.
+    expect(suggest).toContain('standing."hiddenAt" IS NULL');
+    expect(suggest).toContain(`ORDER BY standing.seq DESC LIMIT ${LIVE_CHAT_BACKLOG}`);
     expect(suggest).not.toContain('live_removed_viewers');
     expect(suggest).not.toContain('b2.');
     expect(suggest).not.toContain('"mentionedUserIds"');
