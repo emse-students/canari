@@ -44,6 +44,27 @@ describe('mergeMessagePage', () => {
     expect(mergeMessagePage(current, page).map((m) => m.id)).toEqual(['a', 'queued', 'c']);
   });
 
+  it('keeps the status of a queued own row the page ALSO carries - no stored row has one', () => {
+    // Owner, web 1.6.9, 2026-11-10: a queued photo (stored with its outbox entry, so IN the page)
+    // was re-marked pending at the login, then the conversation's stored page was drawn over it and
+    // the row came back with no status - a check mark and an image placeholder for good.
+    const queuedPhoto = msg('photo', 2000, {
+      isOwn: true,
+      senderId: 'me',
+      content: '{"kind":"media","mediaId":""}',
+    });
+    const page = [msg('a', 1000), queuedPhoto, msg('c', 3000)];
+    const current = [
+      msg('a', 1000),
+      { ...queuedPhoto, status: 'pending' as const },
+      msg('c', 3000),
+    ];
+
+    const merged = mergeMessagePage(current, page);
+
+    expect(merged.find((m) => m.id === 'photo')?.status).toBe('pending');
+  });
+
   it('adds rows the page carries and memory does not', () => {
     const merged = mergeMessagePage([msg('b', 2000)], [msg('a', 1000), msg('b', 2000)]);
     expect(merged.map((m) => m.id)).toEqual(['a', 'b']);

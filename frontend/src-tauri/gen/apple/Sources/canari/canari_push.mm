@@ -805,6 +805,20 @@ static void CanariComposeServerNotification(NSDictionary *data, NSString **title
     *body = arg.length > 0 ? arg : CanariLocalized(@"notif.social.join_ask.body");
     return;
   }
+  id rawOthers = data[@"contentCount"];
+  NSInteger others =
+      [rawOthers isKindOfClass:[NSString class]] ? MAX(0, [rawOthers integerValue]) : 0;
+  // A comment on MY post (owner, 2026-11-14): `contentCount` is how many OTHER people commented
+  // while the post's notification stayed unread - "Alice et 4 autres ont commenté".
+  if ([key isEqualToString:@"social_comment"] && others > 0) {
+    *title = others == 1
+                 ? [NSString stringWithFormat:CanariLocalized(@"notif.social.comment.title_others_one"),
+                                              actor]
+                 : [NSString stringWithFormat:CanariLocalized(@"notif.social.comment.title_others_many"),
+                                              actor, [NSString stringWithFormat:@"%ld", (long)others]];
+    *body = arg.length > 0 ? arg : CanariLocalized(@"notif.social.comment.body");
+    return;
+  }
   NSString *stem = actorTitled[key];
   if (stem) {
     *title = [NSString
@@ -848,8 +862,6 @@ static void CanariComposeServerNotification(NSDictionary *data, NSString **title
       *body = CanariLocalized([NSString stringWithFormat:@"notif.social.%@.body", stem]);
       return;
     }
-    id rawCount = data[@"contentCount"];
-    NSInteger others = [rawCount isKindOfClass:[NSString class]] ? MAX(0, [rawCount integerValue]) : 0;
     if (others == 0) {
       *body = [NSString stringWithFormat:CanariLocalized(@"notif.social.campus_trend.liked_by"), actor];
     } else if (others == 1) {
@@ -867,6 +879,18 @@ static void CanariComposeServerNotification(NSDictionary *data, NSString **title
     return;
   }
   if ([key isEqualToString:@"social_reaction"]) {
+    // On MY post (owner, 2026-11-14): "12 réactions" once others reacted while it stayed unread.
+    if (others > 0) {
+      *title = [NSString stringWithFormat:CanariLocalized(@"notif.social.reaction.title_count"),
+                                          [NSString stringWithFormat:@"%ld", (long)(others + 1)]];
+      *body = others == 1
+                  ? [NSString stringWithFormat:CanariLocalized(@"notif.social.reaction.body_others_one"),
+                                               actor]
+                  : [NSString
+                        stringWithFormat:CanariLocalized(@"notif.social.reaction.body_others_many"),
+                                         actor, [NSString stringWithFormat:@"%ld", (long)others]];
+      return;
+    }
     *title = CanariLocalized(@"notif.social.reaction.title");
     *body = [NSString stringWithFormat:CanariLocalized(@"notif.social.reaction.body"), actor, arg];
     return;
@@ -1547,12 +1571,18 @@ static NSString *const kCanariRingtoneSound = @"canari_ring_callkit.wav";
 ///
 /// `soundFile` names one of the bundled palette-A files; nil is the system default, which is what a
 /// post, a form and the pending-sync notice keep (Android files those on silent-or-default channels).
-static void CanariShowLocalNotification(NSString *title, NSString *body, NSString *deepLink,
-                                      NSString *threadId, int notifId,
-                                      NSString *_Nullable attachmentPath,
-                                      NSString *_Nullable groupId, BOOL timeSensitive,
-                                      NSString *_Nullable subtitle, long long sentAt,
-                                      NSString *_Nullable soundFile) {
+///
+/// `requestIdentifier`, when set, is the request's identifier as the server named it - a post's
+/// `collapseId` (owner, 2026-11-14), the same id APNs files the remote push under - so this local
+/// twin and a later remote push REPLACE each other. `quiet` posts it with no sound, passively: the
+/// update of a post whose notification is still unread.
+static void CanariPostLocalNotification(NSString *title, NSString *body, NSString *deepLink,
+                                        NSString *threadId, int notifId,
+                                        NSString *_Nullable attachmentPath,
+                                        NSString *_Nullable groupId, BOOL timeSensitive,
+                                        NSString *_Nullable subtitle, long long sentAt,
+                                        NSString *_Nullable soundFile,
+                                        NSString *_Nullable requestIdentifier, BOOL quiet) {
   // WP-XP-7: per-conversation notifications use the groupId as thread, not the flat
   // "canari_messages" thread. Suppress the foreground guard ONLY for the old flat thread;
   // per-conversation notifications should still post (they might be from a conversation
@@ -1564,8 +1594,14 @@ static void CanariShowLocalNotification(NSString *title, NSString *body, NSStrin
   UNMutableNotificationContent *content = [[UNMutableNotificationContent alloc] init];
   content.title = title.length > 0 ? title : @"Canari";
   content.body = body ?: @"";
-  content.sound = soundFile.length > 0 ? [UNNotificationSound soundNamed:soundFile]
-                                       : [UNNotificationSound defaultSound];
+  content.sound = quiet                  ? nil
+                  : soundFile.length > 0 ? [UNNotificationSound soundNamed:soundFile]
+                                         : [UNNotificationSound defaultSound];
+  if (quiet) {
+    if (@available(iOS 15.0, *)) {
+      content.interruptionLevel = UNNotificationInterruptionLevelPassive;
+    }
+  }
   content.threadIdentifier = threadId;
   // Inside a group conversation, surface who spoke as a subtitle (WP-XP-7). NSE twin is
   // in NotificationService.swift applyMessageContent.
@@ -1626,7 +1662,9 @@ static void CanariShowLocalNotification(NSString *title, NSString *body, NSStrin
   }
 
   NSString *requestId =
-      notifId > 0 ? [NSString stringWithFormat:@"canari-%d", notifId] : [[NSUUID UUID] UUIDString];
+      requestIdentifier.length > 0 ? requestIdentifier
+      : notifId > 0                ? [NSString stringWithFormat:@"canari-%d", notifId]
+                                   : [[NSUUID UUID] UUIDString];
   UNNotificationRequest *request =
       [UNNotificationRequest requestWithIdentifier:requestId content:content trigger:nil];
   [[UNUserNotificationCenter currentNotificationCenter]
@@ -1657,6 +1695,17 @@ static void CanariShowLocalNotification(NSString *title, NSString *body, NSStrin
            CanariUpdateAppBadge();
          }
        }];
+}
+
+/// Every local notification but a post's collapsed one: no server-named identifier, never quiet.
+static void CanariShowLocalNotification(NSString *title, NSString *body, NSString *deepLink,
+                                      NSString *threadId, int notifId,
+                                      NSString *_Nullable attachmentPath,
+                                      NSString *_Nullable groupId, BOOL timeSensitive,
+                                      NSString *_Nullable subtitle, long long sentAt,
+                                      NSString *_Nullable soundFile) {
+  CanariPostLocalNotification(title, body, deepLink, threadId, notifId, attachmentPath, groupId,
+                              timeSensitive, subtitle, sentAt, soundFile, nil, NO);
 }
 
 /**
@@ -4820,7 +4869,15 @@ static void CanariHandleFcmData(NSDictionary *data) {
     }
     NSString *thread =
         [msgType isEqualToString:@"form_reminder"] ? kCanariThreadForms : kCanariThreadSocial;
-    CanariShowLocalNotification(title, body, deepLink, thread, 0, nil, nil, NO, nil, 0, nil);
+    // ONE LIVE NOTIFICATION PER POST (owner, 2026-11-14): a comment or a reaction on MY post carries
+    // the server's `collapseId`, the identifier APNs files the remote push under, so this twin and
+    // the remote pushes replace each other; `quiet` is the update the server decided must not ring.
+    NSString *collapseId =
+        [data[@"collapseId"] isKindOfClass:[NSString class]] ? data[@"collapseId"] : @"";
+    BOOL quiet = collapseId.length > 0 && [data[@"quiet"] isKindOfClass:[NSString class]] &&
+                 [(NSString *)data[@"quiet"] isEqualToString:@"true"];
+    CanariPostLocalNotification(title, body, deepLink, thread, 0, nil, nil, NO, nil, 0, nil,
+                                collapseId.length > 0 ? collapseId : nil, quiet);
     return;
   }
 
@@ -5638,6 +5695,12 @@ static UNNotificationPresentationOptions CanariOwnLocalPresentation(UNNotificati
   NSString *thread = request.content.threadIdentifier ?: @"";
   if ([thread isEqualToString:kCanariThreadSocial] || [thread isEqualToString:kCanariThreadForms] ||
       [thread isEqualToString:kCanariThreadQuickReply]) {
+    // A quiet update of a post's notification (owner, 2026-11-14) is filed, never shown or heard.
+    if (@available(iOS 15.0, *)) {
+      if (request.content.interruptionLevel == UNNotificationInterruptionLevelPassive) {
+        return UNNotificationPresentationOptionList;
+      }
+    }
     return shown;
   }
   return canari_ios_is_in_foreground() ? UNNotificationPresentationOptionNone : shown;

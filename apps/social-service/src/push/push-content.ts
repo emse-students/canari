@@ -160,9 +160,11 @@ export type PushContent = {
    */
   arg: string;
   /**
-   * A number the sentence needs, set by ONE key family only: the three campus-trend keys, where it
-   * is how many OTHER accounts reacted besides the named `actorName` ("et 9 autres"). Sent as
-   * `contentCount` (decimal) and absent everywhere else - absent means absent, as for the icon.
+   * A number the sentence needs, set by two key families only: the three campus-trend keys, where it
+   * is how many OTHER accounts reacted besides the named `actorName` ("et 9 autres"), and
+   * `social_comment` / `social_reaction` on the reader's own post (2026-11-14), where it is how many
+   * OTHER people did the same among the post's unread rows ("Alice et 4 autres ont commenté"). Sent
+   * as `contentCount` (decimal) and absent everywhere else - absent means absent, as for the icon.
    */
   count?: number;
   legacyTitle: string;
@@ -310,12 +312,18 @@ export function replyContent(actorName: string, preview: string, icon?: PushIcon
 }
 
 /** Someone commented on the recipient's post. */
-export function commentContent(actorName: string, preview: string, icon?: PushIcon): PushContent {
+export function commentContent(
+  actorName: string,
+  preview: string,
+  icon?: PushIcon,
+  others?: number
+): PushContent {
   return {
     key: 'social_comment',
     icon,
     actorName,
     arg: preview,
+    ...(others !== undefined ? { count: others } : {}),
     legacyTitle: `${actorName} a commenté`,
     legacyBody: preview || 'Nouveau commentaire',
   };
@@ -367,12 +375,18 @@ export function reactionTypeToEmoji(reactionType: string): string {
  * The only key whose TITLE names no actor, so the actor travels in the body instead - which is why
  * the native side composes title and body per key rather than from one shared shape.
  */
-export function reactionContent(actorName: string, reaction: string, icon?: PushIcon): PushContent {
+export function reactionContent(
+  actorName: string,
+  reaction: string,
+  icon?: PushIcon,
+  others?: number
+): PushContent {
   return {
     key: 'social_reaction',
     icon,
     actorName,
     arg: reaction,
+    ...(others !== undefined ? { count: others } : {}),
     legacyTitle: 'Nouvelle réaction',
     legacyBody: `${actorName} a réagi ${reaction} à votre publication`,
   };

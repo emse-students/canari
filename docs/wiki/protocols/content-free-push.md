@@ -106,9 +106,10 @@ something to fetch:
   (`dispatchPush` on Android, the extension's `didReceive` switch on iOS) - **no second handler**,
   the rule step 1 already follows. One implementation for 40+ push kinds and every future one.
 - **The iOS presentation is NOT in the data map today, so the answer must carry it.**
-  `buildInternalApnsRequest` decides three things OUTSIDE the map, in the `aps` block: the
-  `thread-id` (`channel_<id>`, the conversation of a reaction, `post_reaction_<id>`, `canari_forms`,
-  `canari_social`), the `sound` (`internalApnsSound`: mention / message / reaction / default) and,
+  `buildInternalApnsRequest` decides these OUTSIDE the map, in the `aps` block: the
+  `thread-id` (`channel_<id>`, the conversation of a reaction, a post's `post_activity_<id>`,
+  `canari_forms`, `canari_social`), the `apns-collapse-id` of a post's activity (2026-11-14), the
+  `sound` (`internalApnsSound`: mention / message / reaction / default) and,
   for a silent push, the background type. A wake's alert carries none of them (they would name the
   conversation), and the extension today keeps the server's `thread-id` and sound for every kind it
   does not rewrite - so a fetched map without them would file every social and reaction banner under
@@ -118,6 +119,11 @@ something to fetch:
   them to the content it delivers. The `apns-push-type`/priority need no carriage: the wake already
   chose them from `silent`. The step-1 MLS answer gets the same three fields (`buildApnsRequest`
   decides them for a frame too), so WP-W5 applies one rule to both kinds of wake.
+  **The `apns-collapse-id` cannot ride a wake** (2026-11-14): it is an HTTP header naming the post,
+  and the NSE cannot change a delivered request's identifier. So a content-free post activity loses
+  replace-in-place on iOS unless WP-W5 finds a carrier for it (an opaque per-recipient id, or the
+  extension removing the post's earlier delivered notification by thread) - owed by WP-W5, not by
+  the collapse ([one per post](../engagement.md#the-owners-decision-of-2026-11-14---what-concerns-you-directly-is-never-dropped-one-live-notification-per-post)).
 - (B) a fetch route per kind, in the service that owns the data (a salon message by id from
   social-service, a bell row by id, ...). Rejected as the recommendation: N routes, N auth checks, and
   the native side learns N answer shapes; a new push kind would need a new route before it could go

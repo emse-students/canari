@@ -343,7 +343,7 @@ describe('a reply is sent as the account its notification was addressed to (revi
 
   it('both posters stamp the recipient under the same key', () => {
     expect(push).toContain('kCanariRecipientKey = @"recipientId";');
-    expect(body('static void CanariShowLocalNotification(')).toContain(
+    expect(body('static void CanariPostLocalNotification(')).toContain(
       'userInfo[kCanariRecipientKey] = recipient;'
     );
     expect(nse).toContain('content.userInfo["recipientId"] = recipient');
