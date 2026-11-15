@@ -711,6 +711,8 @@ maybe('a respondent changes their own answer, against PostgreSQL (migration 166)
       // The form's agenda link answers by the same rule (`FormsController.getFormCalendarLink`).
       expect(await service.mayRead(paidForm, stranger)).toBe(false);
       expect(await service.mayRead(paidForm, { userId: OWNER, isGlobalAdmin: false })).toBe(true);
+      // A form that does not exist answers no, where `get` throws its 404: the one branch they differ on.
+      expect(await service.mayRead('00000000-0000-4000-8000-00000000dead', stranger)).toBe(false);
       expect((await service.hasSubmission(paidForm, BOB)).maySubmit).toBe(false);
       const requestsBefore = issued;
       expect(
