@@ -514,6 +514,13 @@ No entry of the three sets expires on a timer.
    forget, leaving the same entry as item 2, as harmless.
 6. The outage counts (`unknownToRedis`) are per instance: the purge reports and forgets them on
    the instance that runs it, and another instance keeps one number per such live until it stops.
+7. A bar outlives its row in ONE case. No route lifts a removal; the only delete of a
+   `live_removed_viewers` row while its live is open is the removed VIEWER's own account erasure.
+   If that person completes the erasure, signs in again (the same id, the OIDC subject) and comes
+   back to the same live before it ends, PostgreSQL allows them and Redis still bars them:
+   `503 LIVE_SEATS_UNAVAILABLE` for that person on that live until it closes, with the error line
+   `Redis bars a viewer the row allows`. The broadcaster's removal holds for the live it was made
+   on; the erasure does not reach Redis.
 
 **Proven.** Against a real Redis (`live-seats.spec.ts`): an unknown live and a wiped one refuse and
 write nothing; after a close no take is granted, renewal included; an open after the close reopens

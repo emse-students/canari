@@ -2653,7 +2653,9 @@ export class LivesService implements OnModuleDestroy {
     this.unknownToRedis.set(liveId, (refused ?? 0) + 1);
     if (refused !== undefined) return;
     // The two refusals do not heal alike: a live Redis does not know is said open again by its
-    // next segment; a bar the row does not back is removed by nothing but the live's close.
+    // next segment; a bar the row does not back is removed by nothing but the live's close. No
+    // route lifts a removal: the one way to that state is the removed viewer's account erasure,
+    // completed, and the same id back on the same live (lives.md, "What is not closed", 7).
     const state =
       why === 'closed'
         ? 'Redis does not hold the live open while its row is open - no seat until its next segment says it again'

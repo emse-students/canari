@@ -328,6 +328,9 @@ exists for every service, so re-running an old release's `Deploy to Production S
 release back. It used to deploy `latest`, and v0.16.1's rerun redeployed v0.16.4 while passing twenty
 steps (2026-09-06). `release-chain.test.sh` pins the pair; the GHCR prune keeps 30 pushes.
 A rollback does not revert a migration the newer release applied: read it before rolling back across one.
+**A rollback to a build older than 2026-11-15 reopens the live seats' two-build window**, and so does the
+re-deployment after it: a live served only by old instances is refused (`503`) to the viewers a new instance
+serves; bound: the rolling replace, plus one segment ([lives](services/lives.md#no-seat-is-taken-on-a-closed-live-2026-11-15)).
 A rollback also runs the services in the SAME order as a forward deploy (`replace-modes.py`, from
 `depends_on`), so a contract a newer core-service serves and a newer social-service reads has a window
 on the way back that it has not on the way forward: the older core-service is up while the newer
