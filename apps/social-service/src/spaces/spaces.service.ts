@@ -32,6 +32,13 @@ import { writeDependencyJournal } from './dependency-journal';
 import type { AudienceRuleDto } from './dto/space.dto';
 
 /**
+ * Locks association `$1` for a write of its audience rules and answers its `type`; no row when it
+ * does not exist. `FOR NO KEY UPDATE`: two audience writes of one entity wait for each other, while
+ * a row that merely REFERENCES the entity (a post, a member seat - `FOR KEY SHARE`) is not held up.
+ */
+export const AUDIENCE_WRITE_LOCK_SQL = `SELECT type FROM associations WHERE id = $1 FOR NO KEY UPDATE`;
+
+/**
  * The member rows of association `$1` held by users who hold flag `$3` (MANAGE_ASSO) in association
  * `$2` - its FORMER parent. Answers `userId`, `permissions`. Read once a parent changes
  * (`SpacesService.warnFormerParentSeats`), to name what the change did not revoke.
@@ -521,41 +528,51 @@ export class SpacesService {
    * It answers what it stored IN THE READ'S SHAPE (each rule with `editable` for this writer), so the
    * editor renders the write's own result and never needs a second read that could fail after the
    * write has landed.
+   *
+   * THE WRITE IS A REPLACEMENT, SO IT IS JUDGED ON THE RULES IT REPLACES: the entity's row is locked
+   * first ({@link AUDIENCE_WRITE_LOCK_SQL}), then its type, the rules in force and the writer's
+   * bounds are read, judged and replaced in that ONE transaction. Two writes of one entity are
+   * therefore ordered, and the second is judged on what the first stored - never on a read taken
+   * before it.
    */
   async setAudiences(
     associationId: string,
     submitted: AudienceRuleDto[],
     actor: { userId: string; isGlobalAdmin: boolean }
   ): Promise<AudienceRuleView[]> {
-    const association = await this.requireAssociation(associationId);
     const rules = normaliseRules(submitted);
-    this.judged('write', associationId, () =>
-      assertAudienceAllowedForType(association.type, rules)
-    );
     let governedBy: SpaceStanding[] | null = null;
-    if (!actor.isGlobalAdmin) {
-      const current = await this.getAudiences(associationId);
-      // Being its parent already is what stops a star taking an entity over by adding its own space.
-      const { readerSpaces, governorSpaces, governs } = await this.starBounds(
-        actor.userId,
-        associationId
-      );
-      governedBy = governorSpaces;
-      this.judged('write', associationId, () =>
-        assertBdeMayWriteAudience(
-          association.type,
-          readerSpaces,
-          governorSpaces,
-          governs,
-          current,
-          rules
-        )
-      );
-    }
-    this.logger.log(
-      `[spaces] audiences of ${associationId} by ${actor.userId.slice(0, 8)}${actor.isGlobalAdmin ? ' (admin)' : ' (BDE)'}: ${rules.length} rule(s)`
-    );
     const stored = await this.dataSource.transaction(async (manager) => {
+      const [locked] = (await manager.query(AUDIENCE_WRITE_LOCK_SQL, [associationId])) as {
+        type: string;
+      }[];
+      if (!locked) throw new NotFoundException('Association not found');
+      this.judged('write', associationId, () => assertAudienceAllowedForType(locked.type, rules));
+      if (!actor.isGlobalAdmin) {
+        const current = (await manager.find(AssociationAudience, { where: { associationId } })).map(
+          (r) => ({ formation: r.formation, campus: r.campus })
+        );
+        // Being its parent already is what stops a star taking an entity over by adding its own space.
+        const { readerSpaces, governorSpaces, governs } = await this.starBounds(
+          actor.userId,
+          associationId,
+          manager
+        );
+        governedBy = governorSpaces;
+        this.judged('write', associationId, () =>
+          assertBdeMayWriteAudience(
+            locked.type,
+            readerSpaces,
+            governorSpaces,
+            governs,
+            current,
+            rules
+          )
+        );
+      }
+      this.logger.log(
+        `[spaces] audiences of ${associationId} by ${actor.userId.slice(0, 8)}${actor.isGlobalAdmin ? ' (admin)' : ' (BDE)'}: ${rules.length} rule(s)`
+      );
       await manager.delete(AssociationAudience, { associationId });
       if (rules.length > 0) {
         await manager.insert(
@@ -566,7 +583,7 @@ export class SpacesService {
       return rules;
     });
     await this.invalidateFeedCache();
-    const bound = governedBy;
+    const bound = governedBy as SpaceStanding[] | null;
     return stored.map((r) => ({
       ...r,
       editable: bound === null || ruleInsideGovernedSpaces(r, bound),
@@ -601,27 +618,34 @@ export class SpacesService {
    *   WP-D2), never through reach;
    * - `governorSpaces`: every opened space, governed when the entity's own governing BDE governs it
    *   and `userId` holds the flag there - the WRITE bound (G8, D1), per space.
+   *
+   * `runner` is where they are read: the write's own transaction for a write, so the bounds and the
+   * rules they are judged against are read together.
    */
   private async starBounds(
     userId: string,
-    associationId: string
+    associationId: string,
+    runner: { query(sql: string, params: unknown[]): Promise<unknown> } = this.dataSource
   ): Promise<{
     readerSpaces: SpaceStanding[];
     governorSpaces: SpaceStanding[];
     governs: boolean;
   }> {
     const flag = AssociationPermissionFlag.MANAGE_ASSO;
-    const [readerSpaces, governorSpaces, holds] = await Promise.all([
-      this.dataSource.query(BDE_SPACE_STANDINGS_SQL, [userId, flag]) as Promise<SpaceStanding[]>,
-      this.dataSource.query(ENTITY_GOVERNOR_SPACE_STANDINGS_SQL, [
-        associationId,
-        userId,
-        flag,
-      ]) as Promise<SpaceStanding[]>,
-      this.dataSource.query(HOLDS_BDE_FLAG_OVER_SQL, [userId, associationId, flag]) as Promise<
-        { holds: boolean }[]
-      >,
-    ]);
+    // One after the other: `runner` may be ONE connection (a transaction), which runs one query
+    // at a time.
+    const readerSpaces = (await runner.query(BDE_SPACE_STANDINGS_SQL, [
+      userId,
+      flag,
+    ])) as SpaceStanding[];
+    const governorSpaces = (await runner.query(ENTITY_GOVERNOR_SPACE_STANDINGS_SQL, [
+      associationId,
+      userId,
+      flag,
+    ])) as SpaceStanding[];
+    const holds = (await runner.query(HOLDS_BDE_FLAG_OVER_SQL, [userId, associationId, flag])) as {
+      holds: boolean;
+    }[];
     const governs = holds[0]?.holds === true;
     this.logger.debug(
       `[spaces] BDE star standing over ${associationId}: reads ${readerSpaces.filter((r) => r.governed).length}/${readerSpaces.length} spaces, ` +
