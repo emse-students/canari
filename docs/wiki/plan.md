@@ -86,7 +86,6 @@ earliest version, as a checklist.
 
 - [ ] [every route fits on REAL hardware](backlog.d/reading-owed-every-route-fits-on-real-hardware.md)
 - [ ] [the twelve emoji-picture rows on real devices, the iPhone first](backlog.d/emoji-pictures-the-campaign-rows-which-need-real-devices.md)
-- [ ] [a shut phone one commit behind catches up in any community](backlog.d/reading-owed-a-shut-phone-one-commit-behind-catches-up-in-any-community.md)
 - [ ] [Graine v2: the unsigned-row count, the rig re-run and one native refusal](backlog.d/p1-graine-v2-an-author-that-is-proven-and-a-ciphertext-bound-to-its-place.md)
 - [ ] [the CanaReels composer, viewer and editor on real content](backlog.d/reading-owed-the-canareels-composer-viewer-and-editor-on-real-content.md)
 - [ ] [the GRP-3 socket close placed with `ws1.mjs`](backlog.d/p2-a-live-socket-dies-in-the-middle-of-grp-3-and-no-navigation-explains-it-2026.md)
