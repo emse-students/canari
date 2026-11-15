@@ -38,7 +38,8 @@ import {
   sweepDeviceEnvelopes,
   deleteAccountPushTokens,
 } from '../utils/push-envelope';
-import { settledFlag, untilBlockedBehind } from '../testing/lockWait';
+import { settledFlag } from '../testing/lockWait';
+import { untilBlockedBehind } from '../testing/lockBehind';
 
 const URL = process.env.CHAT_DELIVERY_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;

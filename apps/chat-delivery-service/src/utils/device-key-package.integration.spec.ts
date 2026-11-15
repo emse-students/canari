@@ -33,7 +33,8 @@ import { RevokedDevice } from '../entities/revoked-device.entity';
 import { DevicesController } from '../controllers/devices.controller';
 import type { MessagingService } from '../services/messaging.service';
 import { upsertDeviceKeyPackage } from './device-key-package';
-import { settledFlag, untilBlockedBehind } from '../testing/lockWait';
+import { settledFlag } from '../testing/lockWait';
+import { untilBlockedBehind } from '../testing/lockBehind';
 
 const URL = process.env.CHAT_DELIVERY_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;

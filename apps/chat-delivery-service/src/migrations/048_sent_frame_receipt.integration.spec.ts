@@ -22,7 +22,8 @@ import { SentFrameReceipt } from '../entities/sent-frame-receipt.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { QueuedPayload } from '../entities/queued-payload.entity';
 import { saveWithSharedPayload } from '../utils/queued-payload';
-import { settledFlag, untilBlockedBehind } from '../testing/lockWait';
+import { settledFlag } from '../testing/lockWait';
+import { untilBlockedBehind } from '../testing/lockBehind';
 import {
   claimSentFrameReceipt,
   deleteSentFrameReceiptsBefore,
