@@ -151,14 +151,14 @@ describe('PostContent gallery', () => {
     expect(openedAt(target)).toEqual({ index: '2', count: '4' });
   });
 
-  it('draws a file as a row under the grid, never as a cell, without renumbering the pictures', () => {
+  it('draws a file as a card under the grid, never as a cell, without renumbering the pictures', () => {
     const target = render([image(0), file, image(1), image(2)]);
     expect(cells(target).map((cell) => cell.querySelector('button')!.dataset.mediaId)).toEqual([
       'm-0',
       'm-1',
       'm-2',
     ]);
-    const rows = [...target.querySelectorAll<HTMLElement>('[data-gallery-document]')];
+    const rows = [...target.querySelectorAll<HTMLElement>('[data-post-cards] > *')];
     expect(rows).toHaveLength(1);
     expect(rows[0].querySelector('button')!.dataset.mediaId).toBe('f-1');
     const grid = target.querySelector('[data-post-gallery]')!;
@@ -175,7 +175,7 @@ describe('PostContent gallery', () => {
     expect(target.querySelector<HTMLElement>('[style*="aspect-ratio"]')!.style.aspectRatio).toBe(
       '0.6666666666666666 / 1'
     );
-    expect(target.querySelectorAll('[data-gallery-document]')).toHaveLength(1);
+    expect(target.querySelectorAll('[data-post-cards] > *')).toHaveLength(1);
   });
 
   it('asks a video cell to fill its square, and a still to keep its own crop', () => {

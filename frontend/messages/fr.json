@@ -808,7 +808,6 @@
   "settings_notif_bookings_desc": "Une réservation annulée, quittée, faite pour vous, ou qui commence bientôt.",
   "settings_notif_switch_aria": "Notifications : {category}",
   "post_unable_to_report": "Impossible de signaler",
-  "post_event_label": "Événement :",
   "post_view_association_label": "Voir l'association {name}",
   "post_view_profile_label": "Voir le profil de {name}",
   "post_view_anonymous_label": "Auteur anonyme",
@@ -6450,5 +6449,9 @@
   "settings_video_autoplay_desc": "Les vidéos du fil démarrent seules quand elles apparaissent. Sinon, une image et un bouton lecture.",
   "settings_video_autoplay_always": "Toujours",
   "settings_video_autoplay_wifi": "Wi-Fi",
-  "settings_video_autoplay_never": "Jamais"
+  "settings_video_autoplay_never": "Jamais",
+  "attachment_chip_pdf": "PDF",
+  "attachment_chip_event": "Événement",
+  "attachment_event_open": "Voir l'événement",
+  "pdf_open_named_document_label": "Ouvrir {name}"
 }

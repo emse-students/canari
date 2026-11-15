@@ -32,6 +32,7 @@
   import { downloadDecryptedFile } from '$lib/utils/fileDownload';
   import PdfThumbnail from '$lib/components/shared/PdfThumbnail.svelte';
   import PdfViewerModal from '$lib/components/shared/PdfViewerModal.svelte';
+  import AttachmentCard from '$lib/components/shared/AttachmentCard.svelte';
   import MediaLightbox from '$lib/components/shared/MediaLightbox.svelte';
   import VideoPlayer from '$lib/components/shared/VideoPlayer.svelte';
   import VideoPoster from '$lib/components/shared/VideoPoster.svelte';
@@ -247,10 +248,21 @@
   // no height of its own.
   const fillsReservedBox = $derived(reservesAspectRatio(mediaType));
 
-  /** A compact row: drawn from metadata, the file fetched only once the reader asks for it. */
-  const compactFile = $derived(compact && mediaType === 'file');
-
   const isPdf = $derived(mediaType === 'file' && isPdfAttachment(media.mimeType, media.fileName));
+
+  /**
+   * A compact row: drawn from metadata, the file fetched only once the reader asks for it. Only a
+   * PDF has a larger shape (its first page), so any other file is a row whatever the caller asked.
+   */
+  const compactFile = $derived(mediaType === 'file' && (compact || !isPdf));
+
+  /** The card's chip: "PDF", else the file's extension, else "Fichier". */
+  const fileChip = $derived(
+    isPdf
+      ? m.attachment_chip_pdf()
+      : (media.fileName?.match(/\.([a-z0-9]{1,5})$/i)?.[1]?.toUpperCase() ??
+          m.post_media_file_label())
+  );
 
   /** The media as the download reads it - built from the prop, never tracked through it. */
   function buildMediaRef(): MediaRef {
@@ -605,8 +617,9 @@
   {/if}
 {:else}
   <!-- Standalone rendering -->
-  {#if compactFile && !failure && !authMissing}
-    <!-- A compact row never waits on its download: it is drawn from metadata alone. -->
+  {#if mediaType === 'file' && !failure && !authMissing}
+    <!-- A file card never waits on its download: it is drawn from metadata alone, and the hero's
+         first page has its 4:3 box reserved up front, filled once the file is in. -->
     {@render fileCard()}
   {:else if loading}
     {#if mediaType === 'image'}
@@ -650,18 +663,6 @@
       >
         <Mic size={20} class="text-text-muted opacity-20" />
         <div class="ml-3 h-2 flex-1 rounded-full bg-current opacity-10"></div>
-      </div>
-    {:else}
-      <!-- Same footprint as the loaded file card, so nothing jumps on arrival. -->
-      <div
-        class="flex w-full animate-pulse items-center gap-3.5 rounded-3xl bg-black/5 px-3.5 py-3 dark:bg-white/10"
-      >
-        <div
-          class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-black/10 dark:bg-white/10"
-        >
-          <FileText size={22} class="text-text-muted opacity-20" strokeWidth={1.5} />
-        </div>
-        <div class="h-2.5 flex-1 rounded-full bg-black/10 dark:bg-white/10"></div>
       </div>
     {/if}
   {:else if authMissing}
@@ -758,9 +759,8 @@
         <audio use:arbitratePlayback src={blobUrl} controls preload="metadata" class="h-12 w-full"
         ></audio>
       </div>
-    {:else}
-      {@render fileCard()}
     {/if}
+    <!-- A file never reaches here: its card is drawn from metadata, first branch above. -->
   {/if}
 
   <!-- In-app PDF reader -->
@@ -832,97 +832,77 @@
   {/if}
 {/if}
 
-<!-- THE FILE CARD: a header row (icon, name, size, download) and, for a lone PDF, the first page.
-     `compact` is a document among several (owner, 2026-11-02): the row alone, no preview. -->
+<!-- THE FILE CARD, IN THE ONE CARD FAMILY (`AttachmentCard`, owner 2026-11-15): the file glyph, a
+     "PDF" (or extension) chip, the name, the size, and the download beside it. A tap on a PDF opens
+     the in-app reader. `compact` (every file of a post that is not its lone attachment) is the row
+     drawn from metadata alone; the hero is a lone PDF, whose first page runs full width above it. -->
 {#snippet fileCard()}
-  {#snippet fileRowContent()}
-    <div
-      class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-black/10 dark:bg-white/10"
-    >
-      <FileText size={22} strokeWidth={2} class="text-text-muted" />
-    </div>
-    <div class="min-w-0 flex-1 overflow-hidden text-left">
-      <p class="mb-0.5 truncate text-xs leading-tight font-bold">
-        {media.fileName ?? m.post_media_file_label()}
-      </p>
-      <!-- No `uppercase` here: it would render the "Ko" unit as "KO". -->
-      <p class="text-text-muted text-2xs font-semibold">
-        {formatFileSize(media.size)}
-      </p>
-      {#if saveReady}
-        <p class="text-2xs text-accent-text font-semibold" data-save-ready-hint>
-          {m.post_file_ready_to_save()}
-        </p>
+  {#snippet fileTile()}
+    <FileText size={24} strokeWidth={2} />
+  {/snippet}
+  {#snippet pdfPage()}
+    <span class="block aspect-[4/3] w-full overflow-hidden bg-white" data-pdf-page-slot>
+      {#if blobUrl}
+        <PdfThumbnail
+          url={blobUrl}
+          maxWidth={640}
+          imgClass="h-full w-full object-cover object-top bg-white"
+        />
+      {:else}
+        <span class="block h-full w-full animate-pulse bg-black/5" aria-hidden="true"></span>
       {/if}
-    </div>
+    </span>
+  {/snippet}
+  {#snippet download()}
+    <button
+      type="button"
+      onclick={(e) => {
+        e.stopPropagation();
+        activate('download');
+      }}
+      class="ui-icon-button focus-visible:ring-accent-icon rounded-xl transition-all outline-none hover:bg-black/10 focus-visible:ring-2 dark:hover:bg-white/10"
+      aria-label={m.post_download_label()}
+    >
+      {#if busy}
+        <LoaderCircle
+          size={18}
+          strokeWidth={2.5}
+          class="animate-spin opacity-70"
+          data-file-spinner
+        />
+      {:else}
+        <Download
+          size={18}
+          strokeWidth={2.5}
+          class="{saveReady
+            ? 'text-accent-text'
+            : 'opacity-70'} transition-opacity group-hover/att:opacity-100"
+        />
+      {/if}
+    </button>
   {/snippet}
 
   <div
-    class="group/file w-full max-w-full overflow-hidden rounded-2xl border border-black/5 bg-black/5 transition-colors dark:border-white/10 dark:bg-white/10"
+    class="w-full max-w-full"
     aria-busy={busy}
     data-file-card
     data-busy={busy ? '' : undefined}
     data-save-ready={saveReady ? '' : undefined}
   >
-    <div class="flex items-center gap-3.5 px-3.5 {compactFile ? 'py-2' : 'py-3'}">
-      {#if isPdf}
-        <!-- The whole header opens the document; only the download button is carved out
-             of it, which is why it cannot simply wrap the row. -->
-        <button
-          type="button"
-          onclick={openPdfViewer}
-          class="focus-visible:ring-accent-icon flex min-w-0 flex-1 cursor-pointer items-center gap-3.5 rounded-xl outline-none focus-visible:ring-2"
-          aria-label={m.pdf_open_document_label()}
-        >
-          {@render fileRowContent()}
-        </button>
-      {:else}
-        {@render fileRowContent()}
-      {/if}
-      <button
-        type="button"
-        onclick={(e) => {
-          e.stopPropagation();
-          activate('download');
-        }}
-        class="ui-icon-button focus-visible:ring-accent-icon rounded-xl transition-all outline-none hover:bg-black/10 focus-visible:ring-2 dark:hover:bg-white/10"
-        aria-label={m.post_download_label()}
-      >
-        {#if busy}
-          <LoaderCircle
-            size={18}
-            strokeWidth={2.5}
-            class="animate-spin opacity-70"
-            data-file-spinner
-          />
-        {:else}
-          <Download
-            size={18}
-            strokeWidth={2.5}
-            class="{saveReady
-              ? 'text-accent-text'
-              : 'opacity-70'} transition-opacity group-hover/file:opacity-100"
-          />
-        {/if}
-      </button>
-    </div>
-    {#if isPdf && !compactFile}
-      <!-- A post is wide enough to show the page itself; the row keeps its
-           icon so the document is never rendered twice. The preview repeats the header's
-           action rather than adding a second tab stop, hence tabindex -1. -->
-      <button
-        type="button"
-        onclick={openPdfViewer}
-        tabindex="-1"
-        aria-hidden="true"
-        class="block w-full cursor-pointer"
-      >
-        <PdfThumbnail
-          url={blobUrl!}
-          maxWidth={640}
-          imgClass="w-full max-h-[22rem] object-contain object-top border-t border-black/5 dark:border-white/10 bg-white"
-        />
-      </button>
-    {/if}
+    <AttachmentCard
+      kind="file"
+      onclick={isPdf ? openPdfViewer : undefined}
+      ariaLabel={isPdf
+        ? m.pdf_open_named_document_label({ name: media.fileName ?? m.post_media_file_label() })
+        : undefined}
+      chip={fileChip}
+      title={media.fileName ?? m.post_media_file_label()}
+      subtitle={saveReady ? m.post_file_ready_to_save() : formatFileSize(media.size)}
+      tile={fileTile}
+      hero={isPdf && !compactFile}
+      banner={pdfPage}
+      trailing={download}
+      showArrow={false}
+    />
   </div>
 {/snippet}

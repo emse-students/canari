@@ -7,7 +7,6 @@
     admitAttachments,
     attachmentCapNotice,
   } from '$lib/posts/attachmentCap';
-  import { usesCompactDocumentRows } from '$lib/utils/posts/documentRows';
   import { FileText, Film, Music, CalendarCheck, CircleAlert } from '@lucide/svelte';
   import { slide } from 'svelte/transition';
   import { onMount, untrack } from 'svelte';
@@ -271,9 +270,6 @@
     newMediaCaptions = [...newMediaCaptions, ...files.map(() => '')];
   }
 
-  /** Two or more existing documents are rows that fetch nothing until tapped, as on the post card. */
-  const compactExisting = $derived(usesCompactDocumentRows(existingMedia));
-
   /** Removes an existing media item (already uploaded) by index. */
   function removeExistingMedia(i: number) {
     existingMedia = existingMedia.filter((_, idx) => idx !== i);
@@ -509,11 +505,7 @@
               <div
                 class="group relative aspect-square w-full overflow-hidden rounded-2xl border border-black/10 shadow-sm dark:border-white/10"
               >
-                <PostMedia
-                  media={mediaItem}
-                  authToken={currentAuthToken}
-                  compact={compactExisting && resolveMediaType(mediaItem) === 'file'}
-                />
+                <PostMedia media={mediaItem} authToken={currentAuthToken} compact />
                 <MediaThumbRemoveButton
                   label={m.post_edit_remove_image_aria()}
                   title={m.common_delete_button()}

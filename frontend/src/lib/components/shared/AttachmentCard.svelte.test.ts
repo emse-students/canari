@@ -1,0 +1,117 @@
+// @vitest-environment happy-dom
+/**
+ * THE ONE CARD (owner, 2026-11-15) and the review of #3616: the arrow says the card opens something
+ * and where (exit glyph out of the app, chevron inside it), stays beside a trailing control, and goes
+ * when a hero's call to action already says it; a chip that repeats the title is dropped; and what
+ * a banner shows is never a control of its own.
+ */
+import { afterEach, describe, expect, it } from 'vitest';
+import { createRawSnippet, flushSync, mount, unmount } from 'svelte';
+import AttachmentCard from './AttachmentCard.svelte';
+
+const mounted: (() => void)[] = [];
+afterEach(() => {
+  while (mounted.length) mounted.pop()!();
+  document.body.innerHTML = '';
+});
+
+const html = (markup: string) => createRawSnippet(() => ({ render: () => markup }));
+
+function render(props: Record<string, unknown>) {
+  const target = document.createElement('div');
+  document.body.appendChild(target);
+  const app = mount(AttachmentCard, {
+    target,
+    props: { kind: 'link', chip: 'Type', title: 'Title', tile: html('<span></span>'), ...props },
+  });
+  mounted.push(() => void unmount(app));
+  flushSync();
+  return target;
+}
+
+const arrow = (t: HTMLElement) =>
+  t.querySelector<HTMLElement>('[data-attachment-arrow]')?.dataset.attachmentArrow ?? null;
+
+describe('AttachmentCard arrow', () => {
+  it('reads "external" out of the app and "in-app" inside it', () => {
+    expect(arrow(render({ href: 'https://x.example', external: true }))).toBe('external');
+    expect(arrow(render({ href: '/forms/1' }))).toBe('in-app');
+  });
+
+  it('stays beside a trailing control, unless the caller says that control already speaks', () => {
+    const target = render({ onclick: () => {}, trailing: html('<span>bell</span>') });
+    expect(arrow(target)).toBe('in-app');
+    const download = render({
+      onclick: () => {},
+      trailing: html('<span>dl</span>'),
+      showArrow: false,
+    });
+    expect(arrow(download)).toBeNull();
+  });
+
+  it('draws a tap-only card as a bare ui/Button holding phrasing content only', () => {
+    const target = render({
+      onclick: () => {},
+      ariaLabel: 'Open cours.pdf',
+      subtitle: '12 kB',
+      hero: true,
+      banner: html('<span>page</span>'),
+    });
+    const buttons = [...target.querySelectorAll('button')];
+    expect(buttons).toHaveLength(2);
+    const row = buttons.find((b) => b.getAttribute('aria-label') === 'Open cours.pdf')!;
+    expect(row.className).not.toContain('ui-control');
+    expect(row.className).toContain('flex');
+    // A button takes phrasing content only: no div, no paragraph inside either of them.
+    for (const button of buttons) expect(button.querySelector('div, p')).toBeNull();
+  });
+
+  it('clamps the title to two lines: no display utility overrides the clamp box', () => {
+    const target = render({ href: '/x', title: 'A long title' });
+    const title = [...target.querySelectorAll('span')].find(
+      (s) => s.textContent?.trim() === 'A long title'
+    )!;
+    expect(title.className).toContain('line-clamp-2');
+    expect(title.className).not.toMatch(/(^|\s)(block|flex|inline|grid)(\s|$)/);
+  });
+
+  it('is a link whenever it has an address, even with a tap handler of its own', () => {
+    const target = render({ href: '/forms/1', onclick: () => {} });
+    expect(target.querySelector('button')).toBeNull();
+    expect(target.querySelector('a[href="/forms/1"]')).not.toBeNull();
+  });
+
+  it('is absent on a card that opens nothing, and on a hero showing its call to action', () => {
+    expect(arrow(render({ trailing: html('<button>dl</button>') }))).toBeNull();
+    const hero = render({ href: '/forms/1', hero: true, heroAction: 'Fill' });
+    expect(arrow(hero)).toBeNull();
+    expect(hero.textContent).toContain('Fill');
+  });
+});
+
+describe('AttachmentCard chip', () => {
+  it('is dropped when the title only repeats it', () => {
+    const same = render({ href: '/x', chip: 'MiGallery', title: 'migallery' });
+    expect(same.querySelector('[data-attachment-chip]')).toBeNull();
+    const other = render({ href: '/x', chip: 'MiGallery', title: 'Soiree' });
+    expect(other.querySelector('[data-attachment-chip]')?.textContent?.trim()).toBe('MiGallery');
+  });
+});
+
+describe('AttachmentCard pictures', () => {
+  it('makes what the banner and the band below show inert: no focus, no tap of its own', () => {
+    const target = render({
+      href: '/posts/1',
+      hero: true,
+      banner: html('<div><button data-zoom>zoom</button></div>'),
+    });
+    const zoom = target.querySelector('[data-zoom]')!;
+    expect(zoom.closest('[inert]')).not.toBeNull();
+    expect(zoom.closest('[inert]')!.className).toContain('pointer-events-none');
+    const below = render({
+      href: '/posts/1',
+      below: html('<div><button data-zoom2>z</button></div>'),
+    });
+    expect(below.querySelector('[data-zoom2]')!.closest('[inert]')).not.toBeNull();
+  });
+});
