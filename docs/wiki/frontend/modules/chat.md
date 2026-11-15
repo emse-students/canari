@@ -1596,7 +1596,11 @@ also keeps RUNNING after a hand-over (unlike an unload), and its tails had to be
   second review): a drain stores its rows when its window closes, while a checkpoint that landed
   before the lead left may already hold those frames' ratchet advance and seen marks. A reload in
   between - 50 ms after the demotion, now routine - lost the message for good: the new leader can
-  neither decrypt it again nor replay it. The socket is paused, so the open windows only close;
+  neither decrypt it again nor replay it. It waits for the windows open AT the demotion only (third
+  review): a drain restarting behind each close would otherwise hold it for good. What remains is a
+  window that never closes - a hung handler or observer, which `guarded` reports every minute - and
+  then this document, out of the election (`leaving`), stays a stale copy until it is reloaded by
+  hand. The loss itself is not closed by this wait: [rows before ratchet](../../backlog.d/p1-rows-before-ratchet.md);
 - **a lead handed over and not yet taken is released at `freeze`**: the old leader is a follower
   from the grant, but holds the lock until the asker steals it, and an asker that closed in between
   never will. Frozen with that hold, it left every tab a follower until it was thawed;
@@ -1656,7 +1660,8 @@ guard refused the leader's (`MLS state write REFUSED as stale`) - closed by #337
   lead left, an uncovered message is withheld and a covered one acknowledged; a checkpoint claims
   what it held at its export; the drain wires it through the persister; the repeat of a withheld
   commit is re-acknowledged only behind a checkpoint covering it; and `whenBulkIngestsClosed`
-  settles only once the last window's observers have returned.
+  settles only once the last window's observers have returned, and is not held by a window opened
+  after it asked.
 - the send seam (`BaseMlsService.sendSeam.test.ts`): a lead that leaves mid-send seals nothing.
 - `outbox.test.ts`: the line is said once, a lead lost during the gates leaves the entry queued, and
   an offline follower does not ask for the lead.

@@ -269,6 +269,21 @@ describe('a document leaving the lead reloads only once its ingest windows have 
     for (let i = 0; i < 10; i++) await Promise.resolve();
     expect(settled).toBe(true);
   });
+
+  it('is not held by a window opened after it asked (third review of #3321)', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const svc = makeService();
+    const drain = svc.beginBulkIngest({ bufferUi: true, showOverlay: false });
+    let settled = false;
+    void svc.whenBulkIngestsClosed().then(() => (settled = true));
+    // The next drain opens before the first closes - a restart behind each close would otherwise
+    // keep the count above zero for as long as frames keep coming.
+    const next = svc.beginBulkIngest({ bufferUi: true, showOverlay: false });
+    await svc.endBulkIngest(drain);
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(settled).toBe(true);
+    await svc.endBulkIngest(next);
+  });
 });
 
 describe('the drain wires it: a commit it applied waits for the persister checkpoint the drain started', () => {

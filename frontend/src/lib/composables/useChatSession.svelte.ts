@@ -366,8 +366,9 @@ export function useChatSession() {
     if (isLoggedIn) {
       try {
         settled = ctx.ensureMls().whenBulkIngestsClosed();
-      } catch {
+      } catch (e) {
         // No service built yet: nothing was drained, so nothing is buffered.
+        tabLeaderSessionCb?.log(`[TAB] No MLS service to wait for before the reload: ${String(e)}`);
       }
     }
     if (settled === null) reload();

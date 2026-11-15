@@ -1775,18 +1775,29 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   /** Windows removed from {@link openBulkIngests} whose observers are still closing. */
-  private closingBulkIngests = 0;
+  private readonly closingBulkIngests = new Set<BulkIngestHandle>();
 
-  /** Waiters of {@link whenBulkIngestsClosed}, released by the last close. */
-  private bulkIngestsClosedWaiters: Array<() => void> = [];
+  /**
+   * Waiters of {@link whenBulkIngestsClosed}, each with the windows it is still behind. Released by
+   * the close of the last of THOSE windows - never held by one opened after it asked.
+   */
+  private bulkIngestsClosedWaiters: Array<{ behind: Set<BulkIngestHandle>; release: () => void }> =
+    [];
 
   whenBulkIngestsClosed(): Promise<void> {
-    if (this.openBulkIngests.size === 0 && this.closingBulkIngests === 0) return Promise.resolve();
+    // THE WINDOWS OPEN NOW, NOT THE ONES TO COME (third review of #3321). The caller is behind rows a
+    // window already holds; a window opened after it asked holds rows it never asked about, and
+    // waiting for "none open" would let a drain that restarts behind each close hold it for good.
+    const behind = new Set<BulkIngestHandle>([
+      ...this.openBulkIngests.keys(),
+      ...this.closingBulkIngests,
+    ]);
+    if (behind.size === 0) return Promise.resolve();
     // Said only when it waits: the line names what the caller is behind.
     console.log(
-      `[QUEUE] waiting for ${this.openBulkIngests.size + this.closingBulkIngests} open ingest window(s) to close before going on`
+      `[QUEUE] waiting for ${behind.size} open ingest window(s) to close before going on`
     );
-    return new Promise<void>((resolve) => this.bulkIngestsClosedWaiters.push(resolve));
+    return new Promise<void>((release) => this.bulkIngestsClosedWaiters.push({ behind, release }));
   }
 
   async endBulkIngest(handle: BulkIngestHandle): Promise<void> {
@@ -1798,7 +1809,7 @@ export abstract class BaseMlsService implements IMlsService {
       return;
     }
     this.openBulkIngests.delete(handle);
-    this.closingBulkIngests += 1;
+    this.closingBulkIngests.add(handle);
     try {
       // Replay the exact phase the matching open used: start and end can never disagree.
       //
@@ -1818,10 +1829,13 @@ export abstract class BaseMlsService implements IMlsService {
         }
       }
     } finally {
-      this.closingBulkIngests -= 1;
-      if (this.openBulkIngests.size === 0 && this.closingBulkIngests === 0) {
-        for (const resolve of this.bulkIngestsClosedWaiters.splice(0)) resolve();
-      }
+      this.closingBulkIngests.delete(handle);
+      this.bulkIngestsClosedWaiters = this.bulkIngestsClosedWaiters.filter((waiter) => {
+        waiter.behind.delete(handle);
+        if (waiter.behind.size > 0) return true;
+        waiter.release();
+        return false;
+      });
     }
   }
 

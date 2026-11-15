@@ -1912,8 +1912,9 @@ export interface IMlsService {
   addBulkIngestObserver(observer: BulkIngestObserver): void;
 
   /**
-   * Resolves once no bulk-ingest window is open or closing - every observer's close has returned,
-   * so the rows a drain buffered are stored. At once when none is. A document leaving the lead
+   * Resolves once every bulk-ingest window open or closing AT THE CALL has closed - each one's
+   * observers have returned, so the rows a drain buffered are stored. At once when none is; a
+   * window opened after the call does not hold it. A document leaving the lead
    * reloads behind it (`useChatSession`): a checkpoint that landed before the lead left may already
    * hold the ratchet advance and the seen mark of a frame whose row is still buffered, and a reload
    * there would lose the message for good.
