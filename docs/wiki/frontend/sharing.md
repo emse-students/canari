@@ -358,7 +358,8 @@ A link to `/posts/<id>` in a conversation or a channel draws `SharedPostCard` (c
 `MessageTextBody`), no longer the generic `LinkPreviewCard`: author avatar and name, the first
 picture decrypted by `PostMedia` (client-side CEK, no new crypto), a video as its ThumbHash with the
 decorative glass play glyph (`VideoGlassGlyph`, no button), a reel as the 9:16 card with a
-"CanaReel" chip and a tap that opens the reels viewer, the caption on three lines.
+"CanaReel" chip and a tap that opens the reels viewer, the caption on four lines.
+- **The caption is the feed's own rendering** (owner, 2026-11-16: it was flat text, line breaks and `#` lost). The preview kept `markdownToPlainText(post.markdown)`; it now keeps the bounded markdown SOURCE (`sharedPostCaptionSource`, 600 chars, a torn `@[uuid]` dropped) and the card draws it through `PostMarkdown`, the component of the feed and the reel viewer (hashtags, mentions, links, emphasis, line breaks, no raw HTML). It is `inert` and `pointer-events-none`: the whole card is the one link, so a tap on a hashtag opens the post, not the hashtag feed (a nested link would be a second control). The card reads the live post, not a stored excerpt, so no old message needs a migration. Reading owed: [the readings](../backlog.d/shared-post-card-rich-caption-reading-owed.md).
 - **Wire format unchanged**: the message is still the bare link, so an older app draws its generic card.
 - **Recipient's rights**: `sharedPostPreview.ts` reads `GET /api/posts/:id` under the reader's
   session. 403/404/410 is a verdict (cached per viewer for the session, drawn "Publication

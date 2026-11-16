@@ -44,6 +44,7 @@ earliest version, as a checklist.
 - [Decided - the owner's answers of 2026-11-07](backlog.d/owner-decisions-of-2026-11-07.md)
 - ["Envoyer a..." to several targets and CanaReels in chats: the 13 readings, then the production flip](backlog.d/envoyer-a-and-canareels-in-chats-the-readings-then-the-production-flip.md)
 - [The owner's decisions of 2026-11-09](backlog.d/owner-decisions-of-2026-11-09.md)
+- [Reading owed: the shared post / CanaReel card's rich caption](backlog.d/shared-post-card-rich-caption-reading-owed.md)
 - [The owner's decisions of 2026-11-11](backlog.d/owner-decisions-of-2026-11-11.md)
 - [The owner's decisions of 2026-11-14](backlog.d/owner-decisions-of-2026-11-14.md)
 - [The background Welcome's warm-process refusal: two native changes](backlog.d/p3-the-background-welcome-s-warm-process-refusal-its-rate-its-wasted-round-trip.md)

@@ -134,6 +134,22 @@ describe('SharedPostCard', () => {
     await vi.waitFor(() => expect(navigateInAppFromHref).toHaveBeenCalledWith(URL_P));
   });
 
+  it('renders the caption as the feed does: hashtags as links, line breaks, markdown, clamped, inert', async () => {
+    getPost.mockResolvedValue({
+      ...base,
+      markdown: 'Entrainement **UTMB**\n#strava #utmb',
+    });
+    const target = render();
+    await settled(target, 'post');
+    const box = target.querySelector('.post-markdown') as HTMLElement;
+    expect(box.querySelector('strong')?.textContent).toBe('UTMB');
+    expect(box.textContent).toContain('#strava');
+    expect(box.querySelector('br')).not.toBeNull();
+    expect(box.className).toContain('line-clamp-4');
+    expect(box.closest('[inert]')).not.toBeNull();
+    expect(box.innerHTML).not.toContain('<script');
+  });
+
   it('draws a video post as a poster with the decorative glass play glyph, no download', async () => {
     getPost.mockResolvedValue({
       ...base,

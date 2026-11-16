@@ -1,6 +1,5 @@
 import { getPost, isReel, type PostEntity, type PostMediaRef } from '$lib/posts/api';
 import { postAuthorName } from '$lib/posts/postAuthorName';
-import { markdownToPlainText, truncateForMeta } from '$lib/seo/text';
 import { refusalStatus } from '$lib/utils/apiRefusal';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import { isUuidLike } from '$lib/utils/uuidShape';
@@ -16,8 +15,22 @@ import { Log } from '$lib/utils/Log';
  * draws {@link SharedPostPreview} `unavailable`, never a thumbnail and never any of its text.
  */
 
-/** The longest caption kept: the card clamps it to three lines, this only bounds the string. */
-export const SHARED_POST_CAPTION_MAX = 240;
+/** The longest caption source kept: the card clamps it to a few lines, this only bounds the string. */
+export const SHARED_POST_CAPTION_MAX = 600;
+
+/**
+ * The caption's MARKDOWN SOURCE, bounded: the card renders it with the feed's own renderer
+ * (`PostMarkdown`), so the hashtags, mentions, links and line breaks of the post survive. A cut
+ * that lands inside a `@[uuid]` mention token drops the torn token rather than draw its debris.
+ */
+export function sharedPostCaptionSource(markdown: string | null | undefined): string {
+  const source = (markdown ?? '').trim();
+  if (source.length <= SHARED_POST_CAPTION_MAX) return source;
+  return source
+    .slice(0, SHARED_POST_CAPTION_MAX)
+    .replace(/@\[[^\]]*$/, '')
+    .trimEnd();
+}
 
 /** Ratios the preview may take, width over height: Instagram's feed crop, 4:5 to 16:9. */
 const MIN_ASPECT = 4 / 5;
@@ -32,7 +45,7 @@ export interface SharedPostReady {
   /** The post, for the avatar choice (`PostAuthorAvatar`) - never rendered as a whole. */
   post: PostEntity;
   authorName: string;
-  /** Plain text, bounded; empty when the post has none. */
+  /** The post's markdown source, bounded; empty when the post has none. */
   caption: string;
   /** The first picture or video, or `null` for a text-only post (or a file / audio first). */
   media: PostMediaRef | null;
@@ -93,7 +106,7 @@ export function sharedPostReady(post: PostEntity): SharedPostReady {
     // The post header's own resolver: the association, "Anonyme" for an anonymous post, or the
     // author's name - never the author's id as a fallback.
     authorName: postAuthorName(post),
-    caption: truncateForMeta(markdownToPlainText(post.markdown ?? ''), SHARED_POST_CAPTION_MAX),
+    caption: sharedPostCaptionSource(post.markdown),
     media,
     mediaKind: kind,
     isReel: reel,
