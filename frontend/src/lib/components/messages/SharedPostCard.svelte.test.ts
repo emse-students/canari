@@ -150,6 +150,17 @@ describe('SharedPostCard', () => {
     expect(box.innerHTML).not.toContain('<script');
   });
 
+  it('never loads a remote picture written in the caption (tracking vector)', async () => {
+    getPost.mockResolvedValue({
+      ...base,
+      markdown: 'Salut ![pixel](https://tracker.example/p.png) fin',
+    });
+    const target = render();
+    await settled(target, 'post');
+    const box = target.querySelector('.post-markdown') as HTMLElement;
+    expect(box.querySelector('img[src*="tracker.example"]')).toBeNull();
+  });
+
   it('draws a video post as a poster with the decorative glass play glyph, no download', async () => {
     getPost.mockResolvedValue({
       ...base,

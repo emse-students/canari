@@ -24,12 +24,22 @@ export const SHARED_POST_CAPTION_MAX = 600;
  * that lands inside a `@[uuid]` mention token drops the torn token rather than draw its debris.
  */
 export function sharedPostCaptionSource(markdown: string | null | undefined): string {
-  const source = (markdown ?? '').trim();
+  // A picture written in the caption is its alt text here: the card is drawn in every chat that
+  // shows the post, so a remote `![](https://...)` would be fetched by each reader (a tracking
+  // pixel, charter principle 3). The post's own media are the only pictures a card loads.
+  const source = (markdown ?? '')
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/!\[([^\]]*)\]\[[^\]]*\]/g, '$1')
+    .trim();
   if (source.length <= SHARED_POST_CAPTION_MAX) return source;
-  return source
-    .slice(0, SHARED_POST_CAPTION_MAX)
-    .replace(/@\[[^\]]*$/, '')
-    .trimEnd();
+  return (
+    source
+      .slice(0, SHARED_POST_CAPTION_MAX)
+      .replace(/@\[[^\]]*$/, '')
+      // A cut between the two halves of a surrogate pair leaves a lone one: a replacement glyph.
+      .replace(/[\uD800-\uDBFF]$/, '')
+      .trimEnd()
+  );
 }
 
 /** Ratios the preview may take, width over height: Instagram's feed crop, 4:5 to 16:9. */

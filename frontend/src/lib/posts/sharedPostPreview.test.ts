@@ -52,6 +52,9 @@ describe('sharedPostReady', () => {
     const cut = sharedPostCaptionSource(long);
     expect(cut).toBe('a'.repeat(SHARED_POST_CAPTION_MAX - 3));
     expect(sharedPostCaptionSource(null)).toBe('');
+    expect(sharedPostCaptionSource('a ![px](https://t.example/p.png) b ![q][r]')).toBe('a px b q');
+    const pair = `${'a'.repeat(SHARED_POST_CAPTION_MAX - 1)}\u{1F600}`;
+    expect(sharedPostCaptionSource(pair)).toBe('a'.repeat(SHARED_POST_CAPTION_MAX - 1));
   });
 
   it('is text-only when the first media is a file', () => {
