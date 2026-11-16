@@ -1707,5 +1707,80 @@ describe('CallsService', () => {
       expect(lastTokenLookup()).toEqual(['caller', 'b', 'c', 'd']);
       expect(redisStore.get(`call:room:${roomId}:ring_ended`)).toBe('cancelled');
     });
+
+    /**
+     * WP-GC7: the last participant of an answered group call is often NOT the caller, and a
+     * member's ring-end stops only its own devices - so a member rung by CallKit or the Android
+     * full-screen ring kept ringing an emptied room until the window closed.
+     */
+    describe('an emptied room ends every ring (WP-GC7)', () => {
+      /** A mesh group call opened by `caller`, with `b` holding a room token for it. */
+      const openWithJoiner = async (): Promise<string> => {
+        groupCallsMode = 'mesh';
+        const { roomId } = await service.initiateCall('caller', 'group-1', false, 1);
+        await service.ringGroup('caller', 'group-1', roomId, false);
+        groupMemberRepo.findOne.mockResolvedValue({ groupId: 'group-1', userId: 'b' });
+        await service.requestRoomToken('b', 'group-1', roomId, '1');
+        pushTokenRepo.find.mockResolvedValue([]);
+        return roomId;
+      };
+
+      it("a tokened member's room-empty ends every member's ring", async () => {
+        const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+        const roomId = await openWithJoiner();
+
+        await service.endRing('b', 'group-1', roomId, 'room-empty');
+
+        expect(lastTokenLookup()).toEqual(['caller', 'b', 'c', 'd']);
+        expect(redisStore.get(`call:room:${roomId}:ring_ended`)).toBe('room-empty');
+        expect(captured(log)).toContain('room-empty from a participant - every member');
+      });
+
+      it('the caller, tokened at initiate, may end every ring with room-empty too', async () => {
+        jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+        const roomId = await openWithJoiner();
+
+        groupMemberRepo.findOne.mockResolvedValue({ groupId: 'group-1', userId: 'caller' });
+        await service.endRing('caller', 'group-1', roomId, 'room-empty');
+
+        expect(lastTokenLookup()).toEqual(['caller', 'b', 'c', 'd']);
+      });
+
+      it('a member with no token for THIS call is refused: their own devices only, at WARN', async () => {
+        jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+        const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+        const roomId = await openWithJoiner();
+
+        // `c` never joined this room - a token for ANOTHER call buys nothing here.
+        groupMemberRepo.findOne.mockResolvedValue({ groupId: 'group-1', userId: 'c' });
+        const { roomId: other } = await service.initiateCall('c', 'group-1', false, 1);
+        await service.endRing('c', 'group-1', roomId, 'room-empty');
+
+        expect(other).not.toBe(roomId);
+        expect(lastTokenLookup()).toEqual(['c']);
+        expect(redisStore.has(`call:room:${roomId}:ring_ended`)).toBe(false);
+        expect(captured(warn)).toContain('room-empty REFUSED');
+      });
+
+      it('the other reasons are unchanged: a tokened member stops only their own devices', async () => {
+        jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+        const roomId = await openWithJoiner();
+
+        for (const reason of ['cancelled', 'answered', 'ended'] as const) {
+          await service.endRing('b', 'group-1', roomId, reason);
+          expect(lastTokenLookup()).toEqual(['b']);
+        }
+        expect(redisStore.has(`call:room:${roomId}:ring_ended`)).toBe(false);
+      });
+
+      it('a room-empty naming no room of this conversation stops only the sender devices', async () => {
+        jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+        await openWithJoiner();
+
+        await service.endRing('b', 'group-1', 'no-such-room', 'room-empty');
+
+        expect(lastTokenLookup()).toEqual(['b']);
+      });
+    });
   });
 });

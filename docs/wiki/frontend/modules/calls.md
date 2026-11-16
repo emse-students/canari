@@ -2045,11 +2045,32 @@ other participant, the tile grid, the start control in a group) is the
 - **WP-C11, refusal and the end of a group call - decided 2026-11-13, reversible:** one decline
   does not end the call; the call ends for a participant when the last other participant has left.
   On the server, a member's `ring-end` stops THAT member's devices only and does not mark the ring
-  ended; only the caller's ends the ring for everyone. A group call keeps the 60 s ring window to
-  join (interim).
+  ended; only the caller's ends the ring for everyone - and, since
+  [WP-GC7](#an-emptied-room-ends-every-ring-wp-gc7-server-half-2026-11-16), a participant's
+  `room-empty`. A group call keeps the 60 s ring window to join (interim).
 - **Pinned by** `calls.service.spec.ts` (`group calls (WP-GC2)`), `push.controller.wake.spec.ts`,
   `callFailure.test.ts`, the call-service tests named on its page, and the core-service platform and
   version specs.
+
+### An emptied room ends every ring (WP-GC7, server half, 2026-11-16)
+
+A non-caller's `ring-end` stops only its own devices (WP-C11), so when the last participant of an
+answered group call is not the caller, a member rung by CallKit or the Android full-screen ring kept
+ringing until the 60 s window closed. Decided 2026-11-16 (reversible): the ring-end reasons are
+`'cancelled' | 'answered' | 'ended' | 'room-empty'` (`RingEndReason`, `calls.service.ts`), and
+`endRing` honours `room-empty` for EVERY member - marks the ring ended (`ring_ended = room-empty`,
+so no late VoIP push and no later token) and fans `call_ring_end` out to all - but only from a user
+this service issued a room token for THAT call: `call:room:<id>:tokened:<user>`, written for the
+caller at `initiate` and for a callee at `room-token`, before the token leaves, with the binding's
+TTL. From anyone else, `room-empty` stops only the sender's devices and logs
+`room-empty REFUSED for every member` at WARN; a `room-empty` naming no room of the conversation is
+the sender's own devices, as every unbound ring-end. The other three reasons are unchanged.
+
+- **Pinned by** `calls.service.spec.ts` (`an emptied room ends every ring (WP-GC7)`).
+- **Owed:** the client line - `CallService.endCall` sending `room-empty` exactly when its hangup
+  says `roomEmpty` - after WP-GC6; until then no client sends it, and an older server reads an
+  unknown reason as `cancelled`. Reading: a three-way call with C's app killed, C's lock-screen ring
+  stops at the last hangup on the Mi 9T and the iPhone 12.
 
 ### The relay leg (WP-GC4, 2026-11-13)
 

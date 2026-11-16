@@ -11,7 +11,7 @@ import {
   HttpCode,
 } from '@nestjs/common';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
-import { CallsService } from '../services/calls.service';
+import { CallsService, type RingEndReason } from '../services/calls.service';
 import { sanitizeQueryValue } from '../utils/sanitize';
 
 /** WebRTC TURN credential and room token endpoints for authenticated group members. */
@@ -109,7 +109,8 @@ export class CallsController {
 
   /**
    * Stops the ring on every member device (caller cancelled, someone answered, or the
-   * call ended before pickup). Any group member may send it.
+   * call ended before pickup). Any group member may send it; `room-empty` (WP-GC7) reaches every
+   * member only from one who held a room token for that call (see `CallsService.endRing`).
    */
   @UseGuards(HeaderAuthGuard)
   @Post('calls/ring-end')
@@ -121,8 +122,10 @@ export class CallsController {
     if (!userId) throw new BadRequestException('Missing X-User-Id header');
     const safeGroupId = sanitizeQueryValue(body?.groupId, 'groupId');
     const safeCallId = sanitizeQueryValue(body?.callId, 'callId');
-    const reason =
-      body?.reason === 'answered' || body?.reason === 'ended' ? body.reason : 'cancelled';
+    const reason: RingEndReason =
+      body?.reason === 'answered' || body?.reason === 'ended' || body?.reason === 'room-empty'
+        ? body.reason
+        : 'cancelled';
     return this.callsService.endRing(userId, safeGroupId, safeCallId, reason);
   }
 
