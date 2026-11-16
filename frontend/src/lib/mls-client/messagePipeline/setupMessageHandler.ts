@@ -1811,7 +1811,9 @@ async function upsertConversation(
     // even though we just got re-added (rule: re-add => same conversation, active).
     // A row with a seed of its own keeps it: a re-Welcome (a re-add, a repair) is no reason to move
     // a conversation in the list. Only a row with none - the placeholder above - takes the admission.
-    const lastMessageAt = existing.lastMessageAt ?? seed;
+    // 0 is no seed either: a row with no message, seed or start is persisted as recency 0 and read
+    // back as `lastMessageAt: 0`.
+    const lastMessageAt = existing.lastMessageAt || seed;
     const updated = {
       ...existing,
       id: joinedGroupId,

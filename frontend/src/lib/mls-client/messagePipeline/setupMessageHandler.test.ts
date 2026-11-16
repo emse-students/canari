@@ -1162,6 +1162,22 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
       expect(deps.conversations.get(joined)?.lastMessageAt).toBe(seeded);
     });
 
+    it('a row restored with the persisted 0 of an unseeded row takes the admission', async () => {
+      // `toConversationMeta` writes `updatedAt` as the recency, 0 for a row with no message, seed or
+      // start, and the load reads it back as `lastMessageAt: 0` - a value that is the ABSENCE of a seed.
+      const { deps } = await deliverWelcome(
+        { name: 'Equipe', isGroup: true },
+        { queuedCreatedAt: ADMITTED_AT },
+        {
+          conversations: createTestConversations([
+            [joined, emptyConversation(joined, { lifecycle: 'pending', lastMessageAt: 0 })],
+          ]),
+        }
+      );
+
+      expect(deps.conversations.get(joined)?.lastMessageAt).toBe(ADMITTED_AT);
+    });
+
     it('a Welcome with no server time leaves no seed, and says so at warn', async () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
       restores.push(() => warn.mockRestore());
