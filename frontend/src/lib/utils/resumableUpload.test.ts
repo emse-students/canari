@@ -665,7 +665,7 @@ describe('uploadResumable, two parts in flight (2026-11-16)', () => {
         onWire++;
         most = Math.max(most, onWire);
         // A turn of the event loop on the wire, so a serial writer would show ONE here.
-        await new Promise((r) => setTimeout(r, 1));
+        await new Promise((r) => setTimeout(r, 0));
         try {
           return await inner.request(...args);
         } finally {
