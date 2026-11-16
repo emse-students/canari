@@ -20,3 +20,5 @@ again in English. The same sheet on an account in good standing still offers Sta
 - **Suspended, English:** "You can no longer start a live until December 14." with "Try again", Start greyed, the same three console lines and no `[LIVE] start`.
 - **Control after the rows were deleted** (`live_cuts` back to 0): Start enabled, no line.
 **Left: the same sheet in a phone's WebView (the entry's own premise, "one phone is enough"), and the two cuts through `/admin/moderation` instead of fixture rows.** The web code is shared, so a phone read is expected to repeat this; it has not been taken.
+
+**iPhone 12, 2026-11-16 (`1.7.0-alpha.2`): the phone WebView half PASSES** (the sheet said "Vous ne pouvez plus lancer de live jusqu'au 15 décembre." with Start greyed, then offered Start once the fixture rows were deleted; [readings](../device-verification.md#the-iphone-12-readings-of-2026-11-16-170-alpha2-the-all-entries-sitting)). **Left: the two cuts through `/admin/moderation` instead of fixture rows.**
