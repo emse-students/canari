@@ -202,10 +202,48 @@ maybe('a salon granted late badges only what arrives after the grant (PostgreSQL
     );
     expect(row.readMarks).toEqual({});
 
-    // A row stamped AT the floor is the grant's own millisecond; one after it is news.
+    // The floor is the millisecond BEFORE the grant's: a row stamped at it is past, one after it -
+    // the grant's own millisecond onwards - is news.
     await postAfterFloor(salon, 'late', 0);
     await postAfterFloor(salon, 'late', 1);
     expect(await countOf('late', salon)).toBe(1);
+  });
+
+  it('a row posted after the floor was taken, inside the same millisecond, still counts', async () => {
+    await member('boundary');
+    const salon = await salonWithPast(['salons']);
+    // THE GRANT'S CLOCK, PINNED: its one `clock_timestamp()` is read as a fixed instant half-way
+    // through a millisecond, so the boundary is deterministic. A row stamped a tenth of a
+    // millisecond LATER was posted after the grant - news, never a row of the past.
+    const grantAt = '2026-11-16 12:00:00.000500';
+    const postedAt = '2026-11-16 12:00:00.000600';
+    type FloorFn = (m: { query: typeof q }, ...rest: unknown[]) => Promise<void>;
+    const original = (ChannelService.prototype as unknown as { floorUnreadAtGrant: FloorFn })
+      .floorUnreadAtGrant;
+    const floorSpy = jest.spyOn(service as never, 'floorUnreadAtGrant' as never);
+    floorSpy.mockImplementation((async (m: { query: typeof q }, ...rest: unknown[]) => {
+      const pinned = {
+        query: (sql: string, params?: unknown[]) => {
+          if (!sql.includes('clock_timestamp()')) throw new Error('the floor reads no clock');
+          return m.query(
+            sql.replace('clock_timestamp()', `('${grantAt}'::timestamp AT TIME ZONE 'UTC')`),
+            params
+          );
+        },
+      };
+      await original.call(service, pinned, ...rest);
+    }) as never);
+    try {
+      expect(await grant(salon, 'boundary')).toMatchObject({ outcome: 'granted' });
+    } finally {
+      floorSpy.mockRestore();
+    }
+    await q(
+      `INSERT INTO channel_messages ("workspaceId", "channelId", "authorId", content, "createdAt")
+       VALUES ($1, $2, 'peer', 'x', $3::timestamp)`,
+      [WS, salon, postedAt]
+    );
+    expect(await countOf('boundary', salon)).toBe(1);
   });
 
   it('never lowers a floor the member had already cleared past', async () => {

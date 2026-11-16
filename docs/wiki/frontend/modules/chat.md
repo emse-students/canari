@@ -466,7 +466,10 @@ access rewrite that adds a name to a private salon, and a private salon made pub
 did not name). Making a public salon private floors nobody: they all saw it already. The floor is the
 one "Marquer tout comme lu" raises ([read-receipt-privacy](../../read-receipt-privacy.md)), so it
 claims nothing public - the "Lu par" read mark does not move - and `listUnreadCounts` already reads
-it. It is taken on the DATABASE clock (`clock_timestamp()`), the clock that stamps `createdAt`, and
+it. It is taken on the DATABASE clock (`clock_timestamp()`), the clock that stamps `createdAt`, ONE
+MILLISECOND BELOW the grant's: the count keeps a row only when its whole millisecond is above the
+floor, so a floor on the grant's own millisecond hid a row posted after the grant inside it (found in
+review, failing first); below it, the worst case is one row of that millisecond's past counted. It is
 only ever raised (`GREATEST`); a revoke leaves it, a re-grant raises it again. The client needs no
 change: a grantee was outside the salon's audience before, so no live message was tallied, and the
 count it draws is the server's.

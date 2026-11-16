@@ -1263,6 +1263,10 @@ export class ChannelService implements OnApplicationBootstrap {
    *
    * THE DATABASE'S CLOCK (`clock_timestamp()`), the clock that stamps every row's `createdAt`, so a
    * message posted after the grant can never fall under its floor by a skew between two machines.
+   * AND ONE MILLISECOND BELOW IT: the count keeps a row when its WHOLE millisecond is above the
+   * floor (`listUnreadCounts`), so a floor on the grant's own millisecond hid a row posted after the
+   * grant within that millisecond. Below it, the worst case is a row of the past posted in that same
+   * millisecond counted once - a badge too many, never a message hidden (principle 2 before 3).
    * Only ever raised, by the same `GREATEST` merge as {@link clearWorkspaceUnread}: a member who had
    * cleared further keeps it. A revoke leaves the mark; a re-grant raises it again.
    */
@@ -1278,7 +1282,7 @@ export class ChannelService implements OnApplicationBootstrap {
           SET "clearedMarks" = cm."clearedMarks" || jsonb_build_object(
                 $1::text,
                 GREATEST(
-                  floor(extract(epoch from clock_timestamp()) * 1000)::bigint,
+                  floor(extract(epoch from clock_timestamp()) * 1000)::bigint - 1,
                   COALESCE((cm."clearedMarks" ->> $1::text)::bigint, 0)
                 )
               )
