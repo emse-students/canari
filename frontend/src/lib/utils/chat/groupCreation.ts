@@ -22,6 +22,7 @@ import { isBlockedWith } from '$lib/users/blocks';
 import { dropGroupState } from './dropGroupState';
 import { logBestEffortGroupDeleteFailure } from './pendingGroupExits';
 import { holdsGroupState } from './groupUsability';
+import { markGroupInCreation } from './groupsInCreation';
 import {
   CommitOutcomeUnknownError,
   FollowerTabCommitError,
@@ -234,10 +235,15 @@ export async function createNewGroup(
 
   let groupId: string | undefined;
   let conversationKey: string | undefined;
+  let releaseCreationMark: (() => void) | undefined;
 
   try {
     groupId = await mlsService.createRemoteGroup(groupDisplayName, true); // true = multi-user group
     conversationKey = groupId;
+    // MARKED BEFORE THE SERVER CAN LIST IT, released in the `finally` once the row is written or the
+    // group deleted: the connection sweeps read this mark rather than take the listed, rowless group
+    // for one this device lost (`groupsInCreation.ts`).
+    releaseCreationMark = markGroupInCreation(groupId);
 
     // THE MEMBERSHIP IS REGISTERED BEFORE THE LOCAL GROUP EXISTS, AND THE ORDER IS AN INVARIANT.
     //
@@ -380,6 +386,8 @@ export async function createNewGroup(
       }
     }
     return { ok: false, reason: creationRefusal(e) };
+  } finally {
+    releaseCreationMark?.();
   }
 }
 
@@ -1410,8 +1418,11 @@ export async function startNewConversation(
 
   const groupName = `${userId}::${contact}`;
   let groupId: string | undefined;
+  let releaseCreationMark: (() => void) | undefined;
   try {
     groupId = await mlsService.createRemoteGroup(groupName, false); // false = 1-to-1 direct conversation
+    // The same mark as `createNewGroup`, for the same window (`groupsInCreation.ts`).
+    releaseCreationMark = markGroupInCreation(groupId);
     console.log(`[DM] createRemoteGroup → groupId=${groupId}`);
     log(`[DM] Remote group created: ${groupId}`);
     const conversationKey = groupId;
@@ -1514,5 +1525,7 @@ export async function startNewConversation(
       }
     }
     return { ok: false, reason: creationRefusal(_e) };
+  } finally {
+    releaseCreationMark?.();
   }
 }

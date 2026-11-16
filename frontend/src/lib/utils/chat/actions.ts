@@ -33,6 +33,7 @@ import { answerHistoryDigest, stateOurCoverage } from '$lib/utils/chat/historyDi
 import { pendingGroupExitIds } from '$lib/utils/chat/pendingGroupExits';
 import { welcomeSentAt } from '$lib/utils/chat/welcomeSent';
 import { ensureConversationForServerGroup } from '$lib/utils/chat/serverGroupConversation';
+import { isGroupInCreation } from '$lib/utils/chat/groupsInCreation';
 import { retireConversation } from '$lib/utils/chat/conversations';
 import {
   refusalIsTemporary,
@@ -663,6 +664,21 @@ export async function processPendingInvitations(params: {
   const answeredAgain = new Map<string, number>();
 
   for (const [groupId, invitations] of byGroup) {
+    // A GROUP THIS DEVICE IS CREATING IS NOT ABSENT, AND ITS ROWS ARE NOT THIS SWEEP'S. The creation
+    // registers the membership first, which writes a `pending` row for each of the user's other
+    // devices, and admits those very devices in its own bulk Add - while its conversation row is
+    // written only at the end. Read without this, the group looked absent and a re-add recovery was
+    // requested for a group this device was building (LEAF-REFRESH-1, 2026-11-16). Its rows were not
+    // read through, so what they say of an ask stays as shown (`onGroupNotSwept`).
+    if (isGroupInCreation(groupId)) {
+      Log.d(
+        'Pending',
+        `${groupId.slice(0, 8)}... is being created by this device - its own Add admits these ${invitations.length} device(s)`
+      );
+      onGroupNotSwept?.(groupId);
+      continue;
+    }
+
     // "Ready to invite" = conversation active AND group present in local WASM.
     // After a recovery forgetGroup, the conversation stays active but the group
     // has left WASM: calling addMember would loop on "Group not found". We fall into the
@@ -1419,7 +1435,11 @@ export async function discoverMissingGroups(params: {
   // device has already decided to leave is not "missing locally", it is on its way out
   // ({@link ensureConversationForServerGroup}). The question is per group, the round trip is not.
   const owedExits = await pendingGroupExitIds(params.storage);
-  const missing = activeServerGroups.filter((g) => !localGroupIds.has(g.groupId));
+  // A group this device is creating is listed and rowless by construction, not missing: the
+  // creation writes its row (`groupsInCreation.ts`), and the seam below says so at debug.
+  const missing = activeServerGroups.filter(
+    (g) => !localGroupIds.has(g.groupId) && !isGroupInCreation(g.groupId)
+  );
 
   if (missing.length > 0) {
     log(
