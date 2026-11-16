@@ -56,7 +56,10 @@
 //! anew; there is no "replaced" flag to read. And every relayed frame is handed on UNDER the room's
 //! lock ([`P2pRoom::relay`]), the lock the replacement and its `PeerReady` take: a frame the replaced
 //! device sent reaches a participant BEFORE that `PeerReady`, or never - so every frame `from` a
-//! user after a `PeerReady` naming them was sent by the device that `PeerReady` announced.
+//! user after a `PeerReady` naming them was sent by the device that `PeerReady` announced. The
+//! converse does not hold: the new seat routes from the moment it is taken, before its `Joined`,
+//! and a participant may still send what it meant for the old leg until it reads its `PeerReady`,
+//! so the new device drops or survives such frames (the wiki section above).
 
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};

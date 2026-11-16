@@ -2112,6 +2112,13 @@ device joins a call with alice and carol:
   replaced device sent reaches a participant BEFORE the new `PeerReady` (it belongs to the old leg,
   which the client is about to drop) or never. Every frame `from: "bob"` after that `PeerReady` is
   the new device's.
+- **That guarantee runs ONE way: toward the participants, never toward the new device.** The new
+  seat routes `to: "bob"` from the moment it is taken, which is BEFORE its `Joined` and its
+  `PeerReady` frames are handed on, and alice or carol may still be sending what they meant for the
+  OLD leg (an answer, candidates) until they read their own `PeerReady`. No server lock can order
+  those: they were sent before the sender knew. So the new device MUST drop a frame from a `peer` it
+  holds no leg for yet, and must survive one the new leg cannot use (an answer while it is `stable`
+  and polite, a candidate of the old ICE session) as a logged, ignored error - never as a failed leg.
 
 Pinned by `tests/p2p_signalling.rs`
 (`a_second_device_in_a_mesh_replaces_the_first_with_one_peer_ready_per_participant`,
