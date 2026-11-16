@@ -1133,6 +1133,24 @@ rebuilt. **What a fault provokes is forgiven exactly, one line each**: `rowkit.m
 5xx once in invariant 4 and names it as an approximation. DUP-7 needs a new device and is played by
 the device runner.
 
+
+```sh
+bun archive/leaf.mjs --row LEAF-REFRESH-1|LEAF-REFRESH-2   # W6 (owner account) + W7 (peer account)
+bun archive/leaf.mjs --row LEAF-REFRESH-4                  # REVOKES W7's device: re-enrol W7 after (newdevice.mjs)
+bun archive/run.mjs LEAF                                    # -1 and -2
+```
+
+**A LEAF-REFRESH ROW ARMS A DUE REFRESH ON THE SPARE SEATS AND FAULTS ITS COMMIT.** W6 mints the row's group
+and Adds W7 (its own commit dates its leaf), then `mlsrow.mjs` `armLeafRefresh` backdates the ledger eight
+days AFTER the fault is armed, so W6's next send is the trigger. -1 holds the refresh's commit POST, cuts the
+link (`net.mjs` `cutHard`) and fails the held request (it never left), lets the client say `unknown`, then
+answers the settlement `503` with the link UP: there the owner's row-group texts must not reach the peer
+while its text in a SIDE group does (DUP-5's control). -2 reloads W6 with the POST held and reads the
+`[COMMIT] settling N staged commit(s)` line, the resubmission and the ledger naming the server's epoch. -4
+revokes W7's own campaign-owned device and, in the SAME page script, attempts a commit from it (refused
+`DEVICE_REVOKED`), then reloads W6 and counts one `[STRAY] ... revoked device(s) still hold a leaf - removing`
+per group. **Read the gate's lines with whole-second `--since` values**: a fraction dropped a `REJECT` line
+on dev. Judgements in `leafrows.mjs`, pinned by `archive/leaf-selftest.mjs`.
 ```sh
 bun archive/gap.mjs --row GAP-1|GAP-2   # frames ahead of their commits; past-epoch frames again
 bun archive/gap.mjs --row GAP-3         # 2100 sends, then a pull that starts past 2050 - run alone
@@ -1218,6 +1236,8 @@ carries it. DUP-7 and DEV-7 pick ONE group's request on a shared route with `fau
 a new device makes its owner commit in every group at once. **W6 is the owner's second scratch
 profile**: it must be declared in `names.mjs` (owner account) and signed in once by a human. DEV-5 is
 played with CORRUPT-8. Judgements in `devicerows.mjs`, pinned by `archive/devrows-selftest.mjs`.
+
+**RE-ENROLLING A SPARE SEAT WHOSE VAULT IS LOCKED BY A STALE PIN (2026-11-16).** A seat enrolled before the account's PIN was last reset reads "Vos messages enregistres sur cet appareil sont verrouilles par un autre PIN" at `pin.mjs`, and recovering it would reset the account's PIN for EVERY device. Do not recover: make it a NEW device. `bun newdevice.mjs --device W6 --keep-open` (W6 and W7 are in its `WIPEABLE`; a seat is added by a repository edit) clears the origin, signs in, answers the PIN of record, and purges the id it abandoned through the product's device panel - no PIN reset, no other device touched, about 40 s. `unlock.mjs` skips a seat no account's `clients` list names (W6-W8 are not in the file), so use `pin.mjs --device W6 --stay` for them. A seat signed in as ANOTHER account (`login.mjs --device W7 --account third`) is undone the same way: `newdevice.mjs --device W7` signs it back in as its own account (it reports `sameAccount=false` for that one run, and the id it calls purged is the OTHER account's, which this seat's device panel cannot delete: check that account's panel). **A block between two bench accounts severs their follows both ways and lifting it restores none** - re-create the follow row on dev if a phone sitting relied on it.
 
 ```sh
 bun archive/salon.mjs --row RM-4|RM-4b|RM-5|RM-6

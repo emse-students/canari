@@ -17,15 +17,16 @@ import { mark } from './marker.mjs';
  * The row-group prefixes of section 4.2. A group a runner mints is `<GROUP><n>-<mark tail>`
  * (`FLOOR2-mh3k2a9xq`), so `debris.mjs` can sweep it and nothing a person types matches it.
  */
-export const ROW_GROUPS = ['FLOOR', 'CC', 'DUP', 'OFF', 'KILL', 'GAP', 'RM', 'ADM', 'DEV', 'BIG', 'TOK', 'NET', 'LIST'];
+export const ROW_GROUPS = ['FLOOR', 'CC', 'DUP', 'OFF', 'KILL', 'GAP', 'RM', 'ADM', 'DEV', 'BIG', 'TOK', 'NET', 'LIST', 'LEAF'];
 
 /**
- * `FLOOR-2` -> `FLOOR2`, `RM-4b` -> `RM4b`, refusing an id that is not a 1.4.1 row. The one lower-case
+ * `FLOOR-2` -> `FLOOR2`, `RM-4b` -> `RM4b`, `LEAF-REFRESH-2` -> `LEAF2`, refusing an id that is not a 1.4.1 row. The one lower-case
  * letter is a sibling row on the same subject (RM-4b, the revoke race beside RM-4's grant race), and
  * `debris.mjs` allows exactly that letter.
  */
 export function rowStem(rowId) {
-  const m = /^([A-Z]+)-(\d+)([a-z]?)$/.exec(String(rowId));
+  // `LEAF-REFRESH-2` is the one id with a second word (the plan's own spelling); its group is `LEAF`.
+  const m = /^([A-Z]+)(?:-REFRESH)?-(\d+)([a-z]?)$/.exec(String(rowId));
   if (!m || !ROW_GROUPS.includes(m[1])) throw new Error(`rowStem: '${rowId}' is not a 1.4.1 row id (${ROW_GROUPS.join(' ')})`);
   return `${m[1]}${m[2]}${m[3]}`;
 }
