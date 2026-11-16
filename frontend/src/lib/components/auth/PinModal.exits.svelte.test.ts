@@ -19,6 +19,7 @@
  * outside the scrolling body, and the submit still reaches the form it no longer nests in.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { flushSync, mount, unmount } from 'svelte';
 import { initHistoryOverlayStack } from '$lib/utils/historyOverlayStack';
 import { m } from '$lib/paraglide/messages';
@@ -270,5 +271,27 @@ describe('PinModal - the sign-out is out of the tab bar zone', () => {
     document.querySelector<HTMLElement>('[data-pin-signout]')!.click();
     flushSync();
     expect(onSignOut).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('PinModal - the top row clears the status bar and the notch', () => {
+  // The row pads nothing itself: it is the first child of the panel, and `phoneFullScreen` puts the
+  // safe-area-inset-top (iPhone notch, Android status bar, as `--safe-area-inset-top`) on the PANEL
+  // so its background covers it. Pinned as the chain it is: the gate asks for the full-screen panel,
+  // the stylesheet pads that panel by the token, and the row is in flow (not `fixed`/`absolute`,
+  // which would ignore the panel's padding and sit under the bar).
+  it('is a flow child of a panel padded by the top safe-area token', () => {
+    const css = readFileSync('src/app.css', 'utf8');
+    const gate = readFileSync('src/lib/components/auth/PinModal.svelte', 'utf8');
+    expect(gate).toMatch(/<Modal[^>]*\n\s+phoneFullScreen/);
+    expect(css).toMatch(
+      /\.modal-phone-full \.keyboard-aware-modal-panel\s*\{[^}]*padding-top:\s*var\(--safe-area-inset-top, 0px\)/
+    );
+    expect(css).toMatch(/--safe-area-inset-top:\s*env\(safe-area-inset-top, 0px\)/);
+
+    raiseGate();
+    const bar = document.querySelector<HTMLElement>('[data-pin-signout-bar]')!;
+    expect(bar.className).not.toMatch(/\b(fixed|absolute|sticky)\b/);
+    expect(bar.parentElement!.closest('[role="dialog"]')).not.toBeNull();
   });
 });
