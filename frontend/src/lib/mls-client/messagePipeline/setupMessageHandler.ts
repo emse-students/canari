@@ -289,6 +289,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           statePersister,
           pendingBuffer,
           startRecovery,
+          admittedAt: deliveryMeta?.queuedCreatedAt,
         });
       }
 
@@ -380,6 +381,37 @@ interface WelcomeArgs {
   pendingBuffer: Map<string, { msgs: PendingMsg[] }>;
   /** Starts a recovery and returns immediately - never awaited, see `startRecovery`. */
   startRecovery: (groupId: string, opts?: ReAddOptions) => void;
+  /**
+   * The SERVER's time of this Welcome (`queuedCreatedAt`): the moment this account was admitted,
+   * the same on each of its devices. The joined row's ordering seed - see {@link admissionSeed}.
+   */
+  admittedAt: number | undefined;
+}
+
+/**
+ * The ordering seed of a conversation this Welcome makes appear: the server time of the admission.
+ *
+ * WHY A JOINED ROW NEEDS ONE. It holds notices at most, and a notice is not activity
+ * (`conversationRecency`), so with no seed its sort key was 0 - the LAST row of the list. On a phone
+ * with a long list that is below the screen: the iPhone 12 (`1.7.0-alpha.5`, 2026-11-16) joined two
+ * groups with the list in front and drew neither for minutes, then listed both on the first screen
+ * after a resume, whose reconnect ran the group sweep that writes `startedAt` onto a row lacking one
+ * (`recordGroupStart`). The creator's row is seeded with its creation moment
+ * (`groupCreation`); this is the joiner's counterpart, on the server's clock like every sort key.
+ *
+ * A Welcome with no server time is a delivery that lost a field it always carries, so it is ACCUSED
+ * and nothing is invented in its place: the row then sorts by its first real message.
+ */
+function admissionSeed(
+  admittedAt: number | undefined,
+  groupId: string,
+  log: MessageHandlerDeps['log']
+): number | undefined {
+  if (admittedAt !== undefined) return admittedAt;
+  const line = `[WELCOME] ${groupId.slice(0, 8)}... the Welcome carries no server time - the joined conversation has no ordering seed and sorts last until its first real message`;
+  console.warn(line);
+  log(line);
+  return undefined;
 }
 
 /**
@@ -556,6 +588,7 @@ async function handleWelcome(args: WelcomeArgs): Promise<boolean> {
     statePersister,
     pendingBuffer,
     startRecovery,
+    admittedAt,
   } = args;
   const {
     mlsService,
@@ -650,7 +683,13 @@ async function handleWelcome(args: WelcomeArgs): Promise<boolean> {
       await saveConversation(terminalId).catch(() => {});
     }
     if (!findConversationKeyByGroupId(deps.conversations, terminalId)) {
-      await writeRowForHeldGroup(terminalId, groupMeta, sender, deps);
+      await writeRowForHeldGroup(
+        terminalId,
+        groupMeta,
+        sender,
+        deps,
+        admissionSeed(admittedAt, terminalId, log)
+      );
     }
     // Server-side promotion of the membership to 'active' - REQUIRED even on this idempotent path.
     // Real case: a device that joins the group in the BACKGROUND (Welcome via FCM/JNI) does not go
@@ -712,6 +751,7 @@ async function handleWelcome(args: WelcomeArgs): Promise<boolean> {
       log(
         `[HISTORY_ADDRESSED] ${joinedGroupId.slice(0, 8)}… admitted - the inviter's push is solicited`
       );
+      const seed = admissionSeed(admittedAt, joinedGroupId, log);
 
       // FIX 1 — Add the conversation to the map early, to avoid the race between the Welcome
       // (which adds the group to WASM) and the arrival of system messages
@@ -734,6 +774,7 @@ async function handleWelcome(args: WelcomeArgs): Promise<boolean> {
             id: joinedGroupId,
             lifecycle: 'pending',
             identity: { contactName: joinedGroupId, displayName: joinedGroupId },
+            lastMessageAt: seed,
           })
         );
         saveConversation(joinedGroupId).catch(() => {});
@@ -783,7 +824,7 @@ async function handleWelcome(args: WelcomeArgs): Promise<boolean> {
       // H3: under the per-group lock so it does not interleave with a concurrent operation on the
       // same group (in-memory message overwrite).
       pendingRekey = await runExclusiveForGroup(joinedGroupId, () =>
-        upsertConversation(joinedGroupId, groupMeta, sender, userId, deps)
+        upsertConversation(joinedGroupId, groupMeta, sender, userId, deps, seed)
       );
 
       // Replay buffered messages (commits that arrived before the Welcome).
@@ -1673,7 +1714,8 @@ async function upsertConversation(
   gData: { name?: string; isGroup?: boolean } | null,
   senderNorm: string,
   userId: string,
-  deps: MessageHandlerDeps
+  deps: MessageHandlerDeps,
+  seed: number | undefined
 ): Promise<PendingRekey | null> {
   const { conversations, saveConversation } = deps;
   let pendingRekey: PendingRekey | null = null;
@@ -1767,11 +1809,15 @@ async function upsertConversation(
     // mark set by discovery (group deleted/excluded OR false positive from a snapshot race).
     // Without this the conversation would stay locked with its "deleted" banner
     // even though we just got re-added (rule: re-add => same conversation, active).
+    // A row with a seed of its own keeps it: a re-Welcome (a re-add, a repair) is no reason to move
+    // a conversation in the list. Only a row with none - the placeholder above - takes the admission.
+    const lastMessageAt = existing.lastMessageAt ?? seed;
     const updated = {
       ...existing,
       id: joinedGroupId,
       name: displayName,
       lifecycle: 'active' as const,
+      ...(lastMessageAt !== undefined ? { lastMessageAt } : {}),
     };
     if (newConvoKey !== joinedGroupId) {
       // Same DM peer under a different groupId (an independent duplicate group): re-key the
@@ -1808,6 +1854,7 @@ async function upsertConversation(
           displayName,
           ...(isDirect ? { directPeerId } : {}),
         },
+        lastMessageAt: seed,
       })
     );
   }
@@ -1856,7 +1903,8 @@ async function writeRowForHeldGroup(
   groupId: string,
   groupMeta: GroupMeta | null,
   sender: string,
-  deps: MessageHandlerDeps
+  deps: MessageHandlerDeps,
+  seed: number | undefined
 ): Promise<void> {
   const { mlsService, userId, log } = deps;
   let stored: Awaited<
@@ -1903,7 +1951,7 @@ async function writeRowForHeldGroup(
   }
   if (groupMeta) {
     const rekey = await runExclusiveForGroup(groupId, () =>
-      upsertConversation(groupId, groupMeta, sender, userId, deps)
+      upsertConversation(groupId, groupMeta, sender, userId, deps, seed)
     );
     await runPendingRekey(rekey, deps);
   } else {
@@ -1913,6 +1961,7 @@ async function writeRowForHeldGroup(
         id: groupId,
         lifecycle: 'active',
         identity: { contactName: groupId, displayName: groupId },
+        lastMessageAt: seed,
       })
     );
     await deps.saveConversation(groupId).catch((e: unknown) => {
