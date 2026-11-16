@@ -28,7 +28,7 @@
         "@tauri-apps/plugin-sql": "^2.6.0",
         "@tauri-apps/plugin-store": "^2.5.1",
         "@tauri-apps/plugin-websocket": "^2.5.0",
-        "@zumer/snapdom": "^3.7.4",
+        "@zumer/snapdom": "^3.7.5",
         "highlight.js": "^11.12.0",
         "jspdf": "^4.2.1",
         "jsqr": "^1.4.0",
@@ -614,7 +614,7 @@
 
     "@vitest/spy": ["@vitest/spy@5.1.0", "", {}, "sha512-2DPO5OMHWKrBngC+fCmTQqemNF0gidRhp3lxbBmRhW+M1XJrfgPpqNqWVevXtn2f2ufD5ZaR1B6B641aAlcX5A=="],
 
-    "@zumer/snapdom": ["@zumer/snapdom@3.7.4", "", {}, "sha512-HAFoNlMltC/JirFGy0w5VJuqCDT6rQXuQuzcGcBVR8Hi3RXgaQpHmptpv06WMB1aUUs8SAX9crjeQPF3TSKttg=="],
+    "@zumer/snapdom": ["@zumer/snapdom@3.7.5", "", {}, "sha512-KXf6tQc286F8ece8ENKwQgZA6mHx0os2iW5GyktXCx6Eu+xf7WJuwJspItuGoOFKydh/ojP92LapmCIiGumHbg=="],
 
     "acorn": ["acorn@8.19.0", "", { "bin": { "acorn": "bin/acorn" } }, "sha512-oJlA3XiRm7Cyk6qFD2Jn8ak9B7jSy0qy00ADO3+8dpT0LSjFihQYv4C02LFCSYJV3Q37xYwwRy5m+IpIiUzqWw=="],
 
