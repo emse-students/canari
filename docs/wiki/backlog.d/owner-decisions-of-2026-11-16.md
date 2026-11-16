@@ -73,3 +73,11 @@ Recorded so no question answered here is asked again. Each line names where its 
   production event, a timed coincidence, hardware outside the bench): *"Supprime les lectures
   infaisables. S'il y a des problèmes, j'assume de te faire remonter les retours de production."*
   The owner's production feedback covers what they would have read.
+
+### The evening of 2026-11-16
+
+- **(21) The `1.7.0` stable ships tonight WITHOUT group calls**, which move to `1.7.1` as soon as they
+  are read. This supersedes (15) for group calls only: the other large features and every reading
+  still block the stable. The birthday morning-notice reading is taken on the stable the next morning.
+- **(22) `docs/wiki/plan.md` is no longer tracked**: *"C'est exactement le genre de choses que
+  j'entends par problème systémique de notre workflow... Peu importe la solution, je l'accepte."*
