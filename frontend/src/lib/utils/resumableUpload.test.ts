@@ -195,8 +195,12 @@ describe('uploadResumable', () => {
     }).catch(() => undefined);
     const id = row.last!.uploadId!;
     // The server holds parts 0 and 1 though the client saw no answer for 1, and part 2, which was in
-    // flight beside it.
-    expect([...server.sessions.get(id)!.received].sort()).toEqual([0, 1, 2]);
+    // flight beside it. Part 3 MAY be held too: the second lane takes it when part 2's answer lands
+    // before part 1's lost one ends the round, and the two answers race by design (a failure of one
+    // lane never aborts the other's part). The proof that nothing is sent twice is the PUT count below.
+    const firstRound = [...server.sessions.get(id)!.received].sort();
+    expect(firstRound.slice(0, 3)).toEqual([0, 1, 2]);
+    expect(firstRound.length).toBeLessThanOrEqual(4);
     server.fault = () => undefined;
     const done = await up({
       plaintext,
@@ -206,7 +210,8 @@ describe('uploadResumable', () => {
       port: server.port(),
       log: quiet,
     });
-    // Part 3 only: the server's fact said 0, 1 and 2 were there.
+    // Four PUTs over both rounds, whichever round carried part 3: the server's fact said 0, 1 and 2
+    // (and 3, when the race let it through) were there, so none was re-sent.
     expect(server.partsReceived(id)).toBe(4);
     await decrypts(server, done.mediaId, done.keyHex, done.ivHex, plaintext);
   });
