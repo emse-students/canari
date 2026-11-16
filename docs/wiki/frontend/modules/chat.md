@@ -4555,7 +4555,7 @@ join) onto a row that lacks one - so the row rose to the top only once the socke
 creator never had the defect: its row is seeded with its creation moment (`groupCreation.ts`).
 
 **The fix.** The Welcome's own server time (`deliveryMeta.queuedCreatedAt`, the moment this account
-was admitted, the same on each of its devices) is the joined row's `lastMessageAt` seed
+was admitted, the same on each of its devices to within milliseconds, each holding its own queue row, and ties break by id) is the joined row's `lastMessageAt` seed
 (`admissionSeed`, `setupMessageHandler.ts`), on every path that creates the row: the fresh install,
 a DM's new row, and the "already held" Welcome of a group joined in the background. A row that
 already has a seed keeps it - a re-Welcome (a re-add, a repair) does not move a conversation. A

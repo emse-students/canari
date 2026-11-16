@@ -383,7 +383,8 @@ interface WelcomeArgs {
   startRecovery: (groupId: string, opts?: ReAddOptions) => void;
   /**
    * The SERVER's time of this Welcome (`queuedCreatedAt`): the moment this account was admitted,
-   * the same on each of its devices. The joined row's ordering seed - see {@link admissionSeed}.
+   * the same for each of its devices to within milliseconds (each holds its own queue row; ties
+   * break by id). The joined row's ordering seed - see {@link admissionSeed}.
    */
   admittedAt: number | undefined;
 }

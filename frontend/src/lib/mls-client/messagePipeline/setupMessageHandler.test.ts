@@ -1060,12 +1060,6 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
   });
 
   /**
-   * A group the push service joined in the BACKGROUND is held with no conversation row, and the
-   * redelivered Welcome at the next cold start used to promote an existing row and create none: every
-   * frame of the group was then refused `absent-conversation`, and 47 of 150 were lost once the gap
-   * healer had jumped the epochs they were sent in (Pixel 6a, prod 1.2.7, 2026-10-14).
-   */
-  /**
    * A JOINED CONVERSATION IS ORDERED BY ITS ADMISSION, never by 0 (iPhone 12, `1.7.0-alpha.5`,
    * 2026-11-16: two groups joined with the list in front were not drawn for minutes, then listed
    * on the first screen after a resume). The row a Welcome writes holds notices at most - and a
@@ -1189,6 +1183,12 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     });
   });
 
+  /**
+   * A group the push service joined in the BACKGROUND is held with no conversation row, and the
+   * redelivered Welcome at the next cold start used to promote an existing row and create none: every
+   * frame of the group was then refused `absent-conversation`, and 47 of 150 were lost once the gap
+   * healer had jumped the epochs they were sent in (Pixel 6a, prod 1.2.7, 2026-10-14).
+   */
   describe('a group joined in the background, held with no conversation row', () => {
     const bgGroup = '44444444-4444-4444-8444-444444444444';
 
