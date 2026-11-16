@@ -82,9 +82,9 @@ earliest version, as a checklist.
 - [P3 - the thread's render window only grows, at 0.13 MB a bubble: reopen it](backlog.d/p3-the-thread-s-render-window-only-grows-with-listeners-per-bubble.md)
 - [P3 - an accepted but unannounced Add: audit the adder paths, then one rig row](backlog.d/p3-verify-an-add-accepted-but-unannounced-lets-the-joiner-rejoin-over-its-own.md)
 - [P3 - a lives integration spec failed once: the association's live pushed to nobody](backlog.d/p3-flaky-lives-spec-member-live-after-association-live.md)
-- [P3 - A salon is read before the key-group drain has finished, so its rows warn "unreadable - missing seed" and are read again later (1.6.11 logs, 2026-11-14)](backlog.d/p3-a-salon-is-read-before-the-key-group-drain-finishes.md)
 - [P3 - EXIT-FORTIFY: closing the app on the Mi 9T logs `FORTIFY: pthread_mutex_lock called on a destroyed mutex` from the render thread](backlog.d/reading-owed-exit-fortify-closing-the-app-on-the-mi-9t-logged-fortify-pthread.md)
 - [P3 - a 13 MB upload on the iPhone restarted at about half and ran at 40 to 65 KB/s](backlog.d/p3-a-13-mb-upload-on-the-iphone-restarted-at-half-and-ran-at-40-to-65-kb-s.md)
+- [P3 - A private salon granted to a long-standing member badges its whole past as unread (review of #3682, 2026-11-16)](backlog.d/p3-a-private-salon-granted-late-badges-its-whole-past.md)
 - [P3 - the feed offset restored after a Back from an association lands about 226 px lower than it was left (Mi 9T, `1.7.0-alpha.2`)](backlog.d/p3-the-feed-offset-restored-after-a-back-from-an-association-lands-about-226-px.md)
 
 ### Readings owed
@@ -105,6 +105,7 @@ earliest version, as a checklist.
 - [ ] [campus trends and the daily cap, WP-8, WP-10 and the quieter batch](backlog.d/reading-owed-campus-trends-and-the-daily-cap-wp-8-wp-10-and-the-quieter-batch.md)
 - [ ] [rotation on the video, live and camera screens on both phones](backlog.d/rotation-on-video-and-camera-screens.md)
 - [ ] [overlays stacked by open order, not by rung](backlog.d/reading-owed-overlays-stacked-by-open-order-not-by-rung.md)
+- [ ] [a salon opened on a cold start reads its rows after the key-group drain, with no "unreadable - missing seed" warning (1.6.11 logs, 2026-11-14)](backlog.d/p3-a-salon-is-read-before-the-key-group-drain-finishes.md)
 - [ ] [a FIRST message from someone with no conversation yet notifies, end to end](backlog.d/reading-owed-a-first-message-from-someone-with-no-conversation-yet-notifies-end.md)
 - [ ] [the Emojis preference row and its neighbours at 390 pt, on a phone](backlog.d/p3-the-emojis-preference-row-squeezes-its-description-on-a-phone.md)
 - [ ] [a private salon granted after an in-session join is readable on the iPhone, with its badge](backlog.d/p2-a-private-salon-granted-after-an-in-session-join-is-unreadable-on-the-iphone.md)
