@@ -359,6 +359,34 @@ arrival is counted only when the store holds the seed now.
   other salon behind it. They wait for the same link anyway, and a per-group flush would buy little
   for a second accumulator to keep in step.
 
+**A SALON READ WAITS FOR IT TOO (2026-11-16).** The request waiting for the drain removed the
+needless asks, not the read they came from: a salon opened on a cold start or a resume still
+DECODED its page while the key group's queue was being drained, so every row of a session whose
+seed sat in that queue was warned `unreadable - missing seed` (1.6.11 logs, 2026-11-14) and drawn
+only by the re-read the drain's end announced (`holdGraineRepairs`, section WP-33) - a race that
+healed cleanly. What made the two paths overlap was that nothing ordered the decode after the
+drain. `loadChannelHistory` and the whole-history search now fetch the page at once (the stored
+copy is drawn meanwhile) and decode it only once `whenSalonKeysDrained`
+(`utils/graine/salonReadGate.ts`) resolves - the SAME proof the request waits on,
+`whenGroupDrained` on the key group carrying the salon's seeds, after `whenSalonEntryDecided` has
+registered it. A row then reads with the seed the drain brought, or it is a seed this device was
+never sent, and the warning and the request say something true. Nothing is dropped: the rows wait
+with the page, and only the decode moves.
+
+- **Decided from state, never from a clock, and never waited where it cannot end**: no session
+  (`no-runtime`), a salon no community registered (`no-scope`), a key group not registered here
+  (`key-group-unregistered`), a web follower tab (`follower` - it drains nothing), or the service
+  closed during the wait (`closed`, `GroupDrainAbandonedError`). Each is said in the log
+  (`[CHANNEL] page of x decoded without its key-group drain - reason`); a page that had to wait says
+  `decoded after key group y... drained`.
+- **A cost taken knowingly**: the decode follows the drain proof, which needs a pull of the whole
+  mailbox on an OPEN socket. A salon opened while the socket is down shows its stored page (or the
+  skeleton, on a first open) until the link is back and the queue listed - the same wait every
+  frame of the account is under, and what makes the read honest.
+- Pinned by `salonReadGate.test.ts` (held until the drain, at once when drained, the five unwaited
+  states) and `useConversations.salonReadAfterDrain.svelte.test.ts` (fetched at once, decoded only
+  after the drain, no `missing seed`, both rows drawn from one fetch).
+
 ### 4.6 Ordering rule: remove, THEN distribute
 
 When a sender rotates because a member left, the removal commit on the distribution group must land

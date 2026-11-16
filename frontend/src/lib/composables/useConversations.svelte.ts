@@ -42,6 +42,7 @@ import { setPollMeta } from '$lib/stores/pollStore.svelte';
 import { applyChannelEdits, type DecodedChannelEdit } from '$lib/utils/chat/channelEdit';
 import { createLoadGenerations } from '$lib/utils/chat/loadGenerations';
 import { whenSalonEntryDecided } from '$lib/utils/graine/salonSendGate';
+import { whenSalonKeysDrained } from '$lib/utils/graine/salonReadGate';
 import type { ChannelPollMeta } from '$lib/services/ChannelService';
 import { applyChannelReactionFrame } from '$lib/stores/reactionStore.svelte';
 import {
@@ -899,6 +900,16 @@ export function useConversations() {
         salonEntryDecisionNoted.add(rawId);
         ctx.log(`[CHANNEL] page of ${rawId.slice(0, 8)} decoded after its salon entry was decided`);
       }
+      // DECODED ONLY ONCE ITS KEY GROUP IS DRAINED: a seed minted while this device was away is a
+      // frame in its pending queue, and a page decoded before the queue is listed read those rows
+      // `missing seed`, warned, asked, and drew them only at the re-read the drain's end announced
+      // (1.6.11 logs, 2026-11-14). The page was fetched meanwhile; only the decode waits.
+      const keys = await whenSalonKeysDrained(rawId);
+      if (keys.kind === 'drained' && keys.waited) {
+        ctx.log(
+          `[CHANNEL] page of ${rawId.slice(0, 8)} decoded after key group ${keys.groupId.slice(0, 8)}... drained`
+        );
+      }
       const loaded: ChatMessage[] = [];
       // Server row id -> the client UUID its author sealed inside it (own rows only, see below).
       const clientIdOf = new SvelteMap<string, string>();
@@ -1082,6 +1093,8 @@ export function useConversations() {
     const { rows, capped } = await channelService.fetchAllChannelMessages(channelConversationId, {
       cap: 2000,
     });
+    // The same order as the history load: no row is decoded before its key group's drain.
+    await whenSalonKeysDrained(rawId);
 
     const decodedPlain: ChatMessage[] = [];
     const searchEdits: DecodedChannelEdit[] = [];
