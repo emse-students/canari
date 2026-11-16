@@ -676,7 +676,7 @@
           class="shrink-0"
           disabled={saving ||
             reachPending ||
-            (!markdown.trim() && existingMedia.length === 0 && newFiles.length === 0)}
+            (!markdown.trim() && (reel || (existingMedia.length === 0 && newFiles.length === 0)))}
           loading={saving}
           onclick={submitEdit}
         >

@@ -53,11 +53,11 @@ const video = {
   height: 1280,
 };
 
-async function open(kind: 'reel' | 'post') {
+async function open(kind: 'reel' | 'post', markdown = 'legende') {
   const post = {
     id: 'p1',
     kind,
-    markdown: 'legende',
+    markdown,
     mentions: [],
     links: [],
     // An ordinary post's strip would fetch a video's thumbnail: a document draws from its metadata.
@@ -105,6 +105,14 @@ describe('EditPostForm - a reel', () => {
     expect(payload).toEqual({ markdown: 'legende' });
     expect(target.querySelector('[role="list"]')).toBeNull();
     expect(target.querySelector('[data-chip-row]')).toBeNull();
+  });
+
+  it('holds the save on a blank caption: the server refuses an empty body naming no media', async () => {
+    const target = await open('reel', '');
+    const button = [...target.querySelectorAll<HTMLButtonElement>('button')].find(
+      (b) => b.textContent?.trim() === m.post_edit_save_button()
+    )!;
+    expect(button.disabled).toBe(true);
   });
 
   it('keeps sending the media of an ordinary post', async () => {
