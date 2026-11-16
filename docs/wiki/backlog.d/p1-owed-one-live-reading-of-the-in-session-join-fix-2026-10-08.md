@@ -13,3 +13,5 @@ The fix is built ([chat](../frontend/modules/chat.md#a-community-joined-in-sessi
 **Left, counting both sittings above:** on the iPhone, the private salon the joiner MAY read and the universal link into the app on the real host; on the Mi 9T, a private salon already readable AT the join.
 
 **Mi 9T, 2026-11-15: not staged.** The Android app links open only `canari-emse.fr` and `canari.emse.fr` (`AndroidManifest.xml`), so a dev invite cannot enter the app from a browser or an `am start` VIEW; it has to arrive as a link card in a conversation, and a community invite carries its key in the URL fragment, which only a signed-in web seat's invite dialog yields. No seat was free to make one, so the private-salon half and the universal link on the Mi stay owed.
+
+**2026-11-16, both phones (`1.7.0-alpha.4`): NOT TAKEN.** It needs a web seat to make a community, a private salon and an invite link carrying its key, then the grant ordered before and after the join; that staging was not done in this sitting, and nothing about the earlier findings changed.
