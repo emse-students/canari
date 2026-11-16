@@ -154,6 +154,26 @@ describe('LiveBroadcaster', () => {
     expect(q('[data-live-close]')).toBeNull();
   });
 
+  it('on air, the top bar wraps and End stays in the non-shrinking action group (390 pt, 360 px)', async () => {
+    const { broadcast } = screen();
+    await settle();
+    q<HTMLButtonElement>('[data-live-start]')!.click();
+    await settle();
+    expect(broadcast.phase).toBe('live');
+    const bar = q('[data-live-top-bar]')!;
+    const identity = q('[data-live-top-identity]')!;
+    const actions = q('[data-live-top-actions]')!;
+    expect(identity.parentElement).toBe(bar);
+    expect(actions.parentElement).toBe(bar);
+    expect(bar.classList.contains('flex-wrap')).toBe(true);
+    expect(bar.classList.contains('justify-between')).toBe(false);
+    expect(identity.classList.contains('min-w-40')).toBe(true);
+    expect(actions.classList.contains('shrink-0')).toBe(true);
+    for (const sel of ['switch', 'mic-toggle', 'camera-toggle', 'share', 'chat-toggle', 'end']) {
+      expect(actions.querySelector(`[data-live-${sel}]`), sel).not.toBeNull();
+    }
+  });
+
   it('as an association: its name and the association audience rule', async () => {
     screen(null, 'asso-1');
     await settle();

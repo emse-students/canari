@@ -359,6 +359,93 @@ arrival is counted only when the store holds the seed now.
   other salon behind it. They wait for the same link anyway, and a per-group flush would buy little
   for a second accumulator to keep in step.
 
+**A SALON ROW WITH NO SEED WAITS FOR IT TOO (2026-11-16).** The request waiting for the drain
+removed the needless asks, not the read they came from: a salon opened on a cold start or a resume
+still DECODED its page while the key group's queue was being drained, so every row of a session
+whose seed sat in that queue was warned `unreadable - missing seed` (1.6.11 logs, 2026-11-14) and
+drawn only by the re-read the drain's end announced (`holdGraineRepairs`, section WP-33) - a race
+that healed cleanly. What made the two paths overlap was that nothing ordered the verdict "missing"
+after the drain. **The seed store is the discriminator, so only the rows it cannot open wait**:
+`loadChannelHistory` reads `salonKeysNow` (`utils/graine/salonReadGate.ts`) - from state, after
+`whenSalonEntryDecided` has registered the salon - and while the key group carrying the salon's seeds
+is still draining, `decodeChannelMessagePage` DEFERS each row whose seed is missing (by its index:
+answered `null`, neither warned nor asked for) and decodes every other row at once. The page is
+drawn and the skeleton lowered at once with what the store holds - offline or on a socket still
+reconnecting, exactly as before the gate (principle 2, and the slow-link rule that no screen waits
+for the network to draw). The deferred rows are decoded again once `drained()` resolves - the SAME
+proof the request waits on, `whenGroupDrained` - and merged by the same load (no refetch): each
+reads with the seed the drain brought, or is a seed this device was never sent, and the warning
+and the request then say something true. A page whose every seed is held registers no waiter.
+
+- **Decided from state or by an event, never from a clock, and never waited where it cannot end**:
+  no session (`no-runtime`), a salon no community registered (`no-scope`), a key group not
+  registered here (`key-group-unregistered`), a web follower tab (`follower` - it drains nothing),
+  and, DURING the wait, a demotion of this tab (`follower` again, settled by `onLeaderTabChanged`:
+  the demoted tab closes its socket, so the group would never read drained here) or the service
+  closing (`closed`, `GroupDrainAbandonedError`). The non-routine ones are said in the log
+  (`[CHANNEL] page of x decoded without its key-group drain - reason`); a page that deferred rows
+  says how many, and again when they are decoded after the drain. A demotion decodes the deferred
+  rows as a follower would (reported, never asked); `closed` decodes NOTHING more - the session
+  ended (sign-out, client reset) before anything proved the seeds missing, so a warning would be
+  false, and the next session's load reads the page again.
+- **What bounds the wait**: `whenGroupDrained` needs a pull of the whole mailbox on an OPEN socket
+  and the key group idle in the scheduler. Idle includes frames parked behind a Welcome, and that
+  park is bounded by the scheduler's termination proof, not a clock: a Welcome closes the window it
+  opened on success or failure, and a window that survives a drain which emptied every queue is
+  released at once (`releaseStrandedWelcomeBuffers`). While the link is down only the deferred rows
+  wait - rows this device could not have drawn anyway.
+- **A load started meanwhile supersedes the deferred pass** (it decoded the whole page after this
+  one): the older load decodes nothing more and merges nothing.
+- **The second pass ADDS the deferred rows and takes nothing else of the page again.** The page was
+  fetched before a wait that lasts as long as the link is down, and the page stays interactive
+  meanwhile, so a live deletion's tombstone, an edit (the reader's own included, sent over HTTP
+  while the socket is down) or a read mark can move on screen after it. Merging the whole page again
+  (as the first cut of this design did) took each old row verbatim through `mergeMessagePage` and
+  resurrected the deleted row, undid the edit, and re-marked the salon fresh over a stale mark. So a
+  deferred row is inserted only where nothing holds it yet, its edit rows go through
+  `applyChannelEdits` (whose precedence keeps a later edit), its reactions and poll tallies come from
+  its own rows only, the read marks and `channelHistoryLoadedAt` are the first pass's alone, and the
+  stored page is rewritten from what is on screen (deleted rows left out).
+- **A row removed live while a page is in hand is never put back, and a tally voted live is never
+  rewound** (2026-11-16) - by either pass, and by the whole-history search. The server hard-deletes
+  a salon row, and a live removal could only mark a copy already on screen: a deferred row deleted
+  during the wait, or a held row deleted while the page decoded, found nothing to mark and was
+  inserted by the page that still carried it, until the next load removed it - a race that healed,
+  so a defect. Every page read now opens a watch BEFORE its request leaves
+  (`utils/chat/salonRemovals.ts`); `markChannelMessageDeleted` - the one path the reader's own
+  delete and the `channel.message.deleted` broadcast both take - notes the id in every open watch
+  FIRST, whether or not a copy is on screen; the reader skips the noted ids (a removed row is gone
+  for good on the server, whatever the page says) and closes the watch when it ends, so it holds
+  only what was removed during its own life. Poll tallies carry no version, so `pollStore` orders
+  writes on one counter: a live write (`channel.poll.vote`, a poll arriving live, a vote's answer,
+  an optimistic vote) takes the next value, a page's write the value its request left at
+  (`setPollMetaFromPage`), and a page never writes over a tally written after that.
+- **A salon left during the wait is not decoded again**: a removal from a private salon, a dropped
+  community or a sign-out purges the conversation and its seeds, so decoding the deferred rows then
+  would warn `missing seed` and ask for it for a salon this device no longer holds. The pass ends
+  with a log line and draws nothing.
+- **The repair re-read stays, and it is not the same path.** `announceGraineRepair` re-reads a salon
+  when a SEED is stored for it - the only path for rows dropped outside a gated load (a live row
+  that arrived before its seed, an answer a peer sends minutes later, a salon decoded on an earlier
+  link). The deferred pass is the only path that reports a seed still missing AFTER the drain, which
+  no seed arrival would ever announce. When both fire for one salon (a seed of the drain stored
+  for a salon whose load deferred rows), the cost is one extra page fetch, never a false warning or
+  a dropped row.
+- The whole-history search uses the same discriminator WITHOUT the wait: it is one answer to one
+  query, so it searches the rows it can open, leaves the deferred ones unwarned and unasked (the
+  history load owns that), and says how many it could not search yet.
+- Pinned by `salonReadGate.test.ts` (state answers, the wait, the demotion during and before it, the
+  service closing), `channelCrypto.test.ts` (a missing seed deferred, unwarned and unasked, every
+  other class reported) and `useConversations.salonReadAfterDrain.svelte.test.ts` (the held row
+  drawn and the skeleton down before the drain, the queued row drawn after it with no warning, a
+  seed the drain did not bring reported only then, one fetch, a newer load superseding the deferred
+  pass, a deletion made during the wait kept, a stale mark made during it kept, a closed service
+  ending the pass with no decode and no warning, a salon left during the wait never decoded again,
+  a row removed live during the wait or the decode never inserted - search included - and a live
+  vote never rewound by an older page), `salonRemovals.test.ts` and `pollStore.svelte.test.ts`
+  (the two orderings), and `useChannelWorkspaces.svelte.test.ts` (a live removal noted with no row
+  on screen).
+
 ### 4.6 Ordering rule: remove, THEN distribute
 
 When a sender rotates because a member left, the removal commit on the distribution group must land
@@ -3473,6 +3560,47 @@ three places treated it as a conversation:
 
 Left open - a Welcome whose row is unreadable for a group this session does not know either - is
 in [backlog](../backlog.md).
+
+### A Welcome arriving while this device's own external commit awaits the gate was thrown away - FIXED 2026-11-16
+
+Read on the iPhone 12, `1.7.0-alpha.5`, a private salon granted right after an in-session community
+join ([entry](../backlog.d/p2-a-private-salon-granted-after-an-in-session-join-is-unreadable-on-the-iphone.md)):
+`[WELCOME] ... is a KEY-DISTRIBUTION group - installing it as a seed carrier`, `key group ... already
+held - redelivered Welcome ignored (idempotent)`, then `dropped local state for ... (the server refused
+the external commit)`, `externalJoin REFUSED ... reason epoch_mismatch, group at 3`, and the retry
+`a Welcome is owed to this device (welcome-queued) - not joining by external commit`. The salon stayed
+unreadable (`Group not found`, `no seed`) for good.
+
+**One door at a time held; the predicate on the other side did not.** The newcomer's external commit
+was built on a base read before the admitter's Add, so the seat it was served said nothing was owed,
+and the gate refused it as designed. But an external commit is applied to the instance that builds it,
+under the MLS lock, and submitted OUTSIDE it: for the whole round trip `holdsGroupState` and
+`isGroupActive` both answer `true` for a group nobody has accepted. "Held" there means "I asked to be
+in", not "I am in". The admitter's Welcome landed in that span, read the first as the second, and was
+ACKed as a redelivery; the refusal then dropped the state, and the only door left was the Welcome just
+spent. Section 20's "already held" lines of 2026-10-25..29 were the same window with the other
+outcome: the commit was accepted, so ignoring the Welcome cost nothing.
+
+**The fix** (`frontend/src/lib/utils/chat/externalCommitVerdict.ts`): `externalJoin` opens a window
+per group under the MLS lock BEFORE the build, and closes it in a `finally` once the gate's answer
+has been applied - merged on acceptance, dropped on a refusal or an unreachable gate, or never built.
+`handleDistributionWelcome` and `handleWelcome` await `awaitExternalCommitVerdict` before asking
+whether the group is held, so the question is asked of a settled group: accepted means joined (the
+Welcome is redundant, the idempotent path), refused means not held (the Welcome installs, its
+KeyPackage still unconsumed). No clock: the wait ends on the gate's answer, which `submitCommit`
+always returns or throws. When the race is met, the handler logs `[WELCOME] <group> arrived while this
+device's own external commit awaited the gate - read after its answer, held now: <bool>`, which is
+what a reading counts. **The settled read and the install are two steps**, so the install asks again
+under the lock (`externalCommitAwaitsVerdict`, synchronous, where the window opens): a join whose base
+predated the Add can take the lock between them and build, and an install then hit a group held by an
+unanswered commit - refused by the engine, ACKed, gone. A window found open there logs `own external
+commit took the MLS lock before the install - read again after its answer` and the handler starts over;
+each return costs that join one of its bounded attempts (found in review). **The cost:** a Welcome runs
+in the serial inbound drain, so while it waits every later frame waits with it, for one commit round
+trip under the `write` deadline - only when a Welcome for a group lands inside this device's own
+external join of it. Tests: `externalCommitVerdict.test.ts`, the window cases in
+`BaseMlsService.externalJoin.test.ts`, and both Welcome paths in `setupMessageHandler.test.ts`
+(written failing first).
 
 ## 21. Graine v2: an author that is proven, a ciphertext bound to its place - DECIDED BY THE USER 2026-09-28
 
