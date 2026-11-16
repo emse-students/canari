@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * THE SCENE BAR OF A DESKTOP LIVE (owner, 2026-11-14): five ready-made scenes, one click each, in
+   * THE SCENE BAR OF A DESKTOP LIVE (owner, 2026-11-14): five ready-made scenes, one click each, as ONE icon-only row, in
    * the pre-live sheet and over the picture while on air - and, for "screen + camera", the overlay's
    * size and shape. Every decision is the studio's (`liveStudio.svelte.ts`); a click here only calls
    * it, FROM the click, because a scene that needs the screen opens the browser's picker, which only
@@ -13,11 +13,11 @@
     Monitor,
     PictureInPicture2,
     RectangleHorizontal,
+    Square,
     Video,
   } from '@lucide/svelte';
   import type { Component } from 'svelte';
   import Button from '$lib/components/ui/Button.svelte';
-  import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import { rovingTarget } from '$lib/components/ui/rovingFocus';
   import { m } from '$lib/paraglide/messages';
   import type { LiveStudio } from '$lib/live/liveStudio.svelte';
@@ -32,9 +32,11 @@
     studio: LiveStudio;
     /** The privacy and sound sentence: in the pre-live sheet, never over the picture on air. */
     showHint?: boolean;
+    /** Over the picture on air: the rows sit at the right edge, clear of the chat at the left. */
+    onAir?: boolean;
   }
 
-  let { studio, showHint = false }: Props = $props();
+  let { studio, showHint = false, onAir = false }: Props = $props();
 
   const SCENE_LABEL: Record<LiveScene, () => string> = {
     camera: m.live_scene_camera,
@@ -56,6 +58,8 @@
     medium: m.live_scene_overlay_medium,
     large: m.live_scene_overlay_large,
   };
+  /** The icon's pixel size says the camera's: a small, a medium and a large square. */
+  const SIZE_ICON: Record<OverlaySize, number> = { small: 12, medium: 16, large: 20 };
   const SHAPES: readonly OverlayShape[] = ['round', 'rect'];
   const SHAPE_LABEL: Record<OverlayShape, () => string> = {
     round: m.live_scene_overlay_round,
@@ -91,56 +95,97 @@
   }
 </script>
 
-<div class="flex flex-col gap-2" data-live-scene-bar>
+<div
+  class="flex max-w-full flex-col gap-2 {onAir ? 'items-end' : 'items-start'}"
+  data-live-scene-bar
+>
+  <!-- ONE icon-only row (owner, 2026-11-16: no labels spread about, nothing wrapping or overlapping
+       the chat): the name of a scene is its `aria-label` and its tooltip, the chosen one wears the
+       fill, and "Je reviens" is set apart by a rule at the end of the row. -->
   <div
     bind:this={sceneGroup}
-    class="flex flex-wrap gap-1.5"
+    class="flex items-center gap-1 rounded-full bg-black/45 p-1 backdrop-blur-sm"
     role="radiogroup"
     aria-label={m.live_scene_bar_label()}
   >
     {#each LIVE_SCENES as scene, index (scene)}
       {@const Icon = SCENE_ICON[scene]}
+      {#if scene === 'pause'}
+        <span class="mx-0.5 h-5 w-px shrink-0 bg-white/30" aria-hidden="true"></span>
+      {/if}
       <Button
         variant={variantOf(studio.scene === scene)}
         size="compact"
+        icon
+        class="rounded-full"
         role="radio"
         aria-checked={studio.scene === scene}
+        aria-label={SCENE_LABEL[scene]()}
+        title={SCENE_LABEL[scene]()}
         tabindex={studio.scene === scene ? 0 : -1}
         disabled={studio.choosingScreen}
         onclick={() => choose(scene)}
         onkeydown={(event: KeyboardEvent) => onSceneKeydown(event, index)}
         data-live-scene={scene}
       >
-        <Icon size={16} strokeWidth={2.25} />
-        {SCENE_LABEL[scene]()}
+        <Icon size={18} strokeWidth={2.25} />
       </Button>
     {/each}
   </div>
   {#if studio.scene === 'screen-camera'}
-    <!-- The overlay's size and shape: two small fixed sets, so `ui/SegmentedControl` in its
-         over-a-video look - the scene above keeps the ONE fill of the bar (controls.md). -->
-    <div class="flex flex-wrap items-center gap-3" data-live-overlay-options>
-      <div data-live-overlay-sizes>
-        <SegmentedControl
-          variant="overlay"
-          label={m.live_scene_overlay_size_label()}
-          items={SIZES.map((size) => ({ key: size, label: SIZE_LABEL[size]() }))}
-          value={studio.overlay.size}
-          onSelect={(size) => studio.setOverlay({ size })}
-        />
+    <!-- The overlay's size and shape: two small fixed sets, icon-only like the row above (the
+         names are aria-labels and tooltips), in ONE line that never wraps. -->
+    <div
+      class="flex items-center gap-1 rounded-full bg-black/45 p-1 backdrop-blur-sm"
+      data-live-overlay-options
+    >
+      <div
+        class="flex items-center gap-1"
+        role="radiogroup"
+        aria-label={m.live_scene_overlay_size_label()}
+        data-live-overlay-sizes
+      >
+        {#each SIZES as size (size)}
+          <Button
+            variant={variantOf(studio.overlay.size === size)}
+            size="compact"
+            icon
+            class="rounded-full"
+            role="radio"
+            aria-checked={studio.overlay.size === size}
+            aria-label={SIZE_LABEL[size]()}
+            title={SIZE_LABEL[size]()}
+            onclick={() => studio.setOverlay({ size })}
+            data-live-overlay-size={size}
+          >
+            <Square size={SIZE_ICON[size]} strokeWidth={2.25} />
+          </Button>
+        {/each}
       </div>
-      <div data-live-overlay-shapes>
-        <SegmentedControl
-          variant="overlay"
-          label={m.live_scene_overlay_shape_label()}
-          items={SHAPES.map((shape) => ({
-            key: shape,
-            label: SHAPE_LABEL[shape](),
-            icon: shape === 'round' ? Circle : RectangleHorizontal,
-          }))}
-          value={studio.overlay.shape}
-          onSelect={(shape) => studio.setOverlay({ shape })}
-        />
+      <span class="mx-0.5 h-5 w-px shrink-0 bg-white/30" aria-hidden="true"></span>
+      <div
+        class="flex items-center gap-1"
+        role="radiogroup"
+        aria-label={m.live_scene_overlay_shape_label()}
+        data-live-overlay-shapes
+      >
+        {#each SHAPES as shape (shape)}
+          {@const ShapeIcon = shape === 'round' ? Circle : RectangleHorizontal}
+          <Button
+            variant={variantOf(studio.overlay.shape === shape)}
+            size="compact"
+            icon
+            class="rounded-full"
+            role="radio"
+            aria-checked={studio.overlay.shape === shape}
+            aria-label={SHAPE_LABEL[shape]()}
+            title={SHAPE_LABEL[shape]()}
+            onclick={() => studio.setOverlay({ shape })}
+            data-live-overlay-shape={shape}
+          >
+            <ShapeIcon size={16} strokeWidth={2.25} />
+          </Button>
+        {/each}
       </div>
     </div>
   {/if}
