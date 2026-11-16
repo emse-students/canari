@@ -469,31 +469,15 @@ export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
       resume?: { persist: (state: import('$lib/db/types').OutboxResumableUpload) => Promise<void> }
     ) => {
       const { MediaService } = await import('$lib/media');
-      const bytes = media.fileBytes ?? new Uint8Array(0);
-      const retentionClass = uploadClassFor(media);
-      // A CHAT REEL GOES THROUGH A RESUMABLE SESSION (RC-5): a cut or a kill resends only the parts
-      // the server lacks. It is sealed from the outbox's own bytes, part by part - no `File` copy.
-      // Everything else keeps the one-shot route it always took.
-      if (retentionClass === 'chat-reel' && resume) {
-        return new MediaService().uploadResumably(
-          bytes,
-          { mimeType: media.mimeType, fileName: media.fileName },
-          getToken,
-          { width: media.width, height: media.height },
-          retentionClass,
-          { state: media.upload, persist: resume.persist },
-          transport
-        );
-      }
-      const file = new File([bytes.buffer as ArrayBuffer], media.fileName ?? 'file', {
-        type: media.mimeType,
-      });
-      const token = await getToken();
-      return new MediaService().encryptAndUpload(
-        file,
-        token,
+      // A CHAT REEL, AND ANY FILE OVER ONE REQUEST BODY, GOES THROUGH A RESUMABLE SESSION: a cut or
+      // a kill resends only the parts the server lacks. The route is `MediaService`'s to decide.
+      return new MediaService().uploadQueuedAttachment(
+        media.fileBytes ?? new Uint8Array(0),
+        { mimeType: media.mimeType, fileName: media.fileName },
+        getToken,
         { width: media.width, height: media.height },
-        retentionClass,
+        uploadClassFor(media),
+        resume && { state: media.upload, persist: resume.persist },
         transport
       );
     },

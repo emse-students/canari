@@ -1149,8 +1149,12 @@ while its text in a SIDE group does (DUP-5's control). -2 reloads W6 with the PO
 `[COMMIT] settling N staged commit(s)` line, the resubmission and the ledger naming the server's epoch. -4
 revokes W7's own campaign-owned device and, in the SAME page script, attempts a commit from it (refused
 `DEVICE_REVOKED`), then reloads W6 and counts one `[STRAY] ... revoked device(s) still hold a leaf - removing`
-per group. **Read the gate's lines with whole-second `--since` values**: a fraction dropped a `REJECT` line
-on dev. Judgements in `leafrows.mjs`, pinned by `archive/leaf-selftest.mjs`.
+per group. **-4 opens its gate window two seconds before its start**: docker reads a fractional `--since`
+exactly, and a `REJECT` line that followed the start by well under a second was dropped on dev, so the cause is
+the offset between the host's clock and the container's. **What the rows narrate** (`LEAF_ROW_NARRATION`,
+`LEAF_REVOKED_WIPE_NARRATION`, `LEAF_REVOKED_REFUSALS`) is each sentence read on a run, at its level; a line it
+does not name is dirt, and a defect (the group-creation placeholder, [entry](../../docs/wiki/backlog.d/creating-a-group-starts-a-re-add-recovery-of-it-on-the-creating-device.md))
+is filed, not narrated. Judgements in `leafrows.mjs`, pinned by `archive/leaf-selftest.mjs`.
 ```sh
 bun archive/gap.mjs --row GAP-1|GAP-2   # frames ahead of their commits; past-epoch frames again
 bun archive/gap.mjs --row GAP-3         # 2100 sends, then a pull that starts past 2050 - run alone

@@ -19,6 +19,7 @@
  * outside the scrolling body, and the submit still reaches the form it no longer nests in.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { flushSync, mount, unmount } from 'svelte';
 import { initHistoryOverlayStack } from '$lib/utils/historyOverlayStack';
 import { m } from '$lib/paraglide/messages';
@@ -237,5 +238,62 @@ describe('ChangePinModal - the submit does not scroll either', () => {
     raiseGate();
     expect(document.querySelector('[data-pin-mark]')).not.toBeNull();
     expect(document.querySelector('[data-pin-lead]')).not.toBeNull();
+  });
+});
+
+describe('PinModal - the sign-out is out of the tab bar zone', () => {
+  // The bottom bar is `fixed bottom-0` and spans `--bottom-nav-reserve` (nav row + 1px border + the
+  // safe inset), so ANY control drawn in the footer of a full-screen gate lands on a tab. happy-dom
+  // has no layout, so the decidable form is structural: the sign-out is not in the footer nor in the
+  // scroll body, it sits in a row BEFORE the body, and the footer carries the unlock button alone.
+  // The measured fact (Mi 9T 2026-11-15) is in the backlog entry this closes.
+  it('draws the sign-out in a top row, before the scrolling body, never in the footer', () => {
+    raiseGate();
+    const signOut = document.querySelector<HTMLElement>('[data-pin-signout]')!;
+    const footer = document.querySelector<HTMLElement>('[data-modal-footer]')!;
+    const bar = document.querySelector<HTMLElement>('[data-pin-signout-bar]')!;
+    const body = document.querySelector<HTMLElement>('[data-pin-scroll]')!;
+
+    expect(signOut.textContent).toContain(m.auth_pin_sign_out());
+    expect(bar.contains(signOut)).toBe(true);
+    expect(footer.contains(signOut), 'the footer is where the tab bar is drawn').toBe(false);
+    expect(body.contains(signOut)).toBe(false);
+    expect(
+      bar.compareDocumentPosition(body) & Node.DOCUMENT_POSITION_FOLLOWING,
+      'the row precedes the body, so it is at the top of a column layout'
+    ).toBeTruthy();
+    expect(footer.querySelectorAll('button')).toHaveLength(1);
+    // `.tap-target` is the 44px hit box (`max(100%, 2.75rem)` on a touch screen) for a 12px label.
+    expect(signOut.className).toContain('tap-target');
+  });
+
+  it('is still ONE tap: no confirmation between the tap and the sign-out', () => {
+    const onSignOut = vi.fn();
+    raiseGate({ onSignOut });
+    document.querySelector<HTMLElement>('[data-pin-signout]')!.click();
+    flushSync();
+    expect(onSignOut).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('PinModal - the top row clears the status bar and the notch', () => {
+  // The row pads nothing itself: it is the first child of the panel, and `phoneFullScreen` puts the
+  // safe-area-inset-top (iPhone notch, Android status bar, as `--safe-area-inset-top`) on the PANEL
+  // so its background covers it. Pinned as the chain it is: the gate asks for the full-screen panel,
+  // the stylesheet pads that panel by the token, and the row is in flow (not `fixed`/`absolute`,
+  // which would ignore the panel's padding and sit under the bar).
+  it('is a flow child of a panel padded by the top safe-area token', () => {
+    const css = readFileSync('src/app.css', 'utf8');
+    const gate = readFileSync('src/lib/components/auth/PinModal.svelte', 'utf8');
+    expect(gate).toMatch(/<Modal[^>]*\n\s+phoneFullScreen/);
+    expect(css).toMatch(
+      /\.modal-phone-full \.keyboard-aware-modal-panel\s*\{[^}]*padding-top:\s*var\(--safe-area-inset-top, 0px\)/
+    );
+    expect(css).toMatch(/--safe-area-inset-top:\s*env\(safe-area-inset-top, 0px\)/);
+
+    raiseGate();
+    const bar = document.querySelector<HTMLElement>('[data-pin-signout-bar]')!;
+    expect(bar.className).not.toMatch(/\b(fixed|absolute|sticky)\b/);
+    expect(bar.parentElement!.closest('[role="dialog"]')).not.toBeNull();
   });
 });
