@@ -8,7 +8,9 @@
   import { pullToRefresh } from '$lib/actions/pullToRefresh';
   import { registerRetapRefresh, resetPageScroll } from '$lib/navigation/scrollToTop';
   import { page } from '$app/state';
-  import { goto } from '$app/navigation';
+  import { goto, replaceState } from '$app/navigation';
+  import { routerReady } from '$lib/navigation/routerReady';
+  import { feedNamedPath } from '$lib/posts/feedNamedUrl';
   import {
     listPosts,
     searchPosts,
@@ -479,6 +481,21 @@
    * re-derives it.
    */
   const activeFeed = $derived(data.feedParams.feed);
+
+  // THE ADDRESS NAMES THE TAB IT DRAWS (`feedNamedPath`): a bare `/posts` reopens on the tab chosen
+  // LAST when a Back returns to it, so its remembered place would point into another list. Written
+  // shallow, once the router exists (a `replaceState` before that throws); the preference stays.
+  $effect(() => {
+    const named = feedNamedPath(page.url, activeFeed);
+    if (!named) return;
+    const at = page.url.href;
+    void routerReady.then(() => {
+      // Another navigation moved on while the router was starting: that address is not ours to write.
+      if (page.url.href !== at) return;
+      Log.d('POSTS', `the address names its tab: ${named}`);
+      replaceState(resolve(internalPath(named)), page.state);
+    });
+  });
 
   // FOLLOW SUGGESTIONS (engagement WP-6): read once per reader, and only once the feed that draws
   // them is open - Pour toi alone (owner, 2026-11-10: Campus and Associations are pure lists).
