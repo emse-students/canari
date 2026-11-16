@@ -86,8 +86,6 @@ earliest version, as a checklist.
 - [P3 - "server already unreachable" is logged once per request instead of once per transition (1.6.11 logs, 2026-11-14)](backlog.d/p3-server-already-unreachable-is-logged-per-request.md)
 - [P3 - EXIT-FORTIFY: closing the app on the Mi 9T logs `FORTIFY: pthread_mutex_lock called on a destroyed mutex` from the render thread](backlog.d/reading-owed-exit-fortify-closing-the-app-on-the-mi-9t-logged-fortify-pthread.md)
 - [P3 - a 13 MB upload on the iPhone restarted at about half and ran at 40 to 65 KB/s](backlog.d/p3-a-13-mb-upload-on-the-iphone-restarted-at-half-and-ran-at-40-to-65-kb-s.md)
-- [P3 - a group joined from a Welcome on the iPhone reads "Utilisateur inconnu a ajouté Utilisateur inconnu au groupe"](backlog.d/p3-a-group-joined-from-a-welcome-on-the-phone-reads-unknown-user-added-unknown-user.md)
-- [P3 - a newcomer's thread reads "Compte supprime a ajoute Compte supprime au groupe" for its own Add](backlog.d/p3-a-newcomer-s-first-added-notice-reads-compte-supprime-for-both-names.md)
 - [P3 - the Emojis preference row squeezes its description into a five-word column on a phone](backlog.d/p3-the-emojis-preference-row-squeezes-its-description-on-a-phone.md)
 - [P3 - the gated `video-switch` and `video-off-on` call rows read 19.6-25 fps against a threshold of 27](backlog.d/p3-the-gated-video-switch-and-video-off-on-rig-rows-read-19-6-25-fps-threshold-27.md)
 
@@ -116,6 +114,8 @@ earliest version, as a checklist.
 - [ ] [follow suggestions and Suivre, WP-2, WP-5, WP-6, WP-7](backlog.d/reading-owed-follow-suggestions-and-suivre-wp-2-wp-5-wp-6-wp-7.md)
 - [ ] [openings for followers, WP-4](backlog.d/reading-owed-openings-for-followers-wp-4.md)
 - [ ] [the checkpoint every commit awaits under the MLS lock before its first request](backlog.d/reading-owed-the-checkpoint-every-commit-awaits-under-the-mls-lock-before-its.md)
+- [ ] [a group's "X a ajouté Y" notice keeps its names after a reload (was: "Utilisateur inconnu a ajouté Utilisateur inconnu au groupe")](backlog.d/p3-a-group-joined-from-a-welcome-on-the-phone-reads-unknown-user-added-unknown-user.md)
+- [ ] [a newcomer's own "X a ajouté Y" notice names both people (was: "Compte supprime a ajoute Compte supprime au groupe")](backlog.d/p3-a-newcomer-s-first-added-notice-reads-compte-supprime-for-both-names.md)
 - [ ] [the pre-live screen says a suspension before Start](backlog.d/reading-owed-the-pre-live-screen-says-a-suspension-before-start.md)
 
 ## 1.8.0

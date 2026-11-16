@@ -1657,11 +1657,77 @@ export async function replayConversationHistory(params: {
 
 const HEX_ID_RE = /\b[0-9a-f]{64}\b/g;
 
+/** A whole user id as both estates mint it: 64 lower-case hex (see {@link withoutRenamedNotice}). */
+const WHOLE_HEX_ID_RE = /^[0-9a-f]{64}$/;
+
 /**
- * Retroactively resolves 64-char hex user IDs baked into stored system message
- * content (e.g. "abc…def added xyz…uvw to the group") that were stored before
- * async name resolution was applied. Updates the local DB so future loads are
+ * The SENTENCE of a stored system row, and how to put a rewritten one back.
+ *
+ * A row written as an envelope keeps its sentence in `text` and its structured fields beside it - a
+ * notice's ids (`notice.actor`, `notice.targets`), an invitation card. Only `text` is prose, so only
+ * `text` is handed out, and the rest of the object is put back untouched. A legacy row is a plain
+ * sentence and the whole content is its text.
+ */
+function systemRowSentence(content: string): { text: string; withText: (text: string) => string } {
+  if (content.startsWith('{')) {
+    let raw: unknown;
+    try {
+      raw = JSON.parse(content);
+    } catch {
+      // Not JSON after all: `parseEnvelope` reads it as a plain sentence too, which is what it is.
+      raw = undefined;
+    }
+    if (raw && typeof raw === 'object' && typeof (raw as { text?: unknown }).text === 'string') {
+      const envelope = raw as Record<string, unknown> & { text: string };
+      return { text: envelope.text, withText: (text) => JSON.stringify({ ...envelope, text }) };
+    }
+  }
+  return { text: content, withText: (text) => text };
+}
+
+/**
+ * A NOTICE WHOSE IDS THIS PASS REPLACED WITH NAMES, with that notice dropped - or `null` when the
+ * row is not one.
+ *
+ * Until 2026-11-16 the pass below replaced every 64-hex id ANYWHERE in a system row's JSON, so the
+ * `notice` of a membership row (#3232) lost its `actor` and `targets` to display names on the first
+ * load from the store. The renderer then asked the server for an account called "canari test
+ * delta", was told it is not an account id (a name read as an id: "Utilisateur inconnu", or
+ * "Compte supprime" before the server named malformed ids), and drew that label over a stored
+ * sentence that was right - for good, since the row had been rewritten.
+ *
+ * The ids are gone. The sentence beside them was resolved by the same pass with the same names, so
+ * it is the best text there is: the notice is dropped and the row becomes a plain sentence. Told
+ * apart by SHAPE, because the pass wrote nothing but names where 64-hex ids stood and every user id
+ * of both estates is 64 hex (measured 2026-11-16: 565 of 565 in production, 30 of 30 on dev).
+ */
+function withoutRenamedNotice(content: string): string | null {
+  if (!content.startsWith('{')) return null;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(content);
+  } catch {
+    // A plain sentence that opens with a brace: no envelope, so no notice to have lost its ids.
+    return null;
+  }
+  if (!raw || typeof raw !== 'object') return null;
+  const { notice, ...rest } = raw as Record<string, unknown>;
+  if (!notice || typeof notice !== 'object') return null;
+  const spec = notice as { actor?: unknown; targets?: unknown };
+  const people = [spec.actor, ...(Array.isArray(spec.targets) ? spec.targets : [])];
+  if (people.every((p) => typeof p === 'string' && WHOLE_HEX_ID_RE.test(p))) return null;
+  return JSON.stringify(rest);
+}
+
+/**
+ * Retroactively resolves 64-char hex user IDs baked into the SENTENCE of stored system rows (e.g.
+ * "abc…def added xyz…uvw to the group", written when a name lookup failed: `resolveDisplayNames`
+ * keeps the id then, so a later reader can still name it). Updates the local DB so future loads are
  * already clean.
+ *
+ * ONLY THE SENTENCE IS REWRITTEN, never the ids a notice carries beside it: those are what the
+ * renderer draws the names from (`noticeDisplayText`). A row an earlier version of this pass emptied
+ * of its ids is repaired here too ({@link withoutRenamedNotice}).
  */
 export async function retroactivelyResolveHexIds(
   messages: ChatMessage[],
@@ -1669,19 +1735,34 @@ export async function retroactivelyResolveHexIds(
   conversationId: string,
   deviceKeyB64: string
 ): Promise<ChatMessage[]> {
+  const rows = messages.map((m) => {
+    if (!m.isSystem) return null;
+    const healed = withoutRenamedNotice(m.content);
+    const content = healed ?? m.content;
+    return { content, healed: healed !== null, sentence: systemRowSentence(content) };
+  });
   const hexIds = new Set<string>();
-  for (const m of messages) {
-    if (m.isSystem) {
-      for (const id of m.content.match(HEX_ID_RE) ?? []) hexIds.add(id);
-    }
+  for (const row of rows) {
+    for (const id of row?.sentence.text.match(HEX_ID_RE) ?? []) hexIds.add(id);
   }
-  if (hexIds.size === 0) return messages;
+  const healedCount = rows.filter((row) => row?.healed).length;
+  if (hexIds.size === 0 && healedCount === 0) return messages;
+  if (healedCount > 0) {
+    console.warn(
+      `[History] ${healedCount} notice row(s) in group ${conversationId.slice(0, 8)}… named their people by name where ids belong - ` +
+        `rewritten by the hex-id pass before 2026-11-16; their stored sentence stands and the notice is dropped`
+    );
+  }
 
-  const getName = await resolveDisplayNames([...hexIds]);
+  const getName = hexIds.size > 0 ? await resolveDisplayNames([...hexIds]) : null;
 
-  const updated = messages.map((m) => {
-    if (!m.isSystem) return m;
-    const newContent = m.content.replace(HEX_ID_RE, (id) => getName(id));
+  const updated = messages.map((m, i) => {
+    const row = rows[i];
+    if (!row) return m;
+    const text = getName
+      ? row.sentence.text.replace(HEX_ID_RE, (id) => getName(id))
+      : row.sentence.text;
+    const newContent = text === row.sentence.text ? row.content : row.sentence.withText(text);
     return newContent === m.content ? m : { ...m, content: newContent };
   });
 
