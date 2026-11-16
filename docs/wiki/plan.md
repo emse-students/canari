@@ -70,6 +70,7 @@ earliest version, as a checklist.
 - [P2 - no gate proves that an older build reads, and writes back, the MLS state this build writes](backlog.d/p2-no-gate-proves-an-older-build-reads-the-mls-state-this-build-writes.md)
 - [P2 - the first message posted in a salon right after an in-session join raised no unread badge on the iPhone](backlog.d/p2-the-first-message-after-an-in-session-join-raised-no-badge-on-the-iphone.md)
 - [P2 - the reply swipe along a thumb's arc does nothing on WebKit: the thread scrolls instead](backlog.d/p2-the-reply-swipe-along-a-thumb-s-arc-does-nothing-on-webkit.md)
+- [P2 - editing a CanaReel's caption answers 400: the edit form sends the reel's own video back as `media`](backlog.d/p2-editing-a-canareel-s-caption-answers-400-because-the-edit-form-sends-its-video.md)
 
 **P3 - hygiene**
 
