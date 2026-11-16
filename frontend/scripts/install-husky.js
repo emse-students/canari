@@ -33,6 +33,18 @@ if (!gitRoot || process.env.CI === 'true') {
   process.exit(0);
 }
 
+// A CHECK THAT INSTALLS NEVER WRITES THE SHARED CONFIG (2026-11-16). The push tier runs
+// `bun install` (`checks.sh frontend-prepare`), and every worktree shares `core.hooksPath`: the
+// value belongs to the checkout a HUMAN installed in, so the push tier sets this and nothing is
+// written - rather than writing and restoring, which leaves a window where every other checkout
+// reads the push's value.
+if (process.env.CANARI_KEEP_HOOKS_PATH === '1') {
+  console.log(
+    '[install-husky] CANARI_KEEP_HOOKS_PATH=1 (a check is installing): core.hooksPath left as it is'
+  );
+  process.exit(0);
+}
+
 // NO HUSKY BINARY IS RUN ANY MORE (2026-11-15). The hooks are the TRACKED files in `.husky/`,
 // and git is pointed at them directly: husky's generated `.husky/_` wrappers existed only after an
 // install, so a fresh worktree had none and git skipped every hook in silence. What husky did

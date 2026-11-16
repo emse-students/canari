@@ -5,8 +5,10 @@
 # commit, la fusion de PR devrait etre une formalite"*. Three tiers follow from it:
 #   commit   fast checks scoped to the STAGED files - doc links, the plan, the private-data guard,
 #            the native-log guard, the controls ratchet, the touched module's own unit tests.
-#   push     everything that CAN run on a workstation, scoped exactly as CI scopes it (the same
-#            `ci-scopes.sh`), after merging the latest origin/main so the run tests what CI tests.
+#   push     what the pushed files touch (owner, 2026-11-16): the jobs `ci-scopes.sh` - CI's own
+#            filters - plans for the diff since the last verified commit, after merging the latest
+#            origin/main into a feature branch so the run tests what CI tests. The full suites are
+#            CI's.
 #   ci-only  what a Windows workstation cannot run: listed in JOB_TIERS below with the reason.
 # Every command a check runs is `checks.sh`'s or a Make target's - this file decides WHEN, never
 # HOW. The inventory, with measured durations, is docs/wiki/cicd.md
@@ -16,9 +18,10 @@
 #   local-ci.sh commit             called by .husky/pre-commit, after the fixers
 #   local-ci.sh push <remote>      called by .husky/pre-push, the pushed refs on stdin
 #   local-ci.sh all                every local check, whatever changed (`make run-ci`)
+#   local-ci.sh push-plan <base>   print the push plan for <base>..HEAD, run nothing (the self-test)
 #   local-ci.sh tiers              print JOB_TIERS (read by local-ci.test.sh)
-# LOCAL_CI_DRY_RUN=1 prints `PLAN <check>: <command>` for each check instead of running it, and counts it
-# passed - how the self-test exercises the decisions without paying for the checks.
+# LOCAL_CI_DRY_RUN=1 makes the COMMIT tier print `PLAN <check>: <command>` instead of running it. The
+# push tier refuses it: a dry push that passed would send unchecked commits, and it writes no stamp.
 set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
@@ -34,15 +37,15 @@ COMMIT_INDEX="${GIT_INDEX_FILE:-${LOCAL_CI_COMMIT_INDEX:-}}"
 export LOCAL_CI_COMMIT_INDEX="$COMMIT_INDEX" # the helper modes below run as child processes
 # shellcheck disable=SC2046 # one variable name per word, by construction
 unset $(git rev-parse --local-env-vars)
+# git, against the index this commit is built from.
+commit_git() {
+  if [ -n "$COMMIT_INDEX" ]; then GIT_INDEX_FILE="$COMMIT_INDEX" git "$@"; else git "$@"; fi
+}
 # What this commit stages, read from the index git is committing.
 staged_paths() { # <diff-filter> [-- <pathspec>...]
   local filter="$1"
   shift
-  if [ -n "$COMMIT_INDEX" ]; then
-    GIT_INDEX_FILE="$COMMIT_INDEX" git diff --cached --name-only --diff-filter="$filter" "$@"
-  else
-    git diff --cached --name-only --diff-filter="$filter" "$@"
-  fi
+  commit_git diff --cached --name-only --diff-filter="$filter" "$@"
 }
 
 # EVERY JOB OF ci.yml, AND WHERE IT RUNS BEFORE THE PULL REQUEST. `local-ci.test.sh` fails when a
@@ -131,6 +134,7 @@ assert_hooks_path() {
 CHECK_INDEX=0
 CHECK_TOTAL=0
 TIER=""
+MERGED_NOTE=""
 
 # Runs one named check, its output into a log, a progress line before and after. Fails the run on
 # the first red check (a push waits for every check, and the next ones would cost minutes to say
@@ -152,6 +156,7 @@ run_check() {
   else
     say "[$TIER $CHECK_INDEX/$CHECK_TOTAL] $name FAILED ($((SECONDS - start))s) - the end of $log:"
     tail -n 40 "$log" | sed 's/^/    /'
+    [ -z "${MERGED_NOTE:-}" ] || say "$MERGED_NOTE"
     refuse "$name failed. Fix the cause and run it again; the full output is in $log"
   fi
 }
@@ -189,16 +194,10 @@ wasm_key() {
 # are seconds), and the WASM when its key changed. The pinned wasm-pack is installed first, by the
 # script CI uses; on Windows it has no prebuilt binary, refuses, and names the cargo command.
 frontend_generated() {
-  # The install's `prepare` runs THIS branch's install-husky.js, which writes core.hooksPath into
-  # the config every worktree shares. A check must leave that config as it found it (owner's lead,
-  # 2026-11-15): the value follows whichever checkout a human ran `bun install` in, never a hook.
-  local hooks_before
-  hooks_before="$(git config core.hooksPath || true)"
-  bash .github/scripts/checks.sh frontend-prepare
-  if [ "$(git config core.hooksPath || true)" != "$hooks_before" ] && [ -n "$hooks_before" ]; then
-    git config core.hooksPath "$hooks_before"
-    echo "the install rewrote the shared core.hooksPath; put back to $hooks_before"
-  fi
+  # The install's `prepare` runs install-husky.js, which writes core.hooksPath into the config every
+  # worktree shares. A check never writes that config (lead, 2026-11-15): the value follows the
+  # checkout a HUMAN ran `bun install` in. So the install is told not to, at the source.
+  CANARI_KEEP_HOOKS_PATH=1 bash .github/scripts/checks.sh frontend-prepare
   if [ ! -s "$WASM_DIR/mls_wasm_bg.wasm" ] || [ "$(cat "$WASM_KEY_FILE" 2>/dev/null)" != "$(wasm_key)" ]; then
     echo "the MLS WASM is missing or was built from other sources: rebuilding it"
     bash ./scripts/install-wasm-pack.sh
@@ -305,15 +304,37 @@ require_tools() {
 }
 
 # ── push ─────────────────────────────────────────────────────────────────────────────────────────
+# WHERE A PUSH GOES DECIDES WHETHER MAIN IS MERGED INTO IT. A feature branch becomes a pull request
+# into main, so main is merged first and the run tests what CI will. A release branch or a tag is
+# not headed for main - merging main into a release fix would ship main's unreleased work with it -
+# so it is checked as it is, against its own base. main itself takes changes through a pull request
+# only (ruleset 22152902), so a push to it is refused here, by name, before minutes of checks.
 mode_push() {
-  local head lref lsha pushing=0
+  local head lref lsha rref rsha commit pushing=0 passthrough=0 ref_base=""
+  if [ "${LOCAL_CI_DRY_RUN:-}" = "1" ]; then
+    refuse "LOCAL_CI_DRY_RUN=1 is the commit tier's switch; a push it let through would send commits nothing checked. Unset it and push again (the self-test reads the plan with local-ci.sh push-plan)."
+  fi
   assert_hooks_path
   head="$(git rev-parse HEAD)"
-  while read -r lref lsha _; do
+  while read -r lref lsha rref rsha; do
     [ -n "${lref:-}" ] || continue
     [ "$lsha" = "$ZERO" ] && continue # a deletion carries no code
-    if [ "$lsha" != "$head" ]; then
-      refuse "this push sends $lref ($lsha), which is not the checked-out commit ($head). The local checks run on the working tree, so they can only vouch for HEAD: check out $lref and push from there."
+    case "$rref" in
+      refs/heads/main)
+        refuse "this push goes to main ($rref). main takes changes through a pull request only: push a branch and open one (gh pr create)."
+        ;;
+      refs/heads/release/* | refs/tags/*) passthrough=1 ;;
+      refs/heads/*) ;;
+      *) passthrough=1 ;;
+    esac
+    # A tag names a tag object; what the checks can vouch for is the commit under it.
+    commit="$(git rev-parse -q --verify "$lsha^{commit}" 2>/dev/null || echo "$lsha")"
+    if [ "$commit" != "$head" ]; then
+      refuse "this push sends $lref ($commit), which is not the checked-out commit ($head). The local checks run on the working tree, so they can only vouch for HEAD: check out $lref and push from there."
+    fi
+    # The base a passthrough ref is checked against: what the remote already has under that name.
+    if [ -z "$ref_base" ] && [ "${rsha:-$ZERO}" != "$ZERO" ] && git rev-parse -q --verify "$rsha^{commit}" >/dev/null 2>&1; then
+      ref_base="$(git rev-parse "$rsha^{commit}")"
     fi
     pushing=1
   done
@@ -324,6 +345,11 @@ mode_push() {
 
   if ! git diff --quiet || ! git diff --cached --quiet; then
     refuse "the working tree has uncommitted changes, and the checks would read them instead of the commit being pushed. Commit or stash them, then push."
+  fi
+
+  if [ "$passthrough" -eq 1 ]; then
+    push_passthrough "$head" "$ref_base"
+    return
   fi
 
   # THE PUSH THIS HOOK ASKED FOR IS SENT BEFORE ANY FETCH. Its merge of origin/main passed every
@@ -354,6 +380,8 @@ commit, and push again."
     fi
     merged=1
     head="$(git rev-parse HEAD)"
+    # Said again under a failing check: the branch is no longer what was committed.
+    MERGED_NOTE="HEAD now includes a merge of origin/main (${base:0:12}), as ${head:0:12}."
   fi
 
   if [ "$merged" -eq 0 ] && [ "$(cat "$STAMP" 2>/dev/null)" = "$head" ]; then
@@ -361,30 +389,69 @@ commit, and push again."
     return 0
   fi
 
-  # WHAT CHANGED SINCE A VERIFIED COMMIT IS WHAT IS CHECKED. When the stamped commit is in HEAD, its
-  # whole tree passed every check its range owed, and the tree difference from it is exactly what
-  # came in since - new commits, main's merges, any resolution - so the plan is scoped to that.
-  # Without it, a branch whose plan outlasts main's merge rate never converges: measured 2026-11-15,
-  # an hour-long plan, main moved twice meanwhile.
-  local plan_base="$base" stamped
-  stamped="$(cat "$STAMP" 2>/dev/null || true)"
-  if [ -n "$stamped" ] && [ "$stamped" != "$head" ] && git merge-base --is-ancestor "$stamped" HEAD 2>/dev/null; then
-    say "[push] ${stamped:0:12} was verified; checking only what has come in since"
-    plan_base="$stamped"
-  fi
-
-  TIER=push
-  local plan
-  plan="$(push_plan "$plan_base")"
-  require_tools "$plan"
-  run_plan "$plan"
-  printf '%s\n' "$head" >"$STAMP"
+  # What changed since a verified commit is what is checked: new commits, main's merges, any
+  # resolution (stamp_base).
+  verify_range "$head" "$(stamp_base "$base" "$head")"
 
   if [ "$merged" -eq 1 ]; then
     printf '%s\n' "$head" >"$RESEND"
     refuse "origin/main was merged into this branch as ${head:0:12} and every local check passed on it - but git had already chosen the commit to send before this hook ran, so this push would not carry the merge. Run the same git push again: it finds this commit verified and sends it at once."
   fi
   say "[push] every local check passed on ${head:0:12}"
+}
+
+# The base the plan starts from: <base>, or the verified commit (the stamp) when HEAD contains it -
+# its tree passed every check its range owed, so the tree difference from it is exactly what came
+# in since. Without it, a branch whose plan outlasts main's merge rate never converges (measured
+# 2026-11-15: an hour-long plan, main moved twice meanwhile).
+stamp_base() { # <base> <head>
+  local stamped
+  stamped="$(cat "$STAMP" 2>/dev/null || true)"
+  if [ -n "$stamped" ] && [ "$stamped" != "$2" ] && git merge-base --is-ancestor "$stamped" "$2" 2>/dev/null; then
+    say "[push] ${stamped:0:12} was verified; checking only what has come in since" >&2
+    echo "$stamped"
+  else
+    echo "$1"
+  fi
+}
+
+# Runs the push plan for <base>..HEAD and, when every check passed, stamps <head>. The ONLY writer
+# of the stamp, and never reached by a dry run (mode_push refuses one).
+verify_range() { # <head> <base>
+  TIER=push
+  local plan
+  plan="$(push_plan "$2")"
+  require_tools "$plan"
+  run_plan "$plan"
+  printf '%s\n' "$1" >"$STAMP"
+}
+
+# A release branch, a tag, or any ref that is not a feature branch: no merge. Its base is what the
+# remote already holds under that name, or, for a new one, where it leaves origin/main.
+push_passthrough() { # <head> <ref-base or empty>
+  local head="$1" base="$2"
+  if [ "$(cat "$STAMP" 2>/dev/null)" = "$head" ]; then
+    say "[push] ${head:0:12} already passed every local check here - sending it, unmerged"
+    return 0
+  fi
+  if [ -z "$base" ]; then
+    say "[push] fetching origin/main, to find where this ref leaves it (nothing is merged)"
+    git fetch --quiet origin main
+    base="$(git merge-base HEAD origin/main)"
+  fi
+  say "[push] not a feature branch: checked as it is, against ${base:0:12}, with no merge of main"
+  verify_range "$head" "$(stamp_base "$base" "$head")"
+  say "[push] every local check passed on ${head:0:12}"
+}
+
+# The plan a push of HEAD would run for <base>..HEAD, printed, nothing run and nothing written.
+mode_push_plan() { # <base>
+  local base="${1:-}" line
+  [ -n "$base" ] || refuse "push-plan: pass the base the range starts from"
+  TIER=push
+  while IFS= read -r line; do
+    [ -n "$line" ] && say "PLAN ${line%%|*}: ${line#*|}"
+  done < <(push_plan "$(git rev-parse "$base")")
 }
 
 # ── all (make run-ci) ────────────────────────────────────────────────────────────────────────────
@@ -513,7 +580,7 @@ mode_commit() {
   fe_sources="$(grep -E '^frontend/src/.*\.(ts|js|svelte)$' <<<"$staged" || true)"
   if [ -n "$fe_sources" ]; then
     if [ "$merging" -eq 1 ]; then
-      echo "local-ci: concluding a merge - the module tests of its $(grep -c . <<<"$fe_sources") frontend file(s) are the push's to run, which runs the whole suite"
+      echo "local-ci: concluding a merge - the module tests of its $(grep -c . <<<"$fe_sources") frontend file(s) are the push's to run, through vitest related over the merged range"
     else
       vitest+="$(module_tests frontend test "$fe_sources")"$'\n'
     fi
@@ -541,14 +608,16 @@ mode_commit() {
 }
 
 # ── helpers the plans call back into (so one plan line is one command) ──────────────────────────
+# Against the index THIS COMMIT is built from: `git commit -a` and `git commit -- <path>` build a
+# temporary one (GIT_INDEX_FILE), and the default index would call their own changes unstaged.
 mode_plan() {
-  if ! git diff --quiet -- docs/wiki/backlog.d || [ -n "$(git ls-files --others --exclude-standard -- docs/wiki/backlog.d)" ]; then
+  if ! commit_git diff --quiet -- docs/wiki/backlog.d || [ -n "$(git ls-files --others --exclude-standard -- docs/wiki/backlog.d)" ]; then
     echo "docs/wiki/backlog.d has changes this commit does not stage, and the plan would be derived from them. Stage or stash them first."
     return 1
   fi
   bun tools/backlog-plan/plan.mjs
-  if ! git diff --quiet -- docs/wiki/plan.md; then
-    git add -- docs/wiki/plan.md
+  if ! commit_git diff --quiet -- docs/wiki/plan.md; then
+    commit_git add -- docs/wiki/plan.md
     echo "docs/wiki/plan.md regenerated from the staged entries, and staged with them"
   fi
   bun .github/scripts/tests/backlog-plan.test.mjs
@@ -598,6 +667,7 @@ mode="${1:-}"
 case "$mode" in
   commit) mode_commit ;;
   push) mode_push ;;
+  push-plan) mode_push_plan "$@" ;;
   all) mode_all ;;
   tiers) printf '%s' "$JOB_TIERS" ;;
   generated) frontend_generated ;;
@@ -620,7 +690,7 @@ case "$mode" in
     make lint-ci-scripts FILES="$*"
     ;;
   *)
-    echo "usage: local-ci.sh commit | push <remote> | all | tiers" >&2
+    echo "usage: local-ci.sh commit | push <remote> | push-plan <base> | all | tiers" >&2
     exit 2
     ;;
 esac

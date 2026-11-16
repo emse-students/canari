@@ -146,12 +146,15 @@ check_frontend_test() {
 
 # The files whose change can move ANY test, so a push touching one runs the whole suite. The import
 # graph cannot see them: the runner's own config, the setup files and helpers of `src/test/`, the
-# dependencies, and the messages every `m.xxx()` is generated from.
-FRONTEND_TEST_SETUP='^frontend/(vite\.config\.js|vitest\.config\.ts|tsconfig\.json|package\.json|bun\.lock|src/test/|messages/|project\.inlang/)'
+# dependencies, the messages every `m.xxx()` is generated from, the static assets, and the sources
+# of what the build GENERATES into src (the MLS WASM from its two crates, the protobuf bindings
+# from libs/proto) or what tests read across the tree (libs/contracts).
+FRONTEND_TEST_SETUP='^(frontend/(vite\.config\.js|vitest\.config\.ts|kit\.config\.js|tsconfig\.json|package\.json|bun\.lock|src/test/|messages/|project\.inlang/|static/|mls-wasm/|mls-core/)|libs/(proto|contracts)/)'
 
 # WHAT A PUSH'S VITEST RUNS (owner, 2026-11-16, "alleger le push": the whole suite was 720 of a
 # frontend-only push's 846 s). The full suite stays CI's (`frontend-test`). Here:
-#   - a change to FRONTEND_TEST_SETUP runs the whole suite, said by a named line;
+#   - a change to FRONTEND_TEST_SETUP, or a deletion under frontend/src, runs the whole suite,
+#     said by a named line;
 #   - otherwise `vitest related` over the changed files - the tests whose import graph reaches one -
 #     PLUS what that graph cannot see: every scan of the source tree (`src/test/sourceTree`, read
 #     from disk, imports nothing it checks), and every test that names a changed file (one that
@@ -160,11 +163,19 @@ FRONTEND_TEST_SETUP='^frontend/(vite\.config\.js|vitest\.config\.ts|tsconfig\.js
 check_frontend_test_related() {
   local base="${1:-}"
   [ -n "$base" ] || die "frontend-test-related: pass the base the range starts from"
-  local changed setup
-  changed="$(git diff --name-only --diff-filter=ACMR "$base" HEAD -- frontend/)"
+  # No rename detection: a rename is the deletion of its old path, and handled as one.
+  local changed setup deleted
+  changed="$(git diff --name-only --no-renames "$base" HEAD)"
   setup="$(grep -E "$FRONTEND_TEST_SETUP" <<<"$changed" || true)"
-  if [ -n "$setup" ]; then
-    echo "frontend-test: the test setup changed ($(head -1 <<<"$setup" | sed 's#^frontend/##')) - the whole suite runs"
+  # A deleted module has no import graph left to ask: the tests that imported it are found by
+  # nothing but running them all.
+  deleted="$(git diff --name-only --no-renames --diff-filter=D "$base" HEAD -- frontend/src/)"
+  if [ -n "$setup" ] || [ -n "$deleted" ]; then
+    if [ -n "$setup" ]; then
+      echo "frontend-test: the test setup changed ($(head -1 <<<"$setup" | sed 's#^frontend/##')) - the whole suite runs"
+    else
+      echo "frontend-test: a file under frontend/src was deleted ($(head -1 <<<"$deleted" | sed 's#^frontend/##')) - the whole suite runs"
+    fi
     [ "${CHECKS_DRY_RUN:-}" = "1" ] && return 0
     (cd frontend && bun run test)
     return

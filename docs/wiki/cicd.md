@@ -3382,7 +3382,7 @@ the path rules and the whole-tree scans, in seconds; a frontend change runs the 
 | `test-rust` | push | `checks.sh rust <crate>` per crate in scope: lockfile, fmt, clippy, task | cold, from an empty target: mls-core 165 s, call-service 117 s, chat-gateway 119 s, mls-wasm 39 s; src-tauri not measured | the gateway's Redis-backed half needs a Redis service: CI only |
 | `test-typescript-backend` | push | `checks.sh ts <svc>` per service in scope: install, lint, format, typecheck, build, unit specs | core 29 s, media 28 s, chat-delivery 80 s, social 208 s | - |
 | `test-frontend` | push | `local-ci.sh generated` (install, sync, proto, wasm), `checks.sh frontend-lint`, `dead-code`, `frontend-build` | lint 13 s, `svelte-check` 53 s, format 4 s, dead-code 24 s, wasm build 1 min 55 s when its source changed (0 s otherwise), install 24 s | - |
-| `test-frontend-shards` | push, by file | `checks.sh frontend-test-related <base>`: `vitest related` over the range's changed `frontend/src` files, plus every source-tree scan (`src/test/sourceTree`) and every test naming a changed file - what the import graph cannot see. **A change to the test setup** (`vite.config.js`, `vitest.config.ts`, `tsconfig.json`, `package.json`, `bun.lock`, `src/test/`, `messages/`, `project.inlang/`) **runs the whole suite**, said by a named line (owner, 2026-11-16) | the whole suite 12-15 min here (1786 files, 19165 tests; ~6-7 min per shard on a CI runner) | the whole suite with coverage is CI's |
+| `test-frontend-shards` | push, by file | `checks.sh frontend-test-related <base>`: `vitest related` over the range's changed `frontend/src` files, plus every source-tree scan (`src/test/sourceTree`) and every test naming a changed file - what the import graph cannot see. **A change to the test setup** (`vite.config.js`, `vitest.config.ts`, `kit.config.js`, `tsconfig.json`, `package.json`, `bun.lock`, `src/test/`, `messages/`, `project.inlang/`, `static/`, the two MLS crates and `libs/proto` - generated into `src` - and `libs/contracts`), **or a deletion under `frontend/src`** (no import graph is left to ask), **runs the whole suite**, said by a named line (owner, 2026-11-16) | the whole suite 12-15 min here (1786 files, 19165 tests; ~6-7 min per shard on a CI runner) | the whole suite with coverage is CI's |
 | `test-android` | push | `android-unit-tests.sh` (a JDK) | 75 s (272 tests) | - |
 | `test-harness` | push | `make test-harness` | 41 s | - |
 | `test-ci-scripts` | push, by range | `make test-ci-scripts` when the range touches `CI_SCRIPTS_PATHS` (`.github/`, `.husky/`, the Makefile, `scripts/`, `infrastructure/`, `libs/`, a `.*-version` pin); on every push its whole-tree scans (`control-characters`, `no-nul-in-source`, `line-endings`) and the path rules over the range; then `ratchet-not-raised.mjs` against the merge base | `make test-ci-scripts`: 43 min here without `deploy-rolling.test.sh` (the push of 2026-11-15), 46 min with it (6 min on a CI runner) | **The one place a push proves less than the pull request:** CI runs this suite on every pull request, and a push that touches none of `CI_SCRIPTS_PATHS` leaves its source guards (those reading the frontend or the services) to CI, said by name on stderr. Needs `shellcheck`. **`deploy-rolling.test.sh` does not run under Docker Desktop** (the recipe reads `docker info`, prints a named line, and runs it on any other engine): it measures a Linux engine's reload timing, and here it failed twice in two runs on two different cases - its own control saw no failure from DNS-name calls, then one `ConnectionRefused` in 44502 POSTs across 450 reloads. CI, on a Linux engine, is green on it. Not diagnosed further; open in [backlog.d](backlog.d/p3-the-checks-at-commit-shape-is-carried-to-the-other-repos-and-the-ci-only-list-shrinks.md) |
@@ -3430,7 +3430,7 @@ matches it; a commit touching none of them pays nothing.
 
 **What is NOT at commit, and why**: `vitest related` (65-114 s for one file - it walks the whole
 import graph) and the dead-code ratchet (24 s, a whole-program scan) are at push. A merge commit
-skips the module tests (the push runs the whole suite on the merged tree). The whole-tree scans of
+skips the module tests (the push runs `vitest related` over the merged range). The whole-tree scans of
 `make test-ci-scripts` (`control-characters` 24 s, `no-nul-in-source` 7 s) stay at push: they read
 every file whatever was staged.
 
@@ -3474,8 +3474,10 @@ the shared value was found UNSET (no hook ran in any worktree). `.husky/_` is wh
 branch's `bun install` writes, and stays the expected state until every branch carries the new
 install script, so it is SAID (one line naming what a fresh worktree loses), not refused - the hook
 running at all proves this checkout has the wrappers. **The shared config is never written by hand
-or by a hook**: it follows the install script of whatever branch ran `bun install` last, so it
-converges on `.husky` as branches take main. `local-ci.test.sh` refuses an unset and an absolute
+or by a hook**: it follows the install script of whatever branch a HUMAN ran `bun install` in last,
+so it converges on `.husky` as branches take main. The push tier's own `bun install` sets
+`CANARI_KEEP_HOOKS_PATH=1`, and `install-husky.js` then writes nothing - stopped at the source, not
+written and restored (`husky-hookspath.test.mjs` runs the installer both ways). `local-ci.test.sh` refuses an unset and an absolute
 value at both tiers, and accepts `.husky/_` with its line.
 
 A hook that runs but lacks its toolchain FAILS, naming what to install: `bun` not on PATH, a
@@ -3487,10 +3489,19 @@ push `shellcheck`, `cargo`, `node` or `java` as the planned checks need them.
 
 `local-ci.sh push`, from `.husky/pre-push`:
 
-1. It refuses a push of anything but the checked-out commit (the checks run on the working tree)
-   and a dirty tree. A push of deletions only passes.
-2. `git fetch origin main`. When `origin/main` is not already in HEAD, `git merge --no-edit
-   origin/main`. **A conflict aborts the merge and refuses the push**, listing the files.
+1. It refuses a push of anything but the checked-out commit (the checks run on the working tree;
+   an annotated tag is read as the commit under it), a dirty tree, and `LOCAL_CI_DRY_RUN=1` - the
+   commit tier's switch, which at push would send commits nothing checked. A push of deletions only
+   passes.
+2. **The destination decides the merge.** A push to `refs/heads/main` is refused by name (main
+   takes changes through a pull request). A release branch (`refs/heads/release/*`), a tag, or any
+   ref outside `refs/heads/` is NOT headed for main: merging main into a release fix would ship
+   main's unreleased work with it, so it is checked as it is, against what the remote already holds
+   under that name (or, for a new ref, where it leaves `origin/main`), and never merged. Any other
+   branch is a feature branch: `git fetch origin main`, and when `origin/main` is not already in
+   HEAD, `git merge --no-edit origin/main`. **A conflict aborts the merge and refuses the push**,
+   listing the files; a check failing after a merge says *"HEAD now includes a merge of
+   origin/main (<sha>)"*, since the branch is no longer what was committed.
 3. The plan for the range `origin/main..HEAD` - or, when a commit already verified here (the
    stamp) is in HEAD, for `stamp..HEAD`: its tree passed what its range owed, so only what came in
    since is checked. Without that a branch whose plan outlasts main's merge rate never converges
@@ -3498,8 +3509,10 @@ push `shellcheck`, `cargo`, `node` or `java` as the planned checks need them.
    commit tier's, re-proved for the whole branch), the whole-tree scans, and each job whose
    `ci-scopes.sh` scope the range triggers - with a progress line each (`[push 3/9] frontend-lint ... ok (13s)`);
    a failure prints the last 40 lines of its log (`.git/canari-local-ci/<check>.log`, per worktree)
-   and stops.
-4. On success it stamps the verified commit. **If it merged, it refuses once**: git chose the
+   and stops. `local-ci.sh push-plan <base>` prints that plan and runs nothing - how the self-test
+   reads it; the self-test runs the push itself for real, against stub checks.
+4. On success it stamps the verified commit - the ONE writer of the stamp, never reached without
+   the checks running. **If it merged, it refuses once**: git chose the
    pushed commits before the hook ran, so the merge cannot ride this push - *"Run the same git push
    again"*. The second push finds HEAD is the merge it asked for (`resend-head`, beside the stamp) and
    passes at once - **before any fetch**, so main moving during the run does not start a third: CI

@@ -284,8 +284,9 @@ from the source.
   check - `CI passed` - then `gh pr merge --squash --delete-branch`. No approval is required, so the
   whole loop costs a minute; what it buys is a readable diff and a CI run on the MERGED result
   rather than on the branch alone. The admin role can bypass, and that is the emergency path only.
-- Before pushing, nothing by hand: the pre-push hook merges the latest `origin/main` into the branch
-  and runs every check a workstation can run, CI's own scoping and commands
+- Before pushing, nothing by hand: the pre-push hook merges the latest `origin/main` into a feature
+  branch (never into a release branch or a tag, and a push to main is refused) and runs what the
+  pushed files touch - CI's own filters and commands, the full suites staying CI's
   ([cicd](cicd.md#checks-at-commit-at-push-and-in-ci-only)). It refuses a dirty tree, so commit or
   stash first; when it merged, it asks for the same `git push` once more.
 - Commit signing is on globally over SSH (`gpg.format ssh`,

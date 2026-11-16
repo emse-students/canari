@@ -1,17 +1,20 @@
 #!/bin/sh
-# Pre-push hook - merge the latest origin/main, then run every check a workstation CAN run.
+# Pre-push hook - merge the latest origin/main into a feature branch, then run what the pushed files
+# touch (owner, 2026-11-16: the full suites are CI's).
 #
 # BACK SINCE 2026-11-15, after being deleted on 2026-09-02 (docs/wiki/workflow-migration.md,
 # decision 6). The owner: *"tout ce qui est verifie a la PR devrait etre verifie au commit, la
 # fusion de PR devrait etre une formalite"*. The failures that day were all of one kind - a pull
 # request red for something a workstation could have said: ratchet drift because main had moved
 # (#3580, #3599), dead wiki links found only in CI (#3607, #3608). So this hook first merges the
-# latest origin/main (CI tests the merge too), then runs exactly the jobs CI would run for this
-# change (`ci-scopes.sh`, the same script), through the same commands (`checks.sh`, the Makefile).
+# latest origin/main into a feature branch (CI tests the merge too; a release branch or a tag is
+# checked unmerged, a push to main refused), then runs the jobs CI would run for the diff since the
+# last verified commit (`ci-scopes.sh`, the same script), through the same commands (`checks.sh`,
+# the Makefile) - and, for the frontend, only the tests that diff reaches (`vitest related`).
 # The logic is all in `.github/scripts/local-ci.sh`; the tiers are in docs/wiki/cicd.md.
 #
-# IT IS MINUTES LONG, so a push runs in the background (CLAUDE.md) and prints one progress line per
-# check. When it merged origin/main it refuses the push once - git chose the commit to send before
+# IT CAN BE MINUTES LONG (an hour when the CI scripts themselves changed), so a push runs in the
+# background (CLAUDE.md) and prints one progress line per check. When it merged origin/main it refuses the push once - git chose the commit to send before
 # this ran - and the next identical push finds the merge verified and sends it at once.
 #
 # Called by git directly (`core.hooksPath` = `.husky`, tracked), so it exists in every checkout.

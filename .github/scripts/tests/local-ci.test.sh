@@ -5,13 +5,17 @@
 # what a pull request checks is checked before the push). Its decisions fail SILENTLY when wrong:
 # a commit rule that matches nothing runs no check and says nothing, a push that does not merge
 # origin/main tests a tree CI never sees, a conflict left half-merged leaves the branch broken. So
-# this runs the script's own decisions in dry-run mode (`LOCAL_CI_DRY_RUN=1`: the plan is printed,
-# nothing is executed) against scratch repositories, and pins:
+# this runs the script's own decisions against scratch repositories - the commit tier in dry-run
+# mode (`LOCAL_CI_DRY_RUN=1`: the plan is printed, nothing executed), the push tier FOR REAL against
+# stub checks (a dry push is refused: it would be a push nothing checked), and the push plan through
+# `local-ci.sh push-plan` - and pins:
 #   1. every job of ci.yml has a tier in JOB_TIERS, and every tier names a job that exists;
 #   2. the inventory in docs/wiki/cicd.md names every job (it is the one copy of the table);
 #   3. the commit rules plan the right checks for the staged paths, and nothing for a clean index;
-#   4. the push merges origin/main, refuses on a conflict with the branch left as it was, refuses a
-#      dirty tree and a ref that is not HEAD, and passes at once on a commit it already verified;
+#   4. the push merges origin/main into a feature branch and never into a release branch or a tag,
+#      refuses a push to main, a dry run, a conflict (the branch left as it was), a dirty tree and a
+#      ref that is not HEAD, names the merge under a failing check, and passes at once on a commit
+#      it already verified; its plan follows the range, through the same scopes as CI;
 #   5. the tracked hooks call this script, and `make run-ci` runs the same plan.
 #
 # Usage: bash .github/scripts/tests/local-ci.test.sh   (no arguments, no network)
@@ -165,36 +169,103 @@ check "a new backlog entry -> backlog-plan" "a new backlog entry does not plan b
 git -C "$c" reset -q
 rm -f "$c/docs/wiki/backlog.d/new.md"
 
+# The plan regenerates against the index the COMMIT is built from: `git commit -a` and
+# `git commit -- <path>` build their own (GIT_INDEX_FILE), and read against the default index their
+# own changes looked unstaged and were refused. Run through a real pre-commit hook, as git runs it.
+echo "the plan regeneration follows git commit -a and git commit -- <path>:"
+g="$scratch/plan-index"
+make_repo "$g"
+mkdir -p "$g/tools/backlog-plan" "$g/.github/scripts/tests" "$g/.husky"
+# The plan is every entry's text, so an edited entry changes it.
+printf '%s\n' "import { readdirSync, readFileSync, writeFileSync } from 'node:fs';" \
+  "const d = 'docs/wiki/backlog.d';" \
+  "writeFileSync('docs/wiki/plan.md', readdirSync(d).sort().map((f) => readFileSync(d + '/' + f, 'utf8')).join(''));" \
+  >"$g/tools/backlog-plan/plan.mjs"
+echo "" >"$g/.github/scripts/tests/backlog-plan.test.mjs"
+printf '#!/bin/sh\nexec bash .github/scripts/local-ci.sh plan\n' >"$g/.husky/pre-commit"
+chmod +x "$g/.husky/pre-commit"
+echo "entry one" >"$g/docs/wiki/backlog.d/a.md"
+echo "entry one" >"$g/docs/wiki/plan.md"
+git -C "$g" add -A
+git -C "$g" commit -qm plan-base
+echo "entry one, edited" >"$g/docs/wiki/backlog.d/a.md"
+rc=0
+out=$(git -C "$g" commit -qam edit-a 2>&1) || rc=$?
+check "git commit -a commits an edited entry, its plan regenerated" "git commit -a was refused or left the plan out (rc=$rc): $out" \
+  test "$rc" -eq 0 -a "$(git -C "$g" show HEAD:docs/wiki/plan.md)" = "entry one, edited"
+echo "entry one, edited twice" >"$g/docs/wiki/backlog.d/a.md"
+echo "not in this commit" >>"$g/shared.txt"
+rc=0
+out=$(git -C "$g" commit -qm edit-a-again -- docs/wiki/backlog.d/a.md 2>&1) || rc=$?
+check "git commit -- <entry> commits it, its plan regenerated" "git commit -- <path> was refused or left the plan out (rc=$rc): $out" \
+  test "$rc" -eq 0 -a "$(git -C "$g" show HEAD:docs/wiki/plan.md)" = "entry one, edited twice"
+check "and leaves the file it did not name out of the commit" "a partial commit took an unnamed file" \
+  test -z "$(git -C "$g" show --name-only --format= HEAD | grep -F shared.txt || true)"
+
 # ── 4. the push ─────────────────────────────────────────────────────────────────────────────────
-echo "the push tier merges origin/main, and refuses what it cannot vouch for:"
+# RUN FOR REAL, never dry: a dry push would be a push nothing checked, so the push tier refuses one.
+# The fixture's checks are stubs at the paths the plan names, each failing when FAIL_ME exists.
+echo "the push tier merges origin/main into a feature branch, and refuses what it cannot vouch for:"
+stub_checks() { # <dir>: every check the push plans for this fixture, as a stub, committed
+  local dir="$1" name
+  mkdir -p "$dir/.github/scripts/tests"
+  local stub="import { existsSync } from 'node:fs';
+if (existsSync('FAIL_ME')) { console.log('stub: FAIL_ME is present'); process.exit(1); }"
+  for name in wiki-links docs-merge-artefacts backlog-plan backlog-fragments backlog-closed claude-md-cap \
+    docs-private-guard executable-bit pipefail-early-reader migration-numbers image-scan-allowlist \
+    control-characters no-nul-in-source line-endings; do
+    printf '%s\n' "$stub" >"$dir/.github/scripts/tests/$name.test.mjs"
+  done
+  printf '%s\n' "$stub" >"$dir/.github/scripts/ratchet-not-raised.mjs"
+  printf '#!/usr/bin/env bash\necho "stub checks.sh $*"\n' >"$dir/.github/scripts/checks.sh"
+  git -C "$dir" add -A
+  git -C "$dir" commit -qm stubs
+}
 origin="$scratch/origin.git"
 git init -q --bare -b main "$origin"
 p="$scratch/push"
 other="$scratch/other"
 make_repo "$p"
+stub_checks "$p"
 git -C "$p" remote add origin "$origin"
 git -C "$p" push -q origin main
 git -C "$p" switch -q -c feature
 git clone -q "$origin" "$other"
 configure "$other"
 
+# push_hook <local sha> [remote ref] [remote sha]: what git hands .husky/pre-push.
 push_hook() {
-  (cd "$p" && printf 'refs/heads/feature %s refs/heads/feature %s\n' "$1" "$ZERO" |
-    LOCAL_CI_DRY_RUN=1 bash .github/scripts/local-ci.sh push origin 2>&1)
+  (cd "$p" && printf 'refs/heads/x %s %s %s\n' "$1" "${2:-refs/heads/feature}" "${3:-$ZERO}" |
+    DOCS_PRIVATE_DENYLIST_FILE=none bash .github/scripts/local-ci.sh push origin 2>&1)
 }
+# shellcheck disable=SC2317,SC2329 # called through `check` (0.10 names it SC2317, 0.11 SC2329)
+ran() { grep -qE "^\[push [0-9]+/[0-9]+\] $1 ok" <<<"$2"; }
+stamp_file="$(cd "$p" && realpath "$(git rev-parse --git-path canari-local-ci)")/verified-head"
 
 echo "feature" >"$p/feature.txt"
 git -C "$p" add feature.txt
 git -C "$p" commit -qm feature
 head=$(git -C "$p" rev-parse HEAD)
 rc=0
+out=$(cd "$p" && printf 'refs/heads/feature %s refs/heads/feature %s\n' "$head" "$ZERO" |
+  LOCAL_CI_DRY_RUN=1 DOCS_PRIVATE_DENYLIST_FILE=none bash .github/scripts/local-ci.sh push origin 2>&1) || rc=$?
+check "a dry push is refused" "LOCAL_CI_DRY_RUN=1 let a push through (rc=$rc): $out" \
+  test "$rc" -ne 0 -a -n "$(grep -F 'commit tier' <<<"$out" || true)"
+check "and stamps nothing" "a dry push wrote the stamp" test ! -s "$stamp_file"
+rc=0
 out=$(push_hook "$head") || rc=$?
-check "a branch on top of origin/main runs the plan and passes" "a clean push was refused or ran nothing (rc=$rc): $out" \
-  test "$rc" -eq 0 -a -n "$(grep -F 'PLAN control-characters:' <<<"$out" || true)"
+check "a branch on top of origin/main runs its checks and passes" "a clean push was refused or ran nothing (rc=$rc): $out" \
+  test "$rc" -eq 0 -a -n "$(ran control-characters "$out" && echo y)"
+check "and stamps the commit it checked" "the verified commit was not stamped" test "$(cat "$stamp_file" 2>/dev/null)" = "$head"
 rc=0
 out=$(push_hook "$head") || rc=$?
 check "the same commit pushed again is not re-checked (the stamp)" "a verified commit was checked again or refused (rc=$rc): $out" \
-  test "$rc" -eq 0 -a -n "$(grep -F 'already passed every local check' <<<"$out" || true)" -a -z "$(grep -F PLAN <<<"$out" || true)"
+  test "$rc" -eq 0 -a -n "$(grep -F 'already passed every local check' <<<"$out" || true)" -a -z "$(grep -F '] control-characters' <<<"$out" || true)"
+
+rc=0
+out=$(push_hook "$head" refs/heads/main "$ZERO") || rc=$?
+check "a push to main is refused by name" "a push to main was let through (rc=$rc): $out" \
+  test "$rc" -ne 0 -a -n "$(grep -F 'this push goes to main' <<<"$out" || true)"
 
 echo "dirty" >>"$p/feature.txt"
 rc=0
@@ -209,7 +280,7 @@ check "a pushed ref that is not HEAD is refused" "a ref other than HEAD was not 
 
 rc=0
 out=$(cd "$p" && printf 'refs/heads/gone %s refs/heads/gone %s\n' "$ZERO" "$head" |
-  LOCAL_CI_DRY_RUN=1 bash .github/scripts/local-ci.sh push origin 2>&1) || rc=$?
+  DOCS_PRIVATE_DENYLIST_FILE=none bash .github/scripts/local-ci.sh push origin 2>&1) || rc=$?
 check "a deletion-only push passes without checks" "a deletion-only push (rc=$rc): $out" \
   test "$rc" -eq 0 -a -n "$(grep -F 'nothing but deletions' <<<"$out" || true)"
 
@@ -226,7 +297,7 @@ check "origin/main moved: the push is refused once, asking for the same push aga
   test "$rc" -ne 0 -a -n "$(grep -F 'Run the same git push again' <<<"$out" || true)"
 parents=$(git -C "$p" rev-list --parents -n1 HEAD | wc -w | tr -d ' ')
 check "the branch now carries a merge commit of origin/main" "no merge commit was made" test "$parents" -eq 3
-check "the checks ran on the merged result" "the merge was not checked: $out" has "PLAN control-characters:" "$out"
+check "the checks ran on the merged result" "the merge was not checked: $out" ran control-characters "$out"
 # main moves again before the push the hook asked for: that push is still sent as it is, unfetched.
 echo "main moves on" >"$other/main-later.txt"
 git -C "$other" add main-later.txt
@@ -237,6 +308,19 @@ out=$(push_hook "$merged_head") || rc=$?
 check "the second push sends the verified merge at once, though main moved since" "the second push did not pass (rc=$rc): $out" \
   test "$rc" -eq 0 -a -n "$(grep -F 'merged by the last run' <<<"$out" || true)" -a -z "$(grep -F 'fetching origin/main' <<<"$out" || true)"
 check "and nothing was merged for it" "the asked-for push merged main again" test "$(git -C "$p" rev-parse HEAD)" = "$merged_head"
+
+# A commit on top of the verified merge, while main moves with a page: the merge that follows is
+# checked for what came in since the verified commit - main's page among it.
+echo "more" >>"$p/feature.txt"
+git -C "$p" commit -qam more
+echo "# Main" >"$other/docs/wiki/main.md"
+git -C "$other" add docs/wiki/main.md
+git -C "$other" commit -qm main-page
+git -C "$other" push -q origin main
+out=$(push_hook "$(git -C "$p" rev-parse HEAD)") || true
+check "a merge onto a verified commit is checked for what came in since" \
+  "the merge onto a verified commit was not scoped to what came in: $out" \
+  test -n "$(grep -F 'checking only what has come in' <<<"$out" || true)" -a -n "$(ran wiki-links "$out" && echo y)"
 
 # A conflict: aborted, the branch exactly as it was, and the files named.
 echo "theirs" >"$other/shared.txt"
@@ -253,6 +337,45 @@ check "the branch is left exactly as it was" "the branch moved after a refused m
 check "no merge is left in progress" "a merge was left in progress" test ! -f "$(git -C "$p" rev-parse --git-path MERGE_HEAD)"
 check "the working tree is clean" "the refused merge left changes behind" test -z "$(git -C "$p" status --porcelain)"
 
+# A check that fails after the hook merged says the branch now carries the merge.
+git -C "$p" switch -q -c failing main
+echo "x" >"$p/FAIL_ME"
+git -C "$p" add FAIL_ME
+git -C "$p" commit -qm failing
+rc=0
+out=$(push_hook "$(git -C "$p" rev-parse HEAD)" refs/heads/failing) || rc=$?
+check "a check failing after the merge says HEAD now includes it" "a failure after a merge did not name the merge (rc=$rc): $out" \
+  test "$rc" -ne 0 -a -n "$(grep -F 'HEAD now includes a merge of origin/main (' <<<"$out" || true)"
+
+# A release branch is not headed for main: checked as it is, against its own base, never merged.
+git -C "$p" switch -q -c release/v1 main
+echo "fix" >"$p/release.txt"
+git -C "$p" add release.txt
+git -C "$p" commit -qm release-fix
+rel_head=$(git -C "$p" rev-parse HEAD)
+rc=0
+out=$(push_hook "$rel_head" refs/heads/release/v1) || rc=$?
+check "a new release branch is checked without a merge of main" "a release push merged main or failed (rc=$rc): $out" \
+  test "$rc" -eq 0 -a -n "$(grep -F 'with no merge of main' <<<"$out" || true)" -a -z "$(grep -F 'merging origin/main' <<<"$out" || true)"
+check "its checks ran" "a release push ran no check: $out" ran control-characters "$out"
+check "and the release branch was left as committed" "the release branch moved" test "$(git -C "$p" rev-parse HEAD)" = "$rel_head"
+git -C "$p" push -q origin release/v1
+echo "fix 2" >>"$p/release.txt"
+git -C "$p" commit -qam release-fix-2
+rc=0
+out=$(push_hook "$(git -C "$p" rev-parse HEAD)" refs/heads/release/v1 "$rel_head") || rc=$?
+check "an existing release branch is checked against what the remote holds" "a release update was not based on its remote sha (rc=$rc): $out" \
+  test "$rc" -eq 0 -a -n "$(grep -F "against ${rel_head:0:12}, with no merge" <<<"$out" || true)"
+# A tag, annotated: the commit under it is what is checked, and nothing is merged.
+echo "fix 3" >>"$p/release.txt"
+git -C "$p" commit -qam release-fix-3
+git -C "$p" tag -a v1.0.0 -m v1.0.0
+tag_head=$(git -C "$p" rev-parse HEAD)
+rc=0
+out=$(push_hook "$(git -C "$p" rev-parse v1.0.0)" refs/tags/v1.0.0) || rc=$?
+check "an annotated tag is checked as its commit, without a merge" "a tag push merged main, failed, or was refused (rc=$rc): $out" \
+  test "$rc" -eq 0 -a -n "$(grep -F 'with no merge of main' <<<"$out" || true)" -a "$(git -C "$p" rev-parse HEAD)" = "$tag_head"
+
 # ── 4b. the push runs what CI would run for its range, and nothing more ─────────────────────────
 echo "the push plan follows the range, through the same scopes as CI:"
 s_origin="$scratch/scope-origin.git"
@@ -262,10 +385,9 @@ make_repo "$s"
 git -C "$s" remote add origin "$s_origin"
 git -C "$s" push -q origin main
 git -C "$s" switch -q -c feature
-scope_push() { # <message>: commit what is staged, and print the dry-run push plan
+scope_push() { # <message>: commit what is staged, and print the push plan of that one commit
   git -C "$s" commit -qm "$1"
-  (cd "$s" && printf 'refs/heads/feature %s refs/heads/feature %s\n' "$(git rev-parse HEAD)" "$ZERO" |
-    LOCAL_CI_DRY_RUN=1 bash .github/scripts/local-ci.sh push origin 2>&1) || true
+  (cd "$s" && bash .github/scripts/local-ci.sh push-plan HEAD~1 2>&1) || true
 }
 # shellcheck disable=SC2317,SC2329 # called through `check` (0.10 names it SC2317, 0.11 SC2329)
 planned() { grep -F "PLAN $1:" <<<"$2" >/dev/null; }
@@ -322,21 +444,18 @@ check "a crate change runs that crate's suite" "a call-service change planned no
   test -n "$(grep -F 'PLAN rust apps/call-service:' <<<"$out" || true)"
 check "and not the frontend suite" "a Rust change planned the frontend suite" \
   test -z "$(grep -F 'PLAN frontend-test:' <<<"$out" || true)"
-# main moves with a page while the branch was verified: the merge is checked for what it brought.
-s_other="$scratch/scope-other"
-git clone -q "$s_origin" "$s_other"
-configure "$s_other"
-echo "# Main" >"$s_other/docs/wiki/main.md"
-git -C "$s_other" add docs/wiki/main.md
-git -C "$s_other" commit -qm main-page
-git -C "$s_other" push -q origin main
-out=$( (cd "$s" && printf 'refs/heads/feature %s refs/heads/feature %s\n' "$(git rev-parse HEAD)" "$ZERO" |
-  LOCAL_CI_DRY_RUN=1 bash .github/scripts/local-ci.sh push origin 2>&1) || true)
-check "a merge onto a verified commit is checked for what main brought" \
-  "the merge onto a verified commit was not scoped to main's changes: $out" \
-  test -n "$(grep -F 'checking only what has come in' <<<"$out" || true)" -a -n "$(grep -F 'PLAN wiki-links:' <<<"$out" || true)"
-check "and not for the branch's own, already verified, work" "the verified branch work was planned again" \
-  test -z "$(grep -F 'PLAN test-ci-scripts:' <<<"$out" || true)"
+git -C "$s" rm -q frontend/src/lib/unrelated.test.ts
+git -C "$s" commit -qm delete-a-test
+out=$(related)
+check "a deletion under frontend/src runs the whole suite, by a named line" "a deleted frontend/src file did not run the whole suite: $out" \
+  test -n "$(grep -F 'a file under frontend/src was deleted (src/lib/unrelated.test.ts) - the whole suite runs' <<<"$out" || true)"
+mkdir -p "$s/libs/proto"
+echo 'syntax = "proto3";' >"$s/libs/proto/canari.proto"
+git -C "$s" add libs/proto/canari.proto
+git -C "$s" commit -qm proto
+out=$(related)
+check "a change to libs/proto (generated into src) runs the whole suite" "a libs/proto change did not run the whole suite: $out" \
+  test -n "$(grep -F 'the test setup changed (libs/proto/canari.proto) - the whole suite runs' <<<"$out" || true)"
 
 # ── 5. the hooks ────────────────────────────────────────────────────────────────────────────────
 echo "the tracked hooks call the script:"
@@ -360,8 +479,8 @@ for wrong in /abs/hooks ""; do
   check "commit refuses core.hooksPath='${wrong:-<unset>}'" "commit ran with core.hooksPath='${wrong:-<unset>}'" \
     test "$rc" -ne 0 -a -n "$(grep -F 'Run bun install in frontend/' <<<"$out" || true)"
   rc=0
-  out=$(cd "$h" && git reset -q --hard && printf 'refs/heads/main %s refs/heads/main %s\n' "$(git rev-parse HEAD)" "$ZERO" |
-    LOCAL_CI_DRY_RUN=1 bash .github/scripts/local-ci.sh push origin 2>&1) || rc=$?
+  out=$(cd "$h" && git reset -q --hard && printf 'refs/heads/feature %s refs/heads/feature %s\n' "$(git rev-parse HEAD)" "$ZERO" |
+    bash .github/scripts/local-ci.sh push origin 2>&1) || rc=$?
   check "push refuses core.hooksPath='${wrong:-<unset>}'" "push ran with core.hooksPath='${wrong:-<unset>}'" \
     test "$rc" -ne 0 -a -n "$(grep -F 'Run bun install in frontend/' <<<"$out" || true)"
 done
