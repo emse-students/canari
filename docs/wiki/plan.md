@@ -113,6 +113,7 @@ earliest version, as a checklist.
 - [ ] [a salon message arriving before its seed raises its badge (granted salon, in-session join)](backlog.d/reading-owed-a-salon-message-arriving-before-its-seed-raises-its-badge.md)
 - [ ] [the broadcaster's on-air top row at 390 pt (End and the chat toggle on screen)](backlog.d/reading-owed-the-live-on-air-top-row-at-390-pt-and-360-px.md)
 - [ ] [the live viewer's top bar at 360-436 css px portrait (name whole, no button over the second row)](backlog.d/reading-owed-the-live-viewer-top-bar-at-360-436-px.md)
+- [ ] [a menu ends above the iOS tab bar, and a group notification keeps its title (2026-11-16)](backlog.d/reading-owed-the-popover-and-notification-fixes-of-the-iphone-sitting.md)
 
 ## 1.8.0
 
