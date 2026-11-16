@@ -300,8 +300,9 @@ open on this build, and also on `main` when the tap was fast (one main run in th
   - Now `loadChannelHistory` fetches the page at once but DECODES it only when no listing or entry
     still in flight can enter the salon (`whenSalonEntryDecided` in `salonSendGate.ts`).
   - An entered salon waits for no listing, and nothing ever waits for a listing that has not started.
-    Since 2026-11-16 the decode then also waits for the salon's KEY GROUP to drain
-    (`whenSalonKeysDrained`), so no row reads `missing seed` for a seed still in the queue
+    Since 2026-11-16 a row whose seed is MISSING while the salon's key group is still draining is
+    deferred and decoded after the drain (`salonKeysNow`); every other row is drawn at once, so no
+    row reads `missing seed` for a seed still in the queue and nothing else waits
     ([channel-encryption 4.5](../protocols/channel-encryption.md#45-a-missing-seed-is-requested-and-said-out-loud)).
   - **The wait is bounded by LISTING STATE, not by a clock.** It ends when the salon is entered,
     when the last listing or entry in flight settles, or when the session ends

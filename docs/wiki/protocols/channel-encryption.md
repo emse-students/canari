@@ -359,33 +359,57 @@ arrival is counted only when the store holds the seed now.
   other salon behind it. They wait for the same link anyway, and a per-group flush would buy little
   for a second accumulator to keep in step.
 
-**A SALON READ WAITS FOR IT TOO (2026-11-16).** The request waiting for the drain removed the
-needless asks, not the read they came from: a salon opened on a cold start or a resume still
-DECODED its page while the key group's queue was being drained, so every row of a session whose
-seed sat in that queue was warned `unreadable - missing seed` (1.6.11 logs, 2026-11-14) and drawn
-only by the re-read the drain's end announced (`holdGraineRepairs`, section WP-33) - a race that
-healed cleanly. What made the two paths overlap was that nothing ordered the decode after the
-drain. `loadChannelHistory` and the whole-history search now fetch the page at once (the stored
-copy is drawn meanwhile) and decode it only once `whenSalonKeysDrained`
-(`utils/graine/salonReadGate.ts`) resolves - the SAME proof the request waits on,
-`whenGroupDrained` on the key group carrying the salon's seeds, after `whenSalonEntryDecided` has
-registered it. A row then reads with the seed the drain brought, or it is a seed this device was
-never sent, and the warning and the request say something true. Nothing is dropped: the rows wait
-with the page, and only the decode moves.
+**A SALON ROW WITH NO SEED WAITS FOR IT TOO (2026-11-16).** The request waiting for the drain
+removed the needless asks, not the read they came from: a salon opened on a cold start or a resume
+still DECODED its page while the key group's queue was being drained, so every row of a session
+whose seed sat in that queue was warned `unreadable - missing seed` (1.6.11 logs, 2026-11-14) and
+drawn only by the re-read the drain's end announced (`holdGraineRepairs`, section WP-33) - a race
+that healed cleanly. What made the two paths overlap was that nothing ordered the verdict "missing"
+after the drain. **The seed store is the discriminator, so only the rows it cannot open wait**:
+`loadChannelHistory` reads `salonKeysNow` (`utils/graine/salonReadGate.ts`) - from state, after
+`whenSalonEntryDecided` has registered the salon - and while the key group carrying the salon's seeds
+is still draining, `decodeChannelMessagePage` DEFERS each row whose seed is missing (by its index:
+answered `null`, neither warned nor asked for) and decodes every other row at once. The page is
+drawn and the skeleton lowered at once with what the store holds - offline or on a socket still
+reconnecting, exactly as before the gate (principle 2, and the slow-link rule that no screen waits
+for the network to draw). The deferred rows are decoded again once `drained()` resolves - the SAME
+proof the request waits on, `whenGroupDrained` - and merged by the same load (no refetch): each
+reads with the seed the drain brought, or is a seed this device was never sent, and the warning
+and the request then say something true. A page whose every seed is held registers no waiter.
 
-- **Decided from state, never from a clock, and never waited where it cannot end**: no session
-  (`no-runtime`), a salon no community registered (`no-scope`), a key group not registered here
-  (`key-group-unregistered`), a web follower tab (`follower` - it drains nothing), or the service
-  closed during the wait (`closed`, `GroupDrainAbandonedError`). Each is said in the log
-  (`[CHANNEL] page of x decoded without its key-group drain - reason`); a page that had to wait says
-  `decoded after key group y... drained`.
-- **A cost taken knowingly**: the decode follows the drain proof, which needs a pull of the whole
-  mailbox on an OPEN socket. A salon opened while the socket is down shows its stored page (or the
-  skeleton, on a first open) until the link is back and the queue listed - the same wait every
-  frame of the account is under, and what makes the read honest.
-- Pinned by `salonReadGate.test.ts` (held until the drain, at once when drained, the five unwaited
-  states) and `useConversations.salonReadAfterDrain.svelte.test.ts` (fetched at once, decoded only
-  after the drain, no `missing seed`, both rows drawn from one fetch).
+- **Decided from state or by an event, never from a clock, and never waited where it cannot end**:
+  no session (`no-runtime`), a salon no community registered (`no-scope`), a key group not
+  registered here (`key-group-unregistered`), a web follower tab (`follower` - it drains nothing),
+  and, DURING the wait, a demotion of this tab (`follower` again, settled by `onLeaderTabChanged`:
+  the demoted tab closes its socket, so the group would never read drained here) or the service
+  closing (`closed`, `GroupDrainAbandonedError`). The non-routine ones are said in the log
+  (`[CHANNEL] page of x decoded without its key-group drain - reason`); a page that deferred rows
+  says how many, and again when they are decoded after the drain.
+- **What bounds the wait**: `whenGroupDrained` needs a pull of the whole mailbox on an OPEN socket
+  and the key group idle in the scheduler. Idle includes frames parked behind a Welcome, and that
+  park is bounded by the scheduler's termination proof, not a clock: a Welcome closes the window it
+  opened on success or failure, and a window that survives a drain which emptied every queue is
+  released at once (`releaseStrandedWelcomeBuffers`). While the link is down only the deferred rows
+  wait - rows this device could not have drawn anyway.
+- **A load started meanwhile supersedes the deferred pass** (it decoded the whole page after this
+  one): the older load decodes nothing more and merges nothing. The second pass applies reactions,
+  poll tallies and read marks only from the rows it decoded, so it never rewinds a live event.
+- **The repair re-read stays, and it is not the same path.** `announceGraineRepair` re-reads a salon
+  when a SEED is stored for it - the only path for rows dropped outside a gated load (a live row
+  that arrived before its seed, an answer a peer sends minutes later, a salon decoded on an earlier
+  link). The deferred pass is the only path that reports a seed still missing AFTER the drain, which
+  no seed arrival would ever announce. When both fire for one salon (a seed of the drain stored
+  for a salon whose load deferred rows), the cost is one extra page fetch, never a false warning or
+  a dropped row.
+- The whole-history search uses the same discriminator WITHOUT the wait: it is one answer to one
+  query, so it searches the rows it can open, leaves the deferred ones unwarned and unasked (the
+  history load owns that), and says how many it could not search yet.
+- Pinned by `salonReadGate.test.ts` (state answers, the wait, the demotion during and before it, the
+  service closing), `channelCrypto.test.ts` (a missing seed deferred, unwarned and unasked, every
+  other class reported) and `useConversations.salonReadAfterDrain.svelte.test.ts` (the held row
+  drawn and the skeleton down before the drain, the queued row drawn after it with no warning, a
+  seed the drain did not bring reported only then, one fetch, a newer load superseding the deferred
+  pass).
 
 ### 4.6 Ordering rule: remove, THEN distribute
 
