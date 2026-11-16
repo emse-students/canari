@@ -2297,3 +2297,23 @@ describe('useChannelWorkspaces - the history rule moving under an open session',
     expect(store.roleLabels.r2).toBe('Bureau');
   });
 });
+
+describe('useChannelWorkspaces - a live removal is noted for the pages in hand', () => {
+  it('notes the removal even when no copy of the row is on screen to mark', async () => {
+    const { watchSalonRemovals } = await import('$lib/utils/chat/salonRemovals');
+    const store = useChannelWorkspaces();
+    const watch = watchSalonRemovals();
+    const ctx = makeContext();
+    ctx.conversations.set('channel_c1', { id: 'channel_c1', messages: [] } as never);
+
+    store.handleChannelMessageDeleted({ channelId: 'c1', messageId: 'row-not-drawn' }, ctx);
+    store.handleChannelMessageDeleted(
+      { channelId: 'c-unknown', messageId: 'row-of-no-salon' },
+      ctx
+    );
+
+    expect(watch.has('row-not-drawn')).toBe(true);
+    expect(watch.has('row-of-no-salon')).toBe(true);
+    watch.close();
+  });
+});
