@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * THE SCENE BAR OF A DESKTOP LIVE (owner, 2026-11-14): five ready-made scenes, one click each, as ONE icon-only row, in
+   * THE SCENE BAR OF A DESKTOP LIVE (owner, 2026-11-14): four ready-made scenes, one click each, as ONE icon-only row, in
    * the pre-live sheet and over the picture while on air - and, for "screen + camera", the overlay's
    * size and shape. Every decision is the studio's (`liveStudio.svelte.ts`); a click here only calls
    * it, FROM the click, because a scene that needs the screen opens the browser's picker, which only
@@ -9,7 +9,6 @@
   import {
     Circle,
     CirclePause,
-    Columns2,
     Monitor,
     PictureInPicture2,
     RectangleHorizontal,
@@ -42,14 +41,12 @@
     camera: m.live_scene_camera,
     screen: m.live_scene_screen,
     'screen-camera': m.live_scene_screen_camera,
-    'side-by-side': m.live_scene_side_by_side,
     pause: m.live_scene_pause,
   };
   const SCENE_ICON: Record<LiveScene, Component<{ size?: number; strokeWidth?: number }>> = {
     camera: Video,
     screen: Monitor,
     'screen-camera': PictureInPicture2,
-    'side-by-side': Columns2,
     pause: CirclePause,
   };
   const SIZES: readonly OverlaySize[] = ['small', 'medium', 'large'];

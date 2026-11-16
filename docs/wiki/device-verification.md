@@ -550,7 +550,7 @@ noticed: it was stopped at once, the live ended and deleted, the screenshots del
 
 | Step | Verdict | What was seen |
 | --- | --- | --- |
-| 1. Scenes camera, screen, screen + camera, side by side, "Je reviens", back: no gap, no restart | **`PASS`** (bench; the bell and push half not taken) | Every click changed what the viewer saw within one buffer (a screenshot per scene: the shared tab, the tab with the round camera overlay, the two side by side, the "Je reviens tout de suite" card, then the tab again). The viewer's player stayed `playing` on ONE live, its `currentTime` advancing as the wall clock, the video `1280x720` throughout. The studio logged each switch (`scene screen -> screen-camera: switch`). A dismissed picker was not tried (the flag skips the picker) |
+| 1. Scenes camera, screen, screen + camera, side by side (since removed), "Je reviens", back: no gap, no restart | **`PASS`** (bench; the bell and push half not taken) | Every click changed what the viewer saw within one buffer (a screenshot per scene: the shared tab, the tab with the round camera overlay, the two side by side, the "Je reviens tout de suite" card, then the tab again). The viewer's player stayed `playing` on ONE live, its `currentTime` advancing as the wall clock, the video `1280x720` throughout. The studio logged each switch (`scene screen -> screen-camera: switch`). A dismissed picker was not tried (the flag skips the picker) |
 | 2. Overlay: four corners, three sizes, round and rectangle, the keys | **`PASS`** | Dragged to each corner, it snapped on release (`snapped to top-left`, `top-right`, `bottom-left`, `bottom-right`); the three sizes and the two shapes each logged and showed on the viewer; ArrowLeft and ArrowUp moved it a corner each, and Enter twice cycled clockwise. Each CDP mouse drag took about 70 s of rig time (not explained, not measured against the app) |
 | 3. Microphone muted then back, camera off then back | **`PASS`** (the camera light is the owner's) | `microphone muted` / `microphone on`, `camera off` / `camera on` logged; with the camera off the viewer saw the "Caméra coupée" disc in the overlay's place, and the camera came back. The tone was not listened to (the viewer was muted) and the camera light cannot be read on a synthetic camera |
 | 4. The shared window resized twice | **`PASS`** (a tab; a real window not taken) | The window was resized to 1200x700 then 760x950 with the shared tab in front: the viewer's picture re-letterboxed to the new aspect each time (the tab's own text read `1184x549` then `744x799`), no streaks, the video stayed `1280x720`. A window not in front does not report its new size until it is brought forward, so the resize was read with the shared tab in front |
@@ -4225,6 +4225,20 @@ TestFlight `1.7.0-alpha.5` (build `100700005`) on the iPhone 12, `gamma` on dev 
 **Not taken, and why.** Another iPhone-only row of the plan's "Readings owed" that needs no bench build and is not the private-salon Welcome or F1: the live viewer's top bar and the on-air top row are built after `alpha.5` (the End button was still off-screen), the Emojis row and the "server already unreachable" line are in #3678 (after `alpha.5`), the birthday morning notice needs a fixture row dated two days back and an hourly tick, the deploy drill stops dev's services, and the iOS 16 policy row needs an iOS 16 phone. Time went to the ten-minute live and the join.
 
 Dev data written (also in the harness's `WRITTEN-IDS.txt`): one live of `gamma` ("IPH6 live", ended by the sweep), the groups `IPH6G` and `IPH6H` (`delta`, then `gamma`), both DELETED by `delta` through "Supprimer le groupe". `gamma`'s phone keeps the two rows as "Canari Test Delta a supprime cette conversation" (a local copy is removed by "Supprimer localement", not done). **Phone state at the end:** `1.7.0-alpha.5`, `gamma` signed in on dev, "Rester connecte" still ticked (no PIN gate after two relaunches), unlocked, on the chat list, Wi-Fi on, charging; the WDA daemon running.
+
+### The owner's hand rows of the desktop screen share, 2026-11-16 (`1.7.0-alpha.6`)
+
+Read by the owner at about 17:15 in a fresh desktop Chrome on dev, a real share:
+
+| Row | Verdict | What was seen |
+| --- | --- | --- |
+| 1. The real picker, a WINDOW chosen; a dismissed picker | **`PASS`** | The scene stayed as it was when dismissed. |
+| 2. The shared window resized twice | **`PASS`** | Clean. |
+| 3. "Arreter le partage" from the browser's bar | **`PASS`** | "Je reviens", live not ended. |
+| 4. Sound option and sound heard, webcam light off when cut, overlay drag | **`PASS`** | All three read well. |
+| 5. One live in the bell, one push on a watching phone | **NOT TAKEN** | Still owed; the bench takes it with a phone. |
+
+The side-by-side scene was seen and removed the same evening ([decision 23](backlog.d/owner-decisions-of-2026-11-16.md)).
 
 ## The iPhone 12 readings of 2026-11-16, sixth sitting, `1.7.0-alpha.5`: "Envoyer a..." rows 1, 12, 8 (partial) and the F1 PIN path
 
