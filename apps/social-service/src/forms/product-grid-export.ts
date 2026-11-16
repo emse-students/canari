@@ -93,7 +93,9 @@ function writeTotalsBlock(
 
 /**
  * Adds the "Articles" and "Totaux" sheets for a form with priced grids. `names` holds each member
- * submitter's name; a guest is written as the guest word and the reference they were given.
+ * answer's name BY SUBMISSION ID (the answer's snapshot, `respondentNames`, so two answers of one
+ * account may carry two names); a guest is written as the guest word and the reference they were
+ * given.
  */
 export function addProductGridSheets(
   workbook: ExcelJS.Workbook,
@@ -119,7 +121,7 @@ export function addProductGridSheets(
   ];
   for (const sub of submissions) {
     if (!sub.lines?.length) continue;
-    const person = sub.userId ? names.get(sub.userId) : undefined;
+    const person = sub.userId ? names.get(sub.id) : undefined;
     // A guest keeps the guest word and the reference, with the name they typed in front when the
     // form asked (`guestLabel`): a typed name never reads as an account's.
     const buyer = sub.userId

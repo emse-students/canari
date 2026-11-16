@@ -680,7 +680,7 @@ describe('LiveBroadcaster - the scenes on a desktop (owner, 2026-11-14)', () => 
     expect(q('[data-live-camera-toggle]')).not.toBeNull();
   });
 
-  it('a desktop offers the five scenes with the hint, opens its microphone, and Écran opens the picker', async () => {
+  it('a desktop offers the four scenes with the hint, opens its microphone, and Écran opens the picker', async () => {
     const { s } = sheet(true);
     await settle();
     expect(q('[data-live-scenes]')!.dataset.liveScenes).toBe('on');
@@ -689,7 +689,6 @@ describe('LiveBroadcaster - the scenes on a desktop (owner, 2026-11-14)', () => 
       ['camera', m.live_scene_camera()],
       ['screen', m.live_scene_screen()],
       ['screen-camera', m.live_scene_screen_camera()],
-      ['side-by-side', m.live_scene_side_by_side()],
       ['pause', m.live_scene_pause()],
     ] as const) {
       const button = q(`[data-live-scene="${scene}"]`)!;
@@ -720,17 +719,17 @@ describe('LiveBroadcaster - the scenes on a desktop (owner, 2026-11-14)', () => 
     expect(video.className).not.toContain('-scale-x-100');
   });
 
-  it('the five scenes are ONE tab stop the arrows walk, moving focus only - Enter chooses', async () => {
+  it('the four scenes are ONE tab stop the arrows walk, moving focus only - Enter chooses', async () => {
     const { s } = sheet(true);
     await settle();
     const radios = [...document.querySelectorAll<HTMLButtonElement>('[data-live-scene]')];
-    expect(radios.map((r) => r.tabIndex)).toEqual([0, -1, -1, -1, -1]);
+    expect(radios.map((r) => r.tabIndex)).toEqual([0, -1, -1, -1]);
     radios[0].focus();
     radios[0].dispatchEvent(
       new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true })
     );
-    expect(document.activeElement).toBe(radios[4]);
-    radios[4].dispatchEvent(
+    expect(document.activeElement).toBe(radios[3]);
+    radios[3].dispatchEvent(
       new KeyboardEvent('keydown', { key: 'Home', bubbles: true, cancelable: true })
     );
     expect(document.activeElement).toBe(radios[0]);

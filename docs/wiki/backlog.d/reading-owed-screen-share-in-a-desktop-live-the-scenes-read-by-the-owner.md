@@ -3,7 +3,7 @@
 target: 1.7.0
 
 Built: the scenes of a desktop live (#3508, 2026-11-14), in every `1.7.0` pre-release - camera, screen,
-screen with the camera as an overlay, side by side, "Je reviens" - switched ON AIR on ONE recorded
+screen with the camera as an overlay, "Je reviens" - switched ON AIR on ONE recorded
 stream, so the live never restarts and the viewer path is unchanged. Design, what was measured on the
 workstation and what was not: [live](../frontend/modules/live.md#screen-share-in-a-desktop-live-what-170-carries-2026-11-16).
 This is the owner's 2026-11-14 item #93 ([decisions](owner-decisions-of-2026-11-14.md)). **Since the
@@ -31,7 +31,9 @@ It could not drive a real picker or a real window, so what is left is only what 
    each took about 70 s of rig time, a rig fact never explained, not a measurement of the app).
 5. **One live in the bell, one push** when a phone watches (the bench had no phone to give).
 
-A step that fails becomes its own defect entry. Charter: principle 2 (the essential is never lost:
+A step that fails becomes its own defect entry. **Read by the owner on `1.7.0-alpha.6`, 2026-11-16 (about 17:15), in a fresh desktop Chrome on dev: PASS for rows 1 to 4.** (1) The real picker with a WINDOW chosen; a dismissed picker changed nothing. (2) The shared window resized twice, clean. (3) "Arreter le partage" from the browser's bar: "Je reviens", live not ended. (4) The sound option offered and the sound heard, the webcam light off when the camera is cut, the overlay drag feels fine. **Only row 5 stays owed** (one live in the bell, one push on a watching phone): the bench takes it with a phone. The owner also saw the side-by-side scene and had it removed ([decision 23](owner-decisions-of-2026-11-16.md)).
+
+Charter: principle 2 (the essential is never lost:
 a click on the browser's bar no longer throws the live away) and 7 (simple: ready-made scenes, not
 layers).
 
