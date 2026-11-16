@@ -1,5 +1,6 @@
 <script lang="ts">
   import { CloudOff, EyeOff } from '@lucide/svelte';
+  import PostMarkdown from '$lib/components/posts/PostMarkdown.svelte';
   import PostAuthorAvatar from '$lib/components/posts/PostAuthorAvatar.svelte';
   import SharedReelViewer from '$lib/components/reels/SharedReelViewer.svelte';
   import VideoRestingPlay from '$lib/components/ui/player/VideoRestingPlay.svelte';
@@ -267,9 +268,12 @@
         <!-- The padding is on the wrapper: a clamped box with its own padding shows the top of the
              fourth line in it. -->
         <div class="px-3 py-2">
-          <p class="text-text-main line-clamp-3 text-sm leading-snug wrap-anywhere">
-            {ready.caption}
-          </p>
+          <!-- The feed's renderer: hashtags, mentions, links and line breaks as the post drew them.
+               Inert and click-through: the whole card is the one link, a nested one would be a
+               second control (and invalid markup) - a tap anywhere opens the post. -->
+          <div class="text-text-main text-sm leading-snug wrap-anywhere" inert>
+            <PostMarkdown markdown={ready.caption} class="line-clamp-4 [&_a]:pointer-events-none" />
+          </div>
         </div>
       {:else if !showsMedia}
         <p class="text-text-muted px-3 py-2 text-sm italic">{m.shared_post_no_text()}</p>
