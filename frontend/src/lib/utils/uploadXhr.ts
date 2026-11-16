@@ -28,6 +28,12 @@ import { TransportFailureError } from '$lib/utils/transportFailure';
 export interface UploadProgress {
   loaded: number;
   total: number;
+  /**
+   * Bytes the SERVER has acknowledged, reported only by a resumable session (`resumableUpload.ts`),
+   * whose next attempt starts from them. Absent on a one-shot request: nothing of it is kept on a
+   * failure, so its `loaded` is the current attempt's only.
+   */
+  committed?: number;
 }
 
 /**
