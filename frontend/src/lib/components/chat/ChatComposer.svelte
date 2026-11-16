@@ -134,7 +134,7 @@
     onFilesSelected?: (files: File[]) => void;
     /**
      * The conversation takes a CanaReel filmed here (a DM or a group - never a salon). Only effective
-     * while the writer switch is on (`CHAT_REEL_WRITER_ENABLED`: a dev build only).
+     * while the writer switch is on (`CHAT_REEL_WRITER_ENABLED`: on in every build since the `1.7.0` flip).
      */
     reelMessages?: boolean;
     /**

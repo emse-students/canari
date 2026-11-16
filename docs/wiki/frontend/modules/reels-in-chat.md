@@ -538,6 +538,9 @@ phones (the Mi 9T and the iPhone 12), before any stable carries it.** RC-9 close
 
 #### The writer switch for dev only (owner, 2026-11-02)
 
+**Superseded by the production flip for `1.7.0` ([21.1](#211-the-switch-and-the-flip-pr)): the line is
+`true` in every build. What follows is the dev-only period's history.**
+
 The owner's decision of 2026-11-02: the switch turns on **for dev only**, once the bench readings pass;
 production stays off until he says so. **Mechanism: the build's environment, the precedent of
 `CALLS_ENABLED`'s lot 1.** `CHAT_REEL_WRITER_ENABLED = deployEnvironment() === 'development'`: a
@@ -1609,6 +1612,22 @@ both reach production in the same flip, because they are ONE switch.
   with `chatReelWriter.test.ts` pinning it, in its own pull request, cut into a stable after a
   pre-release read on both phones. No server switch exists (the server mode of section 7 was not
   chosen).
+- **THE FLIP IS MERGED FOR `1.7.0` (2026-11-16): `CHAT_REEL_WRITER_ENABLED = true`, a constant.** Every
+  build films a CanaReel in a DM or a group and offers "Envoyer a..." on the camera tab - production
+  web and every stable store build included; a salon keeps its photo-only camera. The stable carries
+  it only if the flip is merged BEFORE the last `1.7.0` pre-release is cut (a compiled switch). Pinned
+  by `chatReelWriter.test.ts` (every `VITE_DEPLOY_ENVIRONMENT` label, production's unset value first,
+  turns it on; a salon never), `ReelCapture.sendTo.svelte.test.ts` (the real switch offers the sheet)
+  and `ChatComposer.attachMenu.svelte.test.ts` (a DM's camera reads the chat cap, a salon's does
+  not). **Preconditions re-read for the flip:** the readers at the floor - MET, both estates serve
+  `minClientVersion` `1.6.6` (read 2026-11-16), above the reader (`v1.2.2`), the push line
+  (`v1.3.1`) and the "CanaReel supprime" tombstone (`v1.6.3`), so no admitted client meets a reel
+  message it cannot draw and no legacy fallback text is owed ([legacy-compatibility](../../legacy-compatibility.md));
+  the floor need not move; the server half (RC-14 holds, `chatMaxDurationMs`, `chatReelMaxTargets`)
+  is in the `v1.6.12` production stable. **What the flip does not settle:** the 13 readings of 21.4
+  were not recorded when it was merged - they are owed on a `1.7.0` pre-release carrying it, and
+  nothing in this pull request claims them. No production kill switch exists short of a release
+  setting the line back to `false`.
 - **#2861 is NOT the flip PR any more, and must be closed and rebuilt.** It was opened on 2026-11-01
   before #2913: it stacks #2858 (the chat profile) and #2860 (the durable session release), both
   merged since, and flips the switch to a bare `true` over a line that has been rewritten - its diff
