@@ -757,10 +757,10 @@ describe('deletePost - a reel deleted by hand', () => {
       purge: () => Promise.resolve({ [BLOB]: 'failed', [COMMENT_BLOB]: 'deleted' }),
     });
     // TypeORM's `remove` resets the primary key on the entity it was handed.
-    postRepo.remove.mockImplementation((post: { id?: string }) => {
+    postRepo.remove.mockImplementation(((post: { id?: string }) => {
       delete post.id;
       return Promise.resolve(post);
-    });
+    }) as unknown as () => Promise<Partial<Post>>);
 
     await service.deletePost('r1', 'alice', false);
 
