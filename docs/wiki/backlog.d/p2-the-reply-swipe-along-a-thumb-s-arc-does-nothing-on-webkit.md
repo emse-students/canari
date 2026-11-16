@@ -6,4 +6,4 @@ Read on the iPhone 12 on 2026-11-15 (`v1.6.12` dev build, a WDA W3C touch sequen
 
 What closes it: a `touch-action` on the bubble that leaves the horizontal axis to the page (to be measured: `pan-y` first), the same five arcs re-read on the iPhone 12, and a regression test of the style. Evidence: the harness state folder `readings-iphone-1115c/` (screenshots `r1-*.png`).
 
-**Fix read on the iPhone 12, 2026-11-15, `1.7.0-alpha.1` (#3605): 6 of 6 arcs of 110 pt with 45, -45, 60, -60, 45 and -45 pt of drift, on a received bubble, each staged one reply** (the same cell staged 0 of 5 on `1.6.12`). Closes at the stable that carries it ([reading](reading-owed-a-reply-swipe-along-a-thumb-s-arc.md)).
+**Fix read on the iPhone 12, 2026-11-15, `1.7.0-alpha.1` (#3605): 6 of 6 arcs of 110 pt with 45, -45, 60, -60, 45 and -45 pt of drift, on a received bubble, each staged one reply** (the same cell staged 0 of 5 on `1.6.12`). Closes at the stable that carries it (the reading entry was closed 2026-11-16: both phones read `PASS`).
