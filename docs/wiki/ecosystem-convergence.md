@@ -197,6 +197,14 @@ Both findings this section carried have closed, one of them before it was writte
   three files had drifted out of shape with no red run to show for it. `ci.yml` runs `format:check`
   there now.
 
+**CANARI MOVED ITS PULL-REQUEST CHECKS TO COMMIT AND PUSH ON 2026-11-15, AND THE OTHER FOUR WILL WANT
+THE SAME SHAPE** (owner: *"tout ce qui est verifie a la PR devrait etre verifie au commit, la fusion de
+PR devrait etre une formalite"*). The shape: one script that says which CI jobs a change owes
+(`ci-scopes.sh`), one that holds every check's command (`checks.sh`), both called by CI AND by the
+tracked hooks, and a pre-push that merges the latest `main` first
+([cicd](cicd.md#checks-at-commit-at-push-and-in-ci-only)). Not carried to Sky, MiGallery,
+Portail-etu or Le Cercle yet: they are COMPLETE, and the shape is proven here before it travels.
+
 ### Where each repo's deploy job RUNS, and the one asymmetry that is left
 
 One model in all five: `release.yml` is the only thing that deploys, and its deploy job runs **on

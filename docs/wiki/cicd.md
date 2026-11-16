@@ -2951,17 +2951,13 @@ will not produce on demand, and `make test-ci-scripts` runs every suite in secon
 decision, change its assertion, and prove the assertion by breaking the thing it guards - a test
 that passes on a mutation is a test that asserts nothing.
 
-**And lint before pushing, because this workstation has no `shellcheck` and CI does.** A change to
-these scripts went red on 2026-09-01 for two findings a local run would have named in one second
+**`shellcheck` runs at commit now, and the hooks refuse to run without it.** A change to these
+scripts went red on 2026-09-01 for two findings a local run would have named in one second
 (`SC1091` - `# shellcheck source-path=SCRIPTDIR` is **per-command, not per-file**, so a second
 `source` needs its own copy - and `SC2016` on a `'${'` case pattern that meant the brace literally).
-Fetch the pinned version into a scratch directory and use the invocation `ci.yml` uses:
-
-```sh
-curl -sSL -o sc.zip https://github.com/koalaman/shellcheck/releases/download/v0.10.0/shellcheck-v0.10.0.zip
-# unzip, then, from the repo root:
-./shellcheck.exe -x .github/scripts/*.sh .github/scripts/lib/*.sh .github/scripts/tests/*.sh
-```
+Since 2026-11-15 a staged `.sh` runs `make lint-ci-scripts`, the invocation CI uses, and a machine
+without `shellcheck`, or with another version than `.shellcheck-version` (0.11 names an indirect call SC2329 where the pinned 0.10 says SC2317, which turned #3623 red in CI after a green push), is refused and told which release to install
+([the tiers](#checks-at-commit-at-push-and-in-ci-only)).
 
 ### The npm advisory endpoint's silence is not a verdict, and telling them apart is one script
 
@@ -3334,6 +3330,215 @@ npm is gone (`node --run test` replaced the one `npm test` in `ci.yml` and the o
 
 **The work**: port four NestJS services from jest to `bun test` - `jest.fn()`/`jest.spyOn` to bun's `mock`/`spyOn`, `ts-jest` (which TypeScript 7 already could not load, see [ecosystem-convergence](ecosystem-convergence.md) section 9), the `moduleNameMapper`, the `@nestjs/testing` fixtures. Days, not hours, and it touches suites guarding MLS storage - the wrong place to discover a mock that silently stopped asserting. It waits for the campaign ladder to reach the bottom, because a test-framework migration changes what "green" means for every rung still to be taken. Until then: bun is the package manager and runtime everywhere except one test invocation, which runs on node on purpose.
 
+## Checks at commit, at push, and in CI only
+
+**The owner's decision, 2026-11-15:** *"tout ce qui est vérifié à la PR devrait être vérifié au
+commit, la fusion de PR devrait être une formalité"*. Four choices came with it:
+
+1. **At commit**, fast checks scoped to the touched files: doc links, the plan regeneration, the
+   log guards, the ratchets and allowlists, the touched modules' unit tests. Seconds, not minutes.
+2. **At push**, what the pushed files touch - see the owner's correction below.
+3. **CI only**, what a Windows workstation cannot run, and the full suites a range does not touch.
+
+**The owner's correction, 2026-11-16 - *alléger le push*:** a push of "everything a workstation can
+run" measured about an hour on this workstation, `make test-ci-scripts` alone about 56 minutes, and
+that is not a formality. The push tier therefore runs ONLY what the changed files touch: the same
+path filters as CI's `changes` job (`ci-scopes.sh`), applied to the diff since the last verified
+commit (the stamp, or the merged `origin/main` on a branch's first push). The full suites -
+`test-ci-scripts` included, unless the range touches a CI script - stay in CI only. The commit tier
+stays fast.
+4. **The pre-push hook merges the latest `origin/main` before its checks.** The failures that day
+   were "main moved" ratchet drift (#3580, #3599) and dead wiki links found only by CI (#3607,
+   #3608, #3599).
+
+### One copy of every command
+
+Three scripts, and nothing else names a check's command:
+
+| Script | Answers | Called by |
+| --- | --- | --- |
+| `.github/scripts/ci-scopes.sh` | WHICH areas a range touches (`frontend=true`, the rust matrix...) | the `changes` job of `ci.yml`, and the pre-push |
+| `.github/scripts/checks.sh` | HOW a check runs (`rust <crate> [step]`, `ts <svc> [step]`, `frontend-lint`, `dead-code`, `frontend-test`, `frontend-build`, `mls-wasm-build`/`verify`, `lockfile-version`, `tauri-parity`) | `ci.yml`, `code-analysis.yml`, the `build-mls-wasm` action, and the push tier |
+| `.github/scripts/local-ci.sh` | WHEN a check runs locally: `commit`, `push`, `all` (`make run-ci`), and `JOB_TIERS`, the tier of every `ci.yml` job | `.husky/pre-commit`, `.husky/pre-push`, the Makefile |
+
+A Make target (`test-ci-scripts`, `test-harness`, `lint-ci-scripts`) is the fourth kind of copy,
+called by name from both sides. `local-ci.test.sh` (in `make test-ci-scripts`) fails when a job of
+`ci.yml` has no tier in `JOB_TIERS`, when `JOB_TIERS` names a job that is gone, and when this
+section does not name every job - so a new CI job cannot arrive without deciding where it runs
+before the pull request.
+
+### The inventory - every job of `ci.yml`
+
+Durations measured on the Windows workstation (OXYGEN, 2026-11-15, under the load of other
+sessions - a Linux runner is faster). "Push" means the pre-push runs it when `ci-scopes.sh` says the
+pushed range (the merged `origin/main` to HEAD) touches its area, exactly as CI's `changes` job
+gates the job - **the push runs what CI would run for that range, and nothing more** (owner,
+2026-11-16, above: an hour-long push, measured, is not a formality). A docs-only push runs
+the path rules and the whole-tree scans, in seconds; a frontend change runs the frontend jobs.
+
+| Job | Tier | Runs locally as | Measured | Why |
+| --- | --- | --- | --- | --- |
+| `changes` | push | `ci-scopes.sh <merge-base> HEAD` | < 1 s | the same filters, read from the same script |
+| `test-rust` | push | `checks.sh rust <crate>` per crate in scope: lockfile, fmt, clippy, task | cold, from an empty target: mls-core 165 s, call-service 117 s, chat-gateway 119 s, mls-wasm 39 s; src-tauri not measured | the gateway's Redis-backed half needs a Redis service: CI only |
+| `test-typescript-backend` | push | `checks.sh ts <svc>` per service in scope: install, lint, format, typecheck, build, unit specs | core 29 s, media 28 s, chat-delivery 80 s, social 208 s | - |
+| `test-frontend` | push | `local-ci.sh generated` (install, sync, proto, wasm), `checks.sh frontend-lint`, `dead-code`, `frontend-build` | lint 13 s, `svelte-check` 53 s, format 4 s, dead-code 24 s, wasm build 1 min 55 s when its source changed (0 s otherwise), install 24 s | - |
+| `test-frontend-shards` | push, by file | `checks.sh frontend-test-related <base>`: `vitest related` over the range's changed `frontend/src` files, plus every source-tree scan (`src/test/sourceTree`) and every test naming a changed file - what the import graph cannot see. **A change to the test setup** (`vite.config.js`, `vitest.config.ts`, `kit.config.js`, `tsconfig.json`, `package.json`, `bun.lock`, `src/test/`, `messages/`, `project.inlang/`, `static/`, the two MLS crates and `libs/proto` - generated into `src` - and `libs/contracts`), **or a deletion under `frontend/src`** (no import graph is left to ask), **runs the whole suite**, said by a named line (owner, 2026-11-16) | the whole suite 12-15 min here (1786 files, 19165 tests; ~6-7 min per shard on a CI runner) | the whole suite with coverage is CI's |
+| `test-android` | push | `android-unit-tests.sh` (a JDK) | 75 s (272 tests) | - |
+| `test-harness` | push | `make test-harness` | 41 s | - |
+| `test-ci-scripts` | push, by range | `make test-ci-scripts` when the range touches `CI_SCRIPTS_PATHS` (`.github/`, `.husky/`, the Makefile, `scripts/`, `infrastructure/`, `libs/`, a `.*-version` pin); on every push its whole-tree scans (`control-characters`, `no-nul-in-source`, `line-endings`) and the path rules over the range; then `ratchet-not-raised.mjs` against the merge base | `make test-ci-scripts`: 43 min here without `deploy-rolling.test.sh` (the push of 2026-11-15), 46 min with it (6 min on a CI runner) | **The one place a push proves less than the pull request:** CI runs this suite on every pull request, and a push that touches none of `CI_SCRIPTS_PATHS` leaves its source guards (those reading the frontend or the services) to CI, said by name on stderr. Needs `shellcheck`. **`deploy-rolling.test.sh` does not run under Docker Desktop** (the recipe reads `docker info`, prints a named line, and runs it on any other engine): it measures a Linux engine's reload timing, and here it failed twice in two runs on two different cases - its own control saw no failure from DNS-name calls, then one `ConnectionRefused` in 44502 POSTs across 450 reloads. CI, on a Linux engine, is green on it. Not diagnosed further; open in [backlog.d](backlog.d/p3-the-checks-at-commit-shape-is-carried-to-the-other-repos-and-the-ci-only-list-shrinks.md) |
+| `mls-forward-compat` | push | `mls-forward-compat.sh` | 107 s | - |
+| `security` | split | the lockfile and Tauri-parity guards at push (`checks.sh lockfile-version`, `tauri-parity`, < 1 s each) | - | CodeQL and the secret scan are GitHub services: CI only |
+| `boot-nest-apps` | CI only | - | - | boots each service on PostgreSQL, Redis and an S3 endpoint |
+| `test-social-integration` | CI only | - | - | integration specs on PostgreSQL and Redis |
+| `test-chat-delivery-integration` | CI only | - | - | integration specs on PostgreSQL |
+| `compile-android-app` | CI only | - | - | needs the Android SDK and NDK |
+| `compile-ios-app` | CI only | - | - | needs macOS and Xcode |
+| `test-call-service-e2e` | CI only | - | - | coturn and five headless browsers on a Linux runner |
+| `dependency-ceiling` | CI only | - | - | decides on a Dependabot pull request only |
+| `dependency-audit` | CI only | - | - | a verdict on the advisory databases, not on the commit; ~5 min per tree |
+| `test-miconnect-blueprints` | CI only | - | - | a full Authentik pair in Docker, twice |
+| `upstream-monitor-freshness` | CI only | - | - | a push to `main` only; reads GitHub |
+| `ci-passed` | CI only | - | - | the aggregation of the jobs above |
+
+The pre-push prints the CI-only jobs its range will trigger, so nobody reads a green push as a
+green pull request. Three of them could run on a workstation with Docker or an SDK and were not
+measured there; that is open in
+[backlog.d](backlog.d/p3-the-checks-at-commit-shape-is-carried-to-the-other-repos-and-the-ci-only-list-shrinks.md).
+
+### The commit tier - what fires on which staged path
+
+`local-ci.sh commit` runs after the pre-commit fixers. Each rule fires only when a staged path
+matches it; a commit touching none of them pays nothing.
+
+| Staged path | Check | Measured |
+| --- | --- | --- |
+| a `.md`, or any deletion or rename | `wiki-links.test.mjs` (reads `git ls-files`, no disk walk) | 0.4 s |
+| a `.md` | `docs-merge-artefacts.test.mjs` | 0.3 s |
+| `docs/wiki/backlog.d/`, `backlog.md`, `plan.md`, `tools/backlog-plan/` | `plan.mjs` re-run and `plan.md` staged, then `backlog-plan.test.mjs`; `backlog-fragments`, `backlog-closed` | 0.5 s, 0.1 s, 0.2 s |
+| `CLAUDE.md` | `claude-md-cap.test.mjs` | 0.05 s |
+| `.md`, `.sh`, `.yml`, `.ts`, `.mjs`, `.env.example` | `docs-private-guard.test.mjs` | 3.3 s |
+| a `.sh` or `.husky/` | `executable-bit`; `pipefail-early-reader`; shellcheck on the staged scripts of the set CI lints (`make lint-ci-scripts FILES=...`, `-x` follows what they source) | 0.15 s, 0.16 s, ~1 s (the whole set, 15-37 s, is the push's) |
+| `.github/` or the Makefile | the CI-definition guards: `changes-outputs`, `ios-compile-job`, `ci-passed-gate`, `action-pins`, `secret-levels`, `codeql-category`, `shellcheck-scope`, `recipe-covers-tests`, `workflow-expressions` | 2.7 s together (`local-ci.test.sh`, 43 s, is the push's) |
+| a `.ts` under `frontend/src` or `apps/*/src` | `declared-duplicates`, `undeclared-duplicates` | 0.8 s |
+| a migration | `migration-numbers.test.mjs` | 0.06 s |
+| `infrastructure/` or a Dockerfile | `image-scan-allowlist.test.mjs` | 1.2 s |
+| `rawControlsRatchet.json` | `ratchet-not-raised.mjs` | < 1 s |
+| a native source under `src-tauri` | vitest `nativeLogContent.test.ts` | ~2.5 s |
+| a `.svelte` file or the ratchet | vitest `controlsGuard.test.ts` | ~2.5 s |
+| a frontend module | its sibling tests (`x.test.ts`, `x.*.test.ts`) in one vitest run | ~2.5 s per file |
+| a service module | its sibling unit specs under jest (integration specs are CI's) | ~9 s for one spec (ts-jest start-up) |
+
+**What is NOT at commit, and why**: `vitest related` (65-114 s for one file - it walks the whole
+import graph) and the dead-code ratchet (24 s, a whole-program scan) are at push. A merge commit
+skips the module tests (the push runs `vitest related` over the merged range). The whole-tree scans of
+`make test-ci-scripts` (`control-characters` 24 s, `no-nul-in-source` 7 s) stay at push: they read
+every file whatever was staged.
+
+### Generated artefacts are built, never assumed
+
+The commit tier's vitest step first runs `local-ci.sh artefacts`: `svelte-kit sync` when
+`.svelte-kit` is missing or a route is staged, Paraglide when its output is missing or a message
+file is staged, `proto:gen` when the protobuf output is missing or `libs/proto` is staged. A
+missing wasm is REFUSED with the command that builds it (`cd frontend && bun run wasm:build`) -
+two minutes is not a commit's to spend silently. The push tier's `local-ci.sh generated` builds
+everything: install, sync, protobuf, and the wasm when its source key changed. The key is the git
+tree ids of `frontend/mls-wasm`, `frontend/mls-core` and `rust-toolchain.toml` plus the `wasm-pack`
+version, written to `frontend/src/lib/wasm/.canari-source-key` - the same inputs as the CI cache
+key. It installs the pinned `wasm-pack` through `scripts/install-wasm-pack.sh` and always ends with
+`checks.sh mls-wasm-verify`, CI's own verification.
+
+### The denylist: unset fails, `none` declares
+
+`docs-private-guard.test.mjs` reads infrastructure names from `DOCS_PRIVATE_DENYLIST_FILE`, a file
+outside the public repository. It used to pass silently when the variable was unset - a gate that
+skips reads exactly like a gate that passed. Now:
+
+- **unset**: refused, pointing here. The push refuses before its first check, not minutes in.
+- **`none`**: the run prints `DENYLIST DECLARED ABSENT` and checks only the built-in patterns. CI
+  sets it, since the runners have no copy.
+- **a path that does not exist**: refused.
+
+Each workstation sets the variable once, to its local copy (or to `none`, said out loud).
+
+### Hooks that cannot be skipped without anyone knowing
+
+On #3611 a commit made in a fresh `git worktree` ran NO hook: `core.hooksPath` pointed at
+`.husky/_`, a directory `husky install` generates inside `node_modules`'s reach, and a worktree
+without it makes git skip the hook silently. **`core.hooksPath` is now `.husky`, the tracked
+directory itself** - `pre-commit` and `pre-push` are committed with mode 100755 and git calls them
+directly, so every worktree of the clone has them. `frontend/scripts/install-husky.js` (run by the
+frontend `bun install`) sets and asserts that value; it no longer runs the husky binary.
+`husky-hookspath.test.mjs` asserts the value and the tracked modes. **And both tiers refuse any
+`core.hooksPath` but `.husky` or `.husky/_`** (`assert_hooks_path` in `local-ci.sh`): the same day
+the shared value was found UNSET (no hook ran in any worktree). `.husky/_` is what an older
+branch's `bun install` writes, and stays the expected state until every branch carries the new
+install script, so it is SAID (one line naming what a fresh worktree loses), not refused - the hook
+running at all proves this checkout has the wrappers. **The shared config is never written by hand
+or by a hook**: it follows the install script of whatever branch a HUMAN ran `bun install` in last,
+so it converges on `.husky` as branches take main. The push tier's own `bun install` sets
+`CANARI_KEEP_HOOKS_PATH=1`, and `install-husky.js` then writes nothing - stopped at the source, not
+written and restored (`husky-hookspath.test.mjs` runs the installer both ways). `local-ci.test.sh` refuses an unset and an absolute
+value at both tiers, and accepts `.husky/_` with its line.
+
+A hook that runs but lacks its toolchain FAILS, naming what to install: `bun` not on PATH, a
+package's `node_modules` missing (with its `bun install` line), `cargo` for a staged crate, and at
+push `shellcheck`, `cargo`, `node` or `java` as the planned checks need them.
+`local-ci.test.sh` covers the tracked hooks and the refusals.
+
+### The push: merge, check, and push again
+
+`local-ci.sh push`, from `.husky/pre-push`:
+
+1. It refuses a push of anything but the checked-out commit (the checks run on the working tree;
+   an annotated tag is read as the commit under it), a dirty tree, and `LOCAL_CI_DRY_RUN=1` - the
+   commit tier's switch, which at push would send commits nothing checked. A push of deletions only
+   passes.
+2. **The destination decides the merge.** A push to `refs/heads/main` is refused by name (main
+   takes changes through a pull request). A release branch (`refs/heads/release/*`), a tag, or any
+   ref outside `refs/heads/` is NOT headed for main: merging main into a release fix would ship
+   main's unreleased work with it, so it is checked as it is, against what the remote already holds
+   under that name (or, for a new ref, where it leaves `origin/main`), and never merged. Any other
+   branch is a feature branch: `git fetch origin main`, and when `origin/main` is not already in
+   HEAD, `git merge --no-edit origin/main`. **A conflict aborts the merge and refuses the push**,
+   listing the files; a check failing after a merge says *"HEAD now includes a merge of
+   origin/main (<sha>)"*, since the branch is no longer what was committed.
+3. The plan for the range `origin/main..HEAD` - or, when a commit already verified here (the
+   stamp) is in HEAD, for `stamp..HEAD`: its tree passed what its range owed, so only what came in
+   since is checked. Without that a branch whose plan outlasts main's merge rate never converges
+   (measured 2026-11-15: an hour-long plan, main moved twice during it). The plan is the path rules over every file of the range (the
+   commit tier's, re-proved for the whole branch), the whole-tree scans, and each job whose
+   `ci-scopes.sh` scope the range triggers - with a progress line each (`[push 3/9] frontend-lint ... ok (13s)`);
+   a failure prints the last 40 lines of its log (`.git/canari-local-ci/<check>.log`, per worktree)
+   and stops. `local-ci.sh push-plan <base>` prints that plan and runs nothing - how the self-test
+   reads it; the self-test runs the push itself for real, against stub checks.
+4. On success it stamps the verified commit - the ONE writer of the stamp, never reached without
+   the checks running. **If it merged, it refuses once**: git chose the
+   pushed commits before the hook ran, so the merge cannot ride this push - *"Run the same git push
+   again"*. The second push finds HEAD is the merge it asked for (`resend-head`, beside the stamp) and
+   passes at once - **before any fetch**, so main moving during the run does not start a third: CI
+   tests the pull request merged onto the current main regardless (measured 2026-11-15: with that
+   check after the fetch, three runs in a row were each refused because main had moved meanwhile).
+   A stamped commit the hook did NOT just merge is still fetched and merged when main moved.
+
+**A hook's environment is not CI's.** Git hands a hook `GIT_DIR` (and, at commit, `GIT_INDEX_FILE`),
+and every check inherits it. The first push run on 2026-11-15 ran `local-ci.test.sh`, whose
+`git -C "$scratch" ...` then wrote into the REAL repository: two `base` commits on the pushed branch
+and a test identity with signing off in the shared `.git/config`, and `core.bare=true` (from `git init`
+re-initialising a `GIT_DIR` with no work tree), which broke the main checkout - all undone by hand.
+The keys the leak could touch are what the test's `configure` and `git init` write: `user.name`,
+`user.email`, `commit.gpgsign`, `core.hooksPath`, `core.autocrlf` and `core.bare`. `local-ci.sh`
+now unsets `git rev-parse --local-env-vars` first, keeping only the commit's index for the one read
+of what is staged, and `local-ci.test.sh` asserts it with a decoy `GIT_DIR`, then compares the real repository's `core.bare`, `core.hooksPath`, `user.*` and `commit.gpgsign` with what they were before its run.
+
+A push that needs CI's verdict on an unmerged range is not possible from here on; that is the
+point. The emergency path is unchanged: a human with admin rights, written into `CHANGELOG.md`.
+
+### The other repositories
+
+Sky, MiGallery, Portail-etu and Le Cercle keep their hooks for now. The convergence will want the
+same shape - one scope script, one command script, tracked hooks - once it has run here for a
+release ([ecosystem-convergence](ecosystem-convergence.md#6-the-gates-and-whether-anything-runs-them)).
+
 ## Notable CI gotchas
 
 - **A CONFLICTING PR PRODUCES NO `pull_request` RUN, AND THE CHECKS LIST STILL LOOKS BUSY.** The `pull_request` event is computed against the MERGE ref; with a conflict GitHub cannot build one, so `CI` is never queued - not red, not skipped, simply never created. `arm-auto-merge` is `pull_request_target`, evaluates against the base, and runs anyway, so one green row sits there while nothing tests the code. PR #525 waited twice and survived a close/reopen before the state was actually asked for. `gh run list` returning nothing is an ANSWER: read `gh pr view <n> --json mergeable,mergeStateStatus` (`CONFLICTING` / `DIRTY`), then rebase on a freshly fetched `main` and `git push --force-with-lease`.
@@ -3343,7 +3548,7 @@ npm is gone (`node --run test` replaced the one `npm test` in `ci.yml` and the o
 - iOS `altool` can exit 0 while output says `UPLOAD FAILED` — the workflow greps for failure markers in the transcript.
 - Android Play API rejects `changesNotSentForReview` post-launch — never include this flag.
 - `workflow_run` triggered off a release-triggered workflow must NOT have a `branches` filter (GitHub silently drops them).
-- Pre-commit hooks sweep the whole frontend and re-stage — isolate unrelated dirty files before committing (`git stash` them).
+- Pre-commit hooks sweep the whole frontend and re-stage — isolate unrelated dirty files before committing (`git stash` them). The pre-push refuses a dirty tree outright ([the tiers](#checks-at-commit-at-push-and-in-ci-only)).
 - Never assert a wall clock in a test. An unseeded generator with rejection sampling once drew 31s against a 15s budget on a runner and took CD down: seed the input, and let the `it` timeout guard non-termination.
 - **`gh run rerun` replays the workflow FILE as it existed at that run's ORIGINAL trigger, never the current one on `main`.** Fixing a workflow bug and re-running the failed run will silently re-run the old, broken definition - confirmed on the v0.14.5 iOS recovery, where the rerun's step list was missing a step added by the fix. Only a fresh trigger (`workflow_dispatch`, or a new event) resolves the current file.
 - **`softprops/action-gh-release` is no longer used in this repository, and this is why.** It can 403 with `Resource not accessible by integration` pointing at `update-a-release`, on its OWN second, `github.ref`-shaped lookup - after it has already found the release by `tag_name`. First seen for `refs/heads/main` under `workflow_dispatch` (where `github.ref` is the branch, not the tag). **The tag variant then cost Apple a whole release**: on the stable `v0.16.0` the iOS arm was refused with `Contents: write` granted and printed by the runner, on `refs/tags/v0.16.0` under a `release` event, and the re-run reproduced it - while the Android arm's identical step succeeded on the same release 24 minutes earlier, and on every stable since. The cause of that refusal is unexplained and now unanswerable, which does not matter: **attaching a file to a release needs no release UPDATE**, so both arms use `gh release upload "$TAG" ... --clobber`, one call, creating nothing when the release is absent. `release-chain.test.sh` refuses an `uses:` in either step.

@@ -353,6 +353,7 @@ earliest version, as a checklist.
 - [P3 - the foreground send does not name its messageId, so an adopted orphan can still be queued twice](backlog.d/p3-the-foreground-send-does-not-name-its-message-id.md)
 - [P3 - the WebSocket credential moves out of the URL (design improvement, 2026-11-13)](backlog.d/p3-the-socket-credential-moves-out-of-the-url.md)
 - [P3 - broadcasting a PHONE's screen in a live (not built)](backlog.d/broadcast-a-phone-screen-in-a-live.md)
+- [P3 - The checks-at-commit shape is carried to the four other repos, and the CI-only list shrinks (2026-11-15)](backlog.d/p3-the-checks-at-commit-shape-is-carried-to-the-other-repos-and-the-ci-only-list-shrinks.md)
 - [P3 - a sign-out that never reached the server leaves a restore key alive in the Google backup](backlog.d/p3-a-sign-out-that-never-reached-the-server-leaves-a-restore-key-alive-in-the.md)
 - [P3 - chat-gateway and call-service share no crate, so two modules are copied between them](backlog.d/p3-the-two-rust-services-share-no-crate.md)
 - [P3 - the vendored websocket plugin: four upstream behaviours found by the review of #2167](backlog.d/p3-the-vendored-websocket-plugin-four-upstream-behaviours-found-by-the-review.md)

@@ -168,11 +168,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: "24"
-
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -190,19 +185,10 @@ jobs:
       # reads every COMMITTED lockfile, which `.bun-version` cannot do: a contributor's own bun is
       # not governed by this repository, and deleting a `bun.lock` before reinstalling is all it
       # takes.
+      # The command is `checks.sh lockfile-version` (2026-11-15), the one copy the local pre-push run
+      # calls too.
       - name: Guard the bun lockfile version
-        run: |
-          set -uo pipefail
-          bad=""
-          while IFS= read -r lock; do
-            v="$(grep -m1 -o '"lockfileVersion"[[:space:]]*:[[:space:]]*[0-9]*' "$lock" | grep -o '[0-9]*$')"
-            echo "--- $lock: lockfileVersion=${v:-MISSING}"
-            [ "$v" = "1" ] || bad="$bad $lock"
-          done < <(git ls-files '*bun.lock')
-          if [ -n "$bad" ]; then
-            echo "::error::bun lockfile version must be 1 (Dependabot cannot read v2):$bad"
-            exit 1
-          fi
+        run: bash .github/scripts/checks.sh lockfile-version
 
       # THE OTHER LOCKFILE INVARIANT, and the one a release used to be the first thing to discover.
       # A Tauri plugin is a JS package AND a Rust crate that must agree on major.minor, and the CLI
@@ -211,9 +197,9 @@ jobs:
       # Android, AppImage and iOS on `@tauri-apps/plugin-log` 2.9.0 against `tauri-plugin-log`
       # 2.8.0. `bun install` re-resolves the JS half and touches no Cargo lockfile, so the two drift
       # by default. Needs no toolchain and no install: it reads two committed files.
+      # By bun since 2026-11-15, through `checks.sh tauri-parity`: it is a plain .mjs reading two files.
       - name: Guard the Tauri JS/Rust version parity
-        working-directory: frontend
-        run: node ./scripts/check-tauri-plugin-versions.mjs
+        run: bash .github/scripts/checks.sh tauri-parity
 
 
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
