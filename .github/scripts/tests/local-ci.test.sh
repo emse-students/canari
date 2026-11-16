@@ -444,6 +444,16 @@ check "a crate change runs that crate's suite" "a call-service change planned no
   test -n "$(grep -F 'PLAN rust apps/call-service:' <<<"$out" || true)"
 check "and not the frontend suite" "a Rust change planned the frontend suite" \
   test -z "$(grep -F 'PLAN frontend-test:' <<<"$out" || true)"
+# A top-level frontend config file, ALONE, owes the frontend jobs (2026-11-16: `kit.config.js` did not).
+for cfg in kit.config.js oxvelte.config.json project.inlang/settings.json; do
+  mkdir -p "$s/frontend/$(dirname "$cfg")"
+  echo "// $cfg" >"$s/frontend/$cfg"
+  git -C "$s" add "frontend/$cfg"
+  out=$(scope_push "cfg-$cfg")
+  check "a change to frontend/$cfg alone plans the frontend suite" "frontend/$cfg alone planned no frontend-test: $out" planned frontend-test "$out"
+  scopes=$(cd "$s" && CI_WORKFLOW=.github/workflows/ci.yml bash .github/scripts/ci-scopes.sh HEAD~1 HEAD 2>/dev/null)
+  check "and CI's scope script says frontend=true" "ci-scopes.sh said frontend=false for frontend/$cfg: $scopes"     test -n "$(grep -Fx 'frontend=true' <<<"$scopes" || true)"
+done
 git -C "$s" rm -q frontend/src/lib/unrelated.test.ts
 git -C "$s" commit -qm delete-a-test
 out=$(related)
