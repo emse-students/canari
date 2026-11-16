@@ -160,8 +160,11 @@ describe('FormsService - closing and reopening a form', () => {
     it('keeps the stored end when the edit carries none', async () => {
       const closedAt = new Date('2026-05-01T00:00:00Z');
       const { service, formRepo } = makeService({ closedAt });
-      await service.update('f1', edit(), OWNER, false);
-      expect(formRepo.save.mock.calls[0][0].closedAt).toBe(closedAt);
+      const saved = await service.update('f1', edit(), OWNER, false);
+      // Left out of the write, not written back as the value read: a close committing between the
+      // edit's read and its save is not undone.
+      expect('closedAt' in formRepo.save.mock.calls[0][0]).toBe(false);
+      expect((saved as { closedAt: unknown }).closedAt).toBe(closedAt);
     });
 
     it('sets and clears the end only when the edit says so', async () => {

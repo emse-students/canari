@@ -1626,7 +1626,16 @@ export class FormsService {
     // publication landing meanwhile would be written back as `draft` by a whole-entity save.
     // Publishing is its own conditional write; the edit leaves the column alone.
     const { status, ...written } = form;
-    const withStatus = <T extends object>(saved: T) => ({ ...saved, status });
+    // NOR IS AN END THE EDIT DID NOT CARRY: the manager's close (`setClosed`) writes `closedAt` on
+    // its own route, and one committing between the read above and this save would be written back
+    // as the value read - a closed form silently reopened. Absent, the column is left out of the
+    // write (a save leaves an undefined property's column alone); the answer still carries it.
+    if (closedAtRaw === undefined) delete (written as Partial<Form>).closedAt;
+    const withStatus = <T extends object>(saved: T) => ({
+      ...saved,
+      status,
+      closedAt: form.closedAt,
+    });
     // A MOVE was judged on the status read before the checks: a publication committing since would
     // otherwise see its form moved after it went live. Outside a publication (which holds the row
     // already), the write re-reads the status under the row's lock and refuses a form published
