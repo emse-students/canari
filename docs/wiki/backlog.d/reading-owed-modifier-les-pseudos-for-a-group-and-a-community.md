@@ -22,3 +22,5 @@ target: 1.7.0
 **iPhone 12 half, read 2026-11-16 (second sitting, `1.7.0-alpha.2`, dev, `gamma`), [device-verification](../device-verification.md#the-iphone-12-readings-of-2026-11-16-second-sitting-170-alpha2-the-staged-readings-cut-short-by-a-sign-out):** PASS for the group (the sheet lists the members, a nickname set on the iPhone shows as "Bet1 - Defini par ..." and as the sender name on a message from the other member, a reset restores "Definir un pseudo") and for the community (a member sees "Defini par ..." and "Reinitialiser", no edit control). Dark theme not taken. The web-only rows (1, 3, the community `USER_BLOCKED`, 5, 6, 8) stay as listed above.
 
 **Mi 9T, 2026-11-16: NOT TAKEN.** The reading needs a fourth account added through "Ajouter" and a second web device; neither was free in this sitting.
+
+**Mi 9T, 2026-11-16 (`1.7.0-alpha.5`, readings-ready sitting): item 5 still NOT TAKEN.** An older build on the Mi means an uninstall (a release build cannot be downgraded in place), a fresh identity-provider sign-in, a new device and the group and community staged afterwards; it was not reached in this sitting. The phone stays on `alpha.5`.
