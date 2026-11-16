@@ -125,6 +125,13 @@ export interface MessageHandlerDeps {
    */
   onSalonUnreadCleared?: (event: { workspaceId: string }) => void;
   /**
+   * A live salon message this device could not OPEN (its seed has not landed, most often: a salon
+   * granted or a community joined a moment ago), from another member and not silent. Its row is not
+   * drawn, so the live tally cannot count it, and the repair that draws it later is a history load,
+   * which counts nothing. The server's count does: the handler asks it (`noteUncountedSalonArrival`).
+   */
+  onSalonArrivalUncounted?: (event: { channelId: string; messageId: string }) => void;
+  /**
    * This device's own role in a community changed, pushed by the server to the member it concerns.
    *
    * Carries what the role GRANTS rather than only its name: the client caches `viewerCanManage`,

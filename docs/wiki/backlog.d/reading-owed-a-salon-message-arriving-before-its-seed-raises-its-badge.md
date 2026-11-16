@@ -1,0 +1,7 @@
+## Reading owed - a salon message arriving before its seed raises its badge (granted salon, in-session join)
+
+target: 1.7.0
+
+**What is built:** a live salon frame this device cannot open yet (its seed has not landed: a private salon granted, or a community joined, a moment ago) used to be dropped unopened, and the repair that drew it later was a history load that counts nothing, so it raised no badge. It now asks the server's count for its badge, by a request sent after it arrived ([chat](../frontend/modules/chat.md#a-salon-message-that-arrives-before-its-seed-still-raises-its-badge-2026-11-16)). This entry replaces the two that read it: the iPhone's first message of one salon after an in-session join (TestFlight `1.6.12-alpha.2`, 3 of 5 trials), and the Mi 9T's private salon granted after the join, no badge for any message before its first open (`1.7.0-alpha.5`; [readings](../device-verification.md#the-mi-9t-readings-of-2026-11-16-on-170-alpha5)). Charter: principle 2 (the essential is never lost).
+
+**The reading that closes it:** on the Mi 9T and the iPhone 12, three runs each: join a community from an invitation card, have its admin grant a private salon, then post one message in each of two salons about two seconds apart and two in the private salon; every salon shows its badge (1, 1, then 2) before it is opened, with one `[UNREAD] ... could not be opened here - its badge is asked of the server's count` line per message that arrived before its seed.

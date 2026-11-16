@@ -413,6 +413,43 @@ others took `Message received for an unknown channel` until a reload.
   joiner may read right after the join (the listing is the reload's own path, unmeasured live). The
   harness row is `bun unread-communities.mjs run join`; it was written, not run, because W1/W2 were held.
 
+### A salon message that arrives before its seed still raises its badge (2026-11-16)
+
+**Read on two phones.** On the iPhone (`1.6.12-alpha.2`), after an in-session join, the first message of
+one salon of two raised no badge, 3 times in 5; on the Mi 9T (`1.7.0-alpha.5`), a private salon granted
+AFTER the join raised none for any message until it had been opened once (`salon-priv` for its first,
+`salon-priv2` for both of two, still none a minute later), while every message was in the salon on
+opening ([device-verification](../../device-verification.md#the-mi-9t-readings-of-2026-11-16-on-170-alpha5)).
+
+- **Cause, read in the code.** A salon's live tally counts a DRAWN row: `channel.message.created` opens
+  the frame and hands a body to `addMessageToChat`, which raises the count. A salon granted (or a
+  community joined) a moment ago does not yet hold the Graine seed of the messages sent right after:
+  the member enters the salon's key group asynchronously (`registerJoinedChannel`,
+  `hydrateJoinedCommunity`), so the open throws `GraineSessionUnavailableError`, the frame is
+  reported unreadable, asks for its seed and is DROPPED. The repair then re-reads the salon
+  (`announceGraineRepair` -> `loadHistoryForConversation`), and a history load merges rows and never
+  touches `unreadCount`. So every message sent before the seed landed was shown and never counted, and
+  the server's count, which did hold it, was asked only at the next community load or reconnect. Once
+  opened, the seed is held, frames open live and the badge works: exactly the reading. Not a race that
+  heals - nothing healed it before a reload.
+- **Fix.** The frame states in the clear what the server's count asks (`senderId`, `silent`), so the
+  decision is taken where the frame is: an unopened frame from another member and not silent calls
+  `onSalonArrivalUncounted`, and its badge is the SERVER's count (`noteUncountedSalonArrival` in
+  `utils/chat/salonUnread.ts`, through `refreshSalonUnreadForUncountedArrival`). Not a local `+1`: a
+  tally of rows nobody can show yet would need its own ledger against a re-delivered frame and the
+  repair's load, and the server's count already is that ledger. **The request is never joined to one
+  already on the wire** (`joinInFlight: false`): that one may have been counted before the row
+  existed. A burst costs at most two requests - the one running, and one after it if an arrival came
+  during it (a flag and a loop, no timer). The open salon is left to the receipt effect, a muted one at
+  zero, and a follower tab learns the counts from the leader, all as for any reconcile.
+- **Tests.** `channelEventHandler.uncountedArrival.test.ts` (real `openChannelMessage`, no seed held:
+  another member's frame asks, a silent or an own one does not) and `salonUnread.test.ts` ("an
+  arrival this device could not count": the badge from the server, a request in flight never joined,
+  a burst of three counted by two requests) - all four fail without the fix, and the two last fail
+  each on its own mutation (joining allowed, the owed loop removed).
+- **Owed:** [the reading](../../backlog.d/reading-owed-a-salon-message-arriving-before-its-seed-raises-its-badge.md)
+  on both phones.
+
 ### Every member list reads by family name, and a row never moves because its name arrived (2026-10-05)
 
 Asked by the user: the community admin panel listed its members by user id, the group panel and a
