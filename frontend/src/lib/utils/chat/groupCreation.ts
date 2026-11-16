@@ -22,6 +22,8 @@ import { isBlockedWith } from '$lib/users/blocks';
 import { dropGroupState } from './dropGroupState';
 import { logBestEffortGroupDeleteFailure } from './pendingGroupExits';
 import { holdsGroupState } from './groupUsability';
+import { markGroupInCreation } from './groupsInCreation';
+import { noteGroupsAudited } from './historyReconcile';
 import {
   CommitOutcomeUnknownError,
   FollowerTabCommitError,
@@ -198,6 +200,28 @@ async function readDevicesWithRetry(
 }
 
 /**
+ * A GROUP THIS DEVICE CREATED OWES NO HISTORY AUDIT - recorded on SUCCESS only.
+ *
+ * The audit (`groupsOwingAudit`, run by every connection pass) asks a member whether this device holds
+ * the same history as everyone else, once per local group it has never asked about. A group this
+ * device created has no past anybody else could hold, so the ask is empty by construction - and it was
+ * made: LEAF-REFRESH-1 (2026-11-16) showed the next connection asking about a group created just
+ * before it. While the creation runs, the pass leaves the group out by the creation's mark
+ * (`initializeConnection`), not by this record.
+ *
+ * WRITTEN ONLY ONCE THE CREATION SUCCEEDED, after its row is written and before the mark is released.
+ * Written earlier, a tab that died mid-creation while the server group survived would come back to a
+ * group it rejoins by Welcome under a discovery placeholder - a path that skips the post-Welcome
+ * history ask because a row exists - with the audit already discharged: the messages its other
+ * devices sent would never be asked for. A failed creation records nothing, so such a group is still
+ * owed. Both creation paths run on the leading tab, a follower's included (delegated to these same
+ * functions).
+ */
+function dischargeCreatedGroupAudit(mlsService: IMlsService, userId: string, groupId: string) {
+  noteGroupsAudited(userId, mlsService.getDeviceId(), [groupId]);
+}
+
+/**
  * Creates a new named MLS multi-user group on the server, initialises the local
  * MLS state, and automatically adds all other devices belonging to the current user
  * in a single bulk commit to avoid epoch fragmentation.
@@ -234,10 +258,15 @@ export async function createNewGroup(
 
   let groupId: string | undefined;
   let conversationKey: string | undefined;
+  let releaseCreationMark: (() => void) | undefined;
 
   try {
     groupId = await mlsService.createRemoteGroup(groupDisplayName, true); // true = multi-user group
     conversationKey = groupId;
+    // MARKED BEFORE THE SERVER CAN LIST IT, released in the `finally` once the row is written or the
+    // group deleted: the connection sweeps read this mark rather than take the listed, rowless group
+    // for one this device lost (`groupsInCreation.ts`).
+    releaseCreationMark = markGroupInCreation(groupId);
 
     // THE MEMBERSHIP IS REGISTERED BEFORE THE LOCAL GROUP EXISTS, AND THE ORDER IS AN INVARIANT.
     //
@@ -355,6 +384,7 @@ export async function createNewGroup(
     );
     selectConversation(conversationKey);
     await saveConversation(conversationKey);
+    dischargeCreatedGroupAudit(mlsService, userId, groupId);
     log(`[OK] Group ${groupId} created.`);
     console.log(`[GROUP] Group created successfully (id=${groupId})`);
     // MLS commits from group setup can leave the catch-up overlay stuck on mobile if begin/end desync.
@@ -380,6 +410,8 @@ export async function createNewGroup(
       }
     }
     return { ok: false, reason: creationRefusal(e) };
+  } finally {
+    releaseCreationMark?.();
   }
 }
 
@@ -1410,8 +1442,11 @@ export async function startNewConversation(
 
   const groupName = `${userId}::${contact}`;
   let groupId: string | undefined;
+  let releaseCreationMark: (() => void) | undefined;
   try {
     groupId = await mlsService.createRemoteGroup(groupName, false); // false = 1-to-1 direct conversation
+    // The same mark as `createNewGroup`, for the same window (`groupsInCreation.ts`).
+    releaseCreationMark = markGroupInCreation(groupId);
     console.log(`[DM] createRemoteGroup → groupId=${groupId}`);
     log(`[DM] Remote group created: ${groupId}`);
     const conversationKey = groupId;
@@ -1489,6 +1524,7 @@ export async function startNewConversation(
     );
     maybeSelect(conversationKey);
     saveConversation(conversationKey);
+    dischargeCreatedGroupAudit(mlsService, userId, groupId);
     log(`[OK] Secure channel established with ${contact}.`);
     console.log(`[DM] 1v1 conversation with ${contact} ready (groupId=${groupId})`);
     return { ok: true, key: conversationKey };
@@ -1514,5 +1550,7 @@ export async function startNewConversation(
       }
     }
     return { ok: false, reason: creationRefusal(_e) };
+  } finally {
+    releaseCreationMark?.();
   }
 }
