@@ -49,6 +49,7 @@ earliest version, as a checklist.
 - [The owner's decisions of 2026-11-14](backlog.d/owner-decisions-of-2026-11-14.md)
 - [The background Welcome's warm-process refusal: two native changes](backlog.d/p3-the-background-welcome-s-warm-process-refusal-its-rate-its-wasted-round-trip.md)
 - [The owner's decisions of 2026-11-15 and 2026-11-16](backlog.d/owner-decisions-of-2026-11-16.md)
+- [Reading owed: the feed's live card follows a start and an end with no relaunch (1.7.0-alpha.6 oddities)](backlog.d/reading-owed-the-live-card-follows-a-start-and-an-end-with-no-relaunch.md)
 
 **P2 - correctness**
 
