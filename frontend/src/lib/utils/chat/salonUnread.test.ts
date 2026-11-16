@@ -9,6 +9,7 @@ import {
   noteSalonNotificationLevel,
   communityUnreadUpTo,
   noteSalonOpened,
+  noteUncountedSalonArrival,
   parseSalonUnreadAnswer,
   reconcileSalonUnread,
   reconcileSalonUnreadFromServer,
@@ -495,5 +496,109 @@ describe('reconcileSalonUnreadFromServer - one request in flight', () => {
     // R0, A, B: B asked for itself and its request was counted AFTER the mark reached the server.
     expect(requests).toEqual([false, true, true]);
     localStorage.clear();
+  });
+});
+
+/**
+ * A live salon message this device could not open (its seed had not landed: a salon granted, or a
+ * community joined, a moment ago) raised no badge - read on the Mi 9T and the iPhone. Its badge is
+ * the server's count, asked by a request sent AFTER the arrival: a request already on the wire may
+ * have been counted before the row existed, so it is never joined.
+ */
+describe('an arrival this device could not count', () => {
+  beforeEach(() => resetSalonUnread());
+
+  const key = SALON.replace('channel_', '');
+
+  it('raises the badge of a salon nothing counted, from the server', async () => {
+    const map = new Map([[SALON, convo()]]);
+    await noteUncountedSalonArrival(
+      key,
+      () =>
+        reconcileSalonUnreadFromServer({
+          conversations: map,
+          selectedId: null,
+          userId: ME,
+          reason: 'test',
+          log: () => {},
+          fetchCounts: async () => ({ asOf: 10, counts: { [key]: 1 } }),
+          joinInFlight: false,
+        }),
+      () => {}
+    );
+    expect(map.get(SALON)?.unreadCount).toBe(1);
+  });
+
+  it('never joins a counts request already on the wire: it may predate the row', async () => {
+    const map = new Map([[SALON, convo()]]);
+    let rowExists = false;
+    let calls = 0;
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const fetchCounts = async () => {
+      calls++;
+      const counted = rowExists ? 1 : 0;
+      if (calls === 1) await gate;
+      return { asOf: calls, counts: counted ? { [key]: counted } : {} };
+    };
+    const ask = (joinInFlight?: boolean) =>
+      reconcileSalonUnreadFromServer({
+        conversations: map,
+        selectedId: null,
+        userId: ME,
+        reason: 'test',
+        log: () => {},
+        fetchCounts,
+        ...(joinInFlight === undefined ? {} : { joinInFlight }),
+      });
+    // A community load's request, counted before the message was written.
+    const before = ask();
+    await Promise.resolve();
+    rowExists = true;
+    const after = noteUncountedSalonArrival(
+      key,
+      () => ask(false),
+      () => {}
+    );
+    release();
+    await Promise.all([before, after]);
+    expect(calls).toBe(2);
+    expect(map.get(SALON)?.unreadCount).toBe(1);
+  });
+
+  it('a burst costs the request running and ONE more after it, which counts every arrival', async () => {
+    const map = new Map([[SALON, convo()]]);
+    let rows = 1;
+    let calls = 0;
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const log = vi.fn();
+    const ask = async () => {
+      calls++;
+      const counted = rows;
+      if (calls === 1) await gate;
+      await reconcileSalonUnreadFromServer({
+        conversations: map,
+        selectedId: null,
+        userId: ME,
+        reason: 'test',
+        log: () => {},
+        fetchCounts: async () => ({ asOf: calls, counts: { [key]: counted } }),
+        joinInFlight: false,
+      });
+    };
+    const first = noteUncountedSalonArrival(key, ask, log);
+    rows = 2;
+    const second = noteUncountedSalonArrival(key, ask, log);
+    rows = 3;
+    const third = noteUncountedSalonArrival(key, ask, log);
+    release();
+    await Promise.all([first, second, third]);
+    expect(calls).toBe(2);
+    expect(map.get(SALON)?.unreadCount).toBe(3);
+    expect(log.mock.calls.map((c) => String(c[0]))).toEqual([
+      expect.stringContaining('one more is owed'),
+      expect.stringContaining('one more is owed'),
+    ]);
   });
 });
