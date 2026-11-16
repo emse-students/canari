@@ -68,17 +68,17 @@
           use:guideAnchor={'nav.profile'}
           title={connection.state === 'slow' ? m.slow_indicator_label() : m.nav_my_profile_title()}
           data-connection={connection.state ?? undefined}
-          class="tap-target focus-visible:outline-accent-icon rounded-full focus-visible:outline-2 focus-visible:outline-offset-2"
+          class="ui-icon-button focus-visible:outline-accent-icon rounded-full focus-visible:outline-2 focus-visible:outline-offset-2"
           aria-label={m.nav_my_profile_label()}
         >
-          <!-- The connection ring hugs the photo, not the 44 px tap area around it: drawn on the button it
+          <!-- The connection ring hugs the photo, not the box around it (the shared `.ui-icon-button` box, as the launcher and the sign-out; the photo is the 32px "md" step centred in it, owner 2026-11-16): drawn on the button it
                floated a gap away from the avatar and read as a separate green circle (owner, 2026-11-13). -->
           <span
             class="inline-flex rounded-full ring-2 transition-[box-shadow] duration-200 {connectionRingClass(
               connection.state
             )}"
           >
-            <Avatar userId={globalSession.userId} size="sm" />
+            <Avatar userId={globalSession.userId} size="md" />
           </span>
         </button>
       {/if}

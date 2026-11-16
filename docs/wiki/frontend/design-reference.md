@@ -743,14 +743,14 @@ at the touch form - 44, 44, 44, 44, 28.
 `iconButtonScale.test.ts`, each with its reason.** Two shapes are out by construction rather than
 by list: a button whose padding is asymmetric (`px-3 py-1.5` is a pill sized to a label) and a
 button that declares no box at all (an inline affordance - the 12px pencil in a comment's meta
-row, the cross in a chip, the avatar in the navbar). A third is out by name: a box measured against
+row, the cross in a chip). A third is out by name: a box measured against
 a neighbour, such as a cross on a 64px thumbnail or the 48px community rail.
 
 **A control drawn under 44px on a touch screen takes `.tap-target`** (2026-09-30, from the
 viewport audit in [phone-comparison](../phone-comparison.md)). It changes nothing visible: under
 `(pointer: coarse)` a centred `::before` extends the hit box to `max(100%, 2.75rem)` on each axis,
 so a 28px pill, a 20px inline link or a 32px avatar is tapped as a 44px target without its row
-growing. Twelve controls carry it - the feed pills, the header's "Accueil", the navbar avatar, the
+growing. Eleven controls carry it - the feed pills, the header's "Accueil", the
 legal back link, the admin tabs and dashboard link, the notification filters and the profile photo
 badge. Both rules are held by `touchTargets.test.ts`.
 
@@ -3536,3 +3536,9 @@ and the lead line (`data-pin-mark`, `data-pin-lead`; the title stays), so the ba
 by what the person no longer needs, and the keypad keeps its place. Under 700 px of height the keys
 are 52 px (above the 44 px floor). Structure is pinned by `PinModal.exits.svelte.test.ts`; the drawn
 position is owed an iPhone 12 reading with a refused PIN.
+
+## The desktop top bar's right-hand controls share one box (2026-11-16)
+
+Owner report: in the desktop `Navbar` the apps grid, the sign-out and the avatar sat at three heights and two sizes. Measured on the real classes at 1280px: the launcher and the sign-out were 38x38 `.ui-icon-button` boxes (glyphs 22 and 20px), but the avatar was a bare `tap-target` button around a 24px photo - an inline button wrapping an inline-flex span grows a line-box gap, so it measured 24x31 with its centre 3.5px above the row's (32 against 35.5).
+
+All three are now `.ui-icon-button` (38px under a pointer, 44px on touch), the avatar is the 32px `md` step centred in its box (the same as `MobileHeader`'s), and the grid and the sign-out are both a 22px glyph at stroke 2.5. The connection ring stays a `box-shadow` on the photo's own span, so it cannot move the row. Measured after: three 38x38 boxes at 1280px and three 44x44 on touch, centres all 35.5, glyphs 22/22/32. `MobileHeader` already used this shape and has no sign-out. `headerControlRow.test.ts` holds the cause (shared box, one glyph size, no bare tap target on the avatar); a layout engine is not available to unit tests.

@@ -24,8 +24,8 @@
   class="ui-icon-button text-text-muted hover:bg-red-err/10 rounded-lg transition-colors hover:text-red-500 disabled:pointer-events-none disabled:opacity-60"
 >
   {#if busy}
-    <LoaderCircle size={20} class="animate-spin" />
+    <LoaderCircle size={22} strokeWidth={2.5} class="animate-spin" />
   {:else}
-    <LogOut size={20} />
+    <LogOut size={22} strokeWidth={2.5} />
   {/if}
 </button>
