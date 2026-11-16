@@ -26,3 +26,5 @@ the iPhone 12 (measured from the DOM, as above), pinned by a test on the gate's 
 
 **Reading owed on both phones:** the Mi 9T and the iPhone 12 read the row from the DOM on the next
 pre-release - it intersects no bottom-bar tab and clears the status bar and the notch. Then delete this entry.
+
+**Mi 9T half read, 2026-11-16 (`1.7.0-alpha.4`, [readings](../device-verification.md#the-mi-9t-readings-of-2026-11-16-on-170-alpha4)): `PASS`.** The gate's "Se deconnecter" is at the top right (42-72 css px from the top, left 304, 121 wide), clear of the status bar, with nothing near the bottom tab bar. Still owed: the iPhone 12 half (the floating tab bar and the notch). Then delete this entry.
