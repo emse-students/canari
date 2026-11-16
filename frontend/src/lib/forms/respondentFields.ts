@@ -28,7 +28,7 @@ import type { Submission } from './api';
  */
 
 /** Every choice the editor offers, in the order it and the respondent notice show them. */
-export const RESPONDENT_CHOICES = [
+const RESPONDENT_CHOICES = [
   'lastName',
   'firstName',
   'email',
@@ -39,22 +39,22 @@ export const RESPONDENT_CHOICES = [
 export type RespondentChoice = (typeof RESPONDENT_CHOICES)[number];
 
 /** What an account can give (no e-mail: Canari keeps none for a member). */
-export const ACCOUNT_FIELDS = ['lastName', 'firstName', 'cursus', 'status', 'campus'] as const;
+const ACCOUNT_FIELDS = ['lastName', 'firstName', 'cursus', 'status', 'campus'] as const;
 export type AccountField = (typeof ACCOUNT_FIELDS)[number];
 
 /** What is asked as a question when no account can be read, beside a guest's names and e-mail. */
-export const DECLARED_FIELDS = ['cursus', 'status', 'campus'] as const;
+const DECLARED_FIELDS = ['cursus', 'status', 'campus'] as const;
 export type DeclaredField = (typeof DECLARED_FIELDS)[number];
 
 /** Student through a cursus, staff through a post. */
-export const RESPONDENT_STATUSES = ['student', 'staff'] as const;
+const RESPONDENT_STATUSES = ['student', 'staff'] as const;
 export type RespondentStatus = (typeof RESPONDENT_STATUSES)[number];
 
 /** The formation a respondent with no cursus declares. Mirrors the server's `NO_FORMATION`. */
 export const NO_FORMATION = 'none';
 
 /** One cursus, as an answer keeps it. */
-export interface RespondentCursus {
+interface RespondentCursus {
   promo: number | null;
   formation: string | null;
 }
@@ -148,7 +148,7 @@ export function statusLabel(status: RespondentStatus): string {
 }
 
 /** The localized word of a stored campus; a value this build does not know is shown as stored. */
-export function campusWord(campus: string): string {
+function campusWord(campus: string): string {
   return (CAMPUSES as readonly string[]).includes(campus) ? campusLabel(campus as Campus) : campus;
 }
 

@@ -18,7 +18,7 @@
    * public form, more firmly on one that charges.
    */
   interface Props {
-    /** The ticked choices, bound: drawn from `respondentFields.ts` `RESPONDENT_CHOICES`. */
+    /** The ticked choices, bound: drawn from the choices `respondentFields.ts` offers. */
     choices: string[];
     /** Whether the form is answerable without an account: the e-mail is offered then. */
     isPublic: boolean;
