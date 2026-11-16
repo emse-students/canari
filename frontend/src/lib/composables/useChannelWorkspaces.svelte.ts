@@ -59,6 +59,7 @@ import { showToast } from '$lib/stores/toast.svelte';
 import { notifNav } from '$lib/stores/notifNav.svelte';
 import { m } from '$lib/paraglide/messages';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
+import { channelMemberAddedData } from '$lib/utils/chat/channelNotice';
 import { notifyReaction } from '$lib/utils/chat/reactionNotify';
 import { describeCommunityRefusal } from '$lib/utils/chat/communityErrors';
 import {
@@ -2092,21 +2093,17 @@ export function useChannelWorkspaces() {
         }
       }
 
-      // Send an encrypted system message into the channel to notify its members
+      // Notify the channel's members. The data is the sentence until every supported build reads
+      // the id shape, then the ids (`channelMemberAddedData`, `channelNotice.ts`). SILENT: the row is
+      // opaque to the server, so the sender says it is a notice - it must neither count as unread
+      // for the salon's members nor ring their phones.
       const inviterId = currentUserId();
-      const getName = await resolveDisplayNames(inviterId ? [memberId, inviterId] : [memberId]);
-      const displayName = getName(memberId);
 
       if (inviterId) {
         try {
-          const inviterName = getName(inviterId);
-          const systemText = m.chat_system_member_added({
-            sender: inviterName,
-            members: displayName,
-          });
-          const systemBytes = encodeAppMessage(mkSystem('memberAdded', systemText as string));
-          // SILENT: the row is opaque to the server, so the sender says it is a notice - it must
-          // neither count as unread for the salon's members nor ring their phones.
+          const systemBytes = encodeAppMessage(
+            mkSystem('memberAdded', await channelMemberAddedData(memberId, inviterId))
+          );
           await sendEncryptedChannelMessage(
             channelConversationId,
             systemBytes,

@@ -5,7 +5,8 @@ import { forgetDeliveredSalonSend } from '$lib/utils/chat/messaging';
 import { openChannelMessageProving } from '$lib/utils/graine/channelSeal';
 import { reportUnreadableChannelMessage } from '$lib/utils/chat/channelCrypto';
 import { decodeAppMessage } from '$lib/proto/codec';
-import { appMsgToEnvelope, appMsgToChannelSystemEnvelope } from '$lib/utils/chat/messageUtils';
+import { appMsgToEnvelope } from '$lib/utils/chat/messageUtils';
+import { channelSystemEnvelope } from '$lib/utils/chat/channelNotice';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { setTyping } from '$lib/stores/typingStore.svelte';
 import { applyPin } from '$lib/stores/pinStore.svelte';
@@ -521,7 +522,11 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
             innerMessageId = msg.messageId ? String(msg.messageId) : undefined;
             const envelope =
               appMsgToEnvelope(msg, channelServerMs) ??
-              appMsgToChannelSystemEnvelope(msg, channelServerMs);
+              (await channelSystemEnvelope(
+                msg,
+                channelServerMs,
+                String(sender || '').toLowerCase()
+              ));
             if (envelope) {
               content = envelope.content;
               isSystemNotice = !!msg.system;
