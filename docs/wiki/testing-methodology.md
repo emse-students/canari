@@ -3927,3 +3927,13 @@ another worktree lacked an export `main` now calls, and every key-group frame fa
 because a copied one is a different client. With the right WASM, `main` read the evicting
 commit as `healed=true`, and the fix re-joined within the same load. That gap between control and
 fix is the whole verdict.
+
+## FOUR TESTS THAT PASSED ALONE AND FAILED UNDER LOAD (2026-11-16)
+
+The pre-push `frontend-test` run (1814 files, several runs in parallel on one box) refused pushes on four files that pass alone. None of them waited on a clock; two causes were found.
+
+- **A cold dynamic import inside the test body** (`navigationNeverWaits`, `mp4Duration`): `await import('./+layout')` or `await import('./mediaBlobCache')` evaluates a large module graph on first use, and that evaluation is charged to the 5 s test timeout. Under oversubscription it took longer than that (reproduced 6/6 with 32 busy loops running; each run is a fresh process, because `--repeats` reuses the warm module cache and hides the defect). The fix is a static import, so evaluation happens at collection, which has no test timeout.
+- **A lazily imported mocked stub** (`SharedPostCard`, the reel viewer): the app imports the viewer lazily and the mock factory compiles a `.svelte` stub on FIRST import, which exceeded the 1 s `vi.waitFor`. The fix is a `beforeAll` that imports both lazy modules once, outside any waiter.
+- **Real render work against a 5 s budget** (`ChatArea.scrollAnchor`): every test mounts a 61-row `ChatArea` for real; fake timers already remove the clock, the CPU cost remains and scales with load. The budget is raised for that file only (30 s), because the cause is CPU and not a cold import; it bounds a hang and synchronises nothing.
+
+Reproduce a cold-import defect with a loop of separate `vitest run` processes under CPU load, never with `--repeats`.

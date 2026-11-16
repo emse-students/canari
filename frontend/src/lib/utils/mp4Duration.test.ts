@@ -8,6 +8,9 @@ import {
   readMp4TailDuration,
   writeMvhdDuration,
 } from './mp4Duration';
+// Static, not `await import()` in the test: the cache pulls in the crypto and request-gate graph,
+// which is cold under load and would spend the 5 s test timeout on module evaluation.
+import { declareVideoDuration } from './mediaBlobCache';
 import { fragmentedMp4 } from './mp4Fixture.test-helper';
 import { box, fragment, initSegment, join } from '$lib/live/fmp4.test-helper';
 
@@ -206,7 +209,6 @@ describe('mp4Duration', () => {
   });
 
   it('a reader gives an already-uploaded video its length before the engine sees it, and only a video', async () => {
-    const { declareVideoDuration } = await import('./mediaBlobCache');
     const bytes = await fragmentedMp4(60);
     const info = vi.spyOn(console, 'info').mockImplementation(() => {});
     declareVideoDuration({ mediaId: 'm', mimeType: 'video/mp4', type: 'image' }, bytes.buffer);
