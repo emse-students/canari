@@ -70,7 +70,6 @@ earliest version, as a checklist.
 - [P2 - A post's pictures and videos: the layout from one to many, designed (owner, 2026-11-15)](backlog.d/p2-a-post-s-media-layout-one-to-many-pictures-and-videos.md)
 - [P2 - no gate proves that an older build reads, and writes back, the MLS state this build writes](backlog.d/p2-no-gate-proves-an-older-build-reads-the-mls-state-this-build-writes.md)
 - [P2 - the reply swipe along a thumb's arc does nothing on WebKit: the thread scrolls instead](backlog.d/p2-the-reply-swipe-along-a-thumb-s-arc-does-nothing-on-webkit.md)
-- [P2 - a group the iPhone joined while the app was in front is not drawn in the chat list until the app is left and resumed](backlog.d/p2-a-group-joined-while-the-iphone-app-is-in-front-is-not-listed-until-the-app-is-left.md)
 - [P2 - a live ended itself (`upload-too-slow`) after 256 s on the iPhone, cause unproven](backlog.d/p2-a-live-ended-itself-upload-too-slow-after-256-s-on-the-iphone.md)
 
 **P3 - hygiene**
@@ -110,6 +109,7 @@ earliest version, as a checklist.
 - [ ] [a private salon granted after an in-session join is readable on the iPhone, with its badge](backlog.d/p2-a-private-salon-granted-after-an-in-session-join-is-unreadable-on-the-iphone.md)
 - [ ] [one "server already unreachable" line per spell, read on a phone log after a real outage](backlog.d/p3-server-already-unreachable-is-logged-per-request.md)
 - [ ] [a salon invitation's notice still reads as a sentence, live and from history (2026-11-16)](backlog.d/reading-owed-a-channel-invite-notice-names-ids-and-draws-live.md)
+- [ ] [a group joined with the list in front is ordered by its admission, and drawn at once](backlog.d/reading-owed-a-group-joined-with-the-list-in-front-is-ordered-by-its-admission.md)
 - [ ] [a salon message arriving before its seed raises its badge (granted salon, in-session join)](backlog.d/reading-owed-a-salon-message-arriving-before-its-seed-raises-its-badge.md)
 - [ ] [the broadcaster's on-air top row at 390 pt (End and the chat toggle on screen)](backlog.d/reading-owed-the-live-on-air-top-row-at-390-pt-and-360-px.md)
 - [ ] [the live scenes bar (one icon row) on a desktop live at two window widths](backlog.d/reading-owed-the-live-scenes-bar-on-a-desktop-live.md)

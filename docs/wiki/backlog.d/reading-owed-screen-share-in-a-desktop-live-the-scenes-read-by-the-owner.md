@@ -34,3 +34,6 @@ It could not drive a real picker or a real window, so what is left is only what 
 A step that fails becomes its own defect entry. Charter: principle 2 (the essential is never lost:
 a click on the browser's bar no longer throws the live away) and 7 (simple: ready-made scenes, not
 layers).
+
+
+**Item 5 read on the Mi 9T, 2026-11-16, `1.7.0-alpha.6` ([readings](../device-verification.md#the-mi-9t-readings-of-2026-11-16-fifth-sitting-on-170-alpha6-the-salon-badge-and-grant-rows-the-live-bars-the-push)): `PASS` with a synthetic capture.** `beta`'s desktop seat went live and switched to the "Ecran" scene; the phone's tray held ONE push ("Canari Test Beta est en live", the live's title) at the start and no second one at the scene change. A live has no bell row by design. Items 1 to 4 stay the owner's hand rows.
