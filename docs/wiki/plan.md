@@ -44,6 +44,7 @@ earliest version, as a checklist.
 - [Decided - the owner's answers of 2026-11-07](backlog.d/owner-decisions-of-2026-11-07.md)
 - ["Envoyer a..." to several targets and CanaReels in chats: the 13 readings, then the production flip](backlog.d/envoyer-a-and-canareels-in-chats-the-readings-then-the-production-flip.md)
 - [The owner's decisions of 2026-11-09](backlog.d/owner-decisions-of-2026-11-09.md)
+- [Reading owed: the shared post / CanaReel card's rich caption](backlog.d/shared-post-card-rich-caption-reading-owed.md)
 - [The owner's decisions of 2026-11-11](backlog.d/owner-decisions-of-2026-11-11.md)
 - [The owner's decisions of 2026-11-14](backlog.d/owner-decisions-of-2026-11-14.md)
 - [The background Welcome's warm-process refusal: two native changes](backlog.d/p3-the-background-welcome-s-warm-process-refusal-its-rate-its-wasted-round-trip.md)
@@ -91,7 +92,6 @@ earliest version, as a checklist.
 
 - [ ] [the CanaReels composer, viewer and editor on real content](backlog.d/reading-owed-the-canareels-composer-viewer-and-editor-on-real-content.md)
 - [ ] [the in-session community join through the deep link on the phones](backlog.d/p1-owed-one-live-reading-of-the-in-session-join-fix-2026-10-08.md)
-- [ ] [a notification tap to a usable conversation: F1](backlog.d/reading-owed-a-notification-tap-to-a-usable-conversation-f1.md)
 - [ ] [a group joined in the background before its row existed: the "already held" Welcome writes and announces the row, the...](backlog.d/reading-owed-a-group-joined-in-the-background-before-its-row-existed-the.md)
 - [ ] [a HISTORY ask answered "I hold nothing" is final for its roster](backlog.d/reading-owed-a-history-ask-answered-i-hold-nothing-is-final-for-its-roster.md)
 - [ ] [the native caches sealed at rest (2026-10-22): the upgrade readings on both phones](backlog.d/reading-owed-the-native-caches-sealed-at-rest-2026-10-22-the-upgrade-readings.md)
@@ -112,6 +112,7 @@ earliest version, as a checklist.
 - [ ] [a salon invitation's notice still reads as a sentence, live and from history (2026-11-16)](backlog.d/reading-owed-a-channel-invite-notice-names-ids-and-draws-live.md)
 - [ ] [a salon message arriving before its seed raises its badge (granted salon, in-session join)](backlog.d/reading-owed-a-salon-message-arriving-before-its-seed-raises-its-badge.md)
 - [ ] [the broadcaster's on-air top row at 390 pt (End and the chat toggle on screen)](backlog.d/reading-owed-the-live-on-air-top-row-at-390-pt-and-360-px.md)
+- [ ] [the live scenes bar (one icon row) on a desktop live at two window widths](backlog.d/reading-owed-the-live-scenes-bar-on-a-desktop-live.md)
 - [ ] [the live viewer's top bar at 360-436 css px portrait (name whole, no button over the second row)](backlog.d/reading-owed-the-live-viewer-top-bar-at-360-436-px.md)
 
 ## 1.8.0

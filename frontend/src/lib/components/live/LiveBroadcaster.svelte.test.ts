@@ -684,8 +684,23 @@ describe('LiveBroadcaster - the scenes on a desktop (owner, 2026-11-14)', () => 
     const { s } = sheet(true);
     await settle();
     expect(q('[data-live-scenes]')!.dataset.liveScenes).toBe('on');
-    expect(q('[data-live-scene="camera"]')!.textContent).toContain(m.live_scene_camera());
-    expect(q('[data-live-scene="pause"]')!.textContent).toContain(m.live_scene_pause());
+    // Icon-only (owner, 2026-11-16): the name is the aria-label and the tooltip, never visible text.
+    for (const [scene, name] of [
+      ['camera', m.live_scene_camera()],
+      ['screen', m.live_scene_screen()],
+      ['screen-camera', m.live_scene_screen_camera()],
+      ['side-by-side', m.live_scene_side_by_side()],
+      ['pause', m.live_scene_pause()],
+    ] as const) {
+      const button = q(`[data-live-scene="${scene}"]`)!;
+      expect(button.getAttribute('aria-label')).toBe(name);
+      expect(button.getAttribute('title')).toBe(name);
+      expect(button.textContent?.trim()).toBe('');
+    }
+    expect(q('[data-live-scene="camera"]')!.getAttribute('aria-checked')).toBe('true');
+    expect(q('[data-live-scene="pause"]')!.getAttribute('aria-checked')).toBe('false');
+    // ONE row, never wrapping onto a second line.
+    expect(q('[data-live-scene-bar] [role="radiogroup"]')!.className).not.toContain('flex-wrap');
     expect(q('[data-live-scene-hint]')!.textContent).toContain(m.live_scene_screen_hint());
     expect(s!.deps.openMicrophone).toHaveBeenCalledTimes(1);
     q<HTMLButtonElement>('[data-live-scene="screen"]')!.click();
@@ -736,15 +751,21 @@ describe('LiveBroadcaster - the scenes on a desktop (owner, 2026-11-14)', () => 
     q<HTMLButtonElement>('[data-live-scene="screen-camera"]')!.click();
     await vi.waitFor(() => expect(s!.studio.scene).toBe('screen-camera'));
     await settle();
-    const tab = (group: string, label: string) =>
-      [...document.querySelectorAll<HTMLButtonElement>(`[${group}] [role="tab"]`)].find(
-        (b) => b.textContent?.trim() === label
+    const choice = (group: string, label: string) =>
+      [...document.querySelectorAll<HTMLButtonElement>(`[${group}] [role="radio"]`)].find(
+        (b) => b.getAttribute('aria-label') === label
       )!;
-    tab('data-live-overlay-sizes', m.live_scene_overlay_large()).click();
-    tab('data-live-overlay-shapes', m.live_scene_overlay_rect()).click();
+    expect(
+      choice('data-live-overlay-sizes', m.live_scene_overlay_large()).textContent?.trim()
+    ).toBe('');
+    choice('data-live-overlay-sizes', m.live_scene_overlay_large()).click();
+    choice('data-live-overlay-shapes', m.live_scene_overlay_rect()).click();
     await settle();
-    // ONE fill in the bar: the chosen scene's; the overlay's choices are the quiet segmented look.
-    expect(document.querySelectorAll('[data-live-scene-bar] .bg-accent')).toHaveLength(1);
+    // One fill per row: the chosen scene, the chosen size, the chosen shape.
+    expect(document.querySelectorAll('[data-live-scene-bar] .bg-accent')).toHaveLength(3);
+    expect(
+      choice('data-live-overlay-sizes', m.live_scene_overlay_large()).getAttribute('aria-checked')
+    ).toBe('true');
     expect(s!.studio.overlay).toMatchObject({ size: 'large', shape: 'rect' });
   });
 
