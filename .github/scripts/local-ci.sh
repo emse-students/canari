@@ -54,23 +54,23 @@ staged_paths() { # <diff-filter> [-- <pathspec>...]
 #   job                              tier      what runs locally, or why nothing can
 JOB_TIERS='
 changes                            push      ci-scopes.sh, the script the CI job calls
-test-rust                          push      checks.sh rust, per crate in scope (the gateway Redis half: CI only)
+test-rust                          ci-only   cargo test and clippy per crate: minutes per crate here (owner, 2026-11-16: the push is the fastest it can be)
 boot-nest-apps                     ci-only   boots each service on PostgreSQL, Redis and an S3 endpoint
 test-social-integration            ci-only   integration specs on PostgreSQL and Redis
 test-chat-delivery-integration     ci-only   integration specs on PostgreSQL
-test-typescript-backend            push      checks.sh ts, per service in scope
-test-frontend                      push      frontend-prepare, frontend-lint, dead-code, frontend-build in scope
-test-frontend-shards               push      checks.sh frontend-test-related: the tests the range reaches, the whole suite when the test setup changed
-test-android                       push      android-unit-tests.sh (a JDK)
+test-typescript-backend            ci-only   the whole jest suite of a service: up to 20 min here
+test-frontend                      split     frontend-prepare and frontend-lint at push; dead-code and frontend-build in CI only
+test-frontend-shards               split     checks.sh frontend-test-related at push: the tests the range reaches; the whole suite in CI only
+test-android                       ci-only   android-unit-tests.sh: a Gradle run
 compile-android-app                ci-only   needs the Android SDK and NDK
 compile-ios-app                    ci-only   needs macOS and Xcode
 test-call-service-e2e              ci-only   coturn and five headless browsers on a Linux runner
-test-harness                       push      make test-harness
-test-ci-scripts                    push      make test-ci-scripts when the range touches CI_SCRIPTS_PATHS; its whole-tree scans and the path rules always
+test-harness                       ci-only   make test-harness
+test-ci-scripts                    split     its whole-tree scans and the path rules at push; make test-ci-scripts (1-2 h here) in CI only
 dependency-ceiling                 ci-only   decides on a Dependabot pull request only
 security                           split     the lockfile guards at push; CodeQL and the secret scan in CI only
 dependency-audit                   ci-only   a verdict on the advisory databases, not on the commit; ~5 min per tree
-mls-forward-compat                 push      mls-forward-compat.sh
+mls-forward-compat                 ci-only   mls-forward-compat.sh: a WASM build
 test-miconnect-blueprints          ci-only   a full Authentik pair in Docker, twice
 upstream-monitor-freshness         ci-only   a push to main only; reads GitHub
 ci-passed                          ci-only   the aggregation of the jobs above
@@ -209,9 +209,6 @@ frontend_generated() {
   bash .github/scripts/checks.sh mls-wasm-verify
 }
 
-# What `make test-ci-scripts` tests: the CI scripts and workflows, the hooks, the Makefile, the
-# deploy and infrastructure scripts, the shared libs and the pinned tool versions.
-CI_SCRIPTS_PATHS='^(\.github/|\.husky/|Makefile$|scripts/|infrastructure/|libs/|\.[a-z-]+-version$)'
 
 # ── The push plan, from the same scopes CI computes ──────────────────────────────────────────────
 # Prints `name|command` lines, cheap checks first. CI-only jobs this change would trigger are
@@ -234,45 +231,30 @@ push_plan() {
   echo "control-characters|bun $t/control-characters.test.mjs"
   echo "no-nul-in-source|bun $t/no-nul-in-source.test.mjs"
   echo "line-endings|bun $t/line-endings.test.mjs"
-  # THE SUITE ITSELF RUNS WHEN THE RANGE TOUCHES WHAT IT TESTS (owner's lead, 2026-11-15: a push is
-  # gated like a pull request, not like a release). CI runs it on every pull request, 6 min on a
-  # runner; here it is 43 min, so a push that touches none of these leaves its source guards (those
-  # that read the frontend or services' sources) to CI - the one place the push proves less, said
-  # by name on stderr.
-  if [ -z "$base" ] || grep -qE "$CI_SCRIPTS_PATHS" <<<"$range"; then
-    echo "test-ci-scripts|make test-ci-scripts"
-  else
-    echo "CI only for this range: test-ci-scripts beyond its whole-tree scans and the path rules" >&2
-  fi
+  # THE PUSH RUNS ONLY WHAT TAKES SECONDS TO MINUTES HERE (owner, 2026-11-16: "Je veux que notre
+  # workflow soit le plus rapide possible"). The suites that cost 20 min to 2 h on a workstation -
+  # make test-ci-scripts, a service's whole jest suite, a crate's cargo test, the whole vitest suite,
+  # dead-code, the frontend build, the harness, the Android and MLS compat jobs - run in CI on every
+  # pull request, and each is named on stderr so the reader knows what the push did not prove.
+  echo "CI only: test-ci-scripts beyond its whole-tree scans and the path rules" >&2
   echo "raw-controls-ratchet|bun .github/scripts/ratchet-not-raised.mjs ${base:-origin/main}"
   echo "lockfile-version|bash .github/scripts/checks.sh lockfile-version"
   echo "tauri-parity|bash .github/scripts/checks.sh tauri-parity"
-  [ "$(scope harness)" = "true" ] && echo "test-harness|make test-harness"
+  [ "$(scope harness)" = "true" ] && echo "CI only: test-harness" >&2
   if [ "$(scope frontend)" = "true" ]; then
     echo "frontend-generated|bash .github/scripts/local-ci.sh generated"
     echo "frontend-lint|bash .github/scripts/checks.sh frontend-lint"
-    echo "dead-code|bash .github/scripts/checks.sh dead-code"
     if [ -n "$base" ]; then
       echo "frontend-test|bash .github/scripts/checks.sh frontend-test-related $base"
     else
-      echo "frontend-test|bash .github/scripts/checks.sh frontend-test"
+      echo "CI only: frontend-test (the whole suite)" >&2
     fi
-    [ "$(scope frontend_build)" = "true" ] && echo "frontend-build|bash .github/scripts/checks.sh frontend-build $(git rev-parse HEAD)"
+    echo "CI only: dead-code, frontend-build" >&2
   fi
-  local svc crate
-  for svc in $(scope ts | grep -o '"apps/[^"]*"' | tr -d '"'); do
-    echo "ts $svc|bash .github/scripts/checks.sh ts $svc"
-    case "$svc" in
-      apps/social-service) echo "CI only: test-social-integration (PostgreSQL)" >&2 ;;
-      apps/chat-delivery-service) echo "CI only: test-chat-delivery-integration (PostgreSQL)" >&2 ;;
-    esac
-  done
-  [ "$(scope ts)" != "[]" ] && echo "CI only: boot-nest-apps (PostgreSQL, Redis, S3)" >&2
-  for crate in $(scope rust | grep -o '"path":"[^"]*"' | sed 's/"path":"//; s/"$//'); do
-    echo "rust $crate|bash .github/scripts/checks.sh rust $crate"
-  done
-  [ "$(scope android)" = "true" ] && echo "android-unit|bash .github/scripts/android-unit-tests.sh"
-  [ "$(scope mls_compat)" = "true" ] && echo "mls-forward-compat|bash .github/scripts/mls-forward-compat.sh"
+  [ "$(scope ts)" != "[]" ] && echo "CI only: the services' jest suites, boot-nest-apps, the PostgreSQL integration suites" >&2
+  grep -q '"path":"' <<<"$(scope rust)" && echo "CI only: the Rust crates' cargo test and clippy" >&2
+  [ "$(scope android)" = "true" ] && echo "CI only: android-unit" >&2
+  [ "$(scope mls_compat)" = "true" ] && echo "CI only: mls-forward-compat" >&2
   [ "$(scope android_app)" = "true" ] && echo "CI only: compile-android-app (Android SDK and NDK)" >&2
   [ "$(scope ios_app)" = "true" ] && echo "CI only: compile-ios-app (macOS and Xcode)" >&2
   [ "$(scope call_e2e)" = "true" ] && echo "CI only: test-call-service-e2e (coturn and browsers on Linux)" >&2
@@ -289,11 +271,9 @@ require_tools() {
   need() { command -v "$1" >/dev/null 2>&1 || missing="$missing $1"; }
   need bun
   need git
-  case "$plan" in *test-ci-scripts*) need shellcheck ;; esac
-  case "$plan" in *"rust "* | *frontend-generated* | *mls-forward-compat*) need cargo ;; esac
-  case "$plan" in *"ts "*) need node ;; esac
-  case "$plan" in *android-unit*) need java ;; esac
-  if [[ "$plan" == *test-ci-scripts* || "$plan" == *shellcheck* ]] && command -v shellcheck >/dev/null 2>&1; then
+  case "$plan" in *frontend-generated*) need cargo ;; esac
+  case "$plan" in *shellcheck*) need shellcheck ;; esac
+  if [[ "$plan" == *shellcheck* ]] && command -v shellcheck >/dev/null 2>&1; then
     missing="$missing$(shellcheck_version_problem)"
   fi
   [ -z "$missing" ] || refuse "missing on this machine:$missing. CI has them; install them (docs/wiki/development.md) - a check that cannot run here is not a check that passed."
