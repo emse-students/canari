@@ -14,7 +14,7 @@ import { isGraineReady, rawChannelId, requireGraineRuntime, scopeForChannel } fr
  * - `follower`: a web follower tab holds no socket and drains nothing; the leader writes the seeds.
  * - `closed`: the MLS service ended before the drain did (`GroupDrainAbandonedError`).
  */
-export type SalonReadUnwaited =
+type SalonReadUnwaited =
   | 'no-runtime'
   | 'no-scope'
   | 'key-group-unregistered'
