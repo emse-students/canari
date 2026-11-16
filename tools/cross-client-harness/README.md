@@ -31,7 +31,7 @@ check spells a name.
 | ------------------------------ | ---------------------------------------------------------------------- |
 | `test-accounts.json`           | Logins and PINs for the two campaign accounts. This repository is PUBLIC: outside the work tree they cannot be committed at all, which is a structure; a `.gitignore` rule would only be a policy. |
 | `chrome-w1/` `chrome-w2/`      | These directories ARE W1 and W2 - profile holds the MLS identity, the session and the enrolment. `git clean -xdf` does not spare a gitignored directory. **Since 2026-09-02 losing one no longer costs a 2FA**: the campaign's accounts are dedicated test accounts. It still costs a DEVICE, which is what actually changes what a row measures. |
-| `test-accounts.json`           | Still outside, and still for the same reason after the move to a LOCAL target: the accounts are ordinary users on the PRODUCTION identity provider, because local authenticates against it by decision 8 of the workflow migration. A local target does not make the password local. |
+| `test-accounts.json`           | Still outside, and still for the same reason after the move to a LOCAL target: the accounts are ordinary users on the PRODUCTION identity provider, because local authenticates against it by decision 8 of the workflow migration. A local target does not make the password local. **Test accounts never sign in through CAS (owner, 2026-11-16)**: they use MiConnect's local password login ("Connexion par mot de passe"), and its credentials are in this file and nowhere else. |
 | `results.ndjson`               | The verdict record. A row carries the condensed dirt of its run, which quotes captured console lines naming real conversations. |
 | `apk/` `a1-baseline/` `logs/`  | Bulk artefacts. No script references them; they are installed and read by hand. |
 
@@ -816,7 +816,7 @@ next one's symptom names the wrong cause.
    `adb tcpip 5555` it does not have.
 2. `bun phone.mjs 9333` (ONE positional port, not `--ensure`). It forwards the app's WebView on
    9333 **and Chrome's own on 9334** - both are needed, because the login is not in the app.
-3. `bun login.mjs --device A1`. Idempotent: a device the IdP still knows reports `already
+3. `bun login.mjs --device A1` (the account signs in with MiConnect's local password login, never CAS). Idempotent: a device the IdP still knows reports `already
    authenticated` and fills nothing. When CAS's cookie has expired the form appears in the Custom
    Tab, and this fills it there. **The app's WebView may die during the hop** - that is not a
    failure, and the landing is re-resolved.
