@@ -3278,9 +3278,9 @@ The open line is in [backlog](backlog.d/p3-audit-advisories-are-suppressed-becau
 
 **Retirement is ASSERTED, not polled (2026-10-10).** The premises step audits media-service without its ignores and fails when any ignored id is no longer reported (`ignored-advisories-still-reported.sh`, `tests/ignored-advisories-still-reported.test.sh`; a registry that did not answer concludes nothing). The five hand re-checks logged here until 2026-10-09 each found `minio` still 8.0.7, `query-string: ^7.1.3`, `stream-json: ^1.8.0`.
 
-### One frontend advisory is ignored, and it is not about kit (2026-10-28)
+### The frontend audit carries no ignore (2026-11-16)
 
-(The two SvelteKit GHSAs it once carried left with the kit 3 upgrade.) `GHSA-gcqx-w48m-w2h4` (2026-10-28), is the other kind: LOW, `deepmerge` <= 4.3.1, no fixed version, reachable only through build tooling (`@sveltejs/vite-plugin-svelte`, `@rollup/plugin-node-resolve`), merging the project's own configuration. That no copy reaches the shipped bundle was not verified; the same retirement step removes it when the audit stops naming it.
+`GHSA-gcqx-w48m-w2h4` (LOW, `deepmerge` <= 4.3.1) was ignored from 2026-10-28; the audit stopped reporting it (the dependency moved) and `Every ignored advisory is still reported` failed, as designed, so the `--ignore` was deleted. The frontend is audited at bun's default level with no suppression.
 
 ### The Rust ignores live in `.cargo/audit.toml` and retire themselves too (2026-10-24)
 
@@ -3345,8 +3345,21 @@ run" measured about an hour on this workstation, `make test-ci-scripts` alone ab
 that is not a formality. The push tier therefore runs ONLY what the changed files touch: the same
 path filters as CI's `changes` job (`ci-scopes.sh`), applied to the diff since the last verified
 commit (the stamp, or the merged `origin/main` on a branch's first push). The full suites -
-`test-ci-scripts` included, unless the range touches a CI script - stay in CI only. The commit tier
-stays fast.
+`test-ci-scripts` included - stay in CI only (the evening correction below removed the exception
+for a CI-script range). The commit tier stays fast.
+
+**The owner's second correction, 2026-11-16 evening - *la rapidité*:** even scoped, a push still ran
+a service's whole jest suite, a crate's `cargo test`, `make test-ci-scripts` on any CI-script change
+and the whole vitest suite on any deleted `frontend/src` file - 40 min to 2 h each here, and with
+several agents pushing at once the workstation saturated (90% RAM, vitest workers timing out, pushes
+refused for load, not code). The owner: *"Je veux que ce soit le plus rapide possible. La raison pour
+laquelle on a fait du pre-push sur le PC, c'est que la PR échouait souvent au bout de 20 minutes pour
+des raisons futiles. Si on ne gagne pas de temps, ça ne sert à rien."* So the push keeps ONLY what
+catches those futile failures in minutes - the path rules and whole-tree scans, the ratchet, the
+lockfile and Tauri-parity guards, `frontend-generated`, `frontend-lint` (lint + `svelte-check`) and
+the vitest run of the tests the range reaches. Everything else in `JOB_TIERS` is `ci-only` or
+`split`, and the push names each on stderr (`CI only: ...`), so the reader knows what it did not
+prove. Agents push with at most four developers at once (owner, same evening).
 4. **The pre-push hook merges the latest `origin/main` before its checks.** The failures that day
    were "main moved" ratchet drift (#3580, #3599) and dead wiki links found only by CI (#3607,
    #3608, #3599).
@@ -3371,22 +3384,23 @@ before the pull request.
 
 Durations measured on the Windows workstation (OXYGEN, 2026-11-15, under the load of other
 sessions - a Linux runner is faster). "Push" means the pre-push runs it when `ci-scopes.sh` says the
-pushed range (the merged `origin/main` to HEAD) touches its area, exactly as CI's `changes` job
-gates the job - **the push runs what CI would run for that range, and nothing more** (owner,
-2026-11-16, above: an hour-long push, measured, is not a formality). A docs-only push runs
-the path rules and the whole-tree scans, in seconds; a frontend change runs the frontend jobs.
+pushed range (the merged `origin/main` to HEAD) touches its area. **Since the evening correction of
+2026-11-16 only the minutes-long checks keep that tier** (the path rules, the whole-tree scans, the
+ratchet, the lockfile and Tauri-parity guards, `frontend-generated`, `frontend-lint`, the related
+vitest run); every other row below is `ci-only` or `split`, and the push names it on stderr. A
+docs-only push runs the path rules and the whole-tree scans, in seconds.
 
 | Job | Tier | Runs locally as | Measured | Why |
 | --- | --- | --- | --- | --- |
 | `changes` | push | `ci-scopes.sh <merge-base> HEAD` | < 1 s | the same filters, read from the same script |
-| `test-rust` | push | `checks.sh rust <crate>` per crate in scope: lockfile, fmt, clippy, task | cold, from an empty target: mls-core 165 s, call-service 117 s, chat-gateway 119 s, mls-wasm 39 s; src-tauri not measured | the gateway's Redis-backed half needs a Redis service: CI only |
-| `test-typescript-backend` | push | `checks.sh ts <svc>` per service in scope: install, lint, format, typecheck, build, unit specs | core 29 s, media 28 s, chat-delivery 80 s, social 208 s | - |
-| `test-frontend` | push | `local-ci.sh generated` (install, sync, proto, wasm), `checks.sh frontend-lint`, `dead-code`, `frontend-build` | lint 13 s, `svelte-check` 53 s, format 4 s, dead-code 24 s, wasm build 1 min 55 s when its source changed (0 s otherwise), install 24 s | - |
-| `test-frontend-shards` | push, by file | `checks.sh frontend-test-related <base>`: `vitest related` over the range's changed `frontend/src` files, plus every source-tree scan (`src/test/sourceTree`) and every test naming a changed file - what the import graph cannot see. **A change to the test setup** (the top-level configs of it are ALSO in `ci-scopes.sh`'s `frontend=true`, asserted alone by `local-ci.test.sh` since 2026-11-16, or the whole-suite rule below would never be reached; `vite.config.js`, `vitest.config.ts`, `kit.config.js`, `tsconfig.json`, `package.json`, `bun.lock`, `src/test/`, `messages/`, `project.inlang/`, `static/`, the two MLS crates and `libs/proto` - generated into `src` - and `libs/contracts`), **or a deletion under `frontend/src`** (no import graph is left to ask), **runs the whole suite**, said by a named line (owner, 2026-11-16) | the whole suite 12-15 min here (1786 files, 19165 tests; ~6-7 min per shard on a CI runner) | the whole suite with coverage is CI's |
-| `test-android` | push | `android-unit-tests.sh` (a JDK) | 75 s (272 tests) | - |
-| `test-harness` | push | `make test-harness` | 41 s | - |
-| `test-ci-scripts` | push, by range | `make test-ci-scripts` when the range touches `CI_SCRIPTS_PATHS` (`.github/`, `.husky/`, the Makefile, `scripts/`, `infrastructure/`, `libs/`, a `.*-version` pin); on every push its whole-tree scans (`control-characters`, `no-nul-in-source`, `line-endings`) and the path rules over the range; then `ratchet-not-raised.mjs` against the merge base | `make test-ci-scripts`: 43 min here without `deploy-rolling.test.sh` (the push of 2026-11-15), 46 min with it (6 min on a CI runner) | **The one place a push proves less than the pull request:** CI runs this suite on every pull request, and a push that touches none of `CI_SCRIPTS_PATHS` leaves its source guards (those reading the frontend or the services) to CI, said by name on stderr. Needs `shellcheck`. **`deploy-rolling.test.sh` does not run under Docker Desktop** (the recipe reads `docker info`, prints a named line, and runs it on any other engine): it measures a Linux engine's reload timing, and here it failed twice in two runs on two different cases - its own control saw no failure from DNS-name calls, then one `ConnectionRefused` in 44502 POSTs across 450 reloads. CI, on a Linux engine, is green on it. Not diagnosed further; open in [backlog.d](backlog.d/p3-the-checks-at-commit-shape-is-carried-to-the-other-repos-and-the-ci-only-list-shrinks.md) |
-| `mls-forward-compat` | push | `mls-forward-compat.sh` | 107 s | - |
+| `test-rust` | CI only since 2026-11-16 evening (was push) | `checks.sh rust <crate>` per crate in scope: lockfile, fmt, clippy, task | cold, from an empty target: mls-core 165 s, call-service 117 s, chat-gateway 119 s, mls-wasm 39 s; src-tauri not measured | the gateway's Redis-backed half needs a Redis service: CI only |
+| `test-typescript-backend` | CI only since 2026-11-16 evening (was push) | `checks.sh ts <svc>` per service in scope: install, lint, format, typecheck, build, unit specs | core 29 s, media 28 s, chat-delivery 80 s, social 208 s | - |
+| `test-frontend` | split since 2026-11-16 evening: generated and lint at push, dead-code and build CI only | `local-ci.sh generated` (install, sync, proto, wasm), `checks.sh frontend-lint`, `dead-code`, `frontend-build` | lint 13 s, `svelte-check` 53 s, format 4 s, dead-code 24 s, wasm build 1 min 55 s when its source changed (0 s otherwise), install 24 s | - |
+| `test-frontend-shards` | split since 2026-11-16 evening: the related tests at push; the whole suite (the cases below) is CI's, said by a named line | `checks.sh frontend-test-related <base>`: `vitest related` over the range's changed `frontend/src` files, plus every source-tree scan (`src/test/sourceTree`) and every test naming a changed file - what the import graph cannot see. **A change to the test setup** (the top-level configs of it are ALSO in `ci-scopes.sh`'s `frontend=true`, asserted alone by `local-ci.test.sh` since 2026-11-16, or the whole-suite rule below would never be reached; `vite.config.js`, `vitest.config.ts`, `kit.config.js`, `tsconfig.json`, `package.json`, `bun.lock`, `src/test/`, `messages/`, `project.inlang/`, `static/`, the two MLS crates and `libs/proto` - generated into `src` - and `libs/contracts`), **or a deletion under `frontend/src`** (no import graph is left to ask), owes the whole suite, which the push does NOT run since the evening correction: it says by a named line that the suite is CI's (owner, 2026-11-16) | the whole suite 12-15 min here (1786 files, 19165 tests; ~6-7 min per shard on a CI runner) | the whole suite with coverage is CI's |
+| `test-android` | CI only since 2026-11-16 evening (was push) | `android-unit-tests.sh` (a JDK) | 75 s (272 tests) | - |
+| `test-harness` | CI only since 2026-11-16 evening (was push) | `make test-harness` | 41 s | - |
+| `test-ci-scripts` | split since 2026-11-16 evening: the whole-tree scans and path rules at push, `make test-ci-scripts` CI only (was push, by range) | until 2026-11-16 evening, `make test-ci-scripts` when the range touched a CI script; now on every push only its whole-tree scans (`control-characters`, `no-nul-in-source`, `line-endings`) and the path rules over the range; then `ratchet-not-raised.mjs` against the merge base | `make test-ci-scripts`: 43 min here without `deploy-rolling.test.sh` (the push of 2026-11-15), 46 min with it (6 min on a CI runner) | CI runs this suite on every pull request, and the push leaves it to CI, said by name on stderr (one of several places the push proves less since the evening correction). Needs `shellcheck`. **`deploy-rolling.test.sh` does not run under Docker Desktop** (the recipe reads `docker info`, prints a named line, and runs it on any other engine): it measures a Linux engine's reload timing, and here it failed twice in two runs on two different cases - its own control saw no failure from DNS-name calls, then one `ConnectionRefused` in 44502 POSTs across 450 reloads. CI, on a Linux engine, is green on it. Not diagnosed further; open in [backlog.d](backlog.d/p3-the-checks-at-commit-shape-is-carried-to-the-other-repos-and-the-ci-only-list-shrinks.md) |
+| `mls-forward-compat` | CI only since 2026-11-16 evening (was push) | `mls-forward-compat.sh` | 107 s | - |
 | `security` | split | the lockfile and Tauri-parity guards at push (`checks.sh lockfile-version`, `tauri-parity`, < 1 s each) | - | CodeQL and the secret scan are GitHub services: CI only |
 | `boot-nest-apps` | CI only | - | - | boots each service on PostgreSQL, Redis and an S3 endpoint |
 | `test-social-integration` | CI only | - | - | integration specs on PostgreSQL and Redis |
