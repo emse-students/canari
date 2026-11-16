@@ -12,6 +12,10 @@ const url = vi.hoisted(() => ({ value: new URL('https://canari.test/forms') }));
 const api = vi.hoisted(() => ({
   getSubmissions: vi.fn(async () => []),
   deleteForm: vi.fn(async () => ({ ok: true })),
+  setFormClosed: vi.fn(async (id: string, closed: boolean) => ({
+    id,
+    closedAt: closed ? '2026-11-16T10:00:00.000Z' : null,
+  })),
   deleteSubmission: vi.fn(),
   listPendingCashSubmissions: vi.fn(async (): Promise<unknown[]> => []),
   validateCashSubmission: vi.fn(async () => ({ ok: true })),
@@ -450,5 +454,62 @@ describe('FormsManagerList - cash awaiting validation', () => {
   it('says there is nothing to validate on a form that takes cash and has none waiting', async () => {
     const target = await render([cashForm()], { scoped: true });
     await vi.waitFor(() => expect(target.textContent).toContain(m.asso_forms_no_pending_cash()));
+  });
+});
+
+describe('FormsManagerList - closing a form (owner, 2026-11-16)', () => {
+  it('closes after a confirmation, and the row gets its "Ferme" badge and a "Rouvrir" entry', async () => {
+    const target = await render([form({})]);
+    expect(target.querySelector('[data-testid="form-closed-badge"]')).toBeNull();
+    await openMenu(target, 'f1');
+    expect(entry('reopen')).toBeNull();
+    entry('close')!.click();
+    await vi.waitFor(() => expect(api.setFormClosed).toHaveBeenCalledWith('f1', true));
+    expect(confirm.showConfirm).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() =>
+      expect(
+        target.querySelector('#form-f1 [data-testid="form-closed-badge"]')!.textContent
+      ).toContain(m.form_list_closed_badge())
+    );
+    await menuClosed();
+    await openMenu(target, 'f1');
+    expect(entry('close')).toBeNull();
+    expect(entry('reopen')).not.toBeNull();
+  });
+
+  it('closes nothing when the confirmation is declined', async () => {
+    confirm.showConfirm.mockResolvedValueOnce(false);
+    const target = await render([form({})]);
+    await openMenu(target, 'f1');
+    entry('close')!.click();
+    await vi.waitFor(() => expect(confirm.showConfirm).toHaveBeenCalledTimes(1));
+    expect(api.setFormClosed).not.toHaveBeenCalled();
+    expect(target.querySelector('[data-testid="form-closed-badge"]')).toBeNull();
+  });
+
+  it('reopens a closed form with no confirmation, and the badge goes', async () => {
+    const target = await render([form({ closedAt: '2026-01-01T00:00:00.000Z' })]);
+    expect(target.querySelector('[data-testid="form-closed-badge"]')).not.toBeNull();
+    await openMenu(target, 'f1');
+    entry('reopen')!.click();
+    await vi.waitFor(() => expect(api.setFormClosed).toHaveBeenCalledWith('f1', false));
+    expect(confirm.showConfirm).not.toHaveBeenCalled();
+    await vi.waitFor(() =>
+      expect(target.querySelector('[data-testid="form-closed-badge"]')).toBeNull()
+    );
+  });
+
+  it('does not call a scheduled end, still to come, closed', async () => {
+    const target = await render([form({ closedAt: '2099-01-01T00:00:00.000Z' })]);
+    expect(target.querySelector('[data-testid="form-closed-badge"]')).toBeNull();
+    await openMenu(target, 'f1');
+    expect(entry('close')).not.toBeNull();
+  });
+
+  it('offers a draft nothing to close', async () => {
+    const target = await render([form({ status: 'draft' })]);
+    await openMenu(target, 'f1');
+    expect(entry('close')).toBeNull();
+    expect(entry('reopen')).toBeNull();
   });
 });

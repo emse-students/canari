@@ -3,6 +3,7 @@ import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
 import { describeApiRefusal, refusalCode, refusalStatus } from '$lib/utils/apiRefusal';
 import { productGridDefinitionMessage } from './productGridEditor';
 import { productGridRefusalMessage } from './productGridFill';
+import { FORM_CLOSE_BEFORE_OPEN } from './formWindow';
 
 /**
  * THE BOUNDS OF A FORM AND OF AN ANSWER, AND THE SENTENCE FOR EACH CODED REFUSAL OF A FORM.
@@ -84,6 +85,8 @@ export function formCodeMessage(code: string | null): string | null {
       return m.form_refusal_closed();
     case FORM_FULL:
       return m.form_refusal_full();
+    case FORM_CLOSE_BEFORE_OPEN:
+      return m.form_refusal_close_before_open();
     case FORM_ANSWER_MISSING:
       return m.form_refusal_answer_missing();
     case FORM_ANSWER_TOO_LONG:

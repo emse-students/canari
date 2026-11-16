@@ -102,6 +102,11 @@ export interface CreateFormPayload {
   maxSubmissions?: number;
   /** ISO 8601 - submissions blocked until this instant. */
   opensAt?: string;
+  /**
+   * ISO 8601 - submissions blocked after this instant, after `opensAt`. On an EDIT, absent keeps
+   * the stored end (the manager's close included) and `null` clears it.
+   */
+  closedAt?: string | null;
   requiresPayment?: boolean;
   /**
    * The association the form belongs to. A create names it or nothing; an edit leaves it when
@@ -463,6 +468,21 @@ export async function uploadFormItemImage(
 export async function deleteForm(id: string): Promise<{ ok: boolean }> {
   const res = await apiFetch(`${socialUrl()}/api/forms/${id}`, { method: 'DELETE' });
   if (!res.ok) throw await refusal(res, 'Failed to delete form');
+  return res.json();
+}
+
+/**
+ * "Clore le formulaire" (`closed`) or "Rouvrir": sets or clears the form's end on the server, apart
+ * from the editor's unpublished revision. Returns the stored `closedAt`.
+ */
+export async function setFormClosed(
+  id: string,
+  closed: boolean
+): Promise<{ id: string; closedAt: string | null }> {
+  const res = await apiFetch(`${socialUrl()}/api/forms/${id}/${closed ? 'close' : 'reopen'}`, {
+    method: 'POST',
+  });
+  if (!res.ok) throw await refusal(res, closed ? 'Failed to close form' : 'Failed to reopen form');
   return res.json();
 }
 

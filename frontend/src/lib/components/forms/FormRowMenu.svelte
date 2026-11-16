@@ -2,14 +2,23 @@
   /**
    * THE "..." OF ONE FORM'S ROW in the management list: everything a manager does less often than
    * "Modifier" and "Reponses" (which stay on the row, with their words) - open the respondent view,
-   * copy the link, show the QR code, export, delete.
+   * copy the link, show the QR code, export, close or reopen (owner, 2026-11-16), delete.
    *
    * It is the app's own menu shape (`FloatingSurface` holding a `MenuList`, as `ProfileOverflowMenu`
    * and the form editor's menus): a sheet on a phone, a popover on a wide window. A draft has no
    * link to hand out, so its menu has no link and no QR code. The export entries are the SAME ones
    * `forms/exportEntries.ts` builds, so a grid form offers its two CSVs here too.
    */
-  import { Download, Ellipsis, ExternalLink, Link, QrCode, Trash2 } from '@lucide/svelte';
+  import {
+    Download,
+    Ellipsis,
+    ExternalLink,
+    Link,
+    Lock,
+    LockOpen,
+    QrCode,
+    Trash2,
+  } from '@lucide/svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import FloatingSurface from '$lib/components/ui/FloatingSurface.svelte';
   import MenuList from '$lib/components/ui/MenuList.svelte';
@@ -25,6 +34,10 @@
     isDraft: boolean;
     /** Whether the form has a priced grid: its export then offers the two grid CSVs. */
     hasProductGrid: boolean;
+    /** The form's end has passed (the manager's close, or its date): the menu offers "Rouvrir". */
+    isClosed: boolean;
+    /** The close or the reopening is in flight: a second one is not started. */
+    closing?: boolean;
     /** The form is being deleted: a second delete is not started. */
     deleting?: boolean;
     /** An export of this form is in flight: the trigger shows it and starts no second one. */
@@ -33,11 +46,14 @@
     onCopyLink: () => void;
     onQr: () => void;
     onExport: (format: SubmissionsExportFormat) => void;
+    onToggleClosed: () => void;
     onDelete: () => void;
   }
 
   let {
     isDraft,
+    isClosed,
+    closing = false,
     hasProductGrid,
     deleting = false,
     exporting = false,
@@ -45,6 +61,7 @@
     onCopyLink,
     onQr,
     onExport,
+    onToggleClosed,
     onDelete,
   }: Props = $props();
 
@@ -73,6 +90,18 @@
         Icon: Download,
       })),
     },
+    // A draft takes no answer yet: there is nothing to close.
+    ...(isDraft
+      ? []
+      : [
+          {
+            items: [
+              isClosed
+                ? { key: 'reopen', label: m.form_list_reopen_action(), Icon: LockOpen }
+                : { key: 'close', label: m.form_list_close_action(), Icon: Lock },
+            ],
+          },
+        ]),
     { items: [{ key: 'delete', label: m.common_delete_button(), Icon: Trash2, danger: true }] },
   ]);
 
@@ -84,6 +113,7 @@
     } else if (key === 'view') onView();
     else if (key === 'link') onCopyLink();
     else if (key === 'qr') onQr();
+    else if ((key === 'close' || key === 'reopen') && !closing) onToggleClosed();
     else if (key === 'delete' && !deleting) onDelete();
   }
 </script>
