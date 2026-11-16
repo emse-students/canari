@@ -1343,6 +1343,21 @@ overlay), `side-by-side` (the screen in the left 70 %, the camera cropped in the
 open draws its "Caméra coupée" card in its box - a scene never shows a source the member did not put
 in it.
 
+**The control that draws them (owner, 2026-11-16, after a reading of the on-air bar: labelled pills
+wrapped onto a second line and rode over the comment field).** ONE icon-only row, a rounded-full
+track over the picture: camera, screen, screen + camera, side by side, then a rule and "Je reviens"
+as the last icon. No label is visible - the name is each button's \`aria-label\` and \`title\` (the same
+Paraglide keys as before) - and the chosen scene wears the bar's fill (\`aria-checked\`). It is one
+\`radiogroup\`, one tab stop, arrows move focus and Enter or Space chooses (a screen scene opens the
+picker, so passing over one never chooses it). The overlay's size (three squares of growing size) and
+shape (circle, rectangle) are the same kind of icon-only row under it, shown only in screen + camera;
+neither row wraps. On air the column sits at the bottom right, and the chat box keeps a fixed
+end margin (\`me-[13.5rem]\`, wider than either row) while the studio exists, so the two can never
+meet at any window width; the camera-off and sound notices stay in the same column. Charter: principle
+7 (simplicity). Tested in \`LiveBroadcaster.svelte.test.ts\` (aria-labels and tooltips, no text, one
+row); the reading at 1280 and ~640 px on a desktop live is owed
+([backlog](../../backlog.d/reading-owed-the-live-scenes-bar-on-a-desktop-live.md)).
+
 **The scene state machine** (`planSceneChange`): the scene shown -> nothing; a scene showing the
 screen while none is held -> ASK for one (the picker, from that click), switch only once granted, a
 dismissed picker changes nothing; anything else -> switch at once. **The screen, once granted, is kept

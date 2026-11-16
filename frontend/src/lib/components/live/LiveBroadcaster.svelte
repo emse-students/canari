@@ -833,7 +833,9 @@
        cursors survive a camera taken away. A verdict that the live is over goes to the machine. -->
   {#if onAir && broadcast.liveId && broadcast.chatKey}
     <div
-      class="pointer-events-none absolute inset-x-0 top-1/4 bottom-[calc(var(--safe-area-inset-bottom,0px)+var(--keyboard-occlusion-bottom,0px))] landscape:max-w-sm"
+      class="pointer-events-none absolute inset-x-0 top-1/4 bottom-[calc(var(--safe-area-inset-bottom,0px)+var(--keyboard-occlusion-bottom,0px))] landscape:max-w-sm {studio
+        ? 'me-[13.5rem]'
+        : ''}"
       style={sideSafePadding()}
       data-no-double-tap
       data-live-broadcaster-chat-box
@@ -854,7 +856,7 @@
     <!-- The desktop's scene bar on air (owner, 2026-11-14), at the bottom right, clear of the chat
          at the left; the sound and the microphone say so here when they need a click. -->
     <div
-      class="pointer-events-none absolute right-0 bottom-0 flex max-w-xl flex-col items-end gap-2 p-3 pb-[calc(var(--safe-area-inset-bottom,0px)+0.75rem)] *:pointer-events-auto"
+      class="pointer-events-none absolute right-0 bottom-0 flex max-w-[calc(100%-1rem)] flex-col items-end gap-2 p-3 pb-[calc(var(--safe-area-inset-bottom,0px)+0.75rem)] *:pointer-events-auto"
       style={sideSafePadding('0.75rem')}
       data-no-double-tap
       data-live-onair-scenes
@@ -881,7 +883,7 @@
           {m.live_mic_fault()}
         </Button>
       {/if}
-      <LiveSceneBar {studio} />
+      <LiveSceneBar {studio} onAir />
     </div>
   {/if}
 
