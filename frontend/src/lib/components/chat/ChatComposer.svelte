@@ -1021,7 +1021,13 @@
           <div class="text-text-muted text-2xs mb-2 px-1 font-bold">
             {m.chat_pending_files_count({ pendingFiles: pendingFiles.length })}
           </div>
-          <div class="flex max-h-52 flex-wrap gap-3 overflow-y-auto overscroll-contain">
+          <!--
+          THE ROW'S PADDING IS THE OVERHANG'S ROOM. A scroll container (`overflow-y-auto` forces
+          `overflow-x` to clip too) cuts whatever leaves its padding box, and the recording tile's
+          remove cross sits half outside the tile (`-top-1.5 -right-1.5`), so it was sliced at the
+          top. `pt-2 pr-2` exceeds that 6px overhang; tiles that keep their cross inside are unaffected.
+        -->
+          <div class="flex max-h-52 flex-wrap gap-3 overflow-y-auto overscroll-contain pt-2 pr-2">
             {#each pendingFiles as entry, index (`${entry.file.name}-${index}`)}
               {@const file = entry.file}
               {@const key = fileKey(file, index)}
