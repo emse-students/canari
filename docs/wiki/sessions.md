@@ -651,6 +651,48 @@ what was missing was a log that said so.
 target is covered and FAILS naming it as covered if it stays so - a bare `adb shell input tap` at a
 tab's coordinates taps whatever is drawn there, and after a reload that is the PIN gate.
 
+## A sign-out keeps "Rester connecte sur cet appareil", by design (2026-11-16)
+
+**What a reading sees, and why it is not a defect.** With the box ticked (the default since the owner's
+decision of 2026-11-16), a member who signs OUT and signs back IN as the SAME account gets no PIN gate,
+then or at the next cold start: `[PIN] Device key restored from PinVault - auto-login` on a vault
+device, `[PIN] Stay signed in on a hardware-held key - keystore unlock, no prompt` on a phone whose key
+is hardware-held. Read on the iPhone 12 (`1.7.0-alpha.5`, TestFlight) and earlier on the Mi 9T; the web
+behaves the same (the slot lives in `localStorage`). This is the contract
+([auth](frontend/modules/auth.md#one-sign-out-sent-two-logouts-and-the-vault-logged-the-user-back-in-during-it---fixed-2026-10-17):
+"a deliberate sign-out keeps the vault slot... Only a NEW sign-in of the same account reopens it without
+the PIN"), and the reasons are these:
+
+- **The box is a property of the DEVICE, not of the session.** Its label says so ("sur cet appareil",
+  "A reserver a un appareil personnel"): the member declared this device trusted to open their local
+  state without the PIN. A sign-out ends the SESSION - server revocation, credentials, identity, push
+  registration ([above](#a-session-that-ends-takes-its-devices-push-registration-with-it-2026-10-22)) -
+  and keeps what the PIN protects ("deconnecter seulement, garder l'etat", the user's words for the
+  PIN gate's exit, `handlePinSignOut`). Unticking the box, in Settings or at the PIN gate, is how a
+  member withdraws that trust; it drops every slot (`setDeviceKeyPersistence`).
+- **A signed-out device opens nothing by itself.** `clearAuth` drops the saved identity before its first
+  `await`, so no unlock trigger fires and a cold start lands on `/login`
+  ([durable-rules](durable-rules.md)). The slot is reached only after a NEW sign-in, which the server
+  checks, and only by the account it names: the slot is bound to its account as AEAD additional data,
+  and the hardware path reads that account's own at-rest marker and keystore alias
+  ([the vault names its account](frontend/modules/auth.md#the-vault-names-its-account---fixed-2026-10-14)).
+  An identity-provider sign-in is a stronger proof of the person than the local PIN it replaces.
+- **On a hardware-held phone there is no key to drop.** The keystore entry IS the at-rest key that
+  seals `mls.bin`, the messages and the caches, and the push reads it on a locked phone
+  ([auth](frontend/modules/auth.md#where-the-key-lives)); deleting it at a sign-out would lose the local
+  history, which a sign-out keeps on purpose. Only the device-wide flag could go, and it would take every
+  other account's "Rester connecte" on the install with it.
+
+**The boundary, stated so nobody rediscovers it.** The re-sign-in is a proof only while the
+identity provider asks for one. A sign-out ends the MiConnect session too
+([auth](frontend/modules/auth.md#signing-out-ends-the-miconnect-session-2026-10-14)); when that end is
+logged as NOT done (`MiConnect session NOT ended (<reason>)`: offline, no id_token, an iOS sheet
+cancelled), the next "Se connecter" may come back without a password, and the ticked box then opens the
+local state with no factor beyond the device - which is exactly the trust the box declares. A member who
+lends or leaves a device unticks the box. Making a sign-out also end "Rester connecte" would be a
+product change (one more PIN entry after every sign-out, and on a hardware-held phone a flag shared by
+every account), not a repair; it is the owner's to ask for.
+
 ## A return target is held to the page's origin (2026-10-28)
 
 A `returnTo` or `redirect` query parameter is of unknown origin, and its consumers include a plain
