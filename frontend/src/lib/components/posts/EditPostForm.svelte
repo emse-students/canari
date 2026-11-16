@@ -428,11 +428,7 @@
   <div class="p-4 sm:p-5">
     {#if studentsOnlyEditable}
       <div class="mb-5">
-        <StudentsOnlySwitch
-          bind:checked={studentsOnly}
-          associationName={post.association?.name ?? ''}
-          busy={saving}
-        />
+        <StudentsOnlySwitch bind:checked={studentsOnly} busy={saving} />
       </div>
     {/if}
     {#if reachEditable && post.associationId}

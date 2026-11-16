@@ -94,15 +94,19 @@ async function publish(target: HTMLElement) {
 }
 
 describe('CreatePostForm - "Entre étudiants"', () => {
-  it('is offered to a list, OFF, saying who will see the post', async () => {
+  it('is offered to a list, OFF, in a collapsed disclosure', async () => {
     const target = await openAs('list-1');
     const toggle = switchOf(target);
     expect(toggle).not.toBeNull();
     expect(toggle!.checked).toBe(false);
-    expect(target.textContent).toContain(m.post_students_only_hint_off({ name: 'Liste Kraken' }));
+    expect(target.textContent).toContain(m.post_students_only_label());
+    const disclosure = target.querySelector<HTMLDetailsElement>(
+      'details[data-students-only-switch]'
+    );
+    expect(disclosure!.open).toBe(false);
     toggle!.click();
     flushSync();
-    expect(target.textContent).toContain(m.post_students_only_hint_on({ name: 'Liste Kraken' }));
+    expect(toggle!.checked).toBe(true);
   });
 
   it('is sent when on, and absent from the payload when left off', async () => {

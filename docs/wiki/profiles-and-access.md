@@ -2902,9 +2902,10 @@ see nothing of it. OFF by default, for every author.
   it keeps its own visibility in the agenda and the public calendar. Only the link FROM the event TO
   the post follows the post's rule. A FORM attached to the post is independent the same way: it stays
   reachable by its own id under its own rules, and only the post that carries it is withheld.
-- **The client**: `StudentsOnlySwitch.svelte` (a `Toggle`, label "Entre étudiants", and one line that
-  follows its position: who will see the post when ON, that everyone of the association's audience
-  will when OFF) in the composer, the reel publish step and the edit form - offered while the
+- **The client**: `StudentsOnlySwitch.svelte` (a plain `Toggle` labelled "Entre étudiants uniquement", no
+  sub-line, inside a "Plus d'options" disclosure that is collapsed by default - owner, 2026-11-16: the
+  full audience is the norm and the switch is for rare cases; it opens by itself when the switch is
+  already ON, so a restriction is never hidden) in the composer, the reel publish step and the edit form - offered while the
   identity is an association or a list (`studentsOnlyOffered`), and in the edit form also on any post
   that already carries it, so it can always be reopened. The composer keeps it in its draft, and
   hands it to the reel step and back ("Garder comme post") inside ONE object, `ComposerReelState`
