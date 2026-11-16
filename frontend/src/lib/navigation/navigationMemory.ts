@@ -19,11 +19,15 @@ export interface MemoryNavigation {
 }
 
 /** `beforeNavigate`: the entry being left keeps its offset, and any restore still waiting ends. */
-export function onLeavingEntry(nav: MemoryNavigation, scrollTop: number): void {
+export function onLeavingEntry(
+  nav: MemoryNavigation,
+  scrollTop: number,
+  scroller?: HTMLElement | null
+): void {
   if (nav.shallow) return;
   cancelRestore();
   // The tracked key, not `history.state`: on a popstate the browser has already switched it.
-  rememberLeaving(currentEntryKey(), scrollTop);
+  rememberLeaving(currentEntryKey(), scrollTop, scroller);
 }
 
 /** `afterNavigate`: registers the arrival, then reopens the page where it was left on a Back or Forward. */
