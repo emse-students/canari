@@ -121,4 +121,13 @@ describe('the composer plays a recording rather than naming it', () => {
 
     expect(remove.length).toBeGreaterThan(0);
   });
+
+  it('leaves the tray row padding for the cross that overhangs the recording tile', () => {
+    mountWith([file('vocal_1788949514272.m4a', 'audio/mp4')]);
+
+    const row = document.querySelector('.overflow-y-auto.flex-wrap');
+
+    expect(row?.classList.contains('pt-2')).toBe(true);
+    expect(row?.classList.contains('pr-2')).toBe(true);
+  });
 });
