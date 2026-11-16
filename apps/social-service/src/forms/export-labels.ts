@@ -55,12 +55,63 @@ export interface ExportLabels {
    */
   edited?: string;
   /**
+   * The words of the respondent's identity columns (`respondent-identity.ts`, owner 2026-11-16):
+   * headers, and what each status and campus reads as. Optional HERE because a store build older
+   * than the account fields sends none: `exportSubmissions` then writes the columns in
+   * {@link LEGACY_IDENTITY_EXPORT_LABELS} ([LEGACY], `docs/wiki/legacy-compatibility.md`) rather than
+   * refuse that organiser's export.
+   */
+  identity?: IdentityExportLabels;
+  /**
    * The words of the priced grid's two sheets (`product-grid-export.ts`). Optional HERE for the same
    * reason as `file`: only a form with a `product_grid` question needs them, and its export is refused
    * `EXPORT_LABELS_PRODUCT_GRID_MISSING` without them.
    */
   productGrid?: ProductGridExportLabels;
 }
+
+/** The words of the identity columns, every one required when the object is sent. */
+export interface IdentityExportLabels {
+  promo: string;
+  formation: string;
+  status: string;
+  campus: string;
+  /** What each status reads as: `student`, `staff`. */
+  student: string;
+  staff: string;
+  /** What each campus reads as, by its stored value (`saint-etienne`, `gardanne`). */
+  campuses: Record<string, string>;
+  /** A declared field an older build could not send (`RespondentIdentity.notDeclared`). */
+  notDeclared: string;
+}
+
+const IDENTITY_KEYS: readonly Exclude<keyof IdentityExportLabels, 'campuses'>[] = [
+  'promo',
+  'formation',
+  'status',
+  'campus',
+  'student',
+  'staff',
+  'notDeclared',
+];
+
+/**
+ * [LEGACY] The identity words of an export asked by a store build older than the account fields,
+ * which sends none (`docs/wiki/legacy-compatibility.md`, removal with `minClientVersion` passing
+ * the release that carries them). French, the words that build's own French catalogue would have
+ * sent (`frontend/messages/fr.json`, `form_respondent_*`), copied here because this service has no
+ * catalogue: an organiser on an old app gets the columns, never a refusal.
+ */
+export const LEGACY_IDENTITY_EXPORT_LABELS: IdentityExportLabels = {
+  promo: "Année d'entrée",
+  formation: 'Formation',
+  status: 'Statut élève / personnel',
+  campus: 'Campus',
+  student: 'Élève',
+  staff: 'Personnel',
+  campuses: { 'saint-etienne': 'Saint-Étienne', gardanne: 'Gardanne' },
+  notDeclared: 'Non déclaré',
+};
 
 /** The words of the "Articles" and "Totaux" sheets, every one required when the object is sent. */
 export interface ProductGridExportLabels {
@@ -146,6 +197,24 @@ export function parseExportLabels(raw: string | undefined): ExportLabels {
   for (const key of ['file', 'fileDeleted', 'email', 'guest', 'edited'] as const)
     if (labels[key] !== undefined && (typeof labels[key] !== 'string' || labels[key] === ''))
       throw new BadRequestException(`export label "${key}" must be a non-empty string`);
+
+  if (labels.identity !== undefined) {
+    const identity = labels.identity;
+    if (typeof identity !== 'object' || identity === null || Array.isArray(identity))
+      throw new BadRequestException('export label "identity" must be an object');
+    const words = identity as Record<string, unknown>;
+    for (const key of IDENTITY_KEYS)
+      if (typeof words[key] !== 'string' || words[key] === '')
+        throw new BadRequestException(`export label "identity.${key}" is missing`);
+    const campuses = words.campuses;
+    if (
+      typeof campuses !== 'object' ||
+      campuses === null ||
+      Array.isArray(campuses) ||
+      Object.values(campuses).some((v) => typeof v !== 'string')
+    )
+      throw new BadRequestException('export label "identity.campuses" is missing');
+  }
 
   if (labels.productGrid !== undefined) {
     const grid = labels.productGrid;

@@ -550,7 +550,7 @@ noticed: it was stopped at once, the live ended and deleted, the screenshots del
 
 | Step | Verdict | What was seen |
 | --- | --- | --- |
-| 1. Scenes camera, screen, screen + camera, side by side, "Je reviens", back: no gap, no restart | **`PASS`** (bench; the bell and push half not taken) | Every click changed what the viewer saw within one buffer (a screenshot per scene: the shared tab, the tab with the round camera overlay, the two side by side, the "Je reviens tout de suite" card, then the tab again). The viewer's player stayed `playing` on ONE live, its `currentTime` advancing as the wall clock, the video `1280x720` throughout. The studio logged each switch (`scene screen -> screen-camera: switch`). A dismissed picker was not tried (the flag skips the picker) |
+| 1. Scenes camera, screen, screen + camera, side by side (since removed), "Je reviens", back: no gap, no restart | **`PASS`** (bench; the bell and push half not taken) | Every click changed what the viewer saw within one buffer (a screenshot per scene: the shared tab, the tab with the round camera overlay, the two side by side, the "Je reviens tout de suite" card, then the tab again). The viewer's player stayed `playing` on ONE live, its `currentTime` advancing as the wall clock, the video `1280x720` throughout. The studio logged each switch (`scene screen -> screen-camera: switch`). A dismissed picker was not tried (the flag skips the picker) |
 | 2. Overlay: four corners, three sizes, round and rectangle, the keys | **`PASS`** | Dragged to each corner, it snapped on release (`snapped to top-left`, `top-right`, `bottom-left`, `bottom-right`); the three sizes and the two shapes each logged and showed on the viewer; ArrowLeft and ArrowUp moved it a corner each, and Enter twice cycled clockwise. Each CDP mouse drag took about 70 s of rig time (not explained, not measured against the app) |
 | 3. Microphone muted then back, camera off then back | **`PASS`** (the camera light is the owner's) | `microphone muted` / `microphone on`, `camera off` / `camera on` logged; with the camera off the viewer saw the "Caméra coupée" disc in the overlay's place, and the camera came back. The tone was not listened to (the viewer was muted) and the camera light cannot be read on a synthetic camera |
 | 4. The shared window resized twice | **`PASS`** (a tab; a real window not taken) | The window was resized to 1200x700 then 760x950 with the shared tab in front: the viewer's picture re-letterboxed to the new aspect each time (the tab's own text read `1184x549` then `744x799`), no streaks, the video stayed `1280x720`. A window not in front does not report its new size until it is brought forward, so the resize was read with the shared tab in front |
@@ -4226,6 +4226,20 @@ TestFlight `1.7.0-alpha.5` (build `100700005`) on the iPhone 12, `gamma` on dev 
 
 Dev data written (also in the harness's `WRITTEN-IDS.txt`): one live of `gamma` ("IPH6 live", ended by the sweep), the groups `IPH6G` and `IPH6H` (`delta`, then `gamma`), both DELETED by `delta` through "Supprimer le groupe". `gamma`'s phone keeps the two rows as "Canari Test Delta a supprime cette conversation" (a local copy is removed by "Supprimer localement", not done). **Phone state at the end:** `1.7.0-alpha.5`, `gamma` signed in on dev, "Rester connecte" still ticked (no PIN gate after two relaunches), unlocked, on the chat list, Wi-Fi on, charging; the WDA daemon running.
 
+### The owner's hand rows of the desktop screen share, 2026-11-16 (`1.7.0-alpha.6`)
+
+Read by the owner at about 17:15 in a fresh desktop Chrome on dev, a real share:
+
+| Row | Verdict | What was seen |
+| --- | --- | --- |
+| 1. The real picker, a WINDOW chosen; a dismissed picker | **`PASS`** | The scene stayed as it was when dismissed. |
+| 2. The shared window resized twice | **`PASS`** | Clean. |
+| 3. "Arreter le partage" from the browser's bar | **`PASS`** | "Je reviens", live not ended. |
+| 4. Sound option and sound heard, webcam light off when cut, overlay drag | **`PASS`** | All three read well. |
+| 5. One live in the bell, one push on a watching phone | **NOT TAKEN** | Still owed; the bench takes it with a phone. |
+
+The side-by-side scene was seen and removed the same evening ([decision 23](backlog.d/owner-decisions-of-2026-11-16.md)).
+
 ## The iPhone 12 readings of 2026-11-16, sixth sitting, `1.7.0-alpha.5`: "Envoyer a..." rows 1, 12, 8 (partial) and the F1 PIN path
 
 TestFlight `1.7.0` build `100700005` (`1.7.0-alpha.5`, dev), `gamma` on the iPhone 12 over WDA; senders and the second seat were the `delta` and `gamma` web seats (the Mi 9T's `alpha` and `beta` were not touched). Evidence (syslog, app log, screenshots) is outside the repository.
@@ -4244,6 +4258,28 @@ TestFlight `1.7.0` build `100700005` (`1.7.0-alpha.5`, dev), `gamma` on the iPho
 **Not read in this sitting:** the rotation lock row, the two institution/overlay entries, the first-message DM variant, the editor's edited PHOTO take, the `alpha.6` rows (the update was not taken). They stay owed.
 
 **Defects and oddities to weigh:** the native tab bar overlaps the bottom of a post's menu and of the profile list (the last item sits under it); the server logs `[REEL] delete of undefined` after the repository's remove (the id is read after it); the English "[Media]" first push above.
+
+## The iPhone 12 readings of 2026-11-16, eighth sitting, `1.7.0-alpha.6`: the "Envoyer a..." rows 2 to 8, 10, 11 and 13
+
+TestFlight `1.7.0-alpha.6` on the iPhone 12, `gamma`, French, over WDA; the second party was the `delta` web seat (a 500 px window, widened for the clean-up) and the `gamma` web seat for the sender's other device and the moderator. The Mi 9T and its accounts were not touched. Only two accounts were usable, so the "second DM" of row 2 was a second group (`IPE13G2`); the groups `IPE13G1`, `IPE13G2` and `IPE13G3` were created by `delta` and deleted through the product at the end. Rows 1 and 12 were read as phone B in the [sixth sitting](#the-iphone-12-readings-of-2026-11-16-sixth-sitting-170-alpha5-envoyer-a-rows-1-12-8-partial-and-the-f1-pin-path) and are not retaken.
+
+| 21.4 row | Verdict | What was read |
+| --- | --- | --- |
+| 2, one take to a DM, G and a second conversation | **PASS** | one 4 s take, three targets: `Queued take ... for 3 conversation(s)`, one `take prepared: 3786397 -> 445550 bytes`, `every send settled, 3 of 3 went`; the tile played on `delta` in all three (540x960, 4.2 s). |
+| 3, feed AND chats | **PASS** | the sheet said the conversations receive the published video itself; the log read `waits for its publish step's upload`, `adopts the published file`, the chat hold placed BEFORE `sent in`, 1 of 1 went; the group tile plays at 718x1278, the published file's size. "The same video" rests on the adopted file id, not on a pixel comparison. |
+| 4, a refused target while the others go | **PASS** | take online, DM and G1 ticked, network cut (`Flush skipped - offline`), `delta` removed `gamma` from G1, network back: `evicted - permanent failure`, `a reel send failed for good - one notice: named`, `every send settled, 1 of 2 went`. G1's bubble read "Non envoye : vous ne faites plus partie de cette conversation"; the DM send went. The toast itself was not seen on screen (log only). |
+| 5, "Annuler partout" | **PASS**, `[UPLOAD-RELEASE]` not exercised | offline, queued for three; the dialog offered "Annuler partout" for the 3 conversations; `delete everywhere ...: 3 queued and 0 sent`, three withdrawn, `it held no uploaded file`. The release path needs an upload session and is not reached while the take never uploaded. |
+| 6, "Supprimer partout" | **PASS** | a take to the DM, G2 and G3 played on `delta` in all three; a plain delete of ONE (G3) left the other two and the next dialog said "envoyee dans 2 conversations"; "Supprimer partout" then read "Ce message a ete supprime." on `delta` in the three; `0 queued and 2 sent`, `file ... is released`, `chat reel ... released: HTTP 200`. |
+| 7, the sender's other device | **PASS** | the `gamma` web seat's sent-take bubble offered only a plain "Delete" ("Permanently delete this message?"), no "everywhere" act; after deleting one copy the DM tile still played on `delta`, so the shared file was kept. |
+| 8, a moderator's purge, everywhere | **PASS**, second attempt | `delta` (non-admin) published a PORTRAIT file (720x1280, gallery input) with CanaReels + DM + G2; the `gamma` web seat (admin) deleted the feed post: server `Reel purge (moderation) deleted ..., a file chats held (reel_moderated)`. On the iPhone the DM tile read "Media expire." then "CanaReel de Canari Test Delta supprime"; after airplane on, a force-kill and a relaunch it still read "supprime" (durable); G2, tapped online, became "supprime" too. **The first attempt was void:** the iPhone had already played the feed video, and a device that fetched a file keeps playing its local copy after the purge (the file route answered 410 meanwhile). The purge does not reach a copy already on a device. |
+| 9, weak network | **NOT READ on the iPhone** | a 42 s take, 3 targets, uploaded in 2 s once prepared (12 s), while the airplane switch takes about 90 s to settle: no upload could be interrupted. The Mi half is in the [Mi sitting](#the-mi-9t-readings-of-2026-11-16-second-sitting-170-alpha2). |
+| 10, a kill during "Preparation NN %" | **PASS**, thin proof | a 30 s take to two targets, force-kill 6 s after "Envoyer (2)" (preparation takes 8 to 12 s), relaunch: `preparing its chat-reel take (25756562 raw bytes)` again, `take prepared`, one upload session, `sent in` once per conversation, `every send settled, 2 of 2 went`. The pre-kill lines never reached the log ring (unflushed), so that the kill landed inside the preparation is inferred from timing, not read. |
+| 11, the chat camera's single send | **PASS in a DM; the group half NOT taken** | "Ajouter" > "Ouvrir la camera", a hold the WDA cut at 60 s: one review "Envoyer", one `take ... upload started for its 1 send(s)`, one `sent in`, and the tile on `delta` plays 60.16 s. |
+| 13, no salon is offered | **PASS** | no salon in the sheet's list; in a salon ("general") "Ajouter" > "Ouvrir la camera" opened a camera whose 3 s hold produced a PHOTO (the pending file was named `canari-ph...`); removed unsent. |
+
+**Dev data written** (also in `WRITTEN-IDS.txt`): the three groups above (deleted through the product), the DM and group tiles of the takes (left in a bench DM), two portrait CanaReels published and deleted through the product (one by `gamma` on the phone, one by the `gamma` web seat), and possibly one earlier portrait CanaReel by `delta` ("IPE13 portrait reel r8") left on the feed by a stopped attempt, still to delete through the product. Nothing was sent from `alpha` or `beta`.
+
+**Defects and oddities:** the chip of a ticked target that the search field filters out shows the raw hex id instead of the name (fixed: [reels-in-chat section 22](frontend/modules/reels-in-chat.md#22-the-two-paths-owner-2026-11-16)); the dialog's "N conversations" count stayed stale on the phone after another device deleted one copy; after the network returned, the camera kept "Canari est injoignable" until a retry tap (a dev edge 530 blip at that minute, not separated); one take opened its review with "Suivant" instead of "Envoyer a..." while the camera still said "Ouverture de la camera", and did not repeat.
 
 ## The Mi 9T readings of 2026-11-16, fifth sitting on `1.7.0-alpha.6`: the salon badge and grant rows, the live bars, the push
 

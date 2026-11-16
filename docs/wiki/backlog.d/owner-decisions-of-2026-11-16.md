@@ -63,3 +63,10 @@ Recorded so no question answered here is asked again. Each line names where its 
   dated line; a real defect it would have caught still blocks the flip.
 - **The form close button ships in `1.7.0` only if it is merged before `alpha.7`**; otherwise it waits
   for the next version.
+
+### The side-by-side scene is removed (23)
+
+- **"Cote a cote" leaves the desktop live scenes** (owner, 2026-11-16 evening: "Cet agencement est un peu
+  bizarre, on peut supprimer cote a cote"). Four scenes remain: camera, screen, screen + camera (overlay),
+  "Je reviens". Charter: principle 7 (simplicity). Nothing on the wire or the server names a scene, so no
+  compatibility shim is owed ([live](../frontend/modules/live.md)).

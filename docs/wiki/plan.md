@@ -49,6 +49,7 @@ earliest version, as a checklist.
 - [The owner's decisions of 2026-11-14](backlog.d/owner-decisions-of-2026-11-14.md)
 - [The background Welcome's warm-process refusal: two native changes](backlog.d/p3-the-background-welcome-s-warm-process-refusal-its-rate-its-wasted-round-trip.md)
 - [The owner's decisions of 2026-11-15 and 2026-11-16](backlog.d/owner-decisions-of-2026-11-16.md)
+- [Reading owed: the feed's live card follows a start and an end with no relaunch (1.7.0-alpha.6 oddities)](backlog.d/reading-owed-the-live-card-follows-a-start-and-an-end-with-no-relaunch.md)
 
 **P2 - correctness**
 
@@ -108,12 +109,15 @@ earliest version, as a checklist.
 - [ ] [the Emojis preference row and its neighbours at 390 pt, on a phone](backlog.d/p3-the-emojis-preference-row-squeezes-its-description-on-a-phone.md)
 - [ ] [a private salon granted after an in-session join is readable on the iPhone, with its badge](backlog.d/p2-a-private-salon-granted-after-an-in-session-join-is-unreadable-on-the-iphone.md)
 - [ ] [one "server already unreachable" line per spell, read on a phone log after a real outage](backlog.d/p3-server-already-unreachable-is-logged-per-request.md)
+- [ ] [a banner in the composer's place clears the Android navigation bar (2026-11-16)](backlog.d/reading-owed-a-banner-in-the-composer-place-clears-the-navigation-bar.md)
 - [ ] [a salon invitation's notice still reads as a sentence, live and from history (2026-11-16)](backlog.d/reading-owed-a-channel-invite-notice-names-ids-and-draws-live.md)
 - [ ] [a group joined with the list in front is ordered by its admission, and drawn at once](backlog.d/reading-owed-a-group-joined-with-the-list-in-front-is-ordered-by-its-admission.md)
 - [ ] [a salon message arriving before its seed raises its badge (granted salon, in-session join)](backlog.d/reading-owed-a-salon-message-arriving-before-its-seed-raises-its-badge.md)
+- [ ] [a form's respondent account fields, on a phone and on the web (owner, 2026-11-16)](backlog.d/reading-owed-form-respondent-account-fields.md)
 - [ ] [the broadcaster's on-air top row at 390 pt (End and the chat toggle on screen)](backlog.d/reading-owed-the-live-on-air-top-row-at-390-pt-and-360-px.md)
 - [ ] [the live scenes bar (one icon row) on a desktop live at two window widths](backlog.d/reading-owed-the-live-scenes-bar-on-a-desktop-live.md)
 - [ ] [the live viewer's top bar at 360-436 css px portrait (name whole, no button over the second row)](backlog.d/reading-owed-the-live-viewer-top-bar-at-360-436-px.md)
+- [ ] [a menu ends above the iOS tab bar, and a group notification keeps its title (2026-11-16)](backlog.d/reading-owed-the-popover-and-notification-fixes-of-the-iphone-sitting.md)
 
 ## 1.7.1
 
