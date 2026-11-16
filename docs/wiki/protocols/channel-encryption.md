@@ -384,7 +384,10 @@ and the request then say something true. A page whose every seed is held registe
   the demoted tab closes its socket, so the group would never read drained here) or the service
   closing (`closed`, `GroupDrainAbandonedError`). The non-routine ones are said in the log
   (`[CHANNEL] page of x decoded without its key-group drain - reason`); a page that deferred rows
-  says how many, and again when they are decoded after the drain.
+  says how many, and again when they are decoded after the drain. A demotion decodes the deferred
+  rows as a follower would (reported, never asked); `closed` decodes NOTHING more - the session
+  ended (sign-out, client reset) before anything proved the seeds missing, so a warning would be
+  false, and the next session's load reads the page again.
 - **What bounds the wait**: `whenGroupDrained` needs a pull of the whole mailbox on an OPEN socket
   and the key group idle in the scheduler. Idle includes frames parked behind a Welcome, and that
   park is bounded by the scheduler's termination proof, not a clock: a Welcome closes the window it
@@ -392,8 +395,19 @@ and the request then say something true. A page whose every seed is held registe
   released at once (`releaseStrandedWelcomeBuffers`). While the link is down only the deferred rows
   wait - rows this device could not have drawn anyway.
 - **A load started meanwhile supersedes the deferred pass** (it decoded the whole page after this
-  one): the older load decodes nothing more and merges nothing. The second pass applies reactions,
-  poll tallies and read marks only from the rows it decoded, so it never rewinds a live event.
+  one): the older load decodes nothing more and merges nothing.
+- **The second pass ADDS the deferred rows and takes nothing else of the page again.** The page was
+  fetched before a wait that lasts as long as the link is down, and the page stays interactive
+  meanwhile, so a live deletion's tombstone, an edit (the reader's own included, sent over HTTP
+  while the socket is down) or a read mark can move on screen after it. Merging the whole page again
+  (as the first cut of this design did) took each old row verbatim through `mergeMessagePage` and
+  resurrected the deleted row, undid the edit, and re-marked the salon fresh over a stale mark. So a
+  deferred row is inserted only where nothing holds it yet, its edit rows go through
+  `applyChannelEdits` (whose precedence keeps a later edit), its reactions and poll tallies come from
+  its own rows only, the read marks and `channelHistoryLoadedAt` are the first pass's alone, and the
+  stored page is rewritten from what is on screen (deleted rows left out). Residual, bounded by the
+  next load: a deferred row hard-deleted DURING the wait is inserted (the live deletion found no
+  row to mark), and the next page, authoritative inside its window, removes it.
 - **The repair re-read stays, and it is not the same path.** `announceGraineRepair` re-reads a salon
   when a SEED is stored for it - the only path for rows dropped outside a gated load (a live row
   that arrived before its seed, an answer a peer sends minutes later, a salon decoded on an earlier
@@ -409,7 +423,8 @@ and the request then say something true. A page whose every seed is held registe
   other class reported) and `useConversations.salonReadAfterDrain.svelte.test.ts` (the held row
   drawn and the skeleton down before the drain, the queued row drawn after it with no warning, a
   seed the drain did not bring reported only then, one fetch, a newer load superseding the deferred
-  pass).
+  pass, a deletion made during the wait kept, a stale mark made during it kept, a closed service
+  ending the pass with no decode and no warning).
 
 ### 4.6 Ordering rule: remove, THEN distribute
 

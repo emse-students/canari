@@ -189,6 +189,61 @@ describe('a salon opened while its key group is draining', () => {
     expect(ids(convs)).toEqual(['m1']);
   });
 
+  it('the deferred pass never rewinds what moved on screen during the wait - a deletion, an edit', async () => {
+    const convs = openSalon();
+    const loading = convs.loadHistoryForConversation(SALON, SALON, makeCtx(), { force: true });
+    await vi.waitFor(() => expect(drain.settle).not.toBeNull());
+    await flushMacrotask();
+    expect(ids(convs)).toEqual(['m1']);
+
+    // While the link comes back, the held row is deleted by a live event (or edited by its author):
+    // the page in hand still carries it as it was when fetched.
+    const before = convs.conversations.get(SALON)!;
+    convs.conversations.set(SALON, {
+      ...before,
+      messages: before.messages.map((m) =>
+        m.id === 'm1' ? { ...m, isDeleted: true, content: 'deleted' } : m
+      ),
+    });
+
+    drain.settle?.(['m2']);
+    await loading;
+
+    const m1 = convs.conversations.get(SALON)!.messages.find((m) => m.id === 'm1');
+    expect(m1?.isDeleted).toBe(true);
+    expect(m1?.content).toBe('deleted');
+    expect(ids(convs)).toEqual(['m1', 'm2']);
+  });
+
+  it('a salon declared stale during the wait is not marked fresh again by the deferred pass', async () => {
+    const convs = openSalon();
+    const loading = convs.loadHistoryForConversation(SALON, SALON, makeCtx(), { force: true });
+    await vi.waitFor(() => expect(drain.settle).not.toBeNull());
+    await flushMacrotask();
+
+    convs.invalidateChannelHistoryCache(SALON);
+    drain.settle?.(['m2']);
+    await loading;
+
+    drain.salonKeysNow.mockReturnValue({ kind: 'drained', groupId: 'kg-0001', waited: false });
+    await convs.loadHistoryForConversation(SALON, SALON, makeCtx());
+    expect(listMessages).toHaveBeenCalledTimes(2);
+  });
+
+  it('a wait the closing service ends decodes nothing more and warns of nothing', async () => {
+    drain.salonKeysNow.mockReturnValue({
+      kind: 'draining',
+      groupId: 'kg-0001',
+      drained: () => Promise.resolve({ kind: 'unwaited', reason: 'closed' }),
+    });
+    const convs = openSalon();
+    await convs.loadHistoryForConversation(SALON, SALON, makeCtx(), { force: true });
+    const { decodeChannelMessagePage } = await import('$lib/utils/chat/channelCrypto');
+    expect(vi.mocked(decodeChannelMessagePage)).toHaveBeenCalledTimes(1);
+    expect(seeds.missingSeedWarned).not.toHaveBeenCalled();
+    expect(ids(convs)).toEqual(['m1']);
+  });
+
   it('a newer load started during the wait supersedes the deferred rows of the older one', async () => {
     const convs = openSalon();
     const first = convs.loadHistoryForConversation(SALON, SALON, makeCtx(), { force: true });

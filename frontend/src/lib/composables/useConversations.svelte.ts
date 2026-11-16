@@ -943,14 +943,12 @@ export function useConversations() {
       const deferredIds = new SvelteSet([...(deferred ?? [])].map((i) => String(pageRows[i].id)));
 
       /**
-       * Builds the page from `decodedRows` and merges it - once with what the store held, and once
-       * more when the deferred rows have been read. `readOnly` is the rows THIS pass decoded (all of
-       * them on the first): a reaction, a poll tally and the read marks are taken from those alone,
-       * so a second pass never rewinds what a live event moved in between. Returns false when a newer
-       * load superseded this one.
+       * Reads the decoded rows at `indices` into what a merge takes: the message bubbles, their
+       * edits, their poll tallies and the client ids of this device's own rows. A reaction lands as it
+       * is read - merged by the same last-write-wins rule everywhere, so the order the page is read in
+       * cannot change the result, including a reaction read before the message it lands on.
        */
-      const mergePage = async (readOnly: ReadonlySet<number> | null): Promise<boolean> => {
-        const firstPass = readOnly === null;
+      const readRows = (indices: Iterable<number>) => {
         const loaded: ChatMessage[] = [];
         // Server row id -> the client UUID its author sealed inside it (own rows only, see below).
         const clientIdOf = new SvelteMap<string, string>();
@@ -958,17 +956,14 @@ export function useConversations() {
         // Applied only once this load is known to be the latest: a superseded load read its rows
         // EARLIER, and `setPollMeta` overwrites - so its tallies would undo the newer load's.
         const pollMetas: [string, ChannelPollMeta][] = [];
-        for (const [i, msg] of pageRows.entries()) {
+        for (const i of indices) {
+          const msg = pageRows[i];
           const decoded = decodedRows[i];
           if (!decoded) continue;
-          const readNow = firstPass || readOnly.has(i);
           // A reaction is a row of its own now (WP-40): it changes a bubble instead of being one.
-          // Merged by the same last-write-wins rule everywhere, so the order the page is read in
-          // cannot change the result - including a reaction read before the message it lands on.
           if (decoded.kind === 'reaction') {
             const r = decoded.reaction;
-            if (readNow)
-              applyChannelReactionFrame(r.targetMessageId, r.senderId, r.emoji, r.at, r.removed);
+            applyChannelReactionFrame(r.targetMessageId, r.senderId, r.emoji, r.at, r.removed);
             continue;
           }
           // An edit is a row of its own as well: collected and applied once the page is built, so
@@ -977,10 +972,8 @@ export function useConversations() {
             edits.push(decoded.edit);
             continue;
           }
-
           // Seed the live poll tally from the server row, keyed by the server id.
-          if (msg.poll && readNow) pollMetas.push([String(msg.id), msg.poll]);
-
+          if (msg.poll) pollMetas.push([String(msg.id), msg.poll]);
           if (decoded.message.isOwn && decoded.message.clientMessageId) {
             clientIdOf.set(decoded.message.id, decoded.message.clientMessageId);
           }
@@ -994,7 +987,41 @@ export function useConversations() {
             isSystem: decoded.message.isSystem,
           });
         }
+        return { loaded, clientIdOf, edits, pollMetas };
+      };
 
+      /**
+       * THIS DEVICE'S OWN ECHOES THE PAGE ALREADY HOLDS are re-keyed to the server's row first, so the
+       * merge sees ONE row. It is the proof that settles an echo whose POST reply was lost or carried
+       * no id and whose frame never came (WP-OFF-2) - no clock involved. Only the author's own rows
+       * can match: `isOwn` is the row's proven sender. The page is also the proof the server holds
+       * them: whatever the unsent ledger still keeps for them (a POST reply lost, a previous page
+       * life killed mid-send) must not come back.
+       */
+      const settleOwnEchoes = (
+        current: Conversation,
+        rowsRead: readonly ChatMessage[],
+        clientIdOf: ReadonlyMap<string, string>
+      ): Conversation => {
+        let reKeyed = current.messages;
+        for (const row of rowsRead) {
+          const clientId = clientIdOf.get(row.id);
+          if (!row.isOwn || !clientId) continue;
+          reKeyed =
+            nextEchoMessages(reKeyed, clientId, { kind: 'settled', serverId: row.id }) ?? reKeyed;
+        }
+        if (clientIdOf.size > 0) clearUnsentSalonTexts(ctx.userId, clientIdOf.values());
+        if (reKeyed === current.messages) return current;
+        ctx.log(`[SALON-ECHO] history load settled echo(es) of ${channelConversationId}`);
+        return { ...current, messages: reKeyed };
+      };
+
+      /** The ids this load stored as the salon's page - the deferred pass adds its rows to them. */
+      let storedPageIds: ReadonlySet<string> = new SvelteSet<string>();
+
+      // THE PAGE AS THE STORE HOLDS IT NOW, merged once - every row but the deferred ones.
+      {
+        const { loaded, clientIdOf, edits, pollMetas } = readRows(pageRows.keys());
         const notice = olderMessagesNotice(channelConversationId, pageRows, v1Dropped);
         if (notice) loaded.push(notice);
         loaded.sort(compareMessageOrder);
@@ -1004,93 +1031,72 @@ export function useConversations() {
           ctx.log(
             `[CHANNEL] history load of ${channelConversationId} superseded by a newer one - its page is not merged`
           );
-          return false;
+          return;
         }
         for (const [messageId, meta] of pollMetas) setPollMeta(messageId, meta);
 
         let current = conversations.get(channelConversationId);
-        if (!current) return true;
-        // THIS DEVICE'S OWN ECHOES THE PAGE ALREADY HOLDS are re-keyed to the server's row first, so the
-        // merge below sees ONE row. It is the proof that settles an echo whose POST reply was lost or
-        // carried no id and whose frame never came (WP-OFF-2) - no clock involved. Only the author's
-        // own rows can match: `isOwn` is the row's proven sender.
-        let reKeyed = current.messages;
-        for (const row of loadedEdited) {
-          const clientId = clientIdOf.get(row.id);
-          if (!row.isOwn || !clientId) continue;
-          reKeyed =
-            nextEchoMessages(reKeyed, clientId, { kind: 'settled', serverId: row.id }) ?? reKeyed;
-        }
-        if (reKeyed !== current.messages) {
-          ctx.log(`[SALON-ECHO] history load settled echo(es) of ${channelConversationId}`);
-          current = { ...current, messages: reKeyed };
-        }
-        // The page is the proof the server holds these: whatever the unsent ledger still keeps for
-        // them (a POST reply lost, a previous page life killed mid-send) must not come back.
-        if (clientIdOf.size > 0) clearUnsentSalonTexts(ctx.userId, clientIdOf.values());
-        // Same race as the DM path, and worse: decrypting 200 channel rows takes seconds, and every
-        // live message posted meanwhile used to be discarded when this resolved.
-        // The reader's OWN mark comes from the server and the owed queue, never from a belief the
-        // device restored: one held above the server's stops the receipt from ever being posted.
-        // Taken on the first pass only: the marks were fetched with the page, and a second pass
-        // applying them again would rewind a mark a live event moved meanwhile.
-        const readWatermarks = firstPass
-          ? salonMarksAfterLoad(
-              current.readWatermarks,
-              rawMarks === undefined ? undefined : (parseReadWatermarks(rawMarks) ?? {}),
-              ctx.userId,
-              owedSalonReadMarks(ctx.userId)[channelConversationId]?.at,
-              channelConversationId
-            )
-          : undefined;
-        // EVERY ROW DRAWN FROM THE STORE THAT THIS PAGE DOES NOT NAME IS WITHDRAWN (F4, review
-        // 2026-10-15). The copy is a preview of the server's newest page, and the server HARD-deletes
-        // a salon message (no tombstone), so a missing row is the only sign it is gone. The merge
-        // alone cannot say it: memory is authoritative outside a page's window, so a deleted newest
-        // row reads as a live arrival and an emptied salon's page removes nothing. A drawn row older
-        // than a full page is withdrawn too: what lies between it and the page is unknown, and a row
-        // shown across a hidden gap is worse than one fetched again on scroll. Only rows drawn from
-        // the store and not yet confirmed - by THIS load or by one it superseded (see
-        // `salonRowsDrawnUnconfirmed`): a message that arrived live after the draw is in neither.
-        let base = current.messages;
-        // The server's rows alone: the older-messages notice is not a message, and is never stored.
-        const serverRows = loadedEdited.filter(
-          (m) => m.id !== olderMessagesNoticeId(channelConversationId)
-        );
-        // A ROW STILL WAITING FOR ITS SEED IS NAMED BY THE PAGE all the same: the server holds it, so
-        // a copy already on screen is neither withdrawn nor dropped by the merge's window.
-        const pendingSeed = firstPass && deferredIds.size > 0 ? deferredIds : null;
-        const drawnUnconfirmed = salonRowsDrawnUnconfirmed.get(channelConversationId);
-        salonRowsDrawnUnconfirmed.delete(channelConversationId);
-        if (drawnUnconfirmed && drawnUnconfirmed.size > 0) {
-          const inPage = new SvelteSet([...serverRows.map((m) => m.id), ...(pendingSeed ?? [])]);
-          const withdrawn = new SvelteSet([...drawnUnconfirmed].filter((id) => !inPage.has(id)));
-          if (withdrawn.size > 0) {
-            ctx.log(
-              `[CHANNEL] ${channelConversationId.slice(0, 16)} ${withdrawn.size} stored row(s) the fresh page does not name withdrawn`
-            );
-            base = base.filter((m) => !withdrawn.has(m.id));
-          }
-        }
-        const kept = pendingSeed ? base.filter((m) => pendingSeed.has(m.id)) : [];
-        conversations.set(channelConversationId, {
-          ...current,
-          // FIRST after the merge too: a reload can hold rows older than this page (section 21.7).
-          messages: keepNoticeOnTop(
-            mergeMessagePage(base, [...loadedEdited, ...kept]),
+        if (current) {
+          current = settleOwnEchoes(current, loadedEdited, clientIdOf);
+          // Same race as the DM path, and worse: decrypting 200 channel rows takes seconds, and every
+          // live message posted meanwhile used to be discarded when this resolved.
+          // The reader's OWN mark comes from the server and the owed queue, never from a belief the
+          // device restored: one held above the server's stops the receipt from ever being posted.
+          const readWatermarks = salonMarksAfterLoad(
+            current.readWatermarks,
+            rawMarks === undefined ? undefined : (parseReadWatermarks(rawMarks) ?? {}),
+            ctx.userId,
+            owedSalonReadMarks(ctx.userId)[channelConversationId]?.at,
             channelConversationId
-          ),
-          ...(readWatermarks !== undefined ? { readWatermarks } : {}),
-        });
-        channelHistoryLoadedAt.set(channelConversationId, {
-          loadedAt: Date.now(),
-          userId: ctx.userId,
-        });
-        await storeSalonPage(channelConversationId, [...serverRows, ...kept], ctx);
-        return true;
-      };
+          );
+          // EVERY ROW DRAWN FROM THE STORE THAT THIS PAGE DOES NOT NAME IS WITHDRAWN (F4, review
+          // 2026-10-15). The copy is a preview of the server's newest page, and the server HARD-deletes
+          // a salon message (no tombstone), so a missing row is the only sign it is gone. The merge
+          // alone cannot say it: memory is authoritative outside a page's window, so a deleted newest
+          // row reads as a live arrival and an emptied salon's page removes nothing. A drawn row older
+          // than a full page is withdrawn too: what lies between it and the page is unknown, and a row
+          // shown across a hidden gap is worse than one fetched again on scroll. Only rows drawn from
+          // the store and not yet confirmed - by THIS load or by one it superseded (see
+          // `salonRowsDrawnUnconfirmed`): a message that arrived live after the draw is in neither.
+          let base = current.messages;
+          // The server's rows alone: the older-messages notice is not a message, and is never stored.
+          const serverRows = loadedEdited.filter(
+            (m) => m.id !== olderMessagesNoticeId(channelConversationId)
+          );
+          // A ROW STILL WAITING FOR ITS SEED IS NAMED BY THE PAGE all the same: the server holds it,
+          // so a copy already on screen is neither withdrawn nor dropped by the merge's window.
+          const drawnUnconfirmed = salonRowsDrawnUnconfirmed.get(channelConversationId);
+          salonRowsDrawnUnconfirmed.delete(channelConversationId);
+          if (drawnUnconfirmed && drawnUnconfirmed.size > 0) {
+            const inPage = new SvelteSet([...serverRows.map((m) => m.id), ...deferredIds]);
+            const withdrawn = new SvelteSet([...drawnUnconfirmed].filter((id) => !inPage.has(id)));
+            if (withdrawn.size > 0) {
+              ctx.log(
+                `[CHANNEL] ${channelConversationId.slice(0, 16)} ${withdrawn.size} stored row(s) the fresh page does not name withdrawn`
+              );
+              base = base.filter((m) => !withdrawn.has(m.id));
+            }
+          }
+          const kept = deferredIds.size > 0 ? base.filter((m) => deferredIds.has(m.id)) : [];
+          conversations.set(channelConversationId, {
+            ...current,
+            // FIRST after the merge too: a reload can hold rows older than this page (section 21.7).
+            messages: keepNoticeOnTop(
+              mergeMessagePage(base, [...loadedEdited, ...kept]),
+              channelConversationId
+            ),
+            ...(readWatermarks !== undefined ? { readWatermarks } : {}),
+          });
+          channelHistoryLoadedAt.set(channelConversationId, {
+            loadedAt: Date.now(),
+            userId: ctx.userId,
+          });
+          const stored = [...serverRows, ...kept];
+          storedPageIds = new SvelteSet(stored.map((m) => m.id));
+          await storeSalonPage(channelConversationId, stored, ctx);
+        }
+      }
 
-      if (!(await mergePage(null))) return;
       if (!deferred || deferred.size === 0 || keys.kind !== 'draining') return;
 
       // THE PAGE IS ON SCREEN; ONLY ITS ROWS WITH NO SEED WAIT. The skeleton is lowered and the load
@@ -1105,6 +1111,15 @@ export function useConversations() {
       if (!salonLoadGenerations.isLatest(channelConversationId, generation)) {
         ctx.log(
           `[CHANNEL] page of ${rawId.slice(0, 8)}: ${deferred.size} deferred row(s) left to the newer load`
+        );
+        return;
+      }
+      // THE SESSION ENDED BEFORE THE DRAIN (sign-out, client reset): nothing proves the seeds missing,
+      // so a warning would be false, and no session is left to draw them for. The next session's
+      // load reads the page again.
+      if (gate.kind === 'unwaited' && gate.reason === 'closed') {
+        ctx.log(
+          `[CHANNEL] page of ${rawId.slice(0, 8)}: ${deferred.size} deferred row(s) not read - the MLS client closed before key group ${keys.groupId.slice(0, 8)}... drained`
         );
         return;
       }
@@ -1123,7 +1138,40 @@ export function useConversations() {
       );
       tallyAfterDrain.report();
       for (const [k, i] of order.entries()) decodedRows[i] = reread[k];
-      await mergePage(deferred);
+
+      // THE DEFERRED ROWS ARE ADDED, AND NOTHING ELSE OF THE PAGE IS TAKEN AGAIN. The page was fetched
+      // before the wait, and the wait lasts as long as the link is down: what moved on screen
+      // meanwhile - a live deletion's tombstone, an edit, a read mark, the reader's own delete - is
+      // newer than the page, and merging the whole page again took each old row verbatim and undid
+      // it. So a deferred row is INSERTED only where nothing holds it yet (a copy already on screen
+      // was drawn readable and is the newer one), its edits go through `applyChannelEdits`, whose
+      // precedence keeps a later edit, and the salon's freshness is left as the first pass and every
+      // stale mark since set it.
+      const { loaded, clientIdOf, edits, pollMetas } = readRows(order);
+      if (!salonLoadGenerations.isLatest(channelConversationId, generation)) return;
+      for (const [messageId, meta] of pollMetas) setPollMeta(messageId, meta);
+      let current = conversations.get(channelConversationId);
+      if (!current) return;
+      current = settleOwnEchoes(current, loaded, clientIdOf);
+      const held = new SvelteSet(current.messages.map((m) => m.id));
+      const fresh = loaded.filter((m) => !held.has(m.id));
+      const messages = keepNoticeOnTop(
+        applyChannelEdits(
+          [...current.messages, ...fresh].sort(compareMessageOrder),
+          edits,
+          ctx.log
+        ),
+        channelConversationId
+      );
+      conversations.set(channelConversationId, { ...current, messages });
+      // The stored page gains the rows read now and keeps every change made on screen meanwhile; a
+      // row deleted since is gone from the server, so it is not stored again.
+      const pageIds = new SvelteSet([...storedPageIds, ...fresh.map((m) => m.id)]);
+      await storeSalonPage(
+        channelConversationId,
+        messages.filter((m) => pageIds.has(m.id) && !m.isDeleted),
+        ctx
+      );
     } catch (e) {
       ctx.log(`[CHANNEL] History load failed: ${String(e)}`);
     } finally {
