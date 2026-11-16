@@ -269,7 +269,8 @@ describe('the slow state is derived from observed answers, and never stacks on o
     const lines = warn.mock.calls.map((c) => String(c[0]));
     expect(lines.filter((l) => l.includes('(stall 1/2)'))).toHaveLength(1);
     expect(lines.filter((l) => l.includes('(stall 2/2)'))).toHaveLength(1);
-    expect(lines.filter((l) => l.includes('(server already unreachable)'))).toHaveLength(3);
+    // Said once for the spell, however many deadlines expire inside it (3 of the 5 here).
+    expect(lines.filter((l) => l.includes('(server already unreachable)'))).toHaveLength(1);
     expect(lines.some((l) => /stall [3-9]\/2/.test(l))).toBe(false);
     // Back by an answer that did not go through `trackRequest` (a socket): a fresh count of two.
     connectivity.notifyServerReachable();
@@ -278,6 +279,35 @@ describe('the slow state is derived from observed answers, and never stacks on o
     stall();
     expect(connectivity.isOffline).toBe(true);
     warn.mockRestore();
+  });
+
+  it('says "already unreachable" once per spell and counts the rest on the line that closes it', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const stall = () =>
+      connectivity.trackRequest().failed(new RequestDeadlineError('read', 20000, 'GET', '/a', 0));
+    const already = () =>
+      warn.mock.calls.filter((c) => String(c[0]).includes('(server already unreachable)')).length;
+    stall();
+    stall(); // verdict reached
+    stall();
+    stall();
+    stall(); // three deadlines inside the spell
+    expect(already()).toBe(1);
+    connectivity.notifyServerReachable();
+    const closing = log.mock.calls
+      .map((c) => String(c[0]))
+      .filter((l) => l.includes('reachable again'));
+    expect(closing).toHaveLength(1);
+    expect(closing[0]).toContain('2 more request deadline(s)');
+    // The next spell speaks again, once.
+    stall();
+    stall();
+    stall();
+    stall();
+    expect(already()).toBe(2);
+    warn.mockRestore();
+    log.mockRestore();
   });
 
   it('an unproven answer restarts the stall count without moving reachability either way', () => {

@@ -21,6 +21,7 @@
 import { RequestDeadlineError } from '$lib/utils/requestDeadline';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import { isAppOnScreen, onAppScreenChange } from '$lib/utils/appForeground';
+import { createChangeLatch } from '$lib/utils/changeLatch';
 
 /** Callback invoked when connectivity is regained (offline -> online). */
 export type ReconnectListener = () => void;
@@ -145,6 +146,15 @@ class ConnectivityStore {
   private latencySlow = false;
   private inFlightSlow = false;
   private consecutiveStalls = 0;
+  /**
+   * THE UNREACHABLE SPELL: counts every entry into "unreachable". It is the value the
+   * "already unreachable" latch is keyed on, so that line is said ONCE per spell, not once per
+   * deadline that expires inside it (a burst of stalled requests printed a burst of identical lines).
+   */
+  private unreachableSpell = 0;
+  /** Deadlines that expired AFTER the first one of the current spell was said; reported when it ends. */
+  private deadlinesWhileUnreachable = 0;
+  private readonly spellLatch = createChangeLatch();
   private nextRequestId = 0;
   private readonly inFlight = new Map<number, ReturnType<typeof setTimeout>>();
 
@@ -224,7 +234,13 @@ class ConnectivityStore {
   notifyServerReachable(): void {
     this.ensureGlobalListeners();
     if (this.serverReachable && this.isOnline) return;
-    console.log('[CONNECTIVITY] server reachable again');
+    const extra = this.deadlinesWhileUnreachable;
+    console.log(
+      extra > 0
+        ? `[CONNECTIVITY] server reachable again (${extra} more request deadline(s) expired while it was unreachable)`
+        : '[CONNECTIVITY] server reachable again'
+    );
+    this.deadlinesWhileUnreachable = 0;
     const wasOffline = this.isOffline;
     // A new count starts with the server back, whichever answer brought it back.
     this.consecutiveStalls = 0;
@@ -242,6 +258,8 @@ class ConnectivityStore {
     if (!this.serverReachable) return;
     console.log('[CONNECTIVITY] server unreachable (transport failure)');
     this.serverReachable = false;
+    this.unreachableSpell++;
+    this.deadlinesWhileUnreachable = 0;
     this.recomputeSlow();
     // The browser still believes it has a link, so no `online` event will ever announce its return:
     // something has to ask. Only when the browser does not already say it is offline - then the
@@ -411,7 +429,14 @@ class ConnectivityStore {
           // The count leads to ONE verdict, and once that verdict holds a stall is not a step
           // towards it: counting on read "3/2", "4/2" (2026-10-31). Said as what it is.
           if (!this.serverReachable) {
-            console.warn(`[CONNECTIVITY] ${error.message} (server already unreachable)`);
+            // ONE LINE PER SPELL: the verdict is a single transition, so the first deadline after it
+            // says what the evidence was and the rest are counted, then reported on the line that
+            // closes the spell ("server reachable again"). A latch on durable state, never a timer.
+            if (this.spellLatch.changed('already-unreachable', String(this.unreachableSpell))) {
+              console.warn(`[CONNECTIVITY] ${error.message} (server already unreachable)`);
+            } else {
+              this.deadlinesWhileUnreachable++;
+            }
           } else {
             this.consecutiveStalls++;
             console.warn(
@@ -490,6 +515,9 @@ class ConnectivityStore {
     this.latencySlow = false;
     this.inFlightSlow = false;
     this.consecutiveStalls = 0;
+    this.unreachableSpell = 0;
+    this.deadlinesWhileUnreachable = 0;
+    this.spellLatch.reset();
   }
 }
 

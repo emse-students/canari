@@ -2435,13 +2435,34 @@ replay in `history.ts`. Make it return an envelope and those handler branches be
 event is never applied and its JSON payload is rendered as an ordinary message attributed to the
 sender. That is exactly what a `msg.system` branch added to it in `7e9d66e8` did until 2026-08-03.
 
-A **channel** notice is the one system message that IS pre-rendered text: `inviteMemberToChannel`
-sends `mkSystem('memberAdded', <already-localized sentence>)` into the channel, because a channel
-has no per-event handler. The two channel decode sites - `channelEventHandler`
-(`channel.message.created`) and `decodeChannelMessageRow` (history + search) - ask for it
-explicitly through **`appMsgToChannelSystemEnvelope`** and attribute it to `'system'` with
-`isSystem: true`, so it renders centred and neutral rather than as a message from whoever triggered
-it. `ChatMessageGroups` centres on the ROW flag; the `system` envelope kind only gives the pill.
+### A salon's membership notice carries ids (2026-11-16)
+
+A **channel** notice is the one system message that travels as pre-rendered text: `inviteMemberToChannel`
+sends `mkSystem('memberAdded', <localized sentence>)`, freezing the inviter's language and a display
+name into the frame. Its replacement is `{ "newUsers": [id] }` - the group's own `memberAdded`
+payload - still SILENT (neither unread nor a ring), and it ships in TWO releases, reader first:
+
+- **The reader (`1.7.0`).** A channel has no per-event handler, so the two decode sites -
+  `channelEventHandler` (`channel.message.created`) and `decodeChannelMessageRow` (history + search) -
+  call **`channelSystemEnvelope`** (`utils/chat/channelNotice.ts`), which classifies the data AT THE
+  SOURCE: a JSON object is the id shape, drawn by the ONE notice rendering (`visibleNoticeContent`,
+  the actor being the ROW's sender, never a payload field); anything else is a legacy sentence,
+  wrapped by **`appMsgToChannelSystemEnvelope`** as before. Ids that name nobody draw nothing and say
+  so once per decode. `channelNotice.readers.test.ts` runs both decode sites on an id frame.
+- **The writer (held).** `channelMemberAddedData` sends the sentence while
+  `CHANNEL_NOTICE_IDS_WRITER_ENABLED` is `false`: a build older than the reader (the floor is `1.6.6`)
+  draws `system.data` as text, so an id frame would reach its screen as raw `{"newUsers":[...]}`. The
+  flip is one line, once `minClientVersion` passes the first stable carrying the reader
+  ([legacy-compatibility](../../legacy-compatibility.md#removal-once-minclientversion-passes-170---a-salon-invitation-notice-sent-as-a-sentence-2026-11-16)).
+
+Both shapes are attributed to `'system'` with `isSystem: true`, so the row renders centred and
+neutral. `ChatMessageGroups` centres on the ROW flag; the `system` envelope kind only gives the pill.
+A sentence row is never rewritten, so the legacy branch of `channelSystemEnvelope` stays for as long
+as an archive holds one.
+
+The archive replay of a group stream (`historySystemEvents.ts`) parses `system.data` in its own guard:
+unparseable data is skipped with one `[HISTORY_REPLAY]` line, as the live handler does, never thrown and
+never read as an event with no data.
 
 ### `memberLeft` had a reader and no writer, for as long as it existed
 
