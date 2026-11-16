@@ -117,7 +117,6 @@ earliest version, as a checklist.
 - [ ] [a group's "X a ajouté Y" notice keeps its names after a reload (was: "Utilisateur inconnu a ajouté Utilisateur inconnu au groupe")](backlog.d/p3-a-group-joined-from-a-welcome-on-the-phone-reads-unknown-user-added-unknown-user.md)
 - [ ] [a newcomer's own "X a ajouté Y" notice names both people (was: "Compte supprime a ajoute Compte supprime au groupe")](backlog.d/p3-a-newcomer-s-first-added-notice-reads-compte-supprime-for-both-names.md)
 - [ ] [the pre-live screen says a suspension before Start](backlog.d/reading-owed-the-pre-live-screen-says-a-suspension-before-start.md)
-- [ ] [a group being created is never discovered or recovered by the device creating it (rig)](backlog.d/creating-a-group-starts-a-re-add-recovery-of-it-on-the-creating-device.md)
 
 ## 1.8.0
 

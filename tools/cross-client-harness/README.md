@@ -1153,7 +1153,7 @@ per group. **-4 opens its gate window two seconds before its start**: docker rea
 exactly, and a `REJECT` line that followed the start by well under a second was dropped on dev, so the cause is
 the offset between the host's clock and the container's. **What the rows narrate** (`LEAF_ROW_NARRATION`,
 `LEAF_REVOKED_WIPE_NARRATION`, `LEAF_REVOKED_REFUSALS`) is each sentence read on a run, at its level; a line it
-does not name is dirt, and a defect (the group-creation placeholder, [entry](../../docs/wiki/backlog.d/creating-a-group-starts-a-re-add-recovery-of-it-on-the-creating-device.md))
+does not name is dirt, and a defect (the group-creation placeholder, fixed by #3666 and [read](../../docs/wiki/device-verification.md#the-leaf-refresh-rows-on-the-web-rig-2026-11-16-170-alpha2-then-alpha3-dev-builds-dev9ca790c-and-dev68983e3))
 is filed, not narrated. Judgements in `leafrows.mjs`, pinned by `archive/leaf-selftest.mjs`.
 ```sh
 bun archive/gap.mjs --row GAP-1|GAP-2   # frames ahead of their commits; past-epoch frames again
