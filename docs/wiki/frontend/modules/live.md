@@ -1362,7 +1362,7 @@ row); the reading at 1280 and ~640 px on a desktop live is owed
 
 **The control that draws them (owner, 2026-11-16, after a reading of the on-air bar: labelled pills
 wrapped onto a second line and rode over the comment field).** ONE icon-only row, a rounded-full
-track over the picture: camera, screen, screen + camera, side by side, then a rule and "Je reviens"
+track over the picture: camera, screen, screen + camera, then a rule and "Je reviens"
 as the last icon. No label is visible - the name is each button's \`aria-label\` and \`title\` (the same
 Paraglide keys as before) - and the chosen scene wears the bar's fill (\`aria-checked\`). It is one
 \`radiogroup\`, one tab stop, arrows move focus and Enter or Space chooses (a screen scene opens the
