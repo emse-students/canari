@@ -28,9 +28,15 @@ vi.mock('$lib/users/blocks', () => ({
     return blocked.ids.map((userId) => ({ userId }));
   },
 }));
-const knownNames = vi.hoisted(() => ({ byId: {} as Record<string, string> }));
+const knownNames = vi.hoisted(() => ({
+  byId: {} as Record<string, string>,
+  asked: [] as string[],
+}));
 vi.mock('$lib/utils/users/displayName', () => ({
-  resolveUserDisplayName: async (id: string) => knownNames.byId[id] ?? null,
+  resolveUserDisplayName: async (id: string) => {
+    knownNames.asked.push(id);
+    return knownNames.byId[id] ?? null;
+  },
   getUserDisplayNameSync: (_id: string, fallback?: string) => fallback ?? 'Utilisateur inconnu',
   peekUserDisplayName: () => null,
 }));
@@ -418,34 +424,46 @@ describe("ReelSendSheet - Snapchat's list (owner, 2026-11-16, section 22)", () =
     expect(document.querySelectorAll('[aria-checked="true"]')).toHaveLength(0);
   });
 
-  it("a group's row names a few of its members (never this account), read from the local tree; a DM has none", async () => {
+  it("a group's row names a few of its members (never this account), read from the local trees in ONE batch; a DM has none", async () => {
     knownNames.byId = { 'u-a': 'Ana', 'u-b': 'Ben', 'u-c': 'Cleo', 'u-d': 'Dan' };
-    const groupMemberIds = vi.fn(async (id: string) =>
-      id === 'g-new' ? [ME, 'u-a', 'u-b', 'u-c', 'u-d'] : []
+    const groupMembers = vi.fn(
+      async (ids: readonly string[]) =>
+        new Map(ids.map((id) => [id, id === 'g-new' ? [ME, 'u-a', 'u-b', 'u-c', 'u-d'] : []]))
     );
-    await open({ host: { ...host, groupMemberIds } });
+    await open({ host: { ...host, groupMembers } });
     await settle();
     expect(row('g-new').querySelector('[data-picker-subtitle]')!.textContent).toBe(
       'Ana, Ben, Cleo'
     );
     expect(row('d-1').querySelector('[data-picker-subtitle]')).toBeNull();
-    expect(groupMemberIds).not.toHaveBeenCalledWith('d-1');
+    expect(groupMembers).toHaveBeenCalledTimes(1);
+    expect([...groupMembers.mock.calls[0][0]].sort()).toEqual(['g-new', 'g-old']);
     knownNames.byId = {};
   });
 
-  it('a group whose members cannot be read keeps its row, said at warn', async () => {
+  it('a member shared by several groups is looked up ONCE, not once per group', async () => {
+    knownNames.byId = { 'u-a': 'Ana', 'u-b': 'Ben' };
+    knownNames.asked = [];
+    const groupMembers = vi.fn(
+      async (ids: readonly string[]) => new Map(ids.map((id) => [id, ['u-a', 'u-b']]))
+    );
+    await open({ host: { ...host, groupMembers } });
+    await settle();
+    expect(row('g-new').querySelector('[data-picker-subtitle]')!.textContent).toBe('Ana, Ben');
+    expect(row('g-old').querySelector('[data-picker-subtitle]')!.textContent).toBe('Ana, Ben');
+    expect(knownNames.asked.filter((id) => id === 'u-a')).toHaveLength(1);
+    expect(knownNames.asked.filter((id) => id === 'u-b')).toHaveLength(1);
+    knownNames.byId = {};
+  });
+
+  it('a group the host could not read keeps its row with no subtitle, and the sheet logs nothing per group', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const groupMemberIds = vi.fn(async () => {
-      throw new Error('not held');
-    });
-    await open({ host: { ...host, groupMemberIds } });
+    const groupMembers = vi.fn(async () => new Map<string, string[]>());
+    await open({ host: { ...host, groupMembers } });
     await settle();
     expect(row('g-new')).not.toBeNull();
     expect(row('g-new').querySelector('[data-picker-subtitle]')).toBeNull();
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining('could not be read'),
-      expect.any(Error)
-    );
+    expect(warn).not.toHaveBeenCalled();
     warn.mockRestore();
   });
 });

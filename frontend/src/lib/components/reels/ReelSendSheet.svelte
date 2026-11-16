@@ -46,7 +46,7 @@
      * for its subtitle (`reelSendBridge`).
      */
     host: Pick<ReelSendHost, 'conversations' | 'userId'> &
-      Partial<Pick<ReelSendHost, 'groupMemberIds'>>;
+      Partial<Pick<ReelSendHost, 'groupMembers'>>;
     /** The most conversations one take may be sent to (`chatReelTargetCap`): the server's, never a guess. */
     cap: number;
     /** The longest take a conversation accepts (`chatMaxDurationMs`): a longer one can only be posted. */
@@ -81,13 +81,18 @@
   let selected = $state<string[]>(untrack(() => initialSelection()));
   let capNotice = $state(false);
   let peerNames = $state<Record<string, string>>({});
-  /** A group's subtitle by conversation id: a few of its members' names (`groupMemberIds`). */
+  /** A group's subtitle by conversation id: a few of its members' names (`groupMembers`). */
   let groupSubtitles = $state<Record<string, string>>({});
   /**
    * The groups whose members were asked, so the effect asks each once. NOT reactive on purpose: the
    * effect writes it, and a reactive set would re-run the effect on its own write.
    */
-  const subtitlesAsked: Record<string, true> = {};
+  const subtitlesAsked = new Set<string>();
+  /**
+   * ONE NAME LOOKUP PER DISTINCT USER, whichever groups they are in (not three per group): the
+   * pending or settled answer by user id. Not reactive, for the reason above.
+   */
+  const memberNames = new Map<string, Promise<string | null>>();
   let blockedPeerIds = $state<ReadonlySet<string>>(new Set());
   /**
    * Whether the blocked list was ANSWERED. A block does not refuse a DM message server-side
@@ -180,38 +185,65 @@
   const sendKeys = $derived(sendTargets.map((c) => c.key));
   const count = $derived(sendKeys.length + (feedSend ? 1 : 0));
 
-  // A GROUP'S ROW NAMES A FEW MEMBERS (owner, 2026-11-16). Read from the LOCAL tree, no server call;
-  // a group this device does not hold yet (not `active`) is not asked - its tree is not here.
+  // A GROUP'S ROW NAMES A FEW MEMBERS (owner, 2026-11-16). Read from the LOCAL trees in ONE batch
+  // once MLS is ready (`groupMembers`), no server call; a group this device does not hold yet (not
+  // `active`) is not asked - its tree is not here. Every listed group, whatever the search shows.
   $effect(() => {
-    const read = host.groupMemberIds;
+    const read = host.groupMembers;
     if (!read) return;
     const me = host.userId();
-    for (const cand of candidates) {
-      const c = cand.conversation;
-      if (c.conversationType !== 'group' || c.lifecycle !== 'active') continue;
-      if (subtitlesAsked[c.id]) continue;
-      subtitlesAsked[c.id] = true;
-      void subtitleOf(read, c.id, me).then((line) => {
-        if (line) groupSubtitles = { ...groupSubtitles, [c.id]: line };
-      });
-    }
+    const ids = listed
+      .map((cand) => cand.conversation)
+      .filter((c) => c.conversationType === 'group' && c.lifecycle === 'active')
+      .map((c) => c.id)
+      .filter((id) => !subtitlesAsked.has(id));
+    if (ids.length === 0) return;
+    for (const id of ids) subtitlesAsked.add(id);
+    console.debug(`[reel-send] the members of ${ids.length} group(s) asked`);
+    void untrack(() => fillSubtitles(read, ids, me));
   });
 
-  /** The first {@link SUBTITLE_NAMES} other members' names of `groupId`, or null (a failure is said). */
-  async function subtitleOf(
-    read: (id: string) => Promise<string[]>,
-    groupId: string,
-    me: string
-  ): Promise<string | null> {
-    try {
-      const ids = (await read(groupId)).filter((id) => id !== me).slice(0, SUBTITLE_NAMES);
-      const names = await Promise.all(ids.map((id) => resolveUserDisplayName(id)));
-      const shown = names.filter((n): n is string => !!n && n.trim().length > 0);
-      return shown.length > 0 ? shown.join(', ') : null;
-    } catch (e) {
-      console.warn(`[reel-send] the members of ${groupId.slice(0, 8)} could not be read`, e);
-      return null;
+  /** The name of one member, asked once for the whole sheet; a failed lookup names nobody, said. */
+  function memberName(userId: string): Promise<string | null> {
+    let pending = memberNames.get(userId);
+    if (!pending) {
+      pending = resolveUserDisplayName(userId).catch((e: unknown) => {
+        console.warn('[reel-send] a group member name could not be resolved', e);
+        return null;
+      });
+      memberNames.set(userId, pending);
     }
+    return pending;
+  }
+
+  /**
+   * The subtitles of `groupIds`: the first {@link SUBTITLE_NAMES} other members of each, every
+   * distinct member named once. A group the host could not read gets none (the host said it).
+   */
+  async function fillSubtitles(
+    read: NonNullable<Props['host']['groupMembers']>,
+    groupIds: string[],
+    me: string
+  ) {
+    const members = await read(groupIds);
+    const shownIds = new Map(
+      [...members].map(([gid, users]) => [
+        gid,
+        users.filter((u) => u !== me).slice(0, SUBTITLE_NAMES),
+      ])
+    );
+    const distinct = [...new Set([...shownIds.values()].flat())];
+    const names = new Map(
+      await Promise.all(distinct.map(async (u) => [u, await memberName(u)] as const))
+    );
+    const next = { ...groupSubtitles };
+    for (const [gid, users] of shownIds) {
+      const shown = users
+        .map((u) => names.get(u))
+        .filter((n): n is string => !!n && n.trim().length > 0);
+      if (shown.length > 0) next[gid] = shown.join(', ');
+    }
+    groupSubtitles = next;
   }
 
   onMount(() => {

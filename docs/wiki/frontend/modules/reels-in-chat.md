@@ -1761,8 +1761,12 @@ and its one file) is unchanged.
   one alphabetically (`reelSendSections`). A typed search is one untitled list of the matches,
   alphabetical, "Publier" still first. Round ticks on the right, multi-select, footer chips and
   "Envoyer (N)". **A group's row names a few members** (three, never this account), read from this
-  device's LOCAL MLS tree through the host's `groupMemberIds` (`getGroupMemberIdentities`, no server
-  call) and only for an `active` group; a failed read keeps the row and is said at warn.
+  device's LOCAL MLS trees through the host's `groupMembers` (`getGroupMemberIdentities`, no server
+  call) and only for an `active` group. **One batch for every listed group, read once MLS is ready**
+  (`readGroupMembersOnceReady` awaits `whenMlsReady`): a sheet opened while the login still runs asks
+  no tree until it can be answered, a session ending first costs one debug line, and the groups whose
+  tree this device lacks are said in ONE warn line for the batch, never one per group (review,
+  2026-11-17). **One name lookup per distinct member**, whatever groups they share, not three per group.
 - **One list component, two users.** `components/shared/ConversationPickList.svelte` draws the search,
   the titled sections and the rows (avatar, name, community or subtitle, a trailing mark the caller
   draws); it decides nothing (rows, order, role, disabled state and the tap are the caller's).
@@ -1782,7 +1786,8 @@ and its one file) is unchanged.
   `useMessaging.imageTo.svelte.test.ts` (a photo as one ordinary image message per held
   conversation, the staging untouched, a sign-out), `ReelSendSheet.svelte.test.ts` (search on top, sections and order, the "Publier" label, the pre-tick,
   the group subtitles), `ReelReview.svelte.test.ts` (one action vs two, the send glyph),
-  `reelSendTargets.test.ts` (`reelSendSections`, `reelSendKeyOf`, `userIdsOfIdentities`),
+  `reelSendTargets.test.ts` (`reelSendSections`, `reelSendKeyOf`, `userIdsOfIdentities`,
+  `readGroupMembersOnceReady`),
   `ForwardMessageModal.svelte.test.ts` (the factored list, behaviour unchanged).
 - **Readings**: rows 2, 3, 11 and 13 of [21.4](#214-the-bench-readings-before-the-flip) are taken on
   these screens; the others stand.

@@ -18,7 +18,7 @@ import { pushHistoryOverlay } from '$lib/utils/historyOverlayStack';
 import { m } from '$lib/paraglide/messages';
 import type { PublishReelDeps } from '$lib/reels/publishReel';
 import type { Conversation } from '$lib/types';
-import { toastStore } from '$lib/stores/toast.svelte';
+import { dismissToast, toastStore } from '$lib/stores/toast.svelte';
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
 import { giveMediaStreamGetTracks } from '$lib/reels/mediaStreamTracks.test-helper';
 
@@ -127,7 +127,7 @@ const host = {
   ),
   adopt: vi.fn(async () => {}),
   endWait: vi.fn(),
-  groupMemberIds: vi.fn(async () => []),
+  groupMembers: vi.fn(async () => new Map<string, string[]>()),
 } satisfies ReelSendHost;
 
 function publishDeps(): PublishReelDeps {
@@ -159,6 +159,8 @@ function publishDeps(): PublishReelDeps {
 let unstubCameras = () => {};
 let unregister = () => {};
 beforeEach(() => {
+  // Each test reads ITS toasts: one left by an earlier test would satisfy, or break, its assertions.
+  for (const t of [...toastStore.toasts]) dismissToast(t.id);
   writer.on = true;
   unstubCameras = stubCameraCount(2);
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
@@ -318,6 +320,7 @@ describe('"Envoyer a..." on the camera tab (RC-12)', () => {
     await click(target, '[data-reel-send-row="g-2"]');
     await click(target, '[data-reel-send-submit]');
     expect(toasts()).toContain(m.reel_sendto_photo_partial({ failed: 1, total: 2 }));
+    expect(toasts()).not.toContain(m.reel_sendto_sending({ count: 1 }));
     // Already in the other conversation: a second press would send it there twice.
     expect(target.querySelector('[data-reel-review]')).toBeNull();
     warn.mockRestore();

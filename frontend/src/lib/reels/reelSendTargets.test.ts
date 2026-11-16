@@ -12,7 +12,7 @@ import {
   REEL_SEND_RECENT_COUNT,
   toggleReelTarget,
 } from './reelSendTargets';
-import { userIdsOfIdentities } from './reelSendBridge';
+import { readGroupMembersOnceReady, userIdsOfIdentities } from './reelSendBridge';
 
 const ME = '11111111-1111-4111-8111-111111111111';
 const PEER = '22222222-2222-4222-8222-222222222222';
@@ -217,6 +217,58 @@ describe('userIdsOfIdentities: a group subtitle names each member once', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     expect(userIdsOfIdentities(['nocolon', 'b:web-1'])).toEqual(['b']);
     expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+});
+
+describe('readGroupMembersOnceReady: one batch, once MLS is ready, never one line per group', () => {
+  it('asks no tree before MLS is ready, then reads every group of the batch', async () => {
+    let ready!: () => void;
+    const readTree = vi.fn(async (id: string) => [`${id}-u:web-1`]);
+    const pending = readGroupMembersOnceReady(['g-1', 'g-2'], {
+      whenReady: () => new Promise<void>((resolve) => (ready = resolve)),
+      readTree,
+    });
+    await Promise.resolve();
+    expect(readTree).not.toHaveBeenCalled();
+    ready();
+    const members = await pending;
+    expect([...members]).toEqual([
+      ['g-1', ['g-1-u']],
+      ['g-2', ['g-2-u']],
+    ]);
+  });
+
+  it('a session that ends before MLS is ready reads nothing and warns nothing', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const readTree = vi.fn(async () => []);
+    const members = await readGroupMembersOnceReady(['g-1', 'g-2', 'g-3'], {
+      whenReady: async () => {
+        throw new Error('signed out');
+      },
+      readTree,
+    });
+    expect(members.size).toBe(0);
+    expect(readTree).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+    expect(debug).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+    debug.mockRestore();
+  });
+
+  it('groups with no tree here are left out and said in ONE warn line for the batch', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const members = await readGroupMembersOnceReady(['g-1', 'g-2', 'g-3'], {
+      whenReady: async () => {},
+      readTree: async (id) => {
+        if (id !== 'g-2') throw new Error('not held');
+        return ['a:web-1'];
+      },
+    });
+    expect([...members.keys()]).toEqual(['g-2']);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain('2 of 3');
     warn.mockRestore();
   });
 });

@@ -47,10 +47,12 @@ export interface ReelSendHost {
   /** The publish step ended: the take stops waiting for it. */
   endWait: (takeId: string) => void;
   /**
-   * The user ids in group `conversationId`, read from this device's LOCAL MLS tree (no server call):
-   * the sheet names a few of them under the group's row. Throws when the group is not held here.
+   * The user ids of each group in `conversationIds`, read from this device's LOCAL MLS trees (no
+   * server call) ONCE MLS IS READY - one batch, so a sheet opened before the login finished asks
+   * nothing until it can be answered ({@link readGroupMembersOnceReady}). A group missing from the
+   * answer has no tree here; the sheet names a few members under each group's row. Never rejects.
    */
-  groupMemberIds: (conversationId: string) => Promise<string[]>;
+  groupMembers: (conversationIds: readonly string[]) => Promise<ReadonlyMap<string, string[]>>;
 }
 
 let host: ReelSendHost | null = null;
@@ -83,4 +85,46 @@ export function userIdsOfIdentities(identities: readonly string[]): string[] {
     if (!ids.includes(parsed.userId)) ids.push(parsed.userId);
   }
   return ids;
+}
+
+/**
+ * The member user ids of each of `groupIds`, read in ONE BATCH once MLS is ready (`whenReady`, the
+ * session's `whenMlsReady`): a sheet opened while the login is still running waits for the answer
+ * rather than asking each tree, failing, and saying so per group. A session that ends first answers
+ * an empty map with one debug line. A group whose tree this device does not hold is left out, and
+ * every such group of the batch is said in ONE warn line (an `active` group with no tree is a fact
+ * worth seeing, once). Never rejects.
+ */
+export async function readGroupMembersOnceReady(
+  groupIds: readonly string[],
+  deps: { whenReady: () => Promise<void>; readTree: (groupId: string) => Promise<string[]> }
+): Promise<Map<string, string[]>> {
+  const members = new Map<string, string[]>();
+  if (groupIds.length === 0) return members;
+  try {
+    await deps.whenReady();
+  } catch (e) {
+    console.debug(
+      `[reel-send] the session ended before MLS was ready: ${groupIds.length} group(s) shown without members`,
+      e
+    );
+    return members;
+  }
+  let unreadable = 0;
+  let firstError: unknown = null;
+  for (const id of groupIds) {
+    try {
+      members.set(id, userIdsOfIdentities(await deps.readTree(id)));
+    } catch (e) {
+      unreadable += 1;
+      firstError ??= e;
+    }
+  }
+  if (unreadable > 0) {
+    console.warn(
+      `[reel-send] ${unreadable} of ${groupIds.length} active group(s) have no readable tree on this device - shown without members`,
+      firstError
+    );
+  }
+  return members;
 }
