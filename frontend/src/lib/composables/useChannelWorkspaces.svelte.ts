@@ -5,6 +5,7 @@ import { conversationBeingRead } from '$lib/utils/chat/arrivalRuntime';
 import {
   clearSalonUnreadLocally,
   communityUnreadUpTo,
+  noteUncountedSalonArrival,
   reconcileSalonUnreadFromServer,
 } from '$lib/utils/chat/salonUnread';
 import { flushSalonReadMarks } from '$lib/utils/chat/salonReadMarkQueue';
@@ -1362,7 +1363,11 @@ export function useChannelWorkspaces() {
    * this account cleared a community on another device (`channel.unread.cleared`), and to put the
    * truth back when a clear from here was refused. One request whatever the number of salons.
    */
-  function refreshSalonUnread(ctx: ChannelWorkspaceContext, reason: string): Promise<void> {
+  function refreshSalonUnread(
+    ctx: ChannelWorkspaceContext,
+    reason: string,
+    opts: { joinInFlight?: boolean } = {}
+  ): Promise<void> {
     return reconcileSalonUnreadFromServer({
       conversations: ctx.conversations,
       // The salon being READ, not the bare selection (`conversationBeingRead`).
@@ -1375,7 +1380,26 @@ export function useChannelWorkspaces() {
         ),
       log: ctx.log,
       reason,
+      ...opts,
     });
+  }
+
+  /**
+   * A live message of salon `channelId` could not be opened here, so nothing counted it: its badge
+   * is the server's count, asked by a request sent AFTER it arrived (`noteUncountedSalonArrival`).
+   */
+  function refreshSalonUnreadForUncountedArrival(
+    ctx: ChannelWorkspaceContext,
+    channelId: string
+  ): Promise<void> {
+    return noteUncountedSalonArrival(
+      channelId,
+      () =>
+        refreshSalonUnread(ctx, `salon ${channelId.slice(0, 8)} arrival not opened here`, {
+          joinInFlight: false,
+        }),
+      ctx.log
+    );
   }
 
   /**
@@ -2837,6 +2861,7 @@ export function useChannelWorkspaces() {
     retryFailedListing,
     /** Re-reads every salon's unread count from the server (one request). */
     refreshSalonUnread,
+    refreshSalonUnreadForUncountedArrival,
     /** "Marquer tout comme lu" on a community: every salon's badge, one request, no receipt. */
     markCommunityRead,
     /** Creates a new community (workspace) and logs the outcome. */

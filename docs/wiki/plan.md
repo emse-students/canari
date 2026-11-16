@@ -68,10 +68,8 @@ earliest version, as a checklist.
 - [P2 - what the keyboard readings of 2026-11-14 filed: a photo DM still jumps to older messages, a short thread loads history on close, a 12 px step](backlog.d/what-the-keyboard-readings-of-2026-11-14-filed.md)
 - [P2 - A post's pictures and videos: the layout from one to many, designed (owner, 2026-11-15)](backlog.d/p2-a-post-s-media-layout-one-to-many-pictures-and-videos.md)
 - [P2 - no gate proves that an older build reads, and writes back, the MLS state this build writes](backlog.d/p2-no-gate-proves-an-older-build-reads-the-mls-state-this-build-writes.md)
-- [P2 - the first message posted in a salon right after an in-session join raised no unread badge on the iPhone](backlog.d/p2-the-first-message-after-an-in-session-join-raised-no-badge-on-the-iphone.md)
 - [P2 - the reply swipe along a thumb's arc does nothing on WebKit: the thread scrolls instead](backlog.d/p2-the-reply-swipe-along-a-thumb-s-arc-does-nothing-on-webkit.md)
 - [P2 - a live ended itself (`upload-too-slow`) after 256 s on the iPhone, cause unproven](backlog.d/p2-a-live-ended-itself-upload-too-slow-after-256-s-on-the-iphone.md)
-- [P2 - a private salon granted to a member after their in-session join raises no unread badge on the Mi 9T](backlog.d/p2-a-private-salon-granted-after-an-in-session-join-raises-no-badge-on-the-mi-9t.md)
 - [P2 - the on-air top row pushes the chat toggle and End off a 390 pt screen](backlog.d/p2-the-on-air-top-row-pushes-the-end-and-chat-buttons-off-a-390-pt-screen.md)
 
 **P3 - hygiene**
@@ -113,10 +111,10 @@ earliest version, as a checklist.
 - [ ] [a FIRST message from someone with no conversation yet notifies, end to end](backlog.d/reading-owed-a-first-message-from-someone-with-no-conversation-yet-notifies-end.md)
 - [ ] [openings for followers, WP-4](backlog.d/reading-owed-openings-for-followers-wp-4.md)
 - [ ] [the Emojis preference row and its neighbours at 390 pt, on a phone](backlog.d/p3-the-emojis-preference-row-squeezes-its-description-on-a-phone.md)
-- [ ] [the pre-live screen says a suspension before Start](backlog.d/reading-owed-the-pre-live-screen-says-a-suspension-before-start.md)
 - [ ] [a private salon granted after an in-session join is readable on the iPhone, with its badge](backlog.d/p2-a-private-salon-granted-after-an-in-session-join-is-unreadable-on-the-iphone.md)
 - [ ] [one "server already unreachable" line per spell, read on a phone log after a real outage](backlog.d/p3-server-already-unreachable-is-logged-per-request.md)
 - [ ] [a salon invitation's notice still reads as a sentence, live and from history (2026-11-16)](backlog.d/reading-owed-a-channel-invite-notice-names-ids-and-draws-live.md)
+- [ ] [a salon message arriving before its seed raises its badge (granted salon, in-session join)](backlog.d/reading-owed-a-salon-message-arriving-before-its-seed-raises-its-badge.md)
 - [ ] [the live viewer's top bar at 360-436 css px portrait (name whole, no button over the second row)](backlog.d/reading-owed-the-live-viewer-top-bar-at-360-436-px.md)
 
 ## 1.8.0

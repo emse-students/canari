@@ -2310,6 +2310,7 @@ export async function loginImpl(
       onChannelDeleted: cb.onChannelDeleted,
       onWorkspaceUpdated: cb.onWorkspaceUpdated,
       onSalonUnreadCleared: cb.onSalonUnreadCleared,
+      onSalonArrivalUncounted: cb.onSalonArrivalUncounted,
       onWorkspaceRoleChanged: cb.onWorkspaceRoleChanged,
       onWorkspaceDeleted: cb.onWorkspaceDeleted,
       onChannelMessageDeleted: cb.onChannelMessageDeleted,
