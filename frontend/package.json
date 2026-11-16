@@ -64,7 +64,7 @@
     "jspdf": "^4.2.1",
     "jsqr": "^1.4.0",
     "marked": "^18.0.14",
-    "mediabunny": "^1.65.2",
+    "mediabunny": "^1.66.0",
     "pdfjs-dist": "^6.5.438",
     "qrcode": "^1.5.4",
     "simple-rnnoise-wasm": "1.1.0",
