@@ -27,6 +27,10 @@ describe('the desktop top bar control row', () => {
     expect(avatarButton).not.toMatch(/class="tap-target /);
   });
 
+  it('draws the avatar photo at the 32px md step, inside the 38px box with room for the ring', () => {
+    expect(navbar).toMatch(/<Avatar userId=\{globalSession\.userId\} size="md" \/>/);
+  });
+
   it('keeps the connection ring a box-shadow, so it cannot change the row', () => {
     expect(navbar).toContain('ring-2');
     expect(navbar).not.toMatch(/\bborder-2\b|\boutline-2 ring/);
@@ -41,5 +45,10 @@ describe('the desktop top bar control row', () => {
     expect(logOut).not.toBeNull();
     expect(logOut![1]).toBe(grip![1]);
     expect(logOut![2]).toBe(grip![2]);
+    // The busy spinner replaces the glyph in the same box: it must not make the button look different.
+    const spinner = session.match(/<LoaderCircle size=\{(\d+)\} strokeWidth=\{([\d.]+)\}/);
+    expect(spinner).not.toBeNull();
+    expect(spinner![1]).toBe(grip![1]);
+    expect(spinner![2]).toBe(grip![2]);
   });
 });
