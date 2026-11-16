@@ -1094,11 +1094,16 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
         `[ring] ring-end call=${callId} reason=${reason} user=${userId} names no room of group=${groupId} - their own devices only`
       );
     }
-    // `room-empty` speaks for the ROOM, so it is believed only from a user who was given a way
-    // into it: a token for THIS call. Read only for that reason - the others never consult it.
+    // A GROUP call rings everyone at once: one member answering or declining stops THEIR devices
+    // only, and the others go on ringing. Only the caller's ring-end is the ring's end for all.
+    const memberOfGroupCall =
+      !unbound && binding.maxSeats !== undefined && binding.callerId !== userId;
+    // ...and a participant's `room-empty` (WP-GC7): nobody is left in the room to answer into. It
+    // speaks for the ROOM, so it is believed only from a user who was given a way into it - a token
+    // for THIS call. It only WIDENS that rule: the caller and a 1:1 never consult the mark.
     const roomEmptyFromParticipant =
-      !unbound && reason === 'room-empty' && (await this.heldRoomToken(callId, userId));
-    if (!unbound && reason === 'room-empty' && !roomEmptyFromParticipant) {
+      memberOfGroupCall && reason === 'room-empty' && (await this.heldRoomToken(callId, userId));
+    if (memberOfGroupCall && reason === 'room-empty' && !roomEmptyFromParticipant) {
       this.logger.warn(
         `[ring] ring-end call=${callId} room-empty REFUSED for every member: user=${userId} was never issued a token for this call - their own devices only`
       );
@@ -1107,14 +1112,7 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
         `[ring] ring-end call=${callId} room-empty from a participant - every member's ring ends (user=${userId})`
       );
     }
-    // A GROUP call rings everyone at once: one member answering or declining stops THEIR devices
-    // only, and the others go on ringing. Only the caller's ring-end is the ring's end for all -
-    // and a participant's `room-empty`: nobody is left in the room to answer into.
-    const ownOnly =
-      unbound ||
-      (reason === 'room-empty'
-        ? !roomEmptyFromParticipant
-        : binding.maxSeats !== undefined && binding.callerId !== userId);
+    const ownOnly = unbound || (memberOfGroupCall && !roomEmptyFromParticipant);
     if (!ownOnly) {
       // The mark spares a late VoIP push; the ring-end pushes below stop rings ALREADY showing, so
       // a Redis failure here is logged and never keeps them from leaving.

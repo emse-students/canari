@@ -2064,7 +2064,12 @@ this service issued a room token for THAT call: `call:room:<id>:tokened:<user>`,
 caller at `initiate` and for a callee at `room-token`, before the token leaves, with the binding's
 TTL. From anyone else, `room-empty` stops only the sender's devices and logs
 `room-empty REFUSED for every member` at WARN; a `room-empty` naming no room of the conversation is
-the sender's own devices, as every unbound ring-end. The other three reasons are unchanged.
+the sender's own devices, as every unbound ring-end. The other three reasons are unchanged, and
+`room-empty` only WIDENS the rule: the caller's ring-end and a 1:1's already reach everyone, so
+neither reads the mark. The mark is per call by construction (the room id is a fresh UUID at
+`initiate`), and its TTL is never the one that decides: once the binding expires the ring-end is
+unbound anyway. What it cannot prove is that the room IS empty - neither the mesh nor the server
+sees occupancy - so a participant's `room-empty` is trusted as far as their membership.
 
 - **Pinned by** `calls.service.spec.ts` (`an emptied room ends every ring (WP-GC7)`).
 - **Owed:** the client line - `CallService.endCall` sending `room-empty` exactly when its hangup

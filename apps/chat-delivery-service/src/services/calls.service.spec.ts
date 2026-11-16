@@ -1717,11 +1717,12 @@ describe('CallsService', () => {
       /** A mesh group call opened by `caller`, with `b` holding a room token for it. */
       const openWithJoiner = async (): Promise<string> => {
         groupCallsMode = 'mesh';
+        // Before `ringGroup`: its background fan-out reads the push tokens too.
+        pushTokenRepo.find.mockResolvedValue([]);
         const { roomId } = await service.initiateCall('caller', 'group-1', false, 1);
         await service.ringGroup('caller', 'group-1', roomId, false);
         groupMemberRepo.findOne.mockResolvedValue({ groupId: 'group-1', userId: 'b' });
         await service.requestRoomToken('b', 'group-1', roomId, '1');
-        pushTokenRepo.find.mockResolvedValue([]);
         return roomId;
       };
 
@@ -1771,6 +1772,27 @@ describe('CallsService', () => {
           expect(lastTokenLookup()).toEqual(['b']);
         }
         expect(redisStore.has(`call:room:${roomId}:ring_ended`)).toBe(false);
+      });
+
+      it('room-empty only WIDENS a ring-end: the caller and a 1:1 never consult the token mark', async () => {
+        jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+        const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+        const roomId = await openWithJoiner();
+
+        // The caller's ring-end was the ring's end for all before WP-GC7; it still is, mark or not.
+        redisStore.delete(`call:room:${roomId}:tokened:caller`);
+        groupMemberRepo.findOne.mockResolvedValue({ groupId: 'group-1', userId: 'caller' });
+        await service.endRing('caller', 'group-1', roomId, 'room-empty');
+        expect(lastTokenLookup()).toEqual(['caller', 'b', 'c', 'd']);
+
+        // A 1:1 ring-end from either side reached both before WP-GC7; `room-empty` changes nothing.
+        groupMemberRepo.find.mockResolvedValue(members('caller', 'callee'));
+        groupMemberRepo.findOne.mockResolvedValue({ groupId: 'group-1', userId: 'caller' });
+        const { roomId: oneToOne } = await service.initiateCall('caller', 'group-1');
+        groupMemberRepo.findOne.mockResolvedValue({ groupId: 'group-1', userId: 'callee' });
+        await service.endRing('callee', 'group-1', oneToOne, 'room-empty');
+        expect(lastTokenLookup()).toEqual(['caller', 'callee']);
+        expect(captured(warn)).not.toContain('room-empty REFUSED');
       });
 
       it('a room-empty naming no room of this conversation stops only the sender devices', async () => {
