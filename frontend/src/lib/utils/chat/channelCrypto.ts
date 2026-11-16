@@ -5,7 +5,8 @@ import {
 } from '$lib/services/ChannelService';
 import { encodeAppMessage, decodeAppMessage, mkEdit, mkPoll, mkReaction } from '$lib/proto/codec';
 import type { DecodedChannelEdit } from '$lib/utils/chat/channelEdit';
-import { appMsgToEnvelope, appMsgToChannelSystemEnvelope } from '$lib/utils/chat/messageUtils';
+import { appMsgToEnvelope } from '$lib/utils/chat/messageUtils';
+import { channelSystemEnvelope } from './channelNotice';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import {
   GraineAuthorMismatchError,
@@ -318,7 +319,8 @@ async function decodeOpenedRow(
     }
     if (decoded) {
       const envelope =
-        appMsgToEnvelope(decoded, serverMs) ?? appMsgToChannelSystemEnvelope(decoded, serverMs);
+        appMsgToEnvelope(decoded, serverMs) ??
+        (await channelSystemEnvelope(decoded, serverMs, String(row.senderId || '').toLowerCase()));
       if (envelope) {
         content = envelope.content;
         timestamp = envelope.options.timestamp;
