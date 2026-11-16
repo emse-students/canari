@@ -72,8 +72,9 @@ import {
 } from '$lib/utils/chat/eviction';
 import { dropGroupState } from '$lib/utils/chat/dropGroupState';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
+import { awaitExternalCommitVerdict } from '$lib/utils/chat/externalCommitVerdict';
 import { isDistributionGroupMeta } from '$lib/utils/chat/groupLifecycle';
-import type { GroupMeta } from '../IMlsService';
+import type { GroupMeta, IMlsService } from '../IMlsService';
 import { channelScope, workspaceScope } from '../distributionScope';
 import { workspaceForChannel } from '$lib/utils/graine/runtime';
 import { noteServerTime } from '$lib/utils/chat/serverClock';
@@ -406,6 +407,28 @@ function registerFromServerRow(
 }
 
 /**
+ * Waits for the gate's answer to this device's own external commit for `groupId`, if one is in
+ * flight, before a Welcome handler asks whether the group is held.
+ *
+ * Until that answer the group is held by a commit nobody has accepted, and "held" there means "I
+ * asked to be in", not "I am in": a Welcome ignored on it as a redelivery is gone when the gate then
+ * refuses the commit and the state is dropped - the device then waits for good for the Welcome it
+ * threw away. The line is the record that the race was met; its rate says how often.
+ */
+async function settleOwnExternalCommit(
+  mlsService: Pick<IMlsService, 'getLocalGroups'>,
+  groupId: string,
+  label: string,
+  log: (msg: string) => void
+): Promise<void> {
+  if (await awaitExternalCommitVerdict(mlsService, groupId)) {
+    log(
+      `[WELCOME] ${label} arrived while this device's own external commit awaited the gate - read after its answer, held now: ${String(holdsGroupState(mlsService, groupId))}`
+    );
+  }
+}
+
+/**
  * Installs a Welcome into a Graine key-distribution group - the admitter's door of
  * channel-encryption section 20 - WITHOUT the conversation machinery of {@link handleWelcome}.
  *
@@ -457,6 +480,10 @@ async function handleDistributionWelcome({
         log(`[WELCOME] key group ${short}... membership not promoted: ${String(e).slice(0, 120)}`)
       );
 
+  // SETTLED BEFORE IT IS READ: a group this device's own external commit holds while the gate has
+  // not answered is not joined yet, and a refusal drops it - so the Welcome waits for that answer
+  // (`externalCommitVerdict.ts`; iPhone 12, 2026-11-16).
+  await settleOwnExternalCommit(mlsService, groupId, `key group ${short}...`, log);
   const held = holdsGroupState(mlsService, groupId);
   const live =
     held &&
@@ -584,6 +611,8 @@ async function handleWelcome({
   //
   // A FAILURE TO READ MEMBERSHIP IS NOT AN EVICTION: `null` keeps the idempotent path, because
   // treating "could not tell" as "removed" would forget the state of groups this device is still in.
+  // SETTLED BEFORE IT IS READ - the same window as a key group's (`handleDistributionWelcome`).
+  await settleOwnExternalCommit(mlsService, terminalId, `${terminalId.slice(0, 8)}…`, log);
   const heldLocally = holdsGroupState(mlsService, terminalId);
   const readmittedAfterEviction =
     heldLocally &&

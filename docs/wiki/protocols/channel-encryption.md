@@ -3474,6 +3474,39 @@ three places treated it as a conversation:
 Left open - a Welcome whose row is unreadable for a group this session does not know either - is
 in [backlog](../backlog.md).
 
+### A Welcome arriving while this device's own external commit awaits the gate was thrown away - FIXED 2026-11-16
+
+Read on the iPhone 12, `1.7.0-alpha.5`, a private salon granted right after an in-session community
+join ([entry](../backlog.d/p2-a-private-salon-granted-after-an-in-session-join-is-unreadable-on-the-iphone.md)):
+`[WELCOME] ... is a KEY-DISTRIBUTION group - installing it as a seed carrier`, `key group ... already
+held - redelivered Welcome ignored (idempotent)`, then `dropped local state for ... (the server refused
+the external commit)`, `externalJoin REFUSED ... reason epoch_mismatch, group at 3`, and the retry
+`a Welcome is owed to this device (welcome-queued) - not joining by external commit`. The salon stayed
+unreadable (`Group not found`, `no seed`) for good.
+
+**One door at a time held; the predicate on the other side did not.** The newcomer's external commit
+was built on a base read before the admitter's Add, so the seat it was served said nothing was owed,
+and the gate refused it as designed. But an external commit is applied to the instance that builds it,
+under the MLS lock, and submitted OUTSIDE it: for the whole round trip `holdsGroupState` and
+`isGroupActive` both answer `true` for a group nobody has accepted. "Held" there means "I asked to be
+in", not "I am in". The admitter's Welcome landed in that span, read the first as the second, and was
+ACKed as a redelivery; the refusal then dropped the state, and the only door left was the Welcome just
+spent. Section 20's "already held" lines of 2026-10-25..29 were the same window with the other
+outcome: the commit was accepted, so ignoring the Welcome cost nothing.
+
+**The fix** (`frontend/src/lib/utils/chat/externalCommitVerdict.ts`): `externalJoin` opens a window
+per group under the MLS lock BEFORE the build, and closes it in a `finally` once the gate's answer
+has been applied - merged on acceptance, dropped on a refusal or an unreachable gate, or never built.
+`handleDistributionWelcome` and `handleWelcome` await `awaitExternalCommitVerdict` before asking
+whether the group is held, so the question is asked of a settled group: accepted means joined (the
+Welcome is redundant, the idempotent path), refused means not held (the Welcome installs, its
+KeyPackage still unconsumed). No clock: the wait ends on the gate's answer, which `submitCommit`
+always returns or throws. When the race is met, the handler logs `[WELCOME] <group> arrived while this
+device's own external commit awaited the gate - read after its answer, held now: <bool>`, which is
+what a reading counts. Tests: `externalCommitVerdict.test.ts`, the window cases in
+`BaseMlsService.externalJoin.test.ts`, and both Welcome paths in `setupMessageHandler.test.ts`
+(written failing first).
+
 ## 21. Graine v2: an author that is proven, a ciphertext bound to its place - DECIDED BY THE USER 2026-09-28
 
 **Why.** §7's table: v1 hides the content from the server and authenticates nothing about who wrote
