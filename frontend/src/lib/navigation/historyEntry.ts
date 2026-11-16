@@ -28,6 +28,8 @@ export interface EntryMemory {
   fromRouteId?: string;
   /** The offset of the page scroller when the entry was last left. */
   top?: number;
+  /** The content on screen then (a `data-scroll-anchor` id) and its distance from the box's top. */
+  anchor?: { id: string; offset: number };
 }
 
 const MAX_ENTRIES = 200;

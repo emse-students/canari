@@ -73,7 +73,7 @@ describe('clearAuthLocally - the tab another tab told of a deletion', () => {
 
   it('is not what clearAuth does: a deliberate sign-out still revokes', async () => {
     fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
-    await clearAuth();
+    await clearAuth('chosen');
     expect(String(fetchMock.mock.calls[0][0])).toContain('/api/auth/logout');
     expect(clearNativeRefreshToken).toHaveBeenCalledTimes(1);
   });
