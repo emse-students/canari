@@ -15,3 +15,7 @@ again at a doubled root font ([design-reference](../frontend/design-reference.md
 description runs in two or three lines at the full card width with the "Systeme / Canari" control below
 it, and no row of the page keeps a text column narrower than half the card. A screenshot at 390 pt is the
 closing reading; the entry is then deleted.
+
+The Langue and Visite guidee rows took the same shape (one shared `CONTROL_ROW` constant; the language control and the replay button
+are `w-full` under the text, `sm:w-auto` beside it), after the Mi 9T doubled-font reading of 2026-11-17 showed them squeezed. Guard:
+`SettingsPreferencesSection.controlRows.svelte.test.ts`. The same reading applies to them at a doubled root font.
