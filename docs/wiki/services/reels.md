@@ -120,6 +120,7 @@ days before 2026-11-09).
 **Editing** (`PATCH /api/posts/:id`): a reel's caption is the only thing that can change. A payload
 naming `media`, `images`, `polls`, `attachedFormId`, `linkedCalendarEventId` or `scheduledAt` on a
 reel is a `400` - the video, its duration and its expiry are fixed at publication.
+**The editor honours it (2026-11-16):** `EditPostForm` sends a reel's caption (and the students-only switch, the reach) and nothing else - no `media`, `polls`, `scheduledAt`, `attachedFormId` - and draws no attachment chip, media strip or drop target (`PostComposerBar` `captionOnly`). It used to resend the reel's own video as `media`, so every caption save answered 400. The server rule is unchanged on purpose: the client is the one that knows it changed nothing else. Ordinary posts keep sending their media. Test: `EditPostForm.reel.svelte.test.ts`.
 
 ### Reading
 
