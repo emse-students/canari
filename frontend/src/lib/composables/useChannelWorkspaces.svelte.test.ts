@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { decodeAppMessage } from '$lib/proto/codec';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 import { SvelteMap } from 'svelte/reactivity';
@@ -2156,6 +2157,23 @@ describe('useChannelWorkspaces - the membership notice', () => {
     const [channelId, , , , , options] = sendEncryptedChannelMessage.mock.calls[0];
     expect(channelId).toBe('channel_c1');
     expect(options).toEqual({ silent: true });
+  });
+
+  // The id shape (`{ newUsers }`) is read by this build, but a build at the floor draws `system.data`
+  // as text: until `minClientVersion` passes the reader, the frame stays the sentence every supported
+  // build draws (`CHANNEL_NOTICE_IDS_WRITER_ENABLED`, legacy-compatibility).
+  it('sends the sentence every supported build reads, never raw ids, while the writer is off', async () => {
+    await useChannelWorkspaces().inviteMemberToChannel(
+      'channel_c1',
+      'newcomer',
+      'member',
+      makeContext()
+    );
+
+    const bytes = sendEncryptedChannelMessage.mock.calls[0][1] as Uint8Array;
+    const sent = decodeAppMessage(bytes)!;
+    expect(sent.system?.event).toBe('memberAdded');
+    expect(sent.system?.data).toBe('notice');
   });
 
   // A member hands the newcomer the past only on a proof it can check: the admission this device

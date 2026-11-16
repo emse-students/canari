@@ -255,7 +255,10 @@
       </div>
     </div>
 
-    <div class="flex items-center justify-between gap-4">
+    <div
+      class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4"
+      data-emoji-style-setting
+    >
       <div class="flex items-center gap-3.5">
         <div class="text-text-muted rounded-xl bg-black/5 p-2.5 dark:bg-black/40">
           <Smile size={20} strokeWidth={2.5} />
@@ -274,7 +277,7 @@
         onSelect={setEmojiStyle}
         label={m.settings_emoji_style_label()}
         tone="yellow"
-        class="w-44 shrink-0"
+        class="w-full shrink-0 sm:w-44"
       />
     </div>
 

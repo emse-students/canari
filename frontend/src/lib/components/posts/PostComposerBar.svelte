@@ -124,7 +124,8 @@
   const full = $derived(attachmentsFull(attachmentCount));
   /** The line beside the formatting toggle: the attachment counter, then the status, one message. */
   const statusLine = $derived.by(() => {
-    if (attachmentCount === 0) return status;
+    // A caption-only form (a reel's edit) has no attachment to count: its video is not one the author edits.
+    if (captionOnly || attachmentCount === 0) return status;
     const counter = m.post_attachments_counter({
       count: attachmentCount,
       max: POST_ATTACHMENTS_MAX,
@@ -369,7 +370,8 @@
       class="text-2xs min-w-0 flex-1 truncate font-semibold {full
         ? 'text-accent-text'
         : 'text-text-muted'}"
-      data-attachment-counter={attachmentCount > 0 ? '' : undefined}>{statusLine}</span
+      data-attachment-counter={!captionOnly && attachmentCount > 0 ? '' : undefined}
+      >{statusLine}</span
     >
     {@render action()}
   </div>
