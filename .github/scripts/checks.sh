@@ -172,13 +172,14 @@ check_frontend_test_related() {
   deleted="$(git diff --name-only --no-renames --diff-filter=D "$base" HEAD -- frontend/src/)"
   if [ -n "$setup" ] || [ -n "$deleted" ]; then
     if [ -n "$setup" ]; then
-      echo "frontend-test: the test setup changed ($(head -1 <<<"$setup" | sed 's#^frontend/##')) - the whole suite runs"
+      echo "frontend-test: the test setup changed ($(head -1 <<<"$setup" | sed 's#^frontend/##')) - the whole suite is CI's"
     else
-      echo "frontend-test: a file under frontend/src was deleted ($(head -1 <<<"$deleted" | sed 's#^frontend/##')) - the whole suite runs"
+      echo "frontend-test: a file under frontend/src was deleted ($(head -1 <<<"$deleted" | sed 's#^frontend/##')) - the whole suite is CI's"
     fi
-    [ "${CHECKS_DRY_RUN:-}" = "1" ] && return 0
-    (cd frontend && bun run test)
-    return
+    # The whole suite is 40+ min on a workstation and 6 on a runner, so it is never run at push
+    # (owner, 2026-11-16: "Je veux que notre workflow soit le plus rapide possible"); CI runs it on
+    # every pull request, and this line names what the push did not prove.
+    return 0
   fi
   local sources=() name f
   while IFS= read -r f; do
