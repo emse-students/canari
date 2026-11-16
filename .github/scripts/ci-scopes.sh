@@ -196,6 +196,13 @@ fi
 # Ask what the gate READS. These read `frontend/` whole, so the trigger is `frontend/`
 # whole, minus nothing that is not separately covered.
 #
+# EVERY CONFIG FILE AT `frontend/`'S TOP LEVEL THAT SHAPES THE SUITE IS LISTED (2026-11-16): `kit.config.js`
+# (adapter, aliases, paths), `oxvelte.config.json` (the Svelte lint) and `project.inlang/` (the
+# Paraglide settings the messages are generated from) were not, so a change to ONLY one of them ran
+# neither the vitest shards nor the build (`kit.config` fed `frontend_build` below and nothing else).
+# `checks.sh frontend-test-related` already treated `kit.config.js` and `project.inlang/` as a test-setup
+# change; the scope that lets it run at all now agrees.
+#
 # `bun.lock` and `patches/` decide which library code the suite runs (2026-10-13): a
 # lockfile-only bump of a patched dependency drops its patch silently, and only
 # `patchedDependencies.test.ts` and the behavioural test behind the patch would say so.
@@ -206,7 +213,7 @@ fi
 if has '^frontend/src/' || has '^frontend/src-tauri/' || has '^frontend/static/' || \
    has '^apps/social-service/src/channels/channel-retention\.scheduler\.ts$' || \
    has '^frontend/package\.json' || has '^frontend/bun\.lock' || has '^frontend/patches/' || \
-   has '^frontend/svelte\.config' || \
+   has '^frontend/svelte\.config' || has '^frontend/kit\.config' || has '^frontend/oxvelte\.config' || has '^frontend/project\.inlang/' || \
    has '^frontend/messages/' || has '^frontend/knip\.json' || has '^frontend/dead-code-' || \
    has '^\.github/scripts/dead-code-ratchet\.mjs' || \
    has '^frontend/vite\.config' || has '^frontend/vitest\.config' || \
