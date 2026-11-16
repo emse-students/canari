@@ -73,7 +73,6 @@ earliest version, as a checklist.
 - [P2 - a live ended itself (`upload-too-slow`) after 256 s on the iPhone, cause unproven](backlog.d/p2-a-live-ended-itself-upload-too-slow-after-256-s-on-the-iphone.md)
 - [P2 - a private salon granted after an in-session join is listed but unreadable on the iPhone, and raises no badge](backlog.d/p2-a-private-salon-granted-after-an-in-session-join-is-unreadable-on-the-iphone.md)
 - [P2 - a private salon granted to a member after their in-session join raises no unread badge on the Mi 9T](backlog.d/p2-a-private-salon-granted-after-an-in-session-join-raises-no-badge-on-the-mi-9t.md)
-- [P2 - the on-air top row pushes the chat toggle and End off a 390 pt screen](backlog.d/p2-the-on-air-top-row-pushes-the-end-and-chat-buttons-off-a-390-pt-screen.md)
 
 **P3 - hygiene**
 
@@ -117,6 +116,7 @@ earliest version, as a checklist.
 - [ ] [the pre-live screen says a suspension before Start](backlog.d/reading-owed-the-pre-live-screen-says-a-suspension-before-start.md)
 - [ ] [one "server already unreachable" line per spell, read on a phone log after a real outage](backlog.d/p3-server-already-unreachable-is-logged-per-request.md)
 - [ ] [a salon invitation's notice still reads as a sentence, live and from history (2026-11-16)](backlog.d/reading-owed-a-channel-invite-notice-names-ids-and-draws-live.md)
+- [ ] [the broadcaster's on-air top row at 390 pt and 360 css px (End and the chat toggle on screen)](backlog.d/reading-owed-the-live-on-air-top-row-at-390-pt-and-360-px.md)
 - [ ] [the live viewer's top bar at 360-436 css px portrait (name whole, no button over the second row)](backlog.d/reading-owed-the-live-viewer-top-bar-at-360-436-px.md)
 
 ## 1.8.0
