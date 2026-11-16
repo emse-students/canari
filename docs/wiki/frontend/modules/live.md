@@ -498,8 +498,6 @@ chat and reactions (WP-L6) are [below](#the-chat-and-the-floating-reactions-clie
 
 The bar is a wrapping flex row: the identity column (`data-live-top-identity`: name, then LIVE, time, count) has `min-w-40 flex-1 basis-40`, and the six actions (report, sound, rotate, chat, share, close) are ONE group (`data-live-top-actions`, `ml-auto shrink-0`, each `.ui-icon-button` at 44 px). With room (landscape, wide phones) they share a row; below the name's floor the whole group drops to its own row under the second line, so the name is never crushed to "Canari Te..." and no button sits over the count (Mi 9T, 436 css px, found 2026-11-16). Test: `LiveViewer.svelte.test.ts` (structure; happy-dom has no layout). A 360-436 px reading is owed ([entry](../../backlog.d/reading-owed-the-live-viewer-top-bar-at-360-436-px.md)).
 
-**The broadcaster's on-air row is the same bar (2026-11-16).** At 390 pt on air, the old `justify-between` row with an unshrinking left block drew the chat toggle and End past the right edge, absent from the accessibility tree: the broadcaster could leave only by Back. `LiveBroadcaster.svelte` now takes its layout from the same three constants as the viewer (`components/live/liveTopBar.ts`: bar, identity floor, non-shrinking actions), so the actions (flip, mic, camera, share, chat toggle, End) wrap whole to their own row under the identity column (`data-live-top-bar`, `data-live-top-identity`, `data-live-top-actions`) and End is always on screen, down to 360 css px (six 44 px targets and gaps are 304 px, under the 336 px of the row). Before air, the close button stays at the left and shares the row. Test: `LiveBroadcaster.svelte.test.ts` (structure). Reading owed: [entry](../../backlog.d/reading-owed-the-live-on-air-top-row-at-390-pt-and-360-px.md).
-
 ### What stacks over the viewer (2026-11-07)
 
 **Since 2026-11-13 the viewer and what opens over it are on the overlay stack (`utils/overlayStack.ts`): whatever opens later is on top, with no rung and no mark. (The text below is the 2026-11-07 history, when `utils/viewerLayer.ts` and `--z-viewer-dialog` did this.)** **The defect (owner, Android, 2026-11-07):** a live's link shared "via Canari" arrives as an incoming share, whose picker (`IncomingShareHost`, mounted at the app root) is OUTSIDE the viewer's subtree, so no mark reached it and it opened on 280, under the viewer, until the live closed. `IncomingShareHost` now marks itself; the same fix covers the reel viewer and the broadcaster overlay. Test: `IncomingShareHost.svelte.test.ts`. The viewer has no other sheet (the header has a viewer COUNT, not a list; reactions are an in-page layer).
@@ -1439,8 +1437,50 @@ flips only before the live: on air a stray tap would cut a gap. Whether a disabl
 frames and silence in the Android WebView's and WKWebView's recorders is a phone reading, owed with
 the others.
 
-**Owed - the owner's real-browser reading**, one entry:
-the entry deleted 2026-11-14 (a reading of unshipped scenes; the screen picker cannot be driven on the bench): re-file it on the pre-release that first carries the scenes.
+**Owed - the owner's real-browser reading**, one entry, re-filed 2026-11-16 on the `1.7.0`
+pre-releases that carry the scenes:
+[the scenes read by the owner](../../backlog.d/reading-owed-screen-share-in-a-desktop-live-the-scenes-read-by-the-owner.md).
+
+### Screen share in a desktop live: what `1.7.0` carries (2026-11-16)
+
+The roadmap's `1.7.0` line "screen share in lives on a desktop (the owner's reading)" (owner,
+2026-11-13) IS the scenes above, built in #3508 and in every `1.7.0` pre-release; what the stable
+waits for is the reading, not more code. Re-read against the brief of 2026-11-16, point by point:
+
+- **The capture**: `getDisplayMedia` from the scene button's click, in a desktop browser
+  (`liveScenesAvailable()`); ideal 1280x720 at 30 fps asked; the microphone kept, the share's sound
+  only asked (the picker decides).
+- **Camera <-> screen without ending the live**: not a track swap on the recorder (`replaceTrack`
+  has no `MediaRecorder` equivalent, and a recorder restart is a gap on every viewer) but ONE
+  composed stream - the canvas track and the mixed audio track made once and recorded from Start to
+  End; a scene changes what is DRAWN, never the tracks ([one stream](#scenes-on-a-desktop-live-owner-2026-11-14)).
+- **What the viewer sees**: the composed 1280x720 frames, the same `LIVE_RECORDER_MIME`, seal and
+  segments as a phone's live - an old viewer plays it, nothing tells a viewer the source changed
+  except the picture. A share stopped from the browser's bar shows "Je reviens", never the camera.
+- **Moderation**: unchanged - report, cut, remove-viewer and blocks act on the live, whatever it
+  shows ([the moderation client](#the-moderation-client-wp-l8s-client-half-2026-10-19)). Nothing is
+  analysed server-side: the segments are sealed, so a screen is moderated exactly as a camera is,
+  by reports. The privacy sentence under the scenes tells the member that viewers see everything
+  shared.
+- **The encoder and upload path**: unchanged by construction - the frame never changes size, every
+  segment starts on its own keyframe, the bitrate is the recorder's (~1.5-1.6 Mb/s measured hidden),
+  and a hidden tab keeps drawing through the worker clock. A screen of fine text at 1280x720 is the
+  cost accepted: the frame is the viewers' decoders' and phones' size, and a larger one would raise
+  every viewer's download for every scene.
+- **Mobile**: nothing - a phone records its camera directly, no scene bar. A phone's own screen is
+  [its own entry](../../backlog.d/broadcast-a-phone-screen-in-a-live.md) (native work on both).
+- **The Tauri shell: nothing, DECIDED 2026-11-16 (reversible)**. No desktop app ships - the Linux
+  AppImage is suspended ([cicd](../../cicd.md#the-linux-desktop-build-is-suspended-not-lost-2026-09-03))
+  and no Windows or macOS bundle is released - so a desktop member broadcasts from a browser, and
+  `liveScenesAvailable()` keeps refusing `isTauriRuntime()`: WebView2 and WebKitGTK answer
+  `getDisplayMedia` differently or not at all, and a path no build ships cannot be read. Lifting it
+  is one condition removed plus a reading on each desktop webview, the day a desktop app is released.
+
+**Work packages**: none left to build for `1.7.0`. **Readings owed**: the one above, read by the bench on `1.7.0-alpha.5` (2026-11-16, a shared TAB through a
+flag that skips the picker, [sitting](../../device-verification.md#the-desktop-screen-share-reading-of-2026-11-16-170-alpha5)); the owner keeps
+only the hand rows (the real picker and window, the bar's own button, the camera light). Not measured and not owed for the stable:
+Safari on macOS (it records MP4, so it would get the scenes; no Mac on the bench) and a modest
+laptop's drawing cost (the reading's `[LIVE-STUDIO] drew` line answers it on the owner's machine).
 
 ## Why a desktop browser cannot broadcast, and Firefox (2026-10-31)
 
