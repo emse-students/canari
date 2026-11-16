@@ -90,6 +90,9 @@ export const LEAF_ROW_NARRATION = [
   // THE PEER'S SWEEP MEETING THE OWNER'S ADD LOCK: the Add that seats the peer holds the group's add lock, the peer's
   // pending-invitation sweep finds it taken, skips and continues (`acquired=false` is the lock doing its job, srvlog.mjs).
   atLevels(['log'], /^\[PENDING\] Group [0-9a-f]{8}…: lock held by another device - skip, its asks stay as shown$/),
+  // A CONNECTION SWEEP RUNNING WHILE THE ROW MINTS ITS GROUP (#3666): the creation marks its group, both sweeps read the mark and leave the rows to the creation's own Add - the fix doing its job (said only when a sweep crosses a creation, about one run in five).
+  atLevels(['debug'], /^\[Pending\] [0-9a-f]{8}\.\.\. is being created by this device - its \d+ row\(s\) are left to the creation's own Add; any row it does not answer waits for the next sweep$/),
+  atLevels(['debug'], /^\[Discovery\] [0-9a-f]{8}\.\.\. is being created by this device - its row is the creation's to write$/),
   atLevels(['log'], /^\[NOTIF\] Inbound in [0-9a-f]{8}… while the window is in front but idle \(no gesture for \d+ s\) - asking\.$/),
   atLevels(['log'], /^\[NOTIF\] Not raised for [0-9a-f]{8}… - permission is "default"; asking\.$/),
   // A history request of another member that NAMES one of the owner's OTHER devices (its phone): the web seat reads it,
