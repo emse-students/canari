@@ -7,6 +7,7 @@ import { SessionExpiredError, SignOutInProgressError } from '$lib/stores/auth';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import { getIsTabLeader } from './tabLeader';
+import { isGroupInCreation } from '$lib/utils/chat/groupsInCreation';
 import { showToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
 import { dropGroupState } from '$lib/utils/chat/dropGroupState';
@@ -500,7 +501,13 @@ export async function syncConnectionAfterWsOpen(
   // READ AGAIN HERE, deliberately: the `localGroups` snapshot taken before the sync loop predates
   // the joins and purges it performs, and reconciling a stale list would audit groups this device
   // has just left and miss the ones it has just joined.
-  const groupsNow = [...mlsService.getLocalGroups()];
+  //
+  // A GROUP THIS DEVICE IS CREATING IS LEFT OUT, read in this same turn as the local groups, before
+  // the mode is chosen - so neither the sweep nor the audit asks about it. It is local from
+  // `createGroup` on, long before the creation ends, and has no past to compare; a creation that
+  // succeeds records it audited, one that fails leaves it owed (`groupsInCreation.ts`,
+  // `dischargeCreatedGroupAudit`).
+  const groupsNow = [...mlsService.getLocalGroups()].filter((id) => !isGroupInCreation(id));
   const { sweep, reason } = connectionSweepDecision(userId, deviceId);
 
   // TWO INDEPENDENT REASONS TO COMPARE, and only one of them is about this connection. The sweep

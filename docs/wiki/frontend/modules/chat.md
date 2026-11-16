@@ -3787,11 +3787,20 @@ both paths, and fails with the mark removed (`created` instead of `in-creation`)
 every local group this device has never asked a member about (`groupsOwingAudit`). A group created
 here was local from `create_group` on and unaudited, so the pass asked about it inside the creation
 (`11.723 auditing 1 group(s) that never have been`, `11.781 [HISTORY_RECONCILE] no member online for
-db92be7a... - will ask when one returns`) and asked again on the next connection. A group this device
-creates has no past anybody else could hold, so both creation paths now record it audited
-(`noteGroupsAudited`) BEFORE `createGroup` - the audit reads `getLocalGroups()` and the record in one
-turn, so the group is never local and owing. A delegated creation runs these same functions on the
-leader. The same test file reads the record at `createGroup` on both paths.
+db92be7a... - will ask when one returns`) and asked again on the next connection. Two halves now:
+
+- **While the creation runs, the pass leaves the group out by its mark.** `initializeConnection`
+  filters `getLocalGroups()` through `isGroupInCreation` in the same turn, before choosing between a
+  full sweep and the audit, so neither mode asks (`initializeConnection.test.ts`, both modes).
+- **Once it has SUCCEEDED, the group is recorded audited** (`noteGroupsAudited`, after the row is
+  written and before the mark is released): a group this device created has no past anybody else
+  could hold. Never earlier - a tab that died mid-creation while the server group survived comes back
+  to a group it rejoins by Welcome under a discovery placeholder, which skips the post-Welcome
+  history ask because a row exists; a record written before success would then leave the messages of
+  the user's other devices never asked for ([principes](../../../principes.md), principle 2). A
+  failed creation records nothing, and its group stays owed. A delegated creation runs these same
+  functions on the leader. `groupCreation.sweepOverlap.test.ts` reads the record during `createGroup`
+  (owed), after `ok` (recorded) and after a failure (owed).
 
 ### A creation that is refused now says which refusal it was (2026-09-24)
 

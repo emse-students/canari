@@ -200,19 +200,22 @@ async function readDevicesWithRetry(
 }
 
 /**
- * A GROUP THIS DEVICE CREATES OWES NO HISTORY AUDIT, and is recorded as audited before it exists.
+ * A GROUP THIS DEVICE CREATED OWES NO HISTORY AUDIT - recorded on SUCCESS only.
  *
  * The audit (`groupsOwingAudit`, run by every connection pass) asks a member whether this device holds
  * the same history as everyone else, once per local group it has never asked about. A group this
- * device creates has no past anybody else could hold, so the ask is empty by construction - and it was
- * made: LEAF-REFRESH-1 (2026-11-16) showed a connection pass auditing a group between its
- * `create_group` and its Add (`[HISTORY_RECONCILE] no member online for <g>... - will ask when one
- * returns`), then asking it again on the next connection.
+ * device created has no past anybody else could hold, so the ask is empty by construction - and it was
+ * made: LEAF-REFRESH-1 (2026-11-16) showed the next connection asking about a group created just
+ * before it. While the creation runs, the pass leaves the group out by the creation's mark
+ * (`initializeConnection`), not by this record.
  *
- * WRITTEN BEFORE `createGroup`, never after: the audit reads `getLocalGroups()` and this record in
- * one synchronous turn, so a group is never local and still owing. A creation that then fails leaves
- * the id of a group nobody holds in the record, which nothing reads. Both creation paths run here on
- * the leading tab, a follower's creation included (it is delegated to these same functions).
+ * WRITTEN ONLY ONCE THE CREATION SUCCEEDED, after its row is written and before the mark is released.
+ * Written earlier, a tab that died mid-creation while the server group survived would come back to a
+ * group it rejoins by Welcome under a discovery placeholder - a path that skips the post-Welcome
+ * history ask because a row exists - with the audit already discharged: the messages its other
+ * devices sent would never be asked for. A failed creation records nothing, so such a group is still
+ * owed. Both creation paths run on the leading tab, a follower's included (delegated to these same
+ * functions).
  */
 function dischargeCreatedGroupAudit(mlsService: IMlsService, userId: string, groupId: string) {
   noteGroupsAudited(userId, mlsService.getDeviceId(), [groupId]);
@@ -281,7 +284,6 @@ export async function createNewGroup(
     // The reverse failure is strictly better and already handled: a membership whose local group
     // never got created leaves a server-side orphan, which the outer catch deletes.
     await mlsService.registerMember(groupId, userId);
-    dischargeCreatedGroupAudit(mlsService, userId, groupId);
     await mlsService.createGroup(groupId);
 
     // Add own other devices to the group - use a single bulk commit to avoid
@@ -382,6 +384,7 @@ export async function createNewGroup(
     );
     selectConversation(conversationKey);
     await saveConversation(conversationKey);
+    dischargeCreatedGroupAudit(mlsService, userId, groupId);
     log(`[OK] Group ${groupId} created.`);
     console.log(`[GROUP] Group created successfully (id=${groupId})`);
     // MLS commits from group setup can leave the catch-up overlay stuck on mobile if begin/end desync.
@@ -1468,7 +1471,6 @@ export async function startNewConversation(
     // its conversation once, at the end, for the same reason and after the same check.
     await mlsService.registerMember(groupId, userId);
     log(`[DM] Server membership registered for ${userId}`);
-    dischargeCreatedGroupAudit(mlsService, userId, groupId);
     await mlsService.createGroup(groupId);
     log(`[DM] Local MLS group created: ${groupId}`);
 
@@ -1522,6 +1524,7 @@ export async function startNewConversation(
     );
     maybeSelect(conversationKey);
     saveConversation(conversationKey);
+    dischargeCreatedGroupAudit(mlsService, userId, groupId);
     log(`[OK] Secure channel established with ${contact}.`);
     console.log(`[DM] 1v1 conversation with ${contact} ready (groupId=${groupId})`);
     return { ok: true, key: conversationKey };

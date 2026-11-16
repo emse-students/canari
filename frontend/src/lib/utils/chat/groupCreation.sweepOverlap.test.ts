@@ -233,15 +233,19 @@ describe('startNewConversation - the same window, on the DM path', () => {
 });
 
 /**
- * A GROUP THIS DEVICE CREATES OWES NO HISTORY AUDIT - the second overlap LEAF-REFRESH-1 showed: the
- * connection pass audited the group between its `create_group` and its Add (`no member online ... -
- * will ask when one returns`), then asked it again on the next connection. The audit reads
- * `getLocalGroups()` and the record in one turn, so the record must already hold the group the
- * instant the group is local: read at `createGroup`, on both paths (a follower's creation is
- * delegated to these same functions).
+ * A GROUP THIS DEVICE CREATED OWES NO HISTORY AUDIT - BUT ONLY ONCE IT WAS CREATED.
+ *
+ * The record is written on SUCCESS, never earlier: a tab that died mid-creation while the server
+ * group survived comes back to a group it rejoins under a discovery placeholder, a path that skips
+ * the post-Welcome history ask - so a record written before success would leave the messages of
+ * the user's other devices never asked for. While the creation runs, the connection pass leaves the
+ * group out by its mark instead (`initializeConnection.test.ts`). Both paths (a follower's creation
+ * is delegated to these same functions).
  */
-describe('a created group is recorded as audited before it exists locally', () => {
-  it('createNewGroup', async () => {
+describe('a created group is recorded as audited on success only', () => {
+  const owing = (id: string) => groupsOwingAudit('me', 'dev-1', [id]);
+
+  it('createNewGroup: still owed while createGroup runs, recorded once it answered ok', async () => {
     resetAuditRecord('me', 'dev-1');
     let owingAtCreate: string[] | undefined;
     const { mls } = groupMls(
@@ -251,7 +255,7 @@ describe('a created group is recorded as audited before it exists locally', () =
     const local = new Set<string>();
     mls.getLocalGroups = vi.fn(() => Array.from(local));
     mls.createGroup = vi.fn(async (id: string) => {
-      owingAtCreate = groupsOwingAudit('me', 'dev-1', [id]);
+      owingAtCreate = owing(id);
       local.add(id);
     });
 
@@ -261,10 +265,30 @@ describe('a created group is recorded as audited before it exists locally', () =
     );
 
     expect(outcome.ok).toBe(true);
-    expect(owingAtCreate).toEqual([]);
+    expect(owingAtCreate).toEqual(['g-new']);
+    expect(owing('g-new')).toEqual([]);
   });
 
-  it('startNewConversation', async () => {
+  it('createNewGroup: a creation that fails leaves the group owed', async () => {
+    resetAuditRecord('me', 'dev-1');
+    const { mls } = groupMls(
+      async () => {},
+      async () => {}
+    );
+    mls.createGroup = vi.fn(async () => {
+      throw new Error('wasm refused');
+    });
+
+    const outcome = await createNewGroup(
+      'Equipe',
+      args(mls, new SvelteMap<string, Conversation>()) as never
+    );
+
+    expect(outcome.ok).toBe(false);
+    expect(owing('g-new')).toEqual(['g-new']);
+  });
+
+  it('startNewConversation: still owed while createGroup runs, recorded once it answered ok', async () => {
     resetAuditRecord('me', 'dev-1');
     let owingAtCreate: string[] | undefined;
     const local = new Set<string>();
@@ -276,7 +300,7 @@ describe('a created group is recorded as audited before it exists locally', () =
       createRemoteGroup: vi.fn(async () => 'g-dm2'),
       registerMember: vi.fn(async () => {}),
       createGroup: vi.fn(async (id: string) => {
-        owingAtCreate = groupsOwingAudit('me', 'dev-1', [id]);
+        owingAtCreate = owing(id);
         local.add(id);
       }),
       getLocalGroups: vi.fn(() => Array.from(local)),
@@ -301,6 +325,7 @@ describe('a created group is recorded as audited before it exists locally', () =
     );
 
     expect(outcome.ok).toBe(true);
-    expect(owingAtCreate).toEqual([]);
+    expect(owingAtCreate).toEqual(['g-dm2']);
+    expect(owing('g-dm2')).toEqual([]);
   });
 });

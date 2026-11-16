@@ -24,9 +24,10 @@
  * PER TAB, AND THAT IS THE RIGHT SCOPE, because a creation runs in the tab that leads.
  * `useConversations`' `createNewGroup` and `startNewConversation` hand a follower's creation to the
  * leader (`getTabLeadership() === 'follower'` -> `delegateCommitToLeader`), so the mark is set in
- * the leader's module; and the two sweeps that read it run only there - the connection pass and the
- * invitation sweep `announceGroupReady` arms on a debounce after any group becomes ready, both
- * behind `getIsTabLeader`. ONE EDGE IS NOT COVERED: a tab still `undecided` (electing) is not
+ * the leader's module; and the sweeps that read it run there - the connection pass behind
+ * `getIsTabLeader`, and the invitation sweep `announceGroupReady` arms on a debounce after a group
+ * becomes ready, which runs on the leader only because Welcome processing and recovery happen there.
+ * The connection pass's history audit reads the mark too (`initializeConnection`). ONE EDGE IS NOT COVERED: a tab still `undecided` (electing) is not
  * delegated, so it runs the creation itself; if another tab then wins and sweeps while it creates,
  * that tab holds no mark. It ends where it always did - its `createGroup` is refused once it learns
  * it follows (`refusesCommitsHere`), the creation fails and deletes its server group.
