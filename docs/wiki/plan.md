@@ -70,6 +70,7 @@ earliest version, as a checklist.
 - [P2 - no gate proves that an older build reads, and writes back, the MLS state this build writes](backlog.d/p2-no-gate-proves-an-older-build-reads-the-mls-state-this-build-writes.md)
 - [P2 - the first message posted in a salon right after an in-session join raised no unread badge on the iPhone](backlog.d/p2-the-first-message-after-an-in-session-join-raised-no-badge-on-the-iphone.md)
 - [P2 - the reply swipe along a thumb's arc does nothing on WebKit: the thread scrolls instead](backlog.d/p2-the-reply-swipe-along-a-thumb-s-arc-does-nothing-on-webkit.md)
+- [P2 - a private salon granted to a member after their in-session join raises no unread badge on the Mi 9T](backlog.d/p2-a-private-salon-granted-after-an-in-session-join-raises-no-badge-on-the-mi-9t.md)
 
 **P3 - hygiene**
 
@@ -86,7 +87,6 @@ earliest version, as a checklist.
 - [P3 - EXIT-FORTIFY: closing the app on the Mi 9T logs `FORTIFY: pthread_mutex_lock called on a destroyed mutex` from the render thread](backlog.d/reading-owed-exit-fortify-closing-the-app-on-the-mi-9t-logged-fortify-pthread.md)
 - [P3 - a 13 MB upload on the iPhone restarted at about half and ran at 40 to 65 KB/s](backlog.d/p3-a-13-mb-upload-on-the-iphone-restarted-at-half-and-ran-at-40-to-65-kb-s.md)
 - [P3 - the Emojis preference row squeezes its description into a five-word column on a phone](backlog.d/p3-the-emojis-preference-row-squeezes-its-description-on-a-phone.md)
-- [P3 - The PIN gate's one-tap "Se deconnecter" sits under the "Discussions" tab (Mi 9T, 2026-11-15)](backlog.d/p3-the-pin-gate-sign-out-sits-under-the-discussions-tab-2026-11-15.md)
 - [P3 - the feed offset restored after a Back from an association lands about 226 px lower than it was left (Mi 9T, `1.7.0-alpha.2`)](backlog.d/p3-the-feed-offset-restored-after-a-back-from-an-association-lands-about-226-px.md)
 - [P3 - the gated `video-switch` and `video-off-on` call rows read 19.6-25 fps against a threshold of 27](backlog.d/p3-the-gated-video-switch-and-video-off-on-rig-rows-read-19-6-25-fps-threshold-27.md)
 
@@ -116,7 +116,6 @@ earliest version, as a checklist.
 - [ ] [a group's "X a ajouté Y" notice keeps its names after a reload (was: "Utilisateur inconnu a ajouté Utilisateur inconnu au groupe")](backlog.d/p3-a-group-joined-from-a-welcome-on-the-phone-reads-unknown-user-added-unknown-user.md)
 - [ ] [a newcomer's own "X a ajouté Y" notice names both people (was: "Compte supprime a ajoute Compte supprime au groupe")](backlog.d/p3-a-newcomer-s-first-added-notice-reads-compte-supprime-for-both-names.md)
 - [ ] [the pre-live screen says a suspension before Start](backlog.d/reading-owed-the-pre-live-screen-says-a-suspension-before-start.md)
-- [ ] [editing a CanaReel's caption: the form sends the caption alone](backlog.d/p2-editing-a-canareel-s-caption-answers-400-because-the-edit-form-sends-its-video.md)
 
 ## 1.8.0
 
