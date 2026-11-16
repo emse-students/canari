@@ -422,7 +422,7 @@ check "plus a test that reads the changed file's text" "a test reading the chang
 check "and not a test about another file" "a test unrelated to the change was planned: $out" \
   test -z "$(grep -F 'unrelated.test.ts' <<<"$out" || true)"
 check "and it does not run the whole suite" "a source change ran the whole suite: $out" \
-  test -z "$(grep -F 'the whole suite runs' <<<"$out" || true)"
+  test -z "$(grep -F 'the whole suite is CI'"'"'s' <<<"$out" || true)"
 echo "export default {};" >"$s/frontend/vitest.config.ts"
 git -C "$s" add frontend/vitest.config.ts
 git -C "$s" commit -qm vitest-config

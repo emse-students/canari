@@ -271,11 +271,9 @@ require_tools() {
   need() { command -v "$1" >/dev/null 2>&1 || missing="$missing $1"; }
   need bun
   need git
-  case "$plan" in *test-ci-scripts*) need shellcheck ;; esac
-  case "$plan" in *"rust "* | *frontend-generated* | *mls-forward-compat*) need cargo ;; esac
-  case "$plan" in *"ts "*) need node ;; esac
-  case "$plan" in *android-unit*) need java ;; esac
-  if [[ "$plan" == *test-ci-scripts* || "$plan" == *shellcheck* ]] && command -v shellcheck >/dev/null 2>&1; then
+  case "$plan" in *frontend-generated*) need cargo ;; esac
+  case "$plan" in *shellcheck*) need shellcheck ;; esac
+  if [[ "$plan" == *shellcheck* ]] && command -v shellcheck >/dev/null 2>&1; then
     missing="$missing$(shellcheck_version_problem)"
   fi
   [ -z "$missing" ] || refuse "missing on this machine:$missing. CI has them; install them (docs/wiki/development.md) - a check that cannot run here is not a check that passed."
