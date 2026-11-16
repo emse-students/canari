@@ -94,10 +94,10 @@ describe('the thread panel on desktop', () => {
    * 12 px step under the ride.
    */
   it('names one floor in the footer and in the thread padding', () => {
-    // Resolved on the two pieces that read it, from the leaf channel's twin first (the keyboard's
+    // Resolved on the pieces that read it (the docked banners too), from the leaf channel's twin first (the keyboard's
     // announcement writes it on them) and the root's safe area otherwise.
     expect(css).toMatch(
-      /\.chat-composer-footer,\s*\.chat-messages-scroll\s*\{\s*--chat-composer-floor:\s*max\(\s*0\.75rem,\s*var\(--keyboard-leaf-safe-area-inset-bottom, var\(--safe-area-inset-bottom, 0px\)\)\s*\);/
+      /\.chat-composer-footer,\s*\.chat-messages-scroll,\s*\.chat-docked-banner\s*\{\s*--chat-composer-floor:\s*max\(\s*0\.75rem,\s*var\(--keyboard-leaf-safe-area-inset-bottom, var\(--safe-area-inset-bottom, 0px\)\)\s*\);/
     );
     const rules = css
       .split('\n}')
@@ -141,5 +141,36 @@ describe('the thread panel on desktop', () => {
     expect(css).toMatch(
       /--chat-keyboard-room: var\(\s*--keyboard-leaf-layout-inset-bottom,\s*var\(--keyboard-layout-inset-bottom, 0px\)\s*\);/
     );
+  });
+});
+
+/**
+ * A BANNER THAT TAKES THE COMPOSER'S PLACE TAKES ITS FLOOR TOO (user report on 1.6.12, Android
+ * 3-button navigation): the deleted-conversation footer sat at `bottom: 0` with a flat `py-3`, so the
+ * navigation bar drew over its "Supprimer localement" button. The composer reserves the bottom safe
+ * area through `--chat-composer-floor`; every branch that replaces it (deleted, unopenable here, no
+ * right to write) must stand on that ONE floor, never on a padding of its own.
+ */
+describe('the banners docked in the composer place', () => {
+  const chatArea = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '..', 'components', 'chat', 'ChatArea.svelte'),
+    'utf8'
+  );
+
+  it('resolves the composer floor on the docked banner and pads its bottom with it', () => {
+    expect(css).toMatch(
+      /\.chat-composer-footer,\s*\.chat-messages-scroll,\s*\.chat-docked-banner\s*\{\s*--chat-composer-floor:/
+    );
+    // The rule of its own, not the group that resolves the floor on it.
+    const rule = css.slice(css.lastIndexOf('\n.chat-docked-banner {'));
+    const body = rule.slice(0, rule.indexOf('\n}'));
+    expect(body).toContain('padding-bottom: var(--chat-composer-floor);');
+    expect(body).toContain('bottom: 0;');
+  });
+
+  it('is the class of every branch that replaces the composer, and no banner pads itself', () => {
+    expect(chatArea.match(/class="chat-docked-banner"/g)?.length).toBe(3);
+    // No bottom-docked banner of the pane keeps the old self-padded shape.
+    expect(chatArea).not.toMatch(/absolute inset-x-0 bottom-0 z-20 [^"]*py-3/);
   });
 });

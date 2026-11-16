@@ -103,7 +103,7 @@
   } from '$lib/forms/formOptionConflict';
   import { Log } from '$lib/utils/Log';
   import { CircleAlert, ExternalLink, FileText, ImagePlus, Users, X } from '@lucide/svelte';
-  import { askedGuestFields } from '$lib/forms/guestIdentity';
+  import { editorChoicesOf, respondentSettingsPayload } from '$lib/forms/respondentFields';
   import {
     draftRefusalMessage,
     formViewHref,
@@ -155,7 +155,8 @@
   let anonymous = $state(false);
   let isPublic = $state(false);
   /** What a public form asks a guest (`guestIdentity.ts`); none by default. */
-  let guestFields = $state<string[]>([]);
+  /** "Qui a repondu": one set of ticks, saved as the two lists (`respondentFields.ts`). */
+  let identityChoices = $state<string[]>([]);
 
   // Payment
   let basePrice = $state(0);
@@ -426,7 +427,7 @@
     allowAnswerEdit = f.allowAnswerEdit ?? false;
     anonymous = f.anonymous ?? false;
     isPublic = f.isPublic ?? false;
-    guestFields = askedGuestFields(f.guestFields);
+    identityChoices = editorChoicesOf(f);
     cashPaymentExpiryDays = f.cashPaymentExpiryDays ?? undefined;
     fileRetentionDays = f.fileRetentionDays ?? FILE_RETENTION_DEFAULT_DAYS;
     imageUrl = f.imageUrl ?? null;
@@ -667,7 +668,7 @@
       ...answerEditPayload(answerEditAvailable, allowAnswerEdit),
       isPublic,
       // Asked of a guest only on a public form that keeps names; otherwise nothing is asked.
-      guestFields: isPublic && !anonymous ? askedGuestFields(guestFields) : [],
+      ...respondentSettingsPayload(identityChoices, { isPublic, anonymous }),
       ...(opensAt ? { opensAt: new Date(opensAt).toISOString() } : {}),
       ...closedAtPayload(),
       requiresPayment,
@@ -1010,7 +1011,7 @@
       bind:anonymous
       anonymousFixed={!isDraft}
       bind:isPublic
-      bind:guestFields
+      bind:identityChoices
       {optionState}
       bind:opensAt
       bind:closedAt

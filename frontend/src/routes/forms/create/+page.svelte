@@ -92,7 +92,7 @@
   } from '$lib/forms/formOptionConflict';
   import { Log } from '$lib/utils/Log';
   import { CircleAlert, FileText } from '@lucide/svelte';
-  import { askedGuestFields } from '$lib/forms/guestIdentity';
+  import { respondentSettingsPayload } from '$lib/forms/respondentFields';
   import { m } from '$lib/paraglide/messages';
 
   // General
@@ -109,7 +109,11 @@
   let anonymous = $state(false);
   let isPublic = $state(false);
   /** What a public form asks a guest (`guestIdentity.ts`); none by default. */
-  let guestFields = $state<string[]>([]);
+  /**
+   * "Qui a repondu": one set of ticks, saved as the two lists (`respondentFields.ts`). A new form
+   * joins the two names, as every named form did before it was a choice.
+   */
+  let identityChoices = $state<string[]>(['lastName', 'firstName']);
 
   // Payment
   let basePrice = $state(0);
@@ -414,7 +418,7 @@
       anonymous,
       isPublic,
       // Asked of a guest only on a public form that keeps names; otherwise nothing is asked.
-      guestFields: isPublic && !anonymous ? askedGuestFields(guestFields) : [],
+      ...respondentSettingsPayload(identityChoices, { isPublic, anonymous }),
       ...(opensAt ? { opensAt: new Date(opensAt).toISOString() } : {}),
       ...(closedAt ? { closedAt: new Date(closedAt).toISOString() } : {}),
       requiresPayment,
@@ -667,7 +671,7 @@
       bind:anonymous
       anonymousFixed={false}
       bind:isPublic
-      bind:guestFields
+      bind:identityChoices
       {optionState}
       bind:opensAt
       bind:closedAt

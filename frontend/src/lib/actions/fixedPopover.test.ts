@@ -95,6 +95,32 @@ describe('computeFixedPopoverPosition', () => {
     });
   });
 
+  it("ends above the iOS native tab bar's band, which a web z-index cannot cover", () => {
+    const anchor = {
+      getBoundingClientRect: () => ({
+        top: 200,
+        bottom: 240,
+        left: 40,
+        right: 180,
+        width: 140,
+        height: 40,
+        x: 40,
+        y: 200,
+        toJSON: () => ({}),
+      }),
+    } as HTMLElement;
+    const panel = { offsetWidth: 224, offsetHeight: 300 } as HTMLElement;
+
+    // 600 tall with a 100 px bar: the last row of a 300 px menu is held to end at 500 - 8 (its height may shrink), not at 548.
+    const withBar = computeFixedPopoverPosition(anchor, panel, {}, 0, 100);
+    expect(withBar.top + Math.min(300, withBar.maxHeight)).toBeLessThanOrEqual(600 - 100 - 8);
+    const without = computeFixedPopoverPosition(anchor, panel, {}, 0, 0);
+    expect(without.top + 300).toBeGreaterThan(600 - 100 - 8);
+    // The keyboard replaces the bar on screen: the larger band wins, they never add up.
+    const both = computeFixedPopoverPosition(anchor, panel, {}, 240, 100);
+    expect(both.top + Math.min(300, both.maxHeight)).toBeLessThanOrEqual(600 - 240 - 8);
+  });
+
   it('opens downward when there is room below', () => {
     const anchor = {
       getBoundingClientRect: () => ({

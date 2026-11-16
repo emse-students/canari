@@ -40,7 +40,8 @@ import {
   GUEST_NAME_MAX_LENGTH,
   type FormAnswerValue,
 } from '../answer-bounds';
-import { GUEST_IDENTITY_FIELDS, type GuestIdentityField } from '../guest-identity';
+import { ASKED_FIELDS, type AskedField } from '../guest-identity';
+import { ACCOUNT_FIELDS, type AccountField } from '../respondent-identity';
 
 /**
  * Validates that `answers` is a shallow Record of at most {@link FORM_MAX_QUESTIONS} keys whose
@@ -334,16 +335,30 @@ export class CreateFormDto {
   draft?: boolean;
 
   /**
-   * What a public form asks a guest about who they are (`guest-identity.ts`): any of `lastName`,
-   * `firstName`, `email`, each required of the guest once asked. Absent keeps the stored value; an
-   * empty list or null asks nothing (stored as null).
+   * What the form ASKS of whoever it cannot read from an account (`guest-identity.ts`,
+   * `respondent-identity.ts`): a guest's `lastName`, `firstName`, `email`, and the declared
+   * `cursus`, `status`, `campus`, each required once asked. Absent keeps the stored value; an empty
+   * list or null asks nothing (stored as null). Sent WITHOUT `respondentFields`, it is a client older
+   * than the account fields, and its declared asks are kept (`legacyGuestFieldsMerge`).
    */
   @IsOptional()
   @IsArray()
-  @ArrayMaxSize(GUEST_IDENTITY_FIELDS.length)
+  @ArrayMaxSize(ASKED_FIELDS.length)
   @ArrayUnique()
-  @IsIn(GUEST_IDENTITY_FIELDS, { each: true })
-  guestFields?: GuestIdentityField[] | null;
+  @IsIn(ASKED_FIELDS, { each: true })
+  guestFields?: AskedField[] | null;
+
+  /**
+   * What the form JOINS from a member's account to each answer (`respondent-identity.ts`, owner
+   * 2026-11-16): any of `lastName`, `firstName`, `cursus`, `status`, `campus`. Absent keeps the
+   * stored value (a create: the two names); stored empty on an anonymous form.
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(ACCOUNT_FIELDS.length)
+  @ArrayUnique()
+  @IsIn(ACCOUNT_FIELDS, { each: true })
+  respondentFields?: AccountField[];
 
   /** Allow the same user to submit multiple times (e.g. product orders). */
   @IsBoolean()
@@ -431,12 +446,43 @@ export class PublishFormRevisionDto extends FormRevisionDto {
 }
 
 /**
+ * What a respondent DECLARES when the form cannot read it from an account (`respondent-identity.ts`):
+ * a guest on a public form, any respondent of an anonymous form. Bounded here by shape only;
+ * `declaredIdentityFor` judges each value against what the form asks, and refuses one it does not.
+ * Declared on both submit bodies, so the global `whitelist` never drops one silently.
+ */
+export class DeclaredIdentityDto {
+  /** One of the formations of a space, or `none` (no cursus). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  declaredFormation?: string;
+
+  /** The entry year, with a formation. */
+  @IsOptional()
+  @IsInt()
+  declaredPromo?: number;
+
+  /** `student` or `staff`. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  declaredStatus?: string;
+
+  /** `saint-etienne` or `gardanne`. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  declaredCampus?: string;
+}
+
+/**
  * A guest's answer to a public form: the answers, how they pay when the form charges, and - only
  * when the form asks for them (`guest-identity.ts`, owner 2026-11-06) - a name and an e-mail. No
  * account, no stored network address, no return URL - the server chooses where Lydia sends a guest
  * back (`FormsService.submit`).
  */
-export class GuestSubmitFormDto {
+export class GuestSubmitFormDto extends DeclaredIdentityDto {
   @IsValidAnswers()
   answers: Record<string, FormAnswerValue>;
 
@@ -497,7 +543,7 @@ export class GuestReceiptDto {
   receipt: string;
 }
 
-export class SubmitFormDto {
+export class SubmitFormDto extends DeclaredIdentityDto {
   @IsString()
   @IsOptional()
   userId?: string;

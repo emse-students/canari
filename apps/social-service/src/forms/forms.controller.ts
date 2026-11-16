@@ -19,6 +19,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Response } from 'express';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
+import { CLIENT_VERSION_HEADER, clientVersionOf } from '../common/client-version';
 import { Throttle } from '@nestjs/throttler';
 import { UserResourceThrottlerGuard } from '../common/guards/user-resource-throttler.guard';
 
@@ -380,9 +381,16 @@ export class FormsController {
   submit(
     @Headers('x-user-id') xUserId: string,
     @Param('id') id: string,
-    @Body() dto: SubmitFormDto
+    @Body() dto: SubmitFormDto,
+    @Headers(CLIENT_VERSION_HEADER) clientVersion?: string | string[]
   ) {
-    return this.service.submit(id, { ...dto, userId: xUserId });
+    // The build the client names: an older one cannot draw the declared questions
+    // (`respondent-identity.ts`, `predatesDeclaredFields`).
+    return this.service.submit(id, {
+      ...dto,
+      userId: xUserId,
+      clientVersion: clientVersionOf(clientVersion),
+    });
   }
 
   /**

@@ -3194,6 +3194,9 @@ export class PostsService {
     const capacity = await this.assertMayManage(post, userId, isAdmin);
     // Read before the row goes: its media ids are only in the row.
     const orphanedMedia = [...postMediaIds(post), ...commentMediaIds(post.comments)];
+    // The repository's remove clears `post.id` on the entity it was given, so the id is kept here
+    // for the reel log lines below (they read `delete of undefined`).
+    const removedPostId = post.id;
     await this.postRepo.remove(post);
     // After the delete has committed, and never gating it. The post is gone either way; the worst
     // a failure here costs is objects kept past the moment they stopped being referenced, which
@@ -3201,6 +3204,7 @@ export class PostsService {
     if (post.kind === 'reel') {
       await this.discardReelBlobs(
         post,
+        removedPostId,
         orphanedMedia,
         capacity === 'moderator' ? 'moderation' : 'author'
       );
@@ -3225,6 +3229,7 @@ export class PostsService {
    */
   private async discardReelBlobs(
     post: Post,
+    postId: string,
     allMediaIds: string[],
     reason: Extract<ReelPurgeReason, 'author' | 'moderation'>
   ): Promise<void> {
@@ -3233,7 +3238,7 @@ export class PostsService {
       ...commentMediaOwners(post.comments),
     ];
     this.logger.log(
-      `[REEL] delete of ${post.id} by its ${reason === 'author' ? 'publisher' : 'moderator'}: ${items.length} blob(s), reason ${reason}`
+      `[REEL] delete of ${postId} by its ${reason === 'author' ? 'publisher' : 'moderator'}: ${items.length} blob(s), reason ${reason}`
     );
     try {
       const results = await this.mediaRetention.purgeReelBlobs(items, reason);
@@ -3242,13 +3247,13 @@ export class PostsService {
         .map(({ mediaId }) => mediaId);
       if (notGone.length > 0) {
         this.logger.warn(
-          `[REEL] delete of ${post.id}: ${notGone.length} blob(s) not deleted, released to the idle clock`
+          `[REEL] delete of ${postId}: ${notGone.length} blob(s) not deleted, released to the idle clock`
         );
         await this.mediaRetention.release(notGone);
       }
     } catch (e) {
       this.logger.warn(
-        `[REEL] delete of ${post.id}: the media service was unreachable (${
+        `[REEL] delete of ${postId}: the media service was unreachable (${
           e instanceof Error ? e.message : String(e)
         }), blobs released to the idle clock`
       );

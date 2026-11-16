@@ -59,8 +59,11 @@
      * "everyone else" tier.
      */
     isPublic: boolean;
-    /** What a public form asks a guest (`guestIdentity.ts`): last name, first name, e-mail. */
-    guestFields: string[];
+    /**
+     * Which of the respondent's fields travel with each answer (`respondentFields.ts`): joined from
+     * a member's account, asked of a guest or of an anonymous form's respondents.
+     */
+    identityChoices: string[];
     /**
      * The form's options as the shared rule reads them (`editorOptionState`): what shuts the
      * anonymous, public and audience switches, whichever was switched on first.
@@ -96,7 +99,7 @@
     anonymous = $bindable(),
     anonymousFixed,
     isPublic = $bindable(),
-    guestFields = $bindable(),
+    identityChoices = $bindable(),
     optionState,
     opensAt = $bindable(),
     closedAt = $bindable(),
@@ -120,7 +123,7 @@
       (allowAnswerEdit ? 1 : 0) +
       (anonymous ? 1 : 0) +
       (isPublic ? 1 : 0) +
-      (isPublic && guestFields.length > 0 ? 1 : 0) +
+      (identityChoices.length > 0 ? 1 : 0) +
       (opensAt ? 1 : 0) +
       (closedAt ? 1 : 0) +
       (settings.grantsCotisation ? 1 : 0) +
@@ -216,7 +219,7 @@
     />
 
     <GuestIdentitySettings
-      bind:guestFields
+      bind:choices={identityChoices}
       {isPublic}
       {anonymous}
       charges={optionState.takesPayment}
