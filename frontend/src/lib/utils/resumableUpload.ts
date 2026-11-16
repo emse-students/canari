@@ -1,8 +1,9 @@
 /**
- * THE RESUMABLE UPLOAD OF A CHAT REEL (reels-in-chat RC-5) - the client half of media-service's
- * upload sessions (`/api/media/upload/session`, WP-S1, docs/wiki/services/media-streaming-upload.md).
+ * THE RESUMABLE UPLOAD OF A CHAT REEL (reels-in-chat RC-5), A FEED POST'S FILES, AND EVERY QUEUED
+ * CHAT ATTACHMENT OVER ONE REQUEST BODY (2026-11-16) - the client half of media-service's upload
+ * sessions (`/api/media/upload/session`, WP-S1, docs/wiki/services/media-streaming-upload.md).
  *
- * WHAT IT REPLACES, FOR A REEL. `encryptAndUpload` seals the whole file, then sends it as one body or
+ * WHAT IT REPLACES. `encryptAndUpload` seals the whole file, then sends it as one body or
  * as legacy chunks under a FRESH uploadId per attempt: a cut at 90 % restarts from byte 0, and nothing
  * says how many bytes the server holds. Here the SERVER says which parts it holds (`GET`), and only
  * the missing ones are sent - a fact the server reports, never a guess by the client.
@@ -19,7 +20,8 @@
  * handed to the caller's `persist`, which writes it into the ENCRYPTED outbox row: the row and its
  * blob hold the file itself, so the key adds no exposure the row did not already carry.
  *
- * Every request body is one part, {@link REEL_UPLOAD_PART_BYTES} (1 MiB): under the host WAF's 10 MiB
+ * Every request body is one part, {@link REEL_UPLOAD_PART_BYTES} (1 MiB), {@link RESUMABLE_PARTS_IN_FLIGHT}
+ * at a time: under the host WAF's 10 MiB
  * drop and the 8 MiB budget, and the most a cut on a weak link can cost.
  *
  * TWO BLOB FORMATS, ONE PROTOCOL (2026-11-06, the background publish queue). What `writesSegmented`
@@ -58,6 +60,16 @@ import type { OutboxResumableUpload } from '$lib/db/types';
  * under the server's 4096.
  */
 export const REEL_UPLOAD_PART_BYTES = 1024 * 1024;
+
+/**
+ * Parts on the wire at once. Two, as `media-streaming-upload` 3.2 designed: measured 2026-11-16 from a
+ * workstation against dev, a 13 MiB single-block session took 4.2 s with one part at a time
+ * (3.2 MB/s, a round trip idle between parts) and 2.5 s with two (5.5 MB/s); on a throttled link
+ * (Fast 3G) all three shapes - legacy 8 MiB chunks, one part, two parts - ran at the link's 77 to
+ * 80 KB/s. More would only split a weak uplink further, and the outbox already runs two uploads.
+ * A round starts with ONE part and opens the second once a part has committed (see the lanes).
+ */
+export const RESUMABLE_PARTS_IN_FLIGHT = 2;
 
 /** How many times one call re-reads the server's fact before giving the failure to its caller. */
 export const RESUMABLE_MAX_ROUNDS = 3;
@@ -248,10 +260,19 @@ export async function uploadResumable(
   const singleBlock = encoding === 'single-block';
   const digest = await sha256Hex(plaintext);
   let state = opts.state;
+  /**
+   * A SESSION THIS CALL STOPS USING IS GIVEN BACK: it holds a slot among the owner's open sessions
+   * (4) and its declared bytes against their staging budget until the 24 h sweep, and the row that
+   * named it is about to name another, so nothing else would ever release it. Best effort.
+   */
+  const supersede = (uploadId: string | undefined, why: string) => {
+    if (uploadId) void releaseUploadSession(port, uploadId, `superseded: ${why}`, log);
+  };
   if (state && (state.encoding ?? SEGMENTED_MEDIA_ENCODING) !== encoding) {
     log(
       `[UPLOAD-RESUME] the saved session was opened as ${state.encoding ?? SEGMENTED_MEDIA_ENCODING}, this upload is ${encoding} - discarded, a new key and session`
     );
+    supersede(state.uploadId, 'another encoding');
     state = undefined;
   }
   if (
@@ -263,6 +284,7 @@ export async function uploadResumable(
     log(
       `[UPLOAD-RESUME] the saved session was opened for other bytes (${state.plaintextBytes} vs ${plaintext.byteLength}) - discarded, a new key and session`
     );
+    supersede(state.uploadId, 'other bytes');
     state = undefined;
   }
   if (!state) {
@@ -286,18 +308,18 @@ export async function uploadResumable(
     : encodeSegmentedHeader(SEGMENTED_MEDIA_SEGMENT_BYTES, plaintext.byteLength);
   const resultEncoding = singleBlock ? {} : { encoding: SEGMENTED_MEDIA_ENCODING };
 
-  /** The single block, sealed once on the first part this call sends (never when nothing is owed). */
-  let block: Uint8Array | null = null;
+  /**
+   * The single block, sealed once on the first part this call sends (never when nothing is owed).
+   * Memoised as a PROMISE: two parts in flight ask for it in the same turn, and a value memo would
+   * let both start a seal of the whole file.
+   */
+  let block: Promise<Uint8Array> | null = null;
   const sealRange = async (start: number, end: number): Promise<Uint8Array<ArrayBuffer>> => {
     if (!singleBlock) return sealBlobRange(plaintext, key, iv, start, end);
-    block ??= new Uint8Array(
-      await crypto.subtle.encrypt(
-        { name: 'AES-GCM', iv: iv as BufferSource },
-        key,
-        plaintext as BufferSource
-      )
-    );
-    return block.slice(start, end);
+    block ??= crypto.subtle
+      .encrypt({ name: 'AES-GCM', iv: iv as BufferSource }, key, plaintext as BufferSource)
+      .then((sealed) => new Uint8Array(sealed));
+    return (await block).slice(start, end);
   };
 
   const answer = async (res: Response, what: string, sessionLost = false) => {
@@ -366,6 +388,8 @@ export async function uploadResumable(
           log(
             `[UPLOAD-RESUME] session ${state.uploadId} ${fact ? 'does not match these bytes' : 'is gone on the server'} - reopening, every part again`
           );
+          // One that still exists but does not match is ours to give back; a gone one is not.
+          if (fact) supersede(state.uploadId, 'does not match these bytes');
           state = { ...state, uploadId: undefined, partBytes: undefined };
         } else {
           received = new Set(fact.received);
@@ -380,38 +404,92 @@ export async function uploadResumable(
       if (partBytes > MEDIA_REQUEST_BODY_BUDGET_BYTES) {
         throw new Error(`[UPLOAD-RESUME] a part of ${partBytes} bytes is over the body budget`);
       }
+      // PROGRESS IS THE SERVER'S COMMITTED BYTES PLUS WHAT THE PARTS IN FLIGHT HAVE MOVED: an attempt
+      // starts from what the server says it holds, never from zero.
       let held = [...received].reduce(
         (sum, i) => sum + Math.min(partBytes, totalBytes - i * partBytes),
         0
       );
-      transport?.onProgress?.({ loaded: held, total: totalBytes });
+      const moving = new Map<number, number>();
+      const report = () => {
+        let inFlight = 0;
+        for (const n of moving.values()) inFlight += n;
+        transport?.onProgress?.({ loaded: held + inFlight, total: totalBytes, committed: held });
+      };
+      report();
+      const owed = Array.from({ length: parts }, (_, i) => i).filter((i) => !received.has(i));
       let reread = false;
-      for (let i = 0; i < parts; i++) {
-        if (received.has(i)) continue;
-        const start = i * partBytes;
-        const end = Math.min(totalBytes, start + partBytes);
-        const body = await sealRange(start, end);
-        const base = held;
-        const res = await port.request(
-          'PUT',
-          `/${state.uploadId}/parts/${i}`,
-          new Blob([body], { type: 'application/octet-stream' }),
-          transport && {
-            ...transport,
-            onProgress: (p) =>
-              transport.onProgress?.({ loaded: base + p.loaded, total: totalBytes }),
+      let failure: { error: unknown } | null = null;
+      const roundStarted = Date.now();
+      const sentBefore = held;
+      /**
+       * THE SECOND LANE OPENS ONLY ONCE THIS ROUND HAS COMMITTED A PART (review of #3661). Two parts
+       * started together share the link from their first byte: on an uplink cut every N seconds with
+       * N x rate under two parts (40 KB/s cut every 30 s), neither ever commits, every attempt ends
+       * with nothing the server holds, and the outbox gives up after three. One lane first means
+       * every round that moves a part's worth of bytes commits it - what the serial writer did. Also
+       * opened when the first lane ends, so a round that ends without a commit never waits on it.
+       */
+      let widen!: () => void;
+      const widened = new Promise<void>((resolve) => (widen = resolve));
+      /**
+       * One lane of {@link RESUMABLE_PARTS_IN_FLIGHT}: takes the next owed part until none is left,
+       * or until another lane met an answer that ends the round. A failure of one lane does not
+       * abort the other's part: that part's bytes count once the server answered for it.
+       */
+      const lane = async (): Promise<void> => {
+        while (!reread && !failure && owed.length > 0) {
+          const i = owed.shift()!;
+          const start = i * partBytes;
+          const end = Math.min(totalBytes, start + partBytes);
+          try {
+            const body = await sealRange(start, end);
+            moving.set(i, 0);
+            const res = await port.request(
+              'PUT',
+              `/${state!.uploadId}/parts/${i}`,
+              new Blob([body], { type: 'application/octet-stream' }),
+              transport && {
+                ...transport,
+                onProgress: (p) => {
+                  moving.set(i, p.loaded);
+                  report();
+                },
+              }
+            );
+            moving.delete(i);
+            if (sessionAnswered(res, 404, 409)) {
+              // Closed under us (expired, cancelled elsewhere) or being completed: re-read the fact.
+              log(`[UPLOAD-RESUME] part ${i} answered ${res.status} - re-reading the session`);
+              reread = true;
+              return;
+            }
+            if (!res.ok) await answer(res, `upload part ${i + 1}/${parts} failed`);
+            held += end - start;
+            received.add(i);
+            report();
+            widen();
+          } catch (e) {
+            moving.delete(i);
+            failure ??= { error: e };
+            return;
           }
-        );
-        if (sessionAnswered(res, 404, 409)) {
-          // Closed under us (expired, cancelled elsewhere) or being completed: re-read the fact.
-          log(`[UPLOAD-RESUME] part ${i} answered ${res.status} - re-reading the session`);
-          reread = true;
-          break;
         }
-        if (!res.ok) await answer(res, `upload part ${i + 1}/${parts} failed`);
-        held += end - start;
-        received.add(i);
+      };
+      const extra = Math.min(RESUMABLE_PARTS_IN_FLIGHT, owed.length) - 1;
+      await Promise.all([
+        lane().finally(widen),
+        ...Array.from({ length: Math.max(0, extra) }, () => widened.then(lane)),
+      ]);
+      // THE RATE THIS DEVICE REACHED, in the session log: what the iPhone's "40 to 65 KB/s" could
+      // not be read from (2026-11-16). Committed bytes only, so a cut part does not inflate it.
+      const elapsed = Date.now() - roundStarted;
+      if (held > sentBefore) {
+        log(
+          `[UPLOAD-RESUME] session ${state.uploadId} round ${round}: ${held - sentBefore} bytes committed in ${elapsed} ms (${Math.round((held - sentBefore) / Math.max(1, elapsed))} KB/s), ${received.size}/${parts} part(s) held`
+        );
       }
+      if (failure) throw (failure as { error: unknown }).error;
       if (!reread) {
         const res = await port.request(
           'POST',
