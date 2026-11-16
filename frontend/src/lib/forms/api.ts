@@ -3,7 +3,8 @@ import { statusLabels } from './paymentStatus';
 import type { AnswerWords } from './answerText';
 import type { PaymentRequestState } from './paymentReturn';
 import type { ProductGridLine, ProductGridPrices, ProductGridView } from './productGridContract';
-import type { GuestIdentityField } from './guestIdentity';
+import type { RespondentChoice, RespondentIdentity } from './respondentFields';
+import { CAMPUSES, campusLabel } from '$lib/profile/miconnectProfile';
 
 export interface FormOption {
   label: string;
@@ -128,10 +129,17 @@ export interface CreateFormPayload {
    */
   isPublic?: boolean;
   /**
-   * What a public form asks a guest about who they are (`guestIdentity.ts`): any of `lastName`,
-   * `firstName`, `email`, each required once asked. Null or absent asks nothing, the default.
+   * What the form ASKS of whoever it cannot read from an account (`respondentFields.ts`): a guest's
+   * `lastName`, `firstName`, `email`, and the declared `cursus`, `status`, `campus` (a guest, or any
+   * respondent of an anonymous form), each required once asked. Null or absent asks nothing.
    */
-  guestFields?: GuestIdentityField[] | null;
+  guestFields?: RespondentChoice[] | null;
+  /**
+   * What the form JOINS from a member's account to each answer (owner, 2026-11-16): any of
+   * `lastName`, `firstName`, `cursus`, `status`, `campus`, read by the server when they send.
+   * Served empty on an anonymous form; absent from a server older than it.
+   */
+  respondentFields?: Exclude<RespondentChoice, 'email'>[];
   /** Whether cash (physical) payment is accepted as an alternative to the online payment. */
   allowCashPayment?: boolean;
   /**
@@ -234,6 +242,7 @@ export interface FormDraft {
 import { apiFetch } from '$lib/utils/apiFetch';
 import { getToken } from '$lib/stores/auth';
 import { socialUrl } from '$lib/utils/apiUrl';
+import { withClientVersionHeader } from '$lib/utils/appVersion';
 import { fetchUpload } from '$lib/media';
 import type { XhrUploadOptions } from '$lib/utils/uploadXhr';
 import { amountBoundsOf, SocialApiError } from '$lib/associations/api';
@@ -581,6 +590,11 @@ export interface Submission {
   guestLastName?: string | null;
   guestFirstName?: string | null;
   guestEmail?: string | null;
+  /**
+   * What the form kept of who answered (migration 174): joined from the account at submit time, or
+   * declared by a guest or an anonymous form's respondent. Null on an answer older than it.
+   */
+  respondentIdentity?: RespondentIdentity | null;
   /** The file answers of this submission whose file the retention purge has deleted. */
   deletedFileIds?: string[];
   /** The live files of this submission, by id: the name a manager's download is saved under. */
@@ -677,12 +691,27 @@ export interface ExportLabels {
   guest: string;
   /** Header of the "last changed" column, written on a form that allows changes or holds a changed answer. */
   edited: string;
+  /** The words of the respondent's identity columns, mirrored by `export-labels.ts`. */
+  identity: IdentityExportLabels;
   /**
    * The words of a priced grid's "Articles" and "Totaux" sheets (`product-grid-export.ts`). Sent
    * with every export: the server refuses a grid form's export without them
    * (`EXPORT_LABELS_PRODUCT_GRID_MISSING`), and checks them, unused, on any other form.
    */
   productGrid: ProductGridExportLabels;
+}
+
+/** The words of the identity columns (promo, formation, status, campus), mirrored by the server. */
+export interface IdentityExportLabels {
+  promo: string;
+  formation: string;
+  status: string;
+  campus: string;
+  student: string;
+  staff: string;
+  campuses: Record<string, string>;
+  /** A declared field an older build could not send (`RespondentIdentity.notDeclared`). */
+  notDeclared: string;
 }
 
 /** The words of the priced grid's two sheets, mirrored by `export-labels.ts`. */
@@ -719,6 +748,16 @@ export function exportLabels(): ExportLabels {
     email: m.form_guest_identity_email(),
     guest: m.form_submitter_guest(),
     edited: m.form_export_col_edited(),
+    identity: {
+      promo: m.form_respondent_promo_label(),
+      formation: m.form_respondent_formation_label(),
+      status: m.form_respondent_field_status(),
+      campus: m.form_respondent_field_campus(),
+      student: m.form_respondent_status_student(),
+      staff: m.form_respondent_status_staff(),
+      campuses: Object.fromEntries(CAMPUSES.map((c) => [c, campusLabel(c)])),
+      notDeclared: m.form_respondent_not_declared(),
+    },
     productGrid: {
       articlesSheet: m.form_export_grid_articles_sheet(),
       totalsSheet: m.form_export_grid_totals_sheet(),
@@ -931,10 +970,18 @@ export async function submitForm(
     successUrl?: string;
     cancelUrl?: string;
     paymentMethod?: 'online' | 'cash';
+    /** On an anonymous form, what it asks to be declared (`declaredPayload`); never otherwise. */
+    declaredFormation?: string;
+    declaredPromo?: number;
+    declaredStatus?: string;
+    declaredCampus?: string;
   }
 ): Promise<any> {
   const res = await apiFetch(`${socialUrl()}/api/forms/${id}/submit`, {
     method: 'POST',
+    // The build is named: the server takes an answer without the declared fields only from a
+    // build older than the questions that ask them (`respondent-identity.ts`).
+    headers: withClientVersionHeader(),
     body: JSON.stringify(payload),
   });
   // Through the one builder, so a payment refusal (`code`, and the amount bounds) is worded by
@@ -963,8 +1010,8 @@ export type PublicForm = Pick<
   | 'paymentsPaused'
 > & {
   closedAt?: string | null;
-  /** What the page asks a guest about who they are; [] asks nothing (`guestIdentity.ts`). */
-  guestFields: GuestIdentityField[];
+  /** What the page asks a guest about who they are; [] asks nothing (`respondentFields.ts`). */
+  guestFields: RespondentChoice[];
   formFull: boolean;
   /** [LEGACY] the one slice, read only from a server older than D32 (`cursusSlicesOf`). */
   pricing: PricingView | null;
@@ -1053,11 +1100,17 @@ export async function submitPublicForm(
     guestLastName?: string;
     guestFirstName?: string;
     guestEmail?: string;
+    /** What the form asks a guest to declare (`declaredPayload`); the server refuses any other. */
+    declaredFormation?: string;
+    declaredPromo?: number;
+    declaredStatus?: string;
+    declaredCampus?: string;
   }
 ): Promise<PublicSubmitReply> {
   const res = await fetch(`${socialUrl()}/api/public/forms/${encodeURIComponent(id)}/submit`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    // Named, as a member's submit is (`submitForm`).
+    headers: withClientVersionHeader({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(payload),
   });
   if (!res.ok) throw await refusal(res, 'Submission failed');

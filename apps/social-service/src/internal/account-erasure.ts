@@ -165,6 +165,10 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'submissions.userId': { action: 'anonymise' },
   'submissions.email': { action: 'anonymise', via: 'userId' },
   'submissions.answers': { action: 'anonymise', via: 'userId' },
+  // The account fields a form joined to a member's answer (migration 174): the account's own names,
+  // cursus, status and campus, so they go with the account. A DECLARED identity on an answer with
+  // no account (a guest, an anonymous form) names nobody this erasure knows, and is not reached.
+  'submissions.respondentIdentity': { action: 'anonymise', via: 'userId' },
   'submissions.paymentSettledBy': { action: 'anonymise' },
   'forms.ownerId': { action: 'anonymise' },
   // A consumed code must stay consumed: NULL would hand it to the next student. The replacement is
@@ -247,7 +251,10 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
     "the ids of the form's questions an answer's price depended on (migration 166)"
   ),
   'forms.guestFields': NO_ACCOUNT(
-    'the names of the fields a public form asks a guest (migration 138): lastName, firstName, email'
+    'the names of the fields a form asks whoever it cannot read from an account (migrations 138, 174)'
+  ),
+  'forms.respondentFields': NO_ACCOUNT(
+    'the names of the account fields a form joins to an answer (migration 174)'
   ),
   // A GUEST'S e-mail belongs to no account: it is written only on a guest's answer (`userId` NULL,
   // `guest-identity.ts` refuses it from a member), so no account's erasure can reach it - there is
@@ -732,7 +739,7 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
   // The answers go, the row stays: it is a seat the form counted and, when paid, a payment record.
   {
     label: 'submissions',
-    sql: `UPDATE submissions SET "userId" = NULL, email = NULL, answers = '{}'::jsonb WHERE "userId" = $1`,
+    sql: `UPDATE submissions SET "userId" = NULL, email = NULL, answers = '{}'::jsonb, "respondentIdentity" = NULL WHERE "userId" = $1`,
   },
   {
     label: 'submissions_settled_by',

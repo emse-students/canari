@@ -5,6 +5,7 @@ import {
   formRefusal,
 } from './answer-bounds';
 import { guestReference } from './guest-receipt';
+import { DECLARED_FIELDS, type DeclaredField } from './respondent-identity';
 
 /**
  * A GUEST'S NAME AND E-MAIL, ONLY WHEN THE FORM ASKS (owner, 2026-11-06).
@@ -30,6 +31,14 @@ const logger = new Logger('GuestIdentity');
 /** The fields a form may ask of a guest, in the order the page and the export show them. */
 export const GUEST_IDENTITY_FIELDS = ['lastName', 'firstName', 'email'] as const;
 export type GuestIdentityField = (typeof GUEST_IDENTITY_FIELDS)[number];
+
+/**
+ * Everything `forms.guestFields` may hold since 2026-11-16: the guest's name and e-mail above, and
+ * the DECLARED fields (`respondent-identity.ts`) asked of whoever the form cannot read from an
+ * account - a guest, or any respondent of an anonymous form.
+ */
+export const ASKED_FIELDS = [...GUEST_IDENTITY_FIELDS, ...DECLARED_FIELDS] as const;
+export type AskedField = GuestIdentityField | DeclaredField;
 
 /** What a guest's answer may carry, as the DTO receives it. */
 export interface GuestIdentityInput {
@@ -72,7 +81,8 @@ export function askedGuestFields(stored: unknown): GuestIdentityField[] {
     logger.warn(`[FORMS] guestFields is not a list (${typeof stored}): read as asking nothing`);
     return [];
   }
-  const unknown = stored.filter((f) => !(GUEST_IDENTITY_FIELDS as readonly unknown[]).includes(f));
+  // The declared fields are this column's too, read by `askedDeclaredFields`: not unknown here.
+  const unknown = stored.filter((f) => !(ASKED_FIELDS as readonly unknown[]).includes(f));
   if (unknown.length > 0) {
     logger.warn(`[FORMS] guestFields holds unknown names ${JSON.stringify(unknown)}: dropped`);
   }
@@ -80,12 +90,35 @@ export function askedGuestFields(stored: unknown): GuestIdentityField[] {
 }
 
 /**
- * What a save stores in `forms.guestFields`: the canonical list, or null when it asks nothing - so
- * "asks nothing" has ONE stored shape, the one every form before migration 138 already has.
+ * Everything the form asks, canonical ({@link ASKED_FIELDS} order): what a fill page reads to draw
+ * the questions about who answers. Unknown names are dropped (and accused by `askedGuestFields`).
  */
-export function storedGuestFields(input: unknown): GuestIdentityField[] | null {
-  const asked = askedGuestFields(input);
+export function askedFields(stored: unknown): AskedField[] {
+  if (!Array.isArray(stored)) return [];
+  return ASKED_FIELDS.filter((f) => (stored as unknown[]).includes(f));
+}
+
+/**
+ * What a save stores in `forms.guestFields`: the canonical list of {@link ASKED_FIELDS}, or null when
+ * it asks nothing - so "asks nothing" has ONE stored shape, the one every form before migration 138
+ * already has.
+ */
+export function storedGuestFields(input: unknown): AskedField[] | null {
+  const asked = askedFields(input);
   return asked.length > 0 ? asked : null;
+}
+
+/**
+ * A save from a client OLDER than the account fields (2026-11-16): it sends `guestFields` and no
+ * `respondentFields`, and its editor knows only the name and e-mail, so its list would erase the
+ * declared asks it never showed. Its names and e-mail are taken, the stored declared asks kept
+ * (`docs/wiki/legacy-compatibility.md`).
+ */
+export function legacyGuestFieldsMerge(sent: unknown, stored: unknown): AskedField[] | null {
+  const kept = Array.isArray(stored)
+    ? DECLARED_FIELDS.filter((f) => (stored as unknown[]).includes(f))
+    : [];
+  return storedGuestFields([...askedGuestFields(sent), ...kept]);
 }
 
 /** Whether an answer carries any of the three fields, empty strings included. */
