@@ -176,6 +176,8 @@ const flow = [
   'log: [03:07:50.000] [JOIN_PUSH] 7961b78c... join push -> f7a9bb80…:web-f7a9bb80…-mvph014o-yj6l (addressable when its Welcome was answered)',
   'log: [03:07:50.000] [LEDGER] opened the ledgers the MLS state carries for f7a9bb80... - 38 key(s)',
   'log: [03:07:50.000] [PENDING] web-c71e1a5b…-mwigbyf0-0lx7 already in tree for 7961b78c… - invitation fulfilled, vouching',
+  "debug: [05:46:26.107] [Pending] c8c28876... is being created by this device - its 13 row(s) are left to the creation's own Add; any row it does not answer waits for the next sweep",
+  "debug: [05:46:26.118] [Discovery] c8c28876... is being created by this device - its row is the creation's to write",
   'log: [03:07:50.000] [NOTIF] Inbound in 899e4e12… while the window is in front but idle (no gesture for 120 s) - asking.',
   'log: [03:07:50.000] [NOTIF] Not raised for 899e4e12… - permission is "default"; asking.',
   'log: [03:45:23.793] [PENDING] Group 19bbc4ba…: lock held by another device - skip, its asks stay as shown',
@@ -183,6 +185,7 @@ const flow = [
   'debug: [03:27:46.877] [GRAINE] not answering c71e1a5b…\'s request 8fc8590d… in community f6220e7e: it names tauri-f7a9bb80…-mwhxtiln-rdtg, not this device - the requester saw it offline or outside the key group\'s tree',
 ];
 ok('every observed flow line is forgiven', ignoringExpectedLog(rep(flow), LEAF_ROW_NARRATION).unexplained.length === 0);
+ok('a placeholder written for a group being created stays dirt', ignoringExpectedLog(rep(['info: [05:46:26.118] [DISCOVERY] Placeholder c8c28876... created.']), LEAF_ROW_NARRATION).unexplained.length === 1);
 ok('at the wrong level it is dirt', ignoringExpectedLog(rep(['warn: [03:07:50.000] [JOIN_PUSH] 7961b78c... join push -> f7a9bb80…:web-x (addressable when its Welcome was answered)']), LEAF_ROW_NARRATION).unexplained.length === 1);
 ok('a push that was NOT DELIVERED stays dirt', ignoringExpectedLog(rep(['log: [03:07:50.000] [JOIN_PUSH] 7961b78c... NOT DELIVERED to f7a9bb80…:web-x - the server answered its Welcome offline']), LEAF_ROW_NARRATION).unexplained.length === 1);
 ok('a vouching of anything but "already in tree" stays dirt', ignoringExpectedLog(rep(['log: [03:07:50.000] [PENDING] web-x recovery request failed: 500']), LEAF_ROW_NARRATION).unexplained.length === 1);
