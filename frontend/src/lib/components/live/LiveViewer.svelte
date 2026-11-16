@@ -71,6 +71,11 @@
 
   let { live, onClose, deps, chatDeps, fetchLimits = fetchLiveLimits }: Props = $props();
 
+  import {
+    LIVE_TOP_ACTIONS_CLASS,
+    LIVE_TOP_BAR_CLASS,
+    LIVE_TOP_IDENTITY_CLASS,
+  } from './liveTopBar';
   /** Registered while open: z-index by open order, the last opened on top (`utils/overlayStack.ts`). */
   const layer = useOverlayLayer(() => true, 'LiveViewer');
 
@@ -356,13 +361,13 @@
     {/if}
 
     <div
-      class="absolute inset-x-0 top-0 flex flex-wrap items-start gap-x-2 gap-y-1 bg-linear-to-b from-black/60 to-transparent p-3 pt-[calc(var(--safe-area-inset-top,0px)+0.75rem)]"
+      class="{LIVE_TOP_BAR_CLASS} bg-linear-to-b from-black/60 to-transparent"
       style={sideSafePadding('0.75rem')}
     >
       <!-- Instagram Live's corner: who, then LIVE, the time and the audience; the controls and the
            close X at the right. -->
       <span
-        class="flex min-w-40 flex-1 basis-40 flex-col items-stretch gap-1 text-sm"
+        class="{LIVE_TOP_IDENTITY_CLASS} flex flex-col items-stretch gap-1 text-sm"
         data-live-top-identity
       >
         <LiveIdentity {live} size="sm" onName={(n) => (name = n)} />
@@ -387,7 +392,7 @@
       <!-- The actions are ONE group that never shrinks: when the name's column would fall under its
            minimum (a 360-436 px portrait phone), the whole group wraps to its own row under the
            name and the count instead of crushing the name or overlapping the second row. -->
-      <span class="ml-auto flex shrink-0 items-center gap-2" data-live-top-actions>
+      <span class={LIVE_TOP_ACTIONS_CLASS} data-live-top-actions>
         <LiveReportControl {live} onBlocked={() => overlay.dismissFromUi()} />
         <!-- The kit's speaker, the same object as on every other video (owner, 2026-11-09). -->
         <VideoSoundButton
