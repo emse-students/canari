@@ -1,28 +1,20 @@
-## P2 - editing a CanaReel's caption answers 400: the edit form sends the reel's own video back as `media`
+## Reading owed - editing a CanaReel's caption: the form sends the caption alone
 
 target: 1.7.0
 
-**Found:** 2026-11-16, Mi 9T, `1.7.0-alpha.2`, dev, an institution reel: the card menu "Modifier le post" opens the edit form, the caption is changed,
-"Enregistrer" answers `PATCH /api/posts/:id` -> **400** and the form shows "Impossible de modifier le post".
-Nothing is written. The server's answer is `a reel's caption is the only thing that can be edited (got media)`
-(`assertReelEditShape`, `apps/social-service/src/posts/reel-rules.ts`; the rule is in
-[reels](../services/reels.md): a payload naming `media` on a reel is a 400).
+**Found:** 2026-11-16, Mi 9T, `1.7.0-alpha.2`, dev, an institution reel: "Modifier le post", caption changed, "Enregistrer" answered
+`PATCH /api/posts/:id` -> **400** (`a reel's caption is the only thing that can be edited (got media)`,
+`assertReelEditShape`, `apps/social-service/src/posts/reel-rules.ts`, [reels](../services/reels.md)). `EditPostForm` always
+sent `media: [...existingMedia, ...uploads]`, and a reel's existing media is its one video.
 
-**Cause (read in the code, not yet fixed):** `EditPostForm.svelte` always builds
-`payload = { markdown, media: allMedia, scheduledAt, attachedFormId, linkedCalendarEventId }` (the reach and the students-only switch ride along when changed) with
-`allMedia = [...existingMedia, ...uploadedRefs]`, and a reel's existing media is its one video, so the body
-carries a non-empty `media`. The server refuses it by design ("a silent drop would tell an editor it changed
-the video"); the form was never taught that a reel's only editable field is the caption. Seen on the wire:
-the body held the reel's `video.mp4` ref (`mediaId`, `iv`, `key`, `segmented-v1`) beside the new text.
+**What is built (#3670):** on `isReel(post)` the form sends `{ markdown }` plus `studentsOnly` and `reach` when they change (both
+are applied by the server before the reel rule), and never `media`, `polls`, `scheduledAt`, `attachedFormId` or
+`linkedCalendarEventId`. It draws no attachment chips, no media strip and takes no dropped file (`PostComposerBar` `captionOnly`). The save is held
+while the caption is blank, because the server's body rule refuses an empty `markdown` that names no media, and a reel edit may not name one: a
+reel's caption cannot be emptied from the editor. Tests: `EditPostForm.reel.svelte.test.ts` (the payload of a reel and of an
+ordinary post, the blank hold; they fail without the change).
 
-**What a fix owes:** on a `kind === 'reel'` post the form sends the caption alone (and the reach, which the
-server accepts, #3314), draws no attach toolbar (the form showed "Photo/video, Ouvrir la camera, Sondage,
-Formulaire, Fichier, Programmer, 1/10 pieces jointes" on a reel), and a test of the payload for a reel. The
-reading that closes it is the same edit on a phone: the caption saved, the card and the CanaReels viewer
-showing it.
+**The reading that closes it:** on a phone, edit a reel's caption: the save answers 200, the card and the CanaReels viewer show the new text, no
+attachment toolbar is drawn, and the save button is disabled once the caption is cleared.
 
-**How it was found, and a trap on the way:** the edit was the only way to make a caption just overflow on
-the Mi; it failed, so the caption was written by SQL on the sitting's own fixture
-([device-verification](../device-verification.md#the-mi-9t-readings-of-2026-11-16-second-sitting-170-alpha2)).
-A second thing met on the same page: `fill` on the form's editor APPENDS to the text already there (the
-contenteditable keeps its content), so a test must clear it first.
+**Not covered, on purpose:** a live replay (`kind = 'replay'`) is also caption-only on the server, but `isReel` is true of `'reel'` alone; whether a replay's pencil reaches this form is not verified here.

@@ -14,6 +14,7 @@
   import { preparedMediaPlaceholder } from '$lib/reels/reelFirstFrame';
   import { getToken } from '$lib/stores/auth';
   import {
+    isReel,
     updatePost,
     type PostEntity,
     type PostMediaRef,
@@ -89,6 +90,14 @@
   }
 
   let { post, authToken = '', onSaved, onCancel }: Props = $props();
+
+  /**
+   * A reel's caption is the only thing an edit may change (`assertReelEditShape`, docs/wiki/services/reels.md):
+   * the form sends the caption alone, draws no attachment chip and no media strip, and takes no dropped
+   * or pasted file. The server answers a body naming `media` on a reel with a 400, and a reel's own
+   * video is exactly what an ordinary post's body would carry back.
+   */
+  const reel = untrack(() => isReel(post));
 
   // --- Text ---
   let markdown = $state(untrack(() => post.markdown ?? ''));
@@ -254,7 +263,7 @@
    * image, so the only place one can go is this list (user, 2026-09-18).
    */
   function addFiles(incoming: File[]) {
-    if (incoming.length === 0) return;
+    if (reel || incoming.length === 0) return;
     // At most ten attachments a post, kept ones included: as many as fit are taken, the rest are said.
     const admitted = admitAttachments(existingMedia.length + newFiles.length, incoming);
     const notice = attachmentCapNotice(admitted);
@@ -349,15 +358,17 @@
 
       const allMedia = [...existingMedia, ...uploadedRefs];
 
-      const payload: UpdatePostPayload = {
-        markdown,
-        media: allMedia,
-        scheduledAt: scheduledAt ? new Date(scheduledAt).toISOString() : null,
-        attachedFormId: includeForm && selectedFormId ? selectedFormId : null,
-        linkedCalendarEventId: selectedLinkedCalendarEventId || null,
-        // Named only where the switch is drawn: absent leaves the stored value as it is.
-        ...(studentsOnlyEditable ? { studentsOnly } : {}),
-      };
+      const payload: UpdatePostPayload = reel
+        ? { markdown, ...(studentsOnlyEditable ? { studentsOnly } : {}) }
+        : {
+            markdown,
+            media: allMedia,
+            scheduledAt: scheduledAt ? new Date(scheduledAt).toISOString() : null,
+            attachedFormId: includeForm && selectedFormId ? selectedFormId : null,
+            linkedCalendarEventId: selectedLinkedCalendarEventId || null,
+            // Named only where the switch is drawn: absent leaves the stored value as it is.
+            ...(studentsOnlyEditable ? { studentsOnly } : {}),
+          };
       if (studentsOnlyEditable && studentsOnly !== (post.studentsOnly === true)) {
         Log.d('STUDENTS_ONLY', `edit turns the switch ${studentsOnly ? 'ON' : 'off'}`);
       }
@@ -370,7 +381,9 @@
         );
       }
 
-      if (includePoll) {
+      if (reel) {
+        // A reel carries no poll: naming none is not naming `polls` at all.
+      } else if (includePoll) {
         const options = filledPollOptions(pollOptions);
         payload.polls = [
           {
@@ -486,7 +499,7 @@
       />
 
       <!-- Existing media + newly added media. -->
-      {#if existingMedia.length > 0 || newFiles.length > 0}
+      {#if !reel && (existingMedia.length > 0 || newFiles.length > 0)}
         <div
           class="flex snap-x snap-mandatory gap-2.5 overflow-x-auto px-3 pt-2 pb-3"
           transition:slide={{ duration: 200 }}
@@ -640,6 +653,7 @@
     <PostComposerBar
       onFiles={addFiles}
       attachmentCount={existingMedia.length + newFiles.length}
+      captionOnly={reel}
       onFormat={(type) => editorField?.format(type)}
       pollActive={includePoll}
       onTogglePoll={() => (includePoll = !includePoll)}
@@ -662,7 +676,7 @@
           class="shrink-0"
           disabled={saving ||
             reachPending ||
-            (!markdown.trim() && existingMedia.length === 0 && newFiles.length === 0)}
+            (!markdown.trim() && (reel || (existingMedia.length === 0 && newFiles.length === 0)))}
           loading={saving}
           onclick={submitEdit}
         >

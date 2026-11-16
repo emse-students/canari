@@ -297,6 +297,7 @@ reached on a phone only by a long press (hard to hold without voting) and as tal
 
 ## Post creation (EditPostForm.svelte)
 
+- **Editing a reel sends its caption alone** (`EditPostForm`, `isReel(post)`): no media, poll, form or schedule is named and no attachment chip is drawn, because the server answers any of them on a reel with a 400 ([reels](../../services/reels.md)). Ordinary posts keep sending their media.
 - Markdown content editor. **A body OR a media entry, and either is enough** - the client's
   `hasContent` and the server's `PostBodyOrMediaConstraint` (`post.dto.ts`, create and edit) say the
   same thing, whitespace counting as no body on both. Until 2026-10-02 the server said
