@@ -60,18 +60,23 @@ before the raise). An older figure on this page is the floor at the date its ent
 - **Removal.** Nothing to remove (no shim in the code): the degradation ends when `minClientVersion`
   passes the first stable carrying the caption edit, and this entry is then deleted.
 
-### A tolerated degradation: a salon invitation notice read by a build older than the id shape (2026-11-16)
+### Removal once `minClientVersion` passes `1.7.0` - a salon invitation notice sent as a sentence (2026-11-16)
 
-- **What.** A salon invitation's `memberAdded` notice carries `{ "newUsers": [id] }`
-  ([chat](frontend/modules/chat.md#a-salons-membership-notice-carries-ids-2026-11-16)). An older build
-  drew `system.data` as the sentence, so it shows the JSON text in that one centred notice. This build
-  reads BOTH shapes (`channelSystemEnvelope`): old sentence rows in the archive stay readable.
-- **Who.** Native apps older than the release carrying the id shape; the web app is always current.
-- **Why tolerated.** One cosmetic notice, never a lost message; a wire field added beside `data` would
-  touch the signed frame canonicalisation for the same cosmetic gain.
-- **Removal.** The legacy-sentence branch of `channelSystemEnvelope` goes when no salon history holds a
-  sentence notice (it never is rewritten), so it stays; the degradation ends when `minClientVersion`
-  passes the first stable carrying the id shape, and this entry is then deleted.
+**Site:** `CHANNEL_NOTICE_IDS_WRITER_ENABLED` and `channelMemberAddedData`
+(`frontend/src/lib/utils/chat/channelNotice.ts`).
+**What it humours:** a build older than the id reader (`channelSystemEnvelope`) draws a salon notice's
+`system.data` as text, so the id shape `{ "newUsers": [id] }`
+([chat](frontend/modules/chat.md#a-salons-membership-notice-carries-ids-2026-11-16)) would reach its
+screen as raw JSON. So the reader ships first and the inviter keeps sending the localized sentence
+every build draws. **The cost while it stands:** the notice keeps the inviter's language and the names
+as the inviter's device knew them. No wire field is added beside `data`: it would touch the signed
+frame for a cosmetic gain, and the floor reaches the reader anyway.
+**Removal condition:** `minClientVersion` at or above the first stable carrying the reader (`1.7.0`)
+on both estates. Then, in one pull request
+([planned](backlog.d/a-salon-invitation-notice-sends-ids-once-the-floor-reads-them.md)): set the switch
+to `true`, then delete it, the sentence branch of `channelMemberAddedData` and its test, and this
+entry. **What stays:** the legacy-sentence branch of `channelSystemEnvelope` - rows are never
+rewritten, so a salon archive holds sentence notices for ever.
 
 ### A tolerated breakage: an institution post from a build older than the reach (owner, 2026-11-10)
 

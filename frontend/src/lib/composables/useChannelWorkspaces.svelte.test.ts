@@ -2159,9 +2159,10 @@ describe('useChannelWorkspaces - the membership notice', () => {
     expect(options).toEqual({ silent: true });
   });
 
-  // A sentence froze the inviter's language and a display name into the frame, and no group handler
-  // can read it. The frame names ids only; every reader draws the row (`channelNotice.ts`).
-  it('names the newcomer by id in JSON, never a rendered sentence', async () => {
+  // The id shape (`{ newUsers }`) is read by this build, but a build at the floor draws `system.data`
+  // as text: until `minClientVersion` passes the reader, the frame stays the sentence every supported
+  // build draws (`CHANNEL_NOTICE_IDS_WRITER_ENABLED`, legacy-compatibility).
+  it('sends the sentence every supported build reads, never raw ids, while the writer is off', async () => {
     await useChannelWorkspaces().inviteMemberToChannel(
       'channel_c1',
       'newcomer',
@@ -2172,7 +2173,7 @@ describe('useChannelWorkspaces - the membership notice', () => {
     const bytes = sendEncryptedChannelMessage.mock.calls[0][1] as Uint8Array;
     const sent = decodeAppMessage(bytes)!;
     expect(sent.system?.event).toBe('memberAdded');
-    expect(JSON.parse(sent.system!.data!)).toEqual({ newUsers: ['newcomer'] });
+    expect(sent.system?.data).toBe('notice');
   });
 
   // A member hands the newcomer the past only on a proof it can check: the admission this device

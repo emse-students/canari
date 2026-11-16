@@ -117,7 +117,7 @@ earliest version, as a checklist.
 - [ ] [a newcomer's own "X a ajouté Y" notice names both people (was: "Compte supprime a ajoute Compte supprime au groupe")](backlog.d/p3-a-newcomer-s-first-added-notice-reads-compte-supprime-for-both-names.md)
 - [ ] [the pre-live screen says a suspension before Start](backlog.d/reading-owed-the-pre-live-screen-says-a-suspension-before-start.md)
 - [ ] [editing a CanaReel's caption: the form sends the caption alone](backlog.d/p2-editing-a-canareel-s-caption-answers-400-because-the-edit-form-sends-its-video.md)
-- [ ] [a salon invitation's notice, in the invitee's and the members' language (2026-11-16)](backlog.d/reading-owed-a-channel-invite-notice-names-ids-and-draws-live.md)
+- [ ] [a salon invitation's notice still reads as a sentence, live and from history (2026-11-16)](backlog.d/reading-owed-a-channel-invite-notice-names-ids-and-draws-live.md)
 
 ## 1.8.0
 
@@ -201,6 +201,7 @@ earliest version, as a checklist.
 - [P3 - the bell picker keeps its old level after a re-follow, until the page is opened again](backlog.d/p3-the-bell-picker-keeps-its-old-level-after-a-re-follow.md)
 - [P3 - the comment route accepts a comment with no text and no media, and pushes "Nouveau commentaire"](backlog.d/p3-the-comment-route-accepts-an-empty-comment-and-pushes-it.md)
 - [P3 - the iOS volume buttons do not reach the in-app camera: withdraw the iOS half of the volume shutter](backlog.d/p3-the-ios-volume-buttons-do-not-reach-the-in-app-camera-withdraw-the-ios-half.md)
+- [P3 - A salon invitation's notice sends ids once the floor reads them (2026-11-16)](backlog.d/a-salon-invitation-notice-sends-ids-once-the-floor-reads-them.md)
 - [P3 - on Android the live sheet says "another app is using the camera" when the camera permission is OFF](backlog.d/p3-the-live-sheet-says-another-app-uses-the-camera-when-the-permission-is-off.md)
 
 ## 1.9.0

@@ -58,6 +58,7 @@ import { showToast } from '$lib/stores/toast.svelte';
 import { notifNav } from '$lib/stores/notifNav.svelte';
 import { m } from '$lib/paraglide/messages';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
+import { channelMemberAddedData } from '$lib/utils/chat/channelNotice';
 import { notifyReaction } from '$lib/utils/chat/reactionNotify';
 import { describeCommunityRefusal } from '$lib/utils/chat/communityErrors';
 import {
@@ -2068,16 +2069,16 @@ export function useChannelWorkspaces() {
         }
       }
 
-      // Notify the channel's members. The frame carries IDS, never a sentence: every reader draws
-      // the row with the one notice rendering, names resolved at read time and in ITS language
-      // (`channelNotice.ts`). SILENT: the row is opaque to the server, so the sender says it is a
-      // notice - it must neither count as unread for the salon's members nor ring their phones.
+      // Notify the channel's members. The data is the sentence until every supported build reads
+      // the id shape, then the ids (`channelMemberAddedData`, `channelNotice.ts`). SILENT: the row is
+      // opaque to the server, so the sender says it is a notice - it must neither count as unread
+      // for the salon's members nor ring their phones.
       const inviterId = currentUserId();
 
       if (inviterId) {
         try {
           const systemBytes = encodeAppMessage(
-            mkSystem('memberAdded', JSON.stringify({ newUsers: [memberId] }))
+            mkSystem('memberAdded', await channelMemberAddedData(memberId, inviterId))
           );
           await sendEncryptedChannelMessage(
             channelConversationId,

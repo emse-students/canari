@@ -9,16 +9,49 @@
  *
  * **Two shapes live in the archive and on the wire, and the data itself tells them apart**: a JSON
  * object is the id shape, anything else is a legacy sentence from a build older than this one,
- * wrapped as it always was. The old shape stays READABLE forever (rows are never rewritten); only
- * the old reader cannot read the new shape ([legacy-compatibility]).
+ * wrapped as it always was. The old shape stays READABLE forever (rows are never rewritten).
+ *
+ * **The reader ships before the writer.** A build older than this reader draws `system.data` as text,
+ * so an id frame would reach its screen as raw `{"newUsers":[...]}`. Every supported build must read
+ * the id shape before any build sends it: {@link CHANNEL_NOTICE_IDS_WRITER_ENABLED}.
  *
  * @see docs/wiki/frontend/modules/chat.md
  */
 import type { IAppMessage } from '$lib/proto/codec';
+import { m } from '$lib/paraglide/messages';
+import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { appMsgToChannelSystemEnvelope } from './messageUtils';
 import { visibleNoticeContent, type VisibleNoticeEvent } from './visibleNotices';
 
 type ChannelEnvelope = ReturnType<typeof appMsgToChannelSystemEnvelope>;
+
+/**
+ * THE WRITER FLIP - `false`, AND `false` IS THE WHOLE OF ITS SAFETY.
+ *
+ * While it is `false` a salon invitation sends the sentence every build draws; the reader above
+ * reads both shapes. The flip is THIS ONE LINE, and it lands only when `minClientVersion` is at or
+ * above the first stable carrying this reader (`1.7.0`), read on BOTH estates - the floor rule of
+ * docs/wiki/legacy-compatibility.md ("a salon invitation notice"), planned in
+ * docs/wiki/backlog.d/a-salon-invitation-notice-sends-ids-once-the-floor-reads-them.md. A compile-time
+ * fact of the binary, no server read: a build at the floor never receives a shape it cannot draw.
+ */
+export const CHANNEL_NOTICE_IDS_WRITER_ENABLED = false;
+
+/**
+ * The `system.data` a salon invitation's `memberAdded` frame carries: the ids once the writer is on,
+ * else the sentence in the inviter's language (the legacy shape every supported build draws).
+ *
+ * @param writesIds the switch, injectable for the test of both shapes
+ */
+export async function channelMemberAddedData(
+  memberId: string,
+  inviterId: string,
+  writesIds: boolean = CHANNEL_NOTICE_IDS_WRITER_ENABLED
+): Promise<string> {
+  if (writesIds) return JSON.stringify({ newUsers: [memberId] });
+  const nameOf = await resolveDisplayNames([memberId, inviterId]);
+  return m.chat_system_member_added({ sender: nameOf(inviterId), members: nameOf(memberId) });
+}
 
 /** The events a salon's id-shaped notice may carry - today only an addition. */
 const CHANNEL_NOTICE_EVENTS: readonly VisibleNoticeEvent[] = ['memberAdded'];

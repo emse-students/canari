@@ -6,7 +6,12 @@ vi.mock('$lib/utils/users/displayName', () => ({
 
 import { decodeAppMessage, encodeAppMessage, mkSystem } from '$lib/proto/codec';
 import { parseEnvelope } from '$lib/envelope';
-import { channelNoticePayload, channelSystemEnvelope } from './channelNotice';
+import {
+  CHANNEL_NOTICE_IDS_WRITER_ENABLED,
+  channelMemberAddedData,
+  channelNoticePayload,
+  channelSystemEnvelope,
+} from './channelNotice';
 
 const NAMES: Record<string, string> = { ana: 'Ana', bob: 'Bob' };
 
@@ -57,5 +62,26 @@ describe('channelSystemEnvelope', () => {
     expect(env).toBeNull();
     expect(warn).toHaveBeenCalledTimes(1);
     warn.mockRestore();
+  });
+});
+
+describe('channelMemberAddedData - what a salon invitation sends', () => {
+  // A build at the floor (1.6.6) draws `system.data` as the sentence it always was, so an id object
+  // would reach its screen as raw JSON text. The writer waits for the floor (legacy-compatibility).
+  it('ships OFF: no supported build below the reader may receive the id shape', () => {
+    expect(CHANNEL_NOTICE_IDS_WRITER_ENABLED).toBe(false);
+  });
+
+  it('sends the sentence while the writer is off, which every build reads', async () => {
+    const data = await channelMemberAddedData('bob', 'ana', false);
+    expect(channelNoticePayload(data)).toBeNull();
+    expect(data).toContain('Ana');
+    expect(data).toContain('Bob');
+  });
+
+  it('sends ids only once the writer is on', async () => {
+    expect(JSON.parse(await channelMemberAddedData('bob', 'ana', true))).toEqual({
+      newUsers: ['bob'],
+    });
   });
 });
