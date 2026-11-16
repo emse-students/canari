@@ -69,3 +69,51 @@ describe('InternalUsersController.publicProfile and the review cohort', () => {
     });
   });
 });
+
+/**
+ * THE ACCOUNT FIELDS A FORM JOINS TO AN ANSWER (owner, 2026-11-16) come from the account row, read
+ * here, never from the respondent's request: names, campus, the posts that tell staff, and every
+ * cursus through the one reconciliation pricing reads.
+ */
+describe('InternalUsersController.respondentIdentity', () => {
+  const SECRET = 'internal-secret-for-tests';
+  const saved = process.env.INTERNAL_SECRET;
+  beforeEach(() => {
+    process.env.INTERNAL_SECRET = SECRET;
+  });
+  afterEach(() => {
+    if (saved === undefined) delete process.env.INTERNAL_SECRET;
+    else process.env.INTERNAL_SECRET = saved;
+  });
+
+  it('serves the names, the campus, the posts and every cursus of the account', async () => {
+    const findOne = jest.fn(() =>
+      Promise.resolve({
+        id: 'member',
+        firstName: 'Marie',
+        lastName: 'CURIE',
+        campus: 'gardanne',
+        posts: ['EMSE'],
+        promo: 2024,
+        formation: 'ISMIN',
+        cursus: [{ formation: 'ISMIN', promo: 2024 }],
+      } as User)
+    );
+    const controller = new InternalUsersController({ findOne } as unknown as Repository<User>);
+    await expect(controller.respondentIdentity('member', SECRET)).resolves.toEqual({
+      firstName: 'Marie',
+      lastName: 'CURIE',
+      campus: 'gardanne',
+      posts: ['EMSE'],
+      cursusViews: [{ promo: 2024, formation: 'ISMIN' }],
+    });
+  });
+
+  it('answers a typed 404 for an unknown account', async () => {
+    const findOne = jest.fn(() => Promise.resolve(null));
+    const controller = new InternalUsersController({ findOne } as unknown as Repository<User>);
+    await expect(controller.respondentIdentity('nobody', SECRET)).rejects.toMatchObject({
+      response: { code: 'RESPONDENT_UNKNOWN' },
+    });
+  });
+});

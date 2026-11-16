@@ -86,3 +86,10 @@ Recorded so no question answered here is asked again. Each line names where its 
   still block the stable. The birthday morning-notice reading is taken on the stable the next morning.
 - **(22) `docs/wiki/plan.md` is no longer tracked**: *"C'est exactement le genre de choses que
   j'entends par problème systémique de notre workflow... Peu importe la solution, je l'accepte."*
+
+### The side-by-side scene is removed (23)
+
+- **"Cote a cote" leaves the desktop live scenes** (owner, 2026-11-16 evening: "Cet agencement est un peu
+  bizarre, on peut supprimer cote a cote"). Four scenes remain: camera, screen, screen + camera (overlay),
+  "Je reviens". Charter: principle 7 (simplicity). Nothing on the wire or the server names a scene, so no
+  compatibility shim is owed ([live](../frontend/modules/live.md)).

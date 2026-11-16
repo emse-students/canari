@@ -1,6 +1,6 @@
 /**
  * CAMPUS TRENDS (engagement WP-10) against a REAL PostgreSQL: migrations 160 and 161 as they ship,
- * exactly one stamp at the write that crosses `TREND_THRESHOLD` (none below it, none after 24 hours,
+ * exactly one stamp at the write that crosses the trend threshold (none below it, none after 24 hours,
  * none twice, one under concurrent writers, NONE for a post already past it when first evaluated -
  * the deploy of 2026-11-10), the space-only audience - never through a follow or a read grant, never
  * the author, never across a block with the author, never a reader already told - ONE trend per
@@ -16,7 +16,8 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { Logger } from '@nestjs/common';
 import { Client, Pool } from 'pg';
-import { TREND_THRESHOLD, announceCampusTrend, groupByLikedBy, trendMediaOf } from './campus-trend';
+import { announceCampusTrend, groupByLikedBy, trendMediaOf } from './campus-trend';
+import { trendThreshold } from './trend-threshold';
 import { PostNotificationsService } from './post-notifications.service';
 import {
   createEngagementPushCapTables,
@@ -53,7 +54,7 @@ const reactors = (n: number, from = 0) =>
   Object.fromEntries(Array.from({ length: n }, (_, i) => [`e${from + i}`, 'like']));
 
 /** The threshold every case is written against. */
-const T = TREND_THRESHOLD;
+const T = trendThreshold();
 
 maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
   const schema = `trend_it_${Math.random().toString(36).slice(2, 10)}`;

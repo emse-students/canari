@@ -7,6 +7,7 @@ vi.mock('$lib/utils/appVersion', () => ({
 }));
 
 import {
+  composePlainNotificationText,
   notificationGroupName,
   notificationIsGroup,
   postNativeMessageNotification,
@@ -167,5 +168,39 @@ describe('notificationGroupName', () => {
 
   it('falls back to the stored name when there is no auxiliary label', () => {
     expect(notificationGroupName('group', '', 'grp-1')).toBe('grp-1');
+  });
+});
+
+describe('composePlainNotificationText', () => {
+  // The preview is Paraglide's `chat_preview_media`, so both locales reach here as a plain string.
+  it.each([
+    ['fr', '[Média]'],
+    ['en', '[Media]'],
+  ])('titles a group by its name and leads the body with the speaker (%s)', (_locale, preview) => {
+    expect(
+      composePlainNotificationText('Alice', preview, { groupName: 'Les Canaris', isGroup: true })
+    ).toEqual({ title: 'Les Canaris', body: `Alice: ${preview}` });
+  });
+
+  it('keeps the sender as the title of a direct message', () => {
+    expect(
+      composePlainNotificationText('Alice', '[Media]', { groupName: '', isGroup: false })
+    ).toEqual({ title: 'Alice', body: '[Media]' });
+  });
+
+  it('keeps the sender as the title when a group has no name to show', () => {
+    expect(
+      composePlainNotificationText('Alice', '[Media]', { groupName: '  ', isGroup: true })
+    ).toEqual({ title: 'Alice', body: '[Media]' });
+  });
+
+  it('never titles a conversation typed direct by a stale name', () => {
+    expect(
+      composePlainNotificationText('Alice', 'hi', { groupName: 'Alice', isGroup: false })
+    ).toEqual({ title: 'Alice', body: 'hi' });
+  });
+
+  it('is the input untouched when the call carries nothing native (a call site without a row)', () => {
+    expect(composePlainNotificationText('Alice', 'hi')).toEqual({ title: 'Alice', body: 'hi' });
   });
 });

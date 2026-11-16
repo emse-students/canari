@@ -94,9 +94,8 @@ describe('LiveStudio - the scenes', () => {
     expect(studio.screen).toBe(screens[0].stream);
     await studio.selectScene('camera');
     await studio.selectScene('screen-camera');
-    await studio.selectScene('side-by-side');
     expect(deps.openDisplay).toHaveBeenCalledTimes(1);
-    expect(compositor.scene).toBe('side-by-side');
+    expect(compositor.scene).toBe('screen-camera');
     expect(mixer.share).toBe(screens[0].audio);
   });
 

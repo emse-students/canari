@@ -371,29 +371,37 @@
           Vos adhésions et rôles, vos cotisations, vos réponses aux formulaires (et, si le
           formulaire vous laisse modifier votre réponse, la date de votre dernière modification,
           visible de ceux qui le gèrent, sans historique des versions précédentes) et vos achats
-          (montant, produit, statut, identifiant de la transaction chez Lydia). Quand un responsable
-          d'association enregistre l'issue d'un paiement non livré (remboursé ou cotisation
-          attribuée), Canari garde cette issue, sa date et l'identifiant du responsable. Quand une
-          association vous rembourse un paiement depuis Canari, Canari garde le remboursement : le
-          paiement concerné, le montant, total ou partiel, le motif saisi, la date, l'identifiant du
-          responsable qui l'a demandé (et de celui qui l'a vérifié si Lydia ne l'avait pas confirmé)
-          et la réponse de Lydia. Le motif est écrit librement par le responsable : il peut nommer
-          une personne, et il figure tel quel dans le relevé que les responsables du compte de
-          paiement de l'association peuvent télécharger. Quand une association accepte de recevoir
-          les paiements d'une autre entité (une liste, par exemple), Canari garde l'identifiant du
-          responsable qui a accepté, à quel titre et la date. Un remboursement total retire ce que
-          le paiement avait apporté (la cotisation, la place du formulaire), sauf une recharge du
-          Cercle, dont le solde ne change pas. Aucune donnée bancaire n'est reçue ni conservée par
-          Canari. Les fichiers déposés dans un formulaire (par exemple un CV) sont lisibles par
-          l'association qui l'a créé. Une image ajoutée à une question par l'auteur d'un formulaire
-          est publique : quiconque a le lien du formulaire peut la voir, sans compte. Elle est
-          effacée quand plus aucun formulaire ne l'affiche. Les modifications d'un formulaire en
-          cours d'écriture sont enregistrées au fur et à mesure comme brouillon (le contenu du
-          formulaire, sans le nom de qui l'a écrit), vidé à la publication ou à l'abandon et
-          supprimé avec le formulaire. Quand le BDE de votre espace publie la carte de la vie
-          associative, votre nom, votre photo de profil et votre rôle dans les associations qui y
-          figurent peuvent y être affichés, visibles de tous sans compte sur le portail, jusqu'à la
-          prochaine publication ou la suppression de votre compte, qui les en retire.
+          (montant, produit, statut, identifiant de la transaction chez Lydia). L'auteur d'un
+          formulaire choisit lesquelles de vos informations de compte accompagnent chaque réponse :
+          nom, prénom, promo et formation, statut élève ou personnel, campus (chacune séparément ;
+          nom et prénom par défaut). Elles sont lues sur votre compte au moment où vous envoyez la
+          réponse, conservées avec elle telles qu'elles étaient alors, et lues par ceux qui gèrent
+          le formulaire (liste des réponses et export) ; le formulaire vous dit lesquelles avant
+          l'envoi. Un formulaire anonyme n'en joint aucune : s'il demande votre promo, votre statut
+          ou votre campus, c'est vous qui les indiquez, sans lien avec votre compte. Quand un
+          responsable d'association enregistre l'issue d'un paiement non livré (remboursé ou
+          cotisation attribuée), Canari garde cette issue, sa date et l'identifiant du responsable.
+          Quand une association vous rembourse un paiement depuis Canari, Canari garde le
+          remboursement : le paiement concerné, le montant, total ou partiel, le motif saisi, la
+          date, l'identifiant du responsable qui l'a demandé (et de celui qui l'a vérifié si Lydia
+          ne l'avait pas confirmé) et la réponse de Lydia. Le motif est écrit librement par le
+          responsable : il peut nommer une personne, et il figure tel quel dans le relevé que les
+          responsables du compte de paiement de l'association peuvent télécharger. Quand une
+          association accepte de recevoir les paiements d'une autre entité (une liste, par exemple),
+          Canari garde l'identifiant du responsable qui a accepté, à quel titre et la date. Un
+          remboursement total retire ce que le paiement avait apporté (la cotisation, la place du
+          formulaire), sauf une recharge du Cercle, dont le solde ne change pas. Aucune donnée
+          bancaire n'est reçue ni conservée par Canari. Les fichiers déposés dans un formulaire (par
+          exemple un CV) sont lisibles par l'association qui l'a créé. Une image ajoutée à une
+          question par l'auteur d'un formulaire est publique : quiconque a le lien du formulaire
+          peut la voir, sans compte. Elle est effacée quand plus aucun formulaire ne l'affiche. Les
+          modifications d'un formulaire en cours d'écriture sont enregistrées au fur et à mesure
+          comme brouillon (le contenu du formulaire, sans le nom de qui l'a écrit), vidé à la
+          publication ou à l'abandon et supprimé avec le formulaire. Quand le BDE de votre espace
+          publie la carte de la vie associative, votre nom, votre photo de profil et votre rôle dans
+          les associations qui y figurent peuvent y être affichés, visibles de tous sans compte sur
+          le portail, jusqu'à la prochaine publication ou la suppression de votre compte, qui les en
+          retire.
         </dd>
       </div>
       <div>
@@ -425,17 +433,18 @@
           chez Lydia. Par défaut, rien ne lui est demandé sur son identité : l'auteur du formulaire
           peut lui demander son nom, son prénom et son adresse e-mail (chacun séparément), qui sont
           alors obligatoires, conservés avec la réponse et lus par ceux qui gèrent le formulaire
-          (liste des réponses et export) ; un membre connecté n'a jamais ces champs. Si l'adresse
-          e-mail est demandée, c'est elle qui est transmise à Lydia pour un paiement en ligne.
-          Sinon, l'adresse e-mail saisie pour payer est transmise à Lydia et n'est pas conservée par
-          Canari. Pour un paiement en ligne, Canari garde une empreinte du lien de retour (jamais le
-          lien lui-même), qui permet de consulter ce paiement. Tant qu'une réponse payante attend
-          son paiement, elle porte une empreinte calculée avec une clé secrète (HMAC) à partir du
-          formulaire et du réseau de la connexion : l'adresse IPv4, ou le préfixe /64 d'une adresse
-          IPv6. L'adresse elle-même n'est pas conservée. Cette empreinte sert uniquement à limiter à
-          trois les réponses en attente de paiement depuis un même réseau ; elle est effacée par une
-          tâche planifiée, dans les cinq minutes qui suivent le règlement, l'annulation ou
-          l'expiration de la réponse.
+          (liste des réponses et export). Il peut aussi lui demander sa promo et sa formation, son
+          statut (élève ou personnel) et son campus, conservés de la même façon ; un membre connecté
+          ne les saisit pas, ils sont lus sur son compte. Si l'adresse e-mail est demandée, c'est
+          elle qui est transmise à Lydia pour un paiement en ligne. Sinon, l'adresse e-mail saisie
+          pour payer est transmise à Lydia et n'est pas conservée par Canari. Pour un paiement en
+          ligne, Canari garde une empreinte du lien de retour (jamais le lien lui-même), qui permet
+          de consulter ce paiement. Tant qu'une réponse payante attend son paiement, elle porte une
+          empreinte calculée avec une clé secrète (HMAC) à partir du formulaire et du réseau de la
+          connexion : l'adresse IPv4, ou le préfixe /64 d'une adresse IPv6. L'adresse elle-même
+          n'est pas conservée. Cette empreinte sert uniquement à limiter à trois les réponses en
+          attente de paiement depuis un même réseau ; elle est effacée par une tâche planifiée, dans
+          les cinq minutes qui suivent le règlement, l'annulation ou l'expiration de la réponse.
         </dd>
       </div>
       <div>

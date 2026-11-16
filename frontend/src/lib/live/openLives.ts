@@ -4,8 +4,9 @@
  * `GET /api/lives` already applies the watch rule (a live follows a post's visibility,
  * docs/wiki/services/lives.md, "Who may watch"), so the reader's own live is the only one filtered
  * here: the broadcaster watches it from the broadcast screen, not from a card. The list is asked
- * when the FEED asks for its first page (a tab load, a pull-to-refresh, a retry, a reconnect) -
- * the feed's own mechanism, no timer of its own.
+ * when the FEED asks for its first page (a tab load, a pull-to-refresh, a retry, a reconnect) and
+ * by the card itself while its place is watched (docs/wiki/frontend/modules/live.md, "The feed
+ * card follows the live").
  */
 
 import { isLiveRefusal, listOpenLives } from './api';
