@@ -17,6 +17,7 @@
 #   frontend-lint             oxlint + oxvelte, svelte-check, oxfmt --check
 #   dead-code                 the knip ratchet
 #   frontend-test [shard]     vitest with coverage, the whole suite or shard N of 4
+#   frontend-test-related <base>   the push's vitest: only what `base..HEAD` reaches (owner, 2026-11-16)
 #   frontend-build <sha>      the production web build, then what it must carry
 #   mls-wasm-build            frontend/mls-wasm -> frontend/src/lib/wasm, warnings denied
 #   mls-wasm-verify           the built WASM exists and carries no unsupported-platform panic
@@ -143,6 +144,60 @@ check_frontend_test() {
   fi
 }
 
+# The files whose change can move ANY test, so a push touching one runs the whole suite. The import
+# graph cannot see them: the runner's own config, the setup files and helpers of `src/test/`, the
+# dependencies, and the messages every `m.xxx()` is generated from.
+FRONTEND_TEST_SETUP='^frontend/(vite\.config\.js|vitest\.config\.ts|tsconfig\.json|package\.json|bun\.lock|src/test/|messages/|project\.inlang/)'
+
+# WHAT A PUSH'S VITEST RUNS (owner, 2026-11-16, "alleger le push": the whole suite was 720 of a
+# frontend-only push's 846 s). The full suite stays CI's (`frontend-test`). Here:
+#   - a change to FRONTEND_TEST_SETUP runs the whole suite, said by a named line;
+#   - otherwise `vitest related` over the changed files - the tests whose import graph reaches one -
+#     PLUS what that graph cannot see: every scan of the source tree (`src/test/sourceTree`, read
+#     from disk, imports nothing it checks), and every test that names a changed file (one that
+#     reads a component's text with `readFileSync`).
+# CHECKS_DRY_RUN=1 prints the decision instead of running it (the self-test reads it).
+check_frontend_test_related() {
+  local base="${1:-}"
+  [ -n "$base" ] || die "frontend-test-related: pass the base the range starts from"
+  local changed setup
+  changed="$(git diff --name-only --diff-filter=ACMR "$base" HEAD -- frontend/)"
+  setup="$(grep -E "$FRONTEND_TEST_SETUP" <<<"$changed" || true)"
+  if [ -n "$setup" ]; then
+    echo "frontend-test: the test setup changed ($(head -1 <<<"$setup" | sed 's#^frontend/##')) - the whole suite runs"
+    [ "${CHECKS_DRY_RUN:-}" = "1" ] && return 0
+    (cd frontend && bun run test)
+    return
+  fi
+  local sources=() name f
+  while IFS= read -r f; do
+    [ -n "$f" ] && sources+=("${f#frontend/}")
+  done < <(grep -E '^frontend/src/' <<<"$changed" || true)
+  if [ "${#sources[@]}" -eq 0 ]; then
+    echo "frontend-test: no file under frontend/src changed - no test is related"
+    return 0
+  fi
+  local extra=()
+  while IFS= read -r f; do
+    [ -n "$f" ] && extra+=("$f")
+  done < <(
+    cd frontend && {
+      grep -rlE "test/sourceTree'" src --include='*.test.ts' --include='*.spec.ts' || true
+      for f in "${sources[@]}"; do
+        name="$(basename "$f")"
+        grep -rlF "$name" src --include='*.test.ts' --include='*.spec.ts' || true
+      done
+    } | sort -u
+  )
+  echo "frontend-test: related to ${#sources[@]} changed file(s), plus ${#extra[@]} test(s) that read the source from disk"
+  if [ "${CHECKS_DRY_RUN:-}" = "1" ]; then
+    printf 'related: %s\n' "${sources[@]}" "${extra[@]}"
+    return 0
+  fi
+  (cd frontend && bun run paraglide:compile && bun run paraglide:compile:test &&
+    bunx vitest related --run "${sources[@]}" "${extra[@]}")
+}
+
 check_frontend_build() {
   local sha="${1:-}"
   [ -n "$sha" ] || die "frontend-build: pass the commit sha the build is stamped with"
@@ -202,6 +257,7 @@ case "$name" in
   frontend-lint) check_frontend_lint ;;
   dead-code) check_dead_code ;;
   frontend-test) check_frontend_test "$@" ;;
+  frontend-test-related) check_frontend_test_related "$@" ;;
   frontend-build) check_frontend_build "$@" ;;
   mls-wasm-build) check_mls_wasm_build ;;
   mls-wasm-verify) check_mls_wasm_verify ;;

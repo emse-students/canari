@@ -57,7 +57,7 @@ test-social-integration            ci-only   integration specs on PostgreSQL and
 test-chat-delivery-integration     ci-only   integration specs on PostgreSQL
 test-typescript-backend            push      checks.sh ts, per service in scope
 test-frontend                      push      frontend-prepare, frontend-lint, dead-code, frontend-build in scope
-test-frontend-shards               push      checks.sh frontend-test, the whole suite in one run
+test-frontend-shards               push      checks.sh frontend-test-related: the tests the range reaches, the whole suite when the test setup changed
 test-android                       push      android-unit-tests.sh (a JDK)
 compile-android-app                ci-only   needs the Android SDK and NDK
 compile-ios-app                    ci-only   needs macOS and Xcode
@@ -253,7 +253,11 @@ push_plan() {
     echo "frontend-generated|bash .github/scripts/local-ci.sh generated"
     echo "frontend-lint|bash .github/scripts/checks.sh frontend-lint"
     echo "dead-code|bash .github/scripts/checks.sh dead-code"
-    echo "frontend-test|bash .github/scripts/checks.sh frontend-test"
+    if [ -n "$base" ]; then
+      echo "frontend-test|bash .github/scripts/checks.sh frontend-test-related $base"
+    else
+      echo "frontend-test|bash .github/scripts/checks.sh frontend-test"
+    fi
     [ "$(scope frontend_build)" = "true" ] && echo "frontend-build|bash .github/scripts/checks.sh frontend-build $(git rev-parse HEAD)"
   fi
   local svc crate

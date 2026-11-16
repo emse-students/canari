@@ -78,11 +78,16 @@ make_repo() {
   local dir="$1"
   mkdir -p "$dir/.github/scripts" "$dir/.github/workflows" "$dir/frontend/src/lib/x" "$dir/docs/wiki/backlog.d" \
     "$dir/apps/core-service/src/a"
-  cp "$repo_root/.github/scripts/local-ci.sh" "$repo_root/.github/scripts/ci-scopes.sh" "$dir/.github/scripts/"
+  cp "$repo_root/.github/scripts/local-ci.sh" "$repo_root/.github/scripts/ci-scopes.sh" \
+    "$repo_root/.github/scripts/checks.sh" "$dir/.github/scripts/"
   echo "name: CI" >"$dir/.github/workflows/ci.yml"
   echo "export const a = 1;" >"$dir/frontend/src/lib/x/mod.ts"
   echo "test" >"$dir/frontend/src/lib/x/mod.test.ts"
   echo "test" >"$dir/frontend/src/lib/x/mod.edge.test.ts"
+  # A scan of the source tree, and a test that reads a file's text: the import graph sees neither.
+  echo "import { sourceFiles } from '../../test/sourceTree';" >"$dir/frontend/src/lib/scan.test.ts"
+  echo "readFileSync('x/mod.ts');" >"$dir/frontend/src/lib/reads.test.ts"
+  echo "readFileSync('other.ts');" >"$dir/frontend/src/lib/unrelated.test.ts"
   echo "export const b = 1;" >"$dir/apps/core-service/src/a/svc.ts"
   echo "spec" >"$dir/apps/core-service/src/a/svc.spec.ts"
   echo "spec" >"$dir/apps/core-service/src/a/svc.integration.spec.ts"
@@ -282,6 +287,26 @@ out=$(scope_push frontend)
 check "a frontend change runs the frontend suite" "a frontend change planned no frontend-test: $out" planned frontend-test "$out"
 check "a frontend change does not run make test-ci-scripts" "a frontend change planned test-ci-scripts" \
   test -z "$(grep -F 'PLAN test-ci-scripts:' <<<"$out" || true)"
+check "and its vitest is the related run, not the whole suite" "the push planned the whole vitest suite: $out" \
+  test -n "$(grep -F 'checks.sh frontend-test-related ' <<<"$out" || true)"
+related() { (cd "$s" && CHECKS_DRY_RUN=1 bash .github/scripts/checks.sh frontend-test-related HEAD~1 2>&1) || true; }
+out=$(related)
+check "the related run takes the changed file" "the changed file was not handed to vitest related: $out" \
+  test -n "$(grep -Fx 'related: src/lib/x/mod.ts' <<<"$out" || true)"
+check "plus every scan of the source tree" "a source-tree scan was left out of the related run: $out" \
+  test -n "$(grep -Fx 'related: src/lib/scan.test.ts' <<<"$out" || true)"
+check "plus a test that reads the changed file's text" "a test reading the changed file was left out: $out" \
+  test -n "$(grep -Fx 'related: src/lib/reads.test.ts' <<<"$out" || true)"
+check "and not a test about another file" "a test unrelated to the change was planned: $out" \
+  test -z "$(grep -F 'unrelated.test.ts' <<<"$out" || true)"
+check "and it does not run the whole suite" "a source change ran the whole suite: $out" \
+  test -z "$(grep -F 'the whole suite runs' <<<"$out" || true)"
+echo "export default {};" >"$s/frontend/vitest.config.ts"
+git -C "$s" add frontend/vitest.config.ts
+git -C "$s" commit -qm vitest-config
+out=$(related)
+check "a change to the test setup runs the whole suite, by a named line" "a vitest config change did not run the whole suite: $out" \
+  test -n "$(grep -F 'the test setup changed (vitest.config.ts) - the whole suite runs' <<<"$out" || true)"
 printf '#!/usr/bin/env bash\necho hi\n' >"$s/.github/scripts/new.sh"
 git -C "$s" add .github/scripts/new.sh
 out=$(scope_push script)
