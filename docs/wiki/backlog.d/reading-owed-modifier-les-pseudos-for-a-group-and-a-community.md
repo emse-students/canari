@@ -9,3 +9,5 @@ target: 1.7.0
 **Triage 2026-11-14: web only, dev web seats, about 30 min** (every item is a client or a route behaviour; no phone surface). #3513, a notification naming a member by their nickname, is NOT in `v1.6.12`, so it is not read here.
 
 **Web sitting 2026-11-15 on dev (`1.6.12-alpha.2`), [device-verification](../device-verification.md#where-the-pass-stands):** (2) PASS by the approval path of a link ask (alpha's other devices held no leaf; "Defini avant votre arrivee", the storage key, the join push and `Full history sent: 1 of 3`); (4) PASS for the group half (a target who blocked the setter reads "Un pseudo que vous ne voyez pas est defini pour vous"); (7) its reset cleared the nickname on the setter's seat. **Left:** 1 and 3 (a third device offline), the community half of 4 (`USER_BLOCKED`), 5, 6, 8, and 7 for a third member.
+
+**Mi 9T, 2026-11-16: NOT TAKEN.** The reading needs a fourth account added through "Ajouter" and a second web device; neither was free in this sitting.

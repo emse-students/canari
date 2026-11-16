@@ -6,7 +6,7 @@ target: 1.7.0
 `withdrawn`) and the pre-live screen now reads `GET /api/lives/standing` with the limits: a suspension
 or a withdrawal is said before Start, which is disabled
 ([live](../frontend/modules/live.md#the-broadcaster-as-built)); its device reading is
-[its own entry](reading-owed-the-pre-live-screen-says-a-suspension-before-start.md). The seat taken
+[its own entry](../device-verification.md#the-mi-9t-readings-of-2026-11-16-the-owed-rows-170-alpha2). The seat taken
 after an end's release (the P3 the server review found) is closed - the take itself refuses a closed
 live and a removed viewer, inside Redis ([lives](../services/lives.md#no-seat-is-taken-on-a-closed-live-2026-11-15)).
 
