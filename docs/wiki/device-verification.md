@@ -531,6 +531,35 @@ closed that day; the entries themselves are deleted. Evidence is outside the rep
 | A BLIND salon banner (no author, no mention, one sound on the redraw; no "Marquer comme lu" while blind) | **`NOT-STAGED`, entry closed** | The bench phone runs a release build, so `run-as` cannot remove the seed mirror, and the channel push carries its own seed frame (`[CHANNEL_PUSH] ... seedFrame=...`); the owner declined a debuggable APK (2026-11-15). The iPhone half was deleted earlier: a sound cannot be observed from the bench, and iOS never redraws |
 | CanaReels "Voir plus", Mi 9T (entry closed 2026-11-16, reopened for what is left) | **`PASS`** (part) | Gesture navigation, `--safe-area-inset-bottom` 24 px: one line, no toggle; a long caption's "Voir plus" at `top` 800 / `bottom` 814 CSS px, the seek slider at 828 / 860, no overlap collapsed or expanded; a seek tap moved the slider expanded. Not read: the just-overflowing caption and a phone with no bottom inset |
 
+## The desktop screen-share reading of 2026-11-16 (`1.7.0-alpha.5`)
+
+The bench took the owner's reading of [screen share in a desktop live](backlog.d/reading-owed-screen-share-in-a-desktop-live-the-scenes-read-by-the-owner.md)
+on `dev.canari-emse.fr` (`1.7.0-alpha.5`), by the owner's 2026-11-16 decision: the bench first, the owner only for the hand rows.
+**Broadcaster**: web seat W6 (`alpha`), desktop Chrome 157, relaunched with the scene flags; **viewer**: web seat W7 (`beta`),
+the feed card then the live viewer. Evidence (screenshots of what the viewer saw, the broadcaster's console) is outside the
+repository. Lives written to dev are in `WRITTEN-IDS.txt`; every one was ended through the product and its `lives` and
+`live_segments` rows read back 0 (read-only).
+
+**How the share was driven, and what that is not.** The rig's browsers run `--use-fake-device-for-media-stream`, which also
+makes `getDisplayMedia` a synthetic picture, so that pass proves the scenes and not a real capture. The real pass therefore ran
+the broadcaster WITHOUT the fake-device flags: the camera and microphone came from a script shim of `getUserMedia` (a canvas with
+a moving disc and a test tone, so no real webcam and no private room), and the screen from a **browser tab** of the bench's own
+page, chosen by `--auto-select-tab-capture-source-by-title`. A WINDOW could not be targeted (Chrome ignored the title flags, and
+`--use-fake-ui-for-media-stream` picks a screen), and one attempt shared the ENTIRE screen for about a minute before it was
+noticed: it was stopped at once, the live ended and deleted, the screenshots deleted, and the entire screen is never shared again.
+
+| Step | Verdict | What was seen |
+| --- | --- | --- |
+| 1. Scenes camera, screen, screen + camera, side by side, "Je reviens", back: no gap, no restart | **`PASS`** (bench; the bell and push half not taken) | Every click changed what the viewer saw within one buffer (a screenshot per scene: the shared tab, the tab with the round camera overlay, the two side by side, the "Je reviens tout de suite" card, then the tab again). The viewer's player stayed `playing` on ONE live, its `currentTime` advancing as the wall clock, the video `1280x720` throughout. The studio logged each switch (`scene screen -> screen-camera: switch`). A dismissed picker was not tried (the flag skips the picker) |
+| 2. Overlay: four corners, three sizes, round and rectangle, the keys | **`PASS`** | Dragged to each corner, it snapped on release (`snapped to top-left`, `top-right`, `bottom-left`, `bottom-right`); the three sizes and the two shapes each logged and showed on the viewer; ArrowLeft and ArrowUp moved it a corner each, and Enter twice cycled clockwise. Each CDP mouse drag took about 70 s of rig time (not explained, not measured against the app) |
+| 3. Microphone muted then back, camera off then back | **`PASS`** (the camera light is the owner's) | `microphone muted` / `microphone on`, `camera off` / `camera on` logged; with the camera off the viewer saw the "Caméra coupée" disc in the overlay's place, and the camera came back. The tone was not listened to (the viewer was muted) and the camera light cannot be read on a synthetic camera |
+| 4. The shared window resized twice | **`PASS`** (a tab; a real window not taken) | The window was resized to 1200x700 then 760x950 with the shared tab in front: the viewer's picture re-letterboxed to the new aspect each time (the tab's own text read `1184x549` then `744x799`), no streaks, the video stayed `1280x720`. A window not in front does not report its new size until it is brought forward, so the resize was read with the shared tab in front |
+| 5. The tab hidden more than five minutes | **`PASS`** (the owner's machine's cost is not this one's) | The live tab `hidden` for 5 min 48 s while the shared tab was in front: the viewer's `currentTime` advanced 58 s per 58 s of wall time and the picture moved. The console printed `[LIVE-STUDIO] drew 900 frames, X ms each on average` every 30 s, twelve lines in the window, X between 0.94 and 1.27 ms (this workstation, screen + camera scene) |
+| 6. Stop sharing | **`PASS`** (the bar's button is the owner's) | The shared tab closed (the `ended` event the bar's button fires): the studio logged `the screen share ended outside the app - scene screen-camera -> pause`, the broadcaster showed "Le partage d'écran s'est arrêté : le live montre « Je reviens »...", the viewer saw "Je reviens tout de suite", the live did not end and the camera was not shown. A new tab and a click on "Ecran" asked again and the viewer saw the fresh capture |
+
+No defect was found. **Left to the owner** (the entry): the real picker and a real window, a real window resized, the bar's own
+"Arreter le partage", the camera light, how a drag feels, and one live in the bell with one push on a phone.
+
 ## 1.7.0-alpha.2
 
 **2026-11-15 (the sitting ran past midnight), the bench readings of `v1.7.0-alpha.2` (build `100700002`, dev answering it): Mi 9T `canari-test-alpha`, iPhone 12 `canari-test-gamma`, the `delta` web seat (CDP 9227) as the sender.** Evidence is kept out of the repo, in `sitting-1700a2/` of the harness directory.
