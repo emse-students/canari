@@ -263,6 +263,8 @@ describe('PinModal - the sign-out is out of the tab bar zone', () => {
       'the row precedes the body, so it is at the top of a column layout'
     ).toBeTruthy();
     expect(footer.querySelectorAll('button')).toHaveLength(1);
+    // `.tap-target` is the 44px hit box (`max(100%, 2.75rem)` on a touch screen) for a 12px label.
+    expect(signOut.className).toContain('tap-target');
   });
 
   it('is still ONE tap: no confirmation between the tap and the sign-out', () => {
