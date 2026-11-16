@@ -3503,7 +3503,15 @@ Welcome is redundant, the idempotent path), refused means not held (the Welcome 
 KeyPackage still unconsumed). No clock: the wait ends on the gate's answer, which `submitCommit`
 always returns or throws. When the race is met, the handler logs `[WELCOME] <group> arrived while this
 device's own external commit awaited the gate - read after its answer, held now: <bool>`, which is
-what a reading counts. Tests: `externalCommitVerdict.test.ts`, the window cases in
+what a reading counts. **The settled read and the install are two steps**, so the install asks again
+under the lock (`externalCommitAwaitsVerdict`, synchronous, where the window opens): a join whose base
+predated the Add can take the lock between them and build, and an install then hit a group held by an
+unanswered commit - refused by the engine, ACKed, gone. A window found open there logs `own external
+commit took the MLS lock before the install - read again after its answer` and the handler starts over;
+each return costs that join one of its bounded attempts (found in review). **The cost:** a Welcome runs
+in the serial inbound drain, so while it waits every later frame waits with it, for one commit round
+trip under the `write` deadline - only when a Welcome for a group lands inside this device's own
+external join of it. Tests: `externalCommitVerdict.test.ts`, the window cases in
 `BaseMlsService.externalJoin.test.ts`, and both Welcome paths in `setupMessageHandler.test.ts`
 (written failing first).
 

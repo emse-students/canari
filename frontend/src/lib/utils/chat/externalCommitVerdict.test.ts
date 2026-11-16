@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { awaitExternalCommitVerdict, openExternalCommitWindow } from './externalCommitVerdict';
+import {
+  awaitExternalCommitVerdict,
+  externalCommitAwaitsVerdict,
+  openExternalCommitWindow,
+} from './externalCommitVerdict';
 
 /** Lets every queued microtask run, so a waiter that could settle has settled. */
 const flush = async () => {
@@ -52,6 +56,16 @@ describe('externalCommitVerdict', () => {
     second();
     await flush();
     expect(settled).toBe(true);
+  });
+
+  it('says synchronously whether a window is open, for the read under the MLS lock', () => {
+    const owner = {};
+    expect(externalCommitAwaitsVerdict(owner, 'g')).toBe(false);
+    const close = openExternalCommitWindow(owner, 'g');
+    expect(externalCommitAwaitsVerdict(owner, 'g')).toBe(true);
+    expect(externalCommitAwaitsVerdict(owner, 'other')).toBe(false);
+    close();
+    expect(externalCommitAwaitsVerdict(owner, 'g')).toBe(false);
   });
 
   it('is scoped to its service instance and its group', async () => {

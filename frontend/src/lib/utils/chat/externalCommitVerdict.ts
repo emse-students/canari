@@ -28,6 +28,15 @@
  * means not held (the Welcome is the door and installs). No clock: the wait ends on the gate's
  * answer, which `submitCommit` always produces or throws.
  *
+ * THE READ AND THE INSTALL ARE TWO STEPS, so the handler asks again UNDER THE LOCK
+ * ({@link externalCommitAwaitsVerdict}) before it installs: a join whose base predated the Add can
+ * take the lock between them and build, and the install would then hit a group held by an unanswered
+ * commit. A window found open there sends the handler back to the settled read.
+ *
+ * THE COST, NAMED: a Welcome runs in the inbound drain, which is serial, so while one waits here
+ * every later frame waits with it - for one commit round trip under the `write` deadline. It is met
+ * only when a Welcome for a group lands inside this device's own external join of that group.
+ *
  * Per service instance (a WeakMap), like `externalJoin`'s own flights: two devices in one test
  * process do not share windows.
  */
@@ -75,4 +84,19 @@ export async function awaitExternalCommitVerdict(owner: object, groupId: string)
     waited = true;
     await pending;
   }
+}
+
+/**
+ * Whether an external commit of `owner` for `groupId` is awaiting the gate's answer RIGHT NOW.
+ *
+ * Read by a Welcome handler UNDER THE MLS LOCK, as the first step of its install: the window opens
+ * only under that lock, so this read and the install are atomic against it. The settled read of
+ * {@link awaitExternalCommitVerdict} comes before the lock, and a join of the same group whose base
+ * predated the Add can take the lock in between and build - an install then lands on a group held by
+ * a commit nobody has accepted, the engine refuses it, and the Welcome is ACKed and gone. A `true`
+ * here sends the handler back to the settled read; each return costs that join one of its bounded
+ * attempts, so the loop ends.
+ */
+export function externalCommitAwaitsVerdict(owner: object, groupId: string): boolean {
+  return windows.get(owner)?.has(groupId) ?? false;
 }

@@ -72,7 +72,10 @@ import {
 } from '$lib/utils/chat/eviction';
 import { dropGroupState } from '$lib/utils/chat/dropGroupState';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
-import { awaitExternalCommitVerdict } from '$lib/utils/chat/externalCommitVerdict';
+import {
+  awaitExternalCommitVerdict,
+  externalCommitAwaitsVerdict,
+} from '$lib/utils/chat/externalCommitVerdict';
 import { isDistributionGroupMeta } from '$lib/utils/chat/groupLifecycle';
 import type { GroupMeta, IMlsService } from '../IMlsService';
 import { channelScope, workspaceScope } from '../distributionScope';
@@ -407,6 +410,13 @@ function registerFromServerRow(
 }
 
 /**
+ * What a Welcome's install returns when it found, under the MLS lock, that this device's own
+ * external commit of the group took the lock between the handler's settled read and the install
+ * (`externalCommitAwaitsVerdict`): nothing was installed, and the handler starts over.
+ */
+const OWN_JOIN_TOOK_THE_LOCK = 'own-join-took-the-lock' as const;
+
+/**
  * Waits for the gate's answer to this device's own external commit for `groupId`, if one is in
  * flight, before a Welcome handler asks whether the group is held.
  *
@@ -445,14 +455,7 @@ async function settleOwnExternalCommit(
  *
  * Always ACKed, like every Welcome: its KeyPackage is consumed and it cannot be reprocessed.
  */
-async function handleDistributionWelcome({
-  content,
-  groupId,
-  ratchetTreeBytes,
-  groupMeta,
-  deps,
-  statePersister,
-}: {
+async function handleDistributionWelcome(args: {
   content: Uint8Array;
   groupId: string;
   ratchetTreeBytes: Uint8Array | undefined;
@@ -464,6 +467,7 @@ async function handleDistributionWelcome({
   deps: MessageHandlerDeps;
   statePersister: ReturnType<typeof createMlsStatePersister>;
 }): Promise<boolean> {
+  const { content, groupId, ratchetTreeBytes, groupMeta, deps, statePersister } = args;
   const { mlsService, userId, log } = deps;
   const short = groupId.slice(0, 8);
   log(
@@ -500,6 +504,8 @@ async function handleDistributionWelcome({
   }
 
   const installed = await mlsService.runUnderMlsLock(async () => {
+    // RE-ASKED UNDER THE LOCK, where the window opens: the read above came before it.
+    if (externalCommitAwaitsVerdict(mlsService, groupId)) return OWN_JOIN_TOOK_THE_LOCK;
     try {
       if (held) {
         await dropGroupState(mlsService, groupId, {
@@ -518,6 +524,12 @@ async function handleDistributionWelcome({
       return false;
     }
   });
+  if (installed === OWN_JOIN_TOOK_THE_LOCK) {
+    log(
+      `[WELCOME] key group ${short}... this device's own external commit took the MLS lock before the install - read again after its answer`
+    );
+    return handleDistributionWelcome(args);
+  }
   if (!installed) return true;
 
   void promote();
@@ -533,16 +545,17 @@ async function handleDistributionWelcome({
  * Always ACKed: a failing Welcome cannot be reprocessed
  * (key package consumed). We request a re-invitation if needed.
  */
-async function handleWelcome({
-  sender,
-  content,
-  groupId,
-  ratchetTreeBytes,
-  deps,
-  statePersister,
-  pendingBuffer,
-  startRecovery,
-}: WelcomeArgs): Promise<boolean> {
+async function handleWelcome(args: WelcomeArgs): Promise<boolean> {
+  const {
+    sender,
+    content,
+    groupId,
+    ratchetTreeBytes,
+    deps,
+    statePersister,
+    pendingBuffer,
+    startRecovery,
+  } = args;
   const {
     mlsService,
     userId,
@@ -666,7 +679,11 @@ async function handleWelcome({
   // failure into `deferredRecovery`; it is executed once the lock is released. [[recovery-outside-lock]]
   // A 1:1 re-keyed by this Welcome: its stored rows move AFTER the lock (`runPendingRekey` below).
   let pendingRekey: PendingRekey | null = null;
-  const deferredRecovery = await mlsService.runUnderMlsLock<DeferredRecovery | null>(async () => {
+  const deferredRecovery = await mlsService.runUnderMlsLock<
+    DeferredRecovery | null | typeof OWN_JOIN_TOOK_THE_LOCK
+  >(async () => {
+    // RE-ASKED UNDER THE LOCK, where the window opens - the key group's step, for the same reason.
+    if (externalCommitAwaitsVerdict(mlsService, terminalId)) return OWN_JOIN_TOOK_THE_LOCK;
     try {
       // The evicted group's local state cannot read or send anything, so it is not state - it is the
       // only thing standing between this Welcome and a usable group. Forgotten HERE, under the lock
@@ -922,6 +939,12 @@ async function handleWelcome({
       return null;
     }
   });
+  if (deferredRecovery === OWN_JOIN_TOOK_THE_LOCK) {
+    log(
+      `[WELCOME] ${terminalId.slice(0, 8)}… this device's own external commit took the MLS lock before the install - read again after its answer`
+    );
+    return handleWelcome(args);
+  }
 
   // ── Recovery, OUTSIDE the MLS lock ──────────────────────────────────────────────────────────
   // requestReAdd prefers externalJoin (self-service rejoin via the server-stored GroupInfo: no
