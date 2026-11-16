@@ -1003,7 +1003,7 @@ async function runRevokedDeviceWipe(ctx: SessionContext, cb: ChatSessionCallback
     // marker to name the account's keystore entry, so the session end leaves them to it.
     const scope = await revokedWipeScope(userId);
     await endAccountSessionLocally(ctx, userId, cb, { eraseAccountRecords: scope === 'install' });
-    await clearAuth();
+    await clearAuth('device-revoked');
     if (scope === 'install') {
       await wipeDeviceToFactory();
     } else {

@@ -1253,6 +1253,7 @@
           {#each resolvedPosts.slice(0, mounted.count) as post, i (post.id)}
             <div
               class="relative"
+              data-scroll-anchor={post.id}
               use:markPostSeen={post}
               data-suggested-post={post.feedSuggested ? post.id : undefined}
             >

@@ -47,7 +47,7 @@ function navigate(
     from: from ? { url: new URL(`http://x${from}`) } : null,
     to: { url: new URL(`http://x${to}`) },
   };
-  onLeavingEntry(n, scroller.scrollTop);
+  onLeavingEntry(n, scroller.scrollTop, scroller);
   history.replaceState({ [HISTORY_METADATA_KEY]: { navigationIndex: key } }, '');
   route.url = new URL(`http://x${to}`);
   onArrivedAtEntry(n, scroller);
@@ -96,6 +96,21 @@ describe('feed -> association -> arrow -> feed, at the same offset', () => {
     scroller.scrollTop = 0;
     navigate('link', 3, '/associations/bde', '/posts', scroller);
     expect(scroller.scrollTop).toBe(0);
+  });
+});
+
+describe('the anchor travels through the layout hook', () => {
+  it('onLeavingEntry records the post on screen and its distance beside the offset', () => {
+    const scroller = box();
+    scroller.getBoundingClientRect = () => ({ top: 100, bottom: 900 }) as DOMRect;
+    const card = document.createElement('div');
+    card.setAttribute('data-scroll-anchor', 'post-7');
+    card.getBoundingClientRect = () => ({ top: 70, bottom: 370 }) as DOMRect;
+    scroller.appendChild(card);
+    navigate('enter', 1, null, '/posts', scroller);
+    scroller.scrollTop = 1200;
+    navigate('link', 2, '/posts', '/associations/bde', scroller);
+    expect(memoryOf(1)).toMatchObject({ top: 1200, anchor: { id: 'post-7', offset: -30 } });
   });
 });
 

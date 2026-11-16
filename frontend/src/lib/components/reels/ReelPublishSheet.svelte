@@ -326,10 +326,7 @@
     <PostIdentityPicker id="reel-identity-select" {associations} bind:value={identity} />
     {#if studentsOnlyAssociation}
       <div class="mt-3">
-        <StudentsOnlySwitch
-          bind:checked={studentsOnly}
-          associationName={studentsOnlyAssociation.name}
-        />
+        <StudentsOnlySwitch bind:checked={studentsOnly} />
       </div>
     {/if}
     {#if reachAssociation}
