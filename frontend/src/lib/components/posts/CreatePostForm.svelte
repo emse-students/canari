@@ -810,10 +810,7 @@
 
     {#if studentsOnlyAssociation}
       <div class="mt-3" transition:fade={{ duration: 200 }}>
-        <StudentsOnlySwitch
-          bind:checked={studentsOnly}
-          associationName={studentsOnlyAssociation.name}
-        />
+        <StudentsOnlySwitch bind:checked={studentsOnly} />
       </div>
     {/if}
 
