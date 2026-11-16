@@ -156,7 +156,7 @@
   beforeNavigate(({ from, to, shallow, type }) => {
     // The entry being left keeps its offset for a Back to it (`lib/navigation/navigationMemory.ts`,
     // which ignores a shallow navigation of any type itself).
-    onLeavingEntry({ type, shallow, from, to }, pageScrollWrap?.scrollTop ?? 0);
+    onLeavingEntry({ type, shallow, from, to }, pageScrollWrap?.scrollTop ?? 0, pageScrollWrap);
     if (shallow && type === 'goto') return;
     // A membership probe that failed is owed one retry on the next navigation (never a timer).
     void retryFailedMyAssociationsProbe();

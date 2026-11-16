@@ -43,7 +43,7 @@ import { mergeHistoryFloor } from '$lib/utils/chat/historyWindow';
 import { holdsGroupState } from './groupUsability';
 import { boundSeenEntries, noteLedgerWritten } from './seenLedgerBounds';
 import { readStateLedger, stageStateLedger, STATE_LEDGER } from '$lib/mls-client/stateLedgers';
-import { canonicalUserId } from '$lib/mls-client/leafIdentity';
+import { ADDRESSABLE_HALF, canonicalUserId } from '$lib/mls-client/leafIdentity';
 import { editSupersedes } from './editPrecedence';
 import {
   settlePendingFor,
@@ -1658,10 +1658,84 @@ export async function replayConversationHistory(params: {
 const HEX_ID_RE = /\b[0-9a-f]{64}\b/g;
 
 /**
- * Retroactively resolves 64-char hex user IDs baked into stored system message
- * content (e.g. "abc…def added xyz…uvw to the group") that were stored before
- * async name resolution was applied. Updates the local DB so future loads are
+ * A stored system row read ONCE: its parsed envelope (`raw`, `null` for a legacy plain sentence),
+ * its SENTENCE, and how to put a rewritten sentence back.
+ *
+ * A row written as an envelope keeps its sentence in `text` and its structured fields beside it - a
+ * notice's ids (`notice.actor`, `notice.targets`), a call record's `callEvent`, an invitation card.
+ * Only `text` is prose, so only `text` is handed out, and the rest of the object is put back
+ * untouched. A legacy row is a plain sentence and the whole content is its text.
+ */
+interface SystemRow {
+  content: string;
+  raw: Record<string, unknown> | null;
+  text: string;
+  withText: (text: string) => string;
+}
+
+function systemRowOf(raw: Record<string, unknown> & { text: string }, content: string): SystemRow {
+  return { content, raw, text: raw.text, withText: (text) => JSON.stringify({ ...raw, text }) };
+}
+
+function readSystemRow(content: string): SystemRow {
+  if (content.startsWith('{')) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(content);
+    } catch {
+      // CLASSIFICATION, NOT A LOSS: a sentence that merely opens with a brace is not an envelope,
+      // and `parseEnvelope` reads it as the plain sentence it is - so it is handled as one below.
+      parsed = undefined;
+    }
+    if (
+      parsed &&
+      typeof parsed === 'object' &&
+      typeof (parsed as { text?: unknown }).text === 'string'
+    ) {
+      return systemRowOf(parsed as Record<string, unknown> & { text: string }, content);
+    }
+  }
+  return { content, raw: null, text: content, withText: (text) => text };
+}
+
+/**
+ * A NOTICE WHOSE IDS THIS PASS REPLACED WITH NAMES, as the row with that notice dropped - or `null`
+ * when the row is not one.
+ *
+ * Until 2026-11-16 the pass below replaced every 64-hex id ANYWHERE in a system row's JSON, so the
+ * `notice` of a membership row (#3232) lost its `actor` and `targets` to display names on the first
+ * load from the store. The renderer then asked the server for an account called "canari test
+ * delta", was told it is not an account id ("Utilisateur inconnu", or "Compte supprime" before the
+ * server named malformed ids), and drew that label over a stored sentence that was right - for
+ * good, since the row had been rewritten. The ids are gone; the sentence beside them was resolved
+ * by the same pass with the same names, so the notice is dropped and the sentence stands.
+ *
+ * ONLY WHAT NO ID CAN BE IS TAKEN AS DAMAGE: a person value outside the client's id grammar
+ * ({@link ADDRESSABLE_HALF} - a space, a non-ASCII letter), which a full name almost always is. The
+ * server still holds legacy ids that are not hex, so "not 64 hex" proves nothing, and a valid id
+ * dropped here would be lost for good. A name that is one ASCII token ("Alice") passes the grammar
+ * and stays unrepaired: it cannot be told from an id by its shape.
+ */
+function withoutRenamedNotice(row: SystemRow): SystemRow | null {
+  const notice = row.raw?.notice;
+  if (!row.raw || !notice || typeof notice !== 'object') return null;
+  const spec = notice as { actor?: unknown; targets?: unknown };
+  const people = [spec.actor, ...(Array.isArray(spec.targets) ? spec.targets : [])];
+  if (!people.some((p) => typeof p === 'string' && !ADDRESSABLE_HALF.test(p))) return null;
+  const rest: Record<string, unknown> = { ...row.raw };
+  delete rest.notice;
+  return systemRowOf(rest as Record<string, unknown> & { text: string }, JSON.stringify(rest));
+}
+
+/**
+ * Retroactively resolves 64-char hex user IDs baked into the SENTENCE of stored system rows (e.g.
+ * "abc…def added xyz…uvw to the group", written when a name lookup failed: `resolveDisplayNames`
+ * keeps the id then, so a later reader can still name it). Updates the local DB so future loads are
  * already clean.
+ *
+ * ONLY THE SENTENCE IS REWRITTEN, never the ids a row carries beside it: a notice's are what the
+ * renderer draws the names from (`noticeDisplayText`). A notice an earlier version of this pass
+ * emptied of its ids is repaired here too ({@link withoutRenamedNotice}).
  */
 export async function retroactivelyResolveHexIds(
   messages: ChatMessage[],
@@ -1669,19 +1743,33 @@ export async function retroactivelyResolveHexIds(
   conversationId: string,
   deviceKeyB64: string
 ): Promise<ChatMessage[]> {
+  const rows = messages.map((m) => {
+    if (!m.isSystem) return null;
+    const read = readSystemRow(m.content);
+    const healed = withoutRenamedNotice(read);
+    return { row: healed ?? read, healed: healed !== null };
+  });
   const hexIds = new Set<string>();
-  for (const m of messages) {
-    if (m.isSystem) {
-      for (const id of m.content.match(HEX_ID_RE) ?? []) hexIds.add(id);
-    }
+  for (const entry of rows) {
+    for (const id of entry?.row.text.match(HEX_ID_RE) ?? []) hexIds.add(id);
   }
-  if (hexIds.size === 0) return messages;
+  const healedCount = rows.filter((entry) => entry?.healed).length;
+  if (hexIds.size === 0 && healedCount === 0) return messages;
+  if (healedCount > 0) {
+    console.warn(
+      `[History] ${healedCount} notice row(s) in group ${conversationId.slice(0, 8)}… named their people by name where ids belong - ` +
+        `rewritten by the hex-id pass before 2026-11-16; their stored sentence stands and the notice is dropped`
+    );
+  }
 
-  const getName = await resolveDisplayNames([...hexIds]);
+  const getName = hexIds.size > 0 ? await resolveDisplayNames([...hexIds]) : null;
 
-  const updated = messages.map((m) => {
-    if (!m.isSystem) return m;
-    const newContent = m.content.replace(HEX_ID_RE, (id) => getName(id));
+  const updated = messages.map((m, i) => {
+    const entry = rows[i];
+    if (!entry) return m;
+    const { row } = entry;
+    const text = getName ? row.text.replace(HEX_ID_RE, (id) => getName(id)) : row.text;
+    const newContent = text === row.text ? row.content : row.withText(text);
     return newContent === m.content ? m : { ...m, content: newContent };
   });
 
