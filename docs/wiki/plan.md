@@ -92,7 +92,6 @@ earliest version, as a checklist.
 
 - [ ] [the CanaReels composer, viewer and editor on real content](backlog.d/reading-owed-the-canareels-composer-viewer-and-editor-on-real-content.md)
 - [ ] [the in-session community join through the deep link on the phones](backlog.d/p1-owed-one-live-reading-of-the-in-session-join-fix-2026-10-08.md)
-- [ ] [a notification tap to a usable conversation: F1](backlog.d/reading-owed-a-notification-tap-to-a-usable-conversation-f1.md)
 - [ ] [a group joined in the background before its row existed: the "already held" Welcome writes and announces the row, the...](backlog.d/reading-owed-a-group-joined-in-the-background-before-its-row-existed-the.md)
 - [ ] [a HISTORY ask answered "I hold nothing" is final for its roster](backlog.d/reading-owed-a-history-ask-answered-i-hold-nothing-is-final-for-its-roster.md)
 - [ ] [the native caches sealed at rest (2026-10-22): the upgrade readings on both phones](backlog.d/reading-owed-the-native-caches-sealed-at-rest-2026-10-22-the-upgrade-readings.md)
