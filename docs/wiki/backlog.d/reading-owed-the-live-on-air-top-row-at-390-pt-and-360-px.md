@@ -7,3 +7,5 @@ Built: on air, the top row of `LiveBroadcaster.svelte` no longer drew the chat t
 Closing reading: a screenshot ON AIR at 390 pt (iPhone 12) and on the Mi 9T, with the "Reconnexion..." pill showing and a title set, End and the chat toggle visible and tappable (44 px), then the same at a doubled root font ([design-reference](../frontend/design-reference.md)). Charter: principle 2 (a live must be endable from its own screen) and 6. Found in [device-verification](../device-verification.md#the-iphone-12-readings-of-2026-11-16-fourth-sitting-b-170-alpha5).
 
 The 360 css px half on a small Android is deleted 2026-11-16 by the owner's decision (16): hardware outside the bench ([owner-decisions-of-2026-11-16](owner-decisions-of-2026-11-16.md)).
+
+**iPhone 12, `1.7.0-alpha.6`, 2026-11-16/17 (seventh sitting, [verdicts](../device-verification.md)):** iPhone half PASS at 390 pt and at a doubled font: all six 44 x 44 actions wrap whole to their own row, End and the chat toggle tappable; the Reconnecting pill was seen once (doubled font, Wi-Fi off), not at 390 pt.

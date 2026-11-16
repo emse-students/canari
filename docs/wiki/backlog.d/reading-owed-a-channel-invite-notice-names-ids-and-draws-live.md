@@ -13,3 +13,5 @@ notice centred, on the live frame AND after a reload (history); the row neither 
 rings. Also open a salon whose history holds an OLDER sentence notice: it still reads as that
 sentence. Any raw `{"newUsers"...}` text on screen is a FAIL. The id shape's own reading belongs to
 the flip ([entry](a-salon-invitation-notice-sends-ids-once-the-floor-reads-them.md)).
+
+**iPhone 12, `1.7.0-alpha.6`, 2026-11-16/17 (seventh sitting, [verdicts](../device-verification.md)):** iPhone: not taken. It needs a third account invited while `gamma` is in the salon, and only `gamma` and `delta` were allowed.

@@ -15,3 +15,5 @@ again at a doubled root font ([design-reference](../frontend/design-reference.md
 description runs in two or three lines at the full card width with the "Systeme / Canari" control below
 it, and no row of the page keeps a text column narrower than half the card. A screenshot at 390 pt is the
 closing reading; the entry is then deleted.
+
+**iPhone 12, `1.7.0-alpha.6`, 2026-11-16/17 (seventh sitting, [verdicts](../device-verification.md)):** iPhone half PASS at 390 pt (two lines, full card width, control below) and at a doubled font (four lines, control below). Narrowest switch-row text column about 52 % of the card: borderline, to weigh with the Mi reading.
