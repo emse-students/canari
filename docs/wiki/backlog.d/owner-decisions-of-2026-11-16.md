@@ -25,3 +25,19 @@ Recorded so no question answered here is asked again. Each line names where its 
 - **The PIN gate's sign-out moved to a top row**, away from the tab bar it overlapped.
 - **The push was lightened.**
 - **The "Entre etudiants uniquement" toggle sits under "Plus d'options".**
+
+### Readings and chantiers decided on the same days
+
+- **The "first message notifies" reading may delete, through the product on dev, an existing
+  conversation between two bench accounts**, to stage a first message from an account that has none.
+- **The iPhone half of the PIN gate sign-out is read by re-enrolling the iPhone**: `gamma` may lose its
+  local history there, and the app is never uninstalled.
+- **The "Organisations" feed Back stays owed**, repeated with a history logger until three clean runs on
+  `alpha.5` or the failure is caught.
+- **Campus trends: the threshold becomes a server-side setting**, the production value unchanged and
+  lowered on dev only.
+- **Forms: an organiser chooses, per form, which respondent account fields are joined to each answer**
+  (Nom, Prénom, E-mail, Promo et formation, Statut élève/personnel, Campus), each optional, building on
+  the existing "Demander aux invités" block. The respondent sees what is transmitted; the answers list
+  and the XLSX export carry the columns and a filter; a field that cannot come from an account (a
+  guest, an anonymous form) is asked instead.
