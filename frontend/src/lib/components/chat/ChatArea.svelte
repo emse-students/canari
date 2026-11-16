@@ -2333,9 +2333,7 @@
     {/if}
 
     {#if conversation?.lifecycle === 'removed'}
-      <div
-        class="absolute inset-x-0 bottom-0 z-20 flex flex-col items-center gap-2 border-t border-black/8 bg-(--color-surface) px-4 py-3 dark:border-white/10"
-      >
+      <div class="chat-docked-banner">
         <p class="text-center text-sm text-(--color-text-muted)">
           {m.chat_conversation_deleted_message()}
         </p>
@@ -2347,11 +2345,7 @@
         </button>
       </div>
     {:else if unopenableHere}
-      <div
-        class="absolute inset-x-0 bottom-0 z-20 flex flex-col items-center gap-2 border-t border-black/8 bg-(--color-surface) px-4 py-3 dark:border-white/10"
-        role="status"
-        data-unopenable-here
-      >
+      <div class="chat-docked-banner" role="status" data-unopenable-here>
         <p class="text-center text-sm text-(--color-text-muted)">
           {m.chat_unopenable_here()}
         </p>
@@ -2379,9 +2373,7 @@
            reading as a broken app rather than as a rule. Same shape as the deleted-conversation
            branch above, and deliberately not a disabled composer - a greyed-out field says "later",
            and this is not later. -->
-      <div
-        class="absolute inset-x-0 bottom-0 z-20 flex flex-col items-center gap-2 border-t border-black/8 bg-[var(--color-surface)] px-4 py-3 dark:border-white/10"
-      >
+      <div class="chat-docked-banner">
         <p class="text-center text-sm text-[var(--color-text-muted)]">
           {writePolicyLine(writePolicy)}
         </p>

@@ -108,6 +108,7 @@ earliest version, as a checklist.
 - [ ] [the Emojis preference row and its neighbours at 390 pt, on a phone](backlog.d/p3-the-emojis-preference-row-squeezes-its-description-on-a-phone.md)
 - [ ] [a private salon granted after an in-session join is readable on the iPhone, with its badge](backlog.d/p2-a-private-salon-granted-after-an-in-session-join-is-unreadable-on-the-iphone.md)
 - [ ] [one "server already unreachable" line per spell, read on a phone log after a real outage](backlog.d/p3-server-already-unreachable-is-logged-per-request.md)
+- [ ] [a banner in the composer's place clears the Android navigation bar (2026-11-16)](backlog.d/reading-owed-a-banner-in-the-composer-place-clears-the-navigation-bar.md)
 - [ ] [a salon invitation's notice still reads as a sentence, live and from history (2026-11-16)](backlog.d/reading-owed-a-channel-invite-notice-names-ids-and-draws-live.md)
 - [ ] [a group joined with the list in front is ordered by its admission, and drawn at once](backlog.d/reading-owed-a-group-joined-with-the-list-in-front-is-ordered-by-its-admission.md)
 - [ ] [a salon message arriving before its seed raises its badge (granted salon, in-session join)](backlog.d/reading-owed-a-salon-message-arriving-before-its-seed-raises-its-badge.md)
