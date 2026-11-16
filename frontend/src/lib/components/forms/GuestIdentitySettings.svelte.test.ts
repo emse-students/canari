@@ -1,7 +1,9 @@
 // @vitest-environment happy-dom
 /**
- * "Demander aux invités : Nom / Prénom / E-mail" (owner, 2026-11-06): three boxes, off by default,
- * drawn only on a public form, with advice that is firmer on a form that charges.
+ * "Qui a repondu" (owner, 2026-11-16, built on "Demander aux invites" of 2026-11-06): ONE set of
+ * boxes on every form - the names, the e-mail on a public form, "Promo et formation", "Statut",
+ * "Campus" - ticked independently; an anonymous form offers no name nor e-mail; the advice to tell
+ * guests apart is firmer on a public form that charges.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
@@ -14,17 +16,22 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
-function render(props: { isPublic: boolean; anonymous?: boolean; charges?: boolean }) {
-  const state = $state({ guestFields: [] as string[] });
+function render(props: {
+  isPublic: boolean;
+  anonymous?: boolean;
+  charges?: boolean;
+  choices?: string[];
+}) {
+  const state = $state({ choices: props.choices ?? ([] as string[]) });
   const target = document.body.appendChild(document.createElement('div'));
   const instance = mount(GuestIdentitySettings, {
     target,
     props: {
-      get guestFields() {
-        return state.guestFields;
+      get choices() {
+        return state.choices;
       },
-      set guestFields(v: string[]) {
-        state.guestFields = v;
+      set choices(v: string[]) {
+        state.choices = v;
       },
       isPublic: props.isPublic,
       anonymous: props.anonymous ?? false,
@@ -37,31 +44,35 @@ function render(props: { isPublic: boolean; anonymous?: boolean; charges?: boole
 }
 
 const boxes = (target: HTMLElement) => [...target.querySelectorAll<HTMLButtonElement>('button')];
+const labels = (target: HTMLElement) => boxes(target).map((b) => b.textContent?.trim());
 
 describe('GuestIdentitySettings', () => {
-  it('draws nothing on a form that is not public', () => {
+  it('offers the account fields on a named form, the e-mail aside (a member has none here)', () => {
     const { target } = render({ isPublic: false });
-    expect(target.querySelector('[data-testid="guest-identity-settings"]')).toBeNull();
-  });
-
-  it('offers three boxes, all off, and ticks them independently', () => {
-    const { target, state } = render({ isPublic: true });
-    const [last, first, email] = boxes(target);
-    expect(boxes(target).map((b) => b.textContent?.trim())).toEqual([
+    expect(labels(target)).toEqual([
       m.form_guest_identity_last_name(),
       m.form_guest_identity_first_name(),
-      m.form_guest_identity_email(),
+      m.form_respondent_field_cursus(),
+      m.form_respondent_field_status(),
+      m.form_respondent_field_campus(),
     ]);
-    expect(boxes(target).every((b) => b.getAttribute('aria-pressed') === 'false')).toBe(true);
+    expect(target.textContent).toContain(m.form_respondent_settings_hint());
+  });
+
+  it('offers the e-mail too on a public form, every box ticked independently', () => {
+    const { target, state } = render({ isPublic: true });
+    expect(labels(target)).toContain(m.form_guest_identity_email());
+    const [last, , email, cursus] = boxes(target);
     email.click();
+    flushSync();
+    cursus.click();
     flushSync();
     last.click();
     flushSync();
-    expect(state.guestFields).toEqual(['email', 'lastName']);
-    expect(first.getAttribute('aria-pressed')).toBe('false');
+    expect(state.choices).toEqual(['email', 'cursus', 'lastName']);
   });
 
-  it('suggests them on a free public form, and firmly on a paid one, until one is ticked', () => {
+  it('suggests telling guests apart on a free public form, firmly on a paid one, until a name is ticked', () => {
     const free = render({ isPublic: true });
     expect(free.target.textContent).toContain(m.form_guest_identity_advice());
     const paid = render({ isPublic: true, charges: true });
@@ -71,9 +82,13 @@ describe('GuestIdentitySettings', () => {
     expect(paid.target.querySelector('[data-testid="guest-identity-advice"]')).toBeNull();
   });
 
-  it('offers none on an anonymous form, and says why', () => {
+  it('offers no name nor e-mail on an anonymous form, only what is declared, and says so', () => {
     const { target } = render({ isPublic: true, anonymous: true });
-    expect(boxes(target)).toHaveLength(0);
-    expect(target.textContent).toContain(m.form_guest_identity_blocked_anonymous());
+    expect(labels(target)).toEqual([
+      m.form_respondent_field_cursus(),
+      m.form_respondent_field_status(),
+      m.form_respondent_field_campus(),
+    ]);
+    expect(target.textContent).toContain(m.form_respondent_settings_hint_anonymous());
   });
 });
