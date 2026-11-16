@@ -4538,6 +4538,31 @@ place by the receivedAt"), `outboxMirror.serverTime.test.ts`, `systemMessageHand
 `historySystemEvents.test.ts`, `messagesPage.test.ts`, `readWatermarkCache.test.ts`,
 `proto_fields.rs` (`build_read_watermark_app_message_*`).
 
+### A joined conversation is ordered by its admission (2026-11-16)
+
+**Seen on the iPhone 12 (`1.7.0-alpha.5`, dev), twice of twice:** a group the phone joined with the
+chat list in front (`[WELCOME] Group ... ready` within a second) was not drawn for minutes, through a
+tab change and a pull-down; after a resume it was on the first screen with the right age.
+
+**The cause.** The row a Welcome writes (`upsertConversation`, the placeholder before it, and the
+held-group row of `writeRowForHeldGroup`) carried no ordering seed, and it holds notices at most -
+"X a ajoute Y", a nickname - which are not activity. So `conversationRecency` fell through
+`lastMessageAt` and `startedAt` to **0: the last row of the list**, below the screen on a phone with a
+long list, where the rig's visible-tree reader (`tools/ios-device`, `isVisible`) never reaches. The
+resume "fixed" it because a new connection runs the group sweep, whose `recordGroupStart`
+(`serverGroupConversation.ts`) writes `startedAt` (the group's server creation, minutes before the
+join) onto a row that lacks one - so the row rose to the top only once the socket reconnected. The
+creator never had the defect: its row is seeded with its creation moment (`groupCreation.ts`).
+
+**The fix.** The Welcome's own server time (`deliveryMeta.queuedCreatedAt`, the moment this account
+was admitted, the same on each of its devices to within milliseconds, each holding its own queue row, and ties break by id) is the joined row's `lastMessageAt` seed
+(`admissionSeed`, `setupMessageHandler.ts`), on every path that creates the row: the fresh install,
+a DM's new row, and the "already held" Welcome of a group joined in the background. A row that
+already has a seed keeps it - a re-Welcome (a re-add, a repair) does not move a conversation. A
+Welcome with no server time is ACCUSED at warn and invents nothing. Tests:
+`setupMessageHandler.test.ts` ("a Welcome orders the joined conversation by the server time of its
+admission"). Reading owed: [the entry](../../backlog.d/reading-owed-a-group-joined-with-the-list-in-front-is-ordered-by-its-admission.md).
+
 ## A catch-up batch is merged with ONE sort (2026-10-12)
 
 `mergeMessagesInInputOrder` (`utils/chat/messageOrder.ts`) merges a batch of received messages into a
