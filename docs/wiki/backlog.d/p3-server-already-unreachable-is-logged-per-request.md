@@ -12,3 +12,6 @@ line carries `2 more request deadline(s)`, and the next spell speaks again).
 requests left stalling, then off): at most one `already unreachable` line per spell, followed by
 `server reachable again (N more request deadline(s) expired while it was unreachable)`; and no spell
 that ends without its closing line.
+
+
+**Mi 9T half, tried 2026-11-16 on `1.7.0-alpha.6`, `NOT READ` ([readings](../device-verification.md#the-mi-9t-readings-of-2026-11-16-fifth-sitting-on-170-alpha6-the-salon-badge-and-grant-rows-the-live-bars-the-push)).** Wi-Fi and data cut over six in-app navigations: the page console held only `browser reports offline` and `online`, because nothing the screens needed was a request that could fail. A system HTTP proxy to a non-routable address (to make requests stall) is not honoured by the WebView. The line needs a request DEADLINE after the "unreachable" verdict, which needs packets dropped on the way. **What would read it:** a Wi-Fi network whose uplink silently drops (a hotspot with its upstream cut) with a screen of requests left stalling; the bench has no such network yet.
