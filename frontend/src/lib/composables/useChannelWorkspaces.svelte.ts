@@ -2,6 +2,7 @@ import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { sendFrameFromThisTab } from '$lib/mls-client/frameFromAnyTab';
 import { slugify } from '$lib/utils/textFold';
 import { conversationBeingRead } from '$lib/utils/chat/arrivalRuntime';
+import { noteSalonRowRemoved } from '$lib/utils/chat/salonRemovals';
 import {
   clearSalonUnreadLocally,
   communityUnreadUpTo,
@@ -2249,12 +2250,18 @@ export function useChannelWorkspaces() {
    * Replaces a channel message with the local "deleted" tombstone, mirroring how a deleted DM
    * renders. The server row is already gone, so this is purely what the reader sees until the
    * next history reload drops it entirely.
+   *
+   * THE ONE PATH EVERY LIVE REMOVAL TAKES (the reader's own delete, the broadcast), so it is where
+   * the removal is noted for the pages in hand - FIRST, because a row no copy of is on screen yet (a
+   * page still decoding, a row waiting for its seed) has nothing to mark and would be inserted by
+   * the page that still carries it (`salonRemovals.ts`).
    */
   function markChannelMessageDeleted(
     channelConversationId: string,
     messageId: string,
     ctx: WorkspacePurgeContext
   ) {
+    noteSalonRowRemoved(messageId);
     const convo = ctx.conversations.get(channelConversationId);
     if (!convo) return;
     const idx = convo.messages.findIndex((msg) => msg.id === messageId);

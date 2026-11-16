@@ -23,6 +23,7 @@ import type { ExternalJoinOutcome } from '$lib/mls-client/IMlsService';
 import { MlsStateWriteRefusedError } from '$lib/utils/hex';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { resetCommitRateLimit } from '$lib/mls-client/commitRateLimit';
+import { awaitExternalCommitVerdict } from '$lib/utils/chat/externalCommitVerdict';
 
 /**
  * Unit-tests the external-join ORCHESTRATION (Phase 4a) in isolation: fetch GroupInfo -> build the
@@ -286,6 +287,66 @@ describe('BaseMlsService.externalJoin', () => {
     // group this device is not in, and the next load would trust it.
     expect(persistMlsStructuralCheckpoint).not.toHaveBeenCalled();
     expect(ctx.forgetGroup).toHaveBeenCalledWith('g', 0);
+  });
+
+  /**
+   * THE GROUP IS HELD BY A COMMIT NOBODY HAS ACCEPTED, from the build until the gate answers - and a
+   * Welcome that read that as "joined" was thrown away, then the refusal dropped the state (iPhone
+   * 12, 2026-11-16). The window is what a Welcome waits on; it must cover exactly that span.
+   */
+  describe('the window a Welcome waits on (externalCommitVerdict)', () => {
+    async function submitHeldOpen() {
+      const ctx = makeCtx();
+      ctx.delivery.fetchGroupInfo.mockResolvedValue({
+        groupInfo: 'AA==',
+        baseEpoch: 5,
+        activeEpoch: 5,
+      });
+      let answerGate!: (v: unknown) => void;
+      ctx.delivery.submitCommit.mockReturnValueOnce(new Promise((r) => (answerGate = r)));
+      const join = externalJoin(ctx, 'g');
+      await vi.waitFor(() => expect(ctx.delivery.submitCommit).toHaveBeenCalled());
+      let reader = false;
+      const read = awaitExternalCommitVerdict(ctx, 'g').then(() => (reader = true));
+      await Promise.resolve();
+      return { ctx, join, read, answerGate, readerSettled: () => reader };
+    }
+
+    it('is open while the gate has not answered, and closes only after a refusal dropped the state', async () => {
+      const h = await submitHeldOpen();
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+      expect(h.readerSettled()).toBe(false);
+
+      // One attempt is enough to read: the next one reads no base and stops.
+      h.ctx.delivery.fetchGroupInfo.mockResolvedValue(null);
+      h.answerGate({ accepted: false, reason: 'epoch_mismatch', currentEpoch: 6 });
+      await h.join;
+      await h.read;
+      expect(h.ctx.forgetGroup).toHaveBeenCalledWith('g', 0);
+      // The drop happened BEFORE the reader was released: what it reads next is settled.
+      expect(h.readerSettled()).toBe(true);
+    });
+
+    it('closes after an accepted commit is merged', async () => {
+      const h = await submitHeldOpen();
+      h.answerGate({ accepted: true, newEpoch: 6 });
+      await h.join;
+      await h.read;
+      expect(h.ctx.mergePendingCommit).toHaveBeenCalledWith('g');
+    });
+
+    it('closes when the build itself fails, so no reader is held by a commit that never existed', async () => {
+      const ctx = makeCtx({
+        joinByExternalCommit: vi.fn().mockRejectedValue(new Error('boom')),
+      });
+      ctx.delivery.fetchGroupInfo.mockResolvedValue({
+        groupInfo: 'AA==',
+        baseEpoch: 5,
+        activeEpoch: 5,
+      });
+      await externalJoin(ctx, 'g');
+      expect(await awaitExternalCommitVerdict(ctx, 'g')).toBe(false);
+    });
   });
 
   it('discards and retries with a fresher GroupInfo on an epoch-race reject, then succeeds', async () => {

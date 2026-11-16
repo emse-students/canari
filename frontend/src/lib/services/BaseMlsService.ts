@@ -208,6 +208,7 @@ import type {
 } from '$lib/mls-client/IMlsService';
 import { dropGroupState } from '$lib/utils/chat/dropGroupState';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
+import { openExternalCommitWindow } from '$lib/utils/chat/externalCommitVerdict';
 import {
   forgetSeenCipherCaches,
   noteFrameConsumed,
@@ -8163,201 +8164,215 @@ export abstract class BaseMlsService implements IMlsService {
         // moment ONLY this device - can export the GroupInfo for the epoch its own commit produces.
         // That base then travels inside the submission below and is stored with the epoch advance,
         // which is what stops an external joiner from locking the NEXT one out (COMM-22).
-        let joined: { groupId: string; commit: Uint8Array; nextBase: string } | 'already-held';
+        // THE GATE'S ANSWER IS AWAITED BY EVERY WELCOME FOR THIS GROUP (`externalCommitVerdict.ts`).
+        // From the build below until the answer is applied, the group is HELD by a commit nobody has
+        // accepted: a Welcome that read that as "joined" was ignored as a redelivery, then the refusal
+        // dropped the state and the device waited for that very Welcome for good (iPhone 12,
+        // 2026-11-16). Opened under the lock before the build, closed here whatever the outcome.
+        let closeVerdictWindow: (() => void) | undefined;
         try {
-          joined = await this.runUnderMlsLock(async () => {
-            // THE GROUP IS READ AGAIN UNDER THE LOCK, BECAUSE A WELCOME INSTALLS IT UNDER THE SAME
-            // LOCK. Everything above ran outside it - a recovery started by one failed Welcome reaches
-            // here after a second Welcome for the group may have been applied by the drain - and an
-            // external commit built over a held group was refused only AFTER OpenMLS had written it
-            // into the live group's storage rows, then read as a failed build that asked a member to
-            // re-add a healthy leaf (review of #2466). Held now means joined: nothing to build.
-            if (holdsGroupState(this, groupId)) return 'already-held' as const;
-            const built = await this.joinByExternalCommit(fromBase64(gi.groupInfo));
-            // The same atomic read as every other publisher, under the lock this section already holds.
-            const { base, baseEpoch } = await this.exportBaseForPublication(built.groupId);
-            // A HARD ERROR, NOT A DEGRADED SUBMISSION, and one step STRONGER than the read above: the
-            // published base is monotonic and cannot be walked back, so a blob exported at any other
-            // epoch than the one the server will record it under would strand the group for good.
-            // Nothing about this can be true and unnoticed: if the instance is not at base + 1 the
-            // join is abandoned like any other build failure, and the caller's welcome_request
-            // fallback is the right next move.
-            if (baseEpoch !== gi.baseEpoch + 1) {
-              throw new Error(
-                `external join instance at epoch ${baseEpoch}, expected ${gi.baseEpoch + 1}`
+          let joined: { groupId: string; commit: Uint8Array; nextBase: string } | 'already-held';
+          try {
+            joined = await this.runUnderMlsLock(async () => {
+              // THE GROUP IS READ AGAIN UNDER THE LOCK, BECAUSE A WELCOME INSTALLS IT UNDER THE SAME
+              // LOCK. Everything above ran outside it - a recovery started by one failed Welcome reaches
+              // here after a second Welcome for the group may have been applied by the drain - and an
+              // external commit built over a held group was refused only AFTER OpenMLS had written it
+              // into the live group's storage rows, then read as a failed build that asked a member to
+              // re-add a healthy leaf (review of #2466). Held now means joined: nothing to build.
+              if (holdsGroupState(this, groupId)) return 'already-held' as const;
+              closeVerdictWindow = openExternalCommitWindow(this, groupId);
+              const built = await this.joinByExternalCommit(fromBase64(gi.groupInfo));
+              // The same atomic read as every other publisher, under the lock this section already holds.
+              const { base, baseEpoch } = await this.exportBaseForPublication(built.groupId);
+              // A HARD ERROR, NOT A DEGRADED SUBMISSION, and one step STRONGER than the read above: the
+              // published base is monotonic and cannot be walked back, so a blob exported at any other
+              // epoch than the one the server will record it under would strand the group for good.
+              // Nothing about this can be true and unnoticed: if the instance is not at base + 1 the
+              // join is abandoned like any other build failure, and the caller's welcome_request
+              // fallback is the right next move.
+              if (baseEpoch !== gi.baseEpoch + 1) {
+                throw new Error(
+                  `external join instance at epoch ${baseEpoch}, expected ${gi.baseEpoch + 1}`
+                );
+              }
+              return { ...built, nextBase: base };
+            });
+          } catch (e) {
+            // THE ENGINE'S OWN REFUSAL OF A HELD GROUP (`MlsError::GroupAlreadyHeld`, a token this
+            // repository defines) is the same answer as the read above, from the side that cannot be
+            // wrong - so it is joined, and the line ACCUSES: reaching it means this service's list of
+            // held groups missed one the engine holds, and the read above trusted that list.
+            //
+            // ONLY FOR THE GROUP ASKED FOR. The refusal names the group the served GroupInfo is for,
+            // and a base naming ANOTHER group the engine holds says nothing about this one: that is a
+            // base this join cannot use, so it fails the build like any other unusable base.
+            const held = /GROUP_ALREADY_HELD: (\S+)/.exec(String(e))?.[1];
+            if (held === groupId) {
+              console.error(
+                `[MLS] externalJoin ${short}... refused by the engine: the group is already held, but this service's list of held groups did not say so - joined, nothing built`
               );
+              return { joined: true, alreadyHeld: true };
             }
-            return { ...built, nextBase: base };
-          });
-        } catch (e) {
-          // THE ENGINE'S OWN REFUSAL OF A HELD GROUP (`MlsError::GroupAlreadyHeld`, a token this
-          // repository defines) is the same answer as the read above, from the side that cannot be
-          // wrong - so it is joined, and the line ACCUSES: reaching it means this service's list of
-          // held groups missed one the engine holds, and the read above trusted that list.
-          //
-          // ONLY FOR THE GROUP ASKED FOR. The refusal names the group the served GroupInfo is for,
-          // and a base naming ANOTHER group the engine holds says nothing about this one: that is a
-          // base this join cannot use, so it fails the build like any other unusable base.
-          const held = /GROUP_ALREADY_HELD: (\S+)/.exec(String(e))?.[1];
-          if (held === groupId) {
-            console.error(
-              `[MLS] externalJoin ${short}... refused by the engine: the group is already held, but this service's list of held groups did not say so - joined, nothing built`
-            );
-            return { joined: true, alreadyHeld: true };
-          }
-          if (held !== undefined) {
-            console.error(
-              `[MLS] externalJoin ${short}... the served base is for another group (${held.slice(0, 8)}...), one this device holds - not joined`
+            if (held !== undefined) {
+              console.error(
+                `[MLS] externalJoin ${short}... the served base is for another group (${held.slice(0, 8)}...), one this device holds - not joined`
+              );
+              return { joined: false, reason: 'build_failed' };
+            }
+            console.warn(
+              `[MLS] externalJoin build failed for ${short}...:`,
+              String(e).slice(0, 120)
             );
             return { joined: false, reason: 'build_failed' };
           }
-          console.warn(`[MLS] externalJoin build failed for ${short}...:`, String(e).slice(0, 120));
-          return { joined: false, reason: 'build_failed' };
-        }
-        if (joined === 'already-held') {
-          console.log(
-            `[MLS] externalJoin ${short}... the group is already held (a Welcome installed it first) - joined, nothing built`
-          );
-          return { joined: true, alreadyHeld: true };
-        }
+          if (joined === 'already-held') {
+            console.log(
+              `[MLS] externalJoin ${short}... the group is already held (a Welcome installed it first) - joined, nothing built`
+            );
+            return { joined: true, alreadyHeld: true };
+          }
 
-        // Submit under the epoch gate against the GroupInfo's base epoch. The server fans the external
-        // commit out to existing members (excluding this device, which already applied it).
-        let validation: { accepted: boolean; reason?: string; currentEpoch?: number };
-        try {
-          validation = await this.delivery.submitCommit(
-            joined.groupId,
-            gi.baseEpoch,
-            toBase64(joined.commit),
-            excludeSelf,
-            joined.nextBase
-          );
-        } catch (e) {
-          // A TRANSPORT FAILURE IS NOT AN ANSWER, and this used to be relabelled an epoch race: the
-          // staged commit was discarded, the base refetched, and the whole thing retried against a
-          // server that had never been reached. We claim NOTHING about membership here. The group is
-          // still dropped, because an external commit cannot be cleared and a pending one left
-          // unmerged breaks every later operation on it - and if the server DID accept the commit we
-          // never saw acknowledged, its base is now stale and a holder's republish is what fixes it.
-          const rateLimited = e instanceof ApiRefusalError && e.status === 429;
-          const overtaken = isSeatClaimOvertaken(e);
+          // Submit under the epoch gate against the GroupInfo's base epoch. The server fans the external
+          // commit out to existing members (excluding this device, which already applied it).
+          let validation: { accepted: boolean; reason?: string; currentEpoch?: number };
+          try {
+            validation = await this.delivery.submitCommit(
+              joined.groupId,
+              gi.baseEpoch,
+              toBase64(joined.commit),
+              excludeSelf,
+              joined.nextBase
+            );
+          } catch (e) {
+            // A TRANSPORT FAILURE IS NOT AN ANSWER, and this used to be relabelled an epoch race: the
+            // staged commit was discarded, the base refetched, and the whole thing retried against a
+            // server that had never been reached. We claim NOTHING about membership here. The group is
+            // still dropped, because an external commit cannot be cleared and a pending one left
+            // unmerged breaks every later operation on it - and if the server DID accept the commit we
+            // never saw acknowledged, its base is now stale and a holder's republish is what fixes it.
+            const rateLimited = e instanceof ApiRefusalError && e.status === 429;
+            const overtaken = isSeatClaimOvertaken(e);
+            await dropGroupState(this, joined.groupId, {
+              reason: rateLimited
+                ? 'the commit gate refused it under the rate limit'
+                : overtaken
+                  ? 'an unrelated eviction overtook its seat claim'
+                  : 'the commit gate could not be reached',
+              // Built in memory during this very call and never checkpointed: there is nothing
+              // durable to undo, and a save here would cost one per failed attempt.
+              checkpoint: 'never-persisted',
+            });
+            // A 429 IS AN ANSWER: the throttler refused before the gate, so nothing was accepted. Its
+            // wait is recorded for every commit path and handed to the caller, which stops its sweep.
+            if (rateLimited) {
+              noteCommitRateLimited(e.retryAfterMs);
+              return {
+                joined: false,
+                reason: 'rate_limited',
+                retryAfterMs: commitRateLimitRemainingMs(),
+              };
+            }
+            // A 409 SEAT_CLAIM_OVERTAKEN IS AN ANSWER: nothing advanced, and the next attempt asks
+            // for a fresh claim at once. Each refusal proves an eviction landed in between, and the
+            // attempt bound still holds against a group evicting without pause.
+            if (overtaken) {
+              console.warn(
+                `[MLS] externalJoin seat claim OVERTAKEN for ${short}... (base ${gi.baseEpoch}) - attempt ${attempt + 1}/${EXTERNAL_JOIN_MAX_ATTEMPTS}`
+              );
+              if (attempt === EXTERNAL_JOIN_MAX_ATTEMPTS - 1) {
+                return {
+                  joined: false,
+                  reason: 'refused',
+                  serverReason: SEAT_CLAIM_OVERTAKEN_REASON,
+                };
+              }
+              continue;
+            }
+            console.warn(
+              `[MLS] externalJoin could not reach the commit gate for ${short}... (base ${gi.baseEpoch}) -` +
+                ` nothing is claimed about membership:`,
+              String(e).slice(0, 120)
+            );
+            return { joined: false, reason: 'unreachable' };
+          }
+
+          if (validation.accepted) {
+            await this.runUnderMlsLock(() => this.mergePendingCommit(joined.groupId));
+            // The external commit's path IS this device's new leaf, so the group's periodic refresh is
+            // dated from here - not from a ledger entry of an earlier incarnation (`leafRefresh.ts`).
+            await this.noteOwnLeafReplaced(joined.groupId, gi.baseEpoch + 1);
+            // THE SERVER HAS ALREADY MADE THIS DURABLE FOR EVERYONE ELSE, so this device may not hold
+            // its half in RAM. The commit is accepted: the group's epoch has advanced for every other
+            // member, and the secrets that make the new epoch usable exist ONLY here, in WASM memory.
+            // A reload before the next checkpoint restores a device that is IN the published tree and
+            // cannot read a word of it - and, finding no local group, joins again from the new base.
+            //
+            // THAT SECOND JOIN FORKS THE GROUP. Measured on prod 2026-08-27: a device joined one salon
+            // at base 0 and again at base 1 two seconds apart across a navigation, leaving the salon at
+            // epoch 2, the granting device stranded at 0 refusing frames it could not read, and the
+            // seed that device held undeliverable - a member granted access who can read nothing.
+            //
+            // `mlsStatePersister` defers routine writes for a reason it states in full: inbound state
+            // is replayable from the server, and outbound ratchet state is checkpointed on the send
+            // path. AN EXTERNAL JOIN IS NEITHER. Nothing on the server can replay these secrets back,
+            // so the structural checkpoint is awaited here, at the point the state moved.
+            let checkpointed: boolean;
+            try {
+              checkpointed = await persistMlsStructuralCheckpoint();
+            } catch (e) {
+              checkpointed = false;
+              console.error(
+                `[MLS] externalJoin FAILED to checkpoint ${short}... - a reload before the next write` +
+                  ` would rejoin and fork the group:`,
+                String(e).slice(0, 120)
+              );
+            }
+            // The join stands either way - it is accepted server-side and usable for this session, and
+            // refusing it here would discard a membership the rest of the group can already see. What
+            // is lost is only its durability, which is why this accuses rather than informs.
+            if (!checkpointed) {
+              console.error(
+                `[MLS] externalJoin for ${short}... was not checkpointed: no persister is registered,` +
+                  ` so this membership does not survive a reload and the next load will rejoin`
+              );
+            }
+            // NO FOLLOW-UP REFRESH HERE, AND ITS ABSENCE IS THE FIX. The base for the epoch this join
+            // created was written in the same transaction as the epoch itself, so there is nothing left
+            // to mint and nothing left to lose - which is what a reload used to take with it.
+            console.log(
+              `[MLS] externalJoin succeeded for ${joined.groupId.slice(0, 8)}... (base epoch ${gi.baseEpoch},` +
+                ` base for ${gi.baseEpoch + 1} stored with the commit)`
+            );
+            return { joined: true };
+          }
+
+          // REFUSED, and the server said WHY - both fields used to be dropped and the line called every
+          // refusal an epoch race. An external commit cannot be cleared, so the group goes; the next
+          // pass re-reads the base and exits on the stale-base fact above if nobody republished.
           await dropGroupState(this, joined.groupId, {
-            reason: rateLimited
-              ? 'the commit gate refused it under the rate limit'
-              : overtaken
-                ? 'an unrelated eviction overtook its seat claim'
-                : 'the commit gate could not be reached',
+            reason: 'the server refused the external commit',
             // Built in memory during this very call and never checkpointed: there is nothing
             // durable to undo, and a save here would cost one per failed attempt.
             checkpoint: 'never-persisted',
           });
-          // A 429 IS AN ANSWER: the throttler refused before the gate, so nothing was accepted. Its
-          // wait is recorded for every commit path and handed to the caller, which stops its sweep.
-          if (rateLimited) {
-            noteCommitRateLimited(e.retryAfterMs);
+          console.warn(
+            `[MLS] externalJoin REFUSED for ${joined.groupId.slice(0, 8)}... (base ${gi.baseEpoch},` +
+              ` reason ${validation.reason ?? 'unspecified'}, group at ${validation.currentEpoch ?? '?'})` +
+              ` - attempt ${attempt + 1}/${EXTERNAL_JOIN_MAX_ATTEMPTS}`
+          );
+          if (attempt === EXTERNAL_JOIN_MAX_ATTEMPTS - 1) {
             return {
               joined: false,
-              reason: 'rate_limited',
-              retryAfterMs: commitRateLimitRemainingMs(),
+              reason: 'refused',
+              serverReason: validation.reason ?? 'unspecified',
+              ...(validation.currentEpoch !== undefined
+                ? { serverEpoch: validation.currentEpoch }
+                : {}),
             };
           }
-          // A 409 SEAT_CLAIM_OVERTAKEN IS AN ANSWER: nothing advanced, and the next attempt asks
-          // for a fresh claim at once. Each refusal proves an eviction landed in between, and the
-          // attempt bound still holds against a group evicting without pause.
-          if (overtaken) {
-            console.warn(
-              `[MLS] externalJoin seat claim OVERTAKEN for ${short}... (base ${gi.baseEpoch}) - attempt ${attempt + 1}/${EXTERNAL_JOIN_MAX_ATTEMPTS}`
-            );
-            if (attempt === EXTERNAL_JOIN_MAX_ATTEMPTS - 1) {
-              return {
-                joined: false,
-                reason: 'refused',
-                serverReason: SEAT_CLAIM_OVERTAKEN_REASON,
-              };
-            }
-            continue;
-          }
-          console.warn(
-            `[MLS] externalJoin could not reach the commit gate for ${short}... (base ${gi.baseEpoch}) -` +
-              ` nothing is claimed about membership:`,
-            String(e).slice(0, 120)
-          );
-          return { joined: false, reason: 'unreachable' };
-        }
-
-        if (validation.accepted) {
-          await this.runUnderMlsLock(() => this.mergePendingCommit(joined.groupId));
-          // The external commit's path IS this device's new leaf, so the group's periodic refresh is
-          // dated from here - not from a ledger entry of an earlier incarnation (`leafRefresh.ts`).
-          await this.noteOwnLeafReplaced(joined.groupId, gi.baseEpoch + 1);
-          // THE SERVER HAS ALREADY MADE THIS DURABLE FOR EVERYONE ELSE, so this device may not hold
-          // its half in RAM. The commit is accepted: the group's epoch has advanced for every other
-          // member, and the secrets that make the new epoch usable exist ONLY here, in WASM memory.
-          // A reload before the next checkpoint restores a device that is IN the published tree and
-          // cannot read a word of it - and, finding no local group, joins again from the new base.
-          //
-          // THAT SECOND JOIN FORKS THE GROUP. Measured on prod 2026-08-27: a device joined one salon
-          // at base 0 and again at base 1 two seconds apart across a navigation, leaving the salon at
-          // epoch 2, the granting device stranded at 0 refusing frames it could not read, and the
-          // seed that device held undeliverable - a member granted access who can read nothing.
-          //
-          // `mlsStatePersister` defers routine writes for a reason it states in full: inbound state
-          // is replayable from the server, and outbound ratchet state is checkpointed on the send
-          // path. AN EXTERNAL JOIN IS NEITHER. Nothing on the server can replay these secrets back,
-          // so the structural checkpoint is awaited here, at the point the state moved.
-          let checkpointed: boolean;
-          try {
-            checkpointed = await persistMlsStructuralCheckpoint();
-          } catch (e) {
-            checkpointed = false;
-            console.error(
-              `[MLS] externalJoin FAILED to checkpoint ${short}... - a reload before the next write` +
-                ` would rejoin and fork the group:`,
-              String(e).slice(0, 120)
-            );
-          }
-          // The join stands either way - it is accepted server-side and usable for this session, and
-          // refusing it here would discard a membership the rest of the group can already see. What
-          // is lost is only its durability, which is why this accuses rather than informs.
-          if (!checkpointed) {
-            console.error(
-              `[MLS] externalJoin for ${short}... was not checkpointed: no persister is registered,` +
-                ` so this membership does not survive a reload and the next load will rejoin`
-            );
-          }
-          // NO FOLLOW-UP REFRESH HERE, AND ITS ABSENCE IS THE FIX. The base for the epoch this join
-          // created was written in the same transaction as the epoch itself, so there is nothing left
-          // to mint and nothing left to lose - which is what a reload used to take with it.
-          console.log(
-            `[MLS] externalJoin succeeded for ${joined.groupId.slice(0, 8)}... (base epoch ${gi.baseEpoch},` +
-              ` base for ${gi.baseEpoch + 1} stored with the commit)`
-          );
-          return { joined: true };
-        }
-
-        // REFUSED, and the server said WHY - both fields used to be dropped and the line called every
-        // refusal an epoch race. An external commit cannot be cleared, so the group goes; the next
-        // pass re-reads the base and exits on the stale-base fact above if nobody republished.
-        await dropGroupState(this, joined.groupId, {
-          reason: 'the server refused the external commit',
-          // Built in memory during this very call and never checkpointed: there is nothing
-          // durable to undo, and a save here would cost one per failed attempt.
-          checkpoint: 'never-persisted',
-        });
-        console.warn(
-          `[MLS] externalJoin REFUSED for ${joined.groupId.slice(0, 8)}... (base ${gi.baseEpoch},` +
-            ` reason ${validation.reason ?? 'unspecified'}, group at ${validation.currentEpoch ?? '?'})` +
-            ` - attempt ${attempt + 1}/${EXTERNAL_JOIN_MAX_ATTEMPTS}`
-        );
-        if (attempt === EXTERNAL_JOIN_MAX_ATTEMPTS - 1) {
-          return {
-            joined: false,
-            reason: 'refused',
-            serverReason: validation.reason ?? 'unspecified',
-            ...(validation.currentEpoch !== undefined
-              ? { serverEpoch: validation.currentEpoch }
-              : {}),
-          };
+        } finally {
+          closeVerdictWindow?.();
         }
       }
       // Unreachable - the last attempt returns above. Typed rather than asserted.
