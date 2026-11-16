@@ -2069,7 +2069,7 @@ chat-delivery logs `stays on the mesh although call_relay=call-service - the cal
 SFU leg`; a relayed call's room token is refused (`GROUP_CALL_CLIENT_TOO_OLD`) to a build below 2, and
 its ring reaches only devices at 2 or more (the mesh's ring keeps `>= 1`). So turning the relay on
 never breaks the builds that only speak the mesh. The dev seed writes `none` until the app's SFU leg
-ships. `cloudflare` joins the list with its leg (WP-GC3).
+ships. `cloudflare` joined the list with WP-GC3 ([below](#the-cloudflare-relay-wp-gc3-server-half-2026-11-16)).
 
 The relay never sees a clear frame: each client keeps its per-sender keys and transforms (WP-GC1),
 and learns the sender of every forwarded track from its stream id, which the SFU sets to the sender's
@@ -2079,6 +2079,65 @@ Proven by a 5-party encrypted call through the SFU in CI
 app's own SFU leg (the client, against this protocol) is the client pull request's, as is reading
 `mode` from `initiate`/`room-token`. Pinned by `calls.service.spec.ts` (the relay rows),
 `callRelaysAgree.test.ts`, `appVersion.test.ts` and the core-service platform and version specs.
+
+### The Cloudflare relay (WP-GC3, server half, 2026-11-16)
+
+**Built on the server, behind the same setting, `none` in production.** `call_relay` gains its third
+value, `cloudflare` (core migration 026, plain: it re-creates 023's CHECK wider), offered at
+`/admin/platform`. It follows the `call-service` rules above to the letter - from the start, a caller
+below `groupCallVersion` 2 stays on the mesh and it is logged, a relayed room's token and ring need 2,
+the cap is `RELAY_SEATS` (8, the same number whichever relay, decided 2026-11-16, reversible) - and
+its binding, room tokens and `initiate`/`room-token` answers say **`mode: "cloudflare"`**. The client
+reads the mode there, never from the setting; **a build that declares `groupCallVersion` 2 speaks
+BOTH flavours** of the SFU leg (`sfu`: call-service's `Join`; `cloudflare`: the proxy below), since
+one setting moves every new call between them (D2). call-service never seats a `cloudflare` token
+(its `mode` claim is not one of call-service's).
+
+**No fallback (principle: a fallback is a signal, never a path).** `cloudflare` on a server without
+the Realtime app's pair (`CLOUDFLARE_SFU_APP_ID`, `CLOUDFLARE_SFU_APP_SECRET`, read from the
+environment at each use by `utils/cloudflare-sfu-app.ts`, the ONE reader) refuses the group call at
+`initiate`: 503 `GROUP_CALL_RELAY_UNAVAILABLE` with `reason: "unconfigured"`, an ERROR naming the
+missing half (never the value), no room bound - never a mesh in its place, which would hide the
+broken setting behind calls that work for three and fail for five. The client words the code
+(`call_group_relay_unavailable`).
+
+**The proxy** (`services/cloudflare-sfu.service.ts`, `controllers/cloudflare-sfu.controller.ts`,
+under `/api/calls/sfu/`, so nginx's `/api/calls/` location authenticates it). Cloudflare Realtime's
+raw SFU is driven by its sessions/tracks API with the app secret, which authorises EVERY session of
+the app - so the secret never leaves chat-delivery, and each request is checked against what this
+server knows:
+
+| Route | Cloudflare call | The checks |
+| --- | --- | --- |
+| `POST calls/sfu/session` `{ roomId, roomToken }` | `POST sessions/new` | the room token verifies and signs `mode: cloudflare` for THIS user and room (`CallsService.admitToCloudflareRoom`: it was issued after every call gate - membership, review cohort, a block dropping the member, the ring window); calls open; still a member. Then the seat is claimed ATOMICALLY (a Lua script on `call:room:<id>:cf:seats`, `userId -> sessionId`): past the cap, 409 `GROUP_CALL_ROOM_FULL`; a second device of a seated user REPLACES its seat (one device per user, 2026-11-13). Answers `{ sessionId, others }` |
+| `POST calls/sfu/tracks` `{ roomId, sessionId, sessionDescription?, tracks }` | `POST sessions/<id>/tracks/new` | `sessionId` is the caller's own seat; a `local` track needs the offer and is recorded as pullable (`call:room:<id>:cf:tracks:<session>`) unless Cloudflare refused it; a `remote` track must name ANOTHER session seated in this room and a track it pushed. Only the fields Cloudflare reads are forwarded |
+| `PUT calls/sfu/renegotiate` `{ roomId, sessionId, sessionDescription }` | `PUT sessions/<id>/renegotiate` | own seat |
+| `PUT calls/sfu/tracks/close` `{ roomId, sessionId, tracks: [{ mid }], force? }` | `PUT sessions/<id>/tracks/close` | own seat |
+| `GET calls/sfu/roster?roomId=` | none | the caller holds a seat; answers the OTHER seats and the tracks each pushed, and `others` |
+| `POST calls/sfu/leave` `{ roomId, sessionId }` | none | releases the seat only if it still holds THIS session (a replaced device's late leave unseats nobody), drops its tracks; answers `{ others }` - `0` is WP-GC6's empty room, owed on the relay as on the mesh. Not gated on membership: a member removed mid-call can still leave |
+
+Every later step re-reads the room's binding (gone: 410; carried by another relay: 403), the kill
+switch and the membership (`CallsService.assertCloudflareParticipant`). Every key of the relay
+expires with the room's binding. Cloudflare refusing (a non-2xx, an `errorCode`), an unreadable body
+or no answer within the TURN call's bound is a 502 `GROUP_CALL_RELAY_UNAVAILABLE`,
+`reason: "upstream"`, logged at ERROR with what Cloudflare said; a per-track `errorCode` is handed
+back in the answer and logged at WARN. Media never crosses chat-delivery: only SDP, whose frames the
+clients' transforms encrypt before Cloudflare sees them (probe Q4, 2026-11-13,
+[revival plan](calls-revival-plan.md#14-probes-of-2026-10-16-clients)).
+
+**What it does not do: announce.** The proxy pushes nothing to the other participants. The client
+half (WP-GC4) announces its session over the conversation's own channel and the others pull it
+through `roster` and `tracks`; the server authorises every pull against the seat ledger, so an
+announcement can name nothing the server would not serve.
+
+Pinned by `cloudflare-sfu.service.spec.ts` (the API calls and their secret, the cap, the replacement,
+every pull refusal, the forwarded fields, each upstream failure typed, the roster, the leave),
+`cloudflare-sfu.redis.spec.ts` (the two seat scripts against a real Redis in CI's `boot-nest-apps`:
+twenty users racing for two seats seat exactly two), `calls.service.spec.ts` (the `cloudflare` rows
+and the two proxy gates) and `callRelaysAgree.test.ts` (the CHECK now read from 026). **Owed:** the
+scheduled SFU probe run through the proxy rather than straight at Cloudflare (it needs a signed-in
+caller and a bound room); the client's leg (WP-GC4); a five-way call on dev with `call_relay =
+cloudflare`, read on the bench.
 
 ## Group calls - the mesh, client half (WP-GC2, 2026-11-13)
 
