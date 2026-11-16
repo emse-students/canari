@@ -450,8 +450,8 @@ describe('ChannelService.updateChannelAccess - a roster edit is a grant', () => 
         })
       ),
       find: jest.fn().mockResolvedValue([
-        { workspaceId: WORKSPACE, userId: ADMIN, roleIds: [ADMIN_ROLE.id] },
-        { workspaceId: WORKSPACE, userId: MEMBER, roleIds: [] },
+        { id: 'm-admin', workspaceId: WORKSPACE, userId: ADMIN, roleIds: [ADMIN_ROLE.id] },
+        { id: 'm-member', workspaceId: WORKSPACE, userId: MEMBER, roleIds: [] },
       ]),
       save: jest.fn(),
     };
@@ -468,9 +468,8 @@ describe('ChannelService.updateChannelAccess - a roster edit is a grant', () => 
     const noop = { findOne: jest.fn(), find: jest.fn().mockResolvedValue([]) };
     const redis = { publishChannelEvent: jest.fn().mockResolvedValue(undefined) };
 
-    Object.assign(memberRepo, {
-      manager: fakeDepartureManager(() => ({ channelRepo, memberRepo, roleRepo })),
-    });
+    const manager = fakeDepartureManager(() => ({ channelRepo, memberRepo, roleRepo }));
+    Object.assign(memberRepo, { manager });
     const service = new ChannelService(
       workspaceRepo as unknown as Repository<Workspace>,
       channelRepo as unknown as Repository<Channel>,
@@ -483,7 +482,7 @@ describe('ChannelService.updateChannelAccess - a roster edit is a grant', () => 
     jest.spyOn(service['logger'], 'log').mockImplementation(() => undefined);
     jest.spyOn(service['logger'], 'warn').mockImplementation(() => undefined);
     jest.spyOn(service['logger'], 'error').mockImplementation(() => undefined);
-    return { service, redis, channel };
+    return { service, redis, channel, manager, memberRepo };
   }
 
   const previousSecret = process.env.INTERNAL_SECRET;
@@ -576,6 +575,40 @@ describe('ChannelService.updateChannelAccess - a roster edit is a grant', () => 
       visibility: 'private',
     });
   });
+
+  /**
+   * A BADGE COUNTS WHAT ARRIVED FOR YOU (owner, 2026-11-16, principle 3): whoever this save lets see
+   * a salon's past has their private unread floor raised to the save, in its transaction, and nobody
+   * else - going private gains nobody, they all saw it. The rows they will write are locked
+   * `FOR UPDATE`, in id order, so two such saves never each upgrade a shared lock on the same row.
+   */
+  it.each([
+    ['a private salon adds a name', true, [ADMIN], true, [ADMIN, MEMBER], ['m-member']],
+    ['a private salon goes public', true, [ADMIN], false, [], ['m-member']],
+    ['a public salon goes private', false, [], true, [ADMIN, MEMBER], []],
+    ['the roster does not move', true, [ADMIN], true, [ADMIN], []],
+  ])(
+    'floors the unread count of whoever gains sight when %s',
+    async (_case, wasPrivate, before, isPrivate, roster, floored) => {
+      const { service, manager, memberRepo } = makeService({
+        isPrivate: wasPrivate,
+        allowedUsers: before,
+      });
+
+      await service.updateChannelAccess(CHANNEL, ADMIN, isPrivate, roster, undefined, 0);
+
+      expect(manager.floors).toEqual(
+        floored.length > 0 ? [{ channelId: CHANNEL, memberIds: floored }] : []
+      );
+      const lockedRead = memberRepo.find.mock.calls
+        .map(([opts]: [{ lock?: unknown }]) => opts)
+        .find((opts: { lock?: unknown }) => opts.lock !== undefined);
+      expect(lockedRead).toMatchObject({
+        order: { id: 'ASC' },
+        lock: { mode: floored.length > 0 ? 'pessimistic_write' : 'pessimistic_read' },
+      });
+    }
+  );
 
   /**
    * THE COMM-23 CASE. Both users could already see the salon, so nothing is gained in access terms

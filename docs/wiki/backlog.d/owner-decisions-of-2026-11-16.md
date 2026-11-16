@@ -31,7 +31,8 @@ Recorded so no question answered here is asked again. Each line names where its 
 - **The "first message notifies" reading may delete, through the product on dev, an existing
   conversation between two bench accounts**, to stage a first message from an account that has none.
 - **The iPhone half of the PIN gate sign-out is read by re-enrolling the iPhone**: `gamma` may lose its
-  local history there, and the app is never uninstalled.
+  local history there. (Written that afternoon as "the app is never uninstalled"; withdrawn by decision
+  (13) below - an uninstall on a bench phone is allowed.)
 - **The "Organisations" feed Back stays owed**, repeated with a history logger until three clean runs on
   `alpha.5` or the failure is caught.
 - **Campus trends: the threshold becomes a server-side setting**, the production value unchanged and
@@ -41,3 +42,34 @@ Recorded so no question answered here is asked again. Each line names where its 
   the existing "Demander aux invités" block. The respondent sees what is transmitted; the answers list
   and the XLSX export carry the columns and a filter; a field that cannot come from an account (a
   guest, an anonymous form) is asked instead.
+
+### The afternoon of 2026-11-16
+
+- **(12) A private salon's unread badge counts only the messages posted AFTER access was granted**
+  (principle 3 of [the charter](../../principes.md), *your attention is not for sale*); the history
+  stays readable. Every grant raises the grantee's private `clearedMarks[salon]` to the grant instant,
+  no migration, "Lu par" untouched ([chat](../frontend/modules/chat.md#a-salons-badge-starts-at-the-grant-owner-2026-11-16),
+  [the reading owed](p3-a-private-salon-granted-late-badges-its-whole-past.md)).
+- **(13) The bench phones are a sandbox: uninstalling the app on the Mi 9T or the iPhone 12 is
+  allowed.** The old "never uninstall" rule is withdrawn; `install -r` stays the default because it
+  keeps the enrolment, and an uninstall is chosen knowing it costs the device
+  ([harness README](../../../tools/cross-client-harness/README.md)).
+- **(14) "Rester connecté sur cet appareil" on the PIN gate is TICKED by default**, and a recorded
+  choice, an unticked one included, is shown as recorded
+  ([sessions](../sessions.md#stay-signed-in-on-the-pin-gate-is-ticked-by-default-owner-2026-11-16)).
+- **(15) Everything stays in `1.7.0`, the large features included** - group calls, "Envoyer a..." to
+  several targets and CanaReels in chats, screen share in lives on desktop: the stable waits for them
+  ([plan](../plan.md)).
+- **(16) Reading halves that need hardware the bench lacks are DELETED, not moved** (Android 9-12, a
+  second Android 13+ maker, an iPad in Split View or Stage Manager): the Mi 9T and the iPhone 12 are
+  enough.
+- **(17) The two readings that need a real outage** (a deploy's 502/503/504 read as "not now"; one
+  "server already unreachable" line per spell) are taken during the `1.7.0-alpha.6` deploy of dev,
+  otherwise by stopping a dev service on purpose (dev only).
+- **(18) `1.7.0-alpha.6` is cut once #3687 and #3691 are merged.**
+- **(19) The desktop screen-share-in-lives reading is taken by the bench first** (Chrome launched with
+  automatic screen selection); only what truly needs a hand is left to the owner.
+- **(20) Every reading half the bench cannot stage is DELETED** (a bench build, real APNs, a real
+  production event, a timed coincidence, hardware outside the bench): *"Supprime les lectures
+  infaisables. S'il y a des problèmes, j'assume de te faire remonter les retours de production."*
+  The owner's production feedback covers what they would have read.

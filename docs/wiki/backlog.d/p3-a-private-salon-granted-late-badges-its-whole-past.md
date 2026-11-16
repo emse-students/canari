@@ -1,33 +1,25 @@
-## P3 - A private salon granted to a long-standing member badges its whole past as unread (review of #3682, 2026-11-16)
+## Reading owed - a private salon granted late badges only what is posted after the grant
 
 target: 1.7.0
 
-**What is wrong.** `ChannelService.listUnreadCounts` (`apps/social-service/src/channels/channel.service.ts`)
-counts a salon's rows after `GREATEST(readMarks[salon], clearedMarks[salon], channel_members."createdAt",
-UNREAD_TRACKED_SINCE_MS)`. A member granted a PRIVATE salon long after joining the community has no
-read mark there yet, so the floor is their community join or the 2026-10-08 tracking floor - and the
-badge shows every non-own row of the salon since then, not the messages posted after the grant. A
-reload already shows that inflated number (the server's count is what a cold start draws). Nothing
-records WHEN access was granted: `channels."allowedUsers"` is a bare list, and `grantPrivateChannelAccess`
-(and the access rewrite that adds a user) writes only the name.
+**What is built** (owner's decision (12) of [2026-11-16](owner-decisions-of-2026-11-16.md), principle 3
+of [the charter](../../principes.md)): every write that lets a member see a salon's past - a grant
+(`grantPrivateChannelAccess`: an accepted invite, an admin join, a member added from the panel), an
+access rewrite that adds a name to a private salon, a private salon made public - raises that member's
+PRIVATE floor `channel_members."clearedMarks"[salon]` to the grant instant, on the database clock,
+only-raise, in the grant's transaction (`ChannelService.floorUnreadAtGrant`). No migration, no query
+change (`listUnreadCounts` already reads the floor), the "Lu par" read mark untouched, the past still
+readable. Before, a member granted a salon long after joining the community was badged every row
+since their community join. Mechanism and locks:
+[chat](../frontend/modules/chat.md#a-salons-badge-starts-at-the-grant-owner-2026-11-16).
 
-**The question to settle**: should a salon's unread floor be the moment access was granted? The
-recommended answer is yes, under principle 3 of [the charter](../../principes.md) (*your attention is
-not for sale*): a badge counts what arrived for you, and a past you were just handed is history to
-read at leisure, not a backlog to clear. The past stays readable (principle 2 is untouched): only
-the count changes.
+**Proven by tests, not yet read live:** `channel-grant-unread-floor.integration.spec.ts` on PostgreSQL
+(ten rows of past, a grant, one row after it: the count is 1, not 11; a higher floor is never lowered;
+the rewrite adding a name and the salon made public), `channel-access-announcement.spec.ts` (who is
+floored per kind of rewrite, and the lock mode), `distribution-group.spec.ts` (the admin join).
 
-**The change to make, without a migration.** At every grant (`grantPrivateChannelAccess`, and the
-access rewrite at the `nextAllowed` write when it adds a user), raise the grantee's
-`channel_members."clearedMarks"[salon]` to the grant instant, with the same only-raise `GREATEST`
-merge `clearWorkspaceUnread` uses (migration 082). `clearedMarks` is the PRIVATE floor - never the "Lu par"
-receipt other members see - so it claims nothing the member did not do, and `listUnreadCounts`
-already reads it: the query itself needs no change. A revoke leaves it (a re-grant raises it again).
-The alternative - a `grantedAt` per (salon, user) read by the query as a fifth `GREATEST` term - costs a
-migration for the same answer.
-
-**The test that proves it**: in `channel-unread-counts.spec.ts` (or beside the grant's own spec), a
-grant writes `clearedMarks[salon] = now` for the grantee and never lowers a higher one; and in
-`tools/cross-client-harness/unread-communities.mjs`, which measures the SQL against the real database,
-a member of a community with ten earlier rows in a private salon is granted it, a peer posts one row,
-and `GET` unread counts answers `1` for that salon, not `11`.
+**The reading that closes it:** on dev, `bun tools/cross-client-harness/unread-communities.mjs run
+grantlate` (the owner of a community makes a fresh private salon, posts ten messages, grants the reader
+through the access panel, posts one more; the reader restarts): the reader's badge on that salon reads
+`1`, its floor is written and one row lies after it, and its read mark has not moved. Or by hand on a
+bench phone: an account granted a private salon with history sees a badge of what follows only.

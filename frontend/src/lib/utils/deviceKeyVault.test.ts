@@ -24,7 +24,9 @@ import {
   clearDeviceKey,
   clearDeviceKeyAndWrapKey,
   forgetUnlabelledDeviceKey,
+  isDeviceKeyPersistenceEnabled,
   loadDeviceKey,
+  pinGateStaySignedInDefault,
   retireUnlabelledDeviceKeyIfOwnedBy,
   saveDeviceKey,
   setDeviceKeyPersistence,
@@ -199,6 +201,33 @@ describe('loadDeviceKey', () => {
     expect(store().getItem(SLOT_A)).toBeNull();
     expect(store().getItem(SLOT_B)).toBeNull();
     expect(store().getItem(WRAP)).toBeNull();
+  });
+});
+
+describe('pinGateStaySignedInDefault - the PIN gate box (owner, 2026-11-16)', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+    vi.restoreAllMocks();
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+  });
+
+  it('opens TICKED on an install that never recorded a choice, without changing the mode', () => {
+    expect(pinGateStaySignedInDefault()).toBe(true);
+    // The box is a proposal: the vault stays session-scoped until a PIN submit records it.
+    expect(isDeviceKeyPersistenceEnabled()).toBe(false);
+  });
+
+  it('remembers an UNTICKED first submit, which changes no mode but is still a choice', async () => {
+    await setDeviceKeyPersistence(false, null);
+    expect(pinGateStaySignedInDefault()).toBe(false);
+  });
+
+  it('shows the choice already recorded, an unticked one included', async () => {
+    await setDeviceKeyPersistence(false, null);
+    expect(pinGateStaySignedInDefault()).toBe(false);
+    await setDeviceKeyPersistence(true, null);
+    expect(pinGateStaySignedInDefault()).toBe(true);
   });
 });
 

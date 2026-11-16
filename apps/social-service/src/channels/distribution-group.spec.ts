@@ -1156,7 +1156,7 @@ describe('ChannelService - the community distribution group', () => {
 
     /** An actor holding exactly `permissions` in the community. */
     function arrangeActorRole(repos: ReturnType<typeof makeService>, permissions: string[]) {
-      const actor = { workspaceId: WORKSPACE, userId: USER, roleIds: ['r-admin'] };
+      const actor = { id: 'm-actor', workspaceId: WORKSPACE, userId: USER, roleIds: ['r-admin'] };
       repos.memberRepo.findOne.mockResolvedValue(actor);
       // The community as a locked read sees it: the actor is a member, so a flip that grants them
       // passes the grantee check (`assertGranteesAreMembers`).
@@ -1254,6 +1254,12 @@ describe('ChannelService - the community distribution group', () => {
         'channel.member.joined',
         expect.objectContaining({ channelId: CHANNEL, joinedBy: USER }),
         expect.any(Array)
+      );
+      // The salon's past is history to them, not a badge (owner, 2026-11-16): the grant raises
+      // their private unread floor in its own transaction, on a row it locked `FOR UPDATE`.
+      expect(repos.departures.floors).toEqual([{ channelId: CHANNEL, memberIds: ['m-actor'] }]);
+      expect(repos.memberRepo.findOne).toHaveBeenCalledWith(
+        expect.objectContaining({ lock: { mode: 'pessimistic_write' } })
       );
     });
 

@@ -450,6 +450,38 @@ opening ([device-verification](../../device-verification.md#the-mi-9t-readings-o
 - **Owed:** [the reading](../../backlog.d/reading-owed-a-salon-message-arriving-before-its-seed-raises-its-badge.md)
   on both phones.
 
+### A salon's badge starts at the grant (owner, 2026-11-16)
+
+**The decision, under principle 3 of [the charter](../../../principes.md)** (*your attention is not for
+sale*): a private salon handed to a member counts as unread only what is posted AFTER access was
+granted. Its past stays readable (principle 2 is untouched); only the count changes. Before, a member
+granted a salon long after joining the community saw a badge of every non-own row since their
+community join (or the 2026-10-08 tracking floor), because nothing recorded when access was given.
+
+**The mechanism, server-side and without a migration.** Every write that lets someone see a salon's
+past raises that person's PRIVATE floor `channel_members."clearedMarks"[salon]` to the grant instant,
+in the grant's own transaction (`ChannelService.floorUnreadAtGrant`, social-service): a grant
+(`grantPrivateChannelAccess` - an accepted invite, an admin join, a member added from the panel), an
+access rewrite that adds a name to a private salon, and a private salon made public (every member it
+did not name). Making a public salon private floors nobody: they all saw it already. The floor is the
+one "Marquer tout comme lu" raises ([read-receipt-privacy](../../read-receipt-privacy.md)), so it
+claims nothing public - the "Lu par" read mark does not move - and `listUnreadCounts` already reads
+it. It is taken on the DATABASE clock (`clock_timestamp()`), the clock that stamps `createdAt`, and
+only ever raised (`GREATEST`); a revoke leaves it, a re-grant raises it again. The client needs no
+change: a grantee was outside the salon's audience before, so no live message was tallied, and the
+count it draws is the server's.
+
+**Locks.** The grant writes the grantee's membership row, so it now reads that row `FOR UPDATE`
+instead of `FOR SHARE` (two grants of two salons to one member, each upgrading a shared lock, would
+deadlock), and the access rewrite reads the community's membership rows `FOR UPDATE`, in id order,
+when it floors anyone. The salon-before-member order of every path is unchanged.
+
+**Tests.** `channel-grant-unread-floor.integration.spec.ts` (PostgreSQL: ten rows of past, a grant,
+one row after it - the count is 1, not 11; a higher floor is never lowered; the rewrite's two cases);
+`channel-access-announcement.spec.ts` (who is floored per kind of rewrite, and the lock mode);
+`distribution-group.spec.ts` (the admin join). The live row is `bun unread-communities.mjs run
+grantlate`: the reader's badge after a restart, its floor and its untouched read mark.
+
 ### Every member list reads by family name, and a row never moves because its name arrived (2026-10-05)
 
 Asked by the user: the community admin panel listed its members by user id, the group panel and a

@@ -82,7 +82,8 @@ export interface VaultedDeviceKey {
 /**
  * Whether the user opted into persisting the device key across browser restarts
  * ("stay signed in"). Persisted in `localStorage` so it survives a restart
- * itself; defaults to false (the secure session-scoped behaviour).
+ * itself; false until a choice is recorded (the session-scoped behaviour). What the PIN gate's box
+ * PROPOSES before that is {@link pinGateStaySignedInDefault}.
  */
 export function isDeviceKeyPersistenceEnabled(): boolean {
   try {
@@ -90,6 +91,25 @@ export function isDeviceKeyPersistenceEnabled(): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * What the PIN gate's "Rester connecté sur cet appareil" box shows when it opens: the choice this
+ * install already recorded, and TICKED when none was ever recorded (owner, 2026-11-16 - see
+ * `docs/wiki/sessions.md`, "Stay signed in"). Distinct from {@link isDeviceKeyPersistenceEnabled},
+ * which answers where the vault lives NOW and stays false until a choice is recorded: the box is a
+ * proposal, and only a PIN submit (`setDeviceKeyPersistence`) turns it into the mode.
+ */
+export function pinGateStaySignedInDefault(): boolean {
+  let recorded: string | null = null;
+  try {
+    recorded = localStorage.getItem(PERSIST_FLAG_KEY);
+  } catch (e) {
+    console.warn('[VAULT] persistence choice unreadable, the PIN gate box shows its default', e);
+  }
+  if (recorded === 'true' || recorded === 'false') return recorded === 'true';
+  console.debug('[VAULT] no persistence choice recorded - the PIN gate box opens ticked');
+  return true;
 }
 
 /**
@@ -317,6 +337,13 @@ export async function setDeviceKeyPersistence(
   current: { userId: string; deviceKeyB64: string } | null
 ): Promise<void> {
   if (current === null && isDeviceKeyPersistenceEnabled() === enabled) {
+    // THE CHOICE IS STILL RECORDED when none was: an unticked first PIN submit is a "no" the PIN
+    // gate must show next time, not an absence it would read as its ticked default.
+    try {
+      localStorage.setItem(PERSIST_FLAG_KEY, enabled ? 'true' : 'false');
+    } catch (e) {
+      console.warn('[VAULT] persistence choice could not be recorded', e);
+    }
     console.debug(`[VAULT] persistence already ${enabled ? 'on' : 'off'} - every slot kept`);
     return;
   }
