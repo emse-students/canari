@@ -96,7 +96,7 @@ const keepOpen = argv.includes("--keep-open");
  */
 // W6 JOINED ON 2026-10-25 for the 1.4.1 campaign: DEV-4 races two fresh devices of the owner and
 // DEV-6 needs a second one after the first is revoked. It is a scratch profile like W3 and holds nothing.
-const WIPEABLE = ["W3", "W1", "W6"];
+const WIPEABLE = ["W3", "W1", "W6", "W7"];
 const device = opt("device", "W3");
 if (!WIPEABLE.includes(device)) {
   throw new Error(

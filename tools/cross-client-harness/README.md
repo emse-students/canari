@@ -1219,6 +1219,8 @@ a new device makes its owner commit in every group at once. **W6 is the owner's 
 profile**: it must be declared in `names.mjs` (owner account) and signed in once by a human. DEV-5 is
 played with CORRUPT-8. Judgements in `devicerows.mjs`, pinned by `archive/devrows-selftest.mjs`.
 
+**RE-ENROLLING A SPARE SEAT WHOSE VAULT IS LOCKED BY A STALE PIN (2026-11-16).** A seat enrolled before the account's PIN was last reset reads "Vos messages enregistres sur cet appareil sont verrouilles par un autre PIN" at `pin.mjs`, and recovering it would reset the account's PIN for EVERY device. Do not recover: make it a NEW device. `bun newdevice.mjs --device W6 --keep-open` (W6 and W7 are in its `WIPEABLE`; a seat is added by a repository edit) clears the origin, signs in, answers the PIN of record, and purges the id it abandoned through the product's device panel - no PIN reset, no other device touched, about 40 s. `unlock.mjs` skips a seat no account's `clients` list names (W6-W8 are not in the file), so use `pin.mjs --device W6 --stay` for them. A seat signed in as ANOTHER account (`login.mjs --device W7 --account third`) is undone the same way: `newdevice.mjs --device W7` signs it back in as its own account (it reports `sameAccount=false` for that one run, and the id it calls purged is the OTHER account's, which this seat's device panel cannot delete: check that account's panel). **A block between two bench accounts severs their follows both ways and lifting it restores none** - re-create the follow row on dev if a phone sitting relied on it.
+
 ```sh
 bun archive/salon.mjs --row RM-4|RM-4b|RM-5|RM-6
 ```
