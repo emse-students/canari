@@ -271,7 +271,17 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
   let systemMessageId: string | undefined = parsed.messageId || undefined;
 
   try {
-    const data = parsed.system.data ? JSON.parse(parsed.system.data) : {};
+    let data: Record<string, any> = {};
+    try {
+      data = parsed.system.data ? JSON.parse(parsed.system.data) : {};
+    } catch (e) {
+      // The live handler's verdict, with the live handler's line: a frame whose payload is not JSON
+      // is skipped and SAID, never thrown into the replay and never read as an event with no data.
+      console.warn(
+        `[HISTORY_REPLAY] System event '${parsed.system.event}' in ${conversationId.slice(0, 8)}… carries unparseable data - skipped: ${String(e).slice(0, 120)}`
+      );
+      return;
+    }
 
     if (parsed.system.event === 'groupRenamed' && data.newName) {
       const convo = getConversation(contactName);

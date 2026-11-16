@@ -1324,3 +1324,16 @@ that clears is silent, so a flapping slow link does not talk (`announcementStep`
 
 **Focus.** Both header avatar buttons draw a `focus-visible` accent outline (`outline-accent-icon`): the
 button's `outline: none` and a ring that is now the connection colour left it no focus indicator.
+
+## 21. "Server already unreachable" is said once per spell (2026-11-16)
+
+The verdict "unreachable" is ONE transition, but every request deadline that expired after it printed
+`(server already unreachable)` again: a burst of stalled requests was a burst of identical lines
+(1.6.11 logs). The first deadline after the verdict keeps its line, which carries the evidence (the
+request, its class and its deadline); the next ones add nothing to it. `connectivity.svelte.ts` keeps
+the entry's SPELL NUMBER (`unreachableSpell`, bumped by `notifyServerUnreachable`) and a `changeLatch`
+keyed on it, so the line is said once per spell - durable state, never a timer. The deadlines the latch
+swallowed are counted (`deadlinesWhileUnreachable`) and reported on the line that closes the spell:
+`server reachable again (N more request deadline(s) expired while it was unreachable)`. Nothing is
+demoted and nothing is lost: the count is the same number the lines would have totalled. Tests:
+`connectivity.test.ts` ("once per spell", and the limit test now expects one line for five stalls).

@@ -1,7 +1,17 @@
-## P3 - the Emojis preference row squeezes its description into a five-word column on a phone
+## Reading owed - the Emojis preference row and its neighbours at 390 pt, on a phone
 
 target: 1.7.0
 
-Read on the iPhone 12 (390 pt wide), Settings > Preferences, 2026-11-15, found while reading the menus entry. The "Emojis" row of `SettingsPreferencesSection.svelte` keeps its label and description beside a two-segment control fixed at `w-44 shrink-0`, so the description ("Systeme : ceux de votre telephone. Canari : les memes dessins sur tous les appareils.") wraps to ONE to three words per line and runs eleven lines down the screen, while the Theme row just above it puts its three-segment control UNDER its text and reads cleanly. Nothing is cut or unreachable; it is a layout wart, not a loss.
+The Emojis row of `SettingsPreferencesSection.svelte` now takes the Theme row's shape: its two-segment
+control sits UNDER the text on a narrow width (`w-full`) and beside it from `sm` (`sm:w-44`), so the
+description reads at full width instead of a one-to-three-word column eleven lines tall (iPhone 12,
+390 pt, 2026-11-15). The Activity-sharing, repost and infinite-reels rows pair their text with a 48 px
+switch, not a fixed 11 rem control, so they were not squeezed and are unchanged. Guard:
+`SettingsPreferencesSection.emojiStyle.svelte.test.ts` (the classes are the contract; happy-dom has no
+layout). Charter: principle 7 (a setting reads at a glance).
 
-The fix is the Theme row's shape (control below the text on a narrow width, beside it from `sm`), and the same look at the other rows of that page that pair a long description with a fixed-width control (Activity sharing, reposts), at 390 pt and at a doubled root font ([design-reference](../frontend/design-reference.md)). A screenshot at 390 pt is the closing reading. Charter: principle 7 (simple, light, pleasant: a setting reads at a glance).
+**What a reading must show**, on the iPhone 12 or any phone at 390 pt, Settings > Preferences, and
+again at a doubled root font ([design-reference](../frontend/design-reference.md)): the Emojis
+description runs in two or three lines at the full card width with the "Systeme / Canari" control below
+it, and no row of the page keeps a text column narrower than half the card. A screenshot at 390 pt is the
+closing reading; the entry is then deleted.
