@@ -28,3 +28,5 @@ the iPhone 12 (measured from the DOM, as above), pinned by a test on the gate's 
 pre-release - it intersects no bottom-bar tab and clears the status bar and the notch. Then delete this entry.
 
 **Mi 9T half read, 2026-11-16 (`1.7.0-alpha.4`, [readings](../device-verification.md#the-mi-9t-readings-of-2026-11-16-on-170-alpha4)): `PASS`.** The gate's "Se deconnecter" is at the top right (42-72 css px from the top, left 304, 121 wide), clear of the status bar, with nothing near the bottom tab bar. Still owed: the iPhone 12 half (the floating tab bar and the notch). Then delete this entry.
+
+**iPhone half, 2026-11-16 (`1.7.0-alpha.4`): NOT READ.** `gamma` was signed out from the dashboard's "Se deconnecter" and signed back in through MiConnect's local password page; the app went straight to the feed and, after a terminate and relaunch, again with NO PIN gate (the device's vault path stayed on), so there was no gate to measure and "Rester connecte" was never offered to leave unticked. A gate on this phone needs a fresh device enrolment or the vault path off; neither was done. `gamma` was left signed in. Still owed: the iPhone half.
