@@ -1,4 +1,5 @@
 import { Log } from '$lib/utils/Log';
+import { cancelRestore } from './restoreControl';
 import { drainHistoryOverlayStack, historyOverlayStackDepth } from '$lib/utils/historyOverlayStack';
 
 /**
@@ -37,6 +38,7 @@ export function scrollPageToTop(trigger: ScrollToTopTrigger): ScrollToTopOutcome
     return 'already-at-top';
   }
   const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+  cancelRestore();
   Log.d('scrollToTop', `${trigger}: from ${Math.round(scroller.scrollTop)}px`);
   scroller.scrollTo({ top: 0, behavior: reduced ? 'auto' : 'smooth' });
   return 'scrolled';
@@ -54,6 +56,7 @@ export function resetPageScroll(): boolean {
     Log.d('scrollToTop', 'reset: no page scroller mounted');
     return false;
   }
+  cancelRestore();
   Log.d('scrollToTop', `reset from ${Math.round(scroller.scrollTop)}px`);
   scroller.scrollTop = 0;
   return true;

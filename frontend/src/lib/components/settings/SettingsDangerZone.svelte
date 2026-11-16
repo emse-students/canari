@@ -39,7 +39,7 @@
       else appendLog(`[DEL-LOCAL] local data NOT wiped: ${decision.kind}`);
       // Every other tab signed in as the deleted account stops writing and closes its stores.
       if (deletedSubject) announceAccountDeleted(deletedSubject);
-      await clearAuth();
+      await clearAuth('account-deleted');
       // THE ACCOUNT IS GONE FOR GOOD, so its rows on this device are only a cost. A failure is
       // logged and never blocks the exit: the marker above resumes it at the next start.
       if (wipes) {

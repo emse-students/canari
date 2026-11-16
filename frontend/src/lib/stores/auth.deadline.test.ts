@@ -156,7 +156,7 @@ describe('the sign-out deadline', () => {
     fetchMock.mockImplementation(hung);
 
     let done = false;
-    const signOut = clearAuth().then(() => {
+    const signOut = clearAuth('chosen').then(() => {
       done = true;
     });
     await vi.advanceTimersByTimeAsync(LOGOUT_DEADLINE_MS - 1);
@@ -177,7 +177,7 @@ describe('the sign-out deadline', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     fetchMock.mockResolvedValue(new Response('', { status: 503 }));
 
-    await clearAuth();
+    await clearAuth('chosen');
 
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('logout✗503'));
     expect(clearUserLocally).toHaveBeenCalledTimes(1);
@@ -188,7 +188,7 @@ describe('the sign-out deadline', () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     fetchMock.mockResolvedValue(new Response('', { status: 200 }));
 
-    await clearAuth();
+    await clearAuth('chosen');
 
     expect(log).toHaveBeenCalledWith(expect.stringContaining('logout✓200'));
     expect(clearUserLocally).toHaveBeenCalledTimes(1);
