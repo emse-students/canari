@@ -1091,6 +1091,9 @@ the association's Achats tab names it "Invité". Both fill pages total with ONE 
 
 ### A guest's name and e-mail, when the form asks (2026-11-06)
 
+**Widened on 2026-11-16** into the form's respondent fields - the same block, also joining a member's
+account fields and asking promo, status and campus: [the respondent's account fields](#the-respondents-account-fields-owner-2026-11-16).
+
 Owner's decisions of 2026-11-06, built for `1.6.6`. **Off by default**: a guest is asked nothing
 about who they are. The creator ticks any of **Nom / Prénom / E-mail** ("Demander aux invités",
 `GuestIdentitySettings.svelte`, drawn under the "Formulaire public" switch while it is on) - three
@@ -1256,6 +1259,112 @@ the price is only as good as the answer it is computed from:
   answered with an option no group holds. The manager prices that cell or marks it unavailable; a
   required, unconditional question whose every option is grouped never reaches it, so a 0 there is
   accepted.
+
+## The respondent's account fields (owner, 2026-11-16)
+
+**The decision.** An organiser chooses, PER FORM, which of the respondent's fields are joined to each
+answer: "Nom", "Prénom", "Promo et formation", "Statut élève / personnel", "Campus" (and, on a public
+form, a guest's "E-mail", as before). Each is optional. The respondent sees, before sending, which
+fields will reach the organiser; the organiser reads them as columns of the responses list and of the
+XLSX export, with a filter by promo, formation and status. Whoever the form cannot read from an
+account - a guest on a public form, any respondent of an anonymous form - is ASKED the fields instead,
+as a guest's name was asked since 2026-11-06.
+
+**Principle 1 of the charter ("Vos messages sont à vous", [docs/principes.md](../../../principes.md):
+"chaque donnée que nous gardons est déclarée").** Nothing about a respondent leaves their account
+unless the organiser ticked it AND the respondent was told before sending; the default is what every
+named form already showed (the two names), so no form starts transmitting more than it did; an
+anonymous form joins nothing from the account and never asks a name or an e-mail. Register C8 and the
+privacy policy name the fields.
+
+**Built on the guest block, not beside it** (owner, 2026-11-16: *"Il y a déjà ça, c'est à
+améliorer"*). The editor's "Demander aux invités" became **"Qui a répondu"**
+(`GuestIdentitySettings.svelte`, drawn on every form now, not only a public one): ONE set of boxes,
+saved as the two lists the server keeps (`respondentSettingsPayload`,
+`frontend/src/lib/forms/respondentFields.ts`):
+
+| Column | Holds | Read for |
+|---|---|---|
+| `forms.respondentFields` (migration 174, jsonb, default `["lastName","firstName"]`) | what is JOINED from the account: `lastName`, `firstName`, `cursus`, `status`, `campus` | a member of a NAMED form; stored `[]` and read empty on an anonymous form (`joinedAccountFields`) |
+| `forms.guestFields` (migration 138, same column, wider list) | what is ASKED: a guest's `lastName`, `firstName`, `email`, and the declared `cursus`, `status`, `campus` | a guest on a public form; EVERY respondent of an anonymous form (declared fields only) |
+
+| Form | Offered boxes | A member | A guest |
+|---|---|---|---|
+| named, not public | names, promo / formation, status, campus | joined from the account, listed in the notice | - |
+| named, public | the same and the e-mail | joined (the e-mail is a guest's: Canari keeps none for a member) | asked, each required |
+| anonymous | promo / formation, status, campus | ASKED, declared, never joined | asked, declared |
+
+**The snapshot** (`submissions.respondentIdentity`, migration 174,
+`apps/social-service/src/forms/respondent-identity.ts`): `{ source: 'account' | 'declared', lastName?,
+firstName?, cursus?: [{promo, formation}], status?: ('student'|'staff')[], campus? }`, holding only the
+fields the form joined or asked. For a member of a named form the values are read from core-service AT
+SUBMIT TIME (`PricingFactsService.accountIdentity` -> `GET internal/users/:id/respondent-identity`, an
+`INTERNAL_SECRET` route beside the pricing one), never from the request: a member's body carrying a
+declared field is refused `FORM_GUEST_IDENTITY_NOT_ASKED`. The read fails CLOSED (503, retry): an
+answer stored without the fields its form joins would say less than the form says it does; a typed 404
+(`RESPONDENT_UNKNOWN`) is an answer (joined empty, accused), a 404 without it is a core-service older
+than the route (`RESPONDENT_CORE_BEHIND`). A form joining nothing reads nothing and stores
+`{ source: 'account' }`, so a NULL snapshot means one thing only: an answer given before 174, whose
+names are read live, as every answer's always were (`respondentNames`, `legacyNameIds` - no backfill,
+no fallback: the NULL is the row's era). A payment retry that reuses its row re-reads the snapshot with
+the new submit; a respondent's own edit of their answer (`editAnswer`) keeps it.
+
+- **Promo et formation** is EVERY cursus (D32's `cursusViewsOf`, the one reconciliation pricing
+  reads), so a person in two cursus shows both ("2024; 2022" / "ICM; Autre" in the export).
+- **Statut** is derived, not a claim: a cursus makes a student, a post (EMSE, ME, Alumni) makes staff,
+  both at once possible (D1). **Canari reads no `school_status` claim, and needs none**: the
+  "Personnel de l'école" choice became an EMSE post in the MiConnect profile (D27), which the sign-in
+  stores in `users.posts` and replaces wholesale at every sign-in, so a post that disappears at the
+  provider clears here too ([profiles-and-access](../../profiles-and-access.md)).
+- **Campus** is `users.campus`, the person's own choice at enrolment (D6).
+- **Declared** values are judged by `declaredIdentityFor`: every asked field required
+  (`FORM_GUEST_IDENTITY_MISSING`), an unasked one refused (`FORM_GUEST_IDENTITY_NOT_ASKED`); a
+  formation of the spaces' list with an entry year (1900..2100), or `none` (no cursus - staff) with
+  none; a status `student` / `staff`; a campus of the two.
+
+**The respondent notice** (`RespondentNotice.svelte`, member fill page): "Transmis à l'organisateur
+avec votre réponse : Nom, Prénom, Promo et formation", from the form's `respondentFields` as
+`GET /forms/:id` serves them (read as the submit reads them). The declared fields are drawn by
+`DeclaredIdentityFields.svelte` ("À propos de vous") on `/f/:id` and on an anonymous form's fill page,
+whose hint says the answer stays anonymous.
+
+**The organiser.** `getSubmissions` serves `respondentIdentity` (the manager allowlist,
+`submission.projection.ts`) and names a member by the snapshot; the responses list draws a column per
+kept field after the name (`identityColumnsOf`, the server's rule mirrored: a field joined or asked
+now, or carried by an answer from when it was) and, when promo / formation or status is kept, three
+pickers filtering by them - promo and formation judged on ONE cursus entry together, as a price is.
+The export writes "Promo", "Formation", "Statut", "Campus" in the client's words
+(`ExportLabels.identity`); a client that sends none is refused, as for the e-mail column. Account
+erasure clears a member's snapshot with the rest of the answer (`account-erasure.ts`).
+
+**Reversible choices taken without the owner (2026-11-16), each a one-line change:**
+
+1. **An anonymous form never asks a name or an e-mail**, even ticked: the decision says its fields
+   are asked instead, but asking a name would break the promise the form makes
+   (`FORM_ANONYMOUS_GUEST_IDENTITY`, unchanged). Promo, status and campus are asked.
+2. **One set of ticks for members and guests.** A public form saved before this joined the member's
+   names and asked guests only what was ticked; the editor opens on the union, so its next save also
+   asks GUESTS the names if they were not asked. Unticking them stops both.
+3. **The e-mail stays a guest's field**: Canari keeps no e-mail for a member, so a member is never
+   asked it and it is not offered on a named form that is not public.
+4. **Declared fields are required once asked**, like a guest's name; "Aucune (pas de cursus)" answers
+   the promo for someone who has none.
+5. **The notice lists the fields, not their values.** The values would cost a core-service read on
+   every page open; the decision asks which fields.
+
+**Rollout.** Migration 174 is additive (two columns, a constant default, no UPDATE - not held). An
+unpublished revision open when it runs is told once that the form changed since it ("Publier quand
+même"), as with 166: the fingerprint covers every column. An older editor's save is humoured
+([legacy-compatibility](../../legacy-compatibility.md#removal-once-minclientversion-passes-the-release-carrying-the-account-fields---a-form-editor-that-sends-guestfields-alone-2026-11-16)).
+
+Tests: `forms.service.respondent-identity.spec.ts` (the rule; the member snapshot read from the
+account, a declared field from a member refused, nothing read when nothing is joined; an anonymous
+member and a guest asked, refused until they answer; the create default; the export's columns in the
+client's words, a pre-174 answer named live, the refusal without words),
+`internal-users.controller.spec.ts` (the core route), `respondentFields.test.ts` (the editor's two
+lists, the declared values, the columns, cells and filter), `GuestIdentitySettings.svelte.test.ts`,
+`RespondentNotice.svelte.test.ts`, `DeclaredIdentityFields.svelte.test.ts`,
+`FormResponsesPanel.svelte.test.ts` (the columns and filters).
 
 ## A respondent changes their own answer (owner, 2026-11-13)
 

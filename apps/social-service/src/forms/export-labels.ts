@@ -55,12 +55,42 @@ export interface ExportLabels {
    */
   edited?: string;
   /**
+   * The words of the respondent's identity columns (`respondent-identity.ts`, owner 2026-11-16):
+   * headers, and what each status and campus reads as. Optional HERE for the same reason as `file`:
+   * only a form that joins or asks one of them (or holds an answer that carries one) writes the
+   * columns, and `exportSubmissions` refuses such a form without them - a store build older than the
+   * account fields.
+   */
+  identity?: IdentityExportLabels;
+  /**
    * The words of the priced grid's two sheets (`product-grid-export.ts`). Optional HERE for the same
    * reason as `file`: only a form with a `product_grid` question needs them, and its export is refused
    * `EXPORT_LABELS_PRODUCT_GRID_MISSING` without them.
    */
   productGrid?: ProductGridExportLabels;
 }
+
+/** The words of the identity columns, every one required when the object is sent. */
+export interface IdentityExportLabels {
+  promo: string;
+  formation: string;
+  status: string;
+  campus: string;
+  /** What each status reads as: `student`, `staff`. */
+  student: string;
+  staff: string;
+  /** What each campus reads as, by its stored value (`saint-etienne`, `gardanne`). */
+  campuses: Record<string, string>;
+}
+
+const IDENTITY_KEYS: readonly Exclude<keyof IdentityExportLabels, 'campuses'>[] = [
+  'promo',
+  'formation',
+  'status',
+  'campus',
+  'student',
+  'staff',
+];
 
 /** The words of the "Articles" and "Totaux" sheets, every one required when the object is sent. */
 export interface ProductGridExportLabels {
@@ -146,6 +176,24 @@ export function parseExportLabels(raw: string | undefined): ExportLabels {
   for (const key of ['file', 'fileDeleted', 'email', 'guest', 'edited'] as const)
     if (labels[key] !== undefined && (typeof labels[key] !== 'string' || labels[key] === ''))
       throw new BadRequestException(`export label "${key}" must be a non-empty string`);
+
+  if (labels.identity !== undefined) {
+    const identity = labels.identity;
+    if (typeof identity !== 'object' || identity === null || Array.isArray(identity))
+      throw new BadRequestException('export label "identity" must be an object');
+    const words = identity as Record<string, unknown>;
+    for (const key of IDENTITY_KEYS)
+      if (typeof words[key] !== 'string' || words[key] === '')
+        throw new BadRequestException(`export label "identity.${key}" is missing`);
+    const campuses = words.campuses;
+    if (
+      typeof campuses !== 'object' ||
+      campuses === null ||
+      Array.isArray(campuses) ||
+      Object.values(campuses).some((v) => typeof v !== 'string')
+    )
+      throw new BadRequestException('export label "identity.campuses" is missing');
+  }
 
   if (labels.productGrid !== undefined) {
     const grid = labels.productGrid;

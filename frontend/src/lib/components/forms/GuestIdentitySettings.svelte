@@ -1,68 +1,73 @@
 <script lang="ts">
   import CheckboxGroup from '$lib/components/ui/CheckboxGroup.svelte';
   import { CONTROL_HINT_CLASS } from '$lib/components/ui/controlClasses';
-  import {
-    GUEST_IDENTITY_FIELDS,
-    guestFieldLabel,
-    guestFieldsAdvice,
-  } from '$lib/forms/guestIdentity';
+  import { guestFieldsAdvice } from '$lib/forms/guestIdentity';
+  import { offeredChoices, respondentChoiceLabel } from '$lib/forms/respondentFields';
   import { m } from '$lib/paraglide/messages';
 
   /**
-   * "Demander aux invites : Nom / Prenom / E-mail" (owner, 2026-11-06) - what a PUBLIC form asks a
-   * guest about who they are. Three independent boxes, all off by default; each ticked one is
-   * required of a guest on `/f/:id`, and a member never sees them.
+   * "Qui a repondu" - which of the respondent's fields travel with each answer (owner, 2026-11-16),
+   * built on the "Demander aux invites" block of 2026-11-06. ONE set of ticks: Nom, Prenom, E-mail
+   * (a public form's guests), Promo et formation, Statut, Campus. For a signed-in member of a named
+   * form the ticked fields are read from the account when they send; whoever the form cannot read
+   * from an account - a guest, any respondent of an anonymous form - is asked them. The save turns
+   * the set into the two lists the server keeps (`respondentSettingsPayload`).
    *
-   * Drawn under the "Formulaire public" switch and only while it is on: on a form nobody answers
-   * without an account, the boxes would ask nobody. The advice says WHY to tick them, more firmly on
-   * a form that charges - an organiser otherwise has only a reference to find who ordered.
+   * An anonymous form offers no name nor e-mail: it promised not to keep who answered. The e-mail is
+   * a guest's only: Canari keeps none for a member. The advice says why to tick something on a
+   * public form, more firmly on one that charges.
    */
   interface Props {
-    /** The ticked fields, bound: drawn from `lastName`, `firstName`, `email`. */
-    guestFields: string[];
-    /** Whether the form is answerable without an account; nothing is drawn otherwise. */
+    /** The ticked choices, bound: drawn from `respondentFields.ts` `RESPONDENT_CHOICES`. */
+    choices: string[];
+    /** Whether the form is answerable without an account: the e-mail is offered then. */
     isPublic: boolean;
-    /** An anonymous form keeps nobody's identity, so it asks a guest none (the server refuses it). */
+    /** An anonymous form asks its respondents instead of joining an account, and never a name. */
     anonymous: boolean;
     /** Whether the form takes money: the advice is firmer then. */
     charges: boolean;
   }
 
-  let { guestFields = $bindable(), isPublic, anonymous, charges }: Props = $props();
+  let { choices = $bindable(), isPublic, anonymous, charges }: Props = $props();
 
-  const options = GUEST_IDENTITY_FIELDS.map((field) => ({
-    value: field,
-    label: guestFieldLabel(field),
-  }));
-  const advice = $derived(guestFieldsAdvice(isPublic, charges, guestFields));
+  const options = $derived(
+    offeredChoices(isPublic, anonymous).map((choice) => ({
+      value: choice,
+      label: respondentChoiceLabel(choice),
+    }))
+  );
+  // The advice is about telling GUESTS apart, so it reads the names and e-mail only.
+  const advice = $derived(
+    guestFieldsAdvice(
+      isPublic && !anonymous,
+      charges,
+      choices.filter((c) => c === 'lastName' || c === 'firstName' || c === 'email')
+    )
+  );
 </script>
 
-{#if isPublic}
-  <div
-    class="border-cn-border space-y-2 rounded-xl border px-3 py-3"
-    data-testid="guest-identity-settings"
-  >
-    {#if anonymous}
-      <p class={CONTROL_HINT_CLASS}>{m.form_guest_identity_blocked_anonymous()}</p>
-    {:else}
-      <CheckboxGroup
-        label={m.form_guest_identity_settings_label()}
-        {options}
-        bind:selected={guestFields}
-        hint={m.form_guest_identity_settings_hint()}
-      />
-      {#if advice === 'paid'}
-        <p
-          class="border-accent/30 bg-accent/5 text-text-main rounded-xl border px-3 py-2 text-xs font-semibold"
-          data-testid="guest-identity-advice"
-        >
-          {m.form_guest_identity_advice_paid()}
-        </p>
-      {:else if advice === 'suggested'}
-        <p class={CONTROL_HINT_CLASS} data-testid="guest-identity-advice">
-          {m.form_guest_identity_advice()}
-        </p>
-      {/if}
-    {/if}
-  </div>
-{/if}
+<div
+  class="border-cn-border space-y-2 rounded-xl border px-3 py-3"
+  data-testid="guest-identity-settings"
+>
+  <CheckboxGroup
+    label={m.form_respondent_settings_label()}
+    {options}
+    bind:selected={choices}
+    hint={anonymous
+      ? m.form_respondent_settings_hint_anonymous()
+      : m.form_respondent_settings_hint()}
+  />
+  {#if advice === 'paid'}
+    <p
+      class="border-accent/30 bg-accent/5 text-text-main rounded-xl border px-3 py-2 text-xs font-semibold"
+      data-testid="guest-identity-advice"
+    >
+      {m.form_guest_identity_advice_paid()}
+    </p>
+  {:else if advice === 'suggested'}
+    <p class={CONTROL_HINT_CLASS} data-testid="guest-identity-advice">
+      {m.form_guest_identity_advice()}
+    </p>
+  {/if}
+</div>

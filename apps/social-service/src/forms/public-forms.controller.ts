@@ -70,6 +70,11 @@ export class PublicFormsController {
         guestLastName: dto.guestLastName,
         guestFirstName: dto.guestFirstName,
         guestEmail: dto.guestEmail,
+        // What the form asks a guest to declare (`respondent-identity.ts`), judged the same way.
+        declaredFormation: dto.declaredFormation,
+        declaredPromo: dto.declaredPromo,
+        declaredStatus: dto.declaredStatus,
+        declaredCampus: dto.declaredCampus,
       },
       'guest',
       // The visitor a paid answer is counted against (PP5): the address the throttle counts too.

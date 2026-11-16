@@ -117,6 +117,7 @@ earliest version, as a checklist.
 - [ ] [a newcomer's own "X a ajouté Y" notice names both people (was: "Compte supprime a ajoute Compte supprime au groupe")](backlog.d/p3-a-newcomer-s-first-added-notice-reads-compte-supprime-for-both-names.md)
 - [ ] [the pre-live screen says a suspension before Start](backlog.d/reading-owed-the-pre-live-screen-says-a-suspension-before-start.md)
 - [ ] [editing a CanaReel's caption: the form sends the caption alone](backlog.d/p2-editing-a-canareel-s-caption-answers-400-because-the-edit-form-sends-its-video.md)
+- [ ] [a form's respondent account fields, on a phone and on the web (owner, 2026-11-16)](backlog.d/reading-owed-form-respondent-account-fields.md)
 
 ## 1.8.0
 

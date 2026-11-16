@@ -480,6 +480,29 @@ as its one slice, logged `[FORMS] the server serves no cursusSlices`.
 estate older than it is served. Then delete the two fields from both answers and their types, the
 `cursusSlicesOf` branch, its test and this entry.
 
+### Removal once `minClientVersion` passes the release carrying the account fields - a form editor that sends `guestFields` alone (2026-11-16)
+
+**Site:** `legacyGuestFieldsMerge` (`apps/social-service/src/forms/guest-identity.ts`), called by
+`FormsService.update` when an edit carries `guestFields` and no `respondentFields`, logged
+`[LEGACY] edit of ... sends guestFields without respondentFields`.
+**What it humours:** an editor older than [the respondent's account fields](frontend/modules/forms.md#the-respondents-account-fields-owner-2026-11-16)
+knows the guest's name and e-mail only, and sends them as the whole `guestFields` list on every save
+(`[]` on a form that is not public). Taken as sent, it would erase the declared asks (promo and
+formation, status, campus) the new editor ticked. Its names and e-mail are taken, the stored declared
+asks kept; `respondentFields` is absent from its body, so it keeps the stored value as any absent field.
+**The cost while it stands:** one branch on the edit path.
+**Removal condition:** `minClientVersion` on both estates passes the first stable carrying the account
+fields, and the `[LEGACY]` line is absent from production for a week. Then delete the helper, its
+branch, its test and this entry.
+
+**Two older-client cases this release does not humour, stated:** an export from a store build older
+than it on a form that joins or asks a promo, a status or a campus is refused (400, `export label
+"identity" is required`) - the server owns no word, as for `email` and `guest` (P3-4 of #3096); and a
+store build older than it, answering an ANONYMOUS form that asks a declared field, is refused
+`FORM_GUEST_IDENTITY_MISSING` - it cannot draw the question. Updating the app is the fix for both.
+The answers given before migration 174 carry no snapshot and read the account's name live, as every
+answer always did: that is the data's meaning, not a client shim, and has no removal date.
+
 ### Removal once both estates log `drained=0` - live segments an older release left in Garage (2026-11-09)
 
 **Site:** `LiveSegmentsService.drainObjectStore`, run by `onApplicationBootstrap`

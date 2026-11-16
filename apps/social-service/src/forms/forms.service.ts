@@ -125,11 +125,26 @@ import { receivedStatus } from '../users/entities/purchase-record.entity';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
 import { toManagerView, toSubmitterView } from './submission.projection';
 import {
+  askedFields,
   askedGuestFields,
   guestIdentityFor,
   guestPayerEmail,
+  legacyGuestFieldsMerge,
   storedGuestFields,
 } from './guest-identity';
+import {
+  DEFAULT_ACCOUNT_FIELDS,
+  accountSnapshot,
+  askedDeclaredFields,
+  declaredIdentityFor,
+  joinedAccountFields,
+  legacyNameIds,
+  identityCells,
+  identityColumnsOf,
+  respondentNames,
+  storedRespondentFields,
+  type RespondentIdentity,
+} from './respondent-identity';
 import {
   describeCursus,
   dimensionsNeedProfile,
@@ -958,6 +973,12 @@ export class FormsService {
       status,
       // One stored shape for "asks a guest nothing": null (`guest-identity.ts`).
       guestFields: storedGuestFields(input.guestFields),
+      // What a member's answer carries from the account: the sent list, else the two names every
+      // named form showed before it was a choice; none on an anonymous form (`respondent-identity.ts`).
+      respondentFields: storedRespondentFields(
+        input.respondentFields ?? DEFAULT_ACCOUNT_FIELDS,
+        input.anonymous === true
+      ),
       currency: 'eur',
       opensAt: opensAtRaw ? new Date(opensAtRaw) : null,
       closedAt: closedAtRaw ? new Date(closedAtRaw) : null,
@@ -1157,6 +1178,11 @@ export class FormsService {
     const { ownerId, ...served } = form;
     return {
       ...served,
+      // What a member's answer carries from the account - the respondent notice reads it - read
+      // as the submit reads it: none on an anonymous form (`respondent-identity.ts`).
+      respondentFields: joinedAccountFields(form),
+      // What the form asks instead, canonical (the declared fields of an anonymous form included).
+      guestFields: askedFields(form.guestFields),
       ...(manages ? { ownerId } : {}),
       submissionCount,
       cotisationDisabled,
@@ -1285,8 +1311,9 @@ export class FormsService {
       opensAt: form.opensAt,
       closedAt: form.closedAt,
       anonymous: form.anonymous,
-      // What the page asks a guest about who they are, canonical; [] asks nothing.
-      guestFields: askedGuestFields(form.guestFields),
+      // What the page asks a guest about who they are, canonical; [] asks nothing. The declared
+      // fields (promo and formation, status, campus) are asked here too (`respondent-identity.ts`).
+      guestFields: askedFields(form.guestFields),
       formFull,
       basePrice: form.basePrice,
       currency: form.currency,
@@ -1590,14 +1617,30 @@ export class FormsService {
     } = input;
     const citedBefore = questionImageIds(form.items);
     const opensBefore = form.opensAt ? new Date(form.opensAt).getTime() : null;
+    if (input.guestFields !== undefined && input.respondentFields === undefined) {
+      this.logger.log(
+        `[LEGACY] edit of ${formId.slice(0, 8)} sends guestFields without respondentFields: a client ` +
+          'older than the account fields, its declared asks kept'
+      );
+    }
     Object.assign(form, {
       ...rest,
       associationId,
       anonymous,
-      // Absent keeps the stored list; a sent one (null and [] included) is stored canonical.
+      // Absent keeps the stored list; a sent one (null and [] included) is stored canonical. A
+      // client older than the account fields sends `guestFields` alone: its declared asks are kept.
       ...(input.guestFields !== undefined
-        ? { guestFields: storedGuestFields(input.guestFields) }
+        ? {
+            guestFields:
+              input.respondentFields === undefined
+                ? legacyGuestFieldsMerge(input.guestFields, form.guestFields)
+                : storedGuestFields(input.guestFields),
+          }
         : {}),
+      respondentFields: storedRespondentFields(
+        input.respondentFields ?? form.respondentFields,
+        anonymous
+      ),
       currency: 'eur',
       opensAt: opensAtRaw ? new Date(opensAtRaw) : null,
       closedAt: closedAtRaw ? new Date(closedAtRaw) : null,
@@ -2450,6 +2493,11 @@ export class FormsService {
       id
     );
 
+    // WHO ANSWERED, as the form chose to keep it (`respondent-identity.ts`): read from the account
+    // NOW for a member of a named form, declared by whoever the form cannot read from one. Judged
+    // before anything is written or issued, like the guest's identity above.
+    const respondentIdentity = await this.respondentIdentityFor(form, input, guest);
+
     // A grid's answer is a map of rows, judged against the question's own rows and columns and
     // stripped of its empty rows - from here on, `answers` holds it in that form (D1).
     input = { ...input, answers: withNormalisedGridAnswers(form.items ?? [], input.answers ?? {}) };
@@ -2801,6 +2849,7 @@ export class FormsService {
             userId: null,
             email: undefined,
             ...guestIdentity,
+            respondentIdentity,
             answers: storedAnswers,
             lines,
             priceLockedItemIds,
@@ -2819,6 +2868,8 @@ export class FormsService {
         // The retry's lines replace the old ones with its answer: the row says what THIS request charges.
         existingPending.lines = lines;
         existingPending.priceLockedItemIds = priceLockedItemIds;
+        // The retry is a new submit: what it carries of the respondent is read again with it.
+        existingPending.respondentIdentity = respondentIdentity;
         existingPending.totalPaid = totalCents;
         existingPending.email = input.email;
         // Its old request is settled (above), so the row stops naming it: a late report about it
@@ -2843,6 +2894,7 @@ export class FormsService {
           userId: input.userId ?? null,
           email: input.email,
           ...guestIdentity,
+          respondentIdentity,
           answers: storedAnswers,
           lines,
           priceLockedItemIds,
@@ -4248,6 +4300,52 @@ export class FormsService {
   }
 
   /**
+   * What an answer stores about its respondent (`respondent-identity.ts`, owner 2026-11-16).
+   *
+   * - A guest, or any respondent of an ANONYMOUS form, is read from no account: the declared fields
+   *   the form asks are judged (every one required, none unasked), else null.
+   * - A member of a NAMED form is never asked: a declared field is refused, and the fields the form
+   *   joins are read from core-service at this moment - never from the request - and stored as a
+   *   snapshot. A form that joins nothing reads nothing and stores `{ source: 'account' }`.
+   */
+  private async respondentIdentityFor(
+    form: Form,
+    input: SubmitFormDto,
+    guest: boolean
+  ): Promise<RespondentIdentity | null> {
+    if (guest || form.anonymous) {
+      return declaredIdentityFor(askedDeclaredFields(form.guestFields), input, form.id);
+    }
+    declaredIdentityFor([], input, form.id);
+    const joined = joinedAccountFields(form);
+    if (joined.length === 0 || !input.userId) return accountSnapshot([], null);
+    const account = await this.pricingFacts.accountIdentity(input.userId);
+    this.logger.debug(
+      `[FORMS] submit form=${form.id.slice(0, 8)} joins ${joined.join(',')} from the account`
+    );
+    return accountSnapshot(joined, account);
+  }
+
+  /**
+   * The account names of the answers given before migration 174 (no snapshot): read live, as every
+   * answer's always were. Only those rows' accounts are asked.
+   */
+  private async legacyNames(
+    manager: EntityManager,
+    rows: readonly { userId: string | null; respondentIdentity?: RespondentIdentity | null }[]
+  ): Promise<Map<string, { firstName: string | null; lastName: string | null }>> {
+    const ids = legacyNameIds(rows);
+    const live = new Map<string, { firstName: string | null; lastName: string | null }>();
+    if (ids.length === 0) return live;
+    const found: { id: string; firstName: string | null; lastName: string | null }[] =
+      await manager.query(`SELECT id, "firstName", "lastName" FROM users WHERE id = ANY($1)`, [
+        ids,
+      ]);
+    found.forEach((r) => live.set(r.id, { firstName: r.firstName, lastName: r.lastName }));
+    return live;
+  }
+
+  /**
    * Returns all submissions for a form enriched with the submitter's first/last name, a payment
    * that landed over capacity first (`overCapacityFirst`): it is the one row the organiser owes
    * something to.
@@ -4262,16 +4360,8 @@ export class FormsService {
         order: form?.anonymous ? { id: 'ASC' } : { createdAt: 'DESC' },
       })
     );
-    const userIds = [...new Set(subs.map((s) => s.userId).filter(Boolean))];
-    const nameMap = new Map<string, { firstName: string | null; lastName: string | null }>();
-    if (userIds.length > 0) {
-      const rows: { id: string; firstName: string | null; lastName: string | null }[] =
-        await this.submissionRepo.manager.query(
-          `SELECT id, "firstName", "lastName" FROM users WHERE id = ANY($1)`,
-          [userIds]
-        );
-      rows.forEach((r) => nameMap.set(r.id, { firstName: r.firstName, lastName: r.lastName }));
-    }
+    // A member's name is the answer's snapshot; only an answer older than it reads the account.
+    const live = await this.legacyNames(this.submissionRepo.manager, subs);
     // The files among these answers: a purged one reads "file deleted" instead of offering a
     // download, a live one is saved under its name. Asked only of a form that has a file question.
     const files = hasFileQuestion(form?.items)
@@ -4281,10 +4371,11 @@ export class FormsService {
       const cited = Object.values(s.answers ?? {}).filter(
         (value): value is string => typeof value === 'string' && files.has(value)
       );
+      const names = s.userId ? respondentNames(s, live) : { firstName: null, lastName: null };
       return {
         ...toManagerView(s),
-        firstName: nameMap.get(s.userId)?.firstName ?? null,
-        lastName: nameMap.get(s.userId)?.lastName ?? null,
+        firstName: names.firstName,
+        lastName: names.lastName,
         deletedFileIds: cited.filter((id) => files.get(id)!.purged),
         fileNames: Object.fromEntries(
           cited.filter((id) => !files.get(id)!.purged).map((id) => [id, files.get(id)!.fileName])
@@ -4325,16 +4416,16 @@ export class FormsService {
       })
     );
 
-    // Batch-fetch first/last names for all submitters
-    const userIds = [...new Set(submissions.map((s) => s.userId).filter(Boolean))];
-    const nameMap = new Map<string, { firstName: string | null; lastName: string | null }>();
-    if (userIds.length > 0) {
-      const rows: { id: string; firstName: string | null; lastName: string | null }[] =
-        await this.formRepo.manager.query(
-          `SELECT id, "firstName", "lastName" FROM users WHERE id = ANY($1)`,
-          [userIds]
-        );
-      rows.forEach((r) => nameMap.set(r.id, { firstName: r.firstName, lastName: r.lastName }));
+    // Each answer's name: its snapshot, the guest's typed one, or - for an answer given before the
+    // snapshot (migration 174) - the account's, read live as it always was. Keyed by answer.
+    const live = await this.legacyNames(this.formRepo.manager, submissions);
+    const nameMap = new Map(submissions.map((s) => [s.id, respondentNames(s, live)]));
+    // The promo and formation, status and campus columns (`respondent-identity.ts`): written when
+    // the form joins or asks the field, or an answer carries it from when it did.
+    const identityColumns = identityColumnsOf(form, submissions);
+    const identityWords = identityColumns.length > 0 ? labels.identity : undefined;
+    if (identityColumns.length > 0 && !identityWords) {
+      throw new BadRequestException('export label "identity" is required');
     }
 
     const workbook = new ExcelJS.Workbook();
@@ -4370,6 +4461,16 @@ export class FormsService {
     if (emailColumn) {
       if (!labels.email) throw new BadRequestException('export label "email" is required');
       headers.push({ header: labels.email, key: 'guestEmail', width: 28 });
+    }
+    if (identityWords) {
+      for (const field of identityColumns) {
+        if (field === 'cursus') {
+          headers.push({ header: identityWords.promo, key: 'promo', width: 10 });
+          headers.push({ header: identityWords.formation, key: 'formation', width: 14 });
+        } else {
+          headers.push({ header: identityWords[field], key: field, width: 16 });
+        }
+      }
     }
     if (form.requiresPayment) {
       headers.push({ header: labels.amount, key: 'total', width: 14 });
@@ -4410,15 +4511,16 @@ export class FormsService {
     }
 
     submissions.forEach((sub) => {
-      const names = (sub.userId && nameMap.get(sub.userId)) || { firstName: null, lastName: null };
+      const names = nameMap.get(sub.id) ?? { firstName: null, lastName: null };
       const row: Record<string, unknown> = {
         date: sub.createdAt instanceof Date ? sub.createdAt : new Date(sub.createdAt as string),
       };
       if (!form.anonymous) {
         // A guest's answer is named by what the guest typed, when the form asked for it.
-        row.firstName = (sub.userId ? names.firstName : sub.guestFirstName) ?? '';
-        row.lastName = (sub.userId ? names.lastName : sub.guestLastName) ?? '';
+        row.firstName = names.firstName ?? '';
+        row.lastName = names.lastName ?? '';
       }
+      if (identityWords) Object.assign(row, identityCells(sub.respondentIdentity, identityWords));
       if (guestColumn) row.guest = sub.userId ? '' : guestReference(sub.id);
       if (emailColumn) row.guestEmail = sub.guestEmail ?? '';
       if (form.requiresPayment) {

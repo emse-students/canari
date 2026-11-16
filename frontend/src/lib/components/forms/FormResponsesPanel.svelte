@@ -34,6 +34,16 @@
   import { showToast } from '$lib/stores/toast.svelte';
   import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
+  import Select from '$lib/components/ui/Select.svelte';
+  import {
+    emptyIdentityFilter,
+    formationWord,
+    identityColumnsOf,
+    identityFilterValues,
+    matchesIdentityFilter,
+    respondentChoiceLabel,
+    statusLabel,
+  } from '$lib/forms/respondentFields';
 
   /**
    * ONE FORM'S RESPONSES SCREEN (WP-G4, the owner-approved mockup of 2026-11-06): summary cards, then
@@ -81,7 +91,15 @@
   let withUnpaid = $state(true);
 
   const words = $derived(fileAnswerWords(submissions));
-  const shown = $derived(visibleResponses(submissions, items, filter, query, words, anonymous));
+  /** Who answered, as columns, and the filter on them: by promo, formation and status. */
+  const identityColumns = $derived(identityColumnsOf(form, submissions));
+  const identityValues = $derived(identityFilterValues(submissions));
+  let identityFilter = $state(emptyIdentityFilter());
+  const shown = $derived(
+    visibleResponses(submissions, items, filter, query, words, anonymous).filter((sub) =>
+      matchesIdentityFilter(sub, identityFilter)
+    )
+  );
   const totals = $derived(gridTotalsViews(items, submissions, withUnpaid));
   const grandUnits = $derived(totals.reduce((sum, view) => sum + view.totals.total.units, 0));
   const grandCents = $derived(totals.reduce((sum, view) => sum + view.totals.total.cents, 0));
@@ -288,6 +306,46 @@
             data-testid="responses-search"
           />
         </label>
+        {#if identityColumns.includes('cursus') || identityColumns.includes('status')}
+          <div
+            class="flex flex-wrap gap-2"
+            role="group"
+            aria-label={m.form_respondent_filters_label()}
+            data-testid="identity-filters"
+          >
+            {#if identityColumns.includes('cursus')}
+              <Select
+                label={m.form_respondent_promo_label()}
+                value={identityFilter.promo}
+                options={[
+                  { value: '', label: m.form_respondent_filter_any() },
+                  ...identityValues.promo.map((p) => ({ value: p, label: p })),
+                ]}
+                onValueChange={(v) => (identityFilter = { ...identityFilter, promo: v })}
+              />
+              <Select
+                label={m.form_respondent_formation_label()}
+                value={identityFilter.formation}
+                options={[
+                  { value: '', label: m.form_respondent_filter_any() },
+                  ...identityValues.formation.map((f) => ({ value: f, label: formationWord(f) })),
+                ]}
+                onValueChange={(v) => (identityFilter = { ...identityFilter, formation: v })}
+              />
+            {/if}
+            {#if identityColumns.includes('status')}
+              <Select
+                label={respondentChoiceLabel('status')}
+                value={identityFilter.status}
+                options={[
+                  { value: '', label: m.form_respondent_filter_any() },
+                  ...identityValues.status.map((s) => ({ value: s, label: statusLabel(s) })),
+                ]}
+                onValueChange={(v) => (identityFilter = { ...identityFilter, status: v })}
+              />
+            {/if}
+          </div>
+        {/if}
         {#if requiresPayment}
           <div
             class="flex flex-wrap gap-1.5"
@@ -325,6 +383,7 @@
           {deletingId}
           {onDelete}
           {rowActions}
+          {identityColumns}
         />
       {/if}
     </div>
