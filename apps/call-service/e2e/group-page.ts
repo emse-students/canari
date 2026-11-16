@@ -9,10 +9,12 @@
  * received frame by its `from`.
  *
  * THE RELAY (WP-GC4). call-service's SFU mode seats up to `max_seats` users; this page holds ONE peer
- * connection, to the SFU, sends its microphone on a SEND-ONLY transceiver (so the SFU never answers a
- * forwarded track on it, and every forwarded track arrives on a transceiver of its own) and learns
- * WHO SENT each forwarded track from its stream id, which the SFU sets to the sender's user id
- * (`sfu_seats::forwarded_stream_id`). That id is the `peer` its receiver transform names.
+ * connection, to the SFU, through THE APP'S OWN SFU LEG (`frontend/src/lib/services/callSfuLeg.ts`):
+ * its microphone on a SEND-ONLY transceiver (so the SFU never answers a forwarded track on it, and
+ * every forwarded track arrives on a transceiver of its own), the offer on `Joined`, the SFU's
+ * renegotiations answered, and WHO SENT each forwarded track read from its stream id, which the SFU
+ * sets to the sender's user id (`sfu_seats::forwarded_stream_id`). That id is the `peer` its receiver
+ * transform names. The page hands the leg the transforms below, as `CallService` hands it its own.
  *
  * THE KEYS (WP-GC1). One key per SENDER, `deriveGroupCallKeys` from `utils/callKeys.ts` - the app's
  * own derivation, imported - over a stand-in exporter (HKDF of a secret the driver hands every page:
@@ -32,6 +34,11 @@ import {
   configureCallAudioSenders,
 } from '../../../frontend/src/lib/utils/callAudio';
 import { deriveGroupCallKeys, type ExportSecret } from '../../../frontend/src/lib/utils/callKeys';
+import {
+  CallSfuLeg,
+  sfuJoinFrame,
+  type SfuServerFrame,
+} from '../../../frontend/src/lib/services/callSfuLeg';
 import {
   askReport,
   currentFault,
@@ -78,6 +85,7 @@ interface ServerFrame {
   initiator?: boolean;
   peer?: string;
   from?: string;
+  others?: number;
 }
 
 /** One leg of the mesh: the peer connection to one other participant. */
@@ -92,9 +100,9 @@ let ws: WebSocket | null = null;
 let wh: WorkerHandle | null = null;
 let stream: MediaStream | null = null;
 const legs = new Map<string, Leg>();
-/** `sfu` mode: the one connection, to the relay. */
-let relay: Leg | null = null;
-/** `sfu` mode: the sender (user id) of each forwarded track, by track id, read from its stream id. */
+/** `sfu` mode: the app's SFU leg, the one connection to the relay. */
+let relay: CallSfuLeg | null = null;
+/** `sfu` mode: the sender (user id) of each forwarded track, by track id, as the leg read it. */
 const trackSender = new Map<string, string>();
 /** Every server frame type received, in order: what the driver prints when a run fails. */
 const frames: string[] = [];
@@ -199,6 +207,12 @@ function watchConnection(pc: RTCPeerConnection, label: string, to?: string) {
         : { type: 'IceCandidate', candidate, to }
     );
   };
+  watchIceErrors(pc, label);
+  pc.onconnectionstatechange = () => connectionChanged(label, pc.connectionState);
+}
+
+/** A refused TURN allocation is a fault when the run is relay-only (see below). */
+function watchIceErrors(pc: RTCPeerConnection, label: string) {
   pc.onicecandidateerror = (e) => {
     const why = `${label}: TURN/STUN ${e.url} answered ${e.errorCode} ${e.errorText}`;
     // Relay-only with ONE server: an allocation it refused is a relay candidate this connection
@@ -206,78 +220,68 @@ function watchConnection(pc: RTCPeerConnection, label: string, to?: string) {
     if (cfg.iceTransportPolicy === 'relay') setFault(why);
     else note(why);
   };
-  pc.onconnectionstatechange = () => {
-    note(`${label}: connectionState=${pc.connectionState}`);
-    if (pc.connectionState === 'failed') setFault(`${label} FAILED`);
-  };
+}
+
+/** A connection's new state, noted; `failed` is a fault. */
+function connectionChanged(label: string, state: RTCPeerConnectionState) {
+  note(`${label}: connectionState=${state}`);
+  if (state === 'failed') setFault(`${label} FAILED`);
 }
 
 /**
- * `sfu` mode: the one connection, to the relay. The microphone goes out on a SEND-ONLY transceiver
- * whose sender transform is assigned in this task; every forwarded track arrives on a transceiver the
- * SFU's offer creates, armed in `ontrack` with the sender its stream id names.
+ * `sfu` mode: the app's SFU leg, given this page's transforms - the sender naming this participant,
+ * a forwarded track's receiver the sender its stream id names - and its signalling. Audio only, so
+ * no codec is held.
  */
-function relayConnection(): Leg {
-  note('relay: creating the peer connection to the SFU');
-  const pc = new RTCPeerConnection({
-    iceServers: cfg.iceServers,
-    iceTransportPolicy: cfg.iceTransportPolicy,
-  });
-  const leg: Leg = { pc, early: [] };
-  pc.ontrack = (e) => {
-    const kind = e.track.kind as 'audio' | 'video';
-    const sender = e.streams[0]?.id?.toLowerCase();
-    if (!sender || sender === cfg.self) {
-      setFault(`relay: a forwarded ${kind} track names no other sender (stream ${String(sender)})`);
-      return;
+function relayLeg(): CallSfuLeg {
+  note('relay: opening the app SFU leg');
+  const leg = new CallSfuLeg(
+    cfg.self,
+    { stream: stream!, tracks: stream!.getAudioTracks() },
+    {
+      createPeerConnection: () => {
+        const pc = new RTCPeerConnection({
+          iceServers: cfg.iceServers,
+          iceTransportPolicy: cfg.iceTransportPolicy,
+        });
+        watchIceErrors(pc, 'the connection to the SFU');
+        return pc;
+      },
+      holdVideoCodec: () => undefined,
+      attachSenderTransform: (sender, kind) => {
+        sender.transform = transform(wh!, 'sender', kind, cfg.self);
+      },
+      attachReceiverTransform: (receiver, kind, peer) => {
+        receiver.transform = transform(wh!, 'receiver', kind, peer);
+      },
+      senderCreated: () => {},
+      cameraRefused: () => setFault('relay: a camera was refused, and this page sends none'),
+      sendSignal: (frame) => send(frame),
+      onJoined: (others) => note(`joined the relay (others=${String(others)})`),
+      onRemoteTrack: (peer, track, remoteStream) => {
+        trackSender.set(track.id, peer);
+        const audio = new Audio();
+        audio.srcObject = remoteStream;
+        void audio.play().catch((err) => note(`play: ${String(err)}`));
+        note(`relay: ontrack ${track.kind} from ${peer}`);
+      },
+      onConnectionState: (state) => connectionChanged('the connection to the SFU', state),
+      onFailed: (e) => setFault(`relay: ${e.message}`),
     }
-    trackSender.set(e.track.id, sender);
-    // A transceiver the SFU's offer created is armed HERE, in the task that created it.
-    if (!e.receiver.transform) e.receiver.transform = transform(wh!, 'receiver', kind, sender);
-    if (!e.transceiver.sender.transform)
-      e.transceiver.sender.transform = transform(wh!, 'sender', kind, cfg.self);
-    const audio = new Audio();
-    audio.srcObject = e.streams[0];
-    void audio.play().catch((err) => note(`play: ${String(err)}`));
-    note(`relay: ontrack ${kind} from ${sender} mid=${e.transceiver.mid}`);
-  };
-  watchConnection(pc, 'the connection to the SFU');
-  for (const track of stream!.getAudioTracks()) {
-    const t = pc.addTransceiver(track, { direction: 'sendonly', streams: [stream!] });
-    // In the task that created the sender and its transceiver (CALL-E2E-BYPASS-MI9T).
-    t.sender.transform = transform(wh!, 'sender', 'audio', cfg.self);
-  }
+  );
+  leg.open();
   return leg;
 }
 
-/** `sfu` mode: one server frame. The client offers first; the SFU renegotiates as tracks arrive. */
+/** `sfu` mode: one server frame - the leg's, or the Join's refusal. */
 async function onRelaySignal(msg: ServerFrame) {
-  const leg = relay!;
   switch (msg.type) {
     case 'Joined':
-      note('joined the relay');
-      await configureCallAudioSenders(leg.pc, false, note);
-      await leg.pc.setLocalDescription(await leg.pc.createOffer());
-      send({ type: 'Offer', sdp: JSON.stringify(leg.pc.localDescription) });
-      return;
-    case 'Answer':
-      await leg.pc.setRemoteDescription(JSON.parse(msg.sdp!));
-      await flushEarly(leg);
-      return;
     case 'Offer':
-      // The SFU's renegotiation: forwarded tracks were added to this connection.
-      await leg.pc.setRemoteDescription(JSON.parse(msg.sdp!));
-      await flushEarly(leg);
-      await leg.pc.setLocalDescription(await leg.pc.createAnswer());
-      send({ type: 'Answer', sdp: JSON.stringify(leg.pc.localDescription) });
+    case 'Answer':
+    case 'IceCandidate':
+      await relay!.handle(msg as SfuServerFrame);
       return;
-    case 'IceCandidate': {
-      const init = JSON.parse(msg.candidate!) as RTCIceCandidateInit;
-      if (!init.candidate) return;
-      if (leg.pc.remoteDescription) await leg.pc.addIceCandidate(init);
-      else leg.early.push(init);
-      return;
-    }
     case 'Refused':
       setFault(`the service refused the Join: ${msg.reason}`);
       return;
@@ -358,11 +362,14 @@ async function start(config: GroupConfig) {
   note(`start: ${cfg.self} joins room ${cfg.roomId}`);
   wh = await keyWorker();
   stream = await navigator.mediaDevices.getUserMedia({ audio: buildCallAudioConstraints() });
-  if (cfg.mode === 'sfu') relay = relayConnection();
-  const joinMode = cfg.mode === 'sfu' ? 'sfu' : 'p2p';
+  if (cfg.mode === 'sfu') relay = relayLeg();
   ws = new WebSocket(`${cfg.ws}?token=${encodeURIComponent(cfg.token)}`);
   ws.onopen = () =>
-    send({ type: 'Join', room_id: cfg.roomId, room_token: cfg.roomToken, mode: joinMode });
+    send(
+      cfg.mode === 'sfu'
+        ? sfuJoinFrame(cfg.roomId, cfg.roomToken)
+        : { type: 'Join', room_id: cfg.roomId, room_token: cfg.roomToken, mode: 'p2p' }
+    );
   ws.onmessage = (e) => {
     const raw = String(e.data);
     signalChain = signalChain
@@ -395,7 +402,7 @@ async function state() {
   if (relay) {
     // One connection carries every sender: each sender's leg is ITS track's inbound counters, on
     // the connection's one candidate pair.
-    const all = await legStats(relay.pc);
+    const all = await legStats(relay.connection);
     for (const [trackId, sender] of trackSender) {
       const packets = all.inboundByTrack[trackId] ?? 0;
       perLeg[sender] = { ...all, inbound: { packetsReceived: packets, bytesReceived: 0 } };
@@ -417,7 +424,7 @@ function hangup() {
   ending = true;
   ws?.close(1000);
   for (const leg of legs.values()) leg.pc.close();
-  relay?.pc.close();
+  relay?.close();
 }
 
 /** Whether the signalling socket finished its close handshake: the service has this end. */

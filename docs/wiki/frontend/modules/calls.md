@@ -2075,10 +2075,66 @@ The relay never sees a clear frame: each client keeps its per-sender keys and tr
 and learns the sender of every forwarded track from its stream id, which the SFU sets to the sender's
 user id ([call-service](../../services/call-service.md#the-relay-for-a-group-call-wp-gc4-2026-11-13)).
 Proven by a 5-party encrypted call through the SFU in CI
-([the scenario](../../services/call-service.md#the-relayed-group-scenario-wp-gc4-2026-11-13)). The
-app's own SFU leg (the client, against this protocol) is the client pull request's, as is reading
-`mode` from `initiate`/`room-token`. Pinned by `calls.service.spec.ts` (the relay rows),
-`callRelaysAgree.test.ts`, `appVersion.test.ts` and the core-service platform and version specs.
+([the scenario](../../services/call-service.md#the-relayed-group-scenario-wp-gc4-2026-11-13)), now
+driven by the app's own SFU leg ([below](#the-apps-sfu-leg-wp-gc4-client-2026-11-16)). Pinned by
+`calls.service.spec.ts` (the relay rows), `callRelaysAgree.test.ts`, `appVersion.test.ts` and the
+core-service platform and version specs.
+
+### The app's SFU leg (WP-GC4 client, 2026-11-16)
+
+**Built as a module, NOT yet wired into `CallService`, and `groupCallVersion` stays 1** - so no build
+is put on the relay yet; the wiring that picks mesh or SFU waits for WP-GC6's `CallService.ts` change
+(the one file every client package touches, serialised). What exists:
+
+- **`services/callSfuLeg.ts`, `CallSfuLeg`: ONE peer connection to the relay**, beside the mesh's
+  `CallLeg` (one per participant). This device's tracks go out on SEND-ONLY transceivers, each
+  sender's encrypt transform attached in the task that created it (`open`, synchronous -
+  CALL-E2E-BYPASS-MI9T); the client offers once, on `Joined`; the SFU renegotiates as participants
+  publish and the leg answers. A forwarded track's both transforms are attached in the task
+  `ontrack` fires in, BEFORE it reaches the screen: the receiver opening the frames of the sender its
+  stream id names (lowercased; the SFU's `forwarded_stream_id`), the transceiver's own sender armed.
+  **A forwarded track naming no sender, or this device's user, ends the leg**
+  (`CallSfuTrackUnattributedError`): no key may be chosen for it.
+- **Glare, decided by a fact.** An SFU offer that crosses the client's own (a participant published
+  between this join and the offer's arrival) cannot be applied by the relay, which refuses an offer
+  while its own is out; so the leg is the POLITE side - it rolls its offer back, answers the relay's,
+  and offers again once `stable` for its transceivers still unplaced (`mid === null`). No timer: the
+  re-offer happens exactly when the connection says a track of ours was never negotiated. An answer
+  in any state but `have-local-offer` answers no offer of ours and is dropped with a line.
+- **Frames one at a time, in arrival order** (a promise chain), so a candidate never lands before the
+  description it belongs to; candidates before any remote description wait and are flushed after it.
+  A step the engine refuses ends the leg with `CallSfuNegotiationError` (its `step`), once.
+- **`Joined { others }`** is handed to the owner (`onJoined`), `null` from a relay older than the
+  field - never read as an empty room. call-service's SFU `Joined` now states it like the p2p one
+  (WP-GC6's shape), read under the seat lock at the reservation (`Reservation::Seated { others }`).
+- **What the leg does NOT own**: the worker and its keys, the transform attach, the VP8 hold, the
+  camera refusal, the microphone switch and the socket stay `CallService`'s, reached through
+  `CallSfuLegHooks` - ONE implementation of each, called at the moments the E2E rules fix. The leg
+  imports only relative modules with no session behind them, so the CI page bundles it as it is.
+- **The room's mode is read from its token** (`utils/callRoomToken.ts`, `roomTokenMode`): `sfu` when
+  chat-delivery signed `mode: "sfu"`, `p2p` without the claim; an unknown mode THROWS
+  (`RoomTokenUnreadableError`) - a relay this build does not speak would only be refused
+  `mode-mismatch` one step later. Never read from `call_relay` itself.
+
+**The proof.** `callSfuLeg.test.ts` (send-only transceivers and their transforms in the opening
+task, the VP8 refusal, the offer on `Joined` and `others`, the early candidates, the forwarded track
+keyed by its stream id, the unattributed track refused, the glare, the frame order, the typed
+failure) and `callRoomToken.test.ts` (the mode). **The CI's 5-party relayed call now runs through
+`CallSfuLeg`** (`apps/call-service/e2e/group-page.ts`, its hooks the page's own transforms): PASS on
+a Windows dev box, 2026-11-16 - all 20 directed legs proven, the sixth user `room-full`, the negative
+leg refused.
+
+**What the `CallService` wiring owes, after WP-GC6 merges.** (1) At setup, `roomTokenMode` of the
+token `initiate`/`room-token` answered picks the leg: `sfu` joins with `sfuJoinFrame` and routes
+`Joined`/`Offer`/`Answer`/`IceCandidate` to `CallSfuLeg.handle`, `Refused` staying the socket's.
+(2) The hooks are `CallService`'s private methods: `attachSenderTransform` /
+`attachReceiverTransform` today take a `CallLeg` and read the receive peer from it, so they need the
+peer (the forwarded track's sender) passed per call and the epoch of the SFU connection; the VP8 hold
+is `holdVideoToVp8`, the camera refusal `refuseCameraSender`'s UI half, the microphone switch
+`micSwitch.attachSender`. (3) `onJoined(others)` feeds WP-GC6's empty-room rule as the mesh's
+`Joined` does. (4) Tiles come from `onRemoteTrack(peer, ...)` keyed by user, and a participant
+leaving is seen as its forwarded tracks ending (the SFU removes them, `drop_publisher_tracks`).
+(5) Only then `groupCallVersion` 2 is declared on `initiate`/`room-token`/push registration.
 
 ## Group calls - the mesh, client half (WP-GC2, 2026-11-13)
 

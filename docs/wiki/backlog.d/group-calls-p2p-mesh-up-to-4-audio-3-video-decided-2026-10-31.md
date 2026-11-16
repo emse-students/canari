@@ -107,9 +107,10 @@ Each is one pull request or more; none is built by the D3 change.
    late joiner's renegotiation; a 5-party encrypted call through the SFU in CI
    ([calls](../frontend/modules/calls.md#the-relay-leg-wp-gc4-2026-11-13),
    [call-service](../services/call-service.md#the-relay-for-a-group-call-wp-gc4-2026-11-13)).
-   `cloudflare` joins the setting with WP-GC3. Owed: the client's SFU leg (the protocol
-   `apps/call-service/e2e/group-page.ts` speaks in `sfu` mode), reading `mode` from
-   `initiate`/`room-token`. A renegotiation scheduled while the peer holds a remote offer is retried
+   `cloudflare` joins the setting with WP-GC3. **Client leg BUILT as a module 2026-11-16**
+   (`services/callSfuLeg.ts`, `roomTokenMode`, the SFU `Joined { others }`; the CI's relayed call
+   now runs through it - [calls](../frontend/modules/calls.md#the-apps-sfu-leg-wp-gc4-client-2026-11-16)).
+   Owed: its `CallService` wiring once WP-GC6 merges, then `groupCallVersion` 2. A renegotiation scheduled while the peer holds a remote offer is retried
    once it is stable again (#3497); a reading under joins faster than a round trip is still owed.
 5. **WP-GC5 - the switch (D1)**: on the participant past the cap, everyone opens the SFU leg,
    proves it, then closes the mesh legs; a rig row that FAILS when any frame crosses the SFU leg
