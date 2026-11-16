@@ -86,7 +86,6 @@ earliest version, as a checklist.
 - [P3 - EXIT-FORTIFY: closing the app on the Mi 9T logs `FORTIFY: pthread_mutex_lock called on a destroyed mutex` from the render thread](backlog.d/reading-owed-exit-fortify-closing-the-app-on-the-mi-9t-logged-fortify-pthread.md)
 - [P3 - a 13 MB upload on the iPhone restarted at about half and ran at 40 to 65 KB/s](backlog.d/p3-a-13-mb-upload-on-the-iphone-restarted-at-half-and-ran-at-40-to-65-kb-s.md)
 - [P3 - the feed offset restored after a Back from an association lands about 226 px lower than it was left (Mi 9T, `1.7.0-alpha.2`)](backlog.d/p3-the-feed-offset-restored-after-a-back-from-an-association-lands-about-226-px.md)
-- [P3 - the live viewer's top bar in portrait truncates the broadcaster's name and its flag button overlaps the viewer-count row on the Mi 9T](backlog.d/p3-the-live-viewer-top-bar-truncates-the-name-and-overlaps-the-count-on-the-mi-9t.md)
 - [P3 - the gated `video-switch` and `video-off-on` call rows read 19.6-25 fps against a threshold of 27](backlog.d/p3-the-gated-video-switch-and-video-off-on-rig-rows-read-19-6-25-fps-threshold-27.md)
 
 ### Readings owed
@@ -116,6 +115,7 @@ earliest version, as a checklist.
 - [ ] [the pre-live screen says a suspension before Start](backlog.d/reading-owed-the-pre-live-screen-says-a-suspension-before-start.md)
 - [ ] [one "server already unreachable" line per spell, read on a phone log after a real outage](backlog.d/p3-server-already-unreachable-is-logged-per-request.md)
 - [ ] [a salon invitation's notice still reads as a sentence, live and from history (2026-11-16)](backlog.d/reading-owed-a-channel-invite-notice-names-ids-and-draws-live.md)
+- [ ] [the live viewer's top bar at 360-436 css px portrait (name whole, no button over the second row)](backlog.d/reading-owed-the-live-viewer-top-bar-at-360-436-px.md)
 
 ## 1.8.0
 

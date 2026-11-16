@@ -494,6 +494,10 @@ since the production flip of 2026-10-30** (dev builds only before it, by the `de
 test). Whether a surface is drawn is the server's runtime kill switch, below. The
 chat and reactions (WP-L6) are [below](#the-chat-and-the-floating-reactions-client-half-wp-l6-2026-10-19-draft); moderation (WP-L8) is merged.
 
+### The top bar at narrow widths (2026-11-16)
+
+The bar is a wrapping flex row: the identity column (`data-live-top-identity`: name, then LIVE, time, count) has `min-w-40 flex-1 basis-40`, and the six actions (report, sound, rotate, chat, share, close) are ONE group (`data-live-top-actions`, `ml-auto shrink-0`, each `.ui-icon-button` at 44 px). With room (landscape, wide phones) they share a row; below the name's floor the whole group drops to its own row under the second line, so the name is never crushed to "Canari Te..." and no button sits over the count (Mi 9T, 436 css px, found 2026-11-16). Test: `LiveViewer.svelte.test.ts` (structure; happy-dom has no layout). A 360-436 px reading is owed ([entry](../../backlog.d/reading-owed-the-live-viewer-top-bar-at-360-436-px.md)).
+
 ### What stacks over the viewer (2026-11-07)
 
 **Since 2026-11-13 the viewer and what opens over it are on the overlay stack (`utils/overlayStack.ts`): whatever opens later is on top, with no rung and no mark. (The text below is the 2026-11-07 history, when `utils/viewerLayer.ts` and `--z-viewer-dialog` did this.)** **The defect (owner, Android, 2026-11-07):** a live's link shared "via Canari" arrives as an incoming share, whose picker (`IncomingShareHost`, mounted at the app root) is OUTSIDE the viewer's subtree, so no mark reached it and it opened on 280, under the viewer, until the live closed. `IncomingShareHost` now marks itself; the same fix covers the reel viewer and the broadcaster overlay. Test: `IncomingShareHost.svelte.test.ts`. The viewer has no other sheet (the header has a viewer COUNT, not a list; reactions are an in-page layer).
