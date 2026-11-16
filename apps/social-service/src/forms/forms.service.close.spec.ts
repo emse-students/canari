@@ -2,7 +2,12 @@ import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { FormsService } from './forms.service';
 import { FORM_PUBLISHED } from './form-status';
 import { FORM_FINGERPRINT_SQL } from './form-draft-revision';
-import { FORM_CLOSE_BEFORE_OPEN, assertWindowOrdered } from './form-window';
+import {
+  FORM_CLOSE_BEFORE_OPEN,
+  FORM_CLOSE_NOT_OPEN_YET,
+  assertMayCloseAt,
+  assertWindowOrdered,
+} from './form-window';
 
 jest.mock('./form-draft-revision', () => ({
   ...jest.requireActual('./form-draft-revision'),
@@ -142,6 +147,23 @@ describe('FormsService - closing and reopening a form', () => {
       expect(row.closedAt).toBeNull();
     });
 
+    it('refuses, typed, to close a form whose opening is still to come, and writes nothing', async () => {
+      const { service, formRepo } = makeService({ opensAt: new Date(Date.now() + 86_400_000) });
+      await expect(service.setClosed('f1', true, OWNER, false)).rejects.toMatchObject({
+        response: { code: FORM_CLOSE_NOT_OPEN_YET },
+      });
+      expect(formRepo.update).not.toHaveBeenCalled();
+    });
+
+    it('closes a form that has opened, and reopens one not open yet', async () => {
+      const { service, row } = makeService({ opensAt: new Date(Date.now() - 86_400_000) });
+      await service.setClosed('f1', true, OWNER, false);
+      expect(row.closedAt).toBeInstanceOf(Date);
+      row.opensAt = new Date(Date.now() + 86_400_000);
+      await service.setClosed('f1', false, OWNER, false);
+      expect(row.closedAt).toBeNull();
+    });
+
     it('is not part of the unpublished revision: the fingerprint excludes closedAt', () => {
       expect(FORM_FINGERPRINT_SQL).toContain("'closedAt'");
     });
@@ -186,6 +208,18 @@ describe('FormsService - closing and reopening a form', () => {
         )
       ).rejects.toMatchObject({ response: { code: FORM_CLOSE_BEFORE_OPEN } });
       expect(formRepo.save).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('assertMayCloseAt', () => {
+    const now = new Date('2027-01-01T12:00:00Z');
+    it('accepts no opening, or an opening passed or now', () => {
+      expect(() => assertMayCloseAt(null, now)).not.toThrow();
+      expect(() => assertMayCloseAt(new Date('2027-01-01T11:00:00Z'), now)).not.toThrow();
+      expect(() => assertMayCloseAt(now, now)).not.toThrow();
+    });
+    it('refuses an opening still to come', () => {
+      expect(() => assertMayCloseAt(new Date('2027-01-01T12:00:01Z'), now)).toThrow('not opened');
     });
   });
 

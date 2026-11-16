@@ -3167,7 +3167,7 @@
   "form_closed_at_label": "Date de clôture",
   "form_closed_at_hint": "Laissez vide pour ne jamais clore automatiquement. Les réponses seront bloquées après cette date ; vous pouvez aussi clore le formulaire à la main depuis la liste.",
   "form_closed_at_before_open": "La date de clôture doit être après la date d'ouverture.",
-  "form_refusal_close_before_open": "La date de clôture doit être après la date d'ouverture.",
+  "form_refusal_close_not_open_yet": "Ce formulaire n'est pas encore ouvert : déplacez ou retirez sa date d'ouverture plutôt que de le clore.",
   "form_requires_payment_label": "Ce formulaire nécessite un paiement",
   "form_base_price_label": "Prix de base public (€)",
   "form_price_mode_grid_label": "Tarifs différenciés (grille)",

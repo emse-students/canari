@@ -2025,6 +2025,16 @@ preview's "Ferme"); only the manager's way to write it was missing.
 - **The list**: a closed form (its end has passed; a future end is a scheduled close and shows
   nothing) carries a "Ferme" badge and its menu offers "Rouvrir" instead of "Clore le formulaire".
   Closing asks a confirmation, reopening does not.
+- **A form not open yet cannot be closed** (lead, 2026-11-16, during the owner's absence; reversible,
+  option (a) of the PR review). Closing writes `closedAt = now`, which would fall BEFORE a future
+  `opensAt`: every later edit was then refused `FORM_CLOSE_BEFORE_OPEN` over a date the manager
+  never typed. `setClosed` now refuses it, typed (`FORM_CLOSE_NOT_OPEN_YET`, `form-window.ts`,
+  "Ce formulaire n'est pas encore ouvert..."), and the list hides "Clore le formulaire" while the
+  opening is to come (`opensLater`); such a form takes no answer yet, so its opening is what to move
+  or clear. "Rouvrir" is unchanged. The other option, judging the window only on bounds an edit
+  writes, was not taken: it keeps a state the invariant calls impossible.
+- **A close is never written back by an edit that did not carry it**: absent, `closedAt` is left out
+  of `update`'s whole-entity save, so a close committing between an edit's read and its save stands.
 
 ### A payment in progress when the form closes
 

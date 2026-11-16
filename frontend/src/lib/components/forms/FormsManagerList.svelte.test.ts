@@ -43,6 +43,8 @@ import FormsManagerList from './FormsManagerList.svelte';
 import { m } from '$lib/paraglide/messages';
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
 import type { Form } from '$lib/forms/api';
+import { ApiRefusalError } from '$lib/utils/apiRefusalError';
+import { dismissToast, toastStore } from '$lib/stores/toast.svelte';
 
 // Never undone: a Svelte outro (the menu closing) creates its animation from a timer that fires
 // after the last test, so an undo would leave it unadopted and its cancellation unhandled.
@@ -504,6 +506,28 @@ describe('FormsManagerList - closing a form (owner, 2026-11-16)', () => {
     expect(target.querySelector('[data-testid="form-closed-badge"]')).toBeNull();
     await openMenu(target, 'f1');
     expect(entry('close')).not.toBeNull();
+  });
+
+  it('offers nothing to close on a form whose opening is still to come', async () => {
+    const target = await render([form({ opensAt: '2099-01-01T00:00:00.000Z' })]);
+    await openMenu(target, 'f1');
+    expect(entry('close')).toBeNull();
+    expect(entry('reopen')).toBeNull();
+  });
+
+  it('says the server refusal of a close, typed', async () => {
+    api.setFormClosed.mockRejectedValueOnce(
+      new ApiRefusalError(400, 'FORM_CLOSE_NOT_OPEN_YET', 'not open yet')
+    );
+    const target = await render([form({})]);
+    await openMenu(target, 'f1');
+    entry('close')!.click();
+    await vi.waitFor(() => expect(api.setFormClosed).toHaveBeenCalledWith('f1', true));
+    await vi.waitFor(() =>
+      expect(toastStore.toasts.map((t) => t.message)).toContain(m.form_refusal_close_not_open_yet())
+    );
+    expect(target.querySelector('[data-testid="form-closed-badge"]')).toBeNull();
+    toastStore.toasts.forEach((t) => dismissToast(t.id));
   });
 
   it('offers a draft nothing to close', async () => {

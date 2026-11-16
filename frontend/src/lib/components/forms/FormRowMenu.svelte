@@ -36,6 +36,8 @@
     hasProductGrid: boolean;
     /** The form's end has passed (the manager's close, or its date): the menu offers "Rouvrir". */
     isClosed: boolean;
+    /** The form's opening is still to come: there is nothing to close yet (`FORM_CLOSE_NOT_OPEN_YET`). */
+    opensLater?: boolean;
     /** The close or the reopening is in flight: a second one is not started. */
     closing?: boolean;
     /** The form is being deleted: a second delete is not started. */
@@ -53,6 +55,7 @@
   let {
     isDraft,
     isClosed,
+    opensLater = false,
     closing = false,
     hasProductGrid,
     deleting = false,
@@ -90,8 +93,9 @@
         Icon: Download,
       })),
     },
-    // A draft takes no answer yet: there is nothing to close.
-    ...(isDraft
+    // A draft, or a form whose opening is still to come, takes no answer yet: there is nothing to
+    // close (lead, 2026-11-16). Reopening stays offered to a closed form whatever its opening.
+    ...(isDraft || (!isClosed && opensLater)
       ? []
       : [
           {

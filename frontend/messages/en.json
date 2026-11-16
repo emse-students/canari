@@ -3135,7 +3135,7 @@
   "form_closed_at_label": "Closing date",
   "form_closed_at_hint": "Leave empty to never close automatically. Responses will be blocked after this date; you can also close the form by hand from the list.",
   "form_closed_at_before_open": "The closing date must be after the opening date.",
-  "form_refusal_close_before_open": "The closing date must be after the opening date.",
+  "form_refusal_close_not_open_yet": "This form has not opened yet: move or clear its opening date instead of closing it.",
   "form_requires_payment_label": "This form requires payment",
   "form_base_price_label": "Base public price (€)",
   "form_price_mode_grid_label": "Differentiated pricing (grid)",

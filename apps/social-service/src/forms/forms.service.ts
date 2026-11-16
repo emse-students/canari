@@ -26,7 +26,7 @@ import {
   onlineOffered,
   publishPaymentRefusal,
 } from './payment-offer';
-import { assertWindowOrdered } from './form-window';
+import { assertMayCloseAt, assertWindowOrdered } from './form-window';
 import { FORM_DRAFT, FORM_PUBLISHED, respondentFormWhere, type FormStatus } from './form-status';
 import { managesForm } from './form-ownership';
 import {
@@ -1924,13 +1924,26 @@ export class FormsService {
    * from its fingerprint), so closing never shows "Modifications non publiees". Gated by
    * `assertFormManager`. Closing a form already closed keeps its first end date; reopening clears
    * the column whether the end is past or still to come. A payment already issued settles through
-   * the submission's own paths, which never read `closedAt` (see forms.md).
+   * the submission's own paths, which never read `closedAt` (see forms.md). Closing a form whose
+   * opening is still to come is refused (`FORM_CLOSE_NOT_OPEN_YET`).
    */
   async setClosed(formId: string, closed: boolean, userId: string, isGlobalAdmin: boolean) {
     const form = await this.assertFormManager(formId, userId, isGlobalAdmin);
     if (form.deletedAt) throw new NotFoundException('Form not found');
-    const alreadyClosed = !!form.closedAt && new Date(form.closedAt) <= new Date();
-    const closedAt = closed ? (alreadyClosed ? new Date(form.closedAt!) : new Date()) : null;
+    const now = new Date();
+    const alreadyClosed = !!form.closedAt && new Date(form.closedAt) <= now;
+    // A form not open yet is not closed: its end would precede its opening (lead, 2026-11-16).
+    if (closed && !alreadyClosed) {
+      try {
+        assertMayCloseAt(form.opensAt, now);
+      } catch (e) {
+        this.logger.log(
+          `[FORMS] close of ${formId.slice(0, 8)} refused: it opens ${new Date(form.opensAt!).toISOString()}`
+        );
+        throw e;
+      }
+    }
+    const closedAt = closed ? (alreadyClosed ? new Date(form.closedAt!) : now) : null;
     this.logger.log(
       `[FORMS] ${closed ? 'close' : 'reopen'} form=${formId.slice(0, 8)} by=${userId.slice(0, 8)}` +
         ` was=${form.closedAt ? new Date(form.closedAt).toISOString() : 'open'}`

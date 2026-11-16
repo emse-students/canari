@@ -52,7 +52,7 @@
   import FormRowMenu from '$lib/components/forms/FormRowMenu.svelte';
   import { productGridQuestions } from '$lib/forms/responsesView';
   import { formViewHref, isDraftForm } from '$lib/forms/publish';
-  import { isClosedForm } from '$lib/forms/formWindow';
+  import { isClosedForm, opensLater } from '$lib/forms/formWindow';
   import Button from '$lib/components/ui/Button.svelte';
   import { markdownToPlainText } from '$lib/seo/text';
 
@@ -205,7 +205,10 @@
         `[FORMS] ${closing ? 'closing' : 'reopening'} form ${form.id.slice(0, 8)} failed:`,
         e
       );
-      showToast(closing ? m.form_list_error_close() : m.form_list_error_reopen());
+      showToast(
+        formCodeMessage(refusalCode(e)) ??
+          (closing ? m.form_list_error_close() : m.form_list_error_reopen())
+      );
     } finally {
       closingId = null;
     }
@@ -506,6 +509,7 @@
               <FormRowMenu
                 isDraft={draft}
                 isClosed={isClosedForm(form)}
+                opensLater={opensLater(form)}
                 closing={closingId === form.id}
                 hasProductGrid={productGridQuestions(form.items ?? []).length > 0}
                 deleting={deletingId === form.id}
