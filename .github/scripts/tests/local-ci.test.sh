@@ -270,6 +270,8 @@ out=$(scope_push docs)
 check "a docs-only push runs the docs gates" "a docs-only push planned no wiki-links: $out" planned wiki-links "$out"
 check "a docs-only push runs no frontend suite" "a docs-only push planned the frontend suite" \
   test -z "$(grep -F 'PLAN frontend-test:' <<<"$out" || true)"
+check "a docs-only push runs no Rust suite" "a docs-only push planned a Rust crate" \
+  test -z "$(grep -F 'PLAN rust ' <<<"$out" || true)"
 check "a docs-only push does not run make test-ci-scripts" "a docs-only push planned test-ci-scripts" \
   test -z "$(grep -F 'PLAN test-ci-scripts:' <<<"$out" || true)"
 check "and says the rest of that suite is CI's" "a skipped test-ci-scripts was not named" \
@@ -286,6 +288,15 @@ out=$(scope_push script)
 check "a CI script change runs make test-ci-scripts" "a script change planned no test-ci-scripts: $out" planned test-ci-scripts "$out"
 check "and lints the pushed script" "the pushed script was not handed to shellcheck" \
   test -n "$(grep -F 'shellcheck .github/scripts/new.sh' <<<"$out" || true)"
+# The positive half of "a docs-only push runs no Rust suite": the fixture CAN plan one.
+mkdir -p "$s/apps/call-service/src"
+echo "fn main() {}" >"$s/apps/call-service/src/main.rs"
+git -C "$s" add apps/call-service/src/main.rs
+out=$(scope_push rust)
+check "a crate change runs that crate's suite" "a call-service change planned no Rust job: $out" \
+  test -n "$(grep -F 'PLAN rust apps/call-service:' <<<"$out" || true)"
+check "and not the frontend suite" "a Rust change planned the frontend suite" \
+  test -z "$(grep -F 'PLAN frontend-test:' <<<"$out" || true)"
 # main moves with a page while the branch was verified: the merge is checked for what it brought.
 s_other="$scratch/scope-other"
 git clone -q "$s_origin" "$s_other"

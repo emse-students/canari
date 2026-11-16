@@ -3337,9 +3337,16 @@ commit, la fusion de PR devrait être une formalité"*. Four choices came with i
 
 1. **At commit**, fast checks scoped to the touched files: doc links, the plan regeneration, the
    log guards, the ratchets and allowlists, the touched modules' unit tests. Seconds, not minutes.
-2. **At push**, everything a workstation CAN run.
-3. **CI only**, what a Windows workstation cannot run. That list, below, is the only thing a pull
-   request checks that the push did not.
+2. **At push**, what the pushed files touch - see the owner's correction below.
+3. **CI only**, what a Windows workstation cannot run, and the full suites a range does not touch.
+
+**The owner's correction, 2026-11-16 - *alléger le push*:** a push of "everything a workstation can
+run" measured about an hour on this workstation, `make test-ci-scripts` alone about 56 minutes, and
+that is not a formality. The push tier therefore runs ONLY what the changed files touch: the same
+path filters as CI's `changes` job (`ci-scopes.sh`), applied to the diff since the last verified
+commit (the stamp, or the merged `origin/main` on a branch's first push). The full suites -
+`test-ci-scripts` included, unless the range touches a CI script - stay in CI only. The commit tier
+stays fast.
 4. **The pre-push hook merges the latest `origin/main` before its checks.** The failures that day
    were "main moved" ratchet drift (#3580, #3599) and dead wiki links found only by CI (#3607,
    #3608, #3599).
@@ -3365,8 +3372,8 @@ before the pull request.
 Durations measured on the Windows workstation (OXYGEN, 2026-11-15, under the load of other
 sessions - a Linux runner is faster). "Push" means the pre-push runs it when `ci-scopes.sh` says the
 pushed range (the merged `origin/main` to HEAD) touches its area, exactly as CI's `changes` job
-gates the job - **the push runs what CI would run for that range, and nothing more** (lead,
-2026-11-15: an 82-minute push of everything, measured, is not a formality). A docs-only push runs
+gates the job - **the push runs what CI would run for that range, and nothing more** (owner,
+2026-11-16, above: an hour-long push, measured, is not a formality). A docs-only push runs
 the path rules and the whole-tree scans, in seconds; a frontend change runs the frontend jobs.
 
 | Job | Tier | Runs locally as | Measured | Why |
