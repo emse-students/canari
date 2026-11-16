@@ -760,3 +760,14 @@ runs shared the machine. That is section 8's class: the victims are random, the 
 cause found: `audioSession.captureSites` still walked the disk (readdir/stat/read of the whole tree inside the
 test); it now reads the shared snapshot. `conversations.retire` already did (686 ms alone, a filter over strings).
 `useConversations.salonStoredPage` had five deadline-based `vi.waitFor` calls; they now wait on the event itself.
+
+**Fifth reading, 2026-11-16** (`tabCommitDelegation` and `pendingMutationsStore`, 5 s timeouts under the full parallel
+pre-push run, both green alone). `tabCommitDelegation` was a real cause, measured: its simulated browser took every
+"turn" (a commit, a signal, a lock hand-off) from `setTimeout(0)`, and `settle()` spent 60 of them, so each of 36 tests
+cost 0.1-2.5 s ALONE on Windows (a timer turn is a real clock tick, about 15 ms) and several times that on a starved
+worker. Turns now come from `setImmediate`: the same separate-macrotask ordering, no clock, so the file runs in well
+under a second of test time and its duration no longer depends on the machine. `pendingMutationsStore` is section 8's
+class again: eight parallel copies of the file all passed, the only heavy cases are the two 1100-seal floods (they carry
+a 120 s deadline and took 12-24 s at eight copies), and no other case went past 0.7 s. The one cheap lever taken: the
+"FLOOD by one sender" case put 20 entries against a bound of three; 8 proves the same eviction with a third of the
+real seals. The two big floods stay at full size, because their size IS the bound they prove.
