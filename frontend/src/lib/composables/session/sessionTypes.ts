@@ -40,6 +40,7 @@ export interface ChatSessionCallbacks extends Pick<
   | 'onChannelDeleted'
   | 'onWorkspaceUpdated'
   | 'onSalonUnreadCleared'
+  | 'onSalonArrivalUncounted'
   | 'onWorkspaceRoleChanged'
   | 'onWorkspaceDeleted'
   | 'onChannelMessageDeleted'

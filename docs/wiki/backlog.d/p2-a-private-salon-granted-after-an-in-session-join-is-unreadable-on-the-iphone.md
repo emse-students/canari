@@ -1,0 +1,11 @@
+## P2 - a private salon granted after an in-session join is listed but unreadable on the iPhone, and raises no badge
+
+target: 1.7.0
+
+**Read 2026-11-16, iPhone 12, TestFlight `1.7.0-alpha.5`, dev ([readings](../device-verification.md#the-iphone-12-readings-of-2026-11-16-fourth-sitting-b-170-alpha5)):** `gamma` joined a fresh community through the invitation card (general, `salon-a`, `salon-b` listed at once, the private salon not listed: the join half passes). `delta` then granted `gamma` the private salon through the channel access panel; `salon-prive` appeared in the rail with its lock, no reload. Three messages sent to it afterwards (a minute apart) raised **no badge**, and the opened room stayed **empty** (also five minutes later, no heal).
+
+**What the phone log says:** `Joined channel e2085792`, then `[WELCOME] ... is a KEY-DISTRIBUTION group - installing it as a seed carrier`, `key group ... already held - redelivered Welcome ignored (idempotent)`, then `[MLS] dropped local state for ... (the server refused the external commit, minEpoch=0)`, `externalJoin REFUSED ... reason epoch_mismatch, group at 3 - attempt 1/3`, `a Welcome is owed to this device (welcome-queued) - not joining by external commit, the admitter's Welcome is the door`, then for each message `undecryptable frame ... Group not found` and `Message ... is unreadable and is not rendered - no seed for session [key:24] (repairable)`, `could not ask for 1 missing seed(s) ... Group not found`.
+
+**Not the Mi's defect:** on the Mi 9T the same grant gave readable messages and only the badge was missing ([the Mi P2](reading-owed-a-salon-message-arriving-before-its-seed-raises-its-badge.md)). Here the key-distribution group Welcome was treated as already held (idempotent) while the local state had been dropped after the refused external commit, so the salon's seeds can never arrive; the missing badge follows from the unreadable message. One run, one phone; whether a second grant heals it or the order of the two Welcomes decides is not known.
+
+**To do:** reproduce on the web rig with the three states named (Welcome redelivered, external commit refused, seed requested), decide which of the three is wrong, fix it, and read the Mi and the iPhone again. Charter: principle 2 (the essential is never lost).
