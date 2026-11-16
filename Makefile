@@ -516,6 +516,7 @@ test-harness:
 	@bun tools/cross-client-harness/archive/floor-selftest.mjs
 	@bun tools/cross-client-harness/archive/cc-selftest.mjs
 	@bun tools/cross-client-harness/archive/settle-selftest.mjs
+	@bun tools/cross-client-harness/archive/leaf-selftest.mjs
 	@bun tools/cross-client-harness/archive/gap-selftest.mjs
 	@bun tools/cross-client-harness/archive/offline-selftest.mjs
 	@bun tools/cross-client-harness/archive/kill-selftest.mjs
