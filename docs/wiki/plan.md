@@ -91,7 +91,6 @@ earliest version, as a checklist.
 
 ### Readings owed
 
-- [ ] [the CanaReels composer, viewer and editor on real content](backlog.d/reading-owed-the-canareels-composer-viewer-and-editor-on-real-content.md)
 - [ ] [the in-session community join through the deep link on the phones](backlog.d/p1-owed-one-live-reading-of-the-in-session-join-fix-2026-10-08.md)
 - [ ] [a group joined in the background before its row existed: the "already held" Welcome writes and announces the row, the...](backlog.d/reading-owed-a-group-joined-in-the-background-before-its-row-existed-the.md)
 - [ ] [a HISTORY ask answered "I hold nothing" is final for its roster](backlog.d/reading-owed-a-history-ask-answered-i-hold-nothing-is-final-for-its-roster.md)
@@ -105,9 +104,7 @@ earliest version, as a checklist.
 - [ ] [campus trends and the daily cap, WP-8, WP-10 and the quieter batch](backlog.d/reading-owed-campus-trends-and-the-daily-cap-wp-8-wp-10-and-the-quieter-batch.md)
 - [ ] [rotation on the video, live and camera screens on both phones](backlog.d/rotation-on-video-and-camera-screens.md)
 - [ ] [overlays stacked by open order, not by rung](backlog.d/reading-owed-overlays-stacked-by-open-order-not-by-rung.md)
-- [ ] [a salon opened on a cold start reads its rows after the key-group drain, with no "unreadable - missing seed" warning (1.6.11 logs, 2026-11-14)](backlog.d/p3-a-salon-is-read-before-the-key-group-drain-finishes.md)
 - [ ] [screen share in a desktop live: the scenes, what the bench read and what is left to the owner's hand](backlog.d/reading-owed-screen-share-in-a-desktop-live-the-scenes-read-by-the-owner.md)
-- [ ] [the Emojis preference row and its neighbours at 390 pt, on a phone](backlog.d/p3-the-emojis-preference-row-squeezes-its-description-on-a-phone.md)
 - [ ] [a private salon granted after an in-session join is readable on the iPhone, with its badge](backlog.d/p2-a-private-salon-granted-after-an-in-session-join-is-unreadable-on-the-iphone.md)
 - [ ] [one "server already unreachable" line per spell, read on a phone log after a real outage](backlog.d/p3-server-already-unreachable-is-logged-per-request.md)
 - [ ] [a banner in the composer's place clears the Android navigation bar (2026-11-16)](backlog.d/reading-owed-a-banner-in-the-composer-place-clears-the-navigation-bar.md)
