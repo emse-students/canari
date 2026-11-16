@@ -70,6 +70,7 @@ earliest version, as a checklist.
 - [P2 - no gate proves that an older build reads, and writes back, the MLS state this build writes](backlog.d/p2-no-gate-proves-an-older-build-reads-the-mls-state-this-build-writes.md)
 - [P2 - the first message posted in a salon right after an in-session join raised no unread badge on the iPhone](backlog.d/p2-the-first-message-after-an-in-session-join-raised-no-badge-on-the-iphone.md)
 - [P2 - the reply swipe along a thumb's arc does nothing on WebKit: the thread scrolls instead](backlog.d/p2-the-reply-swipe-along-a-thumb-s-arc-does-nothing-on-webkit.md)
+- [P2 - a private salon granted to a member after their in-session join raises no unread badge on the Mi 9T](backlog.d/p2-a-private-salon-granted-after-an-in-session-join-raises-no-badge-on-the-mi-9t.md)
 
 **P3 - hygiene**
 
@@ -116,7 +117,6 @@ earliest version, as a checklist.
 - [ ] [a group's "X a ajouté Y" notice keeps its names after a reload (was: "Utilisateur inconnu a ajouté Utilisateur inconnu au groupe")](backlog.d/p3-a-group-joined-from-a-welcome-on-the-phone-reads-unknown-user-added-unknown-user.md)
 - [ ] [a newcomer's own "X a ajouté Y" notice names both people (was: "Compte supprime a ajoute Compte supprime au groupe")](backlog.d/p3-a-newcomer-s-first-added-notice-reads-compte-supprime-for-both-names.md)
 - [ ] [the pre-live screen says a suspension before Start](backlog.d/reading-owed-the-pre-live-screen-says-a-suspension-before-start.md)
-- [ ] [editing a CanaReel's caption: the form sends the caption alone](backlog.d/p2-editing-a-canareel-s-caption-answers-400-because-the-edit-form-sends-its-video.md)
 
 ## 1.8.0
 
