@@ -67,6 +67,7 @@ describe('the hex-id pass never touches the ids a notice carries', () => {
       )
     );
     const { storage, written } = storeOf([row]);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     const [out] = await retroactivelyResolveHexIds([row], storage, 'g1', 'k');
 
@@ -74,6 +75,30 @@ describe('the hex-id pass never touches the ids a notice carries', () => {
     const envelope = parseEnvelope(out.content);
     expect(envelope.kind === 'system' && envelope.notice).toEqual(spec);
     expect(written.size).toBe(0);
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  // The server still holds legacy ids that are not 64 hex, and an upper-case hex id is an id too:
+  // neither is evidence of the old damage, and a valid id dropped would be lost for good.
+  it.each([
+    ['a legacy id that is not hex', 'svc-review_1'],
+    ['an upper-case hex id', DELTA.toUpperCase()],
+  ])('keeps a notice whose actor is %s, unwritten', async (_what, actor) => {
+    const spec = { event: 'memberAdded' as const, actor, targets: [GAMMA] };
+    const row = systemRow(
+      'n5',
+      serializeEnvelope(mkNoticeEnvelope('Revue a ajouté Canari Test Gamma au groupe', spec))
+    );
+    const { storage, written } = storeOf([row]);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const [out] = await retroactivelyResolveHexIds([row], storage, 'g1', 'k');
+
+    expect(out).toBe(row);
+    expect(written.size).toBe(0);
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 
   it('names the ids of the sentence and keeps the notice ids', async () => {
@@ -123,6 +148,14 @@ describe('the hex-id pass never touches the ids a notice carries', () => {
     });
     // Persisted, so the repair is said once per row and never asked of the server again.
     expect(written.get('n4')).toBe(out.content);
+    expect(warn).toHaveBeenCalledTimes(1);
+
+    // The next load reads what was written: nothing left to repair, nothing said, nothing written.
+    const reloaded = systemRow('n4', written.get('n4')!);
+    const again = storeOf([reloaded]);
+    const [second] = await retroactivelyResolveHexIds([reloaded], again.storage, 'g1', 'k');
+    expect(second).toBe(reloaded);
+    expect(again.written.size).toBe(0);
     expect(warn).toHaveBeenCalledTimes(1);
     warn.mockRestore();
   });
