@@ -15,3 +15,5 @@ target: 1.7.0
 **Mi 9T, 2026-11-16, second sitting: NOT TAKEN** ([readings](../device-verification.md#the-mi-9t-readings-of-2026-11-16-second-sitting-170-alpha2)). The rig signs in four accounts and `alpha` already has a DM with each of the others, so no pair without a conversation exists; nothing was deleted to make one. It needs a fifth rig account or a conversation removed by its owner.
 
 **2026-11-16, staging read on dev:** not stageable with the test accounts. `gamma` already shares a conversation with each other test account that holds a device (`alpha`, `beta`, `delta`); the only other accounts with key packages are two real members, and the seeded "Fictif" accounts hold none. A fifth test account needs an identity-provider sign-in by the owner.
+
+**2026-11-16, both phones (`1.7.0-alpha.4`): NOT TAKEN.** The bench is still four accounts that all share a conversation with each other (`alpha` and `gamma` list DMs with the others), so no account without a conversation exists to write first; a fifth account needs an identity-provider sign-in by the owner.
