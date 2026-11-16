@@ -27,8 +27,7 @@ measured on both bench phones in [video-preparation](../video-preparation.md)), 
 had to be added to the composer: an engine that cannot do this could not publish the edited video
 before this change either. A refusal is
 a typed `ReelExportError` (`unreadable` / `unsupported` / `encode`), logged with its fault. Charter:
-principle 8 (simplicity: one engine-neutral path, the MediaRecorder one deleted). **Owed:** the
-iPhone reading of an edited video take, and of an edited photo take.
+principle 8 (simplicity: one engine-neutral path, the MediaRecorder one deleted). **Read 2026-11-16** (iPhone 12, `1.7.0-alpha.4`, [device-verification](../../device-verification.md#the-iphone-12-readings-of-2026-11-16-third-sitting-170-alpha4)): an edited video take (text, sticker, stroke) exports and publishes, and the viewer plays it with the overlays. **Owed:** the iPhone reading of an edited photo take.
 
 ## What exists now (after this PR)
 
