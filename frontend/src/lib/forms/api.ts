@@ -242,6 +242,7 @@ export interface FormDraft {
 import { apiFetch } from '$lib/utils/apiFetch';
 import { getToken } from '$lib/stores/auth';
 import { socialUrl } from '$lib/utils/apiUrl';
+import { withClientVersionHeader } from '$lib/utils/appVersion';
 import { fetchUpload } from '$lib/media';
 import type { XhrUploadOptions } from '$lib/utils/uploadXhr';
 import { amountBoundsOf, SocialApiError } from '$lib/associations/api';
@@ -709,6 +710,8 @@ export interface IdentityExportLabels {
   student: string;
   staff: string;
   campuses: Record<string, string>;
+  /** A declared field an older build could not send (`RespondentIdentity.notDeclared`). */
+  notDeclared: string;
 }
 
 /** The words of the priced grid's two sheets, mirrored by `export-labels.ts`. */
@@ -753,6 +756,7 @@ export function exportLabels(): ExportLabels {
       student: m.form_respondent_status_student(),
       staff: m.form_respondent_status_staff(),
       campuses: Object.fromEntries(CAMPUSES.map((c) => [c, campusLabel(c)])),
+      notDeclared: m.form_respondent_not_declared(),
     },
     productGrid: {
       articlesSheet: m.form_export_grid_articles_sheet(),
@@ -975,6 +979,9 @@ export async function submitForm(
 ): Promise<any> {
   const res = await apiFetch(`${socialUrl()}/api/forms/${id}/submit`, {
     method: 'POST',
+    // The build is named: the server takes an answer without the declared fields only from a
+    // build older than the questions that ask them (`respondent-identity.ts`).
+    headers: withClientVersionHeader(),
     body: JSON.stringify(payload),
   });
   // Through the one builder, so a payment refusal (`code`, and the amount bounds) is worded by
@@ -1102,7 +1109,8 @@ export async function submitPublicForm(
 ): Promise<PublicSubmitReply> {
   const res = await fetch(`${socialUrl()}/api/public/forms/${encodeURIComponent(id)}/submit`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    // Named, as a member's submit is (`submitForm`).
+    headers: withClientVersionHeader({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(payload),
   });
   if (!res.ok) throw await refusal(res, 'Submission failed');

@@ -3020,6 +3020,7 @@
   "form_respondent_no_cursus": "Aucune (pas de cursus)",
   "form_respondent_promo_label": "Année d'entrée",
   "form_respondent_formation_label": "Formation",
+  "form_respondent_not_declared": "Non déclaré",
   "form_respondent_promo_invalid": "Indiquez votre année d'entrée.",
   "form_respondent_notice": "Transmis à l'organisateur avec votre réponse : {fields}",
   "form_respondent_declared_title": "À propos de vous",

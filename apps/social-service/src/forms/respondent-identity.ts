@@ -1,4 +1,5 @@
 import { BadRequestException, Logger } from '@nestjs/common';
+import { clientVersionAtLeast } from '../common/client-version';
 import { SPACE_CAMPUSES, SPACE_FORMATIONS } from '../spaces/space.entity';
 import type { IdentityExportLabels } from './export-labels';
 import {
@@ -51,6 +52,20 @@ export const NO_FORMATION = 'none';
 export const DECLARED_PROMO_MIN = 1900;
 export const DECLARED_PROMO_MAX = 2100;
 
+/**
+ * The first build that draws the declared questions ("A propos de vous") and names itself on a
+ * submit (`X-Canari-Client-Version`). An answer from an older build - or one naming no build - to a
+ * form that asks declared fields is taken WITHOUT them and marked {@link RespondentIdentity.notDeclared}
+ * ([LEGACY], `docs/wiki/legacy-compatibility.md`): it cannot draw the questions, and an old client's
+ * ordinary request is never refused.
+ */
+export const RESPONDENT_FIELDS_MIN_CLIENT_VERSION = '1.7.0';
+
+/** Whether a submit comes from a build older than the declared questions (absent header included). */
+export function predatesDeclaredFields(clientVersion: string | undefined): boolean {
+  return clientVersionAtLeast(clientVersion, RESPONDENT_FIELDS_MIN_CLIENT_VERSION) !== true;
+}
+
 /** One cursus as an answer keeps it. */
 export interface RespondentCursus {
   promo: number | null;
@@ -69,6 +84,12 @@ export interface RespondentIdentity {
   cursus?: RespondentCursus[];
   status?: RespondentStatus[];
   campus?: string | null;
+  /**
+   * The declared fields the form asked that the respondent's build could not draw (a store build
+   * older than {@link RESPONDENT_FIELDS_MIN_CLIENT_VERSION}): the organiser reads them as "not
+   * declared", never as blank or as a value.
+   */
+  notDeclared?: DeclaredField[];
 }
 
 /** What core-service serves for one account (`internal/users/:id/respondent-identity`). */
@@ -220,11 +241,21 @@ function missing(field: string, formId: string): BadRequestException {
 export function declaredIdentityFor(
   asked: readonly DeclaredField[],
   input: DeclaredIdentityInput,
-  formId: string
+  formId: string,
+  olderClient = false
 ): RespondentIdentity | null {
   if (asked.length === 0) {
     if (carriesDeclared(input)) throw notAsked('a declared field', formId);
     return null;
+  }
+  // A build older than the declared questions sends none of them: its answer is taken, the asked
+  // fields marked as not declared. One that sends any is judged like every other (below).
+  if (olderClient && !carriesDeclared(input)) {
+    logger.log(
+      `[LEGACY] answer to form=${formId.slice(0, 8)} from a build older than ` +
+        `${RESPONDENT_FIELDS_MIN_CLIENT_VERSION}: ${asked.join(',')} taken as not declared`
+    );
+    return { source: 'declared', notDeclared: [...asked] };
   }
   const identity: RespondentIdentity = { source: 'declared' };
 
@@ -328,7 +359,13 @@ export function identityColumnsOf(
     ...askedDeclaredFields(form.guestFields),
   ]);
   return DECLARED_FIELDS.filter(
-    (field) => now.has(field) || rows.some((r) => r.respondentIdentity?.[field] !== undefined)
+    (field) =>
+      now.has(field) ||
+      rows.some(
+        (r) =>
+          r.respondentIdentity?.[field] !== undefined ||
+          r.respondentIdentity?.notDeclared?.includes(field)
+      )
   );
 }
 
@@ -347,10 +384,21 @@ export function identityCells(
     return known ?? value;
   };
   const statusWord = (s: RespondentStatus) => (s === 'student' ? words.student : words.staff);
+  const missing = (field: DeclaredField) => identity?.notDeclared?.includes(field) === true;
   return {
-    promo: cursus.map((c) => (c.promo === null ? '' : String(c.promo))).join('; '),
-    formation: cursus.map((c) => c.formation ?? '').join('; '),
-    status: (identity?.status ?? []).map(statusWord).join('; '),
-    campus: identity?.campus ? word(identity.campus, words.campuses[identity.campus]) : '',
+    promo: missing('cursus')
+      ? words.notDeclared
+      : cursus.map((c) => (c.promo === null ? '' : String(c.promo))).join('; '),
+    formation: missing('cursus')
+      ? words.notDeclared
+      : cursus.map((c) => c.formation ?? '').join('; '),
+    status: missing('status')
+      ? words.notDeclared
+      : (identity?.status ?? []).map(statusWord).join('; '),
+    campus: missing('campus')
+      ? words.notDeclared
+      : identity?.campus
+        ? word(identity.campus, words.campuses[identity.campus])
+        : '',
   };
 }

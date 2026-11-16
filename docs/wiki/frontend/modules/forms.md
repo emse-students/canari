@@ -1334,7 +1334,13 @@ kept field after the name (`identityColumnsOf`, the server's rule mirrored: a fi
 now, or carried by an answer from when it was) and, when promo / formation or status is kept, three
 pickers filtering by them - promo and formation judged on ONE cursus entry together, as a price is.
 The export writes "Promo", "Formation", "Statut", "Campus" in the client's words
-(`ExportLabels.identity`); a client that sends none is refused, as for the e-mail column. Account
+(`ExportLabels.identity`); a store build older than the account fields sends none and gets the
+columns in the default French words, logged `[LEGACY]`, never a refusal
+([legacy-compatibility](../../legacy-compatibility.md#removal-once-minclientversion-passes-the-release-carrying-the-account-fields---an-export-asked-without-identity-words-2026-11-16)).
+An answer from a build older than `1.7.0` to a form that asks declared fields (it cannot draw them, and
+names its build on a submit through `X-Canari-Client-Version`) is taken without them and marked
+`notDeclared`, read "Non déclaré" by the organiser
+([legacy-compatibility](../../legacy-compatibility.md#removal-once-minclientversion-passes-170---an-answer-from-a-build-that-cannot-draw-the-declared-questions-2026-11-16)). Account
 erasure clears a member's snapshot with the rest of the answer (`account-erasure.ts`).
 
 **Reversible choices taken without the owner (2026-11-16), each a one-line change:**
@@ -1360,8 +1366,9 @@ même"), as with 166: the fingerprint covers every column. An older editor's sav
 Tests: `forms.service.respondent-identity.spec.ts` (the rule; the member snapshot read from the
 account, a declared field from a member refused, nothing read when nothing is joined; an anonymous
 member and a guest asked, refused until they answer; the create default; the export's columns in the
-client's words, a pre-174 answer named live, the refusal without words),
-`internal-users.controller.spec.ts` (the core route), `respondentFields.test.ts` (the editor's two
+client's words, a pre-174 answer named live, an older client's export in the default words and its
+answer taken "not declared"),
+`internal-users.controller.spec.ts` (the core route), `api.clientVersion.test.ts` (both submits name the build), `respondentFields.test.ts` (the editor's two
 lists, the declared values, the columns, cells and filter), `GuestIdentitySettings.svelte.test.ts`,
 `RespondentNotice.svelte.test.ts`, `DeclaredIdentityFields.svelte.test.ts`,
 `FormResponsesPanel.svelte.test.ts` (the columns and filters).

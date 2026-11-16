@@ -86,7 +86,7 @@ import axios from 'axios';
 import * as ExcelJS from 'exceljs';
 import { safeWorksheetName } from '../utils/worksheet-name';
 import { answerText, type AnswerQuestion, type AnswerWords } from './answer-text';
-import type { ExportLabels } from './export-labels';
+import { LEGACY_IDENTITY_EXPORT_LABELS, type ExportLabels } from './export-labels';
 import {
   conditionNamesProfile,
   formConfigConflicts,
@@ -139,6 +139,7 @@ import {
   declaredIdentityFor,
   joinedAccountFields,
   legacyNameIds,
+  predatesDeclaredFields,
   identityCells,
   identityColumnsOf,
   respondentNames,
@@ -405,6 +406,15 @@ function hasProfileCriterion(item: any): boolean {
 
 /** Where a submission comes from: a signed-in member, or a guest on a public form's link. */
 export type SubmitOrigin = 'member' | 'guest';
+
+/**
+ * What the controller adds to a submit body from the request's headers, never from the body (the
+ * global `whitelist` strips an undeclared body property): the build the client names in
+ * `X-Canari-Client-Version`, undefined when it names none - an older store build.
+ */
+export interface SubmitClient {
+  clientVersion?: string;
+}
 
 /** Dynamic form engine: creation, submission (with optional online checkout), exports, and submission lifecycle. */
 /** The part of a form item the XLSX export needs: a column header, its key, and how to read an answer. */
@@ -2450,7 +2460,7 @@ export class FormsService {
    */
   async submit(
     id: string,
-    input: SubmitFormDto,
+    input: SubmitFormDto & SubmitClient,
     origin: SubmitOrigin = 'member',
     visitorAddress?: string
   ) {
@@ -4310,11 +4320,16 @@ export class FormsService {
    */
   private async respondentIdentityFor(
     form: Form,
-    input: SubmitFormDto,
+    input: SubmitFormDto & SubmitClient,
     guest: boolean
   ): Promise<RespondentIdentity | null> {
     if (guest || form.anonymous) {
-      return declaredIdentityFor(askedDeclaredFields(form.guestFields), input, form.id);
+      return declaredIdentityFor(
+        askedDeclaredFields(form.guestFields),
+        input,
+        form.id,
+        predatesDeclaredFields(input.clientVersion)
+      );
     }
     declaredIdentityFor([], input, form.id);
     const joined = joinedAccountFields(form);
@@ -4423,10 +4438,16 @@ export class FormsService {
     // The promo and formation, status and campus columns (`respondent-identity.ts`): written when
     // the form joins or asks the field, or an answer carries it from when it did.
     const identityColumns = identityColumnsOf(form, submissions);
-    const identityWords = identityColumns.length > 0 ? labels.identity : undefined;
-    if (identityColumns.length > 0 && !identityWords) {
-      throw new BadRequestException('export label "identity" is required');
+    if (identityColumns.length > 0 && !labels.identity) {
+      // A store build older than the account fields sends no identity words: the organiser still
+      // gets the export, in the words that build's French would have sent.
+      this.logger.log(
+        `[LEGACY] export of ${formId.slice(0, 8)} without identity words (a build older than the ` +
+          'account fields): written in the default ones'
+      );
     }
+    const identityWords =
+      identityColumns.length > 0 ? (labels.identity ?? LEGACY_IDENTITY_EXPORT_LABELS) : undefined;
 
     const workbook = new ExcelJS.Workbook();
     // A title Excel refuses ("19/11") made the whole export a 500 (2026-11-13).

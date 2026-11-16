@@ -67,6 +67,11 @@ export interface RespondentIdentity {
   cursus?: RespondentCursus[];
   status?: RespondentStatus[];
   campus?: string | null;
+  /**
+   * The asked declared fields a store build older than the questions could not send: the server
+   * took its answer without them (`predatesDeclaredFields`), and the list reads them as such.
+   */
+  notDeclared?: DeclaredField[];
 }
 
 /** The list a stored value holds, canonical in `vocabulary` order. */
@@ -264,7 +269,12 @@ export function identityColumnsOf(
     ...askedDeclaredFields(form.guestFields),
   ]);
   return DECLARED_FIELDS.filter(
-    (f) => now.has(f) || rows.some((r) => r.respondentIdentity?.[f] !== undefined)
+    (f) =>
+      now.has(f) ||
+      rows.some(
+        (r) =>
+          r.respondentIdentity?.[f] !== undefined || r.respondentIdentity?.notDeclared?.includes(f)
+      )
   );
 }
 
@@ -273,6 +283,7 @@ export function identityCellText(
   identity: RespondentIdentity | null | undefined,
   field: DeclaredField
 ): string {
+  if (identity?.notDeclared?.includes(field)) return m.form_respondent_not_declared();
   switch (field) {
     case 'cursus':
       return (identity?.cursus ?? [])

@@ -56,10 +56,10 @@ export interface ExportLabels {
   edited?: string;
   /**
    * The words of the respondent's identity columns (`respondent-identity.ts`, owner 2026-11-16):
-   * headers, and what each status and campus reads as. Optional HERE for the same reason as `file`:
-   * only a form that joins or asks one of them (or holds an answer that carries one) writes the
-   * columns, and `exportSubmissions` refuses such a form without them - a store build older than the
-   * account fields.
+   * headers, and what each status and campus reads as. Optional HERE because a store build older
+   * than the account fields sends none: `exportSubmissions` then writes the columns in
+   * {@link LEGACY_IDENTITY_EXPORT_LABELS} ([LEGACY], `docs/wiki/legacy-compatibility.md`) rather than
+   * refuse that organiser's export.
    */
   identity?: IdentityExportLabels;
   /**
@@ -81,6 +81,8 @@ export interface IdentityExportLabels {
   staff: string;
   /** What each campus reads as, by its stored value (`saint-etienne`, `gardanne`). */
   campuses: Record<string, string>;
+  /** A declared field an older build could not send (`RespondentIdentity.notDeclared`). */
+  notDeclared: string;
 }
 
 const IDENTITY_KEYS: readonly Exclude<keyof IdentityExportLabels, 'campuses'>[] = [
@@ -90,7 +92,26 @@ const IDENTITY_KEYS: readonly Exclude<keyof IdentityExportLabels, 'campuses'>[] 
   'campus',
   'student',
   'staff',
+  'notDeclared',
 ];
+
+/**
+ * [LEGACY] The identity words of an export asked by a store build older than the account fields,
+ * which sends none (`docs/wiki/legacy-compatibility.md`, removal with `minClientVersion` passing
+ * the release that carries them). French, the words that build's own French catalogue would have
+ * sent (`frontend/messages/fr.json`, `form_respondent_*`), copied here because this service has no
+ * catalogue: an organiser on an old app gets the columns, never a refusal.
+ */
+export const LEGACY_IDENTITY_EXPORT_LABELS: IdentityExportLabels = {
+  promo: "Année d'entrée",
+  formation: 'Formation',
+  status: 'Statut élève / personnel',
+  campus: 'Campus',
+  student: 'Élève',
+  staff: 'Personnel',
+  campuses: { 'saint-etienne': 'Saint-Étienne', gardanne: 'Gardanne' },
+  notDeclared: 'Non déclaré',
+};
 
 /** The words of the "Articles" and "Totaux" sheets, every one required when the object is sent. */
 export interface ProductGridExportLabels {

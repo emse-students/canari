@@ -115,6 +115,16 @@ describe('the responses list', () => {
     expect(identityCellText(null, 'campus')).toBe('');
   });
 
+  it('reads "not declared" for a field an older build could not send, and draws its column', () => {
+    // A store build older than the declared questions answered an anonymous form that asks them:
+    // the server took the answer and marked them (`notDeclared`) rather than refuse it.
+    const older: RespondentIdentity = { source: 'declared', notDeclared: ['cursus', 'campus'] };
+    expect(identityCellText(older, 'cursus')).toBe(m.form_respondent_not_declared());
+    expect(identityCellText(older, 'campus')).toBe(m.form_respondent_not_declared());
+    expect(identityCellText(older, 'status')).toBe('');
+    expect(identityColumnsOf({}, [{ respondentIdentity: older }])).toEqual(['cursus', 'campus']);
+  });
+
   it('filters by promo, formation and status, promo and formation on ONE cursus', () => {
     expect(identityFilterValues(rows)).toEqual({
       promo: ['2024', '2023', '2020'],

@@ -24,6 +24,8 @@ import {
  * them as columns of the export.
  */
 describe('the respondent account fields of a form', () => {
+  /** A build that draws the declared questions (`RESPONDENT_FIELDS_MIN_CLIENT_VERSION`). */
+  const CURRENT = '1.7.0';
   const ACCOUNT: AccountIdentity = {
     firstName: 'Marie',
     lastName: 'CURIE',
@@ -245,10 +247,16 @@ describe('the respondent account fields of a form', () => {
       const { service, saved, accountIdentity } = makeService(
         baseForm({ anonymous: true, guestFields: ['status'], respondentFields: [] })
       );
-      expect(await code(service.submit('f1', { answers: {}, userId: 'u1' }, 'member'))).toBe(
-        FORM_GUEST_IDENTITY_MISSING
+      expect(
+        await code(
+          service.submit('f1', { answers: {}, userId: 'u1', clientVersion: CURRENT }, 'member')
+        )
+      ).toBe(FORM_GUEST_IDENTITY_MISSING);
+      await service.submit(
+        'f1',
+        { answers: {}, userId: 'u1', declaredStatus: 'staff', clientVersion: CURRENT },
+        'member'
       );
-      await service.submit('f1', { answers: {}, userId: 'u1', declaredStatus: 'staff' }, 'member');
       expect(accountIdentity).not.toHaveBeenCalled();
       expect(saved[0]).toMatchObject({
         userId: null,
@@ -256,16 +264,48 @@ describe('the respondent account fields of a form', () => {
       });
     });
 
+    it('takes an older client\'s answer without the declared fields, marked "not declared"', async () => {
+      // A store build older than the account fields cannot draw the questions: its ordinary
+      // answer is taken, and the organiser sees which fields it could not declare.
+      for (const clientVersion of [undefined, '1.6.12']) {
+        const { service, saved } = makeService(
+          baseForm({ anonymous: true, guestFields: ['cursus', 'status'], respondentFields: [] })
+        );
+        await service.submit('f1', { answers: {}, userId: 'u1', clientVersion }, 'member');
+        expect(saved[0]).toMatchObject({
+          userId: null,
+          respondentIdentity: { source: 'declared', notDeclared: ['cursus', 'status'] },
+        });
+      }
+    });
+
+    it('still judges what an older client does send', async () => {
+      const { service } = makeService(
+        baseForm({ anonymous: true, guestFields: ['status'], respondentFields: [] })
+      );
+      expect(
+        await code(
+          service.submit('f1', { answers: {}, userId: 'u1', declaredStatus: 'boss' }, 'member')
+        )
+      ).toBe(FORM_GUEST_IDENTITY_MISSING);
+    });
+
     it('asks a guest of a public form the declared fields, beside the names', async () => {
       const { service, saved, accountIdentity } = makeService(
         baseForm({ isPublic: true, guestFields: ['lastName', 'campus'] })
       );
       expect(
-        await code(service.submit('f1', { answers: {}, guestLastName: 'Curie' }, 'guest'))
+        await code(
+          service.submit(
+            'f1',
+            { answers: {}, guestLastName: 'Curie', clientVersion: CURRENT },
+            'guest'
+          )
+        )
       ).toBe(FORM_GUEST_IDENTITY_MISSING);
       await service.submit(
         'f1',
-        { answers: {}, guestLastName: 'Curie', declaredCampus: 'gardanne' },
+        { answers: {}, guestLastName: 'Curie', declaredCampus: 'gardanne', clientVersion: CURRENT },
         'guest'
       );
       expect(accountIdentity).not.toHaveBeenCalled();
@@ -306,6 +346,7 @@ describe('the respondent account fields of a form', () => {
         student: 'Eleve',
         staff: 'Personnel',
         campuses: { gardanne: 'Gardanne', 'saint-etienne': 'Saint-Etienne' },
+        notDeclared: 'Non declare',
       },
     };
 
@@ -410,15 +451,46 @@ describe('the respondent account fields of a form', () => {
       expect(query).toHaveBeenCalledWith(expect.any(String), [['u-old']]);
     });
 
-    it('refuses an export that would write the columns without their words', async () => {
-      const { service } = exporter(baseForm({ respondentFields: ['campus'] }), [sub({})]);
+    it('writes the columns in the default words for a client older than the account fields', async () => {
+      // An organiser on a store build older than this release sends no identity words: the
+      // export is still served ([LEGACY], `docs/wiki/legacy-compatibility.md`), never refused.
+      const { service } = exporter(baseForm({ respondentFields: ['campus', 'status'] }), [
+        sub({ respondentIdentity: { source: 'account', status: ['staff'], campus: 'gardanne' } }),
+      ]);
       const { identity: _identity, ...older } = LABELS;
-      await expect(service.exportSubmissions('f1', older)).rejects.toBeInstanceOf(
-        BadRequestException
+      const [header, row] = await rows(service, older);
+      expect(header).toEqual([
+        'Date',
+        'Prenom',
+        'Nom',
+        'Statut élève / personnel',
+        'Campus',
+        'Menu',
+      ]);
+      expect(row.slice(3, 5)).toEqual(['Personnel', 'Gardanne']);
+    });
+
+    it('writes "not declared" for a field an older client could not send', async () => {
+      const { service } = exporter(
+        baseForm({ anonymous: true, guestFields: ['cursus', 'status'], respondentFields: [] }),
+        [
+          sub({
+            userId: null,
+            respondentIdentity: { source: 'declared', notDeclared: ['cursus', 'status'] },
+          }),
+        ]
       );
+      const [header, row] = await rows(service);
+      expect(header).toEqual(['Date', 'Promo', 'Formation', 'Statut', 'Menu']);
+      expect(row.slice(1, 4)).toEqual(['Non declare', 'Non declare', 'Non declare']);
     });
 
     it('draws a column only for a field joined, asked, or carried by an answer', () => {
+      expect(
+        identityColumnsOf(baseForm(), [
+          { respondentIdentity: { source: 'declared', notDeclared: ['status'] } },
+        ])
+      ).toEqual(['status']);
       expect(identityColumnsOf(baseForm(), [])).toEqual([]);
       expect(identityColumnsOf(baseForm({ anonymous: true, guestFields: ['status'] }), [])).toEqual(
         ['status']

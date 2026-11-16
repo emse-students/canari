@@ -2988,6 +2988,7 @@
   "form_respondent_no_cursus": "None (no programme)",
   "form_respondent_promo_label": "Entry year",
   "form_respondent_formation_label": "Programme",
+  "form_respondent_not_declared": "Not declared",
   "form_respondent_promo_invalid": "Enter your entry year.",
   "form_respondent_notice": "Shared with the organiser along with your answer: {fields}",
   "form_respondent_declared_title": "About you",
