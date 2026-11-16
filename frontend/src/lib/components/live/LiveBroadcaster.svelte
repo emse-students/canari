@@ -830,60 +830,63 @@
 
   <!-- The chat while on air (WP-L6): its own ONE loop, a hide button on every line, above the End
        button. Under the away layer in paint order, and kept mounted through it, so its lines and
-       cursors survive a camera taken away. A verdict that the live is over goes to the machine. -->
-  {#if onAir && broadcast.liveId && broadcast.chatKey}
+       cursors survive a camera taken away. A verdict that the live is over goes to the machine.
+       The desktop's scene bar on air (owner, 2026-11-14) shares ONE flex row with it: the chat takes
+       the room the bar leaves, so the two cannot overlap at any width and no width is written down;
+       the sound and the microphone say so above the bar when they need a click. -->
+  {#if onAir && ((broadcast.liveId && broadcast.chatKey) || studio)}
     <div
-      class="pointer-events-none absolute inset-x-0 top-1/4 bottom-[calc(var(--safe-area-inset-bottom,0px)+var(--keyboard-occlusion-bottom,0px))] landscape:max-w-sm {studio
-        ? 'me-[13.5rem]'
-        : ''}"
+      class="pointer-events-none absolute inset-x-0 top-1/4 bottom-[calc(var(--safe-area-inset-bottom,0px)+var(--keyboard-occlusion-bottom,0px))] flex items-end gap-3"
       style={sideSafePadding()}
-      data-no-double-tap
-      data-live-broadcaster-chat-box
     >
-      {#key broadcast.liveId}
-        <LiveBroadcasterChat
-          liveId={broadcast.liveId}
-          keyHex={broadcast.chatKey}
-          visible={chatOpen}
-          onEnded={(verdict) => broadcast.chatHeardEnd(verdict)}
-          onViewers={(count) => (viewers = count)}
-        />
-      {/key}
-    </div>
-  {/if}
-
-  {#if studio && onAir}
-    <!-- The desktop's scene bar on air (owner, 2026-11-14), at the bottom right, clear of the chat
-         at the left; the sound and the microphone say so here when they need a click. -->
-    <div
-      class="pointer-events-none absolute right-0 bottom-0 flex max-w-[calc(100%-1rem)] flex-col items-end gap-2 p-3 pb-[calc(var(--safe-area-inset-bottom,0px)+0.75rem)] *:pointer-events-auto"
-      style={sideSafePadding('0.75rem')}
-      data-no-double-tap
-      data-live-onair-scenes
-    >
-      {#if !studio.audioRunning}
-        <Button
-          variant="danger-outline"
-          size="compact"
-          onclick={() => studio.wakeAudio()}
-          data-live-audio-suspended
+      {#if broadcast.liveId && broadcast.chatKey}
+        <div
+          class="relative h-full min-w-0 flex-1 landscape:max-w-sm"
+          data-no-double-tap
+          data-live-broadcaster-chat-box
         >
-          <Volume2 size={16} strokeWidth={2.5} />
-          {m.live_audio_suspended()}
-        </Button>
+          {#key broadcast.liveId}
+            <LiveBroadcasterChat
+              liveId={broadcast.liveId}
+              keyHex={broadcast.chatKey}
+              visible={chatOpen}
+              onEnded={(verdict) => broadcast.chatHeardEnd(verdict)}
+              onViewers={(count) => (viewers = count)}
+            />
+          {/key}
+        </div>
       {/if}
-      {#if studio.micPhase === 'error'}
-        <Button
-          variant="danger-outline"
-          size="compact"
-          onclick={() => void studio.reopenMicrophone()}
-          data-live-mic-fault
+      {#if studio}
+        <div
+          class="ms-auto flex shrink-0 flex-col items-end gap-2 p-3 pb-[calc(var(--safe-area-inset-bottom,0px)+0.75rem)] *:pointer-events-auto"
+          data-no-double-tap
+          data-live-onair-scenes
         >
-          <RefreshCcw size={16} strokeWidth={2.5} />
-          {m.live_mic_fault()}
-        </Button>
+          {#if !studio.audioRunning}
+            <Button
+              variant="danger-outline"
+              size="compact"
+              onclick={() => studio.wakeAudio()}
+              data-live-audio-suspended
+            >
+              <Volume2 size={16} strokeWidth={2.5} />
+              {m.live_audio_suspended()}
+            </Button>
+          {/if}
+          {#if studio.micPhase === 'error'}
+            <Button
+              variant="danger-outline"
+              size="compact"
+              onclick={() => void studio.reopenMicrophone()}
+              data-live-mic-fault
+            >
+              <RefreshCcw size={16} strokeWidth={2.5} />
+              {m.live_mic_fault()}
+            </Button>
+          {/if}
+          <LiveSceneBar {studio} onAir />
+        </div>
       {/if}
-      <LiveSceneBar {studio} onAir />
     </div>
   {/if}
 

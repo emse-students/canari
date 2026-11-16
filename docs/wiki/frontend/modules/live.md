@@ -1351,9 +1351,9 @@ Paraglide keys as before) - and the chosen scene wears the bar's fill (\`aria-ch
 \`radiogroup\`, one tab stop, arrows move focus and Enter or Space chooses (a screen scene opens the
 picker, so passing over one never chooses it). The overlay's size (three squares of growing size) and
 shape (circle, rectangle) are the same kind of icon-only row under it, shown only in screen + camera;
-neither row wraps. On air the column sits at the bottom right, and the chat box keeps a fixed
-end margin (\`me-[13.5rem]\`, wider than either row) while the studio exists, so the two can never
-meet at any window width; the camera-off and sound notices stay in the same column. Charter: principle
+neither row wraps. On air the column sits at the bottom right, and the chat box and the
+column share ONE flex row (the chat \`flex-1 min-w-0\`, the column \`shrink-0\`), so the chat takes
+whatever the bar leaves and the two cannot meet at any window width - no width is written down; the camera-off and sound notices stay in the same column. Charter: principle
 7 (simplicity). Tested in \`LiveBroadcaster.svelte.test.ts\` (aria-labels and tooltips, no text, one
 row); the reading at 1280 and ~640 px on a desktop live is owed
 ([backlog](../../backlog.d/reading-owed-the-live-scenes-bar-on-a-desktop-live.md)).
