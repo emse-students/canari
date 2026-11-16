@@ -1,6 +1,9 @@
 import { Log } from '$lib/utils/Log';
 import { memoryFor, memoryOf } from './historyEntry';
+import { cancelRestore, isActiveRestore, setActiveRestore } from './restoreControl';
 import { PAGE_SCROLLER_SELECTOR } from './scrollToTop';
+
+export { cancelRestore };
 
 /**
  * A PAGE IS REOPENED WHERE IT WAS LEFT, WHEN THE READER GOES BACK TO IT (owner report, 2026-11-15:
@@ -17,13 +20,18 @@ import { PAGE_SCROLLER_SELECTOR } from './scrollToTop';
  * `scrollTop` is a distance in the layout it was measured in, and a feed's layout is not the same
  * twice: cards mount a few at a time, a suggestions strip appears, images and posters settle to
  * their height. A distance applied to a layout that is not the one it was measured in shows another
- * post (and the browser's scroll anchoring then adds the later growth to it: 1500 became 1726). So
- * the entry also records an ANCHOR: the first element of the box that is on screen and wears
- * `data-scroll-anchor="<id>"` (a feed card wears its post id), with its distance from the box's top.
- * The restore waits for that element, scrolls so that IT sits at that distance again, and keeps
- * aligning it while the content above changes, until the page is quiet or the reader touches it.
- * The raw offset stays the answer for a page with no anchor, and for an anchor that is gone (a post
- * deleted meanwhile): the page then settles and the offset applies as before.
+ * post (HYPOTHESIS, not measured: the layout above the post was taller at the restore than when the
+ * reader left). So the entry also records an ANCHOR: the first element of the box that is on screen
+ * and wears `data-scroll-anchor="<id>"` (a feed card wears its post id), with its distance from the
+ * box's top. The restore waits for that element, scrolls so that IT sits at that distance again, and
+ * keeps aligning it while the content above changes, until the page is quiet or the reader touches
+ * it. The box has a FIXED height and never resizes, so what is observed is its content: a
+ * ResizeObserver on the box's first child, on the list holding the anchor and on the anchor itself,
+ * a MutationObserver on the subtree, and the `load` events of images and media (a poster settling
+ * touches no DOM). Another programmatic scroll (a tap on the tab, a change of feed tab) ends the
+ * restore first ({@link cancelRestore}). The raw offset stays the answer for a page with no anchor,
+ * and for an anchor that is gone (a post deleted meanwhile, a re-ranked tab, a post beyond the
+ * loaded page): that is a fallback, logged as a warning naming the anchor.
  *
  * A feed draws after the page is on screen, so the place may not exist yet, and a skeleton is as tall
  * as the cards it stands for. The restore therefore applies only once the target exists (an offset:
@@ -34,37 +42,41 @@ import { PAGE_SCROLLER_SELECTOR } from './scrollToTop';
  * with no further change (settled: the offset applies, clamped by the browser when the page came
  * back shorter); ANY scroll event while it waits (it never scrolls the box before it applies, so
  * such an event is the reader's); a wheel, touch, pointer or key event at any time (the reader, once
- * the restore itself scrolls the box); or the next navigation ({@link cancelRestore}). Changes are
- * watched by a ResizeObserver on the box and a MutationObserver on its subtree, so late-mounted
- * children are seen without re-observing.
+ * the restore itself scrolls the box); or the next navigation or programmatic scroll.
  */
 
 /** The marker of an element a page can be re-aligned on: its value is a stable id of the content. */
 export const SCROLL_ANCHOR_ATTRIBUTE = 'data-scroll-anchor';
 
-/** The anchor elements of the box, in document order. */
-function anchorsOf(scroller: HTMLElement): HTMLElement[] {
-  return Array.from(scroller.querySelectorAll<HTMLElement>(`[${SCROLL_ANCHOR_ATTRIBUTE}]`));
-}
-
-/** The first anchor still on screen (its bottom is below the box's top), with its distance from the top. */
+/**
+ * The first anchor still on screen (its bottom is below the box's top), with its distance from the
+ * top. Anchors are in document order, so their bottoms only grow: a binary search reads O(log n)
+ * rects (each one a layout read) instead of all of them.
+ */
 function anchorOnScreen(scroller: HTMLElement): { id: string; offset: number } | undefined {
   const top = scroller.getBoundingClientRect().top;
-  for (const el of anchorsOf(scroller)) {
-    const rect = el.getBoundingClientRect();
-    if (rect.bottom > top) {
-      return {
-        id: el.getAttribute(SCROLL_ANCHOR_ATTRIBUTE) ?? '',
-        offset: Math.round(rect.top - top),
-      };
-    }
+  const anchors = scroller.querySelectorAll<HTMLElement>(`[${SCROLL_ANCHOR_ATTRIBUTE}]`);
+  let lo = 0;
+  let hi = anchors.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (anchors[mid].getBoundingClientRect().bottom > top) hi = mid;
+    else lo = mid + 1;
   }
-  return undefined;
+  const el = anchors[lo];
+  if (!el) return undefined;
+  return {
+    id: el.getAttribute(SCROLL_ANCHOR_ATTRIBUTE) ?? '',
+    offset: Math.round(el.getBoundingClientRect().top - top),
+  };
 }
 
-/** The anchor element of id `id` (compared as a string: an id is never put in a selector). */
+/** The anchor element of id `id`, by one attribute selector (quotes and backslashes escaped). */
 function findAnchor(scroller: HTMLElement, id: string): HTMLElement | undefined {
-  return anchorsOf(scroller).find((el) => el.getAttribute(SCROLL_ANCHOR_ATTRIBUTE) === id);
+  const escaped = id.replace(/["\\]/g, '\\$&');
+  return (
+    scroller.querySelector<HTMLElement>(`[${SCROLL_ANCHOR_ATTRIBUTE}="${escaped}"]`) ?? undefined
+  );
 }
 
 /**
@@ -94,14 +106,6 @@ export function recallScroll(key: number | undefined): number | undefined {
   return memoryOf(key)?.top;
 }
 
-let stopRestore: (() => void) | null = null;
-
-/** Ends a restore still waiting for its content: a navigation has begun. */
-export function cancelRestore(): void {
-  stopRestore?.();
-  stopRestore = null;
-}
-
 /**
  * The marker a LIST skeleton carries (`data-loading-skeleton`): an explicit declaration by the page
  * that draws it, because `animate-pulse` and `aria-busy` are also worn by things that are never gone
@@ -117,6 +121,9 @@ function placeholderShown(scroller: HTMLElement): boolean {
 /** What only the reader produces: the restore's own scrolling never fires these. */
 const READER_INPUTS = ['wheel', 'touchstart', 'pointerdown', 'keydown'] as const;
 
+/** What changes the height of content without touching the DOM: images and media, in the capture phase. */
+const CONTENT_LOADS = ['load', 'loadedmetadata', 'error'] as const;
+
 /**
  * Puts the box of the entry `key` back where it was left. Returns whether there was anything to
  * restore (a first visit, or a page left at the top, has not).
@@ -131,11 +138,18 @@ export function restoreOnReturn(
   if (!page || !target) return false;
   const scroller: HTMLElement = page;
   const tallEnough = () => scroller.scrollHeight - scroller.clientHeight >= target;
+  /** Resolved once and reused while it stays in the page: a feed mutates a lot, a lookup is not free. */
+  let anchorEl: HTMLElement | undefined;
+  const resolveAnchor = () => {
+    if (!anchor) return undefined;
+    if (!anchorEl?.isConnected) anchorEl = findAnchor(scroller, anchor.id);
+    return anchorEl;
+  };
   /** With an anchor, reached means THE ANCHOR IS DRAWN: a tall page may still lack its post. */
-  const reached = () => (anchor ? findAnchor(scroller, anchor.id) !== undefined : tallEnough());
+  const reached = () => (anchor ? resolveAnchor() !== undefined : tallEnough());
   let logged = false;
   const apply = (why: string) => {
-    const el = anchor ? findAnchor(scroller, anchor.id) : undefined;
+    const el = resolveAnchor();
     if (anchor && el) {
       const drift =
         el.getBoundingClientRect().top - scroller.getBoundingClientRect().top - anchor.offset;
@@ -156,6 +170,13 @@ export function restoreOnReturn(
 
   const resize = new ResizeObserver(() => settle());
   const mutation = new MutationObserver(() => settle());
+  const watched = new Set<Element>();
+  /** The box never changes size (fixed height): what grows is its content, so THAT is observed. */
+  const watch = (el: Element | null | undefined) => {
+    if (!el || watched.has(el)) return;
+    watched.add(el);
+    resize.observe(el);
+  };
   /** Set once the anchor is aligned: the restore then moves the box itself, so only INPUT ends it. */
   let following = false;
   const dropped = (what: string) => {
@@ -166,12 +187,15 @@ export function restoreOnReturn(
     if (!following) dropped('the reader scrolled');
   };
   const userInput = () => dropped('the reader touched the page');
+  const contentLoaded = () => settle();
   function stop() {
     resize.disconnect();
     mutation.disconnect();
+    watched.clear();
     scroller.removeEventListener('scroll', userScrolled);
     for (const e of READER_INPUTS) scroller.removeEventListener(e, userInput);
-    if (stopRestore === stop) stopRestore = null;
+    for (const e of CONTENT_LOADS) scroller.removeEventListener(e, contentLoaded, true);
+    if (isActiveRestore(stop)) setActiveRestore(null);
   }
   let changes = 0;
   /**
@@ -179,13 +203,16 @@ export function restoreOnReturn(
    * an anchor keeps being re-aligned while the content above it changes; otherwise (loaded but
    * shorter, or the anchor never came) finish only after TWO animation frames with no further change
    * - a feed mounts its cards a frame at a time, so a page that is still growing keeps invalidating
-   * the check, and a page that has stopped is the settled one.
+   * the check, and a page that has stopped is the settled one. An anchor that never came is a
+   * fallback and is logged as one, naming it.
    */
   function settle() {
     changes += 1;
     if (placeholderShown(scroller)) return;
     const reachedNow = reached();
     if (reachedNow) {
+      watch(anchorEl);
+      watch(anchorEl?.parentElement);
       apply('content ready');
       if (!anchor) {
         stop();
@@ -196,17 +223,26 @@ export function restoreOnReturn(
     const seen = changes;
     requestAnimationFrame(() =>
       requestAnimationFrame(() => {
-        if (seen !== changes || stopRestore !== stop) return;
+        if (seen !== changes || !isActiveRestore(stop)) return;
         stop();
-        if (!reachedNow) apply('page settled shorter');
+        if (reachedNow) return;
+        if (anchor) {
+          Log.w(
+            'scrollMemory',
+            `entry ${key}: anchor ${anchor.id} never appeared (post gone, re-ranked or beyond the loaded page), the raw offset ${target}px is used`
+          );
+        }
+        apply('page settled shorter');
       })
     );
   }
   scroller.addEventListener('scroll', userScrolled, { passive: true });
   for (const e of READER_INPUTS) scroller.addEventListener(e, userInput, { passive: true });
-  resize.observe(scroller);
+  for (const e of CONTENT_LOADS) scroller.addEventListener(e, contentLoaded, true);
+  watch(scroller);
+  watch(scroller.firstElementChild);
   mutation.observe(scroller, { childList: true, subtree: true });
-  stopRestore = stop;
+  setActiveRestore(stop);
   const goal = anchor ? `anchor ${anchor.id}` : `${target}px`;
   Log.d('scrollMemory', `entry ${key}: waiting to reach ${goal}`);
   // An anchor already drawn is aligned now, and followed until the page is quiet.

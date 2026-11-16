@@ -10,7 +10,9 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { Log } from '$lib/utils/Log';
 import { resetEntryMemory } from './historyEntry';
+import { resetPageScroll, scrollPageToTop } from './scrollToTop';
 import {
   LOADING_SKELETON_ATTRIBUTE,
   cancelRestore,
@@ -35,16 +37,22 @@ class FakeResizeObserver {
   constructor(private cb: () => void) {
     live.push(this);
   }
-  observe() {}
+  targets = new Set<Element>();
+  observe(target: Element) {
+    this.targets.add(target);
+  }
   disconnect() {
     this.active = false;
   }
-  fire() {
-    if (this.active) this.cb();
+  /** A resize of `target` reaches the callback only if THIS observer watches `target`. */
+  fire(target?: Element) {
+    if (this.active && (!target || this.targets.has(target))) this.cb();
   }
 }
 vi.stubGlobal('ResizeObserver', FakeResizeObserver);
 const resized = () => live.forEach((o) => o.fire());
+/** The browser's behaviour: only an element someone observes reports its resize. */
+const resizedAt = (target: Element) => live.forEach((o) => o.fire(target));
 /** requestAnimationFrame as a queue the test drains, one frame at a time. */
 let frameQueue: (() => void)[] = [];
 vi.stubGlobal('requestAnimationFrame', (cb: () => void) => frameQueue.push(cb));
@@ -192,12 +200,15 @@ describe('restoreOnReturn', () => {
 });
 
 /**
- * A feed with real geometry: card `i` is `heights[i]` tall, the box's top is at 100, and a card's
- * rect follows the box's `scrollTop` the way a browser's does.
+ * A feed with real geometry: box > list > cards, card `i` is `heights[i]` tall, the box's top is at
+ * 100, and a card's rect follows the box's `scrollTop` the way a browser's does. The box has a FIXED
+ * height, as `.page-scroll-wrap` does: only the list, or a card, can report a resize.
  */
 function feed(heights: number[]) {
   const model = { heights };
   const el = document.createElement('div');
+  const list = document.createElement('div');
+  el.appendChild(list);
   Object.defineProperty(el, 'clientHeight', { get: () => 800 });
   Object.defineProperty(el, 'scrollHeight', {
     get: () => model.heights.reduce((a, b) => a + b, 0),
@@ -214,13 +225,24 @@ function feed(heights: number[]) {
         const top = 100 + above - el.scrollTop;
         return { top, bottom: top + model.heights[i] } as DOMRect;
       };
-      el.appendChild(card);
+      list.appendChild(card);
       cards.push(card);
     }
   };
   /** Distance of card `i` from the top of the box. */
   const offsetOf = (i: number) => cards[i].getBoundingClientRect().top - 100;
-  return { el, model, draw, offsetOf };
+  return { el, list, model, draw, offsetOf };
+}
+
+/** A feed left at `top` (anchored on card 5 at 1500), then a fresh one on return. */
+function leaveAndReturn(back: number[] = Array(20).fill(300), top = 1500) {
+  const left = feed(Array(20).fill(300));
+  left.draw(20);
+  left.el.scrollTop = top;
+  rememberLeaving(1, top, left.el);
+  document.body.innerHTML = '';
+  const returned = feed(back);
+  return returned;
 }
 
 describe('the place is an anchor, not only a distance (1.7.0-alpha.2: left at 1500, back at 1726)', () => {
@@ -234,6 +256,22 @@ describe('the place is an anchor, not only a distance (1.7.0-alpha.2: left at 15
     restoreOnReturn(2, g.el);
     expect(g.el.scrollTop).toBe(1560);
     expect(g.offsetOf(5)).toBe(-60);
+  });
+
+  it('reads O(log n) rects at leave time, not one per card', () => {
+    const f = feed(Array(400).fill(300));
+    f.draw(400);
+    let reads = 0;
+    f.list.querySelectorAll('div').forEach((c) => {
+      const rect = (c as HTMLElement).getBoundingClientRect;
+      (c as HTMLElement).getBoundingClientRect = () => {
+        reads += 1;
+        return rect.call(c);
+      };
+    });
+    f.el.scrollTop = 60000;
+    rememberLeaving(1, 60000, f.el);
+    expect(reads).toBeLessThan(20);
   });
 
   it('puts the SAME post back when the content above it is taller than when it was left', () => {
@@ -252,12 +290,7 @@ describe('the place is an anchor, not only a distance (1.7.0-alpha.2: left at 15
   });
 
   it('waits for the anchor to be drawn, even when the page is already tall enough', async () => {
-    const left = feed(Array(20).fill(300));
-    left.draw(20);
-    left.el.scrollTop = 1500;
-    rememberLeaving(1, 1500, left.el);
-    document.body.innerHTML = '';
-    const back = feed(Array(20).fill(300));
+    const back = leaveAndReturn();
     back.draw(3); // tall (6000 px of model) but card 5 is not mounted yet
     restoreOnReturn(1, back.el);
     expect(back.el.scrollTop).toBe(0);
@@ -266,48 +299,95 @@ describe('the place is an anchor, not only a distance (1.7.0-alpha.2: left at 15
     expect(back.offsetOf(5)).toBe(0);
   });
 
-  it('keeps the anchor aligned while the content above it still changes, then ends when quiet', async () => {
-    const left = feed(Array(20).fill(300));
-    left.draw(20);
-    left.el.scrollTop = 1500;
-    rememberLeaving(1, 1500, left.el);
-    document.body.innerHTML = '';
-    const back = feed(Array(20).fill(300));
+  it('follows a poster settling with NO DOM change: the observed LIST reports it, not the fixed box', () => {
+    const back = leaveAndReturn();
     back.draw(20);
     restoreOnReturn(1, back.el);
     expect(back.offsetOf(5)).toBe(0);
     back.model.heights[0] = 526; // a poster above settles AFTER the first alignment
-    resized();
+    // The box has a fixed height and reports nothing: the restore must watch the list and the anchor.
+    const watching = live.flatMap((o) => [...o.targets]);
+    expect(watching).toContain(back.list);
+    expect(watching).toContain(back.list.children[5]);
+    resizedAt(back.list);
     expect(back.offsetOf(5)).toBe(0);
     frame();
     frame();
     expect(live.every((o) => !o.active)).toBe(true);
     const quiet = back.el.scrollTop;
     back.model.heights[0] = 700;
-    resized(); // the restore is over: a later change is not followed
+    resizedAt(back.list); // the restore is over: a later change is not followed
     expect(back.el.scrollTop).toBe(quiet);
   });
 
-  it('a wheel, touch or key from the reader ends the following', () => {
-    const left = feed(Array(20).fill(300));
-    left.draw(20);
-    left.el.scrollTop = 1500;
-    rememberLeaving(1, 1500, left.el);
-    document.body.innerHTML = '';
-    const back = feed(Array(20).fill(300));
+  it('follows a card growing in place: the anchor itself is observed', () => {
+    const back = leaveAndReturn();
     back.draw(20);
     restoreOnReturn(1, back.el);
-    back.el.dispatchEvent(new Event('touchstart'));
-    expect(live.every((o) => !o.active)).toBe(true);
+    back.model.heights[4] = 400;
+    resizedAt(back.list.children[5]);
+    expect(back.offsetOf(5)).toBe(0);
   });
 
-  it('falls back to the offset when the anchored post is gone (deleted meanwhile)', () => {
-    const left = feed(Array(20).fill(300));
-    left.draw(20);
-    left.el.scrollTop = 1500;
-    rememberLeaving(1, 1500, left.el);
-    document.body.innerHTML = '';
-    const back = feed(Array(20).fill(300));
+  it('follows an image or a poster that finishes loading (a capture-phase load on the box)', () => {
+    const back = leaveAndReturn();
+    back.draw(20);
+    restoreOnReturn(1, back.el);
+    back.model.heights[2] = 500;
+    back.list.children[2].dispatchEvent(new Event('load'));
+    expect(back.offsetOf(5)).toBe(0);
+    back.model.heights[1] = 450;
+    back.list.children[1].dispatchEvent(new Event('loadedmetadata'));
+    expect(back.offsetOf(5)).toBe(0);
+  });
+
+  it.each(['wheel', 'keydown', 'pointerdown', 'touchstart'])(
+    'a %s from the reader ends the following',
+    (type) => {
+      const back = leaveAndReturn();
+      back.draw(20);
+      restoreOnReturn(1, back.el);
+      expect(live.some((o) => o.active)).toBe(true);
+      back.el.dispatchEvent(new Event(type));
+      expect(live.every((o) => !o.active)).toBe(true);
+    }
+  );
+
+  it('a scroll event while following is the restore itself: ignored', () => {
+    const back = leaveAndReturn();
+    back.draw(20);
+    restoreOnReturn(1, back.el);
+    back.el.dispatchEvent(new Event('scroll'));
+    expect(live.some((o) => o.active)).toBe(true);
+    back.model.heights[0] = 400;
+    resizedAt(back.list);
+    expect(back.offsetOf(5)).toBe(0);
+  });
+
+  it('a tap on the tab or a change of feed tab ends the restore instead of fighting it', () => {
+    const back = leaveAndReturn();
+    back.draw(20);
+    back.el.className = 'page-scroll-wrap';
+    restoreOnReturn(1, back.el);
+    expect(back.el.scrollTop).toBe(1500);
+    scrollPageToTop('tab-retap');
+    expect(live.every((o) => !o.active)).toBe(true);
+    back.el.scrollTop = 0;
+    back.model.heights[0] = 400;
+    resizedAt(back.list);
+    expect(back.el.scrollTop).toBe(0);
+
+    const again = leaveAndReturn();
+    again.draw(20);
+    again.el.className = 'page-scroll-wrap';
+    restoreOnReturn(1, again.el);
+    resetPageScroll();
+    expect(live.filter((o) => o.active)).toHaveLength(0);
+  });
+
+  it('falls back to the offset when the anchored post is gone, and says so naming the anchor', () => {
+    const warn = vi.spyOn(Log, 'w').mockImplementation(() => {});
+    const back = leaveAndReturn();
     back.draw(20);
     back.el.querySelector(`[${SCROLL_ANCHOR_ATTRIBUTE}="p5"]`)?.remove();
     restoreOnReturn(1, back.el);
@@ -315,5 +395,19 @@ describe('the place is an anchor, not only a distance (1.7.0-alpha.2: left at 15
     frame();
     frame();
     expect(back.el.scrollTop).toBe(1500);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][1]).toContain('anchor p5 never appeared');
+    warn.mockRestore();
+  });
+
+  it('does not warn when the anchor was found', () => {
+    const warn = vi.spyOn(Log, 'w').mockImplementation(() => {});
+    const back = leaveAndReturn();
+    back.draw(20);
+    restoreOnReturn(1, back.el);
+    frame();
+    frame();
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 });
