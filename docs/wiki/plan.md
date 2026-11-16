@@ -85,6 +85,7 @@ earliest version, as a checklist.
 - [P3 - EXIT-FORTIFY: closing the app on the Mi 9T logs `FORTIFY: pthread_mutex_lock called on a destroyed mutex` from the render thread](backlog.d/reading-owed-exit-fortify-closing-the-app-on-the-mi-9t-logged-fortify-pthread.md)
 - [P3 - a 13 MB upload on the iPhone restarted at about half and ran at 40 to 65 KB/s](backlog.d/p3-a-13-mb-upload-on-the-iphone-restarted-at-half-and-ran-at-40-to-65-kb-s.md)
 - [P3 - A private salon granted to a long-standing member badges its whole past as unread (review of #3682, 2026-11-16)](backlog.d/p3-a-private-salon-granted-late-badges-its-whole-past.md)
+- [P3 - the "Envoyer a..." sheet names a ticked target by its raw id while the search hides it](backlog.d/p3-the-envoyer-a-sheet-names-a-ticked-target-by-its-raw-id-while-the-search-hides-it.md)
 - [P3 - the feed offset restored after a Back from an association lands about 226 px lower than it was left (Mi 9T, `1.7.0-alpha.2`)](backlog.d/p3-the-feed-offset-restored-after-a-back-from-an-association-lands-about-226-px.md)
 
 ### Readings owed
