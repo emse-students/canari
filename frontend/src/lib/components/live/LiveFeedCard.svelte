@@ -6,13 +6,19 @@
    * title reads "X est en live". A tap opens the viewer.
    *
    * It asks `GET /api/lives` (no seat taken) whenever `refreshKey` changes - the feed bumps it when
-   * it asks for its own first page - AND, while the card is on screen in a visible page, every
-   * `previewPeriodMs` the server's limits name - the SAME period the broadcaster sends a preview on,
-   * so each read can name a new still and none is read twice - so the preview and the count move.
-   * Each answered list drops the kept stills of the lives it no longer names. That period is a
-   * cost knob only: were it wrong, the picture would be staler or the list read more often; nothing
-   * is decided from it, and no request is in flight twice (the next read is scheduled when the last
-   * one answered). Off screen, in a hidden page, or with nothing on air, no timer runs.
+   * it asks for its own first page - AND, while the card's place is on screen in a visible page,
+   * once on each ENTRY into that state (a tab brought back, the feed scrolled back to the top: what
+   * happened meanwhile is read at once, not a period later) and then every `previewPeriodMs` the
+   * server's limits name - the SAME period the broadcaster sends a preview on, so each read can
+   * name a new still and none is read twice - so the preview and the count move. THE READ DOES NOT
+   * DEPEND ON WHAT IS DRAWN: the watched place is an anchor that exists with no live on air too, so
+   * a live that STARTS appears and an ended one leaves with no relaunch (1.7.0-alpha.6: the list was
+   * read only while a card was drawn, so a start was never seen, and an end outlived a hidden tab).
+   * Each answered list drops the kept stills of the lives it no longer names. That period is a cost
+   * knob only: were it wrong, the picture would be staler or the list read more often; nothing is
+   * decided from it, and no request is in flight twice (the next read is scheduled when the last
+   * one answered). Off screen or in a hidden page, no timer runs
+   * ([live](docs/wiki/frontend/modules/live.md#the-feed-card-follows-the-live-2026-11-16)).
    */
   import { onDestroy } from 'svelte';
   import { Radio } from '@lucide/svelte';
@@ -62,6 +68,8 @@
   let refreshMs = $state<number | null>(null);
   let limitsAsked = false;
   let generation = 0;
+  /** Reads started and not yet answered; an entry read is skipped while one is out (its answer is as fresh). */
+  let inFlight = 0;
 
   /** The default watcher: an IntersectionObserver on the card. None in this engine is a signal. */
   function observeOnScreen(el: HTMLElement, report: (onScreen: boolean) => void): () => void {
@@ -80,7 +88,8 @@
   async function refresh(why: string): Promise<void> {
     const mine = ++generation;
     console.debug(`[LIVE] feed card: reading the list (${why})`);
-    const outcome = await load(viewerId);
+    inFlight++;
+    const outcome = await load(viewerId).finally(() => inFlight--);
     if (mine !== generation) return;
     if (outcome.kind === 'answered') {
       lives = outcome.lives;
@@ -97,9 +106,13 @@
     };
   });
 
-  // The limits are read once, and only once a live is on air: a reader with none pays nothing.
+  /** The card's place is on screen in a visible page: the only state in which the list is watched. */
+  const watching = $derived(onScreen && pageVisible);
+
+  // The limits are read once, the first time the place is watched (never for a reader who never
+  // sees the top of the feed). A live may start at any time, so this cannot wait for one on air.
   $effect(() => {
-    if (lives.length === 0 || limitsAsked) return;
+    if (!watching || limitsAsked) return;
     limitsAsked = true;
     void fetchLimits().then(
       (limits) => {
@@ -122,10 +135,17 @@
     return () => document.removeEventListener('visibilitychange', onVisibility);
   });
 
-  // The on-screen refresh: one timer, armed only while all four hold, re-armed after each answer.
+  // The ENTRY read: what happened while the place was not watched (a live ended, another started)
+  // is read the moment it is watched again, not one period later.
+  $effect(() => {
+    if (!watching) return;
+    if (inFlight === 0) void refresh('watched again');
+  });
+
+  // The on-screen refresh: one timer, armed only while the place is watched, re-armed after each answer.
   $effect(() => {
     const period = refreshMs;
-    if (!period || !onScreen || !pageVisible || lives.length === 0) return;
+    if (!period || !watching) return;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const arm = () => {
@@ -210,35 +230,37 @@
   </button>
 {/snippet}
 
-{#if lives.length > 0}
-  <section
-    bind:this={section}
-    class="mb-5"
-    aria-labelledby="live-feed-card-title"
-    data-live-feed-card
-    data-live-feed-layout={lives.length === 1 ? 'large' : 'carousel'}
-  >
-    <h2
-      id="live-feed-card-title"
-      class="text-text-main mb-2 flex items-center gap-2 text-sm font-bold"
+<!-- The ANCHOR is always there, empty or not: it is what is watched, so a first live can appear. -->
+<div bind:this={section} data-live-feed-anchor>
+  {#if lives.length > 0}
+    <section
+      class="mb-5"
+      aria-labelledby="live-feed-card-title"
+      data-live-feed-card
+      data-live-feed-layout={lives.length === 1 ? 'large' : 'carousel'}
     >
-      <Radio size={16} class="text-red-err" aria-hidden="true" />
-      {m.live_card_title()}
-    </h2>
-    {#if lives.length === 1}
-      {@render card(lives[0], true)}
-    {:else}
-      <ul
-        class="-mx-1 flex snap-x snap-mandatory gap-3 overflow-x-auto px-1 pb-1"
-        aria-label={m.live_card_carousel_label()}
-        data-live-carousel
+      <h2
+        id="live-feed-card-title"
+        class="text-text-main mb-2 flex items-center gap-2 text-sm font-bold"
       >
-        {#each lives as live (live.id)}
-          <li class="w-40 shrink-0 snap-start">
-            {@render card(live, false)}
-          </li>
-        {/each}
-      </ul>
-    {/if}
-  </section>
-{/if}
+        <Radio size={16} class="text-red-err" aria-hidden="true" />
+        {m.live_card_title()}
+      </h2>
+      {#if lives.length === 1}
+        {@render card(lives[0], true)}
+      {:else}
+        <ul
+          class="-mx-1 flex snap-x snap-mandatory gap-3 overflow-x-auto px-1 pb-1"
+          aria-label={m.live_card_carousel_label()}
+          data-live-carousel
+        >
+          {#each lives as live (live.id)}
+            <li class="w-40 shrink-0 snap-start">
+              {@render card(live, false)}
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </section>
+  {/if}
+</div>

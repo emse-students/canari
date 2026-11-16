@@ -1602,3 +1602,31 @@ push on both phones.
 back to set `open`, inside the effect that follows the roster prop: the first `@` of any roster-backed
 picker ended in `effect_update_depth_exceeded` when the component was MOUNTED (no existing test did).
 Fixed by reading the local value; pinned by `MentionComposerInput.roster.svelte.test.ts`.
+
+## The feed card follows the live (2026-11-16)
+
+Seen on `1.7.0-alpha.6` (iPhone sitting, PR #3715): after a broadcaster ENDED a live, its card stayed on a
+follower's feed (web seat); and the carousel of a live that STARTED did not appear until a relaunch.
+
+**How the feed learns.** There is no socket event for a live: `LiveFeedCard` reads `GET /api/lives` (no seat
+taken). It read it (1) when the feed bumped `refreshKey` (a first-page load) and (2) on a timer
+(`previewPeriodMs`, 16 s) armed ONLY while `lives.length > 0` AND the card was on screen AND the page visible.
+
+**Why a start was missed (b).** With no live on air nothing was drawn, so there was no element for the
+`IntersectionObserver`, so `onScreen` never became true and the timer never armed; the limits were also read only
+once a card existed. A feed already open when a live began could therefore learn it only from the next
+first-page load (a relaunch).
+
+**Why an end was missed (a).** The timer stops when the tab is hidden or the card scrolled off, and nothing read
+when it was watched again: the first read was a full period later, and never if the limits had not answered.
+The stale card stayed in between.
+
+**The fix, at the cause.** The observer watches an ANCHOR rendered whether or not a card is drawn, so the
+watched state does not depend on what is drawn; the limits are read the first time the place is watched; the
+timer runs whenever the place is watched; and each ENTRY into the watched state (tab visible, feed scrolled
+back to the top) reads once at once, skipped only if a read is already out. Idempotence is the existing state
+(`watching = onScreen && pageVisible`), not a clock: the timer stays a cost knob. Cost: a reader sitting on the
+top of an open feed now reads the (small) list every 16 s even with nothing on air, as with one on air before.
+A push event (a server-sent start/end) would remove that poll; it is not built (it would need a new
+channel). Tests: `LiveFeedCard.svelte.test.ts` (a start with no card drawn; an end read on re-entry).
+Reading owed: [backlog](../../backlog.d/reading-owed-the-live-card-follows-a-start-and-an-end-with-no-relaunch.md).
