@@ -641,6 +641,29 @@ export async function processPendingInvitations(params: {
     return false;
   }
 
+  // A GROUP THIS DEVICE IS CREATING IS NOT ABSENT, AND ITS ROWS ARE NOT THIS SWEEP'S. The creation
+  // registers the membership first, which writes a `pending` row for each of the user's other
+  // devices, while its conversation row is written only at the end. Read without this, the group
+  // looked absent and a re-add recovery was requested for a group this device was building
+  // (LEAF-REFRESH-1, 2026-11-16). Its rows are left to the creation's own Add; any row it does not
+  // answer waits for the next sweep. Taken out BEFORE the count, so the sweep never announces work
+  // it is not going to do, and reported `onGroupNotSwept`: its rows were not read through, so what
+  // they say of an ask stays as shown. A group unmarked here cannot become marked later in this pass:
+  // the mark is set before the server can list the group (`groupsInCreation.ts`).
+  const inCreation = new Map<string, number>();
+  pendingInvitations = pendingInvitations.filter((inv) => {
+    if (!isGroupInCreation(inv.groupId)) return true;
+    inCreation.set(inv.groupId, (inCreation.get(inv.groupId) ?? 0) + 1);
+    return false;
+  });
+  for (const [groupId, rows] of inCreation) {
+    Log.d(
+      'Pending',
+      `${groupId.slice(0, 8)}... is being created by this device - its ${rows} row(s) are left to the creation's own Add; any row it does not answer waits for the next sweep`
+    );
+    onGroupNotSwept?.(groupId);
+  }
+
   if (pendingInvitations.length === 0) return true;
 
   log(`[PENDING] ${pendingInvitations.length} pending invitation(s) to process`);
@@ -664,21 +687,6 @@ export async function processPendingInvitations(params: {
   const answeredAgain = new Map<string, number>();
 
   for (const [groupId, invitations] of byGroup) {
-    // A GROUP THIS DEVICE IS CREATING IS NOT ABSENT, AND ITS ROWS ARE NOT THIS SWEEP'S. The creation
-    // registers the membership first, which writes a `pending` row for each of the user's other
-    // devices, and admits those very devices in its own bulk Add - while its conversation row is
-    // written only at the end. Read without this, the group looked absent and a re-add recovery was
-    // requested for a group this device was building (LEAF-REFRESH-1, 2026-11-16). Its rows were not
-    // read through, so what they say of an ask stays as shown (`onGroupNotSwept`).
-    if (isGroupInCreation(groupId)) {
-      Log.d(
-        'Pending',
-        `${groupId.slice(0, 8)}... is being created by this device - its own Add admits these ${invitations.length} device(s)`
-      );
-      onGroupNotSwept?.(groupId);
-      continue;
-    }
-
     // "Ready to invite" = conversation active AND group present in local WASM.
     // After a recovery forgetGroup, the conversation stays active but the group
     // has left WASM: calling addMember would loop on "Group not found". We fall into the
@@ -1429,12 +1437,15 @@ export async function discoverMissingGroups(params: {
   // Include both ready and placeholder conversations to avoid recreating
   // the same pending entry on each login. Only active groups get placeholders
   // (soft-deleted tombstones are skipped via activeServerGroups above).
-  const localGroupIds = new Set([...conversations.values()].map((c) => c.id));
-
+  //
   // Read ONCE for the whole sweep and handed to the seam below, which owns the guard: a group this
   // device has already decided to leave is not "missing locally", it is on its way out
   // ({@link ensureConversationForServerGroup}). The question is per group, the round trip is not.
   const owedExits = await pendingGroupExitIds(params.storage);
+  // THE ROWS ARE READ AFTER THE LAST AWAIT, in the same synchronous turn as the creation marks
+  // below: a creation that wrote its row and released its mark during the read above is then seen
+  // with its row, never as unmarked and rowless.
+  const localGroupIds = new Set([...conversations.values()].map((c) => c.id));
   // A group this device is creating is listed and rowless by construction, not missing: the
   // creation writes its row (`groupsInCreation.ts`), and the seam below says so at debug.
   const missing = activeServerGroups.filter(

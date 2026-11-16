@@ -3775,10 +3775,23 @@ Both creation paths mark the group synchronously after `createRemoteGroup` and B
 server group deleted. A sweep can only see the group in an answer produced after the registration was
 committed, so any sweep that sees it sees the mark: `ensureConversationForServerGroup` answers
 `in-creation` and writes no placeholder (discovery also leaves it out of its "missing locally" count),
-and `processPendingInvitations` leaves the group's rows to the creation's Add, reporting it
-`onGroupNotSwept`. Both say so at debug. `groupCreation.sweepOverlap.test.ts` runs the two real
+and `processPendingInvitations` takes the group's rows out before it counts them (no `[PENDING] N
+pending invitation(s)` line for them) and reports the group `onGroupNotSwept`: they are left to the
+creation's own Add, and any row it does not answer - the Add is best-effort (a failed device read, a
+device not admitted, one registering after the read) - waits for the next sweep. Both say so at
+debug. Discovery reads its rows after its last await, in the same synchronous turn as the marks. `groupCreation.sweepOverlap.test.ts` runs the two real
 sweeps at the step where they overlapped - inside `registerMember`, and while the Add is staged - on
 both paths, and fails with the mark removed (`created` instead of `in-creation`).
+
+**The same window held a third overlap, with the history audit.** The connection pass audits, once,
+every local group this device has never asked a member about (`groupsOwingAudit`). A group created
+here was local from `create_group` on and unaudited, so the pass asked about it inside the creation
+(`11.723 auditing 1 group(s) that never have been`, `11.781 [HISTORY_RECONCILE] no member online for
+db92be7a... - will ask when one returns`) and asked again on the next connection. A group this device
+creates has no past anybody else could hold, so both creation paths now record it audited
+(`noteGroupsAudited`) BEFORE `createGroup` - the audit reads `getLocalGroups()` and the record in one
+turn, so the group is never local and owing. A delegated creation runs these same functions on the
+leader. The same test file reads the record at `createGroup` on both paths.
 
 ### A creation that is refused now says which refusal it was (2026-09-24)
 

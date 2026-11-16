@@ -17,6 +17,7 @@ import { createNewGroup, startNewConversation } from './groupCreation';
 import { isGroupInCreation } from './groupsInCreation';
 import { ensureConversationForServerGroup } from './serverGroupConversation';
 import { processPendingInvitations } from './actions';
+import { groupsOwingAudit, resetAuditRecord } from './historyReconcile';
 
 /**
  * THE CONNECTION SWEEPS RUN INSIDE A CREATION'S WINDOW, AND FIND NOTHING TO DO THERE.
@@ -89,7 +90,11 @@ function expectNothingTaken(sweep: Sweep | undefined, groupId: string) {
   // Its rows were not read through, so the asks shown for it stay as they are.
   expect(sweep!.onGroupNotSwept).toHaveBeenCalledWith(groupId);
   const lines = sweep!.log.mock.calls.map((c) => String(c[0]));
-  expect(lines.filter((l) => /Placeholder|absent locally|recovery requested/.test(l))).toEqual([]);
+  expect(
+    lines.filter((l) =>
+      /Placeholder|absent locally|recovery requested|pending invitation(s) to process/.test(l)
+    )
+  ).toEqual([]);
 }
 
 function groupMls(onRegistered: () => Promise<void>, onStaged: () => Promise<void>) {
@@ -224,5 +229,78 @@ describe('startNewConversation - the same window, on the DM path', () => {
     expect(outcome).toEqual({ ok: true, key: 'g-dm' });
     expectNothingTaken(afterRegister, 'g-dm');
     expect(isGroupInCreation('g-dm')).toBe(false);
+  });
+});
+
+/**
+ * A GROUP THIS DEVICE CREATES OWES NO HISTORY AUDIT - the second overlap LEAF-REFRESH-1 showed: the
+ * connection pass audited the group between its `create_group` and its Add (`no member online ... -
+ * will ask when one returns`), then asked it again on the next connection. The audit reads
+ * `getLocalGroups()` and the record in one turn, so the record must already hold the group the
+ * instant the group is local: read at `createGroup`, on both paths (a follower's creation is
+ * delegated to these same functions).
+ */
+describe('a created group is recorded as audited before it exists locally', () => {
+  it('createNewGroup', async () => {
+    resetAuditRecord('me', 'dev-1');
+    let owingAtCreate: string[] | undefined;
+    const { mls } = groupMls(
+      async () => {},
+      async () => {}
+    );
+    const local = new Set<string>();
+    mls.getLocalGroups = vi.fn(() => Array.from(local));
+    mls.createGroup = vi.fn(async (id: string) => {
+      owingAtCreate = groupsOwingAudit('me', 'dev-1', [id]);
+      local.add(id);
+    });
+
+    const outcome = await createNewGroup(
+      'Equipe',
+      args(mls, new SvelteMap<string, Conversation>()) as never
+    );
+
+    expect(outcome.ok).toBe(true);
+    expect(owingAtCreate).toEqual([]);
+  });
+
+  it('startNewConversation', async () => {
+    resetAuditRecord('me', 'dev-1');
+    let owingAtCreate: string[] | undefined;
+    const local = new Set<string>();
+    const mls = {
+      fetchUserDevices: vi.fn(async (uid: string) =>
+        uid === 'peer' ? [{ deviceId: 'peer-dev' }] : []
+      ),
+      getDeviceId: vi.fn(() => 'dev-1'),
+      createRemoteGroup: vi.fn(async () => 'g-dm2'),
+      registerMember: vi.fn(async () => {}),
+      createGroup: vi.fn(async (id: string) => {
+        owingAtCreate = groupsOwingAudit('me', 'dev-1', [id]);
+        local.add(id);
+      }),
+      getLocalGroups: vi.fn(() => Array.from(local)),
+      acquireAddLock: vi.fn(async () => true),
+      acquireAddLockAnswer: vi.fn(async () => 'taken'),
+      releaseAddLock: vi.fn(async () => {}),
+      getGroupMemberIdentities: vi.fn(async () => [] as string[]),
+      runUnderMlsLock: vi.fn((fn: () => Promise<unknown>) => fn()),
+      addMembersBulk: vi.fn(async () => ({
+        addedDeviceIds: ['peer-dev'],
+        skipped: [],
+        notAdmitted: [],
+        welcome: new Uint8Array([1]),
+      })),
+      sendWelcome: vi.fn(async () => {}),
+      deleteGroupOnServer: vi.fn(async () => {}),
+    };
+
+    const outcome = await startNewConversation(
+      'peer',
+      args(mls, new SvelteMap<string, Conversation>()) as never
+    );
+
+    expect(outcome.ok).toBe(true);
+    expect(owingAtCreate).toEqual([]);
   });
 });

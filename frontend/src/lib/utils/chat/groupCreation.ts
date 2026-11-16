@@ -23,6 +23,7 @@ import { dropGroupState } from './dropGroupState';
 import { logBestEffortGroupDeleteFailure } from './pendingGroupExits';
 import { holdsGroupState } from './groupUsability';
 import { markGroupInCreation } from './groupsInCreation';
+import { noteGroupsAudited } from './historyReconcile';
 import {
   CommitOutcomeUnknownError,
   FollowerTabCommitError,
@@ -199,6 +200,25 @@ async function readDevicesWithRetry(
 }
 
 /**
+ * A GROUP THIS DEVICE CREATES OWES NO HISTORY AUDIT, and is recorded as audited before it exists.
+ *
+ * The audit (`groupsOwingAudit`, run by every connection pass) asks a member whether this device holds
+ * the same history as everyone else, once per local group it has never asked about. A group this
+ * device creates has no past anybody else could hold, so the ask is empty by construction - and it was
+ * made: LEAF-REFRESH-1 (2026-11-16) showed a connection pass auditing a group between its
+ * `create_group` and its Add (`[HISTORY_RECONCILE] no member online for <g>... - will ask when one
+ * returns`), then asking it again on the next connection.
+ *
+ * WRITTEN BEFORE `createGroup`, never after: the audit reads `getLocalGroups()` and this record in
+ * one synchronous turn, so a group is never local and still owing. A creation that then fails leaves
+ * the id of a group nobody holds in the record, which nothing reads. Both creation paths run here on
+ * the leading tab, a follower's creation included (it is delegated to these same functions).
+ */
+function dischargeCreatedGroupAudit(mlsService: IMlsService, userId: string, groupId: string) {
+  noteGroupsAudited(userId, mlsService.getDeviceId(), [groupId]);
+}
+
+/**
  * Creates a new named MLS multi-user group on the server, initialises the local
  * MLS state, and automatically adds all other devices belonging to the current user
  * in a single bulk commit to avoid epoch fragmentation.
@@ -261,6 +281,7 @@ export async function createNewGroup(
     // The reverse failure is strictly better and already handled: a membership whose local group
     // never got created leaves a server-side orphan, which the outer catch deletes.
     await mlsService.registerMember(groupId, userId);
+    dischargeCreatedGroupAudit(mlsService, userId, groupId);
     await mlsService.createGroup(groupId);
 
     // Add own other devices to the group - use a single bulk commit to avoid
@@ -1447,6 +1468,7 @@ export async function startNewConversation(
     // its conversation once, at the end, for the same reason and after the same check.
     await mlsService.registerMember(groupId, userId);
     log(`[DM] Server membership registered for ${userId}`);
+    dischargeCreatedGroupAudit(mlsService, userId, groupId);
     await mlsService.createGroup(groupId);
     log(`[DM] Local MLS group created: ${groupId}`);
 
