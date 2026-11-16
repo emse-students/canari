@@ -3163,7 +3163,51 @@ describe('outbox uploads - a queued attachment shows its real progress and can b
     expect(mls.sendMessage).toHaveBeenCalledTimes(1);
   });
 
-  it('shows the next attempt as waiting after a transport failure, restarting from zero', async () => {
+  it('the figure of a restarted attempt never goes back (the iPhone 13 MB send, 2026-11-16)', async () => {
+    // Seen on the iPhone 12: 2 %, 50 %, then 6 % - the second attempt reported from zero. The bubble
+    // keeps the furthest point reached for the same body; a resumable attempt then starts from the
+    // server's committed bytes, so a restart is a pause of the bar, never a drop.
+    const storage = makeStorage([mediaEntry('m1')]);
+    const seen: number[] = [];
+    let call = 0;
+    const uploadMedia = vi.fn(async (_m: unknown, transport?: Transport) => {
+      call++;
+      const report = (loaded: number) => {
+        transport?.onProgress?.({ loaded, total: 2_000_000 });
+        seen.push(uploadViewOf('m1')!.loaded);
+      };
+      if (call === 1) {
+        report(400_000);
+        report(1_000_000);
+        throw new UploadNetworkError('/x');
+      }
+      report(120_000);
+      report(1_500_000);
+      return REF;
+    });
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['m1'])]]);
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService: makeMls(),
+        storage,
+        conversations,
+        uploadMedia: uploadMedia as never,
+        isGroupHealthy: () => true,
+      })
+    );
+
+    await outbox.flush();
+    // Waiting for the next attempt, the bytes so far are still the bubble's.
+    expect(uploadViewOf('m1')).toMatchObject({ phase: 'waiting', loaded: 1_000_000 });
+
+    storage._map.get('m1')!.nextAttemptAt = 0;
+    await outbox.flush();
+
+    expect(uploadMedia).toHaveBeenCalledTimes(2);
+    expect(seen).toEqual([400_000, 1_000_000, 1_000_000, 1_500_000]);
+  });
+
+  it('shows the next attempt as waiting after a transport failure', async () => {
     const storage = makeStorage([mediaEntry('w1')]);
     const uploadMedia = vi.fn().mockRejectedValue(new UploadNetworkError('/x'));
     const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['w1'])]]);

@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   RESUMABLE_MAX_ROUNDS,
+  RESUMABLE_PARTS_IN_FLIGHT,
   releaseUploadSession,
   sealBlobRange,
   uploadResumable,
@@ -158,7 +159,9 @@ describe('uploadResumable', () => {
       const id = row.last!.uploadId!;
       // The session was kept for the resume - never released on a transport failure.
       expect(server.sessions.get(id)!.closed).toBeUndefined();
-      expect(server.partsReceived(id)).toBe(cutAt - 1);
+      // Two parts are in flight (`RESUMABLE_PARTS_IN_FLIGHT`): the one beside the cut finishes and
+      // is kept, so the server holds every part but the cut one (the last has nothing beside it).
+      expect(server.partsReceived(id)).toBe(Math.min(cutAt, 3));
 
       // A "relaunch": a new call, with only what the row recorded.
       server.fault = () => undefined;
@@ -190,8 +193,9 @@ describe('uploadResumable', () => {
       log: quiet,
     }).catch(() => undefined);
     const id = row.last!.uploadId!;
-    // The server holds parts 0 and 1 though the client saw no answer for 1.
-    expect([...server.sessions.get(id)!.received]).toEqual([0, 1]);
+    // The server holds parts 0 and 1 though the client saw no answer for 1, and part 2, which was in
+    // flight beside it.
+    expect([...server.sessions.get(id)!.received].sort()).toEqual([0, 1, 2]);
     server.fault = () => undefined;
     const done = await up({
       plaintext,
@@ -201,7 +205,7 @@ describe('uploadResumable', () => {
       port: server.port(),
       log: quiet,
     });
-    // Parts 2 and 3 only: the server's fact said 0 and 1 were there.
+    // Part 3 only: the server's fact said 0, 1 and 2 were there.
     expect(server.partsReceived(id)).toBe(4);
     await decrypts(server, done.mediaId, done.keyHex, done.ivHex, plaintext);
   });
@@ -594,7 +598,7 @@ describe('uploadResumable, single-block (a post photo: ONE AES-GCM block, readab
     expect(sameBytes(await opensAsOneBlock(blob, done.keyHex, done.ivHex), plaintext)).toBe(true);
   });
 
-  it('a cut on part 3 of 4: the resume sends ONLY parts 3 and 4, and the block still opens', async () => {
+  it('a cut on part 3 of 4: the resume sends ONLY the part that was cut, and the block still opens', async () => {
     const server = new FakeSessionServer();
     const row = rowStore();
     const plaintext = plaintextOf();
@@ -609,7 +613,8 @@ describe('uploadResumable, single-block (a post photo: ONE AES-GCM block, readab
     const err = await up({ ...opts, port: server.port() }).catch((e: unknown) => e);
     expect(isTransportFailure(err)).toBe(true);
     const id = row.last!.uploadId!;
-    expect(server.partsReceived(id)).toBe(2);
+    // Parts 1, 2 and 4 (in flight beside the cut) are held; part 3 is owed.
+    expect(server.partsReceived(id)).toBe(3);
     server.fault = () => undefined;
     const done = await up({ ...opts, state: row.last, port: server.port() });
     expect(server.partsReceived(id)).toBe(4);
@@ -643,5 +648,105 @@ describe('uploadResumable, single-block (a post photo: ONE AES-GCM block, readab
     expect(row.last!.uploadId).not.toBe(segmentedState.uploadId);
     const blob = server.stored.get(done.mediaId)!;
     expect(sameBytes(await opensAsOneBlock(blob, done.keyHex, done.ivHex), plaintext)).toBe(true);
+  });
+});
+
+describe('uploadResumable, two parts in flight (2026-11-16)', () => {
+  it('keeps exactly RESUMABLE_PARTS_IN_FLIGHT parts on the wire, and the blob is whole', async () => {
+    const server = new FakeSessionServer();
+    const inner = server.port();
+    let onWire = 0;
+    let most = 0;
+    const port = {
+      request: async (...args: Parameters<typeof inner.request>) => {
+        if (args[0] !== 'PUT') return inner.request(...args);
+        onWire++;
+        most = Math.max(most, onWire);
+        // A turn of the event loop on the wire, so a serial writer would show ONE here.
+        await new Promise((r) => setTimeout(r, 1));
+        try {
+          return await inner.request(...args);
+        } finally {
+          onWire--;
+        }
+      },
+    };
+    const plaintext = plaintextOf(80_000);
+    const done = await up({
+      plaintext,
+      retentionClass: 'chat-reel',
+      persist: rowStore().persist,
+      port,
+    });
+    expect(most).toBe(RESUMABLE_PARTS_IN_FLIGHT);
+    expect(server.partsReceived()).toBe(
+      Math.ceil(segmentedCiphertextLength(plaintext.length) / PART)
+    );
+    await decrypts(server, done.mediaId, done.keyHex, done.ivHex, plaintext);
+  });
+
+  it('seals a single block ONCE, however many parts ask for it at the same time', async () => {
+    const server = new FakeSessionServer();
+    const encrypt = vi.spyOn(crypto.subtle, 'encrypt');
+    try {
+      await up({
+        plaintext: plaintextOf(),
+        encoding: 'single-block',
+        retentionClass: 'ephemeral',
+        persist: rowStore().persist,
+        port: server.port(),
+      });
+      expect(encrypt).toHaveBeenCalledTimes(1);
+    } finally {
+      encrypt.mockRestore();
+    }
+  });
+
+  it('reports committed bytes plus what is in flight, never backwards, from the server held bytes on a resume', async () => {
+    const server = new FakeSessionServer();
+    const row = rowStore();
+    const plaintext = plaintextOf();
+    let puts = 0;
+    server.fault = (method) => (method === 'PUT' && ++puts === 3 ? 'drop' : undefined);
+    await up({
+      plaintext,
+      retentionClass: 'chat-reel',
+      persist: row.persist,
+      port: server.port(),
+    }).catch(() => undefined);
+    const total = segmentedCiphertextLength(plaintext.length);
+    const held = [...server.sessions.get(row.last!.uploadId!)!.received].reduce(
+      (sum, i) => sum + Math.min(PART, total - i * PART),
+      0
+    );
+    server.fault = () => undefined;
+    const seen: number[] = [];
+    await up({
+      plaintext,
+      retentionClass: 'chat-reel',
+      state: row.last,
+      persist: row.persist,
+      port: server.port(),
+      transport: { onProgress: (p) => seen.push(p.loaded) },
+    });
+    // The resume's first figure is what the server holds, not zero.
+    expect(seen[0]).toBe(held);
+    expect([...seen].sort((a, b) => a - b)).toEqual(seen);
+    expect(seen.at(-1)).toBe(total);
+  });
+
+  it('logs the rate each round committed, for a device whose console cannot be read', async () => {
+    const server = new FakeSessionServer();
+    const lines: string[] = [];
+    await up({
+      plaintext: plaintextOf(),
+      retentionClass: 'chat-reel',
+      persist: rowStore().persist,
+      port: server.port(),
+      log: (l) => lines.push(l),
+    });
+    expect(
+      lines.some((l) => /round 1: \d+ bytes committed in \d+ ms \(\d+ KB\/s\), 4\/4 part/.test(l))
+    ).toBe(true);
   });
 });

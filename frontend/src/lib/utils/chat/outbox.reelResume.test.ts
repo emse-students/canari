@@ -580,7 +580,10 @@ describe.each([1, 3])(
       const hung = hangPart(w, 2, () => first.kill());
       await enqueueTake(first, N);
       await waitForEvent(hung.hit);
-      expect(w.server.partsReceived()).toBe(2);
+      // Two parts are in flight (`RESUMABLE_PARTS_IN_FLIGHT`): whether the last part, beside the hung
+      // one, reached the server before the kill is a race of the two lanes - so what is asserted is
+      // that the hung part is missing, and below that across both lives no part arrived twice.
+      expect([...w.server.sessions.values()][0].received.has(2)).toBe(false);
       w.server.fault = () => undefined;
 
       const second = life(w);
@@ -842,7 +845,9 @@ describe.each([1, 3])(
       const second = life(w);
       await cancelAll(second, N);
       await waitForEvent(() => expect(w.server.sessions.get(session)!.closed).toBe(true));
-      expect(w.server.partsReceived()).toBe(2);
+      // The hung part never landed; the one in flight beside it may have (two lanes, a race).
+      expect(w.server.sessions.get(session)!.received.has(2)).toBe(false);
+      expect(w.server.partsReceived()).toBeLessThan(PARTS);
       expect(w.sql.rows.size).toBe(0);
       await waitForEvent(async () => expect(await w.blobs.list()).toEqual([]));
     });
@@ -1358,8 +1363,13 @@ describe('one take, several conversations (RC-13)', () => {
     expect(w.server.stored.size).toBe(0);
     expect(w.events).toEqual([]);
     // The session's release is fire-and-forget in the outbox (`releaseSessionOf`), and no promise
-    // reaches the caller: the request reaching the server is the event to read.
-    await waitForEvent(() => expect(w.server.sent.some((r) => r.method === 'DELETE')).toBe(true));
+    // reaches the caller: the server's state is the event to read. EVERY SESSION OPENED IS GIVEN
+    // BACK - and whether one was opened at all is a race of the abort with the session's `init`
+    // (an abort that lands first opens none, and then no DELETE is owed): asserting "a DELETE was
+    // sent" failed two runs in five on main (2026-11-16), at that line.
+    await waitForEvent(() =>
+      expect([...w.server.sessions.values()].every((s) => s.closed)).toBe(true)
+    );
   });
 
   it('a withdrawal WHILE THE DRIVE READS THE TAKE never starts its transfer (checked right before the claim)', async () => {

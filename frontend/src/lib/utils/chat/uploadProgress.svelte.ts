@@ -44,9 +44,9 @@ import type { UnsentReason } from '$lib/db/types';
  * - `queued`: the entry is in the queue and has not started (its turn has not come, or the file is
  *   about to be read). A statement about the queue only, never about the network.
  * - `waiting`: the last attempt ended with NO ANSWER (a transport failure) or the link is known to be
- *   down, and the next one is queued. The bytes already sent are gone: the media route has no offset,
- *   so an attempt always restarts at zero - EXCEPT a chat reel, whose resumable session (RC-5) sends
- *   only the parts the server does not hold.
+ *   down, and the next one is queued. A file over one request body (and every chat reel) resumes
+ *   through a session, sending only the parts the server does not hold; a smaller one is one request
+ *   and is sent again whole.
  * - `repairing`: the entry is held until the conversation's group is sendable again (roster repair,
  *   re-add requested); the connection is fine.
  * - `retrying`: the last attempt failed for another reason (a server error, a local one) and the
@@ -68,7 +68,10 @@ export type UploadPhase =
 
 export interface UploadView {
   phase: UploadPhase;
-  /** Bytes of the ENCRYPTED body handed to the network in the current attempt. */
+  /**
+   * Bytes of the ENCRYPTED body moved so far - the furthest any attempt of this page life reached for
+   * this `total`, so it never goes back (the outbox's `advanceUpload`).
+   */
   loaded: number;
   /** Size of that body; 0 until the first progress event says. */
   total: number;

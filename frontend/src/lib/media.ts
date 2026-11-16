@@ -259,6 +259,29 @@ export function mediaTypeOf(mimeType: string): MediaType {
   return 'file';
 }
 
+/** The AES-GCM tag a single-block blob adds to its plaintext. */
+const SINGLE_BLOCK_TAG_BYTES = 16;
+
+/**
+ * HOW A QUEUED CHAT ATTACHMENT LEAVES (2026-11-16, the iPhone's 13 MB send that restarted at half):
+ * `null` when its blob fits ONE request body ({@link MEDIA_REQUEST_BODY_BUDGET_BYTES}) and keeps the
+ * single POST it always took (a photo's push thumbnail depends on that route); otherwise the blob
+ * format of a RESUMABLE SESSION - the format `encryptAndUpload` would have written, so a reader sees
+ * the same bytes either way. The legacy chunk route it replaces for these files opened a fresh
+ * uploadId per attempt: any cut, stall or kill sent the whole file again from byte 0.
+ */
+export function resumableEncodingFor(
+  plaintextBytes: number,
+  mimeType: string
+): ResumableBlobEncoding | null {
+  const segmented = writesSegmented(mimeType);
+  const blobBytes = segmented
+    ? segmentedCiphertextLength(plaintextBytes)
+    : plaintextBytes + SINGLE_BLOCK_TAG_BYTES;
+  if (blobBytes <= MEDIA_REQUEST_BODY_BUDGET_BYTES) return null;
+  return segmented ? SEGMENTED_MEDIA_ENCODING : 'single-block';
+}
+
 /** How many times `complete` is asked for ONE uploadId when its answer is lost. */
 const COMPLETE_ATTEMPTS = 3;
 
@@ -1027,6 +1050,53 @@ export class MediaService {
       ...(width && height ? { width, height } : {}),
       ...(done.encoding ? { encoding: done.encoding } : {}),
     };
+  }
+
+  /**
+   * Uploads a file the chat OUTBOX holds - the one route decision for a queued attachment:
+   * - a CHAT REEL: a `segmented-v1` resumable session (RC-5), as since it was built;
+   * - a file whose blob is over one request body ({@link resumableEncodingFor}): a resumable session
+   *   in the format `encryptAndUpload` would have written, so a cut, a stall or a kill costs the
+   *   parts the server does not hold, never the whole file again;
+   * - anything smaller: the single POST of {@link encryptAndUpload}.
+   *
+   * @param resume Where the session's state is persisted (the outbox row), and what a previous
+   *               attempt recorded. Absent, every file takes the non-resumable route.
+   */
+  async uploadQueuedAttachment(
+    bytes: Uint8Array,
+    file: { mimeType: string; fileName?: string },
+    token: () => Promise<string>,
+    dimensions: Partial<ImageDimensions> | undefined,
+    retentionClass: MediaRetentionClass,
+    resume?: {
+      state?: ResumableUploadState;
+      persist: (state: ResumableUploadState) => Promise<void>;
+    },
+    transport?: XhrUploadOptions
+  ): Promise<MediaRef> {
+    if (resume) {
+      const encoding =
+        retentionClass === 'chat-reel'
+          ? SEGMENTED_MEDIA_ENCODING
+          : resumableEncodingFor(bytes.byteLength, file.mimeType);
+      if (encoding) {
+        return this.uploadResumably(
+          bytes,
+          file,
+          token,
+          dimensions,
+          retentionClass,
+          { ...resume, encoding },
+          transport
+        );
+      }
+    }
+    // The view, not its buffer: a view over a larger buffer would upload the bytes around it too.
+    const blob = new File([bytes as Uint8Array<ArrayBuffer>], file.fileName ?? 'file', {
+      type: file.mimeType,
+    });
+    return this.encryptAndUpload(blob, await token(), dimensions, retentionClass, transport);
   }
 
   /**

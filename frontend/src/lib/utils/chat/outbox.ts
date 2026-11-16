@@ -683,9 +683,9 @@ export interface OutboxController {
   resumeGroup: (conversationId: string) => Promise<void>;
   /**
    * "Try this attachment again NOW" (a bubble's retry): skips its backoff, and abandons a transfer
-   * that is on the wire but stalled. The bytes already sent are lost - the media route has no
-   * offset - so a retry restarts the upload at zero; a chat reel's resumable session (RC-5) is the
-   * exception, and sends only the parts the server does not hold.
+   * that is on the wire but stalled. A file over one request body (and every chat reel) resumes
+   * through its session and sends only the parts the server does not hold; a smaller file is one
+   * request and is sent again whole.
    */
   retryUpload: (messageId: string) => void;
   /** Mark already-loaded messages whose id is still queued as `pending` (reload / history load). */
@@ -1119,6 +1119,22 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   /** {@link patchUploadView} on every bubble of `id` ({@link viewIdsOf}). */
   function patchUpload(id: string, patch: Parameters<typeof patchUploadView>[1]): void {
     for (const view of viewIdsOf(id)) patchUploadView(view, patch);
+  }
+
+  /**
+   * BYTES MOVED, NEVER BACKWARDS (2026-11-16): the iPhone's 13 MB send read 50 %, then 6 %, because
+   * every attempt reported from zero. A bubble's figure is the furthest point ANY attempt of this page
+   * life reached for the same body; a resumable attempt then reports from the server's committed
+   * bytes, so a restart costs at most the parts that were in flight - a pause of the bar, never a
+   * drop. A different `total` (another body) starts again. After a reload there is no view, and the
+   * first figure is the server's.
+   */
+  function advanceUpload(id: string, loaded: number, total: number): void {
+    for (const view of viewIdsOf(id)) {
+      const prev = viewOfUpload(view);
+      const floor = prev && prev.total === total ? prev.loaded : 0;
+      patchUploadView(view, { phase: 'uploading', loaded: Math.max(floor, loaded), total });
+    }
   }
 
   /** {@link clearUploadView} on every bubble of `id` ({@link viewIdsOf}). */
@@ -1913,12 +1929,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // Withdrawn (or retried) while it waited for a slot: nothing left the device.
       if (control.signal.aborted) throw new UploadAbortedError(control.signal.reason);
       logMlsMetric({ kind: 'outbox_upload_attempt', conversationId: entry.conversationId });
-      patchUpload(entry.id, {
-        phase: 'preparing',
-        loaded: 0,
-        total: 0,
-        attempt: entry.attempts + 1,
-      });
+      // `loaded`/`total` are KEPT: the figure of the previous attempt stays until this one passes it.
+      patchUpload(entry.id, { phase: 'preparing', attempt: entry.attempts + 1 });
       // The hint only: the transport abandons a dead transfer on its own, this says so earlier.
       // Started after the preparation, which moves no byte and is not a stall.
       let lastMoved = Date.now();
@@ -1945,7 +1957,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
             if (control.signal.aborted) return;
             lastMoved = Date.now();
             attemptLoaded = Math.max(attemptLoaded, loaded);
-            patchUpload(entry.id, { phase: 'uploading', loaded, total });
+            advanceUpload(entry.id, loaded, total);
           },
         },
         {
@@ -2323,8 +2335,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // The count is of CONSECUTIVE local failures: any other kind of hold breaks the run.
     if (!opts.local) unexpected.delete(entry.id);
     patchStatus(entry.id, 'pending');
-    // An attachment still to upload shows that its next attempt is queued (and starts from zero -
-    // except a chat reel's resumable session, which resumes at the parts the server lacks).
+    // An attachment still to upload shows that its next attempt is queued. Its bytes so far are kept
+    // in the view: a file over one request body resumes at the parts the server holds.
     // `quiet` when the payload was not read, so whether the upload already happened is not known.
     // THE LABEL IS THE HOLD'S TYPED REASON, never a guess: only a transport failure accuses the
     // network, only a "not now" answer the server; a group repair and any other failure each say
@@ -2333,7 +2345,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // no upload view is written for it: `unavailable` only ever names a TEXT's wait.
     const phase = opts.transport ? 'waiting' : opts.repair ? 'repairing' : 'retrying';
     if (!opts.quiet && outboxKindHoldsBlob(entry.kind) && !entry.media?.uploadedRef) {
-      patchUpload(entry.id, { phase, loaded: 0, attempt: entry.attempts + 1 });
+      patchUpload(entry.id, { phase, attempt: entry.attempts + 1 });
     } else if (isTypedEntry(entry)) {
       // A TYPED MESSAGE has no upload, so it says only what it waits for, and only when that is
       // the link or the server (R05, 2026-11-09): "en attente" alone read the same during a deploy
