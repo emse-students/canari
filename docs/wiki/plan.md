@@ -111,6 +111,7 @@ earliest version, as a checklist.
 - [ ] [overlays stacked by open order, not by rung](backlog.d/reading-owed-overlays-stacked-by-open-order-not-by-rung.md)
 - [ ] [a FIRST message from someone with no conversation yet notifies, end to end](backlog.d/reading-owed-a-first-message-from-someone-with-no-conversation-yet-notifies-end.md)
 - [ ] [openings for followers, WP-4](backlog.d/reading-owed-openings-for-followers-wp-4.md)
+- [ ] [screen share in a desktop live: the scenes, read with the owner in a real browser](backlog.d/reading-owed-screen-share-in-a-desktop-live-the-scenes-read-by-the-owner.md)
 - [ ] [the Emojis preference row and its neighbours at 390 pt, on a phone](backlog.d/p3-the-emojis-preference-row-squeezes-its-description-on-a-phone.md)
 - [ ] [the pre-live screen says a suspension before Start](backlog.d/reading-owed-the-pre-live-screen-says-a-suspension-before-start.md)
 - [ ] [one "server already unreachable" line per spell, read on a phone log after a real outage](backlog.d/p3-server-already-unreachable-is-logged-per-request.md)
