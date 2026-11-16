@@ -50,8 +50,8 @@ import { psql } from '../estate.mjs';
 import { errorDetail, finishObserved, record } from '../results.mjs';
 import { composeVerdict, invariantDetail, provokedFailures, rowMessageMark } from '../rowkit.mjs';
 import { commitSequence, settleNarration } from '../settlerows.mjs';
-import { LEAF_ROWS, STRAY_NARRATION, acceptedLine, cutDuringSubmit, ledgerNamesServer, refreshLandedOnce, refreshPremise, revokedLeafLeaves, sendsWaitForTheCommit, stageSurvivesReload, strayRemovals, unknownLine } from '../leafrows.mjs';
-import { GROUP_CREATION_NARRATION, REVOKED_REFUSALS, REVOKED_SIGN_OUT_NARRATION, awaitLine, consoleLines, stripStamp } from '../watch.mjs';
+import { LEAF_REVOKED_REFUSALS, LEAF_REVOKED_WIPE_NARRATION, LEAF_ROWS, LEAF_ROW_NARRATION, STRAY_NARRATION, acceptedLine, cutDuringSubmit, ledgerNamesServer, refreshLandedOnce, refreshPremise, revokedLeafLeaves, sendsWaitForTheCommit, stageSurvivesReload, strayRemovals, unknownLine } from '../leafrows.mjs';
+import { GROUP_CREATION_NARRATION, REVOKED_SIGN_OUT_NARRATION, awaitLine, consoleLines, revokedLogoutOnce, stripStamp } from '../watch.mjs';
 import { addMembers } from './addmember.mjs';
 import { armCut, cutHard } from './net.mjs';
 
@@ -286,9 +286,11 @@ const ACTIONS = {
     const last = JSON.parse(
       psql(`SELECT coalesce(json_agg(r), '[]'::json) FROM (SELECT "senderDeviceId" AS "deviceId", "baseEpoch" AS "atEpoch" FROM mls_commit_log WHERE "groupId" = '${c.group.id}' ORDER BY "baseEpoch" DESC LIMIT 1) r`)
     )[0] ?? null;
-    // THE ROW'S WHOLE WINDOW, not the instant of the call: the window opens at the row's start.
-    // WHOLE SECONDS: a `--since` with a fraction dropped this very REFUSE line on dev (measured 2026-11-16: the same window, 4 lines with .749Z and 5 with the whole second).
-    const windowFrom = new Date(Date.parse(c.startSince) - 2000).toISOString().replace(/\.\d+Z$/, 'Z');
+    // THE ROW'S WHOLE WINDOW, not the instant of the call: the window opens two seconds before the row's
+    // start, because the log's clock is the container's and the instant is the host's. Docker itself reads a
+    // fractional `--since` exactly (measured 2026-11-16 on the local estate, to the nanosecond), so the
+    // margin is for the clock offset, never for a fraction.
+    const windowFrom = new Date(Date.parse(c.startSince) - 2000).toISOString();
     const windowLines = commitLines(c.group.id, windowFrom);
     console.log(`[${id}] the gate's lines for the row group since ${windowFrom}: ${windowLines.length} (${windowLines.filter((l) => l.includes('REJECT')).length} REJECT); revoked device ${revoked}`);
     const refusalLines = windowLines.filter(
@@ -422,11 +424,18 @@ try {
   for (const f of failures) console.log(`[${id}] ${f}`);
   console.log(`[${id}] assertions: ${verdict}`);
   const observers = await observersOf(seats, {
+    // BOTH SEATS SAY THE FLOW'S OWN LINES (`LEAF_ROW_NARRATION`); the owner also its group's creation and the
+    // row's gate narration, and a revoked seat the lines of its own wipe, its one sign-out counted once.
     logs: {
-      [OWNER]: [...GROUP_CREATION_NARRATION, ...(out.narration ?? [])],
-      ...(out.revokedSeat ? { [out.revokedSeat]: REVOKED_SIGN_OUT_NARRATION } : {}),
+      [OWNER]: [...LEAF_ROW_NARRATION, ...GROUP_CREATION_NARRATION, ...(out.narration ?? [])],
+      [PEER]: [
+        ...LEAF_ROW_NARRATION,
+        ...(out.revokedSeat === PEER
+          ? [...REVOKED_SIGN_OUT_NARRATION, ...LEAF_REVOKED_WIPE_NARRATION, revokedLogoutOnce(() => consoleLines(seats.seat[PEER].cx))]
+          : []),
+      ],
     },
-    refusals: out.revokedSeat ? { [out.revokedSeat]: REVOKED_REFUSALS } : {},
+    refusals: out.revokedSeat ? { [out.revokedSeat]: LEAF_REVOKED_REFUSALS } : {},
     provoked: { [OWNER]: out.records ?? [] },
     offline: out.offline ? [OWNER] : [],
   });

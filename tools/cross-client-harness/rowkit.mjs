@@ -25,8 +25,9 @@ export const ROW_GROUPS = ['FLOOR', 'CC', 'DUP', 'OFF', 'KILL', 'GAP', 'RM', 'AD
  * `debris.mjs` allows exactly that letter.
  */
 export function rowStem(rowId) {
-  // `LEAF-REFRESH-2` is the one id with a second word (the plan's own spelling); its group is `LEAF`.
-  const m = /^([A-Z]+)(?:-REFRESH)?-(\d+)([a-z]?)$/.exec(String(rowId));
+  // `LEAF-REFRESH-2` is the one id with a second word (the plan's own spelling); its group is `LEAF`. Only
+  // that id is folded: `FLOOR-REFRESH-2` is not a row and stays refused.
+  const m = /^([A-Z]+)-(\d+)([a-z]?)$/.exec(String(rowId).replace(/^LEAF-REFRESH-/, 'LEAF-'));
   if (!m || !ROW_GROUPS.includes(m[1])) throw new Error(`rowStem: '${rowId}' is not a 1.4.1 row id (${ROW_GROUPS.join(' ')})`);
   return `${m[1]}${m[2]}${m[3]}`;
 }

@@ -22,6 +22,7 @@
  * W5 belong to the other rows and other sittings and are never opened here.
  */
 import { decidedAfter, firedAtLeast, resubmissionLine } from './settlerows.mjs';
+import { AUTH_TEARDOWN_NARRATION, DELIVERY_CROSSING_NARRATION, OVERLAY_STACK_NARRATION, REVOKED_REFUSALS, atLevels } from './watch.mjs';
 
 /**
  * The rows. `devices` is what `openSeats` opens, the first being the OWNER (the committer: the one
@@ -49,6 +50,84 @@ export const LEAF_ROWS = {
     note: "the revoked device is W7's own (a campaign-owned device minted by newdevice.mjs); W7 wipes itself on the revocation and is re-enrolled by hand afterwards",
   },
 };
+
+/**
+ * WHAT A LEAF-REFRESH ROW'S TWO BROWSER SEATS SAY WHILE IT MINTS A GROUP, ADDS THE PEER AND REOPENS
+ * ITS PAGES - given to BOTH seats of these rows and nowhere else.
+ *
+ * Read on LEAF-REFRESH-1, -2 and -4 against `dev.9ca790c` (2026-11-16), `PASS-DIRTY` on them. Every
+ * line is a decision the coding standard asks the app to log, said by the flow the row IS: opening
+ * the panels that mint and fill a group (the overlay stack), delivering one Welcome per device of the
+ * peer (`join push ->`, one per device, so a push is a per-device act and not a repeat), the peer's
+ * pending-invitation sync finding each of those devices already in the tree and vouching, a group
+ * view settling and asking once for the history of a short thread, and a reload booting the page
+ * again (the ledgers opened, the nicknames restated, the keyboard baseline, one reason per community
+ * for a history that is not asked or waits for a device: the bench accounts' other devices are
+ * offline by construction). A seat in front of the screen and idle asks for the notification
+ * permission once per inbound text (`permission is "default"`: the rig's profiles never granted it).
+ *
+ * THE SENTENCES ARE PINNED, AND ONLY THE HAPPY SPELLINGS: `join push -> ... NOT DELIVERED`, a
+ * `[GRAINE]` line that names a refusal or a removal, a `[PENDING]` line that is not the vouching one,
+ * and every `warn`/`error` of the same tags are not matched and stay dirt. No outcome of the refresh
+ * itself is forgiven here: the commit, the resubmission and the ledger are asserted by the judges.
+ */
+export const LEAF_ROW_NARRATION = [
+  ...OVERLAY_STACK_NARRATION,
+  // A reload meets the delivery crossing's ONE sentence per session (the socket and the pull both hand a row in); a live frame for an acknowledged row, which accuses the server, is not matched.
+  ...DELIVERY_CROSSING_NARRATION,
+  atLevels(['debug'], /^\[chat\.entry\] short thread: asking for older history \(window \d+\)$/),
+  atLevels(['debug'], /^\[ChatArea\] (?:older-history load|peer scrollback answer \(asked\)) retired by a conversation switch$/),
+  atLevels(['debug'], /^\[keyboardViewport\] baseline \d+ -> \d+ \(settled\)$/),
+  atLevels(['debug'], /^\[NICKNAME\] \d+ salon placement\(s\) changed$/),
+  atLevels(['info'], /^\[NICKNAME\] \d+ nickname\(s\) of \d+ conversation\(s\) restated for the notifications$/),
+  atLevels(['info'], /^\[CHAT_VIEW\] [0-9a-f]{8} entry settled: pinned=(?:true|false) isNearBottom=(?:true|false) newestVisible=(?:true|false) rows=\d+ fromBottom=\d+$/),
+  atLevels(['info'], /^\[GRAINE\] the history of community [0-9a-f]{8} is not asked: no other member, and none of our other devices on its key group is online to receive the request$/),
+  atLevels(['info'], /^\[GRAINE\] the history of community [0-9a-f]{8} waits for a device: \d+ member\(s\) answered "I hold nothing" from every device online, and each has another device on the key group, offline - asked at the next start$/),
+  atLevels(['log'], /^\[JOIN_PUSH\] [0-9a-f]{8}\.\.\. join push -> [0-9a-f]{8}…:\S+ \(addressable when its Welcome was answered\)$/),
+  atLevels(['debug'], /^\[TRUST\] KeyPackage for \S+ vetted: pinned$/),
+  atLevels(['log'], /^\[LEDGER\] opened the ledgers the MLS state carries for [0-9a-f]{8}\.\.\. - \d+ key\(s\)$/),
+  atLevels(['log'], /^\[PENDING\] \S+ already in tree for [0-9a-f]{8}… - invitation fulfilled, vouching$/),
+  // THE PEER'S SWEEP MEETING THE OWNER'S ADD LOCK: the Add that seats the peer holds the group's add lock, the peer's
+  // pending-invitation sweep finds it taken, skips and continues (`acquired=false` is the lock doing its job, srvlog.mjs).
+  atLevels(['log'], /^\[PENDING\] Group [0-9a-f]{8}…: lock held by another device - skip, its asks stay as shown$/),
+  atLevels(['log'], /^\[NOTIF\] Inbound in [0-9a-f]{8}… while the window is in front but idle \(no gesture for \d+ s\) - asking\.$/),
+  atLevels(['log'], /^\[NOTIF\] Not raised for [0-9a-f]{8}… - permission is "default"; asking\.$/),
+  // A history request of another member that NAMES one of the owner's OTHER devices (its phone): the web seat reads it,
+  // sees it is not the addressee and says why it does not answer. Said only when the peer asks while W6 is up.
+  atLevels(['debug'], /^\[GRAINE\] not answering [0-9a-f]{8}…'s request [0-9a-f]{8}… in community [0-9a-f]{8}: it names \S+, not this device - the requester saw it offline or outside the key group's tree$/),
+];
+
+/**
+ * WHAT THE REVOKED SEAT OF LEAF-REFRESH-4 SAYS WHILE IT ERASES ITSELF, beside `REVOKED_SIGN_OUT_NARRATION`.
+ *
+ * W7's own device is revoked while its page stays open, so its page runs `wipeRevokedDevice`: the
+ * auth store clears and drops its socket (`AUTH_TEARDOWN_NARRATION`), the composer, the form drafts,
+ * the local copies, the peer directory and the tab-commit store close (their databases are being
+ * deleted, "no key in hand"), the publish queue stops, the avatar token is cleared and the router
+ * replaces the entry it stood on with the origin it kept. Each is a step of the wipe.
+ * `[RESET] ... SURVIVED the wipe` and
+ * `could not clear` are in no list and stay dirt. Given to the revoked seat of -4 and no other.
+ */
+export const LEAF_REVOKED_WIPE_NARRATION = [
+  ...AUTH_TEARDOWN_NARRATION,
+  atLevels(['log', 'info'], /^\[COMPOSER\] signed out: staging of \d+, replies of \d+ and drafts of \d+ conversation\(s\) forgotten$/),
+  atLevels(['log', 'info'], /^\[FORM-DRAFT-COPY\] store closed: the database is being deleted$/),
+  atLevels(['log', 'info'], /^\[LOCAL-COPIES\] no key in hand - copies closed$/),
+  atLevels(['log', 'info'], /^\[PEER-NAMES\] (?:no key in hand - directory closed|\d+ epoch\(s\) ended \(sign-out\))$/),
+  atLevels(['log', 'info'], /^\[PUBLISH-QUEUE\] stopped$/),
+  atLevels(['info'], /^\[TAB-COMMIT\] (?:store closed: the database is being deleted|drain \(this tab is unavailable\))$/),
+  atLevels(['debug'], /^\[AvatarUrl\] avatar token cleared - avatar URLs unsigned$/),
+  atLevels(['debug'], /^\[backToOrigin\] entry \S+ replaced: origin kept \(\/[a-z]*\)$/),
+];
+
+/**
+ * THE REFUSALS THE REVOKED SEAT OF LEAF-REFRESH-4 IS TOLD TO PROVOKE: the revoked device's own reads
+ * (`REVOKED_REFUSALS`) and the commit the row's page script attempts from it, refused 403
+ * `DEVICE_REVOKED` - the row's own assertion, so the browser's echo of it is expected and necessary
+ * there. Matched on the commit route and the 403 only; the same 403 on any other route, or on any
+ * other row, is a finding.
+ */
+export const LEAF_REVOKED_REFUSALS = [...REVOKED_REFUSALS, { path: /^\/api\/mls\/commit$/, status: [403] }];
 
 /** The needle of the client's own `unknown` verdict on a resubmission - the kept stage. */
 export const unknownLine = (groupId, fromEpoch) => resubmissionLine(groupId, fromEpoch, 'unknown');

@@ -10,8 +10,12 @@
 import { rowGroupName, rowStem } from '../rowkit.mjs';
 import { isGroupDebris } from '../debris.mjs';
 import { commitSequence } from '../settlerows.mjs';
+import { ignoringExpectedLog, ignoringExpectedRefusal } from '../watch.mjs';
 import {
+  LEAF_REVOKED_REFUSALS,
+  LEAF_REVOKED_WIPE_NARRATION,
   LEAF_ROWS,
+  LEAF_ROW_NARRATION,
   SETTLING_LINE,
   STRAY_NARRATION,
   cutDuringSubmit,
@@ -56,6 +60,13 @@ try {
   refused = true;
 }
 ok('an id with another second word is not a row', refused);
+let refusedFold = false;
+try {
+  rowStem('FLOOR-REFRESH-2');
+} catch {
+  refusedFold = true;
+}
+ok('the REFRESH word is folded for LEAF only', refusedFold);
 
 console.log('the premise');
 ok('an own-commit leaf can be armed', refreshPremise({ at: 1, epoch: 1, leaf: 'ab' }).length === 0);
@@ -146,6 +157,55 @@ ok('no gate line for the refusal fails', failing(revokedLeafLeaves({ ...revoke, 
 ok('a removal committed by another device fails', failing(revokedLeafLeaves({ ...revoke, rowCommit: { deviceId: 'peer-dev', atEpoch: 4 } })) === 1);
 ok('a group that did not move fails', failing(revokedLeafLeaves({ ...revoke, serverEpoch: 4 })) === 1);
 ok('a revocation that failed fails', failing(revokedLeafLeaves({ ...revoke, deleted: { status: null } })) >= 1);
+
+console.log('the narration: each sentence read on 2026-11-16 is forgiven at its own level, and only its happy spelling');
+const rep = (unexplained, extra = {}) => ({ errors: [], warnings: [], unexplained, badHttp: [], exceptions: [], severe: [], wsEvents: [], ...extra });
+const flow = [
+  'debug: [03:07:50.000] [overlayStack] register Modal#3, depth 2',
+  'debug: [03:07:50.000] [historyOverlay] a navigation closes 1 open overlay(s)',
+  'debug: [03:07:50.000] [chat.entry] short thread: asking for older history (window 0)',
+  'debug: [03:07:50.000] [ChatArea] older-history load retired by a conversation switch',
+  'debug: [03:49:46.333] [ChatArea] peer scrollback answer (asked) retired by a conversation switch',
+  'debug: [03:07:50.000] [keyboardViewport] baseline 917 -> 917 (settled)',
+  'debug: [03:55:24.897] [TRUST] KeyPackage for f7a9bb80:web-f7a9bb80…-mvph014o-yj6l vetted: pinned',
+  'debug: [03:07:50.000] [NICKNAME] 30 salon placement(s) changed',
+  'info: [03:07:50.000] [NICKNAME] 2 nickname(s) of 1 conversation(s) restated for the notifications',
+  'info: [03:07:50.000] [CHAT_VIEW] 7961b78c entry settled: pinned=true isNearBottom=true newestVisible=false rows=0 fromBottom=0',
+  'info: [03:07:50.000] [GRAINE] the history of community 17cc181b is not asked: no other member, and none of our other devices on its key group is online to receive the request',
+  'info: [03:07:50.000] [GRAINE] the history of community f6220e7e waits for a device: 2 member(s) answered "I hold nothing" from every device online, and each has another device on the key group, offline - asked at the next start',
+  'log: [03:07:50.000] [JOIN_PUSH] 7961b78c... join push -> f7a9bb80…:web-f7a9bb80…-mvph014o-yj6l (addressable when its Welcome was answered)',
+  'log: [03:07:50.000] [LEDGER] opened the ledgers the MLS state carries for f7a9bb80... - 38 key(s)',
+  'log: [03:07:50.000] [PENDING] web-c71e1a5b…-mwigbyf0-0lx7 already in tree for 7961b78c… - invitation fulfilled, vouching',
+  'log: [03:07:50.000] [NOTIF] Inbound in 899e4e12… while the window is in front but idle (no gesture for 120 s) - asking.',
+  'log: [03:07:50.000] [NOTIF] Not raised for 899e4e12… - permission is "default"; asking.',
+  'log: [03:45:23.793] [PENDING] Group 19bbc4ba…: lock held by another device - skip, its asks stay as shown',
+  'log: [03:29:46.318] [QUEUE] delivery b8258a4e... arrived twice - the pull listed a row the socket had already handed in, before this device had sent its acknowledgement - the ordinary crossing, and that acknowledgement covers it; not decrypting it again.',
+  'debug: [03:27:46.877] [GRAINE] not answering c71e1a5b…\'s request 8fc8590d… in community f6220e7e: it names tauri-f7a9bb80…-mwhxtiln-rdtg, not this device - the requester saw it offline or outside the key group\'s tree',
+];
+ok('every observed flow line is forgiven', ignoringExpectedLog(rep(flow), LEAF_ROW_NARRATION).unexplained.length === 0);
+ok('at the wrong level it is dirt', ignoringExpectedLog(rep(['warn: [03:07:50.000] [JOIN_PUSH] 7961b78c... join push -> f7a9bb80…:web-x (addressable when its Welcome was answered)']), LEAF_ROW_NARRATION).unexplained.length === 1);
+ok('a push that was NOT DELIVERED stays dirt', ignoringExpectedLog(rep(['log: [03:07:50.000] [JOIN_PUSH] 7961b78c... NOT DELIVERED to f7a9bb80…:web-x - the server answered its Welcome offline']), LEAF_ROW_NARRATION).unexplained.length === 1);
+ok('a vouching of anything but "already in tree" stays dirt', ignoringExpectedLog(rep(['log: [03:07:50.000] [PENDING] web-x recovery request failed: 500']), LEAF_ROW_NARRATION).unexplained.length === 1);
+ok('a live frame the SERVER published twice stays dirt', ignoringExpectedLog(rep(['log: [03:07:50.000] [QUEUE] delivery b8258a4e... arrived twice - THE SERVER PUBLISHED THE SAME ROW TWICE']), LEAF_ROW_NARRATION).unexplained.length === 1);
+const wipe = [
+  'log: [03:07:50.000] [A] clear',
+  'log: [03:07:50.000] [A] ws-',
+  'log: [03:07:50.000] [COMPOSER] signed out: staging of 0, replies of 0 and drafts of 3 conversation(s) forgotten',
+  'log: [03:07:50.000] [FORM-DRAFT-COPY] store closed: the database is being deleted',
+  'log: [03:07:50.000] [LOCAL-COPIES] no key in hand - copies closed',
+  'log: [03:07:50.000] [PEER-NAMES] no key in hand - directory closed',
+  'log: [03:07:50.000] [PUBLISH-QUEUE] stopped',
+  'info: [03:07:50.000] [TAB-COMMIT] store closed: the database is being deleted',
+  'info: [03:07:50.000] [TAB-COMMIT] drain (this tab is unavailable)',
+  'debug: [03:07:50.000] [AvatarUrl] avatar token cleared - avatar URLs unsigned',
+  'debug: [03:07:50.000] [backToOrigin] entry ab12N replaced: origin kept (/posts)',
+];
+ok("the revoked seat's wipe steps are forgiven", ignoringExpectedLog(rep(wipe), LEAF_REVOKED_WIPE_NARRATION).unexplained.length === 0);
+ok('a wipe that SURVIVED stays dirt', ignoringExpectedLog(rep(['error: [RESET] the database SURVIVED the wipe']), LEAF_REVOKED_WIPE_NARRATION).unexplained.length === 1);
+ok('the wipe lines are not forgiven to a seat given only the flow list', ignoringExpectedLog(rep(wipe), LEAF_ROW_NARRATION).unexplained.length === wipe.length);
+const revokedEcho = { errors: ['Failed to load resource: the server responded with a status of 403 () <- POST https://dev.example/api/mls/commit'], badHttp: ['POST https://dev.example/api/mls/commit -> 403'] };
+ok("the revoked commit's 403 is forgiven on -4's revoked seat", ignoringExpectedRefusal(rep([], revokedEcho), LEAF_REVOKED_REFUSALS).clean);
+ok('the same 403 on another route stays a finding', !ignoringExpectedRefusal(rep([], { ...revokedEcho, badHttp: ['POST https://dev.example/api/mls/other -> 403'] }), LEAF_REVOKED_REFUSALS).clean);
 
 if (failures) {
   console.error(`\n${failures} leaf-refresh assertion(s) failed`);
