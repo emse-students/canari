@@ -1297,13 +1297,26 @@ saved as the two lists the server keeps (`respondentSettingsPayload`,
 **The snapshot** (`submissions.respondentIdentity`, migration 174,
 `apps/social-service/src/forms/respondent-identity.ts`): `{ source: 'account' | 'declared', lastName?,
 firstName?, cursus?: [{promo, formation}], status?: ('student'|'staff')[], campus? }`, holding only the
-fields the form joined or asked. For a member of a named form the values are read from core-service AT
-SUBMIT TIME (`PricingFactsService.accountIdentity` -> `GET internal/users/:id/respondent-identity`, an
-`INTERNAL_SECRET` route beside the pricing one), never from the request: a member's body carrying a
-declared field is refused `FORM_GUEST_IDENTITY_NOT_ASKED`. The read fails CLOSED (503, retry): an
-answer stored without the fields its form joins would say less than the form says it does; a typed 404
-(`RESPONDENT_UNKNOWN`) is an answer (joined empty, accused), a 404 without it is a core-service older
-than the route (`RESPONDENT_CORE_BEHIND`). A form joining nothing reads nothing and stores
+fields the form joined or asked. For a member of a named form the values are read from the ACCOUNT AT
+SUBMIT TIME, never from the request: a member's body carrying a declared field is refused
+`FORM_GUEST_IDENTITY_NOT_ASKED`. **Where they are read decides what the submit depends on** (lead,
+2026-11-16: the default path makes no cross-service call):
+
+- **The names and the campus** come from the `users` table social-service shares with core-service
+  (`FormsService.sharedAccountFields`, read as the responses list always read names). The default form
+  (the two names) therefore submits with core-service down or older than this release; an account the
+  table does not hold is joined empty, accused.
+- **"Promo et formation" and the status** come from core-service (`joinsNeedCore`,
+  `PricingFactsService.accountIdentity` -> `GET internal/users/:id/respondent-identity`, an
+  `INTERNAL_SECRET` route beside the pricing one), and only when the form ticks one of them. Their
+  columns (`cursus`, `promo`, `formation`, `posts`) ARE in the shared table; what is not is the RULE:
+  every cursus is `cursusViewsOf` (D32, the well-formed entries plus the legacy promo / formation pair),
+  the one reconciliation pricing reads too, and the status is derived from it. A second spelling here
+  could list a promo the same person is not priced by. That read fails CLOSED (503, retry - the client
+  words it "réessayez dans un instant", the form kept): an answer stored without the fields its form
+  joins would say less than the form says it does; a typed 404 (`RESPONDENT_UNKNOWN`) is an answer
+  (joined empty, accused), a 404 without it is a core-service older than the route
+  (`RESPONDENT_CORE_BEHIND`), which only a form ticking a cursus or a status can meet. A form joining nothing reads nothing and stores
 `{ source: 'account' }`, so a NULL snapshot means one thing only: an answer given before 174, whose
 names are read live, as every answer's always were (`respondentNames`, `legacyNameIds` - no backfill,
 no fallback: the NULL is the row's era). A payment retry that reuses its row re-reads the snapshot with
@@ -1364,7 +1377,7 @@ même"), as with 166: the fingerprint covers every column. An older editor's sav
 ([legacy-compatibility](../../legacy-compatibility.md#removal-once-minclientversion-passes-the-release-carrying-the-account-fields---a-form-editor-that-sends-guestfields-alone-2026-11-16)).
 
 Tests: `forms.service.respondent-identity.spec.ts` (the rule; the member snapshot read from the
-account, a declared field from a member refused, nothing read when nothing is joined; an anonymous
+account, a declared field from a member refused, nothing read when nothing is joined, a default form submitting with core-service down (names and campus from the shared table, core reached only for a cursus or a status); an anonymous
 member and a guest asked, refused until they answer; the create default; the export's columns in the
 client's words, a pre-174 answer named live, an older client's export in the default words and its
 answer taken "not declared"),

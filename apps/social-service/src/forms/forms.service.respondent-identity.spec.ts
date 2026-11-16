@@ -72,10 +72,15 @@ describe('the respondent account fields of a form', () => {
       }),
       count: jest.fn(() => Promise.resolve(0)),
     };
+    // The shared `users` table, as social-service reads it (same database as core-service).
+    const usersQuery = jest.fn((_sql: string, _params: unknown[]) =>
+      Promise.resolve([{ firstName: 'Marie', lastName: 'CURIE', campus: 'gardanne' }])
+    );
     const formRepo: any = {
       findOne: jest.fn(() => Promise.resolve(form)),
       save: jest.fn((x: unknown) => Promise.resolve(x)),
       create: jest.fn((x: unknown) => x),
+      manager: { query: usersQuery },
     };
     const submissionRepo: any = {
       count: jest.fn(() => Promise.resolve(0)),
@@ -108,7 +113,7 @@ describe('the respondent account fields of a form', () => {
       { enabled: () => false } as any,
       {} as any
     );
-    return { service, saved, formRepo, accountIdentity };
+    return { service, saved, formRepo, accountIdentity, usersQuery };
   }
 
   const code = async (p: Promise<unknown>): Promise<string | undefined> => {
@@ -217,6 +222,48 @@ describe('the respondent account fields of a form', () => {
         ],
         status: ['student', 'staff'],
         campus: 'gardanne',
+      });
+    });
+
+    it('submits a default named form with core-service unreachable: the names come from the shared table', async () => {
+      const { service, saved, accountIdentity, usersQuery } = makeService(baseForm());
+      accountIdentity.mockImplementation(() => Promise.reject(new Error('core-service is down')));
+      await service.submit('f1', { answers: { q1: 'vege' }, userId: 'u1' }, 'member');
+      expect(accountIdentity).not.toHaveBeenCalled();
+      expect(usersQuery).toHaveBeenCalledWith(expect.stringContaining('FROM users'), ['u1']);
+      expect(saved[0].respondentIdentity).toEqual({
+        source: 'account',
+        lastName: 'CURIE',
+        firstName: 'Marie',
+      });
+    });
+
+    it('reads the campus from the shared table too, and reaches core-service only for a cursus or a status', async () => {
+      const campus = makeService(baseForm({ respondentFields: ['firstName', 'campus'] }));
+      campus.accountIdentity.mockImplementation(() => Promise.reject(new Error('down')));
+      await campus.service.submit('f1', { answers: {}, userId: 'u1' }, 'member');
+      expect(campus.accountIdentity).not.toHaveBeenCalled();
+      expect(campus.saved[0].respondentIdentity).toEqual({
+        source: 'account',
+        firstName: 'Marie',
+        campus: 'gardanne',
+      });
+      for (const field of ['cursus', 'status']) {
+        const core = makeService(baseForm({ respondentFields: ['lastName', field] }));
+        await core.service.submit('f1', { answers: {}, userId: 'u1' }, 'member');
+        expect(core.accountIdentity).toHaveBeenCalledWith('u1');
+        expect(core.usersQuery).not.toHaveBeenCalled();
+      }
+    });
+
+    it('joins nothing, accused, for an account the shared table does not hold', async () => {
+      const { service, saved, usersQuery } = makeService(baseForm());
+      usersQuery.mockImplementation(() => Promise.resolve([]));
+      await service.submit('f1', { answers: {}, userId: 'u1' }, 'member');
+      expect(saved[0].respondentIdentity).toEqual({
+        source: 'account',
+        lastName: null,
+        firstName: null,
       });
     });
 

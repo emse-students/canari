@@ -101,6 +101,27 @@ export interface AccountIdentity {
   cursusViews: RespondentCursus[];
 }
 
+/**
+ * The part of an account social-service reads ITSELF from the shared `users` table (the same
+ * database as core-service, read as the responses list always read names): what a form joins of
+ * the names and the campus needs no other service.
+ */
+export type SharedAccountFields = Pick<AccountIdentity, 'firstName' | 'lastName' | 'campus'>;
+
+/**
+ * The account fields read from core-service instead: "Promo et formation" is every cursus through
+ * `cursusViewsOf` (D32: the well-formed entries plus the legacy promo / formation pair when no entry
+ * carries it), the ONE reconciliation pricing reads too, and the status is derived from those views
+ * and the posts. Their columns are in the shared table; the RULE lives in core-service, and a
+ * second spelling of it here could disagree with the price the same person is charged.
+ */
+const CORE_ACCOUNT_FIELDS: readonly AccountField[] = ['cursus', 'status'];
+
+/** Whether a form's joins need core-service (a cursus or a status), or the shared table is enough. */
+export function joinsNeedCore(joined: readonly AccountField[]): boolean {
+  return joined.some((f) => CORE_ACCOUNT_FIELDS.includes(f));
+}
+
 /** The account fields a form joins by default, and every form before migration 174 joined. */
 export const DEFAULT_ACCOUNT_FIELDS: AccountField[] = ['lastName', 'firstName'];
 
@@ -174,9 +195,17 @@ export function accountStatuses(account: AccountIdentity): RespondentStatus[] {
  */
 export function accountSnapshot(
   joined: readonly AccountField[],
-  account: AccountIdentity | null
+  account: AccountIdentity | SharedAccountFields | null
 ): RespondentIdentity {
   const snapshot: RespondentIdentity = { source: 'account' };
+  const full = (field: AccountField): AccountIdentity | null => {
+    if (!account) return null;
+    if (!('cursusViews' in account)) {
+      // `joinsNeedCore` routes a cursus or a status to core-service: reaching here is a caller bug.
+      throw new Error(`accountSnapshot: ${field} joined from the shared table alone`);
+    }
+    return account;
+  };
   for (const field of joined) {
     switch (field) {
       case 'lastName':
@@ -186,13 +215,13 @@ export function accountSnapshot(
         snapshot.firstName = account?.firstName ?? null;
         break;
       case 'cursus':
-        snapshot.cursus = (account?.cursusViews ?? []).map((c) => ({
+        snapshot.cursus = (full(field)?.cursusViews ?? []).map((c) => ({
           promo: c.promo ?? null,
           formation: c.formation ?? null,
         }));
         break;
       case 'status':
-        snapshot.status = account ? accountStatuses(account) : [];
+        snapshot.status = account ? accountStatuses(full(field)!) : [];
         break;
       case 'campus':
         snapshot.campus = account?.campus ?? null;

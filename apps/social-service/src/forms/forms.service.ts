@@ -138,6 +138,7 @@ import {
   askedDeclaredFields,
   declaredIdentityFor,
   joinedAccountFields,
+  joinsNeedCore,
   legacyNameIds,
   predatesDeclaredFields,
   identityCells,
@@ -145,6 +146,7 @@ import {
   respondentNames,
   storedRespondentFields,
   type RespondentIdentity,
+  type SharedAccountFields,
 } from './respondent-identity';
 import {
   describeCursus,
@@ -4334,11 +4336,42 @@ export class FormsService {
     declaredIdentityFor([], input, form.id);
     const joined = joinedAccountFields(form);
     if (joined.length === 0 || !input.userId) return accountSnapshot([], null);
-    const account = await this.pricingFacts.accountIdentity(input.userId);
+    // The names and the campus are read here, from the shared table: the default form (the two
+    // names) reaches no other service. Only a cursus or a status asks core-service its rule.
+    const core = joinsNeedCore(joined);
+    const account = core
+      ? await this.pricingFacts.accountIdentity(input.userId)
+      : await this.sharedAccountFields(input.userId);
     this.logger.debug(
-      `[FORMS] submit form=${form.id.slice(0, 8)} joins ${joined.join(',')} from the account`
+      `[FORMS] submit form=${form.id.slice(0, 8)} joins ${joined.join(',')} from the account ` +
+        `(${core ? 'core-service' : 'shared users table'})`
     );
     return accountSnapshot(joined, account);
+  }
+
+  /**
+   * The names and the campus of an account, from the `users` table social-service shares with
+   * core-service - read as the responses list reads names (`legacyNames`). Null, accused, for an
+   * account the table does not hold (erased between sign-in and submit): joined empty, as
+   * core-service's `RESPONDENT_UNKNOWN` is.
+   */
+  private async sharedAccountFields(userId: string): Promise<SharedAccountFields | null> {
+    const rows: SharedAccountFields[] = await this.formRepo.manager.query(
+      `SELECT "firstName", "lastName", campus FROM users WHERE id = $1`,
+      [userId]
+    );
+    const row = rows[0];
+    if (!row) {
+      this.logger.warn(
+        `[FORMS] respondent identity MISS user=${userId.slice(0, 8)} - no such row in users, joined empty`
+      );
+      return null;
+    }
+    return {
+      firstName: row.firstName ?? null,
+      lastName: row.lastName ?? null,
+      campus: row.campus ?? null,
+    };
   }
 
   /**

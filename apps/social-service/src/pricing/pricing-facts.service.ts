@@ -187,7 +187,8 @@ export class PricingFactsService {
 
   /**
    * The account fields a form joins to a member's answer (`forms/respondent-identity.ts`, owner
-   * 2026-11-16), read from core-service AT SUBMIT TIME - never from the request, so a respondent
+   * 2026-11-16) when it ticks a cursus or a status (`joinsNeedCore`; the names and the campus are read
+   * from the shared `users` table, `FormsService.sharedAccountFields`), read from core-service AT SUBMIT TIME - never from the request, so a respondent
    * cannot send another name or promo than their account's. Here because this is the one place
    * social-service reads a person's identity-provider profile from core-service.
    *
