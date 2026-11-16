@@ -4917,6 +4917,7 @@
   "reel_sendto_failed_in_unnamed": "Une vidéo n'a pas pu être envoyée dans l'une des conversations choisies : ouvrez-la pour voir pourquoi.",
   "reel_sendto_failed_in_many": "La vidéo n'a pas pu être envoyée dans {count} conversations : ouvrez-les pour voir pourquoi.",
   "reel_sendto_failed_in_chosen": "La vidéo n'a pas pu être envoyée dans les conversations choisies : ouvrez-les pour voir pourquoi.",
+  "reel_sendto_photo_partial": "La photo n'a pas pu être mise en file dans {failed} des {total} conversations choisies.",
   "reel_sendto_delete_everywhere_skipped": [
     {
       "declarations": [

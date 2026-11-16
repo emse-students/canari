@@ -23,9 +23,13 @@ vi.mock('$lib/stores/auth', async (importOriginal) => ({
   signOutGeneration: () => signOut.count,
 }));
 
+/** The conversations whose queue refuses the entry (a refusal that is NOT a durable write). */
+const refusedIn = vi.hoisted(() => ({ ids: [] as string[] }));
 vi.mock('$lib/utils/chat/outbox', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/utils/chat/outbox')>()),
-  enqueueOutboxMessage: async () => {},
+  enqueueOutboxMessage: async (e: { conversationId: string }) => {
+    if (refusedIn.ids.includes(e.conversationId)) throw new Error('the queue refused it');
+  },
   applyOutboxPendingStatuses: async () => {},
 }));
 
@@ -104,6 +108,7 @@ async function freshMessaging() {
 
 beforeEach(() => {
   signOut.count = 0;
+  refusedIn.ids = [];
 });
 
 describe('sendImageTo (D-photo)', () => {
@@ -121,6 +126,37 @@ describe('sendImageTo (D-photo)', () => {
     for (const key of ['dm-a', 'group-b', 'elsewhere']) {
       expect(messaging.pendingMediaFilesFor(key)).toEqual([]);
     }
+  });
+
+  it('a reply armed in a chosen conversation stays armed: the photo is not an answer to it', async () => {
+    const messaging = await freshMessaging();
+    const entries: OutboxEntry[] = [];
+    const ctx = makeContext(entries);
+    const armed = { id: 'm-1', senderId: 'peer', content: 'hello', timestamp: new Date() };
+    messaging.handleReply('dm-a', armed as never);
+    expect(await messaging.sendImageTo(photo(), ['dm-a'], ctx)).toBe(1);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].replyTo).toBeUndefined();
+    expect(messaging.replyFor('dm-a')?.id).toBe('m-1');
+  });
+
+  it("one conversation's refused write is its own: counted out, said at error, never staged, no banner", async () => {
+    const messaging = await freshMessaging();
+    const entries: OutboxEntry[] = [];
+    const ctx = makeContext(entries);
+    // The member is looking at the conversation whose write fails: still nothing goes into its composer.
+    (ctx as { selectedNow: () => string }).selectedNow = () => 'group-b';
+    refusedIn.ids = ['group-b'];
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(await messaging.sendImageTo(photo(), ['group-b', 'dm-a'], ctx)).toBe(1);
+    // Its placeholder was withdrawn; the other conversation's photo went.
+    expect(ctx.conversations.get('group-b')!.messages).toEqual([]);
+    expect(ctx.conversations.get('dm-a')!.messages).toHaveLength(1);
+    expect(messaging.pendingMediaFilesFor('group-b')).toEqual([]);
+    const banners = (ctx.setSendError as ReturnType<typeof vi.fn>).mock.calls.filter(([s]) => s);
+    expect(banners).toEqual([]);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('camera photo NOT queued'));
+    error.mockRestore();
   });
 
   it('answers null and sends nothing when no chosen conversation is held', async () => {

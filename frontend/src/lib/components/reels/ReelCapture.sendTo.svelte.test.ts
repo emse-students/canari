@@ -308,6 +308,21 @@ describe('"Envoyer a..." on the camera tab (RC-12)', () => {
     expect(target.querySelector('[data-reel-review]')).toBeNull();
   });
 
+  it('D-photo: a photo queued in only SOME conversations says how many it missed, and the take still ends', async () => {
+    host.sendImage.mockResolvedValueOnce(1);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { target, tap } = await render();
+    await tap();
+    await click(target, '[data-reel-next]');
+    await click(target, '[data-reel-send-row="g-1"]');
+    await click(target, '[data-reel-send-row="g-2"]');
+    await click(target, '[data-reel-send-submit]');
+    expect(toasts()).toContain(m.reel_sendto_photo_partial({ failed: 1, total: 2 }));
+    // Already in the other conversation: a second press would send it there twice.
+    expect(target.querySelector('[data-reel-review]')).toBeNull();
+    warn.mockRestore();
+  });
+
   it('D-photo: a photo the host could not hand anywhere is said, and the sheet stays', async () => {
     host.sendImage.mockResolvedValueOnce(null);
     const { target, tap } = await render();

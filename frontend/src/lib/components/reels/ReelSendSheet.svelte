@@ -137,35 +137,48 @@
     }
   });
 
-  const candidates = $derived(
+  /**
+   * EVERY CONVERSATION THE SHEET LISTS, whatever the search says: what a tick must still belong to,
+   * and where a ticked target's chip reads its name - a chip hidden from the filtered rows by the
+   * search is still named, never shown as its raw key (iPhone 12 reading, 2026-11-16).
+   */
+  const listed = $derived(
     reelSendCandidates({
       conversations: host.conversations(),
       currentUserId: host.userId(),
       peerNames,
-      query,
+      query: '',
       blockedPeerIds,
     })
   );
-  const sections = $derived(reelSendSections(candidates, query));
-  /** Every conversation the sheet lists, whatever the search says: what a tick must still belong to. */
-  const listedKeys = $derived(
-    new Set(
-      reelSendCandidates({
-        conversations: host.conversations(),
-        currentUserId: host.userId(),
-        peerNames,
-        query: '',
-        blockedPeerIds,
-      }).map((c) => c.key)
-    )
+  /** The rows the search keeps (all of them with no search). */
+  const candidates = $derived(
+    query.trim()
+      ? reelSendCandidates({
+          conversations: host.conversations(),
+          currentUserId: host.userId(),
+          peerNames,
+          query,
+          blockedPeerIds,
+        })
+      : listed
   );
-  /** THE SEND SET IS selected AND currently listed: a tick on a row that is no longer one is dropped. */
-  const sendKeys = $derived(chatsBlocked ? [] : selected.filter((k) => listedKeys.has(k)));
+  const sections = $derived(reelSendSections(candidates, query));
+  const listedByKey = $derived(new Map(listed.map((c) => [c.key, c])));
+  /**
+   * THE SEND SET IS selected AND currently listed, in tick order: a tick on a row that is no longer
+   * one is dropped. Each carries its full-list row, so its chip is named whatever the search hides.
+   */
+  const sendTargets = $derived(
+    chatsBlocked
+      ? []
+      : selected.flatMap((k) => {
+          const cand = listedByKey.get(k);
+          return cand ? [cand] : [];
+        })
+  );
+  const sendKeys = $derived(sendTargets.map((c) => c.key));
   const count = $derived(sendKeys.length + (feedSend ? 1 : 0));
-  const labelOf = (key: string) =>
-    candidates.find((c) => c.key === key)?.label ??
-    [...host.conversations()].find(([k]) => k === key)?.[1].name ??
-    key;
 
   // A GROUP'S ROW NAMES A FEW MEMBERS (owner, 2026-11-16). Read from the LOCAL tree, no server call;
   // a group this device does not hold yet (not `active`) is not asked - its tree is not here.
@@ -336,15 +349,15 @@
     {/if}
     {#if sendKeys.length > 0}
       <ul class="mb-2 flex gap-2 overflow-x-auto" data-reel-send-chips>
-        {#each sendKeys as key (key)}
+        {#each sendTargets as target (target.key)}
           <li class="shrink-0">
             <button
               type="button"
               class="bg-cn-bg border-cn-border text-text-main flex items-center gap-1 rounded-full border py-1 pr-2 pl-3 text-xs"
-              aria-label={m.reel_sendto_chip_remove({ name: labelOf(key) })}
-              onclick={() => toggleTarget(key)}
+              aria-label={m.reel_sendto_chip_remove({ name: target.label })}
+              onclick={() => toggleTarget(target.key)}
             >
-              <span class="max-w-32 truncate"><EmojiText text={labelOf(key)} /></span>
+              <span class="max-w-32 truncate"><EmojiText text={target.label} /></span>
               <X size={14} strokeWidth={2.5} />
             </button>
           </li>

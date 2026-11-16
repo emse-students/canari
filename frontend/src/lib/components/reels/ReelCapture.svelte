@@ -564,7 +564,22 @@
         return;
       }
       queuedClip = clip;
-      showToast(m.reel_sendto_sending({ count: handed }), 'info');
+      // A PARTIAL SEND IS SAID, never counted as whole: the photo is already in the others, so the
+      // take still ends (a second press would send it to them twice).
+      if (handed < targetKeys.length) {
+        console.warn(
+          `[reel-capture] send-to: the photo was queued in ${handed} of ${targetKeys.length} conversation(s)`
+        );
+        showToast(
+          m.reel_sendto_photo_partial({
+            failed: targetKeys.length - handed,
+            total: targetKeys.length,
+          }),
+          'warning'
+        );
+      } else {
+        showToast(m.reel_sendto_sending({ count: handed }), 'info');
+      }
       const stillHere =
         !destroyed && capture.kind === 'review' && capture.clip === clip && sendOpen;
       if (!stillHere) {

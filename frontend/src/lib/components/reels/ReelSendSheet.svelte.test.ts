@@ -31,7 +31,8 @@ vi.mock('$lib/users/blocks', () => ({
 const knownNames = vi.hoisted(() => ({ byId: {} as Record<string, string> }));
 vi.mock('$lib/utils/users/displayName', () => ({
   resolveUserDisplayName: async (id: string) => knownNames.byId[id] ?? null,
-  getUserDisplayNameSync: (_id: string, fallback: string) => fallback,
+  getUserDisplayNameSync: (_id: string, fallback?: string) => fallback ?? 'Utilisateur inconnu',
+  peekUserDisplayName: () => null,
 }));
 vi.mock('$lib/components/shared/Avatar.svelte', async () => ({
   default: (await import('./AvatarStub.test-helper.svelte')).default,
@@ -217,6 +218,30 @@ describe('ReelSendSheet', () => {
     input.dispatchEvent(new Event('input', { bubbles: true }));
     await settle();
     expect(rowKeys()).toEqual(['d-1']);
+  });
+
+  it('a ticked target the search hides keeps its NAME on its chip, never its raw id (iPhone 12, 2026-11-16)', async () => {
+    // A DM whose stored name is the peer's raw id: its label comes from the fetched display name.
+    const peer = '43319a65-1d2e-4f00-8a00-000000000001';
+    rows.set(
+      'd-hex',
+      convo('d-hex', peer, 7, { conversationType: 'direct', directPeerId: peer })[1]
+    );
+    knownNames.byId = { [peer]: 'Canari Test Delta' };
+    await open();
+    row('d-hex').click();
+    await settle();
+    const chip = () => document.querySelector('[data-reel-send-chips] button')!;
+    expect(chip().textContent).toContain('Canari Test Delta');
+    const input = document.querySelector<HTMLInputElement>('[data-reel-send-search]')!;
+    input.value = 'old';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await settle();
+    expect(rowKeys()).toEqual(['g-old']);
+    expect(chip().textContent).toContain('Canari Test Delta');
+    expect(chip().textContent).not.toContain('43319a65');
+    expect(chip().getAttribute('aria-label')).toContain('Canari Test Delta');
+    knownNames.byId = {};
   });
 
   it('leaves out the DM of a person the member blocked', async () => {

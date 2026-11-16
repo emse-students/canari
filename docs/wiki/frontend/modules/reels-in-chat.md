@@ -1743,7 +1743,17 @@ and its one file) is unchanged.
   conversation - a photo is small, and the one-file sharing (15.5) is the outbox's VIDEO take, which an
   image does not enter; with "Publier" ticked too, the post is its own upload and the sheet does not
   say "the published video itself". A conversation not held here is skipped, a sign-out during the
-  preparation sends nothing.
+  preparation sends nothing. **Each send is made `elsewhere`** (`handleSendChat` `opts.elsewhere`,
+  adversarial review 2026-11-17): the photo was not written in that conversation's composer, so the
+  reply armed there stays armed (it used to be consumed and the photo went out as an answer to it), a
+  refused file is never re-staged into it, no banner is raised on the conversation on screen, and the
+  answer is exact - `true` only when the file was queued (a file-only send used to answer `undefined`
+  either way, so a refused conversation was counted as sent). A refusal in some conversations is said
+  in a toast naming how many it missed (`reel_sendto_photo_partial`), and the take ends all the same:
+  the photo is already in the others. One send tone for the whole press.
+- **A ticked target's chip is named from the FULL list** (`listed`, the rows with no search), never
+  from the rows the search keeps: a target the search hid used to fall back to the conversation's
+  stored name, a raw id for a DM (iPhone 12 reading, 2026-11-16).
 - **The list** (`ReelSendSheet.svelte`, built on the share picker's rows - owner: *"reprendre le travail
   déjà utilisé pour share"*): the search at the top; a "CanaReels" section with the one row "Publier"
   (not "Publier sur CanaReels" - owner: *"on peut juste faire Publier"*); "Récents", the first

@@ -4917,6 +4917,7 @@
   "reel_sendto_failed_in_unnamed": "A video could not be sent to one of the conversations you chose: open it to see why.",
   "reel_sendto_failed_in_many": "The video could not be sent to {count} conversations: open them to see why.",
   "reel_sendto_failed_in_chosen": "The video could not be sent to the conversations you chose: open them to see why.",
+  "reel_sendto_photo_partial": "The photo could not be queued in {failed} of the {total} chosen conversations.",
   "reel_sendto_delete_everywhere_skipped": [
     {
       "declarations": [
