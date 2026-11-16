@@ -13,6 +13,7 @@ import { workspaceScope } from '$lib/mls-client/distributionScope';
 
 const sendMessage = vi.fn();
 const sealChannelMessage = vi.fn();
+const openChannelMessagePage = vi.fn();
 
 vi.mock('$lib/utils/apiFetch', () => ({
   apiFetch: vi.fn(),
@@ -30,7 +31,7 @@ vi.mock('$lib/services/ChannelService', async (importOriginal) => {
 
 vi.mock('$lib/utils/graine/channelSeal', async (importOriginal) => {
   const actual = await importOriginal<typeof import('$lib/utils/graine/channelSeal')>();
-  return { ...actual, sealChannelMessage };
+  return { ...actual, sealChannelMessage, openChannelMessagePage };
 });
 
 const noteMissingSeed = vi.fn();
@@ -313,5 +314,55 @@ describe('UnreadableRowTally', () => {
     new UnreadableRowTally(CHANNEL).report();
 
     expect(warn).not.toHaveBeenCalled();
+  });
+});
+
+describe('decodeChannelMessagePage while the key group drains', () => {
+  it('defers a row whose seed is missing - unwarned and unasked - and reports every other outcome', async () => {
+    const { decodeChannelMessagePage, UnreadableRowTally } =
+      await import('$lib/utils/chat/channelCrypto');
+    const { GraineSessionUnavailableError, GraineBelowFirstIndexError } =
+      await import('$lib/utils/graine/channelSeal');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    openChannelMessagePage.mockResolvedValue([
+      { ok: false, error: new GraineSessionUnavailableError('sess-queued', RAW) },
+      { ok: false, error: new GraineBelowFirstIndexError('sess-old', 1, 4) },
+    ]);
+    const rows = [
+      { id: 'r-queued', senderId: 'bob', createdAt: '2026-11-14T10:00:00Z' },
+      { id: 'r-old', senderId: 'bob', createdAt: '2026-11-14T09:00:00Z' },
+    ] as never;
+    const tally = new UnreadableRowTally(CHANNEL);
+    const deferred = new Set<number>();
+
+    const out = await decodeChannelMessagePage(CHANNEL, rows, 'me', tally, deferred);
+    tally.report();
+
+    expect(out).toEqual([null, null]);
+    expect([...deferred]).toEqual([0]);
+    // The deferred row is not "missing" yet: its seed may be a frame of the queue.
+    expect(noteMissingSeed).not.toHaveBeenCalled();
+    expect(tally.rowsOf('missing seed')).toEqual([]);
+    // Any other class is said as before.
+    expect(tally.rowsOf('below the handover floor')).toEqual(['r-old']);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('without the set, a missing seed is reported and asked for, exactly as before', async () => {
+    const { decodeChannelMessagePage, UnreadableRowTally } =
+      await import('$lib/utils/chat/channelCrypto');
+    const { GraineSessionUnavailableError } = await import('$lib/utils/graine/channelSeal');
+    openChannelMessagePage.mockResolvedValue([
+      { ok: false, error: new GraineSessionUnavailableError('sess-gone', RAW) },
+    ]);
+    const tally = new UnreadableRowTally(CHANNEL);
+    await decodeChannelMessagePage(
+      CHANNEL,
+      [{ id: 'r-gone', senderId: 'bob', createdAt: '2026-11-14T10:00:00Z' }] as never,
+      'me',
+      tally
+    );
+    expect(tally.rowsOf('missing seed')).toEqual(['r-gone']);
+    expect(noteMissingSeed).toHaveBeenCalledTimes(1);
   });
 });
