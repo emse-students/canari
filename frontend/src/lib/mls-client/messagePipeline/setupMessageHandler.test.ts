@@ -64,6 +64,7 @@ import { m } from '$lib/paraglide/messages';
 import * as codec from '$lib/proto/codec';
 import * as messageUtils from '$lib/utils/chat/messageUtils';
 import { createMlsServiceStub } from '../test/fixtures/mlsServiceStub';
+import { openExternalCommitWindow } from '$lib/utils/chat/externalCommitVerdict';
 import {
   createTestConversations,
   createTestMessageReactions,
@@ -988,6 +989,75 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     expect(onGroupReady).toHaveBeenCalledWith(groupId);
   });
 
+  it("a conversation Welcome arriving while this device's own external commit awaits the gate installs once it is refused", async () => {
+    // The key group's race (iPhone 12, 2026-11-16) on the conversation path: the same predicate.
+    const deps = baseDeps();
+    const mls = deps.mlsService as any;
+    let held = [groupId];
+    mls.getLocalGroups = vi.fn(() => held);
+    mls.isGroupActive = vi.fn().mockResolvedValue(true);
+    mls.processWelcome = vi.fn().mockResolvedValue(groupId);
+    mls.getDeviceId = vi.fn().mockReturnValue('dev-x');
+    const closeWindow = openExternalCommitWindow(mls, groupId);
+    setupMessageHandler(deps as any);
+    const onMsg = mls.onMessage.mock.calls[0][0] as (
+      a: string,
+      b: Uint8Array,
+      c?: string,
+      d?: boolean,
+      e?: Uint8Array
+    ) => Promise<boolean>;
+
+    const ack = onMsg('peer', new Uint8Array([1]), groupId, true, undefined);
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    expect(mls.processWelcome).not.toHaveBeenCalled();
+    held = [];
+    closeWindow();
+
+    expect(await ack).toBe(true);
+    expect(mls.processWelcome).toHaveBeenCalled();
+  });
+
+  it('a conversation Welcome waits for a join that took the MLS lock after its settled read', async () => {
+    const deps = baseDeps();
+    const mls = deps.mlsService as any;
+    let held: string[] = [];
+    mls.getLocalGroups = vi.fn(() => held);
+    mls.isGroupActive = vi.fn().mockResolvedValue(true);
+    mls.getDeviceId = vi.fn().mockReturnValue('dev-x');
+    let closeWindow: (() => void) | undefined;
+    mls.processWelcome = vi.fn(async () => {
+      if (held.length > 0) throw new Error('GROUP_ALREADY_HELD: ' + groupId);
+      return groupId;
+    });
+    let calls = 0;
+    mls.runUnderMlsLock = vi.fn(async (fn: () => Promise<unknown>) => {
+      if (calls++ === 0) {
+        closeWindow = openExternalCommitWindow(mls, groupId);
+        held = [groupId];
+      }
+      return fn();
+    });
+    setupMessageHandler(deps as any);
+    const onMsg = mls.onMessage.mock.calls[0][0] as (
+      a: string,
+      b: Uint8Array,
+      c?: string,
+      d?: boolean,
+      e?: Uint8Array
+    ) => Promise<boolean>;
+
+    const ack = onMsg('peer', new Uint8Array([1]), groupId, true, undefined);
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    expect(mls.processWelcome).not.toHaveBeenCalled();
+    held = [];
+    closeWindow!();
+
+    expect(await ack).toBe(true);
+    expect(mls.processWelcome).toHaveBeenCalledTimes(1);
+    await expect(mls.processWelcome.mock.results[0].value).resolves.toBe(groupId);
+  });
+
   /**
    * A group the push service joined in the BACKGROUND is held with no conversation row, and the
    * redelivered Welcome at the next cold start used to promote an existing row and create none: every
@@ -1231,6 +1301,91 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
       expect(await onMsg('admin', new Uint8Array([1]), keyGroup, true)).toBe(true);
       expect(mls.processWelcome).not.toHaveBeenCalled();
       expect(mls.updateInvitationStatus).toHaveBeenCalled();
+    });
+
+    /**
+     * THE IPHONE 12 READING OF 2026-11-16. The key group was held by this device's own external
+     * commit, built on a base read before the admitter's Add and not yet answered by the gate. The
+     * Welcome read that as "already held" and was thrown away; the gate then refused the commit
+     * (`epoch_mismatch`), the state was dropped, and the salon stayed unreadable for good.
+     */
+    describe("arriving while this device's own external commit awaits the gate", () => {
+      it('installs once the gate REFUSES the commit and the state is dropped', async () => {
+        const { deps, mls, onMsg } = keyGroupDeps({ distributionWorkspaceId: 'ws-1' });
+        // Held, with this device's leaf in it: exactly what an unanswered external commit leaves.
+        let held = [keyGroup];
+        mls.getLocalGroups = vi.fn(() => held);
+        mls.isGroupActive = vi.fn().mockResolvedValue(true);
+        const closeWindow = openExternalCommitWindow(mls, keyGroup);
+
+        const ack = onMsg('admin', new Uint8Array([1]), keyGroup, true);
+        for (let i = 0; i < 20; i++) await Promise.resolve();
+        expect(mls.processWelcome).not.toHaveBeenCalled();
+
+        // The refusal: `externalJoin` drops the state, then closes the window.
+        held = [];
+        closeWindow();
+
+        expect(await ack).toBe(true);
+        expect(mls.processWelcome).toHaveBeenCalled();
+        const lines = deps.log.mock.calls.map((c: unknown[]) => String(c[0]));
+        expect(lines.some((l: string) => l.includes('redelivered Welcome ignored'))).toBe(false);
+        expect(
+          lines.some((l: string) =>
+            l.includes('awaited the gate - read after its answer, held now: false')
+          )
+        ).toBe(true);
+      });
+
+      it('a join that takes the MLS lock between the settled read and the install is waited for too', async () => {
+        // The read and the install are two steps: a join of this group whose base predated the Add
+        // can take the lock in between and build, and an install then would land on a group held by
+        // a commit nobody has accepted - refused by the engine, ACKed, and gone when the gate refuses.
+        const { mls, onMsg } = keyGroupDeps({ distributionWorkspaceId: 'ws-1' });
+        let held: string[] = [];
+        mls.getLocalGroups = vi.fn(() => held);
+        mls.isGroupActive = vi.fn().mockResolvedValue(true);
+        let closeWindow: (() => void) | undefined;
+        let installedWhileOpen = false;
+        mls.processWelcome = vi.fn(async () => {
+          if (closeWindow && held.length > 0) installedWhileOpen = true;
+          return keyGroup;
+        });
+        let calls = 0;
+        mls.runUnderMlsLock = vi.fn(async (fn: () => Promise<unknown>) => {
+          // The first time, `externalJoin` was granted the lock first: it opened its window and built.
+          if (calls++ === 0) {
+            closeWindow = openExternalCommitWindow(mls, keyGroup);
+            held = [keyGroup];
+          }
+          return fn();
+        });
+
+        const ack = onMsg('admin', new Uint8Array([1]), keyGroup, true);
+        for (let i = 0; i < 20; i++) await Promise.resolve();
+        expect(installedWhileOpen).toBe(false);
+        expect(mls.processWelcome).not.toHaveBeenCalled();
+
+        held = [];
+        closeWindow!();
+
+        expect(await ack).toBe(true);
+        expect(mls.processWelcome).toHaveBeenCalledTimes(1);
+        expect(installedWhileOpen).toBe(false);
+      });
+
+      it('control: an ACCEPTED commit leaves the group joined, and the Welcome is redundant', async () => {
+        const { mls, onMsg } = keyGroupDeps({ distributionWorkspaceId: 'ws-1' });
+        mls.getLocalGroups = vi.fn(() => [keyGroup]);
+        mls.isGroupActive = vi.fn().mockResolvedValue(true);
+        const closeWindow = openExternalCommitWindow(mls, keyGroup);
+
+        const ack = onMsg('admin', new Uint8Array([1]), keyGroup, true);
+        closeWindow();
+
+        expect(await ack).toBe(true);
+        expect(mls.processWelcome).not.toHaveBeenCalled();
+      });
     });
 
     it('ACKs a Welcome that fails to install, asking for no recovery - the own load is the door', async () => {
