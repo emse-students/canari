@@ -212,18 +212,30 @@ describe('pinGateStaySignedInDefault - the PIN gate box (owner, 2026-11-16)', ()
     vi.spyOn(console, 'debug').mockImplementation(() => {});
   });
 
-  it('opens TICKED on an install that never recorded a choice, without changing the mode', () => {
+  afterEach(() => {
+    delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+  });
+
+  it('opens TICKED in the app on an install that never recorded a choice, without changing the mode', () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
     expect(pinGateStaySignedInDefault()).toBe(true);
     // The box is a proposal: the vault stays session-scoped until a PIN submit records it.
     expect(isDeviceKeyPersistenceEnabled()).toBe(false);
   });
 
-  it('remembers an UNTICKED first submit, which changes no mode but is still a choice', async () => {
+  it('opens UNTICKED in a browser tab that never recorded a choice (owner, decision 24)', () => {
+    expect(pinGateStaySignedInDefault()).toBe(false);
+    expect(isDeviceKeyPersistenceEnabled()).toBe(false);
+  });
+
+  it('remembers an UNTICKED first submit in the app, which changes no mode but is still a choice', async () => {
+    // In the app, where an absent choice would read as ticked.
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
     await setDeviceKeyPersistence(false, null);
     expect(pinGateStaySignedInDefault()).toBe(false);
   });
 
-  it('shows the choice already recorded, an unticked one included', async () => {
+  it('shows the choice already recorded in a browser tab, a ticked one included', async () => {
     await setDeviceKeyPersistence(false, null);
     expect(pinGateStaySignedInDefault()).toBe(false);
     await setDeviceKeyPersistence(true, null);

@@ -26,6 +26,7 @@
  */
 
 import { isHardwareHeldDeviceKey } from '$lib/crypto/hardwareHeldKey';
+import { isTauriRuntime } from '$lib/utils/tauriRuntime';
 
 const VAULT_KEY_KEY = 'canari_device_key_vault_key'; // random wrap key (b64), shared by every slot
 const PERSIST_FLAG_KEY = 'canari_device_key_persist'; // localStorage - user opted into "stay signed in"
@@ -95,7 +96,9 @@ export function isDeviceKeyPersistenceEnabled(): boolean {
 
 /**
  * What the PIN gate's "Rester connecté sur cet appareil" box shows when it opens: the choice this
- * install already recorded, and TICKED when none was ever recorded (owner, 2026-11-16 - see
+ * install already recorded, and when none was ever recorded, TICKED in the app (`isTauriRuntime`)
+ * and UNTICKED in a browser tab, where the device may be a shared computer and the PIN is the last
+ * barrier a forgotten sign-out leaves (owner, 2026-11-16, decisions 14 and 24 - see
  * `docs/wiki/sessions.md`, "Stay signed in"). Distinct from {@link isDeviceKeyPersistenceEnabled},
  * which answers where the vault lives NOW and stays false until a choice is recorded: the box is a
  * proposal, and only a PIN submit (`setDeviceKeyPersistence`) turns it into the mode.
@@ -108,8 +111,11 @@ export function pinGateStaySignedInDefault(): boolean {
     console.warn('[VAULT] persistence choice unreadable, the PIN gate box shows its default', e);
   }
   if (recorded === 'true' || recorded === 'false') return recorded === 'true';
-  console.debug('[VAULT] no persistence choice recorded - the PIN gate box opens ticked');
-  return true;
+  const app = isTauriRuntime();
+  console.debug(
+    `[VAULT] no persistence choice recorded - the PIN gate box opens ${app ? 'ticked (app)' : 'unticked (web)'}`
+  );
+  return app;
 }
 
 /**

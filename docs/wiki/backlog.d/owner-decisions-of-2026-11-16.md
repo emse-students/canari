@@ -56,10 +56,15 @@ Recorded so no question answered here is asked again. Each line names where its 
   ([harness README](../../../tools/cross-client-harness/README.md)).
 - **(14) "Rester connecté sur cet appareil" on the PIN gate is TICKED by default**, and a recorded
   choice, an unticked one included, is shown as recorded
-  ([sessions](../sessions.md#stay-signed-in-on-the-pin-gate-is-ticked-by-default-owner-2026-11-16)).
+  ([sessions](../sessions.md#stay-signed-in-on-the-pin-gate-ticked-by-default-in-the-app-unticked-on-the-web-owner-2026-11-16)).
 - **(15) Everything stays in `1.7.0`, the large features included** - group calls, "Envoyer a..." to
   several targets and CanaReels in chats, screen share in lives on desktop: the stable waits for them
   ([plan](../plan.md)).
+- **(24) (evening, refining (14)) "Rester connecté sur cet appareil" stays TICKED by default in the iOS
+  and Android apps and is UNTICKED by default on the web**, answering the review note that on a shared
+  computer the PIN is the last barrier a forgotten sign-out leaves (principle 1). The platform is the
+  existing `isTauriRuntime()`, so the desktop app counts as an app
+  ([sessions](../sessions.md#stay-signed-in-on-the-pin-gate-ticked-by-default-in-the-app-unticked-on-the-web-owner-2026-11-16)).
 - **(16) Reading halves that need hardware the bench lacks are DELETED, not moved** (Android 9-12, a
   second Android 13+ maker, an iPad in Split View or Stage Manager): the Mi 9T and the iPhone 12 are
   enough.

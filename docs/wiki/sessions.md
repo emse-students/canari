@@ -651,11 +651,14 @@ what was missing was a log that said so.
 target is covered and FAILS naming it as covered if it stays so - a bare `adb shell input tap` at a
 tab's coordinates taps whatever is drawn there, and after a reload that is the PIN gate.
 
-## "Stay signed in" on the PIN gate is ticked by default (owner, 2026-11-16)
+## "Stay signed in" on the PIN gate: ticked by default in the app, unticked on the web (owner, 2026-11-16)
 
 **The decision.** The PIN gate's "Rester connecté sur cet appareil" box (`PinModal.svelte`,
-`data-stay-signed-in`) opens TICKED on an install that never recorded a choice, and shows the
-recorded choice otherwise - an unticked one included. Ticked, the PIN submit keeps the device-key
+`data-stay-signed-in`) opens, on an install that never recorded a choice, TICKED in the iOS,
+Android and desktop app and UNTICKED in a browser tab (decision 24, answering a principle-1 review
+note: a browser may be a shared computer, where a forgotten sign-out leaves the refresh cookie alive
+and the PIN as the last barrier). The platform is `isTauriRuntime()`, the discriminator the rest of
+the client already uses. Otherwise it shows the recorded choice - ticked or unticked. Ticked, the PIN submit keeps the device-key
 vault in `localStorage` so a restart opens without the PIN; unticked, the vault is session-scoped and
 every cold start asks for the PIN.
 
@@ -664,16 +667,16 @@ what the box shows when the gate opens (`ChatBackgroundService.svelte`). It is N
 `isDeviceKeyPersistenceEnabled()` still answers false until a choice is recorded, so nothing is
 persisted because a box was drawn. Only a PIN submit records the choice (`setDeviceKeyPersistence`),
 and it records it even when the mode does not change: before this, an unticked first submit wrote
-nothing (the mode was already session-scoped), and the next gate would have read that absence as
-its ticked default. The Settings toggle (`SettingsSecuritySection.svelte`) shows the mode, so on an
+nothing (the mode was already session-scoped), and the next gate in the app would have read that
+absence as its ticked default. The Settings toggle (`SettingsSecuritySection.svelte`) shows the mode, so on an
 install that has not passed the gate yet it reads off.
 
 Tests: `deviceKeyVault.test.ts`, `pinGateStaySignedInDefault`.
 
 ## A sign-out keeps "Rester connecte sur cet appareil", by design (2026-11-16)
 
-**What a reading sees, and why it is not a defect.** With the box ticked (the default since the owner's
-decision of 2026-11-16, [above](#stay-signed-in-on-the-pin-gate-is-ticked-by-default-owner-2026-11-16)), a member who signs OUT and signs back IN as the SAME account gets no PIN gate,
+**What a reading sees, and why it is not a defect.** With the box ticked (the app's default since the owner's
+decision of 2026-11-16, [above](#stay-signed-in-on-the-pin-gate-ticked-by-default-in-the-app-unticked-on-the-web-owner-2026-11-16)), a member who signs OUT and signs back IN as the SAME account gets no PIN gate,
 then or at the next cold start: `[PIN] Device key restored from PinVault - auto-login` on a vault
 device, `[PIN] Stay signed in on a hardware-held key - keystore unlock, no prompt` on a phone whose key
 is hardware-held. Read on the iPhone 12 (`1.7.0-alpha.5`, TestFlight) and earlier on the Mi 9T; the web
