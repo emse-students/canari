@@ -1305,7 +1305,7 @@ morts"*).
 
 | File | What it holds |
 | --- | --- |
-| `lib/live/liveScenes.ts` | PURE: the five scenes, the fixed frame, each scene's layout, `containRect` / `coverCrop`, the overlay's box, `snapCorner`, the arrow keys, the preview mapping, and the scene state machine (`planSceneChange`, `sceneAfterScreenEnded`). |
+| `lib/live/liveScenes.ts` | PURE: the four scenes, the fixed frame, each scene's layout, `containRect` / `coverCrop`, the overlay's box, `snapCorner`, the arrow keys, the preview mapping, and the scene state machine (`planSceneChange`, `sceneAfterScreenEnded`). |
 | `lib/live/liveCompositor.ts` | The canvas: draws the scene on every clock tick and pushes one frame (`captureStream(0)` + `requestFrame`). |
 | `lib/live/liveFrameClock.ts`, `workers/liveFrameClock.worker.ts` | The clock: a dedicated worker's `setInterval`, posting `tick` 30 times a second. |
 | `lib/live/liveAudioMixer.svelte.ts` | The sound: microphone and share mixed in one `AudioContext` into ONE track, a gain per input. |
@@ -1336,14 +1336,18 @@ sees the black bars, the overlay where the viewers see it, and the camera as the
 (unmirrored, as OBS shows it). A phone keeps its mirrored, cropped camera preview.
 
 **The scenes** (`LiveScene`): `camera`, `screen`, `screen-camera` (the screen whole, the camera as an
-overlay), `side-by-side` (the screen in the left 70 %, the camera cropped in the right 30 %), `pause`
+overlay), `pause`
 ("Je reviens tout de suite" on a dark card, nothing of either source). A camera switched off or not
 open draws its "Caméra coupée" card in its box - a scene never shows a source the member did not put
-in it.
+in it. A fifth scene, `side-by-side` (the screen in the left 70 %, the camera in the right 30 %), was
+REMOVED on 2026-11-16 (owner: "Cet agencement est un peu bizarre", [decision 23](../../backlog.d/owner-decisions-of-2026-11-16.md)).
+The scene lives only in the broadcaster's own client: the viewer receives ONE composed stream and the
+server stores and names no scene, so nothing on the wire or in the database carries the id and a live
+already on air in it simply keeps its recorded picture; the next build offers four scenes.
 
 **The control that draws them (owner, 2026-11-16, after a reading of the on-air bar: labelled pills
 wrapped onto a second line and rode over the comment field).** ONE icon-only row, a rounded-full
-track over the picture: camera, screen, screen + camera, side by side, then a rule and "Je reviens"
+track over the picture: camera, screen, screen + camera, then a rule and "Je reviens"
 as the last icon. No label is visible - the name is each button's \`aria-label\` and \`title\` (the same
 Paraglide keys as before) - and the chosen scene wears the bar's fill (\`aria-checked\`). It is one
 \`radiogroup\`, one tab stop, arrows move focus and Enter or Space chooses (a screen scene opens the
@@ -1417,7 +1421,7 @@ was not needed, and would have been a Chromium-only path beside Safari's. Then t
 (`liveCompositor.ts`, bundled as is) ran in Chrome 157 with a fake camera and a canvas standing in for
 the share, RESIZED every 5 s through 1920x1080, 801x977, 3440x1440, 1280x720 and 640x1136, hidden
 60 s: 30 ticks a second throughout, the track at 1280x720 at every chunk, and the 76.6 s recording
-played back as ONE 1280x720 video. Screenshots of `screen-camera`, `side-by-side` and `pause` matched
+played back as ONE 1280x720 video. Screenshots of `screen-camera`, `side-by-side` (since removed) and `pause` matched
 the layouts. Not measured: Edge, Safari, a real `getDisplayMedia` share hidden (only the owner's
 reading can drive the picker).
 
