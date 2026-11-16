@@ -6,6 +6,8 @@ import {
   resolveDirectPeerId,
 } from './conversations';
 import { holdsGroupState } from './groupUsability';
+import { isGroupInCreation } from './groupsInCreation';
+import { Log } from '$lib/utils/Log';
 
 /**
  * THE CONVERSATION ROW FOR A GROUP THE SERVER LISTS - written in ONE place, by every path that
@@ -85,17 +87,19 @@ export type EnsureConversationDeps = {
 /**
  * Why no row was created, when none was - each one a DIFFERENT next move for the caller.
  *
- * `existed` and `created` both mean the device may now route for the group. The other three mean it
+ * `existed` and `created` both mean the device may now route for the group. The other four mean it
  * may not, and a caller about to make this device a member has to treat them as such rather than
  * joining anyway: `peer-unresolved` and `duplicate` clear by themselves on a later pass,
- * `exit-owed` clears when the exit is answered.
+ * `exit-owed` clears when the exit is answered, `in-creation` when this device's own creation
+ * writes the row (`groupsInCreation.ts`).
  */
 export type EnsureConversationOutcome =
   | 'existed'
   | 'created'
   | 'peer-unresolved'
   | 'duplicate'
-  | 'exit-owed';
+  | 'exit-owed'
+  | 'in-creation';
 
 /**
  * Brings a KNOWN group row's label back in line with the server's, which is the only authority on it.
@@ -194,6 +198,19 @@ export async function ensureConversationForServerGroup(
     await repairGroupLabel(known[0], known[1], group, conversations, saveConversation, log);
     await recordGroupStart(known[0], group, conversations, saveConversation);
     return 'existed';
+  }
+
+  // A GROUP THIS DEVICE IS CREATING IS NOT "MISSING LOCALLY", IT IS ON ITS WAY IN. The server lists
+  // it from `registerMember` on, and the creation writes its row only once the group is reachable,
+  // at the end - so a sweep in between saw a listed group with no row and wrote a placeholder for
+  // it (LEAF-REFRESH-1, 2026-11-16). The creation's own mark answers, never a delay: it is set
+  // before the server can list the group and released after the row exists (`groupsInCreation.ts`).
+  if (isGroupInCreation(groupId)) {
+    Log.d(
+      'Discovery',
+      `${groupIdShort(groupId)} is being created by this device - its row is the creation's to write`
+    );
+    return 'in-creation';
   }
 
   // A GROUP THIS DEVICE HAS ALREADY DECIDED TO LEAVE IS NOT "MISSING LOCALLY", IT IS ON ITS WAY OUT.
