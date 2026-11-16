@@ -7,3 +7,5 @@ target: 1.7.0
 **The reading that closes it:** a deploy drill on dev with the Mi 9T and the iPhone 12 sending DM and salon texts throughout: no "Echec", no "Non confirme", "En attente du serveur" while it lasts, each message ONCE on the peer; then the same across a production deploy
 
 **Triage 2026-11-14 - left: a dev deploy drill with both phones sending, about 40 min** (a rolling restart of dev's gateway while the phones send DM and salon texts). "Then the same across a production deploy" is DELETED: a production deploy cannot be scheduled for a reading, and the dev drill exercises the same code and status codes.
+
+**iPhone 12, 2026-11-16 (`1.7.0-alpha.2`), DM half PARTIAL** ([readings](../device-verification.md#the-iphone-12-readings-of-2026-11-16-170-alpha2-the-all-entries-sitting)): dev's job re-run while the phone sent 34 DM texts - all sent, none flagged, each once on the peer, two gateway reconnects in 1 s; the edge answered 200 throughout, so no 502/503/504 was ever seen and the "not now" path was NOT exercised. **Left: a deploy that really drops the edge (or a fault injected on the route), the salon half, the Mi 9T.**
