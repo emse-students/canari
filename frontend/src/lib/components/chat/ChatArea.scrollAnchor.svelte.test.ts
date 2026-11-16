@@ -13,14 +13,6 @@ import ChatArea from './ChatArea.svelte';
 import { clearConversationAnchors } from '$lib/utils/chat/scrollAnchors';
 import type { ChatMessage, Conversation } from '$lib/types';
 
-/**
- * Every test mounts a REAL `ChatArea` of 61 rows twice, so the cost is CPU, not a wait: fake timers
- * remove every wall-clock dependency, yet the render work itself is still real. Alone it takes well
- * under a second; in the full run, with the machine oversubscribed, the same work passed 5 s. The
- * budget is raised for this file only, and it bounds a hang, it does not synchronise anything.
- */
-vi.setConfig({ testTimeout: 30_000 });
-
 type Nav = {
   willUnload?: boolean;
   from?: { url: URL };
