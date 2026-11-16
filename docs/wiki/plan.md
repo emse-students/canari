@@ -89,6 +89,7 @@ earliest version, as a checklist.
 - [P3 - a newcomer's thread reads "Compte supprime a ajoute Compte supprime au groupe" for its own Add](backlog.d/p3-a-newcomer-s-first-added-notice-reads-compte-supprime-for-both-names.md)
 - [P3 - the Emojis preference row squeezes its description into a five-word column on a phone](backlog.d/p3-the-emojis-preference-row-squeezes-its-description-on-a-phone.md)
 - [P3 - The PIN gate's one-tap "Se deconnecter" sits under the "Discussions" tab (Mi 9T, 2026-11-15)](backlog.d/p3-the-pin-gate-sign-out-sits-under-the-discussions-tab-2026-11-15.md)
+- [P3 - A group's first system line names nobody on the iPhone (`1.7.0-alpha.2`, 2026-11-16)](backlog.d/p3-a-group-s-first-system-line-names-nobody-on-the-iphone-2026-11-16.md)
 - [P3 - the feed offset restored after a Back from an association lands about 226 px lower than it was left (Mi 9T, `1.7.0-alpha.2`)](backlog.d/p3-the-feed-offset-restored-after-a-back-from-an-association-lands-about-226-px.md)
 - [P3 - the gated `video-switch` and `video-off-on` call rows read 19.6-25 fps against a threshold of 27](backlog.d/p3-the-gated-video-switch-and-video-off-on-rig-rows-read-19-6-25-fps-threshold-27.md)
 

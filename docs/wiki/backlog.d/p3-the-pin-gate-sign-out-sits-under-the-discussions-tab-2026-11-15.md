@@ -19,3 +19,5 @@ option under the absence rule**, since it is reversible, and writes it to the de
 
 **Closes when:** the gate's sign-out control does not intersect any bottom-bar tab on the Mi 9T and
 the iPhone 12 (measured from the DOM, as above), pinned by a test on the gate's layout.
+
+**iPhone geometry, 2026-11-16:** the same overlap on the iPhone 12 (TestFlight `1.7.0-alpha.2`): the gate's "Se deconnecter" at 127-263 x 761-794 points under the floating tab bar (y 761-844). The bench account was found signed out after the gate came up on a reload the app made itself and an unlock script ran; the `[A] logout` line was not flushed, so the exact tap is not read, but this is the candidate. See [device-verification](../device-verification.md#the-iphone-12-readings-of-2026-11-16-second-sitting-170-alpha2-the-staged-readings-cut-short-by-a-sign-out).
