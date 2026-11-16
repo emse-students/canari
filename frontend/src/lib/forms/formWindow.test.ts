@@ -34,7 +34,7 @@ describe('opensLater', () => {
   it('is true only for an opening still to come', () => {
     expect(opensLater({ opensAt: '2026-11-16T12:00:01Z' }, now)).toBe(true);
     expect(opensLater({ opensAt: '2026-11-16T12:00:00Z' }, now)).toBe(false);
-    expect(opensLater({ opensAt: null }, now)).toBe(false);
+    expect(opensLater({}, now)).toBe(false);
     expect(opensLater(null, now)).toBe(false);
   });
 });
