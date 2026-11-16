@@ -70,7 +70,6 @@ earliest version, as a checklist.
 - [P2 - no gate proves that an older build reads, and writes back, the MLS state this build writes](backlog.d/p2-no-gate-proves-an-older-build-reads-the-mls-state-this-build-writes.md)
 - [P2 - the reply swipe along a thumb's arc does nothing on WebKit: the thread scrolls instead](backlog.d/p2-the-reply-swipe-along-a-thumb-s-arc-does-nothing-on-webkit.md)
 - [P2 - a live ended itself (`upload-too-slow`) after 256 s on the iPhone, cause unproven](backlog.d/p2-a-live-ended-itself-upload-too-slow-after-256-s-on-the-iphone.md)
-- [P2 - a private salon granted after an in-session join is listed but unreadable on the iPhone, and raises no badge](backlog.d/p2-a-private-salon-granted-after-an-in-session-join-is-unreadable-on-the-iphone.md)
 
 **P3 - hygiene**
 
@@ -111,6 +110,7 @@ earliest version, as a checklist.
 - [ ] [a FIRST message from someone with no conversation yet notifies, end to end](backlog.d/reading-owed-a-first-message-from-someone-with-no-conversation-yet-notifies-end.md)
 - [ ] [openings for followers, WP-4](backlog.d/reading-owed-openings-for-followers-wp-4.md)
 - [ ] [the Emojis preference row and its neighbours at 390 pt, on a phone](backlog.d/p3-the-emojis-preference-row-squeezes-its-description-on-a-phone.md)
+- [ ] [a private salon granted after an in-session join is readable on the iPhone, with its badge](backlog.d/p2-a-private-salon-granted-after-an-in-session-join-is-unreadable-on-the-iphone.md)
 - [ ] [one "server already unreachable" line per spell, read on a phone log after a real outage](backlog.d/p3-server-already-unreachable-is-logged-per-request.md)
 - [ ] [a salon invitation's notice still reads as a sentence, live and from history (2026-11-16)](backlog.d/reading-owed-a-channel-invite-notice-names-ids-and-draws-live.md)
 - [ ] [a salon message arriving before its seed raises its badge (granted salon, in-session join)](backlog.d/reading-owed-a-salon-message-arriving-before-its-seed-raises-its-badge.md)
