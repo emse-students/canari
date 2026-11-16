@@ -105,6 +105,8 @@ describe('EditPostForm - a reel', () => {
     expect(payload).toEqual({ markdown: 'legende' });
     expect(target.querySelector('[role="list"]')).toBeNull();
     expect(target.querySelector('[data-chip-row]')).toBeNull();
+    // The video is not an editable attachment: no "1/10" counter beside the formatting toggle.
+    expect(target.querySelector('[data-attachment-counter]')).toBeNull();
   });
 
   it('holds the save on a blank caption: the server refuses an empty body naming no media', async () => {
@@ -121,5 +123,6 @@ describe('EditPostForm - a reel', () => {
     const payload = updatePost.mock.calls[0][1] as { media?: unknown[] };
     expect(payload.media).toHaveLength(1);
     expect(target.querySelector('[data-chip-row]')).not.toBeNull();
+    expect(target.querySelector('[data-attachment-counter]')).not.toBeNull();
   });
 });

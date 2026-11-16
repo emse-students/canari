@@ -268,9 +268,11 @@ describe.each(backends)('%s - pending mutations', (_name, rig) => {
   it("a FLOOD by one sender evicts only that sender's own entries, never another member's deletion", async () => {
     const { storage } = await rig();
     const limits = { perSender: 3, perConversation: 1000 };
+    // Eight is already well over the bound of three: each extra put is one more real seal and scan.
+    const FLOOD = 8;
     await storage.putPendingMutation(entry({ sender: 'alice', at: 1 }), limits, KEY);
     let evicted = 0;
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < FLOOD; i++) {
       const write = await storage.putPendingMutation(
         entry({ sender: 'mallory', messageId: `x${i}`, at: 100 + i }),
         limits,
@@ -278,14 +280,18 @@ describe.each(backends)('%s - pending mutations', (_name, rig) => {
       );
       evicted += write.evicted;
     }
-    expect(evicted).toBe(17);
+    expect(evicted).toBe(FLOOD - 3);
     expect((await storage.getPendingMutations('conv', ['m1'], KEY)).entries).toEqual([
       entry({ sender: 'alice', at: 1 }),
     ]);
-    const flood = Array.from({ length: 20 }, (_, i) => `x${i}`);
+    const flood = Array.from({ length: FLOOD }, (_, i) => `x${i}`);
     const left = await storage.getPendingMutations('conv', flood, KEY);
     // The sender's three newest stay.
-    expect(left.entries.map((e) => e.messageId).sort()).toEqual(['x17', 'x18', 'x19']);
+    expect(left.entries.map((e) => e.messageId).sort()).toEqual([
+      `x${FLOOD - 3}`,
+      `x${FLOOD - 2}`,
+      `x${FLOOD - 1}`,
+    ]);
   });
 
   it('evicts a reaction before a deletion or an edit of the same sender, whatever their age', async () => {
