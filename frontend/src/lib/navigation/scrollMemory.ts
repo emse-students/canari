@@ -37,10 +37,11 @@ export { cancelRestore };
  * as the cards it stands for. The restore therefore applies only once the target exists (an offset:
  * the box is tall enough; an anchor: it is drawn) AND no placeholder is shown (a list skeleton
  * declares itself with `data-loading-skeleton`), and it ENDS at the first of, all events and none a
- * clock: an offset applied; an anchor aligned and then two frames with no further change; the first
- * change of the page after which no placeholder is left, the target is missing and two frames pass
- * with no further change (settled: the offset applies, clamped by the browser when the page came
- * back shorter); ANY scroll event while it waits (it never scrolls the box before it applies, so
+ * clock and never by the page going quiet (a live dot mutates for ever): an offset applied; an anchor
+ * confirmed in place on two consecutive frames (a drifted frame re-aligns it and restarts the count; an
+ * anchor that leaves the page after it was aligned just ends it); a target that is missing while the
+ * scrollable height is unchanged on two consecutive frames (settled: the offset applies, clamped by
+ * the browser when the page came back shorter, logged as a fallback); ANY scroll event while it waits (it never scrolls the box before it applies, so
  * such an event is the reader's); a wheel, touch, pointer or key event at any time (the reader, once
  * the restore itself scrolls the box); or the next navigation or programmatic scroll.
  */
@@ -71,12 +72,24 @@ function anchorOnScreen(scroller: HTMLElement): { id: string; offset: number } |
   };
 }
 
-/** The anchor element of id `id`, by one attribute selector (quotes and backslashes escaped). */
+/** An id that needs no escaping in an attribute selector: what every post and entity id is (uuid, number). */
+const PLAIN_ID = /^[\w-]+$/;
+
+/**
+ * The anchor element of id `id`. A plain id (every id the app writes) is ONE attribute selector, so
+ * nothing is scanned on a mutation. An id with any other character (quotes, brackets, control
+ * characters) is compared as a string over the anchors instead of being escaped into a selector:
+ * `CSS.escape` is missing from some engines and test DOMs, a hand-made escape is a parser bet, and
+ * a selector that throws inside an observer callback would end the page's restore for good.
+ */
 function findAnchor(scroller: HTMLElement, id: string): HTMLElement | undefined {
-  const escaped = id.replace(/["\\]/g, '\\$&');
-  return (
-    scroller.querySelector<HTMLElement>(`[${SCROLL_ANCHOR_ATTRIBUTE}="${escaped}"]`) ?? undefined
-  );
+  if (PLAIN_ID.test(id)) {
+    return scroller.querySelector<HTMLElement>(`[${SCROLL_ANCHOR_ATTRIBUTE}="${id}"]`) ?? undefined;
+  }
+  for (const el of scroller.querySelectorAll<HTMLElement>(`[${SCROLL_ANCHOR_ATTRIBUTE}]`)) {
+    if (el.getAttribute(SCROLL_ANCHOR_ATTRIBUTE) === id) return el;
+  }
+  return undefined;
 }
 
 /**
@@ -187,45 +200,75 @@ export function restoreOnReturn(
     if (!following) dropped('the reader scrolled');
   };
   const userInput = () => dropped('the reader touched the page');
+  const documentKey = () => dropped('the reader pressed a key');
   const contentLoaded = () => settle();
   function stop() {
     resize.disconnect();
     mutation.disconnect();
     watched.clear();
     scroller.removeEventListener('scroll', userScrolled);
+    document.removeEventListener('keydown', documentKey);
     for (const e of READER_INPUTS) scroller.removeEventListener(e, userInput);
     for (const e of CONTENT_LOADS) scroller.removeEventListener(e, contentLoaded, true);
     if (isActiveRestore(stop)) setActiveRestore(null);
   }
-  let changes = 0;
   /**
-   * After a change: still loading, keep waiting; target reached, align it - an offset is then done,
-   * an anchor keeps being re-aligned while the content above it changes; otherwise (loaded but
-   * shorter, or the anchor never came) finish only after TWO animation frames with no further change
-   * - a feed mounts its cards a frame at a time, so a page that is still growing keeps invalidating
-   * the check, and a page that has stopped is the settled one. An anchor that never came is a
-   * fallback and is logged as one, naming it.
+   * AFTER A CHANGE the target is aligned (an anchor) or the restore ends (an offset), and ONE frame
+   * loop runs, ending by a PROOF and never by a clock or by the page going quiet - a feed with a
+   * live dot or a counter mutates for ever:
+   * - the anchor is reached: it ends on the second consecutive frame where the anchor sits within a
+   *   pixel of its place (confirmed twice); a frame where it had drifted re-aligns it and starts the
+   *   count again; an anchor that disappears after it was aligned just ends the restore (no jump:
+   *   the page has moved on, and the raw offset would be wrong);
+   * - it is not reached: it ends on the second consecutive frame where the page's scrollable height
+   *   is unchanged (settled: loaded but shorter, or the post never came). That is a FALLBACK to the
+   *   raw offset, logged as one naming the anchor.
+   * A skeleton on screen pauses the loop; the next change restarts it.
    */
-  function settle() {
-    changes += 1;
-    if (placeholderShown(scroller)) return;
-    const reachedNow = reached();
-    if (reachedNow) {
-      watch(anchorEl);
-      watch(anchorEl?.parentElement);
-      apply('content ready');
-      if (!anchor) {
-        stop();
-        return;
-      }
-      following = true;
+  let looping = false;
+  let confirmed = 0;
+  let steady = 0;
+  let lastHeight = 0;
+  function frame() {
+    if (!isActiveRestore(stop)) {
+      looping = false;
+      return;
     }
-    const seen = changes;
-    requestAnimationFrame(() =>
-      requestAnimationFrame(() => {
-        if (seen !== changes || !isActiveRestore(stop)) return;
+    if (placeholderShown(scroller)) {
+      looping = false;
+      return;
+    }
+    if (reached()) {
+      const el = resolveAnchor();
+      if (anchor && el) {
+        const drift =
+          el.getBoundingClientRect().top - scroller.getBoundingClientRect().top - anchor.offset;
+        if (Math.abs(drift) < 1) confirmed += 1;
+        else {
+          confirmed = 0;
+          apply('content moved');
+        }
+        if (confirmed >= 2) {
+          looping = false;
+          stop();
+          return;
+        }
+      }
+    } else if (following) {
+      looping = false;
+      Log.d(
+        'scrollMemory',
+        `entry ${key}: the anchor left the page after it was aligned, restore ended`
+      );
+      stop();
+      return;
+    } else {
+      const height = scroller.scrollHeight;
+      steady = height === lastHeight ? steady + 1 : 0;
+      lastHeight = height;
+      if (steady >= 2) {
+        looping = false;
         stop();
-        if (reachedNow) return;
         if (anchor) {
           Log.w(
             'scrollMemory',
@@ -233,10 +276,34 @@ export function restoreOnReturn(
           );
         }
         apply('page settled shorter');
-      })
-    );
+        return;
+      }
+    }
+    requestAnimationFrame(frame);
+  }
+  function settle() {
+    if (placeholderShown(scroller)) return;
+    steady = 0;
+    if (reached()) {
+      watch(anchorEl);
+      watch(anchorEl?.parentElement);
+      apply('content ready');
+      if (!anchor) {
+        stop();
+        return;
+      }
+      if (!following) confirmed = 0;
+      following = true;
+    }
+    if (!looping) {
+      looping = true;
+      lastHeight = scroller.scrollHeight;
+      requestAnimationFrame(frame);
+    }
   }
   scroller.addEventListener('scroll', userScrolled, { passive: true });
+  // A key aimed at the document (focus on the body) never reaches the box.
+  document.addEventListener('keydown', documentKey, { passive: true });
   for (const e of READER_INPUTS) scroller.addEventListener(e, userInput, { passive: true });
   for (const e of CONTENT_LOADS) scroller.addEventListener(e, contentLoaded, true);
   watch(scroller);

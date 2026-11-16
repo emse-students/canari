@@ -411,3 +411,97 @@ describe('the place is an anchor, not only a distance (1.7.0-alpha.2: left at 15
     warn.mockRestore();
   });
 });
+
+describe('the restore ends by a proof, never by the page going quiet', () => {
+  it('a subtree that keeps mutating (a live dot, a counter) does not hold it: confirmed twice, over', async () => {
+    const back = leaveAndReturn();
+    back.draw(20);
+    restoreOnReturn(1, back.el);
+    for (let i = 0; i < 2; i++) {
+      back.list.appendChild(document.createElement('span')); // a mutation in EVERY frame
+      await flush();
+      frame();
+    }
+    expect(live.every((o) => !o.active)).toBe(true);
+    expect(back.offsetOf(5)).toBe(0);
+  });
+
+  it('a frame where the anchor had drifted re-aligns it and restarts the count', () => {
+    const back = leaveAndReturn();
+    back.draw(20);
+    restoreOnReturn(1, back.el);
+    frame(); // confirmed once
+    back.model.heights[0] = 400; // drifts with NO notification at all
+    frame(); // re-aligned, count restarts
+    expect(back.offsetOf(5)).toBe(0);
+    expect(live.some((o) => o.active)).toBe(true);
+    frame();
+    frame();
+    expect(live.every((o) => !o.active)).toBe(true);
+  });
+
+  it('an anchor removed AFTER it was aligned ends the restore: no warning, no jump to the offset', () => {
+    const warn = vi.spyOn(Log, 'w').mockImplementation(() => {});
+    const back = leaveAndReturn();
+    back.draw(20);
+    restoreOnReturn(1, back.el);
+    const aligned = back.el.scrollTop;
+    back.list.children[5].remove();
+    frame();
+    expect(live.every((o) => !o.active)).toBe(true);
+    expect(back.el.scrollTop).toBe(aligned);
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('an id with control characters and quotes is found without throwing', () => {
+    const f = feed(Array(20).fill(300));
+    f.draw(20);
+    f.list.children[5].setAttribute(SCROLL_ANCHOR_ATTRIBUTE, 'a\u0001"bc]');
+    f.el.scrollTop = 1500;
+    rememberLeaving(1, 1500, f.el);
+    const g = feed(Array(20).fill(300));
+    g.draw(20);
+    g.list.children[5].setAttribute(SCROLL_ANCHOR_ATTRIBUTE, 'a\u0001"bc]');
+    expect(() => restoreOnReturn(1, g.el)).not.toThrow();
+    expect(g.offsetOf(5)).toBe(0);
+  });
+
+  it('removes every listener it added, the capture-phase load ones and the reader inputs included', () => {
+    const back = leaveAndReturn();
+    back.draw(20);
+    const added: string[] = [];
+    const removed: string[] = [];
+    const track = (t: EventTarget, name: string) => {
+      const add = t.addEventListener.bind(t);
+      const rem = t.removeEventListener.bind(t);
+      t.addEventListener = ((type: string, fn: never, opts?: boolean | { capture?: boolean }) => {
+        added.push(`${name}:${type}:${typeof opts === 'boolean' ? opts : !!opts?.capture}`);
+        add(type, fn, opts);
+      }) as typeof t.addEventListener;
+      t.removeEventListener = ((
+        type: string,
+        fn: never,
+        opts?: boolean | { capture?: boolean }
+      ) => {
+        removed.push(`${name}:${type}:${typeof opts === 'boolean' ? opts : !!opts?.capture}`);
+        rem(type, fn, opts);
+      }) as typeof t.removeEventListener;
+    };
+    track(back.el, 'box');
+    track(document, 'document');
+    restoreOnReturn(1, back.el);
+    expect(added).toContain('box:load:true');
+    expect(added).toContain('document:keydown:false');
+    cancelRestore();
+    expect(removed.sort()).toEqual(added.sort());
+  });
+
+  it('a key aimed at the DOCUMENT (focus on the body) ends it too', () => {
+    const back = leaveAndReturn();
+    back.draw(20);
+    restoreOnReturn(1, back.el);
+    document.dispatchEvent(new Event('keydown'));
+    expect(live.every((o) => !o.active)).toBe(true);
+  });
+});
