@@ -3937,3 +3937,5 @@ The pre-push `frontend-test` run (1814 files, several runs in parallel on one bo
 - **Real render work against a 5 s budget** (`ChatArea.scrollAnchor`): every test mounts a 61-row `ChatArea` for real; fake timers already remove the clock, the CPU cost remains and scales with load. The budget is raised for that file only (30 s), because the cause is CPU and not a cold import; it bounds a hang and synchronises nothing.
 
 Reproduce a cold-import defect with a loop of separate `vitest run` processes under CPU load, never with `--repeats`.
+
+Later in the same sweep: `ReelViewer.rail` (the share sheet is a lazy import of a mocked stub, same cause as `SharedPostCard`, same warm-up) and `appVersionCheck.presencePost` (each test calls `vi.resetModules()` on purpose, so the module is evaluated again per test; the first transform is warmed in a `beforeAll`). `useMessaging.unreadWatermark` showed in one log without its error surviving and did not reproduce under four CPU workers, so it has no fix yet: read its error before touching it.
