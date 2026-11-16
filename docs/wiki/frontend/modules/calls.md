@@ -2236,13 +2236,18 @@ the CLEAN reference; `noisy` = the reference under steady band noise + hum 10 dB
 4. **Cost on the desktop: 0.01-0.26 ms per 10 ms frame (0.1-2.6 % of one core in real time)**;
    the Mi 9T's number is owed.
 
-**Owed** ([backlog](../../backlog.d/call-noise-suppression-clean-speech-gate-fails-and-readings-owed.md)):
-the owner took the call on row 3 (OFF by default, 2026-11-01, above); what turns it back ON by
-default is a real call on the bench phones that sounds good with the switch on. The readings, each
-in a call where the switch was turned ON - `ns=on` and the end line on the Mi 9T (Android WebView)
-and the iPhone 12 (WKWebView, AudioWorklet since iOS 14.5; whether its worklet scope has
-WebAssembly, and whether a second AudioContext moves the call's audio route), the switch turned on
-in a call answered from the native ring, a real voice and music with the switch on and off.
+**Decided and read** (the backlog entry was closed 2026-11-16): the owner took the call on row 3 -
+RNNoise ships OFF by default (`CALL_NOISE_SUPPRESSION_DEFAULT = false`, 2026-11-01), the in-call
+switch kept, and `[CALL_REPORT] ns=off` is the ordinary value. The gated rig row `app-ns` failed on
+the synthetic clean reference (LSD 11.0 dB against 7, HF tilt -14.8 against -6, 1.3 s of dropouts
+against 0.25) while it lowered a steady background by 25 dB. What would lift it to ON by default is
+the OWNER's listening to a real call with the switch on (not a bench reading; his 2026-11-15 sitting
+said "dans l'ensemble ca a l'air bien" and did not change the default), after which the `app-ns`
+thresholds are re-read for a suppressor, or another model (GTCRN, Speex) is measured on the same
+rows. The mechanical readings all PASS on both phones (Mi 9T `1.6.12-alpha.2` to `1.7.0-alpha.4`,
+iPhone 12 `1.7.0-alpha.2` and `alpha.4`): worklet ready, `ns=on`, `ns_fallbacks=0`, cost 0.5-1.3 ms
+per frame, the audio route unchanged on both, a call answered from the native ring ends `ns=on`, a
+12 s lock survived on the iPhone, no `unavailable (` line. Readings: [device-verification](../../device-verification.md#the-both-phones-readings-of-2026-11-16-on-170-alpha4).
 
 ## CALL-E2E-BYPASS-MI9T (2026-10-20) - Chromium short-circuits a transform assigned one task late
 
