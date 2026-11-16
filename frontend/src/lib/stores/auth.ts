@@ -38,6 +38,7 @@ import { eraseAccountShortcuts } from '$lib/sharing/shareTargetsNative';
 import { eraseFormDraftCopies } from '$lib/forms/draftCopies';
 import { eraseIncomingShare } from '$lib/mobile/incomingShareSignOut';
 import { endPushRegistration } from '$lib/services/PushNotificationService';
+import type { SignOutCause } from '$lib/stores/signOutCause';
 import { getClientAppVersion, isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { openCustomTab, type CustomTabOutcome } from '$lib/services/customTabsCommands';
 import {
@@ -1044,7 +1045,7 @@ export async function leaveSignedOut(): Promise<void> {
 export async function signOutByChoice(): Promise<void> {
   alog('signout requested by the user');
   try {
-    await clearAuth();
+    await clearAuth('chosen');
     await leaveSignedOut();
   } catch (e) {
     console.error('[auth] sign-out the user chose failed:', e);
@@ -1405,9 +1406,12 @@ export function setToken(token: string): void {
  * Logs the user out: clears the in-memory token and WebSocket cookie,
  * calls the backend logout endpoint to revoke the HttpOnly refresh cookie,
  * and erases all locally persisted user data.
+ *
+ * `cause` names who decided it (see {@link SignOutCause}): printed here and handed to the native
+ * push-registration end, whose line is the only one a phone's logcat carries.
  */
-export async function clearAuth(): Promise<void> {
-  alog('clear');
+export async function clearAuth(cause: SignOutCause): Promise<void> {
+  alog(`clear (${cause})`);
   // FIRST OF ALL, before the handler: every refresh from here to the end of the revocation is moot -
   // one asked for is not sent, one already in flight drops its answer (`_signOutGeneration`).
   //
@@ -1416,7 +1420,7 @@ export async function clearAuth(): Promise<void> {
   // let a refresh be sent while the other was still revoking - and that refresh captured the CURRENT
   // generation, so nothing dropped its answer and it re-saved the user. The refusal holds until the
   // LAST sign-out under way has finished.
-  await clearAuthCounted({ revokeServerSession: true });
+  await clearAuthCounted({ revokeServerSession: true, cause });
 }
 
 /**
@@ -1429,12 +1433,16 @@ export async function clearAuth(): Promise<void> {
  * signed in since - a second logout here would end THAT account's session for nothing.
  */
 export async function clearAuthLocally(): Promise<void> {
-  alog('clear (local only - another tab ended this account)');
-  await clearAuthCounted({ revokeServerSession: false });
+  const cause: SignOutCause = 'account-deleted-in-another-tab';
+  alog(`clear (${cause}) - local only`);
+  await clearAuthCounted({ revokeServerSession: false, cause });
 }
 
 /** Counts one sign-out under way around {@link clearAuthUnderway} - see {@link clearAuth}. */
-async function clearAuthCounted(options: { revokeServerSession: boolean }): Promise<void> {
+async function clearAuthCounted(options: {
+  revokeServerSession: boolean;
+  cause: SignOutCause;
+}): Promise<void> {
   _signOutGeneration++;
   _signOutsUnderway++;
   try {
@@ -1445,7 +1453,10 @@ async function clearAuthCounted(options: { revokeServerSession: boolean }): Prom
 }
 
 /** The body of {@link clearAuth}, run while it is counted in `_signOutsUnderway`. */
-async function clearAuthUnderway(options: { revokeServerSession: boolean }): Promise<void> {
+async function clearAuthUnderway(options: {
+  revokeServerSession: boolean;
+  cause: SignOutCause;
+}): Promise<void> {
   // THE LIVE SESSION ENDS BEFORE ANYTHING IT USES IS GONE - see `setSignOutHandler`. A throw here is
   // a session left running for a signed-out user, so it is accused by name, and the sign-out goes on.
   let handlerSettled: void | Promise<void> = undefined;
@@ -1463,7 +1474,7 @@ async function clearAuthUnderway(options: { revokeServerSession: boolean }): Pro
   // awaited - it never rejects and logs its own failures, and a deletion it cannot finish stays owed
   // on disk until it does. AFTER the handler, which reads the registration marker synchronously for
   // the server-side deregistration of a live session.
-  void endPushRegistration();
+  void endPushRegistration(options.cause);
   // Whose account is leaving, read before the identity below is forgotten.
   const leavingUserId = currentUserId();
   // THE LOCAL IDENTITY GOES NOW, BEFORE THE FIRST AWAIT - never after the revocation below. The

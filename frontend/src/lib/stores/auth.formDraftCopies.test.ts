@@ -33,7 +33,7 @@ beforeEach(() => {
 
 describe("a sign-out erases the forms' device copies", () => {
   it('clearAuth erases those of the account that leaves, named before it is forgotten', async () => {
-    await clearAuth();
+    await clearAuth('chosen');
     expect(eraseFormDraftCopies).toHaveBeenCalledWith('u-leaving', 'signed out');
   });
 
