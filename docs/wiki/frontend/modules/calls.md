@@ -2080,6 +2080,47 @@ app's own SFU leg (the client, against this protocol) is the client pull request
 `mode` from `initiate`/`room-token`. Pinned by `calls.service.spec.ts` (the relay rows),
 `callRelaysAgree.test.ts`, `appVersion.test.ts` and the core-service platform and version specs.
 
+### One device per user: the relay's wire (WP-GC8, 2026-11-16)
+
+**The contract the client rebuilds on**, decided from
+[the one-device-per-user decision](../../open-questions.md#a-group-call-holds-one-device-per-user-decided-2026-11-13-reversible)
+and pinned in call-service (`apps/call-service/src/p2p.rs`). A user holds ONE seat; a second device's
+`Join` (or a device that replaces another) takes it, in a 1:1 room as in a mesh. When bob's second
+device joins a call with alice and carol:
+
+| Who | Receives | Means |
+| --- | --- | --- |
+| bob's replaced device | `PeerLeft` with NO `peer`, then nothing | this device is out of the call; its later frames reach nobody |
+| bob's new device | `Joined`, then one `PeerReady { peer, initiator: false }` per PRESENT participant (no `resumed`), and `PeerAway { peer }` per away one | build every leg from nothing; the new device arrived LAST, so it is the polite side of every pair |
+| alice, carol (present) | exactly ONE `PeerReady { peer: "bob", resumed absent }` each - no `PeerLeft`, no `PeerAway` for bob | drop the leg held for `bob` and build one anew; the call goes on |
+| a participant AWAY then | nothing; on its resume, `PeerReady { peer: "bob" }` WITHOUT `resumed` (and `resumed: true` for the others) | the same rule: its leg to the old device is rebuilt |
+
+- **`peer` is always a USER id, never a device or seat id** - the same `peer` before and after
+  the replacement (and `from` on every relayed frame is the sender's user id too). A test that
+  re-announces a replaced device under another `peer` (`bob:seat-b2`) drives a wire the relay never
+  sends.
+- **`resumed` absent (false) is the whole signal: whatever leg the client holds for that `peer` is
+  dropped and a new one built.** There is no "replaced" flag: a replacement forgets every pair of
+  that user, so each of its pairings is a first one, and `resumed: true` is only ever sent for a
+  pair the same two devices formed before. No other case re-announces a user the client still holds
+  a leg for without `resumed` - a departure is a `PeerLeft { peer }` first, an expired grace too.
+- **Roles may flip.** The new seat is last in arrival order, so a pair the REPLACED device initiated
+  (carol, who joined after bob, now offers to bob's new device) changes sides; the leg is built anew,
+  so the role is read from this `PeerReady`, never kept from the old leg.
+- **No stale frame after the announcement.** call-service hands every relayed frame on UNDER the
+  room's lock (`P2pRoom::relay`), the lock the replacement and its `PeerReady` take, so a frame the
+  replaced device sent reaches a participant BEFORE the new `PeerReady` (it belongs to the old leg,
+  which the client is about to drop) or never. Every frame `from: "bob"` after that `PeerReady` is
+  the new device's.
+
+Pinned by `tests/p2p_signalling.rs`
+(`a_second_device_in_a_mesh_replaces_the_first_with_one_peer_ready_per_participant`,
+`a_participant_away_during_a_replacement_resumes_into_a_fresh_pair_with_the_new_device`, and the 1:1
+`a_second_device_replaces_the_first_and_both_ends_are_told`) and the `p2p.rs` unit tests (the
+pairings, the away resume, `a_relayed_frame_is_delivered_under_the_rooms_lock`). The client half -
+`onPeerReady` / `legForPeerReady` rebuilding on a re-announced `peer` without `resumed`, and its test
+driven by THIS wire - follows WP-GC6 ([backlog](../../backlog.d/group-calls-one-device-per-user.md)).
+
 ## Group calls - the mesh, client half (WP-GC2, 2026-11-13)
 
 **Built, behind the same server switch** (`group_calls_mode`, `off` in production). The start
