@@ -2068,21 +2068,17 @@ export function useChannelWorkspaces() {
         }
       }
 
-      // Send an encrypted system message into the channel to notify its members
+      // Notify the channel's members. The frame carries IDS, never a sentence: every reader draws
+      // the row with the one notice rendering, names resolved at read time and in ITS language
+      // (`channelNotice.ts`). SILENT: the row is opaque to the server, so the sender says it is a
+      // notice - it must neither count as unread for the salon's members nor ring their phones.
       const inviterId = currentUserId();
-      const getName = await resolveDisplayNames(inviterId ? [memberId, inviterId] : [memberId]);
-      const displayName = getName(memberId);
 
       if (inviterId) {
         try {
-          const inviterName = getName(inviterId);
-          const systemText = m.chat_system_member_added({
-            sender: inviterName,
-            members: displayName,
-          });
-          const systemBytes = encodeAppMessage(mkSystem('memberAdded', systemText as string));
-          // SILENT: the row is opaque to the server, so the sender says it is a notice - it must
-          // neither count as unread for the salon's members nor ring their phones.
+          const systemBytes = encodeAppMessage(
+            mkSystem('memberAdded', JSON.stringify({ newUsers: [memberId] }))
+          );
           await sendEncryptedChannelMessage(
             channelConversationId,
             systemBytes,

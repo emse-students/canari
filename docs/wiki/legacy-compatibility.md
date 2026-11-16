@@ -60,6 +60,19 @@ before the raise). An older figure on this page is the floor at the date its ent
 - **Removal.** Nothing to remove (no shim in the code): the degradation ends when `minClientVersion`
   passes the first stable carrying the caption edit, and this entry is then deleted.
 
+### A tolerated degradation: a salon invitation notice read by a build older than the id shape (2026-11-16)
+
+- **What.** A salon invitation's `memberAdded` notice carries `{ "newUsers": [id] }`
+  ([chat](frontend/modules/chat.md#a-salons-membership-notice-carries-ids-2026-11-16)). An older build
+  drew `system.data` as the sentence, so it shows the JSON text in that one centred notice. This build
+  reads BOTH shapes (`channelSystemEnvelope`): old sentence rows in the archive stay readable.
+- **Who.** Native apps older than the release carrying the id shape; the web app is always current.
+- **Why tolerated.** One cosmetic notice, never a lost message; a wire field added beside `data` would
+  touch the signed frame canonicalisation for the same cosmetic gain.
+- **Removal.** The legacy-sentence branch of `channelSystemEnvelope` goes when no salon history holds a
+  sentence notice (it never is rewritten), so it stays; the degradation ends when `minClientVersion`
+  passes the first stable carrying the id shape, and this entry is then deleted.
+
 ### A tolerated breakage: an institution post from a build older than the reach (owner, 2026-11-10)
 
 - **What.** An institution's post must carry a reach (migration 162,

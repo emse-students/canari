@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { decodeAppMessage } from '$lib/proto/codec';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 import { SvelteMap } from 'svelte/reactivity';
@@ -2156,6 +2157,22 @@ describe('useChannelWorkspaces - the membership notice', () => {
     const [channelId, , , , , options] = sendEncryptedChannelMessage.mock.calls[0];
     expect(channelId).toBe('channel_c1');
     expect(options).toEqual({ silent: true });
+  });
+
+  // A sentence froze the inviter's language and a display name into the frame, and no group handler
+  // can read it. The frame names ids only; every reader draws the row (`channelNotice.ts`).
+  it('names the newcomer by id in JSON, never a rendered sentence', async () => {
+    await useChannelWorkspaces().inviteMemberToChannel(
+      'channel_c1',
+      'newcomer',
+      'member',
+      makeContext()
+    );
+
+    const bytes = sendEncryptedChannelMessage.mock.calls[0][1] as Uint8Array;
+    const sent = decodeAppMessage(bytes)!;
+    expect(sent.system?.event).toBe('memberAdded');
+    expect(JSON.parse(sent.system!.data!)).toEqual({ newUsers: ['newcomer'] });
   });
 
   // A member hands the newcomer the past only on a proof it can check: the admission this device
