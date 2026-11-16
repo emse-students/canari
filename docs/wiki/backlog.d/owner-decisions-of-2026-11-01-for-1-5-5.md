@@ -14,7 +14,7 @@ last one ships.
 - **Calls** ([calls](../frontend/modules/calls.md)): the incoming-call screen is in-app plus Android
   full screen, with the same design (#2835); the live end keeps the red X, since a confirmation modal
   exists. RNNoise ships OFF with an in-call switch
-  ([entry](call-noise-suppression-clean-speech-gate-fails-and-readings-owed.md)).
+  ([calls](../frontend/modules/calls.md#noise-suppression-rnnoise---decided-2026-10-31-built-its-clean-speech-row-fails); entry closed 2026-11-16).
 - **Migrations**: applied only if additive, reviewed, and with a backup just before - a held
   migration now fails the deploy until the owner approves it
   ([the gate](../cicd.md#a-migration-the-owner-must-approve-is-held-2026-11-01)).
