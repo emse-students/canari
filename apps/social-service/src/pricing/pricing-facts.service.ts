@@ -2,6 +2,7 @@ import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common'
 import { UserTagService } from '../users/user-tag.service';
 import { NO_CURSUS, type CursusView, type PricingFacts } from './audience';
 import { coreUrl } from '../internal/service-urls';
+import type { AccountIdentity } from '../forms/respondent-identity';
 
 /**
  * What core-service's internal profile route answers with - the part read here. `cursusViews` is
@@ -20,6 +21,15 @@ interface InternalPublicProfile {
  * deploy replaces core-service first; `cicd.md`). Typed so the log and the answer name the cause.
  */
 export const PRICING_CORE_BEHIND = 'PRICING_CORE_BEHIND';
+
+/**
+ * The `code` core-service's `respondent-identity` 404 carries for an unknown account. A 404 WITHOUT
+ * it is a core-service that has no such route - an older one, which only a rollback produces.
+ */
+const RESPONDENT_UNKNOWN = 'RESPONDENT_UNKNOWN';
+
+/** The `code` of the 503 a submit gets when core-service is older than the account fields. */
+export const RESPONDENT_CORE_BEHIND = 'RESPONDENT_CORE_BEHIND';
 
 /**
  * Assembles the facts a price's criteria are evaluated against, once per request.
@@ -173,6 +183,75 @@ export class PricingFactsService {
         (cursus.length ? cursus.map((c) => `${c.formation}:${c.promo}`).join(',') : 'none')
     );
     return cursus.length ? cursus : NO_CURSUS;
+  }
+
+  /**
+   * The account fields a form joins to a member's answer (`forms/respondent-identity.ts`, owner
+   * 2026-11-16) when it ticks a cursus or a status (`joinsNeedCore`; the names and the campus are read
+   * from the shared `users` table, `FormsService.sharedAccountFields`), read from core-service AT SUBMIT TIME - never from the request, so a respondent
+   * cannot send another name or promo than their account's. Here because this is the one place
+   * social-service reads a person's identity-provider profile from core-service.
+   *
+   * Fails CLOSED like the cursus read: the organiser was promised these fields with every answer,
+   * so an answer stored without them would be an answer that silently says less than the form
+   * says it does. A transport failure or a non-404 status is a 503 to retry. A 404 carrying
+   * `RESPONDENT_UNKNOWN` IS an answer (no such account - null, accused); a 404 without it is a
+   * core-service older than this route (`RESPONDENT_CORE_BEHIND`).
+   */
+  async accountIdentity(userId: string): Promise<AccountIdentity | null> {
+    const url = coreUrl(`internal/users/${encodeURIComponent(userId)}/respondent-identity`);
+    const refuse = (code?: string) =>
+      new ServiceUnavailableException({
+        ...(code ? { code } : {}),
+        message: 'Cannot read your profile right now. Please try again in a moment.',
+      });
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        headers: { 'x-internal-secret': process.env.INTERNAL_SECRET ?? '' },
+      });
+    } catch (e) {
+      this.logger.error(
+        `[FORMS] respondent identity fetch FAILED user=${userId.slice(0, 8)} - the answer is refused ` +
+          `rather than stored without the fields its form joins: ${e instanceof Error ? e.message : String(e)}`
+      );
+      throw refuse();
+    }
+    if (res.status === 404) {
+      const body = (await res.json().catch(() => null)) as { code?: string } | null;
+      if (body?.code === RESPONDENT_UNKNOWN) {
+        this.logger.warn(
+          `[FORMS] respondent identity MISS user=${userId.slice(0, 8)} - no such account in core-service, joined empty`
+        );
+        return null;
+      }
+      this.logger.error(
+        `[FORMS] ${RESPONDENT_CORE_BEHIND} user=${userId.slice(0, 8)} - core-service has no respondent-identity ` +
+          'route (older than this service, a rollback window); refusing the answer'
+      );
+      throw refuse(RESPONDENT_CORE_BEHIND);
+    }
+    if (!res.ok) {
+      this.logger.error(
+        `[FORMS] respondent identity fetch returned ${res.status} user=${userId.slice(0, 8)} - refusing the answer`
+      );
+      throw refuse();
+    }
+    const raw = (await res.json()) as Partial<AccountIdentity>;
+    const identity: AccountIdentity = {
+      firstName: raw.firstName ?? null,
+      lastName: raw.lastName ?? null,
+      campus: raw.campus ?? null,
+      posts: Array.isArray(raw.posts) ? raw.posts : [],
+      cursusViews: Array.isArray(raw.cursusViews)
+        ? raw.cursusViews.map((c) => ({ promo: c.promo ?? null, formation: c.formation ?? null }))
+        : [],
+    };
+    this.logger.debug(
+      `[FORMS] respondent identity user=${userId.slice(0, 8)} cursus=${identity.cursusViews.length} ` +
+        `posts=${identity.posts.length} campus=${identity.campus ?? 'none'}`
+    );
+    return identity;
   }
 
   /**

@@ -18,6 +18,7 @@ import { callHoldsAppSound } from '$lib/utils/callSoundGate';
 import { scoreSound } from '$lib/utils/soundPalette';
 import { isAndroidTauriRuntime } from '$lib/utils/appVersion';
 import {
+  composePlainNotificationText,
   postNativeMessageNotification,
   type NativeMessageNotification,
 } from '$lib/utils/nativeNotification';
@@ -634,12 +635,18 @@ export function useNotifications() {
       return;
     }
 
+    // ONE COMPOSITION FOR EVERY NON-ANDROID BUILDER: a group is titled by its name, never by the
+    // sender alone (see `composePlainNotificationText`).
+    const shown = composePlainNotificationText(title, body, native);
     if (isTauriRuntime()) {
       try {
         if (await isPermissionGranted()) {
           await sendNotification({
-            title,
-            ...androidNotificationOptions(body, mentionsMe ? CHANNEL_MENTIONS : CHANNEL_MESSAGES),
+            title: shown.title,
+            ...androidNotificationOptions(
+              shown.body,
+              mentionsMe ? CHANNEL_MENTIONS : CHANNEL_MESSAGES
+            ),
             ...(conversationId ? { id: stableNotifId(conversationId) } : {}),
           });
           // THE CHOICE IS LOGGED BECAUSE IT IS INVISIBLE OTHERWISE. A channel does not appear on
@@ -716,8 +723,8 @@ export function useNotifications() {
         // sound - the message arrives, the call is not interrupted by it.
         const silent = callHoldsAppSound();
         if (silent) console.log(`[NOTIF] ${convKey} raised silent - a call holds the app's sound.`);
-        const n = new Notification(title, {
-          body,
+        const n = new Notification(shown.title, {
+          body: shown.body,
           tag: `canari-${conversationId ?? 'message'}`,
           silent,
         });

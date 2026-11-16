@@ -44,6 +44,13 @@
   import PaymentMethodChoice from '$lib/components/forms/PaymentMethodChoice.svelte';
   import PayerEmailPrompt from '$lib/components/payments/PayerEmailPrompt.svelte';
   import GuestIdentityFields from '$lib/components/forms/GuestIdentityFields.svelte';
+  import DeclaredIdentityFields from '$lib/components/forms/DeclaredIdentityFields.svelte';
+  import {
+    askedDeclaredFields,
+    declaredPayload,
+    emptyDeclaredValues,
+    firstDeclaredProblem,
+  } from '$lib/forms/respondentFields';
   import {
     askedGuestFields,
     emptyGuestIdentity,
@@ -95,9 +102,14 @@
   let guestIdentity = $state(emptyGuestIdentity());
   /** Whether a send was held on them: their fields then say what is missing. */
   let guestIdentityChecked = $state(false);
+  /** The promo and formation, status, campus the form asks a guest to declare ("A propos de vous"). */
+  let declared = $state(emptyDeclaredValues());
+  let declaredChecked = $state(false);
 
   /** What the form asks a guest about who they are; nothing by default (owner, 2026-11-06). */
   const askedFields = $derived(askedGuestFields(form?.guestFields));
+  /** What the form asks a guest to declare (owner, 2026-11-16): a guest has no account to read. */
+  const askedDeclared = $derived(askedDeclaredFields(form?.guestFields));
   const isNotOpenYet = $derived(!!form?.opensAt && new Date(form.opensAt) > new Date());
   const isClosed = $derived(!!form?.closedAt && new Date(form.closedAt) < new Date());
   // No profile half: the server refuses a public form whose questions depend on who answers.
@@ -188,6 +200,17 @@
         ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
       return;
     }
+    // The promo and formation, status and campus the creator asked, said on their own fields.
+    const declaredMissing = firstDeclaredProblem(askedDeclared, declared);
+    if (declaredMissing) {
+      declaredChecked = true;
+      error = '';
+      Log.d('PublicForm', `submit held: declared ${declaredMissing} missing or invalid`);
+      document
+        .getElementById('declared-identity')
+        ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      return;
+    }
     // Lydia's request goes to an address. When the form asked the guest's e-mail, that one is it
     // (typed once, kept with the answer); otherwise the guest types one here, forwarded once and
     // never stored (PP2).
@@ -203,6 +226,7 @@
         answers: visibleAnswers(visibleItems, selections),
         website: honeypot,
         ...guestIdentityPayload(askedFields, guestIdentity),
+        ...declaredPayload(askedDeclared, declared),
         ...(payerEmail ? { payerEmail } : {}),
         ...(total > 0 && form.allowCashPayment ? { paymentMethod: paymentMethodChoice } : {}),
       });
@@ -259,6 +283,8 @@
     // A shared device at an event: the next answer may be somebody else's.
     guestIdentity = emptyGuestIdentity();
     guestIdentityChecked = false;
+    declared = emptyDeclaredValues();
+    declaredChecked = false;
     error = '';
     window.scrollTo({ top: 0 });
   }
@@ -397,6 +423,13 @@
         bind:values={guestIdentity}
         showErrors={guestIdentityChecked}
         emailPaysLydia={paysOnline}
+        disabled={isNotOpenYet || isClosed || form.formFull || submitting}
+      />
+      <DeclaredIdentityFields
+        asked={askedDeclared}
+        bind:values={declared}
+        showErrors={declaredChecked}
+        anonymous={form.anonymous ?? false}
         disabled={isNotOpenYet || isClosed || form.formFull || submitting}
       />
 

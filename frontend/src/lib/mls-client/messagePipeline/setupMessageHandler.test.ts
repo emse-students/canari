@@ -65,6 +65,7 @@ import * as codec from '$lib/proto/codec';
 import * as messageUtils from '$lib/utils/chat/messageUtils';
 import { createMlsServiceStub } from '../test/fixtures/mlsServiceStub';
 import { openExternalCommitWindow } from '$lib/utils/chat/externalCommitVerdict';
+import { compareConversationRecency, conversationRecency } from '$lib/utils/chat/conversations';
 import {
   createTestConversations,
   createTestMessageReactions,
@@ -1056,6 +1057,130 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     expect(await ack).toBe(true);
     expect(mls.processWelcome).toHaveBeenCalledTimes(1);
     await expect(mls.processWelcome.mock.results[0].value).resolves.toBe(groupId);
+  });
+
+  /**
+   * A JOINED CONVERSATION IS ORDERED BY ITS ADMISSION, never by 0 (iPhone 12, `1.7.0-alpha.5`,
+   * 2026-11-16: two groups joined with the list in front were not drawn for minutes, then listed
+   * on the first screen after a resume). The row a Welcome writes holds notices at most - and a
+   * notice is not activity (`conversationRecency`) - so with no seed its sort key was 0: the LAST row
+   * of a long list, below the screen, where a phone's visible tree never reached it. The creator's
+   * row is seeded with its creation moment (`groupCreation`); the joiner's now carries the server's
+   * time of the Welcome that admitted it.
+   */
+  describe('a Welcome orders the joined conversation by the server time of its admission', () => {
+    const joined = '55555555-5555-4555-8555-555555555555';
+    const older = '66666666-6666-4666-8666-666666666666';
+    const ADMITTED_AT = 1_763_302_051_000;
+
+    async function deliverWelcome(
+      meta: unknown,
+      deliveryMeta: { queuedCreatedAt?: number } | undefined,
+      overrides: Record<string, unknown> = {}
+    ) {
+      const deps = baseDeps({
+        conversations: createTestConversations([
+          [
+            older,
+            emptyConversation(older, {
+              lifecycle: 'active',
+              conversationType: 'group',
+              lastMessageAt: ADMITTED_AT - 60_000,
+            }),
+          ],
+        ]),
+        ...overrides,
+      });
+      const mls = deps.mlsService as any;
+      mls.getGroupMeta = vi.fn().mockResolvedValue(meta);
+      mls.processWelcome = vi.fn().mockResolvedValue(joined);
+      mls.getDeviceId = vi.fn().mockReturnValue('dev-x');
+      setupMessageHandler(deps as any);
+      const onMsg = mls.onMessage.mock.calls[0][0] as (...a: unknown[]) => Promise<boolean>;
+      expect(
+        await onMsg('peer-user', new Uint8Array([1]), joined, true, undefined, false, deliveryMeta)
+      ).toBe(true);
+      return { deps, mls };
+    }
+
+    it('a new group sorts above a conversation last active before the admission', async () => {
+      const { deps } = await deliverWelcome(
+        { name: 'IPH6G', isGroup: true },
+        { queuedCreatedAt: ADMITTED_AT }
+      );
+
+      const row = deps.conversations.get(joined)!;
+      expect(row.lastMessageAt).toBe(ADMITTED_AT);
+      expect(conversationRecency(row)).toBe(ADMITTED_AT);
+      const order = [...deps.conversations.values()].sort(compareConversationRecency);
+      expect(order.map((c) => c.id)).toEqual([joined, older]);
+    });
+
+    it('a new DM is seeded the same way', async () => {
+      const { deps } = await deliverWelcome(
+        { name: 'user-a::peer-user', isGroup: false },
+        { queuedCreatedAt: ADMITTED_AT }
+      );
+
+      expect(deps.conversations.get(joined)?.conversationType).toBe('direct');
+      expect(deps.conversations.get(joined)?.lastMessageAt).toBe(ADMITTED_AT);
+    });
+
+    it('a group joined in the background gets the seed from its redelivered Welcome', async () => {
+      const deps = baseDeps({ conversations: createTestConversations([]) });
+      const mls = deps.mlsService as any;
+      mls.getLocalGroups = vi.fn().mockReturnValue([joined]);
+      mls.getGroupMeta = vi.fn().mockResolvedValue({ name: 'Equipe', isGroup: true });
+      setupMessageHandler(deps as any);
+      const onMsg = mls.onMessage.mock.calls[0][0] as (...a: unknown[]) => Promise<boolean>;
+
+      await onMsg('peer', new Uint8Array([1]), joined, true, undefined, false, {
+        queuedCreatedAt: ADMITTED_AT,
+      });
+
+      expect(deps.conversations.get(joined)?.lastMessageAt).toBe(ADMITTED_AT);
+    });
+
+    it('a row that already has a seed keeps it: a re-Welcome is no reason to move it', async () => {
+      const seeded = ADMITTED_AT - 3_600_000;
+      const { deps } = await deliverWelcome(
+        { name: 'Equipe', isGroup: true },
+        { queuedCreatedAt: ADMITTED_AT },
+        {
+          conversations: createTestConversations([
+            [joined, emptyConversation(joined, { lifecycle: 'pending', lastMessageAt: seeded })],
+          ]),
+        }
+      );
+
+      expect(deps.conversations.get(joined)?.lastMessageAt).toBe(seeded);
+    });
+
+    it('a row restored with the persisted 0 of an unseeded row takes the admission', async () => {
+      // `toConversationMeta` writes `updatedAt` as the recency, 0 for a row with no message, seed or
+      // start, and the load reads it back as `lastMessageAt: 0` - a value that is the ABSENCE of a seed.
+      const { deps } = await deliverWelcome(
+        { name: 'Equipe', isGroup: true },
+        { queuedCreatedAt: ADMITTED_AT },
+        {
+          conversations: createTestConversations([
+            [joined, emptyConversation(joined, { lifecycle: 'pending', lastMessageAt: 0 })],
+          ]),
+        }
+      );
+
+      expect(deps.conversations.get(joined)?.lastMessageAt).toBe(ADMITTED_AT);
+    });
+
+    it('a Welcome with no server time leaves no seed, and says so at warn', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      restores.push(() => warn.mockRestore());
+
+      const { deps } = await deliverWelcome({ name: 'IPH6G', isGroup: true }, undefined);
+
+      expect(deps.conversations.get(joined)?.lastMessageAt).toBeUndefined();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('no server time'));
+    });
   });
 
   /**

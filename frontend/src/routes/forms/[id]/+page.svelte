@@ -53,6 +53,14 @@
   import ProductGridQuestion from '$lib/components/forms/ProductGridQuestion.svelte';
   import ProductGridOrderBar from '$lib/components/forms/ProductGridOrderBar.svelte';
   import PaymentMethodChoice from '$lib/components/forms/PaymentMethodChoice.svelte';
+  import DeclaredIdentityFields from '$lib/components/forms/DeclaredIdentityFields.svelte';
+  import RespondentNotice from '$lib/components/forms/RespondentNotice.svelte';
+  import {
+    askedDeclaredFields,
+    declaredPayload,
+    emptyDeclaredValues,
+    firstDeclaredProblem,
+  } from '$lib/forms/respondentFields';
   import {
     allRequiredAnswered as allRequiredAnsweredOf,
     editedAnswers,
@@ -158,6 +166,14 @@
    * as the refusal rather than its sentence, so the card stops saying it the moment it is answered.
    */
   let missingAnswer = $state<MissingAnswer | null>(null);
+  /**
+   * What an ANONYMOUS form asks each respondent to declare (owner, 2026-11-16): its answers are
+   * joined to no account, so the promo and formation, status and campus it wants are typed here.
+   * A named form asks nothing: the server reads them from the account (`RespondentNotice`).
+   */
+  const askedDeclared = $derived(form?.anonymous ? askedDeclaredFields(form.guestFields) : []);
+  let declared = $state(emptyDeclaredValues());
+  let declaredChecked = $state(false);
   /** Questions a profile criterion hides from this submitter, whatever they answer. */
   let hiddenItemIds = $state<string[]>([]);
   /** False when a `submitCondition` excludes them from the form entirely. */
@@ -732,6 +748,17 @@
         ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
       return;
     }
+    // What an anonymous form asks to be declared, said on its own fields, brought into view.
+    const declaredMissing = firstDeclaredProblem(askedDeclared, declared);
+    if (declaredMissing) {
+      declaredChecked = true;
+      error = '';
+      Log.d('FormView', `submit held: declared ${declaredMissing} missing or invalid`);
+      document
+        .getElementById('declared-identity')
+        ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      return;
+    }
     if (editing) {
       // A change neither prices nor pays: the payment steps below are not reached.
       await saveEdit();
@@ -754,6 +781,7 @@
         email: '',
         ...(payerEmail ? { payerEmail } : {}),
         answers: visibleAnswers(visibleItems, selections),
+        ...declaredPayload(askedDeclared, declared),
         ...formCheckoutCallbacks(),
         ...(total > 0 && form.allowCashPayment ? { paymentMethod: paymentMethodChoice } : {}),
       });
@@ -1185,6 +1213,19 @@
         <p class="font-semibold">{m.form_view_payments_paused_title()}</p>
         <p>{m.form_view_payments_paused_note()}</p>
       </div>
+    {/if}
+
+    <!-- ── Who answered: declared on an anonymous form, joined from the account (and said) on a
+         named one ── -->
+    {#if !submitted && !editing}
+      <DeclaredIdentityFields
+        asked={askedDeclared}
+        bind:values={declared}
+        showErrors={declaredChecked}
+        anonymous
+        disabled={submitting || preview}
+      />
+      <RespondentNotice respondentFields={form.respondentFields} />
     {/if}
 
     <!-- ── Payment method (cash vs online) ── -->

@@ -596,6 +596,8 @@ services:
       LIVE_REPORT_SIGNING_KEY: ${LIVE_REPORT_SIGNING_KEY:-}
       # The live replays' total cap in GB (docs/wiki/live-replays.md, D5); empty means 20.
       LIVE_REPLAY_TOTAL_MAX_GB: ${LIVE_REPLAY_TOTAL_MAX_GB:-}
+      # Distinct accounts that make a post a campus trend (docs/wiki/engagement.md); empty means 10.
+      CAMPUS_TREND_THRESHOLD: ${CAMPUS_TREND_THRESHOLD:-}
       # The communities one account may hold as their creator; empty means 20
       # (apps/social-service/src/channels/community-limits.ts).
       COMMUNITY_OWNED_MAX: ${COMMUNITY_OWNED_MAX:-}

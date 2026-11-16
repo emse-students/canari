@@ -41,3 +41,10 @@ Recorded so no question answered here is asked again. Each line names where its 
   the existing "Demander aux invités" block. The respondent sees what is transmitted; the answers list
   and the XLSX export carry the columns and a filter; a field that cannot come from an account (a
   guest, an anonymous form) is asked instead.
+
+### The side-by-side scene is removed (23)
+
+- **"Cote a cote" leaves the desktop live scenes** (owner, 2026-11-16 evening: "Cet agencement est un peu
+  bizarre, on peut supprimer cote a cote"). Four scenes remain: camera, screen, screen + camera (overlay),
+  "Je reviens". Charter: principle 7 (simplicity). Nothing on the wire or the server names a scene, so no
+  compatibility shim is owed ([live](../frontend/modules/live.md)).

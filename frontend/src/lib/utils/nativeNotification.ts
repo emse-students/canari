@@ -155,6 +155,28 @@ export function notificationGroupName(
 }
 
 /**
+ * The title and body of a message notification raised by the PLAIN plugin or the web API - iOS (a
+ * frame that arrives while the app is alive in the background), desktop and the browser, which have
+ * no native builder and no subtitle line.
+ *
+ * A group is titled by ITS name and the speaker leads the body ("Alice: [Media]"), exactly the
+ * hierarchy the iOS extension draws (group title, sender subtitle) and the Android builder draws
+ * from the same `groupName`. Handing the plugin the sender alone as the title lost the group, so a
+ * group message read "Alice / [Media]" on the lock screen whenever this path, not the extension,
+ * raised it (iPhone 12 sitting, 2026-11-16). A direct message, or a group with no name to show,
+ * keeps the sender as the title and the body untouched.
+ */
+export function composePlainNotificationText(
+  senderName: string,
+  body: string,
+  native?: Pick<NativeMessageNotification, 'groupName' | 'isGroup'>
+): { title: string; body: string } {
+  const groupName = native?.groupName.trim() ?? '';
+  if (native?.isGroup === false || groupName === '') return { title: senderName, body };
+  return { title: groupName, body: senderName ? `${senderName}: ${body}` : body };
+}
+
+/**
  * Whether the conversation is a group, for the native builder - the push payload's `isGroup`, read
  * from the row's type. A salon is a group. `null` when the row carries no type (a row written before
  * the field existed): unknown, exactly as the push's absent `isGroup`, and the builder then falls back

@@ -9,3 +9,6 @@ Closing reading: a screenshot ON AIR at 390 pt (iPhone 12) and on the Mi 9T, wit
 The 360 css px half on a small Android is deleted 2026-11-16 by the owner's decision (16): hardware outside the bench ([owner-decisions-of-2026-11-16](owner-decisions-of-2026-11-16.md)).
 
 **iPhone 12, `1.7.0-alpha.6`, 2026-11-16/17 (seventh sitting, [verdicts](../device-verification.md)):** iPhone half PASS at 390 pt and at a doubled font: all six 44 x 44 actions wrap whole to their own row, End and the chat toggle tappable; the Reconnecting pill was seen once (doubled font, Wi-Fi off), not at 390 pt.
+
+
+**Mi 9T half, read 2026-11-16 on `1.7.0-alpha.6` ([readings](../device-verification.md#the-mi-9t-readings-of-2026-11-16-fifth-sitting-on-170-alpha6-the-salon-badge-and-grant-rows-the-live-bars-the-push)): `PASS` at 436 css px, and at 360 css px by density emulation** (a half the owner's decision 16 had deleted; read anyway because the bench could). `alpha` on air with a 42-character title and the "Reconnexion... 7 segments en attente" pill (Wi-Fi cut 9 s): the actions are one non-shrinking group on their own row, End and the chat toggle inside the page and 44x44 (436: End 380-424; 360: End 304-348). **Left: the iPhone's 390 pt reading and the doubled root font** (not taken on the Mi).
