@@ -420,6 +420,8 @@ const REVIEWED_GROUPS: [string, string[]][] = [
       '2x push.rs|done.gone()',
       'push.rs|f.bytes',
       '2x push_registration.rs|completed(done)',
+      // A `'static` literal of the closed `SignOutCause` list, `unknown` for anything else.
+      'push_registration.rs|sign_out_cause_label(&cause)',
     ],
   ],
   [

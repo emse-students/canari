@@ -16,6 +16,7 @@
  * On desktop/web, all methods are silent no-ops.
  */
 
+import type { SignOutCause } from '$lib/stores/signOutCause';
 import { invoke } from '@tauri-apps/api/core';
 import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification';
 import { detectRuntimeDeviceOs } from '$lib/mls-client/mlsPlatform';
@@ -832,8 +833,12 @@ async function reportPushUnavailable(
  * since until then FCM may still hold this install's token.
  *
  * Never rejects: a sign-out does not wait on it to go on, and every failure is logged here.
+ *
+ * `cause` is who decided the sign-out, handed to the native command so its logcat line names it:
+ * a store build forwards no WebView console to logcat, and a sign-out that says only that it
+ * happened reads exactly like a session the server ended (Mi 9T, 2026-11-15, `SignOutCause`).
  */
-export async function endPushRegistration(): Promise<void> {
+export async function endPushRegistration(cause: SignOutCause): Promise<void> {
   // The skip key describes the registration that just ended; left, the next sign-in in this tab
   // would compare a fresh token against it instead of registering.
   try {
@@ -861,7 +866,7 @@ export async function endPushRegistration(): Promise<void> {
     return;
   }
   try {
-    const deleted = await invoke<boolean>('end_push_registration');
+    const deleted = await invoke<boolean>('end_push_registration', { cause });
     if (deleted) {
       console.info(`[Push] sign-out ended this device's push registration (${platform})`);
     } else {

@@ -624,6 +624,33 @@ redirect would have built survives; the root and the sign-in pages stay bare. So
   `$derived` from `page.url`, so the sign-in carries the url of the moment (still through
   `safeInternalPath`, the same-origin gate below). Test: `LoginPage.returnToFollowsUrl.svelte.test.ts`.
 
+## A sign-out names who decided it (2026-11-15)
+
+**Every `clearAuth` names its cause** (`SignOutCause`, `frontend/src/lib/stores/signOutCause.ts`: `chosen`,
+`pin-gate`, `platform-gate`, `identity-split`, `account-deleted`, `session-expired`, `device-revoked`,
+`account-deleted-in-another-tab`), printed on the `[A] clear (<cause>)` line and handed to the native
+`end_push_registration`, whose first line is `[PushEnd] sign-out decided by: <cause>` - mapped in Rust onto the same closed list (`sign_out_cause_label`), anything else printing `unknown`, so the native log carries nothing a caller wrote. A label for the
+log, never read to decide anything; a closed union so the compiler makes every exit name itself.
+
+**Why the NATIVE line has to carry it.** A store build forwards no WebView console to logcat, so on a
+phone the only sign-out lines a reader has without an inspector are the native ones (`[PushEnd]`,
+`endForSignOut`, `[MLS] ending the native MLS session (sign-out...)`) - and they are the SAME for a
+button somebody tapped and for a session the server ended. On the Mi 9T (`1.7.0-alpha.1`, dev,
+2026-11-15) a reading filed "a page reload, then a tap on a bottom tab, signed the account out" (2 of
+2) as a P2 and suspected a refresh rotated twice across the reload. Re-run with the console and the
+network captured over CDP: the reload re-armed the PIN gate (the vault path off: `[PIN] No device key
+in vault for this account - auto-login impossible`, by design - a new document holds no key), and the
+gate's own "Se deconnecter" button is drawn at CSS 158-279 x 875-905, inside the "Discussions" tab's
+218-327 x 873-921 underneath. The tap a minute later landed on it: `[AUTH] Sign-out from the PIN
+gate`, the client's own `POST /api/auth/logout` answered 200, then MiConnect's end-session in the
+in-app browser - which a dead session never opens (`leaveSignedOut` is for a sign-out somebody chose).
+Every refresh across the reload answered 200; no request answered 401 or 403. The session rules held;
+what was missing was a log that said so.
+
+**The rig's lesson:** a phone tap goes through `cdp.mjs click`, which waits in `stablePoint` while its
+target is covered and FAILS naming it as covered if it stays so - a bare `adb shell input tap` at a
+tab's coordinates taps whatever is drawn there, and after a reload that is the PIN gate.
+
 ## A return target is held to the page's origin (2026-10-28)
 
 A `returnTo` or `redirect` query parameter is of unknown origin, and its consumers include a plain
