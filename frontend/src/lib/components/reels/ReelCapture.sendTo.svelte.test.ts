@@ -122,8 +122,12 @@ const host = {
     takeId: 't-1',
     queued: keys.length,
   })),
+  sendImage: vi.fn(
+    async (_f: File, keys: readonly string[]): Promise<number | null> => keys.length
+  ),
   adopt: vi.fn(async () => {}),
   endWait: vi.fn(),
+  groupMemberIds: vi.fn(async () => []),
 } satisfies ReelSendHost;
 
 function publishDeps(): PublishReelDeps {
@@ -254,10 +258,65 @@ describe('"Envoyer a..." on the camera tab (RC-12)', () => {
     expect(target.querySelector('[data-reel-next]')!.textContent).toContain(m.reels_review_next());
   });
 
-  it('a PHOTO keeps "Suivant": its chat send is not built', async () => {
+  it('SWITCH OFF: a PHOTO keeps the one "Suivant", as in production', async () => {
+    writer.on = false;
     const { target, tap } = await render();
     await tap();
+    expect(target.querySelector('[data-reel-secondary]')).toBeNull();
     expect(target.querySelector('[data-reel-next]')!.textContent).toContain(m.reels_review_next());
+  });
+
+  it('D-photo: a PHOTO gets the same review - "Publier" and "Envoyer a..."', async () => {
+    const { target, tap } = await render();
+    await tap();
+    expect(target.querySelector('[data-reel-secondary]')!.textContent?.trim()).toBe(
+      m.reel_review_publish()
+    );
+    expect(target.querySelector('[data-reel-next]')!.textContent).toContain(m.reel_sendto_action());
+  });
+
+  it('D-photo: a PHOTO sent to conversations goes as ordinary image messages, never a reel take, and frees the camera', async () => {
+    const { target, tap } = await render();
+    await tap();
+    await click(target, '[data-reel-next]');
+    expect(target.querySelector('[data-reel-send-same-as-post]')).toBeNull();
+    await click(target, '[data-reel-send-row="g-1"]');
+    await click(target, '[data-reel-send-row="g-2"]');
+    await click(target, '[data-reel-send-submit]');
+    expect(host.send).not.toHaveBeenCalled();
+    expect(host.sendImage).toHaveBeenCalledTimes(1);
+    const [file, keys] = host.sendImage.mock.calls[0] as unknown as [File, string[]];
+    expect(file.type).toMatch(/^image\//);
+    expect(keys).toEqual(['g-1', 'g-2']);
+    expect(toasts()).toContain(m.reel_sendto_sending({ count: 2 }));
+    expect(target.querySelector('[data-reel-review]')).toBeNull();
+    expect(target.querySelector('[data-reel-shutter]')).not.toBeNull();
+  });
+
+  it('D-photo: "Publier" AND a conversation sends the image, then opens the publish step; its Back ends the take', async () => {
+    const { target, tap } = await render({ publishDeps: publishDeps() });
+    await tap();
+    await click(target, '[data-reel-next]');
+    await click(target, '[data-reel-send-feed]');
+    await click(target, '[data-reel-send-row="g-1"]');
+    expect(target.querySelector('[data-reel-send-same-as-post]')).toBeNull();
+    await click(target, '[data-reel-send-submit]');
+    expect(host.sendImage).toHaveBeenCalledTimes(1);
+    expect(host.send).not.toHaveBeenCalled();
+    expect(target.querySelector('[data-reel-publish]')).not.toBeNull();
+    await click(target, '[data-reel-publish] header button');
+    expect(target.querySelector('[data-reel-review]')).toBeNull();
+  });
+
+  it('D-photo: a photo the host could not hand anywhere is said, and the sheet stays', async () => {
+    host.sendImage.mockResolvedValueOnce(null);
+    const { target, tap } = await render();
+    await tap();
+    await click(target, '[data-reel-next]');
+    await click(target, '[data-reel-send-row="g-1"]');
+    await click(target, '[data-reel-send-submit]');
+    expect(toasts()).toContain(m.reel_sendto_failed());
+    expect(target.querySelector('[data-reel-send]')).not.toBeNull();
   });
 
   it('SWITCH ON: a video review offers "Envoyer a...", which opens the sheet, and Back returns to the take', async () => {
@@ -469,5 +528,141 @@ describe('"Envoyer a..." on the camera tab (RC-12)', () => {
     expect((host.adopt.mock.calls as unknown[][])[1][0]).toBe('t-1');
     expect(deps.createPost).toHaveBeenCalledTimes(2);
     expect(host.endWait).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('the two paths of "Envoyer a..." (owner, 2026-11-16, section 22)', () => {
+  it('PATH 1, switch on: the review of a video holds "Publier" and "Envoyer a...", and "Publier" is the publish step, nothing queued', async () => {
+    const { target, hold } = await render();
+    await hold();
+    const secondary = target.querySelector<HTMLButtonElement>('[data-reel-secondary]')!;
+    expect(secondary.textContent?.trim()).toBe(m.reel_review_publish());
+    expect(target.querySelector('[data-reel-next]')!.textContent).toContain(m.reel_sendto_action());
+    await click(target, '[data-reel-secondary]');
+    expect(target.querySelector('[data-reel-publish]')).not.toBeNull();
+    expect(target.querySelector('[data-reel-send]')).toBeNull();
+    expect(host.send).not.toHaveBeenCalled();
+  });
+
+  it('PATH 1, switch OFF: one "Suivant" and no second button, as in production', async () => {
+    writer.on = false;
+    const { target, hold } = await render();
+    await hold();
+    expect(target.querySelector('[data-reel-secondary]')).toBeNull();
+    expect(target.querySelector('[data-reel-next]')!.textContent).toContain(m.reels_review_next());
+  });
+
+  it('PATH 1: the tab camera says no recipient', async () => {
+    const { target } = await render();
+    expect(target.querySelector('[data-camera-send-to]')).toBeNull();
+  });
+
+  const chatProps = (extra: Record<string, unknown> = {}) => ({
+    destination: 'chat',
+    chatFilms: true,
+    chatTarget: { id: 'g-1', name: 'Alpha' },
+    oncapture: vi.fn(),
+    onclose: vi.fn(),
+    ...extra,
+  });
+
+  it('PATH 2: the camera says "Envoyer a" and the conversation under it', async () => {
+    const { target } = await render(chatProps());
+    const header = target.querySelector('[data-camera-title]')!;
+    expect(header.textContent).toContain(m.reel_camera_send_to());
+    expect(header.textContent).toContain('Alpha');
+  });
+
+  it('PATH 2: the review holds "Ajouter des destinataires" and "Alpha" with the send arrow, and no publish button', async () => {
+    const { target, hold } = await render(chatProps());
+    await hold();
+    const next = target.querySelector<HTMLButtonElement>('[data-reel-next]')!;
+    expect(next.textContent?.trim()).toBe('Alpha');
+    expect(next.getAttribute('aria-label')).toBe(m.reel_review_send_to_name({ name: 'Alpha' }));
+    expect(target.querySelector('[data-reel-secondary]')!.textContent?.trim()).toBe(
+      m.reel_review_add_recipients()
+    );
+    expect(target.textContent).not.toContain(m.reel_review_publish());
+  });
+
+  it('PATH 2: the name sends to the conversation in one tap - the take handed back as the direct "Envoyer" did, the camera closed', async () => {
+    const props = chatProps();
+    const { target, hold } = await render(props);
+    await hold();
+    await click(target, '[data-reel-next]');
+    const file = props.oncapture.mock.calls[0][0] as File;
+    expect(file.type).toMatch(/^video\//);
+    expect(props.onclose).toHaveBeenCalled();
+    expect(host.send).not.toHaveBeenCalled();
+  });
+
+  it('PATH 2: "Ajouter des destinataires" opens the SAME sheet with the conversation ticked and "Publier" offered; the press queues ONE take and closes the camera', async () => {
+    const props = chatProps();
+    const { target, hold } = await render(props);
+    await hold();
+    await click(target, '[data-reel-secondary]');
+    expect(target.querySelector('[data-reel-send]')).not.toBeNull();
+    expect(target.querySelector('[data-reel-send-row="g-1"]')!.getAttribute('aria-checked')).toBe(
+      'true'
+    );
+    expect(target.querySelector('[data-reel-send-row="g-2"]')!.getAttribute('aria-checked')).toBe(
+      'false'
+    );
+    expect(target.querySelector('[data-reel-send-feed]')!.textContent).toContain(
+      m.reel_sendto_feed_row()
+    );
+    await click(target, '[data-reel-send-row="g-2"]');
+    await click(target, '[data-reel-send-submit]');
+    expect(host.send).toHaveBeenCalledTimes(1);
+    expect(host.send.mock.calls[0][1]).toEqual(['g-1', 'g-2']);
+    expect(props.oncapture).not.toHaveBeenCalled();
+    expect(props.onclose).toHaveBeenCalled();
+  });
+
+  it('PATH 2: "Publier" ticked with the conversation opens the publish step, which closes the camera instead of leaving for the feed', async () => {
+    const props = chatProps({ publishDeps: publishDeps() });
+    const { target, hold } = await render(props);
+    await hold();
+    await click(target, '[data-reel-secondary]');
+    await click(target, '[data-reel-send-feed]');
+    await click(target, '[data-reel-send-submit]');
+    expect(target.querySelector('[data-reel-publish]')).not.toBeNull();
+    await click(target, '[data-reel-publish-submit]');
+    const { goto } = await import('$app/navigation');
+    expect(goto).not.toHaveBeenCalled();
+    expect(props.onclose).toHaveBeenCalled();
+  });
+
+  it('PATH 2 with no target count served: the one-tap send alone, no sheet offered', async () => {
+    getReelLimits.mockResolvedValue({
+      maxDurationMs: 90_000,
+      chatMaxDurationMs: 60_000,
+      retentionDays: 30,
+      warningWindowDays: 7,
+    });
+    const { target, hold } = await render(chatProps());
+    await hold();
+    expect(target.querySelector('[data-reel-secondary]')).toBeNull();
+    expect(target.querySelector('[data-reel-next]')!.textContent?.trim()).toBe('Alpha');
+  });
+
+  it('PATH 2, switch OFF (a photo-only chat camera): no header, and a photo is "Ajouter" as in production', async () => {
+    writer.on = false;
+    const { target, tap } = await render(chatProps({ chatFilms: false }));
+    expect(target.querySelector('[data-camera-send-to]')).toBeNull();
+    await tap();
+    expect(target.querySelector('[data-reel-secondary]')).toBeNull();
+    expect(target.querySelector('[data-reel-next]')!.textContent?.trim()).toBe(
+      m.reels_review_add()
+    );
+  });
+
+  it('PATH 2: a PHOTO keeps its one "Ajouter" (a photo through the sheet is not built)', async () => {
+    const { target, tap } = await render(chatProps());
+    await tap();
+    expect(target.querySelector('[data-reel-secondary]')).toBeNull();
+    expect(target.querySelector('[data-reel-next]')!.textContent?.trim()).toBe(
+      m.reels_review_add()
+    );
   });
 });

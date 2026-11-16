@@ -28,8 +28,9 @@ vi.mock('$lib/users/blocks', () => ({
     return blocked.ids.map((userId) => ({ userId }));
   },
 }));
+const knownNames = vi.hoisted(() => ({ byId: {} as Record<string, string> }));
 vi.mock('$lib/utils/users/displayName', () => ({
-  resolveUserDisplayName: async () => null,
+  resolveUserDisplayName: async (id: string) => knownNames.byId[id] ?? null,
   getUserDisplayNameSync: (_id: string, fallback: string) => fallback,
 }));
 vi.mock('$lib/components/shared/Avatar.svelte', async () => ({
@@ -107,7 +108,14 @@ async function settle() {
 }
 
 async function open(
-  props: Partial<{ clip: object; cap: number; chatCapMs: number; sending: boolean }> = {}
+  props: Partial<{
+    clip: object;
+    cap: number;
+    chatCapMs: number;
+    sending: boolean;
+    preticked: string | null;
+    host: object;
+  }> = {}
 ): Promise<void> {
   mounted.push(
     mount(ReelSendSheet, {
@@ -136,7 +144,7 @@ const feed = () => document.querySelector<HTMLButtonElement>('[data-reel-send-fe
 const submit = () => document.querySelector<HTMLButtonElement>('[data-reel-send-submit]')!;
 
 describe('ReelSendSheet', () => {
-  it('puts "Publier sur CanaReels" first, then the conversations by recency and no salon', async () => {
+  it('puts "Publier" first, then the conversations by recency and no salon', async () => {
     await open();
     const focusables = [...document.querySelectorAll('[role="checkbox"]')];
     expect(focusables[0]).toBe(feed());
@@ -301,5 +309,118 @@ describe('ReelSendSheet', () => {
     row('g-old').click();
     await settle();
     expect(submit().disabled).toBe(true);
+  });
+});
+
+describe("ReelSendSheet - Snapchat's list (owner, 2026-11-16, section 22)", () => {
+  const titles = () =>
+    [...document.querySelectorAll('[data-picker-section]')].map((h) => h.textContent?.trim());
+
+  function manyRows() {
+    rows.clear();
+    // Ten groups, newest first by `at`: Recents holds six, the rest reads alphabetically.
+    const names = [
+      'Kilo',
+      'Juliet',
+      'India',
+      'Hotel',
+      'Golf',
+      'Foxtrot',
+      'Echo',
+      'Delta',
+      'Alpha',
+      'Bravo',
+    ];
+    names.forEach((name, i) => rows.set(`g-${name}`, convo(`g-${name}`, name, 100 - i)[1]));
+  }
+
+  it('the search is at the top, then "CanaReels" with the one row "Publier", then "Recents", then the rest', async () => {
+    manyRows();
+    await open();
+    const search = document.querySelector('[data-reel-send-search]')!;
+    expect(search.compareDocumentPosition(feed()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(feed().textContent).toContain(m.reel_sendto_feed_row());
+    expect(m.reel_sendto_feed_row()).toBe('Publier');
+    expect(titles()).toEqual([
+      m.reel_sendto_section_feed(),
+      m.reel_sendto_section_recent(),
+      m.reel_sendto_section_all(),
+    ]);
+    expect(rowKeys()).toEqual([
+      // Recents: the six latest, by last activity.
+      'g-Kilo',
+      'g-Juliet',
+      'g-India',
+      'g-Hotel',
+      'g-Golf',
+      'g-Foxtrot',
+      // The rest: alphabetical.
+      'g-Alpha',
+      'g-Bravo',
+      'g-Delta',
+      'g-Echo',
+    ]);
+  });
+
+  it('a typed search is one untitled list of the matches, alphabetical, "Publier" still first', async () => {
+    manyRows();
+    await open();
+    const input = document.querySelector<HTMLInputElement>('[data-reel-send-search]')!;
+    input.value = 'o';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await settle();
+    expect(titles()).toEqual([m.reel_sendto_section_feed()]);
+    expect(rowKeys()).toEqual(['g-Bravo', 'g-Echo', 'g-Foxtrot', 'g-Golf', 'g-Hotel', 'g-Kilo']);
+  });
+
+  it("opened from a conversation's camera, that conversation is ticked from the start", async () => {
+    await open({ preticked: 'g-old' });
+    expect(row('g-old').getAttribute('aria-checked')).toBe('true');
+    expect(row('g-new').getAttribute('aria-checked')).toBe('false');
+    expect(submit().disabled).toBe(false);
+    submit().click();
+    expect(onsend).toHaveBeenCalledWith({ feed: false, targetKeys: ['g-old'] });
+  });
+
+  it('a pre-tick this device does not hold ticks nothing', async () => {
+    await open({ preticked: 'g-gone' });
+    expect(document.querySelectorAll('[aria-checked="true"]')).toHaveLength(0);
+    expect(submit().disabled).toBe(true);
+  });
+
+  it('opened from the tab, nothing is ticked', async () => {
+    await open();
+    expect(document.querySelectorAll('[aria-checked="true"]')).toHaveLength(0);
+  });
+
+  it("a group's row names a few of its members (never this account), read from the local tree; a DM has none", async () => {
+    knownNames.byId = { 'u-a': 'Ana', 'u-b': 'Ben', 'u-c': 'Cleo', 'u-d': 'Dan' };
+    const groupMemberIds = vi.fn(async (id: string) =>
+      id === 'g-new' ? [ME, 'u-a', 'u-b', 'u-c', 'u-d'] : []
+    );
+    await open({ host: { ...host, groupMemberIds } });
+    await settle();
+    expect(row('g-new').querySelector('[data-picker-subtitle]')!.textContent).toBe(
+      'Ana, Ben, Cleo'
+    );
+    expect(row('d-1').querySelector('[data-picker-subtitle]')).toBeNull();
+    expect(groupMemberIds).not.toHaveBeenCalledWith('d-1');
+    knownNames.byId = {};
+  });
+
+  it('a group whose members cannot be read keeps its row, said at warn', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const groupMemberIds = vi.fn(async () => {
+      throw new Error('not held');
+    });
+    await open({ host: { ...host, groupMemberIds } });
+    await settle();
+    expect(row('g-new')).not.toBeNull();
+    expect(row('g-new').querySelector('[data-picker-subtitle]')).toBeNull();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('could not be read'),
+      expect.any(Error)
+    );
+    warn.mockRestore();
   });
 });

@@ -107,7 +107,7 @@
     type WorkspacePurgeContext,
   } from '$lib/composables/useChannelWorkspaces.svelte';
   import type { MessagingContext } from '$lib/composables/useMessaging.svelte';
-  import { registerReelSendHost } from '$lib/reels/reelSendBridge';
+  import { registerReelSendHost, userIdsOfIdentities } from '$lib/reels/reelSendBridge';
   import { adoptOutboxPublishedUpload, endOutboxPublishWait } from '$lib/utils/chat/outbox';
   import { MlsSessionVacantError, type BulkIngestPhase } from '$lib/mls-client';
   import type { IStorage, StoredMessage } from '$lib/db';
@@ -1576,8 +1576,14 @@
         globalSession.isLoggedIn
           ? globalMessaging.sendChatReelTakeTo(file, keys, msgCtx(), opts)
           : Promise.resolve(null),
+      sendImage: (file, keys) =>
+        globalSession.isLoggedIn
+          ? globalMessaging.sendImageTo(file, keys, msgCtx())
+          : Promise.resolve(null),
       adopt: adoptOutboxPublishedUpload,
       endWait: endOutboxPublishWait,
+      groupMemberIds: async (id) =>
+        userIdsOfIdentities(await globalSession.ensureMls().getGroupMemberIdentities(id)),
     });
 
     return () => {

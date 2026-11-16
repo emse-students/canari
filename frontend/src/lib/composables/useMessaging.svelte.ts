@@ -2820,6 +2820,47 @@ export function useMessaging() {
     }
   }
 
+  /**
+   * Sends a PHOTO from the camera tab's "Envoyer a..." (D-photo, owner 2026-11-16) to every
+   * conversation in `targetKeys` as an ORDINARY image message: prepared once, then sent through the
+   * composer's own path (`handleSendChat` with `files`, which queues it durably at the tap) once per
+   * conversation - so each one is exactly the image a member would have attached there, and the
+   * staging of the conversation is never touched. One upload per conversation (a photo is small);
+   * the one-file sharing of a reel take is the outbox's video take, which an image does not enter.
+   *
+   * @returns how many conversations the photo was handed to, or `null` when none (nothing held,
+   *   the preparation refused it - already said by `prepareMediaFiles` - or a sign-out came in).
+   */
+  async function sendImageTo(
+    file: File,
+    targetKeys: readonly string[],
+    ctx: MessagingContext
+  ): Promise<number | null> {
+    const keys = targetKeys.filter(
+      (k, i) => targetKeys.indexOf(k) === i && ctx.conversations.has(k)
+    );
+    ctx.log(`[MEDIA] a camera photo to ${keys.length} of ${targetKeys.length} conversation(s)`);
+    if (keys.length === 0) return null;
+    const tapGeneration = signOutGeneration();
+    const ready = await prepareMediaFiles([file], ctx);
+    if (ready.length === 0) return null;
+    let handed = 0;
+    for (const key of keys) {
+      if (signOutGeneration() !== tapGeneration) {
+        ctx.log(`[MEDIA] camera photo: signed out after ${handed} send(s) - the rest dropped`);
+        break;
+      }
+      // One conversation's failure is its own (said by the send itself); the others still go.
+      try {
+        await handleSendChat({ ...ctx, selectedContact: key }, '', { files: ready });
+        handed += 1;
+      } catch (e) {
+        console.error(`[MEDIA] camera photo NOT sent to ${key.slice(0, 8)}…:`, e);
+      }
+    }
+    return handed > 0 ? handed : null;
+  }
+
   /** Removes a staged (not yet sent) file from the pending media queue by its index. */
   function removePendingMediaFile(conversationKey: string | null, index: number) {
     if (!conversationKey) return;
@@ -3745,6 +3786,8 @@ export function useMessaging() {
     handleFilesSelected,
     /** Queues a raw reel take to several conversations at once (RC-12's send-to sheet). */
     sendChatReelTakeTo,
+    /** A camera photo sent to several conversations as ordinary image messages (D-photo). */
+    sendImageTo,
     /** Sends a finished recording straight out, alone - the microphone gesture already said send. */
     sendVoiceNote,
     /** Removes a staged file from the pending media queue by index. */

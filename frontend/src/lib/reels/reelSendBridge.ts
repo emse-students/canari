@@ -11,6 +11,7 @@
  */
 import type { Conversation } from '$lib/types';
 import type { PublishedReelUpload } from '$lib/reels/publishReel';
+import { parseDeviceIdentity } from '$lib/mls-client/commitAdmits';
 
 /** What queuing a take answers: the take and how many sends were written. */
 export interface QueuedReelTake {
@@ -36,10 +37,20 @@ export interface ReelSendHost {
     targetKeys: readonly string[],
     opts: ReelTakeOptions
   ) => Promise<QueuedReelTake | null>;
+  /**
+   * Sends a PHOTO to each conversation key as an ordinary image message (D-photo); how many it was
+   * handed to, `null` when none.
+   */
+  sendImage: (file: File, targetKeys: readonly string[]) => Promise<number | null>;
   /** The publish step's upload, adopted by the take waiting for it (15.5). */
   adopt: (takeId: string, uploaded: PublishedReelUpload) => Promise<void>;
   /** The publish step ended: the take stops waiting for it. */
   endWait: (takeId: string) => void;
+  /**
+   * The user ids in group `conversationId`, read from this device's LOCAL MLS tree (no server call):
+   * the sheet names a few of them under the group's row. Throws when the group is not held here.
+   */
+  groupMemberIds: (conversationId: string) => Promise<string[]>;
 }
 
 let host: ReelSendHost | null = null;
@@ -55,4 +66,21 @@ export function registerReelSendHost(next: ReelSendHost): () => void {
 /** The live host, or `null` when no session is up. */
 export function reelSendHost(): ReelSendHost | null {
   return host;
+}
+
+/**
+ * The distinct user ids of a tree's `userId:deviceId` leaves, in tree order (a member with two devices
+ * is named once); a leaf that is not such an identity is skipped and said.
+ */
+export function userIdsOfIdentities(identities: readonly string[]): string[] {
+  const ids: string[] = [];
+  for (const entry of identities) {
+    const parsed = parseDeviceIdentity(entry);
+    if (!parsed) {
+      console.warn('[reel-send] a tree leaf is not a userId:deviceId identity - skipped');
+      continue;
+    }
+    if (!ids.includes(parsed.userId)) ids.push(parsed.userId);
+  }
+  return ids;
 }
