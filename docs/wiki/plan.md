@@ -70,7 +70,6 @@ earliest version, as a checklist.
 - [P2 - no gate proves that an older build reads, and writes back, the MLS state this build writes](backlog.d/p2-no-gate-proves-an-older-build-reads-the-mls-state-this-build-writes.md)
 - [P2 - the reply swipe along a thumb's arc does nothing on WebKit: the thread scrolls instead](backlog.d/p2-the-reply-swipe-along-a-thumb-s-arc-does-nothing-on-webkit.md)
 - [P2 - a live ended itself (`upload-too-slow`) after 256 s on the iPhone, cause unproven](backlog.d/p2-a-live-ended-itself-upload-too-slow-after-256-s-on-the-iphone.md)
-- [P2 - a private salon granted after an in-session join is listed but unreadable on the iPhone, and raises no badge](backlog.d/p2-a-private-salon-granted-after-an-in-session-join-is-unreadable-on-the-iphone.md)
 
 **P3 - hygiene**
 
@@ -93,7 +92,6 @@ earliest version, as a checklist.
 - [ ] [the in-session community join through the deep link on the phones](backlog.d/p1-owed-one-live-reading-of-the-in-session-join-fix-2026-10-08.md)
 - [ ] [a notification tap to a usable conversation: F1](backlog.d/reading-owed-a-notification-tap-to-a-usable-conversation-f1.md)
 - [ ] [a group joined in the background before its row existed: the "already held" Welcome writes and announces the row, the...](backlog.d/reading-owed-a-group-joined-in-the-background-before-its-row-existed-the.md)
-- [ ] [a reply swipe along a thumb's arc](backlog.d/reading-owed-a-reply-swipe-along-a-thumb-s-arc.md)
 - [ ] [a HISTORY ask answered "I hold nothing" is final for its roster](backlog.d/reading-owed-a-history-ask-answered-i-hold-nothing-is-final-for-its-roster.md)
 - [ ] [the native caches sealed at rest (2026-10-22): the upgrade readings on both phones](backlog.d/reading-owed-the-native-caches-sealed-at-rest-2026-10-22-the-upgrade-readings.md)
 - [ ] [the stricter script policy and the iOS 16 minimum](backlog.d/reading-owed-the-stricter-script-policy-and-the-ios-16-minimum.md)
@@ -105,16 +103,16 @@ earliest version, as a checklist.
 - [ ] ["Modifier les pseudos" for a group and a community](backlog.d/reading-owed-modifier-les-pseudos-for-a-group-and-a-community.md)
 - [ ] [an institution chooses each post's spaces and public](backlog.d/reading-owed-an-institution-chooses-each-post-s-spaces-and-public.md)
 - [ ] [campus trends and the daily cap, WP-8, WP-10 and the quieter batch](backlog.d/reading-owed-campus-trends-and-the-daily-cap-wp-8-wp-10-and-the-quieter-batch.md)
-- [ ] [CanaReels "Voir plus" clears the seek line: the just-overflowing caption and a phone with no bottom inset](backlog.d/reading-owed-canareels-voir-plus-clears-the-seek-line.md)
 - [ ] [rotation on the video, live and camera screens on both phones](backlog.d/rotation-on-video-and-camera-screens.md)
 - [ ] [overlays stacked by open order, not by rung](backlog.d/reading-owed-overlays-stacked-by-open-order-not-by-rung.md)
 - [ ] [a FIRST message from someone with no conversation yet notifies, end to end](backlog.d/reading-owed-a-first-message-from-someone-with-no-conversation-yet-notifies-end.md)
 - [ ] [openings for followers, WP-4](backlog.d/reading-owed-openings-for-followers-wp-4.md)
 - [ ] [the Emojis preference row and its neighbours at 390 pt, on a phone](backlog.d/p3-the-emojis-preference-row-squeezes-its-description-on-a-phone.md)
+- [ ] [a private salon granted after an in-session join is readable on the iPhone, with its badge](backlog.d/p2-a-private-salon-granted-after-an-in-session-join-is-unreadable-on-the-iphone.md)
 - [ ] [one "server already unreachable" line per spell, read on a phone log after a real outage](backlog.d/p3-server-already-unreachable-is-logged-per-request.md)
 - [ ] [a salon invitation's notice still reads as a sentence, live and from history (2026-11-16)](backlog.d/reading-owed-a-channel-invite-notice-names-ids-and-draws-live.md)
 - [ ] [a salon message arriving before its seed raises its badge (granted salon, in-session join)](backlog.d/reading-owed-a-salon-message-arriving-before-its-seed-raises-its-badge.md)
-- [ ] [the broadcaster's on-air top row at 390 pt and 360 css px (End and the chat toggle on screen)](backlog.d/reading-owed-the-live-on-air-top-row-at-390-pt-and-360-px.md)
+- [ ] [the broadcaster's on-air top row at 390 pt (End and the chat toggle on screen)](backlog.d/reading-owed-the-live-on-air-top-row-at-390-pt-and-360-px.md)
 - [ ] [the live scenes bar (one icon row) on a desktop live at two window widths](backlog.d/reading-owed-the-live-scenes-bar-on-a-desktop-live.md)
 - [ ] [the live viewer's top bar at 360-436 css px portrait (name whole, no button over the second row)](backlog.d/reading-owed-the-live-viewer-top-bar-at-360-436-px.md)
 
