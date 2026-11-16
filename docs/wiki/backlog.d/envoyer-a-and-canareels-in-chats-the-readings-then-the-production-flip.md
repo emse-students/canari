@@ -14,3 +14,6 @@ of the flip: the photo through the sheet (D-photo, needs a server hold change) a
 both in [section 21](../frontend/modules/reels-in-chat.md#21-what-stands-between-main-and-the-production-flip-2026-11-08).
 
 **iPhone 12 as phone B, 2026-11-16 (`1.7.0-alpha.5`, [readings](../device-verification.md#the-iphone-12-readings-of-2026-11-16-sixth-sitting-170-alpha5-envoyer-a-rows-1-12-8-partial-and-the-f1-pin-path)):** row 1 PASS and row 12 PASS in French and English (one "[Media]" push with no group title, first push after the language switch). Row 8 NOT READ: the web take was landscape, so the server stored a plain post and the admin's delete never took the reel purge path; it needs a portrait take from a non-admin author.
+
+
+**Mi 9T, 2026-11-16, `1.7.0-alpha.6`: no row read** ([readings](../device-verification.md#the-mi-9t-readings-of-2026-11-16-fifth-sitting-on-170-alpha6-the-salon-badge-and-grant-rows-the-live-bars-the-push)). The sheet is offered only on the CanaReels TAB's review of a video (`sendToOffered` needs `destination === 'feed'`); the composer's camera reviews with "Suivant" and the reel viewer's "Partager" is the older salon share sheet. The tab's own camera was not reached, and rows 2 to 9 also need a third conversation account. Next sitting: find the tab's camera first, then rows 2, 3, 6, 13 with `beta` as the receiver.
