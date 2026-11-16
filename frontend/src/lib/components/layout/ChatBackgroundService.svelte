@@ -1410,6 +1410,10 @@
         // One request for every salon, whichever community was cleared: the answer is per account.
         void globalChannels.refreshSalonUnread(channelsCtx(), 'community cleared on a device');
       },
+      onSalonArrivalUncounted: (event: { channelId: string; messageId: string }) => {
+        // The row is not drawn yet, so only the server's count can raise its badge.
+        void globalChannels.refreshSalonUnreadForUncountedArrival(channelsCtx(), event.channelId);
+      },
       onWorkspaceRoleChanged: (event: {
         workspaceId: string;
         roleName: string;
