@@ -62,7 +62,7 @@ const ci = read('.github/workflows/ci.yml');
 const makefile = read('Makefile');
 
 const ciGlobs = globsIn(ci, 'shellcheck" -x');
-const makeGlobs = globsIn(makefile, 'shellcheck -x');
+const makeGlobs = globsIn(makefile, 'CI_SHELL_SCRIPTS =');
 
 if (!ciGlobs || ciGlobs.length === 0) {
   fail('no shellcheck globs found in ci.yml - the parse above is broken, not the workflow');

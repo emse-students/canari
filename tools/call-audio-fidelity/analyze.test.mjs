@@ -3,9 +3,14 @@
  * undamaged signal must score clean. Without this, a rig result is a number nobody can believe.
  * Run: `bun test tools/call-audio-fidelity`.
  */
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it, setDefaultTimeout } from 'bun:test';
 import { analyze, fft } from './analyze.mjs';
 import { RATE, buildReference, quantised } from './signal.mjs';
+
+// Every case is a deterministic computation of a few seconds, so bun's 5 s default was a wall
+// clock asserted on CPU time: on a loaded workstation two cases took 5.5 s and 8.9 s and failed a
+// push (2026-11-16). The limit is kept only to name a hang.
+setDefaultTimeout(120_000);
 
 const ref = quantised(buildReference({ seed: 1 }));
 

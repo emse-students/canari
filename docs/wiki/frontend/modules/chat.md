@@ -3739,6 +3739,69 @@ invariant - covered only the group path. The rule about a comment citing a prece
 comment citing a SIBLING FUNCTION just as hard: the guarding test now asserts the order on both
 paths.
 
+### Between the registration and the row, a creating group looked LOST to the connection sweeps (2026-11-16)
+
+The two sections above leave one interval by design: from `registerMember` on, the server LISTS the
+group for its creator and holds a `pending` invitation row for each of the creator's other devices,
+and the conversation row is written once, at the end. Two leader-tab sweeps read exactly that shape -
+listed, rowless - as a group this device lost, and both acted on it. Measured by LEAF-REFRESH-1 on the
+web rig (the row creates a group about a second after a reload, inside the connection pass), on the
+owner's console, one clock:
+
+```
+11.660  [RUST::INFO] create_group: db92be7a...
+11.793  [PENDING] 13 pending invitation(s) to process
+11.828  [RUST::INFO] add_members_bulk to group: db92be7a... (13 key packages)
+11.859  [READD] db92be7a... attempt starting
+11.860  [PENDING] Group db92be7a... absent locally -> recovery requested
+11.866  [DISCOVERY] Placeholder db92be7a... created.
+11.940  [READD] db92be7a... already in WASM - skip (call forgetGroup before recovery if out of sync)
+12.526  [OK] Group db92be7a... created.
+```
+
+Nothing was lost - the creation's own Add admitted the 13 devices and its row overwrote the
+placeholder - which is the shape of a race that heals, not of a design.
+
+**NOT AN `1.7.0-alpha.3` REGRESSION, though it was filed as one.** Every LEAF-REFRESH-1 run of that
+night ran the SAME client bundle, `9ca790c3b` (`1.7.0-alpha.2`): the tabs were never reloaded onto
+`dev.68983e3`, so only the estate changed between the two series (`results.ndjson` records both, as
+`build` and `estateBuild`). And two of the four alpha.2-estate runs show it too (one of the other two
+ended `ERROR`): a placeholder in one, `absent locally` and a placeholder in another. The window has existed since the registration moved first (2026-08-30); a creation inside a
+connection pass is what opens it, and the rig is the first caller that creates there routinely.
+
+**The overlap is deleted with the creation's own state, not with a delay** (`groupsInCreation.ts`).
+Both creation paths mark the group synchronously after `createRemoteGroup` and BEFORE
+`registerMember` is sent, and release the mark in their `finally`, after the row is written or the
+server group deleted. A sweep can only see the group in an answer produced after the registration was
+committed, so any sweep that sees it sees the mark: `ensureConversationForServerGroup` answers
+`in-creation` and writes no placeholder (discovery also leaves it out of its "missing locally" count),
+and `processPendingInvitations` takes the group's rows out before it counts them (no `[PENDING] N
+pending invitation(s)` line for them) and reports the group `onGroupNotSwept`: they are left to the
+creation's own Add, and any row it does not answer - the Add is best-effort (a failed device read, a
+device not admitted, one registering after the read) - waits for the next sweep. Both say so at
+debug. Discovery reads its rows after its last await, in the same synchronous turn as the marks. `groupCreation.sweepOverlap.test.ts` runs the two real
+sweeps at the step where they overlapped - inside `registerMember`, and while the Add is staged - on
+both paths, and fails with the mark removed (`created` instead of `in-creation`).
+
+**The same window held a third overlap, with the history audit.** The connection pass audits, once,
+every local group this device has never asked a member about (`groupsOwingAudit`). A group created
+here was local from `create_group` on and unaudited, so the pass asked about it inside the creation
+(`11.723 auditing 1 group(s) that never have been`, `11.781 [HISTORY_RECONCILE] no member online for
+db92be7a... - will ask when one returns`) and asked again on the next connection. Two halves now:
+
+- **While the creation runs, the pass leaves the group out by its mark.** `initializeConnection`
+  filters `getLocalGroups()` through `isGroupInCreation` in the same turn, before choosing between a
+  full sweep and the audit, so neither mode asks (`initializeConnection.test.ts`, both modes).
+- **Once it has SUCCEEDED, the group is recorded audited** (`noteGroupsAudited`, after the row is
+  written and before the mark is released): a group this device created has no past anybody else
+  could hold. Never earlier - a tab that died mid-creation while the server group survived comes back
+  to a group it rejoins by Welcome under a discovery placeholder, which skips the post-Welcome
+  history ask because a row exists; a record written before success would then leave the messages of
+  the user's other devices never asked for ([principes](../../../principes.md), principle 2). A
+  failed creation records nothing, and its group stays owed. A delegated creation runs these same
+  functions on the leader. `groupCreation.sweepOverlap.test.ts` reads the record during `createGroup`
+  (owed), after `ok` (recorded) and after a failure (owed).
+
 ### A creation that is refused now says which refusal it was (2026-09-24)
 
 `createNewGroup` and `startNewConversation` answered `void`. Five distinct ways of declining ended

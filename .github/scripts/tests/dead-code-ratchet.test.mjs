@@ -100,7 +100,9 @@ try {
 console.log('wiring');
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const ci = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
-ok('ci.yml runs the ratchet', ci.includes('.github/scripts/dead-code-ratchet.mjs frontend'));
+const checks = readFileSync(join(root, '.github/scripts/checks.sh'), 'utf8');
+ok('checks.sh runs the ratchet', checks.includes('.github/scripts/dead-code-ratchet.mjs frontend'));
+ok('ci.yml runs checks.sh dead-code', ci.includes('bash .github/scripts/checks.sh dead-code'));
 const baseline = JSON.parse(readFileSync(join(root, 'frontend/dead-code-baseline.json'), 'utf8'));
 ok(
   'the baseline names every counted category and the messages',

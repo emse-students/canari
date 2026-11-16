@@ -771,6 +771,25 @@ const comm = [
   // pinned separately or half of it rots unnoticed - which is what happened.
   ['the internal read is the same sentence from the other service', `${NEST}[InternalController] [DISTRIBUTION_GROUP] read scope=channel:00000000-0000-4000-8000-000000000001 group=00000000-0000-4000-8000-000000000002 published=true base=9 active=9 user=aaaaaaaa devices=1`, 'benign'],
   ['and it is not forgiven with a base behind the active epoch either', `${NEST}[InternalController] [DISTRIBUTION_GROUP] read scope=channel:00000000-0000-4000-8000-000000000001 group=00000000-0000-4000-8000-000000000002 published=true base=8 active=9 user=aaaaaaaa devices=1`, 'unexplained'],
+  // THE SEAT THE SERVER PRINTS SINCE #2358, and the boot's routine lines read on LEAF-REFRESH-2 (2026-11-16, `dev.68983e3`).
+  ['a distribution group served with no seat asked is the ordinary read', `${NEST}[ChannelService] [DISTRIBUTION_GROUP] served workspace=00000000-0000-4000-8000-000000000001 user=aaaaaaaa group=00000000-0000-4000-8000-000000000002 published=true base=9 active=9 devices=3 seat=unasked`, 'benign'],
+  ['and one for an active seat', `${NEST}[ChannelService] [DISTRIBUTION_GROUP] served workspace=00000000-0000-4000-8000-000000000001 user=aaaaaaaa group=00000000-0000-4000-8000-000000000002 published=true base=9 active=9 devices=3 seat=active`, 'benign'],
+  ['a seat part-way through an admission is not the ordinary read', `${NEST}[ChannelService] [DISTRIBUTION_GROUP] served workspace=00000000-0000-4000-8000-000000000001 user=aaaaaaaa group=00000000-0000-4000-8000-000000000002 published=true base=9 active=9 devices=3 seat=pending`, 'unexplained'],
+  ['a connection census line is one event per socket', '2026-11-16T02:38:21.553193Z  INFO chat_gateway::frame_census: [WS FRAMES] f7a9bb80:web-f7a9bb80-mwigaj8c-95fz closed after 356s: frames=47 heartbeats=44 bytes=844 largest=82 peakPerMinute=8', 'benign'],
+  ['a Welcome answered for an addressable device', `${NEST}[MessagingService] [WELCOME][welcome-send-c2bb79c1] ADDRESSABILITY group=00000000-0000-4000-8000-000000000002 target=f7a9bb80:web-f7a9bb80-mvph014o-yj6l is addressable`, 'benign'],
+  ['and for an offline one', `${NEST}[MessagingService] [WELCOME][welcome-send-c2bb79c1] ADDRESSABILITY group=00000000-0000-4000-8000-000000000002 target=f7a9bb80:tauri-f7a9bb80-mwh9w7si-d2hr is offline - the inviter sends it no addressed answer`, 'benign'],
+  ['the guidance read of a boot', `${NEST}[HelpSeenService] [HELP_SEEN] read user=f7a9bb80 seen=15`, 'benign'],
+  ['the birthday reads of a boot', `${NEST}[BirthdaysService] [BIRTHDAY] own read user=f7a9bb80 set=false`, 'benign'],
+  ['and the day\'s celebrants', `${NEST}[BirthdaysService] [BIRTHDAY] today for f7a9bb80: 1 celebrant(s) on 2026-11-16`, 'benign'],
+  ['the boot\'s one community read', `${NEST}[ChannelService] [BOOT_READS] user=f7a9bb80 communities=17 (asked 17)`, 'benign'],
+  ['the bell\'s renderable types', `${NEST}[PostNotificationsService] [NOTIF] bell of f7a9bb80 for build 1.7.0-alpha.3: 14 renderable type(s)`, 'benign'],
+  ['the trends the bell no longer shows', `${NEST}[PostNotificationsService] [TREND] bell: 1 of 2 naming(s) no longer hold, not shown`, 'benign'],
+  ['an avatar answered 304 to a signed request is the cache working', `${NEST}[UsersController] [AVATAR] outcome=not-modified status=304 ms=8 target=f7a9bb80 access=signed`, 'benign'],
+  ['a push registration queued to end with a sign-out', `${NEST}[SessionPushEndService] [PUSH_SESSION_END] queued user=c71e1a5b device=unnamed session=5e0886a4 cause=logout`, 'benign'],
+  ['its first pass', `${NEST}[SessionPushEndService] [PUSH_SESSION_END] first pass done user=c71e1a5b device=unnamed session=5e0886a4 cause=logout removed=0 stale=none - final pass at 2026-11-16T03:05:37.000Z, once every access token of the session expired`, 'benign'],
+  ['and its closing pass', `${NEST}[SessionPushEndService] [PUSH_SESSION_END] ended user=c71e1a5b device=web-c71e1a5b-mwim4yhi-wuiu session=5e0886a4 cause=logout removed=0 stale=none attempts=0`, 'benign'],
+  ['a push registration that was NOT ended is not', `${NEST}[SessionPushEndService] [PUSH_SESSION_END] the push registration was NOT ended user=c71e1a5b device=unnamed session=5e0886a4 cause=logout attempts=3 error=timeout`, 'unexplained'],
+  ['an avatar that was unavailable is not', `${NEST}[UsersController] [AVATAR] outcome=unavailable status=503 ms=8 target=f7a9bb80 access=signed`, 'unexplained'],
   // THE GRANT PAIR, the community twin of `[GROUP_INVITE]` above and split the same way: the preview
   // is an anonymous read, the acceptance is a person who can now read the community's traffic.
   ['a channel invite preview is a read', `[Nest] 1  - 08/14/2026, 12:43:51 PM   DEBUG [InternalInvitesController] internal channel invite preview token=fVcgu-Y-`, 'benign'],
@@ -1215,6 +1234,9 @@ check(
     const refused = D('AuthController', 'Access refused again: session sid=e24f05df-47fc-4b42-92ed-627d08b86a5f has ended');
     check('R6 expected   a revoked session refused (DEV-3)', verdictIn(refused, 'DEV-3'), 'expected');
     check('R6 dirt       a revoked session refused (in ADM-1)', verdictIn(refused, 'ADM-1'), 'out-of-row');
+    const noTok = D('MessagingService', '[PUSH_SEND][send-08c0b1e4] No push token for user=f7a9bb80 device=tauri-f7a9bb - send #100 to it');
+    check('R6 expected   a phone install without a push token (LEAF-REFRESH-1)', verdictIn(noTok, 'LEAF-REFRESH-1'), 'expected');
+    check('R6 dirt       a phone install without a push token (in COMM-14)', verdictIn(noTok, 'COMM-14'), 'out-of-row');
   }
   // TWO RULES READ ONE LINE: the one naming the row judges it (ADM-3's Decline winning, alpha.5).
   {

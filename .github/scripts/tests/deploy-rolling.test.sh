@@ -648,10 +648,15 @@ deploy >"$TMP/direct.log" 2>&1 || {
 }
 stop_callers direct
 bad="$(failures direct)"
+total="$(field direct "Object.values(r.statuses).reduce((a, b) => a + b, 0)")"
+# NOT EVENT-ORDERED YET: the witness depends on a call landing on the old replica as it stops, ordered
+# only by the `sleep 2` above and the caller's loop, so a quiet machine misses it as easily as a busy
+# one. The fix (hold one call open on the old replica, then stop it) is planned in
+# docs/wiki/backlog.d/p3-the-checks-at-commit-shape-is-carried-to-the-other-repos-and-the-ci-only-list-shrinks.md
 if [ -n "$bad" ]; then
-  ok "calls to the API by its DNS name fail across its release ($bad) - the reset the mesh removes, reproduced"
+  ok "calls to the API by its DNS name fail across its release ($bad of ${total:-0}) - the reset the mesh removes, reproduced"
 else
-  fail "calls to the API by its DNS name saw NO failure across its release - the fixture cannot show the gap, so the case above proves nothing"
+  fail "calls to the API by its DNS name saw NO failure across its release (bad: ${bad:-none}, of ${total:-0} calls) - the fixture cannot show the gap, so the case above proves nothing"
 fi
 
 # ── 2d. The mesh itself recreated, under calls ──────────────────────────────

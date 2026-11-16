@@ -87,9 +87,11 @@ check(
 );
 
 console.log('the path filter:');
-const m = ci.match(/# -- iOS app compile --[\s\S]*?if ([\s\S]*?); then\n\s+echo "ios_app=true"/);
+// The filter lives in ci-scopes.sh since 2026-11-15, shared with the local pre-push run.
+const scopes = readFileSync(resolve(repoRoot, '.github/scripts/ci-scopes.sh'), 'utf8');
+const m = scopes.match(/# -- iOS app compile --[\s\S]*?if ([\s\S]*?); then\n\s+echo "ios_app=true"/);
 if (!m) {
-  bad('cannot find the ios_app filter in ci.yml');
+  bad('cannot find the ios_app filter in ci-scopes.sh');
   process.exit(1);
 }
 const patterns = [...m[1].matchAll(/has '([^']+)'/g)].map((x) => new RegExp(x[1]));

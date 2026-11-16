@@ -25,6 +25,6 @@
     "src/lib/forms/productGridContract.ts": ["exports", "types"],
     "src/lib/carte/publish.ts": ["types"]
   },
-  "ignoreDependencies": ["emoji-picker-element-data", "husky"],
+  "ignoreDependencies": ["emoji-picker-element-data"],
   "ignoreBinaries": ["wasm-pack"]
 }

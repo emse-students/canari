@@ -3163,7 +3163,68 @@ describe('outbox uploads - a queued attachment shows its real progress and can b
     expect(mls.sendMessage).toHaveBeenCalledTimes(1);
   });
 
-  it('shows the next attempt as waiting after a transport failure, restarting from zero', async () => {
+  /**
+   * Two attempts of one entry, each reporting `[loaded, committed?]` pairs; the first fails with no
+   * answer. Returns what the bubble showed after each report.
+   */
+  async function twoAttempts(id: string, first: number[][], second: number[][]) {
+    const storage = makeStorage([mediaEntry(id)]);
+    const seen: number[] = [];
+    let call = 0;
+    const uploadMedia = vi.fn(async (_m: unknown, transport?: Transport) => {
+      const reports = call++ === 0 ? first : second;
+      for (const [loaded, committed] of reports) {
+        transport?.onProgress?.({ loaded, total: 2_000_000, committed });
+        seen.push(uploadViewOf(id)!.loaded);
+      }
+      if (call === 1) throw new UploadNetworkError('/x');
+      return REF;
+    });
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', [id])]]);
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService: makeMls(),
+        storage,
+        conversations,
+        uploadMedia: uploadMedia as never,
+        isGroupHealthy: () => true,
+      })
+    );
+    await outbox.flush();
+    const between = uploadViewOf(id);
+    storage._map.get(id)!.nextAttemptAt = 0;
+    await outbox.flush();
+    expect(uploadMedia).toHaveBeenCalledTimes(2);
+    return { seen, between };
+  }
+
+  it('the figure of a restarted RESUMABLE attempt never goes back (the iPhone 13 MB send, 2026-11-16)', async () => {
+    // Seen on the iPhone 12: 2 %, 50 %, then 6 % - the second attempt reported from zero. A session
+    // reports `committed` (the server's bytes) and starts its next attempt from them; the bubble
+    // keeps the furthest point reached, so a restart is a pause of the bar, never a drop.
+    const { seen, between } = await twoAttempts(
+      'm1',
+      [
+        [400_000, 0],
+        [1_000_000, 900_000],
+      ],
+      [
+        [900_000, 900_000],
+        [1_500_000, 1_400_000],
+      ]
+    );
+    // Waiting for the next attempt, the bytes so far are still the bubble's.
+    expect(between).toMatchObject({ phase: 'waiting', loaded: 1_000_000 });
+    expect(seen).toEqual([400_000, 1_000_000, 1_000_000, 1_500_000]);
+  });
+
+  it('a ONE-SHOT request keeps nothing on a failure, and its restart says so (from zero)', async () => {
+    // No `committed`: nothing the server kept, so the bar must not claim the first attempt's bytes.
+    const { seen } = await twoAttempts('m2', [[400_000], [1_000_000]], [[120_000], [1_500_000]]);
+    expect(seen).toEqual([400_000, 1_000_000, 120_000, 1_500_000]);
+  });
+
+  it('shows the next attempt as waiting after a transport failure', async () => {
     const storage = makeStorage([mediaEntry('w1')]);
     const uploadMedia = vi.fn().mockRejectedValue(new UploadNetworkError('/x'));
     const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['w1'])]]);

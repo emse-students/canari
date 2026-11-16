@@ -33,6 +33,7 @@ import { answerHistoryDigest, stateOurCoverage } from '$lib/utils/chat/historyDi
 import { pendingGroupExitIds } from '$lib/utils/chat/pendingGroupExits';
 import { welcomeSentAt } from '$lib/utils/chat/welcomeSent';
 import { ensureConversationForServerGroup } from '$lib/utils/chat/serverGroupConversation';
+import { isGroupInCreation } from '$lib/utils/chat/groupsInCreation';
 import { retireConversation } from '$lib/utils/chat/conversations';
 import {
   refusalIsTemporary,
@@ -638,6 +639,29 @@ export async function processPendingInvitations(params: {
   } catch (e) {
     log(`[PENDING] Error fetching pending invitations: ${e}`);
     return false;
+  }
+
+  // A GROUP THIS DEVICE IS CREATING IS NOT ABSENT, AND ITS ROWS ARE NOT THIS SWEEP'S. The creation
+  // registers the membership first, which writes a `pending` row for each of the user's other
+  // devices, while its conversation row is written only at the end. Read without this, the group
+  // looked absent and a re-add recovery was requested for a group this device was building
+  // (LEAF-REFRESH-1, 2026-11-16). Its rows are left to the creation's own Add; any row it does not
+  // answer waits for the next sweep. Taken out BEFORE the count, so the sweep never announces work
+  // it is not going to do, and reported `onGroupNotSwept`: its rows were not read through, so what
+  // they say of an ask stays as shown. A group unmarked here cannot become marked later in this pass:
+  // the mark is set before the server can list the group (`groupsInCreation.ts`).
+  const inCreation = new Map<string, number>();
+  pendingInvitations = pendingInvitations.filter((inv) => {
+    if (!isGroupInCreation(inv.groupId)) return true;
+    inCreation.set(inv.groupId, (inCreation.get(inv.groupId) ?? 0) + 1);
+    return false;
+  });
+  for (const [groupId, rows] of inCreation) {
+    Log.d(
+      'Pending',
+      `${groupId.slice(0, 8)}... is being created by this device - its ${rows} row(s) are left to the creation's own Add; any row it does not answer waits for the next sweep`
+    );
+    onGroupNotSwept?.(groupId);
   }
 
   if (pendingInvitations.length === 0) return true;
@@ -1413,13 +1437,20 @@ export async function discoverMissingGroups(params: {
   // Include both ready and placeholder conversations to avoid recreating
   // the same pending entry on each login. Only active groups get placeholders
   // (soft-deleted tombstones are skipped via activeServerGroups above).
-  const localGroupIds = new Set([...conversations.values()].map((c) => c.id));
-
+  //
   // Read ONCE for the whole sweep and handed to the seam below, which owns the guard: a group this
   // device has already decided to leave is not "missing locally", it is on its way out
   // ({@link ensureConversationForServerGroup}). The question is per group, the round trip is not.
   const owedExits = await pendingGroupExitIds(params.storage);
-  const missing = activeServerGroups.filter((g) => !localGroupIds.has(g.groupId));
+  // THE ROWS ARE READ AFTER THE LAST AWAIT, in the same synchronous turn as the creation marks
+  // below: a creation that wrote its row and released its mark during the read above is then seen
+  // with its row, never as unmarked and rowless.
+  const localGroupIds = new Set([...conversations.values()].map((c) => c.id));
+  // A group this device is creating is listed and rowless by construction, not missing: the
+  // creation writes its row (`groupsInCreation.ts`), and the seam below says so at debug.
+  const missing = activeServerGroups.filter(
+    (g) => !localGroupIds.has(g.groupId) && !isGroupInCreation(g.groupId)
+  );
 
   if (missing.length > 0) {
     log(

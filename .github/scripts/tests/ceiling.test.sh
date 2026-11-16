@@ -287,9 +287,10 @@ check_that "the job runs when the android_app filter says so, and not under some
   job_has '^    if: \$\{\{ needs\.changes\.outputs\.run-android-app == .true. \}\}$'
 check_that "the job runs android-app-compile.sh" job_has '^        run: bash \.github/scripts/android-app-compile\.sh$'
 check_that "android-app-compile.sh is executable" test -x "$tests_dir/../android-app-compile.sh"
-# The filter itself is EVALUATED, not grepped: the `if has ...` of the `android_app` block is run
+# The filter itself is EVALUATED, not grepped: the `if has ...` of the `android_app` block (in
+# ci-scopes.sh, the script the `changes` job runs) is run
 # against a real path of the tree this job exists to watch, and against one it must not fire on.
-filter_if="$(awk '/-- Android `:app` compile --/{f=1} f && /^          if has/{c=1} c{print} c && /; then$/{exit}' "$ci_yml")"
+filter_if="$(awk '/-- Android `:app` compile --/{f=1} f && /^if has/{c=1} c{print} c && /; then$/{exit}' "$tests_dir/../ci-scopes.sh")"
 # shellcheck disable=SC2317,SC2329  # `has` is called by the `if has ...` text evaluated below
 filter_fires() { # <path>: does the android_app filter fire for a change to that single path?
   (

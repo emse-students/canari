@@ -19,5 +19,10 @@ and NO confirmation: the exit stays one tap, as decided for a gate that cannot b
 footer carries the unlock button alone. Pinned by `PinModal.exits.svelte.test.ts` (structure and the
 safe-area chain; happy-dom has no layout).
 
+**Closes when:** the gate's sign-out control does not intersect any bottom-bar tab on the Mi 9T and
+the iPhone 12 (measured from the DOM, as above), pinned by a test on the gate's layout.
+
+**iPhone geometry, 2026-11-16:** the same overlap on the iPhone 12 (TestFlight `1.7.0-alpha.2`): the gate's "Se deconnecter" at 127-263 x 761-794 points under the floating tab bar (y 761-844). The bench account was found signed out after the gate came up on a reload the app made itself and an unlock script ran; the `[A] logout` line was not flushed, so the exact tap is not read, but this is the candidate. See [device-verification](../device-verification.md#the-iphone-12-readings-of-2026-11-16-second-sitting-170-alpha2-the-staged-readings-cut-short-by-a-sign-out).
+
 **Reading owed on both phones:** the Mi 9T and the iPhone 12 read the row from the DOM on the next
 pre-release - it intersects no bottom-bar tab and clears the status bar and the notch. Then delete this entry.

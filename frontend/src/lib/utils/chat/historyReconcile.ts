@@ -390,6 +390,10 @@ export function groupsOwingAudit(
  * **Called only with the groups a probe actually LEFT for** - never with the pass's input list. The
  * two differ by exactly the deferred ones, and writing the input would be discharging a deferral on
  * a step that precedes the act, the mistake this module has already paid for once.
+ *
+ * The one other writer is a creation on this device that SUCCEEDED (`groupCreation.ts`), for a
+ * group with no past anybody could hold: there is nothing to ask, so nothing is deferred by
+ * recording it. A failed or interrupted creation records nothing, and its group stays owed.
  */
 export function noteGroupsAudited(
   userId: string,
