@@ -442,7 +442,13 @@ export class UploadSessionService {
         }
         if (code === 'ERR_STREAM_PREMATURE_CLOSE' || code === 'ECONNRESET') {
           this.logger.warn(`Part ${idx} of session ${id} interrupted after ${guard.bytes} bytes`);
-          throw new BadRequestException('Part body was interrupted; send it again');
+          // A 408, NOT a 400: the client reads a 400 from us as a refusal FOR GOOD and drops the
+          // file, while a broken connection is the most temporary failure there is. The client
+          // retries a 408 (`uploadRefusalCause`), and the part is re-sent whole.
+          throw new HttpException(
+            'Part body was interrupted; send it again',
+            HttpStatus.REQUEST_TIMEOUT
+          );
         }
         this.logger.error(`Part ${idx} of session ${id} could not be written: ${String(err)}`);
         throw new InternalServerErrorException('Could not write the part');

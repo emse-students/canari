@@ -664,7 +664,7 @@ routes in `media.controller.ts` (NO `FileInterceptor`: a spec reads the route me
   `413` before a byte is read**, more than the part's exact length `413`, fewer `400`. The request stream
   is piped through a byte counter into `createWriteStream(..., {flags: 'r+', start: index * partBytes})`
   with 64 KiB buffers - heap is the buffer, not the part. Only a part whose every byte landed is recorded;
-  an interrupted one is `400` and absent from `status`. **A re-sent part rewrites the same bytes at the same
+  an interrupted one is `408` (temporary: a `400` from us is a refusal for good to the client, which then dropped the file; 2026-11-16) and absent from `status`. **A re-sent part rewrites the same bytes at the same
   offset**: this is the defect of `appendChunk`, which appends and so doubled a chunk whose answer was lost.
   Same-index PUTs are serialised, different indexes run in parallel. **A re-sent part is UNMARKED
   (durably) before its first byte is rewritten and re-marked when the whole body landed**, so a retry cut
