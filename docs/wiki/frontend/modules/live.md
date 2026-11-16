@@ -851,8 +851,8 @@ the member no longer learns it from a refused `POST /api/lives`. Rules of the re
   `live_cut` notice and push). No sentence was decided for it on this sheet.
 
 Tests: "the right to broadcast, read before Start (WP-L8)" in `liveBroadcast.svelte.test.ts`, the two
-standing cases of `LiveBroadcaster.svelte.test.ts`, the route in `api.test.ts`. Not read on a device
-yet ([reading](../../backlog.d/reading-owed-the-pre-live-screen-says-a-suspension-before-start.md)).
+standing cases of `LiveBroadcaster.svelte.test.ts`, the route in `api.test.ts`. Read on the web, the iPhone 12 and the Mi 9T
+(2026-11-16, [readings](../../device-verification.md#the-mi-9t-readings-of-2026-11-16-fourth-sitting-the-pre-live-suspension)).
 
 **The title and the preview (owner, 2026-11-07).** The pre-live sheet carries an optional title field
 when the limits serve `titleMaxChars`: one line, cut at 80 CODE POINTS as typed (`liveTitle.ts`,
