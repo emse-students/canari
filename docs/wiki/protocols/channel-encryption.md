@@ -405,9 +405,25 @@ and the request then say something true. A page whose every seed is held registe
   deferred row is inserted only where nothing holds it yet, its edit rows go through
   `applyChannelEdits` (whose precedence keeps a later edit), its reactions and poll tallies come from
   its own rows only, the read marks and `channelHistoryLoadedAt` are the first pass's alone, and the
-  stored page is rewritten from what is on screen (deleted rows left out). Residual, bounded by the
-  next load: a deferred row hard-deleted DURING the wait is inserted (the live deletion found no
-  row to mark), and the next page, authoritative inside its window, removes it.
+  stored page is rewritten from what is on screen (deleted rows left out).
+- **A row removed live while a page is in hand is never put back, and a tally voted live is never
+  rewound** (2026-11-16) - by either pass, and by the whole-history search. The server hard-deletes
+  a salon row, and a live removal could only mark a copy already on screen: a deferred row deleted
+  during the wait, or a held row deleted while the page decoded, found nothing to mark and was
+  inserted by the page that still carried it, until the next load removed it - a race that healed,
+  so a defect. Every page read now opens a watch BEFORE its request leaves
+  (`utils/chat/salonRemovals.ts`); `markChannelMessageDeleted` - the one path the reader's own
+  delete and the `channel.message.deleted` broadcast both take - notes the id in every open watch
+  FIRST, whether or not a copy is on screen; the reader skips the noted ids (a removed row is gone
+  for good on the server, whatever the page says) and closes the watch when it ends, so it holds
+  only what was removed during its own life. Poll tallies carry no version, so `pollStore` orders
+  writes on one counter: a live write (`channel.poll.vote`, a poll arriving live, a vote's answer,
+  an optimistic vote) takes the next value, a page's write the value its request left at
+  (`setPollMetaFromPage`), and a page never writes over a tally written after that.
+- **A salon left during the wait is not decoded again**: a removal from a private salon, a dropped
+  community or a sign-out purges the conversation and its seeds, so decoding the deferred rows then
+  would warn `missing seed` and ask for it for a salon this device no longer holds. The pass ends
+  with a log line and draws nothing.
 - **The repair re-read stays, and it is not the same path.** `announceGraineRepair` re-reads a salon
   when a SEED is stored for it - the only path for rows dropped outside a gated load (a live row
   that arrived before its seed, an answer a peer sends minutes later, a salon decoded on an earlier
@@ -424,7 +440,11 @@ and the request then say something true. A page whose every seed is held registe
   drawn and the skeleton down before the drain, the queued row drawn after it with no warning, a
   seed the drain did not bring reported only then, one fetch, a newer load superseding the deferred
   pass, a deletion made during the wait kept, a stale mark made during it kept, a closed service
-  ending the pass with no decode and no warning).
+  ending the pass with no decode and no warning, a salon left during the wait never decoded again,
+  a row removed live during the wait or the decode never inserted - search included - and a live
+  vote never rewound by an older page), `salonRemovals.test.ts` and `pollStore.svelte.test.ts`
+  (the two orderings), and `useChannelWorkspaces.svelte.test.ts` (a live removal noted with no row
+  on screen).
 
 ### 4.6 Ordering rule: remove, THEN distribute
 

@@ -38,11 +38,12 @@ import { withMlsBulkIngest } from '$lib/mls-client/mlsBulkIngest';
 import { publishConversationRead } from '$lib/mls-client/tabMessageSync';
 import { notifNav } from '$lib/stores/notifNav.svelte';
 import { resolveConversationKey } from '$lib/utils/chat/openConversationFromId';
-import { setPollMeta } from '$lib/stores/pollStore.svelte';
+import { pollWriteMark, setPollMetaFromPage } from '$lib/stores/pollStore.svelte';
 import { applyChannelEdits, type DecodedChannelEdit } from '$lib/utils/chat/channelEdit';
 import { createLoadGenerations } from '$lib/utils/chat/loadGenerations';
 import { whenSalonEntryDecided } from '$lib/utils/graine/salonSendGate';
 import { salonKeysNow } from '$lib/utils/graine/salonReadGate';
+import { watchSalonRemovals } from '$lib/utils/chat/salonRemovals';
 import type { ChannelPollMeta } from '$lib/services/ChannelService';
 import { applyChannelReactionFrame } from '$lib/stores/reactionStore.svelte';
 import {
@@ -881,6 +882,11 @@ export function useConversations() {
       }
     };
 
+    // WHAT MOVES LIVE WHILE THE PAGE IS IN HAND IS NEWER THAN THE PAGE, from the moment its request
+    // leaves (below, with no await before it) until the deferred pass ends: a row removed live is
+    // never put back (`salonRemovals.ts`), and a tally voted live is never rewound (`pollStore`).
+    const removals = watchSalonRemovals();
+    const pollMark = pollWriteMark();
     try {
       // Nothing to hydrate: a Graine seed is already in the local store or it is not, and the
       // server holds none to fetch. A row this device has no seed for is REPORTED unreadable by
@@ -954,12 +960,14 @@ export function useConversations() {
         const clientIdOf = new SvelteMap<string, string>();
         const edits: DecodedChannelEdit[] = [];
         // Applied only once this load is known to be the latest: a superseded load read its rows
-        // EARLIER, and `setPollMeta` overwrites - so its tallies would undo the newer load's.
+        // EARLIER, and a page's tally overwrites one as old - so its tallies would undo the newer load's.
         const pollMetas: [string, ChannelPollMeta][] = [];
         for (const i of indices) {
           const msg = pageRows[i];
           const decoded = decodedRows[i];
           if (!decoded) continue;
+          // Removed live since the request left: the server holds it no more, whatever the page says.
+          if (removals.has(String(msg.id))) continue;
           // A reaction is a row of its own now (WP-40): it changes a bubble instead of being one.
           if (decoded.kind === 'reaction') {
             const r = decoded.reaction;
@@ -1033,7 +1041,7 @@ export function useConversations() {
           );
           return;
         }
-        for (const [messageId, meta] of pollMetas) setPollMeta(messageId, meta);
+        for (const [messageId, meta] of pollMetas) setPollMetaFromPage(messageId, meta, pollMark);
 
         let current = conversations.get(channelConversationId);
         if (current) {
@@ -1065,10 +1073,12 @@ export function useConversations() {
           );
           // A ROW STILL WAITING FOR ITS SEED IS NAMED BY THE PAGE all the same: the server holds it,
           // so a copy already on screen is neither withdrawn nor dropped by the merge's window.
+          // One removed live since the request left is not: the server holds it no more.
+          const waiting = new SvelteSet([...deferredIds].filter((id) => !removals.has(id)));
           const drawnUnconfirmed = salonRowsDrawnUnconfirmed.get(channelConversationId);
           salonRowsDrawnUnconfirmed.delete(channelConversationId);
           if (drawnUnconfirmed && drawnUnconfirmed.size > 0) {
-            const inPage = new SvelteSet([...serverRows.map((m) => m.id), ...deferredIds]);
+            const inPage = new SvelteSet([...serverRows.map((m) => m.id), ...waiting]);
             const withdrawn = new SvelteSet([...drawnUnconfirmed].filter((id) => !inPage.has(id)));
             if (withdrawn.size > 0) {
               ctx.log(
@@ -1077,7 +1087,7 @@ export function useConversations() {
               base = base.filter((m) => !withdrawn.has(m.id));
             }
           }
-          const kept = deferredIds.size > 0 ? base.filter((m) => deferredIds.has(m.id)) : [];
+          const kept = waiting.size > 0 ? base.filter((m) => waiting.has(m.id)) : [];
           conversations.set(channelConversationId, {
             ...current,
             // FIRST after the merge too: a reload can hold rows older than this page (section 21.7).
@@ -1123,6 +1133,15 @@ export function useConversations() {
         );
         return;
       }
+      // THE SALON WAS LEFT DURING THE WAIT (a removal from a private salon, a community dropped, a
+      // sign-out): its purge took the conversation and, with it, the seeds. Decoding now would warn
+      // `missing seed` and ask for it for a salon this device no longer holds - nothing is drawn for it.
+      if (!conversations.has(channelConversationId)) {
+        ctx.log(
+          `[CHANNEL] page of ${rawId.slice(0, 8)}: ${deferred.size} deferred row(s) not read - the salon was left during the wait`
+        );
+        return;
+      }
       if (gate.kind === 'drained') {
         ctx.log(
           `[CHANNEL] page of ${rawId.slice(0, 8)}: ${deferred.size} row(s) decoded after key group ${gate.groupId.slice(0, 8)}... drained`
@@ -1149,7 +1168,7 @@ export function useConversations() {
       // stale mark since set it.
       const { loaded, clientIdOf, edits, pollMetas } = readRows(order);
       if (!salonLoadGenerations.isLatest(channelConversationId, generation)) return;
-      for (const [messageId, meta] of pollMetas) setPollMeta(messageId, meta);
+      for (const [messageId, meta] of pollMetas) setPollMetaFromPage(messageId, meta, pollMark);
       let current = conversations.get(channelConversationId);
       if (!current) return;
       current = settleOwnEchoes(current, loaded, clientIdOf);
@@ -1175,6 +1194,7 @@ export function useConversations() {
     } catch (e) {
       ctx.log(`[CHANNEL] History load failed: ${String(e)}`);
     } finally {
+      removals.close();
       settleLoad();
     }
   }
@@ -1203,100 +1223,111 @@ export function useConversations() {
     const rawId = channelConversationId.replace(/^channel_/, '');
     const meLower = ctx.userId.toLowerCase();
 
-    const { rows, capped } = await channelService.fetchAllChannelMessages(channelConversationId, {
-      cap: 2000,
-    });
-    // THE SAME DISCRIMINATOR AS THE HISTORY LOAD, WITHOUT ITS WAIT: a row whose seed is held is
-    // searched now, and a row whose seed may still be in the draining key group's queue is neither
-    // warned nor asked for - the history load owns that wait and that request. A search is one
-    // answer to one query, so it never hangs on a drain that lasts as long as the link is down; it
-    // says how many rows it could not search yet instead.
-    const keys = salonKeysNow(rawId);
-    const deferred = keys.kind === 'draining' ? new SvelteSet<number>() : undefined;
-
-    const decodedPlain: ChatMessage[] = [];
-    const searchEdits: DecodedChannelEdit[] = [];
-    const tally = new UnreadableRowTally(rawId);
-    const decodedRows = await decodeChannelMessagePage(rawId, rows, meLower, tally, deferred);
-    if (deferred && deferred.size > 0 && keys.kind === 'draining') {
-      ctx.log(
-        `[CHANNEL] search of ${rawId.slice(0, 8)} left ${deferred.size} row(s) unsearched - no seed yet, key group ${keys.groupId.slice(0, 8)}... still draining`
-      );
-    }
-    for (const [i, row] of rows.entries()) {
-      const decoded = decodedRows[i];
-      if (!decoded) continue;
-      if (decoded.kind === 'reaction') {
-        // Searching the whole history is also the widest sweep of reaction frames there is, so it
-        // merges them rather than dropping them - a search must not cost a message its hearts.
-        const r = decoded.reaction;
-        applyChannelReactionFrame(r.targetMessageId, r.senderId, r.emoji, r.at, r.removed);
-        continue;
-      }
-      if (decoded.kind === 'edit') {
-        searchEdits.push(decoded.edit);
-        continue;
-      }
-      const message = decoded.message;
-      if (row.poll) setPollMeta(String(row.id), row.poll);
-      decodedPlain.push({
-        id: message.id,
-        senderId: message.senderId,
-        content: message.content,
-        timestamp: message.timestamp,
-        isOwn: message.isOwn,
-        isSystem: message.isSystem,
+    // Opened before the request leaves, for the same reason as the history load's: a row removed
+    // live while the sweep is in hand is not inserted back, and a tally voted live is not rewound.
+    const removals = watchSalonRemovals();
+    const pollMark = pollWriteMark();
+    try {
+      const { rows, capped } = await channelService.fetchAllChannelMessages(channelConversationId, {
+        cap: 2000,
       });
-    }
-    // Edits first, THEN the match: a search must find the words a message holds now, not the ones
-    // it was first sent with.
-    const decodedAll = applyChannelEdits(decodedPlain, searchEdits, ctx.log);
-    const matches: { id: string; ts: number }[] = [];
-    for (const message of decodedAll) {
-      let text = message.content;
-      try {
-        text = getPreviewText(parseEnvelope(message.content));
-      } catch {
-        /* fall back to the raw content */
-      }
-      if (foldForSearch(text).includes(q)) {
-        matches.push({ id: message.id, ts: message.timestamp.getTime() });
-      }
-    }
+      // THE SAME DISCRIMINATOR AS THE HISTORY LOAD, WITHOUT ITS WAIT: a row whose seed is held is
+      // searched now, and a row whose seed may still be in the draining key group's queue is neither
+      // warned nor asked for - the history load owns that wait and that request. A search is one
+      // answer to one query, so it never hangs on a drain that lasts as long as the link is down; it
+      // says how many rows it could not search yet instead.
+      const keys = salonKeysNow(rawId);
+      const deferred = keys.kind === 'draining' ? new SvelteSet<number>() : undefined;
 
-    // Merge the full fetched history into the conversation (union by id, keeping optimistic/pending
-    // local messages) so a hit older than the loaded page is present and scrollable.
-    //
-    // WRITTEN ONLY WHEN THE MERGE ACTUALLY ADDS SOMETHING. This used to `set` unconditionally, and a
-    // `set` mints a new conversation object whether or not its contents changed - which made this
-    // function retrigger whatever was watching the conversation, including the effect that had just
-    // called it. Measured by the campaign's SEARCH-4 on 2026-08-22: one search in a 1052-message
-    // channel issued 4956 requests to `/messages` and was still going ten minutes later, never
-    // settling on a result, because every pass rewrote the object that caused the next pass.
-    const current = conversations.get(channelConversationId);
-    if (current) {
-      const existingIds = new SvelteSet(current.messages.map((m) => m.id));
-      const added = decodedAll.filter((m) => !existingIds.has(m.id));
-      // EVERY ROW THIS SWEEP DECODED IS CONFIRMED BY THE SERVER, so it leaves the unconfirmed draws.
-      // Otherwise a stored row it just merged stays pending past a failed load, and the next page,
-      // whose window starts above it, would withdraw a message the server still holds.
-      const pending = salonRowsDrawnUnconfirmed.get(channelConversationId);
-      if (pending) for (const m of decodedAll) pending.delete(m.id);
-      if (added.length) {
-        // A whole-history sweep brings the oldest rows of all: the notice stays above them.
-        const merged = keepNoticeOnTop(
-          [...current.messages, ...added].sort(compareMessageOrder),
-          channelConversationId
+      const decodedPlain: ChatMessage[] = [];
+      const searchEdits: DecodedChannelEdit[] = [];
+      const tally = new UnreadableRowTally(rawId);
+      const decodedRows = await decodeChannelMessagePage(rawId, rows, meLower, tally, deferred);
+      if (deferred && deferred.size > 0 && keys.kind === 'draining') {
+        ctx.log(
+          `[CHANNEL] search of ${rawId.slice(0, 8)} left ${deferred.size} row(s) unsearched - no seed yet, key group ${keys.groupId.slice(0, 8)}... still draining`
         );
-        conversations.set(channelConversationId, { ...current, messages: merged });
       }
-    }
+      for (const [i, row] of rows.entries()) {
+        const decoded = decodedRows[i];
+        if (!decoded) continue;
+        if (removals.has(String(row.id))) continue;
+        if (decoded.kind === 'reaction') {
+          // Searching the whole history is also the widest sweep of reaction frames there is, so it
+          // merges them rather than dropping them - a search must not cost a message its hearts.
+          const r = decoded.reaction;
+          applyChannelReactionFrame(r.targetMessageId, r.senderId, r.emoji, r.at, r.removed);
+          continue;
+        }
+        if (decoded.kind === 'edit') {
+          searchEdits.push(decoded.edit);
+          continue;
+        }
+        const message = decoded.message;
+        if (row.poll) setPollMetaFromPage(String(row.id), row.poll, pollMark);
+        decodedPlain.push({
+          id: message.id,
+          senderId: message.senderId,
+          content: message.content,
+          timestamp: message.timestamp,
+          isOwn: message.isOwn,
+          isSystem: message.isSystem,
+        });
+      }
+      // Edits first, THEN the match: a search must find the words a message holds now, not the ones
+      // it was first sent with.
+      const decodedAll = applyChannelEdits(decodedPlain, searchEdits, ctx.log);
+      const matches: { id: string; ts: number }[] = [];
+      for (const message of decodedAll) {
+        let text = message.content;
+        try {
+          text = getPreviewText(parseEnvelope(message.content));
+        } catch {
+          /* fall back to the raw content */
+        }
+        if (foldForSearch(text).includes(q)) {
+          matches.push({ id: message.id, ts: message.timestamp.getTime() });
+        }
+      }
 
-    if (capped) {
-      ctx.log(`[CHANNEL] Search covered the ${rows.length} most recent messages (history capped)`);
-    }
+      // Merge the full fetched history into the conversation (union by id, keeping optimistic/pending
+      // local messages) so a hit older than the loaded page is present and scrollable.
+      //
+      // WRITTEN ONLY WHEN THE MERGE ACTUALLY ADDS SOMETHING. This used to `set` unconditionally, and a
+      // `set` mints a new conversation object whether or not its contents changed - which made this
+      // function retrigger whatever was watching the conversation, including the effect that had just
+      // called it. Measured by the campaign's SEARCH-4 on 2026-08-22: one search in a 1052-message
+      // channel issued 4956 requests to `/messages` and was still going ten minutes later, never
+      // settling on a result, because every pass rewrote the object that caused the next pass.
+      const current = conversations.get(channelConversationId);
+      if (current) {
+        const existingIds = new SvelteSet(current.messages.map((m) => m.id));
+        const added = decodedAll.filter((m) => !existingIds.has(m.id));
+        // EVERY ROW THIS SWEEP DECODED IS CONFIRMED BY THE SERVER, so it leaves the unconfirmed draws.
+        // Otherwise a stored row it just merged stays pending past a failed load, and the next page,
+        // whose window starts above it, would withdraw a message the server still holds.
+        const pending = salonRowsDrawnUnconfirmed.get(channelConversationId);
+        if (pending) for (const m of decodedAll) pending.delete(m.id);
+        if (added.length) {
+          // A whole-history sweep brings the oldest rows of all: the notice stays above them.
+          const merged = keepNoticeOnTop(
+            [...current.messages, ...added].sort(compareMessageOrder),
+            channelConversationId
+          );
+          conversations.set(channelConversationId, { ...current, messages: merged });
+        }
+      }
 
-    return matches.sort((a, b) => a.ts - b.ts).map((m) => m.id);
+      if (capped) {
+        ctx.log(
+          `[CHANNEL] Search covered the ${rows.length} most recent messages (history capped)`
+        );
+      }
+
+      return matches.sort((a, b) => a.ts - b.ts).map((m) => m.id);
+    } finally {
+      removals.close();
+    }
   }
 
   /**

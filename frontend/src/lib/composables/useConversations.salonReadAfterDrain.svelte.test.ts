@@ -14,14 +14,17 @@ import { flushMacrotask } from '../../test/flush';
 
 const listMessages = vi.hoisted(() => vi.fn());
 const listReadMarks = vi.hoisted(() => vi.fn());
+const fetchAllChannelMessages = vi.hoisted(() => vi.fn());
 vi.mock('$lib/services/ChannelService', () => ({
-  channelService: { listMessages, listReadMarks },
+  channelService: { listMessages, listReadMarks, fetchAllChannelMessages },
 }));
 
 /** The device's seed store, by row, and what a row read without its seed says. */
 const seeds = vi.hoisted(() => ({
   held: new Set<string>(),
   missingSeedWarned: vi.fn(),
+  /** Run once, while the NEXT page is being decoded: a live event landing during the decode. */
+  duringDecode: null as null | (() => void),
 }));
 
 vi.mock('$lib/utils/chat/channelCrypto', () => ({
@@ -33,8 +36,11 @@ vi.mock('$lib/utils/chat/channelCrypto', () => ({
       _me: string,
       _tally: unknown,
       deferMissingSeed?: Set<number>
-    ) =>
-      rows.map((row, i) => {
+    ) => {
+      const during = seeds.duringDecode;
+      seeds.duringDecode = null;
+      during?.();
+      return rows.map((row, i) => {
         if (!seeds.held.has(row.id)) {
           if (deferMissingSeed) {
             deferMissingSeed.add(i);
@@ -55,7 +61,8 @@ vi.mock('$lib/utils/chat/channelCrypto', () => ({
             isSystem: false,
           },
         };
-      })
+      });
+    }
   ),
   UnreadableRowTally: class {
     report() {}
@@ -85,6 +92,8 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
 }));
 
 const { useConversations } = await import('./useConversations.svelte');
+const { noteSalonRowRemoved } = await import('$lib/utils/chat/salonRemovals');
+const { getPollMeta, setPollMeta } = await import('$lib/stores/pollStore.svelte');
 
 const SALON = 'channel_7d2f0aa0-0000-4000-8000-000000000001';
 
@@ -118,6 +127,7 @@ beforeEach(async () => {
   vi.clearAllMocks();
   seeds.held = new Set(['m1']);
   drain.settle = null;
+  seeds.duringDecode = null;
   drain.salonKeysNow.mockImplementation(() => ({
     kind: 'draining',
     groupId: 'kg-0001',
@@ -263,5 +273,107 @@ describe('a salon opened while its key group is draining', () => {
     // The older load neither decodes its deferred row again nor merges over the newer page.
     expect(vi.mocked(decodeChannelMessagePage).mock.calls.length).toBe(decodes);
     expect(ids(convs)).toEqual(['m1', 'm2']);
+  });
+  it('a salon left during the wait is not decoded again - no warning, no request for a salon gone', async () => {
+    const convs = openSalon();
+    const loading = convs.loadHistoryForConversation(SALON, SALON, makeCtx(), { force: true });
+    await vi.waitFor(() => expect(drain.settle).not.toBeNull());
+    await flushMacrotask();
+
+    // Removed from the private salon (or signed out): the purge takes the conversation.
+    convs.conversations.delete(SALON);
+
+    drain.settle?.([]);
+    await loading;
+    const { decodeChannelMessagePage } = await import('$lib/utils/chat/channelCrypto');
+    expect(vi.mocked(decodeChannelMessagePage)).toHaveBeenCalledTimes(1);
+    expect(seeds.missingSeedWarned).not.toHaveBeenCalled();
+    expect(convs.conversations.has(SALON)).toBe(false);
+  });
+
+  it('a deferred row removed live during the wait is never inserted - the delete found no row to mark', async () => {
+    const convs = openSalon();
+    const loading = convs.loadHistoryForConversation(SALON, SALON, makeCtx(), { force: true });
+    await vi.waitFor(() => expect(drain.settle).not.toBeNull());
+    await flushMacrotask();
+    expect(ids(convs)).toEqual(['m1']);
+
+    // `channel.message.deleted` for the row still waiting for its seed: nothing on screen to mark.
+    noteSalonRowRemoved('m2');
+
+    drain.settle?.(['m2']);
+    await loading;
+    expect(ids(convs)).toEqual(['m1']);
+  });
+
+  it('a held row removed live while the page decodes is not put back by the merge', async () => {
+    seeds.held = new Set(['m1', 'm2']);
+    seeds.duringDecode = () => noteSalonRowRemoved('m1');
+    const convs = openSalon();
+    await convs.loadHistoryForConversation(SALON, SALON, makeCtx(), { force: true });
+    expect(ids(convs)).toEqual(['m2']);
+  });
+
+  it("a removal before the page was asked for, or by another salon read, is not this load's", async () => {
+    noteSalonRowRemoved('m1');
+    seeds.held = new Set(['m1', 'm2']);
+    const convs = openSalon();
+    await convs.loadHistoryForConversation(SALON, SALON, makeCtx(), { force: true });
+    // No watch was open: the note went nowhere, and the page is authoritative for what it holds.
+    expect(ids(convs)).toEqual(['m1', 'm2']);
+  });
+
+  it("a live vote during the wait is not rewound by the deferred row's older tally", async () => {
+    const stale = {
+      optionIds: ['a'],
+      multipleChoice: false,
+      endsAt: null,
+      closed: false,
+      votesByUser: {},
+    };
+    const live = { ...stale, votesByUser: { peer: ['a'] } };
+    listMessages.mockResolvedValue([{ id: 'm1' }, { id: 'm2', poll: stale }]);
+    const convs = openSalon();
+    const loading = convs.loadHistoryForConversation(SALON, SALON, makeCtx(), { force: true });
+    await vi.waitFor(() => expect(drain.settle).not.toBeNull());
+    await flushMacrotask();
+
+    // `channel.poll.vote` on the poll still waiting for its seed.
+    setPollMeta('m2', live);
+
+    drain.settle?.(['m2']);
+    await loading;
+    expect(getPollMeta('m2')).toEqual(live);
+  });
+
+  it("a live vote while the page decodes is not rewound by the page's older tally", async () => {
+    seeds.held = new Set(['m1', 'm2']);
+    const stale = {
+      optionIds: ['a'],
+      multipleChoice: false,
+      endsAt: null,
+      closed: false,
+      votesByUser: {},
+    };
+    const live = { ...stale, votesByUser: { peer: ['a'] } };
+    listMessages.mockResolvedValue([{ id: 'm1', poll: stale }, { id: 'm2' }]);
+    seeds.duringDecode = () => setPollMeta('m1', live);
+    const convs = openSalon();
+    await convs.loadHistoryForConversation(SALON, SALON, makeCtx(), { force: true });
+    expect(getPollMeta('m1')).toEqual(live);
+  });
+
+  it('a whole-history search does not insert a row removed live while it decoded', async () => {
+    drain.salonKeysNow.mockReturnValue({ kind: 'drained', groupId: 'kg-0001', waited: false });
+    seeds.held = new Set(['m1', 'm2']);
+    fetchAllChannelMessages.mockResolvedValue({
+      rows: [{ id: 'm1' }, { id: 'm2' }],
+      capped: false,
+    });
+    seeds.duringDecode = () => noteSalonRowRemoved('m2');
+    const convs = openSalon();
+    const hits = await convs.searchChannelHistory(SALON, 'text', makeCtx());
+    expect(hits).toEqual(['m1']);
+    expect(ids(convs)).toEqual(['m1']);
   });
 });
