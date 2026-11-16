@@ -641,6 +641,13 @@ Mi 9T, `1.7.0-alpha.5` (`versionCode` `100700005`), dev, `alpha` (the `beta` web
 | CanaReels edited PHOTO take ([entry](backlog.d/reading-owed-the-canareels-composer-viewer-and-editor-on-real-content.md)) | **`PASS`** (emoji overlay) | Composer camera, short shutter tap, "Modifier la photo ou la video", an emoji, "Suivant": a 718x1278 attachment with the emoji burned in; text typed but not confirmed; not published |
 | Sealed caches, "file opened on the other phone" and the new-backup notice | **NOT TAKEN** | Not reached; the Mi legacy pass is deleted under (20) |
 
+**Upgraded to `1.7.0-alpha.6` (`versionCode` `100700006`, `adb install -r`, Play Protect answered "Ne pas envoyer", the account and enrolment kept, PIN gate then unlocked).** The alpha.6 rows read on the Mi in this sitting:
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| "Server already unreachable" once per spell | **`PARTIAL`** | Wi-Fi and data off, six rounds of in-app navigation over about 2.5 min, then back on: the ring holds ONE `[CONNECTIVITY] server unreachable (transport failure)` (17:03:26), then `browser reports online`, `server reachable again`, `probe answered (online event, attempt 1)` (17:06:13), and NO `(server already unreachable)` line at all. A repeat is one only a stalled request raises; the navigation made none, so the "once, not once per request" half is NOT shown |
+| A salon message before its seed raises its badge (5 trials, gap under 300 ms); the salon invitation notice live and after reload; the live viewer top bar (longest name); the on-air top row screenshot; the in-session join's private-salon badge | **NOT TAKEN** | Each needs a second seat acting inside a sub-second window or a live with the longest bench name, not reached in this sitting |
+
 **Traps met.** `leave.mjs`-style helpers built on `openCommunity` do not work on the Mi's mobile layout (the community bar has no picker): tap `[aria-label="<name>"]` and `[aria-label="Parametres de la communaute"]`. A full navigation re-arms the PIN gate (`pin.mjs --device A1`). `phone.mjs tapNotification` died on `uiautomator dump` ("Killed") and the shade was then tapped with `mcp__android-mcp__ClickBySelector` on the row's text. The notification-permission prompt covers the community bar until "Plus tard" is tapped.
 
 Dev data written: community HOLD1116 joined by `alpha` (invited by `beta`), left and re-invited once, then deleted by `beta`; no other write.
