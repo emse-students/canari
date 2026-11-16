@@ -498,6 +498,8 @@ chat and reactions (WP-L6) are [below](#the-chat-and-the-floating-reactions-clie
 
 The bar is a wrapping flex row: the identity column (`data-live-top-identity`: name, then LIVE, time, count) has `min-w-40 flex-1 basis-40`, and the six actions (report, sound, rotate, chat, share, close) are ONE group (`data-live-top-actions`, `ml-auto shrink-0`, each `.ui-icon-button` at 44 px). With room (landscape, wide phones) they share a row; below the name's floor the whole group drops to its own row under the second line, so the name is never crushed to "Canari Te..." and no button sits over the count (Mi 9T, 436 css px, found 2026-11-16). Test: `LiveViewer.svelte.test.ts` (structure; happy-dom has no layout). A 360-436 px reading is owed ([entry](../../backlog.d/reading-owed-the-live-viewer-top-bar-at-360-436-px.md)).
 
+**The broadcaster's on-air row is the same bar (2026-11-16).** At 390 pt on air, the old `justify-between` row with an unshrinking left block drew the chat toggle and End past the right edge, absent from the accessibility tree: the broadcaster could leave only by Back. `LiveBroadcaster.svelte` now takes its layout from the same three constants as the viewer (`components/live/liveTopBar.ts`: bar, identity floor, non-shrinking actions), so the actions (flip, mic, camera, share, chat toggle, End) wrap whole to their own row under the identity column (`data-live-top-bar`, `data-live-top-identity`, `data-live-top-actions`) and End is always on screen, down to 360 css px (six 44 px targets and gaps are 304 px, under the 336 px of the row). Before air, the close button stays at the left and shares the row. Test: `LiveBroadcaster.svelte.test.ts` (structure). Reading owed: [entry](../../backlog.d/reading-owed-the-live-on-air-top-row-at-390-pt-and-360-px.md).
+
 ### What stacks over the viewer (2026-11-07)
 
 **Since 2026-11-13 the viewer and what opens over it are on the overlay stack (`utils/overlayStack.ts`): whatever opens later is on top, with no rung and no mark. (The text below is the 2026-11-07 history, when `utils/viewerLayer.ts` and `--z-viewer-dialog` did this.)** **The defect (owner, Android, 2026-11-07):** a live's link shared "via Canari" arrives as an incoming share, whose picker (`IncomingShareHost`, mounted at the app root) is OUTSIDE the viewer's subtree, so no mark reached it and it opened on 280, under the viewer, until the live closed. `IncomingShareHost` now marks itself; the same fix covers the reel viewer and the broadcaster overlay. Test: `IncomingShareHost.svelte.test.ts`. The viewer has no other sheet (the header has a viewer COUNT, not a list; reactions are an in-page layer).
@@ -851,8 +853,8 @@ the member no longer learns it from a refused `POST /api/lives`. Rules of the re
   `live_cut` notice and push). No sentence was decided for it on this sheet.
 
 Tests: "the right to broadcast, read before Start (WP-L8)" in `liveBroadcast.svelte.test.ts`, the two
-standing cases of `LiveBroadcaster.svelte.test.ts`, the route in `api.test.ts`. Not read on a device
-yet ([reading](../../backlog.d/reading-owed-the-pre-live-screen-says-a-suspension-before-start.md)).
+standing cases of `LiveBroadcaster.svelte.test.ts`, the route in `api.test.ts`. Read on the web, the iPhone 12 and the Mi 9T
+(2026-11-16, [readings](../../device-verification.md#the-mi-9t-readings-of-2026-11-16-fourth-sitting-the-pre-live-suspension)).
 
 **The title and the preview (owner, 2026-11-07).** The pre-live sheet carries an optional title field
 when the limits serve `titleMaxChars`: one line, cut at 80 CODE POINTS as typed (`liveTitle.ts`,

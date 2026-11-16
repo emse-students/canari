@@ -40,6 +40,7 @@ export interface ChannelEventContext extends Pick<
   | 'onChannelDeleted'
   | 'onWorkspaceUpdated'
   | 'onSalonUnreadCleared'
+  | 'onSalonArrivalUncounted'
   | 'onWorkspaceRoleChanged'
   | 'onWorkspaceDeleted'
   | 'onChannelMessageDeleted'
@@ -87,6 +88,7 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     onChannelDeleted,
     onWorkspaceUpdated,
     onSalonUnreadCleared,
+    onSalonArrivalUncounted,
     onWorkspaceRoleChanged,
     onWorkspaceDeleted,
     onChannelMessageDeleted,
@@ -456,6 +458,8 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
       // then, and the push trigger decides from the same fact - see `openChannelMessageProving`.
       let authorProven = false;
       const channelServerMs = parseServerTimestampMs(data.createdAt);
+      // Set when the frame could not be OPENED - as opposed to opened and found to be no bubble.
+      let unopened = false;
       try {
         if (data.ciphertext) {
           // Opened here rather than left to the history reload: a live bubble that only appeared
@@ -538,6 +542,7 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
           return;
         }
       } catch (e) {
+        unopened = true;
         // The SAME decision the history path takes, and for the same reason a live bubble is opened
         // here at all: a message whose seed has not landed yet must ASK for it, not wait for a
         // history reload to notice. `content` stays undefined, so the row is not rendered until the
@@ -553,7 +558,27 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
 
       // Only persist if decryption succeeded - a missing key means loadChannelHistory
       // will replay it cleanly after a fresh key hydration.
-      if (content === undefined) return;
+      if (content === undefined) {
+        // AN UNOPENED FRAME IS STILL AN ARRIVAL, AND ITS BADGE IS OWED NOW. The live tally counts
+        // a ROW, so a message whose seed had not landed raised nothing, and the repair that later
+        // draws it is a history load, which counts nothing either: a salon granted (or a community
+        // joined) a moment ago showed no badge for every message sent before its seed arrived,
+        // until it was opened once (Mi 9T and iPhone, 1.7.0-alpha.5 / 1.6.12-alpha.2). The frame
+        // says in the clear what the server's count asks - its author and `silent` - so the
+        // decision is taken here, and the count is the server's, which already holds this row.
+        const fromOther = String(sender || '').toLowerCase() !== ctx.userId.toLowerCase();
+        if (unopened && fromOther && data.silent !== true) {
+          log(
+            `[UNREAD] ${messageId.slice(0, 8)} of ${String(data.channelId).slice(0, 8)} could not be opened here - its badge is asked of the server's count`
+          );
+          onSalonArrivalUncounted?.({ channelId: String(data.channelId), messageId });
+        } else if (unopened) {
+          log(
+            `[UNREAD] ${messageId.slice(0, 8)} of ${String(data.channelId).slice(0, 8)} could not be opened here - ${fromOther ? 'silent' : 'own'}, no badge owed`
+          );
+        }
+        return;
+      }
 
       // Keyed by the SERVER row id, exactly like the history load (`decodeChannelMessageRow`).
       // Every server-side operation on a channel message - delete, pin, poll vote, reaction -

@@ -71,6 +71,11 @@
   import { useScreenOrientation } from '$lib/mobile/screenOrientation.svelte';
   import { previewDoubleTap } from '$lib/reels/previewDoubleTap';
   import { sideSafePadding } from '$lib/utils/sideSafeArea';
+  import {
+    LIVE_TOP_ACTIONS_CLASS,
+    LIVE_TOP_BAR_CLASS,
+    LIVE_TOP_IDENTITY_CLASS,
+  } from './liveTopBar';
 
   interface Props {
     /** Broadcast AS this association (`POST_AS_ASSO` there), or null for the member. */
@@ -439,12 +444,13 @@
   {/if}
 
   <!-- The top row: close (never while on air: End is the way out) and the lens. -->
-  <div
-    class="absolute inset-x-0 top-0 flex items-start justify-between gap-3 p-3 pt-[calc(var(--safe-area-inset-top,0px)+0.75rem)]"
-    style={sideSafePadding('0.75rem')}
-  >
+  <div class={LIVE_TOP_BAR_CLASS} style={sideSafePadding('0.75rem')} data-live-top-bar>
     {#if onAir || broadcast.phase === 'starting' || broadcast.phase === 'ending'}
-      <div class="flex flex-col items-start gap-2" role="status">
+      <div
+        class="{LIVE_TOP_IDENTITY_CLASS} flex flex-col items-start gap-2"
+        role="status"
+        data-live-top-identity
+      >
         {#if onAir}
           <!-- Who is on air, then the badge, the time and the audience: Instagram Live's corner. -->
           {#if broadcasterId}
@@ -541,7 +547,7 @@
       </CameraControlButton>
     {/if}
 
-    <div class="flex shrink-0 items-center gap-2">
+    <div class={LIVE_TOP_ACTIONS_CLASS} data-live-top-actions>
       {#if broadcast.phase === 'preview' && orientation.canRotate}
         <RotateButton onrotate={orientation.rotate} />
       {/if}
