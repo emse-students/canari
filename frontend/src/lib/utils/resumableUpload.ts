@@ -67,6 +67,7 @@ export const REEL_UPLOAD_PART_BYTES = 1024 * 1024;
  * (3.2 MB/s, a round trip idle between parts) and 2.5 s with two (5.5 MB/s); on a throttled link
  * (Fast 3G) all three shapes - legacy 8 MiB chunks, one part, two parts - ran at the link's 77 to
  * 80 KB/s. More would only split a weak uplink further, and the outbox already runs two uploads.
+ * A round starts with ONE part and opens the second once a part has committed (see the lanes).
  */
 export const RESUMABLE_PARTS_IN_FLIGHT = 2;
 
@@ -259,10 +260,19 @@ export async function uploadResumable(
   const singleBlock = encoding === 'single-block';
   const digest = await sha256Hex(plaintext);
   let state = opts.state;
+  /**
+   * A SESSION THIS CALL STOPS USING IS GIVEN BACK: it holds a slot among the owner's open sessions
+   * (4) and its declared bytes against their staging budget until the 24 h sweep, and the row that
+   * named it is about to name another, so nothing else would ever release it. Best effort.
+   */
+  const supersede = (uploadId: string | undefined, why: string) => {
+    if (uploadId) void releaseUploadSession(port, uploadId, `superseded: ${why}`, log);
+  };
   if (state && (state.encoding ?? SEGMENTED_MEDIA_ENCODING) !== encoding) {
     log(
       `[UPLOAD-RESUME] the saved session was opened as ${state.encoding ?? SEGMENTED_MEDIA_ENCODING}, this upload is ${encoding} - discarded, a new key and session`
     );
+    supersede(state.uploadId, 'another encoding');
     state = undefined;
   }
   if (
@@ -274,6 +284,7 @@ export async function uploadResumable(
     log(
       `[UPLOAD-RESUME] the saved session was opened for other bytes (${state.plaintextBytes} vs ${plaintext.byteLength}) - discarded, a new key and session`
     );
+    supersede(state.uploadId, 'other bytes');
     state = undefined;
   }
   if (!state) {
@@ -377,6 +388,8 @@ export async function uploadResumable(
           log(
             `[UPLOAD-RESUME] session ${state.uploadId} ${fact ? 'does not match these bytes' : 'is gone on the server'} - reopening, every part again`
           );
+          // One that still exists but does not match is ours to give back; a gone one is not.
+          if (fact) supersede(state.uploadId, 'does not match these bytes');
           state = { ...state, uploadId: undefined, partBytes: undefined };
         } else {
           received = new Set(fact.received);
@@ -401,7 +414,7 @@ export async function uploadResumable(
       const report = () => {
         let inFlight = 0;
         for (const n of moving.values()) inFlight += n;
-        transport?.onProgress?.({ loaded: held + inFlight, total: totalBytes });
+        transport?.onProgress?.({ loaded: held + inFlight, total: totalBytes, committed: held });
       };
       report();
       const owed = Array.from({ length: parts }, (_, i) => i).filter((i) => !received.has(i));
@@ -410,9 +423,19 @@ export async function uploadResumable(
       const roundStarted = Date.now();
       const sentBefore = held;
       /**
+       * THE SECOND LANE OPENS ONLY ONCE THIS ROUND HAS COMMITTED A PART (review of #3661). Two parts
+       * started together share the link from their first byte: on an uplink cut every N seconds with
+       * N x rate under two parts (40 KB/s cut every 30 s), neither ever commits, every attempt ends
+       * with nothing the server holds, and the outbox gives up after three. One lane first means
+       * every round that moves a part's worth of bytes commits it - what the serial writer did. Also
+       * opened when the first lane ends, so a round that ends without a commit never waits on it.
+       */
+      let widen!: () => void;
+      const widened = new Promise<void>((resolve) => (widen = resolve));
+      /**
        * One lane of {@link RESUMABLE_PARTS_IN_FLIGHT}: takes the next owed part until none is left,
-       * or until another lane met an answer that ends the round. A lane never abandons a part it
-       * started - that part's bytes count only once the server answered for it.
+       * or until another lane met an answer that ends the round. A failure of one lane does not
+       * abort the other's part: that part's bytes count once the server answered for it.
        */
       const lane = async (): Promise<void> => {
         while (!reread && !failure && owed.length > 0) {
@@ -445,6 +468,7 @@ export async function uploadResumable(
             held += end - start;
             received.add(i);
             report();
+            widen();
           } catch (e) {
             moving.delete(i);
             failure ??= { error: e };
@@ -452,9 +476,11 @@ export async function uploadResumable(
           }
         }
       };
-      await Promise.all(
-        Array.from({ length: Math.min(RESUMABLE_PARTS_IN_FLIGHT, owed.length) }, lane)
-      );
+      const extra = Math.min(RESUMABLE_PARTS_IN_FLIGHT, owed.length) - 1;
+      await Promise.all([
+        lane().finally(widen),
+        ...Array.from({ length: Math.max(0, extra) }, () => widened.then(lane)),
+      ]);
       // THE RATE THIS DEVICE REACHED, in the session log: what the iPhone's "40 to 65 KB/s" could
       // not be read from (2026-11-16). Committed bytes only, so a cut part does not inflate it.
       const elapsed = Date.now() - roundStarted;

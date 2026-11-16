@@ -69,8 +69,10 @@ export type UploadPhase =
 export interface UploadView {
   phase: UploadPhase;
   /**
-   * Bytes of the ENCRYPTED body moved so far - the furthest any attempt of this page life reached for
-   * this `total`, so it never goes back (the outbox's `advanceUpload`).
+   * Bytes of the ENCRYPTED body sent so far (the outbox's `advanceUpload`). On a resumable session,
+   * the furthest any attempt of this page life reached for this `total`, so it never goes back; it
+   * may exceed what the server holds by the part(s) in flight when an attempt ended, until the next
+   * attempt passes them. On a one-shot request, the current attempt's bytes: a restart is from zero.
    */
   loaded: number;
   /** Size of that body; 0 until the first progress event says. */

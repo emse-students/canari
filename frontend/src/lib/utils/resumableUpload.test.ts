@@ -14,7 +14,7 @@ import {
 } from '$lib/mediaSegmented';
 import { hexDecode, hexEncode } from '$lib/mediaCrypto';
 import { MediaUploadError, uploadRefusalCause } from '$lib/utils/mediaErrors';
-import { UploadAbortedError } from '$lib/utils/uploadXhr';
+import { UploadAbortedError, UploadNetworkError } from '$lib/utils/uploadXhr';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import { FakeSessionServer } from '../../test/fakeUploadSessionServer';
 
@@ -159,9 +159,10 @@ describe('uploadResumable', () => {
       const id = row.last!.uploadId!;
       // The session was kept for the resume - never released on a transport failure.
       expect(server.sessions.get(id)!.closed).toBeUndefined();
-      // Two parts are in flight (`RESUMABLE_PARTS_IN_FLIGHT`): the one beside the cut finishes and
-      // is kept, so the server holds every part but the cut one (the last has nothing beside it).
-      expect(server.partsReceived(id)).toBe(Math.min(cutAt, 3));
+      // A round opens its second lane once a part has committed (`RESUMABLE_PARTS_IN_FLIGHT`): a cut
+      // on the first part leaves nothing; after that, the part in flight beside the cut finishes
+      // and is kept, so the server holds every part but the cut one (the last has none beside it).
+      expect(server.partsReceived(id)).toBe(cutAt === 1 ? 0 : Math.min(cutAt, 3));
 
       // A "relaunch": a new call, with only what the row recorded.
       server.fault = () => undefined;
@@ -598,7 +599,7 @@ describe('uploadResumable, single-block (a post photo: ONE AES-GCM block, readab
     expect(sameBytes(await opensAsOneBlock(blob, done.keyHex, done.ivHex), plaintext)).toBe(true);
   });
 
-  it('a cut on part 3 of 4: the resume sends ONLY the part that was cut, and the block still opens', async () => {
+  it('a cut on part 3 of 4: the resume sends ONLY the parts the server lacks, and the block still opens', async () => {
     const server = new FakeSessionServer();
     const row = rowStore();
     const plaintext = plaintextOf();
@@ -613,8 +614,9 @@ describe('uploadResumable, single-block (a post photo: ONE AES-GCM block, readab
     const err = await up({ ...opts, port: server.port() }).catch((e: unknown) => e);
     expect(isTransportFailure(err)).toBe(true);
     const id = row.last!.uploadId!;
-    // Parts 1, 2 and 4 (in flight beside the cut) are held; part 3 is owed.
-    expect(server.partsReceived(id)).toBe(3);
+    // Part 1 alone, then parts 2 and 3 side by side (the second lane opens on the first commit):
+    // part 3 is cut, part 2 lands, and the round ends - parts 3 and 4 are owed.
+    expect(server.partsReceived(id)).toBe(2);
     server.fault = () => undefined;
     const done = await up({ ...opts, state: row.last, port: server.port() });
     expect(server.partsReceived(id)).toBe(4);
@@ -748,5 +750,132 @@ describe('uploadResumable, two parts in flight (2026-11-16)', () => {
     expect(
       lines.some((l) => /round 1: \d+ bytes committed in \d+ ms \(\d+ KB\/s\), 4\/4 part/.test(l))
     ).toBe(true);
+  });
+});
+
+describe('uploadResumable on an uplink that is cut every few seconds (review of #3661)', () => {
+  /**
+   * A link that moves `budget` bytes per attempt, shared by every part on the wire (1 KiB at a time,
+   * a turn of the event loop each), then cuts: every request in flight and every new one fails with
+   * no answer until `reconnect()`. The reviewer's case: 40 KB/s cut every 30 s is 1.2 MB a window,
+   * under two 1 MiB parts.
+   */
+  function cuttingLink(server: FakeSessionServer, budget: number) {
+    const inner = server.port();
+    let left = budget;
+    return {
+      reconnect: () => (left = budget),
+      port: {
+        request: async (...args: Parameters<typeof inner.request>) => {
+          const [, path, body, transport] = args;
+          if (left <= 0) throw new UploadNetworkError(path);
+          if (!(body instanceof Blob)) return inner.request(...args);
+          for (let sent = 0; sent < body.size;) {
+            await new Promise((r) => setTimeout(r, 0));
+            if (left <= 0) throw new UploadNetworkError(path);
+            const step = Math.min(1024, body.size - sent, left);
+            sent += step;
+            left -= step;
+            transport?.onProgress?.({ loaded: sent, total: body.size });
+          }
+          return inner.request(...args);
+        },
+      },
+    };
+  }
+
+  it('commits a part in every window of 1.2 parts, and completes - two lanes from the start never did', async () => {
+    const server = new FakeSessionServer();
+    const link = cuttingLink(server, Math.round(1.2 * PART));
+    const row = rowStore();
+    const plaintext = plaintextOf();
+    const parts = Math.ceil(segmentedCiphertextLength(plaintext.length) / PART);
+    let done: Awaited<ReturnType<typeof up>> | null = null;
+    let held = 0;
+    for (let attempt = 1; attempt <= parts + 1 && !done; attempt++) {
+      link.reconnect();
+      try {
+        done = await up({
+          plaintext,
+          retentionClass: 'chat-reel',
+          state: row.last,
+          persist: row.persist,
+          port: link.port,
+        });
+      } catch (e) {
+        expect(e).toBeInstanceOf(UploadNetworkError);
+        // EVERY CUT WINDOW COMMITTED A PART: the progress the outbox's give-up count looks for.
+        const now = server.sessions.get(row.last!.uploadId!)!.received.size;
+        expect(now).toBeGreaterThan(held);
+        held = now;
+      }
+    }
+    expect(done).not.toBeNull();
+    await decrypts(server, done!.mediaId, done!.keyHex, done!.ivHex, plaintext);
+  });
+});
+
+describe('uploadResumable gives back a session it stops using (review of #3661)', () => {
+  /** Opens a session with part 1 cut, so a state with a live uploadId is left in the row. */
+  async function leftOpen(server: FakeSessionServer, plaintext: Uint8Array) {
+    const row = rowStore();
+    let puts = 0;
+    server.fault = (method) => (method === 'PUT' && ++puts === 1 ? 'drop' : undefined);
+    await up({
+      plaintext,
+      retentionClass: 'archive',
+      persist: row.persist,
+      port: server.port(),
+    }).catch(() => undefined);
+    server.fault = () => undefined;
+    return row;
+  }
+
+  it('a state opened for OTHER bytes: its session is released, and a new one completes', async () => {
+    const server = new FakeSessionServer();
+    const row = await leftOpen(server, plaintextOf());
+    const old = row.last!.uploadId!;
+    await up({
+      plaintext: plaintextOf(30_000),
+      retentionClass: 'archive',
+      state: row.last,
+      persist: row.persist,
+      port: server.port(),
+    });
+    expect(server.sessions.get(old)!.closed).toBe(true);
+    expect(row.last!.uploadId).not.toBe(old);
+  });
+
+  it('a state opened under the other ENCODING: its session is released', async () => {
+    const server = new FakeSessionServer();
+    const plaintext = plaintextOf();
+    const row = await leftOpen(server, plaintext);
+    const old = row.last!.uploadId!;
+    await up({
+      plaintext,
+      encoding: 'single-block',
+      retentionClass: 'archive',
+      state: row.last,
+      persist: row.persist,
+      port: server.port(),
+    });
+    expect(server.sessions.get(old)!.closed).toBe(true);
+  });
+
+  it('a session the server still has but that does not match these bytes is released before reopening', async () => {
+    const server = new FakeSessionServer();
+    const plaintext = plaintextOf();
+    const row = await leftOpen(server, plaintext);
+    const old = row.last!.uploadId!;
+    // The server's fact disagrees with the saved state (another part size).
+    const done = await up({
+      plaintext,
+      retentionClass: 'archive',
+      state: { ...row.last!, partBytes: PART * 2 },
+      persist: row.persist,
+      port: server.port(),
+    });
+    expect(server.sessions.get(old)!.closed).toBe(true);
+    await decrypts(server, done.mediaId, done.keyHex, done.ivHex, plaintext);
   });
 });

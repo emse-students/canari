@@ -23,6 +23,7 @@ import {
   ConflictException,
   ForbiddenException,
   HttpException,
+  HttpStatus,
   NotFoundException,
   PayloadTooLargeException,
   UnprocessableEntityException,
@@ -221,7 +222,7 @@ describe('parts: a positional write, so a retry is harmless', () => {
     expect(r.stored[0].bytes.equals(s.blob)).toBe(true);
   });
 
-  it('a part interrupted midway is not reported received, and the resend completes it', async () => {
+  it('a part interrupted midway is answered 408 (temporary, never a refusal), not reported received, and the resend completes it', async () => {
     const r = rig();
     const s = await open(r, 'alice', 3000);
     const half = sliceOf(s.blob, 1024, 0);
@@ -231,9 +232,10 @@ describe('parts: a positional write, so a retry is harmless', () => {
         this.destroy(Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' }));
       },
     });
-    await expect(r.svc.putPart('alice', s.uploadId, 0, broken, 1024)).rejects.toThrow(
-      BadRequestException
-    );
+    // A 400 is what the client reads as refused FOR GOOD (it drops the file); a cut is temporary.
+    const err = await r.svc.putPart('alice', s.uploadId, 0, broken, 1024).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(HttpException);
+    expect((err as HttpException).getStatus()).toBe(HttpStatus.REQUEST_TIMEOUT);
     expect((await r.svc.status('alice', s.uploadId)).received).toEqual([]);
     for (const i of Array(s.totalParts).keys()) {
       await put(r, 'alice', s.uploadId, i, sliceOf(s.blob, 1024, i));
@@ -710,7 +712,7 @@ describe('a retried part is unmarked while it is rewritten', () => {
       },
     });
     await expect(r.svc.putPart('alice', s.uploadId, 1, broken, 1024)).rejects.toThrow(
-      BadRequestException
+      'Part body was interrupted'
     );
     const status = await r.svc.status('alice', s.uploadId);
     expect(status.received).not.toContain(1);
@@ -938,7 +940,7 @@ describe('the short window judges an UNTOUCHED session only', () => {
       },
     });
     await expect(r.svc.putPart('alice', s.uploadId, 0, broken, s.blob.length)).rejects.toThrow(
-      BadRequestException
+      'Part body was interrupted'
     );
     expect((await r.svc.status('alice', s.uploadId)).received).toEqual([]);
     backdate(r);
@@ -1021,7 +1023,7 @@ describe('the client resume protocol of a chat reel (reels-in-chat RC-5), walked
       },
     });
     await expect(first.svc.putPart('alice', s.uploadId, 2, cut, 1024)).rejects.toThrow(
-      BadRequestException
+      'Part body was interrupted'
     );
 
     // The server restarts meanwhile; life 2 of the client asks what it holds.

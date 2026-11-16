@@ -39,6 +39,19 @@ describe('MediaService.uploadQueuedAttachment', () => {
     expect(resumable.mock.calls[0][4]).toBe('ephemeral');
   });
 
+  it('keeps the one-shot route metadata on the session route: a name of "file", a lower-cased type', async () => {
+    const { resumable } = spies();
+    await new MediaService().uploadQueuedAttachment(
+      new Uint8Array(13_631_488),
+      { mimeType: 'Application/PDF' },
+      token,
+      undefined,
+      'ephemeral',
+      { persist }
+    );
+    expect(resumable.mock.calls[0][1]).toEqual({ mimeType: 'application/pdf', fileName: 'file' });
+  });
+
   it('keeps a file that fits one request body on the single POST', async () => {
     const { resumable, oneShot } = spies();
     await new MediaService().uploadQueuedAttachment(

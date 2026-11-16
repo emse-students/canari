@@ -89,6 +89,7 @@ import {
   UploadGaveUpError,
   UploadNetworkError,
   UploadStalledError,
+  type UploadProgress,
   type XhrUploadOptions,
 } from '$lib/utils/uploadXhr';
 import {
@@ -1122,17 +1123,22 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   }
 
   /**
-   * BYTES MOVED, NEVER BACKWARDS (2026-11-16): the iPhone's 13 MB send read 50 %, then 6 %, because
-   * every attempt reported from zero. A bubble's figure is the furthest point ANY attempt of this page
-   * life reached for the same body; a resumable attempt then reports from the server's committed
-   * bytes, so a restart costs at most the parts that were in flight - a pause of the bar, never a
-   * drop. A different `total` (another body) starts again. After a reload there is no view, and the
-   * first figure is the server's.
+   * WHAT THE BUBBLE SAYS HAS GONE (2026-11-16): the iPhone's 13 MB send read 50 %, then 6 %, because
+   * every attempt reported from zero.
+   * - A RESUMABLE SESSION (the report carries `committed`) never goes backwards: the figure is the
+   *   furthest point any attempt of this page life reached for the same body, and the next attempt
+   *   reports from the server's committed bytes. What it may show above them is only the part(s)
+   *   that were in flight when an attempt ended, until the next attempt passes them - a pause of the
+   *   bar, never a drop. After a reload there is no view, and the first figure is the server's.
+   * - A ONE-SHOT REQUEST (no `committed`) keeps nothing on a failure, so its figure is the current
+   *   attempt's bytes and a restart shows from zero: the bar never claims bytes no server kept.
+   * A different `total` (another body) starts again.
    */
-  function advanceUpload(id: string, loaded: number, total: number): void {
+  function advanceUpload(id: string, progress: UploadProgress): void {
+    const { loaded, total, committed } = progress;
     for (const view of viewIdsOf(id)) {
       const prev = viewOfUpload(view);
-      const floor = prev && prev.total === total ? prev.loaded : 0;
+      const floor = committed !== undefined && prev && prev.total === total ? prev.loaded : 0;
       patchUploadView(view, { phase: 'uploading', loaded: Math.max(floor, loaded), total });
     }
   }
@@ -1949,15 +1955,15 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         media,
         {
           signal: control.signal,
-          onProgress: ({ loaded, total }) => {
+          onProgress: (progress) => {
             // A WITHDRAWN TRANSFER REPORTS NOTHING: a late progress event of a request that has not
             // yet answered its abort would recreate the view `clearUpload` just removed, for an entry
             // that is gone. (`persist` below is NOT guarded the same way: a session opened after the
             // abort must still be remembered in `openSessions`, because that is what releases it.)
             if (control.signal.aborted) return;
             lastMoved = Date.now();
-            attemptLoaded = Math.max(attemptLoaded, loaded);
-            advanceUpload(entry.id, loaded, total);
+            attemptLoaded = Math.max(attemptLoaded, progress.loaded);
+            advanceUpload(entry.id, progress);
           },
         },
         {
