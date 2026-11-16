@@ -244,18 +244,29 @@ export async function decodeChannelMessageRow(
  * report, in page order - but the page's signatures cost ONE engine call
  * (`openChannelMessagePage`, F7) instead of one per row. What the history load and the
  * whole-history search call.
+ *
+ * @param deferMissingSeed Given while the salon's key group is still DRAINING (`salonKeysNow`): a row
+ *   whose seed is missing is put here, by its index in `rows`, answered `null`, and neither reported
+ *   nor asked for - its seed may be a frame of that queue, so "missing" is not known yet. The caller
+ *   decodes those rows again once the drain is proven. Every other outcome is reported as usual.
  */
 export async function decodeChannelMessagePage(
   channelId: string,
   rows: readonly ChannelMessageRow[],
   userIdLower: string,
-  tally?: UnreadableRowTally
+  tally?: UnreadableRowTally,
+  deferMissingSeed?: Set<number>
 ): Promise<(DecodedChannelRow | null)[]> {
   const channel = rawChannelId(channelId);
   const openings = await openChannelMessagePage(channel, rows);
   const out: (DecodedChannelRow | null)[] = [];
   for (const [i, row] of rows.entries()) {
     const opening = openings[i];
+    if (deferMissingSeed && !opening.ok && opening.error instanceof GraineSessionUnavailableError) {
+      deferMissingSeed.add(i);
+      out.push(null);
+      continue;
+    }
     out.push(
       await decodeOpenedRow(
         channel,
