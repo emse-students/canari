@@ -3984,6 +3984,22 @@ The writers, which are the mechanism that holds the invariant:
 | `onWelcomeProcessed` (`sessionAuth.ts`), the FCM merge, channel builders, tab sync | the group / conversation id they were handed |
 | every other `set` (retire, unread, watermarks, rename, avatar, messages) | read-modify-write of a key already in the map |
 
+### Telling a peer's deletion from a false "deleted" (a 1.6.12 report, 2026-11-16)
+
+A DM whose only content was a community-invitation notice showed "Cette conversation a ete supprimee"
+above "Supprimer localement". The device's log began weeks after the row was retired, so it could
+only say `[DISCOVERY] ... kept - already removed, awaiting a manual deletion` at every connection -
+the tombstone rule above, not the moment of retirement. **The server answers the question the log
+cannot**, read-only and in aggregates: the `dm_groups` row carried `deletedAt` (the same day it was
+created, some eight hours later), no member, seat or interval remained, and `dm_user_dismissed_groups`
+held exactly ONE row for it, written at the same instant as `deletedAt` - the shape of a manual
+deletion (959 of the 1089 dismissals on production share it). That dismissal belonged to the OTHER
+member: had it been the reporter's, discovery would have PURGED the row (`dismissed by user -
+removing`, which runs before the tombstone branch) instead of keeping it with the banner. **A real
+deletion by the peer, so the "deleted" state was the truth**; no 404/410, no sweep and no forgotten
+group was involved. The defect in that report was the footer's missing bottom inset
+([keyboard-and-send-motion](../keyboard-and-send-motion.md#7-a-banner-in-the-composers-place-stands-on-its-floor-2026-11-16)).
+
 ### A deleted DM is not carried into the next one
 
 Decided by the owner on 2026-11-10. When a peer deletes a DM, this device keeps it as a RETIRED
