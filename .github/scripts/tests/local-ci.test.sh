@@ -402,7 +402,7 @@ check "a docs-only push runs no Rust suite" "a docs-only push planned a Rust cra
 check "a docs-only push does not run make test-ci-scripts" "a docs-only push planned test-ci-scripts" \
   test -z "$(grep -F 'PLAN test-ci-scripts:' <<<"$out" || true)"
 check "and says the rest of that suite is CI's" "a skipped test-ci-scripts was not named" \
-  test -n "$(grep -F 'CI only for this range: test-ci-scripts' <<<"$out" || true)"
+  test -n "$(grep -F 'CI only: test-ci-scripts' <<<"$out" || true)"
 echo "export const a = 2;" >"$s/frontend/src/lib/x/mod.ts"
 git -C "$s" add frontend/src/lib/x/mod.ts
 out=$(scope_push frontend)
@@ -422,26 +422,27 @@ check "plus a test that reads the changed file's text" "a test reading the chang
 check "and not a test about another file" "a test unrelated to the change was planned: $out" \
   test -z "$(grep -F 'unrelated.test.ts' <<<"$out" || true)"
 check "and it does not run the whole suite" "a source change ran the whole suite: $out" \
-  test -z "$(grep -F 'the whole suite runs' <<<"$out" || true)"
+  test -z "$(grep -F 'the whole suite is CI'"'"'s' <<<"$out" || true)"
 echo "export default {};" >"$s/frontend/vitest.config.ts"
 git -C "$s" add frontend/vitest.config.ts
 git -C "$s" commit -qm vitest-config
 out=$(related)
-check "a change to the test setup runs the whole suite, by a named line" "a vitest config change did not run the whole suite: $out" \
-  test -n "$(grep -F 'the test setup changed (vitest.config.ts) - the whole suite runs' <<<"$out" || true)"
+check "a change to the test setup leaves the whole suite to CI, by a named line" "a vitest config change did not name the whole suite as CI's: $out" \
+  test -n "$(grep -F 'the test setup changed (vitest.config.ts) - the whole suite is CI'"'"'s' <<<"$out" || true)"
 printf '#!/usr/bin/env bash\necho hi\n' >"$s/.github/scripts/new.sh"
 git -C "$s" add .github/scripts/new.sh
 out=$(scope_push script)
-check "a CI script change runs make test-ci-scripts" "a script change planned no test-ci-scripts: $out" planned test-ci-scripts "$out"
+check "a CI script change leaves make test-ci-scripts to CI (owner, 2026-11-16)" "a script change planned test-ci-scripts: $out" \
+  test -z "$(grep -F 'PLAN test-ci-scripts:' <<<"$out" || true)"
 check "and lints the pushed script" "the pushed script was not handed to shellcheck" \
   test -n "$(grep -F 'shellcheck .github/scripts/new.sh' <<<"$out" || true)"
-# The positive half of "a docs-only push runs no Rust suite": the fixture CAN plan one.
+# A crate change: its suite is CI's (owner, 2026-11-16), and the push says so by name.
 mkdir -p "$s/apps/call-service/src"
 echo "fn main() {}" >"$s/apps/call-service/src/main.rs"
 git -C "$s" add apps/call-service/src/main.rs
 out=$(scope_push rust)
-check "a crate change runs that crate's suite" "a call-service change planned no Rust job: $out" \
-  test -n "$(grep -F 'PLAN rust apps/call-service:' <<<"$out" || true)"
+check "a crate change leaves that crate's suite to CI, by a named line" "a call-service change planned a Rust job or named none: $out" \
+  test -z "$(grep -F 'PLAN rust ' <<<"$out" || true)" -a -n "$(grep -F 'CI only: the Rust crates' <<<"$out" || true)"
 check "and not the frontend suite" "a Rust change planned the frontend suite" \
   test -z "$(grep -F 'PLAN frontend-test:' <<<"$out" || true)"
 # A top-level frontend config file, ALONE, owes the frontend jobs (2026-11-16: `kit.config.js` did not).
@@ -457,15 +458,15 @@ done
 git -C "$s" rm -q frontend/src/lib/unrelated.test.ts
 git -C "$s" commit -qm delete-a-test
 out=$(related)
-check "a deletion under frontend/src runs the whole suite, by a named line" "a deleted frontend/src file did not run the whole suite: $out" \
-  test -n "$(grep -F 'a file under frontend/src was deleted (src/lib/unrelated.test.ts) - the whole suite runs' <<<"$out" || true)"
+check "a deletion under frontend/src leaves the whole suite to CI, by a named line" "a deleted frontend/src file did not name the whole suite as CI's: $out" \
+  test -n "$(grep -F 'a file under frontend/src was deleted (src/lib/unrelated.test.ts) - the whole suite is CI'"'"'s' <<<"$out" || true)"
 mkdir -p "$s/libs/proto"
 echo 'syntax = "proto3";' >"$s/libs/proto/canari.proto"
 git -C "$s" add libs/proto/canari.proto
 git -C "$s" commit -qm proto
 out=$(related)
-check "a change to libs/proto (generated into src) runs the whole suite" "a libs/proto change did not run the whole suite: $out" \
-  test -n "$(grep -F 'the test setup changed (libs/proto/canari.proto) - the whole suite runs' <<<"$out" || true)"
+check "a change to libs/proto (generated into src) leaves the whole suite to CI" "a libs/proto change did not name the whole suite as CI's: $out" \
+  test -n "$(grep -F 'the test setup changed (libs/proto/canari.proto) - the whole suite is CI'"'"'s' <<<"$out" || true)"
 
 # ── 5. the hooks ────────────────────────────────────────────────────────────────────────────────
 echo "the tracked hooks call the script:"
