@@ -3101,14 +3101,21 @@ knip, svelte-check and paraglide (frontend) and through `@nestjs/cli`, `@angular
 level, closure and ignores. The pull-request audit reads it with `closure: production`
 (`ci.yml` passes it to `code-analysis.yml`). The nightly reads it with `full`. Gate 7 of
 `release-preflight.sh` reads it with `production`, stables only. `audit-dependencies.test.sh`
-asserts the matrix's trees are that table's, and pins the flags.
+pins the flags and asserts that the table's trees are exactly the directories of
+`git ls-files '*bun.lock'` (minus commented exclusions, none today) and the matrix's. That is how
+`libs/handoff` (its `jose`, audited by nothing until then) joined, as a sixth tree audited like a
+service.
 
 **What "what we ship" means, per tree. It is measured, not assumed:**
 
 | Tree | Production closure | Why |
 | ---- | ------------------ | --- |
-| the four services | `bun audit --prod` | the image runs `bun dist/main.js`, which loads only what `dependencies` reaches. `--prod` (and `--production`, `-p`) is missing from `bun audit --help` in bun 1.4.0 but works: it reads the lockfile alone, and on 2026-11-17 it dropped picomatch from media-service while keeping its five minio advisories |
+| the four services, `libs/handoff` | `bun audit --prod` | the image runs `bun dist/main.js`, which loads only what `dependencies` reaches. `--prod` (and `--production`, `-p`) is missing from `bun audit --help` in bun 1.4.0 but works: it reads the lockfile alone, and on 2026-11-17 it dropped picomatch from media-service while keeping its five minio advisories |
 | frontend | **the full audit, never `--prod`** | `svelte`, `@sveltejs/kit`, `protobufjs`, `parse5` and `emoji-picker-element-data` are devDependencies and are BUNDLED. The SSR image copies only `build/`, with no `node_modules`. `--prod` would stop auditing the code users run. Treating kit as shipped does not help either: `bun audit --prod` follows kit's PEER `vite` and brings picomatch back |
+
+**The frontend is the one exception to "a tool's advisory does not block a pull request"**: its
+pull-request audit still blocks on a devDependency advisory, because its devDependencies are bundled
+into what ships.
 
 **picomatch, measured on 2026-11-17:**
 
@@ -3129,19 +3136,33 @@ installed tree, and `tests/picomatch-premise.test.mjs` is its self-test:
 
 - frontend: picomatch is unreached. A new devDependency counts as shipped until declared build-only.
 - the three TypeORM trees: picomatch's only shipped parent is tinyglobby, and tinyglobby's is typeorm.
-  Inside typeorm only `util/DirectoryExportedClassesLoader.js` imports tinyglobby, and no shipped
-  `src` file hands TypeORM a string there.
+  Inside typeorm only `util/DirectoryExportedClassesLoader.js` imports tinyglobby. **No string reaches
+  it, asserted at runtime**: each service's `app-module.boot-spec.ts` (the `boot-nest-apps` job) reads
+  `entities`, `migrations` and `subscribers` off the DataSource the real AppModule built and expects
+  no string, which a shorthand, a const, a spread or a factory cannot evade. The premise script
+  refuses the ignore if that assertion leaves the spec. It also keeps a grep for a LITERAL string in
+  every shipped `src` file, because it runs in the audit job of every pull request (the boot runs
+  only when a service changed) and reads a DataSource built outside the AppModule, which the boot
+  never constructs.
 
-**The nightly ignores it too, in all five trees, on another premise (coordinator, 2026-11-17).** In
+**The nightly ignores it too, in all five trees that hold picomatch, on another premise (coordinator, 2026-11-17).** In
 the full closure the build tools DO hold picomatch, and the audit has reported it (every pull request of 2026-11-17). A
 nightly that stays red until upstream ships is noise: its reader learns to skip it, and it hides the
 next advisory. So the full closure carries the same ignore, and `picomatch-premise.mjs <tree> full`
 asserts that **no fixed release exists**. It reads GitHub's advisory record
 (`GET /advisories/GHSA-fc5q-39xc-vjpf`) and refuses the ignore when any picomatch entry has a
-`first_patched_version`, when the advisory is withdrawn, or when the record cannot be read. The day a
+`first_patched_version`, when the advisory is withdrawn, or when the record cannot be read after one
+retry five seconds later. The day a
 fix ships, the nightly goes red, which is exactly when there is something to do: upgrade.
 
 `Every ignored advisory is still reported` then retires the ignore once the upgrade has landed and nothing reports the advisory any more.
+
+**Gate 7 on an outage, and its evidence.** Every refusal prints the audit's whole output, indented:
+the package and path of an advisory, or what an unrecognised failure said. Once one tree's registry
+has not answered, the remaining trees are asked with `AUDIT_ATTEMPTS=1`. An outage then costs one
+tree's three attempts plus one per other tree, not three each (up to 80 minutes). Its remedy is
+`gh run rerun <run>`, which re-reads the same tag. `release-preflight.test.sh` runs the loop
+(`shipped_closure_gate`) against a fake audit.
 
 **What else the production audit reads (2026-11-17):** a LOW `fast-xml-parser` advisory
 (GHSA-474x-hrwr-fgx4, via minio and firebase-admin) is below the services' `moderate` level.

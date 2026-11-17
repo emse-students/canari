@@ -12,8 +12,10 @@
  *              be LEFT OUT, so a new devDependency counts as shipped until someone says otherwise.
  *   services   picomatch is reached only as `typeorm > tinyglobby > picomatch`, and TypeORM globs
  *              only the STRING entries of `entities` / `migrations` / `subscribers` - so (a) inside
- *              typeorm only `util/DirectoryExportedClassesLoader.js` touches tinyglobby, and (b) the
- *              service's shipped source hands TypeORM no string there (classes only).
+ *              typeorm only `util/DirectoryExportedClassesLoader.js` touches tinyglobby, and (b) no
+ *              string reaches it: asserted at RUNTIME by the service's boot spec on the booted
+ *              DataSource (this script checks the assertion is still there), plus a grep of the
+ *              shipped source for a literal string.
  *
  * An edge is followed through `dependencies` and `optionalDependencies`, never `peerDependencies`:
  * a peer is satisfied by whoever declares it (kit peers vite, which only the build loads), and a
@@ -138,13 +140,13 @@ function scripts(dir, base = dir, out = []) {
   return out;
 }
 
-/** Every shipped `.ts` file under `src` (tests are not compiled into what ships). */
+/** Every shipped `.ts` file under `src`: `tsconfig.build.json` excludes every name ending in `spec.ts`. */
 function shippedSources(dir, out = []) {
   if (!existsSync(dir)) return out;
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
     if (statSync(full).isDirectory()) shippedSources(full, out);
-    else if (/\.ts$/.test(entry) && !/\.(spec|test)\.ts$/.test(entry) && !entry.endsWith('.d.ts')) out.push(full);
+    else if (/\.ts$/.test(entry) && !entry.endsWith('spec.ts') && !entry.endsWith('.d.ts')) out.push(full);
   }
   return out;
 }
@@ -171,6 +173,19 @@ export function typeormProblems(treeDir) {
   const others = globbing.filter((file) => file !== 'util/DirectoryExportedClassesLoader.js');
   if (globbing.length === 0) problems.push('typeorm no longer imports tinyglobby at all - the edge the ignore was measured on is gone');
   if (others.length > 0) problems.push(`typeorm now globs from more than DirectoryExportedClassesLoader: ${others.join(', ')}`);
+  // THE AUTHORITATIVE LEG IS AT RUNTIME: the service's boot spec reads `dataSource.options` off the
+  // DataSource the real AppModule built and asserts no string is in it - which a shorthand, a const,
+  // a spread or a factory cannot evade. It runs in the `boot-nest-apps` job, so here we only assert
+  // it is still there.
+  const bootSpec = join(treeDir, 'src', 'app-module.boot-spec.ts');
+  const boot = existsSync(bootSpec) ? readFileSync(bootSpec, 'utf8') : '';
+  if (!boot.includes('GHSA-fc5q-39xc-vjpf') || !boot.includes('dataSource.options')) {
+    problems.push('src/app-module.boot-spec.ts no longer asserts, on the booted DataSource, that TypeORM is handed no string path');
+  }
+  // THE GREP STAYS AS WELL, for what the boot cannot see: it runs here, in the audit job of every
+  // pull request and nightly (the boot runs only when a service changed), and it reads every
+  // shipped source, including a DataSource built outside the AppModule (a CLI or script), which the
+  // boot never constructs. It catches only a LITERAL string; the boot catches the rest.
   for (const file of shippedSources(join(treeDir, 'src'))) {
     const text = readFileSync(file, 'utf8');
     for (const match of text.matchAll(/\b(entities|migrations|subscribers)\s*:\s*/g)) {
@@ -232,12 +247,21 @@ if (import.meta.main) {
     // The nightly: every tree that holds picomatch, one question about the advisory itself.
     const headers = { Accept: 'application/vnd.github+json' };
     if (process.env.GH_TOKEN) headers.Authorization = `Bearer ${process.env.GH_TOKEN}`;
+    // ONE RETRY, five seconds later: a single dropped request must not turn the nightly red, and a
+    // record still unreadable after it is reported (an unread premise grants nothing).
     let problems;
-    try {
-      const res = await fetch(`https://api.github.com/advisories/${ADVISORY}`, { headers });
-      problems = res.ok ? unpatchedProblems(await res.json()) : [`the advisory API answered ${res.status}, so whether a fix exists is unknown`];
-    } catch (err) {
-      problems = [`the advisory API could not be reached (${err?.message ?? err}), so whether a fix exists is unknown`];
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const res = await fetch(`https://api.github.com/advisories/${ADVISORY}`, { headers });
+        problems = res.ok ? unpatchedProblems(await res.json()) : [`the advisory API answered ${res.status} (attempt ${attempt}/2), so whether a fix exists is unknown`];
+        if (res.ok) break;
+      } catch (err) {
+        problems = [`the advisory API could not be reached (${err?.message ?? err}; attempt ${attempt}/2), so whether a fix exists is unknown`];
+      }
+      if (attempt === 1) {
+        console.log(`::warning::${tree}: ${problems[0]} - retrying once in 5 s`);
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+      }
     }
     if (problems.length > 0) {
       for (const p of problems) console.log(`::error::${tree}: ${p}. ${ADVISORY} is not granted in the full closure.`);

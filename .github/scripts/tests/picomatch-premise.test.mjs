@@ -51,7 +51,9 @@ const servicePkgs = {
   jest: { name: 'jest', dependencies: { picomatch: '^4' } },
 };
 const loader = { 'node_modules/typeorm/util/DirectoryExportedClassesLoader.js': 'const t = require("tinyglobby");' };
-const module = { 'src/app.module.ts': 'TypeOrmModule.forRoot({\n  entities: [\n    User,\n    Group,\n  ],\n  synchronize: false,\n})' };
+const module = {
+  'src/app-module.boot-spec.ts': '// GHSA-fc5q-39xc-vjpf\nconst { entities, migrations, subscribers } = dataSource.options;',
+  'src/app.module.ts': 'TypeOrmModule.forRoot({\n  entities: [\n    User,\n    Group,\n  ],\n  synchronize: false,\n})' };
 const serviceRoot = { name: 's', dependencies: { typeorm: '1' }, devDependencies: { jest: '30' } };
 
 expect('service: the measured shape holds (a dev-only picomatch parent is not shipped)',
@@ -70,6 +72,10 @@ expect('service: a migrations path is refused',
   tree({ root: serviceRoot, pkgs: servicePkgs, files: { ...loader, ...module, 'src/data-source.ts': 'new DataSource({ migrations: ["dist/migrations/*.js"] })' } }), service, false);
 expect('service: typeorm globbing from a second module is refused',
   tree({ root: serviceRoot, pkgs: servicePkgs, files: { ...loader, ...module, 'node_modules/typeorm/driver/Other.js': "import g from 'tinyglobby';" } }), service, false);
+expect('service: a boot spec that no longer asserts the booted options is refused',
+  tree({ root: serviceRoot, pkgs: servicePkgs, files: { ...loader, ...module, 'src/app-module.boot-spec.ts': 'it("boots", () => {});' } }), service, false);
+expect('service: the boot spec itself (a spec.ts) is not read as shipped source',
+  tree({ root: serviceRoot, pkgs: servicePkgs, files: { ...loader, ...module, 'src/app-module.boot-spec.ts': "// GHSA-fc5q-39xc-vjpf dataSource.options\nentities: ['probe']," } }), service, true);
 expect('service: typeorm no longer importing tinyglobby is refused (the measurement is stale)',
   tree({ root: serviceRoot, pkgs: servicePkgs, files: module }), service, false);
 expect('service: a required dependency that is not installed is refused (unmeasurable)',

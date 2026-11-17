@@ -305,3 +305,47 @@ classify_shipped_audit() {
     *) printf 'undecidable %s\n' "${1:-nothing}" ;;
   esac
 }
+
+# Gate 7's loop: every tree of `lib/audit-trees.sh`, its PRODUCTION closure, through
+# `audit-dependencies.sh`. Needs the caller's printers (`ok`, `refuse`, `hint`) and the table
+# (`AUDIT_TREES`, `audit_flags`) loaded. `AUDIT_SCRIPT` replaces the audit (the self-test's fake).
+#
+# EVERY REFUSAL CARRIES ITS EVIDENCE: the audit's whole output, indented, for every verdict but
+# `clean` - an advisory's package and path, or the line an unrecognised failure printed.
+#
+# AN OUTAGE IS ASKED ONCE PER TREE AFTER THE FIRST. Three attempts of up to five minutes each are
+# worth spending on the first tree; once the registry has been silent for one, the rest are asked
+# with `AUDIT_ATTEMPTS=1`, so an outage costs one tree's budget plus one attempt per other tree
+# instead of eighty minutes. Its remedy is a rerun of this same run, which re-reads the same tag.
+shipped_closure_gate() {
+  local here audit tree flags out rc once=''
+  here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  audit="${AUDIT_SCRIPT:-$here/../audit-dependencies.sh}"
+  for tree in "${AUDIT_TREES[@]}"; do
+    flags="$(audit_flags "$tree" production)" || { refuse "$tree has no audit setup in lib/audit-trees.sh"; continue; }
+    rc=0
+    # shellcheck disable=SC2086  # `$flags` is a word-split list by construction
+    out="$(env REGISTRY_OUTAGE_IS_FAILURE=false ${once:+AUDIT_ATTEMPTS=1} bash "$audit" "$tree" $flags 2>&1)" || rc=$?
+    case "$(classify_shipped_audit "$rc")" in
+      clean)
+        ok "$tree: no advisory in its production closure"
+        continue
+        ;;
+      advisory)
+        refuse "$tree: an advisory touches what this stable ships (audit output below)"
+        hint 'Fix it (or measure it unreachable and add an ignore with its asserted premise, lib/audit-trees.sh),'
+        hint 'then cut a NEW pre-release and its stable: a rerun re-reads this same commit.'
+        ;;
+      unanswered)
+        refuse "$tree: the npm advisory endpoint never answered, so what this stable ships is unaudited"
+        hint "Remedy: gh run rerun ${GITHUB_RUN_ID:-<this run>} once npm answers - it re-reads the same tag."
+        [ -z "$once" ] && hint 'The trees after this one are asked once each: the registry is already known to be silent.'
+        once=1
+        ;;
+      *)
+        refuse "$tree: the audit exited $rc, which is no verdict (audit output below)"
+        ;;
+    esac
+    while IFS= read -r line; do hint "  | $line"; done <<<"$out"
+  done
+}

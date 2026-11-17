@@ -251,7 +251,7 @@ jobs:
         # `release-preflight.sh`; `audit-dependencies.test.sh` asserts this list is that table's.
         # Ignores stay keyed PER TREE there: an `--ignore` spread across every tree would hide an
         # advisory where nobody measured whether it is reachable.
-        tree: [frontend, apps/core-service, apps/social-service, apps/media-service, apps/chat-delivery-service]
+        tree: [frontend, apps/core-service, apps/social-service, apps/media-service, apps/chat-delivery-service, libs/handoff]
     steps:
       - name: Checkout
         uses: actions/checkout@v7

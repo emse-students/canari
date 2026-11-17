@@ -20,17 +20,19 @@
 # `code-analysis.yml` (the minio ones: "The premises behind media-service's ignores"; picomatch:
 # `picomatch-premise.mjs`). Every one is retired by "Every ignored advisory is still reported".
 
-# Every tree with a `bun.lock`. `audit-dependencies.test.sh` asserts the matrix in
-# `code-analysis.yml` names exactly these.
+# Every tree with a committed `bun.lock`. `audit-dependencies.test.sh` asserts this list against
+# `git ls-files '*bun.lock'` (minus its commented exclusions) and against the matrix in
+# `code-analysis.yml`. `libs/handoff` (2026-11-17) holds the source copies of the vendored sign-in
+# handoff modules and their `jose`; nothing audited it before.
 # shellcheck disable=SC2034  # read by the files that source this one
-AUDIT_TREES=(frontend apps/core-service apps/social-service apps/media-service apps/chat-delivery-service)
+AUDIT_TREES=(frontend apps/core-service apps/social-service apps/media-service apps/chat-delivery-service libs/handoff)
 
 # audit_install_flags <tree>: how the audit job installs the tree (the premises read `node_modules`).
 # The frontend runs its scripts (Tauri and the WASM glue need them); every service skips them.
 audit_install_flags() {
   case "$1" in
     frontend) echo '--frozen-lockfile' ;;
-    apps/*) echo '--frozen-lockfile --ignore-scripts' ;;
+    apps/* | libs/handoff) echo '--frozen-lockfile --ignore-scripts' ;;
     *) echo "::error::audit_install_flags: $1 is not an audited tree" >&2; return 1 ;;
   esac
 }
@@ -52,6 +54,8 @@ audit_ignores() {
     # nightly has REPORTED it and there is nothing to upgrade to - so the nightly is red only on
     # something new, and goes red again the day a fixed release exists, which is when there is work.
     apps/core-service | apps/social-service | apps/chat-delivery-service | frontend) ids+=(GHSA-fc5q-39xc-vjpf) ;;
+    # jose only, a runtime dependency: nothing to ignore.
+    libs/handoff) ;;
     *) echo "::error::audit_ignores: $tree is not an audited tree" >&2; return 1 ;;
   esac
   local out=() id
@@ -65,7 +69,7 @@ audit_flags() {
   ignores="$(audit_ignores "$tree" "$closure")" || return 1
   case "$tree" in
     frontend) ;;
-    apps/*)
+    apps/* | libs/handoff)
       [ "$closure" = production ] && flags+=(--prod)
       flags+=(--audit-level=moderate) ;;
   esac

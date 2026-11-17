@@ -449,12 +449,86 @@ shipped 2 'unanswered'     'exit 2 is an unanswered registry, told apart so the 
 shipped 127 'undecidable 127' 'any other exit decides nothing'
 shipped '' 'undecidable nothing' 'no exit at all decides nothing'
 # shellcheck disable=SC2016 # the patterns are the script's literal text
-if grep -qF 'audit_flags "$tree" production' "$PREFLIGHT" && grep -qF 'source "$HERE/lib/audit-trees.sh"' "$PREFLIGHT" &&
-  grep -qF 'for tree in "${AUDIT_TREES[@]}"' "$PREFLIGHT"; then
-  pass "release-preflight.sh asks gate 7 of every tree, through the pull-request audit's own table"
+if grep -qF 'source "$HERE/lib/audit-trees.sh"' "$PREFLIGHT" && grep -qxF '  shipped_closure_gate' "$PREFLIGHT"; then
+  pass "release-preflight.sh asks gate 7 through shipped_closure_gate and the pull-request audit's own table"
 else
   fail "release-preflight.sh does not run gate 7 from lib/audit-trees.sh"
 fi
+
+# THE LOOP ITSELF, against a fake audit: what it refuses, what evidence it prints, and how few
+# attempts an outage costs after the first tree. The fake answers per tree from a file
+# (`<tree> <exit> <one output line>`) and logs the AUDIT_ATTEMPTS each call was given.
+# shellcheck source-path=SCRIPTDIR source=../lib/audit-trees.sh
+source "$HERE/../lib/audit-trees.sh"
+G7="$(mktemp -d)"
+cat >"$G7/audit.sh" <<'FAKE'
+#!/usr/bin/env bash
+line="$(grep -m 1 -F "$1 " "$G7_ANSWERS")"
+printf '%s attempts=%s\n' "$1" "${AUDIT_ATTEMPTS:-default}" >>"$G7_CALLS"
+rest="${line#* }"
+printf '%s\n' "${rest#* }"
+exit "${rest%% *}"
+FAKE
+# gate7 <answers file content>: runs the loop with stub printers, sets G7_OUT and G7_REFUSED.
+gate7() {
+  printf '%s\n' "$1" >"$G7/answers"
+  : >"$G7/calls"
+  G7_OUT="$(
+    FAILED=0
+    ok() { printf 'OK %s\n' "$1"; }
+    refuse() { FAILED=1; printf 'REFUSE %s\n' "$1"; }
+    hint() { printf 'HINT %s\n' "$1"; }
+    G7_ANSWERS="$G7/answers" G7_CALLS="$G7/calls" GITHUB_RUN_ID=4242 AUDIT_SCRIPT="$G7/audit.sh" shipped_closure_gate
+    printf 'FAILED=%s\n' "$FAILED"
+  )"
+}
+# answers <index> <exit> <line>: every tree clean except the one at <index> (-1: none).
+answers() {
+  local i=0 t
+  for t in "${AUDIT_TREES[@]}"; do
+    if [ "$i" -eq "$1" ]; then printf '%s %s %s\n' "$t" "$2" "$3"; else printf '%s 0 No vulnerabilities found\n' "$t"; fi
+    i=$((i + 1))
+  done
+}
+
+gate7 "$(answers -1 0 none)"
+if grep -qx 'FAILED=0' <<<"$G7_OUT" && [ "$(grep -c '^OK ' <<<"$G7_OUT")" -eq "${#AUDIT_TREES[@]}" ] && ! grep -q '^HINT' <<<"$G7_OUT"; then
+  pass "every tree clean: gate 7 passes, one ok per tree, no evidence printed"
+else
+  fail "a clean table did not pass cleanly: $G7_OUT"
+fi
+
+gate7 "$(answers 1 1 'high: typeorm > tinyglobby > picomatch GHSA-zzzz')"
+if grep -qx 'FAILED=1' <<<"$G7_OUT" && grep -qF 'HINT   | high: typeorm > tinyglobby > picomatch GHSA-zzzz' <<<"$G7_OUT"; then
+  pass "an advisory refuses, and its WHOLE output (package and path) is the evidence"
+else
+  fail "an advisory refusal lost its evidence: $G7_OUT"
+fi
+
+gate7 "$(answers 2 1 'error: something nobody has seen before')"
+if grep -qx 'FAILED=1' <<<"$G7_OUT" && grep -qF 'HINT   | error: something nobody has seen before' <<<"$G7_OUT"; then
+  pass "an exit 1 that names no advisory still refuses WITH what it printed"
+else
+  fail "an unrecognised exit 1 refused without evidence: $G7_OUT"
+fi
+
+gate7 "$(answers 0 7 'Segmentation fault')"
+if grep -qx 'FAILED=1' <<<"$G7_OUT" && grep -qF 'exited 7, which is no verdict' <<<"$G7_OUT" && grep -qF 'HINT   | Segmentation fault' <<<"$G7_OUT"; then
+  pass "an exit that is no verdict refuses, with its output"
+else
+  fail "an undecidable exit was not refused with evidence: $G7_OUT"
+fi
+
+gate7 "$(answers 0 2 'error: POST advisories/bulk - 503')"
+first_attempts="$(sed -n 1p "$G7/calls")"
+later_attempts="$(sed -n '2,$p' "$G7/calls" | grep -vc 'attempts=1$')"
+if grep -qx 'FAILED=1' <<<"$G7_OUT" && grep -qF 'gh run rerun 4242' <<<"$G7_OUT" &&
+  [ "$first_attempts" = "${AUDIT_TREES[0]} attempts=default" ] && [ "$later_attempts" -eq 0 ]; then
+  pass "an outage refuses naming 'gh run rerun <run>', and every later tree is asked ONCE"
+else
+  fail "the outage path: first '$first_attempts', later calls not at 1: $later_attempts; $G7_OUT"
+fi
+rm -rf "$G7"
 
 printf '\n'
 if [ "$FAIL" -ne 0 ]; then

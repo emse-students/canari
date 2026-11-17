@@ -340,23 +340,7 @@ else
   # what that run could not see, and it is exactly what production would receive. Same table
   # (`lib/audit-trees.sh`, `production`), same script, so the merge and the release cannot disagree
   # on what counts; the ignores' premises were asserted by that same `CI passed` on this commit.
-  for tree in "${AUDIT_TREES[@]}"; do
-    tree_flags="$(audit_flags "$tree" production)" || { refuse "$tree has no audit setup in lib/audit-trees.sh"; continue; }
-    # shellcheck disable=SC2086  # a word-split list by construction
-    AUDIT_OUT="$(REGISTRY_OUTAGE_IS_FAILURE=false bash "$HERE/audit-dependencies.sh" "$tree" $tree_flags 2>&1)"
-    AUDIT_RC=$?
-    case "$(classify_shipped_audit "$AUDIT_RC")" in
-      clean) ok "$tree: no advisory in its production closure" ;;
-      advisory)
-        refuse "$tree: an advisory touches what this stable ships"
-        printf '%s\n' "$AUDIT_OUT" | grep -E '^\s*(low|moderate|high|critical):' | sed 's/^/          /'
-        hint 'Fix it (or measure it unreachable and add an ignore with its asserted premise, lib/audit-trees.sh),'
-        hint 'then cut a NEW pre-release and its stable: a rerun re-reads this same commit.'
-        ;;
-      unanswered) refuse "$tree: the npm advisory endpoint never answered, so what this stable ships is unaudited - publish again once it answers" ;;
-      *) refuse "$tree: the audit exited $AUDIT_RC, which is no verdict" ;;
-    esac
-  done
+  shipped_closure_gate
 fi
 
 printf '\n'

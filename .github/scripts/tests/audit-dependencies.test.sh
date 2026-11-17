@@ -258,6 +258,8 @@ flags apps/chat-delivery-service production '--prod --audit-level=moderate --ign
 flags apps/chat-delivery-service full '--audit-level=moderate --ignore=GHSA-fc5q-39xc-vjpf'
 flags apps/media-service production "--prod --audit-level=moderate $MINIO"
 flags apps/media-service full "--audit-level=moderate $MINIO --ignore=GHSA-fc5q-39xc-vjpf"
+flags libs/handoff production '--prod --audit-level=moderate'
+flags libs/handoff full '--audit-level=moderate'
 
 if grep -q -- '--prod' <<<"$(audit_flags frontend production)"; then
   echo "FAIL the frontend is audited --prod: svelte, kit and protobufjs are devDependencies that SHIP"
@@ -276,6 +278,26 @@ if audit_flags frontend prod >/dev/null 2>&1; then
   failures=$((failures + 1))
 else
   echo "PASS a misspelt closure is refused"
+fi
+
+# EVERY COMMITTED bun.lock IS IN THE TABLE, read from git rather than from a list a person keeps:
+# `libs/handoff/bun.lock` (jose) sat unaudited until 2026-11-17 because the old matrix was such a
+# list. A lockfile that must NOT be audited is excluded here BY NAME, with its reason on its line.
+AUDIT_EXCLUDED_LOCKS=(
+  # (none today)
+)
+repo_root="$(cd "$(dirname "$0")/../../.." && pwd)"
+locked_trees=$(git -C "$repo_root" ls-files '*bun.lock' | while IFS= read -r f; do
+  d="$(dirname "$f")"
+  [[ " ${AUDIT_EXCLUDED_LOCKS[*]} " == *" $d "* ]] || printf '%s\n' "$d"
+done | sort)
+table_trees=$(printf '%s\n' "${AUDIT_TREES[@]}" | sort)
+if [ -n "$locked_trees" ] && [ "$locked_trees" = "$table_trees" ]; then
+  echo "PASS the table audits every committed bun.lock ($(wc -l <<<"$locked_trees") trees)"
+else
+  echo "FAIL the committed lockfiles and the table disagree:"
+  diff <(echo "$locked_trees") <(echo "$table_trees") | sed 's/^/     /'
+  failures=$((failures + 1))
 fi
 
 # THE MATRIX AND THE TABLE NAME THE SAME TREES. A tree added to one and not the other is either
