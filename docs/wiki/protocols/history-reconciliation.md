@@ -3143,7 +3143,7 @@ Three earlier attempts to carry "this group is incomplete" across an exchange we
 
 **Mixed versions.** An older responder ignores `incomplete` and stays silent - the silence escalation still applies. An older asker never sends `incomplete`, so it never receives the new frame; an unknown system event is acked silently anyway.
 
-**Known costs, stated.** A device that ACCUSES frames falsely (the TAB-3b shape below) now walks the online membership once per evidence edge instead of asking once - bounded, and each step logged. And the 01:07 `same state` anomaly above is not explained by this fix: if a state key ever agrees falsely, the walk excludes a member that held the messages. The reading entry says what would show that.
+**Known costs, stated.** A device that ACCUSES frames falsely (the TAB-3b shape below) now walks the online membership once per evidence edge instead of asking once - bounded and logged at each step, but about 2·N_online·M decrypts per cold start where it used to be about M; the figures, the measurement owed and the candidate answers are in [backlog](../backlog.d/p2-a-false-accuser-costs-n-online-elections-per-cold-start.md). And the 01:07 `same state` anomaly above is not explained by this fix: if a state key ever agrees falsely, the walk excludes a member that held the messages. The reading entry says what would show that.
 
 ## Open questions
 
