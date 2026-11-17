@@ -48,7 +48,8 @@
   }
   function stage(el) {
     const l = getLayer();
-    for (const c of [...l.children]) if (c.tagName !== 'PRE') c.remove();
+    // A static NodeList: removing a child does not shift the iteration.
+    for (const c of l.querySelectorAll(':scope > :not(pre)')) c.remove();
     el.style.cssText = 'position:absolute;left:0;top:60px;width:100%;height:auto;display:block';
     l.appendChild(el);
   }
