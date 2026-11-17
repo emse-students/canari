@@ -29,7 +29,9 @@ use openmls_rust_crypto::RustCrypto;
 use openmls_traits::crypto::OpenMlsCrypto;
 use openmls_traits::random::OpenMlsRand;
 use openmls_traits::types::{HpkeAeadType, HpkeCiphertext, HpkeConfig, HpkeKdfType, HpkeKemType};
-use zeroize::Zeroizing;
+/// Re-exported so a caller holding the secret before it reaches this module (the Tauri command,
+/// whose argument parsing can fail first) wraps it with the same type, with no dependency of its own.
+pub use zeroize::Zeroizing;
 
 /// An X25519 public key, as the ask carries it.
 pub const HISTORY_ANSWER_PUBLIC_KEY_BYTES: usize = 32;

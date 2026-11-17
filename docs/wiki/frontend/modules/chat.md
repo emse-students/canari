@@ -6270,8 +6270,11 @@ its setter leaves.
 
 **The late joiner.** A member added after a `nickname` frame went out never receives it. The
 inviter's JOIN PUSH to the new device restates the register (`nicknames`, beside `pins`), even when
-every message is withheld, so a new member gets the names in the first bundle. That join push is the
-ONLY bundle a register is taken from (review of #3177). **It hangs on the delivery of a Welcome, not
+every message is withheld, so a new member gets the names in the first bundle; since 2026-11-17 the
+push carries the state and NO message (the messages come by the newcomer's own sealed reconciliation,
+[history-answer-addressing](../../protocols/history-answer-addressing.md#what-is-not-sealed-the-inviters-join-push---so-it-carries-no-message-2026-11-17)).
+That join push and the answer to the newcomer's own register ask (below) are the ONLY bundles a
+register is taken from (review of #3177). **It hangs on the delivery of a Welcome, not
 on a caller** (#3185). `BaseMlsService.sendWelcomeConsuming` is the one place a Welcome is known
 stored by the server, whoever sent it - the member's "Ajouter" (`inviteMembersToGroup`, which a
 join-request approval also is), a pending invitation, a welcome_request answer, a group's creation, or
@@ -6307,10 +6310,11 @@ the newcomer's `join` ask lives in memory (`noteJoinSolicited`), so a reload bet
 retried push refuses it, and the inviter's own device has to come back while the newcomer is online.
 The newcomer, by contrast, is online by construction when it asks, already runs a reconciliation on
 every connection whose deferral waits for a member to return, and can keep a durable "register owed"
-marker until an answer clears it. So the register will ride the existing digest ask (`register: true`)
-and its elected answer, under the same four limits below - designed in
-[its entry](../../backlog.d/p2-an-offline-newcomer-receives-no-join-push.md), not built in #3185 because
-it changes the reconciliation's wire and deserves its own review.
+marker until an answer clears it. So the register rides the existing digest ask (`register: true`)
+and its elected answer, sealed to the ask, under the same four limits below
+(`registerOwed.ts`, built 2026-11-17 in a draft pull request:
+[the mechanism](../../protocols/history-answer-addressing.md#the-newcomer-asks-for-its-register-2026-11-17),
+[its entry](../../backlog.d/p2-an-offline-newcomer-receives-no-join-push.md)).
 
 Before #3185 only the pending invitation and the welcome_request answer pushed, each by an explicit
 call: a newcomer added by "Ajouter", or whose Welcome came from the drain, saw no nickname at all
