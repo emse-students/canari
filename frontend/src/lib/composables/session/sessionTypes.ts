@@ -8,7 +8,7 @@
  */
 import type { SvelteMap } from 'svelte/reactivity';
 import type { IMlsService } from '$lib/mlsService';
-import type { BulkIngestPhase } from '$lib/mls-client';
+import type { BulkIngestObserver, BulkIngestPhase } from '$lib/mls-client';
 import type { IStorage } from '$lib/db';
 import type { MessageHandlerDeps } from '$lib/mls-client/messagePipeline/deps';
 import type { LoginErrorCode } from './loginErrors';
@@ -99,8 +99,13 @@ export interface ChatSessionCallbacks extends Pick<
     contactName: string,
     options?: AddMessageToChatOptions
   ) => Promise<void>;
-  beginBulkMessageIngest?: (phase: BulkIngestPhase) => void;
-  endBulkMessageIngest?: (phase: BulkIngestPhase) => void | Promise<void>;
+  /**
+   * The UI render buffer's observer of the bulk-ingest windows, built by
+   * `useMessaging.bulkIngestObserver` - ONE object, every hook required, so a page cannot register
+   * the window's open and close and forget the hold that stores its rows before a checkpoint
+   * exports their ratchet advance (rows before ratchet).
+   */
+  messageIngestObserver?: Required<BulkIngestObserver>;
   batchAddMessages?: (
     messages: Array<{ senderId: string; content: string } & AddMessageToChatOptions>,
     contactName: string,

@@ -37,3 +37,23 @@ manifest and play a growing source through MSE). The readings it produced are on
 at most half the best RTT, 35-90 ms here). Glass-to-glass is `now - (recStart + video.currentTime)`:
 the frame on screen was captured at the recorder's start plus its media time. It leaves out the
 camera's and the display's own latency (tens of ms).
+
+## The bitrate floor and codec bench (live-scaling stage 0 (ii), 2026-11-17)
+
+A second instrument, for one question: **how low can a phone's live go, and with which API?**
+([live-scaling](../../docs/wiki/frontend/modules/live-scaling.md#stage-0-ii---the-bitrate-floor-measured-2026-11-17)
+holds the readings). No network, no account: everything happens in the page.
+
+| File | What it is |
+| --- | --- |
+| `codec-bench.js` | The page side (`window.__CB`): the codec support matrix (`MediaRecorder.isTypeSupported`, `VideoEncoder` / `VideoDecoder.isConfigSupported` with each hardware hint and `bitrateMode: 'constant'`, `MediaSource` / `ManagedMediaSource.isTypeSupported`, `mediaCapabilities`); a `MediaRecorder` run (video only, H.264 baseline fMP4, 2 s slices and 2 s keyframes as the product asks); a `VideoEncoder` run (explicit `bitrate`, `bitrateMode`, `latencyMode: 'realtime'`, a keyframe every 60 frames); and `show(i, atS)`, which decodes a run's own bytes (MSE for the recorder, `VideoDecoder` for WebCodecs) and puts the frame full screen for a phone screenshot. Source: the back camera, or `synthetic`, a seeded busy scene panned 2 px a frame - the same on every phone. |
+| `codec.mjs` | The driver over CDP: `matrix`, `mr <w> <h> <bps> [durS] [src]`, `wc <codec> <w> <h> <bps> [durS] [mode] [hw] [src]`, `show <i> [atS]`, `preview`, `clear`, `state`. Async page calls are parked on the page and polled, because the WebKit bridge answers an awaited promise with `{}`. |
+| `codec-bench.html` | The same bench as a page with buttons, for a system browser: serve this directory statically and, on the Mi, `adb reverse` it so Chrome sees a secure `localhost`. Not used for the 2026-11-17 readings. |
+
+**Where it runs.** Mi 9T: INSIDE the app's WebView (`adb forward tcp:9301 localabstract:webview_devtools_remote_<pid>`,
+target `9301:tauri.localhost`) - the app page is a secure context with the camera granted, so no
+test page has to be loaded into it. iPhone 12: **Safari**, because the TestFlight WKWebView is not
+inspectable and a LAN `http://` page is not a secure context (no camera); the bench is injected into
+any https page (`pymobiledevice3 webinspector cdp --port 9310`, target `9310:<host>`), and the camera
+prompt is answered with `bun tools/ios-device/ios.mjs tap Allow`. Safari runs the same WebKit
+and the same VideoToolbox encoder as the app's WKWebView.
