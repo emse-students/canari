@@ -24,7 +24,8 @@ import {
   type NativeMessageNotification,
   type NativeReactionNotification,
 } from '$lib/utils/nativeNotification';
-import { reactionNotificationKey } from '$lib/utils/chat/reactionNotification';
+import { reactionCollapseKey, reactionNotificationKey } from '$lib/utils/chat/reactionNotification';
+import { stableNotifId } from '$lib/utils/stableNotifId';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { appendLog } from '$lib/utils/sessionLog';
 import { systemNotificationsBlockedAnnounceOnce } from '$lib/utils/systemNotificationsBlocked';
@@ -103,15 +104,6 @@ export const CHANNEL_MENTIONS = 'canari_mentions_v2';
  * completeness only: on Android a reaction is posted by the native builder, never by the plugin.
  */
 export const CHANNEL_REACTIONS = 'canari_reactions_v2';
-
-/** Returns a stable positive integer ID derived from a conversation ID string, used to replace existing Tauri notifications for the same conversation. */
-function stableNotifId(conversationId: string): number {
-  let hash = 0;
-  for (let i = 0; i < conversationId.length; i++) {
-    hash = (Math.imul(31, hash) + conversationId.charCodeAt(i)) | 0;
-  }
-  return Math.abs(hash) || 1;
-}
 
 export function useNotifications() {
   let lastNotificationAt = $state(0);
@@ -669,32 +661,35 @@ export function useNotifications() {
 
   /**
    * Raises the notification of a REACTION to one of this account's messages - the frame trigger
-   * decided by `useMessaging.notifyInboundReaction` (`reactionNotification.ts`): the app is in front
-   * and the conversation is off screen, where the push is dropped.
+   * decided by `useMessaging.notifyInboundReaction` (`reactionNotification.ts`): the conversation is
+   * off screen, and the push of the same reaction may draw it too.
    *
-   * Android asks the native builder, which composes the push's own reaction notification under the
-   * push's own key; iOS, desktop and the browser post a plain one, keyed `reaction:<conversation>` so
-   * it never replaces the conversation's message notification and a second reaction updates the
-   * first. Throttled per that key, as a message is per conversation.
+   * ONE REACTION, ONE NOTIFICATION, WHICHEVER TRIGGER LANDS SECOND. Android asks the native builder,
+   * which stamps the line with the reaction's own instant exactly as the push does, so the second is
+   * recognised (`alreadyPosted`, the alerted ledger). iOS, desktop and the browser post a plain one
+   * whose id is {@link reactionCollapseKey}'s - on iOS the push's `apns-collapse-id` is that same
+   * decimal, so the system replaces one by the other. It never replaces the conversation's message
+   * notification. Throttled per that reaction, so a burst of different reactions loses none.
    */
   async function sendReactionNotification(reaction: NativeReactionNotification) {
-    const convKey = reactionNotificationKey(reaction.conversationId);
-    if (!mayRaise(convKey)) return;
+    const reactionKey = reactionCollapseKey(reaction.conversationId, reaction.actorId, reaction.at);
+    if (!mayRaise(reactionKey)) return;
     if (isAndroidTauriRuntime()) {
       const accepted = await postNativeReactionNotification(reaction);
+      const shade = reactionNotificationKey(reaction.conversationId);
       console.log(
         accepted
-          ? `[NOTIF] Raised for ${convKey} by the native builder on ${CHANNEL_REACTIONS}.`
-          : `[NOTIF] Not raised for ${convKey} - the native builder refused it; nothing else posts on Android.`
+          ? `[NOTIF] Raised for ${shade} by the native builder on ${CHANNEL_REACTIONS}.`
+          : `[NOTIF] Not raised for ${shade} - the native builder refused it; nothing else posts on Android.`
       );
       return;
     }
     await postPlainNotification({
-      convKey,
+      convKey: reactionKey,
       title: reaction.actorName,
       body: m.notif_reaction_message_body({ emoji: reaction.emoji }),
       channelId: CHANNEL_REACTIONS,
-      idKey: convKey,
+      idKey: reactionKey,
       conversationId: reaction.conversationId,
     });
   }
@@ -704,8 +699,9 @@ export function useNotifications() {
    * message and a reaction, so neither can drift from the other's permission, tap and sound rules.
    *
    * @param p.idKey what the notification's id (plugin) or tag (browser) is derived from: the
-   *   conversation for a message, `reaction:<conversation>` for a reaction - so the two never
-   *   replace each other, and a second of either kind updates the first.
+   *   conversation for a message (a second message updates the first), the reaction itself for a
+   *   reaction (`reactionCollapseKey`, the push's own collapse id on iOS) - so the two kinds never
+   *   replace each other.
    * @param p.conversationId where a tap leads.
    */
   async function postPlainNotification(p: {

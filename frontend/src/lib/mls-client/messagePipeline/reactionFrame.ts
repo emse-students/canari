@@ -26,6 +26,11 @@ export interface ReactionFrameOutcome {
   changed: boolean;
   /** The reacted-to message's author as this device holds it, null when it holds no copy. */
   messageAuthorId: string | null;
+  /**
+   * Whether the store could NOT answer for the row (a read that threw, a row sealed under a key this
+   * device cannot open) - so a null author is a real unknown, not an absence.
+   */
+  storeFailed: boolean;
 }
 
 /**
@@ -55,7 +60,7 @@ export async function applyReactionFrame(
     log(
       `[REACTION] A reaction frame from ${sender.slice(0, 8)} names no message or no emoji - ignored`
     );
-    return { changed: false, messageAuthorId: null };
+    return { changed: false, messageAuthorId: null, storeFailed: false };
   }
   // `at` is the sender's clock; an undated frame reads as 0 and loses to anything dated. A frame
   // from before `removed` existed carries false, which is what it meant.
@@ -68,6 +73,7 @@ export async function applyReactionFrame(
   // why), and a writer shows a message BEFORE it stores it (`keepUntilStored` there).
   let stored: { reactions?: MessageReaction[]; senderId?: string } | null = null;
   let sealedElsewhere = false;
+  let storeFailed = false;
   if (storage) {
     try {
       // Scoped to THIS conversation: a frame of one conversation never reaches a row of another.
@@ -76,11 +82,12 @@ export async function applyReactionFrame(
         console.warn(
           `[REACTION] ${msgId.slice(0, 8)} is stored under a key this device cannot open - left as it is`
         );
-        if (!shown) return { changed: false, messageAuthorId: null };
+        if (!shown) return { changed: false, messageAuthorId: null, storeFailed: true };
         sealedElsewhere = true;
       }
       stored = found.rows.get(msgId) ?? null;
     } catch (e) {
+      storeFailed = true;
       // Not read is not absent: keeping the reaction for a message that may be stored would only
       // delay it, while dropping it would lose it - so it is kept, and settled on the next look.
       log(`[REACTION] stored row of ${msgId.slice(0, 8)} could not be read: ${String(e)}`);
@@ -104,7 +111,7 @@ export async function applyReactionFrame(
 
   if (!shown && !stored) {
     await keep();
-    return { changed: false, messageAuthorId: null };
+    return { changed: false, messageAuthorId: null, storeFailed };
   }
   const messageAuthorId = shownMessage?.senderId ?? stored?.senderId ?? null;
 
@@ -116,7 +123,7 @@ export async function applyReactionFrame(
     removed,
     authorship
   );
-  if (!updated) return { changed: false, messageAuthorId };
+  if (!updated) return { changed: false, messageAuthorId, storeFailed };
   messageReactions.set(msgId, updated);
   const c = conversations.get(convoKey);
   const idx = c ? c.messages.findIndex((m) => m.id === msgId) : -1;
@@ -127,7 +134,7 @@ export async function applyReactionFrame(
   } else {
     log(`[REACTION] ${msgId.slice(0, 8)} is stored, not shown - merged into its row`);
   }
-  const outcome = { changed: true, messageAuthorId };
+  const outcome = { changed: true, messageAuthorId, storeFailed };
   if (!storage || sealedElsewhere) return outcome;
   if (!stored) {
     log(

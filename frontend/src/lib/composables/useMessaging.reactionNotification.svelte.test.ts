@@ -2,8 +2,9 @@
 /**
  * A REACTION TO MY MESSAGE WHILE THE APP IS OPEN ON ANOTHER SCREEN NOTIFIED NOBODY (owner,
  * 2026-11-17): the push is dropped in the foreground on both phones, and a reaction had no second
- * trigger. `notifyInboundReaction` is that trigger; these pin it from both directions - raised where
- * the push is dropped, NEVER raised where the push draws, so one reaction is never announced twice.
+ * trigger. `notifyInboundReaction` is that trigger; these pin that it is raised whenever the
+ * conversation is off screen - never deferring to a push that may itself be dropped - and carries the
+ * reaction's instant, which makes its post and the push's ONE notification.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SvelteMap } from 'svelte/reactivity';
@@ -74,21 +75,17 @@ const REACTION: InboundReaction = {
   removed: false,
   changed: true,
   messageAuthorId: ME,
+  authorLookupFailed: false,
   live: true,
 };
 
-/**
- * The phone's two shell facts: on screen (`__canariForeground`) and ACTIVE (`__canariActive`, the
- * one its push handler reads). Android writes both from one flag; iOS's differ under Control Center.
- */
-function foreground(value: boolean | undefined, active: boolean | undefined = value) {
+/** The phone's own on-screen fact (`__canariForeground`); absent off the phone shells. */
+function foreground(value: boolean | undefined) {
   Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' });
   vi.spyOn(document, 'hasFocus').mockReturnValue(true);
   const w = window as unknown as Record<string, unknown>;
   if (value === undefined) delete w.__canariForeground;
   else w.__canariForeground = value;
-  if (active === undefined) delete w.__canariActive;
-  else w.__canariActive = active;
 }
 
 describe('the frame trigger of a reaction to my message', () => {
@@ -116,35 +113,30 @@ describe('the frame trigger of a reaction to my message', () => {
     });
   });
 
-  it('NEVER DOUBLES THE PUSH: a phone not in the foreground is left to the push', async () => {
-    // Exactly the state in which Android's `dispatchPush` and iOS `CanariHandleFcmData` draw it.
+  it('NEVER A LOSS: a phone not in front still posts it - the push of the same reaction is made ONE with it', async () => {
+    // Round 2 of the review: deferring to the push here, then a push landing after the user came
+    // back (and dropped as foreground), announced it NOWHERE. Both post now; `at` makes them one.
     const messaging = useMessaging();
     const { ctx, sendReactionNotification } = makeContext();
     foreground(false);
 
     messaging.notifyInboundReaction(REACTION, ctx);
-    await Promise.resolve();
-    await new Promise((r) => setTimeout(r, 0));
 
-    expect(sendReactionNotification).not.toHaveBeenCalled();
-    expect(console.log).toHaveBeenCalledWith(
-      expect.stringContaining('the app is not active - the push draws it')
-    );
+    await vi.waitFor(() => expect(sendReactionNotification).toHaveBeenCalledTimes(1));
+    expect(sendReactionNotification.mock.calls[0][0].at).toBe(1_700_000_000_123);
   });
 
-  it('NEVER DOUBLES THE PUSH: an iPhone on screen but INACTIVE (Control Center, Face ID) is left to the push', async () => {
-    // `willPresent` PRESENTS the banner exactly then (`canari_ios_is_in_foreground()` is false) while
-    // the on-screen flag still says true: the trigger must read the push gate's fact, not that one.
+  it('leaves a frame without its instant to the push on a phone, and says so', async () => {
     const messaging = useMessaging();
     const { ctx, sendReactionNotification } = makeContext();
-    foreground(true, false);
+    foreground(true);
 
-    messaging.notifyInboundReaction(REACTION, ctx);
+    messaging.notifyInboundReaction({ ...REACTION, at: 0 }, ctx);
     await new Promise((r) => setTimeout(r, 0));
 
     expect(sendReactionNotification).not.toHaveBeenCalled();
     expect(console.log).toHaveBeenCalledWith(
-      expect.stringContaining('the app is not active - the push draws it')
+      expect.stringContaining('it carries no instant, so it cannot be told apart from its push')
     );
   });
 
@@ -209,19 +201,40 @@ describe('the frame trigger of a reaction to my message', () => {
     expect(console.log).not.toHaveBeenCalledWith(expect.stringContaining('[NOTIF] Reaction'));
   });
 
-  it('SAYS, as a loss, a fresh reaction on a message this device holds nowhere - never "not mine"', async () => {
+  it('WARNS each reaction whose author the STORE failed to give - a real unknown', async () => {
+    const messaging = useMessaging();
+    const { ctx, sendReactionNotification } = makeContext();
+    foreground(true);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const failed = { ...REACTION, messageAuthorId: null, authorLookupFailed: true };
+
+    messaging.notifyInboundReaction(failed, ctx);
+    messaging.notifyInboundReaction(failed, ctx);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(sendReactionNotification).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('whether it is to my message is unknown')
+    );
+  });
+
+  it('says ONCE per session, never per heart, a frame naming no author on a message held nowhere', async () => {
+    // A reactor predating `target_author_id`, in a salon this device never drew: every heart there
+    // reads this way, mine or not.
     const messaging = useMessaging();
     const { ctx, sendReactionNotification } = makeContext();
     foreground(true);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-    messaging.notifyInboundReaction({ ...REACTION, messageAuthorId: null }, ctx);
+    for (let i = 0; i < 3; i++) {
+      messaging.notifyInboundReaction({ ...REACTION, messageAuthorId: null }, ctx);
+    }
     await new Promise((r) => setTimeout(r, 0));
 
     expect(sendReactionNotification).not.toHaveBeenCalled();
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining('whether it is to my message is unknown')
-    );
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('left to the push alone'));
   });
 
   it('web and desktop have no push, so a hidden tab is told', async () => {

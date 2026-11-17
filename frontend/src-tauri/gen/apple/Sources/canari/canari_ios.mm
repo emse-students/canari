@@ -138,7 +138,6 @@ static void CanariSetupFirebaseIfAvailable(void) {
 static void CanariPublishSafeAreaInsets(void);
 static void CanariPublishDynamicType(void);
 static void CanariPublishForeground(NSString *_Nullable opening);
-static void CanariPublishActive(void);
 
 /// Puts the WebView's own scroll view back inside its content whenever it has left it.
 ///
@@ -1317,7 +1316,6 @@ static void CanariRegisterCallPageHandlers(NSString *where) {
     CanariPublishSafeAreaInsets();
     CanariPublishDynamicType();
     CanariPublishForeground(nil);
-    CanariPublishActive();
   }
 }
 @end
@@ -1452,31 +1450,6 @@ static void CanariPublishForeground(NSString *_Nullable opening) {
             }];
   NSLog(@"[CanariIOS] foreground=%@ published to the page (opens a link=%d)", value,
         opening.length > 0 ? 1 : 0);
-}
-
-/// Hands the page the PUSH GATE's fact - `canari_ios_is_in_foreground()`, ACTIVE only - as
-/// `window.__canariActive` (`isAppActive`, appForeground.ts). NOT the on-screen fact
-/// `CanariPublishForeground` sends: under Control Center, Notification Center or a Face ID sheet the
-/// app is on screen yet INACTIVE, and `willPresent` then PRESENTS a push. A page trigger that must
-/// never double a push (a reaction to my message, `reactionNotification.ts`) reads this one, so the
-/// two decide on ONE fact (review of #3792). Sent from the active pair, right after the flag moves,
-/// and after every page load.
-static void CanariPublishActive(void) {
-  NSString *value = canari_ios_is_in_foreground() ? @"true" : @"false";
-  WKWebView *webView = CanariFindWebView();
-  if (webView == nil) {
-    NSLog(@"[CanariIOS] active=%@ not published: no WebView yet (the page load publishes it)", value);
-    return;
-  }
-  NSString *js = [NSString stringWithFormat:@"window.__canariActive=%@;", value];
-  [webView evaluateJavaScript:js
-            completionHandler:^(__unused id result, NSError *error) {
-              if (error != nil) {
-                NSLog(@"[CanariIOS] ERROR active=%@ not published to the page: %@", value,
-                      CanariErrorReason(error));
-              }
-            }];
-  NSLog(@"[CanariIOS] active=%@ published to the page", value);
 }
 
 /// Hands the page the user's Dynamic Type body size, as `canari:dynamic-type` (detail `bodyPx`) and
@@ -1769,7 +1742,6 @@ static void CanariOnShareReady(__unused CFNotificationCenterRef center, __unused
 static void CanariOnDidBecomeActive(__unused NSNotification *note) {
   g_isInForeground = true;
   CanariSetAppGroupForegroundFlag(YES);
-  CanariPublishActive();
   canari_ios_on_resume();
   CanariApplyWebViewTransparency();
   CanariApplyEdgeToEdge();
@@ -1812,7 +1784,6 @@ static void CanariOnDidBecomeActive(__unused NSNotification *note) {
 static void CanariOnWillResignActive(__unused NSNotification *note) {
   g_isInForeground = false;
   CanariSetAppGroupForegroundFlag(NO);
-  CanariPublishActive();
   canari_ios_on_pause();
   // Snapshot the push context and secret into the App Group container before suspending
   // (mls.bin already follows each of its writes - see didBecomeActive).

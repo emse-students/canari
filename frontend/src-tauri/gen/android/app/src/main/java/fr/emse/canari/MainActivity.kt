@@ -829,10 +829,7 @@ class MainActivity : TauriActivity() {
         // same dispatch as the edge and does not read the conversation left on screen
         // (`resumeOpening.svelte.ts`). JSON-quoted: it is page data, never code.
         val openingJs = if (opening != null) org.json.JSONObject.quote(opening) else "null"
-        // `__canariActive` is the PUSH GATE's fact (`isAppActive`, appForeground.ts). On Android it
-        // is this same `isInForeground` - the flag `dispatchPush` drops a foreground push on - so it
-        // rides this one publish; iOS publishes its own from a different flag (`CanariPublishActive`).
-        val js = "window.__canariForeground=$foreground;window.__canariActive=$foreground;" +
+        val js = "window.__canariForeground=$foreground;" +
             "window.dispatchEvent(new CustomEvent('canari:foreground',{detail:{foreground:$foreground,opening:$openingJs}}));"
         try {
             webView.evaluateJavascript(js, null)

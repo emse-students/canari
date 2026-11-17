@@ -2245,8 +2245,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 return false
             }
             if (reaction) {
-                // THE FRAME TRIGGER OF A REACTION: the WebView decided the app is in front with this
-                // conversation off screen - where the push is dropped - so nothing else draws it.
+                // THE FRAME TRIGGER OF A REACTION: the WebView decided this conversation is off
+                // screen. The push may draw the same reaction too; the shared stamp makes them one.
                 Log.d(TAG, "notifyMessageFromWebSocket: reaction queued groupId=${groupId.take(8)} actor=${senderId.take(8)}")
                 WS_NOTIF_LANE.execute {
                     try {
@@ -2332,15 +2332,17 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         /**
          * Posts (or updates) a conversation's REACTION notification - the ONE composition both
          * triggers of a reaction share: the push ([handleReactionNotification], app not in front)
-         * and the WebSocket frame ([notifyMessageFromWebSocket] with `reaction = true`, app in front
-         * with that conversation off screen, decided in the WebView by `reactionNotification.ts`).
+         * and the WebSocket frame ([notifyMessageFromWebSocket] with `reaction = true`, that
+         * conversation off screen, decided in the WebView by `reactionNotification.ts`). Both may fire
+         * for one reaction; the stamp below makes them one.
          *
          * Filed on [CHANNEL_REACTIONS] under [reactionNotifKey], so it never overwrites the
-         * conversation's unread message notification and a second reaction UPDATES the first. A push
-         * and a frame for ONE reaction - should both ever fire across a foreground transition - land
-         * on one notification AND one line: both stamp it with the reaction's own instant
-         * ([reactionAt]), which is what `alreadyPosted` in [showMessageNotification] matches on. No quick actions: there is nothing to reply to
-         * and nothing to mark read. The sentence is `notif_reaction_body`, the same string for both.
+         * conversation's unread message notification and a second reaction joins the first. A push
+         * and a frame for ONE reaction land on one notification AND one line: both stamp it with the
+         * reaction's own instant ([reactionAt]), which `alreadyPosted` and the alerted ledger in
+         * [showMessageNotification] match on, under [REACTION_POST_LOCK]. No quick actions: there is
+         * nothing to reply to and nothing to mark read. The sentence is `notif_reaction_body`, the
+         * same string for both.
          *
          * @param fallbackName the actor's name when this conversation holds no nickname for them -
          *   the push's title, or the name the WebView resolved.
@@ -2365,18 +2367,28 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             )(actorId) ?: fallbackName
             val largeIcon = (if (actorId.isNotEmpty()) fetchAvatar(actorId) else null)
                 ?: generateInitialsBitmap(actorName)
-            showMessageNotification(
-                senderName = actorName,
-                groupName = "",
-                body = appLocaleContext(this).getString(R.string.notif_reaction_body, emoji),
-                largeIcon = largeIcon,
-                groupId = groupId,
-                channel = CHANNEL_REACTIONS,
-                quickActions = false,
-                sentAt = reactionAt,
-                suppressInForeground = suppressInForeground,
-            )
+            // ONE CHECK-AND-POST AT A TIME: the push (its FCM thread) and the frame (the WebSocket
+            // lane) may build the SAME reaction at once now that the frame trigger no longer defers to
+            // the push. Each asks the shade and the alerted ledger, then posts and records; two
+            // interleaved would both find nothing and both alert. Held only around that, never the
+            // avatar fetch above.
+            synchronized(REACTION_POST_LOCK) {
+                showMessageNotification(
+                    senderName = actorName,
+                    groupName = "",
+                    body = appLocaleContext(this).getString(R.string.notif_reaction_body, emoji),
+                    largeIcon = largeIcon,
+                    groupId = groupId,
+                    channel = CHANNEL_REACTIONS,
+                    quickActions = false,
+                    sentAt = reactionAt,
+                    suppressInForeground = suppressInForeground,
+                )
+            }
         }
+
+        /** Serialises [showReactionNotification]'s check-and-post across its two triggers. */
+        private val REACTION_POST_LOCK = Any()
 
         // --- The message notification, and the avatar chain it needs -------------------
         //

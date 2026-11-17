@@ -8,7 +8,8 @@ import type { ChatMessage } from '$lib/types';
  * `onInboundReaction` is told what the frame changed and whose message it landed on. The author was
  * read from the in-memory window alone, so a reaction to MY older message in a salon not opened this
  * session read as "not mine" and was announced by nobody while the push was dropped in front. It is
- * read where the MLS path reads it: the window, then the salon's stored page.
+ * read from the window, then from the author the frame STATES (`target_author_id`), then - for news
+ * only - from the salon's stored page; and a store that cannot answer is said as such.
  */
 
 vi.mock('$lib/stores/typingStore.svelte', () => ({ setTyping: vi.fn() }));
@@ -23,7 +24,8 @@ vi.mock('$lib/utils/graine/channelSeal', () => ({
 }));
 vi.mock('$lib/utils/chat/channelCrypto', () => ({ reportUnreadableChannelMessage: vi.fn() }));
 const REACTION = { messageId: 'srv-mine', emoji: '+1', at: 1_700_000_000_123, removed: false };
-vi.mock('$lib/proto/codec', () => ({ decodeAppMessage: vi.fn(() => ({ reaction: REACTION })) }));
+const decodeAppMessage = vi.fn((): unknown => ({ reaction: REACTION }));
+vi.mock('$lib/proto/codec', () => ({ decodeAppMessage: () => decodeAppMessage() }));
 vi.mock('$lib/envelope', () => ({ serializeEnvelope: vi.fn(), mkTextEnvelope: vi.fn() }));
 vi.mock('$lib/utils/chat/messageUtils', () => ({
   appMsgToEnvelope: vi.fn(),
@@ -83,7 +85,10 @@ const frame = {
 };
 
 describe('channelEventHandler - a salon reaction reaches the reaction trigger', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.restoreAllMocks();
+  });
 
   it('hands the frame, LIVE, with the author of the shown row and its own instant', async () => {
     const { ctx, onInboundReaction, getMessagesByIds } = setup({ shown: true });
@@ -97,6 +102,7 @@ describe('channelEventHandler - a salon reaction reaches the reaction trigger', 
       removed: false,
       changed: true,
       messageAuthorId: 'me',
+      authorLookupFailed: false,
       live: true,
     });
     // The window answered: the store is not asked.
@@ -110,7 +116,15 @@ describe('channelEventHandler - a salon reaction reaches the reaction trigger', 
     expect(onInboundReaction.mock.calls[0][0]).toMatchObject({ changed: false });
   });
 
-  it('THE DEFECT: a salon not held in memory names the author from its stored page', async () => {
+  it('names the author the frame STATES, without a store read', async () => {
+    decodeAppMessage.mockReturnValueOnce({ reaction: { ...REACTION, targetAuthorId: 'me' } });
+    const { ctx, onInboundReaction, getMessagesByIds } = setup({ shown: false });
+    await handleChannelEvent(frame, ctx);
+    expect(onInboundReaction.mock.calls[0][0]).toMatchObject({ messageAuthorId: 'me' });
+    expect(getMessagesByIds).not.toHaveBeenCalled();
+  });
+
+  it('THE DEFECT: a frame naming no author, in a salon not held in memory, reads its stored page', async () => {
     const { ctx, onInboundReaction, getMessagesByIds } = setup({
       shown: false,
       stored: { senderId: 'me' },
@@ -121,25 +135,56 @@ describe('channelEventHandler - a salon reaction reaches the reaction trigger', 
   });
 
   it.each([
+    ['a replay', () => applyChannelReactionFrame.mockReturnValueOnce(false)],
+    [
+      'a removal',
+      () => decodeAppMessage.mockReturnValueOnce({ reaction: { ...REACTION, removed: true } }),
+    ],
+  ])(
+    'pays no store read, and warns nothing, for %s - the trigger discards it anyway',
+    async (_, arrange) => {
+      arrange();
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const { ctx, onInboundReaction, getMessagesByIds } = setup({
+        shown: false,
+        stored: 'throws',
+      });
+      await handleChannelEvent(frame, ctx);
+      expect(getMessagesByIds).not.toHaveBeenCalled();
+      expect(warn).not.toHaveBeenCalled();
+      expect(onInboundReaction.mock.calls[0][0]).toMatchObject({
+        messageAuthorId: null,
+        authorLookupFailed: false,
+      });
+    }
+  );
+
+  it.each([
     ['held nowhere', { shown: false }],
     ['with no store this session', { shown: false, storage: false }],
   ] as const)(
-    'names nobody for a row %s - the trigger then says it is unresolved',
+    'names nobody for a row %s, and no failure: nothing failed to answer',
     async (_, o) => {
       const { ctx, onInboundReaction } = setup(o);
       await handleChannelEvent(frame, ctx);
-      expect(onInboundReaction.mock.calls[0][0]).toMatchObject({ messageAuthorId: null });
+      expect(onInboundReaction.mock.calls[0][0]).toMatchObject({
+        messageAuthorId: null,
+        authorLookupFailed: false,
+      });
     }
   );
 
   it.each([
     ['stored under a key this device cannot open', 'unreadable'],
     ['in a store that cannot be read', 'throws'],
-  ] as const)('names nobody, and WARNS, for a row %s', async (_, stored) => {
+  ] as const)('names nobody, says the store FAILED, and warns, for a row %s', async (_, stored) => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const { ctx, onInboundReaction } = setup({ shown: false, stored });
     await handleChannelEvent(frame, ctx);
-    expect(onInboundReaction.mock.calls[0][0]).toMatchObject({ messageAuthorId: null });
+    expect(onInboundReaction.mock.calls[0][0]).toMatchObject({
+      messageAuthorId: null,
+      authorLookupFailed: true,
+    });
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('its author is unknown'));
   });
 });

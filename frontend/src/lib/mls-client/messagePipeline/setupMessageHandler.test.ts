@@ -2178,7 +2178,13 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     const REACTION = { messageId: 'm-mine', emoji: '+1', at: 1_700_000_000_123, removed: false };
 
     async function deliver(
-      opts: { shown: boolean; meta?: Record<string, unknown>; stored?: unknown },
+      opts: {
+        shown: boolean;
+        meta?: Record<string, unknown>;
+        stored?: unknown;
+        storeThrows?: boolean;
+        stated?: string;
+      },
       frames = 1
     ) {
       const mine = { id: 'm-mine', senderId: 'user-a', content: 'hi' } as any;
@@ -2189,10 +2195,13 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
         ]),
         storage: {
           mergeMessages: vi.fn(async (_c: string, ids: string[]) => new Set(ids)),
-          getMessagesByIds: vi.fn(async () => ({
-            rows: new Map(opts.stored ? [['m-mine', opts.stored]] : []),
-            unreadable: new Set(),
-          })),
+          getMessagesByIds: vi.fn(async () => {
+            if (opts.storeThrows) throw new Error('store closed');
+            return {
+              rows: new Map(opts.stored ? [['m-mine', opts.stored]] : []),
+              unreadable: new Set(),
+            };
+          }),
         },
         onInboundReaction,
       });
@@ -2205,7 +2214,7 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
       const onMsg = mls.onMessage.mock.calls[0][0];
       for (let i = 0; i < frames; i++) {
         vi.mocked(codec.decodeAppMessage).mockReturnValueOnce({
-          reaction: REACTION,
+          reaction: opts.stated ? { ...REACTION, targetAuthorId: opts.stated } : REACTION,
           messageId: `mid-r-${i}`,
         } as any);
         await onMsg('Peer', new Uint8Array([1]), groupId, false, undefined, false, opts.meta);
@@ -2225,7 +2234,33 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
         removed: false,
         changed: true,
         messageAuthorId: 'user-a',
+        authorLookupFailed: false,
         live: true,
+      });
+    });
+
+    it('names the author the frame STATES when this device holds no copy of the message', async () => {
+      const seen = await deliver({ shown: false, meta: { channel: 'live' }, stated: 'user-a' });
+      expect(seen.mock.calls[0][0]).toMatchObject({
+        messageAuthorId: 'user-a',
+        authorLookupFailed: false,
+      });
+    });
+
+    it('prefers the row it holds over the stated author', async () => {
+      const seen = await deliver({
+        shown: true,
+        meta: { channel: 'live' },
+        stated: 'someone-else',
+      });
+      expect(seen.mock.calls[0][0].messageAuthorId).toBe('user-a');
+    });
+
+    it('says the store FAILED, so a null author is a real unknown', async () => {
+      const seen = await deliver({ shown: false, meta: { channel: 'live' }, storeThrows: true });
+      expect(seen.mock.calls[0][0]).toMatchObject({
+        messageAuthorId: null,
+        authorLookupFailed: true,
       });
     });
 
@@ -2240,7 +2275,11 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
 
     it('names nobody, and changes nothing, for a message held neither shown nor stored', async () => {
       const seen = await deliver({ shown: false, meta: { channel: 'live' } });
-      expect(seen.mock.calls[0][0]).toMatchObject({ changed: false, messageAuthorId: null });
+      expect(seen.mock.calls[0][0]).toMatchObject({
+        changed: false,
+        messageAuthorId: null,
+        authorLookupFailed: false,
+      });
     });
 
     it('says a replay changed nothing', async () => {

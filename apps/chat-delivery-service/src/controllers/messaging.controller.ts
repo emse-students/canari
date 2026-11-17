@@ -34,6 +34,13 @@ import {
   sanitizeQueryValue,
 } from '../utils/sanitize';
 import { RouteParams } from '../common/route-params';
+import { reactionCollapseId } from '../services/push-payload';
+
+/**
+ * How far ahead of this server a reaction's instant may be and still be forwarded (`notify-reaction`):
+ * a day covers any phone's clock drift, and refuses a stamp no real reaction could carry.
+ */
+export const REACTION_AT_MAX_AHEAD_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Commits one user may submit per minute on `POST /mls/commit`, across all their devices.
@@ -655,8 +662,9 @@ export class MessagingController {
       actorName: string;
       /**
        * The reaction's own instant (`ReactionMsg.at`, the reactor's clock), so the author's device
-       * recognises a push and a WebSocket frame for the SAME reaction (Android's `alreadyPosted`).
-       * Absent from a client predating it: the push then carries no `at`, as before.
+       * recognises a push and a WebSocket frame for the SAME reaction (Android's `alreadyPosted`; on
+       * iOS the `collapseId` derived from it). Absent from a client predating it: the push then
+       * carries neither, as before.
        */
       at?: number;
     }
@@ -672,9 +680,20 @@ export class MessagingController {
 
     const emoji = String(body.emoji ?? '').slice(0, 20);
     const actor = String(body.actorName ?? callerId).slice(0, 100);
-    // Forwarded only as a positive integer of ms: anything else is a client's bug, never a stamp.
+    // Forwarded only as a plausible instant: a positive integer of ms no later than a day ahead of
+    // this server (a reactor's clock may run fast, never by days). Anything else is a client's bug,
+    // never a stamp - and a stamp is an identity on the author's devices, so a wild one is refused
+    // rather than allowed to collide with or outlive the reactions it would be compared with.
     const at = Number(body.at);
-    const stamp = Number.isSafeInteger(at) && at > 0 ? { at: String(at) } : {};
+    const stamp =
+      Number.isSafeInteger(at) && at > 0 && at <= Date.now() + REACTION_AT_MAX_AHEAD_MS
+        ? { at: String(at), collapseId: reactionCollapseId(groupId, canonicalUserId(callerId), at) }
+        : {};
+    if (body.at !== undefined && !('at' in stamp)) {
+      this.logger.warn(
+        `[notify-reaction] an implausible reaction instant from ${sanitizeLogValue(callerId)} was not forwarded: ${sanitizeLogValue(String(body.at))}`
+      );
+    }
 
     // Legacy body only - carries the emoji and the actor, never the message. Clients that
     // understand `reaction` compose their own from `strings.xml` / `Localizable.strings`.

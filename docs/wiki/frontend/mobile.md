@@ -3292,42 +3292,48 @@ its whole matrix asserted beside it:
 
 | term | refused when |
 | --- | --- |
-| the frame (`inboundReactionVerdict`) | my own reaction, or a reaction to somebody else's message (said nowhere: the ordinary frame); a fresh live frame on a message held on neither the screen nor the store (`unresolved`, WARNED: if it is mine, nothing announces it - a salon reads its author from the window, then its stored page, as the MLS path does); a removal, a replay or older state, or a frame that is not LIVE (said: it is a reaction to me) |
-| live (`isLiveDelivery`) | not `channel === 'live'`, or `aheadOfMailbox`, or an `addressed` history answer - a catch-up on resume may carry a reaction the push already drew in the background. A page of salon history raises nothing |
-| the screen (`reactionTriggerRefusal`) | the app is NOT active (`isAppActive`, the push draws it - checked FIRST); the conversation is on screen (`canSeeArrival`); the `reactions` category is off; a private conversation's level is not `all` (a reaction is never a mention) |
+| the frame (`inboundReactionVerdict`) | my own reaction, or a reaction to somebody else's message (said nowhere: the ordinary frame); a removal, a replay or older state, or a frame that is not LIVE (said: it is a reaction to me). The author is the row held (window, then store), else the one the frame STATES (`ReactionMsg.target_author_id`, the reactor's own claim - the one `notify-reaction` already rests on). News whose author is still unknown is `unresolved` (WARNED each time) when the store FAILED to answer, `unattributed` (said ONCE per session) when the frame comes from a reactor predating `target_author_id` |
+| live (`isLiveDelivery`) | not `channel === 'live'`, or `aheadOfMailbox`, or an `addressed` history answer - a catch-up on resume may carry a reaction already announced and dismissed. A page of salon history raises nothing |
+| the screen (`reactionTriggerRefusal`) | the conversation is on screen (`canSeeArrival`); on a phone, a frame with no `at` (it could not be made one with its push, so the push draws it); the `reactions` category is off; a private conversation's level is not `all` (a reaction is never a mention). **The app's foreground state is NOT a term** |
 
 **A salon's level is not applied**, on either path: the server cannot read it for a reaction
 (`sendPushToUser` reads a level only for a group uuid), and one rule written in only one builder is
 decided by the route ([durable-rules](../durable-rules.md)).
 
-**Disjoint from the push by construction.** The push is drawn only while the app is NOT active
-(`dispatchPush` / `CanariHandleFcmData` return before the reaction branch), this trigger only while it
-IS, and both read ONE fact, published to the page as `window.__canariActive` (`isAppActive`) by the
-shell from its push gate's own flag: Android's `isInForeground` (beside `__canariForeground`, the same
-flag there), iOS `canari_ios_is_in_foreground()` - ACTIVE only - on `didBecomeActive`,
-`willResignActive` and every page load (`CanariPublishActive`). NOT the on-screen `__canariForeground`:
-on iOS it stays true under Control Center or a Face ID sheet, where `willPresent` presents the push -
-the double the review of #3792 found. `appForeground.contract.test.ts` holds both shells to it. Both
-triggers stamp the line with the reaction's own instant (`ReactionMsg.at`; the push carries it as `at`,
-forwarded by `notify-reaction`), so on Android the second is recognised by `alreadyPosted` and adds no
-line. On Android both post the ONE composition,
-`showReactionNotification` (the push's sentence `notif_reaction_body`, `CHANNEL_REACTIONS`, no quick
-actions) under the ONE key `reaction:<groupId>`, so a transition falling between the two reads
-replaces rather than doubles. The frame reaches it through `notifier_message_natif` with
-`reaction = true` (`body` is then the emoji). `reactionNotification.test.ts` reads both native
-guards and both call sites.
+**Deduplicated by identity, never by a flag read at two moments (review of #3792, round 2).** The
+first design made the two triggers disjoint on a foreground flag: the page deferred while the app
+was not active, the push drew only then. But the page decides when the frame lands and the push gate
+when the push lands - a page that deferred while iOS was inactive (Control Center) or Android just
+paused, then a push landing after the user came back, was dropped as foreground too: nobody
+announced it. So the frame trigger ignores the app's state, both may post, and the REACTION's own
+identity makes the two posts one:
 
-**iOS, desktop and the browser post a plain one** (`useNotifications.sendReactionNotification` ->
-`postPlainNotification`, the message's own plain path): titled with the actor, body
-`notif_reaction_message_body`, id/tag derived from `reaction:<conversation>` so it never replaces the
-conversation's message notification. Web and desktop have no push, so `isAppActive` is always
-true there and a hidden tab or an idle window is told.
+- **Android**: both stamp the line with the reaction's own instant (`ReactionMsg.at`; the push carries
+  it as `at`, forwarded by `notify-reaction`), and post the ONE composition `showReactionNotification`
+  (`notif_reaction_body`, `CHANNEL_REACTIONS`, no quick actions) under the ONE key `reaction:<groupId>`
+  and ONE lock (`REACTION_POST_LOCK`), so whichever lands second is recognised by `alreadyPosted` or,
+  once dismissed, by the alerted ledger. The frame reaches it through `notifier_message_natif` with
+  `reaction = true`.
+- **iOS**: the page posts through the plugin, whose request identifier is `"\(notification.id)"`;
+  the id is `stableNotifId(reaction:<conversation>:<reactor>:<at>)` (`reactionCollapseId`), and the
+  server sends the push with `apns-collapse-id` = the same decimal (`reactionCollapseId` in
+  `push-payload.ts`, kept on the content-free wake too - a hash naming nothing), so the system files
+  both under one request and replaces one by the other, as a post's local twin already does
+  (`CanariPostLocalNotification`). The two copies of the hash are held together by one vector asserted
+  in both test suites.
+- A frame with no `at` (a reactor predating it, whose push carries none either) cannot be made one with
+  its push: on a phone it is left to the push, as before #3792. `notify-reaction` forwards `at` only
+  as a positive integer at most a day ahead of the server (`REACTION_AT_MAX_AHEAD_MS`).
+
+**Desktop and the browser** post the plain one too, with the same per-reaction id/tag; they have no
+push, so the frame is their only trigger and a hidden tab or an idle window is told.
 
 **What only a phone can say (the reading, [backlog](../backlog.d/reading-owed-a-reaction-to-my-message-notifies-in-the-background.md)).**
-On iOS one window stays unproven by any test here: a live frame a suspended process's socket
-buffered and delivers after the resume, whose push the extension already drew - two banners for one
-reaction. The reading on the iPhone 12 says whether it occurs, and confirms that a reaction under
-Control Center shows the push's banner alone.
+That iOS replaces a delivered LOCAL notification by a remote one with the same `apns-collapse-id`
+(and the reverse) is what a post's twin already relies on, and is proven by no test here. Two
+questions for the iPhone 12: a reaction under Control Center shows ONE entry (a second sound on the
+replacement is possible and acceptable), and a reaction while ACTIVE on another screen keeps its
+entry when the dropped push of the same identifier lands (`willPresent` answers None for it).
 
 #### Background MLS decrypt ladder
 

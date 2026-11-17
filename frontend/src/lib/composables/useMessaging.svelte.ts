@@ -7,7 +7,7 @@
  * - File selection + validation
  */
 import { sendFrameFromThisTab } from '$lib/mls-client/frameFromAnyTab';
-import { isAppActive, isAppInForeground } from '$lib/utils/appForeground';
+import { isAppInForeground } from '$lib/utils/appForeground';
 import { isSalonMuted } from '$lib/utils/chat/salonUnread';
 import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { SvelteMap, SvelteDate, SvelteSet } from 'svelte/reactivity';
@@ -839,10 +839,15 @@ export function useMessaging() {
    * other screen notified nobody (owner, 2026-11-17). Called for every reaction frame applied, DM,
    * group or salon; the decision is `reactionNotification.ts`, whose matrix is asserted beside it.
    *
-   * NEVER THE PUSH'S DOUBLE: the push is drawn only while the app is NOT active, this only while it
-   * IS (`isAppActive`: the shell publishes the push gate's own flag), and only for a LIVE frame - a catch-up on resume may
-   * carry a reaction the push already announced in the background.
+   * NEVER A LOSS, NEVER A DOUBLE: this trigger does not ask whether the app is in front - a flag read
+   * now and a push gate read when the push lands can disagree, and their disagreement lost the
+   * reaction (review of #3792, round 2). It posts whenever the conversation is off screen, and the
+   * reaction's own identity makes its post and the push's ONE notification (`reactionNotification.ts`).
+   * Only for a LIVE frame: a catch-up on resume may carry a reaction already announced and dismissed.
    */
+  /** Whether the once-per-session line of an `unattributed` reaction has been said. */
+  let unattributedSaid = false;
+
   function notifyInboundReaction(reaction: InboundReaction, ctx: MessagingContext): void {
     const key = reaction.conversationKey;
     const tag = `${reaction.messageId.slice(0, 8)} in ${key.slice(0, 16)}`;
@@ -850,6 +855,17 @@ export function useMessaging() {
     // The ordinary frame - a reaction to someone else's message - is said nowhere: a salon of two
     // hundred would print a line per heart. A reaction to MINE that is not news is said.
     if (verdict.kind === 'not-mine') return;
+    if (verdict.kind === 'unattributed') {
+      // ONCE PER SESSION, NOT PER HEART: until its reactor updates, every reaction in a salon this
+      // device never drew reads this way, mine or not. The one line names the cause and the cure.
+      if (!unattributedSaid) {
+        unattributedSaid = true;
+        console.warn(
+          `[NOTIF] Reaction ${tag} - ${verdict.why}: such a reaction to my message is left to the push alone (said once this session).`
+        );
+      }
+      return;
+    }
     if (verdict.kind === 'unresolved') {
       // A LOSS, SAID AS ONE: if this was a reaction to my message, the push was dropped in front
       // and nothing else announces it.
@@ -866,8 +882,10 @@ export function useMessaging() {
     const convo = ctx.conversations.get(key);
     const isSalon = key.startsWith('channel_');
     const refusal = reactionTriggerRefusal({
-      appActive: isAppActive(),
       conversationOnScreen: canSeeArrival(ctx, key),
+      // A phone has a reaction push that may draw it too; web and desktop have none.
+      pushMayDraw: isMobileTauriRuntime(),
+      at: reaction.at,
       reactionsAllowed: notificationPreferences.pushAllowed('reactions'),
       // A salon's level is not the server's to apply to a reaction, so neither is it this trigger's
       // (`ReactionTriggerFacts.level`); a private conversation's is read by its MLS group id.

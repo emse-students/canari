@@ -5,19 +5,22 @@ import { describe, expect, it } from 'vitest';
 import {
   inboundReactionVerdict,
   isLiveDelivery,
+  reactionCollapseId,
+  reactionCollapseKey,
   reactionNotificationKey,
   reactionTriggerRefusal,
   type InboundReaction,
   type ReactionTriggerFacts,
 } from './reactionNotification';
+import { stableNotifId } from '$lib/utils/stableNotifId';
 
 /**
  * THE FRAME TRIGGER OF A REACTION TO MY MESSAGE (owner, 2026-11-17).
  *
  * A reaction push is dropped whenever the app is in the foreground, on Android and on iOS, even when
  * its conversation is not on screen - and a reaction had no second trigger, so it notified nobody.
- * This file pins the second trigger's decision AND the property that makes it safe to add: it can
- * never draw a reaction the push draws, because the two read one foreground fact in opposite senses.
+ * This file pins the second trigger's decision AND the property that makes it safe to add: when it
+ * and the push both draw one reaction, the reaction's own identity makes the two posts ONE.
  */
 
 const ME = 'me-user-id';
@@ -32,6 +35,7 @@ const FRESH: InboundReaction = {
   removed: false,
   changed: true,
   messageAuthorId: ME,
+  authorLookupFailed: false,
   live: true,
 };
 
@@ -65,11 +69,18 @@ describe('inboundReactionVerdict - the frame alone', () => {
     expect(inboundReactionVerdict({ ...FRESH, ...change }, ME).kind).toBe('not-mine');
   });
 
-  it('NEVER CALLS "NOT MINE" WHAT IT CANNOT TELL: fresh news on a message held nowhere is unresolved', () => {
-    // If it is mine, the push was dropped in front and nothing announces it - a loss, said as one.
-    expect(inboundReactionVerdict({ ...FRESH, messageAuthorId: null }, ME)).toEqual({
+  it('NEVER CALLS "NOT MINE" WHAT IT CANNOT TELL - and tells the two unknowns apart', () => {
+    // The store answered "no such row" and the frame names no author: a reactor predating
+    // `target_author_id`, said once per session by the caller (a salon never drawn reads this way).
+    expect(inboundReactionVerdict({ ...FRESH, messageAuthorId: null }, ME).kind).toBe(
+      'unattributed'
+    );
+    // The store FAILED to answer: a real unknown, warned each time.
+    expect(
+      inboundReactionVerdict({ ...FRESH, messageAuthorId: null, authorLookupFailed: true }, ME)
+    ).toEqual({
       kind: 'unresolved',
-      why: 'its message is on neither the screen nor the store of this device',
+      why: 'the store could not give its row, and the frame names no author',
     });
   });
 
@@ -95,34 +106,35 @@ describe('isLiveDelivery', () => {
 
 describe('reactionTriggerRefusal - the screen', () => {
   const OPEN: ReactionTriggerFacts = {
-    appActive: true,
     conversationOnScreen: false,
+    pushMayDraw: true,
+    at: 1_700_000_000_123,
     reactionsAllowed: true,
     level: 'all',
   };
 
-  it('raises it while the app is in front with that conversation off screen', () => {
+  it('raises it whenever the conversation is off screen', () => {
     expect(reactionTriggerRefusal(OPEN)).toBeNull();
     // A salon carries no level, exactly as the server applies none to a salon reaction.
     expect(reactionTriggerRefusal({ ...OPEN, level: undefined })).toBeNull();
   });
 
-  it('NEVER RAISES IT WHILE THE APP IS NOT ACTIVE - whatever else is true', () => {
-    // The push draws a reaction exactly then; every cell of the rest of the matrix is walked so no
-    // later term can reopen the overlap.
-    for (const conversationOnScreen of [false, true]) {
-      for (const reactionsAllowed of [false, true]) {
-        for (const level of ['all', 'mentions', 'none', undefined] as const) {
-          expect(
-            reactionTriggerRefusal({
-              appActive: false,
-              conversationOnScreen,
-              reactionsAllowed,
-              level,
-            })
-          ).toBe('the app is not active - the push draws it');
-        }
-      }
+  it('NEVER ASKS WHETHER THE APP IS IN FRONT: no fact it reads can race the push gate', () => {
+    // Round 2 of the review: a flag read now and a push gate read when the push lands disagreed,
+    // and both deferred - nobody announced the reaction. The facts carry no foreground term at all;
+    // the reaction's identity (`at`) makes the two posts one instead.
+    expect(Object.keys(OPEN).sort()).toEqual(
+      ['at', 'conversationOnScreen', 'level', 'pushMayDraw', 'reactionsAllowed'].sort()
+    );
+  });
+
+  it('leaves a frame WITHOUT its instant to the push on a phone - it could not be made one with it', () => {
+    for (const at of [0, Number.NaN]) {
+      expect(reactionTriggerRefusal({ ...OPEN, at })).toBe(
+        'it carries no instant, so it cannot be told apart from its push - the push draws it'
+      );
+      // Web and desktop have no push: the frame is their only trigger.
+      expect(reactionTriggerRefusal({ ...OPEN, at, pushMayDraw: false })).toBeNull();
     }
   });
 
@@ -139,18 +151,17 @@ describe('reactionTriggerRefusal - the screen', () => {
 });
 
 /**
- * THE OTHER HALF OF THE PROOF: the push is drawn only while the app is NOT in the foreground. Read
- * from the native sources, because nothing else spans the two languages - if either push handler
- * ever drew a reaction in the foreground, this trigger would double it.
+ * THE OTHER HALF OF THE PROOF: what the push does, read from the native sources, because nothing
+ * else spans the languages - it drops a reaction in the foreground (where the frame is the only
+ * trigger), and when both draw one, they post it as ONE notification.
  */
-describe('the push half is the exact complement', () => {
+describe('the push half', () => {
   const here = dirname(fileURLToPath(import.meta.url));
   const root = resolve(here, '../../../../src-tauri');
   const read = (path: string) => readFileSync(resolve(root, path), 'utf8');
   const kotlin = read(
     'gen/android/app/src/main/java/fr/emse/canari/CanariFirebaseMessagingService.kt'
   );
-  const mainActivity = read('gen/android/app/src/main/java/fr/emse/canari/MainActivity.kt');
   const objc = read('gen/apple/Sources/canari/canari_push.mm');
 
   it('Android drops a reaction push in the foreground, before it reaches the reaction builder', () => {
@@ -166,15 +177,31 @@ describe('the push half is the exact complement', () => {
     expect(branch).toBeGreaterThan(guard);
   });
 
-  it('Android: the flag the WebView reads is the one that guard reads', () => {
-    // `isAppActive` reads `window.__canariActive`, which the activity writes from the same
-    // `isInForeground` (`appForeground.contract.test.ts` holds both shells and every transition).
-    expect(mainActivity).toContain('window.__canariActive=$foreground;');
+  it('Android: the two triggers check-and-post one reaction under ONE lock', () => {
+    // The push's FCM thread and the WebSocket lane may build the same reaction at once; interleaved,
+    // both would find the shade empty and both alert.
+    const composer = kotlin.slice(kotlin.indexOf('internal fun Context.showReactionNotification('));
+    const body = composer.slice(0, composer.indexOf('\n        }\n'));
+    expect(body).toMatch(/synchronized\(REACTION_POST_LOCK\) \{\s*showMessageNotification\(/);
+    expect(kotlin).toContain('private val REACTION_POST_LOCK = Any()');
+  });
+
+  it('iOS: the page and the push name ONE reaction by ONE identifier', () => {
+    // The plugin files the page's post under `"\(notification.id)"`; the server sends the push with
+    // `apns-collapse-id` = the same decimal (chat-delivery-service `push-payload.spec.ts` asserts this
+    // very vector), so the system replaces one by the other.
+    expect(reactionCollapseKey('grp-1', 'Peer-User', 1_700_000_000_123)).toBe(
+      'reaction:grp-1:peer-user:1700000000123'
+    );
+    expect(reactionCollapseId('grp-1', 'Peer-User', 1_700_000_000_123)).toBe('1354250138');
+    expect(reactionCollapseId('channel_c1', 'peer', 1_700_000_000_123)).toBe('1973244109');
+    expect(
+      String(stableNotifId(reactionCollapseKey('grp-1', 'peer-user', 1_700_000_000_123)))
+    ).toBe('1354250138');
   });
 
   it('Android: both triggers post the ONE composition, under the ONE key', () => {
-    // So a frame and a push for one reaction - should a transition fall between the two reads -
-    // land on one notification, replaced by id, never two.
+    // So a frame and a push for one reaction land on one notification, never two.
     expect(kotlin).toContain(
       'internal fun reactionNotifKey(groupId: String): String = "reaction:$groupId"'
     );

@@ -2416,7 +2416,18 @@ export function useChannelWorkspaces() {
     const rowId = crypto.randomUUID();
     await deliverSalonWrite(
       `reaction:${messageId}:${emoji}`,
-      () => sendChannelReaction(channelConversationId, messageId, emoji, at, standing, rowId),
+      () =>
+        sendChannelReaction(
+          channelConversationId,
+          messageId,
+          emoji,
+          at,
+          standing,
+          rowId,
+          // The author as this device shows it: stated in the frame, the claim notify-reaction makes.
+          ctx.conversations.get(channelConversationId)?.messages.find((m) => m.id === messageId)
+            ?.senderId
+        ),
       (outcome) => {
         if (outcome.kind === 'owed') {
           ctx.log(`[CHANNEL] reaction on ${messageId.slice(0, 8)} kept, sent on reconnect`);

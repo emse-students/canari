@@ -502,18 +502,28 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
             );
             // The frame trigger of a reaction notification. A salon frame on this path is LIVE by
             // construction - the server fans it out the moment it is posted; a page of history is
-            // read by `useConversations`, which raises nothing. Only a frame someone listens for
-            // pays for the author's lookup.
+            // read by `useConversations`, which raises nothing.
             if (onInboundReaction) {
+              const removed = msg.reaction.removed === true;
+              const author = await salonMessageAuthor(
+                channelId,
+                targetId,
+                msg.reaction.targetAuthorId || null,
+                // Only NEWS pays for a store read: a replay or a removal is discarded by the
+                // trigger whoever wrote the message.
+                changed && !removed,
+                ctx
+              );
               onInboundReaction({
                 conversationKey: channelId,
                 messageId: targetId,
                 reactorId,
                 emoji: String(msg.reaction.emoji ?? ''),
                 at: Number(msg.reaction.at ?? 0),
-                removed: msg.reaction.removed === true,
+                removed,
                 changed,
-                messageAuthorId: await salonMessageAuthor(channelId, targetId, ctx),
+                messageAuthorId: author.id,
+                authorLookupFailed: author.lookupFailed,
                 live: true,
               });
             }
@@ -668,35 +678,39 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
 }
 
 /**
- * The author of a salon row a reaction landed on, read where the MLS path reads it
- * (`applyReactionFrame`): the window in memory, then the salon's stored page (`storeSalonPage` in
- * `useConversations`), which holds the last page drawn in an earlier session - so a reaction to my
- * message in a salon not opened THIS session is still recognised as one (review of #3792). Null
- * only when neither holds the row; the trigger then says so (`inboundReactionVerdict`, `unresolved`).
+ * The author of a salon row a reaction landed on: the row in memory (its sender proven by Graine),
+ * else the author the frame STATES (`ReactionMsg.target_author_id`, the reactor's own claim - the one
+ * its push to the author already rests on), else - for a frame that is news, and only then - the
+ * salon's stored page (`storeSalonPage` in `useConversations`), the last page an earlier session drew.
+ * `lookupFailed` says the store was asked and could not answer: only then is a null a real unknown
+ * (`inboundReactionVerdict`, `unresolved`), and only then is it warned here.
  */
 async function salonMessageAuthor(
   channelId: string,
   messageId: string,
+  statedAuthorId: string | null,
+  isNews: boolean,
   ctx: Pick<ChannelEventContext, 'conversations' | 'storage' | 'deviceKey'>
-): Promise<string | null> {
+): Promise<{ id: string | null; lookupFailed: boolean }> {
   const shown = ctx.conversations.get(channelId)?.messages.find((m) => m.id === messageId);
-  if (shown) return shown.senderId;
-  // A null is never silent: the trigger says it, as `unresolved`, when the frame would be news.
-  if (!ctx.storage) return null;
+  if (shown) return { id: shown.senderId, lookupFailed: false };
+  if (statedAuthorId) return { id: statedAuthorId, lookupFailed: false };
+  // A frame that is no news, or a session with no store: nothing to ask, and nothing failed.
+  if (!isNews || !ctx.storage) return { id: null, lookupFailed: false };
   try {
     const found = await ctx.storage.getMessagesByIds(channelId, [messageId], ctx.deviceKey());
     if (found.unreadable.has(messageId)) {
       console.warn(
         `[REACTION] ${messageId.slice(0, 8)} is stored under a key this device cannot open - its author is unknown`
       );
-      return null;
+      return { id: null, lookupFailed: true };
     }
-    return found.rows.get(messageId)?.senderId ?? null;
+    return { id: found.rows.get(messageId)?.senderId ?? null, lookupFailed: false };
   } catch (e) {
     console.warn(
       `[REACTION] the stored row of ${messageId.slice(0, 8)} could not be read - its author is unknown: ${String(e)}`
     );
-    return null;
+    return { id: null, lookupFailed: true };
   }
 }
 

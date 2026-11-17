@@ -22,6 +22,7 @@ import {
   presentationOf,
   isInternalSilent,
   type EnvelopeContent,
+  reactionCollapseId,
 } from './push-payload';
 
 /** The step-1 wake key every wake builder test names. */
@@ -825,5 +826,33 @@ describe('the MLS frame answer carries its presentation', () => {
     expect(
       presentationOf(buildInternalApnsRequest('t', 'b', { type: 'channel_read' }, 'fr'))
     ).toBeNull();
+  });
+});
+
+/**
+ * ONE REACTION, ONE iOS NOTIFICATION (review of #3792): the push's `apns-collapse-id` must be the
+ * very identifier the author's page gives its own notification of that reaction. The frontend's
+ * `reactionCollapseId` (`reactionNotification.test.ts`) asserts THIS vector too - two copies in two
+ * packages, held together by one number.
+ */
+describe('reactionCollapseId - the shared vector with the page', () => {
+  it("is the page's identifier for the same reaction", () => {
+    expect(reactionCollapseId('grp-1', 'Peer-User', 1_700_000_000_123)).toBe('1354250138');
+    expect(reactionCollapseId('channel_c1', 'peer', 1_700_000_000_123)).toBe('1973244109');
+  });
+
+  it('is a decimal the notification plugin can own, and fits an apns-collapse-id', () => {
+    const id = reactionCollapseId('a'.repeat(200), 'b', Number.MAX_SAFE_INTEGER);
+    expect(id).toMatch(/^[0-9]{1,10}$/);
+  });
+
+  it('is what the full push and the wake carry', () => {
+    const data = {
+      type: 'social',
+      reaction: 'true',
+      groupId: 'grp-1',
+      collapseId: reactionCollapseId('grp-1', 'peer-user', 1_700_000_000_123),
+    };
+    expect(buildInternalApnsRequest('t', 'b', data).collapseId).toBe('1354250138');
   });
 });

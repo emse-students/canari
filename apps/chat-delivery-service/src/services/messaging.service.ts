@@ -159,6 +159,7 @@ import {
   LONGEST_FALLBACK_LOCALE,
   buildInternalAndroidHalf,
   buildInternalApnsHalf,
+  buildInternalApnsRequest,
   decideProtoCarriage,
   measureDataFields,
   measureApnsPayload,
@@ -1302,7 +1303,14 @@ export class MessagingService {
     key: WakeKey,
     silent: boolean,
     mentionsOnly: boolean,
-    android: { priority: 'high'; ttl?: number }
+    android: { priority: 'high'; ttl?: number },
+    /**
+     * The `apns-collapse-id` the FULL push of the same content would carry (`buildInternalApnsRequest`),
+     * for a REACTION only: the identifier the device files it under, which a wake must keep - one
+     * reaction's push and the page's own notification of it are ONE request only if both carry it
+     * (review of #3792). It is a hash naming nothing; an id that names content never goes here.
+     */
+    collapseId?: string
   ): Message {
     if (pt.platform === 'ios') {
       const request = buildWakeApnsRequest(key, silent, mentionsOnly, pt.locale);
@@ -1313,6 +1321,7 @@ export class MessagingService {
           headers: {
             'apns-push-type': request.pushType,
             'apns-priority': String(request.priority),
+            ...(collapseId ? { 'apns-collapse-id': collapseId } : {}),
           },
         },
       };
@@ -8599,9 +8608,19 @@ export class MessagingService {
           // The content-free wake: the device fetches the envelope and runs it through the path
           // this full push would have taken. Android keeps the full push's options.
           await getMessaging().send(
-            this.buildWakeMessage(pt, { envelopeId }, isInternalSilent(data), false, {
-              priority: 'high',
-            })
+            this.buildWakeMessage(
+              pt,
+              { envelopeId },
+              isInternalSilent(data),
+              false,
+              { priority: 'high' },
+              // A REACTION's collapse id is kept: a hash naming nothing (`reactionCollapseId`), and
+              // what makes its push and the page's notification one. A post's names the post
+              // (`post_activity_<id>`), which a content-free wake must never carry.
+              data.reaction === 'true'
+                ? buildInternalApnsRequest(title, body, data, pt.locale).collapseId
+                : undefined
+            )
           );
           sent++;
           this.logger.log(

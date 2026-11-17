@@ -1425,7 +1425,9 @@ async function handleKnownGroup({
         at: Number(msg.reaction.at ?? 0),
         removed: msg.reaction.removed === true,
         changed: outcome.changed,
-        messageAuthorId: outcome.messageAuthorId,
+        // The row this device holds, else the author the frame states (`target_author_id`).
+        messageAuthorId: outcome.messageAuthorId ?? (msg.reaction.targetAuthorId || null),
+        authorLookupFailed: outcome.storeFailed,
         live: isLiveDelivery(deliveryMeta),
       });
     } else if (msg.call || msg.groupCall) {
