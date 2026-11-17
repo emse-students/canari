@@ -94,8 +94,11 @@ describe('FormsService - closing and reopening a form', () => {
       const closed = await service.setClosed('f1', true, OWNER, false);
       expect((row.closedAt as Date).getTime()).toBeGreaterThanOrEqual(before);
       expect(closed.closedAt).toBe(row.closedAt);
-      await service.setClosed('f1', false, OWNER, false);
+      // The answer SAYS the state, so a client never compares the stored end with its own clock.
+      expect(closed.windowState).toBe('closed');
+      const reopened = await service.setClosed('f1', false, OWNER, false);
       expect(row.closedAt).toBeNull();
+      expect(reopened.windowState).toBe('open');
     });
 
     it('refuses a stranger, on both routes, and writes nothing', async () => {

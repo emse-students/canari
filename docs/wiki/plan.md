@@ -18,7 +18,6 @@ earliest version, as a checklist.
 
 **P1 - security, or a user-facing path that is broken**
 
-- [P1 - the cause of a REVOKED device's partial restore is not established](backlog.d/p1-the-cause-of-a-revoked-device-s-partial-restore-is-not-established.md)
 - [P1 - Opening a community: F1-F7 BUILT, the 200 ms budget is what is left (user, 2026-10-14; state re-read 2026-10-22)](backlog.d/p1-opening-a-community-f1-f7-built-the-200-ms-budget-is-what-is-left-user-2026.md)
 - [P1 - The MiConnect terms stage reaches production with the next STABLE: three things come first (2026-10-16)](backlog.d/p1-the-miconnect-terms-stage-reaches-production-with-the-next-stable-three.md)
 - [P1 - Live moderation (WP-L8): merged; the client's standing refusals, the viewer cap and the readings are owed (2026-10-19)](backlog.d/p1-live-moderation-wp-l8-merged-the-client-s-standing-refusals-the-vie.md)
@@ -85,7 +84,6 @@ earliest version, as a checklist.
 - [P3 - EXIT-FORTIFY: closing the app on the Mi 9T logs `FORTIFY: pthread_mutex_lock called on a destroyed mutex` from the render thread](backlog.d/reading-owed-exit-fortify-closing-the-app-on-the-mi-9t-logged-fortify-pthread.md)
 - [P3 - a 13 MB upload on the iPhone restarted at about half and ran at 40 to 65 KB/s](backlog.d/p3-a-13-mb-upload-on-the-iphone-restarted-at-half-and-ran-at-40-to-65-kb-s.md)
 - [P3 - the feed offset restored after a Back from an association lands about 226 px lower than it was left (Mi 9T, `1.7.0-alpha.2`)](backlog.d/p3-the-feed-offset-restored-after-a-back-from-an-association-lands-about-226-px.md)
-- [P3 - the member form page draws a form its manager ended as open, and refuses only at "Envoyer" (read on the Mi 9T, 2026-11-17)](backlog.d/p3-the-member-form-page-draws-a-form-a-manager-ended-as-open.md)
 - [P3 - the trend bell logs "naming(s) no longer hold" at every read of the bell](backlog.d/p3-the-trend-bell-logs-a-dropped-naming-on-every-read.md)
 
 ### Readings owed
@@ -116,6 +114,7 @@ earliest version, as a checklist.
 - [ ] [a menu ends above the iOS tab bar, and a group notification keeps its title (2026-11-16)](backlog.d/reading-owed-the-popover-and-notification-fixes-of-the-iphone-sitting.md)
 - [ ] [an association post's writer, drawn small under its name for its moderators (2026-11-17)](backlog.d/reading-owed-association-post-writer-line.md)
 - [ ] [the repair of a rewound sender walks to the member that holds the messages (2026-11-17)](backlog.d/reading-owed-heal-repair-walks-to-the-holder.md)
+- [ ] [removing a login row that names an unlisted device erases that machine (2026-11-17)](backlog.d/reading-owed-removing-a-login-row-naming-an-unlisted-device-erases-that-machine.md)
 
 ## 1.7.1
 

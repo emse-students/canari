@@ -216,6 +216,12 @@ export interface Form extends CreateFormPayload {
   imageUrl?: string | null;
   /** When a manager closed the form (`GET /forms/:id`); absent or null while it takes answers. */
   closedAt?: string | null;
+  /**
+   * Whether the form takes answers NOW, judged by the server (every read and the close answer
+   * carry it; absent only from a server that predates it, `formWindow.ts`). Never derive it from
+   * `opensAt` / `closedAt` against the device clock.
+   */
+  windowState?: 'open' | 'not-yet' | 'closed';
   /** Answers holding a place (`GET /forms/:id` only): the editor warns before removing an ordered row. */
   submissionCount?: number;
   /** `draft` until a manager publishes it; absent on a server before drafts, which is `published`. */
@@ -482,12 +488,12 @@ export async function deleteForm(id: string): Promise<{ ok: boolean }> {
 
 /**
  * "Clore le formulaire" (`closed`) or "Rouvrir": sets or clears the form's end on the server, apart
- * from the editor's unpublished revision. Returns the stored `closedAt`.
+ * from the editor's unpublished revision. Returns the stored `closedAt` and the server's `windowState`.
  */
 export async function setFormClosed(
   id: string,
   closed: boolean
-): Promise<{ id: string; closedAt: string | null }> {
+): Promise<{ id: string; closedAt: string | null; windowState?: Form['windowState'] }> {
   const res = await apiFetch(`${socialUrl()}/api/forms/${id}/${closed ? 'close' : 'reopen'}`, {
     method: 'POST',
   });
@@ -1030,6 +1036,7 @@ export type PublicForm = Pick<
   | 'paymentsPaused'
 > & {
   closedAt?: string | null;
+  windowState?: 'open' | 'not-yet' | 'closed';
   /** What the page asks a guest about who they are; [] asks nothing (`respondentFields.ts`). */
   guestFields: RespondentChoice[];
   formFull: boolean;

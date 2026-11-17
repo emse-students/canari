@@ -431,7 +431,8 @@
     }
   ],
   "chat_device_session_orphan_note": "This connection never identified a device: it has not unlocked your messages. If you do not recognise it, remove it.",
-  "chat_device_session_unlisted_note": "This connection names a device that is no longer in the list. If you do not recognise it, remove it.",
+  "chat_device_session_unlisted_note": "This connection comes from a device that is no longer in the list. Removing it erases that device: it is signed out and starts over, without your conversations.",
+  "chat_device_remove_own_refused": "This device is the one you are using right now: it cannot be removed from here.",
   "chat_device_limit_reached": "This device could not register: your account has reached the limit of {max} devices. Delete an unused device in Settings > Device management, then reopen the app.",
   "common_refresh_button": "Refresh",
   "chat_channel_settings_title": "Channel settings",
@@ -3260,6 +3261,7 @@
   "chat_community_invite_qr_intro": "Scan this code to join the community.",
   "form_view_event_linked": "Linked event",
   "form_view_event_see": "See →",
+  "form_view_not_open_yet": "This form is not open yet.",
   "form_view_opens_at": "Opens on {date}",
   "form_view_reminder_active": "Reminder set",
   "form_view_remind_me": "Remind me",

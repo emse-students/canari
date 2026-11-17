@@ -3415,6 +3415,20 @@ export class MlsDeliveryApi {
         { method: 'DELETE', headers: await this.auth() }
       );
       if (!res.ok) {
+        // The server refuses, as a typed answer, to ban the device the calling session is bound to
+        // (`OWN_DEVICE`): classified here, at the throw, so the panel never reads it as a retry.
+        if (res.status === 409) {
+          const body = (await res.json().catch(() => null)) as { code?: unknown } | null;
+          if (body?.code === 'OWN_DEVICE') {
+            console.warn(`[deleteDevice] refused: ${deviceId} is this session's own device`);
+            return {
+              status: 'own_device',
+              groupsCleaned: 0,
+              keyPackagesDeleted: 0,
+              oneTimeKeyPackagesDeleted: 0,
+            };
+          }
+        }
         console.error(`deleteDevice failed: ${res.status}`);
         return {
           status: 'error',
