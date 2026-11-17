@@ -411,26 +411,58 @@ pub const BACKGROUND_JOINS_CAPACITY: usize = 256;
 /// does not hold, and the app believes a note only when the tree it loads holds the group - the
 /// ledger is a claim, the tree is the fact. The other order could lose a join between the two
 /// writes. A failure is said at error and the join goes on: what is lost is the register ask.
-fn note_background_join(files_dir: &Path, group_id: &str) {
+///
+/// Returns whether THIS call inserted the note - the only note its caller may take back
+/// ([`unnote_refused_background_join`]); one already there was written by another engine.
+fn note_background_join(files_dir: &Path, group_id: &str) -> bool {
     let short: String = group_id.chars().take(8).collect();
     let noted =
         crate::commands::storage::with_json_ledger(files_dir, BACKGROUND_JOINS_FILE, |map| {
             if map.contains_key(group_id) {
-                return (true, false);
+                return (Some(false), false);
             }
             if map.len() >= BACKGROUND_JOINS_CAPACITY {
-                return (false, false);
+                return (None, false);
             }
             map.insert(group_id.to_string(), serde_json::Value::Bool(true));
-            (true, true)
+            (Some(true), true)
         });
     match noted {
-        Ok(true) => log::info!("[BG_JOIN] group={short} noted as joined in the background"),
-        Ok(false) => log::error!(
-            "[BG_JOIN] group={short} NOT noted: the background-join ledger is full ({BACKGROUND_JOINS_CAPACITY}) - the app will not ask its register"
+        Ok(Some(inserted)) => {
+            log::info!("[BG_JOIN] group={short} noted as joined in the background");
+            inserted
+        }
+        Ok(None) => {
+            log::error!(
+                "[BG_JOIN] group={short} NOT noted: the background-join ledger is full ({BACKGROUND_JOINS_CAPACITY}) - the app will not ask its register"
+            );
+            false
+        }
+        Err(e) => {
+            log::error!(
+                "[BG_JOIN] group={short} NOT noted ({e}) - the app will not ask its register"
+            );
+            false
+        }
+    }
+}
+
+/// Takes back the note THIS engine inserted for `group_id`, its `mls.bin` write having been refused
+/// (review of #3777): the page changed the bytes meanwhile - typically by installing the same Welcome
+/// itself, its forget having run while the ledger was still empty - so the join this note claims is
+/// not the one the device holds, and left there it would re-owe at the next start a register the
+/// page took. Said at error when the ledger cannot be edited.
+fn unnote_refused_background_join(files_dir: &Path, group_id: &str) {
+    let short: String = group_id.chars().take(8).collect();
+    match crate::commands::storage::with_json_ledger(files_dir, BACKGROUND_JOINS_FILE, |map| {
+        let removed = map.remove(group_id).is_some();
+        (removed, removed)
+    }) {
+        Ok(_) => log::info!(
+            "[BG_JOIN] group={short} not installed (mls.bin write refused) - its note taken back"
         ),
         Err(e) => log::error!(
-            "[BG_JOIN] group={short} NOT noted ({e}) - the app will not ask its register"
+            "[BG_JOIN] group={short} note NOT taken back after a refused install ({e}) - the next start may owe a register already taken"
         ),
     }
 }
@@ -1190,8 +1222,14 @@ pub fn process_welcome_background_with_key(
         .save_encrypted_with_key(&key)
         .map_err(|e| e.to_string())?;
     // Noted before the install, so no join goes unnoted (see `note_background_join`).
-    note_background_join(files_dir, &group_id);
-    write_over_loaded_state(files_dir, state_bytes, &enc)?;
+    let inserted = note_background_join(files_dir, &group_id);
+    if let Err(e) = write_over_loaded_state(files_dir, state_bytes, &enc) {
+        // Not installed: the note this call wrote claims a join that did not happen.
+        if inserted {
+            unnote_refused_background_join(files_dir, &group_id);
+        }
+        return Err(e);
+    }
     log::info!(
         "[BG_JOIN] joined group via Welcome: {group_id} (mls.bin {} bytes)",
         enc.len()
@@ -1805,6 +1843,49 @@ mod tests {
             take_background_joins(&dir).unwrap().is_empty(),
             "taken once"
         );
+    }
+
+    /// A JOIN WHOSE `mls.bin` WRITE IS REFUSED takes its own note back (review of #3777): the page
+    /// changed the bytes - installing the same Welcome itself, its forget already run on an empty
+    /// ledger - so the next start must find nothing to re-owe. A note another engine wrote stays.
+    #[test]
+    fn a_background_join_whose_write_is_refused_takes_its_note_back() {
+        let _s = quiet_foreground();
+        let tag = "bgjoinrefused";
+        let mut alice = MlsManager::load_or_create(&format!("{tag}-alice"), "dev-a", None).unwrap();
+        let bob = MlsManager::load_or_create(&format!("{tag}-bob"), "dev-b", None).unwrap();
+        let gid = format!("{tag}-group");
+        alice.create_group(gid.clone()).unwrap();
+        let kp = bob.generate_key_package().unwrap();
+        let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(73)).unwrap();
+        let loaded = bob.save_encrypted_with_key(&key).unwrap();
+        let (_commit, welcome, _added, _skipped) = alice.add_members_bulk(&gid, &[&kp]).unwrap();
+        alice.merge_pending_commit_for(&gid).unwrap();
+        let tree = STANDARD.encode(alice.export_ratchet_tree_for(&gid).unwrap());
+        // The page wrote mls.bin after this engine loaded it.
+        let dir = dir_holding(tag, b"the page's newer state");
+
+        let joined = process_welcome_background_with_key(
+            &dir,
+            &loaded,
+            &key_b64(73),
+            &format!("{tag}-bob"),
+            "dev-b",
+            &STANDARD.encode(welcome.unwrap()),
+            &tree,
+        );
+
+        assert!(joined.is_err(), "the compare-and-swap refuses the write");
+        assert!(take_background_joins(&dir).unwrap().is_empty());
+    }
+
+    /// A NOTE ALREADY THERE is not this call's to take back.
+    #[test]
+    fn a_note_already_written_is_not_inserted_again() {
+        let _s = quiet_foreground();
+        let dir = dir_holding("bgjoinagain", b"state");
+        assert!(note_background_join(&dir, "g"));
+        assert!(!note_background_join(&dir, "g"));
     }
 
     /// A WELCOME THAT DOES NOT INSTALL notes nothing: the ledger names joins, never attempts.

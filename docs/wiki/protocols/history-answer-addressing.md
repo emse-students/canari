@@ -421,12 +421,15 @@ ASKS, on facts it holds durably:
    missing for other reasons).
 
    **A note the page installed over is forgotten (review of #3777, P2-2).** The note is written
-   before the `mls.bin` write, which can then be refused (the page holds the state) or erased by
-   the page's own persist; the page then installs the same Welcome itself and takes the register.
+   before the `mls.bin` write. When that write is REFUSED (the page changed the bytes since the
+   engine loaded them - possibly by installing the same Welcome, its forget having run while the
+   ledger was still empty), the engine takes back the note it inserted itself, and only that one
+   (`unnote_refused_background_join`). When the write LANDS and the page's own persist later erases
+   it, the page installs the same Welcome itself and takes the register.
    Left in the ledger, the note would make the next start find the group held and owe its register
    again - and this device, a holder, would DECLINE newcomers, possibly the last device one of them
-   waits on. So the page's own install (`handleWelcome`) forgets the group in the ledger
-   (`forget_background_join`). Chosen over a durable "register taken" set because it removes the
+   waits on. So for that second case - the only one the page can see - its own install
+   (`handleWelcome`) forgets the group in the ledger (`forget_background_join`). Chosen over a durable "register taken" set because it removes the
    stale claim where it lives rather than keeping a second, ever-growing fact to overrule it; the
    residue is a kill between the install and that call, before the install is persisted - which
    loses the install itself.
