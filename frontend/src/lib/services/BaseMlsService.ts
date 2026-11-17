@@ -4967,7 +4967,7 @@ export abstract class BaseMlsService implements IMlsService {
   /**
    * Records a member's first invitation that another device's add lock refused, as owed at this
    * group's current epoch (see {@link IMlsService.acquireAddLockAnswer}). An entry already owed at
-   * that epoch - a second invitation refused by the same lock - is merged into, never overwritten.
+   * that epoch is merged into by the record itself (`recordOwedInvitation`), never overwritten.
    *
    * @returns whether it is recorded; `false` tells the caller the refusal is the member's to retry.
    */
@@ -4979,26 +4979,11 @@ export abstract class BaseMlsService implements IMlsService {
     const invitation = await oweIfHeld();
     if (!invitation) return false;
     const baseEpoch = this.getEpoch(groupId);
-    const earlier = listOwedInvitations(this.userId).find(
-      (o) => o.groupId === groupId && o.baseEpoch === baseEpoch && o.cause === 'race'
-    );
-    const union = (a: readonly string[] = [], b: readonly string[] = []) => [
-      ...new Set([...a, ...b]),
-    ];
-    const merged: CommitInvitation = earlier
-      ? {
-          ...invitation,
-          users: union(earlier.invitation.users, invitation.users),
-          ...(earlier.invitation.rostered || invitation.rostered
-            ? { rostered: union(earlier.invitation.rostered, invitation.rostered) }
-            : {}),
-        }
-      : invitation;
     try {
       recordOwedInvitation(this.userId, {
         groupId,
         baseEpoch,
-        invitation: merged,
+        invitation,
         cause: 'race',
       });
     } catch (e) {

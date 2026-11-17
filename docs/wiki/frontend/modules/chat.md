@@ -6325,7 +6325,7 @@ Every taker of the add lock, and when it takes it:
 | --- | --- | --- |
 | `processPendingInvitations` (`actions.ts`), the sweep | **at the first row that needs an Add** (`takeLockForAnAdd`), after its leaf check and BEFORE its package is claimed; vouching, an ask raised for a member and a cleanup take none | the Add of a pending device NOT in the tree |
 | `handleWelcomeRequest` (`actions.ts`) | **once the Add is decided**: after the cooldown, the refused-device check and the anti-livelock limit (a refused lock is not counted as an attempt), before the package is claimed | the Add or replace answering a `welcome_request`; a package missing or refused by the vetting is still learned under it |
-| `processWelcomeRequestBackground` (Android FCM service) | on entry, after its "already refused from these bytes" check, before the package is claimed | the background answer; its native stage may still decline (`already-member`, `stale-epoch-known`, `foreground-active`), which only the stage - built from the claimed package - can tell. Left as it is: changing it means a native build, for a path that answers a request with an Add as its purpose |
+| `processWelcomeRequestBackground` (Android FCM service) | on entry, after its "already refused from these bytes" check, before the package is claimed | the background answer; its native stage may still decline (`already-member`, `stale-epoch-known`, `foreground-active`), which only the stage - built from the claimed package - can tell. Left as it is: changing it means a native build, for a path that answers a request with an Add as its purpose; its `Thread.sleep` retry of the lock is a [backlog entry](../../backlog.d/p2-the-android-background-welcome-answer-retries-the-add-lock-on-a-clock.md) |
 | `createGroup` (`groupCreation.ts`) | before the creation's Add of the creator's other devices | that Add |
 | `processBulkAddition` (`groupCreation.ts`) | before the invitation's Add | the invitation |
 | `performDirectAdd` (`groupCreation.ts`) | before the 1:1's Add | the peer's and own devices |
@@ -6340,8 +6340,11 @@ group; its rows stay `pending` for the next sweep (`onGroupNotSwept`).
 adding a device it was owed - so **a member's FIRST invitation that meets another device's lock is
 OWED, never refused** (`add-lock-owed`). `processBulkAddition` hands `acquireAddLockAnswer` an
 `oweIfHeld` that states the invitation with its roster baseline (`owedInvitationOf`); on `held` the
-service records it (`oweInvitationOnHeldLock`, at the group's current epoch, merged with an entry
-already owed there) BEFORE the refusal arms its wake. It then takes the path a lost invitation
+service records it (`oweInvitationOnHeldLock`, at the group's current epoch) BEFORE the refusal
+arms its wake. **The record merges, and a conclusion settles only what it covered**
+(`owedInvitations.ts`): two gestures owed at one epoch - this one and a kept commit lost at the same
+base, or a second invitation refused by the lock a drain holds - are one entry holding both people,
+and a re-plan that concludes removes the people IT re-planned, never the entry. It then takes the path a lost invitation
 waiting on `add-lock` takes ([mls-protocol](../../protocols/mls-protocol.md)): re-planned at the
 server-stated end of the lock (`wakeAtAddLockExpiry`), a commit applied in the group, the release of
 this device's own lock, or the next connection - events, never a retry on a clock - and every ending

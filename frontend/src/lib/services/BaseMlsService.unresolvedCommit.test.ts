@@ -1703,6 +1703,62 @@ describe('settleUnresolvedCommits - a kept invitation that did not land', () => 
     }
   });
 
+  // TWO GESTURES AT ONE EPOCH (#3799 review, a): an invitation owed on another device's lock, then a
+  // kept commit staged at the same base and lost - its settlement records into the same entry.
+  it('a kept commit lost at the epoch an owed invitation waits on is merged with it, never written over it', async () => {
+    const c = ctx(raceLost(), { state: keptInvite() });
+    const server = fakeLockServer(c);
+    server.value = `${U}:other-device#theirs`;
+    const lock = c as unknown as {
+      acquireAddLockAnswer(g: string, oweIfHeld?: () => Promise<unknown>): Promise<string>;
+    };
+    expect(await lock.acquireAddLockAnswer(G, async () => ({ users: ['w7'], rostered: [] }))).toBe(
+      'owed'
+    );
+
+    await c.settleUnresolvedCommits();
+
+    expect(listOwedInvitations(U).map((o) => o.invitation.users)).toEqual([['w7', 'w5']]);
+  });
+
+  // A DRAIN CONCLUDES WHAT IT RE-PLANNED, NOT THE KEY (#3799 review, b): while the drain holds the
+  // lock, a second invitation is refused by it (SET NX refuses its own holder) and owed into the same
+  // entry; the drain's conclusion leaves it, and the drain asked again by the release re-plans it.
+  it('an invitation owed while a drain holds the lock survives that drain, and is re-planned after it', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const c = ctx(raceLost(), { state: keptInvite() });
+      fakeLockServer(c);
+      const lock = c as unknown as {
+        acquireAddLock(g: string): Promise<boolean>;
+        releaseAddLock(g: string): Promise<void>;
+        acquireAddLockAnswer(g: string, oweIfHeld?: () => Promise<unknown>): Promise<string>;
+      };
+      const seen: string[][] = [];
+      let second: string | null = null;
+      const replanner = vi.fn(async (o: OwedInvitation): Promise<ReplanVerdict> => {
+        seen.push([...o.invitation.users]);
+        if (!(await lock.acquireAddLock(G))) return 'waiting';
+        if (second === null) {
+          second = await lock.acquireAddLockAnswer(G, async () => ({
+            users: ['w6'],
+            rostered: [],
+          }));
+        }
+        await lock.releaseAddLock(G);
+        return 'concluded';
+      });
+      register(c, replanner);
+      await settled(c);
+
+      expect(second).toBe('owed');
+      expect(seen).toEqual([['w5'], ['w6']]);
+      expect(listOwedInvitations(U)).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('records nothing when the invitation cannot be stated, and the answer stays `held`', async () => {
     const c = ctx(submitting());
     const server = fakeLockServer(c);
