@@ -1982,13 +1982,18 @@ export class SqliteStorage implements IStorage {
   async saveGraineSession(
     session: StoredGraineSession,
     deviceKeyB64: string,
-    onlyWhile?: () => boolean
+    onlyWhile?: () => boolean,
+    sentCountWas?: number
   ): Promise<void> {
     const encrypted = await encryptData(encodeGraineSensitive(session), deviceKeyB64);
     if (onlyWhile && !onlyWhile()) {
       throw new StoreWriteRefusedError(`the Graine session ${session.sessionId}`);
     }
     const c = graineClearColumns(session);
+    if (sentCountWas !== undefined) {
+      await this.swapGraineSession(c, encrypted, sentCountWas);
+      return;
+    }
     await this.db.execute(
       `INSERT OR REPLACE INTO graine
          (session_id, workspace_id, channel_id, sender_id, first_index, created_at, sent_count, distribution_epoch, iv, cipher_text)
@@ -2006,6 +2011,46 @@ export class SqliteStorage implements IStorage {
         uint8ToBase64(encrypted.cipherText),
       ]
     );
+  }
+
+  /**
+   * The compare-and-swap half of {@link saveGraineSession}: ONE statement, so it lands only while
+   * the row still carries `sentCountWas`; a missing row or a moved count is refused, nothing written.
+   */
+  private async swapGraineSession(
+    c: GraineClearColumns,
+    encrypted: { iv: Uint8Array; cipherText: Uint8Array },
+    sentCountWas: number
+  ): Promise<void> {
+    const result = await this.db.execute(
+      `UPDATE graine SET workspace_id = $2, channel_id = $3, sender_id = $4, first_index = $5,
+         created_at = $6, sent_count = $7, distribution_epoch = $8, iv = $9, cipher_text = $10
+       WHERE session_id = $1 AND sent_count = $11`,
+      [
+        c.sessionId,
+        c.workspaceId,
+        c.channelId,
+        c.senderId,
+        c.firstIndex,
+        c.createdAt,
+        c.sentCount ?? null,
+        c.distributionEpoch ?? null,
+        uint8ToBase64(encrypted.iv),
+        uint8ToBase64(encrypted.cipherText),
+        sentCountWas,
+      ]
+    );
+    if ((result?.rowsAffected ?? 0) > 0) return;
+    const rows: any[] = await this.db.select(
+      'SELECT sent_count FROM graine WHERE session_id = $1',
+      [c.sessionId]
+    );
+    // AT A LEVEL THAT ACCUSES: another writer moved this session's count between the reservation's
+    // read and its write. Refused, so no index is handed out a second time.
+    console.error(
+      `[GRAINE] session ${c.sessionId} not written: its count moved from ${sentCountWas} to ${rows[0]?.sent_count ?? 'none'} since it was read - another writer reserved on it`
+    );
+    throw new StoreWriteRefusedError(`the Graine session ${c.sessionId}`);
   }
 
   /** Every session known for a channel, newest first. See {@link IStorage.getGraineSessions}. */
