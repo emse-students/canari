@@ -160,15 +160,25 @@ async function resolveOrClassify(hostname: string): Promise<LookupAddress[]> {
   try {
     return await lookup(hostname, { all: true });
   } catch (error) {
-    const code =
-      typeof error === 'object' && error !== null && 'code' in error
-        ? String((error as { code?: unknown }).code)
-        : 'none';
+    const code = resolverCode(error);
+    // Not the resolver's answer (no `getaddrinfo` code): a bug of ours, never dressed as an outage.
+    if (code === null) throw error;
     if (NAME_HAS_NO_ADDRESS.has(code)) {
       throw new BadRequestException('Host cannot be resolved');
     }
     throw new UpstreamUnreachableError(hostname, error, code);
   }
+}
+
+/**
+ * The resolver's code when `error` IS the resolver's failure - a string `code` on an error whose
+ * `syscall` is `getaddrinfo`, as both node and bun throw it - and `null` for anything else, which
+ * only a bug can produce here and which must surface as one.
+ */
+function resolverCode(error: unknown): string | null {
+  if (typeof error !== 'object' || error === null) return null;
+  const { code, syscall } = error as { code?: unknown; syscall?: unknown };
+  return typeof code === 'string' && syscall === 'getaddrinfo' ? code : null;
 }
 
 /**
@@ -576,8 +586,9 @@ export class OEmbedUnavailable {
  *
  * Goes through the same SSRF guard as the page fetch: the endpoint is declared
  * by the page, so it is exactly as attacker-controlled as the URL that was
- * pasted. Never throws - a preview that already has Open Graph data must not be
- * lost because the optional enrichment failed - but never swallows either: every
+ * pasted. Never throws for the endpoint's sake - a preview that already has Open Graph data must
+ * not be lost because the optional enrichment failed; only a bug of ours propagates - and never
+ * swallows either: every
  * failure comes back as an {@link OEmbedUnavailable} the caller logs, where it used to be a bare
  * `null` that said nothing about which of five things went wrong.
  */
@@ -594,6 +605,7 @@ export async function fetchOEmbedData(
     }
     if (error instanceof BadRequestException)
       return new OEmbedUnavailable('refused', error.message);
+    // Reachable: the guard rethrows what is not the resolver's answer (`resolverCode`) - a bug.
     throw error;
   }
 

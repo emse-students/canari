@@ -299,7 +299,10 @@ describe('SecurityController - getLinkPreview classifies what it could not do', 
     const dnsSilent = () =>
       new UpstreamUnreachableError(
         'silent.example',
-        Object.assign(new Error('getaddrinfo EAI_AGAIN'), { code: 'EAI_AGAIN' }),
+        Object.assign(new Error('getaddrinfo EAI_AGAIN'), {
+          code: 'EAI_AGAIN',
+          syscall: 'getaddrinfo',
+        }),
         'EAI_AGAIN'
       );
 
@@ -345,6 +348,31 @@ describe('SecurityController - getLinkPreview classifies what it could not do', 
 
       expect(seen.status).toBe(502);
       expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('the image route lets a bug in the guard surface as one, never as a 400', async () => {
+      const bug = new TypeError('a bug of ours');
+      guardMock.mockRejectedValueOnce(bug);
+      const seen: { status: number } = { status: 200 };
+      const res = {
+        status: (code: number) => ((seen.status = code), res),
+        setHeader: () => undefined,
+        end: () => undefined,
+      };
+      const savedSecret = process.env.INTERNAL_SHARED_SECRET;
+      process.env.INTERNAL_SHARED_SECRET = 'dns-test-secret';
+      try {
+        await expect(
+          controller.getLinkPreviewImage(
+            'https://silent.example/a.png',
+            mintPreviewTicket('dns-test-secret').ticket,
+            res as never
+          )
+        ).rejects.toBe(bug);
+      } finally {
+        process.env.INTERNAL_SHARED_SECRET = savedSecret;
+      }
+      expect(seen.status).toBe(200);
     });
   });
 });

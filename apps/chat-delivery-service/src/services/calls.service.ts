@@ -34,7 +34,7 @@ import {
   readGroupCallsMode,
 } from '../utils/group-calls-mode';
 import { readCallRelay, RELAY_SEATS } from '../utils/call-relay';
-import { fcmErrorCode, isTerminalPushTokenError } from '../utils/fcm-errors';
+import { describeFcmFailure, fcmErrorCode, isTerminalPushTokenError } from '../utils/fcm-errors';
 import { ADMITTED_SEAT, callerSeatStanding, refuseAwaitingSeat } from '../utils/group-membership';
 import { voipRingPayload } from './call-ring-payload';
 import { incomingCallAlertBody, IOS_CALL_RING_SOUND } from './push-payload';
@@ -1488,8 +1488,9 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
         `[${scope}] deleted invalid push token user=${pt.userId} device=${pt.deviceId} code=${code}`
       );
     } else {
-      this.logger.warn(
-        `[${scope}] FCM failed user=${pt.userId} device=${pt.deviceId} code=${code} err=${String(e)}`
+      const failure = describeFcmFailure(e);
+      this.logger[failure.level](
+        `[${scope}] FCM failed user=${pt.userId} device=${pt.deviceId} ${failure.text}`
       );
     }
   }

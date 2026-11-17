@@ -722,6 +722,7 @@ export class SecurityController {
         res.status(502).end();
         return;
       }
+      // Reachable: the guard rethrows what is not the resolver's answer - a bug, left to surface.
       if (!(error instanceof BadRequestException)) throw error;
       this.logger.debug(`[LINK_PREVIEW_IMAGE] refused: ${error.message}`);
       res.status(400).end('Invalid or blocked URL');

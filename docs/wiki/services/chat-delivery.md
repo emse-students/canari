@@ -2393,6 +2393,28 @@ not found.` - so a ring never removed a dead token; it also deleted on a bare `i
 which the v1 endpoint returns for a malformed PAYLOAD as well, an allowlist it did not have. Every
 other failure is a WARN naming the code, and the row stays.
 
+**A token FCM calls malformed (`invalid-argument`) is kept, and that is measured, not assumed.**
+FCM v1 answers `INVALID_ARGUMENT` -> `messaging/invalid-argument` both for a garbage token and for a
+bad payload, and nothing structured tells the two apart, so no path deletes on it: a ring would
+retry such a token, with one WARN per ring. Measured read-only on production chat-delivery
+2026-11-17: the reachable log is the running container's (32 h - a deploy replaces the container and
+its log, so seven days do not exist anywhere), holding 1195 sends and ONE failure, a social push to
+a token FCM called not registered; **zero** `invalid-argument`, on zero tokens; the dev container,
+zero failures. A discriminator (the same ring payload accepted for another token, or a durable
+per-token strike cleared by a success) would be machinery for a case that has not happened.
+**What reveals it later:** every FCM failure line, on every path (`[ring]`, `[ring-end]`,
+`[PUSH_SEND]`, `[WELCOME_REQ]`, `[SOCIAL_PUSH]`), now carries `code=` (`describeFcmFailure`, the
+same file); before, the message paths printed only the prose, so this very count could not be
+taken from them. `grep 'FCM failed' | grep -c 'code=messaging/invalid-argument'` over a window, and
+the distinct `device=` values, answer it; a non-zero count with a recurring device is the trigger.
+
+**A refused credential is OUR misconfiguration, logged at ERROR** (2026-11-17).
+`messaging/mismatched-credential`, `third-party-auth-error` (the APNs key Firebase holds for us) and
+`authentication-error` (our service account) blame the project, not the device: every device fails
+the same way until a human fixes the configuration. They were a WARN reading `FCM failed ... err=`
+like any token's failure; `describeFcmFailure` now logs them at ERROR, saying `OUR credentials were
+refused ... not this device's token`, and none of them deletes a row.
+
 `/api/calls/ring-end` (reason `answered`/`cancelled`/`ended`) is sent to **all** members
 including the caller's own devices and stops the ring everywhere; both platforms also arm a
 local 60 s timeout as a safety net. Ordering gotcha: `call_ring_end` must be processed **before**
@@ -2627,8 +2649,10 @@ throw Bun's `DNSException: getaddrinfo EAI_AGAIN` on `link-preview` and `link-sa
 `ExceptionsHandler` printed an ERROR stack and answered `500` for each. It was a passing resolver
 hiccup, not a URL that can never resolve (that is `ENOTFOUND`, of which there were none), so the fix
 is code, not container DNS. The guard now answers `ENOTFOUND`/`ENODATA` (the name has no address)
-as the caller's `400`, and every other resolver failure as an `UpstreamUnreachableError` carrying
-the host and the resolver code; `link-preview` and `link-safety` turn it into a `502`, `no-store`,
+as the caller's `400`, and every other resolver failure - an error carrying a `code` and
+`syscall: 'getaddrinfo'`, as node and bun both throw it - as an `UpstreamUnreachableError` carrying
+the host and the resolver code; anything else thrown by the lookup is a bug of ours and is rethrown
+untouched, never dressed as an outage (each route's last `throw error` is that path, tested); `link-preview` and `link-safety` turn it into a `502`, `no-store`,
 with one WARN (`... unreachable (dns EAI_AGAIN)`), the image proxy into a `502` instead of the `400`
 of a refused URL, and the GIF relay types it rather than inferring it by elimination.
 

@@ -1,6 +1,6 @@
 /// <reference types="jest" />
 
-import { fcmErrorCode, isTerminalPushTokenError } from './fcm-errors';
+import { describeFcmFailure, fcmErrorCode, isTerminalPushTokenError } from './fcm-errors';
 
 /** What Firebase Admin throws: an `Error` whose message never names the code it carries. */
 function fcmError(code: string, message = 'Requested entity was not found.'): Error {
@@ -35,5 +35,27 @@ describe('fcm-errors', () => {
 
   it('never decides on prose: a message naming the code is not the code', () => {
     expect(isTerminalPushTokenError(new Error('registration-token-not-registered'))).toBe(false);
+  });
+
+  it.each([
+    'messaging/mismatched-credential',
+    'messaging/third-party-auth-error',
+    'messaging/authentication-error',
+  ])('reports %s at ERROR as our own misconfiguration, and never as a dead token', (code) => {
+    const report = describeFcmFailure(fcmError(code));
+
+    expect(report.level).toBe('error');
+    expect(report.text).toContain(`code=${code}`);
+    expect(report.text).toContain('OUR credentials');
+    expect(report.text).toContain("not this device's token");
+    expect(isTerminalPushTokenError(fcmError(code))).toBe(false);
+  });
+
+  it('reports any other failure at WARN, naming the code (none when the throw carries none)', () => {
+    expect(describeFcmFailure(fcmError('messaging/invalid-argument'))).toEqual({
+      level: 'warn',
+      text: 'code=messaging/invalid-argument err=Error: Requested entity was not found.',
+    });
+    expect(describeFcmFailure(new Error('boom')).text).toBe('code=none err=Error: boom');
   });
 });

@@ -43,6 +43,15 @@ describe('assertSafeExternalUrl - the DNS lookup', () => {
     }
   );
 
+  it.each([
+    ['a TypeError', new TypeError('a bug of ours')],
+    ['a code with no getaddrinfo syscall', Object.assign(new Error('x'), { code: 'EAI_AGAIN' })],
+  ])("rethrows %s untouched: only the resolver's own failure is classified", async (_what, bug) => {
+    lookup.mockRejectedValue(bug);
+
+    await expect(assertSafeExternalUrl('https://bug.example/a')).rejects.toBe(bug);
+  });
+
   it('still refuses a name resolving to a private address', async () => {
     lookup.mockResolvedValue([{ address: '10.0.0.4', family: 4 }]);
 

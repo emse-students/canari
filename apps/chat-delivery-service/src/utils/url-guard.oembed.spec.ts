@@ -46,13 +46,23 @@ describe('fetchOEmbedData - every failure is typed', () => {
     });
   });
 
+  it('lets a bug of ours propagate rather than calling it an outage', async () => {
+    const bug = new TypeError('a bug of ours');
+    lookup.mockRejectedValue(bug);
+
+    await expect(fetchOEmbedData(ENDPOINT)).rejects.toBe(bug);
+  });
+
   it.each([
     ['refused', () => lookup.mockResolvedValue([{ address: '10.0.0.4', family: 4 }])],
     [
       'unreachable',
       () =>
         lookup.mockRejectedValue(
-          Object.assign(new Error('getaddrinfo EAI_AGAIN'), { code: 'EAI_AGAIN' })
+          Object.assign(new Error('getaddrinfo EAI_AGAIN'), {
+            code: 'EAI_AGAIN',
+            syscall: 'getaddrinfo',
+          })
         ),
     ],
     [

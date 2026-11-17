@@ -938,6 +938,31 @@ describe('CallsService', () => {
       expect(captured(warn)).toContain(`code=${code}`);
       warn.mockRestore();
     });
+
+    it('ring-end reports a refused credential at ERROR as ours, and keeps the token', async () => {
+      pushTokenRepo.find.mockResolvedValue([
+        {
+          id: '8',
+          userId: 'callee',
+          deviceId: 'd8',
+          token: 'fcm-8',
+          platform: 'ios',
+          voipToken: null,
+        },
+      ]);
+      fcmSend.mockRejectedValueOnce(
+        Object.assign(new Error('SenderId mismatch'), { code: 'messaging/mismatched-credential' })
+      );
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+
+      await service.endRing('caller', 'group-1', 'call-1', 'answered');
+
+      expect(pushTokenRepo.delete).not.toHaveBeenCalled();
+      expect(captured(error)).toContain(
+        '[ring-end] FCM failed user=callee device=d8 code=messaging/mismatched-credential - OUR credentials'
+      );
+      error.mockRestore();
+    });
   });
 
   describe('the server-side call record (WP-CALL-LOG)', () => {
