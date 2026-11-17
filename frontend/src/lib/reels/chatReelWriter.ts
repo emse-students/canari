@@ -1,5 +1,4 @@
 import type { ReelLimits } from '$lib/posts/api';
-import { deployEnvironment } from '$lib/utils/deployEnvironment';
 import type { CaptureDestination } from './reelCapture';
 import { REEL_TAKE_MAX_SENDS } from '$lib/db/sqliteBatch';
 
@@ -23,16 +22,16 @@ import { REEL_TAKE_MAX_SENDS } from '$lib/db/sqliteBatch';
  *
  * Salons are NOT written by this switch even when it is `true`: their send path is RC-8's.
  *
- * **ON FOR A DEV BUILD ONLY (owner, 2026-11-02: "turn the switch on for dev only"; production stays
- * off until the owner says so).** The test is the one `CALLS_ENABLED` used for its lot 1: a build
- * made for `dev.canari-emse.fr` - the dev web estate and every PRE-RELEASE store build, which the
- * pipelines point at dev and nowhere else (`android.yml`, `ios.yml`, `build.yml`) - carries
- * `VITE_DEPLOY_ENVIRONMENT=development`; production web and every STABLE store build never set it
- * (unset MEANS production, `deployEnvironment.ts`). A compile-time fact of the binary, no timer, no
- * server read, no fallback. Production turns on only by changing this line to `true`, in its own
- * pull request, for a stable.
+ * **ON IN EVERY BUILD (the production flip for `1.7.0`, reels-in-chat section 21.1).** From
+ * 2026-11-02 to this flip the line read `deployEnvironment() === 'development'` (owner: "turn the
+ * switch on for dev only"), so only dev web and the pre-release store builds filmed; it is now a
+ * constant, so production web and every stable store build carry the writer and the "Envoyer a..."
+ * sheet too. A compile-time fact of the binary, no timer, no server read, no fallback: there is no
+ * production kill switch short of a release that sets it back to `false`. The readers it writes
+ * for are the `minClientVersion` floor (`1.6.6` on both estates, above the reader's `v1.2.2`, the
+ * push line's `v1.3.1` and the "CanaReel supprime" tombstone's `v1.6.3`; legacy-compatibility.md).
  */
-export const CHAT_REEL_WRITER_ENABLED = deployEnvironment() === 'development';
+export const CHAT_REEL_WRITER_ENABLED = true;
 
 /** A chat reel's life, the server's window (`CHAT_REEL_RETENTION_DAYS` in media-service). */
 export const CHAT_REEL_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
