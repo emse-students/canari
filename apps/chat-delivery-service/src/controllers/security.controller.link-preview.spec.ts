@@ -43,7 +43,7 @@ jest.mock('../utils/url-guard', () => {
 });
 
 import { SecurityController } from './security.controller';
-import { assertSafeExternalUrl, ssrfSafeFetch } from '../utils/url-guard';
+import { assertSafeExternalUrl, ssrfSafeFetch, UpstreamUnreachableError } from '../utils/url-guard';
 import { mintPreviewTicket } from '../utils/previewTicket';
 
 const fetchMock = ssrfSafeFetch as jest.MockedFunction<typeof ssrfSafeFetch>;
@@ -285,6 +285,66 @@ describe('SecurityController - getLinkPreview classifies what it could not do', 
 
       expect(seen.status).toBe(502);
       expect(fetchMock).toHaveBeenCalledTimes(6);
+    });
+  });
+
+  /**
+   * A RESOLVER THAT SAID NOTHING IS NOT A BUG AND NOT THE REQUEST'S FAULT. Measured in production
+   * 2026-11-16: a one-minute outbound degradation (image fetches timing out in the same seconds)
+   * made the guard's own DNS lookup fail with `EAI_AGAIN` on `link-preview` and `link-safety`; the
+   * raw error escaped, and Nest printed an ERROR stack and answered `500` for each. The guard now
+   * types it at the throw ({@link UpstreamUnreachableError}), and every route answers `502`.
+   */
+  describe("the guard's own DNS lookup said nothing (EAI_AGAIN)", () => {
+    const dnsSilent = () =>
+      new UpstreamUnreachableError(
+        'silent.example',
+        Object.assign(new Error('getaddrinfo EAI_AGAIN'), { code: 'EAI_AGAIN' }),
+        'EAI_AGAIN'
+      );
+
+    it.each([
+      [
+        'link-preview',
+        (c: SecurityController, res: never) => c.getLinkPreview('https://silent.example/a', res),
+      ],
+      [
+        'link-safety',
+        (c: SecurityController, res: never) => c.getLinkSafety('https://silent.example/a', res),
+      ],
+    ])('%s answers 502, stores nothing, and fetches nothing', async (_route, call) => {
+      guardMock.mockRejectedValueOnce(dnsSilent());
+      const res = makeRes();
+
+      await expect(call(controller, res as never)).rejects.toBeInstanceOf(BadGatewayException);
+
+      expect(res.headers['Cache-Control']).toBe('no-store');
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('the image route answers 502, not the 400 of a refused URL', async () => {
+      guardMock.mockRejectedValueOnce(dnsSilent());
+      const seen: { status: number } = { status: 200 };
+      const res = {
+        status: (code: number) => ((seen.status = code), res),
+        setHeader: () => undefined,
+        end: () => undefined,
+      };
+
+      const savedSecret = process.env.INTERNAL_SHARED_SECRET;
+      process.env.INTERNAL_SHARED_SECRET = 'dns-test-secret';
+      try {
+        await controller.getLinkPreviewImage(
+          'https://silent.example/a.png',
+          mintPreviewTicket('dns-test-secret').ticket,
+          res as never
+        );
+      } finally {
+        process.env.INTERNAL_SHARED_SECRET = savedSecret;
+      }
+
+      expect(seen.status).toBe(502);
+      expect(fetchMock).not.toHaveBeenCalled();
     });
   });
 });

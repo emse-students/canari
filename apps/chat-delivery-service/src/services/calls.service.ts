@@ -34,6 +34,7 @@ import {
   readGroupCallsMode,
 } from '../utils/group-calls-mode';
 import { readCallRelay, RELAY_SEATS } from '../utils/call-relay';
+import { fcmErrorCode, isTerminalPushTokenError } from '../utils/fcm-errors';
 import { ADMITTED_SEAT, callerSeatStanding, refuseAwaitingSeat } from '../utils/group-membership';
 import { voipRingPayload } from './call-ring-payload';
 import { incomingCallAlertBody, IOS_CALL_RING_SOUND } from './push-payload';
@@ -1475,16 +1476,21 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /** Deletes the push token row on terminal FCM errors (unregistered/invalid). */
+  /**
+   * Deletes the push token row when FCM says the TOKEN is gone, decided on the error's structured
+   * code ({@link isTerminalPushTokenError}, shared with the message pushes), never on its prose.
+   */
   private async dropTokenIfGone(pt: PushToken, e: unknown, scope: string): Promise<void> {
-    const msg = String(e);
-    if (msg.includes('registration-token-not-registered') || msg.includes('invalid-argument')) {
+    const code = fcmErrorCode(e) ?? 'none';
+    if (isTerminalPushTokenError(e)) {
       await this.pushTokenRepo.delete({ id: pt.id });
       this.logger.warn(
-        `[${scope}] deleted invalid push token user=${pt.userId} device=${pt.deviceId}`
+        `[${scope}] deleted invalid push token user=${pt.userId} device=${pt.deviceId} code=${code}`
       );
     } else {
-      this.logger.warn(`[${scope}] FCM failed user=${pt.userId} device=${pt.deviceId} err=${msg}`);
+      this.logger.warn(
+        `[${scope}] FCM failed user=${pt.userId} device=${pt.deviceId} code=${code} err=${String(e)}`
+      );
     }
   }
 

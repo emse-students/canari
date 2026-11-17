@@ -131,13 +131,44 @@ export async function assertSafeExternalUrl(rawUrl: string): Promise<URL> {
     throw new BadRequestException('Private network URLs are not allowed');
   }
 
-  const resolved = await lookup(hostname, { all: true });
+  const resolved = await resolveOrClassify(hostname);
   if (resolved.length === 0) {
     throw new BadRequestException('Host cannot be resolved');
   }
   assertPublicAddresses(resolved);
 
   return parsed;
+}
+
+/**
+ * The resolver codes that are an ANSWER about the name: it does not exist (NXDOMAIN) or holds no
+ * address. Only these may become the caller's `400`; a name that does not exist today will not
+ * exist on the next render either.
+ */
+const NAME_HAS_NO_ADDRESS: ReadonlySet<string> = new Set(['ENOTFOUND', 'ENODATA']);
+
+/**
+ * Resolves `hostname`, CLASSIFYING A FAILURE AT THE THROW so no caller reads the resolver's prose.
+ *
+ * `ENOTFOUND`/`ENODATA` are an answer about the URL ({@link NAME_HAS_NO_ADDRESS}): a `400`. Anything
+ * else - `EAI_AGAIN` above all, the resolver saying "try again" - is the resolver saying NOTHING,
+ * the same class as a connect timeout: {@link UpstreamUnreachableError}. It used to escape raw, so
+ * Nest's `ExceptionsHandler` printed a stack at ERROR and answered `500` for a passing resolver
+ * hiccup that was neither the request's fault nor a bug.
+ */
+async function resolveOrClassify(hostname: string): Promise<LookupAddress[]> {
+  try {
+    return await lookup(hostname, { all: true });
+  } catch (error) {
+    const code =
+      typeof error === 'object' && error !== null && 'code' in error
+        ? String((error as { code?: unknown }).code)
+        : 'none';
+    if (NAME_HAS_NO_ADDRESS.has(code)) {
+      throw new BadRequestException('Host cannot be resolved');
+    }
+    throw new UpstreamUnreachableError(hostname, error, code);
+  }
 }
 
 /**
@@ -234,9 +265,13 @@ export class UpstreamUnreachableError extends Error {
    */
   constructor(
     readonly host: string,
-    readonly reason: unknown
+    readonly reason: unknown,
+    /** The resolver's code when the failure was the DNS lookup itself (`EAI_AGAIN`), else absent. */
+    readonly dnsCode?: string
   ) {
-    super(`${host} unreachable: ${String(errorCause(reason) ?? reason)}`);
+    super(
+      `${host} unreachable${dnsCode ? ` (dns ${dnsCode})` : ''}: ${String(errorCause(reason) ?? reason)}`
+    );
     this.name = 'UpstreamUnreachableError';
   }
 }

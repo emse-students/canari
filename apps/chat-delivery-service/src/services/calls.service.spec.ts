@@ -904,6 +904,40 @@ describe('CallsService', () => {
         expect.objectContaining({ type: 'call_ring_end', callId: 'call-1', reason: 'answered' })
       );
     });
+
+    /**
+     * A dead token is told by the CODE Firebase Admin sets at the throw: its message ("Requested
+     * entity was not found.") never names it, so a decision read from `String(e)` never deleted one.
+     * And a generic `invalid-argument` (a payload fault too) never deletes a working device's row.
+     */
+    it.each([
+      ['messaging/registration-token-not-registered', true],
+      ['messaging/invalid-registration-token', true],
+      ['messaging/invalid-argument', false],
+      ['messaging/server-unavailable', false],
+    ])('ring-end on FCM code %s deletes the token row: %s', async (code, deleted) => {
+      pushTokenRepo.find.mockResolvedValue([
+        {
+          id: '7',
+          userId: 'callee-android',
+          deviceId: 'd7',
+          token: 'fcm-7',
+          platform: 'android',
+          voipToken: null,
+        },
+      ]);
+      fcmSend.mockRejectedValueOnce(
+        Object.assign(new Error('Requested entity was not found.'), { code })
+      );
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+
+      const result = await service.endRing('caller', 'group-1', 'call-1', 'answered');
+
+      expect(result.notified).toBe(0);
+      expect(pushTokenRepo.delete.mock.calls).toEqual(deleted ? [[{ id: '7' }]] : []);
+      expect(captured(warn)).toContain(`code=${code}`);
+      warn.mockRestore();
+    });
   });
 
   describe('the server-side call record (WP-CALL-LOG)', () => {

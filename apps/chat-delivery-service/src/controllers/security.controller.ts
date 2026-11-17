@@ -468,7 +468,7 @@ export class SecurityController {
       throw new BadRequestException('url is required');
     }
 
-    const targetUrl = await assertSafeExternalUrl(url);
+    const targetUrl = await this.guardOrBadGateway(url, 'LINK_PREVIEW', res);
     const cacheKey = targetUrl.toString();
 
     const cached = SecurityController.previewCache.get(cacheKey);
@@ -547,7 +547,7 @@ export class SecurityController {
       throw new BadRequestException('url is required');
     }
 
-    const targetUrl = await assertSafeExternalUrl(url);
+    const targetUrl = await this.guardOrBadGateway(url, 'LINK_SAFETY', res);
     const cacheKey = targetUrl.toString();
 
     const cached = SecurityController.safeBrowsingCache.get(cacheKey);
@@ -559,6 +559,24 @@ export class SecurityController {
     SecurityController.safeBrowsingCache.set(cacheKey, verdict.flagged, verdict.cacheTtlMs);
     res.setHeader('Cache-Control', `public, max-age=${Math.floor(verdict.cacheTtlMs / 1000)}`);
     return { unsafe: verdict.flagged };
+  }
+
+  /**
+   * The SSRF guard of a JSON endpoint, its one unreachable outcome answered here: a resolver that
+   * said nothing (`EAI_AGAIN`, typed {@link UpstreamUnreachableError} at the throw) is a `502` that
+   * nothing caches and a WARN naming the host and the resolver code - never the `500` and ERROR
+   * stack Nest's `ExceptionsHandler` printed for it, since it is neither the request's fault nor a
+   * bug. A refused URL (`BadRequestException`) passes through as the caller's `400`.
+   */
+  private async guardOrBadGateway(url: string, scope: string, res: ExpressResponse): Promise<URL> {
+    try {
+      return await assertSafeExternalUrl(url);
+    } catch (error) {
+      if (!(error instanceof UpstreamUnreachableError)) throw error;
+      this.logger.warn(`[${scope}] ${error.message}`);
+      res.setHeader('Cache-Control', 'no-store');
+      throw new BadGatewayException('Link upstream unreachable');
+    }
   }
 
   /**
@@ -689,7 +707,15 @@ export class SecurityController {
     let targetUrl: URL;
     try {
       targetUrl = await assertSafeExternalUrl(url);
-    } catch {
+    } catch (error) {
+      // The resolver saying nothing is not the URL's fault: a 502, as for a fetch that failed.
+      if (error instanceof UpstreamUnreachableError) {
+        this.logger.warn(`[LINK_PREVIEW_IMAGE] ${error.message}`);
+        res.status(502).end();
+        return;
+      }
+      if (!(error instanceof BadRequestException)) throw error;
+      this.logger.debug(`[LINK_PREVIEW_IMAGE] refused: ${error.message}`);
       res.status(400).end('Invalid or blocked URL');
       return;
     }

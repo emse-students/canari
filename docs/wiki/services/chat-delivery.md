@@ -2383,6 +2383,16 @@ per member token:
   no FCM alert instead) - [calls](../frontend/modules/calls.md#the-native-ring-on-the-iphone---pushkit-and-callkit-wp-c6-owner-2026-10-22).
 - **iOS without `voipToken`** (legacy builds) → FCM alert banner ("📞 Appel entrant").
 
+**A dead FCM token is told by its CODE, never by its prose** (2026-11-17). A ring or ring-end send
+that FCM refuses deletes the `push_token` row only when `isTerminalPushTokenError`
+(`src/utils/fcm-errors.ts`, the ONE classifier, shared with the message pushes of
+`MessagingService`) reads `messaging/registration-token-not-registered` or
+`messaging/invalid-registration-token` from the error's structured `code`. The ring path used to
+read `String(e)`, and a real `FirebaseMessagingError` stringifies to `Error: Requested entity was
+not found.` - so a ring never removed a dead token; it also deleted on a bare `invalid-argument`,
+which the v1 endpoint returns for a malformed PAYLOAD as well, an allowlist it did not have. Every
+other failure is a WARN naming the code, and the row stays.
+
 `/api/calls/ring-end` (reason `answered`/`cancelled`/`ended`) is sent to **all** members
 including the caller's own devices and stops the ring everywhere; both platforms also arm a
 local 60 s timeout as a safety net. Ordering gotcha: `call_ring_end` must be processed **before**
@@ -2608,6 +2618,19 @@ the top: every outbound call inside `resolveLinkPreview` goes through its `reach
 "the site said something unusable" and "the site said nothing" cannot be confused by the handler.
 An unexpected error - a parser fault, a bug in this file - is neither cached nor blamed on the
 caller: it is a `500`, logged at `error`.
+
+**The guard's own DNS lookup is classified at the throw too** (2026-11-17). `assertSafeExternalUrl`
+resolves the host before anything is fetched, and that lookup used to fail RAW: measured in
+production on 2026-11-16, a one-minute outbound degradation (image fetches timing out to other
+hosts in the same seconds - the only outbound failures of that container's first day) made it
+throw Bun's `DNSException: getaddrinfo EAI_AGAIN` on `link-preview` and `link-safety`, and Nest's
+`ExceptionsHandler` printed an ERROR stack and answered `500` for each. It was a passing resolver
+hiccup, not a URL that can never resolve (that is `ENOTFOUND`, of which there were none), so the fix
+is code, not container DNS. The guard now answers `ENOTFOUND`/`ENODATA` (the name has no address)
+as the caller's `400`, and every other resolver failure as an `UpstreamUnreachableError` carrying
+the host and the resolver code; `link-preview` and `link-safety` turn it into a `502`, `no-store`,
+with one WARN (`... unreachable (dns EAI_AGAIN)`), the image proxy into a `502` instead of the `400`
+of a refused URL, and the GIF relay types it rather than inferring it by elimination.
 
 **One budget, and every mechanism that can enforce it agrees.** `OUTBOUND_BUDGET_MS` (4 000 ms) arms
 the endpoint's `AbortController` for the whole operation - redirect chain and oEmbed follow-up - AND

@@ -185,19 +185,6 @@ export class PushController {
     await verifyPushSecret(this.pushTokenRepo, this.logger, authHeader, userId, deviceId);
   }
 
-  private isTerminalPushTokenError(error: unknown): boolean {
-    const rawCode =
-      typeof error === 'object' && error && 'code' in error
-        ? (error as { code?: unknown }).code
-        : undefined;
-    const code = typeof rawCode === 'string' ? rawCode : '';
-
-    return (
-      code === 'messaging/invalid-registration-token' ||
-      code === 'messaging/registration-token-not-registered'
-    );
-  }
-
   /**
    * A device stating that it CANNOT obtain a push token, after exhausting its own retries.
    *
