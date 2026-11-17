@@ -3,7 +3,15 @@
  * sealed for, under the live key; anything else is a typed refusal the viewer drops. Real WebCrypto.
  */
 import { describe, it, expect } from 'vitest';
-import { LiveChatOpenError, openLiveChatMessage, sealLiveChatMessage } from './liveChatCrypto';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import {
+  LIVE_CHAT_V1_MAX_CHARS,
+  LiveChatOpenError,
+  openLiveChatMessage,
+  sealLiveChatMessage,
+} from './liveChatCrypto';
 import { sealLiveSegment } from './liveCrypto';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
 
@@ -136,5 +144,22 @@ describe('the other direction (h)', () => {
     expect(await reason(openLiveChatMessage(KEY, LIVE, CLIENT, ALICE, pairs))).toBe(
       'out-of-format'
     );
+  });
+});
+
+describe('the v1 bound and the server (review of #3783)', () => {
+  it("is social-service's LIVE_CHAT_MESSAGE_MAX_CHARS, the bound it publishes and sizes its byte cap on", () => {
+    // Read as text, as the other parity tests read a service file: the frontend does not compile
+    // the services. Two copies of one number, held together here, never by memory.
+    const source = readFileSync(
+      join(
+        dirname(fileURLToPath(import.meta.url)),
+        '../../../../apps/social-service/src/lives/live.constants.ts'
+      ),
+      'utf8'
+    );
+    const server = /export const LIVE_CHAT_MESSAGE_MAX_CHARS = (\d+);/.exec(source);
+    expect(server).not.toBeNull();
+    expect(Number(server![1])).toBe(LIVE_CHAT_V1_MAX_CHARS);
   });
 });

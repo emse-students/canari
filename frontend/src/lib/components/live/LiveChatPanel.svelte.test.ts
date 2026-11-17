@@ -10,7 +10,11 @@ import { flushSync, mount, unmount } from 'svelte';
 import LiveChatPanel from './LiveChatPanel.svelte';
 import LiveReactionsLayer from './LiveReactionsLayer.svelte';
 import type { LiveChatLine } from '$lib/live/liveChat';
+import { LIVE_CHAT_V1_MAX_CHARS } from '$lib/live/liveChatCrypto';
 import { m } from '$lib/paraglide/messages';
+
+/** U+202E RIGHT-TO-LEFT OVERRIDE, built rather than typed: a literal one in source is itself a bidi hazard. */
+const RLO = String.fromCodePoint(0x202e);
 
 vi.mock('$lib/components/shared/Avatar.svelte', () => ({ default: () => {} }));
 vi.mock('$lib/utils/users/displayName', () => ({
@@ -245,19 +249,13 @@ describe('LiveChatPanel', () => {
   });
 
   it('(f) isolates every name and text in its own bidi run, so a U+202E cannot reverse the line', () => {
-    const { target } = render({ lines: [line({ text: '202Eevil' })] });
+    // It once read '202Eevil' - an escape lost on its way in, so it tested plain text; the case it
+    // names is the built override, and the copy below it that held the literal is folded in here.
+    const { target } = render({ lines: [line({ text: `${RLO}evil` })] });
     const runs = target.querySelectorAll('[data-live-chat-line] bdi');
     expect(runs).toHaveLength(2);
     expect(runs[1].getAttribute('dir')).toBe('auto');
-    expect(runs[1].textContent).toBe('202Eevil');
-  });
-
-  it('isolates each name and text in its own bidi run, so a U+202E cannot reverse the line', () => {
-    const { target } = render({ lines: [line({ text: '‮evil' })] });
-    const runs = target.querySelectorAll('[data-live-chat-line] bdi');
-    expect(runs).toHaveLength(2);
-    expect(runs[1].getAttribute('dir')).toBe('auto');
-    expect(runs[1].textContent).toBe('‮evil');
+    expect(runs[1].textContent).toBe(`${RLO}evil`);
   });
 
   it('draws a line as ONE run: line breaks a modified client sealed collapse, never stack (review G7)', () => {
@@ -335,6 +333,20 @@ describe('LiveChatPanel', () => {
     unmount(app!);
     const reader = render({ canWrite: false });
     expect(reader.target.querySelector('[data-live-chat-composer]')).toBeNull();
+  });
+
+  it('bounds the composer by the v1 format before the limits arrive (review of #3783)', async () => {
+    const send = vi.fn(async (_text: string) => 'too-long' as const);
+    const { target } = render({ send, maxChars: null });
+    typeInto(editorOf(target), 'x'.repeat(LIVE_CHAT_V1_MAX_CHARS + 1));
+    target.querySelector<HTMLFormElement>('[data-live-chat-composer]')!.requestSubmit();
+    await vi.waitFor(() => expect(send).toHaveBeenCalled());
+    expect(send.mock.calls[0][0]).toHaveLength(LIVE_CHAT_V1_MAX_CHARS);
+    await vi.waitFor(() =>
+      expect(target.querySelector('[role="alert"]')?.textContent).toContain(
+        m.live_chat_failed_too_long({ max: LIVE_CHAT_V1_MAX_CHARS })
+      )
+    );
   });
 
   it('a too long refusal puts the text back with the reason', async () => {

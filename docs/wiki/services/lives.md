@@ -1498,7 +1498,7 @@ every text in its own `<bdi dir="auto">`; no key, plaintext or ciphertext in a l
 
 | # | Finding | Severity | Disposition |
 | --- | --- | --- | --- |
-| C-1 | **The client drew any length that opened**: the server stores up to 900 bytes of text (it cannot count characters it cannot read), three times the composer's 300, and a line was drawn `whitespace-pre-wrap` - a modified client could fill the overlay with one line of line breaks | low | **Fixed**: 300 UTF-16 units is part of the v1 FORMAT (`LIVE_CHAT_V1_MAX_CHARS`), and a longer plaintext is `LiveChatOpenError('out-of-format')`, dropped like any line that does not open; a line is drawn as one run (`whitespace-normal`), so line breaks collapse (`liveChatCrypto.test.ts`, `LiveChatPanel.svelte.test.ts`) |
+| C-1 | **The client drew any length that opened**: the server stores up to 900 bytes of text (it cannot count characters it cannot read), three times the composer's 300, and a line was drawn `whitespace-pre-wrap` - a modified client could fill the overlay with one line of line breaks | low | **Fixed**: 300 UTF-16 units is part of the v1 FORMAT (`LIVE_CHAT_V1_MAX_CHARS`), and a longer plaintext is `LiveChatOpenError('out-of-format')`, dropped like any line that does not open, and the app never SENDS one: the session and the composer apply that bound from the start, before `GET /api/lives/limits` answers, and never a larger one it answers (review of #3783); a line is drawn as one run (`whitespace-normal`), so line breaks collapse (`liveChatCrypto.test.ts`, `LiveChatPanel.svelte.test.ts`) |
 | C-2 | **The declared mentions are not bound to the sealed text** (M2): an author may push up to 5 people not named in the line (the M4 rate holds: once per author per person per minute), and a token in the text that was not declared tints a viewer's line without a push | low | **Accepted, by design**: the server cannot read the line (C11), and M2 already calls the ids candidates. The push names the live, never the text |
 | C-3 | **The report route confirms a guessed plaintext**: `LIVE_CHAT_REPORT_MISMATCH` against `201`, with no bound on mismatches | low | **Accepted**: who may report holds the live key and may open the line anyway; the guess gains nothing a viewer lacks. Each mismatch is logged once (`logMismatchOnce`) |
 | C-4 | **Who wrote a line is the server's word**, and the kept proof of a reported line is an HMAC under a server secret | info | **Accepted, stated**: every key holder can seal under any author id; authorship is the authenticated `x-user-id` the server stores. Per-author signing keys would be a redesign |
@@ -1574,16 +1574,17 @@ the other viewer (no line dropped). The workstation and the route are dev's.
 
 | Phase | Chat writes | Segment `PUT` (ms, p50 / p95 / p99 / max) | `LIVE_SEGMENT_TOO_FAST` | Chat `429` | Samples with a lock waiter |
 | --- | --- | --- | --- | --- | --- |
-| A - the ceiling, 5 min: each account a line every 1 s and a burst every 0.5 s (C6 lets 3 per 5 s and 2 per 2 s through) | ~6 a second (323 lines and 528 bursts stored) | 150 / 233 / 365 / 371 (196 PUTs, all `200`) | 0 | 286 `LIVE_MESSAGE_TOO_FAST`, 690 `LIVE_REACTION_TOO_FAST` | 3 of 1579, at most 1 waiter, at most 1 ms |
-| B - overdrive, 5 min: a line every 0.2 s and a burst every 0.15 s per account | ~23 a second, 87 % refused (346 lines, 563 bursts stored) | 158 / 256 / 717 / 912 (148 PUTs, all `200`) | 0 | 2603 and 3370 | 27 of 1480: two pile-ups of about 2 s with up to 8 waiters, at most 399 ms sampled; otherwise none |
-| C - no chat, 2 min | 0 | 141 / 209 / 239 / 239 (66 PUTs, all `200`) | 0 | - | 0 of 740 |
+| A - just past the ceiling, 5 min (12:31:05-12:36:11 UTC): each account a line every 1 s and a burst every 0.5 s, so 3 tries a second per account against the 1.6 C6 lets through (3 lines per 5 s, 2 bursts per 2 s) | ~6 a second (323 lines and 528 bursts stored) | 150 / 233 / 365 / 371 - **196 PUTs from the live's start (12:29:34), so the first 91 s carry no chat**; the 371 ms max was already there before the chat began (34 PUTs then: 166 / 365 / 371 / 371) | 0 | 286 `LIVE_MESSAGE_TOO_FAST`, 690 `LIVE_REACTION_TOO_FAST` | 3 of 1579, at most 1 waiter, at most 1 ms |
+| B - overdrive, 5 min (12:36:23-12:41:19): a line every 0.2 s and a burst every 0.15 s per account - lines 5 times A's rate, bursts 3.3 times, ~23 tries a second in all, about 7 times the 3.2 a second C6 lets the two accounts through | ~23 a second, 87 % refused (346 lines, 563 bursts stored) | 158 / 256 / 717 / 912 (148 PUTs, all `200`) | 0 | 2603 and 3370 | 27 of 1480: two pile-ups of about 2 s with up to 8 waiters, at most 399 ms sampled; otherwise none |
+| C - no chat, 2 min (12:41:34-12:43:45) | 0 | 141 / 209 / 239 / 239 (66 PUTs, all `200`) | 0 | - | 0 of 740 |
 
 **What it says.** At the rate C6 lets through, the chat costs the ingest nothing measurable. Past it,
 **a refused write still takes the row lock** - the window is COUNTED under the lock (C6) - so a client
-that ignores `retryAfterMs` at five times the ceiling contends with the ingest for what it is
-refused; the worst ingest seen was 912 ms against a 2 s segment, with no segment refused or lost.
-The app's own client sends at most one burst per tick and refuses a line it would be refused for, so
-that load is a modified client's. **Not read:** more than two chatting accounts at once (the rig had
+that ignores `retryAfterMs` at about 7 times what C6 lets through contends with the ingest for what
+it is refused; the worst ingest seen was 912 ms against a 2 s segment, with no segment refused or
+lost. The app's own client sends at most one burst per tick, and nobody types five lines a second,
+so that load is a modified client's. The lock samples are sliced by these timestamps; the segment
+counts of B and C are exactly their phases (the probe was reset at each start), A's are not (above). **Not read:** more than two chatting accounts at once (the rig had
 two free seats besides the broadcaster; phase B's 23 writes a second is about half the 24-viewer
 worst case above), and the cause of the two pile-ups (the sample shows waiters, not which statement
 held the row).
