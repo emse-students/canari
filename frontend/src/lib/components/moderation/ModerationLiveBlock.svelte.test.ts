@@ -443,6 +443,13 @@ describe("the broadcaster's standing and the withdrawal", () => {
       'refused',
       m.moderation_live_withdraw_account_invalid,
     ],
+    [
+      '403 out of scope',
+      403,
+      'MODERATION_OUT_OF_SCOPE',
+      'refused',
+      m.moderation_refusal_out_of_scope,
+    ],
     ['500 no code', 500, null, 'unavailable', m.moderation_live_withdraw_error],
   ] as const)('%s says its own sentence and stays open', async (_n, status, code, kind, key) => {
     withdrawBroadcaster.mockRejectedValue(
@@ -507,6 +514,25 @@ describe('lifting a withdrawal', () => {
     expect(target.querySelector('[data-moderation-live-lift-error]')).toBeNull();
   });
 
+  it('opens ONE confirmation for a double tap, and frees the button once it is declined', async () => {
+    let answer: (yes: boolean) => void = () => {};
+    showConfirm.mockImplementation(() => new Promise<boolean>((r) => (answer = r)));
+    const warn = vi.spyOn(console, 'warn');
+    const { target } = render(withdrawnLive());
+    const button = target.querySelector<HTMLButtonElement>('[data-moderation-live-lift]')!;
+    button.click();
+    button.click();
+    flushSync();
+    expect(showConfirm).toHaveBeenCalledTimes(1);
+    answer(false);
+    await settle();
+    expect(liftBroadcasterWithdrawal).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+    expect(target.querySelector<HTMLButtonElement>('[data-moderation-live-lift]')!.disabled).toBe(
+      false
+    );
+  });
+
   it.each([
     [
       '403 forbidden',
@@ -521,6 +547,13 @@ describe('lifting a withdrawal', () => {
       'LIVE_ACCOUNT_INVALID',
       'refused',
       m.moderation_live_withdraw_account_invalid,
+    ],
+    [
+      '403 out of scope',
+      403,
+      'MODERATION_OUT_OF_SCOPE',
+      'refused',
+      m.moderation_refusal_out_of_scope,
     ],
     ['500 no code', 500, null, 'unavailable', m.moderation_live_lift_error],
   ] as const)(

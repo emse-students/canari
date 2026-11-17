@@ -1021,9 +1021,11 @@ broadcaster says a running suspension stays (the standing is derived from the cu
 leaves on record), then `liftBroadcasterWithdrawal` = `DELETE /api/lives/broadcasters/:userId/withdrawal`.
 The answer goes to the page, which toasts "rétabli" or, on `lifted: false` (a repeat, or another
 moderator first), "n'était plus retiré", and re-reads the queue; a refusal is a sentence under the
-row by `code` (`LIVE_WITHDRAWAL_FORBIDDEN`, `LIVE_ACCOUNT_INVALID`, anything else a retry). No notice
-reaches the member: the server writes none for a lift, and the pre-live screen reads the standing
-again at its next open. **Not built:** a standing view for a broadcaster with no reported live (there
+row by `code` (a reach refusal such as `MODERATION_OUT_OF_SCOPE` through `describeModerationRefusal`,
+as the withdrawal and the cut do, then `LIVE_WITHDRAWAL_FORBIDDEN`, `LIVE_ACCOUNT_INVALID`, anything
+else a retry); the button is taken before the confirmation opens, so a double tap asks once. No
+notice reaches the member yet ([P3](../../backlog.d/p3-a-lifted-withdrawal-is-not-told-to-the-member.md)):
+the server writes none for a lift, and the pre-live screen reads the standing again at its next open. **Not built:** a standing view for a broadcaster with no reported live (there
 is no per-account staff read; the caller's own `GET /api/lives/standing` is not for staff), so a
 withdrawal is lifted from one of the broadcaster's report rows, which the queue lists, pending first,
 while they are among its 50 newest ([the entry that closes it](../../backlog.d/p2-no-staff-view-of-a-broadcaster-s-standing-without-a-report.md)). Tests: the standing, withdrawal and lift blocks of

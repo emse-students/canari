@@ -9,6 +9,7 @@
   import { liftBroadcasterWithdrawal, LiveRefusalError } from '$lib/live/api';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { isTransportFailure } from '$lib/utils/transportFailure';
+  import { describeModerationRefusal } from '$lib/moderation/moderationRefusal';
   import { LIVE_STRIKE_WINDOW_DAYS, LIVE_WITHDRAWAL_FROM_CUTS } from '$lib/live/constants';
   import ModerationLiveCutDialog from './ModerationLiveCutDialog.svelte';
   import ModerationLiveWithdrawDialog from './ModerationLiveWithdrawDialog.svelte';
@@ -74,6 +75,9 @@
 
   /** The sentence for a refused lift, decided on the typed code, never on a message. */
   function liftErrorText(e: unknown): string {
+    // A refusal of the moderator's REACH (an institution's or a BDE's live, another BDE's spaces).
+    const reach = describeModerationRefusal(e);
+    if (reach) return reach;
     if (e instanceof LiveRefusalError) {
       if (e.code === 'LIVE_WITHDRAWAL_FORBIDDEN') return m.moderation_live_lift_forbidden();
       if (e.code === 'LIVE_ACCOUNT_INVALID') return m.moderation_live_withdraw_account_invalid();
@@ -88,6 +92,8 @@
   async function lift() {
     const userId = live.broadcasterId;
     if (!userId || lifting) return;
+    // Taken BEFORE the confirmation: a second tap while it is open must not open another one.
+    lifting = true;
     const yes = await showConfirm(
       m.moderation_live_lift_prompt({
         name: broadcasterName || m.moderation_live_withdraw_this_account(),
@@ -96,9 +102,9 @@
     );
     if (!yes) {
       console.debug(`[MODERATION] lift of ${userId}'s withdrawal declined`);
+      lifting = false;
       return;
     }
-    lifting = true;
     liftError = '';
     console.debug(`[MODERATION] lifting the withdrawal of ${userId}`);
     try {

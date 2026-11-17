@@ -8,7 +8,8 @@ hiding one from the viewer (WP-L6, `POST /api/lives/:id/messages/:messageId/hide
 lifting a withdrawal in `/admin/moderation`
 ([live](../frontend/modules/live.md#the-moderation-client-wp-l8s-client-half-2026-10-19)). The gate
 list is [live-production](../frontend/modules/live-production.md#2-the-gates-each-with-its-evidence);
-the viewer cap is [its own entry](live-viewer-cap-lifted-in-measured-steps.md). Read 2026-11-17 and
+the viewer cap is [its own entry](live-viewer-cap-lifted-in-measured-steps.md). Lives stay a release
+blocker until the gates G7-G9 close: [the release-blocker entry](p1-lives-release-blocker-crypto-reviews-load-and-phone-readings.md). Read 2026-11-17 and
 no longer owed: dev's `[LIVE_REPORT_AGE]` line (`pending=0` hourly, G4), and dev's `lives_mode` row
 open (`on`, published by `/api/version` as `lives.mode`).
 
