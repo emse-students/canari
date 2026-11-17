@@ -1274,6 +1274,7 @@
                   {isDeleted}
                   {firstLink}
                   jumbo={isEmojiOnly}
+                  onOwnBubble={isOwn}
                 />
               {/if}
             {/if}

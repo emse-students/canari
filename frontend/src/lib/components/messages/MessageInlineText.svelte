@@ -26,14 +26,16 @@
   interface Props {
     /** A run of text carrying no URL - the caller has already split those out. */
     text: string;
+    /** Inside the sender's own accent-filled bubble: mentions inherit the bubble's colour. */
+    onOwnBubble?: boolean;
   }
 
-  let { text }: Props = $props();
+  let { text, onOwnBubble = false }: Props = $props();
 </script>
 
 {#each splitTextWithMentions(text) as part, index (`${index}-${part.type}-${'userId' in part ? part.userId : part.value}`)}
   {#if part.type === 'mention'}
-    <MessageMentionChip userId={part.userId} />
+    <MessageMentionChip userId={part.userId} {onOwnBubble} />
   {:else if part.type === 'hashtag'}
     <!-- IT TAKES THE BUBBLE'S OWN COLOUR, because the bubble is the only thing that knows what it
          is filled with. `text-accent-text` was 1.68:1 on the outgoing

@@ -90,7 +90,7 @@ questions the first draft of this page left open, the same day.
 11. **The writer of an association's post is visible to its moderators** (the platform admin, the
     BDE in scope), as an association comment's already is; **the raw `authorId` of `/posts/hidden` is
     closed.** Built 2026-11-17: one rule serves it everywhere, `/posts/hidden` included (P8); the
-    phone reading is [owed](backlog.d/reading-owed-association-post-writer-line.md).
+    phone reading PASSED on `1.7.0-alpha.8` ([readings](device-verification.md#the-phone-readings-of-2026-11-17-170-alpha8-both-phones-one-sitting)).
     **The lead's reading, reversible (2026-11-17): the writer is also served their own name**, drawn
     small under the association's like an anonymous post's author sees theirs - it tells them
     nothing they do not know, and one rule for both names is simpler than two. Reversing it is one

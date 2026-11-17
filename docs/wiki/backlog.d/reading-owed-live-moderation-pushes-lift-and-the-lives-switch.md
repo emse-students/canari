@@ -9,7 +9,7 @@ lifting a withdrawal in `/admin/moderation`
 ([live](../frontend/modules/live.md#the-moderation-client-wp-l8s-client-half-2026-10-19)). The gate
 list is [live-production](../frontend/modules/live-production.md#2-the-gates-each-with-its-evidence);
 the viewer cap is [its own entry](live-viewer-cap-lifted-in-measured-steps.md). Lives stay a release
-blocker until the gates G7-G9 close: [the release-blocker entry](p1-lives-release-blocker-crypto-reviews-load-and-phone-readings.md). Read 2026-11-17 and
+blocker until G9 closes (G7 and G8 closed 2026-11-17): [the phone-reading entry](reading-owed-lives-on-both-phones-watching-broadcasting-chat-and-reactions.md). Read 2026-11-17 and
 no longer owed: dev's `[LIVE_REPORT_AGE]` line (`pending=0` hourly, G4), and dev's `lives_mode` row
 open (`on`, published by `/api/version` as `lives.mode`).
 
@@ -31,3 +31,5 @@ Closing readings, each `PASS` or a new entry:
 
 **Owed by the user, not here:** the filtering statement and the terms' reread
 ([backlog](../backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks), G10, G11).
+
+**Mi 9T and web seats, 2026-11-17 (`1.7.0-alpha.8`, [readings](../device-verification.md#the-phone-readings-of-2026-11-17-170-alpha8-both-phones-one-sitting)): readings 1 (Mi half), 2 and 3 `PASS`.** The three pushes arrived on `canari_social` with the table's texts and each tap opened the notifications list; the bell rows read "... interrompu par la modération — Autre", "Vous ne pouvez plus diffuser pendant un temps — Spam", "Votre droit de diffuser a été retiré — Autre", each with the camera icon and no avatar. The lift: "Restore the right" on a pending live report row, the confirmation naming the broadcaster, the toast, the row re-read with the suspension and no withdrawal, and the broadcaster's pre-live screen saying "Vous ne pouvez plus lancer de live jusqu'au 17 décembre." with Start disabled. The switch: `lives_mode` closed at `/admin/platform` (`/api/version` `lives.mode: off`), the feed card gone and the broadcaster's live ended at once, the composer's Live chip gone at the next open, both back after reopening. **Two defects filed:** the list does not refresh when a push is tapped while it is already mounted ([entry](p2-the-notifications-list-is-not-reread-when-a-push-opens-it.md)), and the lift is reachable only from a PENDING live report ([entry](p2-a-withdrawn-broadcaster-can-be-lifted-only-from-a-pending-live-report.md)). **Left:** the iPhone half of reading 1.

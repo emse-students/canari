@@ -23,3 +23,5 @@ bubble against 200. **What is left, in order, sized honestly:**
    resume at 4x and the iOS protocol (a day each).
 
 The 200 ms on every row is several weeks beyond the step above, not one pull request.
+
+**Mi 9T, 2026-11-17 (`1.7.0-alpha.8`, [readings](../device-verification.md#the-phone-readings-of-2026-11-17-170-alpha8-both-phones-one-sitting)), step 1 in part:** `community-open.mjs --runs 3 --cpu 1 --net none` on `BancOuverture-1`, cold medians (worst): tap to rail and salons 915 (1093) ms, salon to pane 433 (564), salon to messages 865 (966), cached reopen 354 (363), 49 API calls / 330 kB, long tasks 898 ms; warm: 364 / 316 / 323 / 380, 4 calls. A different community from the 1.6.9-alpha.1 reading, so not comparable to its 891 ms. **Not run:** `--profile-salon` and `--chain`, so step 1 still owes the naming of the time before the pane.

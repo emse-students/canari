@@ -21,7 +21,7 @@ import {
   type LiveChatLine,
 } from './liveChat';
 import { LiveRefusalError } from './api';
-import { LiveChatOpenError } from './liveChatCrypto';
+import { LIVE_CHAT_V1_MAX_CHARS, LiveChatOpenError } from './liveChatCrypto';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 import { flushMacrotask } from '../../test/flush';
 import type { LiveChatBlock, LiveChatMessageWire, LiveManifest, LiveReactionKind } from './types';
@@ -226,6 +226,19 @@ describe('writing', () => {
     expect(await s.send('123456')).toBe('too-long');
     expect(await s.send('12345')).toBeNull();
     expect(deps.seal).toHaveBeenCalledTimes(1);
+  });
+
+  it('bounds a line by the v1 format BEFORE the limits arrive, so it never sends one nobody can read', async () => {
+    // The limits are read asynchronously; a line past the format's 300 units would be stored by the
+    // server (it counts bytes) and then dropped by every viewer as out-of-format.
+    const s = session();
+    expect(await s.send('x'.repeat(LIVE_CHAT_V1_MAX_CHARS + 1))).toBe('too-long');
+    expect(deps.seal).not.toHaveBeenCalled();
+    // A server answering a larger bound cannot widen the format either.
+    s.setLimits({ chatMessageMaxChars: 900, reactionTapsPerWindow: 10 });
+    expect(s.messageMaxChars).toBe(LIVE_CHAT_V1_MAX_CHARS);
+    expect(await s.send('x'.repeat(LIVE_CHAT_V1_MAX_CHARS + 1))).toBe('too-long');
+    expect(await s.send('x'.repeat(LIVE_CHAT_V1_MAX_CHARS))).toBeNull();
   });
 
   it('cannot write without an account', async () => {
