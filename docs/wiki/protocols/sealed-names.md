@@ -142,20 +142,32 @@ push, and each device keeps it beside the row it names.
     the frame `unconfirmed`, because re-sending would put it over that name. So does the SAME name
     under another date: the members renaming Old -> B -> Old leave the row showing "Old" again, dated
     after this device's rename, and a name-only compare re-sent the older rename over their later
-    statement for everyone (#3785 round 6, P2). The one statement that dates the same name without
-    being a later one is a join push dating an undated row (`withRestatedGroupName`); it dates the
-    pending frame's `over` in the same write, so the frame is still recognised and re-sent. A row that holds the pending name, dated, saw it land, so only the server's
-    copy is owed. Otherwise the SAME frame is re-sent (`resendPendingRename`: the same id and the
-    same signed `sentAt`), so a member that already took it draws no second notice. Its outcome is a
-    type (`RenameResendOutcome`): no answer again, or a send that was not made, keeps it pending - a
+    statement for everyone (#3785 round 6, P2). A statement from BEFORE the rename that dates an
+    undated base is no later statement: the row showed the name undated when this device renamed
+    (the server's list, or an own rename answered with no server time), and a replayed or live frame
+    that set it, or a join push restating it, dates it afterwards. Every one of those paths writes
+    through ONE rule (`withDatedGroupName`), which dates the pending frame's `over` in the same write
+    when the statement names that base at a time no later than the rename's `sentAt`; the frame is
+    still recognised and re-sent. Doing it in the join push only left the replay dating the row
+    alone, and a rename the person was told is on its way was never sent (#3785 round 7, F1). A row
+    that holds the pending name, dated, saw it land, so only the server's copy is owed. Otherwise the
+    SAME frame is re-sent (`resendPendingRename`: the same id and the same signed `sentAt`), so a
+    member that already took it draws no second notice. Its outcome is a type
+    (`RenameResendOutcome`): no answer again, or a send that was not made, keeps it pending - a
     failed re-send proves something about the re-send only, never about the first copy. Only a typed
     refusal that ends it (`evicted`, `group-deleted`, or the receivers' bound, `clock`) stops the
-    re-sending, and even then the frame is kept `unconfirmed`. So is a frame the 24 h bound has
-    provably passed for, unsent, because every receiver would refuse it. The proof is a SERVER time,
-    never this device's clock: the receivers measure the bound on the server's stamp, and the newest
-    row this device holds for the group (`latestServerTimeOf`) was accepted no later than the server's
-    now. A clock running ahead shelved a frame every member would still take; with no such proof the
-    frame is re-sent, and a receivers' refusal comes back typed (`clock`).
+    re-sending, and even then the frame is kept `unconfirmed`.
+  - **A re-send goes out only within a bound the server's clock proves.** A frame past the receivers'
+    24 h bound is refused by every member, and each still draws its "renamed the group" notice for
+    a name nobody took - noise for the whole group. So the sweep reads the server's clock in that
+    very pass: the `Date` of the delivery service's answer to the group row read
+    (`GroupMeta.serverNow`, `serverDateOf`; chat-delivery exposes the header to the phone apps). It
+    is never this device's clock, which may run ahead or behind, nor an older server time this
+    device holds, which says nothing of how long it was offline. The read unanswered keeps the frame
+    pending for the next sweep; answered past the bound, or with no clock it can read, the bound is
+    not proven and the frame is kept `unconfirmed`, unsent (#3785 round 7, F2). The `Date` is to the
+    second, and the residual race is one round trip wide: a frame re-sent seconds before its bound
+    can still be stamped after it.
   - **`unconfirmed`, and the heal every stopped frame relies on.** A frame this device stopped
     re-sending may still have reached every member: its first copy's answer was lost, not the copy.
     The members then hold its notice under the id this device minted, and this device holds no row

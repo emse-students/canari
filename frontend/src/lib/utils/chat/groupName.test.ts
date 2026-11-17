@@ -13,7 +13,6 @@ import {
   ownRenameFromRelay,
   parseNameSync,
   unconfirmedFrom,
-  latestServerTimeOf,
   pendingRenameOutcome,
   pendingRenameVerdict,
   reportRenameRefusal,
@@ -230,13 +229,35 @@ describe('a rename whose frame got no answer', () => {
     expect(pendingRenameVerdict(row, row.nameSync!.pending!)).toBe('resend');
   });
 
-  it('the latest server time held is the newest row the server accepted, never a clock', () => {
-    const at = (serverTimestamp?: number) =>
-      ({ id: 'x', senderId: 'u', content: '', timestamp: new Date(0), serverTimestamp }) as never;
-    expect(latestServerTimeOf({ messages: [] })).toBeUndefined();
-    expect(latestServerTimeOf({ messages: [at(T), at(undefined), at(T + 7), at(T + 2)] })).toBe(
-      T + 7
+  // ROUND 7, F1: every path dating a row goes through `withDatedGroupName`, a replayed frame too.
+  // The archive replaying the frame that set "Old" at T0 used to date the row and leave the base
+  // undated, so the sweep read it as superseded and never sent a rename the person was told was on
+  // its way.
+  it('a replayed frame that set the undated base before the rename dates that base: still re-sent', () => {
+    const undated = { ...PENDING, over: { name: 'Old' } };
+    const row = rowOf(
+      applyRenameFrame(
+        group({ name: 'Old', nameSync: { pending: undated } }),
+        'Old',
+        T - 500,
+        T - 600
+      )
     );
+    expect(row).toMatchObject({ name: 'Old', nameAt: T - 500 });
+    expect(row.nameSync?.pending?.over).toEqual({ name: 'Old', at: T - 500 });
+    expect(pendingRenameVerdict(row, row.nameSync!.pending!)).toBe('resend');
+  });
+
+  it('the same name stated AFTER the rename was minted is a later statement: the base stays undated', () => {
+    const undated = { ...PENDING, over: { name: 'Old' } };
+    const row = rowOf(
+      withDatedGroupName(group({ name: 'Old', nameSync: { pending: undated } }), {
+        name: 'Old',
+        at: T + 5,
+      })
+    );
+    expect(row.nameSync?.pending?.over).toEqual({ name: 'Old' });
+    expect(pendingRenameVerdict(row, row.nameSync!.pending!)).toBe('superseded');
   });
 
   it('is re-sent only while the row still holds what it was made over', () => {

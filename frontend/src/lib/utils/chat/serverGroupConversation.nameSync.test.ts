@@ -60,15 +60,25 @@ async function sweep(
     freshName?: string;
     /** Whether this link's pull has drained the group. */
     drained?: boolean;
+    /** The server's clock its answer states (`GroupMeta.serverNow`); `null` states none. */
+    serverNow?: number | null;
+    /** Whether the group row read is answered at all. */
+    metaAnswered?: boolean;
   } = {}
 ) {
   const conversations = new Map<string, Conversation>([[GROUP_ID, held]]);
   const renameGroup = opts.renameGroup ?? vi.fn().mockResolvedValue(undefined);
-  const getGroupMeta = vi.fn().mockResolvedValue({
-    groupId: GROUP_ID,
-    name: opts.freshName ?? serverName,
-    isGroup: true,
-  });
+  const serverNow = opts.serverNow === undefined ? T + 60_000 : opts.serverNow;
+  const getGroupMeta = vi.fn().mockResolvedValue(
+    opts.metaAnswered === false
+      ? null
+      : {
+          groupId: GROUP_ID,
+          name: opts.freshName ?? serverName,
+          isGroup: true,
+          ...(serverNow === null ? {} : { serverNow }),
+        }
+  );
   const log = vi.fn();
   const nameSync = opts.nameSync === null ? undefined : (opts.nameSync ?? settler());
   await ensureConversationForServerGroup(listed(serverName), {
@@ -269,37 +279,49 @@ describe('the pending frame (a send with no answer) is re-sent as the same frame
     expect(after.nameSync).toBeUndefined();
   });
 
-  // The bound the receivers apply is measured on the SERVER's stamp, so only a server time proves
-  // it has passed - never this device's clock, which may run ahead (a valid frame shelved) or behind.
-  const accepted = (serverTimestamp: number) =>
-    ({
-      id: 'r1',
-      senderId: 'u2',
-      content: 'x',
-      timestamp: new Date(serverTimestamp),
-      serverTimestamp,
-    }) as never;
-
-  it('a row the server accepted past the receivers bound proves it: not re-sent, kept unconfirmed', async () => {
+  // ROUND 7, F2: the bound the receivers apply is measured on the SERVER's clock, and a re-send past
+  // it is refused by every member while each still draws its notice. So it is read in the sweep,
+  // from the server's answer - never this device's clock, never an older server time held here.
+  it("the server's clock past the receivers bound: not re-sent, kept unconfirmed", async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const s = settler();
-    const { row: after } = await sweep(
-      pendingRow({ messages: [accepted(T + BUNDLE_SERVER_TIME_SKEW_MS + 1)] }),
-      'Old',
-      { nameSync: s }
-    );
+    const { row: after } = await sweep(pendingRow(), 'Old', {
+      nameSync: s,
+      serverNow: T + BUNDLE_SERVER_TIME_SKEW_MS + 1,
+    });
     expect(s.resend).not.toHaveBeenCalled();
     expect(after.nameSync).toEqual({ unconfirmed: PENDING });
     expect(error).toHaveBeenCalledWith(expect.stringContaining('NOT re-sent'));
     error.mockRestore();
   });
 
-  it('no server time proving the bound passed: re-sent, whatever this device clock says', async () => {
+  it('the server states no clock: the bound cannot be proven, so not re-sent - kept unconfirmed', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const s = settler();
+    const { row: after } = await sweep(pendingRow(), 'Old', { nameSync: s, serverNow: null });
+    expect(s.resend).not.toHaveBeenCalled();
+    expect(after.nameSync).toEqual({ unconfirmed: PENDING });
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('no readable clock'));
+    error.mockRestore();
+  });
+
+  it('the group row read unanswered: still pending, for the next sweep', async () => {
+    const s = settler();
+    const { row: after, log } = await sweep(pendingRow(), 'Old', {
+      nameSync: s,
+      metaAnswered: false,
+    });
+    expect(s.resend).not.toHaveBeenCalled();
+    expect(after.nameSync).toEqual({ pending: PENDING });
+    expect(said(log)).toContain('still pending');
+  });
+
+  it("within the server's bound: re-sent, whatever this device's clock says", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(T + 10 * BUNDLE_SERVER_TIME_SKEW_MS);
     try {
       const s = settler();
-      await sweep(pendingRow({ messages: [accepted(T + 1_000)] }), 'Old', { nameSync: s });
+      await sweep(pendingRow(), 'Old', { nameSync: s, serverNow: T + 1_000 });
       expect(s.resend).toHaveBeenCalled();
     } finally {
       vi.useRealTimers();

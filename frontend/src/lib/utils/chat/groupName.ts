@@ -121,7 +121,31 @@ export function withDatedGroupName(
 ): { row: Conversation } | { skipped: GroupNameSkip } {
   if ((convo.conversationType ?? 'group') !== 'group') return { skipped: 'not-a-group' };
   if (!groupNameSupersedes(next, convo)) return { skipped: 'not-newer' };
-  return { row: { ...convo, name: next.name, nameAt: next.at } };
+  const row = { ...convo, name: next.name, nameAt: next.at };
+  // A STATEMENT DATING THE VERY NAME A PENDING RENAME WAS MADE OVER dates that rename's base in the
+  // same write. The row showed the name undated when this device renamed (the server's list, or an
+  // own rename that got no server time), and every path that dates a row comes here: a replayed or
+  // live frame that set it, a join push restating it. Without this the sweep read the row as moved
+  // on (`pendingRenameVerdict` compares the date too, which is what keeps A -> B -> A from
+  // re-sending), and a rename the person was told is on its way was never sent. Only a statement
+  // from BEFORE the rename was minted dates the base: a later one restating the same name is a later
+  // statement, which the rename must not be re-sent over.
+  const pending = convo.nameSync?.pending;
+  if (
+    pending &&
+    convo.nameAt === undefined &&
+    pending.over.at === undefined &&
+    pending.over.name === next.name &&
+    next.at <= pending.sentAt
+  ) {
+    return {
+      row: withNameSync(row, {
+        ...convo.nameSync,
+        pending: { ...pending, over: { name: next.name, at: next.at } },
+      }),
+    };
+  }
+  return { row };
 }
 
 /**
@@ -135,22 +159,7 @@ export function withRestatedGroupName(
   next: DatedGroupName
 ): { row: Conversation } | { skipped: GroupNameSkip } {
   if (convo.nameAt !== undefined) return { skipped: 'already-dated' };
-  const outcome = withDatedGroupName(convo, next);
-  if (!('row' in outcome)) return outcome;
-  // THE RESTATEMENT DATES THE VERY NAME A PENDING RENAME WAS MADE OVER: the row showed it undated
-  // when this device renamed, and the members' statement of it is what the inviter relays. The
-  // rename's `over` takes that date, so the sweep still recognises its base and re-sends
-  // (`pendingRenameVerdict` compares the date too, which is what keeps A -> B -> A from re-sending).
-  const pending = outcome.row.nameSync?.pending;
-  if (pending && pending.over.at === undefined && pending.over.name === next.name) {
-    return {
-      row: withNameSync(outcome.row, {
-        ...outcome.row.nameSync,
-        pending: { ...pending, over: { name: next.name, at: next.at } },
-      }),
-    };
-  }
-  return outcome;
+  return withDatedGroupName(convo, next);
 }
 
 /**
@@ -397,8 +406,8 @@ export function pendingRenameOutcome(
  * - `resend`: the row still holds the statement the rename was made over - the same name AND the
  *   same date. A date is compared too: the members renaming Old -> B -> Old leave the row showing
  *   "Old" again, under a later date, and re-sending then put the older rename over their later
- *   statement for everyone. The one restatement that dates an undated base, a join push, dates
- *   `over` with it (`withRestatedGroupName`);
+ *   statement for everyone. A statement from before the rename dating an undated base (a replayed
+ *   frame, a join push) dates `over` in the same write (`withDatedGroupName`);
  * - `landed`: the row holds the pending name, dated - its own frame came back to it, so it reached
  *   the server and only the server's copy is still owed;
  * - `superseded`: the row holds a later statement (another name, or the same name under another
@@ -413,23 +422,6 @@ export function pendingRenameVerdict(
   if (row.name === pending.name && row.nameAt !== undefined) return 'landed';
   if (row.name !== pending.over.name) return 'superseded';
   return row.nameAt === pending.over.at ? 'resend' : 'superseded';
-}
-
-/**
- * The latest server time this device holds for the conversation - the server's acceptance of the
- * newest row it holds - or `undefined` when no row carries one. A lower bound on the server's clock
- * NOW, never this device's clock: the receivers bound a rename's server time by its `sentAt`, so
- * only a server time proves that bound has passed (`settleNameSync`).
- */
-export function latestServerTimeOf(convo: Pick<Conversation, 'messages'>): number | undefined {
-  let latest: number | undefined;
-  for (const m of convo.messages) {
-    const at = m.serverTimestamp;
-    if (typeof at === 'number' && Number.isFinite(at) && (latest === undefined || at > latest)) {
-      latest = at;
-    }
-  }
-  return latest;
 }
 
 /**

@@ -11,7 +11,6 @@ import { Log } from '$lib/utils/Log';
 import {
   GROUP_NAME_SKIP_TEXT,
   ownRenameOutcome,
-  latestServerTimeOf,
   pendingRenameVerdict,
   unconfirmedFrom,
   withNameSync,
@@ -263,9 +262,9 @@ async function recordGroupStart(
  * that no longer holds the statement it was made over - another name, or the same name under another
  * date - keeps the frame `unconfirmed`, since re-sending would put it over that statement; a row that
  * holds the name, dated, saw it land, so only the server's copy is owed. Otherwise the SAME frame is
- * re-sent (`NameSyncSettler.resend`). A frame the server's own time (the newest row it accepted here,
- * `latestServerTimeOf`) puts past the receivers' bound would be refused by every one of them, so it
- * is kept `unconfirmed`, unsent - this device's clock decides nothing here. A
+ * re-sent (`NameSyncSettler.resend`) - only within the receivers' bound as the server's clock, read in
+ * this sweep, proves it: past it every member would refuse the frame and still draw its notice, so
+ * an unprovable bound keeps it `unconfirmed`, unsent - this device's clock decides nothing here. A
  * re-send with no answer, or not made, keeps it pending; a re-send ANSWERED with a refusal that ends
  * it keeps it `unconfirmed`. Every frame this device stops re-sending may still have reached the
  * members: a member's relayed copy of its notice settles it (`ownRenameFromRelay`).
@@ -312,7 +311,18 @@ async function settleNameSync(
     await save();
   };
   const pending = start.nameSync.pending;
-  if (pending) await settlePendingRename(key, group, pending, settler, conversations, replace, log);
+  if (pending) {
+    await settlePendingRename(
+      key,
+      group,
+      pending,
+      settler,
+      mlsService,
+      conversations,
+      replace,
+      log
+    );
+  }
 
   const convo = conversations.get(key);
   const owed = convo?.nameSync?.serverCopy;
@@ -368,6 +378,7 @@ async function settlePendingRename(
   group: ServerGroupRow,
   pending: PendingRename,
   settler: NameSyncSettler,
+  mlsService: IMlsService,
   conversations: Map<string, Conversation>,
   replace: (sync: NameSync, row?: Conversation) => Promise<void>,
   log: (msg: string) => void
@@ -392,15 +403,31 @@ async function settlePendingRename(
     log(`[GROUP_NAME] ${id} pending frame came back - only the server copy owed`);
     return;
   }
-  // A SERVER TIME PROVES THE BOUND HAS PASSED, never this device's clock: the receivers measure it
-  // on the server's stamp. The newest row this device holds was accepted no later than the server's
-  // now, so once it lies past the bound every member would refuse the re-send. With no such proof
-  // the frame is re-sent, and its answer is checked by the receivers' own rule (`sendRenameFrame`).
-  const seen = latestServerTimeOf(current);
-  if (seen !== undefined && seen - pending.sentAt > BUNDLE_SERVER_TIME_SKEW_MS) {
+  // RE-SENT ONLY WITHIN A BOUND THE SERVER'S OWN CLOCK PROVES. Every receiver measures its bound on
+  // the server's stamp, and a re-send past it is refused by every one of them while each still
+  // draws the rename's notice - a notice for a name nobody took. So the server's clock is read NOW,
+  // in this sweep (`GroupMeta.serverNow`, the `Date` of its answer), never this device's clock nor
+  // an older server time it holds. Unanswered, the frame stays pending for the next sweep; answered
+  // with no time it can read, the bound cannot be proven, so it is not re-sent.
+  const meta = await mlsService.getGroupMeta(group.groupId).catch((e: unknown) => {
+    console.warn(`[GROUP_NAME] ${id} group row read failed: ${String(e).slice(0, 120)}`);
+    return null;
+  });
+  if (!meta) {
+    log(`[GROUP_NAME] ${id} still pending - the server's clock could not be read this sweep`);
+    return;
+  }
+  if (meta.serverNow === undefined) {
     await replace(unconfirmedFrom(current.nameSync, pending));
     console.error(
-      `[GROUP_NAME] ${id} NOT re-sent - the server has already accepted a row of this group more than the receivers' bound after it was minted, so every member would refuse it; kept unconfirmed, settled by a member's relayed copy if its first copy landed`
+      `[GROUP_NAME] ${id} NOT re-sent - the server's answer carried no readable clock, so whether the receivers would still take it cannot be proven; kept unconfirmed, settled by a member's relayed copy if its first copy landed`
+    );
+    return;
+  }
+  if (Math.abs(meta.serverNow - pending.sentAt) > BUNDLE_SERVER_TIME_SKEW_MS) {
+    await replace(unconfirmedFrom(current.nameSync, pending));
+    console.error(
+      `[GROUP_NAME] ${id} NOT re-sent - the server's clock lies beyond the receivers' bound from its signed sentAt, so every member would refuse it; kept unconfirmed, settled by a member's relayed copy if its first copy landed`
     );
     return;
   }
