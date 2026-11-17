@@ -3110,7 +3110,7 @@ it is not that. On a phone this is a minute of an empty conversation.
 
 ## HEAL-repair lands on a coin flip: the measurement and the root cause (2026-09-08)
 
-**Built 2026-11-17** - see [the fix](#the-fix-the-walk-advances-on-an-answer-built-2026-11-17) below; the harness batch that confirms it is owed in [backlog](../backlog.d/reading-owed-heal-repair-walks-to-the-holder.md). The row HEAL-repair and its `PASS` of 2026-09-06 were one draw of a three-sided coin (ten runs across three builds, 2026-09-08). Two candidate causes were refuted by A/B and are not to be re-opened without new evidence ([durable-rules](../durable-rules.md)).
+**Built 2026-11-17** - see [the fix](#the-fix-the-walk-advances-on-an-answer-built-2026-11-17) below; the harness batch that confirms it is owed in [backlog](../backlog.d/p2-a-repair-ask-is-absorbed-by-another-device-s-exchange.md). The row HEAL-repair and its `PASS` of 2026-09-06 were one draw of a three-sided coin (ten runs across three builds, 2026-09-08). Two candidate causes were refuted by A/B and are not to be re-opened without new evidence ([durable-rules](../durable-rules.md)).
 
 **What separates a healed run from a partial one is not the asking.** The cadence is identical: three asks about 33 s apart, `escalated: true` every time. The difference is whether any one is ANSWERED. Every PARTIAL run contains zero `[HISTORY_BUNDLE]` lines; every HEALED run contains exactly one, answering the LAST ask (172 ms after it in the sampled run), never the first.
 

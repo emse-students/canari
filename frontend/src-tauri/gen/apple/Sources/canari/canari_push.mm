@@ -5858,7 +5858,7 @@ static void (^CanariFinishOnMain(void (^handler)(void), NSString *what))(void) {
 /// the page refused it: the reaction is on screen, or its notification is off). EVERY active push
 /// comes here, keyed by its IDENTIFIER and never by its data: a content-free wake whose fetch failed
 /// or answered `gone` keeps `type=wake` in its userInfo yet still carries the reaction's collapse id.
-/// The iPhone reading is owed (backlog.d/reading-owed-ios-reaction-push-replaces-the-page-notification.md).
+/// Read on the iPhone 12 on 1.7.0-alpha.10 (docs/wiki/device-verification.md, the alpha.10 sitting).
 static void CanariPresentForegroundPush(
     UNUserNotificationCenter *center, NSString *identifier,
     void (^completionHandler)(UNNotificationPresentationOptions options)) {

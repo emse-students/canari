@@ -3340,8 +3340,7 @@ push, so the frame is their only trigger and a hidden tab or an idle window is t
 
 **What only a phone can say** (the background reading,
 [backlog](../backlog.d/reading-owed-a-reaction-to-my-message-notifies-in-the-background.md); the iOS
-identity reading, [backlog](../backlog.d/reading-owed-ios-reaction-push-replaces-the-page-notification.md),
-owed on `1.7.0`). That iOS replaces a delivered LOCAL notification by a remote one with the same
+identity reading, read PASS on `1.7.0-alpha.10` ([readings](../device-verification.md#the-phone-readings-of-2026-11-17-170-alpha10-both-phones-and-the-rig)). That iOS replaces a delivered LOCAL notification by a remote one with the same
 `apns-collapse-id` (and the reverse) is what a post's twin already relies on, and is proven by no
 test here: a reaction under Control Center shows ONE entry (a second sound on the replacement is
 acceptable), and a reaction while ACTIVE on another screen keeps an entry (the `List` answer).
