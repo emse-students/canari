@@ -1096,9 +1096,12 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     if (!this.firebaseReady('ring-end')) return { notified: 0 };
     const tokens = await this.pushTokenRepo.find({ where: { userId: In(memberIds) } });
 
+    // No `groupId` (content-free push WP-W6, owner decision N2 of 2026-11-04): Google and Apple
+    // would read which conversation a call was in. Every receiver ever shipped finds the ring by
+    // `callId` alone (Android `cancelIncomingCallNotification`, iOS `CanariEndCallKitCall` and the
+    // `canariCallId` alert sweep), so nothing a device does changes.
     const dataFields: Record<string, string> = {
       type: 'call_ring_end',
-      groupId,
       callId,
       reason,
     };
