@@ -197,8 +197,10 @@
         return;
       }
       Log.d('FormsManagerList', `${closing ? 'closing' : 'reopening'} form ${form.id.slice(0, 8)}`);
-      const { closedAt } = await setFormClosed(form.id, closing);
-      setForms(forms.map((f) => (f.id === form.id ? { ...f, closedAt } : f)));
+      const { closedAt, windowState } = await setFormClosed(form.id, closing);
+      // The answer carries the server's own verdict (`windowState`): the row never re-judges the
+      // stored end against this device's clock.
+      setForms(forms.map((f) => (f.id === form.id ? { ...f, closedAt, windowState } : f)));
       showToast(closing ? m.form_list_closed_toast() : m.form_list_reopened_toast());
     } catch (e) {
       console.error(
