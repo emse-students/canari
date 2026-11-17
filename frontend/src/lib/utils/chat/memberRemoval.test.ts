@@ -77,7 +77,12 @@ describe('removalOutcome', () => {
 
   it('purges a private channel the user just lost', () => {
     expect(
-      removalOutcome({ localUserId: me, kickedUserId: me, channelId: 'c1', channelIsPrivate: true })
+      removalOutcome({
+        localUserId: me,
+        kickedUserId: me,
+        channelId: 'c1',
+        channelIsPrivate: true,
+      })
     ).toBe('channel');
   });
 
