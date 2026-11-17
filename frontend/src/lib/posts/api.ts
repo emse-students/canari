@@ -183,15 +183,22 @@ export interface PersonalRepublicationRequestState {
 
 export interface PostEntity {
   id: string;
-  /** Omitted when the post is published as an association (`association` is set). */
+  /**
+   * The writer. On a post published under another name - an association's, or "Anonyme" - it is
+   * served only to whoever moderates the post and to the writer (`PostsService.viewerSeesWriter`,
+   * decision 11 of moderation-authority), and drawn as the small line under that name
+   * (`revealedPostAuthor`); every other reader receives none.
+   */
   authorId?: string;
   /**
    * The pencil and the bin: the post's publisher, a content moderator, or a platform admin.
    *
    * This and the two below are what the CALLING user may do with this post, one field per control,
-   * answered by the server. None of them can be derived here: `authorId` is deliberately stripped
-   * from association posts, so a client comparing ids finds no owner for the very posts an
-   * association's officers manage, and nothing in a post says whether its reader moderates the feed.
+   * answered by the server. None of them can be derived here: `authorId` is withheld from an
+   * association post's readers (its moderators and its writer aside), and the post belongs to the
+   * association rather than to its writer anyway - a client comparing ids finds no owner for the
+   * very posts an association's officers manage, and nothing in a post says whether its reader
+   * moderates the feed.
    */
   canManage?: boolean;
   /**
@@ -290,7 +297,7 @@ export interface PostEntity {
   association?: PostAssociationAuthor;
   /**
    * Fixed at creation, mutually exclusive with `association`. Strips `authorId` (and the name
-   * fields above) from every reader except a content moderator or platform admin - see
+   * fields above) from every reader except its moderators and its own author - see
    * `canUnmaskAnonymous`. Always present regardless of viewer, so the client can render the
    * generic icon even when it never received an `authorId` to draw a real avatar from.
    */

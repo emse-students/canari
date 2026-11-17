@@ -207,7 +207,7 @@ The user's two decisions, for posts, reels and comments alike:
   unshrinkable item and the republishers an item of basis 0 - the author name shrinks only once
   they are gone. The repost glyph is `aria-hidden`; the words carry it.
 - **An anonymous post or comment is NAMED "Anonyme" for every reader, with the mask avatar.** A
-  reader the server sent the author's id to - `authorId` on a post (`mustHideAnonymousAuthor`:
+  reader the server sent the author's id to - `authorId` on a post (`viewerSeesWriter`:
   the author, a content moderator, a platform admin), `userId` on a comment (`serveComment`: the
   writer, a content moderator, a platform admin) - also gets ONE small line under the name: a mask
   glyph and the real name linking the profile (`RevealedAuthorLine`, mounted from
@@ -220,6 +220,13 @@ The user's two decisions, for posts, reels and comments alike:
   header. This replaced the 2026-09-17 shape (real name and photo, an "Anonyme" badge by the time).
   Component tests per state: `PostHeader.anonymous`, `CommentItem.anonymous`, `CommentsPreview`,
   `ReelSlide`. **Read by tests only; no phone has looked at it.**
+- **An association's post names its writer to its moderators the same way (owner, 2026-11-15,
+  [decision 11](../../moderation-authority.md)).** The server serves `authorId` on it to whoever
+  moderates the post (the platform admin, a BDE whose spaces hold it) and to the writer, nobody
+  else (`viewerSeesWriter`). The association stays the name and the avatar, big; the writer is the
+  same small line, with a pen instead of the mask (`RevealedAuthorLine`, `under: 'association'`,
+  from `revealedPostAuthor`). Test: `PostHeader.anonymous` ("PostHeader association post").
+  **Read by tests only; no phone has looked at it** ([reading owed](../../backlog.d/reading-owed-association-post-writer-line.md)).
 
 **The row is ONE floating glass pill, not a band (owner, 2026-10-31, iPhone: unequal margins, a grey
 band "in the middle of nowhere").** The three tabs are a segmented control inside one `.glass-chrome`

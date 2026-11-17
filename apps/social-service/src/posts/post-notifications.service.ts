@@ -317,7 +317,7 @@ export function repostProposalTextWithheldSql(n: string): string {
 
 /**
  * What a notification ABOUT an anonymous post carries instead of the real author - the identity
- * `mustHideAnonymousAuthor` already withholds from a post's own reader, withheld here too. A
+ * `PostsService.viewerSeesWriter` already withholds from a post's own reader, withheld here too. A
  * notification has no per-viewer read-time shaping the way a post does (`actorName` is
  * denormalized onto the row at write time, per `PostNotification`'s own docblock), so the two
  * call sites that notify ABOUT an anonymous post - a mention, and `PostAnnounceScheduler`'s
