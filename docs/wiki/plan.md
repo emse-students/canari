@@ -49,7 +49,6 @@ earliest version, as a checklist.
 - [The owner's decisions of 2026-11-14](backlog.d/owner-decisions-of-2026-11-14.md)
 - [The background Welcome's warm-process refusal: two native changes](backlog.d/p3-the-background-welcome-s-warm-process-refusal-its-rate-its-wasted-round-trip.md)
 - [The owner's decisions of 2026-11-15 and 2026-11-16](backlog.d/owner-decisions-of-2026-11-16.md)
-- [Reading owed: the feed's live card follows a start and an end with no relaunch (1.7.0-alpha.6 oddities)](backlog.d/reading-owed-the-live-card-follows-a-start-and-an-end-with-no-relaunch.md)
 
 **P2 - correctness**
 
@@ -86,6 +85,7 @@ earliest version, as a checklist.
 - [P3 - EXIT-FORTIFY: closing the app on the Mi 9T logs `FORTIFY: pthread_mutex_lock called on a destroyed mutex` from the render thread](backlog.d/reading-owed-exit-fortify-closing-the-app-on-the-mi-9t-logged-fortify-pthread.md)
 - [P3 - a 13 MB upload on the iPhone restarted at about half and ran at 40 to 65 KB/s](backlog.d/p3-a-13-mb-upload-on-the-iphone-restarted-at-half-and-ran-at-40-to-65-kb-s.md)
 - [P3 - the feed offset restored after a Back from an association lands about 226 px lower than it was left (Mi 9T, `1.7.0-alpha.2`)](backlog.d/p3-the-feed-offset-restored-after-a-back-from-an-association-lands-about-226-px.md)
+- [P3 - the member form page draws a form its manager ended as open, and refuses only at "Envoyer" (read on the Mi 9T, 2026-11-17)](backlog.d/p3-the-member-form-page-draws-a-form-a-manager-ended-as-open.md)
 
 ### Readings owed
 
@@ -106,7 +106,6 @@ earliest version, as a checklist.
 - [ ] [a private salon granted late badges only what is posted after the grant](backlog.d/p3-a-private-salon-granted-late-badges-its-whole-past.md)
 - [ ] [one "server already unreachable" line per spell, read on a phone log after a real outage](backlog.d/p3-server-already-unreachable-is-logged-per-request.md)
 - [ ] [a banner in the composer's place clears the Android navigation bar (2026-11-16)](backlog.d/reading-owed-a-banner-in-the-composer-place-clears-the-navigation-bar.md)
-- [ ] [a group joined with the list in front is ordered by its admission, and drawn at once](backlog.d/reading-owed-a-group-joined-with-the-list-in-front-is-ordered-by-its-admission.md)
 - [ ] [a salon message arriving before its seed raises its badge (granted salon, in-session join)](backlog.d/reading-owed-a-salon-message-arriving-before-its-seed-raises-its-badge.md)
 - [ ] [closing a form from the list, the respondent sees "ferme", the form reopens](backlog.d/reading-owed-closing-a-form-by-hand.md)
 - [ ] [a form's respondent account fields, on a phone and on the web (owner, 2026-11-16)](backlog.d/reading-owed-form-respondent-account-fields.md)

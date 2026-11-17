@@ -1629,4 +1629,4 @@ back to the top) reads once at once, skipped only if a read is already out. Idem
 top of an open feed now reads the (small) list every 16 s even with nothing on air, as with one on air before.
 A push event (a server-sent start/end) would remove that poll; it is not built (it would need a new
 channel). Tests: `LiveFeedCard.svelte.test.ts` (a start with no card drawn; an end read on re-entry).
-Reading owed: [backlog](../../backlog.d/reading-owed-the-live-card-follows-a-start-and-an-end-with-no-relaunch.md).
+Read on the Mi 9T on `1.7.0-alpha.7` (2026-11-17, [readings](../../device-verification.md#the-mi-9t-readings-of-2026-11-17-170-alpha7-the-envoyer-a-retakes-on-section-22s-screens)): start, end and a backgrounded app all followed with no relaunch; the entry is deleted.

@@ -17,8 +17,15 @@ The three conditions, in order:
    tapped, once (pinned by `archive/ios-observables-selftest.mjs`, against a fake device). How WDA types the
    web checkbox is unknown until the page is up: the first run of condition 3 is its proof, and a mismatch
    is a one-line fix to `findTermsBox`.
-3. **NOT MET (owner/lead action, a write to the identity provider's configuration, not to its host)**: the prompt read on the Mi 9T and the iPhone. One MiConnect serves dev and production,
-   so bind `miconnect-authorization` to ONE provider first (the harness's `Canari Local`), read it on
-   both phones, then lift the hold for the eight.
+3. **HALF (2026-11-17): BOUND to ONE provider, the web read PASSED, the two phone readings are owed.** With the
+   owner's yes, the held `45-consent.yaml` was applied through the blueprint importer (the flow, prompts,
+   policies and stages only) and the harness's `miconnect-canari-local` provider alone now authorizes through
+   `miconnect-authorization`; the other eight providers were listed before and after and are unchanged. A web
+   sign-in of a test account then showed the terms page, the tick was accepted, the authorization ended on the
+   redirect, and a second authorization skipped the page. Owed: the prompt read on the Mi 9T and the iPhone 12
+   against the `Canari Local` client, then lift the hold for the eight. **Revert of the binding** (generic): in an
+   `ak shell`, set that provider's `authorization_flow` back to `default-provider-authorization-implicit-consent`;
+   the saved before-state is in the private operations folder, and the next stable's `apply-blueprints.sh` does
+   it by itself (the blueprint still names the implicit flow). The flow and stage objects may stay, inert.
 
 **The lead lifts the hold** once the three hold, and tells the user (decided 2026-10-18).
