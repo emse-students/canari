@@ -1,6 +1,8 @@
 ## P1 - rows before ratchet: what is left once a checkpoint stores the buffered rows first (raised by the second review of #3321, 2026-11-15)
 
-target: 1.7.0
+target: 1.7.1
+
+**2026-11-17 evening: the first step shipped in `1.7.0` (#3786, on dev from `1.7.0-alpha.10`); the windows left below are `1.7.1`, per the [scope cut](owner-decisions-of-2026-11-17.md#the-170-scope-cut-afternoon---it-supersedes-the-mornings-line-below). Its device reading stays [its own entry](reading-owed-rows-before-ratchet.md).**
 
 **Built (2026-11-17, #3786):** a checkpoint stores the rows the live drain's UI buffer holds BEFORE
 it exports their ratchet advance, and nothing re-enters the buffer until its write settled

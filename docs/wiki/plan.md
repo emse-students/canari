@@ -21,8 +21,6 @@ earliest version, as a checklist.
 - [P1 - Opening a community: F1-F7 BUILT, the 200 ms budget is what is left (user, 2026-10-14; state re-read 2026-10-22)](backlog.d/p1-opening-a-community-f1-f7-built-the-200-ms-budget-is-what-is-left-user-2026.md)
 - [P1 - The MiConnect terms stage reaches production with the next STABLE: three things come first (2026-10-16)](backlog.d/p1-the-miconnect-terms-stage-reaches-production-with-the-next-stable-three.md)
 - [P1 - A new member of a group conversation receives its whole past; decided 2026-10-21 that they must not](backlog.d/p1-a-new-member-of-a-group-conversation-receives-its-whole-past-decided-2026-10.md)
-- [P1 - encrypt the names of groups, communities and salons (raised 2026-10-21, tied to principle 1 of the charter on 2026-11-10)](backlog.d/p1-encrypt-the-names-of-groups-communities-and-salons.md)
-- [P1 - rows before ratchet: what is left once a checkpoint stores the buffered rows first (raised by the second review of #3321, 2026-11-15)](backlog.d/p1-rows-before-ratchet.md)
 - [P1 - media-service holds the retention durations after the deploy that adds the relay (the boot notice carries them)](backlog.d/p1-media-retention-held-after-the-deploy-that-adds-the-relay.md)
 
 **Chantiers, decisions and questions (no severity)**
@@ -45,6 +43,7 @@ earliest version, as a checklist.
 - [P2 - A community joined from another device, or just joined, is not drawn until a cold start or a reload](backlog.d/p2-a-community-joined-elsewhere-is-not-drawn-until-a-cold-start.md)
 - [P2 - a device that accuses frames falsely walks the whole online membership at every cold start (#3762)](backlog.d/p2-a-false-accuser-costs-n-online-elections-per-cold-start.md)
 - [P2 - a live ended itself (`upload-too-slow`) after 256 s on the iPhone, cause unproven](backlog.d/p2-a-live-ended-itself-upload-too-slow-after-256-s-on-the-iphone.md)
+- [P2 - a new group's invitation is refused by the creator's own other device: the group is created without the people chosen (2026-11-17)](backlog.d/p2-a-new-group-s-invitation-is-refused-by-the-creator-s-own-other-device.md)
 - [P2 - A withdrawn broadcaster can be given the right back only from a PENDING live report](backlog.d/p2-a-withdrawn-broadcaster-can-be-lifted-only-from-a-pending-live-report.md)
 - [P2 - staff have no view of a broadcaster's standing without a report, so a withdrawal is lifted only from a report row among the 50 newest](backlog.d/p2-no-staff-view-of-a-broadcaster-s-standing-without-a-report.md)
 - [P2 - The notifications list is not re-read when a push opens it while it is already mounted](backlog.d/p2-the-notifications-list-is-not-reread-when-a-push-opens-it.md)
@@ -84,9 +83,6 @@ earliest version, as a checklist.
 - [ ] [a menu ends above the iOS tab bar, and a group notification keeps its title (2026-11-16)](backlog.d/reading-owed-the-popover-and-notification-fixes-of-the-iphone-sitting.md)
 - [ ] [a native device with no push token row now says why, and registers again (production, after the `1.7.0` stable)](backlog.d/reading-owed-a-device-with-no-push-token-now-says-so.md)
 - [ ] [a reaction to my message notifies a backgrounded and a killed phone, on both platforms (2026-11-17)](backlog.d/reading-owed-a-reaction-to-my-message-notifies-in-the-background.md)
-- [ ] [a ring's end no longer names the conversation, and still stops the ring (2026-11-17)](backlog.d/reading-owed-call-ring-end-carries-no-conversation.md)
-- [ ] [the repair of a rewound sender walks to the member that holds the messages (2026-11-17)](backlog.d/reading-owed-heal-repair-walks-to-the-holder.md)
-- [ ] [on an iPhone, a reaction's push and the page's notification of it are ONE entry, and neither erases the other (2026-11-17)](backlog.d/reading-owed-ios-reaction-push-replaces-the-page-notification.md)
 - [ ] [the iPhone's one seed mirror keeps the extension's seeds through a foreground (2026-11-17)](backlog.d/reading-owed-ios-seed-mirror-one-copy.md)
 - [ ] [live moderation: the three broadcaster pushes, the withdrawal lift and the lives switch](backlog.d/reading-owed-live-moderation-pushes-lift-and-the-lives-switch.md)
 - [ ] [Minesweeper replay as a global admin](backlog.d/reading-owed-minesweeper-replay-as-a-global-admin.md)
@@ -96,13 +92,16 @@ earliest version, as a checklist.
 
 **P1 - security, or a user-facing path that is broken**
 
+- [P1 - encrypt the names of groups, communities and salons (raised 2026-10-21, tied to principle 1 of the charter on 2026-11-10)](backlog.d/p1-encrypt-the-names-of-groups-communities-and-salons.md)
 - [P1 - push payloads carry nothing for Google and Apple (owner, recorded 2026-11-01; decided and built 2026-11-02, switch OFF; raised from P2 on 2026-11-10 by principle 1 of the charter)](backlog.d/push-payloads-carry-nothing-for-google-and-apple.md)
+- [P1 - rows before ratchet: what is left once a checkpoint stores the buffered rows first (raised by the second review of #3321, 2026-11-15)](backlog.d/p1-rows-before-ratchet.md)
 - [P1 - the admission rule's fix-forward: a conversation may refuse an entry no member made only once nothing legitimate produces one](backlog.d/p1-the-admission-rule-fix-forward.md)
 
 **Chantiers, decisions and questions (no severity)**
 
 - [Group calls go peer to peer in a MESH up to 4 in audio and 3 in video, a relay SFU beyond (owner decision D-A, 2026-10-31, not built - feeds WP-C11)](backlog.d/group-calls-p2p-mesh-up-to-4-audio-3-video-decided-2026-10-31.md)
 - [CanaReels sent to community salons (RC-8): the salon send path and the salon rows of "Envoyer à..."](backlog.d/reels-in-salons.md)
+- [A push raised while the app is dead titles an unnamed group by its members' first names (owner, 2026-11-17)](backlog.d/an-unnamed-group-s-push-names-its-members-by-first-name.md)
 - [The background Welcome's warm-process refusal: two native changes](backlog.d/p3-the-background-welcome-s-warm-process-refusal-its-rate-its-wasted-round-trip.md)
 
 **P2 - correctness**
@@ -119,10 +118,10 @@ earliest version, as a checklist.
 - [P2 - a group call holds one device per user: prove the second device replaces the first](backlog.d/group-calls-one-device-per-user.md)
 - [P2 - a late write of an incoming seed can raise a floor a repair lowered since](backlog.d/p2-a-late-incoming-seed-write-can-raise-a-floor-a-repair-lowered.md)
 - [P2 - A reaction to my message notifies nobody while the app is open, on any screen (2026-11-17)](backlog.d/p2-a-reaction-to-my-message-notifies-nobody-while-the-app-is-open.md)
+- [P2 - a repair ask is absorbed by another device's exchange, and the walk never reaches the holder (reading of 2026-11-17; built as "the repair walks to the member that holds the messages")](backlog.d/p2-a-repair-ask-is-absorbed-by-another-device-s-exchange.md)
 - [P2 - an organiser testing a form by moving its opening to "now" notifies everyone who asked to be told](backlog.d/p2-an-organiser-test-of-a-form-notifies-everyone-who-asked.md)
 - [P2 - an Android blind salon banner `held=true` with the seed frame attached (2026-11-17)](backlog.d/p2-android-blind-salon-banner-held-true.md)
 - [P2 - no gate proves that an older build reads, and writes back, the MLS state this build writes](backlog.d/p2-no-gate-proves-an-older-build-reads-the-mls-state-this-build-writes.md)
-- [P2 - one "Nouvelle discussion" panel, and groups unnamed by default (owner, 2026-11-17)](backlog.d/p2-one-new-discussion-panel-and-unnamed-groups.md)
 - [P2 - about six devices a day become orphans, nearly all of them browsers](backlog.d/p2-orphan-devices-refill-the-queue-watched-daily-cleaned-by-hand.md)
 - [P2 - every service image ships its dev dependencies in the runtime stage](backlog.d/p2-service-images-ship-their-dev-dependencies.md)
 - [P2 - a rolling replace answered two 502s once: its evidence must survive the retire first](backlog.d/p2-the-deploy-s-rolling-replace-two-posts-answered-502-across-a-release-cause.md)
@@ -137,6 +136,7 @@ earliest version, as a checklist.
 - [P3 - Connectivity stays "reachable" through a captive portal, so the send waits for the ladder (review of #2428, 2026-10-25)](backlog.d/p3-connectivity-stays-reachable-through-a-captive-portal-so-the-send-waits-for.md)
 - [P3 - `frontend/` holds three Cargo lockfiles that one `mls-core` bump must all move: one workspace](backlog.d/p2-a-cargo-bump-in-mls-core-leaves-two-committed-lockfiles-dependabot-will.md)
 - [P3 - an unsigned restored message is only marked, and a history bundle has no byte cap per chunk](backlog.d/p2-signed-authorship-of-restored-history-built-2276-owed-rig-rows-and-a-version.md)
+- [P3 - a community member's remove control does not name them for a screen reader (2026-11-17)](backlog.d/p3-a-community-member-s-remove-control-does-not-name-them.md)
 - [P3 - a live that ends normally makes every viewer log a warning (2026-11-17)](backlog.d/p3-a-live-that-ends-normally-warns-on-every-viewer.md)
 - [P3 - the dev estate logs one CSP `inline script` refusal on every page load](backlog.d/p3-dev-logs-a-csp-inline-script-error-on-every-page-load.md)
 - [P3 - a lives integration spec failed once: the association's live pushed to nobody](backlog.d/p3-flaky-lives-spec-member-live-after-association-live.md)
