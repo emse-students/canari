@@ -128,15 +128,18 @@ export function withDatedGroupName(
   // live frame that set it, a join push restating it. Without this the sweep read the row as moved
   // on (`pendingRenameVerdict` compares the date too, which is what keeps A -> B -> A from
   // re-sending), and a rename the person was told is on its way was never sent. Only a statement
-  // from BEFORE the rename was minted dates the base: a later one restating the same name is a later
-  // statement, which the rename must not be re-sent over.
+  // PROVABLY from before the rename dates the base - stamped no later than a server time this
+  // device had seen when it minted the frame, server time against server time. A later one
+  // restating the same name is a later statement, which the rename must not be re-sent over; one
+  // stamped in between cannot be told apart, and is read as later (sealed-names.md).
   const pending = convo.nameSync?.pending;
   if (
     pending &&
     convo.nameAt === undefined &&
     pending.over.at === undefined &&
     pending.over.name === next.name &&
-    next.at <= pending.sentAt
+    pending.serverSeenAt !== undefined &&
+    next.at <= pending.serverSeenAt
   ) {
     return {
       row: withNameSync(row, {
@@ -240,7 +243,20 @@ export type OwedServerCopy = { name: string; from: string };
  * with, so the re-send is the SAME frame - the receivers draw one notice under one id, and a member
  * that already took it takes the same name again. `over` is the row the rename was made over.
  */
-export type PendingRename = { name: string; messageId: string; sentAt: number; over: RenameBase };
+export type PendingRename = {
+  name: string;
+  messageId: string;
+  sentAt: number;
+  over: RenameBase;
+  /**
+   * The newest instant THE SERVER had stated to this account when the frame was minted
+   * (`serverTimeSeen`, serverClock.ts) - absent when it had stated none. A server time no later than
+   * the frame's own acceptance, so a statement the server stamped at or before it provably came
+   * BEFORE the rename: what dates an undated base (`withDatedGroupName`) server time to server time,
+   * never against this device's clock.
+   */
+  serverSeenAt?: number;
+};
 
 /**
  * What this device still owes, or still does not know, about a rename it made - on the row
@@ -291,7 +307,14 @@ function parsePendingRename(raw: unknown): PendingRename | null {
   ) {
     return null;
   }
-  return { name: r.name, messageId: r.messageId, sentAt: r.sentAt, over };
+  if (r.serverSeenAt !== undefined && !positiveNumber(r.serverSeenAt)) return null;
+  return {
+    name: r.name,
+    messageId: r.messageId,
+    sentAt: r.sentAt,
+    over,
+    ...(r.serverSeenAt !== undefined ? { serverSeenAt: r.serverSeenAt } : {}),
+  };
 }
 
 /**

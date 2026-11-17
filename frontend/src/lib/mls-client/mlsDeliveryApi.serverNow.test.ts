@@ -8,12 +8,14 @@ import { MlsDeliveryApi, serverDateOf, type MlsDeliveryFetch } from './mlsDelive
  */
 const DATE = 'Tue, 17 Nov 2026 09:00:00 GMT';
 
-function answering(headers: Record<string, string>) {
-  const fetchImpl: MlsDeliveryFetch = async () =>
-    new Response(JSON.stringify({ id: 'g1', name: 'n', isGroup: true }), {
+function answering(headers: Record<string, string>, inits: (RequestInit | undefined)[] = []) {
+  const fetchImpl: MlsDeliveryFetch = async (_input, init) => {
+    inits.push(init);
+    return new Response(JSON.stringify({ id: 'g1', name: 'n', isGroup: true }), {
       status: 200,
       headers,
     });
+  };
   return new MlsDeliveryApi({
     historyUrl: 'https://test.local',
     getToken: async () => 'tok',
@@ -38,6 +40,16 @@ describe('the server clock a group row read carries', () => {
   it("is never read from an answer that is not the API's", async () => {
     const meta = await answering({ 'content-type': 'text/plain', date: DATE }).getGroupMeta('g1');
     expect(meta?.serverNow).toBeUndefined();
+  });
+
+  it('the typed status read carries it too, from a request no cache may answer', async () => {
+    const inits: (RequestInit | undefined)[] = [];
+    const status = await answering(
+      { 'content-type': 'application/json', date: DATE },
+      inits
+    ).getGroupServerStatus('g1');
+    expect(status).toMatchObject({ groupId: 'g1', serverNow: Date.parse(DATE) });
+    expect(inits[0]?.cache).toBe('no-store');
   });
 
   it('reads nothing but a real date', () => {

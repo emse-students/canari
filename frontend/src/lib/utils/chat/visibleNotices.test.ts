@@ -30,6 +30,7 @@ import { buildHistoryDigest, diffHistoryDigest, isEmptyHistoryDiff } from './his
 import { historyStateKey } from './historyStateKey';
 import { sendVisibleNotice, type NoticeWriter } from './visibleNotices';
 import { appMessageSentAtMs } from './messageUtils';
+import { noteServerTime, resetServerClockForTests } from './serverClock';
 import { handleSystemEvent } from '$lib/mls-client/messagePipeline/systemMessageHandler';
 import { applyReplaySystemEvent } from './historySystemEvents';
 
@@ -305,6 +306,26 @@ describe('the other notices the acting device used to miss', () => {
     });
     expect(ownNotice.addMessageToChat).not.toHaveBeenCalled();
     expect(mlsService.renameGroup).not.toHaveBeenCalled();
+  });
+
+  // #3785 round 8, item 2: what dates the rename's undated base is a SERVER time, compared with the
+  // server's stamp of a statement - so the frame carries the newest one the server had stated when
+  // it was minted, never this device's clock.
+  it('an unanswered frame carries the server time this account had seen when it was minted', async () => {
+    const mlsService = createMlsServiceStub();
+    vi.mocked(mlsService.sendMessage).mockRejectedValue(new DeliveryUnreachableError('offline'));
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    resetServerClockForTests();
+    noteServerTime(ALICE, 1_790_000_000_000);
+    const out = await renameGroupAndBroadcast({
+      mlsService,
+      groupId: GROUP,
+      newName: 'Nouveau nom',
+      userId: ALICE,
+      deviceKeyB64: 'k',
+      ownNotice: own(),
+    });
+    expect(out).toMatchObject({ unanswered: { serverSeenAt: 1_790_000_000_000 } });
   });
 
   // #3785 re-review 2, P2-1: A FOLLOWER TAB'S RENAME IS HANDED TO THE LEADER, and two of the

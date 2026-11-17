@@ -147,9 +147,19 @@ push, and each device keeps it beside the row it names.
     (the server's list, or an own rename answered with no server time), and a replayed or live frame
     that set it, or a join push restating it, dates it afterwards. Every one of those paths writes
     through ONE rule (`withDatedGroupName`), which dates the pending frame's `over` in the same write
-    when the statement names that base at a time no later than the rename's `sentAt`; the frame is
-    still recognised and re-sent. Doing it in the join push only left the replay dating the row
-    alone, and a rename the person was told is on its way was never sent (#3785 round 7, F1). A row
+    when the statement names that base at a time PROVABLY before the rename; the frame is still
+    recognised and re-sent. Doing it in the join push only left the replay dating the row alone, and
+    a rename the person was told is on its way was never sent (#3785 round 7, F1). "Provably before"
+    is server time against server time, never against this device's `sentAt` (its own clock: running
+    behind, the rename was never sent; ahead, A -> B -> A reopened). The frame carries the newest
+    instant the server had stated to this account when it was minted (`PendingRename.serverSeenAt`,
+    `serverTimeSeen` in serverClock.ts), which is no later than the frame's own acceptance, and only
+    a statement stamped at or before it dates the base (#3785 round 8). **The residual:** a statement
+    of the same name stamped between that instant and the rename's acceptance cannot be told from a
+    later one, and is read as later - the frame is kept `unconfirmed`, never re-sent, and settles only
+    if its first copy landed and a member relays it. The window is the time since the server last
+    said anything to this account; a device that renames with a live link has heard from it within
+    seconds. With no server time ever seen, nothing dates the base. A row
     that holds the pending name, dated, saw it land, so only the server's copy is owed. Otherwise the
     SAME frame is re-sent (`resendPendingRename`: the same id and the same signed `sentAt`), so a
     member that already took it draws no second notice. Its outcome is a type
@@ -163,11 +173,20 @@ push, and each device keeps it beside the row it names.
     very pass: the `Date` of the delivery service's answer to the group row read
     (`GroupMeta.serverNow`, `serverDateOf`; chat-delivery exposes the header to the phone apps). It
     is never this device's clock, which may run ahead or behind, nor an older server time this
-    device holds, which says nothing of how long it was offline. The read unanswered keeps the frame
-    pending for the next sweep; answered past the bound, or with no clock it can read, the bound is
-    not proven and the frame is kept `unconfirmed`, unsent (#3785 round 7, F2). The `Date` is to the
-    second, and the residual race is one round trip wide: a frame re-sent seconds before its bound
-    can still be stamped after it.
+    device holds, which says nothing of how long it was offline. The frame is stamped AFTER that read,
+    by the send's latency (seconds, minutes on a slow link), and the `Date` is floored to the second,
+    so the late side keeps a margin: re-sent only while the server's clock is more than
+    `RENAME_RESEND_MARGIN_MS` (10 min) inside the bound. The margin is not a proof - a send slower
+    than that still crosses, and its answer comes back typed `clock`, which ends the re-sending. The
+    early side keeps the plain bound, since a later stamp only moves the frame inside it (#3785
+    round 8). The read is classified by TYPE (`getGroupServerStatus`), never by a `null` that lumps
+    a gone group with a lost answer: no answer keeps the frame pending; no live group (`absent`, or a
+    `deletedAt` tombstone) keeps it `unconfirmed`, said in a line; past the bound keeps it
+    `unconfirmed`, unsent, at ERROR. An answer with NO readable clock is an unknown, not a refusal:
+    the frame stays pending, said once per frame, and is re-sent once a clock is readable - a phone
+    build reaches the stores before production serves the exposed header, and shelving every rename
+    swept in that window lost them for good. The read is `cache: 'no-store'`, so its `Date` is the
+    server's clock now and not a stored answer's.
   - **`unconfirmed`, and the heal every stopped frame relies on.** A frame this device stopped
     re-sending may still have reached every member: its first copy's answer was lost, not the copy.
     The members then hold its notice under the id this device minted, and this device holds no row

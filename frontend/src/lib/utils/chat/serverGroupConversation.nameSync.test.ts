@@ -18,6 +18,7 @@ import type { RenameResendOutcome } from './groupActions';
 import { BUNDLE_SERVER_TIME_SKEW_MS } from './messageTime';
 import {
   ensureConversationForServerGroup,
+  RENAME_RESEND_MARGIN_MS,
   type NameSyncSettler,
   type ServerGroupRow,
 } from './serverGroupConversation';
@@ -62,29 +63,38 @@ async function sweep(
     drained?: boolean;
     /** The server's clock its answer states (`GroupMeta.serverNow`); `null` states none. */
     serverNow?: number | null;
-    /** Whether the group row read is answered at all. */
-    metaAnswered?: boolean;
+    /** What the group row read answers: a row (default), no answer, no group, a deleted one. */
+    status?: 'row' | 'error' | 'absent' | 'deleted';
   } = {}
 ) {
   const conversations = new Map<string, Conversation>([[GROUP_ID, held]]);
   const renameGroup = opts.renameGroup ?? vi.fn().mockResolvedValue(undefined);
   const serverNow = opts.serverNow === undefined ? T + 60_000 : opts.serverNow;
-  const getGroupMeta = vi.fn().mockResolvedValue(
-    opts.metaAnswered === false
-      ? null
-      : {
-          groupId: GROUP_ID,
-          name: opts.freshName ?? serverName,
-          isGroup: true,
-          ...(serverNow === null ? {} : { serverNow }),
-        }
-  );
+  const meta = {
+    groupId: GROUP_ID,
+    name: opts.freshName ?? serverName,
+    isGroup: true,
+    deletedAt: null as string | null,
+    ...(serverNow === null ? {} : { serverNow }),
+  };
+  const getGroupMeta = vi.fn().mockResolvedValue(meta);
+  const status = opts.status ?? 'row';
+  const getGroupServerStatus = vi
+    .fn()
+    .mockResolvedValue(
+      status === 'row'
+        ? meta
+        : status === 'deleted'
+          ? { ...meta, deletedAt: '2026-11-17T09:00:00.000Z' }
+          : status
+    );
   const log = vi.fn();
   const nameSync = opts.nameSync === null ? undefined : (opts.nameSync ?? settler());
   await ensureConversationForServerGroup(listed(serverName), {
     mlsService: {
       renameGroup,
       getGroupMeta,
+      getGroupServerStatus,
       isGroupDrained: () => opts.drained ?? true,
     } as unknown as IMlsService,
     userId: 'u1',
@@ -282,12 +292,13 @@ describe('the pending frame (a send with no answer) is re-sent as the same frame
   // ROUND 7, F2: the bound the receivers apply is measured on the SERVER's clock, and a re-send past
   // it is refused by every member while each still draws its notice. So it is read in the sweep,
   // from the server's answer - never this device's clock, never an older server time held here.
-  it("the server's clock past the receivers bound: not re-sent, kept unconfirmed", async () => {
+  // ROUND 8, item 1: less a margin, since the frame is stamped after that read by the send's latency.
+  it("the server's clock inside the margin before the bound: not re-sent, kept unconfirmed", async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const s = settler();
     const { row: after } = await sweep(pendingRow(), 'Old', {
       nameSync: s,
-      serverNow: T + BUNDLE_SERVER_TIME_SKEW_MS + 1,
+      serverNow: T + BUNDLE_SERVER_TIME_SKEW_MS - RENAME_RESEND_MARGIN_MS + 1,
     });
     expect(s.resend).not.toHaveBeenCalled();
     expect(after.nameSync).toEqual({ unconfirmed: PENDING });
@@ -295,26 +306,65 @@ describe('the pending frame (a send with no answer) is re-sent as the same frame
     error.mockRestore();
   });
 
-  it('the server states no clock: the bound cannot be proven, so not re-sent - kept unconfirmed', async () => {
+  it("the server's clock exactly the margin before the bound: re-sent", async () => {
+    const s = settler();
+    await sweep(pendingRow(), 'Old', {
+      nameSync: s,
+      serverNow: T + BUNDLE_SERVER_TIME_SKEW_MS - RENAME_RESEND_MARGIN_MS,
+    });
+    expect(s.resend).toHaveBeenCalled();
+  });
+
+  it("the server's clock more than the bound BEFORE the signed sentAt: not re-sent", async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const s = settler();
-    const { row: after } = await sweep(pendingRow(), 'Old', { nameSync: s, serverNow: null });
+    const { row: after } = await sweep(pendingRow(), 'Old', {
+      nameSync: s,
+      serverNow: T - BUNDLE_SERVER_TIME_SKEW_MS - 1,
+    });
     expect(s.resend).not.toHaveBeenCalled();
     expect(after.nameSync).toEqual({ unconfirmed: PENDING });
-    expect(error).toHaveBeenCalledWith(expect.stringContaining('no readable clock'));
     error.mockRestore();
   });
 
+  // ROUND 8, item 3: an unknown is not a refusal. A phone build reaches the stores before production
+  // serves the exposed header; shelving every rename swept then lost them for good.
+  it('the server states no clock: still pending, said once per frame, re-sent once a clock is readable', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const frame = { ...PENDING, messageId: 'clockless-frame-1' };
+    const held = row({ name: 'Old', nameAt: T - 1_000, nameSync: { pending: frame } });
+    const s = settler();
+    const first = await sweep(held, 'Old', { nameSync: s, serverNow: null });
+    const second = await sweep(first.row, 'Old', { nameSync: s, serverNow: null });
+    expect(s.resend).not.toHaveBeenCalled();
+    expect(second.row.nameSync).toEqual({ pending: frame });
+    expect(warn.mock.calls.filter((c) => String(c[0]).includes('no readable clock'))).toHaveLength(
+      1
+    );
+    await sweep(second.row, 'Old', { nameSync: s, serverNow: T + 1_000 });
+    expect(s.resend).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+
+  // ROUND 8, item 4: the read is answered by TYPE, never a null that lumps a gone group with a
+  // transport failure.
   it('the group row read unanswered: still pending, for the next sweep', async () => {
     const s = settler();
-    const { row: after, log } = await sweep(pendingRow(), 'Old', {
-      nameSync: s,
-      metaAnswered: false,
-    });
+    const { row: after, log } = await sweep(pendingRow(), 'Old', { nameSync: s, status: 'error' });
     expect(s.resend).not.toHaveBeenCalled();
     expect(after.nameSync).toEqual({ pending: PENDING });
     expect(said(log)).toContain('still pending');
   });
+
+  for (const status of ['absent', 'deleted'] as const) {
+    it(`a group the server holds no live row for (${status}): not re-sent, kept unconfirmed`, async () => {
+      const s = settler();
+      const { row: after, log } = await sweep(pendingRow(), 'Old', { nameSync: s, status });
+      expect(s.resend).not.toHaveBeenCalled();
+      expect(after.nameSync).toEqual({ unconfirmed: PENDING });
+      expect(said(log)).toContain('no live group');
+    });
+  }
 
   it("within the server's bound: re-sent, whatever this device's clock says", async () => {
     vi.useFakeTimers();

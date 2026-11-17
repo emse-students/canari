@@ -262,9 +262,11 @@ async function recordGroupStart(
  * that no longer holds the statement it was made over - another name, or the same name under another
  * date - keeps the frame `unconfirmed`, since re-sending would put it over that statement; a row that
  * holds the name, dated, saw it land, so only the server's copy is owed. Otherwise the SAME frame is
- * re-sent (`NameSyncSettler.resend`) - only within the receivers' bound as the server's clock, read in
- * this sweep, proves it: past it every member would refuse the frame and still draw its notice, so
- * an unprovable bound keeps it `unconfirmed`, unsent - this device's clock decides nothing here. A
+ * re-sent (`NameSyncSettler.resend`) - only within the receivers' bound, less a margin for the
+ * send's own latency (`RENAME_RESEND_MARGIN_MS`), as the server's clock read in this sweep proves it:
+ * past it every member would refuse the frame and still draw its notice, so it is kept `unconfirmed`,
+ * unsent. No answer to that read, or an answer with no readable clock, keeps it pending; a group the
+ * server holds no live row for keeps it `unconfirmed` - this device's clock decides nothing here. A
  * re-send with no answer, or not made, keeps it pending; a re-send ANSWERED with a refusal that ends
  * it keeps it `unconfirmed`. Every frame this device stops re-sending may still have reached the
  * members: a member's relayed copy of its notice settles it (`ownRenameFromRelay`).
@@ -407,27 +409,40 @@ async function settlePendingRename(
   // the server's stamp, and a re-send past it is refused by every one of them while each still
   // draws the rename's notice - a notice for a name nobody took. So the server's clock is read NOW,
   // in this sweep (`GroupMeta.serverNow`, the `Date` of its answer), never this device's clock nor
-  // an older server time it holds. Unanswered, the frame stays pending for the next sweep; answered
-  // with no time it can read, the bound cannot be proven, so it is not re-sent.
-  const meta = await mlsService.getGroupMeta(group.groupId).catch((e: unknown) => {
-    console.warn(`[GROUP_NAME] ${id} group row read failed: ${String(e).slice(0, 120)}`);
-    return null;
-  });
-  if (!meta) {
-    log(`[GROUP_NAME] ${id} still pending - the server's clock could not be read this sweep`);
+  // an older server time it holds. The group row read is answered by TYPE: no answer keeps the frame
+  // pending; a group the server holds no live row for keeps it `unconfirmed` (no member is left to
+  // re-send to); an answer with no clock it can read is an unknown, not a refusal, so the frame stays
+  // pending until one is readable - a phone build reaches the stores before production serves the
+  // exposed header, and shelving every rename swept in that window lost them for good.
+  const status = await mlsService.getGroupServerStatus(group.groupId);
+  if (status === 'error') {
+    log(`[GROUP_NAME] ${id} still pending - the group row read got no answer this sweep`);
     return;
   }
-  if (meta.serverNow === undefined) {
+  if (status === 'absent' || status.deletedAt) {
     await replace(unconfirmedFrom(current.nameSync, pending));
-    console.error(
-      `[GROUP_NAME] ${id} NOT re-sent - the server's answer carried no readable clock, so whether the receivers would still take it cannot be proven; kept unconfirmed, settled by a member's relayed copy if its first copy landed`
+    log(
+      `[GROUP_NAME] ${id} not re-sent - the server holds no live group (${status === 'absent' ? 'no row' : 'deleted'}); kept unconfirmed, settled by a member's relayed copy if its first copy landed`
     );
     return;
   }
-  if (Math.abs(meta.serverNow - pending.sentAt) > BUNDLE_SERVER_TIME_SKEW_MS) {
+  if (status.serverNow === undefined) {
+    if (!clocklessFramesSaid.has(pending.messageId)) {
+      clocklessFramesSaid.add(pending.messageId);
+      console.warn(
+        `[GROUP_NAME] ${id} still pending - the server's answer carried no readable clock (an estate older than this build?), so whether the receivers would take a re-send cannot be proven; re-sent once a clock is readable`
+      );
+    }
+    return;
+  }
+  const lead = status.serverNow - pending.sentAt;
+  if (
+    lead > BUNDLE_SERVER_TIME_SKEW_MS - RENAME_RESEND_MARGIN_MS ||
+    -lead > BUNDLE_SERVER_TIME_SKEW_MS
+  ) {
     await replace(unconfirmedFrom(current.nameSync, pending));
     console.error(
-      `[GROUP_NAME] ${id} NOT re-sent - the server's clock lies beyond the receivers' bound from its signed sentAt, so every member would refuse it; kept unconfirmed, settled by a member's relayed copy if its first copy landed`
+      `[GROUP_NAME] ${id} NOT re-sent - the server's clock lies ${lead >= 0 ? 'too close to or past' : 'beyond'} the receivers' bound from its signed sentAt, so the members could refuse it; kept unconfirmed, settled by a member's relayed copy if its first copy landed`
     );
     return;
   }
@@ -456,6 +471,23 @@ async function settlePendingRename(
     log(`[GROUP_NAME] ${id} re-sent and delivered, row kept: ${GROUP_NAME_SKIP_TEXT[own.skipped]}`);
   }
 }
+
+/**
+ * How far INSIDE the receivers' late bound a re-send must be, as the server's clock reads it in the
+ * sweep. The frame is stamped after that read, by the send's latency - seconds, minutes on a slow
+ * link - and the `Date` it is read from is floored to the second; a re-send read at the bound's last
+ * second is stamped past it, refused by every member, and each still draws its notice. Ten minutes
+ * is a margin, not a proof: a send stamped later than that after the read still crosses the bound,
+ * and its answer then comes back typed `clock` (`sendRenameFrame`), which ends the re-sending. The
+ * early side needs none: a later stamp only moves the frame inside the bound.
+ */
+export const RENAME_RESEND_MARGIN_MS = 10 * 60_000;
+
+/**
+ * The pending frames whose missing server clock this tab has already said - once per frame, not once
+ * per sweep: the state repeats on every connection until the estate serves the header.
+ */
+const clocklessFramesSaid = new Set<string>();
 
 /** The 8-character prefix every line in this file names a group by. */
 const groupIdShort = (groupId: string) => `${groupId.slice(0, 8)}...`;

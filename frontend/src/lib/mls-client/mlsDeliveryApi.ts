@@ -3044,8 +3044,11 @@ export class MlsDeliveryApi {
     serverNow: number | undefined;
   }> {
     return this.joinInFlight(`group:${groupId}`, async () => {
+      // `no-store`: the answer's `Date` is the server's clock NOW (`GroupMeta.serverNow`), which a
+      // stored answer would not be.
       const res = await this.f(`${this.historyUrl}/api/mls/groups/${encodeURIComponent(groupId)}`, {
         headers: await this.auth(),
+        cache: 'no-store',
       });
       return {
         ok: res.ok,
@@ -3156,6 +3159,8 @@ export class MlsDeliveryApi {
           ? (g as { isGroup: boolean }).isGroup
           : undefined,
       deletedAt: (g as { deletedAt?: string | null }).deletedAt ?? null,
+      // The server's clock, from its own answer (`fromApi` is established above).
+      ...(res.serverNow !== undefined ? { serverNow: res.serverNow } : {}),
       // CARRIED, and they were not. `GroupMeta` has documented these as "the discriminator a
       // destructive sweep needs" since WP-22, `decideAbsentLocalGroupFate` reads them, and this
       // mapper dropped them on the floor - so the only thing that ever kept a distribution group

@@ -627,6 +627,8 @@ describe('a replayed rename that set the base of a pending rename', () => {
     messageId: 'own-rename-1',
     sentAt: T0 + 60_000,
     over: { name: 'Old' },
+    // The server had stated a time after T0 to this account when the rename was minted.
+    serverSeenAt: T0 + 30_000,
   };
 
   it('dates the base, and the sweep verdict stays resend', async () => {

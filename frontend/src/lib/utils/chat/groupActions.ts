@@ -18,6 +18,7 @@ import { clearGroupNotReady } from './notReadyRegistry';
 import { historyRangeStart, isWithinHistoryRange } from './historyWindow';
 import { cachedHistoryStateKey } from './historyStateKey';
 import { sendVisibleNotice, type OwnNotice, type SentNotice } from './visibleNotices';
+import { serverTimeSeen } from './serverClock';
 import { readerHistorySelection } from './historyEntitlement';
 import { mintHistoryRequestId, noteHistoryAsk } from './historyAddressing';
 import {
@@ -288,7 +289,7 @@ export async function deleteGroupAndBroadcast(params: {
  */
 export type RenameResult =
   | { delivered: { nameAt: number | null; serverCopyOwed: boolean } }
-  | { unanswered: { messageId: string; sentAt: number } };
+  | { unanswered: { messageId: string; sentAt: number; serverSeenAt?: number } };
 
 /**
  * Sends one `groupRenamed` frame minted as `minted` and runs the receivers' check on its answer -
@@ -402,13 +403,17 @@ export async function renameGroupAndBroadcast(params: {
   ownNotice: Omit<OwnNotice, 'actor'>;
 }): Promise<RenameResult> {
   const { mlsService, groupId, newName, userId, ownNotice } = params;
+  // Read BEFORE the frame is minted: a server time no later than its acceptance (`PendingRename`).
+  const seen = serverTimeSeen(userId);
   const minted = { messageId: crypto.randomUUID(), sentAt: Date.now() };
   const sent = await sendRenameFrame({
     ...params,
     minted,
     ownNotice: { ...ownNotice, actor: userId },
   });
-  if (sent === 'unanswered') return { unanswered: minted };
+  if (sent === 'unanswered') {
+    return { unanswered: { ...minted, ...(seen > 0 ? { serverSeenAt: seen } : {}) } };
+  }
   const written = await writeServerCopy(mlsService, groupId, newName);
   return { delivered: { nameAt: sent.receivedAt, serverCopyOwed: !written } };
 }

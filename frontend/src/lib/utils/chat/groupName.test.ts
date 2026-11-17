@@ -218,7 +218,7 @@ describe('a rename whose frame got no answer', () => {
   });
 
   it("a join push dating the undated name a pending rename was made over dates that rename's base", () => {
-    const undated = { ...PENDING, over: { name: 'Old' } };
+    const undated = { ...PENDING, over: { name: 'Old' }, serverSeenAt: T - 100 };
     const row = rowOf(
       withRestatedGroupName(group({ name: 'Old', nameSync: { pending: undated } }), {
         name: 'Old',
@@ -234,7 +234,7 @@ describe('a rename whose frame got no answer', () => {
   // undated, so the sweep read it as superseded and never sent a rename the person was told was on
   // its way.
   it('a replayed frame that set the undated base before the rename dates that base: still re-sent', () => {
-    const undated = { ...PENDING, over: { name: 'Old' } };
+    const undated = { ...PENDING, over: { name: 'Old' }, serverSeenAt: T - 100 };
     const row = rowOf(
       applyRenameFrame(
         group({ name: 'Old', nameSync: { pending: undated } }),
@@ -258,6 +258,41 @@ describe('a rename whose frame got no answer', () => {
     );
     expect(row.nameSync?.pending?.over).toEqual({ name: 'Old' });
     expect(pendingRenameVerdict(row, row.nameSync!.pending!)).toBe('superseded');
+  });
+
+  // ROUND 8, item 2: SERVER TIME AGAINST SERVER TIME. The statement's stamp is the server's; this
+  // device's `sentAt` is its own clock, which may run ahead (A -> B -> A reopens) or behind (the
+  // rename is never sent). The base is dated only by a stamp no later than a server time this
+  // account had seen when it minted the frame.
+  it('a stamp before the device clock but after the server time seen at mint is not provably earlier', () => {
+    const undated = { ...PENDING, over: { name: 'Old' }, serverSeenAt: T - 1_000 };
+    const row = rowOf(
+      withDatedGroupName(group({ name: 'Old', nameSync: { pending: undated } }), {
+        name: 'Old',
+        at: T - 500,
+      })
+    );
+    expect(row.nameSync?.pending?.over).toEqual({ name: 'Old' });
+  });
+
+  it('no server time seen at mint: nothing proves the statement earlier, the base stays undated', () => {
+    const undated = { ...PENDING, sentAt: T + 10 * 60_000, over: { name: 'Old' } };
+    const row = rowOf(
+      withDatedGroupName(group({ name: 'Old', nameSync: { pending: undated } }), {
+        name: 'Old',
+        at: T - 500,
+      })
+    );
+    expect(row.nameSync?.pending?.over).toEqual({ name: 'Old' });
+  });
+
+  it('the server time seen at mint is kept through a round trip of the stored value', () => {
+    const withSeen = { ...PENDING, serverSeenAt: T - 1_000 };
+    expect(parseNameSync(JSON.stringify({ pending: withSeen }))).toEqual({ pending: withSeen });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(parseNameSync({ pending: { ...PENDING, serverSeenAt: -1 } })).toBeUndefined();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('unreadable half'));
+    error.mockRestore();
   });
 
   it('is re-sent only while the row still holds what it was made over', () => {
