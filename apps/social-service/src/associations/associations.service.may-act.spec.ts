@@ -109,7 +109,7 @@ function makeService(rows: Row[], kinds: Record<string, string> = {}) {
     undefined as never, // userTagService
     { enabled: () => false, tell: async () => 0 } as never // lydiaNotifier
   );
-  return { service, memberRepo };
+  return { service, memberRepo, assoRepo };
 }
 
 const {
@@ -530,5 +530,46 @@ describe('AssociationsService scoped event governance', () => {
     } finally {
       warn.mockRestore();
     }
+  });
+});
+
+describe('AssociationsService.commentStandings (owner, 2026-11-15, decision 4)', () => {
+  const { MODERATE } = AssociationPermissionFlag;
+
+  it('costs an ordinary reader the one membership read, and no institution query', async () => {
+    const { service, memberRepo, assoRepo } = makeService(
+      [{ userId: 'u1', associationId: 'club', permissions: POST_AS_ASSO }],
+      { inst: 'institution' }
+    );
+    await expect(service.commentStandings('u1', ['club', 'inst'])).resolves.toEqual({
+      postAs: new Set(['club']),
+      moderatedInstitutions: new Set(),
+    });
+    expect(memberRepo.find).toHaveBeenCalledTimes(1);
+    expect(assoRepo.find).not.toHaveBeenCalled();
+    expect(memberRepo.query).not.toHaveBeenCalled();
+  });
+
+  it("names the institutions whose MODERATE the reader holds, never a club's", async () => {
+    const { service } = makeService(
+      [
+        { userId: 'u1', associationId: 'inst', permissions: MODERATE },
+        { userId: 'u1', associationId: 'club', permissions: MODERATE | POST_AS_ASSO },
+      ],
+      { inst: 'institution' }
+    );
+    await expect(service.commentStandings('u1', ['club', 'inst'])).resolves.toEqual({
+      postAs: new Set(['club']),
+      moderatedInstitutions: new Set(['inst']),
+    });
+  });
+
+  it('asks nothing of an anonymous reader', async () => {
+    const { service, memberRepo } = makeService([], { inst: 'institution' });
+    await expect(service.commentStandings(undefined, ['inst'])).resolves.toEqual({
+      postAs: new Set(),
+      moderatedInstitutions: new Set(),
+    });
+    expect(memberRepo.find).not.toHaveBeenCalled();
   });
 });

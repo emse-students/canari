@@ -103,6 +103,7 @@ earliest version, as a checklist.
 - [ ] [rotation on the video, live and camera screens on both phones](backlog.d/rotation-on-video-and-camera-screens.md)
 - [ ] [overlays stacked by open order, not by rung](backlog.d/reading-owed-overlays-stacked-by-open-order-not-by-rung.md)
 - [ ] [the Emojis preference row and its neighbours at 390 pt, on a phone](backlog.d/p3-the-emojis-preference-row-squeezes-its-description-on-a-phone.md)
+- [ ] [an institution's moderator moderates its own content, and no student](backlog.d/reading-owed-an-institution-moderator-moderates-its-own-content.md)
 - [ ] [a private salon granted after an in-session join is readable on the iPhone, with its badge](backlog.d/p2-a-private-salon-granted-after-an-in-session-join-is-unreadable-on-the-iphone.md)
 - [ ] [a private salon granted late badges only what is posted after the grant](backlog.d/p3-a-private-salon-granted-late-badges-its-whole-past.md)
 - [ ] [one "server already unreachable" line per spell, read on a phone log after a real outage](backlog.d/p3-server-already-unreachable-is-logged-per-request.md)
@@ -125,10 +126,6 @@ earliest version, as a checklist.
 - [CanaReels sent to community salons (RC-8): the salon send path and the salon rows of "Envoyer à..."](backlog.d/reels-in-salons.md)
 
 ## 1.8.0
-
-**P1 - security, or a user-facing path that is broken**
-
-- [P1 - an institution's MODERATE member moderates the students of a space it governs, and not the institution's own content](backlog.d/p1-institution-moderators-moderate-their-own-content-not-students.md)
 
 **Chantiers, decisions and questions (no severity)**
 

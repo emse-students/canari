@@ -5,6 +5,7 @@
     AssociationPermissionFlag,
     BDE_ONLY_FLAGS,
     hasPermissionFlag,
+    offersBdeOnlyFlag,
   } from '$lib/associations/api';
   import { kindOffersFlag } from '$lib/associations/editSections';
   import { Trash2, ChevronDown } from '@lucide/svelte';
@@ -15,7 +16,10 @@
     displayName: string;
     /** When true, shows role editor and remove (association admins). */
     manage?: boolean;
-    /** When false, BDE-only flags (VALIDATE_EVENTS, MANAGE_ASSO, MODERATE) are hidden. */
+    /**
+     * Whether the entity governs a space: with `kind`, decides which BDE-only flag is offered
+     * (`offersBdeOnlyFlag` - MODERATE on every institution, the others only where honoured).
+     */
     isBDE?: boolean;
     /**
      * The kind of entity the member belongs to: the editor offers only the rights its sections
@@ -76,7 +80,7 @@
       { flag: AssociationPermissionFlag.MANAGE_ASSO, label: m.asso_flag_manage_asso() },
       { flag: AssociationPermissionFlag.MODERATE, label: m.asso_flag_moderate() },
     ]
-      .filter(({ flag }) => isBDE || !BDE_ONLY_FLAGS.has(flag))
+      .filter(({ flag }) => !BDE_ONLY_FLAGS.has(flag) || offersBdeOnlyFlag(kind, isBDE, flag))
       .filter(({ flag }) => BDE_ONLY_FLAGS.has(flag) || kindOffersFlag(kind, flag))
   );
 
