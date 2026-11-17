@@ -15,7 +15,11 @@
 import { ForbiddenException, ServiceUnavailableException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { MessagingController, REACTION_AT_MAX_AHEAD_MS } from './messaging.controller';
+import {
+  MessagingController,
+  REACTION_AT_MAX_AHEAD_MS,
+  REACTION_MESSAGE_ID_MAX_LENGTH,
+} from './messaging.controller';
 import { reactionCollapseId } from '../services/push-payload';
 import { MessagingService } from '../services/messaging.service';
 import { QueuedMessage } from '../entities/queued-message.entity';
@@ -340,6 +344,18 @@ describe('the relay routes refuse a caller with no seat in the group they name',
       await controller.notifyReaction(MEMBER, { ...unnamed, at: 1_700_000_000_123 });
       expect(push.mock.calls[0][3]).toHaveProperty('at', '1700000000123');
       expect(push.mock.calls[0][3]).not.toHaveProperty('collapseId');
+    });
+
+    it('hashes no message id past the bound - the stamp alone, said once', async () => {
+      const warned = jest.spyOn((controller as any).logger, 'warn').mockImplementation(() => {});
+      await controller.notifyReaction(MEMBER, {
+        ...reaction(GROUP),
+        messageId: 'm'.repeat(REACTION_MESSAGE_ID_MAX_LENGTH + 1),
+        at: 1_700_000_000_123,
+      });
+      expect(push.mock.calls[0][3]).toHaveProperty('at', '1700000000123');
+      expect(push.mock.calls[0][3]).not.toHaveProperty('collapseId');
+      expect(warned).toHaveBeenCalledTimes(1);
     });
 
     it('forwards an instant up to a day ahead of the server', async () => {

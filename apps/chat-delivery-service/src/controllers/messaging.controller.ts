@@ -36,6 +36,9 @@ import {
 import { RouteParams } from '../common/route-params';
 import { reactionCollapseId } from '../services/push-payload';
 
+/** The longest reacted-to message id `notify-reaction` hashes: a uuid is 36, a server row id shorter. */
+export const REACTION_MESSAGE_ID_MAX_LENGTH = 128;
+
 /**
  * How far ahead of this server a reaction's instant may be and still be forwarded (`notify-reaction`):
  * a day covers any phone's clock drift, and refuses a stamp no real reaction could carry.
@@ -685,7 +688,16 @@ export class MessagingController {
     // never a stamp - and a stamp is an identity on the author's devices, so a wild one is refused
     // rather than allowed to collide with or outlive the reactions it would be compared with.
     const at = Number(body.at);
-    const messageId = String(body.messageId ?? '');
+    // A message id is a server row id or a client uuid, never long: one past the bound is a client's
+    // bug, and hashing it (`reactionCollapseId` walks every character) would let a caller buy CPU
+    // with a body. Refused by length, said once, and the push then carries the stamp alone.
+    const rawMessageId = typeof body.messageId === 'string' ? body.messageId : '';
+    const messageId = rawMessageId.length <= REACTION_MESSAGE_ID_MAX_LENGTH ? rawMessageId : '';
+    if (rawMessageId && !messageId) {
+      this.logger.warn(
+        `[notify-reaction] a message id of ${rawMessageId.length} characters from ${sanitizeLogValue(callerId)} was not used: no collapse id`
+      );
+    }
     const atIsPlausible =
       Number.isSafeInteger(at) && at > 0 && at <= Date.now() + REACTION_AT_MAX_AHEAD_MS;
     // The collapse id needs the reacted-to message (`reactionCollapseId`: never the conversation).
