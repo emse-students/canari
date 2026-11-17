@@ -1008,22 +1008,15 @@ fn wipe_native_app_data(
         (Err(e), Ok(())) => Err(e),
         (Err(e), Err(w)) => Err(format!("{e}; {w}")),
     };
-    // The mirrored names also live in the iOS App Group container, which the walk above never
-    // reaches. Same policy as the account deletion: no container is logged at ERROR and returned,
-    // after everything else was removed.
+    // The mirrored names, the share and the seed mirror also live in the iOS App Group container,
+    // which the walk above never reaches ([`wipe_app_group`]). Same policy as the account deletion:
+    // no container is logged at ERROR and returned, after everything else was removed.
     #[cfg(target_os = "ios")]
     {
-        // The names copy, and the share the Share Extension left there - its manifest and its
-        // copies - which no sign-out reaches if nobody signed in (`app_group_share`).
-        let group = crate::app_group::app_group_dir().and_then(|g| {
-            let names = wipe_group_names(&g);
-            let share = crate::commands::app_group_share::wipe_group_share(&g);
-            match (names, share) {
-                (Ok(()), Ok(())) => Ok(()),
-                (Err(a), Err(b)) => Err(format!("{a}; {b}")),
-                (Err(e), Ok(())) | (Ok(()), Err(e)) => Err(e),
-            }
-        });
+        // `wipe_app_group` locks `graine_seeds.lock` in the App Group: an app suspended holding a
+        // shared-container lock is killed (`0xdead10cc`, `app_group::BackgroundTime`).
+        let _background = crate::app_group::BackgroundTime::begin(c"canari-factory-wipe");
+        let group = crate::app_group::app_group_dir().and_then(|g| wipe_app_group(&g));
         if let Err(e) = group {
             log::error!("[RESET] the App Group was not entirely wiped: {e}");
             return match wiped {
@@ -1033,6 +1026,34 @@ fn wipe_native_app_data(
         }
     }
     wiped
+}
+
+/// The App Group half of the factory wipe: the names copy, the share the Share Extension left there
+/// (its manifest and its copies, which no sign-out reaches if nobody signed in - `app_group_share`),
+/// and the Graine seed mirror, the iPhone's ONLY copy since channel-encryption section 27 (no
+/// lifecycle copy replaces it any more, so left here it would outlive the wipe). Every part is
+/// attempted; the failures are joined.
+#[cfg(any(target_os = "ios", test))]
+pub(crate) fn wipe_app_group(group: &std::path::Path) -> Result<(), String> {
+    let mut failures = Vec::new();
+    if let Err(e) = wipe_group_names(group) {
+        failures.push(e);
+    }
+    if let Err(e) = crate::commands::app_group_share::wipe_group_share(group) {
+        failures.push(e);
+    }
+    match crate::commands::push::remove_graine_mirror(group) {
+        Ok(had) => log::info!("[RESET] App Group seed mirror: removed={had}"),
+        Err(e) => {
+            log::error!("[RESET] the App Group seed mirror was not removed: {e}");
+            failures.push(e);
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; "))
+    }
 }
 
 /// Removes the App Group copies of `display_names.json` and `conversation_nicknames.json`. A factory
@@ -2143,6 +2164,25 @@ mod tests {
         assert!(group.join("push_context.json").exists());
         // Nothing to remove is a success, not a failure.
         wipe_group_names(&group).unwrap();
+        std::fs::remove_dir_all(&group).ok();
+    }
+
+    /// The factory wipe takes the App Group's seed mirror too: since channel-encryption section 27 it
+    /// is the iPhone's ONLY copy, and no lifecycle copy replaces it any more - left there, every seed
+    /// of the wiped install would outlive the wipe. Taken under the writers' lock, which stays.
+    #[test]
+    fn the_wipe_removes_the_app_group_seed_mirror() {
+        let group = temp_dir("group-seeds");
+        std::fs::write(group.join("graine_seeds.json"), b"CNSEAL1-sealed").unwrap();
+        std::fs::write(group.join("push_context.json"), b"{}").unwrap();
+
+        wipe_app_group(&group).unwrap();
+
+        assert!(!group.join("graine_seeds.json").exists());
+        assert!(group.join("graine_seeds.lock").exists());
+        assert!(group.join("push_context.json").exists());
+        // Nothing to remove is a success, not a failure.
+        wipe_app_group(&group).unwrap();
         std::fs::remove_dir_all(&group).ok();
     }
 

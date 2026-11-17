@@ -527,9 +527,10 @@ durable by construction:
 - **The registration names its session.** An access token carries `sid`, the session it was minted
   for (`signAccessToken`); `/api/auth/verify` answers it as `X-Session-Id`, nginx forwards it on every
   authenticated location (and empties a client's own), and `POST /mls/push/register` stores it in
-  `push_token."sessionId"` (chat-delivery migration 037) on every registration, null included. A row
-  written before the column, or with an access token minted before the claim, holds NULL; there is
-  no backfill.
+  `push_token."sessionId"` (chat-delivery migration 037) on every registration. A registration naming
+  no session is refused, typed `400 SESSION_UNNAMED` (never a 401/403), since verify answers a token
+  without the claim as anonymous (2026-11-17). A row written before the column, or before that
+  refusal, holds NULL; there is no backfill, and `ifBoundTo=none` still reaches it.
 - **The ending is part of the session's deletion.** The same transaction that deletes the session
   writes one `session_push_endings` row (core-service migration 016) for EVERY deliberately ended
   session, with the device it named or NULL (`DELETE ... RETURNING` for `revokeOthers`). A failure

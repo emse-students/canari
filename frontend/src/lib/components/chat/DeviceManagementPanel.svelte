@@ -29,7 +29,12 @@
     revocableDeviceId,
     type PanelRow as PanelRowOf,
   } from './deviceRowRemoval';
-  import { createDevicePanelLoader, panelStateFrom, type PanelLoadResult } from './devicePanelLoad';
+  import {
+    createDevicePanelLoader,
+    panelStateFrom,
+    settleRemoval,
+    type PanelLoadResult,
+  } from './devicePanelLoad';
 
   interface DeviceInfo {
     deviceId: string;
@@ -264,41 +269,50 @@
     }
 
     deleting = row.key;
-    // Said AFTER the reload below, which clears the panel's messages when it starts.
-    let failure = '';
-    let sessionFailure = '';
-    try {
-      const { outcome } = await removeDeviceRow(row, {
-        deleteDevice: (deviceId) => mlsService.deleteDevice(userId, deviceId),
-        revokeSession: revokeAuthSession,
-        myDeviceId,
-        devicesKnown,
-      });
-      if (outcome === 'own-device') {
-        // The server refused to ban the device this session is bound to; nothing was signed out.
-        failure = m.chat_device_remove_own_refused();
-      } else if (outcome === 'device-incomplete') {
-        // The removal did not complete; whatever is left is still listed after the reload below.
-        failure = m.chat_device_delete_retry_error();
-      } else if (outcome === 'sessions-left') {
-        // The device is gone but a credential for it survived: say so, because the two halves
-        // have different consequences and only one of them is visible in the list.
-        sessionFailure = m.settings_sessions_revoke_error();
-      } else {
-        showToast(
-          revokes ? m.chat_device_removed_toast() : m.settings_sessions_revoked_toast(),
-          'info'
-        );
-      }
-    } catch (e) {
-      console.error('[DevicePanel] Failed to remove row', e);
-      failure = revokes ? m.chat_device_remove_error() : m.settings_sessions_revoke_error();
-    } finally {
-      deleting = null;
-    }
-    await loadDeviceData();
-    if (failure) error = failure;
-    if (sessionFailure) sessionError = sessionFailure;
+    // What the removal has to say is shown AFTER the reload, which clears the messages (`settleRemoval`).
+    await settleRemoval({
+      remove: async () => {
+        try {
+          const { outcome } = await removeDeviceRow(row, {
+            deleteDevice: (deviceId) => mlsService.deleteDevice(userId, deviceId),
+            revokeSession: revokeAuthSession,
+            myDeviceId,
+            devicesKnown,
+          });
+          if (outcome === 'own-device') {
+            // The server refused to ban the device this session is bound to; nothing was signed out.
+            return { failure: m.chat_device_remove_own_refused(), sessionFailure: '' };
+          }
+          if (outcome === 'device-incomplete') {
+            // The removal did not complete; whatever is left is still listed after the reload.
+            return { failure: m.chat_device_delete_retry_error(), sessionFailure: '' };
+          }
+          if (outcome === 'sessions-left') {
+            // The device is gone but a credential for it survived: say so, because the two halves
+            // have different consequences and only one of them is visible in the list.
+            return { failure: '', sessionFailure: m.settings_sessions_revoke_error() };
+          }
+          showToast(
+            revokes ? m.chat_device_removed_toast() : m.settings_sessions_revoked_toast(),
+            'info'
+          );
+          return { failure: '', sessionFailure: '' };
+        } catch (e) {
+          console.error('[DevicePanel] Failed to remove row', e);
+          const failure = revokes
+            ? m.chat_device_remove_error()
+            : m.settings_sessions_revoke_error();
+          return { failure, sessionFailure: '' };
+        } finally {
+          deleting = null;
+        }
+      },
+      reload: loadDeviceData,
+      show: ({ failure, sessionFailure }) => {
+        if (failure) error = failure;
+        if (sessionFailure) sessionError = sessionFailure;
+      },
+    });
   }
 
   function startEditing(deviceId: string) {

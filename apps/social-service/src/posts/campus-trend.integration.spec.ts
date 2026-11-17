@@ -686,6 +686,21 @@ maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
       expect((await served(P(40))).s1).toEqual({});
     });
 
+    it('a bell read of a row whose naming no longer holds logs nothing, however often it is read', async () => {
+      await follow('s1', 'e0');
+      await post(P(48), 'a', { reactions: { ...likers(T), e0: "J'aime" } });
+      expect(await announceCampusTrend({ manager, notifications }, P(48))).toBe(4);
+      await q(`UPDATE posts SET reactions = reactions - 'e0' WHERE id = $1`, [P(48)]);
+      const debug = jest.spyOn(Logger.prototype, 'debug').mockImplementation(() => undefined);
+      try {
+        expect((await served(P(48))).s1).toEqual({});
+        expect((await served(P(48))).s1).toEqual({});
+        expect(debug.mock.calls.filter(([m]) => String(m).includes('[TREND] bell'))).toEqual([]);
+      } finally {
+        debug.mockRestore();
+      }
+    });
+
     it("the bell drops the name once the post's reactors are withheld from the reader (grant only)", async () => {
       // g (Gardanne) is told of EG's post, liked by e0 whom g follows; Gardanne's e0, e1 and e2
       // are told too.
