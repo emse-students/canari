@@ -923,6 +923,7 @@
   onClose={closeNewChatModal}
   onStartDirect={handleStartDirect}
   onCreateGroup={handleCreateGroup}
+  onNameStepClose={() => (newChatError = '')}
 />
 
 <SidebarNewChannelModal

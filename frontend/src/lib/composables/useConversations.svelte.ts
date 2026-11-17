@@ -2610,7 +2610,18 @@ export function useConversations() {
     ctx.log(
       `[GROUP] created ${nameRaw.trim() ? 'a named' : 'an unnamed'} group; inviting the ${memberIds.length} person(s) chosen`
     );
-    await inviteMembersToGroupAt(outcome.key, memberIds, ctx);
+    try {
+      await inviteMembersToGroupAt(outcome.key, memberIds, ctx);
+    } catch (e) {
+      // THE GROUP EXISTS: an invitation that threw must not leave the panel open over it (a retry
+      // would create a second group) nor an unhandled rejection with no line. The panel closes on
+      // the group, which can be completed from its own member list; the cause is the line.
+      ctx.log(`[GROUP] the invitation into the new group threw: ${String(e).slice(0, 240)}`);
+      console.error(
+        `[GROUP] the group was created but inviting the chosen people threw - it can be completed from its member list`,
+        e
+      );
+    }
     return outcome;
   }
 

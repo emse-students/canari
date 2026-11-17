@@ -3,6 +3,7 @@ import type { Conversation } from '$lib/types';
 import {
   buildConversationRow,
   findDirectConversationByPeer,
+  isRawId,
   resolveDirectPeerId,
 } from './conversations';
 import { holdsGroupState } from './groupUsability';
@@ -131,6 +132,14 @@ async function repairGroupLabel(
   if (!group.isGroup) return;
   const serverName = (group.name ?? '').trim();
   if (!serverName || serverName === convo.name) return;
+  if (!convo.name.trim() || isRawId(convo.name)) {
+    // The row carried NO readable name while the server holds one: until now the list drew this
+    // group by its members' first names (`resolveConversationListPresentation`). Deliberate for an
+    // unnamed group, but for a NAMED one it is the visible end of a name that never reached us.
+    console.warn(
+      `[GROUP_LABEL] ${groupIdShort(group.groupId)} is named "${serverName}" server-side but its row held no readable name - it was drawn by its members until this repair`
+    );
+  }
   conversations.set(key, { ...convo, name: serverName, contactName: serverName });
   log(
     `[DISCOVERY] ${groupIdShort(group.groupId)} relabelled "${convo.name}" -> "${serverName}" (the server is the authority on a group's name)`

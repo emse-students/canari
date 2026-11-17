@@ -238,7 +238,6 @@ type StoredBodyVerdict =
   | { kind: 'held'; id: string }
   | { kind: 'upgrade'; row: StoredMessage; content: string };
 
-/** Creates and returns the reactive messaging store covering send, receive, reactions, edit, delete, replies, and media uploads. */
 /**
  * The title a notification gives a GROUP, drawn as the list draws it: an unnamed group is titled by
  * its members' first names on this device, never by its id or a blank (owner, 2026-11-17). `null`
@@ -260,6 +259,7 @@ function notificationGroupTitle(
   ).displayName;
 }
 
+/** Creates and returns the reactive messaging store covering send, receive, reactions, edit, delete, replies, and media uploads. */
 export function useMessaging() {
   const messageReactions = new SvelteMap<string, MessageReaction[]>();
   /**

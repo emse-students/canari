@@ -21,6 +21,11 @@ import {
 } from './groupTreeMembers';
 import { m } from '$lib/paraglide/messages';
 
+/** Binds a session that holds every group, answering reads with `read`. */
+function bindHeld(read: (groupId: string) => Promise<string[]>): void {
+  bindGroupTreeReader({ holds: () => true, read });
+}
+
 afterEach(() => bindGroupTreeReader(null));
 
 /** A reader whose answers the test releases one by one, in any order. */
@@ -35,7 +40,7 @@ function deferredReader() {
 describe('groupTreeMembers', () => {
   it('reads a group on sight, once, and labels it by the other members', async () => {
     const reader = vi.fn(async () => ['me:d1', 'alice:d1', 'bob:d2', 'alice:d3']);
-    bindGroupTreeReader(reader);
+    bindHeld(reader);
 
     expect(unnamedGroupLabelOf('g1', 'me')).toBeNull();
     ensureGroupTreeMembers('g1');
@@ -49,7 +54,7 @@ describe('groupTreeMembers', () => {
 
   it('follows a departure when the tree changes', async () => {
     let leaves = ['me:d1', 'alice:d1', 'bob:d2'];
-    bindGroupTreeReader(async () => leaves);
+    bindHeld(async () => leaves);
     await refreshGroupTreeMembers('g1', 'test');
     leaves = ['me:d1', 'alice:d1'];
     noteGroupTreeChanged('g1', 'commit');
@@ -58,7 +63,7 @@ describe('groupTreeMembers', () => {
 
   it('keeps the NEWEST read when two straddle a commit and the older answers last', async () => {
     const { reader, calls } = deferredReader();
-    bindGroupTreeReader(reader);
+    bindHeld(reader);
     const older = refreshGroupTreeMembers('g1', 'first');
     const newer = refreshGroupTreeMembers('g1', 'commit');
     calls[1].resolve(['me:d1', 'alice:d1']);
@@ -68,24 +73,42 @@ describe('groupTreeMembers', () => {
     expect(groupTreeMemberIds('g1')).toEqual(['alice', 'me']);
   });
 
-  it('leaves a group this device does not hold unlabelled', async () => {
-    bindGroupTreeReader(async () => {
-      throw new Error('Group not found');
-    });
+  it('asks whether a group is held and reads nothing when it is not', async () => {
+    const read = vi.fn(async () => ['me:d1', 'alice:d1']);
+    bindGroupTreeReader({ holds: () => false, read });
     await refreshGroupTreeMembers('g1', 'test');
+    expect(read).not.toHaveBeenCalled();
     expect(groupTreeMemberIds('g1')).toBeUndefined();
   });
 
+  it('warns on a held group that cannot be read and retries it on the next sight', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let fail = true;
+    const read = vi.fn(async () => {
+      if (fail) throw new Error('wasm not ready');
+      return ['me:d1', 'alice:d1'];
+    });
+    bindGroupTreeReader({ holds: () => true, read });
+    ensureGroupTreeMembers('g1');
+    await vi.waitFor(() => expect(warn).toHaveBeenCalled());
+    expect(groupTreeMemberIds('g1')).toBeUndefined();
+    fail = false;
+    ensureGroupTreeMembers('g1');
+    await vi.waitFor(() => expect(groupTreeMemberIds('g1')).toEqual(['alice', 'me']));
+    expect(read).toHaveBeenCalledTimes(2);
+    warn.mockRestore();
+  });
+
   it('forgets every read when the session changes', async () => {
-    bindGroupTreeReader(async () => ['me:d1', 'alice:d1']);
+    bindHeld(async () => ['me:d1', 'alice:d1']);
     await refreshGroupTreeMembers('g1', 'test');
-    bindGroupTreeReader(async () => []);
+    bindHeld(async () => []);
     expect(groupTreeMemberIds('g1')).toBeUndefined();
   });
 
   it('reads no tree on a change to a group no label was ever drawn for', async () => {
     const reader = vi.fn(async () => ['me:d1']);
-    bindGroupTreeReader(reader);
+    bindHeld(reader);
     noteGroupTreeChanged('key-group', 'commit');
     await Promise.resolve();
     expect(reader).not.toHaveBeenCalled();

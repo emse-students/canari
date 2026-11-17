@@ -24,8 +24,15 @@ import {
   resolveUserDisplayName,
 } from '$lib/utils/users/displayName';
 
-/** Reads the leaf identities (`userId:deviceId`) of a group's tree; throws when it is not held. */
-export type GroupTreeReader = (groupId: string) => Promise<string[]>;
+/**
+ * What the session offers: the FACT of holding a group (`holdsGroupState`, synchronous) and the read
+ * of its leaf identities (`userId:deviceId`), which throws when the group is not held. The fact is
+ * asked first, so a refusal is never how this module learns a group is absent.
+ */
+export interface GroupTreeReader {
+  holds: (groupId: string) => boolean;
+  read: (groupId: string) => Promise<string[]>;
+}
 
 const membersByGroup = new SvelteMap<string, readonly string[]>();
 /**
@@ -54,21 +61,33 @@ export function groupTreeMemberIds(groupId: string): readonly string[] | undefin
 
 /**
  * Re-reads `groupId`'s tree and publishes who it holds when that changed. A group this device does
- * not hold (a newcomer before its Welcome, a follower tab) has no tree to read, and its label keeps
- * the generic word: said at debug, once per read, because it is an ordinary state and not a fault.
+ * not hold (a newcomer before its Welcome, a follower tab) has no tree to read and is not asked to:
+ * its label keeps the generic word, said at debug because it is an ordinary state and not a fault.
  */
 export async function refreshGroupTreeMembers(groupId: string, why: string): Promise<void> {
   if (!reader || !groupId) return;
   const seq = ++readSeq;
   latestRead.set(groupId, seq);
-  let identities: string[];
-  try {
-    identities = await reader(groupId);
-  } catch (e) {
-    if (latestRead.get(groupId) !== seq) return;
+  if (!reader.holds(groupId)) {
+    // Asked, not learned by failing: no read is attempted. The group stays recorded as seen, so the
+    // Welcome that installs it (`noteGroupTreeChanged`) reads it then.
     membersByGroup.delete(groupId);
     console.debug(
-      `[GROUP_LABEL] ${groupId.slice(0, 8)}... tree not read after ${why} - this device does not hold it (${String(e).slice(0, 120)}); the label stays generic`
+      `[GROUP_LABEL] ${groupId.slice(0, 8)}... tree not read after ${why} - this device does not hold it; the label stays generic`
+    );
+    return;
+  }
+  let identities: string[];
+  try {
+    identities = await reader.read(groupId);
+  } catch (e) {
+    if (latestRead.get(groupId) !== seq) return;
+    // A HELD group that cannot be read is a fault (WASM not ready, a corrupt group), never an
+    // ordinary state: said at warn, and NOT recorded as read so the next sight tries again.
+    membersByGroup.delete(groupId);
+    latestRead.delete(groupId);
+    console.warn(
+      `[GROUP_LABEL] ${groupId.slice(0, 8)}... tree of a held group could not be read after ${why}: ${String(e).slice(0, 120)}; the label stays generic until the next sight`
     );
     return;
   }

@@ -45,6 +45,11 @@
      * members' first names (owner, 2026-11-17).
      */
     onCreateGroup: (name: string, memberIds: string[]) => void;
+    /**
+     * The name step was closed without creating: a group's refusal was said there, and must not
+     * linger above the 1:1 choice, where it would read as the refusal of something else.
+     */
+    onNameStepClose?: () => void;
   }
 
   let {
@@ -56,6 +61,7 @@
     onClose,
     onStartDirect,
     onCreateGroup,
+    onNameStepClose,
   }: Props = $props();
 
   /** The people chosen, in the order they were picked - the chips above the search. */
@@ -261,7 +267,10 @@
 -->
 <Modal
   open={open && naming}
-  onClose={() => (naming = false)}
+  onClose={() => {
+    naming = false;
+    onNameStepClose?.();
+  }}
   title={m.chat_group_name_modal_title()}
 >
   <form id="new-group-form" class="space-y-2" onsubmit={handleNameSubmit}>

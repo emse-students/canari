@@ -139,7 +139,7 @@ import { resetWelcomeSent } from '$lib/utils/chat/welcomeSent';
 import { onPeersCameOnline } from '$lib/stores/presenceStore';
 import { sendHistoryProbe } from '$lib/utils/chat/groupActions';
 import { digestIdentity } from '$lib/utils/chat/historyDigestRendezvous';
-import { canSendInGroup } from '$lib/utils/chat/groupUsability';
+import { canSendInGroup, holdsGroupState } from '$lib/utils/chat/groupUsability';
 import { measureRestoreShortfall } from '$lib/utils/chat/restoreShortfall';
 import { graineRepairHoldObserver, setGraineRuntime } from '$lib/utils/graine/runtime';
 import { clearParkedAsks } from '$lib/utils/graine/parkedAsks';
@@ -2285,7 +2285,10 @@ export async function loginImpl(
     });
 
     // An unnamed group is labelled by who its tree holds, read from THIS session's MLS state.
-    bindGroupTreeReader((groupId) => mlsService.getGroupMemberIdentities(groupId));
+    bindGroupTreeReader({
+      holds: (groupId) => holdsGroupState(mlsService, groupId),
+      read: (groupId) => mlsService.getGroupMemberIdentities(groupId),
+    });
     setupMessageHandler({
       mlsService,
       storage: ctx.getStorage(),

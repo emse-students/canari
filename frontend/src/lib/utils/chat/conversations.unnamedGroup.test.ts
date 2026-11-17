@@ -17,6 +17,11 @@ import { seedUserDisplayName } from '$lib/utils/users/displayName';
 
 const GROUP = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
 
+/** Binds a session that holds every group, answering reads with `read`. */
+function bindHeld(read: (groupId: string) => Promise<string[]>): void {
+  bindGroupTreeReader({ holds: () => true, read });
+}
+
 afterEach(() => bindGroupTreeReader(null));
 
 const present = (name: string) =>
@@ -29,7 +34,7 @@ describe('an unnamed group', () => {
   it('reads "Groupe" until its tree is read, then its members by first name', async () => {
     seedUserDisplayName('alice', 'Alice Martin', 'Alice');
     seedUserDisplayName('bob', 'Bob Durand', 'Bob');
-    bindGroupTreeReader(async () => ['me:d1', 'alice:d1', 'bob:d1']);
+    bindHeld(async () => ['me:d1', 'alice:d1', 'bob:d1']);
 
     expect(present('')).toBe(m.conversation_unnamed_group());
     await refreshGroupTreeMembers(GROUP, 'test');
@@ -40,13 +45,13 @@ describe('an unnamed group', () => {
   });
 
   it('never covers a name the group was given', async () => {
-    bindGroupTreeReader(async () => ['me:d1', 'alice:d1']);
+    bindHeld(async () => ['me:d1', 'alice:d1']);
     await refreshGroupTreeMembers(GROUP, 'test');
     expect(present('Projet Canari')).toBe('Projet Canari');
   });
 
   it('keeps "Groupe" when the viewer is alone in it', async () => {
-    bindGroupTreeReader(async () => ['me:d1', 'me:d2']);
+    bindHeld(async () => ['me:d1', 'me:d2']);
     await refreshGroupTreeMembers(GROUP, 'test');
     expect(present('')).toBe(m.conversation_unnamed_group());
   });
