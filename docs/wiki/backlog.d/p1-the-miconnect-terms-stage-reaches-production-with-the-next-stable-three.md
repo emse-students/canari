@@ -11,12 +11,13 @@ rollback and the fail-open property are in
 
 The three conditions, in order:
 1. **MET** (2026-10-18): `/legal/miconnect` answers 200 on dev.
-2. **HALF**: `login.mjs` ticks the box on the web and in the Android Custom Tab (`idpform.mjs`,
-   pinned by `archive/idpform-selftest.mjs`, never run against the live page). The iOS sheet path
-   (`signInThroughSheet`, `phone-ios.mjs`) still knows only the system consent alert, not the terms
-   page. Owed: teach it the page, or set the iPhone account's `cgu_version` (a read-modify-write of
-   the whole attributes bag).
-3. **NOT MET**: the prompt read on the Mi 9T and the iPhone. One MiConnect serves dev and production,
+2. **MET in code (2026-11-17), unrun against the live page**: `login.mjs` ticks the box on the web and in the
+   Android Custom Tab (`idpform.mjs`), and `signInThroughSheet` (`phone-ios.mjs`) now knows a `terms` stage -
+   a sheet showing a control labelled "J'ai lu les conditions d'utilisation..." is ticked, then "Continuer" is
+   tapped, once (pinned by `archive/ios-observables-selftest.mjs`, against a fake device). How WDA types the
+   web checkbox is unknown until the page is up: the first run of condition 3 is its proof, and a mismatch
+   is a one-line fix to `findTermsBox`.
+3. **NOT MET (owner/lead action, a write to the identity provider's configuration, not to its host)**: the prompt read on the Mi 9T and the iPhone. One MiConnect serves dev and production,
    so bind `miconnect-authorization` to ONE provider first (the harness's `Canari Local`), read it on
    both phones, then lift the hold for the eight.
 
