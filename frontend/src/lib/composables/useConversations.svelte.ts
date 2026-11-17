@@ -32,6 +32,7 @@ import {
   chat_unopenable_start_again_failed,
   group_rename_failed,
   group_rename_failed_clock,
+  group_rename_pending,
   common_remove_label,
 } from '$lib/paraglide/messages';
 import { showConfirm } from '$lib/stores/confirm.svelte';
@@ -52,6 +53,7 @@ import {
   GROUP_NAME_SKIP_TEXT,
   GroupRenameRefusedError,
   ownRenameOutcome,
+  pendingRenameOutcome,
 } from '$lib/utils/chat/groupName';
 import {
   fetchGroupRoster,
@@ -2793,7 +2795,13 @@ export function useConversations() {
     if (!convo) return;
     if ((convo.conversationType ?? 'group') !== 'group') return; // only named groups can be renamed
     try {
-      const { nameAt, serverCopyOwed } = await renameGroupAndBroadcast({
+      // What the row held when the rename was made over it - what the rename's unfinished business
+      // is compared with later (`groupName.ts`, `RenameBase`).
+      const over = {
+        name: convo.name,
+        ...(convo.nameAt !== undefined ? { at: convo.nameAt } : {}),
+      };
+      const result = await renameGroupAndBroadcast({
         mlsService: ctx.ensureMls(),
         groupId: convo.id,
         newName: name,
@@ -2806,7 +2814,16 @@ export function useConversations() {
       // taken before the await erased the first, and writing the name blindly overwrote the second.
       const current = conversations.get(key);
       if (current) {
-        const outcome = ownRenameOutcome(current, name, nameAt, serverCopyOwed);
+        const outcome =
+          'unanswered' in result
+            ? pendingRenameOutcome(current, { name, ...result.unanswered, over })
+            : ownRenameOutcome(
+                current,
+                name,
+                result.delivered.nameAt,
+                result.delivered.serverCopyOwed,
+                over
+              );
         if ('row' in outcome) {
           conversations.set(key, outcome.row);
           await saveConversation(key, ctx);
@@ -2816,9 +2833,18 @@ export function useConversations() {
           );
         }
       }
+      if ('unanswered' in result) {
+        // NO ANSWER IS NOT A FAILURE: the members may already hold the name. The person who typed
+        // it is told it is on its way, and the next connection re-sends the same frame.
+        showToast(group_rename_pending(), 'info');
+        ctx.log(
+          `[GROUP_NAME] rename of ${key.slice(0, 8)}… pending - re-sent at the next connection`
+        );
+        return;
+      }
       ctx.log(`Group ${key} renamed`);
     } catch (e) {
-      // The frame did not leave, or no member will take it, so nothing was renamed anywhere
+      // The server refused the frame, or no member will take it, so nothing was renamed anywhere
       // (`renameGroupAndBroadcast`): the person who typed the name is told, the panel having closed
       // already - and told to check the clock when that is what refused it (classified at the throw).
       ctx.log(`[GROUP_NAME] rename of ${key.slice(0, 8)}… failed: ${String(e).slice(0, 120)}`);

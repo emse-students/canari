@@ -100,6 +100,7 @@ import {
   boundedRestatedGroupName,
   GROUP_NAME_REFUSAL_TEXT,
   GROUP_NAME_SKIP_TEXT,
+  reportRenameRefusal,
   withRestatedGroupName,
 } from '$lib/utils/chat/groupName';
 
@@ -1171,9 +1172,7 @@ export async function handleSystemEvent(
       if (storage) await saveConversation(convoKey);
       log(`📝 Group renamed by ${senderNorm}`);
     } else if ('refused' in outcome) {
-      console.error(
-        `[GROUP_NAME] rename by ${senderNorm.slice(0, 8)} in ${convoKey.slice(0, 8)}… NOT applied: ${GROUP_NAME_REFUSAL_TEXT[outcome.refused]}`
-      );
+      reportRenameRefusal(convo.id, outcome.refused, `rename by ${senderNorm.slice(0, 8)}`);
     } else if (outcome.skipped === 'not-a-group') {
       console.warn(
         `[GROUP_NAME] rename by ${senderNorm.slice(0, 8)} in ${convoKey.slice(0, 8)}… NOT applied: ${GROUP_NAME_SKIP_TEXT[outcome.skipped]}`

@@ -2,7 +2,7 @@ import {
   SCHEMA_VERSION,
   conversationAwaitingAdmissionStatement,
   conversationNameAtStatement,
-  conversationServerNameOwedAtStatement,
+  conversationNameSyncStatement,
   conversationServerReadWatermarksStatement,
   conversationStartedAtStatement,
   isFreshDatabase,
@@ -286,10 +286,10 @@ describe('conversationNameAtStatement (v21)', () => {
       name_at: null,
     });
     expect(conversationNameAtStatement(columnsOf())).toBeNull();
-    const owed = conversationServerNameOwedAtStatement(columnsOf());
-    expect(owed).not.toBeNull();
-    engine.exec(owed!);
-    expect(conversationServerNameOwedAtStatement(columnsOf())).toBeNull();
+    const sync = conversationNameSyncStatement(columnsOf());
+    expect(sync).not.toBeNull();
+    engine.exec(sync!);
+    expect(conversationNameSyncStatement(columnsOf())).toBeNull();
     expect(SCHEMA_VERSION).toBe(21);
   });
 });

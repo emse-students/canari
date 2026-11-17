@@ -22,6 +22,7 @@ import {
   persistMlsStateAfterMutation,
   purgeLocalConversationRecord,
   isGroupActiveOnServer,
+  resendPendingRename,
 } from '$lib/utils/chat/groupActions';
 import {
   awaitProbe,
@@ -36,7 +37,11 @@ import {
 } from '$lib/utils/chat/historyDiffAnswer';
 import { pendingGroupExitIds } from '$lib/utils/chat/pendingGroupExits';
 import { welcomeSentAt } from '$lib/utils/chat/welcomeSent';
-import { ensureConversationForServerGroup } from '$lib/utils/chat/serverGroupConversation';
+import {
+  ensureConversationForServerGroup,
+  type NameSyncSettler,
+} from '$lib/utils/chat/serverGroupConversation';
+import type { NoticeWriter } from '$lib/utils/chat/visibleNotices';
 import { isGroupInCreation } from '$lib/utils/chat/groupsInCreation';
 import { retireConversation } from '$lib/utils/chat/conversations';
 import {
@@ -1148,6 +1153,8 @@ export async function discoverMissingGroups(params: {
   conversations: Map<string, Conversation>;
   saveConversation?: (key: string) => Promise<void>;
   deleteConversation?: (key: string) => Promise<void>;
+  /** Writes this device's own notice when the sweep re-sends a pending rename (`settleNameSync`). */
+  addMessageToChat: NoticeWriter;
   log: (msg: string) => void;
   /** Optional: IndexedDB access to verify messages have been migrated before purge. */
   storage?: IStorage | null;
@@ -1478,6 +1485,20 @@ export async function discoverMissingGroups(params: {
   //
   // The `existed` branch is a map scan and nothing else - no round trip, no MLS - so running it for
   // every group costs a pass over a list this function has already fetched.
+  // What a rename still owes - a frame whose send got no answer, a server copy - is settled here,
+  // by the connection sweep only (`EnsureConversationDeps.nameSync`).
+  const nameSync: NameSyncSettler = {
+    resend: (pending, groupId, contactName) =>
+      resendPendingRename({
+        mlsService,
+        groupId,
+        pending,
+        userId,
+        deviceKeyB64,
+        ownNotice: { contactName, addMessageToChat: params.addMessageToChat },
+      }),
+    now: () => Date.now(),
+  };
   for (const g of activeServerGroups) {
     await ensureConversationForServerGroup(g, {
       mlsService,
@@ -1486,6 +1507,7 @@ export async function discoverMissingGroups(params: {
       saveConversation,
       owedExits,
       log,
+      nameSync,
     });
   }
 

@@ -45,10 +45,12 @@ import { readConfirmedTree } from './confirmedTree';
 import { anyHistoryWithheldIn, historyWithheldFrom } from './historyWithheld';
 import { refusesCommitsHere } from '$lib/mls-client/stateAuthority';
 import { MemberRemovalNotCommittedError } from './memberRemovalError';
+import { isTransportFailure } from '$lib/utils/transportFailure';
 import {
   GROUP_NAME_REFUSAL_TEXT,
   GroupRenameRefusedError,
   readRenameFrame,
+  type PendingRename,
   restatedGroupName,
   type DatedGroupName,
 } from './groupName';
@@ -270,41 +272,44 @@ export async function deleteGroupAndBroadcast(params: {
 }
 
 /**
- * Renames the group: states the new name to every member in a `groupRenamed` frame FIRST, writes this
- * device's own notice under the frame's id (`sendVisibleNotice`), and only then writes the server's
- * copy.
+ * What a rename's `groupRenamed` frame came to:
+ * - `delivered`: the server answered it - `nameAt` is its acceptance time (`null` when the answer
+ *   named none), `serverCopyOwed` whether the server's copy of the name is still to be written;
+ * - `unanswered`: the send got NO ANSWER, so the server may hold the frame or not. Its fate is
+ *   UNKNOWN - never a failure, never a rename - and the frame is kept, under the id and `sentAt` it
+ *   was minted with, to be re-sent as the SAME frame at the next connection (`PendingRename`).
+ */
+export type RenameResult =
+  | { delivered: { nameAt: number | null; serverCopyOwed: boolean } }
+  | { unanswered: { messageId: string; sentAt: number } };
+
+/**
+ * Sends one `groupRenamed` frame minted as `minted` and runs the receivers' check on its answer -
+ * the one send path of a rename, the gesture's and the sweep's re-send alike.
  *
- * THE FRAME IS THE RENAME, AND IT GOES FIRST. A member's device dates a group's name by the frame that
- * stated it and no longer lets the server's undated list override that (`groupName.ts`). Writing the
- * server first meant a frame that then failed left the two disagreeing for good: undated devices and
- * older builds took the new name from the list, dated devices kept the old one. Now a frame that does
- * not leave is a failed rename that changed nothing anywhere, thrown to the caller.
+ * A TRANSPORT FAILURE IS NOT AN ANSWER (`isTransportFailure`, classified at the throw): the frame
+ * may be on the server, routed to every member, with only the answer lost - so it returns
+ * `'unanswered'`, and the caller keeps the frame pending. Reading it as "not renamed" split the group:
+ * the members took the name, this device told its user it failed. Every OTHER error is an answer (a
+ * status, a refused handover) that the frame was not taken, and is thrown.
  *
  * THE SENDER RUNS THE RECEIVERS' CHECK ON ITS OWN FRAME (`readRenameFrame`): a server time further
  * from the `sentAt` this device signed than every receiver believes - a clock off by more than a day -
- * means no member will take the name, so neither does this device nor the server's copy. Thrown as a
- * {@link GroupRenameRefusedError}, which the screen tells apart from a lost network.
- *
- * The server's copy serves only the builds that read nothing else. A failed write there, once the
- * frame is out, is not a failed rename - the members have the name - so it is not thrown: it is
- * returned as `serverCopyOwed`, which the caller records on the row (`serverNameOwedAt`) and the next
- * connection's sweep retries. The write is idempotent - it sets the same name again - so retrying it
- * renames nothing twice; what must never be retried is the FRAME, which would draw a second notice.
- *
- * @returns `nameAt`: the server's acceptance time of the frame - the date this device writes beside
- *   the new name, the one every member's copy carries - or `null` when the answer named none; and
- *   whether the server's copy is still owed.
+ * means no member takes the name, so neither does this device nor the server's copy: thrown as a
+ * {@link GroupRenameRefusedError}. The NOTICE has gone out by then and is drawn everywhere, this
+ * device included ("X renamed the group to Y") while the name stays the same everywhere: the frame
+ * cannot be checked before the server has dated it, and every device agrees on what it shows.
  */
-export async function renameGroupAndBroadcast(params: {
+async function sendRenameFrame(params: {
   mlsService: IMlsService;
   groupId: string;
   newName: string;
   userId: string;
   deviceKeyB64: string;
-  /** Where this device writes its own copy of the notice. */
-  ownNotice: Omit<OwnNotice, 'actor'>;
-}): Promise<{ nameAt: number | null; serverCopyOwed: boolean }> {
-  const { mlsService, groupId, newName, userId, deviceKeyB64, ownNotice } = params;
+  minted: { messageId: string; sentAt: number };
+  ownNotice: OwnNotice;
+}): Promise<SentNotice | 'unanswered'> {
+  const { mlsService, groupId, newName, userId, deviceKeyB64, minted, ownNotice } = params;
   let sent: SentNotice;
   try {
     sent = await sendVisibleNotice(
@@ -312,11 +317,18 @@ export async function renameGroupAndBroadcast(params: {
       groupId,
       'groupRenamed',
       { newName },
-      { ...ownNotice, actor: userId }
+      ownNotice,
+      minted
     );
   } catch (e) {
+    if (isTransportFailure(e)) {
+      console.warn(
+        `[GROUP_NAME] groupRenamed frame ${minted.messageId.slice(0, 8)} for ${groupId.slice(0, 8)}… got no answer - its fate is unknown: kept pending, re-sent under the same id at the next connection: ${String(e).slice(0, 120)}`
+      );
+      return 'unanswered';
+    }
     console.error(
-      `[GROUP_NAME] groupRenamed frame for ${groupId.slice(0, 8)}… NOT delivered - nothing was renamed, neither for the members nor on the server: ${String(e).slice(0, 120)}`
+      `[GROUP_NAME] groupRenamed frame for ${groupId.slice(0, 8)}… refused - nothing was renamed, neither for the members nor on the server: ${String(e).slice(0, 120)}`
     );
     throw e;
   } finally {
@@ -327,20 +339,93 @@ export async function renameGroupAndBroadcast(params: {
     const own = readRenameFrame(newName, sent.receivedAt, sent.sentAt);
     if ('refused' in own) {
       console.error(
-        `[GROUP_NAME] own rename of ${groupId.slice(0, 8)}… refused by the receivers' own check - ${GROUP_NAME_REFUSAL_TEXT[own.refused]} (sentAt ${sent.sentAt}, server ${sent.receivedAt}): no member takes it, so neither this device nor the server's copy does`
+        `[GROUP_NAME] own rename of ${groupId.slice(0, 8)}… refused by the receivers' own check - ${GROUP_NAME_REFUSAL_TEXT[own.refused]} (sentAt ${sent.sentAt}, server ${sent.receivedAt}): no member takes it, so neither this device nor the server's copy does (the notice is drawn everywhere all the same)`
       );
       throw new GroupRenameRefusedError(own.refused);
     }
   }
+  return sent;
+}
+
+/**
+ * Writes the server's copy of a name the members hold. `false` when the write failed: the copy is
+ * then OWED, recorded on the row by the caller and written by the next connection's sweep.
+ */
+async function writeServerCopy(
+  mlsService: IMlsService,
+  groupId: string,
+  newName: string
+): Promise<boolean> {
   try {
     await mlsService.renameGroup(groupId, newName);
+    return true;
   } catch (e) {
     console.error(
-      `[GROUP_NAME] ${groupId.slice(0, 8)}… renamed for the members, but the server's copy was not written - owed, retried at the next connection: ${String(e).slice(0, 120)}`
+      `[GROUP_NAME] ${groupId.slice(0, 8)}… renamed for the members, but the server's copy was not written - owed, written at the next connection: ${String(e).slice(0, 120)}`
     );
-    return { nameAt: sent.receivedAt, serverCopyOwed: true };
+    return false;
   }
-  return { nameAt: sent.receivedAt, serverCopyOwed: false };
+}
+
+/**
+ * Renames the group: states the new name to every member in a `groupRenamed` frame FIRST, writes this
+ * device's own notice under the frame's id (`sendVisibleNotice`), and only then writes the server's
+ * copy.
+ *
+ * THE FRAME IS THE RENAME, AND IT GOES FIRST. A member's device dates a group's name by the frame that
+ * stated it and no longer lets the server's undated list override that (`groupName.ts`). Writing the
+ * server first meant a frame that then failed left the two disagreeing for good. Now a frame the
+ * server REFUSED is a failed rename that changed nothing anywhere, thrown to the caller; a frame that
+ * got NO ANSWER is `unanswered`, its fate unknown, and kept pending ({@link sendRenameFrame}).
+ *
+ * The server's copy serves only the builds that read nothing else. A failed write there, once the
+ * frame is out, is not a failed rename - the members have the name - so it is not thrown: it is
+ * returned as `serverCopyOwed`, which the caller records on the row (`NameSync.serverCopy`) and the
+ * next connection's sweep writes, compare-and-set (`settleNameSync`).
+ */
+export async function renameGroupAndBroadcast(params: {
+  mlsService: IMlsService;
+  groupId: string;
+  newName: string;
+  userId: string;
+  deviceKeyB64: string;
+  /** Where this device writes its own copy of the notice. */
+  ownNotice: Omit<OwnNotice, 'actor'>;
+}): Promise<RenameResult> {
+  const { mlsService, groupId, newName, userId, ownNotice } = params;
+  const minted = { messageId: crypto.randomUUID(), sentAt: Date.now() };
+  const sent = await sendRenameFrame({
+    ...params,
+    minted,
+    ownNotice: { ...ownNotice, actor: userId },
+  });
+  if (sent === 'unanswered') return { unanswered: minted };
+  const written = await writeServerCopy(mlsService, groupId, newName);
+  return { delivered: { nameAt: sent.receivedAt, serverCopyOwed: !written } };
+}
+
+/**
+ * Re-sends a rename whose first send got no answer (`PendingRename`), as the SAME frame: the id and
+ * the `sentAt` it was minted with, so a member that already took it draws no second notice and takes
+ * the same name again, and the receivers bound its server time by the same signed instant. Run by
+ * the connection sweep (`settleNameSync`), which decided the row still waits for it. Thrown errors
+ * are the server's answers (and {@link GroupRenameRefusedError}); `'unanswered'` keeps it pending.
+ */
+export async function resendPendingRename(params: {
+  mlsService: IMlsService;
+  groupId: string;
+  pending: PendingRename;
+  userId: string;
+  deviceKeyB64: string;
+  ownNotice: Omit<OwnNotice, 'actor'>;
+}): Promise<SentNotice | 'unanswered'> {
+  const { pending, userId, ownNotice } = params;
+  return sendRenameFrame({
+    ...params,
+    newName: pending.name,
+    minted: { messageId: pending.messageId, sentAt: pending.sentAt },
+    ownNotice: { ...ownNotice, actor: userId },
+  });
 }
 
 /**

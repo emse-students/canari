@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   applyRenameFrame,
   boundedRestatedGroupName,
@@ -9,6 +9,10 @@ import {
   restatedGroupName,
   withDatedGroupName,
   withRestatedGroupName,
+  parseNameSync,
+  pendingRenameOutcome,
+  pendingRenameVerdict,
+  reportRenameRefusal,
 } from './groupName';
 import { BUNDLE_SERVER_TIME_SKEW_MS } from './messageTime';
 import type { Conversation } from '$lib/types';
@@ -137,34 +141,118 @@ describe('what is read off the wire, refused by its real cause', () => {
 });
 
 describe("the acting device's own rename, written over the row as it is AFTER the send", () => {
+  const OVER = { name: 'Old', at: T };
+
   it("a peer's later rename applied during the send stays", () => {
     const meanwhile = group({ name: 'B', nameAt: T + 5_000 });
-    expect(ownRenameOutcome(meanwhile, 'A', T)).toEqual({ skipped: 'not-newer' });
+    expect(ownRenameOutcome(meanwhile, 'A', T, false, OVER)).toEqual({ skipped: 'not-newer' });
   });
 
   it('dated by the answer when newer', () => {
-    expect(rowOf(ownRenameOutcome(group({ nameAt: T }), 'A', T + 1))).toMatchObject({
+    expect(rowOf(ownRenameOutcome(group({ nameAt: T }), 'A', T + 1, false, OVER))).toMatchObject({
       name: 'A',
       nameAt: T + 1,
     });
   });
 
   it('with no server time in the answer the row is written undated, never under an older date', () => {
-    const row = rowOf(ownRenameOutcome(group({ name: 'Old', nameAt: T }), 'A', null));
+    const row = rowOf(ownRenameOutcome(group({ name: 'Old', nameAt: T }), 'A', null, false, OVER));
     expect(row.name).toBe('A');
     expect('nameAt' in row).toBe(false);
   });
 
-  it('an owed server copy is recorded under the date of the name it is owed for', () => {
-    expect(rowOf(ownRenameOutcome(group({ nameAt: T }), 'A', T + 1, true))).toMatchObject({
+  it('an owed server copy is recorded by NAME and the server name it goes over', () => {
+    expect(rowOf(ownRenameOutcome(group({ nameAt: T }), 'A', T + 1, true, OVER))).toMatchObject({
       name: 'A',
       nameAt: T + 1,
-      serverNameOwedAt: T + 1,
+      nameSync: { serverCopy: { name: 'A', from: 'Old' } },
     });
   });
 
-  it('a rename whose server copy was written clears what an older one owed', () => {
-    const row = rowOf(ownRenameOutcome(group({ nameAt: T, serverNameOwedAt: T }), 'A', T + 1));
-    expect('serverNameOwedAt' in row).toBe(false);
+  it('an UNDATED rename owes its copy too - the marker is not lost with the date', () => {
+    const row = rowOf(ownRenameOutcome(group({ name: 'Old', nameAt: T }), 'A', null, true, OVER));
+    expect('nameAt' in row).toBe(false);
+    expect(row.nameSync).toEqual({ serverCopy: { name: 'A', from: 'Old' } });
+  });
+
+  it('a rename whose server copy was written clears what an older one owed, a pending frame too', () => {
+    const owing = group({
+      nameAt: T,
+      nameSync: {
+        serverCopy: { name: 'Older', from: 'X' },
+        pending: { name: 'P', messageId: 'm1', sentAt: T, over: { name: 'Older' } },
+      },
+    });
+    const row = rowOf(ownRenameOutcome(owing, 'A', T + 1, false, OVER));
+    expect('nameSync' in row).toBe(false);
+  });
+});
+
+describe('a rename whose frame got no answer', () => {
+  const PENDING = { name: 'A', messageId: 'm1', sentAt: T, over: { name: 'Old', at: T - 1 } };
+
+  it('keeps the name shown and records the frame, beside an older owed copy', () => {
+    const row = rowOf(
+      pendingRenameOutcome(
+        group({ name: 'Old', nameAt: T - 1, nameSync: { serverCopy: { name: 'Old', from: 'Z' } } }),
+        PENDING
+      )
+    );
+    expect(row.name).toBe('Old');
+    expect(row.nameAt).toBe(T - 1);
+    expect(row.nameSync).toEqual({ serverCopy: { name: 'Old', from: 'Z' }, pending: PENDING });
+  });
+
+  it('is re-sent only while the row still holds what it was made over', () => {
+    expect(pendingRenameVerdict({ name: 'Old', nameAt: T - 1 }, PENDING)).toBe('resend');
+    expect(pendingRenameVerdict({ name: 'B', nameAt: T + 9 }, PENDING)).toBe('superseded');
+    // The same name under another date is another statement, not the row it was made over.
+    expect(pendingRenameVerdict({ name: 'Old', nameAt: T + 9 }, PENDING)).toBe('superseded');
+    // Its own frame came back from the archive: it landed.
+    expect(pendingRenameVerdict({ name: 'A', nameAt: T + 2 }, PENDING)).toBe('landed');
+  });
+});
+
+describe('the stored name sync', () => {
+  const PENDING = { name: 'A', messageId: 'm1', sentAt: T, over: { name: 'Old' } };
+
+  it('round-trips through JSON, and an empty record reads as nothing owed', () => {
+    const sync = { serverCopy: { name: 'A', from: 'Old' }, pending: PENDING };
+    expect(parseNameSync(JSON.stringify(sync))).toEqual(sync);
+    expect(parseNameSync(sync)).toEqual(sync);
+    expect(parseNameSync(null)).toBeUndefined();
+    expect(parseNameSync('{}')).toBeUndefined();
+  });
+
+  it('says so when a stored value does not parse, and drops only the unreadable half', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(parseNameSync('not json')).toBeUndefined();
+    expect(
+      parseNameSync({ serverCopy: { name: 'A', from: 'Old' }, pending: { name: 'A' } })
+    ).toEqual({ serverCopy: { name: 'A', from: 'Old' } });
+    expect(error).toHaveBeenCalledTimes(2);
+    error.mockRestore();
+  });
+});
+
+describe('a refused rename frame is reported', () => {
+  it('a legacy frame without a signed sentAt is said ONCE per conversation, at INFO', () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    reportRenameRefusal('conv-legacy-1', 'no-signed-time', 'rename by abcd');
+    reportRenameRefusal('conv-legacy-1', 'no-signed-time', 'replayed rename');
+    reportRenameRefusal('conv-legacy-2', 'no-signed-time', 'rename by abcd');
+    expect(info).toHaveBeenCalledTimes(2);
+    expect(error).not.toHaveBeenCalled();
+    info.mockRestore();
+    error.mockRestore();
+  });
+
+  it('any other refusal is an error, every time', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    reportRenameRefusal('conv-x', 'server-time-out-of-bound', 'rename by abcd');
+    reportRenameRefusal('conv-x', 'server-time-out-of-bound', 'rename by abcd');
+    expect(error).toHaveBeenCalledTimes(2);
+    error.mockRestore();
   });
 });

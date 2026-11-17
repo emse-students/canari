@@ -177,15 +177,23 @@ export type SentNotice = { receivedAt: number | null; sentAt: number };
  * instant every member's copy is dated by, which a rename dates its own row with (`groupName.ts`) -
  * and the `sentAt` the frame carries, which every receiver bounds that time by: the sender runs the
  * same bound on its own frame (`renameGroupAndBroadcast`).
+ *
+ * `minted` re-sends a frame whose first send got no answer under the id and `sentAt` it was minted
+ * with (`resendPendingRename`): every device then holds one notice, under one id, whichever copy
+ * reached it.
  */
 export async function sendVisibleNotice(
   mlsService: IMlsService,
   groupId: string,
   event: VisibleNoticeEvent | 'memberLeft' | 'groupDeleted',
   payload: Record<string, unknown>,
-  own?: OwnNotice
+  own?: OwnNotice,
+  minted?: { messageId: string; sentAt: number }
 ): Promise<SentNotice> {
-  const frame = mkVisibleSystem(event, JSON.stringify(payload));
+  // A re-send is the SAME frame - the id and sentAt of the first - so the members draw one notice.
+  const frame = minted
+    ? { ...mkVisibleSystem(event, JSON.stringify(payload)), ...minted }
+    : mkVisibleSystem(event, JSON.stringify(payload));
   const noOwnRow = event === 'memberLeft' || event === 'groupDeleted' || !own;
   const text = noOwnRow ? null : await visibleNoticeContent(event, payload, own.actor);
   // From whichever tab acts: a follower's gesture hands its notice to the leader (`frameFromAnyTab`).

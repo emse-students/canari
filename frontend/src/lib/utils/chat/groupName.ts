@@ -196,32 +196,208 @@ export function applyRenameFrame(
 }
 
 /**
+ * The name - and its date, when a frame dated it - a row held when this device renamed the group
+ * over it. What the rename's unfinished business is compared with before it is acted on: a row that
+ * no longer holds it has moved on, and what was owed for the older statement is dropped.
+ */
+export type RenameBase = { name: string; at?: number };
+
+/**
+ * The server's copy of a name the members already hold, not written at the rename. `from` is the
+ * name the row held before the rename - the name this device believes the server held - and the copy
+ * is written only while the server still holds it (a compare-and-set, `settleNameSync`): a server
+ * that names something else was written by a later rename, and an owed copy never goes over it.
+ */
+export type OwedServerCopy = { name: string; from: string };
+
+/**
+ * A `groupRenamed` frame whose send got NO ANSWER: the server may or may not hold it, so its fate is
+ * unknown and it is neither a rename nor a failure. Kept with the id and the `sentAt` it was minted
+ * with, so the re-send is the SAME frame - the receivers draw one notice under one id, and a member
+ * that already took it takes the same name again. `over` is the row the rename was made over.
+ */
+export type PendingRename = { name: string; messageId: string; sentAt: number; over: RenameBase };
+
+/**
+ * What this device still owes about a rename it made, on the row (`Conversation.nameSync`), settled by
+ * the next connection's sweep - never on a clock. Both halves may stand at once: an older rename's
+ * server copy, and a newer rename whose frame is pending.
+ */
+export type NameSync = { serverCopy?: OwedServerCopy; pending?: PendingRename };
+
+const nonEmptyString = (v: unknown): v is string => typeof v === 'string' && v.trim() !== '';
+const positiveNumber = (v: unknown): v is number =>
+  typeof v === 'number' && Number.isFinite(v) && v > 0;
+
+function parseRenameBase(raw: unknown): RenameBase | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.name !== 'string') return null;
+  if (r.at !== undefined && !positiveNumber(r.at)) return null;
+  return r.at === undefined ? { name: r.name } : { name: r.name, at: r.at };
+}
+
+function parseOwedServerCopy(raw: unknown): OwedServerCopy | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  return nonEmptyString(r.name) && typeof r.from === 'string'
+    ? { name: r.name, from: r.from }
+    : null;
+}
+
+function parsePendingRename(raw: unknown): PendingRename | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  const over = parseRenameBase(r.over);
+  if (
+    !nonEmptyString(r.name) ||
+    !nonEmptyString(r.messageId) ||
+    !positiveNumber(r.sentAt) ||
+    !over
+  ) {
+    return null;
+  }
+  return { name: r.name, messageId: r.messageId, sentAt: r.sentAt, over };
+}
+
+/**
+ * `row` with its `nameSync` replaced by `sync`, the field REMOVED when nothing is owed - an empty
+ * record on a row would be a "something is owed" that names nothing.
+ */
+export function withNameSync<T extends { nameSync?: NameSync }>(row: T, sync: NameSync): T {
+  const { nameSync: _previous, ...rest } = row;
+  const kept: NameSync = {
+    ...(sync.serverCopy ? { serverCopy: sync.serverCopy } : {}),
+    ...(sync.pending ? { pending: sync.pending } : {}),
+  };
+  return (Object.keys(kept).length ? { ...rest, nameSync: kept } : rest) as T;
+}
+
+/** `{ nameSync }` when something is owed, `{}` otherwise - spread into a row being built. */
+export function nameSyncField(sync: NameSync | undefined): { nameSync?: NameSync } {
+  return withNameSync({}, sync ?? {});
+}
+
+/**
+ * Reads a stored {@link NameSync} - the JSON text of the SQLite column, or the object IndexedDB
+ * keeps. `undefined` for nothing owed (NULL, absent, an empty record). A value that does not parse
+ * is reported, never silent: it is a write this build did not make, and reads as nothing owed.
+ */
+export function parseNameSync(raw: unknown): NameSync | undefined {
+  if (raw === null || raw === undefined) return undefined;
+  let value: unknown = raw;
+  if (typeof raw === 'string') {
+    try {
+      value = JSON.parse(raw);
+    } catch {
+      console.error('[GROUP_NAME] stored nameSync is not JSON - read as nothing owed');
+      return undefined;
+    }
+  }
+  if (!value || typeof value !== 'object') {
+    console.error('[GROUP_NAME] stored nameSync is not a record - read as nothing owed');
+    return undefined;
+  }
+  const v = value as Record<string, unknown>;
+  const serverCopy = v.serverCopy === undefined ? undefined : parseOwedServerCopy(v.serverCopy);
+  const pending = v.pending === undefined ? undefined : parsePendingRename(v.pending);
+  if (serverCopy === null || pending === null) {
+    console.error('[GROUP_NAME] stored nameSync holds an unreadable half - that half is dropped');
+  }
+  return nameSyncField({ serverCopy: serverCopy ?? undefined, pending: pending ?? undefined })
+    .nameSync;
+}
+
+/**
  * What the ACTING device's own rename does to its row, re-read after the send: dated by the server
  * time its send was answered with, and written only when newer - a peer's later rename applied while
  * the send was in flight stays (`not-newer`). With no server time in the answer the row is written
  * UNDATED, honestly: keeping the previous `nameAt` beside the new name would claim a date for it
- * that belongs to another statement, and the server's list still corrects an undated name.
+ * that belongs to another statement.
  *
  * `serverCopyOwed` says the members have the name but the server's copy was not written: the row
- * then carries `serverNameOwedAt` - the date of the name whose copy is owed - which the next
- * connection's sweep settles (`settleOwedServerName`, `serverGroupConversation.ts`). A rename
- * whose copy WAS written clears whatever an older one owed: the server now holds a later name.
+ * then owes it ({@link OwedServerCopy}, keyed by the NAME and the server name it goes over, so an
+ * undated row owes it too), and the sweep that would otherwise relabel an undated row from the
+ * server's list writes the copy first (`settleNameSync`). The rename supersedes whatever an older
+ * one owed - a frame still pending included: the members now hold a later statement.
  */
 export function ownRenameOutcome(
   current: Conversation,
   name: string,
   receivedAt: number | null,
-  serverCopyOwed = false
+  serverCopyOwed: boolean,
+  over: RenameBase
 ): { row: Conversation } | { skipped: GroupNameSkip } {
+  const sync: NameSync = serverCopyOwed ? { serverCopy: { name, from: over.name } } : {};
   if (receivedAt === null) {
     if ((current.conversationType ?? 'group') !== 'group') return { skipped: 'not-a-group' };
-    const { nameAt: _undated, serverNameOwedAt: _owed, ...rest } = current;
-    return { row: { ...rest, name } };
+    const { nameAt: _undated, ...rest } = current;
+    return { row: withNameSync({ ...rest, name }, sync) };
   }
   const outcome = withDatedGroupName(current, { name, at: receivedAt });
   if (!('row' in outcome)) return outcome;
-  const { serverNameOwedAt: _previous, ...row } = outcome.row;
-  return { row: serverCopyOwed ? { ...row, serverNameOwedAt: receivedAt } : row };
+  return { row: withNameSync(outcome.row, sync) };
+}
+
+/**
+ * What a rename whose frame got NO ANSWER does to the row: the name it shows stays (the members may
+ * not have the new one, and claiming it would be a guess), and the frame is recorded as pending, to
+ * be re-sent under its own id by the next connection's sweep. An older rename's owed server copy
+ * stays beside it.
+ */
+export function pendingRenameOutcome(
+  current: Conversation,
+  pending: PendingRename
+): { row: Conversation } | { skipped: GroupNameSkip } {
+  if ((current.conversationType ?? 'group') !== 'group') return { skipped: 'not-a-group' };
+  return { row: withNameSync(current, { ...current.nameSync, pending }) };
+}
+
+/**
+ * What the sweep does with a pending rename before re-sending it, read off the row as it stands:
+ * - `resend`: the row still holds what the rename was made over, so nothing has settled it;
+ * - `landed`: the row holds the pending name, dated - this device's own frame came back to it (an
+ *   archive replay), so it reached the server and only the server's copy is still owed;
+ * - `superseded`: the row moved on to a name a later statement set - re-sending would put the older
+ *   rename back on top of it, at a later server time.
+ */
+export function pendingRenameVerdict(
+  row: Pick<Conversation, 'name' | 'nameAt'>,
+  pending: PendingRename
+): 'resend' | 'landed' | 'superseded' {
+  if (row.name === pending.name && row.nameAt !== undefined) return 'landed';
+  if (row.name === pending.over.name && row.nameAt === pending.over.at) return 'resend';
+  return 'superseded';
+}
+
+/** The conversations a rename frame without a signed `sentAt` was already reported for. */
+const legacyRenameReported = new Set<string>();
+
+/**
+ * Says why a rename frame was refused - the ONE line the live handler and the archive replay share.
+ * A frame from a build before `sentAt` existed (`no-signed-time`) is an expected LEGACY state,
+ * refused all the same since nothing bounds its server time, and said ONCE per conversation at INFO:
+ * a line repeated on every frame or replay page is a line its reader learns to skip. Every other
+ * refusal is a frame that should not exist, and is said every time, as an error.
+ *
+ * @param where who read it, for the line: "rename by abcd1234" or "replayed rename".
+ */
+export function reportRenameRefusal(
+  conversationId: string,
+  refusal: GroupNameRefusal,
+  where: string
+): void {
+  if (refusal === 'no-signed-time') {
+    if (legacyRenameReported.has(conversationId)) return;
+    legacyRenameReported.add(conversationId);
+    console.info(
+      `[GROUP_NAME] ${where} in ${conversationId.slice(0, 8)}… predates the signed sentAt - not applied (said once per conversation)`
+    );
+    return;
+  }
+  console.error(
+    `[GROUP_NAME] ${where} in ${conversationId.slice(0, 8)}… NOT applied: ${GROUP_NAME_REFUSAL_TEXT[refusal]}`
+  );
 }
 
 /**

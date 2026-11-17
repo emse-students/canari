@@ -1,3 +1,4 @@
+import type { NameSync } from '$lib/utils/chat/groupName';
 /**
  * Lifecycle state of a conversation - the SINGLE source replacing the old
  * `(isReady, deletedRemotely)` pair.
@@ -276,11 +277,11 @@ export interface Conversation {
    */
   nameAt?: number;
   /**
-   * The `nameAt` of a name this device renamed the group to whose SERVER copy is still owed: the
-   * frame reached the members, the server's write failed. Settled by the next connection's sweep,
-   * and only while the row still holds that dated name (`settleOwedServerName`). Absent: nothing owed.
+   * What this device still owes about a rename it made (`groupName.ts`, `NameSync`): the server's
+   * copy of a name its members already hold, and/or a `groupRenamed` frame whose send ended with no
+   * answer. Settled by the next connection's sweep (`settleNameSync`). Absent: nothing owed.
    */
-  serverNameOwedAt?: number;
+  nameSync?: NameSync;
   conversationType?: 'direct' | 'group' | 'channel';
   directPeerId?: string;
   /** Media-service ID of the group image (unencrypted avatar). Channels never carry one. */

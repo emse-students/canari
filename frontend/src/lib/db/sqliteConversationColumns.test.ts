@@ -92,9 +92,15 @@ describe('SqliteStorage - the dated group name v21 added (`name_at`, groupName.t
     await storage.saveConversation({
       ...conversation('g6'),
       nameAt: NAME_AT,
-      serverNameOwedAt: NAME_AT,
+      nameSync: {
+        serverCopy: { name: 'A', from: 'Old' },
+        pending: { name: 'B', messageId: 'm1', sentAt: NAME_AT, over: { name: 'A', at: NAME_AT } },
+      },
     });
-    expect((await storage.getConversation('g6'))?.serverNameOwedAt).toBe(NAME_AT);
-    expect((await storage.getConversation('g5'))?.serverNameOwedAt).toBeUndefined();
+    expect((await storage.getConversation('g6'))?.nameSync).toEqual({
+      serverCopy: { name: 'A', from: 'Old' },
+      pending: { name: 'B', messageId: 'm1', sentAt: NAME_AT, over: { name: 'A', at: NAME_AT } },
+    });
+    expect((await storage.getConversation('g5'))?.nameSync).toBeUndefined();
   });
 });

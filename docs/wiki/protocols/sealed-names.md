@@ -70,9 +70,10 @@ push, and each device keeps it beside the row it names.
   copy, and throws a `GroupRenameRefusedError`. The person is told to check the date and time
   (`group_rename_failed_clock`). The notice the frame drew stays in every member's history, and no
   device takes the name.
-- **Pre-#752 rename frames carry no signed `sentAt`.** On an archive replay they are refused all the
-  same, because nothing bounds their server time. This is an expected legacy state, so it is said once
-  per conversation at INFO, never at ERROR on every replay.
+- **Pre-#752 rename frames carry no signed `sentAt`.** They are refused all the
+  same, because nothing bounds their server time, live or replayed. This is an expected legacy state,
+  so it is said once per conversation at INFO (`reportRenameRefusal`, shared by both paths), never at
+  ERROR on every frame.
 - **Communities** have no MLS frame per salon: their state is sealed under a key handed out through the
   community's key group (Graine), the channel the seeds already travel on. A member who joins reads the
   current state, and one who left cannot open a state sealed after the rotation that removed them.
@@ -87,8 +88,9 @@ push, and each device keeps it beside the row it names.
   - `readRenameFrame` adds the bound on the signed `sentAt`;
   - `applyRenameFrame` is the one rule shared by the live path and the replay;
   - `withDatedGroupName` applies to group rows only;
-  - `withRestatedGroupName` (join push), `ownRenameOutcome`, `restatedGroupName` and
-    `boundedRestatedGroupName` cover the other paths.
+  - `withRestatedGroupName` (join push), `ownRenameOutcome`, `pendingRenameOutcome`,
+    `restatedGroupName` and `boundedRestatedGroupName` cover the other paths;
+  - `reportRenameRefusal` is the one refusal line of the live path and the replay.
 - A received `groupRenamed` frame, live (`systemMessageHandler`) and replayed (`historySystemEvents`),
   is applied only when it is newer than the held name. **This fixes a defect**: an older rename read
   after a newer one (a queue drain behind a live frame, or a replay page) used to put the old name
@@ -103,21 +105,61 @@ push, and each device keeps it beside the row it names.
 - `repairGroupLabel` corrects only an undated name. Once a frame has dated the name, the server's
   undated list no longer overrides it. A disagreement is logged once per name, with its length and
   never its text. `buildConversationRow` keeps a dated name over a site's undated one.
-- **A rename is a frame or a failure, and the frame goes first.** `renameGroupAndBroadcast` used to
-  write the server's copy first, then swallow a failed frame. Undated devices and older builds then
-  took the new name from the list while dated devices kept the old one, for good. Now the frame is
-  sent first. If it does not leave, nothing was renamed anywhere: the error is thrown, and the person
-  is told (`group_rename_failed`, a toast, because the panel has already closed). The server's copy
-  is written afterwards, for the older builds only. If that write fails once the frame is out, it is
-  logged at ERROR and not thrown, because the members already have the name. It becomes **a server
-  copy owed**: `serverNameOwedAt` on the row (local SQLite v21 column `server_name_owed_at`) records
-  the date of the name whose copy is owed. The sweep that every connection makes
-  (`settleOwedServerName`, beside `repairGroupLabel`) retries only the PATCH. That PATCH is
-  idempotent, since it sets the same name again, so the retry renames nothing twice. What must never
-  be retried is the FRAME, which would draw a second notice. The retry runs only while the row still
-  holds that dated name. Once a later name supersedes it, the owed copy is dropped unwritten, because
-  writing it would put an older name back on the server. A server list that already holds the name
-  clears the owed copy without a write.
+- **A rename is a frame, the frame goes first, and a lost answer is not a failure.**
+  `renameGroupAndBroadcast` used to write the server's copy first, then swallow a failed frame.
+  Undated devices and older builds then took the new name from the list while dated devices kept the
+  old one, for good. Now the frame is sent first, and its outcome is classified by TYPE at the throw:
+  - **the server answered and refused it** (a status, a refused tab handover): nothing was renamed
+    anywhere. The error is thrown, and the person is told (`group_rename_failed`, a toast, because the
+    panel has already closed);
+  - **the send got no answer** (`isTransportFailure`, e.g. `DeliveryUnreachableError`): the server may
+    hold the frame and every member the name, so this is an UNKNOWN outcome, never "not renamed". The
+    rename returns `unanswered` with the id and `sentAt` the frame was minted with. The row keeps the
+    name it shows and records `nameSync.pending` (`PendingRename`), and the person is told the name is
+    on its way (`group_rename_pending`). Reading it as a failure split the group: the members took the
+    name and the sender's user was told it failed (#3785 re-review, P2-b).
+- **What a rename still owes lives on the row, as `nameSync`** (local SQLite v21 column `name_sync`,
+  JSON; IndexedDB stores the object; `parseNameSync` reads both and reports an unreadable value). It
+  has two halves, settled by the sweep every connection makes (`settleNameSync`, injected into
+  `ensureConversationForServerGroup` by `discoverMissingGroups` as a `NameSyncSettler`), never on a
+  clock:
+  - **`pending`, the frame**. Read off the row first (`pendingRenameVerdict`). A row that moved on to a
+    later statement drops it, because re-sending would put the older rename back on top with a later
+    server time. A row that holds the pending name, dated, saw its own frame come back from the archive,
+    so the frame landed and only the server's copy is owed. Otherwise the SAME frame is re-sent
+    (`resendPendingRename`: the same id and the same signed `sentAt`), so a member that already took it
+    draws no second notice. Another send without an answer keeps it pending. An answered refusal drops
+    it at ERROR. A frame minted more than the 24 h bound ago is dropped unsent at ERROR, because every
+    receiver would refuse it.
+  - **`serverCopy`, the server's copy** of a name the members hold (`OwedServerCopy { name, from }`),
+    owed when the PATCH after a delivered frame fails. It is written **compare-and-set**: only while the
+    row still holds `name` AND the server's list still holds `from`, the name the row held before the
+    rename. A server that names anything else was written by a later rename. This device's sweep may
+    well run before it has read that rename's frame, so the owed copy is dropped at WARN and never
+    written over it (#3785 re-review, P2-a: A renames to X and its PATCH fails, B renames to Y and its
+    PATCH lands, A's sweep wrote X over Y). The residual race is one round trip wide: a member's write
+    landing between the list this sweep read and the write it makes. `from` is the row's name, which is
+    this device's belief about the server's copy. When the server was already behind, the copy is
+    dropped rather than written, which is the conservative side.
+  - The copy is keyed by the NAME, not the date, so a rename whose answer carried no server time (an
+    undated row) owes it too. `repairGroupLabel` never relabels a row whose name's copy is owed: the
+    list is behind by exactly that write. Without this, the sweep put the old name back on the device
+    that had renamed.
+  - **The recovery path does not settle** (`recovery.ts` passes no settler). A re-join runs before the
+    device has drained what arrived while it was out, so it would compare with a list whose later
+    rename it has not read. A row that owes something is then neither settled nor relabelled there, and
+    the next connection sweep does both, in order.
+- **On a clock refusal the notice has already gone out.** The sender can only check its frame once the
+  server has dated it, so the frame, and the notice "X renamed the group to Y", reach every member,
+  this device included. No device takes the name. Every device therefore shows the same thing: the
+  notice in the history, the old name in the header.
+- **A device that rejoins holding an older DATED name recovers the newer one only by replaying the
+  rename frame** from the archive, or through a later rename. The server's list no longer corrects a
+  dated name, and the join push's restatement is taken only onto an undated row. A rejoin replays the
+  history window, which includes the rename frame while it is inside that window. A rename older than
+  the window stays unread until the next rename (step 2's restatement does not cover it either). The
+  disagreement is logged once per name (`[DISCOVERY] ... names it differently`), so its rate is
+  measured before anything else is built for it.
 - **The acting device writes its own rename over the row as it is AFTER the send**
   (`ownRenameOutcome`). The row is dated by the server time the send was answered with, and written
   only when newer, so a peer's later rename applied while the send was in flight stays. If the answer

@@ -214,16 +214,16 @@ export function conversationNameAtStatement(columns: readonly string[]): string 
 }
 
 /**
- * The v20 -> v21 step, second column: `server_name_owed_at` (`ConversationMeta.serverNameOwedAt`),
- * the date of a name this device renamed the group to whose server copy is still owed. NULL on
- * arrival: nothing owed. Returns `null` when the column is there.
+ * The v20 -> v21 step, second column: `name_sync` (`ConversationMeta.nameSync`, JSON), what this
+ * device still owes about a rename it made - a server copy, a frame whose send ended unanswered. NULL
+ * on arrival: nothing owed. Returns `null` when the column is there.
  *
  * @param columns Column names of the `conversations` table, from `PRAGMA table_info(conversations)`.
  */
-export function conversationServerNameOwedAtStatement(columns: readonly string[]): string | null {
-  return columns.includes('server_name_owed_at')
+export function conversationNameSyncStatement(columns: readonly string[]): string | null {
+  return columns.includes('name_sync')
     ? null
-    : 'ALTER TABLE conversations ADD COLUMN server_name_owed_at INTEGER';
+    : 'ALTER TABLE conversations ADD COLUMN name_sync TEXT';
 }
 
 /**
