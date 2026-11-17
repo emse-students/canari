@@ -22,7 +22,11 @@
  * Every refusal is an UNMEASURABLE premise too: a tree with no `node_modules`, or a required
  * dependency that is not installed, grants nothing.
  *
- *   bun .github/scripts/picomatch-premise.mjs <tree>     (exit 0 holds, 1 refused)
+ * In the FULL closure (the nightly), the question is different: the build tools DO hold picomatch,
+ * and the nightly has reported it. The premise there is that no fixed release exists yet
+ * (`unpatchedProblems`), so the nightly is red only on something new.
+ *
+ *   bun .github/scripts/picomatch-premise.mjs <tree> [production|full]   (exit 0 holds, 1 refused)
  */
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative, sep } from 'node:path';
@@ -200,8 +204,52 @@ export function premiseProblems(treeDir, premise) {
   return problems;
 }
 
+export const ADVISORY = 'GHSA-fc5q-39xc-vjpf';
+
+/**
+ * THE NIGHTLY'S PREMISE (`full` closure): the advisory has been REPORTED and there is nothing to
+ * upgrade to. Read from GitHub's own record of the advisory: every picomatch entry must still have
+ * no `first_patched_version`. The day one has, the ignore is refused and the nightly goes red - the
+ * one moment there is something to do. A record that cannot be read grants nothing.
+ *
+ * @param {unknown} advisory the JSON of `GET /advisories/GHSA-fc5q-39xc-vjpf`
+ * @returns {string[]} empty when no fixed release exists
+ */
+export function unpatchedProblems(advisory) {
+  if (!advisory || typeof advisory !== 'object' || advisory.ghsa_id !== ADVISORY) return [`the advisory record is not ${ADVISORY}'s, so whether a fix exists is unknown`];
+  if (advisory.withdrawn_at) return [`${ADVISORY} was withdrawn on ${advisory.withdrawn_at}: delete the ignore`];
+  const entries = (Array.isArray(advisory.vulnerabilities) ? advisory.vulnerabilities : []).filter((v) => v?.package?.ecosystem === 'npm' && v?.package?.name === 'picomatch');
+  if (entries.length === 0) return [`${ADVISORY} no longer names npm picomatch, so the record no longer describes this ignore`];
+  const patched = entries.map((v) => v.first_patched_version).filter((v) => v !== null && v !== undefined && v !== '');
+  if (patched.length > 0) return [`picomatch now has a fixed release (${patched.map((v) => v.identifier ?? v).join(', ')}): upgrade, then delete the ignore`];
+  return [];
+}
+
 if (import.meta.main) {
   const tree = process.argv[2];
+  const closure = process.argv[3] ?? 'production';
+  if (closure === 'full') {
+    // The nightly: every tree that holds picomatch, one question about the advisory itself.
+    const headers = { Accept: 'application/vnd.github+json' };
+    if (process.env.GH_TOKEN) headers.Authorization = `Bearer ${process.env.GH_TOKEN}`;
+    let problems;
+    try {
+      const res = await fetch(`https://api.github.com/advisories/${ADVISORY}`, { headers });
+      problems = res.ok ? unpatchedProblems(await res.json()) : [`the advisory API answered ${res.status}, so whether a fix exists is unknown`];
+    } catch (err) {
+      problems = [`the advisory API could not be reached (${err?.message ?? err}), so whether a fix exists is unknown`];
+    }
+    if (problems.length > 0) {
+      for (const p of problems) console.log(`::error::${tree}: ${p}. ${ADVISORY} is not granted in the full closure.`);
+      process.exit(1);
+    }
+    console.log(`    ${tree}: ${ADVISORY} still has no fixed picomatch release; the nightly has reported it, and the ignore holds until one exists.`);
+    process.exit(0);
+  }
+  if (closure !== 'production') {
+    console.log(`::error::picomatch-premise: closure '${closure}' is neither production nor full`);
+    process.exit(1);
+  }
   const premise = PREMISES[tree];
   if (!premise) {
     console.log(`::error::picomatch-premise: no premise is declared for '${tree}' (known: ${Object.keys(PREMISES).join(', ')})`);

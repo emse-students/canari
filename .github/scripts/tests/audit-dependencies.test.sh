@@ -252,12 +252,12 @@ MINIO='--ignore=GHSA-vcc3-ghjq-m6fr --ignore=GHSA-qr28-fpjm-wq7f --ignore=GHSA-5
 flags frontend production '--ignore=GHSA-fc5q-39xc-vjpf'
 flags frontend full '--ignore=GHSA-fc5q-39xc-vjpf'
 flags apps/core-service production '--prod --audit-level=moderate --ignore=GHSA-fc5q-39xc-vjpf'
-flags apps/core-service full '--audit-level=moderate'
+flags apps/core-service full '--audit-level=moderate --ignore=GHSA-fc5q-39xc-vjpf'
 flags apps/social-service production '--prod --audit-level=moderate --ignore=GHSA-fc5q-39xc-vjpf'
 flags apps/chat-delivery-service production '--prod --audit-level=moderate --ignore=GHSA-fc5q-39xc-vjpf'
-flags apps/chat-delivery-service full '--audit-level=moderate'
+flags apps/chat-delivery-service full '--audit-level=moderate --ignore=GHSA-fc5q-39xc-vjpf'
 flags apps/media-service production "--prod --audit-level=moderate $MINIO"
-flags apps/media-service full "--audit-level=moderate $MINIO"
+flags apps/media-service full "--audit-level=moderate $MINIO --ignore=GHSA-fc5q-39xc-vjpf"
 
 if grep -q -- '--prod' <<<"$(audit_flags frontend production)"; then
   echo "FAIL the frontend is audited --prod: svelte, kit and protobufjs are devDependencies that SHIP"

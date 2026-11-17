@@ -10,7 +10,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { PREMISES, premiseProblems } from '../picomatch-premise.mjs';
+import { PREMISES, premiseProblems, unpatchedProblems } from '../picomatch-premise.mjs';
 
 const work = mkdtempSync(join(tmpdir(), 'picomatch-premise-'));
 let failures = 0;
@@ -101,6 +101,27 @@ expect('frontend: a nested copy is resolved from its parent first',
 const bare = join(work, 'no-node-modules');
 write(join(bare, 'package.json'), { name: 'b' });
 expect('a tree with no node_modules is refused', bare, service, false);
+
+// ---- the nightly (full closure): reported, and no fixed release to upgrade to ---------------------
+const record = (vulns, extra = {}) => ({ ghsa_id: 'GHSA-fc5q-39xc-vjpf', withdrawn_at: null, vulnerabilities: vulns, ...extra });
+const pico = (patched) => ({ package: { ecosystem: 'npm', name: 'picomatch' }, vulnerable_version_range: '<= 4.0.7', first_patched_version: patched });
+function unpatched(name, advisory, wantHolds) {
+  const problems = unpatchedProblems(advisory);
+  const holds = problems.length === 0;
+  if (holds === wantHolds) console.log(`ok   ${name}`);
+  else {
+    failures++;
+    console.log(`FAIL ${name}: wanted ${wantHolds ? 'holds' : 'refused'}, got ${holds ? 'holds' : problems.join(' | ')}`);
+  }
+}
+unpatched('full: no fixed release (the 2026-11-17 record) holds', record([pico(null)]), true);
+unpatched('full: a fixed release as an object is refused - time to upgrade', record([pico({ identifier: '4.0.8' })]), false);
+unpatched('full: a fixed release as a string is refused', record([pico('4.0.8')]), false);
+unpatched('full: one patched range among two is refused', record([pico(null), pico('2.3.3')]), false);
+unpatched('full: a withdrawn advisory is refused - the ignore is dead', record([pico(null)], { withdrawn_at: '2026-12-01T00:00:00Z' }), false);
+unpatched('full: a record that no longer names picomatch is refused', record([{ package: { ecosystem: 'npm', name: 'other' }, first_patched_version: null }]), false);
+unpatched('full: another advisory record is refused', { ...record([pico(null)]), ghsa_id: 'GHSA-xxxx-xxxx-xxxx' }, false);
+unpatched('full: an unreadable record is refused', null, false);
 
 rmSync(work, { recursive: true, force: true });
 if (failures > 0) {

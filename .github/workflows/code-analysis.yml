@@ -427,9 +427,13 @@ jobs:
       #   the three  `typeorm > tinyglobby > picomatch` IS shipped and loaded at boot, but TypeORM
       #   TypeORM    globs only the STRING entries of `entities`/`migrations`/`subscribers`, and these
       #   services   services pass classes - no pattern is ever compiled, and one would be ours.
-      #              Ignored in the production closure only: the full nightly audit still reports it
-      #              through @nestjs/cli and jest.
       #   media      picomatch is not in its production closure, so `--prod` already says nothing.
+      #
+      # THE NIGHTLY (`full`) IGNORES IT IN ALL FIVE TREES, ON A DIFFERENT PREMISE. There the build
+      # tools DO hold picomatch, and the nightly has reported it; a red that stays red until upstream
+      # ships is noise its reader learns to skip, and it would hide the next advisory. So the premise
+      # in `full` is that NO FIXED RELEASE EXISTS (GitHub's advisory record, `first_patched_version`):
+      # the day one does, the ignore is refused and the nightly goes red - when there is work to do.
       #
       # `picomatch-premise.mjs` (self-tested) asserts each of those on the installed tree and refuses
       # the ignore the moment one stops being true. It runs only where the table grants the ignore.
@@ -438,6 +442,9 @@ jobs:
         env:
           TREE: ${{ matrix.tree }}
           CLOSURE: ${{ inputs.closure }}
+          # The full closure's premise reads GitHub's advisory record; the token only lifts the
+          # anonymous rate limit.
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -uo pipefail
           source .github/scripts/lib/audit-trees.sh
@@ -445,7 +452,7 @@ jobs:
             echo "    $TREE does not ignore GHSA-fc5q-39xc-vjpf in the $CLOSURE closure; no premise to check."
             exit 0
           fi
-          bun .github/scripts/picomatch-premise.mjs "$TREE"
+          bun .github/scripts/picomatch-premise.mjs "$TREE" "$CLOSURE"
 
       # THE RETIREMENT, ASSERTED INSTEAD OF POLLED, for EVERY tree that suppresses something (the
       # media-service premises, the picomatch premise). The audit run WITHOUT the ignores, in the

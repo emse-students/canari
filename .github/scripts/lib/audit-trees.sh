@@ -41,14 +41,17 @@ audit_ignores() {
   case "$closure" in production | full) ;; *) echo "::error::audit_ignores: closure '$closure' is neither production nor full" >&2; return 1 ;; esac
   case "$tree" in
     # minio's edges, runtime dependencies: ignored in BOTH closures. code-analysis.yml carries why.
-    apps/media-service) ids+=(GHSA-vcc3-ghjq-m6fr GHSA-qr28-fpjm-wq7f GHSA-528h-pc64-c93x GHSA-hqr4-qq8f-hg3x GHSA-mjw6-4jj6-33hc) ;;
-    # picomatch ReDoS (2026-11-17, no fixed version exists). Shipped as `typeorm > tinyglobby`,
-    # which globs only string entity/migration/subscriber paths, and these services pass classes.
-    # PRODUCTION ONLY: the full nightly audit still reports picomatch through the build tools.
-    apps/core-service | apps/social-service | apps/chat-delivery-service)
-      [ "$closure" = production ] && ids+=(GHSA-fc5q-39xc-vjpf) ;;
-    # The frontend has one closure (above), where picomatch arrives only through build tools.
-    frontend) ids+=(GHSA-fc5q-39xc-vjpf) ;;
+    # media-service ships no picomatch, so only its FULL closure (the build tools) needs that one.
+    apps/media-service)
+      ids+=(GHSA-vcc3-ghjq-m6fr GHSA-qr28-fpjm-wq7f GHSA-528h-pc64-c93x GHSA-hqr4-qq8f-hg3x GHSA-mjw6-4jj6-33hc)
+      [ "$closure" = full ] && ids+=(GHSA-fc5q-39xc-vjpf) ;;
+    # picomatch ReDoS (2026-11-17, no fixed release exists), in every tree that holds it. Two
+    # premises, one per closure (`picomatch-premise.mjs`): in `production`, it is unreachable in what
+    # ships (the services: `typeorm > tinyglobby`, which globs only string entity/migration/
+    # subscriber paths, and they pass classes; the frontend: not shipped at all). In `full`, the
+    # nightly has REPORTED it and there is nothing to upgrade to - so the nightly is red only on
+    # something new, and goes red again the day a fixed release exists, which is when there is work.
+    apps/core-service | apps/social-service | apps/chat-delivery-service | frontend) ids+=(GHSA-fc5q-39xc-vjpf) ;;
     *) echo "::error::audit_ignores: $tree is not an audited tree" >&2; return 1 ;;
   esac
   local out=() id
