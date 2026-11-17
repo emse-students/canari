@@ -20,7 +20,7 @@ import { m } from '$lib/paraglide/messages';
 import { canonicalUserId, canonicalUserOf } from '$lib/mls-client/leafIdentity';
 
 /** The most first names a label spells out; past it, two are named and the rest counted. */
-export const UNNAMED_GROUP_SHOWN_NAMES = 3;
+const UNNAMED_GROUP_SHOWN_NAMES = 3;
 
 /**
  * The people a group's tree holds, one entry per person whatever their number of devices, in
