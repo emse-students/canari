@@ -546,38 +546,18 @@
       viewMode: (routeMode === 'communities' ? 'communities' : 'chat') as 'chat' | 'communities',
       conversations: convs.conversations,
       selectedContact: convs.selectedContact,
-      newContactInput: convs.newContactInput,
-      newGroupInput: convs.newGroupInput,
       newChannelInput: convs.newChannelInput,
       channelWorkspaces: channels.channelWorkspaces,
       selectedChannelId: channels.selectedChannelConversationId,
       currentUserId: session.userId,
-      onContactInputChange: (v: string) => {
-        convs.newContactInput = v;
-      },
-      onGroupInputChange: (v: string) => {
-        convs.newGroupInput = v;
-      },
       onChannelInputChange: (v: string) => {
         convs.newChannelInput = v;
       },
-      // BOTH ANSWER, because the sidebar closes its creation panel on the answer. The input is
-      // cleared here as before - the panel keeps its own copy of the text and decides, from the
-      // outcome, whether to blank it.
-      onAddContact: async (value?: string) => {
-        const c = (value ?? convs.newContactInput).trim();
-        if (!c) return { ok: true, key: null } as const;
-        const outcome = await convs.startNewConversation(c, convCtx());
-        convs.newContactInput = '';
-        return outcome;
-      },
-      onCreateGroup: async (value?: string) => {
-        const g = (value ?? convs.newGroupInput).trim();
-        if (!g) return { ok: true, key: null } as const;
-        const outcome = await convs.createNewGroup(g, convCtx());
-        convs.newGroupInput = '';
-        return outcome;
-      },
+      // BOTH ANSWER, because the sidebar closes its creation panel on the answer.
+      onAddContact: (contactId: string) => convs.startNewConversation(contactId, convCtx()),
+      // A blank name creates an UNNAMED group (owner, 2026-11-17).
+      onCreateGroup: (name: string, memberIds: string[]) =>
+        convs.createGroupWithMembers(name, memberIds, convCtx()),
       onCreateChannel: (workspaceId: string, value?: string, visibility?: 'public' | 'private') => {
         const ch = (value ?? convs.newChannelInput).trim();
         if (!ch) return;

@@ -148,7 +148,10 @@ import {
   isChannelConversationId,
   sendEncryptedChannelMessage,
 } from '$lib/utils/chat/channelCrypto';
-import { findDirectConversationByPeer } from '$lib/utils/chat/conversations';
+import {
+  findDirectConversationByPeer,
+  resolveConversationListPresentation,
+} from '$lib/utils/chat/conversations';
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
 import { beginBulkUiFlushBench, finishBulkUiFlushBench } from '$lib/mls-client/catchupBenchmark';
 import {
@@ -276,6 +279,27 @@ type StoredBodyVerdict =
   | { kind: 'unreadable'; id: string }
   | { kind: 'held'; id: string }
   | { kind: 'upgrade'; row: StoredMessage; content: string };
+
+/**
+ * The title a notification gives a GROUP, drawn as the list draws it: an unnamed group is titled by
+ * its members' first names on this device, never by its id or a blank (owner, 2026-11-17). `null`
+ * for anything that is not a group, which keeps its own rule (`notificationGroupName`).
+ */
+function notificationGroupTitle(
+  convo: Pick<Conversation, 'id' | 'name' | 'contactName' | 'conversationType'>,
+  userId: string
+): string | null {
+  if ((convo.conversationType ?? 'group') !== 'group') return null;
+  return resolveConversationListPresentation(
+    {
+      id: convo.id,
+      name: convo.name,
+      contactName: convo.contactName,
+      conversationType: convo.conversationType,
+    },
+    userId
+  ).displayName;
+}
 
 /** Creates and returns the reactive messaging store covering send, receive, reactions, edit, delete, replies, and media uploads. */
 export function useMessaging() {
@@ -1165,7 +1189,12 @@ export function useMessaging() {
           conversationId: conversationKey,
           senderId,
           senderName,
-          groupName: notificationGroupName(convo.conversationType, convo.contactName, convo.name),
+          groupName: notificationGroupName(
+            convo.conversationType,
+            convo.contactName,
+            convo.name,
+            notificationGroupTitle(convo, ctx.userId)
+          ),
           isGroup: notificationIsGroup(convo.conversationType),
           body: notificationBody,
           mentionsMe,

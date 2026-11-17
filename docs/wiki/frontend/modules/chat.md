@@ -6269,10 +6269,86 @@ A user in the English app wanted a GROUP and created a COMMUNITY: the community 
 
 | Entry point | What it creates | fr / en |
 |---|---|---|
-| "Nouvelle discussion" > tab "Groupe" (`SidebarNewChatModal`, `onCreateGroup`) | an MLS group conversation | button "Créer la discussion de groupe" / "Create group conversation" |
+| "Nouvelle discussion" with two or more people chosen, then the name step (`SidebarNewChatModal`, `onCreateGroup`; [one panel](#one-new-discussion-panel)) | an MLS group conversation | button "Créer un groupe avec N personnes" / "Create a group with N people", then "Créer la discussion de groupe" / "Create group conversation" |
 | The rail's dashed "+" (`SidebarNewCommunityModal`, `onCreateWorkspace`) | a community (workspace with channels) | title "Nouvelle communauté" / "New community", field "Nom de la communauté" / "Community name", button "Créer la communauté" / "Create community" |
 
 **English never says "club" for a community** (the `chat_*` strings about a community's settings, invitation and deletion now say "community"). "Club" stays where it names an ASSOCIATION (the `asso_*`, `admin_*`, `posts_*`, `payout_*` and `dependency_*` families): there it is the English word for the French "association", a different object from a community.
+
+### One new discussion panel
+
+The owner, 2026-11-17: creating a group took "Nouvelle discussion", then the "Groupe" tab, then a name, then an
+EMPTY group whose members were added afterwards from its own panel. Now there is one panel
+(`SidebarNewChatModal`) and people are chosen FIRST; the number chosen decides
+([principe 7](../../../principes.md), simple).
+
+| Chosen | The footer button | What it does |
+| --- | --- | --- |
+| nobody | "Démarrer la discussion", disabled | - |
+| one person | "Démarrer la discussion" | opens the 1:1 with them, or creates it (`startNewConversation`, unchanged) |
+| two or more | "Créer un groupe avec N personnes" | opens the NAME STEP, a second panel over the first |
+
+**The name step.** The field is EMPTY, and its placeholder - greyed - is the label the group will
+carry if it stays empty: the chosen people's first names, composed by the same function every
+device uses afterwards (`composeUnnamedGroupLabel`), so the suggestion is exactly what will show.
+Keeping it creates an **UNNAMED group**; typing creates a named one, with the duplicate-name refusal
+as before. Either way `createGroupWithMembers` (`useConversations`) creates the group, which adds this
+account's own devices, then invites the people chosen into it, addressed by the key the creation
+answered - two commits, the order every creation already took. An invitation that reaches only some
+of them is told by `reportBulkAdditionOutcome` like any other; the group exists and is completed
+from its panel.
+
+**Decisions taken here (reversible):**
+- **Layout**: the chosen people are removable chips ABOVE the search, the Messenger pattern; the
+  recent 1:1 peers are listed below as toggles (a check in a circle), so a group of familiar people
+  costs a tap each. Tapping a recent peer no longer opens their 1:1 at once - it chooses them, and the
+  footer acts: one gesture model for one person and for ten.
+- **Communities stay a separate entry** (the rail's dashed "+"): a community is a different object
+  with a different name (the 2026-11-04 decision just above), and offering it here would put it back
+  in the panel the owner asked to simplify.
+- **The button** with several chosen says what it does and how many: "Créer un groupe avec N
+  personnes" / "Create a group with N people". N counts the people chosen, not the creator.
+
+#### An unnamed group: no name stored, the members' first names drawn
+
+The owner's decision: a group whose creator kept the suggestion stores NO name - the client sends
+`createRemoteGroup(null)` (no `name` key; the `dm_groups.name` column stays NULL), the row stores
+`''`, and no MLS statement names it - and EVERY device draws it by its current members' first names,
+updated as people join or leave (Messenger and WhatsApp do the same). It fits
+[sealed names](../../backlog.d/p1-encrypt-the-names-of-groups-communities-and-salons.md): the server never learns a name the members did not
+choose, and the label is composed from what each device already holds.
+
+- **Who**: the user ids of the group's RATCHET TREE (`getGroupMemberIdentities`, local), not the
+  server's roster. Every member's device holds the same tree at the same epoch, so they name the same
+  people; the roster is a routing table read at an instant. `groupTreeMembers.ts` keeps them,
+  reactive, re-read after every inbound commit and every Welcome (`setupMessageHandler`) and after
+  every commit of this device's own (`BaseMlsService.mergeAccepted`) - only for a group a label was
+  ever drawn for, so a named group or a key group costs no read. A group is read on first sight. The
+  newest read wins: a read that straddles a commit and answers last is dropped. A group this device
+  does not hold (a newcomer before its Welcome, a follower tab) keeps the generic word.
+- **What they are called**: the local display-name cache, by FIRST name (`getUserFirstNameSync`;
+  a nickname set in the group replaces it, as everywhere in the group). Each member's profile is
+  asked once when the tree is read, and the label fills in as profiles land.
+- **The order** is the first names' under ONE fixed collation (`'fr'`), then the ids', never the
+  tree's leaf order, so every device spells the same label. Up to three names are spelt out; past
+  three, two are named and the rest counted ("Alice, Bob et 3 autres"), so the count is never one.
+  The viewer is never named; alone in it, the group reads
+  "Groupe".
+- **Everywhere a name shows** reads `resolveConversationListPresentation`, whose last resort is now
+  the members' label before "Groupe": the list and its search, the thread header, the conversation
+  panel, the share sheet, a call's peers - and an in-app or Android-builder notification
+  (`notificationGroupName` takes the resolved title for a group, `useMessaging`).
+- **What it does not cover**, and is accepted: a push raised while the app is DEAD is composed by the
+  native code from the server's push or the mirrored rows, and an unnamed group's carries no title,
+  so it reads as the sender alone - the plain-notification rule for "a group with no name to show"
+  (`composePlainNotificationText`). A build older than this one reads the server's NULL name and
+  shows "Groupe". A row that only knows its id (a newcomer's placeholder of a NAMED group, before the
+  name arrives) shows the members' names for that moment instead of "Groupe".
+- **Naming it later** is the ordinary rename (`groupRenamed`, dated by step 1 of the sealed-names work,
+  PR #3785). Taking a name back off - "remove the name" - does not exist; a frame carrying an empty
+  name is refused (`empty-name`).
+
+Tests: `unnamedGroupLabel.test.ts`, `groupTreeMembers.test.ts`, `conversations.unnamedGroup.test.ts`,
+`groupCreation.unnamed.test.ts`, `nativeNotification.test.ts`, `Sidebar.creationRefusal.svelte.test.ts`.
 
 ## Per-conversation nicknames ("Modifier les pseudos", 2026-11-08)
 

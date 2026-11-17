@@ -1084,11 +1084,6 @@
     "select": 0,
     "input": 1
   },
-  "src/lib/components/sidebar/SidebarNewChatModal.svelte": {
-    "button": 1,
-    "select": 0,
-    "input": 1
-  },
   "src/lib/components/sidebar/SidebarNewCommunityModal.svelte": {
     "button": 1,
     "select": 0,

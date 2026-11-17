@@ -229,6 +229,16 @@ describe('notificationGroupName', () => {
   it('falls back to the stored name when there is no auxiliary label', () => {
     expect(notificationGroupName('group', '', 'grp-1')).toBe('grp-1');
   });
+
+  it("titles a group as the list draws it - an unnamed group by its members' first names", () => {
+    // The row of an unnamed group holds only its id; the list names it "Alice et Bob".
+    expect(notificationGroupName('group', 'grp-1', 'grp-1', 'Alice et Bob')).toBe('Alice et Bob');
+  });
+
+  it('never lets a group title rename a channel or title a direct message', () => {
+    expect(notificationGroupName('channel', 'channel_1', 'general', 'X')).toBe('general');
+    expect(notificationGroupName('direct', 'peer-1', 'me::peer-1', 'X')).toBe('');
+  });
 });
 
 describe('composePlainNotificationText', () => {

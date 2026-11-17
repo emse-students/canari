@@ -222,9 +222,14 @@ function dischargeCreatedGroupAudit(mlsService: IMlsService, userId: string, gro
 }
 
 /**
- * Creates a new named MLS multi-user group on the server, initialises the local
+ * Creates a new MLS multi-user group on the server, initialises the local
  * MLS state, and automatically adds all other devices belonging to the current user
  * in a single bulk commit to avoid epoch fragmentation.
+ *
+ * A BLANK `name` CREATES AN UNNAMED GROUP (owner, 2026-11-17): no name is sent to the server and the
+ * row stores none, and every device draws it by its members' first names
+ * (`resolveConversationListPresentation`, `groupTreeMembers.ts`). An unnamed group is never
+ * a duplicate of another: two groups of the same people are two groups, as in any messenger.
  *
  * On failure the partially-created group is cleaned up server-side and the
  * conversation is removed from the reactive map, and the caller is told WHICH failure it was so the
@@ -244,13 +249,14 @@ export async function createNewGroup(
     log,
   } = deps;
 
-  if (!name.trim()) return { ok: true, key: null };
   const groupDisplayName = name.trim();
-  const duplicateGroup = Array.from(conversations.values()).find(
-    (c) =>
-      (c.conversationType ?? 'group') === 'group' &&
-      c.name.toLowerCase() === groupDisplayName.toLowerCase()
-  );
+  const duplicateGroup =
+    groupDisplayName &&
+    Array.from(conversations.values()).find(
+      (c) =>
+        (c.conversationType ?? 'group') === 'group' &&
+        c.name.toLowerCase() === groupDisplayName.toLowerCase()
+    );
   if (duplicateGroup) {
     log(`Group not created: one with this name already exists.`);
     return { ok: false, reason: 'duplicate-group-name' };
@@ -261,7 +267,8 @@ export async function createNewGroup(
   let releaseCreationMark: (() => void) | undefined;
 
   try {
-    groupId = await mlsService.createRemoteGroup(groupDisplayName, true); // true = multi-user group
+    // `null` for an unnamed group: the server is never told a name the members did not choose.
+    groupId = await mlsService.createRemoteGroup(groupDisplayName || null, true); // true = multi-user group
     conversationKey = groupId;
     // MARKED BEFORE THE SERVER CAN LIST IT, released in the `finally` once the row is written or the
     // group deleted: the connection sweeps read this mark rather than take the listed, rowless group

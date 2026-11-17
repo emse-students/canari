@@ -897,8 +897,8 @@ export interface IMlsService {
    * (`FollowerTabCommitError`), whose state is a copy the leader never holds.
    */
   createGroup(groupId: string): Promise<void>;
-  /** Creates a new named group on the delivery server and returns its assigned group ID. */
-  createRemoteGroup(name: string, isGroup?: boolean): Promise<string>;
+  /** Creates a new group on the delivery server and returns its assigned group ID; `null` = unnamed. */
+  createRemoteGroup(name: string | null, isGroup?: boolean): Promise<string>;
   /**
    * Writes the current MLS state to THIS platform's durable store - the whole checkpoint, and the
    * only call a checkpoint needs.

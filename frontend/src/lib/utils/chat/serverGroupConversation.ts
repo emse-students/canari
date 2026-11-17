@@ -3,6 +3,7 @@ import type { Conversation } from '$lib/types';
 import {
   buildConversationRow,
   findDirectConversationByPeer,
+  isRawId,
   resolveDirectPeerId,
 } from './conversations';
 import { holdsGroupState } from './groupUsability';
@@ -202,6 +203,15 @@ async function repairGroupLabel(
     // it is said once per name, never on every sweep.
     noteServerNameDisagreement(group.groupId, serverName, convo.nameAt, log);
     return;
+  }
+  if (isRawId(convo.name)) {
+    // The row carried a RAW ID as its name while the server holds a real one: the list drew this
+    // group by its members' first names (`resolveConversationListPresentation`). An EMPTY row name
+    // is the ordinary state of a group unnamed at creation, so it says nothing here (the relabel
+    // line below still does); a raw id is the visible end of a name that never reached us.
+    console.warn(
+      `[GROUP_LABEL] ${groupIdShort(group.groupId)} is named "${serverName}" server-side but its row held a raw id - it was drawn by its members until this repair`
+    );
   }
   conversations.set(key, { ...convo, name: serverName, contactName: serverName });
   log(
