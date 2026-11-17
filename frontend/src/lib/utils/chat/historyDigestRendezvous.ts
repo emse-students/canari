@@ -43,6 +43,12 @@ export type SolicitedProbe =
       /** What the asker holds in `[since, now]`, folded to 64 bits. See `historyStateKey`. */
       key: string;
       since: number;
+      /**
+       * The asker holds frames of this group it cannot read and no repair has landed since. A
+       * responder that then holds nothing the asker lacks ANSWERS so (`history_cannot_repair`)
+       * instead of staying silent. Absent on every ordinary probe and from older builds.
+       */
+      incomplete?: boolean;
     }
   | {
       kind: 'digest';
@@ -50,6 +56,12 @@ export type SolicitedProbe =
       since: number;
       /** The asker's id for this ask, echoed on the answer (an ask without one is never stored). */
       requestId: string;
+      /**
+       * The asker holds frames of this group it cannot read and no repair has landed since. A
+       * responder that then holds nothing the asker lacks ANSWERS so (`history_cannot_repair`)
+       * instead of staying silent. Absent on every ordinary probe and from older builds.
+       */
+      incomplete?: boolean;
     }
   | {
       kind: 'range';
