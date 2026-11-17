@@ -496,7 +496,7 @@ chat and reactions (WP-L6) are [below](#the-chat-and-the-floating-reactions-clie
 
 ### The top bar at narrow widths (2026-11-16)
 
-The bar is a wrapping flex row: the identity column (`data-live-top-identity`: name, then LIVE, time, count) has `min-w-40 flex-1 basis-40`, and the six actions (report, sound, rotate, chat, share, close) are ONE group (`data-live-top-actions`, `ml-auto shrink-0`, each `.ui-icon-button` at 44 px). With room (landscape, wide phones) they share a row; below the name's floor the whole group drops to its own row under the second line, so the name is never crushed to "Canari Te..." and no button sits over the count (Mi 9T, 436 css px, found 2026-11-16). Test: `LiveViewer.svelte.test.ts` (structure; happy-dom has no layout). A 360-436 px reading is owed ([entry](../../backlog.d/reading-owed-the-live-viewer-top-bar-at-360-436-px.md)).
+The bar is a wrapping flex row: the identity column (`data-live-top-identity`: name, then LIVE, time, count) has `min-w-40 flex-1 basis-40`, and the six actions (report, sound, rotate, chat, share, close) are ONE group (`data-live-top-actions`, `ml-auto shrink-0`, each `.ui-icon-button` at 44 px). With room (landscape, wide phones) they share a row; below the name's floor the whole group drops to its own row under the second line, so the name is never crushed to "Canari Te..." and no button sits over the count (Mi 9T, 436 css px, found 2026-11-16). Test: `LiveViewer.svelte.test.ts` (structure; happy-dom has no layout). A 360-436 px reading is owed (entry (entry deleted 2026-11-17)).
 
 ### What stacks over the viewer (2026-11-07)
 
@@ -1629,4 +1629,4 @@ back to the top) reads once at once, skipped only if a read is already out. Idem
 top of an open feed now reads the (small) list every 16 s even with nothing on air, as with one on air before.
 A push event (a server-sent start/end) would remove that poll; it is not built (it would need a new
 channel). Tests: `LiveFeedCard.svelte.test.ts` (a start with no card drawn; an end read on re-entry).
-Reading owed: [backlog](../../backlog.d/reading-owed-the-live-card-follows-a-start-and-an-end-with-no-relaunch.md).
+Read on the Mi 9T on `1.7.0-alpha.7` (2026-11-17, [readings](../../device-verification.md#the-mi-9t-readings-of-2026-11-17-170-alpha7-the-envoyer-a-retakes-on-section-22s-screens)): start, end and a backgrounded app all followed with no relaunch; the entry is deleted.
