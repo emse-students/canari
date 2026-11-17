@@ -526,10 +526,10 @@
           comme vos messages. Pour un appel, notre serveur envoie aussi un avis d'appel entrant à chaque
           appareil d'un membre qui accepte les appels dans cette conversation, même si l'application est
           fermée : il ne contient aucun nom, seulement les identifiants techniques de la conversation,
-          de l'appel et de l'appelant, et s'il s'agit d'un appel vidéo ; votre téléphone affiche lui-même
-          le nom de l'appelant qu'il connaît déjà (sur iPhone, l'alerte envoyée est générique, « Appel
-          entrant »). L'avis qui arrête la sonnerie ne contient que l'identifiant de l'appel et la raison
-          de l'arrêt.
+          de l'appel et de l'appelant, s'il s'agit d'un appel vidéo et l'heure de fin de sonnerie ; votre
+          téléphone affiche lui-même le nom de l'appelant qu'il connaît déjà (sur iPhone, l'alerte envoyée
+          est générique, « Appel entrant »). L'avis qui arrête la sonnerie ne contient que l'identifiant
+          de l'appel et la raison de l'arrêt.
         </dd>
       </div>
       <div>
