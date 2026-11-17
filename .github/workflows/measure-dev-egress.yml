@@ -1,0 +1,16 @@
+name: measure-dev-egress
+on: pull_request
+permissions: {}
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: What answers a runner on dev
+        run: |
+          for p in / /_app/immutable/assets/mls_wasm_bg.ERopDwy-.wasm; do
+            echo "== $p"
+            curl -s -o body.bin -D hdr.txt -H 'accept-encoding: identity' "https://dev.canari-emse.fr$p" -w 'status=%{http_code} bytes=%{size_download}\n'
+            grep -iE '^(HTTP|server|cf-mitigated|cf-cache-status|content-type)' hdr.txt || true
+            grep -oiE '<title>[^<]*</title>' body.bin | sed -n 1p || true
+          done
