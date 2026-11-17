@@ -60,6 +60,11 @@ describe('the iOS seed mirror', () => {
     const appMirror = pushRs.slice(pushRs.indexOf('async fn with_app_mirror<'));
     const body = appMirror.slice(0, appMirror.indexOf('\n}\n'));
     expect(body).toContain('let home = seed_mirror_home(&data_dir, &key)?;');
+    // Background time held BEFORE any App Group lock is taken (the fold and the edit both take one):
+    // an app suspended holding a shared-container lock is killed, 0xdead10cc.
+    const held = body.indexOf('crate::app_group::BackgroundTime::begin(');
+    expect(held).toBeGreaterThan(0);
+    expect(held).toBeLessThan(body.indexOf('seed_mirror_home(&data_dir, &key)'));
     expect(body).toContain('edit(&home, &key)');
     const home = pushRs.slice(pushRs.indexOf('fn seed_mirror_home('));
     const homeBody = home.slice(0, home.indexOf('\n}\n'));

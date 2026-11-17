@@ -5048,9 +5048,39 @@ app-alive push path in `canari_push.mm` (`CanariGraineSeedHeld`, `CanariHandleCh
 the App Group's file. The copy an older build left in `app_data_dir` is folded in ONCE, at the first
 foreground edit (`fold_legacy_seed_mirror`): a UNION under both writers' locks, never an overwrite -
 a session the group holds keeps its entry, with both writers' labels; a session it lacks is added; a
-copy no key opens is deleted unread. An account's wipe edits the one file
-([auth](../frontend/modules/auth.md#the-seed-mirror-labels-each-entry-with-its-writers-2026-11-07)).
-Retiring the fold is in [legacy-compatibility](../legacy-compatibility.md).
+copy no key opens, or that is not JSON, is deleted unfolded (`MirrorReadError::Unopenable` /
+`Unparsable`), while a copy that merely failed to READ (`MirrorReadError::Io`) is kept and the edit
+fails, so the next one folds it. An account's wipe edits the one file
+([auth](../frontend/modules/auth.md#the-seed-mirror-labels-each-entry-with-its-writers-2026-11-07)),
+and the factory wipe now deletes it under its lock (`storage::wipe_app_group`): with no lifecycle copy
+left to replace it, it would otherwise outlive the wipe. Retiring the fold is in
+[legacy-compatibility](../legacy-compatibility.md).
+
+**What the union cannot undo, stated.** A removal the older build made in its OWN copy only - a salon
+left, a session the retention sweep forgot, after the last lifecycle copy and before the upgrade -
+is not in the app's file, while the group's still holds the entry, so the union keeps it. Nothing
+in the two files tells that entry from a seed the extension stored meanwhile, and the forgets were
+never recorded, so they cannot be re-run. What it costs: sealed seeds of a salon this account once
+read, at most `GRAINE_MIRROR_SESSIONS_PER_CHANNEL` (20) per channel, in a file only Rust opens; no
+push of a salon left reaches the phone to use them. It ends with the per-channel bound when that
+channel is written again, an account's wipe, or the factory wipe - and nothing else, which is the
+window, said rather than guessed around.
+
+**Every foreground edit now takes a lock IN the App Group, so it holds background time.** An app
+suspended while it holds a lock on a shared-container file is killed (`0xdead10cc`) - the rule the
+Share Extension's capture already obeys under `performExpiringActivity`
+([sharing](../frontend/sharing.md)). An edit can start in the seconds after the app leaves the
+screen (a frame the page absorbs on its way out), so `with_app_mirror` holds a
+`beginBackgroundTaskWithName:` assertion (`app_group::BackgroundTime`) across the fold and the edit,
+and ends it when the edit returns; its expiry, never the expected path for a lock held milliseconds,
+is said at ERROR and the task ended as the API requires.
+
+**What is proved where, and what is not compiled here.** The home the foreground writes is chosen
+under `cfg(target_os = "ios")` (`seed_mirror_home`), and so is the background-time assertion: no
+host build or test compiles either. The ONLY proof that the foreground writes the App Group is the
+source scan in `iosMlsMirror.test.ts`; the iOS branch is first compiled by the release's iOS build,
+and first run on the iPhone reading below. The fold itself, the union, the refusals and the factory
+wipe's removal run in host tests.
 
 **What holds it.** `a_seed_the_extension_stored_survives_the_app_becoming_active` (`push.rs`, red
 against the byte copy), the fold's union, refusal and unreadable-copy cases, and
@@ -5058,5 +5088,7 @@ against the byte copy), the fold's union, refusal and unreadable-copy cases, and
 seed file, and the app-alive path reads `CanariAppGroupPath()`.
 
 **Not established, and said:** the one Android line of 2026-11-14 (`held=true`). Android has one
-file, so this cause cannot reach it. What is owed is in
-[the reading](../backlog.d/reading-owed-ios-seed-mirror-one-copy.md).
+file, so this cause cannot reach it: [its own entry](../backlog.d/p2-android-blind-salon-banner-held-true.md).
+The bench run against a key group of production size, which this section does not cover, is
+[another](../backlog.d/p1-salon-push-seed-frame-at-production-key-group-size.md). What is owed for
+this fix is in [the reading](../backlog.d/reading-owed-ios-seed-mirror-one-copy.md).

@@ -226,9 +226,10 @@ export async function wipeDeviceToFactory(): Promise<string[]> {
       await endNativeMlsSession('factory wipe', { sweepState: true });
     });
     // Everything Canari wrote in the Tauri app data directory: the MLS state, the message
-    // database, the Graine seeds and channel keys the background push service reads, the
-    // cached notification avatars and the device-key alias index. NOT the WebView's own
-    // stores, which the unconditional block below owns - and which this step must not touch,
+    // database, the Graine seed mirror the Android push service reads, the cached notification
+    // avatars and the device-key alias index - and on iOS the App Group's names copy, Share
+    // Extension files and seed mirror (`wipe_app_group`, the iPhone's only seed copy). NOT the
+    // WebView's own stores, which the unconditional block below owns - and which this step must not touch,
     // because deleting them from under a running engine is what killed the process.
     await step('the native app data', async () => {
       await invoke('clear_app_data');

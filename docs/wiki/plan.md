@@ -31,6 +31,7 @@ earliest version, as a checklist.
 - [P1 - a third of the `1.6.12` native devices hold no push token row: no push can reach them (production, 2026-11-15)](backlog.d/p1-a-third-of-the-1-6-12-native-devices-hold-no-push-token-row.md)
 - [P1 - media-service holds the retention durations after the deploy that adds the relay (the boot notice carries them)](backlog.d/p1-media-retention-held-after-the-deploy-that-adds-the-relay.md)
 - [P1 - rows before ratchet: a live drain stores its rows only when its window closes, after a checkpoint may already hold their ratchet advance (raised by the second review of #3321, 2026-11-15)](backlog.d/p1-rows-before-ratchet.md)
+- [P1 - a salon push's seed frame opened against a key group of production size, on the bench (2026-11-17)](backlog.d/p1-salon-push-seed-frame-at-production-key-group-size.md)
 
 **Chantiers, decisions and questions (no severity)**
 
@@ -70,6 +71,7 @@ earliest version, as a checklist.
 - [P2 - no gate proves that an older build reads, and writes back, the MLS state this build writes](backlog.d/p2-no-gate-proves-an-older-build-reads-the-mls-state-this-build-writes.md)
 - [P2 - the reply swipe along a thumb's arc does nothing on WebKit: the thread scrolls instead](backlog.d/p2-the-reply-swipe-along-a-thumb-s-arc-does-nothing-on-webkit.md)
 - [P2 - a live ended itself (`upload-too-slow`) after 256 s on the iPhone, cause unproven](backlog.d/p2-a-live-ended-itself-upload-too-slow-after-256-s-on-the-iphone.md)
+- [P2 - an Android blind salon banner `held=true` with the seed frame attached (2026-11-17)](backlog.d/p2-android-blind-salon-banner-held-true.md)
 
 **P3 - hygiene**
 
@@ -189,7 +191,7 @@ earliest version, as a checklist.
 - [P3 - The case-collision refusal keeps the deletion marker for ever (found 2026-10-18, fourth review of #2023)](backlog.d/p3-the-case-collision-refusal-keeps-the-deletion-marker-for-ever-found-2026-10.md)
 - [P3 - iOS: the system theme does not follow a live switch of the phone's theme (2026-10-19)](backlog.d/p3-ios-the-system-theme-does-not-follow-a-live-switch-of-the-phone-s-theme-2026.md)
 - [P3 - the Android JavaScript bridges answer any frame the WebView loads (review of WP-C-BG-A, 2026-10-19; re-read 2026-11-11)](backlog.d/p3-the-android-javascript-bridges-answer-any-frame.md)
-- [P3 - the iOS factory wipe leaves the App Group copies other than the names (2026-10-19)](backlog.d/p3-the-ios-factory-wipe-leaves-the-app-group-copies-other-than-the-names-2026.md)
+- [P3 - the iOS factory wipe leaves the App Group copies other than the names, the share and the seeds (2026-10-19)](backlog.d/p3-the-ios-factory-wipe-leaves-the-app-group-copies-other-than-the-names-2026.md)
 - [P3 - Two association deletes that co-organise each other's events can deadlock (found 2026-10-19, review of #2116, not fixed)](backlog.d/p3-two-association-deletes-that-co-organise-each-other-s-events-can-deadlock.md)
 - [P3 - Android lint crashes on the Gradle build script, and no CI gate runs Android lint (found 2026-10-20)](backlog.d/p3-android-lint-crashes-on-the-gradle-build-script-and-no-ci-gate-runs-android.md)
 - [P3 - CALL-PATH-LINE: the `selected path ... relayed=` line over-counts relayed calls (2026-10-20, not built)](backlog.d/p3-call-path-line-the-selected-path-relayed-line-over-counts-relayed-calls-2026.md)

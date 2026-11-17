@@ -26,4 +26,5 @@ seed mirror folded into the App Group` once, and never again.
 the iOS `missing=seed refused=none` lines go to zero from builds carrying it (the line names no
 version, so read it with the stable's adoption). An Android line (`held=true`, one on 2026-11-14)
 has a different cause, since Android always had one file: read its phone's in-app log
-(`[NATIVE_PUSH] ... openSeedFrame`) before building anything for it.
+(`[NATIVE_PUSH] ... openSeedFrame`) before building anything for it
+([its entry](p2-android-blind-salon-banner-held-true.md)).

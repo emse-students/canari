@@ -87,9 +87,11 @@ rewritten, so a salon archive holds sentence notices for ever.
 The first foreground mirror edit of a newer build folds that copy into the group's (a union) and
 deletes it, so it runs once per install and then finds nothing.
 **Removal condition:** `minClientVersion` at or above the first stable carrying the fold, on both
-estates - every install that can still run has then started a build that folded. Then delete the
-function, its call and its three tests. **The cost of keeping it meanwhile:** one `stat` per
-foreground mirror edit on iOS.
+estates. That does NOT prove every install folded: a store update skips versions, so an iPhone may go
+from a build without the fold straight to one without it. So the fold is REPLACED, not deleted: its
+call becomes an unconditional delete of `{app_data_dir}/graine_seeds.json` (the group's copy already
+holds what the last lifecycle copy put there), and the function and its four tests go. **The cost of
+keeping it meanwhile:** one `stat` per foreground mirror edit on iOS.
 
 ### A tolerated breakage: an institution post from a build older than the reach (owner, 2026-11-10)
 

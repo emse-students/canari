@@ -667,6 +667,27 @@ fn lock_seed_mirror(data_dir: &std::path::Path) -> Result<std::fs::File, String>
     Ok(lock)
 }
 
+/// Removes the seed mirror in `dir` under the lock its writers take, so a push writing a seed at
+/// the same instant lands entirely before or entirely after. Returns whether a file was there.
+///
+/// The lock is opened only when the mirror exists: creating `graine_seeds.lock` in a container that
+/// never had a mirror would leave a file this call invented. Shared by the iOS factory wipe of the
+/// App Group (`storage::wipe_app_group`) and the bench's `forget_graine`.
+#[cfg(any(target_os = "ios", test, feature = "bench-observables"))]
+pub(crate) fn remove_graine_mirror(dir: &std::path::Path) -> Result<bool, String> {
+    let path = dir.join("graine_seeds.json");
+    if !path.exists() {
+        return Ok(false);
+    }
+    // Released when `_lock` drops, on every return path.
+    let _lock = lock_seed_mirror(dir)?;
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(format!("remove graine_seeds.json: {e}")),
+    }
+}
+
 /// What [`fold_legacy_seed_mirror`] did: nothing when the app held no copy of its own.
 #[cfg(any(target_os = "ios", test))]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -696,8 +717,9 @@ pub(crate) struct LegacyFold {
 /// both are united on it), a session it lacks is added, and each channel the fold added to is held
 /// to the per-channel bound. Under BOTH writers' locks, the app's first: an account's wipe edits
 /// the one copy it finds under that copy's lock, so a fold cannot read the app's copy before a wipe
-/// and land it in the group's after. An app copy no key opens is deleted unread - the cache key
-/// never rotates, so nothing on this install will ever open it.
+/// and land it in the group's after. An app copy no key opens, or that is not JSON, is deleted
+/// unfolded - the cache key never rotates, so nothing on this install will ever read it; an app copy
+/// that merely failed to READ is kept, and the call fails, so the next edit folds it.
 #[cfg(any(target_os = "ios", test))]
 pub(crate) fn fold_legacy_seed_mirror(
     app_dir: &std::path::Path,
@@ -714,9 +736,13 @@ pub(crate) fn fold_legacy_seed_mirror(
         Ok(Some(root)) => root,
         // Removed between the check and the lock: there is nothing left to fold.
         Ok(None) => return Ok(LegacyFold::default()),
-        Err(e) => {
+        // A read that failed THIS time says nothing about the bytes: the file stays for the next
+        // edit, and this one fails rather than land beside a copy it has not folded.
+        Err(e @ MirrorReadError::Io(_)) => return Err(e.to_string()),
+        // For good: the key never rotates, and bytes that are not JSON never will be.
+        Err(e @ (MirrorReadError::Unopenable(_) | MirrorReadError::Unparsable(_))) => {
             log::error!(
-                "[GRAINE_MIRROR] the app's former seed mirror is unreadable and is deleted unfolded: {e}"
+                "[GRAINE_MIRROR] the app's former seed mirror will never open and is deleted unfolded: {e}"
             );
             serde_json::json!({})
         }
@@ -895,6 +921,39 @@ pub(crate) fn reseal_graine_mirror(
     with_graine_mirror_inner(data_dir, key, true, |_| Ok(((), false))).map(|(_, wrote)| wrote)
 }
 
+/// Why [`read_graine_mirror`] could not answer - a TYPE, because its callers act on the difference:
+/// the fold of the app's former copy deletes a file nothing will ever open, and keeps one it merely
+/// could not read this time (2026-11-17 review).
+#[cfg(any(mobile, test, feature = "bench-observables"))]
+#[derive(Debug)]
+pub(crate) enum MirrorReadError {
+    /// The file is there and reading it failed - a fault of this moment; its bytes may be sound.
+    Io(std::io::Error),
+    /// The bytes are sealed and no key was handed over, or the install's key does not open them -
+    /// for good, since that key never rotates.
+    Unopenable(String),
+    /// The bytes opened and are not a JSON document.
+    Unparsable(serde_json::Error),
+}
+
+#[cfg(any(mobile, test, feature = "bench-observables"))]
+impl std::fmt::Display for MirrorReadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io(e) => write!(f, "read graine_seeds.json: {e}"),
+            Self::Unopenable(e) => write!(f, "graine_seeds.json: {e}"),
+            Self::Unparsable(e) => write!(f, "graine_seeds.json unparsable: {e}"),
+        }
+    }
+}
+
+#[cfg(any(mobile, test, feature = "bench-observables"))]
+impl From<MirrorReadError> for String {
+    fn from(e: MirrorReadError) -> Self {
+        e.to_string()
+    }
+}
+
 /// Reads the whole mirror, or `None` when there is none. `key` may be absent only while the file is
 /// still the older build's plaintext: a sealed mirror with no key to open it is an error, never an
 /// empty map, because "I could not look" is not "there is nothing".
@@ -902,24 +961,26 @@ pub(crate) fn reseal_graine_mirror(
 pub(crate) fn read_graine_mirror(
     data_dir: &std::path::Path,
     key: Option<&CacheKey>,
-) -> Result<Option<serde_json::Value>, String> {
+) -> Result<Option<serde_json::Value>, MirrorReadError> {
     let bytes = match std::fs::read(data_dir.join("graine_seeds.json")) {
         Ok(b) => b,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(format!("read graine_seeds.json: {e}")),
+        Err(e) => return Err(MirrorReadError::Io(e)),
     };
     let plain = match key {
         Some(key) => open_file(key, Purpose::SeedMirror, &bytes)
-            .map_err(|e| format!("graine_seeds.json: {e}"))?
+            .map_err(|e| MirrorReadError::Unopenable(e.to_string()))?
             .into_inner(),
         None if crate::native_cache::is_sealed_file(&bytes) => {
-            return Err("graine_seeds.json is sealed and no cache key was handed over".into())
+            return Err(MirrorReadError::Unopenable(
+                "sealed, and no cache key was handed over".into(),
+            ))
         }
         None => bytes,
     };
     serde_json::from_slice(&plain)
         .map(Some)
-        .map_err(|e| format!("graine_seeds.json unparsable: {e}"))
+        .map_err(MirrorReadError::Unparsable)
 }
 
 /// Writes the seeds a background decrypt found in a key-material frame - the `seeds` array of a
@@ -1174,6 +1235,10 @@ async fn with_app_mirror<T: Send + Default + 'static>(
         #[cfg(mobile)]
         {
             let key = crate::native_cache::app_cache_key(&app)?;
+            // Held across the fold and the edit, both of which lock a file of the App Group: an
+            // app suspended holding that lock is killed (`0xdead10cc`, `app_group::BackgroundTime`).
+            #[cfg(target_os = "ios")]
+            let _background = crate::app_group::BackgroundTime::begin(c"canari-seed-mirror");
             let home = seed_mirror_home(&data_dir, &key)?;
             edit(&home, &key)
         }
@@ -4024,6 +4089,44 @@ mod graine_mirror_tests {
 
         assert_eq!((fold.found, fold.added, fold.merged), (true, 0, 0));
         assert_eq!(mirror(&group)["chan"]["s-1"]["seed"], "c2VlZA==");
+        assert!(!app.join("graine_seeds.json").exists());
+        std::fs::remove_dir_all(&app).ok();
+        std::fs::remove_dir_all(&group).ok();
+    }
+
+    /// An app copy that could not be READ is a fault of the moment, not of its bytes: the fold fails,
+    /// the file stays for the next edit, and the group's copy is untouched. (A directory where the
+    /// file should be makes the read fail without a NotFound on every platform.)
+    #[test]
+    fn a_former_copy_that_fails_to_read_is_kept_and_the_fold_fails() {
+        let app = mirror_dir("fold-io-app");
+        let group = mirror_dir("fold-io-group");
+        std::fs::create_dir_all(app.join("graine_seeds.json")).unwrap();
+        merge_as(&group, "chan", "s-1", "c2VlZA==", 1, Some("acct-a")).unwrap();
+        let before = std::fs::read(group.join("graine_seeds.json")).unwrap();
+
+        let refused = fold_legacy_seed_mirror(&app, &group, &KEY);
+
+        assert!(refused.is_err(), "{refused:?}");
+        assert!(app.join("graine_seeds.json").exists());
+        assert_eq!(
+            std::fs::read(group.join("graine_seeds.json")).unwrap(),
+            before
+        );
+        std::fs::remove_dir_all(&app).ok();
+        std::fs::remove_dir_all(&group).ok();
+    }
+
+    /// Bytes that open and are not JSON will never be: deleted unfolded, like a copy no key opens.
+    #[test]
+    fn an_unparsable_former_copy_is_deleted_unfolded() {
+        let app = mirror_dir("fold-junk-app");
+        let group = mirror_dir("fold-junk-group");
+        std::fs::write(app.join("graine_seeds.json"), b"not json").unwrap();
+
+        let fold = fold_legacy_seed_mirror(&app, &group, &KEY).unwrap();
+
+        assert_eq!((fold.found, fold.added), (true, 0));
         assert!(!app.join("graine_seeds.json").exists());
         std::fs::remove_dir_all(&app).ok();
         std::fs::remove_dir_all(&group).ok();
