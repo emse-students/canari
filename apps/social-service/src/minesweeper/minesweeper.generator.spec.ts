@@ -14,9 +14,11 @@
 import { BadRequestException, HttpException } from '@nestjs/common';
 import type { Repository } from 'typeorm';
 import { issuedGeneratorVersion, MinesweeperService } from './minesweeper.service';
+import type { TimedMove } from './minesweeper.timings';
 import { CHALLENGE, createBoard, revealCell } from './engine/game';
 import type { MinesweeperBan } from './entities/minesweeper-ban.entity';
 import type { MinesweeperChallenge } from './entities/minesweeper-challenge.entity';
+import type { MinesweeperReplay } from './entities/minesweeper-replay.entity';
 import type { MinesweeperScore } from './entities/minesweeper-score.entity';
 
 function build() {
@@ -33,7 +35,8 @@ function build() {
   const service = new MinesweeperService(
     challenges as unknown as Repository<MinesweeperChallenge>,
     {} as unknown as Repository<MinesweeperScore>,
-    bans as unknown as Repository<MinesweeperBan>
+    bans as unknown as Repository<MinesweeperBan>,
+    {} as unknown as Repository<MinesweeperReplay>
   );
   return { service, challenges, saved };
 }
@@ -84,13 +87,20 @@ describe('the replay honours the challenge version', () => {
   const winningLogForV2 = () => {
     const board = createBoard(CHALLENGE, seed, 2);
     revealCell(board, x, y);
-    const moves = [{ type: 'reveal' as const, x, y }];
+    const moves: TimedMove[] = [{ type: 'reveal', x, y, t: 0 }];
     board.cells.forEach((cell, i) => {
       if (!cell.mine)
-        moves.push({ type: 'reveal', x: i % board.width, y: Math.floor(i / board.width) });
+        moves.push({
+          type: 'reveal',
+          x: i % board.width,
+          y: Math.floor(i / board.width),
+          t: moves.length * 10,
+        });
     });
     return moves;
   };
+  /** The claimed game length of a log: where its last move is. */
+  const lengthOf = (moves: TimedMove[]) => moves[moves.length - 1].t;
   const challengeRow = (generatorVersion: number): MinesweeperChallenge =>
     ({
       id: 'challenge-1',
@@ -108,11 +118,9 @@ describe('the replay honours the challenge version', () => {
   it('rejects the v2 log on a challenge issued with generator 1: it is another board', async () => {
     const { service, challenges, saved } = build();
     challenges.findOne.mockResolvedValue(challengeRow(1));
+    const moves = winningLogForV2();
     await expect(
-      service.submit('user-1', 'challenge-1', {
-        moves: winningLogForV2(),
-        claimedDurationMs: 60_000,
-      })
+      service.submit('user-1', 'challenge-1', { moves, claimedDurationMs: lengthOf(moves) })
     ).rejects.toThrow(/verification failed/);
     expect(saved[saved.length - 1]?.status).toBe('rejected');
   }, 60_000);
@@ -120,11 +128,9 @@ describe('the replay honours the challenge version', () => {
   it('refuses a challenge stored with a generator nobody can replay, WITHOUT storing a verdict', async () => {
     const { service, challenges, saved } = build();
     challenges.findOne.mockResolvedValue(challengeRow(7));
+    const moves = winningLogForV2();
     await expect(
-      service.submit('user-1', 'challenge-1', {
-        moves: winningLogForV2(),
-        claimedDurationMs: 60_000,
-      })
+      service.submit('user-1', 'challenge-1', { moves, claimedDurationMs: lengthOf(moves) })
     ).rejects.toThrow(BadRequestException);
     // A rollback past a generator must not turn an honest in-flight solve into a permanent rejection.
     expect(saved).toHaveLength(0);
