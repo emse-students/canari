@@ -96,16 +96,45 @@ describe('registerOwed - the state a newcomer still asks for', () => {
     expect(registerNeverTaken('ann', 'g1')).toBe(false);
   });
 
-  it('a decline gives its ask back - two devices declining each other spend nothing', () => {
+  it("a device's FIRST decline gives its ask back", () => {
     const log = vi.spyOn(console, 'log');
     noteRegisterOwed('ann', 'g1');
-    for (let i = 0; i < REGISTER_ASKS_MAX * 3; i++) {
-      noteRegisterAsked('ann', 'g1');
-      noteRegisterDeclined('ann', 'g1', 'bob:phone', ['bob:phone', 'carl:laptop']);
-    }
+    for (let i = 0; i < REGISTER_ASKS_MAX; i++) noteRegisterAsked('ann', 'g1');
+    noteRegisterDeclined('ann', 'g1', 'bob:phone', ['bob:phone', 'carl:laptop']);
     expect(endSpentRegisterAsks('ann', 'g1')).toBe(false);
     expect(isRegisterOwed('ann', 'g1')).toBe(true);
-    expect(log.mock.calls.join(' ')).toContain('holds no register - the ask is not counted');
+    expect(log.mock.calls.join(' ')).toContain('its first decline: the ask is not counted');
+  });
+
+  it('a device declining at every election spends the bound like silence - the asking ends (P2-1)', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    noteRegisterOwed('ann', 'g1');
+    const others = ['bob:phone', 'carl:laptop', 'dan:tablet'];
+    let sent = 0;
+    while (!endSpentRegisterAsks('ann', 'g1') && sent < 100) {
+      noteRegisterAsked('ann', 'g1');
+      sent++;
+      noteRegisterDeclined('ann', 'g1', 'bob:phone', others);
+    }
+    expect(isRegisterOwed('ann', 'g1')).toBe(false);
+    expect(sent).toBe(REGISTER_ASKS_MAX + 1);
+  });
+
+  it('two declines on one ask give back at most one ask per device - an earlier silent ask stays counted', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    noteRegisterOwed('ann', 'g1');
+    const others = ['bob:phone', 'carl:laptop', 'dan:tablet', 'eve:web'];
+    let sent = 0;
+    while (!endSpentRegisterAsks('ann', 'g1') && sent < 100) {
+      noteRegisterAsked('ann', 'g1');
+      sent++;
+      // The elected responder and the re-elected one both decline, every time.
+      noteRegisterDeclined('ann', 'g1', 'bob:phone', others);
+      noteRegisterDeclined('ann', 'g1', 'carl:laptop', others);
+    }
+    expect(isRegisterOwed('ann', 'g1')).toBe(false);
+    // Bounded by REGISTER_ASKS_MAX plus one ask per declining device.
+    expect(sent).toBeLessThanOrEqual(REGISTER_ASKS_MAX + others.length);
   });
 
   it('ends when EVERY other device declined - nobody holds a register to give', () => {

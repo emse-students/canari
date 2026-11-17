@@ -435,6 +435,25 @@ fn note_background_join(files_dir: &Path, group_id: &str) {
     }
 }
 
+/// Removes `group_id` from the background-join ledger - the page installed its Welcome itself, so a
+/// note for it is stale (`forget_background_join` command). Said at error when the ledger cannot be
+/// edited: the next start may then owe a register already taken.
+pub fn forget_background_join(files_dir: &Path, group_id: &str) {
+    let short: String = group_id.chars().take(8).collect();
+    match crate::commands::storage::with_json_ledger(files_dir, BACKGROUND_JOINS_FILE, |map| {
+        let removed = map.remove(group_id).is_some();
+        (removed, removed)
+    }) {
+        Ok(true) => log::info!(
+            "[BG_JOIN] group={short} installed by the page - its background note is forgotten"
+        ),
+        Ok(false) => {}
+        Err(e) => log::error!(
+            "[BG_JOIN] group={short} note NOT forgotten ({e}) - the next start may owe a register already taken"
+        ),
+    }
+}
+
 /// Takes every group the background-join ledger names, and deletes it - the app's start
 /// (`take_background_joins` command). From this call on, each join is the app's to own.
 pub fn take_background_joins(files_dir: &Path) -> Result<Vec<String>, String> {
@@ -1809,6 +1828,24 @@ mod tests {
 
         assert!(joined.is_err());
         assert!(take_background_joins(&dir).unwrap().is_empty());
+    }
+
+    /// A NOTE THE PAGE'S OWN INSTALL MADE STALE is forgotten, so the next start takes nothing for it
+    /// (review of #3777, P2-2); the other notes stay.
+    #[test]
+    fn a_note_the_page_installed_over_is_forgotten() {
+        let _s = quiet_foreground();
+        let dir = dir_holding("bgjoinforget", b"state");
+        note_background_join(&dir, "stale");
+        note_background_join(&dir, "kept");
+
+        forget_background_join(&dir, "stale");
+        forget_background_join(&dir, "never-noted");
+
+        assert_eq!(
+            take_background_joins(&dir).unwrap(),
+            vec!["kept".to_string()]
+        );
     }
 
     /// A FULL LEDGER names no further join (said at error), and keeps the ones it holds.

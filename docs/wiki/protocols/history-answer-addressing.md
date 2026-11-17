@@ -419,6 +419,21 @@ ASKS, on facts it holds durably:
    was (the inviter's push solicited, the fresh join announced). This is a FACT written by the code
    that joined; "held, no row, Welcome in hand" was the alternative, and it is a guess (a row can be
    missing for other reasons).
+
+   **A note the page installed over is forgotten (review of #3777, P2-2).** The note is written
+   before the `mls.bin` write, which can then be refused (the page holds the state) or erased by
+   the page's own persist; the page then installs the same Welcome itself and takes the register.
+   Left in the ledger, the note would make the next start find the group held and owe its register
+   again - and this device, a holder, would DECLINE newcomers, possibly the last device one of them
+   waits on. So the page's own install (`handleWelcome`) forgets the group in the ledger
+   (`forget_background_join`). Chosen over a durable "register taken" set because it removes the
+   stale claim where it lives rather than keeping a second, ever-growing fact to overrule it; the
+   residue is a kill between the install and that call, before the install is persisted - which
+   loses the install itself.
+
+   **Late on a warm resume, never lost.** The ledger is taken at a cold start only: a background
+   join made while the app's process stayed alive in the background is owed its register at the
+   next cold start, not at the resume.
 3. **Asked by the reconciliation it already runs.** While the entry still asks, `sendHistoryProbe`
    sends the DIGEST (never the state key, whose match is answered by silence) with `register: true`,
    and the ask this device keeps says `register` too (`noteHistoryAsk`). Like every ask, it carries
@@ -451,14 +466,18 @@ bound dropped both markers, and both then answered later newcomers with an empty
 
 **It terminates on proofs, never a clock.** The asking ends when either holds:
 
-- **`REGISTER_ASKS_MAX` (5) asks went UNANSWERED.** Every register ask that leaves is counted
-  (`noteRegisterAsked`), a decline gives its ask back (`noteRegisterDeclined`), and the bound is
-  checked before the next ask (`endSpentRegisterAsks`), so a decline that came back meanwhile is
-  already counted out. Counted at the ask, because silence is an answer: an older responder ignores
-  `register`, and when its store matches ours it sends nothing, so no answer-side count would ever
-  move ([legacy](../legacy-compatibility.md)). An ask answered by a device of this account is counted
-  like any other: on this build such a device answers or declines, and one on an older build is the
-  legacy case the bound exists for.
+- **`REGISTER_ASKS_MAX` (5) counted asks.** Every register ask that leaves is counted
+  (`noteRegisterAsked`); the FIRST decline from each device gives one ask back
+  (`noteRegisterDeclined`), and any later decline from that device is counted like silence (review
+  of #3777, P2-1: giving back on every decline let a device declining at each election - or a hostile
+  member - keep the count at zero, and two answerers of one ask erase an earlier silent ask). So at
+  most `REGISTER_ASKS_MAX` asks plus one per distinct declining device (an MLS-verified member) ever
+  leave, whoever is online. The bound is checked before the next ask (`endSpentRegisterAsks`), so a
+  decline that came back meanwhile is already counted out. Counted at the ask, because silence is an
+  answer: an older responder ignores `register`, and when its store matches ours it sends nothing, so no answer-side count would ever
+  move ([legacy](../legacy-compatibility.md)). A device of this account is treated like any other
+  device: on this build it answers or declines, and one on an older build is the legacy case the
+  bound exists for.
 - **Every other device of the tree DECLINED.** The decliners are kept in the entry; once they cover
   every leaf of the group but this one (`getGroupMemberIdentities`), nobody holds a register to give.
 
@@ -468,8 +487,9 @@ back - so no ask repeats without one.
 **What is still lost, honestly.** A conversation in which NO device holds a register - every member
 admitted offline, the inviter's push lost to each, and the inviter gone or itself never having taken
 one - never gets the nicknames set before those admissions: nobody can give them, and the asking ends
-on the declines. A group whose only holders run a build that ignores `register` is asked five times
-and then not again until a re-admission. A FIFO-evicted entry (more than 256 conversations owed at
+on the declines. A group whose only holders run a build that ignores `register` - or are offline
+at every election while other devices decline - is asked `REGISTER_ASKS_MAX` plus one per other
+device times, and then not again until a re-admission. A FIFO-evicted entry (more than 256 conversations owed at
 once) answers as a holder would. Each is said at warn where it ends.
 
 **The register answer carries the nickname register and nothing else (decided 2026-11-17).** The
@@ -479,7 +499,10 @@ from the elected answerer, or keep what can do lasting harm out of it. The secon
 the first would need the receiver to re-run the election on a roster it may not hold yet (it has just
 joined), and a floor or read marks taken from a forged answer would hide history from the device for
 good. The nicknames are bounded by the merge (unverified, current members only, dated within the
-bundle's server time), so a forged register can at worst mislabel, and the next real one corrects it.
+bundle's server time), so a forged register can at worst mislabel. **It is NOT corrected by a later
+one:** the first register taken ends the entry, so this device asks no more, and from then on it
+answers newcomers as a holder - passing on the forged (or an empty) register it took. A nickname set
+live afterwards, by its `nickname` frame, does overrule it.
 The pins, the floor and the read marks ride only the inviter's join push, which is taken only from a
 device of the user the Welcome came from (review of #3777, P2-c): the join ask records that user
 (`noteJoinSolicited`) and `takeAddressedAsk` refuses any other member's device for it, whatever slot
@@ -496,7 +519,9 @@ says is gone.
 **Only a Welcome that installed the group asks at once.** The fresh-join reconciliation runs in
 `sessionAuth`'s `onWelcomeProcessed` callback, told by the drain whether the handler INSTALLED the
 group (`noteWelcomeInstalled`) - or, for a background join, took its first redelivery as the
-admission. The mark is read ONCE per Welcome, on success and on a handler that threw alike. A
+admission. The mark is keyed by the envelope's group id - the one the drain reads it by, so a
+Welcome delivered without one leaves none - and read ONCE per Welcome, on success and on a handler
+that threw alike. A
 redelivered Welcome of a group already held joins nothing and asks nothing.
 
 ### What proves the register ask and the state-only push
@@ -505,6 +530,12 @@ redelivered Welcome of a group already held joins nothing and asks nothing.
   as nothing owed at error, clearing what is not owed says nothing; the asks counted across a reload,
   the bound ending the asking at warn while the register stays never-taken, a decline giving its ask
   back, every other device declining ending the asking, a re-admission asking from zero.
+- `registerOwed.test.ts` (P2-1) - a device declining at every election spends the bound like
+  silence; two declines on every ask give back at most one ask per device.
+- `backgroundJoins.test.ts` (P2-2), `setupMessageHandler.test.ts`, `mobile/background.rs`
+  (`a_note_the_page_installed_over_is_forgotten`) - the page's own install forgets the group's
+  background note, so the next start does not owe a register the page took; a Welcome with no
+  envelope group id leaves no install mark.
 - `backgroundJoins.test.ts`, `mobile/background.rs` (`a_background_join_is_noted_and_taken_once`,
   `a_welcome_that_does_not_install_notes_nothing`, `a_full_background_join_ledger_keeps_what_it_holds`):
   a background join is noted and taken once, a refused one not at all; a group the loaded state does

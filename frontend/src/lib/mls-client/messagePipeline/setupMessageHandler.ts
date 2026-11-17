@@ -50,7 +50,7 @@ import { retryOverheardPull } from '$lib/utils/chat/historyDiffAnswer';
 import { takeOwedPulls } from '$lib/utils/chat/historyOverheardPull';
 import { forgetHistoryAsks, noteJoinSolicited } from '$lib/utils/chat/historyAddressing';
 import { noteRegisterOwed } from '$lib/utils/chat/registerOwed';
-import { takeBackgroundJoined } from '$lib/utils/chat/backgroundJoins';
+import { forgetBackgroundJoin, takeBackgroundJoined } from '$lib/utils/chat/backgroundJoins';
 import {
   hasHistoryFrameBeenConsumed,
   markHistoryFrameConsumed,
@@ -713,7 +713,7 @@ async function handleWelcome(args: WelcomeArgs): Promise<boolean> {
     // owed was written at the start.
     if (takeBackgroundJoined(terminalId)) {
       noteJoinSolicited(terminalId, sender);
-      mlsService.noteWelcomeInstalled(groupId ?? terminalId);
+      if (groupId) mlsService.noteWelcomeInstalled(groupId);
       log(
         `[WELCOME] ${terminalId.slice(0, 8)}… joined in the background - its redelivered Welcome taken as the admission`
       );
@@ -769,9 +769,14 @@ async function handleWelcome(args: WelcomeArgs): Promise<boolean> {
       // durably here so a device the push never reached - offline at the delivery, or reloaded
       // before it - asks for it by its own reconciliation. A key group has no conversation state.
       if (!mlsService.isDistributionGroup(joinedGroupId)) noteRegisterOwed(userId, joinedGroupId);
+      // THE PAGE'S OWN INSTALL MAKES ANY BACKGROUND NOTE FOR THIS GROUP STALE (`backgroundJoins.ts`):
+      // forgotten, so the next start does not owe again a register this device is about to take.
+      void forgetBackgroundJoin(joinedGroupId);
       // A FRESH JOIN, told to the announcement as a fact (`onWelcomeProcessed`'s `installed`): it is
       // what runs the newcomer's reconciliation, which a redelivered Welcome must not.
-      mlsService.noteWelcomeInstalled(groupId ?? joinedGroupId);
+      // Keyed by the ENVELOPE's id, the one the drain reads it by: a Welcome delivered without one is
+      // not announced, so a mark under another id would never be read.
+      if (groupId) mlsService.noteWelcomeInstalled(groupId);
       log(
         `[HISTORY_ADDRESSED] ${joinedGroupId.slice(0, 8)}… admitted - the inviter's push is solicited`
       );

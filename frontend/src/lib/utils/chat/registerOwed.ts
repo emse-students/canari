@@ -23,12 +23,16 @@
  *   or a decline from EVERY other device of the group (nobody holds a register to give). Stopping
  *   to ask never makes a device answer as if it held one.
  *
- * **A DECLINE IS NOT COUNTED.** Two newcomers - or one person's phone and laptop - elected for each
- * other's asks both decline; counting those would spend the bound on answers that prove only who
- * cannot help, and drop both entries before the member that holds the register is elected. Asks
- * are counted when they LEAVE, and a decline gives its ask back. Counted at the ask rather than at
- * an answer because silence is an answer: an older responder whose store matches ours sends
- * nothing at all, so no answer-side count would ever move.
+ * **A DEVICE'S FIRST DECLINE IS NOT COUNTED.** Two newcomers - or one person's phone and laptop -
+ * elected for each other's asks both decline; counting those would spend the bound on answers that
+ * prove only who cannot help. So the FIRST decline from each device gives its ask back, and every
+ * later one from the same device is counted like silence (review of #3777, P2-1): giving back on
+ * every decline let a device that declines at each election - or a hostile member declining on
+ * purpose - keep the count at zero for ever, and let the two answerers of one ask erase an earlier
+ * silent ask. The asks are therefore bounded by {@link REGISTER_ASKS_MAX} plus the number of other
+ * devices, whatever is online. Counted at the ask rather than at an answer because silence is an
+ * answer: an older responder whose store matches ours sends nothing at all, so no answer-side count
+ * would ever move.
  *
  * Durable (`localStorage`, per account) because the question outlives the page: a reload between
  * the Welcome and the answer must still ask. Bounded ({@link REGISTER_OWED_LIMIT}) as a FIFO - state,
@@ -158,8 +162,13 @@ export function noteRegisterDeclined(
   const owed = read(account);
   const entry = owed.find((o) => o.group === groupId && o.asking);
   if (!entry) return;
-  entry.asked = Math.max(0, entry.asked - 1);
-  if (!entry.declined.includes(decliner)) entry.declined.push(decliner);
+  // ONLY A FIRST DECLINE GIVES ITS ASK BACK: one ask per device at most, which is what bounds the
+  // asks by REGISTER_ASKS_MAX plus the other devices, however often a device declines.
+  const first = !entry.declined.includes(decliner);
+  if (first) {
+    entry.declined.push(decliner);
+    entry.asked = Math.max(0, entry.asked - 1);
+  }
   const nobodyHolds = others.length > 0 && others.every((d) => entry.declined.includes(d));
   if (nobodyHolds) entry.asking = false;
   if (!write(account, owed)) return;
@@ -169,7 +178,7 @@ export function noteRegisterDeclined(
     );
   } else {
     console.log(
-      `[REGISTER] ${groupId.slice(0, 8)}... ${decliner.slice(0, 8)} holds no register - the ask is not counted`
+      `[REGISTER] ${groupId.slice(0, 8)}... ${decliner.slice(0, 8)} holds no register - ${first ? 'its first decline: the ask is not counted' : 'declined before: the ask is counted'}`
     );
   }
 }

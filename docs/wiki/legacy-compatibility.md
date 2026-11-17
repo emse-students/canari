@@ -104,9 +104,9 @@ called from `sendHistoryProbe` (`groupActions.ts`).
 ([history-answer-addressing](protocols/history-answer-addressing.md#the-newcomer-asks-for-its-register-2026-11-17))
 ignores `register` and answers the digest alone - or, its store matching ours, sends nothing: no
 register and no decline. Such an ask stays counted, and after five unanswered asks the newcomer stops
-asking, said at warn. Declines from responders on this build are NOT counted (they give their ask
-back), so two newcomers - or one person's two devices - declining each other spend nothing; their
-asking ends only when every other device of the tree has declined, which is a proof, not this bound.
+asking, said at warn. A responder on this build declines instead, and its FIRST decline gives its
+ask back (later ones from the same device count like silence), so at most five asks plus one per
+other device ever leave; the asking also ends when every other device of the tree has declined.
 **The cost while it stands:** a newcomer whose only register holders run an older build asks five
 times (a digest instead of the state key each time), keeps the nicknames it had, and declines -
 never answers empty - while it has taken none.

@@ -477,17 +477,6 @@ pub(crate) fn read_and_clear_read_watermarks(app: tauri::AppHandle) -> Vec<serde
     take_ndjson_handoff(&app, "read_watermarks.ndjson", "READ_WATERMARK")
 }
 
-/// Takes the ledger of key-group joins the push service attempted while the app was shut, and
-/// deletes it (channel-encryption section 26, `mobile::key_group_join`).
-///
-/// Called once at start-up, BEFORE the key-group registry is restored and before the drain: a group
-/// joined from a push is in `mls.bin` and in no registry row, and a key group the registry does not
-/// name has its backlog refused as `absent-conversation` (section 22). The `joined` entries carry the
-/// scope the server named, which is what the frontend writes into the registry. From this call on,
-/// every group in the ledger is the app's own join's to own - which is why the whole file goes.
-///
-/// Empty on desktop, where no push service exists to join anything, and on iOS, whose notification
-/// extension never joins (it writes no `mls.bin` of the app's).
 /// Takes the groups a background Welcome joined while the app was shut, and deletes the ledger
 /// (`mobile::background::take_background_joins`). Called once at start-up, before the drain: the
 /// frontend makes each conversation among them owe its register (`registerOwed.ts`), as a Welcome
@@ -528,6 +517,44 @@ pub(crate) fn take_background_joins(app: tauri::AppHandle) -> Vec<String> {
     }
 }
 
+/// Forgets `group_id` in the background-join ledger: the PAGE installed that group's Welcome itself
+/// (`handleWelcome`), so whatever a background engine noted for it - a join whose `mls.bin` write was
+/// refused, or erased by the page's own persist - describes a join that is not the one this device
+/// holds, and its register is the page's to ask and take (review of #3777, P2-2). Without this, the
+/// next start would take the stale note for a group the page HOLDS and owe a register it already
+/// took. Nothing on desktop; a failure is said at error.
+#[tauri::command]
+pub(crate) fn forget_background_join(app: tauri::AppHandle, group_id: String) {
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        let data_dir = match app.path().app_data_dir() {
+            Ok(d) => d,
+            Err(e) => {
+                log::error!(
+                    "[BG_JOIN] app_data_dir() failed: {e} - a stale note may re-owe a register"
+                );
+                return;
+            }
+        };
+        crate::mobile::background::forget_background_join(&data_dir, &group_id);
+    }
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        let _ = (app, group_id);
+    }
+}
+
+/// Takes the ledger of key-group joins the push service attempted while the app was shut, and
+/// deletes it (channel-encryption section 26, `mobile::key_group_join`).
+///
+/// Called once at start-up, BEFORE the key-group registry is restored and before the drain: a group
+/// joined from a push is in `mls.bin` and in no registry row, and a key group the registry does not
+/// name has its backlog refused as `absent-conversation` (section 22). The `joined` entries carry the
+/// scope the server named, which is what the frontend writes into the registry. From this call on,
+/// every group in the ledger is the app's own join's to own - which is why the whole file goes.
+///
+/// Empty on desktop, where no push service exists to join anything, and on iOS, whose notification
+/// extension never joins (it writes no `mls.bin` of the app's).
 #[tauri::command]
 pub(crate) fn take_key_group_push_joins(app: tauri::AppHandle) -> Vec<serde_json::Value> {
     #[cfg(any(target_os = "android", target_os = "ios"))]

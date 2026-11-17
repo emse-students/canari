@@ -1,3 +1,7 @@
+vi.mock('$lib/utils/chat/backgroundJoins', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/utils/chat/backgroundJoins')>()),
+  forgetBackgroundJoin: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock('$lib/utils/hex', () => ({
   saveMlsState: vi.fn().mockResolvedValue(undefined),
   saveMlsStateEncrypted: vi.fn().mockResolvedValue(undefined),
@@ -58,7 +62,7 @@ vi.mock('$lib/utils/chat/recovery', () => ({
 
 import { setupMessageHandler } from './setupMessageHandler';
 import { isRegisterOwed } from '$lib/utils/chat/registerOwed';
-import { adoptBackgroundJoins } from '$lib/utils/chat/backgroundJoins';
+import { adoptBackgroundJoins, forgetBackgroundJoin } from '$lib/utils/chat/backgroundJoins';
 import { takeAddressedAsk } from '$lib/utils/chat/historyAddressing';
 import { messageRowStore, placement, storedRow } from '../test/fixtures/messageRowStore';
 import { resetUnackedFrames } from './unackedFrames';
@@ -361,6 +365,42 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     // A FRESH JOIN, told to the announcement as a fact: what runs the newcomer's reconciliation. A
     // key group's Welcome takes the Graine handler, which announces nothing to the conversation layer.
     expect(mls.noteWelcomeInstalled.mock.calls).toEqual(keyGroup ? [] : [[groupId]]);
+  });
+
+  it("the page's own install forgets the group's background note - the next start owes nothing again (P2-2)", async () => {
+    vi.mocked(forgetBackgroundJoin).mockClear();
+    const deps = baseDeps();
+    const mls = deps.mlsService as any;
+    mls.processWelcome = vi.fn().mockResolvedValue(groupId);
+    mls.getDeviceId = vi.fn().mockReturnValue('dev-x');
+    setupMessageHandler(deps as any);
+    const onMsg = mls.onMessage.mock.calls[0][0] as (
+      a: string,
+      b: Uint8Array,
+      c?: string,
+      d?: boolean
+    ) => Promise<boolean>;
+    await onMsg('peer-user', new Uint8Array([1, 2]), groupId, true);
+
+    expect(vi.mocked(forgetBackgroundJoin).mock.calls).toEqual([[groupId]]);
+  });
+
+  it('a Welcome delivered with no envelope group id leaves no install mark - the drain reads none', async () => {
+    const deps = baseDeps();
+    const mls = deps.mlsService as any;
+    mls.processWelcome = vi.fn().mockResolvedValue(groupId);
+    mls.getDeviceId = vi.fn().mockReturnValue('dev-x');
+    setupMessageHandler(deps as any);
+    const onMsg = mls.onMessage.mock.calls[0][0] as (
+      a: string,
+      b: Uint8Array,
+      c?: string,
+      d?: boolean
+    ) => Promise<boolean>;
+    await onMsg('peer-user', new Uint8Array([1, 2]), undefined, true);
+
+    expect(mls.processWelcome).toHaveBeenCalled();
+    expect(mls.noteWelcomeInstalled).not.toHaveBeenCalled();
   });
 
   /**

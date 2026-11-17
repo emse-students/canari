@@ -75,6 +75,26 @@ export function takeBackgroundJoined(groupId: string): boolean {
 }
 
 /**
+ * Forgets `groupId` in the native ledger: the PAGE installed its Welcome itself, so whatever a
+ * background engine noted for it is stale - a join whose `mls.bin` write was refused, or that the
+ * page's own persist erased (review of #3777, P2-2). Left there, the next start would find the group
+ * held, owe its register again although the page took it, and this device would DECLINE newcomers
+ * it could answer. A no-op off the native app; a failure is said at error, never thrown - the
+ * install it follows must not fail for it.
+ */
+export async function forgetBackgroundJoin(groupId: string): Promise<void> {
+  if (!isTauriRuntime()) return;
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('forget_background_join', { groupId });
+  } catch (e) {
+    console.error(
+      `[BG_JOIN] ${groupId.slice(0, 8)}… - its background note could not be forgotten; the next start may owe a register already taken: ${String(e).slice(0, 160)}`
+    );
+  }
+}
+
+/**
  * Takes the native ledger and adopts it. A no-op off the native app; a ledger that could not be
  * taken is said at error, and those conversations ask for no register.
  */

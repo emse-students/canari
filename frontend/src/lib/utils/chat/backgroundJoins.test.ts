@@ -1,7 +1,36 @@
 // @vitest-environment happy-dom
-import { beforeEach, describe, expect, it } from 'vitest';
-import { adoptBackgroundJoins, takeBackgroundJoined } from './backgroundJoins';
-import { isRegisterOwed } from './registerOwed';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+/** The native ledger, as the two commands edit it. */
+const ledger = vi.hoisted(() => ({ groups: [] as string[] }));
+vi.mock('$lib/utils/openExternal', () => ({ isTauriRuntime: () => true }));
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: vi.fn(async (command: string, args?: { groupId: string }) => {
+    if (command === 'forget_background_join') {
+      ledger.groups = ledger.groups.filter((g) => g !== args?.groupId);
+      return undefined;
+    }
+    if (command === 'take_background_joins') {
+      const taken = ledger.groups;
+      ledger.groups = [];
+      return taken;
+    }
+    throw new Error(`unexpected command ${command}`);
+  }),
+}));
+
+import {
+  adoptBackgroundJoins,
+  forgetBackgroundJoin,
+  takeBackgroundJoined,
+  takeBackgroundJoins,
+} from './backgroundJoins';
+import {
+  clearRegisterOwed,
+  isRegisterOwed,
+  noteRegisterOwed,
+  registerNeverTaken,
+} from './registerOwed';
 
 /**
  * P2-a of the review of #3777: a conversation the push service joined while the app was shut is
@@ -59,5 +88,27 @@ describe('the conversations joined in the background', () => {
 
     expect(result).toEqual({ owed: 0, ignored: 1 });
     expect(isRegisterOwed('me', 'key-group')).toBe(false);
+  });
+});
+
+/**
+ * P2-2 of the re-review of #3777: a background note whose install was refused (or erased) while the
+ * page installed the same Welcome itself must not re-owe, at the next start, the register the page
+ * then took - this device would decline newcomers it can answer.
+ */
+describe('a background note the page installed over', () => {
+  it('is forgotten by the install, so the next start does not owe the register again', async () => {
+    localStorage.clear();
+    ledger.groups = ['g-stale'];
+    // The page installs the Welcome itself (`handleWelcome`): owed, the note forgotten, then taken.
+    noteRegisterOwed('me', 'g-stale');
+    await forgetBackgroundJoin('g-stale');
+    clearRegisterOwed('me', 'g-stale', 'register answer');
+
+    const mls = { isDistributionGroup: () => false, getLocalGroups: () => ['g-stale'] };
+    await takeBackgroundJoins(mls as never, 'me', () => {});
+
+    expect(registerNeverTaken('me', 'g-stale')).toBe(false);
+    expect(takeBackgroundJoined('g-stale')).toBe(false);
   });
 });
