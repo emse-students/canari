@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createDevicePanelLoader, panelStateFrom, type PanelLoadResult } from './devicePanelLoad';
+import {
+  createDevicePanelLoader,
+  panelStateFrom,
+  settleRemoval,
+  type PanelLoadResult,
+} from './devicePanelLoad';
 
 type D = { deviceId: string };
 type S = { id: string };
@@ -21,13 +26,13 @@ describe('panelStateFrom', () => {
       devices: { status: 'fulfilled', value: [{ deviceId: 'd1' }] },
       sessions: { status: 'fulfilled', value: [{ id: 's1' }] },
     });
-    expect(ok).toMatchObject({ devicesKnown: true, sessionsKnown: true, devicesFailed: false });
+    expect(ok).toMatchObject({ devicesKnown: true, sessionsKnown: true });
 
     const failed = panelStateFrom<D, S>({
       devices: { status: 'rejected', reason: new Error('down') },
       sessions: { status: 'fulfilled', value: [{ id: 's1' }] },
     });
-    expect(failed).toMatchObject({ devices: [], devicesKnown: false, devicesFailed: true });
+    expect(failed).toMatchObject({ devices: [], devicesKnown: false, sessionsKnown: true });
   });
 });
 
@@ -78,5 +83,44 @@ describe('createDevicePanelLoader', () => {
     expect(applied.map((r) => r.devices)).toEqual([
       { status: 'fulfilled', value: [{ deviceId: 'new' }] },
     ]);
+  });
+});
+
+describe('settleRemoval', () => {
+  /*
+   * The panel's reload clears its messages when it starts, so a removal's failure set BEFORE it was
+   * wiped before anyone could read it. The message is shown only once the reload has finished.
+   */
+  it("shows the removal's messages after the reload, which would otherwise clear them", async () => {
+    const order: string[] = [];
+    let shown = '';
+    await settleRemoval({
+      remove: async () => {
+        order.push('remove');
+        return { failure: 'retry', sessionFailure: '' };
+      },
+      reload: async () => {
+        order.push('reload');
+        shown = '';
+      },
+      show: (messages) => {
+        order.push('show');
+        shown = messages.failure;
+      },
+    });
+    expect(order).toEqual(['remove', 'reload', 'show']);
+    expect(shown).toBe('retry');
+  });
+
+  it('still reloads and shows nothing when the removal succeeded', async () => {
+    const show = vi.fn();
+    const reload = vi.fn(async () => undefined);
+    await settleRemoval({
+      remove: async () => ({ failure: '', sessionFailure: '' }),
+      reload,
+      show,
+    });
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(show).toHaveBeenCalledWith({ failure: '', sessionFailure: '' });
   });
 });
