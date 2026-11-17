@@ -2380,9 +2380,12 @@ export async function loginImpl(
     if (cb.beginBulkMessageIngest && cb.endBulkMessageIngest) {
       const beginUi = cb.beginBulkMessageIngest;
       const endUi = cb.endBulkMessageIngest;
+      const holdRows = cb.holdRowsForCheckpoint;
       mlsService.addBulkIngestObserver({
         onBulkIngestStart: (phase) => beginUi(phase),
         onBulkIngestEnd: (phase) => endUi(phase),
+        // The UI buffer holds rows of frames already applied: a checkpoint stores them first.
+        ...(holdRows ? { holdRowsForCheckpoint: () => holdRows() } : {}),
       });
     }
     // The new-device notices consume the device events from here on, and drain what is pending.

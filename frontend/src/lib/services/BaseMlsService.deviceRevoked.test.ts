@@ -258,6 +258,8 @@ describe('BaseMlsService.generateKeyPackage on a revoked device', () => {
       // The real seams: the latch is checked where every write of a live client passes.
       const seams = {
         persistCheckpoint: BaseMlsService.prototype.persistCheckpoint,
+        holdRowsForExport: BaseMlsService.prototype['holdRowsForExport'],
+        bulkIngestObservers: [],
         changeDeviceKey: BaseMlsService.prototype.changeDeviceKey,
       };
       const ctx = makeCtx({

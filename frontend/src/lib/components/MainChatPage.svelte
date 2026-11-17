@@ -507,6 +507,7 @@
       beginBulkMessageIngest: (phase: BulkIngestPhase) => messaging.beginBulkMessageIngest(phase),
       endBulkMessageIngest: (phase: BulkIngestPhase) =>
         messaging.endBulkMessageIngest(msgCtx(), phase),
+      holdRowsForCheckpoint: () => messaging.holdRowsForCheckpoint(msgCtx()),
       batchAddMessages: (
         msgs: Parameters<typeof messaging.batchAddMessages>[0],
         contactName: string,

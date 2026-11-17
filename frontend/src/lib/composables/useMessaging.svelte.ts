@@ -504,26 +504,36 @@ export function useMessaging() {
     bulkIngestBuffer.clear();
   }
 
-  /** Ends catch-up: flushes bulk buffer when used, then hides the loading overlay. */
-  async function endBulkMessageIngest(ctx: MessagingContext, phase: BulkIngestPhase) {
-    const { bufferUi, showOverlay } = phase;
-    if (!bufferUi && !showOverlay) return;
+  /**
+   * Checkpoints waiting to export while rows they would claim are held here. While one is, an
+   * inbound message takes the live path - stored by its own handler - instead of the buffer, so the
+   * buffer cannot refill behind the store the checkpoint is waiting for (see {@link holdRowsForCheckpoint}).
+   */
+  let checkpointsHoldingRows = 0;
 
-    try {
-      if (bufferUi && bulkIngestActive) {
-        // Disable buffering BEFORE the await loop: any message that arrives during the flush
-        // (e.g. a channel event calling addMessageToChat outside the drain queue) then takes
-        // the live path and renders immediately, instead of landing in a buffer the finally
-        // block is about to discard - which would silently drop it.
-        bulkIngestActive = false;
-        const entries = [...bulkIngestBuffer.entries()].sort(([, a], [, b]) => {
-          const seqA = a[0]?.ingestSequence ?? Number.MAX_SAFE_INTEGER;
-          const seqB = b[0]?.ingestSequence ?? Number.MAX_SAFE_INTEGER;
-          return seqA - seqB;
-        });
-        const benchMessageCount = entries.reduce((sum, [, msgs]) => sum + msgs.length, 0);
-        beginBulkUiFlushBench(entries.length, benchMessageCount);
-        bulkIngestBuffer.clear();
+  /**
+   * The ONE chain every store of the buffer goes through - the window's close and a checkpoint's
+   * hold - so neither overtakes the other, and awaiting it awaits every row taken before. Never
+   * rejects: each step catches and logs its own failure.
+   */
+  let bufferedRowsStored: Promise<void> = Promise.resolve();
+
+  /**
+   * Stores (and renders) every message the bulk buffer holds now, in the order they arrived, behind
+   * any store already running. The buffer is taken when this step's turn comes, not when it is asked.
+   */
+  function storeBufferedRows(ctx: MessagingContext, origin: string): Promise<void> {
+    const step = bufferedRowsStored.then(async () => {
+      if (bulkIngestBuffer.size === 0) return;
+      const entries = [...bulkIngestBuffer.entries()].sort(([, a], [, b]) => {
+        const seqA = a[0]?.ingestSequence ?? Number.MAX_SAFE_INTEGER;
+        const seqB = b[0]?.ingestSequence ?? Number.MAX_SAFE_INTEGER;
+        return seqA - seqB;
+      });
+      const benchMessageCount = entries.reduce((sum, [, msgs]) => sum + msgs.length, 0);
+      beginBulkUiFlushBench(entries.length, benchMessageCount);
+      bulkIngestBuffer.clear();
+      try {
         for (const [contactName, messages] of entries) {
           if (messages.length > 0) {
             // ARRIVALS. The bulk buffer holds messages that came over the wire while a drain was
@@ -533,7 +543,64 @@ export function useMessaging() {
             await yieldToMainThread();
           }
         }
+      } catch (e) {
+        console.error(`[ADD_MSG] storing the buffered messages failed (${origin}):`, e);
+      } finally {
         finishBulkUiFlushBench();
+      }
+    });
+    bufferedRowsStored = step;
+    return step;
+  }
+
+  /**
+   * ROWS BEFORE RATCHET: called by a checkpoint BEFORE it exports the MLS state, which already holds
+   * the ratchet advance and the seen mark of every message this buffer holds. Exported first, a kill
+   * before the window's close lost those messages for good - the device can neither decrypt them
+   * again (the generation is spent on disk) nor replay them (they are marked seen). So the export
+   * waits for them to be STORED, and until the returned release is called no new message enters the
+   * buffer: it takes the live path, whose handler stores it. That is what makes the wait end - one
+   * store of what is held, never a race with a drain refilling it.
+   * See [chat](docs/wiki/frontend/modules/chat.md#rows-before-ratchet-a-checkpoint-stores-the-buffered-rows-first-2026-11-17).
+   */
+  async function holdRowsForCheckpoint(ctx: MessagingContext): Promise<() => void> {
+    checkpointsHoldingRows += 1;
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      checkpointsHoldingRows -= 1;
+    };
+    if (bulkIngestBuffer.size > 0) {
+      // Said only when there is something to store: it is the line that explains a batch landing
+      // while its window is still open.
+      const count = [...bulkIngestBuffer.values()].reduce((sum, msgs) => sum + msgs.length, 0);
+      console.log(
+        `[ADD_MSG] A checkpoint is about to export: storing the ${count} buffered message(s) first, the window stays open`
+      );
+    }
+    try {
+      await storeBufferedRows(ctx, 'before a checkpoint exports their ratchet advance');
+    } catch (e) {
+      release();
+      throw e;
+    }
+    return release;
+  }
+
+  /** Ends catch-up: flushes bulk buffer when used, then hides the loading overlay. */
+  async function endBulkMessageIngest(ctx: MessagingContext, phase: BulkIngestPhase) {
+    const { bufferUi, showOverlay } = phase;
+    if (!bufferUi && !showOverlay) return;
+
+    try {
+      if (bufferUi && bulkIngestActive) {
+        // Disable buffering BEFORE the await: any message that arrives during the flush (e.g. a
+        // channel event calling addMessageToChat outside the drain queue) then takes the live path
+        // and renders immediately, instead of landing in a buffer the finally block is about to
+        // discard - which would silently drop it.
+        bulkIngestActive = false;
+        await storeBufferedRows(ctx, 'ingest window closed');
         // AND THE DRAIN DOES NOT MOVE IT EITHER. This ended with the same blind jump, at the
         // worst possible moment: a catch-up finishing is exactly when a bad connection has just
         // recovered, so the reader who spent the outage scrolled up reading history was teleported
@@ -544,6 +611,7 @@ export function useMessaging() {
     } finally {
       if (bufferUi) {
         bulkIngestActive = false;
+        warnIfDiscardingBuffered('endBulkMessageIngest');
         bulkIngestBuffer.clear();
       }
       if (showOverlay) {
@@ -1035,7 +1103,15 @@ export function useMessaging() {
     // is no inbound drain, so the echo took the live path. One extra item costs nothing to render.
     // The acting device's own visible notice is the same case under a `system` sender
     // (`soleWriter`): nothing echoes it either, so the buffer would be its only copy.
-    if (bulkIngestActive && !isOwnMessage(senderId, ctx.userId) && options.soleWriter !== true) {
+    // AND NOTHING IS BUFFERED WHILE A CHECKPOINT WAITS FOR THE BUFFER'S ROWS
+    // (`holdRowsForCheckpoint`): this message's ratchet advance may be in the state it exports, so
+    // its row is stored now, by the live path below.
+    if (
+      bulkIngestActive &&
+      checkpointsHoldingRows === 0 &&
+      !isOwnMessage(senderId, ctx.userId) &&
+      options.soleWriter !== true
+    ) {
       const convo = ctx.conversations.get(normalized);
       if (!convo) {
         console.warn(
@@ -3772,6 +3848,8 @@ export function useMessaging() {
     beginBulkMessageIngest,
     /** Flushes buffered messages after MLS queue catch-up. */
     endBulkMessageIngest,
+    /** Stores the buffered rows before a checkpoint exports their ratchet advance (rows before ratchet). */
+    holdRowsForCheckpoint,
     /** Resets overlay + bulk buffer (e.g. after a desynced catch-up on mobile). */
     resetMessageCatchupState,
     /**

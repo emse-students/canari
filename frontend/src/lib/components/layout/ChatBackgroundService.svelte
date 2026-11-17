@@ -1134,6 +1134,7 @@
         globalMessaging.beginBulkMessageIngest(phase),
       endBulkMessageIngest: (phase: BulkIngestPhase) =>
         globalMessaging.endBulkMessageIngest(msgCtx(), phase),
+      holdRowsForCheckpoint: () => globalMessaging.holdRowsForCheckpoint(msgCtx()),
       batchAddMessages: (
         msgs: Parameters<typeof globalMessaging.batchAddMessages>[0],
         contactName: string,

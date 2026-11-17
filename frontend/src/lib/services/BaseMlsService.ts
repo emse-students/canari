@@ -181,6 +181,7 @@ import {
 import {
   checkpointWroteNothing,
   fromBase64,
+  MlsCheckpointNotWrittenError,
   MlsStateWriteRefusedError,
   sameBytes,
   toBase64,
@@ -5348,38 +5349,92 @@ export abstract class BaseMlsService implements IMlsService {
     }
     // Before the state opened there is no ledger to stage: the state being written is the one the
     // load is building (a fresh start, a rotation), and the opening reads what it carries.
-    const ledgers = stateLedgersHydrated(this.userId)
-      ? this.stageCheckpointLedgers(await this.emittedForCheckpoint())
+    // Read first: a send landing after the read costs one burnt generation too many, never too few.
+    const emitted = stateLedgersHydrated(this.userId)
+      ? await this.emittedForCheckpoint()
       : undefined;
-    // What this write holds of the inbound frames, read BEFORE it exports: a frame applied while it
-    // seals is not in it ({@link durableApplied}).
-    const appliedAtExport = this.inboundApplied;
-    // NOTHING IS AWAITED BETWEEN THE STAGING ABOVE AND THE CALL BELOW: on the web the platform
-    // applies the ledgers and exports in this same turn, so every mark staged describes an advance
-    // the export holds.
+    // ROWS BEFORE RATCHET: the rows held in memory for frames already applied are stored before the
+    // export claims those frames' ratchet advance, and none is held again until the export is taken.
+    const releaseRows = await this.holdRowsForExport();
     try {
-      await this.writeCheckpoint(
-        this.currentDeviceKeyB64,
-        {
-          isEnded: () => this.stateWritesEnded === true,
-          holdsNoLead: refusesCommitsHere,
-          endOnRefusal: options?.endsDocumentOnRefusal
-            ? () => {
-                this.stateWritesEnded = true;
-              }
-            : undefined,
-        },
-        ledgers
-      );
-      // Only a write that LANDED holds what it exported: the ledgers in it, and the frames counted
-      // into `appliedAtExport`.
-      if (appliedAtExport > this.durableApplied) this.durableApplied = appliedAtExport;
-    } catch (e) {
-      // The next checkpoint carries them. A client that already took them re-applies the same value,
-      // a no-op; one that never got them (a native call refused before it ran) takes them then.
-      if (ledgers) restageStateLedgers(this.userId, ledgers);
-      throw e;
+      const ledgers = emitted ? this.stageCheckpointLedgers(emitted) : undefined;
+      // What this write holds of the inbound frames, read BEFORE it exports: a frame applied while it
+      // seals is not in it ({@link durableApplied}).
+      const appliedAtExport = this.inboundApplied;
+      // NOTHING IS AWAITED BETWEEN THE STAGING ABOVE AND THE CALL BELOW: on the web the platform
+      // applies the ledgers and exports in this same turn, so every mark staged describes an advance
+      // the export holds.
+      try {
+        await this.writeCheckpoint(
+          this.currentDeviceKeyB64,
+          {
+            isEnded: () => this.stateWritesEnded === true,
+            holdsNoLead: refusesCommitsHere,
+            endOnRefusal: options?.endsDocumentOnRefusal
+              ? () => {
+                  this.stateWritesEnded = true;
+                }
+              : undefined,
+          },
+          ledgers
+        );
+        // Only a write that LANDED holds what it exported: the ledgers in it, and the frames counted
+        // into `appliedAtExport`.
+        if (appliedAtExport > this.durableApplied) this.durableApplied = appliedAtExport;
+      } catch (e) {
+        // The next checkpoint carries them. A client that already took them re-applies the same
+        // value, a no-op; one that never got them (a native call refused before it ran) takes them then.
+        if (ledgers) restageStateLedgers(this.userId, ledgers);
+        throw e;
+      }
+    } finally {
+      // Released once the write settled, not at the capture: on native the export runs in the
+      // command, so the hold has to outlast the call.
+      releaseRows();
     }
+  }
+
+  /**
+   * ROWS BEFORE RATCHET (P1, review of #3321): asks every observer that holds rows of applied frames
+   * in memory to store them, and returns the release of every hold taken.
+   *
+   * THE ORDER, NOT A WAIT FOR A WINDOW: a live drain buffers its rows until its window closes, and a
+   * checkpoint started meanwhile - by a send, an earlier window, the persister's coalescing, and the
+   * window's own close, whose persister observer runs BEFORE the UI one - exported the ratchet
+   * advance and the seen marks of frames whose rows existed only in memory. A kill there lost them
+   * for good: the generation is spent on disk and the frame is marked seen. Each hold ends on one
+   * store of what is held (the observer stops buffering while it is taken), so this terminates
+   * without a clock; nothing here waits on a handler, so a handler awaiting a checkpoint cannot
+   * deadlock it.
+   *
+   * A HOLD THAT FAILS REFUSES THE CHECKPOINT ({@link MlsCheckpointNotWrittenError} at `rows`): the
+   * state stays behind the frames, the direction a reload repairs by decrypting them again.
+   */
+  private async holdRowsForExport(): Promise<() => void> {
+    const releases: Array<() => void> = [];
+    const releaseAll = () => {
+      for (const release of releases) {
+        try {
+          release();
+        } catch (e) {
+          console.error('[MLS] a row hold could not be released after the checkpoint:', e);
+        }
+      }
+    };
+    for (const observer of this.bulkIngestObservers) {
+      if (!observer.holdRowsForCheckpoint) continue;
+      try {
+        releases.push(await observer.holdRowsForCheckpoint());
+      } catch (e) {
+        releaseAll();
+        console.error(
+          '[MLS] checkpoint not written: the rows of frames already applied could not be stored first - the state stays behind them, and they decrypt again after a reload:',
+          e
+        );
+        throw new MlsCheckpointNotWrittenError('rows', e);
+      }
+    }
+    return releaseAll;
   }
 
   /**

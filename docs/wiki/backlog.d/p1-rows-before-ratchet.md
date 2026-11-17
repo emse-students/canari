@@ -1,26 +1,28 @@
-## P1 - rows before ratchet: a live drain stores its rows only when its window closes, after a checkpoint may already hold their ratchet advance (raised by the second review of #3321, 2026-11-15)
+## P1 - rows before ratchet: what is left once a checkpoint stores the buffered rows first (raised by the second review of #3321, 2026-11-15)
 
 target: 1.7.0
 
-A live drain decrypts each frame and buffers its row in the UI's bulk-ingest buffer; the rows are
-stored only when the drain's window closes (`endBulkMessageIngest`, `useMessaging.svelte.ts`). A
-checkpoint is not ordered behind that close: one started by an earlier window, by a send, or by the
-persister's coalescing can land while the window is still open, and it then holds the frame's ratchet
-advance and its seen mark while the frame's row exists only in memory. A process kill in that window
-(a browser closed, a crash, an app swiped away) loses the message for good: the device cannot decrypt
-it again (`SecretReuseError` - the generation is spent on disk) and will not replay it (it is marked
-seen). Principle 2 of the [charter](../../principes.md): the essential is never lost.
+**Built (2026-11-17):** a checkpoint stores the rows the live drain's UI buffer holds BEFORE it
+exports their ratchet advance, and nothing re-enters the buffer until its write settled
+(`BaseMlsService.holdRowsForExport` -> `useMessaging.holdRowsForCheckpoint`;
+[chat](../frontend/modules/chat.md#rows-before-ratchet-a-checkpoint-stores-the-buffered-rows-first-2026-11-17)).
+That closes the window this entry was raised for - the whole length of a drain's window, seconds on
+a catch-up - and its test is the one the entry named: a window still open, a checkpoint's hold, the
+"kill" (the window never closes), the rows in the store. The device reading is
+[its own entry](reading-owed-rows-before-ratchet.md).
 
-What already narrows it, and why that is not the fix:
+**Left, in order (same class, narrower windows):**
 
-- the drain's ack waits for a checkpoint covering a commit or a Welcome (`DrainAckHold`), so the
-  server keeps those rows - but an application message beside them is acknowledged as soon as a
-  checkpoint covers it, which can be before its row is stored;
-- a demoted tab reloads only once the windows open at its demotion have closed
-  (`whenBulkIngestsClosed`, [chat](../frontend/modules/chat.md)); that covers the hand-over, not a kill.
-
-The fix is an ORDER, not a wait: a frame's row is durable before any checkpoint may claim its ratchet
-advance - either the drain stores rows as it applies them (and the UI buffer is a render buffer only),
-or a checkpoint exports the state only up to the last frame whose row is stored. The test that lifts
-it: a drain whose checkpoint lands before its window closes, a kill simulated between the two, and
-the reloaded service still holding the message (as a row, or as a frame it can decrypt again).
+1. **A frame decrypted whose handler has not reached `addMessageToChat` yet** when the export is
+   taken (web: an `await` inside the handler between the decrypt and the add; native: a decrypt
+   command already issued). The live path outside any drain has the same gap. Milliseconds long,
+   but the charter does not count in milliseconds. Closing it means the hold also waits for the
+   in-flight application frame's row - without waiting on a handler that may itself await a
+   checkpoint (a commit's structural one), which is the deadlock the built step avoids by design.
+   The likely shape: the pipeline marks "row owed" at the decrypt of an APPLICATION frame and
+   settles it where the row is decided (stored, buffered-then-stored, or no row), and the hold waits
+   only for marks whose frames carry no commit. **Size: 2-3 days**, MLS pipeline, Opus review.
+2. **The orphan buffer** (`bufferOrphan`): a message whose conversation is not yet in the map is
+   kept in memory until `drainOrphanMessages`, so a checkpoint can hold its advance first. Store the
+   orphan's row at buffering (the replay then meets it as stored, `storedBodyVerdict`), or include
+   it in the hold. **Size: 1 day.**

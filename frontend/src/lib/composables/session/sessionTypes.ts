@@ -101,6 +101,8 @@ export interface ChatSessionCallbacks extends Pick<
   ) => Promise<void>;
   beginBulkMessageIngest?: (phase: BulkIngestPhase) => void;
   endBulkMessageIngest?: (phase: BulkIngestPhase) => void | Promise<void>;
+  /** Stores the buffered rows before a checkpoint exports their ratchet advance (`BulkIngestObserver`). */
+  holdRowsForCheckpoint?: () => Promise<() => void>;
   batchAddMessages?: (
     messages: Array<{ senderId: string; content: string } & AddMessageToChatOptions>,
     contactName: string,
