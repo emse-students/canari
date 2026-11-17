@@ -3193,9 +3193,10 @@ behind that close: one started by a send, by an earlier window, by the persister
 by the window's OWN close, since `BaseMlsService.endBulkIngest` runs the persister observer (registered
 in `setupMessageHandler`) before the UI one (registered in `sessionAuth`) - exported the frame's
 ratchet advance and its seen mark (staged INTO the state, KILL-2) while the row was only in memory. A
-kill there (a browser closed, a crash, an app swiped away) lost the message for good: the generation
-is spent on disk (`SecretReuseError`) and the frame is marked seen, so it is neither decrypted again
-nor replayed. Principle 2 of the [charter](../../../principes.md): the essential is never lost.
+kill there (a browser closed, a crash, an app swiped away) lost the message from the device: the
+generation is spent on disk (`SecretReuseError`) and the frame is marked seen, so it is neither
+decrypted again nor replayed. Principle 2 of the [charter](../../../principes.md): the essential is
+never lost.
 
 **The fix is an order.** `persistCheckpoint` asks every bulk-ingest observer that holds rows
 (`BulkIngestObserver.holdRowsForCheckpoint`, implemented by `useMessaging.holdRowsForCheckpoint`)
@@ -3207,8 +3208,34 @@ without a clock and without racing a drain that keeps refilling the buffer. Ever
 (the hold's and the window close's) goes through ONE chain (`storeBufferedRows`), so a hold that
 meets a close already storing waits for that store's rows too. Nothing in the hold waits on a drain
 handler, so a handler that awaits a checkpoint (a commit's structural checkpoint) cannot deadlock it.
-A hold that throws refuses the checkpoint (`MlsCheckpointNotWrittenError` at step `rows`): the state
-stays behind the frames, the direction a reload repairs by decrypting them again.
+
+**A row that could not be stored refuses the checkpoint (review of #3786).** `batchAddMessages`
+renders a batch and then writes it, and a failed write was only logged: the hold resolved and the
+export went through with the rows in memory alone. A failed write is now kept whole
+(`unstoredRowWrites`, the batch's own `writeBatchRows` seam), whichever path wrote it - the hold's
+store, a window's close, a restore. A hold retries every kept write ONCE, puts back in the buffer a
+conversation whose batch threw, and rejects (`BufferedRowsNotStoredError`) while anything stands;
+`persistCheckpoint` then refuses (`MlsCheckpointNotWrittenError` at step `rows`) and the persister
+keeps the state dirty. One refusal per trigger, no timer: the next checkpoint's hold retries. The
+window's close only logs, as it always did - it is not a checkpoint.
+
+**What a refused checkpoint leaves, exactly.** The state on disk stays behind those frames, and a
+reload repairs it from what still holds them: a frame the server still lists (a commit or a Welcome,
+held by `DrainAckHold`, or one not acknowledged) is decrypted again; an APPLICATION frame a leader
+tab already acknowledged at the drain's end is gone from the server and comes back through the
+history archive, whose replay reads it because no landed checkpoint marked it seen.
+
+**A hung row write holds every checkpoint.** An IndexedDB write that never settles leaves the hold
+pending: that checkpoint never exports, and the persister's in-flight one (`inFlightEncrypted`)
+never clears, so no later checkpoint starts either. No timeout, deliberately - exporting past a row
+write that has not answered is the loss this order exists to prevent; the hung store is the defect,
+and every other write to it hangs too.
+
+**One observer, every hook required.** Each page hands the session ONE object,
+`useMessaging.bulkIngestObserver(msgCtx)` (`SessionCallbacks.messageIngestObserver`,
+`Required<BulkIngestObserver>`), so the window's open, its close and the checkpoint's hold are
+registered together or not at all; `messageIngestObserver.wiring.test.ts` pins both pages and the
+session's registration.
 
 **What it costs.** A checkpoint that lands inside an open window renders the buffered messages at
 that moment instead of at the close, and messages arriving while it writes render one by one (the
@@ -3218,15 +3245,18 @@ the N buffered message(s) first, the window stays open`.
 
 **Pinned by** `useMessaging.rowsBeforeRatchet.svelte.test.ts` (the buffered rows are in the store
 when the hold resolves, the window still open - the simulated kill; a message during the hold is
-stored by its handler; buffering resumes after release; a hold waits for a close already storing)
-and `BaseMlsService.rowsBeforeRatchet.test.ts` (rows stored, then export, then write, then release;
-released on a failed write; a failed hold refuses the checkpoint and exports nothing).
+stored by its handler; buffering resumes after release; a hold waits for a close already storing; a
+failing store rejects the hold and the next hold retries it, from the hold's own store and from a
+close's; the observer's hold is the messaging hold) and `BaseMlsService.rowsBeforeRatchet.test.ts`
+(rows stored, then export, then write, then release; released on a failed write; a failed hold
+refuses the checkpoint and exports nothing).
 
-**What it does not close, stated.** Three narrower windows of the same class remain, in the
-[backlog entry](../../backlog.d/p1-rows-before-ratchet.md): a frame decrypted whose handler has not
-yet reached `addMessageToChat` when the export is taken (the live path has the same gap, milliseconds
-long); the orphan buffer (`bufferOrphan`, a message whose conversation is not yet in the map, kept in
-memory until `drainOrphanMessages`); and the device reading of a kill inside a window.
+**What it does not close, stated.** Narrower windows of the same class remain, in the
+[backlog entry](../../backlog.d/p1-rows-before-ratchet.md): a row not yet STORED when the export is
+taken (a frame whose handler has not reached `addMessageToChat`, or a live-path write still in
+flight); an application frame acknowledged at the drain's end (`announceAck` in `onDrainEnd`) before
+the close stores its row, whose backstop is the history archive; the orphan buffer (`bufferOrphan`);
+and the device reading of a kill inside a window.
 
 ### Forwarding
 

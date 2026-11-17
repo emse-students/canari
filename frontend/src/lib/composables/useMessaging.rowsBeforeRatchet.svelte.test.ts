@@ -49,7 +49,7 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
   globalNotifs: {},
 }));
 
-const { useMessaging } = await import('./useMessaging.svelte');
+const { useMessaging, BufferedRowsNotStoredError } = await import('./useMessaging.svelte');
 type MessagingContext = import('./useMessaging.svelte').MessagingContext;
 import type { Conversation } from '$lib/types';
 
@@ -188,5 +188,75 @@ describe('a checkpoint during a bulk-ingest window (rows before ratchet)', () =>
     (await hold)();
     expect(storedIds(saveMessage)).toEqual(['in-5']);
     await closing;
+  });
+
+  /**
+   * A FAILED WRITE MUST NOT LET THE EXPORT THROUGH (review of #3786, P2). `batchAddMessages` caught
+   * its own write failure and the buffer was already cleared, so the hold resolved, the checkpoint
+   * exported the ratchet advance and the row stood only in memory.
+   */
+  it('REJECTS the hold while a row stands unstored, and the next hold retries the write', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const messaging = useMessaging();
+    const { ctx, saveMessage } = makeContext();
+    const saveMessagesIfAbsent = (
+      ctx.storage as unknown as { saveMessagesIfAbsent: ReturnType<typeof vi.fn> }
+    ).saveMessagesIfAbsent;
+    // The batch's write and the hold's one retry of it both fail.
+    saveMessagesIfAbsent
+      .mockRejectedValueOnce(new Error('QuotaExceededError'))
+      .mockRejectedValueOnce(new Error('QuotaExceededError'));
+
+    messaging.beginBulkMessageIngest(LIVE_DRAIN);
+    await messaging.addMessageToChat(PEER, 'unlucky', CONVO, ctx, { messageId: 'in-6' });
+
+    await expect(messaging.holdRowsForCheckpoint(ctx)).rejects.toBeInstanceOf(
+      BufferedRowsNotStoredError
+    );
+    expect(storedIds(saveMessage)).toEqual([]);
+
+    // The hold that refused was released: a message now buffers again.
+    await messaging.addMessageToChat(PEER, 'next', CONVO, ctx, { messageId: 'in-7' });
+    expect(storedIds(saveMessage)).toEqual([]);
+
+    // The next checkpoint's hold retries the failed write, then stores what was buffered since.
+    (await messaging.holdRowsForCheckpoint(ctx))();
+    expect(storedIds(saveMessage).sort()).toEqual(['in-6', 'in-7']);
+  });
+
+  it('a write that failed at the window CLOSE is retried by the next hold, and refuses it while it fails', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const messaging = useMessaging();
+    const { ctx, saveMessage } = makeContext();
+    const saveMessagesIfAbsent = (
+      ctx.storage as unknown as { saveMessagesIfAbsent: ReturnType<typeof vi.fn> }
+    ).saveMessagesIfAbsent;
+    // The close's write and the first hold's retry fail; the second hold's retry lands.
+    saveMessagesIfAbsent
+      .mockRejectedValueOnce(new Error('AbortError'))
+      .mockRejectedValueOnce(new Error('AbortError'));
+
+    messaging.beginBulkMessageIngest(LIVE_DRAIN);
+    await messaging.addMessageToChat(PEER, 'closing', CONVO, ctx, { messageId: 'in-8' });
+    // The close only logs: it is not a checkpoint.
+    await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
+
+    await expect(messaging.holdRowsForCheckpoint(ctx)).rejects.toBeInstanceOf(
+      BufferedRowsNotStoredError
+    );
+    (await messaging.holdRowsForCheckpoint(ctx))();
+    expect(storedIds(saveMessage)).toEqual(['in-8']);
+  });
+
+  it('builds ONE observer whose hold is the messaging hold (the wiring a page cannot half-do)', async () => {
+    const messaging = useMessaging();
+    const { ctx, saveMessage } = makeContext();
+    const observer = messaging.bulkIngestObserver(() => ctx);
+
+    observer.onBulkIngestStart(LIVE_DRAIN);
+    await messaging.addMessageToChat(PEER, 'via the observer', CONVO, ctx, { messageId: 'in-9' });
+    (await observer.holdRowsForCheckpoint())();
+    expect(storedIds(saveMessage)).toEqual(['in-9']);
+    await observer.onBulkIngestEnd(LIVE_DRAIN);
   });
 });

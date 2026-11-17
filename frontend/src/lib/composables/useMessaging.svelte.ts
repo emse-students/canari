@@ -112,7 +112,7 @@ import type {
   Conversation,
 } from '$lib/types';
 import type { IMlsService } from '$lib/mlsService';
-import type { BulkIngestPhase } from '$lib/mls-client';
+import type { BulkIngestObserver, BulkIngestPhase } from '$lib/mls-client';
 import type { IStorage, OutboxEntry, StoredMessage } from '$lib/db';
 import {
   applyOutboxPendingStatuses,
@@ -184,6 +184,28 @@ import { voiceNoteEntry } from '$lib/utils/chat/voiceNote';
 import type { MediaLoudness } from '$lib/video/loudnessMeter';
 
 /** Runtime dependencies injected into all messaging operations. */
+/** One batch's rows to write, kept whole so a failed write can be retried as it was. */
+interface BatchRowWrite {
+  conversationId: string;
+  upgradeRows: StoredMessage[];
+  newRows: StoredMessage[];
+  /** The pending mutations each written row consumed, removed once the row is on disk. */
+  consumedById: Map<string, PendingMutation[]>;
+}
+
+/**
+ * Rows of frames already applied could not be stored before a checkpoint (rows before ratchet): the
+ * checkpoint is refused while they stand, and the next one's hold retries them.
+ */
+export class BufferedRowsNotStoredError extends Error {
+  constructor(readonly rows: number) {
+    super(
+      `${rows} row(s) of frames already applied are not stored - the checkpoint must wait for them`
+    );
+    this.name = 'BufferedRowsNotStoredError';
+  }
+}
+
 export interface MessagingContext {
   /** Returns (or lazily creates) the active MLS service. */
   ensureMls: () => IMlsService;
@@ -514,40 +536,88 @@ export function useMessaging() {
   /**
    * The ONE chain every store of the buffer goes through - the window's close and a checkpoint's
    * hold - so neither overtakes the other, and awaiting it awaits every row taken before. Never
-   * rejects: each step catches and logs its own failure.
+   * rejects: each step catches and logs its own failure, and reports it as its value.
    */
-  let bufferedRowsStored: Promise<void> = Promise.resolve();
+  let bufferedRowsStored: Promise<unknown> = Promise.resolve();
+
+  /**
+   * The rows a batch rendered and could not WRITE (`batchAddMessages`): memory holds them, the disk
+   * does not. Retried by the next checkpoint's hold, which refuses to let the export through while
+   * any stands - their frames' ratchet advance must not become durable before them. Retried there
+   * and nowhere else: a hold is the one moment it matters, and each trigger tries once (no timer).
+   */
+  const unstoredRowWrites: BatchRowWrite[] = [];
+
+  /** How many rows {@link unstoredRowWrites} holds. */
+  function unstoredRowCount(): number {
+    return unstoredRowWrites.reduce((sum, w) => sum + w.upgradeRows.length + w.newRows.length, 0);
+  }
+
+  /** Retries every write {@link unstoredRowWrites} holds; returns how many rows still stand unstored. */
+  async function retryUnstoredRowWrites(ctx: MessagingContext): Promise<number> {
+    if (unstoredRowWrites.length === 0) return 0;
+    const pending = unstoredRowWrites.splice(0);
+    console.log(
+      `[ADD_MSG] Retrying ${pending.length} batch write(s) that failed - a checkpoint is waiting for them`
+    );
+    for (const write of pending) {
+      if (!(await writeBatchRows(ctx, write))) unstoredRowWrites.push(write);
+    }
+    return unstoredRowCount();
+  }
 
   /**
    * Stores (and renders) every message the bulk buffer holds now, in the order they arrived, behind
    * any store already running. The buffer is taken when this step's turn comes, not when it is asked.
+   *
+   * Resolves `true` when nothing taken is left off the disk. On a checkpoint's hold (`hold`), a
+   * conversation whose batch THREW is put back in the buffer, and every write that failed - here or
+   * at an earlier close - is retried once ({@link unstoredRowWrites}); at a window's close it only
+   * logs - the close is not a checkpoint, and the next hold retries what its write left behind.
    */
-  function storeBufferedRows(ctx: MessagingContext, origin: string): Promise<void> {
+  function storeBufferedRows(ctx: MessagingContext, origin: 'hold' | 'close'): Promise<boolean> {
     const step = bufferedRowsStored.then(async () => {
-      if (bulkIngestBuffer.size === 0) return;
-      const entries = [...bulkIngestBuffer.entries()].sort(([, a], [, b]) => {
-        const seqA = a[0]?.ingestSequence ?? Number.MAX_SAFE_INTEGER;
-        const seqB = b[0]?.ingestSequence ?? Number.MAX_SAFE_INTEGER;
-        return seqA - seqB;
-      });
-      const benchMessageCount = entries.reduce((sum, [, msgs]) => sum + msgs.length, 0);
-      beginBulkUiFlushBench(entries.length, benchMessageCount);
-      bulkIngestBuffer.clear();
-      try {
-        for (const [contactName, messages] of entries) {
-          if (messages.length > 0) {
-            // ARRIVALS. The bulk buffer holds messages that came over the wire while a drain was
-            // running - they are new to the reader, and until 2026-09-05 this path told nobody
-            // (TAB-1). The restore case is the OTHER caller, in `systemMessageHandler`.
-            await batchAddMessages(messages, contactName, ctx, 'arrival');
+      let allStored = true;
+      if (bulkIngestBuffer.size > 0) {
+        const entries = [...bulkIngestBuffer.entries()].sort(([, a], [, b]) => {
+          const seqA = a[0]?.ingestSequence ?? Number.MAX_SAFE_INTEGER;
+          const seqB = b[0]?.ingestSequence ?? Number.MAX_SAFE_INTEGER;
+          return seqA - seqB;
+        });
+        const benchMessageCount = entries.reduce((sum, [, msgs]) => sum + msgs.length, 0);
+        beginBulkUiFlushBench(entries.length, benchMessageCount);
+        bulkIngestBuffer.clear();
+        try {
+          for (const [contactName, messages] of entries) {
+            if (messages.length === 0) continue;
+            try {
+              // ARRIVALS. The bulk buffer holds messages that came over the wire while a drain was
+              // running - they are new to the reader, and until 2026-09-05 this path told nobody
+              // (TAB-1). The restore case is the OTHER caller, in `systemMessageHandler`.
+              // A failed write is kept in `unstoredRowWrites`, answered by the retry below.
+              await batchAddMessages(messages, contactName, ctx, 'arrival');
+            } catch (e) {
+              allStored = false;
+              console.error(
+                `[ADD_MSG] storing the buffered messages of "${contactName}" failed (${origin}):`,
+                e
+              );
+              if (origin === 'hold') {
+                // Back in front of whatever came since: the next hold stores them, and until then
+                // the checkpoint holding their advance is refused.
+                const since = bulkIngestBuffer.get(contactName) ?? [];
+                bulkIngestBuffer.set(contactName, [...messages, ...since]);
+              }
+            }
             await yieldToMainThread();
           }
+        } finally {
+          finishBulkUiFlushBench();
         }
-      } catch (e) {
-        console.error(`[ADD_MSG] storing the buffered messages failed (${origin}):`, e);
-      } finally {
-        finishBulkUiFlushBench();
       }
+      // On a hold, ONE retry of every write that failed - this step's and any earlier close's.
+      if (origin === 'hold') return allStored && (await retryUnstoredRowWrites(ctx)) === 0;
+      return allStored && unstoredRowWrites.length === 0;
     });
     bufferedRowsStored = step;
     return step;
@@ -556,11 +626,12 @@ export function useMessaging() {
   /**
    * ROWS BEFORE RATCHET: called by a checkpoint BEFORE it exports the MLS state, which already holds
    * the ratchet advance and the seen mark of every message this buffer holds. Exported first, a kill
-   * before the window's close lost those messages for good - the device can neither decrypt them
-   * again (the generation is spent on disk) nor replay them (they are marked seen). So the export
-   * waits for them to be STORED, and until the returned release is called no new message enters the
-   * buffer: it takes the live path, whose handler stores it. That is what makes the wait end - one
-   * store of what is held, never a race with a drain refilling it.
+   * before the window's close lost those messages from the device - the generation is spent on disk
+   * and the frame is marked seen. So the export waits for them to be STORED, and until the returned
+   * release is called no new message enters the buffer: it takes the live path, whose handler stores
+   * it. That is what makes the wait end - one store of what is held, never a race with a drain
+   * refilling it. A row that could not be stored REJECTS the hold ({@link BufferedRowsNotStoredError})
+   * and the checkpoint is refused while it stands; the next checkpoint's hold retries it.
    * See [chat](docs/wiki/frontend/modules/chat.md#rows-before-ratchet-a-checkpoint-stores-the-buffered-rows-first-2026-11-17).
    */
   async function holdRowsForCheckpoint(ctx: MessagingContext): Promise<() => void> {
@@ -579,13 +650,25 @@ export function useMessaging() {
         `[ADD_MSG] A checkpoint is about to export: storing the ${count} buffered message(s) first, the window stays open`
       );
     }
-    try {
-      await storeBufferedRows(ctx, 'before a checkpoint exports their ratchet advance');
-    } catch (e) {
+    const allStored = await storeBufferedRows(ctx, 'hold');
+    if (!allStored) {
       release();
-      throw e;
+      const buffered = [...bulkIngestBuffer.values()].reduce((sum, msgs) => sum + msgs.length, 0);
+      throw new BufferedRowsNotStoredError(unstoredRowCount() + buffered);
     }
     return release;
+  }
+
+  /**
+   * The UI render buffer's observer of the bulk-ingest windows - ONE object with every hook, so a
+   * page registers the window's open, its close and the checkpoint's hold together or not at all.
+   */
+  function bulkIngestObserver(getCtx: () => MessagingContext): Required<BulkIngestObserver> {
+    return {
+      onBulkIngestStart: (phase) => beginBulkMessageIngest(phase),
+      onBulkIngestEnd: (phase) => endBulkMessageIngest(getCtx(), phase),
+      holdRowsForCheckpoint: () => holdRowsForCheckpoint(getCtx()),
+    };
   }
 
   /** Ends catch-up: flushes bulk buffer when used, then hides the loading overlay. */
@@ -600,7 +683,7 @@ export function useMessaging() {
         // and renders immediately, instead of landing in a buffer the finally block is about to
         // discard - which would silently drop it.
         bulkIngestActive = false;
-        await storeBufferedRows(ctx, 'ingest window closed');
+        await storeBufferedRows(ctx, 'close');
         // AND THE DRAIN DOES NOT MOVE IT EITHER. This ended with the same blind jump, at the
         // worst possible moment: a catch-up finishing is exactly when a bad connection has just
         // recovered, so the reader who spent the outage scrolled up reading history was teleported
@@ -1749,7 +1832,7 @@ export function useMessaging() {
     contactName: string,
     ctx: MessagingContext,
     origin: MessageBatchOrigin
-  ) {
+  ): Promise<void> {
     if (messages.length === 0) return;
     const normalized = contactName.toLowerCase();
     const convo = ctx.conversations.get(normalized);
@@ -2055,20 +2138,16 @@ export function useMessaging() {
     // archive replay runs outside the inbound drain) may have written the id since the read above,
     // and its row then stands and memory takes it (`showStoredInstead`).
     if (ctx.storage && persisted && (upgradeRows.length > 0 || newRows.length > 0)) {
-      try {
-        // An upgrade row carries no reactions, edit or deletion of its own: written by
-        // compare-and-set onto the stored row, it adds to them and never erases them.
-        const upgraded = await writeShownUpgrades(ctx, normalized, upgradeRows);
-        const written = await ctx.storage.saveMessagesIfAbsent(newRows, ctx.deviceKeyB64);
-        const standing = newRows.filter((row) => !written.has(row.id)).map((row) => row.id);
-        if (standing.length > 0) await showStoredInstead(ctx, normalized, standing);
-        await removeSettled(
-          ctx,
-          [...upgraded, ...written].flatMap((id) => consumedById.get(id) ?? [])
-        );
-        await ctx.saveConversation(normalized);
-      } catch (e) {
-        console.error('[DB] batchAddMessages failed:', e);
+      const write: BatchRowWrite = {
+        conversationId: normalized,
+        upgradeRows,
+        newRows,
+        consumedById,
+      };
+      if (!(await writeBatchRows(ctx, write))) {
+        // SHOWN AND NOT STORED: kept for the next checkpoint's hold, which retries it and refuses
+        // the export while it fails (rows before ratchet).
+        unstoredRowWrites.push(write);
       }
       // Kept between the read above and the writes: settled now, against the rows that stand.
       await settlePendingFor(pendingDeps(ctx), normalized, batchIds);
@@ -2079,6 +2158,36 @@ export function useMessaging() {
     // reader had scrolled up to read, and not even whether this message belongs to the thread they
     // have open, since `getChatContainer()` is whichever one that is. `ChatArea` owns the position
     // and decides it with `respondToNewMessage`, from the one stick-to-bottom flag.
+  }
+
+  /**
+   * A batch's write, its own seam so a checkpoint's hold can retry what failed
+   * ({@link unstoredRowWrites}). Resolves `true` once every row is on disk (or another writer's row
+   * stands for it); a failure is logged here and answered `false`, never thrown.
+   */
+  async function writeBatchRows(ctx: MessagingContext, write: BatchRowWrite): Promise<boolean> {
+    const { conversationId, upgradeRows, newRows, consumedById } = write;
+    if (!ctx.storage) return true;
+    try {
+      // An upgrade row carries no reactions, edit or deletion of its own: written by
+      // compare-and-set onto the stored row, it adds to them and never erases them.
+      const upgraded = await writeShownUpgrades(ctx, conversationId, upgradeRows);
+      const written = await ctx.storage.saveMessagesIfAbsent(newRows, ctx.deviceKeyB64);
+      const standing = newRows.filter((row) => !written.has(row.id)).map((row) => row.id);
+      if (standing.length > 0) await showStoredInstead(ctx, conversationId, standing);
+      await removeSettled(
+        ctx,
+        [...upgraded, ...written].flatMap((id) => consumedById.get(id) ?? [])
+      );
+      await ctx.saveConversation(conversationId);
+      return true;
+    } catch (e) {
+      console.error(
+        `[DB] batchAddMessages failed - ${upgradeRows.length + newRows.length} row(s) of "${conversationId}" shown and NOT stored, kept for the next checkpoint's hold:`,
+        e
+      );
+      return false;
+    }
   }
 
   // ── Send ──────────────────────────────────────────────────────────────────
@@ -3850,6 +3959,8 @@ export function useMessaging() {
     endBulkMessageIngest,
     /** Stores the buffered rows before a checkpoint exports their ratchet advance (rows before ratchet). */
     holdRowsForCheckpoint,
+    /** The UI buffer's bulk-ingest observer, every hook in one object (see `SessionCallbacks`). */
+    bulkIngestObserver,
     /** Resets overlay + bulk buffer (e.g. after a desynced catch-up on mobile). */
     resetMessageCatchupState,
     /**

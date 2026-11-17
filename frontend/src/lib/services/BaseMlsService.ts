@@ -5408,8 +5408,18 @@ export abstract class BaseMlsService implements IMlsService {
    * without a clock; nothing here waits on a handler, so a handler awaiting a checkpoint cannot
    * deadlock it.
    *
-   * A HOLD THAT FAILS REFUSES THE CHECKPOINT ({@link MlsCheckpointNotWrittenError} at `rows`): the
-   * state stays behind the frames, the direction a reload repairs by decrypting them again.
+   * A HOLD THAT FAILS REFUSES THE CHECKPOINT ({@link MlsCheckpointNotWrittenError} at `rows`), once
+   * per trigger: the next checkpoint's hold retries the rows. Refused, the state on disk stays
+   * behind those frames, and a reload repairs it from what still holds them - a frame the server
+   * still lists (a commit or a Welcome, held by {@link DrainAckHold}, or one not yet acknowledged) is
+   * decrypted again; an APPLICATION frame a leader tab already acknowledged at the drain's end is
+   * gone from the server, and comes back through the history archive, whose replay reads it because
+   * no landed checkpoint marked it seen.
+   *
+   * AND A HUNG ROW WRITE HOLDS EVERY CHECKPOINT: an IndexedDB write that never settles leaves the
+   * hold pending, so this checkpoint never exports and the persister's in-flight one never clears.
+   * No timeout, deliberately - exporting past a row write that has not answered is the loss this
+   * order exists to prevent; the hung store is the defect, and every write after it hangs too.
    */
   private async holdRowsForExport(): Promise<() => void> {
     const releases: Array<() => void> = [];
@@ -5429,7 +5439,7 @@ export abstract class BaseMlsService implements IMlsService {
       } catch (e) {
         releaseAll();
         console.error(
-          '[MLS] checkpoint not written: the rows of frames already applied could not be stored first - the state stays behind them, and they decrypt again after a reload:',
+          '[MLS] checkpoint not written: the rows of frames already applied could not be stored first - the state stays behind them; the next checkpoint retries the rows, and a reload reads them again from the server or the history archive:',
           e
         );
         throw new MlsCheckpointNotWrittenError('rows', e);
