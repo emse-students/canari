@@ -138,6 +138,12 @@
      */
     reelMessages?: boolean;
     /**
+     * The conversation this composer writes to - its id and its name as the header shows it. A
+     * camera that films (`reelMessages`, the writer on) says whom it films for and sends there in one
+     * tap (reels-in-chat section 22, path 2); ignored by a photo-only camera.
+     */
+    cameraTarget?: { id: string; name: string } | null;
+    /**
      * Sends a finished recording immediately, as its own message.
      *
      * The recording does NOT go through `onFilesSelected`, and the difference is the gesture:
@@ -182,6 +188,7 @@
     onConfirmEdit,
     onFilesSelected,
     reelMessages = false,
+    cameraTarget = null,
     onSendVoiceNote,
     pendingFiles = [],
     onRemovePendingFile,
@@ -1310,6 +1317,7 @@
         <CameraOverlay
           destination="chat"
           chatFilms={chatReelAllowed(!reelMessages)}
+          chatTarget={chatReelAllowed(!reelMessages) ? cameraTarget : null}
           oncapture={onCameraCapture}
           onclose={() => (cameraOpen = false)}
         />

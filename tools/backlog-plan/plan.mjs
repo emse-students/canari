@@ -35,7 +35,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /** The allowed targets, earliest first. A shipped tier is removed from the head; a new one appended. */
-export const TIERS = ['1.7.0', '1.8.0', '1.9.0', '1.10.0'];
+export const TIERS = ['1.7.0', '1.7.1', '1.8.0', '1.9.0', '1.10.0'];
 
 /** The title prefix that makes an entry a reading - owed a measurement and nothing else. */
 export const READING_PREFIX = 'Reading owed - ';

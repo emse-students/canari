@@ -3,6 +3,7 @@
   import { kindHasSection } from '$lib/associations/editSections';
   import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
   import { formCodeMessage, formItemsProblem } from '$lib/forms/answerBounds';
+  import { formWindowInvalid } from '$lib/forms/formWindow';
   import { describeApiRefusal, refusalCode, refusalStatus } from '$lib/utils/apiRefusal';
   import { safeInternalPath } from '$lib/utils/internalPath';
   import { gotoAppPath } from '$lib/navigation/gotoAppPath';
@@ -99,6 +100,7 @@
   let description = $state('');
   let maxSubmissions = $state<number | undefined>(undefined);
   let opensAt = $state('');
+  let closedAt = $state('');
   let allowMultipleSubmissions = $state(false);
   /** Whether a respondent may change their own answer while the form is open (migration 166). */
   let allowAnswerEdit = $state(false);
@@ -418,6 +420,7 @@
       // Asked of a guest only on a public form that keeps names; otherwise nothing is asked.
       ...respondentSettingsPayload(identityChoices, { isPublic, anonymous }),
       ...(opensAt ? { opensAt: new Date(opensAt).toISOString() } : {}),
+      ...(closedAt ? { closedAt: new Date(closedAt).toISOString() } : {}),
       requiresPayment,
       // NEVER conditioned on `requiresPayment` - a free form belongs to the association it was
       // created for exactly as a paid one does (the comment on `associations` above already said
@@ -455,6 +458,10 @@
     }
     if (requiresPayment && !associationId) {
       error = m.form_error_association_required();
+      return;
+    }
+    if (formWindowInvalid(opensAt, closedAt)) {
+      error = m.form_closed_at_before_open();
       return;
     }
     const itemsProblem = formItemsProblem(items);
@@ -667,6 +674,7 @@
       bind:identityChoices
       {optionState}
       bind:opensAt
+      bind:closedAt
       bind:submitCondition
       bind:settings={cotisation}
       {tiers}

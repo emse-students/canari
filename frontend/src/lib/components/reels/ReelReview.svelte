@@ -1,6 +1,7 @@
 <script lang="ts">
   import { REEL_FRAME_RATIO } from '$lib/reels/reelFrame';
   import ReelFrame from './ReelFrame.svelte';
+  import Button from '$lib/components/ui/Button.svelte';
   /**
    * A finished take, looped full-bleed before it goes anywhere (CanaReels R3): discard it and film
    * again, edit it, remove its sound, or go on to publish it.
@@ -13,9 +14,14 @@
    * THE SOUND BUTTON REMOVES THE AUDIO TRACK FROM WHAT IS PUBLISHED (`clip.soundRemoved`, read by
    * `publishReel`), not a listening toggle: while it is on the preview is silent, so what is heard
    * is what is published.
+   *
+   * TWO ACTIONS WHEN THE TAKE HAS TWO WAYS ON (owner, 2026-11-16, reels-in-chat section 22): a
+   * secondary button on the left (`secondaryLabel`: "Publier" on the CanaReels tab, "Ajouter des
+   * destinataires" in a conversation's camera) beside the primary one on the right ("Envoyer a..." /
+   * the conversation's name with a send arrow). Without a secondary the bar is the one "Next" it was.
    */
   import { onDestroy } from 'svelte';
-  import { ArrowRight, Pencil, Volume2, VolumeX, X } from '@lucide/svelte';
+  import { ArrowRight, Pencil, Send, Volume2, VolumeX, X } from '@lucide/svelte';
   import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
   import type { ReelClip } from '$lib/reels/reelCapture';
   import { m } from '$lib/paraglide/messages';
@@ -34,6 +40,13 @@
     nextLabel?: string;
     /** Offer to remove the sound. Only the reel publish applies it, so a take handed back as a file hides it. */
     soundRemoval?: boolean;
+    /** The primary action's accessible name, when its label alone does not say it (a bare conversation name). */
+    nextAriaLabel?: string;
+    /** The primary action's glyph: an arrow on to a step, or the send arrow of a one-tap send. */
+    nextIcon?: 'arrow' | 'send';
+    /** A second action, on the left of the bar (absent: the bar holds the primary alone). */
+    secondaryLabel?: string;
+    onsecondary?: () => void;
   }
 
   let {
@@ -44,7 +57,13 @@
     onnext,
     nextLabel = m.reels_review_next(),
     soundRemoval = true,
+    nextAriaLabel,
+    nextIcon = 'arrow',
+    secondaryLabel,
+    onsecondary,
   }: Props = $props();
+
+  const hasSecondary = $derived(secondaryLabel !== undefined && onsecondary !== undefined);
 
   const isImage = $derived(clip.blob.type.startsWith('image/'));
   const soundRemoved = $derived(clip.soundRemoved === true);
@@ -166,17 +185,35 @@
   </div>
 
   <div
-    class="pointer-events-none absolute inset-x-0 bottom-0 flex justify-end px-4 pt-3 pb-[calc(var(--safe-area-inset-bottom,0px)+0.75rem)]"
+    class="pointer-events-none absolute inset-x-0 bottom-0 flex {hasSecondary
+      ? 'justify-between gap-3'
+      : 'justify-end'} px-4 pt-3 pb-[calc(var(--safe-area-inset-bottom,0px)+0.75rem)]"
     data-reel-review-bar
   >
+    {#if hasSecondary}
+      <!-- `bare`: a pill drawn over the take, no control box (controls.md). -->
+      <Button
+        variant="bare"
+        class="pointer-events-auto inline-flex shrink-0 items-center rounded-full bg-black/50 px-5 py-3 text-sm font-bold ring-1 ring-white/30 hover:bg-black/70"
+        onclick={() => onsecondary?.()}
+        data-reel-secondary
+      >
+        {secondaryLabel}
+      </Button>
+    {/if}
     <button
       type="button"
-      class="text-on-accent bg-accent hover:bg-accent-hover pointer-events-auto inline-flex items-center gap-2 rounded-full px-5 py-3 text-sm font-bold outline-none focus-visible:ring-2 focus-visible:ring-white"
+      class="text-on-accent bg-accent hover:bg-accent-hover pointer-events-auto inline-flex min-w-0 items-center gap-2 rounded-full px-5 py-3 text-sm font-bold outline-none focus-visible:ring-2 focus-visible:ring-white"
+      aria-label={nextAriaLabel}
       onclick={onnext}
       data-reel-next
     >
-      {nextLabel}
-      <ArrowRight size={18} strokeWidth={2.5} />
+      <span class="truncate">{nextLabel}</span>
+      {#if nextIcon === 'send'}
+        <Send size={18} strokeWidth={2.5} class="shrink-0" />
+      {:else}
+        <ArrowRight size={18} strokeWidth={2.5} class="shrink-0" />
+      {/if}
     </button>
   </div>
 </div>
