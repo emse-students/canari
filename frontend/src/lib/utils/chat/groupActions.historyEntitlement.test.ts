@@ -27,6 +27,7 @@ import {
   WithheldUnsupportedError,
 } from '$lib/mls-client/mlsDeliveryApi';
 import type { FrameDelivery } from '$lib/mls-client/frameDelivery';
+import { historySealAad, mintHistoryAnswerKey, openHistoryContent } from '$lib/crypto/historySeal';
 
 /**
  * A REMOVE HOLDS AGAINST A LATER RE-ADD (user, 2026-10-14).
@@ -202,6 +203,79 @@ describe('a Remove holds against a later re-add - every history sender withholds
     expect(error).toHaveBeenCalledWith(
       expect.stringContaining('predates addressed history answers')
     );
+    error.mockRestore();
+  });
+
+  /**
+   * Option B (history-answer-addressing.md, "Sealing the answer to the asker"): an ask that carried
+   * a key is answered with its CONTENT sealed to it - the routing stays in clear, and the content
+   * opens only with the asker's secret, bound to this answering device.
+   */
+  it('an addressed answer to a keyed ask is SEALED to it, and opens to what the reader may read', async () => {
+    const mlsService = stubWithBobsWindow();
+    const engine = mlsService.historySealEngine();
+    const key = await mintHistoryAnswerKey(engine);
+
+    await sendHistoryBundleForIds(
+      GROUP,
+      STORE.map((m) => m.id),
+      { storage: storageWith(STORE), deviceKeyB64: 'k', mlsService, log: vi.fn() },
+      { to: BOB_NEW_DEVICE, since: 0, requestId: ASK, answerKey: key.answerKey }
+    );
+
+    const [frame] = sentPayloads(mlsService) as Array<Record<string, unknown>>;
+    expect(frame).toMatchObject({ to: BOB_NEW_DEVICE, requestId: ASK, last: true });
+    expect(frame.messages).toBeUndefined();
+    expect(typeof frame.sealed).toBe('string');
+    expect(deliveries(mlsService)).toEqual([
+      { silent: true, durable: false, recipients: [BOB_NEW_DEVICE] },
+    ]);
+    const content = await openHistoryContent(
+      engine,
+      key.secret,
+      historySealAad(GROUP, ASK, BOB_NEW_DEVICE, mlsService.getDeviceId()),
+      frame.sealed as string
+    );
+    expect((content.messages as Array<{ id: string }>).map((m) => m.id)).toEqual(EXPECTED_KEPT);
+  });
+
+  it('a BROADCAST answer (a server that predates addressing) is not sealed, even to a keyed ask', async () => {
+    const mlsService = stubWithBobsWindow();
+    vi.mocked(mlsService.getAddressedAnswersSupported).mockResolvedValue(false);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const key = await mintHistoryAnswerKey(mlsService.historySealEngine());
+
+    await sendHistoryBundleForIds(
+      GROUP,
+      STORE.map((m) => m.id),
+      { storage: storageWith(STORE), deviceKeyB64: 'k', mlsService, log: vi.fn() },
+      { to: ALICE, since: 0, requestId: ASK, answerKey: key.answerKey }
+    );
+
+    expect(sentIds(mlsService)).toEqual(EXPECTED_KEPT);
+    expect((sentPayloads(mlsService)[0] as Record<string, unknown>).sealed).toBeUndefined();
+    error.mockRestore();
+  });
+
+  it('an engine that cannot seal answers NOTHING - never the content in clear', async () => {
+    const mlsService = stubWithBobsWindow();
+    const key = await mintHistoryAnswerKey(mlsService.historySealEngine());
+    vi.mocked(mlsService.historySealEngine).mockReturnValue({
+      newAnswerKeyPair: vi.fn(),
+      seal: vi.fn().mockRejectedValue('malformed-public-key'),
+      open: vi.fn(),
+    });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await sendHistoryBundleForIds(
+      GROUP,
+      STORE.map((m) => m.id),
+      { storage: storageWith(STORE), deviceKeyB64: 'k', mlsService, log: vi.fn() },
+      { to: ALICE, since: 0, requestId: ASK, answerKey: key.answerKey }
+    );
+
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(error.mock.calls.join(' ')).toContain('Could not seal chunk 1/1');
     error.mockRestore();
   });
 

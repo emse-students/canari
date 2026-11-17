@@ -20,6 +20,12 @@ import { cachedHistoryStateKey } from './historyStateKey';
 import { sendVisibleNotice, type OwnNotice } from './visibleNotices';
 import { readerHistorySelection } from './historyEntitlement';
 import { mintHistoryRequestId, noteHistoryAsk } from './historyAddressing';
+import {
+  historySealAad,
+  mintHistoryAnswerKey,
+  sealHistoryContent,
+  type HistoryAnswerKey,
+} from '$lib/crypto/historySeal';
 import { treeHoldsUser, userIdOfLeaf } from '$lib/mls-client/leafIdentity';
 import {
   buildHistoryDigest,
@@ -837,31 +843,83 @@ function bundleFrame(
     mkSystem(
       'history_bundle',
       JSON.stringify({
-        messages,
-        to,
-        ...(answer?.requestId ? { requestId: answer.requestId } : {}),
-        ...(answer?.join ? { join: true } : {}),
-        ...(last ? { last: true } : {}),
-        // The conversation's own state - read watermarks and the shared history floor. A handful of
-        // numbers, sent whole with every frame because both merges are `max` and therefore free to
-        // repeat. Sending them once would make their delivery depend on which chunk survived.
-        ...(state?.readWatermarks ? { readWatermarks: state.readWatermarks } : {}),
-        // The server-clock marks beside them (readState.ts). An older reader ignores the field and
-        // keeps the stamped map, which is all it can compare.
-        ...(state?.serverReadWatermarks
-          ? { serverReadWatermarks: state.serverReadWatermarks }
-          : {}),
-        ...(state?.historyFloor ? { floor: state.historyFloor } : {}),
-        // Restated by every chunk like the two above, and for the same reason: sending it once
-        // would make it depend on which chunk survived. Merged per entry on `at`, so repeating it
-        // is free in exactly the way a `max` is.
-        ...(state?.pins?.length ? { pins: state.pins } : {}),
-        // The nickname register rides the JOIN PUSH only - the one bundle a reader takes it from
-        // (`mergeBundleNicknames`): in a broadcast it would be a relayer's word nobody believes.
-        // An older reader ignores the field.
-        ...(answer?.join && state?.nicknames?.length ? { nicknames: state.nicknames } : {}),
+        ...bundleContent(messages, { state, join: answer?.join === true }),
+        ...bundleRouting(to, { answer, last }),
       })
     )
+  );
+}
+
+/**
+ * What ROUTES a bundle: the addressee, the ask it answers and whether it closes it. Never sealed -
+ * the receiver needs it to find the ask whose secret opens the rest.
+ */
+function bundleRouting(
+  to: string,
+  { answer, last }: { answer?: BundleAnswer; last?: boolean }
+): Record<string, unknown> {
+  return {
+    to,
+    ...(answer?.requestId ? { requestId: answer.requestId } : {}),
+    ...(answer?.join ? { join: true } : {}),
+    ...(last ? { last: true } : {}),
+  };
+}
+
+/**
+ * What a bundle CARRIES: the messages and the conversation's state. This is the part an answer to
+ * an ask that carried an `answerKey` seals (option B, `$lib/crypto/historySeal`).
+ */
+function bundleContent(
+  messages: unknown[],
+  { state, join }: { state?: ConversationHistoryState; join: boolean }
+): Record<string, unknown> {
+  return {
+    messages,
+    // The conversation's own state - read watermarks and the shared history floor. A handful of
+    // numbers, sent whole with every frame because both merges are `max` and therefore free to
+    // repeat. Sending them once would make their delivery depend on which chunk survived.
+    ...(state?.readWatermarks ? { readWatermarks: state.readWatermarks } : {}),
+    // The server-clock marks beside them (readState.ts). An older reader ignores the field and
+    // keeps the stamped map, which is all it can compare.
+    ...(state?.serverReadWatermarks ? { serverReadWatermarks: state.serverReadWatermarks } : {}),
+    ...(state?.historyFloor ? { floor: state.historyFloor } : {}),
+    // Restated by every chunk like the two above, and for the same reason: sending it once
+    // would make it depend on which chunk survived. Merged per entry on `at`, so repeating it
+    // is free in exactly the way a `max` is.
+    ...(state?.pins?.length ? { pins: state.pins } : {}),
+    // The nickname register rides the JOIN PUSH only - the one bundle a reader takes it from
+    // (`mergeBundleNicknames`): in a broadcast it would be a relayer's word nobody believes.
+    // An older reader ignores the field.
+    ...(join && state?.nicknames?.length ? { nicknames: state.nicknames } : {}),
+  };
+}
+
+/**
+ * Builds one SEALED `history_bundle` frame: the routing in clear, the content sealed to the ask's
+ * `answerKey` and bound to the conversation, the ask, the asker and this answering device
+ * (`historySealAad`). Rejects with a `HistorySealError` when the engine cannot seal.
+ */
+async function sealedBundleFrame(
+  groupId: string,
+  messages: unknown[],
+  to: string,
+  mlsService: IMlsService,
+  opts: {
+    state?: ConversationHistoryState;
+    answer: { requestId: string; answerKey: string };
+    last: boolean;
+  }
+): Promise<Uint8Array> {
+  const { state, answer, last } = opts;
+  const sealed = await sealHistoryContent(
+    mlsService.historySealEngine(),
+    answer.answerKey,
+    historySealAad(groupId, answer.requestId, to, mlsService.getDeviceId()),
+    bundleContent(messages, { state, join: false })
+  );
+  return encodeAppMessage(
+    mkSystem('history_bundle', JSON.stringify({ ...bundleRouting(to, { answer, last }), sealed }))
   );
 }
 
@@ -869,7 +927,17 @@ function bundleFrame(
  * Which ask a bundle answers: the asker's `requestId`, or `join` for the inviter's push, which nobody
  * asked an id for - the receiver's own admission solicited it (`historyAddressing.ts`).
  */
-type BundleAnswer = { requestId: string; join?: never } | { join: true; requestId?: never };
+type BundleAnswer =
+  | {
+      requestId: string;
+      /**
+       * The public key the ask carried (base64), when it carried one: an ADDRESSED answer is then
+       * sealed to it. Absent from an asker that predates sealing.
+       */
+      answerKey?: string;
+      join?: never;
+    }
+  | { join: true; requestId?: never; answerKey?: never };
 
 /** What a conversation carries beyond its messages, and what every bundle restates. */
 type ConversationHistoryState = {
@@ -1253,7 +1321,28 @@ async function sendBundleChunks(
     if (chosen.kept.length === 0) continue;
     const payload = chosen.kept.map(serializeForBundle);
     const last = i + chunkSize >= selection.length;
-    const bytes = bundleFrame(payload, to, { state, answer, last });
+    // SEALED WHEN ADDRESSED TO AN ASK THAT CARRIED A KEY (option B): the routing kept the frame from
+    // every other member; the seal keeps it from them even if the server hands it on. A broadcast
+    // (a server that predates addressed answers) stays as it was - its readers are everyone.
+    let bytes: Uint8Array;
+    if (addressed && answer.answerKey !== undefined) {
+      try {
+        bytes = await sealedBundleFrame(groupId, payload, to, mlsService, {
+          state,
+          answer: { requestId: answer.requestId, answerKey: answer.answerKey },
+          last,
+        });
+      } catch (e) {
+        // A defect of this build (the key was checked where the ask was parsed): answering nothing
+        // is the only honest answer - an unsealed one is what the asker asked not to receive.
+        console.error(
+          `[HISTORY_SEAL] Could not seal chunk ${chunkNo}/${totalChunks} to ${to} in ${groupId.slice(0, 8)}… - ${String(e).slice(0, 160)}; stopping after ${sent} message(s)`
+        );
+        return sent === 0 ? { kind: 'refused' } : { kind: 'sent', count: sent };
+      }
+    } else {
+      bytes = bundleFrame(payload, to, { state, answer, last });
+    }
     try {
       await mlsService.sendMessage(
         groupId,
@@ -1263,7 +1352,7 @@ async function sendBundleChunks(
       );
       sent += payload.length;
       log(
-        `[HISTORY_BUNDLE] Chunk ${chunkNo}/${totalChunks} - ${payload.length} msg → ${groupId.slice(0, 8)}…${addressed ? ` (addressed to ${to})` : ' (broadcast)'}`
+        `[HISTORY_BUNDLE] Chunk ${chunkNo}/${totalChunks} - ${payload.length} msg → ${groupId.slice(0, 8)}…${addressed ? ` (addressed to ${to}${answer.answerKey !== undefined ? ', sealed' : ''})` : ' (broadcast)'}`
       );
     } catch (e) {
       if (e instanceof AddressedUnsupportedError) {
@@ -1576,6 +1665,27 @@ export async function sendHistoryCannotRepair(
 }
 
 /**
+ * The key ONE history ask carries (option B, `$lib/crypto/historySeal`), or `null` when the engine
+ * cannot mint one - then the ask is NOT sent: an ask without a key invites an unsealed answer, and
+ * an engine that cannot mint is a defect of this build, said at error. The next reconciliation asks
+ * again; nothing here retries.
+ */
+async function askKeyOrNothing(
+  groupId: string,
+  tag: string,
+  { mlsService }: HistorySendDeps
+): Promise<HistoryAnswerKey | null> {
+  try {
+    return await mintHistoryAnswerKey(mlsService.historySealEngine());
+  } catch (e) {
+    console.error(
+      `[${tag}] Could not mint the answer key of an ask in ${groupId.slice(0, 8)}… - ${String(e).slice(0, 160)}; nothing asked`
+    );
+    return null;
+  }
+}
+
+/**
  * Asks the elected responder for a bounded slice of history OLDER than anything this device holds -
  * the scrollback, driven by a reader rather than by a connection.
  *
@@ -1595,15 +1705,17 @@ export async function sendHistoryRangeRequest(
   if (followerTabSendsNoHistoryFrame('range request', groupId, log)) return false;
   // The ask is recorded BEFORE it leaves, under the id the frame carries: an addressed answer is
   // accepted only against it (`historyAddressing.ts`), and it can arrive before the send resolves.
+  const key = await askKeyOrNothing(groupId, 'HISTORY_RANGE', { mlsService, log });
+  if (key === null) return false;
   const requestId = mintHistoryRequestId();
-  noteHistoryAsk(groupId, requestId, {
-    kind: 'range',
-    since: request.since,
-    before: request.before,
-    askedAt: Date.now(),
-  });
+  noteHistoryAsk(
+    groupId,
+    requestId,
+    { kind: 'range', since: request.since, before: request.before, askedAt: Date.now() },
+    key.secret
+  );
   const bytes = encodeAppMessage(
-    mkSystem('history_range', JSON.stringify({ ...request, requestId }))
+    mkSystem('history_range', JSON.stringify({ ...request, requestId, answerKey: key.answerKey }))
   );
   try {
     await mlsService.sendMessage(groupId, bytes, undefined, DELIVERY.transport);
@@ -1658,8 +1770,10 @@ export async function sendHistoryDigest(
       : `${digest.ranges.length} slice(s) at depth ${digest.depth}`;
   // Recorded before it leaves - see `sendHistoryRangeRequest`. The answer to a digest is the diff
   // the responder computes, bounded by the `since` stated here.
+  const key = await askKeyOrNothing(groupId, 'HISTORY_DIGEST', deps);
+  if (key === null) return false;
   const requestId = mintHistoryRequestId();
-  noteHistoryAsk(groupId, requestId, { kind: 'digest', since, askedAt: Date.now() });
+  noteHistoryAsk(groupId, requestId, { kind: 'digest', since, askedAt: Date.now() }, key.secret);
   const bytes = encodeAppMessage(
     mkSystem(
       'history_digest',
@@ -1668,6 +1782,7 @@ export async function sendHistoryDigest(
         digest,
         since,
         requestId,
+        answerKey: key.answerKey,
         ...(incomplete ? { incomplete: true } : {}),
       })
     )
@@ -1726,17 +1841,24 @@ export async function sendHistoryPull(
 
   for (const payload of frames) {
     // One ask per frame, each bounded by exactly what it names - see `sendHistoryRangeRequest`.
+    const key = await askKeyOrNothing(groupId, 'HISTORY_PULL', { mlsService, log });
+    if (key === null) return;
     const requestId = mintHistoryRequestId();
-    noteHistoryAsk(groupId, requestId, {
-      kind: 'pull',
-      since,
-      ids: (payload.ids as string[] | undefined) ?? [],
-      prefixes: (payload.prefixes as string[] | undefined) ?? [],
-      depth: payload.depth as number | undefined,
-      askedAt: Date.now(),
-    });
+    noteHistoryAsk(
+      groupId,
+      requestId,
+      {
+        kind: 'pull',
+        since,
+        ids: (payload.ids as string[] | undefined) ?? [],
+        prefixes: (payload.prefixes as string[] | undefined) ?? [],
+        depth: payload.depth as number | undefined,
+        askedAt: Date.now(),
+      },
+      key.secret
+    );
     const bytes = encodeAppMessage(
-      mkSystem('history_pull', JSON.stringify({ ...payload, requestId }))
+      mkSystem('history_pull', JSON.stringify({ ...payload, requestId, answerKey: key.answerKey }))
     );
     try {
       await mlsService.sendMessage(groupId, bytes, undefined, DELIVERY.transport);
@@ -1784,6 +1906,8 @@ export async function sendHistoryBundleForIds(
     since: number;
     /** The `requestId` of the ask this answers - echoed so the asker can accept it addressed. */
     requestId: string;
+    /** The `answerKey` the ask carried, if any - an addressed answer is sealed to it. */
+    answerKey?: string;
     /**
      * Also send every TOMBSTONE this device holds in the window, whether the asker lacks the id or
      * not - the answer to a digest. The digest names ids only, while the state key that asked for
@@ -1796,7 +1920,7 @@ export async function sendHistoryBundleForIds(
   }
 ): Promise<void> {
   const { storage, mlsService, log } = deps;
-  const { to, chunkSize = 200, since, requestId, withTombstones = false } = opts;
+  const { to, chunkSize = 200, since, requestId, answerKey, withTombstones = false } = opts;
   if (followerTabSendsNoHistoryFrame('bundle for ids', groupId, log)) return;
   if (!storage) {
     log(`[HISTORY_BUNDLE] No storage - cannot serve ${groupId.slice(0, 8)}…`);
@@ -1834,7 +1958,7 @@ export async function sendHistoryBundleForIds(
     groupId,
     selected,
     { mlsService, log },
-    { chunkSize, to, state, answer: { requestId } }
+    { chunkSize, to, state, answer: { requestId, answerKey } }
   );
   if (outcome.kind !== 'sent') return;
   log(
@@ -1888,10 +2012,12 @@ export async function sendHistoryRangeBundle(
     since?: number;
     /** The `requestId` of the range ask this answers. */
     requestId: string;
+    /** The `answerKey` the range ask carried, if any - an addressed answer is sealed to it. */
+    answerKey?: string;
   }
 ): Promise<void> {
   const { storage, mlsService, log } = deps;
-  const { to, before, limit, since = 0, requestId } = opts;
+  const { to, before, limit, since = 0, requestId, answerKey } = opts;
   if (followerTabSendsNoHistoryFrame('range bundle', groupId, log)) return;
   if (!storage) {
     log(`[HISTORY_RANGE] No storage - cannot serve ${groupId.slice(0, 8)}…`);
@@ -1921,7 +2047,7 @@ export async function sendHistoryRangeBundle(
     groupId,
     page,
     { mlsService, log },
-    { chunkSize: 200, to, state, answer: { requestId } }
+    { chunkSize: 200, to, state, answer: { requestId, answerKey } }
   );
   if (outcome.kind !== 'sent') return;
   log(

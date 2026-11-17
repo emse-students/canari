@@ -204,6 +204,7 @@ earliest version, as a checklist.
 - [P3 - the iOS volume buttons do not reach the in-app camera: withdraw the iOS half of the volume shutter](backlog.d/p3-the-ios-volume-buttons-do-not-reach-the-in-app-camera-withdraw-the-ios-half.md)
 - [P3 - A salon invitation's notice sends ids once the floor reads them (2026-11-16)](backlog.d/a-salon-invitation-notice-sends-ids-once-the-floor-reads-them.md)
 - [P3 - on Android the live sheet says "another app is using the camera" when the camera permission is OFF](backlog.d/p3-the-live-sheet-says-another-app-uses-the-camera-when-the-permission-is-off.md)
+- [P3 - A history answer is sealed or refused once the floor seals (2026-11-17)](backlog.d/p3-a-history-answer-is-sealed-or-refused-once-the-floor-seals.md)
 
 ## 1.9.0
 

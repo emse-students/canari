@@ -1,4 +1,5 @@
 import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
+import type { HistorySealEngine } from '$lib/crypto/historySeal';
 import { DeliveryRefusal } from '$lib/mls-client/mlsDeliveryHttp';
 import { reportMlsSessionLost } from '$lib/mls-client/mlsSessionLoss';
 import { cachedCommitInstants, type ServerInstant } from '$lib/mls-client/serverInstant';
@@ -9169,6 +9170,7 @@ export abstract class BaseMlsService implements IMlsService {
   abstract leafHoldingKeyOf(groupId: string, keyPackage: Uint8Array): Promise<string | null>;
   abstract graineRun(groupId: string): Promise<GraineRunReading>;
   abstract graineSignatureEngine(): GraineSignatureEngine;
+  abstract historySealEngine(): HistorySealEngine;
   abstract signWithDeviceCredential(message: Uint8Array): Promise<Uint8Array>;
   abstract takeForkFindings(): Promise<ForkFinding[]>;
   abstract forgetGroup(groupId: string, minEpoch?: number): void;

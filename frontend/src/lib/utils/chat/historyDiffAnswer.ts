@@ -114,11 +114,14 @@ export async function answerHistoryDigest(params: {
   since: number;
   /** The asker's id for its digest, echoed on the bundle so it can be accepted addressed. */
   requestId: string;
+  /** The key the digest carried, if any - the addressed answer is sealed to it. */
+  answerKey?: string;
   /** The asker holds frames it cannot read - see `stateWeCannotRepair`. */
   incomplete?: boolean;
   deps: HistoryAnswerDeps;
 }): Promise<void> {
-  const { groupId, requesterIdentity, selfIdentity, digest, since, requestId, deps } = params;
+  const { groupId, requesterIdentity, selfIdentity, digest, since, requestId, answerKey, deps } =
+    params;
   const { log } = deps;
   const short = groupId.slice(0, 8);
 
@@ -143,6 +146,7 @@ export async function answerHistoryDigest(params: {
     to: requesterIdentity,
     since,
     requestId,
+    answerKey,
     // The digest names ids, the state key that asked for it counts deletions as well.
     withTombstones: true,
   }).catch((e) => log(`[HISTORY_BUNDLE] Diff send error to ${requesterIdentity}: ${String(e)}`));
