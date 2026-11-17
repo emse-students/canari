@@ -314,6 +314,22 @@ describe('handleSystemEvent - history_bundle restates the dated group name (grou
     error.mockRestore();
   });
 
+  it('a restated name never beats a name a frame already dated here - an inviter cannot rename for the newcomer', async () => {
+    noteJoinSolicited('g1', 1);
+    const ctx = groupRow(makeCtx(JOIN_PUSH));
+    ctx.conversations.set('g1', {
+      ...ctx.conversations.get('g1'),
+      name: 'Les ROOTz',
+      nameAt: 800_000,
+    });
+    await handleSystemEvent(
+      'history_bundle',
+      { messages: [], to: TO_ME, join: true, last: true, groupName: { name: 'Faux', at: 999_999 } },
+      ctx as any
+    );
+    expect(ctx.conversations.get('g1')).toMatchObject({ name: 'Les ROOTz', nameAt: 800_000 });
+  });
+
   it('a broadcast bundle names nothing - only the join push restates the name', async () => {
     const ctx = groupRow(makeCtx({ senderNorm: 'inviter' }));
     await handleSystemEvent(

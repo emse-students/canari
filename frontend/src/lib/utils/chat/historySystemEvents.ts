@@ -16,7 +16,11 @@ import { appMessageSentAtMs } from '$lib/utils/chat/messageUtils';
 import { applyPin, mergePinEntries } from '$lib/stores/pinStore.svelte';
 import { applyNicknameFrame, nicknameMembersOf, type NicknameRosterSource } from './nicknameFrame';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
-import { parseDatedGroupName, withDatedGroupName } from '$lib/utils/chat/groupName';
+import {
+  applyRenameFrame,
+  GROUP_NAME_REFUSAL_TEXT,
+  GROUP_NAME_SKIP_TEXT,
+} from '$lib/utils/chat/groupName';
 import { boundedByVerifiedSentAt, withVettedBundleServerTimes } from '$lib/utils/chat/messageTime';
 import { applyReaction } from '$lib/utils/chat/messageReactions';
 import { editSupersedes } from '$lib/utils/chat/editPrecedence';
@@ -289,13 +293,23 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
       // when newer than the name held - a page of old renames replayed after a live one no longer
       // walks the name back through them.
       const convo = getConversation(contactName);
-      const stated = parseDatedGroupName(data.newName, parseServerTimestampMs(msg.timestamp));
-      const renamed = convo && stated ? withDatedGroupName(convo, stated) : null;
-      if (renamed) {
-        setConversation(contactName, renamed);
-      } else if (!stated) {
+      const outcome = convo
+        ? applyRenameFrame(
+            convo,
+            data.newName,
+            parseServerTimestampMs(msg.timestamp),
+            appMessageSentAtMs(parsed.sentAt)
+          )
+        : null;
+      if (outcome && 'row' in outcome) {
+        setConversation(contactName, outcome.row);
+      } else if (outcome && 'refused' in outcome) {
         console.error(
-          `[GROUP_NAME] replayed rename in ${conversationId.slice(0, 8)}… NOT applied: the archive row carries no readable server time (${String(msg.timestamp).slice(0, 40)})`
+          `[GROUP_NAME] replayed rename in ${conversationId.slice(0, 8)}… NOT applied: ${GROUP_NAME_REFUSAL_TEXT[outcome.refused]}`
+        );
+      } else if (outcome?.skipped === 'not-a-group') {
+        console.warn(
+          `[GROUP_NAME] replayed rename in ${conversationId.slice(0, 8)}… NOT applied: ${GROUP_NAME_SKIP_TEXT[outcome.skipped]}`
         );
       }
       systemContent = await visibleNoticeContent('groupRenamed', data, senderNorm);

@@ -266,6 +266,30 @@ describe('the other notices the acting device used to miss', () => {
       })
     ).rejects.toThrow('offline');
     expect(ownNotice.addMessageToChat).not.toHaveBeenCalled();
+    // THE FRAME GOES FIRST: a frame that did not leave renamed nothing on the server either, so
+    // undated devices and older builds never take a name the dated devices were never told.
+    expect(mlsService.renameGroup).not.toHaveBeenCalled();
+  });
+
+  it("a rename the members received stands when the server's copy then fails - logged, not thrown", async () => {
+    const mlsService = createMlsServiceStub();
+    vi.mocked(mlsService.renameGroup).mockRejectedValue(new Error('503'));
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const ownNotice = own();
+    const receivedAt = await renameGroupAndBroadcast({
+      mlsService,
+      groupId: GROUP,
+      newName: 'Nouveau nom',
+      userId: ALICE,
+      deviceKeyB64: 'k',
+      ownNotice,
+    });
+    expect(receivedAt).toEqual(expect.any(Number));
+    expect(sentFrames(mlsService)[0]?.system?.event).toBe('groupRenamed');
+    expect(error.mock.calls.map((c) => String(c[0])).join(' ')).toContain(
+      "the server's copy was not written"
+    );
+    error.mockRestore();
   });
 
   it('a departure still sends its frame and writes no row: no device of the leaver draws it', async () => {

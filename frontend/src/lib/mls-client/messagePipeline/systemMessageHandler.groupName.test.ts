@@ -19,14 +19,14 @@ import { handleSystemEvent } from './systemMessageHandler';
 
 const T = Date.UTC(2026, 10, 17, 9, 0, 0);
 
-function device() {
+function device(conversationType: 'group' | 'direct' = 'group') {
   const convo = {
     id: 'g1',
     contactName: 'g1',
     lifecycle: 'active',
     messages: [],
     name: 'Groupe',
-    conversationType: 'group',
+    conversationType,
   };
   const conversations = new Map<string, any>([['g1', convo]]);
   const saveConversation = vi.fn().mockResolvedValue(undefined);
@@ -48,13 +48,13 @@ function device() {
     convoKey: 'g1',
     persistMlsStateNow: vi.fn(),
   };
-  const rename = (newName: string, serverAt: number | undefined) =>
+  const rename = (newName: string, serverAt: number | undefined, sentAt: number = serverAt ?? T) =>
     handleSystemEvent('groupRenamed', { newName }, {
       ...ctx,
       convo: conversations.get('g1'),
       senderNorm: 'alice',
       messageId: crypto.randomUUID(),
-      sentAt: serverAt ?? T,
+      sentAt,
       deliveryMeta: serverAt === undefined ? undefined : { queuedCreatedAt: serverAt },
     } as never);
   return { conversations, saveConversation, rename };
@@ -86,5 +86,30 @@ describe('a received groupRenamed frame', () => {
     expect(error.mock.calls.map((c) => String(c[0])).join('\n')).toContain(
       'carries no server time'
     );
+  });
+
+  it('a server time far from the signed sentAt is refused at ERROR: a hostile stamp locks nothing in', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const phone = device();
+    await phone.rename('Pour toujours', Date.UTC(2100, 0, 1), T);
+    expect(phone.conversations.get('g1').name).toBe('Groupe');
+    expect(error.mock.calls.map((c) => String(c[0])).join('\n')).toContain('signed sentAt');
+  });
+
+  it('an empty name is refused for being empty, not for a missing server time', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const phone = device();
+    await phone.rename('   ', T);
+    const said = error.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(said).toContain('empty once trimmed');
+    expect(said).not.toContain('server time');
+  });
+
+  it('a rename inside a DM names its true cause, not "not newer"', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const phone = device('direct');
+    await phone.rename('Les ROOTz', T);
+    expect(phone.conversations.get('g1').name).toBe('Groupe');
+    expect(warn.mock.calls.map((c) => String(c[0])).join('\n')).toContain('not a group');
   });
 });

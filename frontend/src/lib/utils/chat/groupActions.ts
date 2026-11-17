@@ -264,14 +264,19 @@ export async function deleteGroupAndBroadcast(params: {
 }
 
 /**
- * Renames the group on the server, then states the new name to every member in a `groupRenamed`
- * frame, and writes this device's own notice under the frame's id (`sendVisibleNotice`).
+ * Renames the group: states the new name to every member in a `groupRenamed` frame FIRST, writes this
+ * device's own notice under the frame's id (`sendVisibleNotice`), and only then writes the server's
+ * copy.
  *
- * THE FRAME IS THE RENAME, NOT A COURTESY ABOUT IT. A member's device dates a group's name by the
- * frame that stated it and no longer lets the server's undated list override that
- * (`groupName.ts`), so a rename whose frame did not leave reached nobody who holds a dated name: it
- * throws, and the caller reports a failed rename rather than one only the server saw. The server
- * copy is still written first, for the builds that read only that list.
+ * THE FRAME IS THE RENAME, AND IT GOES FIRST. A member's device dates a group's name by the frame that
+ * stated it and no longer lets the server's undated list override that (`groupName.ts`). Writing the
+ * server first meant a frame that then failed left the two disagreeing for good: undated devices and
+ * older builds took the new name from the list, dated devices kept the old one. Now a frame that does
+ * not leave is a failed rename that changed nothing anywhere, thrown to the caller.
+ *
+ * The server's copy serves only the builds that read nothing else. Once the frame is out, a failed
+ * write there is logged at ERROR and NOT thrown: the members have the name, and calling the rename
+ * failed would invite a retry that renames the group a second time.
  *
  * @returns the server's acceptance time of the frame - the date this device writes beside the new
  *   name, the same one every member's copy carries - or `null` when the answer named none.
@@ -286,9 +291,9 @@ export async function renameGroupAndBroadcast(params: {
   ownNotice: Omit<OwnNotice, 'actor'>;
 }): Promise<number | null> {
   const { mlsService, groupId, newName, userId, deviceKeyB64, ownNotice } = params;
-  await mlsService.renameGroup(groupId, newName);
+  let receivedAt: number | null;
   try {
-    return await sendVisibleNotice(
+    receivedAt = await sendVisibleNotice(
       mlsService,
       groupId,
       'groupRenamed',
@@ -297,13 +302,21 @@ export async function renameGroupAndBroadcast(params: {
     );
   } catch (e) {
     console.error(
-      `[GROUP_NAME] groupRenamed frame for ${groupId.slice(0, 8)}… NOT delivered - the members were not told, so the rename is reported as failed: ${String(e).slice(0, 120)}`
+      `[GROUP_NAME] groupRenamed frame for ${groupId.slice(0, 8)}… NOT delivered - nothing was renamed, neither for the members nor on the server: ${String(e).slice(0, 120)}`
     );
     throw e;
   } finally {
     // Whatever the send did to the ratchet is checkpointed, delivered or not.
     await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64);
   }
+  try {
+    await mlsService.renameGroup(groupId, newName);
+  } catch (e) {
+    console.error(
+      `[GROUP_NAME] ${groupId.slice(0, 8)}… renamed for the members, but the server's copy was not written - builds that read only the server's list keep the old name until the next rename: ${String(e).slice(0, 120)}`
+    );
+  }
+  return receivedAt;
 }
 
 /**

@@ -4085,6 +4085,7 @@
   "community_join_invited_text": "You have been invited to join",
   "community_join_btn": "Join the community",
   "group_join_page_title": "Join a group",
+  "group_rename_failed": "The group could not be renamed. Try again.",
   "group_join_error_fallback": "Failed to join the group",
   "group_join_action": "Join this conversation",
   "group_join_sent_title": "Request sent!",

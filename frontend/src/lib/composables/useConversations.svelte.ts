@@ -30,6 +30,7 @@ import {
   chat_group_remove_member_confirm,
   chat_system_removed_from_group,
   chat_unopenable_start_again_failed,
+  group_rename_failed,
   common_remove_label,
 } from '$lib/paraglide/messages';
 import { showConfirm } from '$lib/stores/confirm.svelte';
@@ -46,6 +47,7 @@ import { salonKeysNow } from '$lib/utils/graine/salonReadGate';
 import { watchSalonRemovals } from '$lib/utils/chat/salonRemovals';
 import type { ChannelPollMeta } from '$lib/services/ChannelService';
 import { applyChannelReactionFrame } from '$lib/stores/reactionStore.svelte';
+import { GROUP_NAME_SKIP_TEXT, ownRenameOutcome } from '$lib/utils/chat/groupName';
 import {
   fetchGroupRoster,
   fetchUniqueGroupMembers,
@@ -2794,15 +2796,27 @@ export function useConversations() {
         deviceKeyB64: ctx.deviceKeyB64,
         ownNotice: { contactName: key, addMessageToChat: ctx.addMessageToChat },
       });
-      // RE-READ AFTER THE AWAIT, AND PATCH THE NAME ONLY. The send wrote our own notice into this
-      // conversation meanwhile (`sendVisibleNotice`); writing back the snapshot taken before the
-      // await erased it from this device's screen - the one device that had never drawn it.
-      // Dated by the server's acceptance of the frame, as every member's copy is (`groupName.ts`).
-      patchConversation(key, nameAt !== null ? { name, nameAt } : { name });
-      await saveConversation(key, ctx);
+      // RE-READ AFTER THE AWAIT. The send wrote our own notice into this conversation meanwhile
+      // (`sendVisibleNotice`), and a peer's rename may have landed too: writing back the snapshot
+      // taken before the await erased the first, and writing the name blindly overwrote the second.
+      const current = conversations.get(key);
+      if (current) {
+        const outcome = ownRenameOutcome(current, name, nameAt);
+        if ('row' in outcome) {
+          conversations.set(key, outcome.row);
+          await saveConversation(key, ctx);
+        } else {
+          ctx.log(
+            `[GROUP_NAME] own rename of ${key.slice(0, 8)}… not written over the row: ${GROUP_NAME_SKIP_TEXT[outcome.skipped]}`
+          );
+        }
+      }
       ctx.log(`Group ${key} renamed`);
     } catch (e) {
-      ctx.log(`Erreur renommage: ${String(e)}`);
+      // The frame did not leave, so nothing was renamed anywhere (`renameGroupAndBroadcast`): the
+      // person who typed the name is told, the panel having closed already.
+      ctx.log(`[GROUP_NAME] rename of ${key.slice(0, 8)}… failed: ${String(e).slice(0, 120)}`);
+      showToast(group_rename_failed(), 'error');
     }
   }
 

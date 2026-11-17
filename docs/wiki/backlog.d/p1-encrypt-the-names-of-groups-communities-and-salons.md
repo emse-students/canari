@@ -22,16 +22,16 @@ acceptance of its frame, and the inviter's join push hands it to a newcomer.
 - **Left, in order:**
   1. Every group gets a dated name: creation and a one-time silent restatement. About 2 days.
   2. The server stops knowing group names: create and rename, the push fields, the join-ask push, the
-     native naming, the invite preview. It ships behind a minimum version. About 1 week.
+     native naming, the invite preview (the name moves to the link's `#fragment`). It ships behind the
+     minimum version decided below. About 1 week.
   3. A HELD migration nulls `dm_groups.name`, with a before and after count. About 1 day plus the
      owner's line.
   4. The sealed community state: name, photo, salons, role labels and nicknames under a key-group key.
      The slug goes, and the migration is held. 2 to 4 weeks.
-- **Owner decisions owed** (each with a recommended option on the page):
-  - What a shared invite link shows before joining. Recommended: the name travels in the link's
-    `#fragment`.
-  - The minimum version for step 2. Recommended: the version carrying steps 1 and the creation
-    dating.
+- **Owner decisions taken (2026-11-17)**, on the page:
+  - A shared invite link carries the name in its `#fragment`, never sent to a server. The in-app card
+    shows it, and a link unfurler shows a generic "Invitation Canari".
+  - The minimum client version for step 2 is the version carrying step 1 and the creation dating.
 
 Push names are closed by [content-free push](push-payloads-carry-nothing-for-google-and-apple.md),
 which this work follows.
