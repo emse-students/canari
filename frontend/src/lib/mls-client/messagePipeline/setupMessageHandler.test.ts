@@ -58,6 +58,8 @@ vi.mock('$lib/utils/chat/recovery', () => ({
 
 import { setupMessageHandler } from './setupMessageHandler';
 import { isRegisterOwed } from '$lib/utils/chat/registerOwed';
+import { adoptBackgroundJoins } from '$lib/utils/chat/backgroundJoins';
+import { takeAddressedAsk } from '$lib/utils/chat/historyAddressing';
 import { messageRowStore, placement, storedRow } from '../test/fixtures/messageRowStore';
 import { resetUnackedFrames } from './unackedFrames';
 import { activeMlsStatePersister } from '../mlsStatePersisterRegistry';
@@ -1033,6 +1035,41 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     expect(onGroupReady).toHaveBeenCalledWith(groupId);
     // Joins nothing, so the announcement must not reconcile it as a fresh join.
     expect(mls.noteWelcomeInstalled).not.toHaveBeenCalled();
+  });
+
+  it('the redelivered Welcome of a group the push service JOINED is its admission - once', async () => {
+    // P2-a of the review of #3777: an Android background join installs the group with no page
+    // running, so the page's first Welcome for it is this redelivery.
+    const deps = baseDeps();
+    const mls = deps.mlsService as any;
+    mls.getLocalGroups = vi.fn().mockReturnValue([groupId]);
+    mls.isDistributionGroup = vi.fn().mockReturnValue(false);
+    mls.getDeviceId = vi.fn().mockReturnValue('dev-x');
+    adoptBackgroundJoins(
+      mls,
+      'me',
+      [groupId],
+      () => true,
+      () => {}
+    );
+    setupMessageHandler(deps as any);
+    const onMsg = mls.onMessage.mock.calls[0][0] as (
+      a: string,
+      b: Uint8Array,
+      c?: string,
+      d?: boolean,
+      e?: Uint8Array
+    ) => Promise<boolean>;
+
+    expect(await onMsg('peer', new Uint8Array([1]), groupId, true, undefined)).toBe(true);
+    expect(mls.noteWelcomeInstalled.mock.calls).toEqual([[groupId]]);
+    // The inviter's push is solicited, from the user the Welcome came from only.
+    expect(takeAddressedAsk(groupId, undefined, 'carol:carol-dev', true)).toBeNull();
+    expect(takeAddressedAsk(groupId, undefined, 'peer:peer-dev', true)?.ask.kind).toBe('join');
+
+    // A second redelivery is a redelivery like any other.
+    expect(await onMsg('peer', new Uint8Array([1]), groupId, true, undefined)).toBe(true);
+    expect(mls.noteWelcomeInstalled).toHaveBeenCalledTimes(1);
   });
 
   it("a conversation Welcome arriving while this device's own external commit awaits the gate installs once it is refused", async () => {

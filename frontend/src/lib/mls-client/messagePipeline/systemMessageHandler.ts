@@ -81,7 +81,7 @@ import {
 import { boundedByVerifiedSentAt, withVettedBundleServerTimes } from '$lib/utils/chat/messageTime';
 import { applyPin, mergePinEntries } from '$lib/stores/pinStore.svelte';
 import { mergeBundleNicknames } from '$lib/utils/users/conversationNicknames.svelte';
-import { clearRegisterOwed } from '$lib/utils/chat/registerOwed';
+import { clearRegisterOwed, noteRegisterDeclined } from '$lib/utils/chat/registerOwed';
 import { applyNicknameFrame, nicknameMembersOf } from '$lib/utils/chat/nicknameFrame';
 import { m } from '$lib/paraglide/messages';
 import type { MessageHandlerDeps } from './deps';
@@ -1524,6 +1524,39 @@ export async function handleSystemEvent(
           `[HISTORY_ADDRESSED] a register answer from ${senderNorm.slice(0, 8)} in ${convoKey.slice(0, 8)}… carried ${incoming.length} message(s) - dropped, it carries the state only`
         );
         incoming = [];
+      }
+      // A DECLINE (`register: 'none'`, sealed under our register ask): the elected device never took
+      // a register either. It carries nothing to take; it gives the ask back and rules that device
+      // out (`noteRegisterDeclined`), against the group's OTHER devices as the TREE lists them.
+      if (
+        ask.kind === 'digest' &&
+        ask.register === true &&
+        bundleState !== data &&
+        bundleState?.register === 'none'
+      ) {
+        if (incoming.length > 0) {
+          console.error(
+            `[HISTORY_ADDRESSED] a register decline from ${senderNorm.slice(0, 8)} in ${convoKey.slice(0, 8)}… carried ${incoming.length} message(s) - dropped, it carries nothing`
+          );
+        }
+        let others: string[] = [];
+        try {
+          others = (await mlsService.getGroupMemberIdentities(convoKey))
+            .map((leaf) => leaf.toLowerCase())
+            .filter((leaf) => leaf !== me);
+        } catch (e) {
+          // The decline still gives its ask back; only "every device declined" cannot be decided.
+          console.warn(
+            `[REGISTER] ${convoKey.slice(0, 8)}… roster unreadable - the decline from ${senderNorm.slice(0, 8)} rules nobody else out: ${String(e).slice(0, 120)}`
+          );
+        }
+        noteRegisterDeclined(
+          userId,
+          convoKey,
+          digestIdentity(senderNorm, answeringDevice ?? '').toLowerCase(),
+          others
+        );
+        return true;
       }
     } else if (typeof data?.sealed === 'string') {
       // A BROADCAST is never sealed by an honest answerer - only an addressed answer is.

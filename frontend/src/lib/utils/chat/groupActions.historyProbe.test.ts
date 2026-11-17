@@ -4,6 +4,7 @@ import {
   REGISTER_ASKS_MAX,
   clearRegisterOwed,
   isRegisterOwed,
+  noteRegisterDeclined,
   noteRegisterOwed,
 } from './registerOwed';
 import { forgetHistoryAsks, takeAddressedAsk } from './historyAddressing';
@@ -198,13 +199,33 @@ describe('sendHistoryProbe - a register owed', () => {
       });
 
     for (let i = 0; i < REGISTER_ASKS_MAX; i++) await probe();
-    expect(isRegisterOwed('user-a', GROUP)).toBe(false);
+    // Spent, but ended only at the NEXT ask: a decline arriving meanwhile would give one back.
+    expect(isRegisterOwed('user-a', GROUP)).toBe(true);
     await probe();
+    expect(isRegisterOwed('user-a', GROUP)).toBe(false);
 
     expect(sentEvents(mlsService)).toEqual([
       ...Array(REGISTER_ASKS_MAX).fill('history_digest'),
       'history_state',
     ]);
+  });
+
+  it('an ask a decline gave back is not spent - the next probe still asks for the register', async () => {
+    noteRegisterOwed('user-a', GROUP);
+    const mlsService = createMlsServiceStub();
+    const probe = () =>
+      sendHistoryProbe(GROUP, SELF, {
+        storage: storageHolding(0),
+        deviceKeyB64: 'k',
+        mlsService,
+        log: vi.fn(),
+      });
+    for (let i = 0; i < REGISTER_ASKS_MAX; i++) await probe();
+    noteRegisterDeclined('user-a', GROUP, 'user-b:phone', ['user-b:phone', 'user-c:laptop']);
+    await probe();
+
+    expect(sentEvents(mlsService)).toEqual(Array(REGISTER_ASKS_MAX + 1).fill('history_digest'));
+    expect(isRegisterOwed('user-a', GROUP)).toBe(true);
   });
 
   it('an ask that did not leave is not counted', async () => {

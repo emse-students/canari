@@ -3214,6 +3214,10 @@ export abstract class BaseMlsService implements IMlsService {
             // is still unknown, so the handler records it against that group and the Welcome that
             // eventually lands re-fetches it - the seam that exists for exactly this.
             if (groupId) this.messageScheduler.releaseWelcomeBuffer(groupId, 'Welcome failed');
+            // And the install mark is read here too - ONCE, whatever happened: a handler that threw
+            // after installing announces nothing, and its mark left behind would make the next
+            // redelivery look like a fresh join. The register owed is durable and asks anyway.
+            if (groupId) this.welcomesInstalled.delete(groupId);
           } else {
             const exFlags = {
               isWelcome: msg.isWelcome,

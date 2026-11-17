@@ -271,6 +271,7 @@ import {
 } from './sessionConnection';
 import { startSyncWatchdogImpl } from './sessionWatchdogs';
 import { takeKeyGroupPushJoins } from '$lib/utils/graine/keyGroupPushJoins';
+import { takeBackgroundJoins } from '$lib/utils/chat/backgroundJoins';
 import { drainNseOutcomes } from '$lib/mobile/nseOutcomes';
 import { drainNativePushLog } from '$lib/mobile/nativePushLog';
 import { uploadClassFor } from '$lib/reels/chatReelWriter';
@@ -1990,6 +1991,10 @@ export async function loginImpl(
     // 26): their trees are in the state just loaded, their registry rows are not - until this.
     // Info level: one line per ledger entry at start, each a decision a device reading must name.
     await takeKeyGroupPushJoins(mlsService, (line) => Log.i('LOGIN', line));
+    // And the CONVERSATIONS it joined: each owes its register (`registerOwed.ts`) as one the page
+    // joined does, and its redelivered Welcome is taken as the admission it was (`backgroundJoins.ts`).
+    // After the registry restore above, which is what tells a key group apart; before the drain.
+    await takeBackgroundJoins(mlsService, ctx.getUserId(), (line) => Log.i('LOGIN', line));
     stopIfSignedOut('distribution-groups');
     // What the iOS notification extension did while the app was shut: decrypted, fell back, timed
     // out or killed - one `[NSE_OUTCOME]` line each (`nseOutcomes.ts`). Not awaited: nothing below

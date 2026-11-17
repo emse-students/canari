@@ -15,6 +15,6 @@ Until every client seals, an asker accepts an UNSEALED answer to its keyed ask (
 error, like any answer that does not open; `historyAskId` treats an ask without `answerKey` as
 malformed and answers nothing (D211's rule for `requestId`); `noteHistoryAsk` takes a secret, never
 `null`, and the tests of the routing rules mint one; the legacy-compatibility entry goes. In the same
-pull request, if the floor also carries the register ask: the warn that `noteRegisterAsked` says when
-the fifth ask drops a marker is raised to error, and its legacy-compatibility entry goes
+pull request, if the floor also carries the register ask: the warn that `endSpentRegisterAsks` says
+when five unanswered asks end the asking is raised to error, and its legacy-compatibility entry goes
 ([legacy-compatibility](../legacy-compatibility.md#removal-once-minclientversion-passes-the-first-stable-carrying-it---the-bound-on-register-asks-2026-11-17)).

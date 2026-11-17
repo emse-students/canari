@@ -397,7 +397,54 @@ pub fn decrypt_media_blob(raw_key: &[u8], iv: &[u8], ciphertext: &[u8]) -> Optio
 }
 
 // The stale ledger is named where `mls.bin`'s deletion sweeps it.
-use crate::commands::storage::{BACKGROUND_STAGES_FILE, STALE_WELCOME_LEDGER_FILE};
+use crate::commands::storage::{
+    BACKGROUND_JOINS_FILE, BACKGROUND_STAGES_FILE, STALE_WELCOME_LEDGER_FILE,
+};
+
+/// The most groups the background-join ledger names - far above the joins of one absence. A
+/// capacity, not a clock: a join beyond it is not noted, said at error, and its conversation asks
+/// for no register (`registerOwed.ts`) - the loss is the nickname register, never a message.
+pub const BACKGROUND_JOINS_CAPACITY: usize = 256;
+
+/// Notes that a background Welcome JOINED `group_id` (`BACKGROUND_JOINS_FILE`). Written BEFORE the
+/// `mls.bin` write that installs it: a note whose install was then refused names a group the state
+/// does not hold, and the app believes a note only when the tree it loads holds the group - the
+/// ledger is a claim, the tree is the fact. The other order could lose a join between the two
+/// writes. A failure is said at error and the join goes on: what is lost is the register ask.
+fn note_background_join(files_dir: &Path, group_id: &str) {
+    let short: String = group_id.chars().take(8).collect();
+    let noted =
+        crate::commands::storage::with_json_ledger(files_dir, BACKGROUND_JOINS_FILE, |map| {
+            if map.contains_key(group_id) {
+                return (true, false);
+            }
+            if map.len() >= BACKGROUND_JOINS_CAPACITY {
+                return (false, false);
+            }
+            map.insert(group_id.to_string(), serde_json::Value::Bool(true));
+            (true, true)
+        });
+    match noted {
+        Ok(true) => log::info!("[BG_JOIN] group={short} noted as joined in the background"),
+        Ok(false) => log::error!(
+            "[BG_JOIN] group={short} NOT noted: the background-join ledger is full ({BACKGROUND_JOINS_CAPACITY}) - the app will not ask its register"
+        ),
+        Err(e) => log::error!(
+            "[BG_JOIN] group={short} NOT noted ({e}) - the app will not ask its register"
+        ),
+    }
+}
+
+/// Takes every group the background-join ledger names, and deletes it - the app's start
+/// (`take_background_joins` command). From this call on, each join is the app's to own.
+pub fn take_background_joins(files_dir: &Path) -> Result<Vec<String>, String> {
+    crate::commands::storage::with_json_ledger(files_dir, BACKGROUND_JOINS_FILE, |map| {
+        let taken: Vec<String> = map.keys().cloned().collect();
+        let changed = !map.is_empty();
+        map.clear();
+        (taken, changed)
+    })
+}
 /// The most groups the stale ledger names. A capacity, not a clock: a full ledger is emptied before
 /// the next entry, which costs each forgotten group ONE more refused answer and nothing else.
 pub const STALE_WELCOME_LEDGER_CAPACITY: usize = 64;
@@ -1123,6 +1170,8 @@ pub fn process_welcome_background_with_key(
     let enc = manager
         .save_encrypted_with_key(&key)
         .map_err(|e| e.to_string())?;
+    // Noted before the install, so no join goes unnoted (see `note_background_join`).
+    note_background_join(files_dir, &group_id);
     write_over_loaded_state(files_dir, state_bytes, &enc)?;
     log::info!(
         "[BG_JOIN] joined group via Welcome: {group_id} (mls.bin {} bytes)",
@@ -1701,6 +1750,80 @@ mod tests {
     /// A distinct device key per test so no two tests can read the same `mls.bin`.
     fn key_b64(seed: u8) -> String {
         STANDARD.encode([seed; 32])
+    }
+
+    /// A BACKGROUND JOIN IS NOTED, and the app's take hands it over once: the conversation it joined
+    /// is then owed its register like one the page joined (`registerOwed.ts`).
+    #[test]
+    fn a_background_join_is_noted_and_taken_once() {
+        let _s = quiet_foreground();
+        let tag = "bgjoin";
+        let mut alice = MlsManager::load_or_create(&format!("{tag}-alice"), "dev-a", None).unwrap();
+        let bob = MlsManager::load_or_create(&format!("{tag}-bob"), "dev-b", None).unwrap();
+        let gid = format!("{tag}-group");
+        alice.create_group(gid.clone()).unwrap();
+        let kp = bob.generate_key_package().unwrap();
+        let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(71)).unwrap();
+        let state = bob.save_encrypted_with_key(&key).unwrap();
+        let (_commit, welcome, _added, _skipped) = alice.add_members_bulk(&gid, &[&kp]).unwrap();
+        alice.merge_pending_commit_for(&gid).unwrap();
+        let tree = STANDARD.encode(alice.export_ratchet_tree_for(&gid).unwrap());
+        let dir = dir_holding(tag, &state);
+
+        process_welcome_background_with_key(
+            &dir,
+            &state,
+            &key_b64(71),
+            &format!("{tag}-bob"),
+            "dev-b",
+            &STANDARD.encode(welcome.unwrap()),
+            &tree,
+        )
+        .expect("the background join");
+
+        assert_eq!(take_background_joins(&dir).unwrap(), vec![gid]);
+        assert!(
+            take_background_joins(&dir).unwrap().is_empty(),
+            "taken once"
+        );
+    }
+
+    /// A WELCOME THAT DOES NOT INSTALL notes nothing: the ledger names joins, never attempts.
+    #[test]
+    fn a_welcome_that_does_not_install_notes_nothing() {
+        let _s = quiet_foreground();
+        let bob = MlsManager::load_or_create("bgjoinbad-bob", "dev-b", None).unwrap();
+        let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(72)).unwrap();
+        let state = bob.save_encrypted_with_key(&key).unwrap();
+        let dir = dir_holding("bgjoinbad", &state);
+
+        let joined = process_welcome_background_with_key(
+            &dir,
+            &state,
+            &key_b64(72),
+            "bgjoinbad-bob",
+            "dev-b",
+            &STANDARD.encode(b"not a welcome"),
+            "",
+        );
+
+        assert!(joined.is_err());
+        assert!(take_background_joins(&dir).unwrap().is_empty());
+    }
+
+    /// A FULL LEDGER names no further join (said at error), and keeps the ones it holds.
+    #[test]
+    fn a_full_background_join_ledger_keeps_what_it_holds() {
+        let _s = quiet_foreground();
+        let dir = dir_holding("bgjoinfull", b"state");
+        for i in 0..BACKGROUND_JOINS_CAPACITY {
+            note_background_join(&dir, &format!("g{i:04}"));
+        }
+        note_background_join(&dir, "one-too-many");
+
+        let taken = take_background_joins(&dir).unwrap();
+        assert_eq!(taken.len(), BACKGROUND_JOINS_CAPACITY);
+        assert!(!taken.contains(&"one-too-many".to_string()));
     }
 
     /// A temp directory of its own, so the `mls.bin` each test writes is its own.

@@ -379,10 +379,11 @@ member admitted after that arrival is not. That second case was the residual, an
 taking the messages OUT of the push (draft pull request): `sendFullHistoryBundle` sends one frame
 with the conversation's state (read marks, floor, pins, nickname register) and `messages: []`, and
 never reads the store. The state is the conversation's, every member holds it. The messages reach the
-newcomer by its own reconciliation - a keyed digest, sealed by rule 3 - which now runs at EVERY
-processed Welcome (`sessionAuth.ts`, `onWelcomeProcessed`: the call was inside a branch that the
-Welcome handler's own row made dead in the ordinary case, so a fresh join used to wait for the next
-connection to compare). Two keys to seal the push itself were considered and rejected:
+newcomer by its own reconciliation - a keyed digest, sealed by rule 3 - which now runs at every
+Welcome that INSTALLED the group (`sessionAuth.ts`, `onWelcomeProcessed`: the call was inside a
+branch that the Welcome handler's own row made dead in the ordinary case, so a fresh join used to
+wait for the next connection to compare). Two keys to seal the push itself were considered and
+rejected:
 
 - **the KeyPackage's init key** - its secret is deleted once the Welcome is processed;
 - **the newcomer's MLS leaf encryption key** - the secret is openmls's to manage (read from its
@@ -403,31 +404,73 @@ retried ([backlog](../backlog.d/p2-an-offline-newcomer-receives-no-join-push.md)
 ASKS, on facts it holds durably:
 
 1. **Owed from the admission.** Processing a Welcome into a conversation group (not a key group)
-   writes a per-account "register owed" marker for it (`registerOwed.ts`,
-   `ACCOUNT_KEY.registerOwed`, a 256-entry FIFO in `localStorage`), beside the in-memory join ask
-   (`setupMessageHandler.ts`). Durable because the question outlives the page: a reload between the
-   Welcome and the answer still asks.
-2. **Asked by the reconciliation it already runs.** While the marker is set, `sendHistoryProbe` sends
-   the DIGEST (never the state key, whose match is answered by silence) with `register: true`, and
-   the ask this device keeps says `register` too (`noteHistoryAsk`). Like every ask, it carries a key.
-3. **Answered first by the elected responder.** `answerHistoryDigest`, seeing `register`, sends ONE
-   frame before the diff (`sendRegisterAnswer`): addressed to the asker alone, SEALED to its ask, its
-   content the NICKNAME REGISTER and `register: true` and no message, not closing the ask (the diff's last chunk
-   does). Never broadcast (a server that does not address gets no register), withheld from an
-   unvouched device, nothing sent when the engine cannot seal. A register ask with no key is a defect
-   of its sender: no state is sent, said at error, and the diff still goes. A responder still owed
-   its OWN register for the group answers none (said in its log): it has none to restate, and an
-   empty one would end the asker's marker on nothing.
-4. **Taken only from what opened under the ask.** The receiver takes the nicknames - under
-   `mergeBundleNicknames`' limits (unverified, current members only) - from an answer only when its ask said `register` AND the SEALED content says `register`. The flag is
-   never in the clear routing: one a relaying server could set would turn an ordinary answer into one
-   the reader takes state from. An unsealed frame saying `register` is taken as an ordinary answer
-   and said at error. A message riding a register answer is dropped (at error): it carries the state
-   only.
-5. **Cleared by the first state TAKEN** - a register answer, or the inviter's join push - and only
-   when every merge had its input (`stateTaken` in `systemMessageHandler.ts`): a push finding no
+   writes a per-account entry for it (`registerOwed.ts`, `ACCOUNT_KEY.registerOwed`, a 256-entry FIFO
+   in `localStorage`), beside the in-memory join ask (`setupMessageHandler.ts`). Durable because the
+   question outlives the page: a reload between the Welcome and the answer still asks.
+2. **Owed from a background join too (review of #3777, P2-a).** The Android push service installs a
+   Welcome into `mls.bin` with no page running (`process_welcome_background_with_key`); the page
+   later sees that Welcome redelivered for a group it holds, which the Welcome handler treats as
+   idempotent - so the admission's notes were never written. The native join now notes every group
+   it installs in `background_joins.json` (written before the `mls.bin` write, so no join goes
+   unnoted; it leaves with `mls.bin`), and the app takes and clears that ledger once per start,
+   before the drain (`take_background_joins`, `backgroundJoins.ts`). Each conversation it names is
+   believed only when the state just loaded holds the group - the ledger is a claim, the tree is the
+   fact - and is then owed its register; its redelivered Welcome is taken, once, as the admission it
+   was (the inviter's push solicited, the fresh join announced). This is a FACT written by the code
+   that joined; "held, no row, Welcome in hand" was the alternative, and it is a guess (a row can be
+   missing for other reasons).
+3. **Asked by the reconciliation it already runs.** While the entry still asks, `sendHistoryProbe`
+   sends the DIGEST (never the state key, whose match is answered by silence) with `register: true`,
+   and the ask this device keeps says `register` too (`noteHistoryAsk`). Like every ask, it carries
+   a key.
+4. **Answered first by the elected responder.** `answerHistoryDigest`, seeing `register`, sends ONE
+   frame before the diff (`sendRegisterAnswer`): addressed to the asker alone, SEALED to its ask, no
+   message, not closing the ask (the diff's last chunk does). Its content is the NICKNAME REGISTER and
+   `register: true` - or, from a device that never took its own register, `register: 'none'`, a typed
+   DECLINE: it holds none to restate, and an empty register would end the asker's entry on nothing.
+   Never broadcast (a server that does not address gets no register), withheld from an unvouched
+   device, nothing sent when the engine cannot seal. A register ask with no key is a defect of its
+   sender: no state is sent, said at error, and the diff still goes.
+5. **Taken only from what opened under the ask.** The receiver takes the nicknames - under
+   `mergeBundleNicknames`' limits (unverified, current members only) - from an answer only when its
+   ask said `register` AND the SEALED content says `register: true`. The flag is never in the clear
+   routing: one a relaying server could set would turn an ordinary answer into one the reader takes
+   state from. An unsealed frame saying `register` is taken as an ordinary answer and said at error.
+   A message riding a register answer or a decline is dropped (at error).
+6. **Ended by the first state TAKEN** - a register answer, or the inviter's join push - and only when
+   every merge had its input (`stateTaken` in `systemMessageHandler.ts`): a push finding no
    conversation row, a save refused, or a register with no roster to check its nicknames against took
-   nothing, so the marker stays (said at warn) and the next reconciliation asks again.
+   nothing, so the entry stays (said at warn) and the next reconciliation asks again.
+
+**Two questions, two durable facts (review of #3777, P2-b).** "Was a register ever taken here?" is
+the entry's EXISTENCE (`registerNeverTaken`), and it ends only when one is taken: the responder reads
+it to decide between answering and declining. "Do I still ask?" is the entry's `asking` field
+(`isRegisterOwed`), which ends on a proof that asking is useless. They used to be one marker, and two
+newcomers - or one person's phone and laptop, each elected for the other's ask - each refused, the
+bound dropped both markers, and both then answered later newcomers with an empty register.
+
+**It terminates on proofs, never a clock.** The asking ends when either holds:
+
+- **`REGISTER_ASKS_MAX` (5) asks went UNANSWERED.** Every register ask that leaves is counted
+  (`noteRegisterAsked`), a decline gives its ask back (`noteRegisterDeclined`), and the bound is
+  checked before the next ask (`endSpentRegisterAsks`), so a decline that came back meanwhile is
+  already counted out. Counted at the ask, because silence is an answer: an older responder ignores
+  `register`, and when its store matches ours it sends nothing, so no answer-side count would ever
+  move ([legacy](../legacy-compatibility.md)). An ask answered by a device of this account is counted
+  like any other: on this build such a device answers or declines, and one on an older build is the
+  legacy case the bound exists for.
+- **Every other device of the tree DECLINED.** The decliners are kept in the entry; once they cover
+  every leaf of the group but this one (`getGroupMemberIdentities`), nobody holds a register to give.
+
+Asks leave on state edges - every connection, every Welcome that INSTALLED the group, a member coming
+back - so no ask repeats without one.
+
+**What is still lost, honestly.** A conversation in which NO device holds a register - every member
+admitted offline, the inviter's push lost to each, and the inviter gone or itself never having taken
+one - never gets the nicknames set before those admissions: nobody can give them, and the asking ends
+on the declines. A group whose only holders run a build that ignores `register` is asked five times
+and then not again until a re-admission. A FIFO-evicted entry (more than 256 conversations owed at
+once) answers as a holder would. Each is said at warn where it ends.
 
 **The register answer carries the nickname register and nothing else (decided 2026-11-17).** The
 ask's key rides the ask, so ANY member of the group can seal an answer to it, and the receiver does
@@ -437,47 +480,59 @@ the first would need the receiver to re-run the election on a roster it may not 
 joined), and a floor or read marks taken from a forged answer would hide history from the device for
 good. The nicknames are bounded by the merge (unverified, current members only, dated within the
 bundle's server time), so a forged register can at worst mislabel, and the next real one corrects it.
-The pins, the floor and the read marks still ride the inviter's join push, whose sender the receiver
-checks against its Welcome.
+The pins, the floor and the read marks ride only the inviter's join push, which is taken only from a
+device of the user the Welcome came from (review of #3777, P2-c): the join ask records that user
+(`noteJoinSolicited`) and `takeAddressedAsk` refuses any other member's device for it, whatever slot
+is free. That user is the delivery envelope's word, as the routing of every addressed answer is.
 
-**It terminates on a count, never a clock.** Every register ask SENT is counted in the marker
-(`noteRegisterAsked`), durably; the fifth (`REGISTER_ASKS_MAX`) drops it, said at warn. The asks
-leave on state edges - every connection, every Welcome that INSTALLED the group, a member coming back
-- so the bound is several elections' worth. It counts at the ask, not at an answer, because silence is
-an answer: an older responder ignores `register`, and when its store matches ours it sends nothing,
-so no answer-side count would ever move. Without the bound such a group would send the full digest
-instead of the state key at every connection until the FIFO pushed it out
-([legacy](../legacy-compatibility.md)).
+**A newcomer the push never reached does not learn the floor - and that is not noise today.** The
+floor rides only the push, so such a newcomer states its `since` from a floor of zero. Nothing moves
+the floor yet (`historyWindow.ts`: it ships worth zero, no member prunes inside the five-year
+window), so every member's floor is zero too and `coverageFallsShort` compares the same windows it
+always did. The day something moves the floor, it owes the newcomer the floor through an answer it
+can trust, or a member's `coveredFrom` above the newcomer's `since` starts a walk for a past the floor
+says is gone.
 
 **Only a Welcome that installed the group asks at once.** The fresh-join reconciliation runs in
 `sessionAuth`'s `onWelcomeProcessed` callback, told by the drain whether the handler INSTALLED the
-group (`noteWelcomeInstalled`, read once per announcement). A redelivered Welcome of a group already
-held joins nothing and asks nothing; the marker it would have re-opened is not re-opened either.
+group (`noteWelcomeInstalled`) - or, for a background join, took its first redelivery as the
+admission. The mark is read ONCE per Welcome, on success and on a handler that threw alike. A
+redelivered Welcome of a group already held joins nothing and asks nothing.
 
 ### What proves the register ask and the state-only push
 
-- `registerOwed.test.ts` - the marker: durable, per account, bounded FIFO, an unreadable list reads
+- `registerOwed.test.ts` - the entry: durable, per account, bounded FIFO, an unreadable list reads
   as nothing owed at error, clearing what is not owed says nothing; the asks counted across a reload,
-  the fifth dropping it at warn, a re-admission asking from zero.
+  the bound ending the asking at warn while the register stays never-taken, a decline giving its ask
+  back, every other device declining ending the asking, a re-admission asking from zero.
+- `backgroundJoins.test.ts`, `mobile/background.rs` (`a_background_join_is_noted_and_taken_once`,
+  `a_welcome_that_does_not_install_notes_nothing`, `a_full_background_join_ledger_keeps_what_it_holds`):
+  a background join is noted and taken once, a refused one not at all; a group the loaded state does
+  not hold, or a key group, owes nothing.
 - `setupMessageHandler.test.ts` - a processed Welcome makes a conversation group owe its register,
-  a key group none; a fresh install is told to the announcement, a redelivery is not.
+  a key group none; a fresh install is told to the announcement, a redelivery is not; the first
+  redelivery of a background-joined group is its admission, the second is not.
 - `BaseMlsService.welcomeBuffer.test.ts` - the announcement says `installed` for the Welcome that
-  installed the group, not for its redelivery.
+  installed the group, not for its redelivery, nor after a handler that threw.
+- `historyAddressing.test.ts`, `systemMessageHandler.bundleAddressing.test.ts` - the join push is
+  taken only from a device of the user the Welcome came from.
 - `groupActions.historyProbe.test.ts` - an owed register sends the digest with `register` whatever
-  the store holds, and keeps the ask with it; none once cleared; another account's marker asks nothing;
-  each ask that left is counted, one that did not leave is not.
+  the store holds, and keeps the ask with it; none once cleared; another account's entry asks nothing;
+  each ask that left is counted, one that did not leave is not, one a decline gave back is not spent.
 - `systemMessageHandler.lateDigest.test.ts` - the digest handler carries `register` to the answer.
 - `historyDiffAnswer.register.test.ts` - the register frame leaves BEFORE the diff, sealed and bound
   to this answerer; none for an ordinary digest; a keyless register ask gets no state, at error.
 - `groupActions.registerAnswer.test.ts` - one frame, addressed, its clear routing only `to`,
   `requestId`, `sealed`; its content the nickname register and no message, no floor, pin or read
   mark even when the store holds them; never broadcast, withheld from an unvouched device, nothing
-  when the engine cannot seal, none from a device still owed its own.
+  when the engine cannot seal; a sealed `register: 'none'` from a device that never took its own,
+  asking or not.
 - `systemMessageHandler.nickname.test.ts` - the register is taken from a sealed register answer and
-  the marker cleared; no message from it; no state from an answer to a non-register digest, nor from
+  the entry ended; no message from it; no state from an answer to a non-register digest, nor from
   `register` said in clear (beside sealed content, or on an unsealed frame, at error); the push
-  clears the marker; a register answer takes no floor or read mark; the marker is KEPT when the
-  roster is unreadable, the push finds no row, or its save fails.
+  ends the entry; a register answer takes no floor or read mark; the entry is KEPT when the roster
+  is unreadable, the push finds no row, or its save fails; a decline gives its ask back and takes
+  nothing, and declines from every other device end the asking.
 - `groupActions.historyBundle.test.ts`, `groupActions.historyEntitlement.test.ts` - the push sends
   the state and no message, never reading the store, addressed or (an older server) broadcast; the
   entitlement cases it used to carry are asserted on the answer to an ask.

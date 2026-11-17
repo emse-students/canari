@@ -3,9 +3,12 @@ import {
   REGISTER_ASKS_MAX,
   REGISTER_OWED_LIMIT,
   clearRegisterOwed,
+  endSpentRegisterAsks,
   isRegisterOwed,
   noteRegisterAsked,
+  noteRegisterDeclined,
   noteRegisterOwed,
+  registerNeverTaken,
 } from './registerOwed';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 
@@ -32,7 +35,7 @@ describe('registerOwed - the state a newcomer still asks for', () => {
   it('is DURABLE - read back from storage, as a reloaded page reads it', () => {
     noteRegisterOwed('ann', 'g1');
     expect(JSON.parse(localStorage.getItem(ACCOUNT_KEY.registerOwed('ann')) ?? '[]')).toEqual([
-      { group: 'g1', asked: 0 },
+      { group: 'g1', asked: 0, asking: true, declined: [] },
     ]);
   });
 
@@ -74,17 +77,47 @@ describe('registerOwed - the state a newcomer still asks for', () => {
    * IT TERMINATES ON A COUNT OF ASKS, durably: a group whose members never answer `register` (an
    * older build, a server that cannot address) stops being asked after REGISTER_ASKS_MAX asks.
    */
-  it('ends after REGISTER_ASKS_MAX asks that took nothing, said at warn', () => {
+  it('ends after REGISTER_ASKS_MAX unanswered asks, said at warn - and the register is still not taken', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     noteRegisterOwed('ann', 'g1');
     for (let i = 1; i < REGISTER_ASKS_MAX; i++) noteRegisterAsked('ann', 'g1');
+    expect(endSpentRegisterAsks('ann', 'g1')).toBe(false);
+    noteRegisterAsked('ann', 'g1');
     expect(isRegisterOwed('ann', 'g1')).toBe(true);
     expect(warn).not.toHaveBeenCalled();
-    noteRegisterAsked('ann', 'g1');
+    expect(endSpentRegisterAsks('ann', 'g1')).toBe(true);
     expect(isRegisterOwed('ann', 'g1')).toBe(false);
     expect(warn.mock.calls.join(' ')).toContain(
       `asked for its register ${REGISTER_ASKS_MAX} time(s)`
     );
+    // P2-b: the asking ended, the fact the responder reads did not.
+    expect(registerNeverTaken('ann', 'g1')).toBe(true);
+    clearRegisterOwed('ann', 'g1', 'join push');
+    expect(registerNeverTaken('ann', 'g1')).toBe(false);
+  });
+
+  it('a decline gives its ask back - two devices declining each other spend nothing', () => {
+    const log = vi.spyOn(console, 'log');
+    noteRegisterOwed('ann', 'g1');
+    for (let i = 0; i < REGISTER_ASKS_MAX * 3; i++) {
+      noteRegisterAsked('ann', 'g1');
+      noteRegisterDeclined('ann', 'g1', 'bob:phone', ['bob:phone', 'carl:laptop']);
+    }
+    expect(endSpentRegisterAsks('ann', 'g1')).toBe(false);
+    expect(isRegisterOwed('ann', 'g1')).toBe(true);
+    expect(log.mock.calls.join(' ')).toContain('holds no register - the ask is not counted');
+  });
+
+  it('ends when EVERY other device declined - nobody holds a register to give', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    noteRegisterOwed('ann', 'g1');
+    const others = ['bob:phone', 'ann:laptop'];
+    noteRegisterDeclined('ann', 'g1', 'bob:phone', others);
+    expect(isRegisterOwed('ann', 'g1')).toBe(true);
+    noteRegisterDeclined('ann', 'g1', 'ann:laptop', others);
+    expect(isRegisterOwed('ann', 'g1')).toBe(false);
+    expect(registerNeverTaken('ann', 'g1')).toBe(true);
+    expect(warn.mock.calls.join(' ')).toContain('every other device (2) declined');
   });
 
   it('counts across a reload - the count is stored, not held in memory', () => {
@@ -92,16 +125,18 @@ describe('registerOwed - the state a newcomer still asks for', () => {
     noteRegisterAsked('ann', 'g1');
     noteRegisterAsked('ann', 'g1');
     expect(JSON.parse(localStorage.getItem(ACCOUNT_KEY.registerOwed('ann')) ?? '[]')).toEqual([
-      { group: 'g1', asked: 2 },
+      { group: 'g1', asked: 2, asking: true, declined: [] },
     ]);
   });
 
   it('a new admission to the group asks from zero again', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     noteRegisterOwed('ann', 'g1');
-    for (let i = 1; i < REGISTER_ASKS_MAX; i++) noteRegisterAsked('ann', 'g1');
+    for (let i = 0; i < REGISTER_ASKS_MAX; i++) noteRegisterAsked('ann', 'g1');
+    endSpentRegisterAsks('ann', 'g1');
     noteRegisterOwed('ann', 'g1');
     noteRegisterAsked('ann', 'g1');
+    expect(endSpentRegisterAsks('ann', 'g1')).toBe(false);
     expect(isRegisterOwed('ann', 'g1')).toBe(true);
   });
 

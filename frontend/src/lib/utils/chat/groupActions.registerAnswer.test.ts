@@ -11,7 +11,12 @@ import {
   resetConversationNicknamesForTests,
 } from '$lib/utils/users/conversationNicknames.svelte';
 import type { FrameDelivery } from '$lib/mls-client/frameDelivery';
-import { noteRegisterOwed } from './registerOwed';
+import {
+  REGISTER_ASKS_MAX,
+  endSpentRegisterAsks,
+  noteRegisterAsked,
+  noteRegisterOwed,
+} from './registerOwed';
 
 /**
  * THE RESPONDER'S HALF OF THE REGISTER ASK (`registerOwed.ts`, history-answer-addressing.md, "The
@@ -93,14 +98,41 @@ describe('sendRegisterAnswer', () => {
     expect(Object.keys(content).sort()).toEqual(['messages', 'nicknames', 'register']);
   });
 
-  it('is not answered by a device still owed its own register - it has none to restate', async () => {
+  /** Opens the one frame sent, as the asker does. */
+  async function opened(
+    mlsService: ReturnType<typeof createMlsServiceStub>,
+    secret: Uint8Array
+  ): Promise<Record<string, unknown>> {
+    const [frame] = frames(mlsService);
+    return openHistoryContent(
+      mlsService.historySealEngine(),
+      secret,
+      historySealAad(GROUP, REQUEST, ASKER, ANSWERER),
+      frame.body.sealed as string
+    );
+  }
+
+  it('is DECLINED, sealed and typed, by a device that never took its own register - no empty register', async () => {
     noteRegisterOwed('user-a', GROUP);
     const mlsService = createMlsServiceStub();
-    const { sent, log } = await answer(mlsService);
+    const { key, sent, log } = await answer(mlsService);
 
-    expect(sent).toBe(false);
-    expect(mlsService.sendMessage).not.toHaveBeenCalled();
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('still owed its own'));
+    expect(sent).toBe(true);
+    expect(frames(mlsService)).toHaveLength(1);
+    // The nickname it holds from a live frame is NOT handed over as if it were the register.
+    expect(await opened(mlsService, key.secret)).toEqual({ messages: [], register: 'none' });
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('Declined'));
+  });
+
+  it('declines still once its own asking ended - it STILL never took one (P2-b)', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    noteRegisterOwed('user-a', GROUP);
+    for (let i = 0; i < REGISTER_ASKS_MAX; i++) noteRegisterAsked('user-a', GROUP);
+    expect(endSpentRegisterAsks('user-a', GROUP)).toBe(true);
+    const mlsService = createMlsServiceStub();
+    const { key } = await answer(mlsService);
+
+    expect((await opened(mlsService, key.secret)).register).toBe('none');
   });
 
   it('is never broadcast - a server that does not address gets no register at all', async () => {

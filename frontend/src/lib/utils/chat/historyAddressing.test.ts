@@ -81,9 +81,15 @@ describe('historyAddressing - the open asks', () => {
     expect(takeAddressedAsk('other-group', 'req-a', ANSWERER, true)).toBeNull();
   });
 
+  it("the push is taken from a device of the user the Welcome came from, never another member's", () => {
+    noteJoinSolicited(GROUP, 'Bob', ASKED_AT);
+    expect(takeAddressedAsk(GROUP, undefined, 'carol:carol-phone', true)).toBeNull();
+    expect(takeAddressedAsk(GROUP, undefined, ANSWERER, true)?.ask.kind).toBe('join');
+  });
+
   it('the push is solicited by an admission, and by nothing else', () => {
     expect(takeAddressedAsk(GROUP, undefined, ANSWERER, true)).toBeNull();
-    noteJoinSolicited(GROUP, ASKED_AT);
+    noteJoinSolicited(GROUP, 'bob', ASKED_AT);
     expect(takeAddressedAsk(GROUP, undefined, ANSWERER, true)?.ask.kind).toBe('join');
   });
 
@@ -109,11 +115,14 @@ describe('historyAddressing - the open asks', () => {
 
 describe('historyAddressing - what an answer may carry', () => {
   it('nothing sent after the question, beyond the skew margin', () => {
-    const { kept, outOfBound } = boundAddressedMessages({ kind: 'join', askedAt: ASKED_AT }, [
-      at('old', 1),
-      at('edge', ASKED_AT + UNDATED_SKEW_MARGIN_MS),
-      at('later', ASKED_AT + UNDATED_SKEW_MARGIN_MS + 1),
-    ]);
+    const { kept, outOfBound } = boundAddressedMessages(
+      { kind: 'join', askedAt: ASKED_AT, inviter: 'bob' },
+      [
+        at('old', 1),
+        at('edge', ASKED_AT + UNDATED_SKEW_MARGIN_MS),
+        at('later', ASKED_AT + UNDATED_SKEW_MARGIN_MS + 1),
+      ]
+    );
 
     expect(kept.map((m) => m.id)).toEqual(['old', 'edge']);
     expect(outOfBound).toBe(1);
@@ -289,7 +298,7 @@ describe('every ask carries its own answer key, and keeps the secret that opens 
   });
 
   it('the join push is an ask with no key', () => {
-    noteJoinSolicited(GROUP, ASKED_AT);
+    noteJoinSolicited(GROUP, 'bob', ASKED_AT);
     expect(takeAddressedAsk(GROUP, undefined, ANSWERER, true)?.keyed).toBe(false);
   });
 });

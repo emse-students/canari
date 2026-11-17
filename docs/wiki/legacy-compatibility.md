@@ -98,18 +98,22 @@ this entry.
 
 ### Removal once `minClientVersion` passes the first stable carrying it - the bound on register asks (2026-11-17)
 
-**Site:** `REGISTER_ASKS_MAX` and `noteRegisterAsked` (`registerOwed.ts`), called from
-`sendHistoryProbe` (`groupActions.ts`).
+**Site:** `REGISTER_ASKS_MAX`, `noteRegisterAsked` and `endSpentRegisterAsks` (`registerOwed.ts`),
+called from `sendHistoryProbe` (`groupActions.ts`).
 **What it humours:** a responder older than the register ask
 ([history-answer-addressing](protocols/history-answer-addressing.md#the-newcomer-asks-for-its-register-2026-11-17))
-ignores `register` and answers the digest alone - or, its store matching ours, sends nothing. The
-newcomer's marker then never clears by an answer, so the fifth ask sent drops it, said at warn.
-**The cost while it stands:** a newcomer whose group has no member on a build that answers `register`
-asks five times (a digest instead of the state key each time) and keeps the nicknames it had.
+ignores `register` and answers the digest alone - or, its store matching ours, sends nothing: no
+register and no decline. Such an ask stays counted, and after five unanswered asks the newcomer stops
+asking, said at warn. Declines from responders on this build are NOT counted (they give their ask
+back), so two newcomers - or one person's two devices - declining each other spend nothing; their
+asking ends only when every other device of the tree has declined, which is a proof, not this bound.
+**The cost while it stands:** a newcomer whose only register holders run an older build asks five
+times (a digest instead of the state key each time), keeps the nicknames it had, and declines -
+never answers empty - while it has taken none.
 **Removal condition:** `minClientVersion` at or above the first stable carrying the register ask, on
-both estates. Every responder then answers `register`; the bound stays (a server that cannot address,
-a responder still owed its own register) but its line is raised from warn to error, since only a
-defect reaches it - in the same pull request as the sealed-answer refusal
+both estates. Every responder then answers or declines `register`; the bound stays (a server that
+cannot address) but its line is raised from warn to error, since only a defect reaches it - in the
+same pull request as the sealed-answer refusal
 ([planned](backlog.d/p3-a-history-answer-is-sealed-or-refused-once-the-floor-seals.md)) - and this
 entry goes.
 

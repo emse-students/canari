@@ -488,6 +488,46 @@ pub(crate) fn read_and_clear_read_watermarks(app: tauri::AppHandle) -> Vec<serde
 ///
 /// Empty on desktop, where no push service exists to join anything, and on iOS, whose notification
 /// extension never joins (it writes no `mls.bin` of the app's).
+/// Takes the groups a background Welcome joined while the app was shut, and deletes the ledger
+/// (`mobile::background::take_background_joins`). Called once at start-up, before the drain: the
+/// frontend makes each conversation among them owe its register (`registerOwed.ts`), as a Welcome
+/// the page processes does, and believes an entry only when the state it loaded holds the group.
+///
+/// Empty on desktop, where no push service joins anything. An unreadable ledger is said at error
+/// and answered empty - what is lost is the register ask of those groups, never a message.
+#[tauri::command]
+pub(crate) fn take_background_joins(app: tauri::AppHandle) -> Vec<String> {
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        let data_dir = match app.path().app_data_dir() {
+            Ok(d) => d,
+            Err(e) => {
+                log::error!(
+                    "[BG_JOIN] app_data_dir() failed: {e} - the background joins are not taken"
+                );
+                return vec![];
+            }
+        };
+        match crate::mobile::background::take_background_joins(&data_dir) {
+            Ok(taken) => {
+                if !taken.is_empty() {
+                    log::info!("[BG_JOIN] ledger taken: {} group(s)", taken.len());
+                }
+                taken
+            }
+            Err(e) => {
+                log::error!("[BG_JOIN] ledger not taken ({e}) - those groups ask no register");
+                vec![]
+            }
+        }
+    }
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        let _ = app;
+        vec![]
+    }
+}
+
 #[tauri::command]
 pub(crate) fn take_key_group_push_joins(app: tauri::AppHandle) -> Vec<serde_json::Value> {
     #[cfg(any(target_os = "android", target_os = "ios"))]

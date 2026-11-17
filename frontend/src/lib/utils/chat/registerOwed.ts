@@ -1,27 +1,39 @@
 /**
- * THE NICKNAME REGISTER A NEWCOMER IS STILL OWED, ASKED FOR UNTIL IT ARRIVES - OR UNTIL A BOUNDED
- * NUMBER OF ASKS HAS BROUGHT NOTHING (docs/wiki/protocols/history-answer-addressing.md, "The newcomer
- * asks for its register").
+ * THE NICKNAME REGISTER A NEWCOMER IS STILL OWED - TWO DURABLE FACTS, ONE PER QUESTION
+ * (docs/wiki/protocols/history-answer-addressing.md, "The newcomer asks for its register").
  *
  * A device admitted to a group conversation used to get the conversation's state - the nickname
  * register among it - only from the inviter's join push, which is an addressed transport frame: a
  * newcomer offline when its Welcome was delivered got none, and nothing retried. So the newcomer
- * ASKS: processing a Welcome writes a durable "register owed" marker for the group, every
- * reconciliation of that group then asks with a DIGEST carrying `register: true` (the state key's
- * match is answered by silence, which would never deliver it), the elected responder answers with
- * the register, sealed to the ask's key, and the first register actually TAKEN - from that answer or
- * from an accepted join push - clears the marker.
+ * ASKS: processing a Welcome writes a durable entry for the group, every reconciliation of that
+ * group then asks with a DIGEST carrying `register: true` (the state key's match is answered by
+ * silence, which would never deliver it), the elected responder answers with the register, sealed
+ * to the ask's key, and the first register actually TAKEN - from that answer or from an accepted
+ * join push - deletes the entry.
  *
- * **IT TERMINATES ON A COUNT, NOT A CLOCK.** Every register ask sent is counted here, durably; after
- * {@link REGISTER_ASKS_MAX} asks the marker is dropped (said at warn). Without that, a group whose
- * members all run a build that ignores `register` - or that the server cannot address - would send the
- * full digest instead of the state key on every connection until the FIFO pushed the group out.
- * Counted at the ASK rather than at an answer because silence is an answer: an older responder whose
- * store matches ours sends nothing at all, so no answer-side count would ever move.
+ * **THE ENTRY ANSWERS TWO QUESTIONS, AND KEEPS ONE FIELD FOR EACH** (review of #3777, P2-b):
+ *
+ * - **"was a register ever taken here?"** - the entry's existence ({@link registerNeverTaken}). It
+ *   ends ONLY when one is taken. A responder asks it before answering a register ask: a device that
+ *   never took one has none to restate, and DECLINES (a typed "none held" answer) rather than
+ *   handing over an empty register that would end the asker's entry on nothing;
+ * - **"do I still ask?"** - `asking` ({@link isRegisterOwed}). It ends on a PROOF that asking is
+ *   useless, never on a clock: {@link REGISTER_ASKS_MAX} asks that brought neither a register nor a
+ *   decline (a member that ignores `register` - an older build - or a server that cannot address),
+ *   or a decline from EVERY other device of the group (nobody holds a register to give). Stopping
+ *   to ask never makes a device answer as if it held one.
+ *
+ * **A DECLINE IS NOT COUNTED.** Two newcomers - or one person's phone and laptop - elected for each
+ * other's asks both decline; counting those would spend the bound on answers that prove only who
+ * cannot help, and drop both entries before the member that holds the register is elected. Asks
+ * are counted when they LEAVE, and a decline gives its ask back. Counted at the ask rather than at
+ * an answer because silence is an answer: an older responder whose store matches ours sends
+ * nothing at all, so no answer-side count would ever move.
  *
  * Durable (`localStorage`, per account) because the question outlives the page: a reload between
  * the Welcome and the answer must still ask. Bounded ({@link REGISTER_OWED_LIMIT}) as a FIFO - state,
- * never a clock; a group pushed out is one whose register the next Welcome to it re-opens.
+ * never a clock; a group pushed out is one whose register the next Welcome to it re-opens, and which
+ * meanwhile answers others as a holder would.
  */
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 
@@ -29,14 +41,18 @@ import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 export const REGISTER_OWED_LIMIT = 256;
 
 /**
- * How many register asks a group may send before the marker is dropped. Each ask leaves on a state
- * edge (a connection, a fresh join, a member coming back), and a responder on this build answers the
- * first one it is elected for; five is several connections' worth of elections that found none.
+ * How many register asks that brought neither a register nor a decline a group may send. Each ask
+ * leaves on a state edge (a connection, a fresh join, a member coming back), and a responder on this
+ * build answers - or declines - the first one it is elected for; five unanswered is several
+ * connections' worth of elections that found only members that ignore `register`.
  */
 export const REGISTER_ASKS_MAX = 5;
 
-/** One owed register: the group, and how many asks for it have left so far. */
-type Owed = { group: string; asked: number };
+/**
+ * One group whose register this account never took: whether it still asks, how many of its asks are
+ * still unanswered, and which devices (`user:device`) declined, holding none.
+ */
+type Owed = { group: string; asked: number; asking: boolean; declined: string[] };
 
 function read(account: string): Owed[] {
   try {
@@ -48,7 +64,9 @@ function read(account: string): Owed[] {
             typeof o === 'object' &&
             o !== null &&
             typeof (o as Owed).group === 'string' &&
-            Number.isInteger((o as Owed).asked)
+            Number.isInteger((o as Owed).asked) &&
+            typeof (o as Owed).asking === 'boolean' &&
+            Array.isArray((o as Owed).declined)
         )
       : [];
   } catch (e) {
@@ -76,46 +94,87 @@ function write(account: string, owed: Owed[]): boolean {
 /** Records that `account`, just admitted to `groupId`, is owed its register - asked from zero. */
 export function noteRegisterOwed(account: string, groupId: string): void {
   const owed = read(account).filter((o) => o.group !== groupId);
-  owed.push({ group: groupId, asked: 0 });
+  owed.push({ group: groupId, asked: 0, asking: true, declined: [] });
   if (!write(account, owed)) return;
   console.log(
     `[REGISTER] ${groupId.slice(0, 8)}... owes its register - the next reconciliation asks for it`
   );
 }
 
-/** Whether `account` still asks for `groupId`'s register. */
+/** Whether `account` still ASKS for `groupId`'s register. */
 export function isRegisterOwed(account: string, groupId: string): boolean {
-  return read(account).some((o) => o.group === groupId);
+  return read(account).some((o) => o.group === groupId && o.asking);
 }
 
 /**
- * Counts one register ask SENT for `groupId`; the ask that reaches {@link REGISTER_ASKS_MAX} is the
- * last, and the marker is dropped with it (said at warn: no responder on a build that answers
- * `register` was elected that many times).
+ * Whether `account` never TOOK `groupId`'s register since its admission - asking or not. A device
+ * for which this holds has no register to restate, and declines a register ask.
  */
-export function noteRegisterAsked(account: string, groupId: string): void {
-  const owed = read(account);
-  const entry = owed.find((o) => o.group === groupId);
-  if (!entry) return;
-  entry.asked += 1;
-  if (entry.asked < REGISTER_ASKS_MAX) {
-    write(account, owed);
-    return;
-  }
-  if (
-    !write(
-      account,
-      owed.filter((o) => o.group !== groupId)
-    )
-  ) {
-    return;
-  }
-  console.warn(
-    `[REGISTER] ${groupId.slice(0, 8)}... asked for its register ${entry.asked} time(s) and took none - no longer asked (its members do not answer \`register\`, or cannot be addressed)`
-  );
+export function registerNeverTaken(account: string, groupId: string): boolean {
+  return read(account).some((o) => o.group === groupId);
 }
 
-/** The register was TAKEN (a register answer or the inviter's push merged it): stop asking. */
+/** Counts one register ask that LEFT for `groupId`. */
+export function noteRegisterAsked(account: string, groupId: string): void {
+  const owed = read(account);
+  const entry = owed.find((o) => o.group === groupId && o.asking);
+  if (!entry) return;
+  entry.asked += 1;
+  write(account, owed);
+}
+
+/**
+ * Ends the asking when {@link REGISTER_ASKS_MAX} asks went unanswered - called before an ask, so a
+ * decline that came back meanwhile has already given its ask back. Said at warn: the members
+ * elected that many times ignore `register`, or the server cannot address. The entry stays: the
+ * register is still not taken.
+ *
+ * @returns whether the asking is over (nothing is to be asked).
+ */
+export function endSpentRegisterAsks(account: string, groupId: string): boolean {
+  const owed = read(account);
+  const entry = owed.find((o) => o.group === groupId && o.asking);
+  if (!entry || entry.asked < REGISTER_ASKS_MAX) return false;
+  entry.asking = false;
+  if (!write(account, owed)) return true;
+  console.warn(
+    `[REGISTER] ${groupId.slice(0, 8)}... asked for its register ${entry.asked} time(s) with no answer - no longer asked (its members do not answer \`register\`, or cannot be addressed)`
+  );
+  return true;
+}
+
+/**
+ * An elected device DECLINED a register ask for `groupId`: it holds none. The ask is given back
+ * (a decline proves who cannot help, not that nobody can), and the decliner remembered; once every
+ * device in `others` - the group's devices but this one - has declined, nobody holds a register to
+ * give and the asking ends, said at warn. The entry stays: the register is still not taken.
+ */
+export function noteRegisterDeclined(
+  account: string,
+  groupId: string,
+  decliner: string,
+  others: readonly string[]
+): void {
+  const owed = read(account);
+  const entry = owed.find((o) => o.group === groupId && o.asking);
+  if (!entry) return;
+  entry.asked = Math.max(0, entry.asked - 1);
+  if (!entry.declined.includes(decliner)) entry.declined.push(decliner);
+  const nobodyHolds = others.length > 0 && others.every((d) => entry.declined.includes(d));
+  if (nobodyHolds) entry.asking = false;
+  if (!write(account, owed)) return;
+  if (nobodyHolds) {
+    console.warn(
+      `[REGISTER] ${groupId.slice(0, 8)}... every other device (${others.length}) declined - none holds a register, no longer asked`
+    );
+  } else {
+    console.log(
+      `[REGISTER] ${groupId.slice(0, 8)}... ${decliner.slice(0, 8)} holds no register - the ask is not counted`
+    );
+  }
+}
+
+/** The register was TAKEN (a register answer or the inviter's push merged it): both facts end. */
 export function clearRegisterOwed(account: string, groupId: string, how: string): void {
   const owed = read(account);
   if (!owed.some((o) => o.group === groupId)) return;
@@ -124,8 +183,7 @@ export function clearRegisterOwed(account: string, groupId: string, how: string)
       account,
       owed.filter((o) => o.group !== groupId)
     )
-  ) {
+  )
     return;
-  }
   console.log(`[REGISTER] ${groupId.slice(0, 8)}... register received (${how}) - no longer asked`);
 }

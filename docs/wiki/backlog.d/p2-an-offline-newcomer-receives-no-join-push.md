@@ -9,9 +9,13 @@ design below in three places, is in
 
 - the register travels SEALED, its flag inside the sealed content and never in the clear routing;
 - the join push carries no message any more;
-- the fresh-join reconciliation runs at every processed Welcome. It was dead in the ordinary case.
+- the fresh-join reconciliation runs at every Welcome that INSTALLED the group. It was dead in the
+  ordinary case;
+- a group the Android push service joined while the app was shut is owed its register too (a native
+  ledger the app takes at its start), and the asking ends on proofs: unanswered asks, or a decline
+  from every other device.
 
-Left: the adversarial review, the merge, and the reading below.
+Left: the merge, and the reading below.
 
 **What is true after #3185.** The inviter's join push (`joinPush.ts`, `sendFullHistoryBundle`) is an
 ADDRESSED history answer, and an addressed frame is transport-only: the server publishes it only to a

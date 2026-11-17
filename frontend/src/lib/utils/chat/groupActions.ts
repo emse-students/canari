@@ -20,7 +20,12 @@ import { cachedHistoryStateKey } from './historyStateKey';
 import { sendVisibleNotice, type OwnNotice } from './visibleNotices';
 import { readerHistorySelection } from './historyEntitlement';
 import { mintHistoryRequestId, noteHistoryAsk } from './historyAddressing';
-import { isRegisterOwed, noteRegisterAsked } from './registerOwed';
+import {
+  endSpentRegisterAsks,
+  isRegisterOwed,
+  noteRegisterAsked,
+  registerNeverTaken,
+} from './registerOwed';
 import {
   historySealAad,
   mintHistoryAnswerKey,
@@ -876,7 +881,7 @@ function bundleContent(
   {
     state,
     join,
-    register = false,
+    register,
   }: {
     state?: ConversationHistoryState;
     join: boolean;
@@ -885,12 +890,12 @@ function bundleContent(
      * clear routing: a flag a relaying server could set would let it turn an ordinary answer into one
      * the reader takes the conversation's state from.
      */
-    register?: boolean;
+    register?: RegisterAnswer;
   }
 ): Record<string, unknown> {
   return {
     messages,
-    ...(register ? { register: true } : {}),
+    ...(register ? { register } : {}),
     // The conversation's own state - read watermarks and the shared history floor. A handful of
     // numbers, sent whole with every frame because both merges are `max` and therefore free to
     // repeat. Sending them once would make their delivery depend on which chunk survived.
@@ -906,7 +911,9 @@ function bundleContent(
     // The nickname register rides the JOIN PUSH and the REGISTER ANSWER only - the two bundles a
     // reader takes it from (`mergeBundleNicknames`): in a broadcast it would be a relayer's word
     // nobody believes. An older reader ignores the field.
-    ...((join || register) && state?.nicknames?.length ? { nicknames: state.nicknames } : {}),
+    ...((join || register === true) && state?.nicknames?.length
+      ? { nicknames: state.nicknames }
+      : {}),
   };
 }
 
@@ -922,7 +929,7 @@ async function sealedBundleFrame(
   mlsService: IMlsService,
   opts: {
     state?: ConversationHistoryState;
-    answer: { requestId: string; seal: AnswerSeal; register?: true };
+    answer: { requestId: string; seal: AnswerSeal; register?: RegisterAnswer };
     last: boolean;
   }
 ): Promise<Uint8Array> {
@@ -931,7 +938,7 @@ async function sealedBundleFrame(
     mlsService.historySealEngine(),
     answer.seal.answerKey,
     historySealAad(groupId, answer.requestId, to, answer.seal.answerer),
-    bundleContent(messages, { state, join: false, register: answer.register === true })
+    bundleContent(messages, { state, join: false, register: answer.register })
   );
   return encodeAppMessage(
     mkSystem('history_bundle', JSON.stringify({ ...bundleRouting(to, { answer, last }), sealed }))
@@ -953,6 +960,12 @@ type BundleAnswer =
       join?: never;
     }
   | { join: true; requestId?: never; seal?: never };
+
+/**
+ * What an answer to a REGISTER ask says, inside its sealed content: `true` hands over the register,
+ * `'none'` declines - the answerer never took one (`registerOwed.ts`).
+ */
+type RegisterAnswer = true | 'none';
 
 /**
  * What an answer to a KEYED ask is sealed with: the key the ask carried (base64) and THIS answerer's
@@ -1546,10 +1559,12 @@ export async function sendHistoryProbe(
   const { storage, log } = deps;
   // A REGISTER OWED ASKS WITH THE DIGEST (`registerOwed.ts`): a state key that matches is answered
   // by silence, which would never deliver the state this device was admitted without.
-  if (isRegisterOwed(userIdOfLeaf(from), groupId)) {
+  const account = userIdOfLeaf(from);
+  if (isRegisterOwed(account, groupId) && !endSpentRegisterAsks(account, groupId)) {
     const asked = await sendHistoryDigest(groupId, from, deps, incomplete, true);
-    // Counted once it LEFT: the bound ends the marker after that many asks brought nothing.
-    if (asked) noteRegisterAsked(userIdOfLeaf(from), groupId);
+    // Counted once it LEFT, given back by a decline: the bound ends the asking after that many
+    // asks brought no answer at all.
+    if (asked) noteRegisterAsked(account, groupId);
     return asked;
   }
   let held: number | null = null;
@@ -2020,8 +2035,10 @@ function withinTombstoneCeiling(
  * dated within the bundle's server time), while a floor taken from it would hide history from this
  * device for good (history-answer-addressing.md, "The newcomer asks for its register").
  *
- * **NOT ANSWERED BY A DEVICE STILL OWED ITS OWN REGISTER**: it holds no register to restate, and an
- * empty one would end the asker's marker on nothing.
+ * **DECLINED BY A DEVICE THAT NEVER TOOK ITS OWN REGISTER** (`registerNeverTaken` - whether or not
+ * it still asks): it holds none to restate, and an empty one would end the asker's entry on nothing.
+ * It answers instead, through the same gates and the same seal, with `register: 'none'` - a typed
+ * decline the asker does not count against its bound (review of #3777, P2-b).
  *
  * @returns whether the frame left.
  */
@@ -2034,12 +2051,6 @@ export async function sendRegisterAnswer(
   const { to, requestId, seal } = opts;
   const short = groupId.slice(0, 8);
   if (followerTabSendsNoHistoryFrame('register answer', groupId, log)) return false;
-  if (isRegisterOwed(userIdOfLeaf(seal.answerer), groupId)) {
-    log(
-      `[REGISTER] ${to}'s register in ${short}… not answered - this device is still owed its own, so it has none to restate`
-    );
-    return false;
-  }
   if (await historyWithheldAfterSettling(groupId, to, mlsService, log)) {
     log(
       `[REGISTER] ${to} entered ${short}... unvouched - its register is not answered until a member vouches for it`
@@ -2053,12 +2064,13 @@ export async function sendRegisterAnswer(
     );
     return false;
   }
-  const nicknames = nicknameEntries(groupId);
+  const holds = !registerNeverTaken(userIdOfLeaf(seal.answerer), groupId);
+  const nicknames = holds ? nicknameEntries(groupId) : [];
   let bytes: Uint8Array;
   try {
     bytes = await sealedBundleFrame(groupId, [], to, mlsService, {
       state: nicknames.length > 0 ? { nicknames } : {},
-      answer: { requestId, seal, register: true },
+      answer: { requestId, seal, register: holds ? true : 'none' },
       last: false,
     });
   } catch (e) {
@@ -2070,7 +2082,9 @@ export async function sendRegisterAnswer(
   try {
     await mlsService.sendMessage(groupId, bytes, undefined, addressedHistoryAnswer(to));
     log(
-      `[REGISTER] Answered ${to}'s register in ${short}… (${nicknames.length} nickname(s), sealed)`
+      holds
+        ? `[REGISTER] Answered ${to}'s register in ${short}… (${nicknames.length} nickname(s), sealed)`
+        : `[REGISTER] Declined ${to}'s register in ${short}… - this device never took its own (sealed)`
     );
     return true;
   } catch (e) {

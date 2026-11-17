@@ -80,8 +80,8 @@ use crate::commands::push::{
     read_and_clear_pending_call_accept, read_and_clear_pending_notification_tap,
     read_and_clear_pending_quick_replies, read_and_clear_read_watermarks, read_outbox_mirror,
     return_pending_quick_replies, set_push_context_locale, store_device_identity,
-    store_graine_seed, store_outbox_mirror, store_push_context, store_push_secret, take_fcm_cache,
-    take_key_group_push_joins,
+    store_graine_seed, store_outbox_mirror, store_push_context, store_push_secret,
+    take_background_joins, take_fcm_cache, take_key_group_push_joins,
 };
 use crate::commands::push_registration::{
     complete_owed_push_token_deletion, end_push_registration,
@@ -1813,6 +1813,7 @@ pub fn run() {
             take_fcm_cache,
             ack_fcm_cache,
             read_and_clear_read_watermarks,
+            take_background_joins,
             take_key_group_push_joins,
             take_nse_outcomes,
             take_native_push_log,
