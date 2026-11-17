@@ -121,6 +121,11 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'minesweeper_scores.userId': { action: 'delete' },
   'minesweeper_challenges.userId': { action: 'delete' },
   'minesweeper_bans.userId': { action: 'delete' },
+  // A won game's timed move log (migration 175): a list of digs and flags and when, naming nobody. It
+  // hangs off the score by a foreign key with ON DELETE CASCADE, so the score's deletion above removes it.
+  'minesweeper_replays.moves': NO_ACCOUNT(
+    'the dig and flag log of a won game (type, cell, milliseconds), deleted with its score by the cascade'
+  ),
   'document_reviewer_grants.userId': { action: 'delete' },
   'read_grants.user_id': { action: 'delete' },
   // The named reader's switch "voit les commentaires" (migration 132): theirs, gone with them.

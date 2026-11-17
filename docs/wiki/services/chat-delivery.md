@@ -2040,14 +2040,43 @@ the server could say a phone was silent, which is how a third of a build went un
   `(os, build)` whose phones ran and hold no row ten minutes after - zero is the steady state. A
   phone whose stated outcome is `no-token` is **counted apart** (`noOsToken`, on the log line, never
   a WARN): its state is known and no fix of ours changes it. A live session counts only when it is
-  the device's OWN account's (`s."userId" = k."userId"`).
+  the device's OWN account's (`s."userId" = k."userId"`). Each WARN carries `last:`, the tally of
+  what its unregistered phones last stated (`key_package."pushOutcome"`), so the branch is read from
+  the report itself, with no access to the per-device lines.
+
+**Re-measured 2026-11-17 (production read-only, still on `1.6.12`).** Same shape: of the phones that
+ran in 24 h, every older build holds a row (0 of 117), `1.6.12` does not on 15 of 75 Android and 12
+of 59 iOS. Three facts the earlier reads did not have. **No request leaves these phones**: 26 of the
+27 called `register-device` (204 lines since the last restart) and not one `[PUSH_REGISTER]`,
+`[PUSH_UNAVAILABLE]` or row deletion names them; the edge's access log shows 4 `401` on
+`POST /api/mls/push/register` against 224 `201` over the same hours - so the ladder ends before the
+request, or waits forever before it. **Mostly one launch each**: 13 of them made one
+`register-device`, 6 two. **Not only new enrolments**: over the phones that ran in 72 h, grouped by
+the device's earliest session row,
+`1.6.12` phones whose first session predates the `1.6.12` deploy are tokenless too (15 of 100 since
+before 2026-11-07, 18 of 34 from the week before), while the phones of the same enrolment weeks still
+on an older build hold their row (0 of 145) - so the build, not the enrolment, carries it.
+
+**Why `last=` was not enough, and what it now says.** The client-side branches that end without a
+request are an `unauthorized` ladder (the session's token source threw, or a renewed token was
+refused) and a ladder parked on an await (the permission rationale or dialog, the OS token, the
+session token, the request itself). The bare terms merged them:
+`unauthorized` covered six causes and `in-progress` / `started` named no await. They are now
+QUALIFIED - `unauthorized:<session-expired|device-revoked|signing-out|identity-split|renewed-refused|other>`
+(the token source's verdict, a `tokenVerdict` field each of its error types sets at the throw -
+`utils/tokenVerdict.ts` - since the auth store cannot be imported by the push service, and a class
+name would turn into `other` on a rename) and `in-progress:<stage>` / `started:<stage>` with
+`permission`, `os-token`, `session-token`, `sending` (the durable `started` marker carries the
+stage, so a process that died parked leaves where). No stage names the pause between two attempts:
+each failed attempt records its final outcome first, which the report states over any stage. The server allowlists the qualifier per term (`parsePushOutcome`); an older
+build's bare term is still accepted.
 
 Tests: `PushNotificationService.reconcile.test.ts`, `mlsDeliveryApi.pushRegistered.test.ts`,
 `TauriMlsService.pushReconcile.test.ts` (client); `devices.controller.push-presence.spec.ts`,
 `utils/push-coverage.spec.ts`, `utils/push-coverage.integration.spec.ts` (the predicate against
 PostgreSQL) (server). **What closes the incident** is the `[PUSH_COVERAGE]` WARN
-lines reading zero for the build that ships this, and the `[PUSH_MISSING] last=` terms naming the
-branch if they do not ([the backlog entry](../backlog.d/p1-a-third-of-the-1-6-12-native-devices-hold-no-push-token-row.md)).
+lines reading zero for the build that ships this, and their `last:` tally naming the branch and
+the await if they do not ([the backlog entry](../backlog.d/reading-owed-a-device-with-no-push-token-now-says-so.md)).
 
 #### Transport — single gateway (FCM)
 

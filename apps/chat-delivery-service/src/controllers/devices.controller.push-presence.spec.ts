@@ -95,7 +95,11 @@ describe('DevicesController.registerDevice - the push registration it answers ab
 
   it.each([
     ['unauthorized', 'did not reach the server'],
+    // The branch is named (2026-11-17: the tokenless phones had sent nothing, and the bare term
+    // could not say which branch ended the ladder or where a dead one was waiting).
+    ['unauthorized:session-expired', 'did not reach the server'],
     ['started', 'did not reach the server'],
+    ['started:permission', 'did not reach the server'],
     ['registered', 'a server-side deletion'],
   ])('a phone with no row and last=%s is ACCUSED, naming the side', async (outcome, side) => {
     held = false;
@@ -114,6 +118,7 @@ describe('DevicesController.registerDevice - the push registration it answers ab
     // The login starts the ladder BEFORE the first register-device: an Android 13+ first install
     // with its permission rationale still open said `started`, and was accused of a dead process.
     ['in-progress', 'still running'],
+    ['in-progress:os-token', 'still running'],
     // No Play services, an APNs failure: a known state, already accused by [PUSH_UNAVAILABLE].
     ['no-token', 'no push token'],
   ])('last=%s is EXPECTED: said at log, never accused', async (outcome, says) => {
@@ -148,9 +153,23 @@ describe('DevicesController.registerDevice - the push registration it answers ab
     held = false;
     await controller.registerDevice({ ...BODY, pushOutcome: 'pwned forged line' }, 'u1');
     await controller.registerDevice(BODY, 'u1');
+    // A qualifier is allowlisted per term too: an unknown one, a term that takes none, a third part,
+    // a key every object inherits.
+    for (const forged of [
+      'unauthorized:pwned',
+      'registered:x',
+      'started:permission:x',
+      'constructor:x',
+    ]) {
+      await controller.registerDevice({ ...BODY, pushOutcome: forged }, 'u1');
+    }
     expect(missingLines(warn).map((l) => l.match(/last=(\S+)/)?.[1])).toEqual([
       'invalid',
       'unstated',
+      'invalid',
+      'invalid',
+      'invalid',
+      'invalid',
     ]);
   });
 

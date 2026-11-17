@@ -50,6 +50,13 @@ deferral already waits for a member to come back (`onPeersCameOnline`, `retryDef
 and the marker clears on the first accepted answer. An older responder ignores `register`; the asker
 keeps the marker and asks again on the next connection, at the cost of a digest instead of a state key.
 
+**It also seals the last unsealed history answer (option B, 2026-11-17).** Since option B every ask
+carries a key and its addressed answer is sealed to it; the join push answers no ask and stays unsealed
+([history-answer-addressing](../protocols/history-answer-addressing.md#what-is-not-sealed-the-inviters-join-push)).
+The register digest above IS a keyed ask, so its answer is sealed with nothing more; once it ships, the
+unsolicited push can be retired. Whether that moves this entry forward is owed to the owner (the P1
+[entry](p1-a-new-member-of-a-group-conversation-receives-its-whole-past-decided-2026-10.md), step 2).
+
 **Why it is not in #3185.** It changes the reconciliation's wire (a field on the digest and its answer),
 adds a durable marker on the newcomer and a mixed-version behaviour; the MLS chat path deserves its own
 pull request and its own adversarial review for that.
