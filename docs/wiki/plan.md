@@ -116,6 +116,7 @@ earliest version, as a checklist.
 - [ ] [the repair of a rewound sender walks to the member that holds the messages (2026-11-17)](backlog.d/reading-owed-heal-repair-walks-to-the-holder.md)
 - [ ] [the iPhone's one seed mirror keeps the extension's seeds through a foreground (2026-11-17)](backlog.d/reading-owed-ios-seed-mirror-one-copy.md)
 - [ ] [live moderation: the three broadcaster pushes, the withdrawal lift and the lives switch](backlog.d/reading-owed-live-moderation-pushes-lift-and-the-lives-switch.md)
+- [ ] [Minesweeper replay as a global admin](backlog.d/reading-owed-minesweeper-replay-as-a-global-admin.md)
 - [ ] [removing a login row that names an unlisted device erases that machine (2026-11-17)](backlog.d/reading-owed-removing-a-login-row-naming-an-unlisted-device-erases-that-machine.md)
 
 ## 1.7.1
@@ -205,6 +206,7 @@ earliest version, as a checklist.
 - [P3 - the iOS volume buttons do not reach the in-app camera: withdraw the iOS half of the volume shutter](backlog.d/p3-the-ios-volume-buttons-do-not-reach-the-in-app-camera-withdraw-the-ios-half.md)
 - [P3 - A salon invitation's notice sends ids once the floor reads them (2026-11-16)](backlog.d/a-salon-invitation-notice-sends-ids-once-the-floor-reads-them.md)
 - [P3 - on Android the live sheet says "another app is using the camera" when the camera permission is OFF](backlog.d/p3-the-live-sheet-says-another-app-uses-the-camera-when-the-permission-is-off.md)
+- [P3 - A history answer is sealed or refused once the floor seals (2026-11-17)](backlog.d/p3-a-history-answer-is-sealed-or-refused-once-the-floor-seals.md)
 
 ## 1.9.0
 

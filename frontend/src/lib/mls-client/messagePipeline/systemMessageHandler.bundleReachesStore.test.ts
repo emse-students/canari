@@ -148,7 +148,7 @@ describe('history_bundle - an addressed answer carries a deletion onto a held ro
   /** An answer to the digest this device asked, as the reconciliation exchange delivers it. */
   async function answer(ctx: any, messages: unknown[]) {
     const requestId = mintHistoryRequestId();
-    noteHistoryAsk(GROUP, requestId, { kind: 'digest', since: 0, askedAt: 1_000_000 });
+    noteHistoryAsk(GROUP, requestId, { kind: 'digest', since: 0, askedAt: 1_000_000 }, null);
     await handleSystemEvent(
       'history_bundle',
       { messages, requestId, to: digestIdentity(ME, MY_DEVICE), last: true },

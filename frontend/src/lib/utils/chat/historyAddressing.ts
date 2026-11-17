@@ -21,6 +21,10 @@
  *
  * What an accepted answer may DO is decided by the bundle handler (add messages, nothing else); what
  * it may CARRY is decided here ({@link boundAddressedMessages}).
+ *
+ * **An ask also keeps the SECRET its answer is sealed to** (option B, `$lib/crypto/historySeal`):
+ * the ask carried the public half, the answerer sealed the answer's content to it, and the secret
+ * lives here beside the ask, in memory, for exactly as long as the ask is open.
  */
 import { UNDATED_SKEW_MARGIN_MS } from '$lib/utils/chat/historyEntitlement';
 import { selectEntryIdsForPrefixes } from '$lib/utils/chat/historyManifest';
@@ -65,7 +69,24 @@ const JOIN_ASK = '__join__';
  * One open ask: the answering devices (`sender:senderDeviceId`) it has taken, and those whose `last`
  * chunk closed it.
  */
-type OpenAsk = { ask: HistoryAsk; answerers: Set<string>; closedBy: Set<string> };
+type OpenAsk = {
+  ask: HistoryAsk;
+  answerers: Set<string>;
+  closedBy: Set<string>;
+  /** The secret the answer is sealed to, or `null` for an ask that carried no key (the join push). */
+  answerSecret: Uint8Array | null;
+};
+
+/**
+ * What {@link takeAddressedAsk} hands the receiver: the ask, and whether it carried a key (its answer
+ * must then have come sealed). The secret itself is read before the take ({@link answerSecretOf}).
+ */
+export type TakenAsk = { ask: HistoryAsk; keyed: boolean };
+
+/** Overwrites a secret this module is letting go of - JS frees nothing on demand, so it is wiped. */
+function wipe(open: OpenAsk | undefined): void {
+  open?.answerSecret?.fill(0);
+}
 
 /** Open asks, per conversation, in the order they were made. Insertion order is the FIFO. */
 const openAsks = new Map<string, Map<string, OpenAsk>>();
@@ -87,24 +108,41 @@ export function parseHistoryRequestId(raw: unknown): string | undefined {
   return typeof raw === 'string' && /^[A-Za-z0-9-]{8,64}$/.test(raw) ? raw : undefined;
 }
 
-function remember(groupId: string, requestId: string, ask: HistoryAsk): void {
+function remember(
+  groupId: string,
+  requestId: string,
+  ask: HistoryAsk,
+  answerSecret: Uint8Array | null
+): void {
   let asks = openAsks.get(groupId);
   if (!asks) {
     asks = new Map();
     openAsks.set(groupId, asks);
   }
+  wipe(asks.get(requestId));
   asks.delete(requestId);
-  asks.set(requestId, { ask, answerers: new Set(), closedBy: new Set() });
+  asks.set(requestId, { ask, answerers: new Set(), closedBy: new Set(), answerSecret });
   while (asks.size > MAX_OPEN_ASKS_PER_GROUP) {
     const oldest = asks.keys().next().value;
     if (oldest === undefined) break;
+    wipe(asks.get(oldest));
     asks.delete(oldest);
   }
 }
 
-/** Records an ask this device is about to send, under the id the frame carries. */
-export function noteHistoryAsk(groupId: string, requestId: string, ask: HistoryAsk): void {
-  remember(groupId, requestId, ask);
+/**
+ * Records an ask this device is about to send, under the id the frame carries, with the secret of
+ * the `answerKey` it carries - the answer is sealed to that key, and opens only with this secret.
+ * `null` records an ask whose answer is NOT sealed - the protocol before option B, which the tests
+ * of the routing rules still exercise; every ask this build sends passes its secret.
+ */
+export function noteHistoryAsk(
+  groupId: string,
+  requestId: string,
+  ask: HistoryAsk,
+  answerSecret: Uint8Array | null
+): void {
+  remember(groupId, requestId, ask, answerSecret);
 }
 
 /**
@@ -112,7 +150,7 @@ export function noteHistoryAsk(groupId: string, requestId: string, ask: HistoryA
  * solicits the inviter's push. A Welcome processed again re-opens it, which is the same fact.
  */
 export function noteJoinSolicited(groupId: string, now: number = Date.now()): void {
-  remember(groupId, JOIN_ASK, { kind: 'join', askedAt: now });
+  remember(groupId, JOIN_ASK, { kind: 'join', askedAt: now }, null);
 }
 
 /**
@@ -121,13 +159,15 @@ export function noteJoinSolicited(groupId: string, now: number = Date.now()): vo
  * `answerer` is the device the answer came from (`sender:senderDeviceId`, checked against the MLS
  * credential on decrypt): its chunk marked `last` closes the ask FOR IT, a device beyond the first
  * {@link MAX_ANSWERERS_PER_ASK} is refused, and the ask is gone once every answerer it took is done.
+ * The ask comes back with whether it carried a key ({@link TakenAsk}); its secret is wiped when the
+ * ask is closed, so a sealed answer is opened BEFORE it is taken.
  */
 export function takeAddressedAsk(
   groupId: string,
   requestId: string | undefined,
   answerer: string,
   last: boolean
-): HistoryAsk | null {
+): TakenAsk | null {
   const asks = openAsks.get(groupId);
   const id = requestId ?? JOIN_ASK;
   const open = asks?.get(id);
@@ -140,10 +180,21 @@ export function takeAddressedAsk(
     open.closedBy.add(answerer);
     if (open.closedBy.size >= MAX_ANSWERERS_PER_ASK) {
       asks?.delete(id);
+      wipe(open);
       if (asks?.size === 0) openAsks.delete(groupId);
     }
   }
-  return open.ask;
+  return { ask: open.ask, keyed: open.answerSecret !== null };
+}
+
+/**
+ * A COPY of the secret an open ask's answer is sealed to, or `undefined` when `groupId` holds no
+ * such ask or it carried no key. A copy, because the ask may be closed (and its secret wiped) while
+ * the caller's open is in flight; the caller wipes the copy when done.
+ */
+export function answerSecretOf(groupId: string, requestId: string): Uint8Array | undefined {
+  const secret = openAsks.get(groupId)?.get(requestId)?.answerSecret;
+  return secret ? secret.slice() : undefined;
 }
 
 /** How many asks `groupId` holds open - the tests, and a diagnostic. */
@@ -153,6 +204,7 @@ export function openHistoryAskCount(groupId: string): number {
 
 /** Forgets every open ask - a sign-out, and the tests. */
 export function forgetHistoryAsks(): void {
+  for (const asks of openAsks.values()) for (const open of asks.values()) wipe(open);
   openAsks.clear();
 }
 

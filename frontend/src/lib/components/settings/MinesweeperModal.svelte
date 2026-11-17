@@ -11,7 +11,6 @@
     DEFAULT_CONFIG,
     LATEST_GENERATOR_VERSION,
     type MinesweeperBoard,
-    type MinesweeperMove,
   } from '$lib/minesweeper/game';
   import {
     startMinesweeperChallenge,
@@ -32,6 +31,7 @@
     type MinesweeperSettings,
   } from '$lib/minesweeper/settings';
   import { EMPTY_CELL_VIEWS, syncCellViews } from '$lib/minesweeper/cellViews';
+  import type { TimedMove } from '$lib/minesweeper/replay';
   import MinesweeperCell from './MinesweeperCell.svelte';
   import {
     HAPTIC_FLAG,
@@ -153,8 +153,12 @@
     saveFlag(UNRANKED_STORAGE_KEY, unranked);
   }
 
-  /** Recorded player actions for the current game; replayed server-side for ranked anti-cheat. Plain, not reactive: the template never reads it. */
-  let moves: MinesweeperMove[] = [];
+  /**
+   * Recorded player actions for the current game, each with the millisecond it was made (from the first
+   * dig): replayed server-side for ranked anti-cheat, and kept with the score for a moderator to watch
+   * back. Plain, not reactive: the template never reads it.
+   */
+  let moves: TimedMove[] = [];
   /** Set once `startMinesweeperChallenge` succeeds; null means casual (unranked) play. */
   let challengeId = $state<string | null>(null);
   let rankedMode = $state(false);
@@ -228,6 +232,11 @@
       clearInterval(timerHandle);
       timerHandle = null;
     }
+  }
+
+  /** Milliseconds since the first dig, for the move being made now; the first dig itself is 0 (the timer starts after it). */
+  function moveTime(): number {
+    return moves.length === 0 ? 0 : Math.max(0, Math.round(performance.now() - startTimeMs));
   }
 
   function startTimer() {
@@ -449,8 +458,9 @@
 
   async function submitRankedResult() {
     if (!challengeId) return;
-    // Nest `IsInt` rejects floats; performance.now()-based elapsed must be rounded.
-    const claimedDurationMs = Math.round(elapsedMs);
+    // The game length IS the winning move's time: the server refuses a log that ends anywhere else.
+    // Whole milliseconds, as Nest `IsInt` rejects floats.
+    const claimedDurationMs = moves[moves.length - 1]?.t ?? 0;
     console.debug('[minesweeper] submitting ranked result', {
       challengeId,
       moveCount: moves.length,
@@ -493,6 +503,8 @@
   function handlePostMove() {
     if (board.status === 'playing') return;
     stopTimer();
+    // The clock reads the game's length to the millisecond: the time the log ends on, not the last tick.
+    elapsedMs = moves[moves.length - 1]?.t ?? elapsedMs;
     buzz(board.status === 'won' ? HAPTIC_WIN : HAPTIC_LOSS);
     if (board.status === 'won' && rankedMode && challengeId) {
       void submitRankedResult();
@@ -563,7 +575,7 @@
     const cell = board.cells[y * board.width + x];
     // Ghost taps after a long-press flag must not log a no-op reveal (breaks server replay).
     if (cell.state === 'flagged') return;
-    moves.push({ type: 'reveal', x, y });
+    moves.push({ type: 'reveal', x, y, t: moveTime() });
     revealCell(board, x, y);
     commit();
     handlePostMove();
@@ -573,7 +585,7 @@
     if (board.status !== 'playing') return;
     const cell = board.cells[y * board.width + x];
     if (cell.state === 'revealed') return;
-    moves.push({ type: 'flag', x, y });
+    moves.push({ type: 'flag', x, y, t: moveTime() });
     toggleFlag(board, x, y);
     commit();
     handlePostMove();
