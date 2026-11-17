@@ -21,7 +21,9 @@
     </style>
   </head>
   <body>
-    <p>Live bitrate-floor and codec bench (tools/live-bench/README.md). Results stay in this page.</p>
+    <p>
+      Live bitrate-floor and codec bench (tools/live-bench/README.md). Results stay in this page.
+    </p>
     <div id="b"></div>
     <pre id="o"></pre>
     <script src="codec-bench.js"></script>
@@ -32,8 +34,14 @@
         ['matrix', () => __CB.matrix()],
         ['MR 720p 1.0', () => __CB.start('mr', { w: 1280, h: 720, bps: 1e6 })],
         ['MR 480p 1.0', () => __CB.start('mr', { w: 848, h: 480, bps: 1e6 })],
-        ['WC avc1.42E01F 720p 1.0', () => __CB.start('wc', { codec: 'avc1.42E01F', w: 1280, h: 720, bps: 1e6 })],
-        ['WC avc1.4D401F 720p 1.0', () => __CB.start('wc', { codec: 'avc1.4D401F', w: 1280, h: 720, bps: 1e6 })],
+        [
+          'WC avc1.42E01F 720p 1.0',
+          () => __CB.start('wc', { codec: 'avc1.42E01F', w: 1280, h: 720, bps: 1e6 }),
+        ],
+        [
+          'WC avc1.4D401F 720p 1.0',
+          () => __CB.start('wc', { codec: 'avc1.4D401F', w: 1280, h: 720, bps: 1e6 }),
+        ],
         ['state', () => __CB.state()],
         ['show last', () => __CB.show(__CB.results.length - 1, 30)],
         ['clear', () => __CB.clear()],

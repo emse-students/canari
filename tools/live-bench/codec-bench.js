@@ -15,7 +15,13 @@
   // results, a changed one replaces it.
   if (window.__CB && window.__CB.src === window.__CB_SRC) return;
   if (window.__CB) window.__CB.clear();
-  const CB = (window.__CB = { src: window.__CB_SRC, busy: false, step: '', results: [], errors: [] });
+  const CB = (window.__CB = {
+    src: window.__CB_SRC,
+    busy: false,
+    step: '',
+    results: [],
+    errors: [],
+  });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const err = (e) => CB.errors.push(String((e && e.stack) || e).slice(0, 400));
 
@@ -112,7 +118,11 @@
     v.setAttribute('playsinline', '');
     await v.play().catch(() => {});
     for (let i = 0; i < 100 && !v.videoWidth; i++) await sleep(50);
-    return { stream: camStream, video: v, settings: { width: w, height: h, frameRate: 30, synthetic: true } };
+    return {
+      stream: camStream,
+      video: v,
+      settings: { width: w, height: h, frameRate: 30, synthetic: true },
+    };
   }
   const source = (src, w, h) => (src === 'synthetic' ? synthetic(w, h) : camera(w, h));
   async function camera(w, h) {
@@ -191,7 +201,8 @@
       const row = {
         name,
         codec: c,
-        mrRecord: typeof MediaRecorder !== 'undefined' ? MediaRecorder.isTypeSupported(mrType(c)) : null,
+        mrRecord:
+          typeof MediaRecorder !== 'undefined' ? MediaRecorder.isTypeSupported(mrType(c)) : null,
         wcEnc: typeof VideoEncoder !== 'undefined' ? await sup(encCfg({})) : null,
         wcEncHw:
           typeof VideoEncoder !== 'undefined'
@@ -202,7 +213,9 @@
             ? await sup(encCfg({ hardwareAcceleration: 'prefer-software' }))
             : null,
         wcEncCbr:
-          typeof VideoEncoder !== 'undefined' ? await sup(encCfg({ bitrateMode: 'constant' })) : null,
+          typeof VideoEncoder !== 'undefined'
+            ? await sup(encCfg({ bitrateMode: 'constant' }))
+            : null,
         mseDecode: MS ? MS.isTypeSupported(mseType(c)) : null,
         wcDec: typeof VideoDecoder !== 'undefined' ? await sup(decCfg({})) : null,
         wcDecHw:
@@ -279,7 +292,7 @@
       if (tff & 0x2) p += 4;
       if (tff & 0x8) p += 4;
       if (tff & 0x10) p += 4;
-      let flags = tff & 0x20 ? u32(b, p) : st.trex ?? null;
+      let flags = tff & 0x20 ? u32(b, p) : (st.trex ?? null);
       const trf = u32(b, trun.o + 8) & 0xffffff;
       let q = trun.o + 16;
       if (trf & 0x1) q += 4;
@@ -347,7 +360,9 @@
     // Steady state: the first 10 s carry the encoder's ramp; the last 50 s are the answer.
     const late = chunks.filter((c) => c.at >= 10000);
     const lateBytes = late.reduce((a, c) => a + c.size, 0);
-    const lateSpan = late.length ? (late[late.length - 1].at - late[0].at) / 1000 + segMs / 1000 : 0;
+    const lateSpan = late.length
+      ? (late[late.length - 1].at - late[0].at) / 1000 + segMs / 1000
+      : 0;
     Object.assign(res, {
       wallS: +wall.toFixed(1),
       chunks: chunks.length,
@@ -383,14 +398,22 @@
     kfFrames = 60,
     src = 'camera',
   }) {
-    if (typeof VideoEncoder === 'undefined') return { api: 'VideoEncoder', codec, error: 'no VideoEncoder' };
+    if (typeof VideoEncoder === 'undefined')
+      return { api: 'VideoEncoder', codec, error: 'no VideoEncoder' };
     // The camera first: a phone held upright delivers a portrait track, and the encoder takes the
     // track's orientation (as MediaRecorder does), so w x h is swapped to match it.
     const { video, settings } = await source(src, w, h);
     if (settings.height > settings.width && w > h) [w, h] = [h, w];
     const res = { api: 'VideoEncoder', src, codec, w, h, bps, durS, kfFrames };
     res.track = { w: settings.width, h: settings.height, fps: settings.frameRate };
-    const base = { codec, width: w, height: h, bitrate: bps, framerate: 30, latencyMode: 'realtime' };
+    const base = {
+      codec,
+      width: w,
+      height: h,
+      bitrate: bps,
+      framerate: 30,
+      latencyMode: 'realtime',
+    };
     if (codec.startsWith('avc')) base.avc = { format: 'avc' };
     // Probe: the asked mode and hardware first, then step back, recording each answer.
     res.probe = {};
@@ -498,7 +521,12 @@
       keyKB: +(keys.reduce((a, c) => a + c.size, 0) / Math.max(1, keys.length) / 1024).toFixed(1),
       totalBytes: total,
       deliveredMbps: mbps(total, wall),
-      steadyMbps: steady.length ? mbps(steady.reduce((a, b) => a + b, 0), steady.length * 2) : null,
+      steadyMbps: steady.length
+        ? mbps(
+            steady.reduce((a, b) => a + b, 0),
+            steady.length * 2
+          )
+        : null,
       segKB: {
         p10: +(pct(wins, 0.1) / 1024).toFixed(1),
         p50: +(pct(wins, 0.5) / 1024).toFixed(1),
@@ -538,7 +566,12 @@
     for (const k of Object.keys(r)) if (!k.startsWith('_')) o[k] = r[k];
     return o;
   };
-  CB.state = () => ({ busy: CB.busy, step: CB.step, errors: CB.errors, results: CB.results.map(strip) });
+  CB.state = () => ({
+    busy: CB.busy,
+    step: CB.step,
+    errors: CB.errors,
+    results: CB.results.map(strip),
+  });
 
   // --- show a decoded frame ---------------------------------------------------------------------
   CB.show = async (i, atS = 30) => {
@@ -569,7 +602,9 @@
       v.currentTime = start + atS;
       await new Promise((ok) => v.addEventListener('seeked', ok, { once: true }));
       await sleep(500);
-      label(`${tag}\nbuffered ${start.toFixed(2)}-${b.length ? b.end(b.length - 1).toFixed(2) : '?'} s, at ${v.currentTime.toFixed(2)}`);
+      label(
+        `${tag}\nbuffered ${start.toFixed(2)}-${b.length ? b.end(b.length - 1).toFixed(2) : '?'} s, at ${v.currentTime.toFixed(2)}`
+      );
       return { at: v.currentTime, vw: v.videoWidth, vh: v.videoHeight };
     }
     // WebCodecs: decode from the keyframe at or before atS, up to 15 frames past it (a P frame).
@@ -591,7 +626,9 @@
     });
     dec.configure(r._decoderConfig);
     for (let j = k; j < Math.min(ch.length, k + 16); j++)
-      dec.decode(new EncodedVideoChunk({ type: ch[j].type, timestamp: ch[j].ts, data: ch[j].data }));
+      dec.decode(
+        new EncodedVideoChunk({ type: ch[j].type, timestamp: ch[j].ts, data: ch[j].data })
+      );
     await dec.flush();
     dec.close();
     stage(cv);

@@ -111,7 +111,8 @@ else if (cmd === 'wc')
     src: args[7] || 'camera',
   });
 else if (cmd === 'show') out = await settle(`__CB.show(${num(args[0])}, ${num(args[1], 30)})`);
-else if (cmd === 'preview') out = await settle(`__CB.preview(${num(args[0], 1280)}, ${num(args[1], 720)})`);
+else if (cmd === 'preview')
+  out = await settle(`__CB.preview(${num(args[0], 1280)}, ${num(args[1], 720)})`);
 else if (cmd === 'clear') out = await evaluate('__CB.clear()');
 else if (cmd === 'state') out = await evaluate('__CB.state()');
 else throw new Error(`unknown command ${cmd}`);
