@@ -30,7 +30,6 @@ earliest version, as a checklist.
 - [P1 - push payloads carry nothing for Google and Apple (owner, recorded 2026-11-01; decided and built 2026-11-02, switch OFF; raised from P2 on 2026-11-10 by principle 1 of the charter)](backlog.d/push-payloads-carry-nothing-for-google-and-apple.md)
 - [P1 - blind salon banners: the seed is absent when the push lands](backlog.d/p1-blind-salon-banners-the-failing-branch-is-unnamed.md)
 - [P1 - a backup restore resumed an outbound Graine session at an index it had already used](backlog.d/p1-a-backup-restore-resumed-an-outbound-graine-session-at-a-spent-index.md)
-- [P1 - a third of the `1.6.12` native devices hold no push token row: no push can reach them (production, 2026-11-15)](backlog.d/p1-a-third-of-the-1-6-12-native-devices-hold-no-push-token-row.md)
 - [P1 - media-service holds the retention durations after the deploy that adds the relay (the boot notice carries them)](backlog.d/p1-media-retention-held-after-the-deploy-that-adds-the-relay.md)
 - [P1 - rows before ratchet: a live drain stores its rows only when its window closes, after a checkpoint may already hold their ratchet advance (raised by the second review of #3321, 2026-11-15)](backlog.d/p1-rows-before-ratchet.md)
 
@@ -64,7 +63,6 @@ earliest version, as a checklist.
 - [P2 - a DM ending in photos and a video lands on OLDER messages when the keyboard opens (`1.6.12`, Pixel 6a, 2026-11-14) - a defect, the 2026-10-30 fix does not hold](backlog.d/p2-a-dm-ending-in-photos-lands-on-older-messages-when-the-keyboard-opens.md)
 - [P2 - an iPhone re-announces what its extension showed after a cold start (2026-11-14; prior attempt: PR #2844, branch kept)](backlog.d/p2-an-iphone-re-announces-what-its-extension-showed-after-a-cold-start.md)
 - [P2 - the group panel lists 22 roster seats that hold no device (18 are departed people, 4 are a join that never completed; counted on production 2026-11-14)](backlog.d/p2-the-group-panel-lists-22-roster-seats-that-hold-no-device.md)
-- [P2 - native devices with no push token stay silent: a fifth cause](backlog.d/reading-owed-a-device-with-no-push-token-now-says-so.md)
 - [P2 - a frame read before a browser kill is called "never read here" on the next cold start](backlog.d/reading-owed-the-live-seen-cipher-mark-written-at-the-checkpoint.md)
 - [P2 - the retention durations a sweep applies are not yet admin settings](backlog.d/retention-durations-not-yet-settings.md)
 - [P2 - what the keyboard readings of 2026-11-14 filed: a photo DM still jumps to older messages, a short thread loads history on close, a 12 px step](backlog.d/what-the-keyboard-readings-of-2026-11-14-filed.md)
@@ -110,6 +108,7 @@ earliest version, as a checklist.
 - [ ] [the live scenes bar (one icon row) on a desktop live at two window widths](backlog.d/reading-owed-the-live-scenes-bar-on-a-desktop-live.md)
 - [ ] [the live viewer's top bar at 360-436 css px portrait (name whole, no button over the second row)](backlog.d/reading-owed-the-live-viewer-top-bar-at-360-436-px.md)
 - [ ] [a menu ends above the iOS tab bar, and a group notification keeps its title (2026-11-16)](backlog.d/reading-owed-the-popover-and-notification-fixes-of-the-iphone-sitting.md)
+- [ ] [a native device with no push token row now says why, and registers again (production, after the `1.7.0` stable)](backlog.d/reading-owed-a-device-with-no-push-token-now-says-so.md)
 
 ## 1.7.1
 

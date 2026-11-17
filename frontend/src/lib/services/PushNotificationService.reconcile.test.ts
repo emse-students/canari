@@ -300,7 +300,7 @@ describe('the outcome a device states on register-device', { timeout: 30_000 }, 
     expect(push.pushOutcomeForReport()).toBe('none');
   });
 
-  it('is `in-progress` while this process registers - a fresh sign-in is not a dead process', async () => {
+  it('is `in-progress:<stage>` while this process registers - a fresh sign-in is not a dead process', async () => {
     registerAnswers(200);
     const { isPermissionGranted } = await import('@tauri-apps/plugin-notification');
     const push = await freshModule();
@@ -308,13 +308,14 @@ describe('the outcome a device states on register-device', { timeout: 30_000 }, 
     vi.mocked(isPermissionGranted).mockReturnValueOnce(new Promise(() => {}));
     void push.startPushService('https://api', LIVE, 'dev-1');
     await drain();
-    expect(push.pushOutcomeForReport()).toBe('in-progress');
+    // The stage names the await it is parked on: here, the notification permission.
+    expect(push.pushOutcomeForReport()).toBe('in-progress:permission');
     // ...and on `false` it is not started a second time.
     push.reconcilePushRegistration(false);
     expect(console.warn).not.toHaveBeenCalled();
     // A NEXT process reads `started`: this one died inside its ladder.
     const next = await freshModule();
-    expect(next.pushOutcomeForReport()).toBe('started');
+    expect(next.pushOutcomeForReport()).toBe('started:permission');
   });
 
   it('is `registered` after a registration the server answered', async () => {
@@ -324,11 +325,11 @@ describe('the outcome a device states on register-device', { timeout: 30_000 }, 
     expect(push.pushOutcomeForReport()).toBe('registered');
   });
 
-  it('is `unauthorized` after the ladder that used to end in silence', async () => {
+  it('is `unauthorized:renewed-refused` after the ladder that used to end in silence', async () => {
     registerAnswers(401);
     const push = await freshModule();
     await settle(push.startPushService('https://api', LIVE, 'dev-1'));
-    expect(push.pushOutcomeForReport()).toBe('unauthorized');
+    expect(push.pushOutcomeForReport()).toBe('unauthorized:renewed-refused');
   });
 
   it('is `unauthorized` when the session has no token to send at all - no request, still a record', async () => {
@@ -342,7 +343,55 @@ describe('the outcome a device states on register-device', { timeout: 30_000 }, 
     };
     await settle(push.startPushService('https://api', noToken, 'dev-1'));
     expect(registrations()).toBe(0);
-    expect(push.pushOutcomeForReport()).toBe('unauthorized');
+    expect(push.pushOutcomeForReport()).toBe('unauthorized:other');
+  });
+
+  it('names the session verdict that stood in for a token - no request, and the branch is known', async () => {
+    registerAnswers(200);
+    const cases: Array<[string, string]> = [
+      ['SessionExpiredError', 'unauthorized:session-expired'],
+      ['SessionEndedByDeviceRevocationError', 'unauthorized:device-revoked'],
+      ['SignOutInProgressError', 'unauthorized:signing-out'],
+      ['IdentitySplitError', 'unauthorized:identity-split'],
+    ];
+    for (const [name, stated] of cases) {
+      localStorage.clear();
+      const push = await freshModule();
+      const verdict: PushAuth = {
+        tokenNow: async () => {
+          const e = new Error('no token');
+          e.name = name;
+          throw e;
+        },
+        renew: async () => 'jwt',
+      };
+      await settle(push.startPushService('https://api', verdict, 'dev-1'));
+      expect(push.pushOutcomeForReport()).toBe(stated);
+    }
+    expect(registrations()).toBe(0);
+  });
+
+  it('a process that died waiting for its OS token leaves `started:os-token`', async () => {
+    registerAnswers(200);
+    const push = await freshModule();
+    vi.useFakeTimers();
+    try {
+      osToken = null;
+      void push.startPushService('https://api', LIVE, 'dev-1');
+      // Inside the first attempt's 30 s poll of the OS: nothing final recorded yet.
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(push.pushOutcomeForReport()).toBe('in-progress:os-token');
+    } finally {
+      vi.useRealTimers();
+    }
+    const next = await freshModule();
+    expect(next.pushOutcomeForReport()).toBe('started:os-token');
+  });
+
+  it("an older build's bare `started` marker is stated as it is", async () => {
+    localStorage.setItem('canari_push_started', '1');
+    const push = await freshModule();
+    expect(push.pushOutcomeForReport()).toBe('started');
   });
 
   it('is `refused` after a 4xx answer', async () => {
@@ -357,7 +406,7 @@ describe('the outcome a device states on register-device', { timeout: 30_000 }, 
     const first = await freshModule();
     await settle(first.startPushService('https://api', LIVE, 'dev-1'));
     const next = await freshModule();
-    expect(next.pushOutcomeForReport()).toBe('unauthorized');
+    expect(next.pushOutcomeForReport()).toBe('unauthorized:renewed-refused');
   });
 
   it('is forgotten at sign-out, so the next account starts at `none`', async () => {

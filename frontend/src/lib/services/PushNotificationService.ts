@@ -90,11 +90,47 @@ export class PushRegistrationRefusedError extends Error {
  * gave-up report is sent with it - that report would be refused with the same token.
  */
 export class PushRegistrationUnauthorizedError extends Error {
-  constructor(why: string, cause?: unknown) {
+  constructor(
+    readonly kind: UnauthorizedCause,
+    why: string,
+    cause?: unknown
+  ) {
     super(`the push registration has no accepted token: ${why}`, { cause });
     this.name = 'PushRegistrationUnauthorizedError';
   }
 }
+
+/**
+ * WHICH `unauthorized` it was - stated to the server as `unauthorized:<cause>`. The bare term merged
+ * every branch that ends the ladder without an accepted token, and the 2026-11-15 incident is a
+ * population that ended without a request: the term alone could not say which branch to fix, so the
+ * reading after the next stable would only have opened another round.
+ *
+ * - `renewed-refused`: the server answered 401 to a token renewed for this registration;
+ * - `session-expired`, `device-revoked`, `signing-out`, `identity-split`: what the session's token
+ *   source threw instead of a token (the auth store's verdicts, by the type each is thrown as);
+ * - `other`: any other failure to obtain a token - a branch nobody has named yet.
+ */
+export type UnauthorizedCause =
+  | 'renewed-refused'
+  | 'session-expired'
+  | 'device-revoked'
+  | 'signing-out'
+  | 'identity-split'
+  | 'other';
+
+/**
+ * The token-source failures by the NAME each type gives itself (`this.name`, explicit in every
+ * constructor, so it survives minification). Read by name and not by `instanceof` because their
+ * module, the auth store, imports this one. The name feeds the REPORT only: the control flow already
+ * decided, by type, that this is a failure another attempt cannot lift.
+ */
+const UNAUTHORIZED_CAUSE_BY_ERROR_NAME: Readonly<Record<string, UnauthorizedCause>> = {
+  SessionExpiredError: 'session-expired',
+  SessionEndedByDeviceRevocationError: 'device-revoked',
+  SignOutInProgressError: 'signing-out',
+  IdentitySplitError: 'identity-split',
+};
 
 /**
  * The session that started this registration ended (a sign-out bumped `pushSessionGeneration`):
@@ -116,11 +152,19 @@ export class PushRegistrationSupersededError extends Error {
 function classifyTokenFailure(error: unknown): unknown {
   if (error instanceof RefreshFailedError || isTransportFailure(error)) return error;
   const name = error instanceof Error ? error.name : typeof error;
-  return new PushRegistrationUnauthorizedError(`no session token (${name})`, error);
+  const kind = Object.hasOwn(UNAUTHORIZED_CAUSE_BY_ERROR_NAME, name)
+    ? UNAUTHORIZED_CAUSE_BY_ERROR_NAME[name]
+    : 'other';
+  return new PushRegistrationUnauthorizedError(kind, `no session token (${name})`, error);
 }
 
-/** The answer of one registration attempt; see {@link PushRegistrationFailure}. */
-export type PushRegistrationOutcome = { ok: true } | { ok: false; reason: PushRegistrationFailure };
+/**
+ * The answer of one registration attempt; see {@link PushRegistrationFailure}. An `unauthorized`
+ * failure also says which one ({@link UnauthorizedCause}), for the record the server reads.
+ */
+export type PushRegistrationOutcome =
+  | { ok: true }
+  | { ok: false; reason: PushRegistrationFailure; unauthorized?: UnauthorizedCause };
 
 /**
  * The server answered the registration and its push secret could not be stored on the device.
@@ -152,7 +196,11 @@ export class PushSecretNotStoredError extends Error {
  *
  * With no final outcome since the sign-out, `pushOutcomeForReport` states `in-progress` while THIS
  * process's ladder or a registration runs, `started` when a ladder began in an earlier process and
- * nothing came of it (kept apart, `PUSH_STARTED_STORAGE_KEY`), else `none`.
+ * nothing came of it (kept apart, `PUSH_STARTED_STORAGE_KEY`), else `none`. Both carry the
+ * {@link RegistrationStage} the registration was at - `in-progress:permission`, `started:os-token` -
+ * because a ladder that never sends is a ladder WAITING somewhere, and the bare term could not say
+ * where (production, 2026-11-17: the tokenless `1.6.12` phones sent no registration and no report).
+ * An `unauthorized` failure is recorded as `unauthorized:<cause>` ({@link UnauthorizedCause}).
  *
  * WHY IT IS DURABLE: the branches that end a registration without a request - an `unauthorized`
  * ladder, an owed deletion, a process killed inside the four-minute ladder - leave no trace on the
@@ -160,7 +208,56 @@ export class PushSecretNotStoredError extends Error {
  * 2026-11-15: 25 of 65 `1.6.12` devices held no row and had said nothing). The next authenticated
  * call this device makes anyway carries the evidence; no new request is spent on it.
  */
-export type PushOutcomeRecord = 'registered' | PushRegistrationFailure | 'deferred' | 'no-user';
+export type PushOutcomeRecord =
+  | 'registered'
+  | PushRegistrationFailure
+  | `unauthorized:${UnauthorizedCause}`
+  | 'deferred'
+  | 'no-user';
+
+/**
+ * Where a running registration is waiting - the await it is parked on:
+ * - `permission`: the rationale or the OS notification dialog, i.e. an answer from the USER;
+ * - `os-token`: the OS push token (`getFcmToken`, up to 30 s per attempt);
+ * - `session-token`: the session's bearer (`tokenNow`, a refresh at most);
+ * - `sending`: the registration request, sent and not answered;
+ * - `retry-wait`: the pause between two attempts of the ladder.
+ */
+export type RegistrationStage =
+  | 'permission'
+  | 'os-token'
+  | 'session-token'
+  | 'sending'
+  | 'retry-wait';
+
+/** The stage of the registration running in this process; meaningful only while one runs. */
+let registrationStage: RegistrationStage | null = null;
+
+/**
+ * Notes where the registration of the session of `generation` is now waiting. While the durable
+ * `started` marker stands (a ladder began and nothing final was recorded since), the marker takes the
+ * stage too, so a process that dies there leaves `started:<stage>` for the next one to state.
+ */
+function noteStage(stage: RegistrationStage, generation: number): void {
+  if (generation !== pushSessionGeneration) return;
+  registrationStage = stage;
+  try {
+    if (localStorage.getItem(PUSH_STARTED_STORAGE_KEY) !== null) {
+      localStorage.setItem(PUSH_STARTED_STORAGE_KEY, stage);
+    }
+  } catch (err) {
+    console.warn(`[Push] could not mark the registration stage (${stage})`, err);
+  }
+}
+
+/** The stages a durable `started` marker may name; anything else (an older build's `1`) names none. */
+const REGISTRATION_STAGES: ReadonlySet<string> = new Set<RegistrationStage>([
+  'permission',
+  'os-token',
+  'session-token',
+  'sending',
+  'retry-wait',
+]);
 
 /** localStorage key of {@link PushOutcomeRecord}; cleared at sign-out with the registration. */
 export const PUSH_OUTCOME_STORAGE_KEY = 'canari_push_outcome';
@@ -200,6 +297,15 @@ function recordPushOutcome(outcome: PushOutcomeRecord, generation: number): void
   }
 }
 
+/** The record an attempt's outcome leaves: an `unauthorized` one names its cause. */
+function outcomeRecord(outcome: PushRegistrationOutcome): PushOutcomeRecord {
+  if (outcome.ok) return 'registered';
+  if (outcome.reason === 'unauthorized' && outcome.unauthorized) {
+    return `unauthorized:${outcome.unauthorized}`;
+  }
+  return outcome.reason;
+}
+
 /** Marks that a ladder began for the session of `generation`, beside its last final outcome. */
 function markLadderStarted(generation: number): void {
   if (generation !== pushSessionGeneration) return;
@@ -228,8 +334,12 @@ export function pushOutcomeForReport(): string {
   try {
     const final = localStorage.getItem(PUSH_OUTCOME_STORAGE_KEY);
     if (final) return final;
-    if (registeringNow()) return 'in-progress';
-    return localStorage.getItem(PUSH_STARTED_STORAGE_KEY) ? 'started' : 'none';
+    if (registeringNow()) {
+      return registrationStage ? `in-progress:${registrationStage}` : 'in-progress';
+    }
+    const started = localStorage.getItem(PUSH_STARTED_STORAGE_KEY);
+    if (started === null) return 'none';
+    return REGISTRATION_STAGES.has(started) ? `started:${started}` : 'started';
   } catch (err) {
     console.warn('[Push] could not read the registration outcome', err);
     return 'unreadable';
@@ -396,7 +506,7 @@ export async function registerPushToken(
   }
   const entry = {
     generation,
-    promise: registerPushTokenOnce(registerFn).finally(() => {
+    promise: registerPushTokenOnce(registerFn, generation).finally(() => {
       if (registrationInFlight === entry) registrationInFlight = null;
     }),
   };
@@ -406,9 +516,11 @@ export async function registerPushToken(
 
 /** The registration `registerPushToken` serialises. */
 async function registerPushTokenOnce(
-  registerFn: (token: string) => Promise<void>
+  registerFn: (token: string) => Promise<void>,
+  generation: number
 ): Promise<PushRegistrationOutcome> {
   console.info('[Push] registerPushToken start');
+  noteStage('os-token', generation);
   // getFcmToken() returns immediately if already written, otherwise waits for
   // the canari:fcm-token native event emitted by MainActivity (max 30 s).
   const token = await getFcmToken();
@@ -448,8 +560,8 @@ async function registerPushTokenOnce(
       return { ok: false, reason: 'unauthorized' };
     }
     if (err instanceof PushRegistrationUnauthorizedError) {
-      console.warn(`[Push] ${err.message} - not retried`, err.cause);
-      return { ok: false, reason: 'unauthorized' };
+      console.warn(`[Push] ${err.message} - not retried (${err.kind})`, err.cause);
+      return { ok: false, reason: 'unauthorized', unauthorized: err.kind };
     }
     console.error('[Push] FCM token registration failed', err);
     return { ok: false, reason: 'rejected' };
@@ -510,7 +622,7 @@ export async function startPushService(
 
   const registerOnce = async (): Promise<PushRegistrationOutcome> => {
     const outcome = await registerAttempt();
-    recordPushOutcome(outcome.ok ? 'registered' : outcome.reason, generation);
+    recordPushOutcome(outcomeRecord(outcome), generation);
     return outcome;
   };
 
@@ -562,6 +674,7 @@ export async function startPushService(
       // below lasts minutes, and a token captured at its start could expire under it and then be
       // refused on every attempt, the gave-up report included.
       let token: string;
+      noteStage('session-token', generation);
       try {
         token = await auth.tokenNow();
       } catch (err) {
@@ -569,12 +682,16 @@ export async function startPushService(
       }
       // A 401 IS AN ANSWER about the bearer: renewed ONCE and sent again (`renewOn401.ts`, the one
       // copy of that rule); a 401 on the renewed token ends the registration.
+      noteStage('sending', generation);
       const response = await sendRenewingOn401(send, token, {
         tokenNow: auth.tokenNow,
         renew: auth.renew,
         where: 'POST /api/mls/push/register',
         refusedRenewed: () =>
-          new PushRegistrationUnauthorizedError('the token renewed for it was refused too'),
+          new PushRegistrationUnauthorizedError(
+            'renewed-refused',
+            'the token renewed for it was refused too'
+          ),
         renewalFailed: (err) => classifyTokenFailure(err),
       });
       if (!response.ok) {
@@ -669,6 +786,7 @@ export async function startPushService(
     // answer and it is honoured: Android gives an app very few chances to ask, and spending one on a
     // user who just said "later" wastes it for good.
     try {
+      noteStage('permission', generation);
       let permissionGranted = await isPermissionGranted();
       if (!permissionGranted) {
         const askNow = await showConfirm(m.push_permission_rationale(), {
@@ -703,6 +821,7 @@ export async function startPushService(
         console.warn(`[Push] registration ${outcome.reason} - an answer, so no retry`);
         break;
       }
+      noteStage('retry-wait', generation);
       await new Promise((resolve) => setTimeout(resolve, BACKGROUND_RETRY_DELAY_MS));
       if (superseded()) {
         console.info('[Push] the session that started this registration ended - ladder stopped');
