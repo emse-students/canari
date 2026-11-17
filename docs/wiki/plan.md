@@ -20,7 +20,6 @@ earliest version, as a checklist.
 
 - [P1 - Opening a community: F1-F7 BUILT, the 200 ms budget is what is left (user, 2026-10-14; state re-read 2026-10-22)](backlog.d/p1-opening-a-community-f1-f7-built-the-200-ms-budget-is-what-is-left-user-2026.md)
 - [P1 - The MiConnect terms stage reaches production with the next STABLE: three things come first (2026-10-16)](backlog.d/p1-the-miconnect-terms-stage-reaches-production-with-the-next-stable-three.md)
-- [P1 - lives are a release blocker (D3): the two crypto reviews, the chat load reading and the phone readings are owed](backlog.d/p1-lives-release-blocker-crypto-reviews-load-and-phone-readings.md)
 - [P1 - A new member of a group conversation receives its whole past; decided 2026-10-21 that they must not](backlog.d/p1-a-new-member-of-a-group-conversation-receives-its-whole-past-decided-2026-10.md)
 - [P1 - encrypt the names of groups, communities and salons (raised 2026-10-21, tied to principle 1 of the charter on 2026-11-10)](backlog.d/p1-encrypt-the-names-of-groups-communities-and-salons.md)
 - [P1 - rows before ratchet: a live drain stores its rows only when its window closes, after a checkpoint may already hold their ratchet advance (raised by the second review of #3321, 2026-11-15)](backlog.d/p1-rows-before-ratchet.md)
@@ -61,6 +60,7 @@ earliest version, as a checklist.
 ### Readings owed
 
 - [ ] [the CanaReels composer, viewer and editor on real content](backlog.d/reading-owed-the-canareels-composer-viewer-and-editor-on-real-content.md)
+- [ ] [lives on both bench phones: watching, broadcasting, the chat panel and the floating reactions (G9, a release blocker)](backlog.d/reading-owed-lives-on-both-phones-watching-broadcasting-chat-and-reactions.md)
 - [ ] [sharing into Canari on iOS](backlog.d/reading-owed-sharing-into-canari-on-ios.md)
 - [ ] [seeds mirrored before the writer label](backlog.d/reading-owed-seeds-mirrored-before-the-writer-label.md)
 - [ ] [a deploy's `502`/`503`/`504` is "not now", never a send failure](backlog.d/reading-owed-a-deploy-s-502-503-504-is-not-now-never-a-send-failure.md)
@@ -182,7 +182,6 @@ earliest version, as a checklist.
 - [P2 - the web checkpoint is 82 % WASM ChaCha20 seal - the hardened reader merged (#2074), the writer OFF (2026-10-12)](backlog.d/p2-the-web-checkpoint-is-82-wasm-chacha20-seal-the-hardened-reader-mer.md)
 - [P2 - GDPR compliance: the open items of the register (2026-10-16)](backlog.d/p2-gdpr-compliance-the-open-items-of-the-register-2026-10-16.md)
 - [P2 - MIGALLERY'S ONLY OFFSITE STILL LANDS ON THE OLD CANARI VM](backlog.d/p2-migallery-s-only-offsite-still-lands-on-the-old-canari-vm.md)
-- [P2 - Live chat and floating reactions (WP-L6): shipped behind `lives_mode` (#2131, #2136, #2170), three things are owed (2026-10-19)](backlog.d/p2-live-chat-and-floating-reactions-wp-l6-shipped-behind-lives-mode-21.md)
 - [P2 - a call that never paired, and a ring for a call already hung up (2026-10-20)](backlog.d/p2-a-call-that-never-paired-and-a-ring-for-a-call-already-hung-up-2026-10-20.md)
 - [P2 - a crash between a top-up's purchase commit and its Cercle dispatch loses the top-up silently (review of #2218, 2026-10-21)](backlog.d/p2-a-crash-between-a-top-up-s-purchase-commit-and-its-cercle-dispatch-loses-the.md)
 - [P2 - an answer whose Lydia request is still OPEN shows "pending" with no button for up to 28 minutes (2026-10-21)](backlog.d/p2-an-answer-whose-lydia-request-is-still-open-shows-pending-with-no-button-for.md)

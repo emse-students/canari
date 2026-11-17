@@ -58,9 +58,15 @@ function checkArgs(keyHex: string, liveId: string, index: number): void {
   }
 }
 
-/** A uuid's 16 raw bytes (the caller checked its shape). Shared with the chat seal. */
+/**
+ * A uuid's 16 raw bytes, in either case. Shared with the chat and poster seals, so it checks the
+ * shape ITSELF rather than trust every caller to have (adversarial review G7, 2026-11-17):
+ * `hexDecode` maps a non-hex digit to 0 and takes an odd length, so an unchecked id would bind a
+ * different AAD silently. A RangeError - a programming error.
+ */
 export function uuidBytes(uuid: string): Uint8Array<ArrayBuffer> {
-  return hexDecode(uuid.replaceAll('-', ''));
+  if (!UUID_RE.test(uuid)) throw new RangeError('live id must be a uuid');
+  return hexDecode(uuid.replaceAll('-', '').toLowerCase());
 }
 
 /** The v1 AAD: label || 0x00 || the uuid's 16 raw bytes || index as u32 big-endian. */
@@ -79,6 +85,9 @@ function buildAad(liveId: string, index: number): Uint8Array<ArrayBuffer> {
  * with the chat seal (`liveChatCrypto.ts`): one key, one import path.
  */
 export function importLiveKey(keyHex: string, usage: 'encrypt' | 'decrypt'): Promise<CryptoKey> {
+  // Checked HERE, whatever the caller did (review G7): WebCrypto ignores `length: 256` on a raw
+  // import, so 32 hex characters would import silently as an AES-128 key.
+  if (!KEY_HEX_RE.test(keyHex)) throw new RangeError('live key must be 64 hex characters');
   return crypto.subtle.importKey(
     'raw',
     hexDecode(keyHex),
