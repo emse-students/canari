@@ -19,7 +19,9 @@ export function bareSnippetCalls(text: string): string[] {
   const names = [...text.matchAll(/\{#snippet\s+([A-Za-z_$][\w$]*)\s*\(/g)].map((m) => m[1]);
   const found: string[] = [];
   for (const name of new Set(names)) {
-    const bare = new RegExp(`\\{\\s*${name.replace(/\$/g, '\\$')}\\s*\\(`, 'g');
+    // Every regex metacharacter escaped, not only `$`: the name is data, never pattern.
+    const literal = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const bare = new RegExp(`\\{\\s*${literal}\\s*\\(`, 'g');
     for (const m of text.matchAll(bare)) found.push(`${name} @${m.index}`);
   }
   return found;
