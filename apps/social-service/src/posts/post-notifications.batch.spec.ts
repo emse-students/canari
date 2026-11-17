@@ -351,6 +351,81 @@ describe('PostNotificationsService.createNotifications', () => {
     expect(served.map((r) => r.actorId)).toEqual(['', '', 'claire']);
   });
 
+  it("serves a mention stored BEFORE the fix, on an association's post, as the association - never its writer", async () => {
+    const svc = service();
+    const P_ASSO = '00000000-0000-4000-8000-0000000000a1';
+    const P_PERSONAL = '00000000-0000-4000-8000-0000000000a2';
+    const rows = [
+      // The old shape: the officer as actor, their name, no association, no comment, no marker.
+      {
+        id: 'n1',
+        type: 'mention',
+        postId: P_ASSO,
+        actorId: 'the-officer',
+        actorName: 'Officer',
+        associationId: null,
+        associationLogoUrl: null,
+        commentId: null,
+        meta: null,
+      },
+      // A comment's mention by the same officer: a person speaking, kept.
+      {
+        id: 'n2',
+        type: 'mention',
+        postId: P_ASSO,
+        actorId: 'the-officer',
+        actorName: 'Officer',
+        associationId: null,
+        associationLogoUrl: null,
+        commentId: 'c1',
+        meta: null,
+      },
+      // A personal post's own mention: its author, kept.
+      {
+        id: 'n3',
+        type: 'mention',
+        postId: P_PERSONAL,
+        actorId: 'claire',
+        actorName: 'Claire',
+        associationId: null,
+        associationLogoUrl: null,
+        commentId: null,
+        meta: null,
+      },
+    ];
+    jest
+      .spyOn(svc, 'bellPageQuery')
+      .mockReturnValue({ getMany: () => Promise.resolve(rows.map((r) => ({ ...r }))) } as never);
+    const asked: unknown[][] = [];
+    (svc as unknown as { notifRepo: { manager: { query: unknown } } }).notifRepo.manager.query = (
+      sql: string,
+      params: unknown[] = []
+    ) => {
+      if (!sql.includes('FROM posts')) return Promise.resolve([]);
+      asked.push(params);
+      return Promise.resolve([
+        {
+          postId: P_ASSO,
+          authorId: 'the-officer',
+          associationId: 'asso1',
+          name: 'BDE',
+          logoUrl: '/api/media/public/logo1',
+        },
+      ]);
+    };
+    const served = await svc.getNotifications('reader');
+    expect(served[0]).toMatchObject({
+      actorId: '',
+      actorName: 'BDE',
+      associationId: 'asso1',
+      associationLogoUrl: '/api/media/public/logo1',
+    });
+    expect(served[1]).toMatchObject({ actorId: 'the-officer', associationId: null });
+    expect(served[2]).toMatchObject({ actorId: 'claire', associationId: null });
+    // One read for the page, asked only of the old-shaped post mentions.
+    expect(asked).toEqual([[[P_ASSO, P_PERSONAL]]]);
+  });
+
   it('says nothing for a post no association published - a face is correct there', async () => {
     await service().createNotifications({
       recipientIds: ['a'],

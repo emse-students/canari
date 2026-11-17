@@ -88,9 +88,17 @@ questions the first draft of this page left open, the same day.
     **No notification names the writer either** (review of #3770): a mention in an association's
     post names the association (`notifyPostMentions`, no member stored); an `association_post` or
     `association_repost` bell row keeps the member who acted - the actor exclusion and the review
-    cohort read it - and the bell serves it blank (`withholdPublishingMember`, rows written before
-    included); a push shows the association's logo or no picture, never the member's face
-    (`pushIconOf`).
+    cohort read it - and the bell serves it blank; a post's mention STORED before the fix (the
+    officer as actor, no association) is served as one written now - the association as actor,
+    name and logo - when its post is an association's and its actor that post's author. Both are
+    ONE shaping at the read, `withholdPublishingMember`: no row is rewritten, and every stored row
+    is covered. A push shows the association's logo or no picture, never the member's face
+    (`pushIconOf`). **A row naming nobody keeps the review cohort's rule of the person behind it**
+    (review of #3770): the bell reads the cohort side of a row with an empty actor from the
+    comment's writer, else the post's author (`bellRowActorAccountSql`, in `bellRowVisibleSql`) -
+    the person its push was gated on - so a review account's anonymous or association-voiced
+    mention is not pushed and then hidden. It costs a primary-key read per such row, and nothing
+    while no cohort is configured.
     **Known, and bounded:** (a) a feed page is cached 30 s per reader (`post-list-cache`), so a
     moderator who loses the scope, or a writer whose post is edited away from them, can read the
     writer on a cached page for at most 30 s after; (b) the campus trend (`campus-trend.ts`) and a

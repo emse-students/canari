@@ -217,21 +217,51 @@ export const POST_MENTION_META = { mentionIn: 'post' } as const;
  * The bell types whose actor is the MEMBER who acted in an association's name - `association_post`
  * (who pressed publish) and `association_repost` (who republished). The member is stored, for the
  * actor exclusion and the review cohort's filter, and NEVER SERVED: the row speaks as the
- * association (decision 11 of moderation-authority; {@link withholdPublishingMember}).
+ * association (decision 11 of moderation-authority; `PostNotificationsService.withholdPublishingMember`).
  */
 export const ASSOCIATION_VOICE_NOTIFICATION_TYPES: readonly string[] = [
   'association_post',
   'association_repost',
 ];
 
+/** A uuid, as a post id is: anything else is not asked of `posts` (a varchar `postId` may hold any id). */
+const UUID_PATTERN = new RegExp(UUID_SHAPE, 'i');
+
 /**
- * A bell row as served: the member behind an association's voice withheld
- * ({@link ASSOCIATION_VOICE_NOTIFICATION_TYPES}). The ONE shaping of what the bell serves of an
- * actor, so a row written before this rule is covered with the rest - nothing is rewritten.
+ * A post's own mention stored BEFORE 2026-11-17 (no `commentId`, no {@link POST_MENTION_META}, no
+ * association, a named actor): on an association's post its actor is the officer who wrote it - the
+ * shape `withholdPublishingMember` re-reads against the post.
  */
-export function withholdPublishingMember<T extends { type: string; actorId: string }>(row: T): T {
-  if (ASSOCIATION_VOICE_NOTIFICATION_TYPES.includes(row.type)) row.actorId = '';
-  return row;
+function isOldPostMentionShape(row: PostNotification): boolean {
+  return (
+    row.type === 'mention' &&
+    !row.commentId &&
+    !row.associationId &&
+    !!row.actorId &&
+    row.meta?.mentionIn !== POST_MENTION_META.mentionIn &&
+    UUID_PATTERN.test(row.postId)
+  );
+}
+
+/**
+ * THE ACCOUNT BEHIND ROW `n`'s ACTOR, as the review cohort's boundary must read it: the actor, or -
+ * on a row naming nobody (an anonymous or an association's voice, `actorId` empty) - the person who
+ * really acted, read where it is stored: a comment's writer (`commentId`), else, for a post's own
+ * mention, the post's author. The PUSH of those rows was gated on that person
+ * (`mentionRecipientsOf` at the post's publication, `sameSideOfReviewCohort` at a comment's write),
+ * so the bell reads the same person, and a push is never sent for a row the bell then hides. A
+ * comment gone from its post leaves nobody: the empty actor stands, as it did.
+ */
+export function bellRowActorAccountSql(n: string): string {
+  const anon = `'${ANONYMOUS_NOTIFICATION_ACTOR_ID}'`;
+  return `(CASE WHEN ${n}."actorId" <> ${anon} THEN ${n}."actorId"
+    WHEN ${n}."commentId" IS NOT NULL THEN COALESCE((SELECT ba_c->>'userId' FROM posts ba_cpost
+      CROSS JOIN LATERAL jsonb_array_elements(COALESCE(ba_cpost.comments, '[]'::jsonb)) ba_c
+      WHERE ba_cpost.id = ${asUuidSql(`${n}."postId"`)} AND ba_c->>'id' = ${n}."commentId"
+      LIMIT 1), ${n}."actorId")
+    WHEN ${n}.type = 'mention' THEN COALESCE((SELECT ba_post."authorId" FROM posts ba_post
+      WHERE ba_post.id = ${asUuidSql(`${n}."postId"`)}), ${n}."actorId")
+    ELSE ${n}."actorId" END)`;
 }
 
 /**
@@ -304,7 +334,7 @@ export function bellRowShownSql(n: string): string {
  * (`NOTIFICATION_TYPE_MIN_CLIENT`), every admitted build draws them.
  */
 export function bellRowVisibleSql(n: string): string {
-  return `(${bellRowShownSql(n)} AND ${sameSideOfReviewCohortSql(`${n}."actorId"`, `${n}."recipientId"`)})`;
+  return `(${bellRowShownSql(n)} AND ${sameSideOfReviewCohortSql(bellRowActorAccountSql(n), `${n}."recipientId"`)})`;
 }
 
 /**
@@ -1224,8 +1254,8 @@ export class PostNotificationsService {
    * build serves it.
    */
   async getNotifications(userId: string, limit = 30, clientVersion?: string) {
-    const rows = (await this.bellPageQuery(userId, limit, clientVersion).getMany()).map(
-      withholdPublishingMember
+    const rows = await this.withholdPublishingMember(
+      await this.bellPageQuery(userId, limit, clientVersion).getMany()
     );
     await this.resolveTrendLikedBy(rows);
     await this.serveReplacedPartyNotices(rows);
@@ -1243,6 +1273,55 @@ export class PostNotificationsService {
       `[STUDENTS_ONLY] bell of ${userId.slice(0, 8)}: ${ids.size} repost proposal text(s) withheld`
     );
     for (const row of rows) if (ids.has(row.id)) row.text = '';
+    return rows;
+  }
+
+  /**
+   * THE ONE SHAPING OF WHAT THE BELL SERVES OF AN ACTOR (decision 11 of moderation-authority): no
+   * row names the member who wrote or acted in an association's name.
+   * - An `association_post` or `association_repost` row ({@link ASSOCIATION_VOICE_NOTIFICATION_TYPES})
+   *   keeps the member stored and serves its actor blank.
+   * - A post's own mention stored before 2026-11-17 named the officer who wrote an association's
+   *   post (`isOldPostMentionShape`): it is served as one written now - the association as its
+   *   actor (name, logo), no member - when its post is an association's and its actor that post's
+   *   author. ONE read for the page, asked only when such a row is on it.
+   * Rows are reshaped where they are served, never rewritten: the 90-day sweep takes the old ones.
+   */
+  async withholdPublishingMember(rows: PostNotification[]): Promise<PostNotification[]> {
+    for (const row of rows) {
+      if (ASSOCIATION_VOICE_NOTIFICATION_TYPES.includes(row.type)) row.actorId = '';
+    }
+    const old = rows.filter(isOldPostMentionShape);
+    if (old.length === 0) return rows;
+    const voices: {
+      postId: string;
+      authorId: string;
+      associationId: string;
+      name: string;
+      logoUrl: string | null;
+    }[] = await this.notifRepo.manager.query(
+      `SELECT wp.id::text AS "postId", wp."authorId", wa.id::text AS "associationId", wa.name,
+              wa."logoUrl"
+         FROM posts wp JOIN associations wa ON wa.id = wp."associationId"
+        WHERE wp.id = ANY($1::uuid[])`,
+      [[...new Set(old.map((r) => r.postId.toLowerCase()))]]
+    );
+    const byPost = new Map(voices.map((v) => [v.postId.toLowerCase(), v]));
+    let reshaped = 0;
+    for (const row of old) {
+      const voice = byPost.get(row.postId.toLowerCase());
+      if (!voice || voice.authorId !== row.actorId) continue;
+      row.actorId = ANONYMOUS_NOTIFICATION_ACTOR_ID;
+      row.actorName = voice.name;
+      row.associationId = voice.associationId;
+      row.associationLogoUrl = voice.logoUrl;
+      reshaped++;
+    }
+    if (reshaped > 0) {
+      this.logger.debug(
+        `[NOTIFY] bell: ${reshaped} mention(s) stored before 2026-11-17 served as their association`
+      );
+    }
     return rows;
   }
 
