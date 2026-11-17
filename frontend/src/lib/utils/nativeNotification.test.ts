@@ -145,6 +145,7 @@ describe('postNativeReactionNotification', () => {
     actorId: 'peer-1',
     actorName: 'Alice',
     emoji: '❤️',
+    at: 1_700_000_000_123,
   };
 
   it('does not reach the native builder off Android', async () => {
@@ -168,7 +169,8 @@ describe('postNativeReactionNotification', () => {
       groupName: '',
       body: '❤️',
       mentionsMe: false,
-      sentAt: 0,
+      // The reaction's own instant, which the push carries too: one reaction, one line.
+      sentAt: 1_700_000_000_123,
       serverAt: 0,
       covers: 1,
       authorProven: false,

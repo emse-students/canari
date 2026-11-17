@@ -2423,7 +2423,15 @@ export function useChannelWorkspaces() {
           return;
         }
         if (outcome.kind === 'sent') {
-          void notifyReactionAuthor(channelConversationId, messageId, emoji, standing, userId, ctx);
+          void notifyReactionAuthor(
+            channelConversationId,
+            messageId,
+            emoji,
+            at,
+            standing,
+            userId,
+            ctx
+          );
           return;
         }
         if (nothingLeftTheDevice(outcome.error)) {
@@ -2454,6 +2462,7 @@ export function useChannelWorkspaces() {
     channelConversationId: string,
     messageId: string,
     emoji: string,
+    at: number,
     removed: boolean,
     userId: string,
     ctx: ChannelWorkspaceContext
@@ -2469,6 +2478,7 @@ export function useChannelWorkspaces() {
       emoji,
       messageId,
       actorName: getName(userId),
+      at,
     }).catch(() => {});
   }
 

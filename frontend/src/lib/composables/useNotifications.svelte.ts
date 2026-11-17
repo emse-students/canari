@@ -578,6 +578,42 @@ export function useNotifications() {
   }
 
   /** Shows an OS-level notification (via Tauri plugin or Web Notification API). Rate-limited per conversation to 800 ms to absorb bursts while allowing different conversations to notify independently. Uses a stable ID/tag per conversation so successive messages replace rather than stack. */
+  /**
+   * THE PREAMBLE EVERY SYSTEM NOTIFICATION SHARES - a message's and a reaction's - so neither can
+   * drift from the other's refusal or throttle. Whether one may be raised now under `convKey` (the
+   * conversation for a message, `reaction:<conversation>` for a reaction); when it may, the throttle
+   * window is taken.
+   */
+  function mayRaise(convKey: string): boolean {
+    if (typeof window === 'undefined') return false;
+    // A TERMINAL REFUSAL IS KNOWN BEFORE ANY OF THIS, AND ASKING IT PER MESSAGE COSTS THREE LINES A
+    // MESSAGE FOR THE LIFE OF THE SESSION. Measured on HEAL-REVOKE-9 (2026-09-07): 12 inbound
+    // messages produced 33 `[NOTIF]` lines - "while the window is open ... asking", "permission is
+    // \"denied\"; asking", and the throttle firing for notifications that could never be raised.
+    //
+    // The line that claimed to be asking was also FALSE: `requestSystemNotificationPermission` has
+    // no `denied` branch, because a browser will not re-prompt once denied - only the user can
+    // change it in site settings. So the work was a guaranteed no-op narrated as an action.
+    //
+    // Checked BEFORE the throttle on purpose: throttling a notification that cannot be raised
+    // burns the per-conversation window and prints a line about a decision that was never live.
+    // Guarded on `isTauriRuntime` because on native the plugin's permission is the authority and
+    // the web value says nothing - the Tauri branch of `postPlainNotification` is left as it was.
+    if (systemNotificationsBlockedAnnounceOnce()) return false;
+
+    const now = Date.now();
+    const lastAt = lastNotifAtByConv.get(convKey) ?? 0;
+    if (now - lastAt < 800) {
+      // EVERY SWALLOWED BRANCH LOGS. Three returns here were silent, so "the user was not notified"
+      // and "the code never got there" were the same observation from outside - which is what made
+      // TAB-1's zero unattributable for a day.
+      console.log(`[NOTIF] Throttled for ${convKey} - ${now - lastAt} ms since the last (800 ms).`);
+      return false;
+    }
+    lastNotifAtByConv.set(convKey, now);
+    return true;
+  }
+
   async function sendSystemNotification(
     title: string,
     body: string,
@@ -593,34 +629,8 @@ export function useNotifications() {
      */
     native?: NativeMessageNotification
   ) {
-    if (typeof window === 'undefined') return;
     const convKey = conversationId ?? '__default__';
-
-    // A TERMINAL REFUSAL IS KNOWN BEFORE ANY OF THIS, AND ASKING IT PER MESSAGE COSTS THREE LINES A
-    // MESSAGE FOR THE LIFE OF THE SESSION. Measured on HEAL-REVOKE-9 (2026-09-07): 12 inbound
-    // messages produced 33 `[NOTIF]` lines - "while the window is open ... asking", "permission is
-    // \"denied\"; asking", and the throttle firing for notifications that could never be raised.
-    //
-    // The line that claimed to be asking was also FALSE: `requestSystemNotificationPermission` has
-    // no `denied` branch, because a browser will not re-prompt once denied - only the user can
-    // change it in site settings. So the work was a guaranteed no-op narrated as an action.
-    //
-    // Checked BEFORE the throttle on purpose: throttling a notification that cannot be raised
-    // burns the per-conversation window and prints a line about a decision that was never live.
-    // Guarded on `isTauriRuntime` because on native the plugin's permission is the authority and
-    // the web value says nothing - the Tauri branch below is left exactly as it was.
-    if (systemNotificationsBlockedAnnounceOnce()) return;
-
-    const now = Date.now();
-    const lastAt = lastNotifAtByConv.get(convKey) ?? 0;
-    if (now - lastAt < 800) {
-      // EVERY SWALLOWED BRANCH LOGS. Three returns here were silent, so "the user was not notified"
-      // and "the code never got there" were the same observation from outside - which is what made
-      // TAB-1's zero unattributable for a day.
-      console.log(`[NOTIF] Throttled for ${convKey} - ${now - lastAt} ms since the last (800 ms).`);
-      return;
-    }
-    lastNotifAtByConv.set(convKey, now);
+    if (!mayRaise(convKey)) return;
     // ONE BUILDER ON ANDROID, AND IT IS THE RICH ONE. Checked before the plugin rather than
     // inside it: the plugin path below is the WEB implementation, kept because web and desktop
     // have nothing else, and running it here as well is what posted two notifications for one
@@ -668,16 +678,8 @@ export function useNotifications() {
    * first. Throttled per that key, as a message is per conversation.
    */
   async function sendReactionNotification(reaction: NativeReactionNotification) {
-    if (typeof window === 'undefined') return;
     const convKey = reactionNotificationKey(reaction.conversationId);
-    if (systemNotificationsBlockedAnnounceOnce()) return;
-    const now = Date.now();
-    const lastAt = lastNotifAtByConv.get(convKey) ?? 0;
-    if (now - lastAt < 800) {
-      console.log(`[NOTIF] Throttled for ${convKey} - ${now - lastAt} ms since the last (800 ms).`);
-      return;
-    }
-    lastNotifAtByConv.set(convKey, now);
+    if (!mayRaise(convKey)) return;
     if (isAndroidTauriRuntime()) {
       const accepted = await postNativeReactionNotification(reaction);
       console.log(

@@ -15,16 +15,19 @@
  *
  * | | the push | the frame (this file) |
  * | --- | --- | --- |
- * | drawn when | the app is NOT in the foreground | the app IS in the foreground, the conversation off screen |
+ * | drawn when | the app is NOT active | the app IS active, the conversation off screen |
  * | on Android | `handleReactionNotification` | `notifier_message_natif` with `reaction = true` |
  * | on iOS | the extension / `canari_push.mm` | the plain plugin |
  * | on web and desktop | never (no push) | the Notification API / the plugin |
  *
- * DISJOINT BY CONSTRUCTION: the two predicates are one fact read twice - the foreground flag the
- * Android activity and the iOS shell write into the page (`appForeground.ts`) is the same state
- * their push handlers read - and on Android both post under the ONE key `reaction:<groupId>`, so a
- * transition between the two reads replaces rather than doubles. `reactionNotification.test.ts`
- * holds both halves.
+ * DISJOINT BY CONSTRUCTION: the two predicates are one fact read twice - `window.__canariActive`
+ * (`isAppActive`, appForeground.ts), which each shell writes from the very flag its push handlers
+ * drop a foreground push on (`MainActivity.isInForeground`; `canari_ios_is_in_foreground()`, ACTIVE
+ * only - NOT the on-screen `__canariForeground`, which on iOS stays true under Control Center or a
+ * Face ID sheet while the push banner IS presented, the double the review of #3792 found) - and on
+ * Android both post under the ONE key `reaction:<groupId>`, so a transition between the two reads
+ * replaces rather than doubles. `reactionNotification.test.ts` and `appForeground.contract.test.ts`
+ * hold both halves.
  *
  * PURE ON PURPOSE: every fact is passed in, so the whole matrix is asserted without a runtime.
  */
@@ -44,6 +47,8 @@ export interface InboundReaction {
   /** Who reacted - the frame's proven sender. */
   reactorId: string;
   emoji: string;
+  /** The reaction's own instant (`ReactionMsg.at`, the reactor's clock) - the stamp of its line. */
+  at: number;
   /** True when the frame TAKES a reaction back. */
   removed: boolean;
   /**
@@ -77,12 +82,16 @@ export function isLiveDelivery(meta: IncomingDeliveryMeta | undefined): boolean 
  * What one applied reaction frame means for this account's notifications.
  *
  * - `not-mine`: no reaction to a message of mine by someone else - the ordinary frame, said nowhere.
+ * - `unresolved`: a frame that would be news, on a message this device holds on neither its screen
+ *   nor its store, so whether it is MINE cannot be told. Said as a loss: if it is mine, the push was
+ *   dropped in front and nothing announces it (review of #3792 - it used to read as `not-mine`).
  * - `refused`: a reaction to my message that is nevertheless not news - said, because it IS one.
  * - `owed`: a fresh reaction by someone else to my message; the screen decides the rest
  *   ({@link reactionTriggerRefusal}).
  */
 export type InboundReactionVerdict =
   | { kind: 'not-mine'; why: string }
+  | { kind: 'unresolved'; why: string }
   | { kind: 'refused'; why: string }
   | { kind: 'owed' };
 
@@ -96,7 +105,18 @@ export function inboundReactionVerdict(
     return { kind: 'not-mine', why: 'my own reaction, from another device' };
   }
   if (reaction.messageAuthorId === null) {
-    return { kind: 'not-mine', why: 'its message is not on this device' };
+    // Whose message it is cannot be told - but a frame that would be no news even on MY message
+    // loses nothing, and a salon of two hundred would otherwise print a line per heart taken back.
+    if (reaction.removed || !reaction.changed || !reaction.live) {
+      return {
+        kind: 'not-mine',
+        why: 'its message is not on this device, and the frame is no news',
+      };
+    }
+    return {
+      kind: 'unresolved',
+      why: 'its message is on neither the screen nor the store of this device',
+    };
   }
   if (canonicalUserId(reaction.messageAuthorId) !== me) {
     return { kind: 'not-mine', why: 'not a reaction to my message' };
@@ -114,10 +134,11 @@ export function inboundReactionVerdict(
 /** The runtime facts the trigger is decided on, gathered by the caller. */
 export interface ReactionTriggerFacts {
   /**
-   * The foreground flag the shell writes (`isAppInForeground`): the SAME fact the push handlers read
-   * to drop a reaction push. Always true on web and desktop, which have no push to defer to.
+   * The push gate's fact as the shell publishes it (`isAppActive`): the SAME flag the push handlers
+   * read to drop a reaction push - never the on-screen flag, which differs on iOS. Always true on
+   * web and desktop, which have no push to defer to.
    */
-  appInForeground: boolean;
+  appActive: boolean;
   /** Whether the reader can see the conversation (`canSeeArrival`): the bubble then carries it. */
   conversationOnScreen: boolean;
   /** Whether the account's `reactions` category may be pushed (`notificationPreferences.pushAllowed`). */
@@ -133,11 +154,11 @@ export interface ReactionTriggerFacts {
 /**
  * Why the frame trigger does NOT raise this reaction, or null when it does.
  *
- * The foreground term comes FIRST and is what makes this trigger disjoint from the push: a reaction
+ * The active term comes FIRST and is what makes this trigger disjoint from the push: a reaction
  * that lands while the app is not in front is the push's to draw, whatever else is true.
  */
 export function reactionTriggerRefusal(facts: ReactionTriggerFacts): string | null {
-  if (!facts.appInForeground) return 'the app is not in the foreground - the push draws it';
+  if (!facts.appActive) return 'the app is not active - the push draws it';
   if (facts.conversationOnScreen) return 'its conversation is on screen - the bubble shows it';
   if (!facts.reactionsAllowed) return 'the "reactions" category is switched off for this account';
   // A reaction is never a mention, so `mentions` refuses it exactly as `none` does - the server's

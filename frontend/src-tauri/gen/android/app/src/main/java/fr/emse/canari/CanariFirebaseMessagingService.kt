@@ -2221,8 +2221,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          *   not said, and the name rule decides.
          * @param reaction whether this frame is a REACTION to one of this account's messages rather
          *   than a message (2026-11-17): [body] is then the emoji, [senderId] / [senderName] the
-         *   actor, and the post is [showReactionNotification] - the push's own composition, on
-         *   [CHANNEL_REACTIONS] under [reactionNotifKey].
+         *   actor, [sentAt] the reaction's own instant, and the post is [showReactionNotification] -
+         *   the push's own composition, on [CHANNEL_REACTIONS] under [reactionNotifKey].
          */
         @JvmStatic
         fun notifyMessageFromWebSocket(
@@ -2250,7 +2250,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 Log.d(TAG, "notifyMessageFromWebSocket: reaction queued groupId=${groupId.take(8)} actor=${senderId.take(8)}")
                 WS_NOTIF_LANE.execute {
                     try {
-                        context.showReactionNotification(groupId, senderId, senderName, body, suppressInForeground = false)
+                        context.showReactionNotification(groupId, senderId, senderName, body, sentAt, suppressInForeground = false)
                     } catch (e: Exception) {
                         // EVERY SWALLOWED BRANCH LOGS: in the foreground this lane is the only path.
                         Log.e(TAG, "notifyMessageFromWebSocket: reaction build failed for ${groupId.take(8)}: ${throwableSite(e)}")
@@ -2336,13 +2336,18 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * with that conversation off screen, decided in the WebView by `reactionNotification.ts`).
          *
          * Filed on [CHANNEL_REACTIONS] under [reactionNotifKey], so it never overwrites the
-         * conversation's unread message notification, a second reaction UPDATES the first, and a
-         * push and a frame for one reaction - should both ever fire across a foreground transition -
-         * land on one notification rather than two. No quick actions: there is nothing to reply to
+         * conversation's unread message notification and a second reaction UPDATES the first. A push
+         * and a frame for ONE reaction - should both ever fire across a foreground transition - land
+         * on one notification AND one line: both stamp it with the reaction's own instant
+         * ([reactionAt]), which is what `alreadyPosted` in [showMessageNotification] matches on. No quick actions: there is nothing to reply to
          * and nothing to mark read. The sentence is `notif_reaction_body`, the same string for both.
          *
          * @param fallbackName the actor's name when this conversation holds no nickname for them -
          *   the push's title, or the name the WebView resolved.
+         * @param reactionAt the reaction's own instant (`ReactionMsg.at`, the reactor's clock): the
+         *   frame's `at`, and the push's `at` (sent since 2026-11-17). 0 from a reactor predating
+         *   that field - the line is then stamped now, and a push and a frame of that one reaction
+         *   cannot be recognised as one (two lines, two alerts), exactly as before.
          * @param suppressInForeground TRUE for the push, which knows only whether the app is in
          *   front; FALSE for the frame, whose trigger already asked the finer question.
          */
@@ -2351,6 +2356,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             actorId: String,
             fallbackName: String,
             emoji: String,
+            reactionAt: Long,
             suppressInForeground: Boolean = true,
         ) {
             // The actor's nickname in that conversation first (owner, 2026-11-14), else the fallback.
@@ -2367,6 +2373,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 groupId = groupId,
                 channel = CHANNEL_REACTIONS,
                 quickActions = false,
+                sentAt = reactionAt,
                 suppressInForeground = suppressInForeground,
             )
         }
@@ -2893,8 +2900,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // something visible, it is a second announcement of something the user already dismissed.
             //
             // Only where a SENDER'S stamp exists, which is the same condition `alreadyPosted` carries
-            // and for the same reason: a reaction reaches here with `sentAt = 0`, no message of its
-            // own can be identified, and this must never guess. A salon push carried 0 until
+            // and for the same reason: a reaction from a reactor predating `at` reaches here with
+            // `sentAt = 0`, no reaction of its own can be identified, and this must never guess. A salon push carried 0 until
             // 2026-09-22 and now carries `createdAt`.
             //
             // AND NEVER AGAINST A SUPERSEDE, which is the half that would otherwise break the
@@ -6066,8 +6073,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         Log.d(TAG, "reaction: group=${groupId.take(8)} actor=${actorId.take(8)}")
+        // The reaction's own instant, the stamp the frame trigger uses too; absent from an older reactor.
+        val reactionAt = data["at"]?.toLongOrNull() ?: 0L
         // The push's title is the server's name for the actor - the fallback behind their nickname.
-        showReactionNotification(groupId, actorId, data["title"] ?: getString(R.string.app_name), emoji)
+        showReactionNotification(groupId, actorId, data["title"] ?: getString(R.string.app_name), emoji, reactionAt)
     }
 
     // --- Channel (community) message push --------------------------------------

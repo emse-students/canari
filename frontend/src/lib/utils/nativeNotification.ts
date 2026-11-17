@@ -144,6 +144,11 @@ export type NativeReactionNotification = {
   /** The actor's name as this device resolved it - the fallback behind their nickname. */
   actorName: string;
   emoji: string;
+  /**
+   * The reaction's own instant (`ReactionMsg.at`), the stamp of its line: the push carries the same
+   * one (`at`), so whichever trigger arrives second is recognised and adds no line (`alreadyPosted`).
+   */
+  at: number;
 };
 
 /**
@@ -167,7 +172,7 @@ export async function postNativeReactionNotification(
       groupName: '',
       body: reaction.emoji,
       mentionsMe: false,
-      sentAt: 0,
+      sentAt: reaction.at,
       serverAt: 0,
       covers: 1,
       authorProven: false,

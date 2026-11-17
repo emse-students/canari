@@ -1091,6 +1091,7 @@ export async function addReaction(
       emoji,
       messageId,
       actorName: currentUserDisplayName ?? userId,
+      at,
     }).catch(() => {});
   }
   return true;

@@ -109,6 +109,61 @@ describe('the foreground contract between the shells and the page', () => {
     expect(note).toBeLessThan(push.indexOf('CanariQueueNotificationTap(deepLink);', note));
   });
 
+  /**
+   * THE PUSH GATE'S FACT IS PUBLISHED FROM THE PUSH GATE ITSELF (review of #3792). A page trigger that
+   * must never double a push (`isAppActive`, the reaction trigger) reads `window.__canariActive`; if a
+   * shell wrote it from any flag but the one its push handler drops a foreground push on, a reaction
+   * under Control Center was announced twice - the banner, and the page's own.
+   */
+  it('Android writes __canariActive from the flag its push gate reads, in the same publish', () => {
+    const push = readFileSync(
+      'src-tauri/gen/android/app/src/main/java/fr/emse/canari/CanariFirebaseMessagingService.kt',
+      'utf8'
+    );
+    expect(push).toContain('if (MainActivity.isInForeground && !showsWhileForeground) {');
+    expect(android).toContain(
+      'val js = "window.__canariForeground=$foreground;window.__canariActive=$foreground;" +'
+    );
+    // ...and every publish hands it `isInForeground` as it now stands.
+    const calls = [...android.matchAll(/^\s*pushForeground\((.*)\)$/gm)].map((m) => m[1]);
+    expect(calls).toEqual(['isInForeground', 'true, opening', 'false']);
+    const resume = android.slice(android.indexOf('override fun onResume()'));
+    expect(resume.indexOf('isInForeground = true')).toBeLessThan(
+      resume.indexOf('pushForeground(true, opening)')
+    );
+    const pause = android.slice(android.indexOf('override fun onPause()'));
+    expect(pause.indexOf('isInForeground = false')).toBeLessThan(
+      pause.indexOf('pushForeground(false)')
+    );
+  });
+
+  it('iOS writes __canariActive from canari_ios_is_in_foreground(), every time that flag moves', () => {
+    const push = readFileSync('src-tauri/gen/apple/Sources/canari/canari_push.mm', 'utf8');
+    // The push gate: `willPresent` handles (and does not present) a push only while this is true.
+    expect(push).toMatch(
+      /\n {2}if \(canari_ios_is_in_foreground\(\)\) \{\n {4}CanariPushProcessRemoteNotificationUserInfo\(/
+    );
+    expect(ios).toContain('bool canari_ios_is_in_foreground(void) { return g_isInForeground; }');
+    const publisher = objcBody(ios, 'static void CanariPublishActive(void) {');
+    expect(publisher).toContain('canari_ios_is_in_foreground() ? @"true" : @"false"');
+    expect(publisher).toContain('@"window.__canariActive=%@;"');
+    // NOT the on-screen flag, which stays true under Control Center while the banner is presented.
+    expect(publisher).not.toContain('g_isOnScreen');
+    // Every assignment of the flag is followed, in its own function, by the publish.
+    const assignments = [...ios.matchAll(/\n {2}g_isInForeground = (true|false);/g)];
+    expect(assignments).toHaveLength(2);
+    for (const a of assignments) {
+      const rest = ios.slice(a.index, ios.indexOf('\n}\n', a.index));
+      expect(rest, a[0]).toContain('CanariPublishActive();');
+    }
+    // ...and a page loaded after the last move is told too.
+    const loadObserver = ios.slice(
+      ios.indexOf('@implementation CanariLoadObserver'),
+      ios.indexOf('@end', ios.indexOf('@implementation CanariLoadObserver'))
+    );
+    expect(loadObserver).toContain('CanariPublishActive();');
+  });
+
   it('iOS never publishes from the ACTIVE pair handlers: a Face ID sheet does not take the app off screen', () => {
     for (const signature of [
       'static void CanariOnDidBecomeActive(',

@@ -272,6 +272,8 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
       onJoinAsk: deps.onJoinAsk,
       onJoinAskSettled: deps.onJoinAskSettled,
       onInboundReaction: deps.onInboundReaction,
+      storage: deps.storage,
+      deviceKey: deps.deviceKey,
     });
   };
 
@@ -1394,6 +1396,7 @@ async function handleKnownGroup({
         messageId: msg.reaction.messageId ?? '',
         reactorId: sender,
         emoji: msg.reaction.emoji ?? '',
+        at: Number(msg.reaction.at ?? 0),
         removed: msg.reaction.removed === true,
         changed: outcome.changed,
         messageAuthorId: outcome.messageAuthorId,

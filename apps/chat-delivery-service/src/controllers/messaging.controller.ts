@@ -653,6 +653,12 @@ export class MessagingController {
       /** The reacted-to message, so the device can find its own copy. Never its content. */
       messageId?: string;
       actorName: string;
+      /**
+       * The reaction's own instant (`ReactionMsg.at`, the reactor's clock), so the author's device
+       * recognises a push and a WebSocket frame for the SAME reaction (Android's `alreadyPosted`).
+       * Absent from a client predating it: the push then carries no `at`, as before.
+       */
+      at?: number;
     }
   ): Promise<{ sent: number; failed: number }> {
     if (!callerId) throw new BadRequestException('x-user-id header required');
@@ -666,6 +672,9 @@ export class MessagingController {
 
     const emoji = String(body.emoji ?? '').slice(0, 20);
     const actor = String(body.actorName ?? callerId).slice(0, 100);
+    // Forwarded only as a positive integer of ms: anything else is a client's bug, never a stamp.
+    const at = Number(body.at);
+    const stamp = Number.isSafeInteger(at) && at > 0 ? { at: String(at) } : {};
 
     // Legacy body only - carries the emoji and the actor, never the message. Clients that
     // understand `reaction` compose their own from `strings.xml` / `Localizable.strings`.
@@ -681,6 +690,7 @@ export class MessagingController {
       // The ACTOR, so the device can fetch their avatar - the message path needs it and the
       // social path never carried one.
       senderId: callerId,
+      ...stamp,
     });
   }
 }

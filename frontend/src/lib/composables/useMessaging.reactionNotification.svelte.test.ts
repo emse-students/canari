@@ -70,18 +70,25 @@ const REACTION: InboundReaction = {
   messageId: 'msg-1',
   reactorId: PEER,
   emoji: '❤️',
+  at: 1_700_000_000_123,
   removed: false,
   changed: true,
   messageAuthorId: ME,
   live: true,
 };
 
-/** The phone's own foreground fact - the one its push handler reads too. */
-function foreground(value: boolean | undefined) {
+/**
+ * The phone's two shell facts: on screen (`__canariForeground`) and ACTIVE (`__canariActive`, the
+ * one its push handler reads). Android writes both from one flag; iOS's differ under Control Center.
+ */
+function foreground(value: boolean | undefined, active: boolean | undefined = value) {
   Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' });
   vi.spyOn(document, 'hasFocus').mockReturnValue(true);
-  if (value === undefined) delete (window as unknown as Record<string, unknown>).__canariForeground;
-  else (window as unknown as Record<string, unknown>).__canariForeground = value;
+  const w = window as unknown as Record<string, unknown>;
+  if (value === undefined) delete w.__canariForeground;
+  else w.__canariForeground = value;
+  if (active === undefined) delete w.__canariActive;
+  else w.__canariActive = active;
 }
 
 describe('the frame trigger of a reaction to my message', () => {
@@ -105,6 +112,7 @@ describe('the frame trigger of a reaction to my message', () => {
       actorId: PEER,
       actorName: 'Peer',
       emoji: '❤️',
+      at: 1_700_000_000_123,
     });
   });
 
@@ -120,7 +128,23 @@ describe('the frame trigger of a reaction to my message', () => {
 
     expect(sendReactionNotification).not.toHaveBeenCalled();
     expect(console.log).toHaveBeenCalledWith(
-      expect.stringContaining('the app is not in the foreground - the push draws it')
+      expect.stringContaining('the app is not active - the push draws it')
+    );
+  });
+
+  it('NEVER DOUBLES THE PUSH: an iPhone on screen but INACTIVE (Control Center, Face ID) is left to the push', async () => {
+    // `willPresent` PRESENTS the banner exactly then (`canari_ios_is_in_foreground()` is false) while
+    // the on-screen flag still says true: the trigger must read the push gate's fact, not that one.
+    const messaging = useMessaging();
+    const { ctx, sendReactionNotification } = makeContext();
+    foreground(true, false);
+
+    messaging.notifyInboundReaction(REACTION, ctx);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(sendReactionNotification).not.toHaveBeenCalled();
+    expect(console.log).toHaveBeenCalledWith(
+      expect.stringContaining('the app is not active - the push draws it')
     );
   });
 
@@ -183,6 +207,21 @@ describe('the frame trigger of a reaction to my message', () => {
 
     expect(sendReactionNotification).not.toHaveBeenCalled();
     expect(console.log).not.toHaveBeenCalledWith(expect.stringContaining('[NOTIF] Reaction'));
+  });
+
+  it('SAYS, as a loss, a fresh reaction on a message this device holds nowhere - never "not mine"', async () => {
+    const messaging = useMessaging();
+    const { ctx, sendReactionNotification } = makeContext();
+    foreground(true);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    messaging.notifyInboundReaction({ ...REACTION, messageAuthorId: null }, ctx);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(sendReactionNotification).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('whether it is to my message is unknown')
+    );
   });
 
   it('web and desktop have no push, so a hidden tab is told', async () => {

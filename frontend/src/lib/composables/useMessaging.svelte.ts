@@ -7,7 +7,7 @@
  * - File selection + validation
  */
 import { sendFrameFromThisTab } from '$lib/mls-client/frameFromAnyTab';
-import { isAppInForeground } from '$lib/utils/appForeground';
+import { isAppActive, isAppInForeground } from '$lib/utils/appForeground';
 import { isSalonMuted } from '$lib/utils/chat/salonUnread';
 import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { SvelteMap, SvelteDate, SvelteSet } from 'svelte/reactivity';
@@ -839,8 +839,8 @@ export function useMessaging() {
    * other screen notified nobody (owner, 2026-11-17). Called for every reaction frame applied, DM,
    * group or salon; the decision is `reactionNotification.ts`, whose matrix is asserted beside it.
    *
-   * NEVER THE PUSH'S DOUBLE: the push is drawn only while the app is NOT in the foreground, this only
-   * while it IS (the same shell-written flag), and only for a LIVE frame - a catch-up on resume may
+   * NEVER THE PUSH'S DOUBLE: the push is drawn only while the app is NOT active, this only while it
+   * IS (`isAppActive`: the shell publishes the push gate's own flag), and only for a LIVE frame - a catch-up on resume may
    * carry a reaction the push already announced in the background.
    */
   function notifyInboundReaction(reaction: InboundReaction, ctx: MessagingContext): void {
@@ -850,6 +850,14 @@ export function useMessaging() {
     // The ordinary frame - a reaction to someone else's message - is said nowhere: a salon of two
     // hundred would print a line per heart. A reaction to MINE that is not news is said.
     if (verdict.kind === 'not-mine') return;
+    if (verdict.kind === 'unresolved') {
+      // A LOSS, SAID AS ONE: if this was a reaction to my message, the push was dropped in front
+      // and nothing else announces it.
+      console.warn(
+        `[NOTIF] Reaction ${tag} - ${verdict.why}: whether it is to my message is unknown, so nothing is raised.`
+      );
+      return;
+    }
     if (verdict.kind === 'refused') {
       console.log(`[NOTIF] Reaction to my message ${tag} - ${verdict.why}; nothing raised.`);
       return;
@@ -858,7 +866,7 @@ export function useMessaging() {
     const convo = ctx.conversations.get(key);
     const isSalon = key.startsWith('channel_');
     const refusal = reactionTriggerRefusal({
-      appInForeground: isAppInForeground(),
+      appActive: isAppActive(),
       conversationOnScreen: canSeeArrival(ctx, key),
       reactionsAllowed: notificationPreferences.pushAllowed('reactions'),
       // A salon's level is not the server's to apply to a reaction, so neither is it this trigger's
@@ -897,6 +905,7 @@ export function useMessaging() {
           actorId: reaction.reactorId,
           actorName,
           emoji: reaction.emoji,
+          at: reaction.at,
         })
       )
       .catch((e: unknown) =>

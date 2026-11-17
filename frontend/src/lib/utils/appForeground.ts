@@ -47,6 +47,30 @@ export function isAppInForeground(): boolean {
   return typeof value === 'boolean' ? value : true;
 }
 
+/** The global each phone shell writes from the very flag its push handlers read (see below). */
+const ACTIVE_FLAG = '__canariActive';
+
+/**
+ * True when the phone's PUSH HANDLERS treat the app as in front - and so drop a message or reaction
+ * push, leaving the page to announce it. NOT {@link isAppInForeground}, and on iOS the two differ:
+ * the push gate is `canari_ios_is_in_foreground()`, ACTIVE only (false from `willResignActive`, so
+ * under Control Center, Notification Center or a Face ID sheet the push banner IS presented), while
+ * `__canariForeground` is the on-screen fact (false only from `didEnterBackground`). A trigger that
+ * must never double a push reads THIS, the same fact the push reads (owner review of #3792):
+ * `canari_ios.mm` publishes `window.__canariActive` from `canari_ios_is_in_foreground()` on the
+ * active pair and on every page load; Android's activity writes it beside `__canariForeground`,
+ * both from `MainActivity.isInForeground`, which is its push gate. `appForeground.contract.test.ts`
+ * holds both shells to it.
+ *
+ * READ, NEVER CACHED, for the reason {@link isAppInForeground} gives. Returns `true` when the global
+ * is absent - web and desktop, which have no push to defer to.
+ */
+export function isAppActive(): boolean {
+  if (typeof window === 'undefined') return true;
+  const value = (window as unknown as Record<string, unknown>)[ACTIVE_FLAG];
+  return typeof value === 'boolean' ? value : true;
+}
+
 /**
  * Calls `onChange` whenever the app moves between foreground and background.
  *

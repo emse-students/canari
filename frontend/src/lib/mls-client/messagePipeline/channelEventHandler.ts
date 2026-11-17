@@ -45,6 +45,8 @@ export interface ChannelEventContext extends Pick<
   | 'onWorkspaceDeleted'
   | 'onChannelMessageDeleted'
   | 'onInboundReaction'
+  | 'storage'
+  | 'deviceKey'
   | 'log'
 > {
   /** Called when a commit is rejected (desynced epoch) - triggers a re-add request. */
@@ -500,19 +502,21 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
             );
             // The frame trigger of a reaction notification. A salon frame on this path is LIVE by
             // construction - the server fans it out the moment it is posted; a page of history is
-            // read by `useConversations`, which raises nothing. The author is the row's proven
-            // sender as this device shows it; a row not loaded here names nobody.
-            const target = conversations.get(channelId)?.messages.find((m) => m.id === targetId);
-            onInboundReaction?.({
-              conversationKey: channelId,
-              messageId: targetId,
-              reactorId,
-              emoji: String(msg.reaction.emoji ?? ''),
-              removed: msg.reaction.removed === true,
-              changed,
-              messageAuthorId: target?.senderId ?? null,
-              live: true,
-            });
+            // read by `useConversations`, which raises nothing. Only a frame someone listens for
+            // pays for the author's lookup.
+            if (onInboundReaction) {
+              onInboundReaction({
+                conversationKey: channelId,
+                messageId: targetId,
+                reactorId,
+                emoji: String(msg.reaction.emoji ?? ''),
+                at: Number(msg.reaction.at ?? 0),
+                removed: msg.reaction.removed === true,
+                changed,
+                messageAuthorId: await salonMessageAuthor(channelId, targetId, ctx),
+                live: true,
+              });
+            }
             return;
           }
           // An edit is a silent row as well, and changes a bubble instead of adding one. The
@@ -661,6 +665,39 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
   // informs, and it can never fire on a matched pair.
   log(`[ERROR] Unhandled channel event type: ${event?.type}`);
   console.error('[Channel Event] no handler for type', event?.type);
+}
+
+/**
+ * The author of a salon row a reaction landed on, read where the MLS path reads it
+ * (`applyReactionFrame`): the window in memory, then the salon's stored page (`storeSalonPage` in
+ * `useConversations`), which holds the last page drawn in an earlier session - so a reaction to my
+ * message in a salon not opened THIS session is still recognised as one (review of #3792). Null
+ * only when neither holds the row; the trigger then says so (`inboundReactionVerdict`, `unresolved`).
+ */
+async function salonMessageAuthor(
+  channelId: string,
+  messageId: string,
+  ctx: Pick<ChannelEventContext, 'conversations' | 'storage' | 'deviceKey'>
+): Promise<string | null> {
+  const shown = ctx.conversations.get(channelId)?.messages.find((m) => m.id === messageId);
+  if (shown) return shown.senderId;
+  // A null is never silent: the trigger says it, as `unresolved`, when the frame would be news.
+  if (!ctx.storage) return null;
+  try {
+    const found = await ctx.storage.getMessagesByIds(channelId, [messageId], ctx.deviceKey());
+    if (found.unreadable.has(messageId)) {
+      console.warn(
+        `[REACTION] ${messageId.slice(0, 8)} is stored under a key this device cannot open - its author is unknown`
+      );
+      return null;
+    }
+    return found.rows.get(messageId)?.senderId ?? null;
+  } catch (e) {
+    console.warn(
+      `[REACTION] the stored row of ${messageId.slice(0, 8)} could not be read - its author is unknown: ${String(e)}`
+    );
+    return null;
+  }
 }
 
 /** Whether `value` is one of the three salon write policies. */

@@ -28,6 +28,7 @@ const FRESH: InboundReaction = {
   messageId: 'msg-1',
   reactorId: PEER,
   emoji: '❤️',
+  at: 1_700_000_000_123,
   removed: false,
   changed: true,
   messageAuthorId: ME,
@@ -48,9 +49,28 @@ describe('inboundReactionVerdict - the frame alone', () => {
   it.each([
     ['my own reaction from another device', { reactorId: ME }],
     ['a reaction to somebody else', { messageAuthorId: PEER }],
-    ['a reaction to a message this device holds no copy of', { messageAuthorId: null }],
+    [
+      'a removal on a message this device holds no copy of',
+      { messageAuthorId: null, removed: true },
+    ],
+    [
+      'a replay on a message this device holds no copy of',
+      { messageAuthorId: null, changed: false },
+    ],
+    [
+      'a catch-up on a message this device holds no copy of',
+      { messageAuthorId: null, live: false },
+    ],
   ] as const)('is not about me: %s', (_, change) => {
     expect(inboundReactionVerdict({ ...FRESH, ...change }, ME).kind).toBe('not-mine');
+  });
+
+  it('NEVER CALLS "NOT MINE" WHAT IT CANNOT TELL: fresh news on a message held nowhere is unresolved', () => {
+    // If it is mine, the push was dropped in front and nothing announces it - a loss, said as one.
+    expect(inboundReactionVerdict({ ...FRESH, messageAuthorId: null }, ME)).toEqual({
+      kind: 'unresolved',
+      why: 'its message is on neither the screen nor the store of this device',
+    });
   });
 
   it.each([
@@ -75,7 +95,7 @@ describe('isLiveDelivery', () => {
 
 describe('reactionTriggerRefusal - the screen', () => {
   const OPEN: ReactionTriggerFacts = {
-    appInForeground: true,
+    appActive: true,
     conversationOnScreen: false,
     reactionsAllowed: true,
     level: 'all',
@@ -87,7 +107,7 @@ describe('reactionTriggerRefusal - the screen', () => {
     expect(reactionTriggerRefusal({ ...OPEN, level: undefined })).toBeNull();
   });
 
-  it('NEVER RAISES IT WHILE THE APP IS NOT IN THE FOREGROUND - whatever else is true', () => {
+  it('NEVER RAISES IT WHILE THE APP IS NOT ACTIVE - whatever else is true', () => {
     // The push draws a reaction exactly then; every cell of the rest of the matrix is walked so no
     // later term can reopen the overlap.
     for (const conversationOnScreen of [false, true]) {
@@ -95,12 +115,12 @@ describe('reactionTriggerRefusal - the screen', () => {
         for (const level of ['all', 'mentions', 'none', undefined] as const) {
           expect(
             reactionTriggerRefusal({
-              appInForeground: false,
+              appActive: false,
               conversationOnScreen,
               reactionsAllowed,
               level,
             })
-          ).toBe('the app is not in the foreground - the push draws it');
+          ).toBe('the app is not active - the push draws it');
         }
       }
     }
@@ -147,10 +167,9 @@ describe('the push half is the exact complement', () => {
   });
 
   it('Android: the flag the WebView reads is the one that guard reads', () => {
-    // `isAppInForeground` reads `window.__canariForeground`, which the activity writes from the same
-    // `isInForeground` (`appForeground.contract.test.ts` holds the transitions).
-    expect(mainActivity).toContain('isInForeground');
-    expect(mainActivity).toContain('__canariForeground');
+    // `isAppActive` reads `window.__canariActive`, which the activity writes from the same
+    // `isInForeground` (`appForeground.contract.test.ts` holds both shells and every transition).
+    expect(mainActivity).toContain('window.__canariActive=$foreground;');
   });
 
   it('Android: both triggers post the ONE composition, under the ONE key', () => {
@@ -161,16 +180,29 @@ describe('the push half is the exact complement', () => {
     );
     expect(reactionNotificationKey('grp-1')).toBe('reaction:grp-1');
     expect(kotlin).toMatch(
-      /showReactionNotification\(groupId, actorId, data\["title"\] \?: getString\(R\.string\.app_name\), emoji\)/
+      /showReactionNotification\(groupId, actorId, data\["title"\] \?: getString\(R\.string\.app_name\), emoji, reactionAt\)/
     );
     expect(kotlin).toContain(
-      'context.showReactionNotification(groupId, senderId, senderName, body, suppressInForeground = false)'
+      'context.showReactionNotification(groupId, senderId, senderName, body, sentAt, suppressInForeground = false)'
     );
     // The composition files a reaction on its own channel, without the message actions.
     const composer = kotlin.slice(kotlin.indexOf('internal fun Context.showReactionNotification('));
     expect(composer.slice(0, composer.indexOf('\n        }\n'))).toMatch(
-      /channel = CHANNEL_REACTIONS,\s*quickActions = false,\s*suppressInForeground = suppressInForeground,/
+      /channel = CHANNEL_REACTIONS,\s*quickActions = false,\s*sentAt = reactionAt,\s*suppressInForeground = suppressInForeground,/
     );
+  });
+
+  it("Android: both triggers stamp the line with the reaction's own instant, so the second adds none", () => {
+    // `alreadyPosted` matches a line by its stamp and only when it is > 0: a reaction stamped 0 on
+    // either path would add a second line and alert twice (review of #3792).
+    expect(kotlin).toContain(
+      'val alreadyPosted = sentAt > 0 && style.messages.any { it.timestamp == stamp }'
+    );
+    // The push: the `at` the server forwards from the reactor (`notify-reaction`).
+    expect(kotlin).toContain('val reactionAt = data["at"]?.toLongOrNull() ?: 0L');
+    // The frame: the `at` of its own `ReactionMsg`, handed down as `sentAt`.
+    const native = readFileSync(resolve(here, '../nativeNotification.ts'), 'utf8');
+    expect(native).toContain('sentAt: reaction.at,');
   });
 
   it('iOS drops a reaction push in the foreground, before it reaches the reaction branch', () => {

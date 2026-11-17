@@ -2047,6 +2047,96 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
   });
 
   /**
+   * THE FRAME TRIGGER OF A REACTION NOTIFICATION (review of #3792): every applied reaction frame is
+   * handed to `onInboundReaction` with what `applyReactionFrame` established - whether it changed
+   * anything, whose message it landed on (the shown row, else the STORED row) - and whether it came
+   * live (`isLiveDelivery`). The decision is the caller's; these pin what it is told.
+   */
+  describe('a reaction frame is handed to onInboundReaction', () => {
+    const REACTION = { messageId: 'm-mine', emoji: '+1', at: 1_700_000_000_123, removed: false };
+
+    async function deliver(
+      opts: { shown: boolean; meta?: Record<string, unknown>; stored?: unknown },
+      frames = 1
+    ) {
+      const mine = { id: 'm-mine', senderId: 'user-a', content: 'hi' } as any;
+      const onInboundReaction = vi.fn();
+      const deps = baseDeps({
+        conversations: createTestConversations([
+          [groupId, emptyConversation(groupId, { messages: opts.shown ? [mine] : [] })],
+        ]),
+        storage: {
+          mergeMessages: vi.fn(async (_c: string, ids: string[]) => new Set(ids)),
+          getMessagesByIds: vi.fn(async () => ({
+            rows: new Map(opts.stored ? [['m-mine', opts.stored]] : []),
+            unreadable: new Set(),
+          })),
+        },
+        onInboundReaction,
+      });
+      const mls = deps.mlsService as any;
+      mls.processIncomingMessage = vi
+        .fn()
+        .mockResolvedValue({ plaintext: new Uint8Array([7]), author: 'unsigned' });
+      mls.getLocalGroups = vi.fn().mockReturnValue([groupId]);
+      setupMessageHandler(deps as any);
+      const onMsg = mls.onMessage.mock.calls[0][0];
+      for (let i = 0; i < frames; i++) {
+        vi.mocked(codec.decodeAppMessage).mockReturnValueOnce({
+          reaction: REACTION,
+          messageId: `mid-r-${i}`,
+        } as any);
+        await onMsg('Peer', new Uint8Array([1]), groupId, false, undefined, false, opts.meta);
+      }
+      return onInboundReaction;
+    }
+
+    it('tells a LIVE fresh reaction to my shown message, with its author and its own instant', async () => {
+      const seen = await deliver({ shown: true, meta: { channel: 'live' } });
+      expect(seen).toHaveBeenCalledTimes(1);
+      expect(seen).toHaveBeenCalledWith({
+        conversationKey: groupId,
+        messageId: 'm-mine',
+        reactorId: 'peer',
+        emoji: '+1',
+        at: 1_700_000_000_123,
+        removed: false,
+        changed: true,
+        messageAuthorId: 'user-a',
+        live: true,
+      });
+    });
+
+    it('names the author from the STORED row when the message is not in memory', async () => {
+      const seen = await deliver({
+        shown: false,
+        meta: { channel: 'live' },
+        stored: { id: 'm-mine', senderId: 'user-a', content: 'hi', reactions: [] },
+      });
+      expect(seen.mock.calls[0][0]).toMatchObject({ changed: true, messageAuthorId: 'user-a' });
+    });
+
+    it('names nobody, and changes nothing, for a message held neither shown nor stored', async () => {
+      const seen = await deliver({ shown: false, meta: { channel: 'live' } });
+      expect(seen.mock.calls[0][0]).toMatchObject({ changed: false, messageAuthorId: null });
+    });
+
+    it('says a replay changed nothing', async () => {
+      const seen = await deliver({ shown: true, meta: { channel: 'live' } }, 2);
+      expect(seen.mock.calls.map((c) => c[0].changed)).toEqual([true, false]);
+    });
+
+    it.each([
+      ['a pulled row', { channel: 'pull' }],
+      ['a frame ahead of an unlisted mailbox', { channel: 'live', aheadOfMailbox: true }],
+      ['a frame with no delivery facts', undefined],
+    ])('marks %s as not live', async (_, meta) => {
+      const seen = await deliver({ shown: true, meta });
+      expect(seen.mock.calls[0][0].live).toBe(false);
+    });
+  });
+
+  /**
    * AN UNDECODABLE PAYLOAD IS ACKNOWLEDGED, AND THAT IS THE ONLY DISPOSITION THAT TERMINATES.
    *
    * `false` from this handler keeps the row in `queued_message` so it is replayed once the group or

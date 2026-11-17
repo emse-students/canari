@@ -303,6 +303,22 @@ describe('the relay routes refuse a caller with no seat in the group they name',
       );
     });
 
+    it("carries the reaction's own instant, so the author's device dedups a push against its frame", async () => {
+      await controller.notifyReaction(MEMBER, { ...reaction(GROUP), at: 1_700_000_000_123 });
+      expect(push).toHaveBeenCalledWith(
+        AUTHOR,
+        'Someone',
+        expect.any(String),
+        expect.objectContaining({ at: '1700000000123' })
+      );
+    });
+
+    it('forwards no instant when none, or no valid one, is given', async () => {
+      await controller.notifyReaction(MEMBER, reaction(GROUP));
+      await controller.notifyReaction(MEMBER, { ...reaction(GROUP), at: -5 });
+      for (const call of push.mock.calls) expect(call[3]).not.toHaveProperty('at');
+    });
+
     it('refuses a caller with no seat, and pushes nothing', async () => {
       await expect(
         refusalOf(controller.notifyReaction(STRANGER, reaction(GROUP)))
