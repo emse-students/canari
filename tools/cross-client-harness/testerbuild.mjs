@@ -3,8 +3,9 @@
  * BUILT FOR DEV - the provenance `apkbuild.mjs` records for an APK this rig built, for one it did not.
  *
  * WHY IT EXISTS (coordinator, 2026-10-27). A Play-signed build cannot be replaced by the rig's own
- * APK (the signatures differ, and an uninstall is never taken), so a phone moved onto the tester
- * build stays on it - and `pin.mjs` refuses an app whose bundle no record vouches for
+ * APK (the signatures differ, and only an uninstall crosses that line - allowed on the bench phones
+ * since 2026-11-16, but never taken by the rig on its own), so a phone moved onto the tester build
+ * stays on it - and `pin.mjs` refuses an app whose bundle no record vouches for
  * (`appBundleVerdict`: `unrecorded`). The tester build's provenance is not on this machine: it is in
  * the release that shipped it. This module reads it there and writes the same record a rig build
  * writes, with `source: 'play-tester'`, so every reader of `a1-builds.ndjson` keeps one join.

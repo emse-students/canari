@@ -2232,8 +2232,9 @@ orders this; the guards make it hold without relying on that order.
 vault ("deconnecter seulement, garder l'etat", see `handlePinSignOut`). So a device signed out with
 "Rester connecte" ticked unlocks WITHOUT its PIN after the next sign-in of the SAME account (another
 account never sees that slot - [the vault names its account](#the-vault-names-its-account---fixed-2026-10-14)) - the
-vault was never cleared by any live path, `v1.2.6` included. Whether a sign-out should end "Rester
-connecte" is a decision for the user, not a defect of this fix.
+vault was never cleared by any live path, `v1.2.6` included. Why that is the design and not a defect,
+and where its guarantee ends, is on
+[sessions](../../sessions.md#a-sign-out-keeps-rester-connecte-sur-cet-appareil-by-design-2026-11-16).
 
 ### An account deletion wipes THAT account's local database and vault slot (WP-DEL-LOCAL, 2026-10-18)
 
