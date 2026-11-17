@@ -4612,7 +4612,7 @@ a DM's new row, and the "already held" Welcome of a group joined in the backgrou
 already has a seed keeps it - a re-Welcome (a re-add, a repair) does not move a conversation. A
 Welcome with no server time is ACCUSED at warn and invents nothing. Tests:
 `setupMessageHandler.test.ts` ("a Welcome orders the joined conversation by the server time of its
-admission"). Reading owed: [the entry](../../backlog.d/reading-owed-a-group-joined-with-the-list-in-front-is-ordered-by-its-admission.md).
+admission"). Read on the Mi 9T on `1.7.0-alpha.7` (2026-11-17, [readings](../../device-verification.md#the-mi-9t-readings-of-2026-11-17-170-alpha7-the-envoyer-a-retakes-on-section-22s-screens)): the row was on the first screen within seconds; the entry is deleted.
 
 ## A catch-up batch is merged with ONE sort (2026-10-12)
 
