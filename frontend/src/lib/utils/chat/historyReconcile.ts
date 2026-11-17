@@ -103,8 +103,10 @@ export function raiseReconcile(
     pending.absorbed++;
     return pending.done;
   }
-  // THE FRAME IS THE PROOF, so it is recorded before the ask that carries it.
+  // THE FRAME IS THE PROOF, so it is recorded before the ask that carries it - and a NEW frame
+  // widens the gap every recorded agreement was measured against, so it re-opens the walk.
   openUnrepairedProof(groupId);
+  reopenWalkOnNewLoss(groupId, log);
   const entry = { done: Promise.resolve(false), absorbed: 0 };
   raised.set(groupId, entry);
   entry.done = reconcileGroup(mlsService, groupId, log).finally(() => {
@@ -169,6 +171,27 @@ const unrepaired = new Map<string, Set<string>>();
  */
 function openUnrepairedProof(groupId: string): void {
   if (!unrepaired.has(groupId)) unrepaired.set(groupId, new Set());
+}
+
+/**
+ * A frame this device had never seen was just LOST: the members that said they hold nothing we lack
+ * are no longer excluded.
+ *
+ * **Their answers compared against a smaller gap.** `history_cannot_repair` states that a member
+ * holds nothing in our window that we lack - and a frame lost AFTER that answer is a message we now
+ * lack, held first of all by its sender. Keeping the set would skip exactly that member: a walk that
+ * had already ended on `no_peer_online` would answer every later loss with the same empty election,
+ * for the rest of the session, while the holder sat online (review of #3762). Only a live loss does
+ * this: a replay (`escalateReconciliation`) re-accuses frames the walk already asked about, so it
+ * keeps the set, and a burst is one call here because `raiseReconcile` absorbs the rest.
+ */
+function reopenWalkOnNewLoss(groupId: string, log: (msg: string) => void): void {
+  const cannotRepair = unrepaired.get(groupId);
+  if (!cannotRepair || cannotRepair.size === 0) return;
+  log(
+    `[HISTORY_RECONCILE] a new frame of ${groupId.slice(0, 8)}… was lost - the ${cannotRepair.size} member(s) that held nothing we lacked may hold it, eligible again`
+  );
+  cannotRepair.clear();
 }
 
 /** Whether this device holds an open proof of incompleteness for `groupId` (see {@link unrepaired}). */

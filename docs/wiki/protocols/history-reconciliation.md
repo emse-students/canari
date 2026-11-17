@@ -3133,7 +3133,7 @@ Three earlier attempts to carry "this group is incomplete" across an exchange we
 | | |
 | --- | --- |
 | WHAT | per group: an entry exists while this device holds a frame it cannot read and no repair has landed since; its set names the members that ANSWERED an ask carrying that proof with `history_cannot_repair`. A member that said nothing is never in it. |
-| opened by | an evidence edge only: `raiseReconcile` (a live `LOST frame`) and `escalateReconciliation` (a replay's unreadable frames) |
+| opened by | an evidence edge only: `raiseReconcile` (a live `LOST frame`) and `escalateReconciliation` (a replay's unreadable frames). A LIVE loss (`raiseReconcile`) also EMPTIES the set: a frame lost after the answers is a message their senders may hold, and keeping them excluded ended every later ask of the session on an empty election (review of #3762). A replay re-accuses frames already asked about and keeps it |
 | HOW LONG | in memory, until discharged. The next boot replays the frames and proves the gap again |
 | WHAT discharges it | `noteRepairLanded`: a `history_bundle` that ADDED messages to this group's store. An agreement compares two stores; once a repair changed ours, every recorded agreement was about a store we no longer have. Never a peer's statement, never the window, never a clock. Also `forgetGroupReconciliation` and the session reset |
 

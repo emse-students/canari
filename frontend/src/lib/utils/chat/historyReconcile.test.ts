@@ -1338,6 +1338,39 @@ describe('a member that holds nothing we lack - the walk is driven by its ANSWER
     expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(1);
   });
 
+  it('a frame LOST after the walk ended re-opens it - its sender may be a member that had agreed', async () => {
+    // Review of #3762: W3 and W1 said they held nothing we lacked and the walk ended on the server's
+    // proof. Then a NEW frame from W3 is lost. W3 holds that message; an ask that still excluded it
+    // would end on the same empty election for the rest of the session.
+    const mls = elections(
+      { target: W3 },
+      { target: W1 },
+      { noPeerOnline: true, excludedOnline: 2 },
+      { target: W3 }
+    );
+    const now = Date.now();
+    await raiseReconcile(mls, GROUP, log);
+    await noteCannotRepair(mls, GROUP, W3, log, now);
+    await noteCannotRepair(mls, GROUP, W1, log, now);
+
+    await raiseReconcile(mls, GROUP, log);
+
+    expect(mls.sendHistoryRequest.mock.calls[3][1]).toEqual({ exclude: [] });
+    expect(probe).toHaveBeenLastCalledWith(GROUP, { incomplete: true });
+    expect(log.mock.calls.flat().join(' | ')).toContain('eligible again');
+  });
+
+  it('a REPLAY of frames already asked about keeps the members that agreed excluded', async () => {
+    const mls = elections({ target: W3 }, { target: W1 });
+    const now = Date.now();
+    await raiseReconcile(mls, GROUP, log);
+    await noteCannotRepair(mls, GROUP, W3, log, now);
+
+    await escalateReconciliation(mls, GROUP, log, now + 120_000);
+
+    expect(mls.sendHistoryRequest.mock.calls[2][1]).toEqual({ exclude: [W3] });
+  });
+
   it('forgets the proof with the conversation', async () => {
     const mls = elections({ target: W3 });
     await raiseReconcile(mls, GROUP, log);
