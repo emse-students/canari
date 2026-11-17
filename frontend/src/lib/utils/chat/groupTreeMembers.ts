@@ -83,11 +83,12 @@ export async function refreshGroupTreeMembers(groupId: string, why: string): Pro
   } catch (e) {
     if (latestRead.get(groupId) !== seq) return;
     // A HELD group that cannot be read is a fault (WASM not ready, a corrupt group), never an
-    // ordinary state: said at warn, and NOT recorded as read so the next sight tries again.
+    // ordinary state: said at warn. It STAYS recorded as asked (the failure mark): a render must
+    // never drive the retry, or every list recompute would read WASM and warn again for the whole
+    // session. The retry is the next commit or Welcome (`noteGroupTreeChanged`), one read per event.
     membersByGroup.delete(groupId);
-    latestRead.delete(groupId);
     console.warn(
-      `[GROUP_LABEL] ${groupId.slice(0, 8)}... tree of a held group could not be read after ${why}: ${String(e).slice(0, 120)}; the label stays generic until the next sight`
+      `[GROUP_LABEL] ${groupId.slice(0, 8)}... tree of a held group could not be read after ${why}: ${String(e).slice(0, 120)}; the label stays generic until the next commit or Welcome`
     );
     return;
   }

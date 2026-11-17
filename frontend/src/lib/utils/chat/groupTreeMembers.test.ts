@@ -81,7 +81,7 @@ describe('groupTreeMembers', () => {
     expect(groupTreeMemberIds('g1')).toBeUndefined();
   });
 
-  it('warns on a held group that cannot be read and retries it on the next sight', async () => {
+  it('warns once on a held group that cannot be read, however often it is drawn, and retries on a change', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     let fail = true;
     const read = vi.fn(async () => {
@@ -90,13 +90,31 @@ describe('groupTreeMembers', () => {
     });
     bindGroupTreeReader({ holds: () => true, read });
     ensureGroupTreeMembers('g1');
-    await vi.waitFor(() => expect(warn).toHaveBeenCalled());
+    await vi.waitFor(() => expect(warn).toHaveBeenCalledTimes(1));
+    ensureGroupTreeMembers('g1');
+    ensureGroupTreeMembers('g1');
+    await Promise.resolve();
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledTimes(1);
     expect(groupTreeMemberIds('g1')).toBeUndefined();
     fail = false;
-    ensureGroupTreeMembers('g1');
+    noteGroupTreeChanged('g1', 'commit');
     await vi.waitFor(() => expect(groupTreeMemberIds('g1')).toEqual(['alice', 'me']));
     expect(read).toHaveBeenCalledTimes(2);
     warn.mockRestore();
+  });
+
+  it('reads a group once it is held after a change, having skipped it while it was not', async () => {
+    let held = false;
+    const read = vi.fn(async () => ['me:d1', 'alice:d1']);
+    bindGroupTreeReader({ holds: () => held, read });
+    ensureGroupTreeMembers('g1');
+    await Promise.resolve();
+    expect(read).not.toHaveBeenCalled();
+    held = true;
+    noteGroupTreeChanged('g1', 'welcome');
+    await vi.waitFor(() => expect(groupTreeMemberIds('g1')).toEqual(['alice', 'me']));
+    expect(read).toHaveBeenCalledTimes(1);
   });
 
   it('forgets every read when the session changes', async () => {

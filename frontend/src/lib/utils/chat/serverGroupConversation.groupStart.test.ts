@@ -135,10 +135,8 @@ describe('the unreadable-name warning of a label repair', () => {
     log: () => {},
   });
 
-  it.each([
-    ['empty', ''],
-    ['a raw id', GROUP_ID],
-  ])('warns when the server holds a name and the row is %s', async (_label, rowName) => {
+  it('warns when the server holds a name and the row is a raw id', async () => {
+    const rowName = GROUP_ID;
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const conversations = held({ name: rowName, contactName: rowName });
     await ensureConversationForServerGroup(serverRow({ name: 'Equipe' }), deps(conversations));
@@ -150,6 +148,11 @@ describe('the unreadable-name warning of a label repair', () => {
   it.each([
     ['a readable name is renamed', held(), 'Equipe'],
     ['the server holds no name', held({ name: '' }), ''],
+    [
+      'the row is unnamed (empty) and the server names it',
+      held({ name: '', contactName: '' }),
+      'Equipe',
+    ],
   ])('stays silent when %s', async (_label, conversations, serverName) => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     await ensureConversationForServerGroup(serverRow({ name: serverName }), deps(conversations));

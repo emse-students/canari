@@ -2291,7 +2291,9 @@ export async function loginImpl(
 
     // An unnamed group is labelled by who its tree holds, read from THIS session's MLS state.
     bindGroupTreeReader({
-      holds: (groupId) => holdsGroupState(mlsService, groupId),
+      // An UNKNOWN held set (a listing that failed) says nothing about absence: fall through to the
+      // read, whose refusal is then reported rather than silently skipped.
+      holds: (groupId) => !mlsService.heldGroupsKnown() || holdsGroupState(mlsService, groupId),
       read: (groupId) => mlsService.getGroupMemberIdentities(groupId),
     });
     setupMessageHandler({

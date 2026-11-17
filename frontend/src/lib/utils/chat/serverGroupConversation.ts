@@ -132,12 +132,13 @@ async function repairGroupLabel(
   if (!group.isGroup) return;
   const serverName = (group.name ?? '').trim();
   if (!serverName || serverName === convo.name) return;
-  if (!convo.name.trim() || isRawId(convo.name)) {
-    // The row carried NO readable name while the server holds one: until now the list drew this
-    // group by its members' first names (`resolveConversationListPresentation`). Deliberate for an
-    // unnamed group, but for a NAMED one it is the visible end of a name that never reached us.
+  if (isRawId(convo.name)) {
+    // The row carried a RAW ID as its name while the server holds a real one: the list drew this
+    // group by its members' first names (`resolveConversationListPresentation`). An EMPTY row name
+    // is the ordinary state of a group unnamed at creation, so it says nothing here (the relabel
+    // line below still does); a raw id is the visible end of a name that never reached us.
     console.warn(
-      `[GROUP_LABEL] ${groupIdShort(group.groupId)} is named "${serverName}" server-side but its row held no readable name - it was drawn by its members until this repair`
+      `[GROUP_LABEL] ${groupIdShort(group.groupId)} is named "${serverName}" server-side but its row held a raw id - it was drawn by its members until this repair`
     );
   }
   conversations.set(key, { ...convo, name: serverName, contactName: serverName });
