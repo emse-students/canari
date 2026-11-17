@@ -1326,11 +1326,13 @@ now, not before. What the exits do with it:
 wiped account when its wipe runs can still write a labelled entry after it - one seed, sealed, read
 by nobody, removed by the next exit that reaches it. And `mirror_holds_channel`, the relayed-seed
 check, reads the file without the writers' lock: the writers rename whole files, so it reads one
-version or the other, and a stale answer costs one relayed seed left to the app. **The iOS
-activation copy of the file into the App Group** goes through Rust
-(`canari_ios_mirror_graine_seeds_to_app_group`, `sync_seed_mirror_copy`) under the GROUP copy's
-`graine_seeds.lock`, the lock the wipe holds there: an unlocked copy could bring back seeds a wipe
-had just removed. Pinned by the `graine_mirror_tests` in `push.rs`, `accountLocalWipe.test.ts` and
+version or the other, and a stale answer costs one relayed seed left to the app. **iOS holds ONE
+copy since 2026-11-17, the App Group's**: the lifecycle copy of the app's file over it erased every
+seed the extension had stored
+([channel-encryption section 27](../../protocols/channel-encryption.md#27-the-iphone-held-two-seed-mirrors-and-the-one-without-the-extensions-seeds-won---fixed-2026-11-17)),
+so the foreground writes the group's file itself and a wipe edits that one file. The copy an older
+build left in `app_data_dir` is folded in once (`fold_legacy_seed_mirror`), under both writers'
+locks, so it cannot bring back seeds a wipe removed. Pinned by the `graine_mirror_tests` in `push.rs`, `accountLocalWipe.test.ts` and
 `iosMlsMirror.test.ts`; owed one bench reading
 ([device-verification](../../device-verification.md#the-seed-mirror-labelled-by-account---owed-2026-11-07)).
 

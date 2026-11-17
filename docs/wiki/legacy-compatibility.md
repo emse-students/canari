@@ -78,6 +78,19 @@ to `true`, then delete it, the sentence branch of `channelMemberAddedData` and i
 entry. **What stays:** the legacy-sentence branch of `channelSystemEnvelope` - rows are never
 rewritten, so a salon archive holds sentence notices for ever.
 
+### Removal once `minClientVersion` passes the first stable carrying it - the iOS fold of the app's former seed mirror (2026-11-17)
+
+**Site:** `fold_legacy_seed_mirror` and its call in `seed_mirror_home` (`frontend/src-tauri/src/commands/push.rs`).
+**What it humours:** an iPhone install whose older build kept a seed mirror of its own in
+`app_data_dir` beside the App Group's, and copied it over the group's on every lifecycle event
+([channel-encryption section 27](protocols/channel-encryption.md#27-the-iphone-held-two-seed-mirrors-and-the-one-without-the-extensions-seeds-won---fixed-2026-11-17)).
+The first foreground mirror edit of a newer build folds that copy into the group's (a union) and
+deletes it, so it runs once per install and then finds nothing.
+**Removal condition:** `minClientVersion` at or above the first stable carrying the fold, on both
+estates - every install that can still run has then started a build that folded. Then delete the
+function, its call and its three tests. **The cost of keeping it meanwhile:** one `stat` per
+foreground mirror edit on iOS.
+
 ### A tolerated breakage: an institution post from a build older than the reach (owner, 2026-11-10)
 
 - **What.** An institution's post must carry a reach (migration 162,
