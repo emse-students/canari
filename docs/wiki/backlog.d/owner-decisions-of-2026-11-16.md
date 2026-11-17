@@ -87,6 +87,28 @@ Recorded so no question answered here is asked again. Each line names where its 
 - **(22) `docs/wiki/plan.md` is no longer tracked**: *"C'est exactement le genre de choses que
   j'entends par problème systémique de notre workflow... Peu importe la solution, je l'accepte."*
 
+### Decided the evening of 2026-11-16
+
+- **"Envoyer à..." has two paths, one review screen and one list**
+  ([reels-in-chat section 22](../frontend/modules/reels-in-chat.md#22-the-two-paths-owner-2026-11-16)):
+  from the CanaReels tab the review of a video offers "Publier" and "Envoyer à..."; from a
+  conversation's camera the camera names the conversation, and the review offers "Ajouter des
+  destinataires" (the same list, that conversation ticked) and the conversation's name, which sends
+  there in one tap. The list's first row reads **"Publier"**, not "Publier sur CanaReels". **No save
+  button** on the review. **No camera icon on the conversation rows.** **Community salons in the list
+  move to `1.7.1`** ([reels-in-salons](reels-in-salons.md)).
+- **A PHOTO taken in the CanaReels tab gets the same review as a video** ("Publier" / "Envoyer à...")
+  and arrives as an ordinary image in the chosen chats (D-photo).
+- **The `1.7.0` stable ships once every reading is taken**, even if that is tomorrow.
+- **"Clore" on a form is hidden, and refused, before its opening date.**
+- **"Rester connecté" is ticked by default in the apps and unticked on the web.**
+- **The light pre-push keeps only the fast checks; the long suites run in CI only**
+  ([cicd](../cicd.md#checks-at-commit-at-push-and-in-ci-only)).
+- **An "Envoyer à..." reading the bench cannot stage falls under decision (20)** and is deleted with a
+  dated line; a real defect it would have caught still blocks the flip.
+- **The form close button ships in `1.7.0` only if it is merged before `alpha.7`**; otherwise it waits
+  for the next version.
+
 ### The side-by-side scene is removed (23)
 
 - **"Cote a cote" leaves the desktop live scenes** (owner, 2026-11-16 evening: "Cet agencement est un peu

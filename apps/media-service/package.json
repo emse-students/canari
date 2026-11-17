@@ -1,6 +1,6 @@
 {
   "name": "media-service",
-  "version": "1.7.0-alpha.6",
+  "version": "1.7.0-alpha.7",
   "scripts": {
     "start": "ts-node src/main.ts",
     "start:dev": "nest start --watch",
@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "@nestjs/common": "^12.5.0",
-    "@nestjs/core": "^12.4.2",
+    "@nestjs/core": "^12.5.0",
     "@nestjs/platform-express": "^12.5.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",

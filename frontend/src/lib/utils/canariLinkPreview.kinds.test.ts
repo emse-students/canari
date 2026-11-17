@@ -156,4 +156,8 @@ describe('formStateLabel', () => {
     expect(formStateLabel({ formFull: true }, NOW)).toBe('Complet');
     expect(formStateLabel({ opensAt: '2026-05-01T00:00:00Z' }, NOW)).toBe('Ouvert');
   });
+
+  it('calls an end still to come open, not closed', () => {
+    expect(formStateLabel({ closedAt: '2026-07-01T00:00:00Z' }, NOW)).toBe('Ouvert');
+  });
 });
