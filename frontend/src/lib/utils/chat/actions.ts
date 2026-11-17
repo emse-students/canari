@@ -29,7 +29,11 @@ import {
   DIGEST_TTL_MS,
   noteDigestSolicited,
 } from '$lib/utils/chat/historyDigestRendezvous';
-import { answerHistoryDigest, stateOurCoverage } from '$lib/utils/chat/historyDiffAnswer';
+import {
+  answerHistoryDigest,
+  stateOurCoverage,
+  stateWeCannotRepair,
+} from '$lib/utils/chat/historyDiffAnswer';
 import { pendingGroupExitIds } from '$lib/utils/chat/pendingGroupExits';
 import { welcomeSentAt } from '$lib/utils/chat/welcomeSent';
 import { ensureConversationForServerGroup } from '$lib/utils/chat/serverGroupConversation';
@@ -2206,6 +2210,20 @@ export async function handleHistoryRequest(params: {
       log(
         `[HISTORY_REQ] ${short}... same state as ${requesterIdentity} (${ourKey}) - nothing to do`
       );
+      // AND AGREEMENT IS NOT A REPAIR for an asker that holds frames it cannot read. Two members can
+      // hold the same gap while a third holds the messages: HEAL-repair healed one run in three
+      // because the walk stopped here. So that asker is TOLD, and elects another member - see
+      // `noteCannotRepair`. The answer replaces the coverage statement below rather than adding one.
+      if (probe.incomplete) {
+        await stateWeCannotRepair({
+          groupId,
+          selfIdentity,
+          requesterIdentity,
+          since: probe.since,
+          deps,
+        });
+        return;
+      }
       // AGREEMENT IS NOT COMPLETENESS, and this is the one case where nothing else would say so. Two
       // devices can hold exactly the same messages over the asker's window and both be missing the
       // years below OUR window - the key is computed over what each store holds, so it agrees
@@ -2240,7 +2258,7 @@ export async function handleHistoryRequest(params: {
     return;
   }
 
-  const { digest, since, requestId } = probe;
+  const { digest, since, requestId, incomplete } = probe;
   await answerHistoryDigest({
     groupId,
     requesterIdentity,
@@ -2248,6 +2266,7 @@ export async function handleHistoryRequest(params: {
     digest,
     since,
     requestId,
+    incomplete,
     deps,
   });
 }

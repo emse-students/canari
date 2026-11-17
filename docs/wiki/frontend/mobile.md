@@ -1377,7 +1377,8 @@ slot's (`refresh_extension_copy` -> `sync_extension_copy`, the same code an acco
 module `slot_file` in `concurrency.rs`, whose only other item is the follower-taking writer - it
 replaced a source scan (`only_the_slot_writer_writes_mls_bin`) that did the same job one layer lower.
 The copy is an APFS clone where the volume allows it (`std::fs::copy`), and its time is in the
-`[MLS_ACCOUNT]` debug line. The activation mirror stays for the seeds and the secret; its `mls.bin`
+`[MLS_ACCOUNT]` debug line. The activation mirror stays for the secret (the seed mirror lives in the App Group since 2026-11-17,
+[channel-encryption section 27](../protocols/channel-encryption.md#27-the-iphone-held-two-seed-mirrors-and-the-one-without-the-extensions-seeds-won---fixed-2026-11-17)); its `mls.bin`
 and `push_context.json` halves re-copy files that are already followed. The bench
 commands' deliberate damage (`commands/bench.rs`) is not followed: a CORRUPT row measures the app.
 

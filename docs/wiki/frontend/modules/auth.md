@@ -1326,11 +1326,13 @@ now, not before. What the exits do with it:
 wiped account when its wipe runs can still write a labelled entry after it - one seed, sealed, read
 by nobody, removed by the next exit that reaches it. And `mirror_holds_channel`, the relayed-seed
 check, reads the file without the writers' lock: the writers rename whole files, so it reads one
-version or the other, and a stale answer costs one relayed seed left to the app. **The iOS
-activation copy of the file into the App Group** goes through Rust
-(`canari_ios_mirror_graine_seeds_to_app_group`, `sync_seed_mirror_copy`) under the GROUP copy's
-`graine_seeds.lock`, the lock the wipe holds there: an unlocked copy could bring back seeds a wipe
-had just removed. Pinned by the `graine_mirror_tests` in `push.rs`, `accountLocalWipe.test.ts` and
+version or the other, and a stale answer costs one relayed seed left to the app. **iOS holds ONE
+copy since 2026-11-17, the App Group's**: the lifecycle copy of the app's file over it erased every
+seed the extension had stored
+([channel-encryption section 27](../../protocols/channel-encryption.md#27-the-iphone-held-two-seed-mirrors-and-the-one-without-the-extensions-seeds-won---fixed-2026-11-17)),
+so the foreground writes the group's file itself and a wipe edits that one file. The copy an older
+build left in `app_data_dir` is folded in once (`fold_legacy_seed_mirror`), under both writers'
+locks, so it cannot bring back seeds a wipe removed. Pinned by the `graine_mirror_tests` in `push.rs`, `accountLocalWipe.test.ts` and
 `iosMlsMirror.test.ts`; owed one bench reading
 ([device-verification](../../device-verification.md#the-seed-mirror-labelled-by-account---owed-2026-11-07)).
 
@@ -2130,6 +2132,69 @@ evidence is gone), logs `[ERROR] Partial restore: n/m ...` and `console.error`, 
 `mls_error_restore_shortfall_text`, dismissible). No retry or repair was added: the demotion to
 `pending` and the re-add that follow are the existing recovery, and this is only its report.
 
+
+#### Why the old PC of 2026-08-23 came back with its store - established 2026-11-17
+
+The report that opened this chantier: an old PC, removed from the connected devices through the
+panel, still held its local store, and reconnecting it brought back some conversations and not
+others. Three causes were candidates - a SESSION-only removal, a device revoked whose sessions
+survived, or a wipe the watchdog undid - and the entry waited on a measurement. It was taken from
+production's own tables, read-only:
+
+- **Only two of the account's devices committed that week, both on 2026-08-22.** At 12:04:16.379 a
+  web id minted on 2026-08-12 was revoked, and a fresh web id minted 0.44 s later (its own id
+  carries `Date.now()` in base 36) external-joined nine groups. At 13:09:05 a web id **minted on
+  2026-06-09** - the old PC - external-joined the same nine groups under its OWN id, and again at
+  13:10. That id was first revoked on 2026-08-25, after the report.
+- **A device on the denylist cannot do that.** Every connection publishes a KeyPackage first
+  (`syncConnectionAfterWsOpen`), registration was refused for an active revocation, and the client
+  answered a refusal by minting a new id; the PIN check's one-shot reset also ended in a new id. The
+  revocation window was ten years, and the account's revocation rows from June survive, so no PIN
+  reset cleared the list in between. **So the PC had never been revoked: cause 1, the removal
+  signed a login out and revoked nothing.** Causes 2 and 3 both need a revocation and are refuted
+  for this machine (cause 3 is the 12:04 browser's shape, fixed 2026-08-28 above; cause 2 is
+  structurally gone since the device route ends the sessions itself).
+- **Nothing MLS was missing.** The nine groups were every live group the account held; both
+  devices rejoined all nine. The conversations that did not come back were rows of groups the
+  server no longer held for the account, and one of them was the tombstone that blocked the new
+  DM - the half fixed with `canRepresentThePeer`.
+
+#### A removed row whose device the server no longer lists
+
+That shape is still reachable: the panel gives a login its own row when the device it names is not
+listed (`unlistedDeviceId` - a KeyPackage aged out of the retention window or unresolvable), and
+removing such a row only signed it out. The machine kept everything, and at its next login it
+re-registered under the same id. Since 2026-11-17 `revocableDeviceId` (`deviceRowRemoval.ts`)
+revokes the id such a row names, exactly as a listed device is revoked - the ban, the frame, the
+sessions ended server-side, and the wipe at the machine's next exchange - and both the row's note
+(`chat_device_session_unlisted_note`) and the confirmation say the machine is erased.
+
+**"Not listed" is only a fact when the list answered.** `buildPanelRows` derives `unlistedDeviceId`
+only while `devicesKnown` is true - false from the start of every load until the device fetch
+answers, and after a failed one, which also drops the list a reopen still held. Read off a list that
+did not load, every healthy device is "not listed", and one delete would wipe the user's phone; so
+while the list is unknown every login is a plain sign-out row and `revocableDeviceId` returns null.
+**And only the LATEST load writes** (`createDevicePanelLoader`, `devicePanelLoad.ts`): each load
+carries a generation, and one that answers after a later load started writes nothing - neither
+devices, logins, `devicesKnown` nor a message. Without it a slow load that failed after a reopen's
+load succeeded left `devices = []` beside `devicesKnown = true`. The state an applied load writes is
+`panelStateFrom`, every field at once. A removal's message is shown only after the reload it triggers, which
+clears the messages when it starts (`settleRemoval`).
+
+**And the panel never bans the device it runs on, checked twice.** Client side, a row naming
+`myDeviceId` or holding the current login only signs out, and logs that decision. That check reads
+the client's own idea of its id, which an identity rotation or a moved binding can leave stale, so
+the server holds the fact: an owner's `DELETE /mls/devices/...` first asks core-service which device
+the calling session of that user is bound to (`sessionBoundDevice`,
+`GET /internal/sessions/users/:userId/sessions/:sid/device`) and refuses, before anything is purged,
+with a typed `409 OWN_DEVICE` when it is the id asked; an unreadable binding answers 503, and a
+request naming no session a typed `400 SESSION_UNNAMED` (every access token has carried `sid` since
+2026-10-25), destroying nothing either way. A retirement (`reason=retired`) is exempt - its id is the
+caller's own abandoned one, still bound until the next unlock; a client older than `1.5.0` retires
+without the reason and meets the refusal until then, a population measured at zero
+([legacy-compatibility](../../legacy-compatibility.md)). The client types the
+refusal at the throw (`status: 'own_device'`), and the panel then signs no login out and says the
+device is the one in use (`chat_device_remove_own_refused`).
 
 ### The same erasure when the USER asks, and the three things the button never did
 

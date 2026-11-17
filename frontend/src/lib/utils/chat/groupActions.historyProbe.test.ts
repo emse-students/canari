@@ -27,6 +27,17 @@ function storageHolding(count: number | Error, messages: StoredMessage[] = []): 
   } as unknown as IStorage;
 }
 
+/** The JSON body of every system frame sent, in order. */
+function sentBodies(
+  mlsService: ReturnType<typeof createMlsServiceStub>
+): Record<string, unknown>[] {
+  return vi
+    .mocked(mlsService.sendMessage)
+    .mock.calls.map((call) =>
+      JSON.parse(decodeAppMessage(call[1] as Uint8Array)?.system?.data ?? '{}')
+    );
+}
+
 function sentEvents(mlsService: ReturnType<typeof createMlsServiceStub>): string[] {
   return vi
     .mocked(mlsService.sendMessage)
@@ -78,4 +89,34 @@ describe('sendHistoryProbe', () => {
     expect(sentEvents(mlsService)).toEqual(['history_state']);
     expect(log).toHaveBeenCalledWith(expect.stringContaining('Could not count'));
   });
+
+  // HEAL-repair: a device holding frames it cannot read says so on the probe, so a member holding
+  // nothing it lacks answers instead of staying silent. Only then - the ordinary probe keeps its
+  // exact shape on the wire.
+  it.each([
+    ['state key', 1],
+    ['digest', 0],
+  ])(
+    'carries the proof of incompleteness on the %s only when there is one',
+    async (_leg, count) => {
+      const held =
+        count > 0
+          ? [{ id: 'm1', senderId: 'u', content: 'x', timestamp: Date.now() } as StoredMessage]
+          : [];
+      const deps = (mlsService: ReturnType<typeof createMlsServiceStub>) => ({
+        storage: storageHolding(count, held),
+        deviceKeyB64: 'k',
+        mlsService,
+        log: vi.fn(),
+      });
+      const proving = createMlsServiceStub();
+      const ordinary = createMlsServiceStub();
+
+      await sendHistoryProbe(GROUP, SELF, deps(proving), true);
+      await sendHistoryProbe(GROUP, SELF, deps(ordinary));
+
+      expect(sentBodies(proving)[0].incomplete).toBe(true);
+      expect('incomplete' in sentBodies(ordinary)[0]).toBe(false);
+    }
+  );
 });

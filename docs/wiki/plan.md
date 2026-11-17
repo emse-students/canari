@@ -18,8 +18,6 @@ earliest version, as a checklist.
 
 **P1 - security, or a user-facing path that is broken**
 
-- [P1 - the repair of a rewound sender lands on a coin flip, the ask cadence is identical either way, and a peer 21 messages behind was told "same state - nothing to do" (measured 2026-09-08, ten runs across three builds)](backlog.d/p1-the-repair-of-a-rewound-sender-lands-on-a-coin-flip-the-ask-cadence-is.md)
-- [P1 - the cause of a REVOKED device's partial restore is not established](backlog.d/p1-the-cause-of-a-revoked-device-s-partial-restore-is-not-established.md)
 - [P1 - Opening a community: F1-F7 BUILT, the 200 ms budget is what is left (user, 2026-10-14; state re-read 2026-10-22)](backlog.d/p1-opening-a-community-f1-f7-built-the-200-ms-budget-is-what-is-left-user-2026.md)
 - [P1 - The MiConnect terms stage reaches production with the next STABLE: three things come first (2026-10-16)](backlog.d/p1-the-miconnect-terms-stage-reaches-production-with-the-next-stable-three.md)
 - [P1 - Live moderation (WP-L8): merged; the client's standing refusals, the viewer cap and the readings are owed (2026-10-19)](backlog.d/p1-live-moderation-wp-l8-merged-the-client-s-standing-refusals-the-vie.md)
@@ -28,9 +26,9 @@ earliest version, as a checklist.
 - [P1 - The ledgers that must follow the MLS state live in `localStorage`, which an unclean exit loses for seconds after each write (KILL-2, 2026-10-25; design owed)](backlog.d/p1-the-ledgers-that-must-follow-the-mls-state-live-in-localstorage-which-an.md)
 - [P1 - the admission rule's fix-forward: a conversation may refuse an entry no member made only once nothing legitimate produces one](backlog.d/p1-the-admission-rule-fix-forward.md)
 - [P1 - push payloads carry nothing for Google and Apple (owner, recorded 2026-11-01; decided and built 2026-11-02, switch OFF; raised from P2 on 2026-11-10 by principle 1 of the charter)](backlog.d/push-payloads-carry-nothing-for-google-and-apple.md)
-- [P1 - blind salon banners: the seed is absent when the push lands](backlog.d/p1-blind-salon-banners-the-failing-branch-is-unnamed.md)
 - [P1 - media-service holds the retention durations after the deploy that adds the relay (the boot notice carries them)](backlog.d/p1-media-retention-held-after-the-deploy-that-adds-the-relay.md)
 - [P1 - rows before ratchet: a live drain stores its rows only when its window closes, after a checkpoint may already hold their ratchet advance (raised by the second review of #3321, 2026-11-15)](backlog.d/p1-rows-before-ratchet.md)
+- [P1 - a salon push's seed frame opened against a key group of production size, on the bench (2026-11-17)](backlog.d/p1-salon-push-seed-frame-at-production-key-group-size.md)
 
 **Chantiers, decisions and questions (no severity)**
 
@@ -69,6 +67,8 @@ earliest version, as a checklist.
 - [P2 - no gate proves that an older build reads, and writes back, the MLS state this build writes](backlog.d/p2-no-gate-proves-an-older-build-reads-the-mls-state-this-build-writes.md)
 - [P2 - the reply swipe along a thumb's arc does nothing on WebKit: the thread scrolls instead](backlog.d/p2-the-reply-swipe-along-a-thumb-s-arc-does-nothing-on-webkit.md)
 - [P2 - a live ended itself (`upload-too-slow`) after 256 s on the iPhone, cause unproven](backlog.d/p2-a-live-ended-itself-upload-too-slow-after-256-s-on-the-iphone.md)
+- [P2 - a device that accuses frames falsely walks the whole online membership at every cold start (#3762)](backlog.d/p2-a-false-accuser-costs-n-online-elections-per-cold-start.md)
+- [P2 - an Android blind salon banner `held=true` with the seed frame attached (2026-11-17)](backlog.d/p2-android-blind-salon-banner-held-true.md)
 
 **P3 - hygiene**
 
@@ -83,8 +83,6 @@ earliest version, as a checklist.
 - [P3 - EXIT-FORTIFY: closing the app on the Mi 9T logs `FORTIFY: pthread_mutex_lock called on a destroyed mutex` from the render thread](backlog.d/reading-owed-exit-fortify-closing-the-app-on-the-mi-9t-logged-fortify-pthread.md)
 - [P3 - a 13 MB upload on the iPhone restarted at about half and ran at 40 to 65 KB/s](backlog.d/p3-a-13-mb-upload-on-the-iphone-restarted-at-half-and-ran-at-40-to-65-kb-s.md)
 - [P3 - the feed offset restored after a Back from an association lands about 226 px lower than it was left (Mi 9T, `1.7.0-alpha.2`)](backlog.d/p3-the-feed-offset-restored-after-a-back-from-an-association-lands-about-226-px.md)
-- [P3 - the member form page draws a form its manager ended as open, and refuses only at "Envoyer" (read on the Mi 9T, 2026-11-17)](backlog.d/p3-the-member-form-page-draws-a-form-a-manager-ended-as-open.md)
-- [P3 - the trend bell logs "naming(s) no longer hold" at every read of the bell](backlog.d/p3-the-trend-bell-logs-a-dropped-naming-on-every-read.md)
 
 ### Readings owed
 
@@ -108,11 +106,12 @@ earliest version, as a checklist.
 - [ ] [a salon message arriving before its seed raises its badge (granted salon, in-session join)](backlog.d/reading-owed-a-salon-message-arriving-before-its-seed-raises-its-badge.md)
 - [ ] [closing a form from the list, the respondent sees "ferme", the form reopens](backlog.d/reading-owed-closing-a-form-by-hand.md)
 - [ ] [a form's respondent account fields, on a phone and on the web (owner, 2026-11-16)](backlog.d/reading-owed-form-respondent-account-fields.md)
-- [ ] [the broadcaster's on-air top row at 390 pt (End and the chat toggle on screen)](backlog.d/reading-owed-the-live-on-air-top-row-at-390-pt-and-360-px.md)
 - [ ] [the live scenes bar (one icon row) on a desktop live at two window widths](backlog.d/reading-owed-the-live-scenes-bar-on-a-desktop-live.md)
-- [ ] [the live viewer's top bar at 360-436 css px portrait (name whole, no button over the second row)](backlog.d/reading-owed-the-live-viewer-top-bar-at-360-436-px.md)
 - [ ] [a menu ends above the iOS tab bar, and a group notification keeps its title (2026-11-16)](backlog.d/reading-owed-the-popover-and-notification-fixes-of-the-iphone-sitting.md)
 - [ ] [a native device with no push token row now says why, and registers again (production, after the `1.7.0` stable)](backlog.d/reading-owed-a-device-with-no-push-token-now-says-so.md)
+- [ ] [the repair of a rewound sender walks to the member that holds the messages (2026-11-17)](backlog.d/reading-owed-heal-repair-walks-to-the-holder.md)
+- [ ] [the iPhone's one seed mirror keeps the extension's seeds through a foreground (2026-11-17)](backlog.d/reading-owed-ios-seed-mirror-one-copy.md)
+- [ ] [removing a login row that names an unlisted device erases that machine (2026-11-17)](backlog.d/reading-owed-removing-a-login-row-naming-an-unlisted-device-erases-that-machine.md)
 
 ## 1.7.1
 
@@ -188,7 +187,7 @@ earliest version, as a checklist.
 - [P3 - The case-collision refusal keeps the deletion marker for ever (found 2026-10-18, fourth review of #2023)](backlog.d/p3-the-case-collision-refusal-keeps-the-deletion-marker-for-ever-found-2026-10.md)
 - [P3 - iOS: the system theme does not follow a live switch of the phone's theme (2026-10-19)](backlog.d/p3-ios-the-system-theme-does-not-follow-a-live-switch-of-the-phone-s-theme-2026.md)
 - [P3 - the Android JavaScript bridges answer any frame the WebView loads (review of WP-C-BG-A, 2026-10-19; re-read 2026-11-11)](backlog.d/p3-the-android-javascript-bridges-answer-any-frame.md)
-- [P3 - the iOS factory wipe leaves the App Group copies other than the names (2026-10-19)](backlog.d/p3-the-ios-factory-wipe-leaves-the-app-group-copies-other-than-the-names-2026.md)
+- [P3 - the iOS factory wipe leaves the App Group copies other than the names, the share and the seeds (2026-10-19)](backlog.d/p3-the-ios-factory-wipe-leaves-the-app-group-copies-other-than-the-names-2026.md)
 - [P3 - Two association deletes that co-organise each other's events can deadlock (found 2026-10-19, review of #2116, not fixed)](backlog.d/p3-two-association-deletes-that-co-organise-each-other-s-events-can-deadlock.md)
 - [P3 - Android lint crashes on the Gradle build script, and no CI gate runs Android lint (found 2026-10-20)](backlog.d/p3-android-lint-crashes-on-the-gradle-build-script-and-no-ci-gate-runs-android.md)
 - [P3 - CALL-PATH-LINE: the `selected path ... relayed=` line over-counts relayed calls (2026-10-20, not built)](backlog.d/p3-call-path-line-the-selected-path-relayed-line-over-counts-relayed-calls-2026.md)
@@ -283,7 +282,6 @@ earliest version, as a checklist.
 - [P3 - Post-stable proposal for the user: a partial unique index on tier keys (2026-10-26)](backlog.d/p3-post-stable-proposal-for-the-user-a-partial-unique-index-on-tier-keys-2026.md)
 - [P3 - an admin who never joined a private salon is not told when it is created or deleted](backlog.d/p3-an-admin-who-never-joined-a-private-salon-is-not-told-when-it-is-created-or.md)
 - [P3 - `ChatArea.entryWindow` "never mounts more than the 20-row entry frame" fails under the full sweep and passes alone (2026-10-27)](backlog.d/p3-chatarea-entrywindow-never-mounts-more-than-the-20-row-entry-frame-fails.md)
-- [P3 - the $lib alias migration waits for a quiet frontend (2026-10-27)](backlog.d/p3-the-lib-alias-migration-waits-for-a-quiet-frontend-2026-10-27.md)
 - [P3 - Three loose ends of the per-conversation drafts (review of #2614, 2026-10-27)](backlog.d/p3-three-loose-ends-of-the-per-conversation-drafts-review-of-2614-2026-10-27.md)
 - [P3 - Two devices of one account joining a community at once: one exhausts its external-join attempts and loses a frame (LIST-RACE-1-W, 2026-10-27)](backlog.d/p3-two-devices-of-one-account-joining-a-community-at-once-one-exhausts-its.md)
 - [P3 - A rotation that fails every time loops through the PIN gate (2026-10-28)](backlog.d/p3-a-rotation-that-fails-every-time-loops-through-the-pin-gate-2026-10-28.md)

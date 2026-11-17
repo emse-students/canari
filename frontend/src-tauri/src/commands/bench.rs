@@ -26,12 +26,12 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
+use crate::commands::push::remove_graine_mirror;
+
 /// The MLS state the app loads at start (`commands::storage`).
 const MLS_BIN: &str = "mls.bin";
 /// The Graine seed mirror (`commands::push::with_graine_mirror`), in each container that has one.
 const GRAINE_SEEDS: &str = "graine_seeds.json";
-/// The lock every writer of [`GRAINE_SEEDS`] takes, in the same directory.
-const GRAINE_LOCK: &str = "graine_seeds.lock";
 /// Where the rig's MLS snapshot is kept: inside the app data directory, so a wipe takes it too.
 const SNAPSHOT_DIR: &str = "bench";
 const SNAPSHOT_FILE: &str = "mls.bin.snapshot";
@@ -112,31 +112,6 @@ pub(crate) fn graine_sessions(
             .and_then(|c| c.as_object())
             .map_or(0, |c| c.len()),
     ))
-}
-
-/// Removes the seed mirror in `dir` under the lock its writers take, so a push writing a seed at
-/// the same instant lands entirely before or entirely after. Returns whether a file was there.
-///
-/// The lock is opened only when the mirror exists: creating `graine_seeds.lock` in a container that
-/// never had a mirror would leave a file this call invented.
-pub(crate) fn remove_graine_mirror(dir: &Path) -> Result<bool, String> {
-    let path = dir.join(GRAINE_SEEDS);
-    if !path.exists() {
-        return Ok(false);
-    }
-    let lock = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(dir.join(GRAINE_LOCK))
-        .map_err(|e| format!("open {GRAINE_LOCK}: {e}"))?;
-    // Released when `lock` drops, on every return path.
-    crate::commands::push::lock_exclusive(&lock).map_err(|e| format!("lock {GRAINE_LOCK}: {e}"))?;
-    match std::fs::remove_file(&path) {
-        Ok(()) => Ok(true),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(e) => Err(format!("remove {GRAINE_SEEDS}: {e}")),
-    }
 }
 
 /// The size of `mls.bin` in `data_dir` and the first 16 hex digits of its SHA-256 - enough for a
@@ -434,7 +409,7 @@ mod tests {
     fn a_mirror_that_never_existed_leaves_no_lock_behind() {
         let d = scratch("nolock");
         assert!(!remove_graine_mirror(&d).unwrap());
-        assert!(!d.join(GRAINE_LOCK).exists());
+        assert!(!d.join("graine_seeds.lock").exists());
     }
 
     #[test]

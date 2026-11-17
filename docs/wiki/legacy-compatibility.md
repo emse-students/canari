@@ -78,6 +78,21 @@ to `true`, then delete it, the sentence branch of `channelMemberAddedData` and i
 entry. **What stays:** the legacy-sentence branch of `channelSystemEnvelope` - rows are never
 rewritten, so a salon archive holds sentence notices for ever.
 
+### Removal once `minClientVersion` passes the first stable carrying it - the iOS fold of the app's former seed mirror (2026-11-17)
+
+**Site:** `fold_legacy_seed_mirror` and its call in `seed_mirror_home` (`frontend/src-tauri/src/commands/push.rs`).
+**What it humours:** an iPhone install whose older build kept a seed mirror of its own in
+`app_data_dir` beside the App Group's, and copied it over the group's on every lifecycle event
+([channel-encryption section 27](protocols/channel-encryption.md#27-the-iphone-held-two-seed-mirrors-and-the-one-without-the-extensions-seeds-won---fixed-2026-11-17)).
+The first foreground mirror edit of a newer build folds that copy into the group's (a union) and
+deletes it, so it runs once per install and then finds nothing.
+**Removal condition:** `minClientVersion` at or above the first stable carrying the fold, on both
+estates. That does NOT prove every install folded: a store update skips versions, so an iPhone may go
+from a build without the fold straight to one without it. So the fold is REPLACED, not deleted: its
+call becomes an unconditional delete of `{app_data_dir}/graine_seeds.json` (the group's copy already
+holds what the last lifecycle copy put there), and the function and its four tests go. **The cost of
+keeping it meanwhile:** one `stat` per foreground mirror edit on iOS.
+
 ### A tolerated breakage: an institution post from a build older than the reach (owner, 2026-11-10)
 
 - **What.** An institution's post must carry a reach (migration 162,
@@ -633,19 +648,17 @@ that id (never the caller's own, which is the one the install is using). Permane
 date.
 **Condition:** every estate serves migration 040 (one deploy of each). The date is when to check.
 
-### Removal at deploy + one access-token lifetime - an access token that names no session
+### A tolerated breakage: a client older than `1.5.0` retiring its abandoned id (2026-11-17)
 
-**Site:** the `legacy` branch of `AuthController.sessionOfToken` in
-`apps/core-service/src/auth/auth.controller.ts`.
-**What it humours:** an access token minted before its issuer wrote `sid`. The issuer always writes it
-now, so such a token is pre-deploy by construction and dies by its own `exp` within
-`ACCESS_TOKEN_TTL_SECONDS` (1 h) of the deploy; it is accepted without a session read, `X-Session-Id`
-empty, logged once per process at `log`. Refusing it would answer every client signed in at the
-deploy anonymous for up to that hour. The dev estate cannot rehearse it (its tokens already carry
-`sid`).
-**Condition:** production has run the release carrying the check for longer than one access-token
-lifetime. Then delete the branch, so a token naming no session is answered anonymous like an ended
-one ([sessions](sessions.md#an-access-token-is-only-as-alive-as-its-session-2026-10-25)).
+**Site:** the own-device refusal of `DevicesController.deleteDevice` (chat-delivery,
+[auth](frontend/modules/auth.md#a-removed-row-whose-device-the-server-no-longer-lists)).
+**What breaks:** a client older than `1.5.0` (the `?reason=retired` parameter, #2450) retires the id
+its own rotation abandoned with a plain delete, read as an owner's; while its session is still bound to
+that id (until its next unlock rebinds it) the server now answers `409 OWN_DEVICE`, and the id is
+retired at a later round instead. Nothing is lost: the abandoned id holds no state the install uses.
+**Measured 2026-11-17 on production:** the KeyPackages published in the last 7 days name only
+`1.6.0` and later (the web is always current), so the population is ZERO.
+**Condition:** none - no shim was added.
 
 ### No date yet - a frontend image older than the target lists, drained by DNS (2026-11-01)
 

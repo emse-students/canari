@@ -286,8 +286,6 @@ export class AuthController {
   /** Shared secret used to sign X-Internal-Token HMAC headers for inter-service auth. */
   private readonly internalSecret: string;
 
-  /** Set at the first sid-less access token this process accepts, so it is said once (`sessionOfToken`). */
-  private legacyTokenSeen = false;
   /**
    * Ended sessions whose refusal this process has already said at `warn` (`sessionOfToken`): a
    * client holding such a token sends several requests before its refresh is refused, and the
@@ -433,8 +431,6 @@ export class AuthController {
   private async requireAccessToken(req: Request): Promise<{
     userId: string;
     isAdmin: boolean;
-    /** `live` when the token names a session that exists; `legacy` when it names none (sid-less). */
-    sessionState: 'live' | 'legacy';
   }> {
     const header = req.headers['authorization'];
     if (!header) throw new UnauthorizedException('Missing Authorization header');
@@ -457,7 +453,7 @@ export class AuthController {
     if (!payload.sub) throw new UnauthorizedException('Token carries no subject');
     const session = await this.sessionOfToken({ sub: payload.sub, sid: payload.sid });
     if (session.state === 'ended') throw new UnauthorizedException('Session has ended');
-    return { userId: payload.sub, isAdmin: !!payload.admin, sessionState: session.state };
+    return { userId: payload.sub, isAdmin: !!payload.admin };
   }
 
   /**
@@ -1317,13 +1313,8 @@ export class AuthController {
   @Throttle({ default: { limit: HANDOFF_MINT_LIMIT_PER_MINUTE, ttl: 60_000 } })
   async mintHandoff(@Req() req: Request, @Body() body: HandoffMintDto): Promise<HandoffMint> {
     this.handoff.assertOffered();
-    const { userId, sessionState } = await this.requireAccessToken(req);
-    // ONLY A LIVE SESSION MINTS. A sid-less token (`legacy`) names no session whose end could stop
-    // it, so it may read for its last hour but never vouch for the user to another site.
-    if (sessionState !== 'live') {
-      this.logger.warn(`[HANDOFF] refused class=no_session user=${userId}`);
-      throw new UnauthorizedException('A handoff needs a token of a live session');
-    }
+    // ONLY A LIVE SESSION MINTS: `requireAccessToken` refuses an ended or sid-less token.
+    const { userId } = await this.requireAccessToken(req);
     return await this.handoff.mint(userId, body?.aud, body?.dest);
   }
 
@@ -1409,9 +1400,8 @@ export class AuthController {
     res.set('X-User-Id', payload.sub);
     res.set('X-Logged-In', 'true');
     res.set('X-Global-Admin', payload.admin ? 'true' : 'false');
-    // The session this access token was minted for - proven live above; empty for a token minted
-    // before the claim existed (`sessionOfToken`).
-    res.set('X-Session-Id', session.state === 'live' ? session.sessionId : '');
+    // The session this access token was minted for - proven live above.
+    res.set('X-Session-Id', session.sessionId);
 
     // Mint a per-minute HMAC token so backend services can verify the request
     // genuinely came through nginx (not from a compromised container).
@@ -1432,13 +1422,9 @@ export class AuthController {
    *
    * - `live`: the token names a session that still exists.
    * - `ended`: it names one that does not - signed out, revoked, replaced or expired.
-   * - `legacy`: it names NONE. Accepted, by construction rather than by trust: since the release that
-   *   brought this check, the only issuer (`signAccessToken`) always writes `sid`, so a sid-less
-   *   token can only have been minted by the previous release before its deploy, and it dies by its
-   *   own `exp` within one `ACCESS_TOKEN_TTL_SECONDS`. Refusing it would answer every client that
-   *   was signed in at the deploy anonymous for up to that hour. Said ONCE per process at `log`, not
-   *   per request. The branch goes one token lifetime after the deploy
-   *   (`docs/wiki/legacy-compatibility.md`).
+   * - `ended`, too, when it names NONE: the only issuer (`signAccessToken`) has written `sid` since
+   *   2026-10-25 and a token lives one `ACCESS_TOKEN_TTL_SECONDS`, so a sid-less token is no client
+   *   this service minted for any live session. The hour's acceptance kept for that deploy is gone.
    *
    * A database failure is NOT an answer and is not turned into one: it propagates, nginx's
    * `auth_request` then fails the request with a 5xx, and a client keeps its session on a 5xx.
@@ -1446,15 +1432,12 @@ export class AuthController {
   private async sessionOfToken(payload: {
     sub: string;
     sid?: unknown;
-  }): Promise<{ state: 'live'; sessionId: string } | { state: 'legacy' } | { state: 'ended' }> {
+  }): Promise<{ state: 'live'; sessionId: string } | { state: 'ended' }> {
     if (typeof payload.sid !== 'string' || payload.sid.length === 0) {
-      if (!this.legacyTokenSeen) {
-        this.legacyTokenSeen = true;
-        this.logger.log(
-          'An access token naming no session was accepted (minted before the sid claim) - said once per process; such tokens expire within one access-token lifetime of the deploy'
-        );
-      }
-      return { state: 'legacy' };
+      this.logger.warn(
+        `Access refused: an access token of user=${payload.sub} names no session - every token minted since 2026-10-25 carries one; answered anonymous`
+      );
+      return { state: 'ended' };
     }
     let live: boolean;
     try {
