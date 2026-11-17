@@ -69,6 +69,33 @@ describe('Graine sessions in IndexedDB', () => {
     expect((await storage.getGraineSession('sess-1', KEY))?.sentCount).toBe(6);
   });
 
+  it('a compare-and-swap write lands only while the stored count is the one it was read at', async () => {
+    const storage = await freshStorage();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    await storage.saveGraineSession(session({ sentCount: 5 }), KEY);
+
+    // Read at 3, the row says 5: another writer reserved since. Refused, typed, nothing written.
+    const stale = storage.saveGraineSession(session({ sentCount: 4 }), KEY, undefined, 3);
+    await expect(stale).rejects.toBeInstanceOf(StoreWriteRefusedError);
+    expect((await storage.getGraineSession('sess-1', KEY))?.sentCount).toBe(5);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('moved from 3 to 5'));
+
+    // A row gone since the read (a purge) is not brought back by the swap.
+    const gone = storage.saveGraineSession(
+      session({ sessionId: 'sess-2', sentCount: 1 }),
+      KEY,
+      undefined,
+      0
+    );
+    await expect(gone).rejects.toBeInstanceOf(StoreWriteRefusedError);
+    expect(await storage.getGraineSession('sess-2', KEY)).toBeNull();
+
+    // Read at the count the row still carries: written.
+    await storage.saveGraineSession(session({ sentCount: 6 }), KEY, () => true, 5);
+    expect((await storage.getGraineSession('sess-1', KEY))?.sentCount).toBe(6);
+    error.mockRestore();
+  });
+
   it('round-trips the distribution frame a sender keeps with its session', async () => {
     const storage = await freshStorage();
     const s = session({

@@ -73,6 +73,11 @@ count stays. Older files still carry the field; it is not read. Pinned by
 `backup.graineRestore.test.ts` against the real IndexedDB backend: export, seal past the export,
 wipe, import, send.
 
+The same rollback had a second door that no backup opens: two tabs. A tab that lost the lead and had
+not yet been told wrote back the count it read before the new leader sent. Closed on 2026-11-17 by
+a compare-and-swap on `sentCount` in the write's own transaction, whatever either tab believes about
+the lead ([channel-encryption, WP-30](../protocols/channel-encryption.md#wp-30-and-the-departure-nobody-records)).
+
 ## What is NOT here
 
 - **Cross-device history is pooled automatically**, as a manifest diff between an account's own
