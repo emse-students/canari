@@ -1,21 +1,37 @@
-## P2 - native devices with no push token stay silent: a fifth cause
+## Reading owed - a native device with no push token row now says why, and registers again (production, after the `1.7.0` stable)
 
 target: 1.7.0
 
-**What is built:** a device with no push token now says so
+**What is built.** A device that ends a registration without a token reports it (`[PUSH_UNAVAILABLE]`);
+`register-device` answers whether the server holds the device's `push_token` row and the phone
+registers again on `false` (#3649); every `register-device` states the last outcome, QUALIFIED since
+2026-11-17 - `unauthorized:<cause>`, `in-progress:<stage>`, `started:<stage>` - and the daily
+`[PUSH_COVERAGE]` WARN per `(os, build)` carries the tally of those outcomes (`last:`), so the branch
+is read from the report without log access. Mechanism and every measurement:
+[chat-delivery](../services/chat-delivery.md#the-servers-row-decides-whether-a-registration-is-owed-2026-11-15).
 
-**The reading that closes it:** after the next release a tokenless device either acquires one or prints `[PUSH_UNAVAILABLE]` naming a cause; silence with a tokenless device still in `key_package` means a FIFTH cause
+**What it replaces.** The P1 "a third of the `1.6.12` native devices hold no push token row" (filed
+2026-11-15, its build work done, file deleted 2026-11-17) and this entry's earlier "fifth cause"
+readings (2026-11-14, two tokenless devices among 194). Production re-read 2026-11-17, read-only,
+still on `1.6.12`: older builds 0 of 117 tokenless, `1.6.12` 15 of 75 Android and 12 of 59 iOS; none
+of them sent a registration request or a report, most launched once. The cause is NOT established:
+every branch that ends without a request is client-side, and only the qualified `last=` of a `1.7.0`
+phone can name it.
 
-**Read on production 2026-11-14** (15.5 hours after the `v1.6.11` deploy): of the 84 native
-devices that fetched history, 83 hold a `push_token` row; ONE does not - an iOS `1.6.6` device,
-still in `key_package`, not revoked - and no `[PUSH_UNAVAILABLE]` line was written at all. That is
-this entry's "silence" case, but one device cannot separate a fifth cause from the documented one:
-an app closed inside the four-minute registration ladder reports nothing
-(`PushNotificationService.ts`). Owed: the same read after the next stable; the same device silent
-across days, or more than one, is the fifth cause.
+**The reading that closes it**, on production, the day after the `1.7.0` stable reaches both stores,
+read-only:
 
-**Read again 2026-11-14, after the `1.6.12` deploy (read-only):** of the 194 native devices that fetched from chat-delivery since the deploy, TWO hold no `push_token` row - an Android `1.6.10` and an iOS `1.6.7` device, both with a KeyPackage of 2026-11-12/13, neither revoked, both already seen in the first read - and still not ONE `[PUSH_UNAVAILABLE]` line on production. More than one device, silent across two deploys: by this entry's own rule that is a FIFTH cause, a token lost after registration (or never asked) on a path that reports nothing. Next: read each device's own log for its `[Push]` lines (the Mi 9T reproduces the Android shape if a token row can be removed on dev), and find which writer deletes a `push_token` row without the device learning it.
+1. The `[PUSH_COVERAGE]` daily line on chat-delivery: no WARN for any `1.7.0` build, or every one
+   carrying a `last:` tally that names the branch.
+2. The query of the chat-delivery wiki section (`utils/push-coverage.ts`, `PUSH_COVERAGE_SQL`) grouped
+   by `"pushOutcome"`: the `1.7.0` phones that ran and hold no row beyond the ten-minute grace read 0.
+3. If not 0: the tally names the fix - `unauthorized:<cause>` points at the session's token source,
+   `in-progress:<stage>` / `started:<stage>` at the await the ladder never left - and that fix is
+   filed as its own P1 for `1.7.1` with the tally as its evidence.
 
-**Read again 2026-11-15 (production, read-only, aggregates only, 19:06 UTC; the population is the device a session used in the last 24 hours, its build the one its LATEST key package states, revoked devices left out):** the question changed shape, because the tokenless devices are no longer two among 194. Of 274 native devices, **0 of 209 on a build older than `1.6.12` hold no `push_token` row, and 25 of 65 on `1.6.12` do (Android 14 of 43, iOS 11 of 22)**; none of the 25 is inside the four-minute ladder (their key packages are up to 24 hours old). 14 of the 25 belong to an account that holds a token on ANOTHER device (9 of the 11 iOS ones on an older build). No `[PUSH_UNAVAILABLE]` is readable from here (production logs are not part of this sitting's form). Filed as its own defect: [p1-a-third-of-the-1-6-12-native-devices-hold-no-push-token-row.md](p1-a-third-of-the-1-6-12-native-devices-hold-no-push-token-row.md). On dev the count is not comparable: a dev reset truncates `push_token` (`infrastructure/lib/copy-strips.sh`), so the only two rows dev holds are the two devices that registered after the `1.7.0-alpha.1` deploy.
+On dev the count is not comparable (a reset truncates `push_token`, `infrastructure/lib/copy-strips.sh`);
+dev read 2026-11-17: both `1.7.0-alpha.7` phones hold their row (`registered`), one `alpha.6` Android
+that ran once states `in-progress` with no row - a process that ended inside its ladder, the case the
+new `started:<stage>` names.
 
-**Re-read 2026-11-16 (production read-only after #3649 merged - `SHOW default_transaction_read_only` read `on`, aggregates only, the same predicate as 2026-11-15).** **Production still runs `1.6.12`: the `1.7.0` stable has NOT shipped, so #3649 (a phone with no push row registers again at its next unlock and says why) is on no production device and this read cannot test it.** What it does say: builds older than `1.6.12` hold 0 tokenless of 205 (Android 0 of 61, iOS 0 of 144); `1.6.12` holds **27 of 73** (Android 14 of 48, iOS 13 of 25), against 25 of 65 the day before, and EVERY tokenless one is a device whose first key package is later than the `1.6.12` deploy (14 of 14 Android, 13 of 13 iOS; 34 and 12 `1.6.12` devices born since the deploy do hold a token): the gap is a property of `1.6.12` ENROLMENTS and not of older devices losing a row, which is the shape #3649's "no push row at the next unlock" is built for. **Server half on dev (`1.7.0-alpha.2`, read-only):** of the dev devices active in 24 h, both `1.7.0` ones (Android and iOS, `alpha.2`; and the iOS `alpha.1`) hold a `push_token` row, while 5 of 5 Android devices still on `1.6.12-alpha.2` do not - dev's `push_token` is truncated at each reset (`copy-strips.sh`), and those pre-fix builds never re-register. The server's own report works: dev's chat-delivery logged the daily `[PUSH_COVERAGE] native devices that ran in 24 h: 6, holding no push registration 10 min after: 5, given no push token by their OS (known, [PUSH_UNAVAILABLE]): 0` and one WARN line naming the build (`os=android build=1.6.12-alpha.2 without=5/5 ... [PUSH_MISSING]`), and no line for any `1.7.0` build. **What waits for the stable:** the same three queries on production for `1.6.12`-and-older builds once the `1.7.0` fleet exists (the tokenless share of `1.7.0` enrolments must read 0 beyond the four-minute ladder), and a production `[PUSH_COVERAGE]` line, which is not readable from a sitting without log access. What the server half CAN say today is only that the new reporting is live and silent for the fixed builds on dev.
+Charter: principle 1 (your messages are yours - a message that cannot ring is lost to the phone).

@@ -78,6 +78,24 @@ to `true`, then delete it, the sentence branch of `channelMemberAddedData` and i
 entry. **What stays:** the legacy-sentence branch of `channelSystemEnvelope` - rows are never
 rewritten, so a salon archive holds sentence notices for ever.
 
+### Removal once `minClientVersion` passes the first stable that seals - an unsealed history answer (2026-11-17)
+
+**Site:** the `[LEGACY]` branch of the `history_bundle` receiver (`noteUnsealedAnswerOnce`,
+`systemMessageHandler.ts`), and the answerer's unsealed branch for an ask that carries no
+`answerKey` (`sendBundleChunks`, `groupActions.ts`).
+**What it humours:** a build older than option B
+([history-answer-addressing](protocols/history-answer-addressing.md#sealing-the-answer-to-the-asker---option-b-2026-11-17))
+answers a keyed ask in clear - still addressed to the asker alone - and asks without a key. Both are
+accepted, the first said once per session at error so its population is counted.
+**The cost while it stands:** an answer between two builds of which one predates sealing is protected
+by the server's routing alone, as it was under step A.
+**Removal condition:** `minClientVersion` at or above the first stable carrying option B, on both
+estates. Then, in one pull request
+([planned](backlog.d/p3-a-history-answer-is-sealed-or-refused-once-the-floor-seals.md)): an unsealed
+answer to a keyed ask is refused at error, an ask with no `answerKey` is malformed and answered
+nothing (as one with no `requestId` is, D211), `noteHistoryAsk`'s `null` secret goes, and so does
+this entry.
+
 ### Removal once `minClientVersion` passes the first stable carrying it - the iOS fold of the app's former seed mirror (2026-11-17)
 
 **Site:** `fold_legacy_seed_mirror` and its call in `seed_mirror_home` (`frontend/src-tauri/src/commands/push.rs`).

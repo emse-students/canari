@@ -23,6 +23,7 @@ import {
   type GraineSignatureEngine,
   type GraineSignatureVerdict,
 } from '$lib/crypto/graineV2';
+import type { HistorySealEngine } from '$lib/crypto/historySeal';
 
 export type MlsWasmBindings = typeof import('$lib/wasm/mls_wasm.js');
 
@@ -332,6 +333,29 @@ export function wasmGraineSignatureEngine(): GraineSignatureEngine {
       return wasm.graine_verify_signatures(
         packGraineSignatureChecks(checks)
       ) as GraineSignatureVerdict[];
+    },
+  };
+}
+
+/**
+ * The sealed history answer's HPKE half on the web: the stateless free functions of the WASM crate,
+ * which are `mls-core/src/history_seal.rs` - the one implementation on every platform. The engines
+ * reject with the bare code, typed by `historySealErrorOf` where the answer is sealed or opened.
+ */
+export function wasmHistorySealEngine(): HistorySealEngine {
+  return {
+    async newAnswerKeyPair() {
+      const wasm = await loadMlsWasmModule();
+      const pair = wasm.history_answer_keypair() as { secret: Uint8Array; public: Uint8Array };
+      return { secret: pair.secret, publicKey: pair.public };
+    },
+    async seal(publicKey, aad, plaintext) {
+      const wasm = await loadMlsWasmModule();
+      return wasm.seal_history_answer(publicKey, aad, plaintext);
+    },
+    async open(secret, aad, sealed) {
+      const wasm = await loadMlsWasmModule();
+      return wasm.open_history_answer(secret, aad, sealed);
     },
   };
 }

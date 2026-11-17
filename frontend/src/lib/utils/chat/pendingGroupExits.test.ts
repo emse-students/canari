@@ -412,7 +412,12 @@ describe('drainPendingGroupExits', () => {
     const storage = makeStorage();
     const mlsService = makeMls();
     expect(
-      await drainPendingGroupExits({ storage, mlsService, userId: 'u1', log: (m) => lines.push(m) })
+      await drainPendingGroupExits({
+        storage,
+        mlsService,
+        userId: 'u1',
+        log: (m) => lines.push(m),
+      })
     ).toEqual([]);
     expect(mlsService.deleteGroupOnServer).not.toHaveBeenCalled();
     expect(lines).toEqual([]);
