@@ -60,7 +60,14 @@ questions the first draft of this page left open, the same day.
    (`institutionModeratesOwnSql`, ORed into the publisher predicate `moderatesPublisherSql`; the door
    `MODERATES_SOMEWHERE_SQL`). A comment in the institution's name is its content wherever it sits; a
    club's comment under the institution's post stays the club's, as under a BDE's post (the lead's
-   reading, reversible, the rule of 2026-11-03 applied both ways).
+   reading, reversible, the rule of 2026-11-03 applied both ways). A refusal to a caller who moderates
+   only as an institution is its own code, `MODERATION_OUTSIDE_OWN_INSTITUTION`, never the BDE's
+   "outside your spaces". The reader's institution standing comes from the membership read the
+   comment pencil already makes (`AssociationsService.commentStandings`), so an ordinary reader pays
+   no query for it. **Measured on production before the deploy (2026-11-17, read-only aggregate):
+   0 institution memberships carry `MODERATE` (bit 128), of 4 institutions, and 0 spaces are
+   governed by an institution** - so nobody gains or loses a power on deploy; the platform admin
+   grants the first one.
 5. **The author of a post, or the `POST_AS_ASSO` holders for an association's post, may HIDE (never
    delete) another person's comment under it**: a tombstone like moderation's, never revealing an
    anonymous writer. [WP](backlog.d/p2-a-post-owner-hides-a-comment-under-it.md).

@@ -195,8 +195,9 @@ A comment is judged on ITSELF: its replies never shield it (decision below). **T
 only what the BDE may act on** - an escalated item is simply absent from it, and stays in the platform
 admin's queue (decided 2026-11-04, the simpler and reversible of the two options: no "escalated" row to
 render). A refused act is classified at the throw: 403 `MODERATION_RESERVED_TO_PLATFORM_ADMIN` when the
-target is in an institution's or a BDE's name, `MODERATION_OUT_OF_SCOPE` otherwise,
-`MODERATOR_REQUIRED` for a caller who moderates nowhere - each worded by the client through
+target is in an institution's or a BDE's name, `MODERATION_OUT_OF_SCOPE` otherwise for a BDE
+moderator, `MODERATION_OUTSIDE_OWN_INSTITUTION` for a caller who moderates only as an institution
+(2026-11-15), `MODERATOR_REQUIRED` for a caller who moderates nowhere - each worded by the client through
 `describeModerationRefusal` (`frontend/src/lib/moderation/moderationRefusal.ts`), on the post card and
 in the reports queue alike (`ModerationApiError` is an `ApiRefusalError`, so `refusalCode` reads it).
 **Not moderation, and so unchanged:** pinning a post in a space (WP-PIN, a promotion - a BDE may pin

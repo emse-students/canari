@@ -255,6 +255,7 @@ import {
   MODERATED_INSTITUTION_IDS_SQL,
   MODERATES_SOMEWHERE_SQL,
   MODERATION_OUT_OF_SCOPE,
+  MODERATION_OUTSIDE_OWN_INSTITUTION,
   MODERATION_RESERVED_SQL,
   MODERATION_RESERVED_TO_PLATFORM_ADMIN,
   MODERATOR_REQUIRED,
@@ -3216,12 +3217,26 @@ export class AssociationsService {
   async isContentModerator(userId: string, opts?: { isGlobalAdmin?: boolean }): Promise<boolean> {
     if (opts?.isGlobalAdmin) return true;
     if (!userId) return false;
-    const rows: { moderates: boolean }[] = await this.memberRepo.query(MODERATES_SOMEWHERE_SQL, [
-      userId,
-    ]);
-    const moderates = rows[0]?.moderates === true;
-    this.logger.debug(`[MODERATION] door user=${sanitizeLog(userId.slice(0, 8))} -> ${moderates}`);
-    return moderates;
+    const standing = await this.moderationStanding(userId);
+    return standing.asBde || standing.asInstitution;
+  }
+
+  /** Where `userId` moderates (`MODERATES_SOMEWHERE_SQL`): as a BDE, as an institution, both or neither. */
+  private async moderationStanding(
+    userId: string
+  ): Promise<{ asBde: boolean; asInstitution: boolean }> {
+    const rows: { asBde: boolean; asInstitution: boolean }[] = await this.memberRepo.query(
+      MODERATES_SOMEWHERE_SQL,
+      [userId]
+    );
+    const standing = {
+      asBde: rows[0]?.asBde === true,
+      asInstitution: rows[0]?.asInstitution === true,
+    };
+    this.logger.debug(
+      `[MODERATION] door user=${sanitizeLog(userId.slice(0, 8))} bde=${standing.asBde} institution=${standing.asInstitution}`
+    );
+    return standing;
   }
 
   /**
@@ -3332,7 +3347,9 @@ export class AssociationsService {
 
   /**
    * Of `userIds`, the people `userId` may moderate as people (mute, withdraw a broadcast right): all
-   * for a platform admin; for a BDE `MODERATE` holder, those belonging to one of its spaces.
+   * for a platform admin; for a BDE `MODERATE` holder, those belonging to one of its spaces; for an
+   * institution's `MODERATE` member, none - not even the people of a space the institution governs
+   * (owner, 2026-11-15, decision 3; `bdeModeratesUserSql`).
    */
   async moderatedUserIds(
     userId: string | undefined,
@@ -3439,29 +3456,35 @@ export class AssociationsService {
    * THE TYPED REFUSAL of a moderation act, classified at the throw: 403 `MODERATOR_REQUIRED` when the
    * caller moderates nowhere; 403 `MODERATION_RESERVED_TO_PLATFORM_ADMIN` when the target is published
    * in an institution's or a BDE's name (owner, 2026-11-03 and 2026-11-15: only its own moderators,
-   * who pass the act, and the platform admin moderate those);
-   * 403 `MODERATION_OUT_OF_SCOPE` otherwise - outside the spaces the caller's BDE governs. Logged with
-   * the target's kind, never its content.
+   * who pass the act, and the platform admin moderate those); 403 `MODERATION_OUT_OF_SCOPE` for a BDE
+   * moderator otherwise - outside the spaces its BDE governs; 403
+   * `MODERATION_OUTSIDE_OWN_INSTITUTION` for a caller who moderates only as an institution, which
+   * reaches its own content and no person (decisions 3 and 4). Logged with the target's kind, never
+   * its content.
    */
   async refuseModeration(userId: string | undefined, target: ModerationTarget): Promise<never> {
-    const somewhere = !!userId && (await this.isContentModerator(userId));
+    const standing = userId
+      ? await this.moderationStanding(userId)
+      : { asBde: false, asInstitution: false };
+    const somewhere = standing.asBde || standing.asInstitution;
     const reserved = somewhere && (await this.isReservedToPlatformAdmin(target));
-    const code = !somewhere
-      ? MODERATOR_REQUIRED
+    const [code, message] = !somewhere
+      ? [MODERATOR_REQUIRED, 'MODERATE in a BDE or an institution, or global admin, required']
       : reserved
-        ? MODERATION_RESERVED_TO_PLATFORM_ADMIN
-        : MODERATION_OUT_OF_SCOPE;
+        ? [
+            MODERATION_RESERVED_TO_PLATFORM_ADMIN,
+            "Content in an institution's or a BDE's name is moderated by its own moderators and the platform admin only",
+          ]
+        : standing.asBde
+          ? [MODERATION_OUT_OF_SCOPE, 'Outside the spaces your BDE governs']
+          : [
+              MODERATION_OUTSIDE_OWN_INSTITUTION,
+              'An institution moderates its own content only, and no person',
+            ];
     this.logger.log(
       `[MODERATION] refused user=${sanitizeLog((userId ?? '').slice(0, 8))} target=${target.kind}:${sanitizeLog(target.id)} code=${code}`
     );
-    throw new ForbiddenException({
-      code,
-      message: !somewhere
-        ? 'BDE MODERATE permission or global admin required'
-        : reserved
-          ? "Content in an institution's or a BDE's name is moderated by its own moderators and the platform admin only"
-          : 'Outside the spaces your BDE governs',
-    });
+    throw new ForbiddenException({ code, message });
   }
 
   /** Is `target` published in an institution's or a BDE's name (`MODERATION_RESERVED_SQL`)? */
@@ -3549,8 +3572,61 @@ export class AssociationsService {
     flag: AssociationPermissionFlag,
     opts?: { isGlobalAdmin?: boolean }
   ): Promise<Set<string>> {
+    return (await this.actOnAny(userId, associationIds, flag, opts)).granted;
+  }
+
+  /**
+   * A comment thread's two standings over the associations its comments speak for, in ONE membership
+   * read (owner, 2026-11-15, decision 4): `postAs`, where the reader holds `POST_AS_ASSO` (`mayActOnAny`,
+   * the comment's author); `moderatedInstitutions`, the INSTITUTIONS among them whose `MODERATE` the
+   * reader holds - a comment in such a name is that institution's content wherever it sits. The kinds
+   * are read only when a membership row carries `MODERATE` at all, so an ordinary reader pays the
+   * membership read the pencil already cost and nothing more. `POST_AS_ASSO` has no super-admin tier
+   * and no kind excludes it, so the rows cover every id asked.
+   */
+  async commentStandings(
+    userId: string | undefined,
+    associationIds: string[]
+  ): Promise<{ postAs: Set<string>; moderatedInstitutions: Set<string> }> {
+    const { granted, rows } = await this.actOnAny(
+      userId,
+      associationIds,
+      AssociationPermissionFlag.POST_AS_ASSO
+    );
+    const moderating = rows
+      .filter((r) => (r.permissions & AssociationPermissionFlag.MODERATE) !== 0)
+      .map((r) => r.associationId);
+    if (moderating.length === 0) return { postAs: granted, moderatedInstitutions: new Set() };
+    const kinds = await this.assoRepo.find({
+      where: { id: In(moderating) },
+      select: { id: true, type: true },
+    });
+    const moderatedInstitutions = new Set(
+      kinds.filter((k) => k.type === 'institution').map((k) => k.id.toLowerCase())
+    );
+    this.logger.debug(
+      `[MODERATION] comment standings user=${sanitizeLog((userId ?? '').slice(0, 8))} moderate-rows=${moderating.length} institutions=${moderatedInstitutions.size}`
+    );
+    return { postAs: granted, moderatedInstitutions };
+  }
+
+  /**
+   * `mayActOnAny`'s three tiers, with the caller's own membership rows they read (empty when no row
+   * was read: an admin, an anonymous caller, nothing to judge) - so `commentStandings` answers a
+   * second question from the same read.
+   */
+  private async actOnAny(
+    userId: string | undefined,
+    associationIds: string[],
+    flag: AssociationPermissionFlag,
+    opts?: { isGlobalAdmin?: boolean }
+  ): Promise<{
+    granted: Set<string>;
+    rows: { associationId: string; permissions: number }[];
+  }> {
+    const none = { granted: new Set<string>(), rows: [] };
     let unique = [...new Set(associationIds.filter(Boolean))];
-    if (unique.length === 0) return new Set();
+    if (unique.length === 0) return none;
     if ((flag & ANY_TYPE_EXCLUDED_FLAGS) !== 0) {
       // The kind's exclusion, as in `mayAct`: nobody holds the flag on a kind that excludes it.
       const kinds = await this.assoRepo.find({
@@ -3565,11 +3641,11 @@ export class AssociationsService {
           `[PERM] flag=${flag} held by nobody on ${excluded.size}/${unique.length} assocs (kind)`
         );
         unique = unique.filter((id) => !excluded.has(id));
-        if (unique.length === 0) return new Set();
+        if (unique.length === 0) return none;
       }
     }
-    if (opts?.isGlobalAdmin) return new Set(unique);
-    if (!userId) return new Set();
+    if (opts?.isGlobalAdmin) return { granted: new Set(unique), rows: [] };
+    if (!userId) return none;
 
     // The super-admin tier is scoped per association too: the associations among `unique` that a BDE
     // where the caller holds MANAGE_ASSO governs - never all of them because it governs some.
@@ -3586,7 +3662,7 @@ export class AssociationsService {
         `[PERM] super-admin granted user=${userId.slice(0, 8)} flag=${flag} on ${granted.size}/${unique.length} assocs`
       );
     }
-    if (rest.length === 0) return granted;
+    if (rest.length === 0) return { granted, rows: [] };
 
     const rows = await this.memberRepo.find({
       where: { userId, associationId: In(rest) },
@@ -3598,7 +3674,7 @@ export class AssociationsService {
     this.logger.debug(
       `[PERM] user=${userId.slice(0, 8)} holds flag=${flag} on ${granted.size}/${unique.length} assocs`
     );
-    return granted;
+    return { granted, rows };
   }
 
   /**

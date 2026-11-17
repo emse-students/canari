@@ -30,6 +30,7 @@ import {
   BDE_MODERATES_REPORT_SQL,
   BDE_MODERATION_READ_OPENS_POST_SQL,
   MODERATION_OUT_OF_SCOPE,
+  MODERATION_OUTSIDE_OWN_INSTITUTION,
   MODERATION_RESERVED_SQL,
   MODERATION_RESERVED_TO_PLATFORM_ADMIN,
   MODERATOR_REQUIRED,
@@ -930,9 +931,10 @@ maybe('BDE moderation scope against PostgreSQL', () => {
         .muteUser('pdisStudent', 'govMod', undefined, { reason: 'x' } as never)
         .catch((e: unknown) => e);
       expect(refusal).toBeInstanceOf(ForbiddenException);
-      // It moderates SOMEWHERE (its institution's content), so the refusal is the scope's.
+      // It moderates SOMEWHERE - its institution's content - and nothing else: its own code, so
+      // the client never tells it "outside your BDE's spaces" (decision 3).
       expect((refusal as ForbiddenException).getResponse()).toMatchObject({
-        code: MODERATION_OUT_OF_SCOPE,
+        code: MODERATION_OUTSIDE_OWN_INSTITUTION,
       });
     });
 
@@ -1003,7 +1005,7 @@ maybe('BDE moderation scope against PostgreSQL', () => {
       }
     });
 
-    it('classifies a refusal: reserved for a BDE on its content, out of scope for its act on a student', async () => {
+    it('classifies a refusal: reserved for a BDE on its content, its own code for an institution on a student', async () => {
       const svc = service();
       const codeOf = async (
         who: string,
@@ -1015,7 +1017,18 @@ maybe('BDE moderation scope against PostgreSQL', () => {
       expect(await codeOf('seMod', { kind: 'post', id: P.instSePost })).toBe(
         MODERATION_RESERVED_TO_PLATFORM_ADMIN
       );
+      // Decision 3: the student of the space the institution governs is not its to moderate.
       expect(await codeOf('govMod', { kind: 'post', id: P.pdisStudentPost })).toBe(
+        MODERATION_OUTSIDE_OWN_INSTITUTION
+      );
+      expect(await codeOf('govMod', { kind: 'user', id: 'pdisStudent' })).toBe(
+        MODERATION_OUTSIDE_OWN_INSTITUTION
+      );
+      expect(await codeOf('instMod', { kind: 'live', id: L.seLive })).toBe(
+        MODERATION_OUTSIDE_OWN_INSTITUTION
+      );
+      // A BDE moderator out of its spaces keeps the BDE wording.
+      expect(await codeOf('seMod', { kind: 'user', id: 'pdisStudent' })).toBe(
         MODERATION_OUT_OF_SCOPE
       );
       expect(await codeOf('seStudent', { kind: 'post', id: P.instSePost })).toBe(
@@ -1044,6 +1057,60 @@ maybe('BDE moderation scope against PostgreSQL', () => {
             served: await comment('instMod', postId, c.id ?? ''),
           });
         }
+      }
+    });
+
+    it("deletes its own comment under a post it does not moderate, tombstoned over a student's reply (the route)", async () => {
+      // `POST /moderation/comments/:id/delete` on the real tables: the door passes the comment in
+      // the institution's name, and the student's reply under it - a post instMod does not
+      // moderate - is NOT taken: the root is tombstoned over it. The institution's own reply goes.
+      const post = '10000000-0000-4000-8000-00000000000f';
+      const thread: StoredComment[] = [
+        { id: 'im-root', userId: 'seStudent', associationId: A.instSe, text: 'inst words' },
+        { id: 'im-st', parentId: 'im-root', userId: 'gaStudent', text: 'student reply' },
+        { id: 'im-inst', parentId: 'im-root', userId: 'seStudent', associationId: A.instSe },
+      ];
+      await client.query(
+        `INSERT INTO posts (id, "authorId", "associationId", comments) VALUES ($1, 'seStudent', NULL, $2)`,
+        [post, JSON.stringify(thread)]
+      );
+      const ds = new DataSource({
+        type: 'postgres',
+        url: URL,
+        entities: [ContentReport],
+        synchronize: false,
+        extra: { options: `-c search_path=${schema},public` },
+      });
+      await ds.initialize();
+      try {
+        const route = new ModerationController(
+          new ModerationService(
+            ds.getRepository(ContentReport),
+            {} as never,
+            {
+              post: jest.fn(() => of({ data: { changed: 0 } })),
+            } as never
+          ),
+          service()
+        );
+        expect(await posts('instMod')).not.toContain(post);
+        const done = await route.deleteReportedComment('im-root', 'instMod', undefined);
+        expect([...done.removedIds]).toEqual(['im-inst']);
+        expect([...done.tombstoneIds]).toEqual(['im-root']);
+        const after = (await client.query(`SELECT comments FROM posts WHERE id = $1`, [post]))
+          .rows[0].comments as StoredComment[];
+        expect(after.map((c) => c.id)).toEqual(['im-root', 'im-st']);
+        expect(after[0]).toMatchObject({ id: 'im-root', text: '', removedByModeration: true });
+        expect(after[1]).toMatchObject({ id: 'im-st', text: 'student reply' });
+        // The student's reply itself stays refused to the institution, typed as its own.
+        const refusal = await route
+          .deleteReportedComment('im-st', 'instMod', undefined)
+          .catch((e: unknown) => e);
+        expect((refusal as ForbiddenException).getResponse()).toMatchObject({
+          code: MODERATION_OUTSIDE_OWN_INSTITUTION,
+        });
+      } finally {
+        await ds.destroy();
       }
     });
   });

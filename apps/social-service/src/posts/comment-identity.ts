@@ -239,43 +239,31 @@ export class CommentIdentityService {
   ): Promise<CommentViewer> {
     const isGlobalAdmin = who.isGlobalAdmin === true;
     const assocIds = associationIdsOf(comments);
-    const [isModerator, managedAssociationIds] = await Promise.all([
+    const [isModerator, standings] = await Promise.all([
       // A platform admin moderates everywhere: nothing to ask of the post.
       who.isModerator !== undefined
         ? Promise.resolve(who.isModerator)
         : !isGlobalAdmin && who.viewerId && who.postId
           ? this.associations.mayModeratePost(who.viewerId, who.postId, { isGlobalAdmin })
           : Promise.resolve(isGlobalAdmin),
-      // No admin tier: the pencil is the author's alone (owner, 2026-11-02).
-      this.associations.mayActOnAny(who.viewerId, assocIds, AssociationPermissionFlag.POST_AS_ASSO),
+      // No admin tier: the pencil is the author's alone (owner, 2026-11-02). The same membership
+      // read names the institutions whose MODERATE the reader holds (decision 4), so an ordinary
+      // reader pays nothing more for them.
+      this.associations.commentStandings(who.viewerId, assocIds),
     ]);
-    const [moderatedAssociationIds, moderatedInstitutionIds] = await Promise.all([
-      this.moderatedPublishers(who.viewerId, isModerator && !isGlobalAdmin, assocIds),
-      this.moderatedInstitutions(who.viewerId, isGlobalAdmin, assocIds),
-    ]);
+    const moderatedAssociationIds = await this.moderatedPublishers(
+      who.viewerId,
+      isModerator && !isGlobalAdmin,
+      assocIds
+    );
     return {
       viewerId: who.viewerId,
       isGlobalAdmin,
       isModerator,
-      managedAssociationIds,
+      managedAssociationIds: standings.postAs,
       moderatedAssociationIds,
-      moderatedInstitutionIds,
+      moderatedInstitutionIds: standings.moderatedInstitutions,
     };
-  }
-
-  /**
-   * The institutions among `assocIds` whose `MODERATE` the reader holds - asked of any signed-in
-   * reader but the platform admin (who moderates everything) as soon as an association's comment is
-   * there: such a comment is its institution's content wherever it sits, so no post standing can
-   * stand in for this question (owner, 2026-11-15, decision 4).
-   */
-  private async moderatedInstitutions(
-    viewerId: string | undefined,
-    isGlobalAdmin: boolean,
-    assocIds: string[]
-  ): Promise<ReadonlySet<string>> {
-    if (isGlobalAdmin || !viewerId || assocIds.length === 0) return new Set();
-    return this.associations.moderatedInstitutionIds(viewerId, assocIds);
   }
 
   /**

@@ -49,8 +49,15 @@ import { isReaderSpaceSql } from './reader-spaces';
 
 const MODERATE = String(AssociationPermissionFlag.MODERATE);
 
-/** 403 `code`: the caller moderates somewhere, but not where this target lives. */
+/** 403 `code`: the caller moderates as a BDE, but not where this target lives. */
 export const MODERATION_OUT_OF_SCOPE = 'MODERATION_OUT_OF_SCOPE';
+/**
+ * 403 `code`: the caller moderates ONLY as an institution's `MODERATE` member, which reaches that
+ * institution's own content and nothing else - never a person, even of a space the institution
+ * governs (owner, 2026-11-15, decisions 3 and 4). Its own code so the client never words it "outside
+ * your BDE's spaces".
+ */
+export const MODERATION_OUTSIDE_OWN_INSTITUTION = 'MODERATION_OUTSIDE_OWN_INSTITUTION';
 /**
  * 403 `code`: the target is published in an INSTITUTION's or a BDE's name, or in the name of an
  * entity with no governing parent (or is a comment under a post in such a name), which no other BDE
@@ -71,7 +78,10 @@ export interface ModerationTarget {
   postId?: string | null;
 }
 
-/** 403 `code`: the caller moderates nowhere (neither a platform admin nor a BDE `MODERATE` holder). */
+/**
+ * 403 `code`: the caller moderates nowhere (neither a platform admin nor a `MODERATE` holder in a BDE
+ * or an institution).
+ */
 export const MODERATOR_REQUIRED = 'MODERATOR_REQUIRED';
 /** 403 `code`: editing another person's post, which no moderator may do (owner, 2026-11-02). */
 export const POST_EDIT_PUBLISHER_ONLY = 'POST_EDIT_PUBLISHER_ONLY';
@@ -114,17 +124,22 @@ export function institutionModeratesOwnSql(moderator: string, association: strin
 }
 
 /**
- * THE DOOR (`AssociationsService.isContentModerator`): user `$1` moderates SOMEWHERE - `MODERATE` in
- * a BDE (an association of type `association` governing a space) or in an INSTITUTION, governing a
- * space or not (owner, 2026-11-15, decisions 3 and 4). It opens the moderation surfaces and
- * classifies a refusal; every act then asks its scoped predicate. MODERATE held in a club, a list,
- * or an institution's space standing grants nothing more. Answers `moderates`.
+ * THE DOOR (`AssociationsService.isContentModerator`): where user `$1` moderates - `asBde`,
+ * `MODERATE` in a BDE (an association of type `association` governing a space); `asInstitution`, in
+ * an INSTITUTION, governing a space or not (owner, 2026-11-15, decisions 3 and 4). Either opens the
+ * moderation surfaces; the pair classifies a refusal (`MODERATION_OUT_OF_SCOPE` vs
+ * `MODERATION_OUTSIDE_OWN_INSTITUTION`); every act then asks its scoped predicate. MODERATE held in a
+ * club or a list grants nothing.
  */
-export const MODERATES_SOMEWHERE_SQL = `SELECT EXISTS (SELECT 1 FROM association_members door_m
-  JOIN associations door_a ON door_a.id = door_m."associationId"
-  WHERE door_m."userId" = $1 AND (door_m.permissions & ${MODERATE}) <> 0
-    AND ((door_a.type = 'association' AND ${isBdeAssociationSql('door_a')})
-      OR door_a.type = 'institution')) AS "moderates"`;
+export const MODERATES_SOMEWHERE_SQL = `SELECT
+    EXISTS (SELECT 1 FROM association_members door_m
+      JOIN associations door_a ON door_a.id = door_m."associationId"
+      WHERE door_m."userId" = $1 AND (door_m.permissions & ${MODERATE}) <> 0
+        AND door_a.type = 'association' AND ${isBdeAssociationSql('door_a')}) AS "asBde",
+    EXISTS (SELECT 1 FROM association_members door_im
+      JOIN associations door_i ON door_i.id = door_im."associationId"
+      WHERE door_im."userId" = $1 AND (door_im.permissions & ${MODERATE}) <> 0
+        AND door_i.type = 'institution') AS "asInstitution"`;
 
 /**
  * THE PUBLISHER HALF OF THE ONE PREDICATE: user `moderator` holds `MODERATE` over what is published in

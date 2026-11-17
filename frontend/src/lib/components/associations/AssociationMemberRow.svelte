@@ -16,7 +16,10 @@
     displayName: string;
     /** When true, shows role editor and remove (association admins). */
     manage?: boolean;
-    /** When false, BDE-only flags (VALIDATE_EVENTS, MANAGE_ASSO, MODERATE) are hidden. */
+    /**
+     * Whether the entity governs a space: with `kind`, decides which BDE-only flag is offered
+     * (`offersBdeOnlyFlag` - MODERATE on every institution, the others only where honoured).
+     */
     isBDE?: boolean;
     /**
      * The kind of entity the member belongs to: the editor offers only the rights its sections

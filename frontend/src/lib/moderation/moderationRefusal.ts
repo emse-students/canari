@@ -14,6 +14,7 @@ import { Log } from '$lib/utils/Log';
 export const MODERATION_REFUSAL_CODES = {
   MODERATION_RESERVED_TO_PLATFORM_ADMIN: 'MODERATION_RESERVED_TO_PLATFORM_ADMIN',
   MODERATION_OUT_OF_SCOPE: 'MODERATION_OUT_OF_SCOPE',
+  MODERATION_OUTSIDE_OWN_INSTITUTION: 'MODERATION_OUTSIDE_OWN_INSTITUTION',
   MODERATOR_REQUIRED: 'MODERATOR_REQUIRED',
 } as const;
 
@@ -21,6 +22,8 @@ const WORDING: Readonly<Record<string, () => string>> = {
   [MODERATION_REFUSAL_CODES.MODERATION_RESERVED_TO_PLATFORM_ADMIN]:
     m.moderation_refusal_reserved_to_platform_admin,
   [MODERATION_REFUSAL_CODES.MODERATION_OUT_OF_SCOPE]: m.moderation_refusal_out_of_scope,
+  [MODERATION_REFUSAL_CODES.MODERATION_OUTSIDE_OWN_INSTITUTION]:
+    m.moderation_refusal_outside_own_institution,
   [MODERATION_REFUSAL_CODES.MODERATOR_REQUIRED]: m.moderation_refusal_moderator_required,
 };
 
