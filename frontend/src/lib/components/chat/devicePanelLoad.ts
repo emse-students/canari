@@ -21,10 +21,8 @@ export interface PanelLoadState<D, S> {
   devices: D[];
   /** True only when THIS load's device fetch answered; `buildPanelRows` derives nothing without it. */
   devicesKnown: boolean;
-  devicesFailed: boolean;
   sessions: S[];
   sessionsKnown: boolean;
-  sessionsFailed: boolean;
 }
 
 /** The state an applied load writes: a failed half is empty AND unknown, never a stale list. */
@@ -34,10 +32,8 @@ export function panelStateFrom<D, S>(result: PanelLoadResult<D, S>): PanelLoadSt
   return {
     devices: result.devices.status === 'fulfilled' ? result.devices.value : [],
     devicesKnown: devicesOk,
-    devicesFailed: !devicesOk,
     sessions: result.sessions.status === 'fulfilled' ? result.sessions.value : [],
     sessionsKnown: sessionsOk,
-    sessionsFailed: !sessionsOk,
   };
 }
 
@@ -68,4 +64,24 @@ export function createDevicePanelLoader<D, S>(deps: DevicePanelLoaderDeps<D, S>)
       deps.apply({ devices, sessions });
     },
   };
+}
+
+/** What a removal has to tell the user: an empty string is "nothing to say". */
+export interface RemovalMessages {
+  failure: string;
+  sessionFailure: string;
+}
+
+/**
+ * Runs a removal, reloads the panel, and only THEN shows what the removal had to say: the reload
+ * clears the panel's messages when it starts, so a failure set before it was wiped unread.
+ */
+export async function settleRemoval(steps: {
+  remove: () => Promise<RemovalMessages>;
+  reload: () => Promise<void>;
+  show: (messages: RemovalMessages) => void;
+}): Promise<void> {
+  const messages = await steps.remove();
+  await steps.reload();
+  steps.show(messages);
 }

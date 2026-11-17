@@ -2176,7 +2176,8 @@ while the list is unknown every login is a plain sign-out row and `revocableDevi
 carries a generation, and one that answers after a later load started writes nothing - neither
 devices, logins, `devicesKnown` nor a message. Without it a slow load that failed after a reopen's
 load succeeded left `devices = []` beside `devicesKnown = true`. The state an applied load writes is
-`panelStateFrom`, every field at once.
+`panelStateFrom`, every field at once. A removal's message is shown only after the reload it triggers, which
+clears the messages when it starts (`settleRemoval`).
 
 **And the panel never bans the device it runs on, checked twice.** Client side, a row naming
 `myDeviceId` or holding the current login only signs out, and logs that decision. That check reads
