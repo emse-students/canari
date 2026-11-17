@@ -3492,7 +3492,7 @@ No key fingerprint or technical id on a normal screen: the waiting device's own 
 |---|---|---|---|---|
 | `--accent` (`accent`) | `#f6c232` | `#ffd45d` | The FILL: primary button, active-tab indicator, selected chip, own-bubble. Always carries `on-accent`. | n/a |
 | `--on-accent` (`on-accent`) | `#151b2c` | `#151b2c` | Ink on the fill | 10.35 light, 12.10 dark |
-| `--accent-text` (`accent-text`) | `#836300` | `#ffd45d` | A link, a mention, a counter, any coloured TEXT (rule C) | 5.60 on white, 4.99 on the page grey `#f0f2f5`, 4.58 on its own 20 % tint over that grey; 13.2 on `#121212` |
+| `--accent-text` (`accent-text`) | `#836300` | `#ffd45d` | A link, a mention, a counter, any coloured TEXT (rule C). **Inside your own bubble a mention takes `currentColor` instead**: the bubble is filled with the accent | 5.60 on white, 4.99 on the page grey `#f0f2f5`, 4.58 on its own 20 % tint over that grey; 13.2 on `#121212` |
 | `--accent-icon` (`accent-icon`) | `#af8601` | `#ffd45d` | A glyph, a border, a focus ring, the native tab glyph | 3.37 on white, 3.00 on `#f0f2f5`; 13.2 on `#121212` dark |
 | `--accent-hover` (`accent-hover`) | `#e4af1b` | `#ffe082` | Hover of the fill | n/a |
 
@@ -3547,12 +3547,21 @@ All three are now `.ui-icon-button` (38px under a pointer, 44px on touch), the a
 
 ## A mention chip in the sender's own bubble took the bubble's fill as its text colour (2026-11-17)
 
-Owner, Android dark mode: a mention in a message the user SENT read as a blank gap. `MessageMentionChip`
-drew `text-accent-text`, the accent family for text on a NEUTRAL surface (`#ffd45d` in dark, section
-31's own measurement of the same family: 1.13:1 on the yellow outgoing bubble in dark, 1.68:1 in
-light). It is the hashtag defect of section 31 again, in the one inline element that kept its own
-colour. **The chip now takes `currentColor`**, the rule of section 31: it cannot know what its bubble
-is filled with, so it names no colour. It stays told apart by the `@`, `font-semibold`, and a faint
-`bg-accent/10` pill (Tailwind emits a solid fallback before the `color-mix` form, so the text colour
-being `currentColor` keeps it legible on a WebView without `color-mix`). Pinned by
-`MessageMentionChip.svelte.test.ts`.
+Owner, Android dark mode: a mention in a message the user SENT read as a blank gap.
+`MessageMentionChip` drew `text-accent-text`, the accent family for text on a NEUTRAL surface
+(`#ffd45d` in dark), on the accent-filled own bubble: section 31 measured this family at 1.13:1 in
+dark and 1.68:1 in light there. It is the hashtag defect of section 31 again, in the one inline
+element that kept its own colour.
+
+**THE FIX IS A VARIANT, NOT A GLOBAL CHANGE.** `isOwn` is threaded from `MessageBubble` through
+`MessageTextBody` and `MessageMediaRenderer` (its `onAmber`: an own message whose bubble is
+actually drawn) and `MessageInlineText` into the chip as `onOwnBubble`. Inside your own bubble the
+chip names no colour and inherits `currentColor` (10.35:1 and 12.10:1), told apart by the `@` and
+`font-semibold`, like a hashtag. On every other bubble it keeps `text-accent-text`.
+
+**NO TINT, EITHER WAY.** `bg-accent/10` was written first and refused twice: it is invisible on the
+accent-filled own bubble, and Tailwind emits a solid fallback (`bg-accent`) before the `color-mix()`
+form under `@supports`, so on a WebView without `color-mix` an INCOMING dark bubble would show the
+accent text on a solid accent pill, yellow on yellow again (about 1.13:1). Pinned by
+`MessageMentionChip.svelte.test.ts` (own has no accent text class, incoming keeps it, neither has a
+`bg-accent` class) and `MessageInlineText.svelte.test.ts` (the flag is forwarded).

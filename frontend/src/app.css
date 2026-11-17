@@ -49,7 +49,8 @@
   /* THE ONE ACCENT (owner, 2026-11-09, option B + rule C; docs/wiki/frontend/design-reference.md).
      `accent` is the FILL (bars, tabs, buttons, selected states) and always carries `on-accent`
      ink. Yellow cannot be text on a light surface (1.66:1 on white), so the same hue has three
-     more jobs: `accent-text` (a link, a counter, a mention: 4.5:1), `accent-icon` (a glyph, a
+     more jobs: `accent-text` (a link, a counter, a mention: 4.5:1; inside your own bubble a mention
+     takes `currentColor`, the bubble being filled with the accent), `accent-icon` (a glyph, a
      border, a focus ring that must read as yellow: 3:1) and `accent-hover`. The Tailwind amber
      scale is NOT an accent and `accentTokens.test.ts` counts it; amber survives as a warning only,
      through `amber-warn`. */

@@ -1,9 +1,9 @@
 // @vitest-environment happy-dom
 /**
- * A MENTION IS LEGIBLE IN THE SENDER'S OWN BUBBLE (owner, 2026-11-17, Android dark mode: the name
- * was yellow on the yellow own bubble, a blank gap in the sentence). `text-accent-text` is the
- * accent family drawn on a NEUTRAL surface; the own bubble is filled with the accent, so the chip
- * must take the bubble's own text colour - the rule the hashtag already follows.
+ * A MENTION IS LEGIBLE ON EVERY BUBBLE (owner, 2026-11-17, Android dark mode: in the sender's own
+ * accent-filled bubble the name was yellow on yellow, a blank gap). The own bubble takes the
+ * bubble's colour; any other keeps the accent text. Neither carries a `bg-accent/N` tint, whose
+ * fallback without `color-mix` is the solid accent.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
@@ -26,19 +26,31 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
-describe('the mention chip takes the colour of the bubble it sits in', () => {
-  it('uses currentColor, never the accent text token that equals the own bubble fill', () => {
-    seedUserDisplayName('u-bob', 'Bob Martin');
-    const target = document.body.appendChild(document.createElement('div'));
-    const chip = mount(MessageMentionChip, { target, props: { userId: 'u-bob' } });
-    flushSync();
-    const button = target.querySelector('button');
-    expect(button).not.toBeNull();
-    const classes = button!.className.split(/\s+/);
+function chipClasses(onOwnBubble: boolean): string[] {
+  seedUserDisplayName('u-bob', 'Bob Martin');
+  const target = document.body.appendChild(document.createElement('div'));
+  const chip = mount(MessageMentionChip, { target, props: { userId: 'u-bob', onOwnBubble } });
+  flushSync();
+  const button = target.querySelector('button');
+  expect(button).not.toBeNull();
+  expect(button!.textContent).toContain('@');
+  const classes = button!.className.split(/\s+/);
+  unmount(chip);
+  return classes;
+}
+
+describe('the mention chip follows the bubble it sits in', () => {
+  it('own bubble: no accent text class, so it inherits the bubble colour', () => {
+    const classes = chipClasses(true);
     expect(classes).not.toContain('text-accent-text');
-    expect(classes).not.toContain('text-accent');
     expect(classes).toContain('font-semibold');
-    expect(button!.textContent).toContain('@');
-    unmount(chip);
+  });
+
+  it('incoming bubble: keeps the accent text colour', () => {
+    expect(chipClasses(false)).toContain('text-accent-text');
+  });
+
+  it.each([true, false])('no accent tint that falls back to solid accent (own=%s)', (own) => {
+    expect(chipClasses(own).some((c) => /(^|:)bg-accent/.test(c))).toBe(false);
   });
 });
