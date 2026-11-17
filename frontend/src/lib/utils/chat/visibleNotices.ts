@@ -19,9 +19,10 @@
 import { sendFrameFromThisTab } from '$lib/mls-client/frameFromAnyTab';
 import type { IMlsService } from '$lib/mlsService';
 import { encodeAppMessage, mkVisibleSystem } from '$lib/proto/codec';
-import { mkNoticeEnvelope, serializeEnvelope, type NoticeSpec } from '$lib/envelope';
+import { mkNoticeEnvelope, parseEnvelope, serializeEnvelope, type NoticeSpec } from '$lib/envelope';
 import { noticeText, noticeUserIds } from './noticeText';
-import type { AddMessageToChatOptions } from '$lib/types';
+import type { AddMessageToChatOptions, Conversation } from '$lib/types';
+import { GROUP_NAME_REFUSAL_TEXT, ownRenameFromRelay } from './groupName';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { SYSTEM_SENDER_ID } from './messageUtils';
 
@@ -233,4 +234,45 @@ export async function sendVisibleNotice(
     `[NOTICE] ${event} written on the acting device in ${groupId.slice(0, 8)}… as ${frame.messageId.slice(0, 8)} - the id every member's device writes`
   );
   return { receivedAt: sent.receivedAt, sentAt: frame.sentAt };
+}
+
+/** The name a stored rename notice says the group was renamed to, or `undefined` for any other row. */
+export function renamedToOf(content: string): string | undefined {
+  const envelope = parseEnvelope(content);
+  return envelope.kind === 'system' && envelope.notice?.event === 'groupRenamed'
+    ? envelope.notice.name
+    : undefined;
+}
+
+/**
+ * The heal of a rename whose fate this device never learnt (`ownRenameFromRelay`), run on the rows a
+ * history bundle adds - live and replayed, one rule. Returns the row to write, or `null` when no
+ * relayed row is one of this device's own rename frames; says what it did either way it acts.
+ */
+export function ownRenameSettledByRelay(
+  convo: Conversation,
+  rows: ReadonlyArray<{ id: string; content: string; serverTimestamp?: number }>,
+  relayer: string,
+  log: (msg: string) => void
+): Conversation | null {
+  const settled = ownRenameFromRelay(
+    convo,
+    rows.map((r) => ({
+      id: r.id,
+      ...(typeof r.serverTimestamp === 'number' ? { serverTimestamp: r.serverTimestamp } : {}),
+      renamedTo: renamedToOf(r.content),
+    }))
+  );
+  if (!settled) return null;
+  const what = `own rename ${settled.frame.messageId.slice(0, 8)} in ${convo.id.slice(0, 8)}…`;
+  if ('refused' in settled) {
+    console.error(
+      `[GROUP_NAME] ${what}: the copy ${relayer.slice(0, 8)} relayed is not taken - ${settled.refused === 'other-name' ? 'it names another name under that id' : GROUP_NAME_REFUSAL_TEXT[settled.refused]}`
+    );
+    return null;
+  }
+  log(
+    `[GROUP_NAME] ${what} landed, proven by the copy ${relayer.slice(0, 8)} relayed - ${settled.outcome === 'applied' ? 'the name taken at the time the members hold it' : 'a later name stands, as for every member'}`
+  );
+  return settled.row;
 }

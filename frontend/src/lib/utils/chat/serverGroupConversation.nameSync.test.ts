@@ -1,17 +1,20 @@
 /**
  * WHAT A RENAME STILL OWES, SETTLED BY THE CONNECTION SWEEP (`settleNameSync`).
  *
- * Two halves. The SERVER'S COPY of a name the members hold is written compare-and-set: only while the
- * row holds that name and the server still holds the name the rename was made over - a server naming
- * anything else was written by a later rename, and an owed copy put an older name back over it
- * (#3785 re-review P2-a). The PENDING FRAME - a send that got no answer, its fate unknown - is re-sent
- * as the same frame while the row still holds what it was made over, and dropped once anything else
- * settled it (P2-b). The recovery path, which runs before the device drained what it missed, neither
- * settles nor relabels a row that owes something.
+ * Two halves. The SERVER'S COPY of a name the members hold is written compare-and-set, on the
+ * server's name read again right before the write: only while the row holds that name and the server
+ * still holds the name the rename was made over - a server naming anything else was written by a
+ * later rename, and an owed copy put an older name back over it (#3785 re-review P2-a). The PENDING
+ * FRAME - a send that got no answer, its fate unknown - is re-sent as the same frame while the row
+ * still shows what it was made over; a frame it stops re-sending is kept `unconfirmed`, never
+ * forgotten. Neither half runs before this link has drained the group: a row read before the device
+ * has read what arrived while it was out cannot say nothing happened since (re-review 2, P2-2). The
+ * recovery path neither settles nor relabels a row that owes something.
  */
 import type { Conversation } from '$lib/types';
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import type { PendingRename } from './groupName';
+import type { RenameResendOutcome } from './groupActions';
 import { BUNDLE_SERVER_TIME_SKEW_MS } from './messageTime';
 import {
   ensureConversationForServerGroup,
@@ -38,9 +41,11 @@ function row(over: Partial<Conversation> = {}): Conversation {
 
 const listed = (name: string): ServerGroupRow => ({ groupId: GROUP_ID, name, isGroup: true });
 
+const DELIVERED: RenameResendOutcome = { sent: { receivedAt: T + 60_000, sentAt: T } };
+
 function settler(over: Partial<NameSyncSettler> = {}): NameSyncSettler {
   return {
-    resend: vi.fn().mockResolvedValue({ receivedAt: T + 60_000, sentAt: T + 59_000 }),
+    resend: vi.fn().mockResolvedValue(DELIVERED),
     now: () => T + 60_000,
     ...over,
   };
@@ -49,14 +54,30 @@ function settler(over: Partial<NameSyncSettler> = {}): NameSyncSettler {
 async function sweep(
   held: Conversation,
   serverName: string,
-  opts: { nameSync?: NameSyncSettler | null; renameGroup?: ReturnType<typeof vi.fn> } = {}
+  opts: {
+    nameSync?: NameSyncSettler | null;
+    renameGroup?: ReturnType<typeof vi.fn>;
+    /** The server's name read again before the write; the listed one when absent. */
+    freshName?: string;
+    /** Whether this link's pull has drained the group. */
+    drained?: boolean;
+  } = {}
 ) {
   const conversations = new Map<string, Conversation>([[GROUP_ID, held]]);
   const renameGroup = opts.renameGroup ?? vi.fn().mockResolvedValue(undefined);
+  const getGroupMeta = vi.fn().mockResolvedValue({
+    groupId: GROUP_ID,
+    name: opts.freshName ?? serverName,
+    isGroup: true,
+  });
   const log = vi.fn();
   const nameSync = opts.nameSync === null ? undefined : (opts.nameSync ?? settler());
   await ensureConversationForServerGroup(listed(serverName), {
-    mlsService: { renameGroup } as unknown as IMlsService,
+    mlsService: {
+      renameGroup,
+      getGroupMeta,
+      isGroupDrained: () => opts.drained ?? true,
+    } as unknown as IMlsService,
     userId: 'u1',
     conversations,
     saveConversation: vi.fn(async () => {}),
@@ -66,6 +87,8 @@ async function sweep(
   });
   return { row: conversations.get(GROUP_ID)!, renameGroup, log, nameSync };
 }
+
+const said = (log: ReturnType<typeof vi.fn>) => log.mock.calls.map((c) => String(c[0])).join('\n');
 
 describe('the owed server copy is written compare-and-set', () => {
   const owing = (over: Partial<Conversation> = {}) =>
@@ -86,6 +109,15 @@ describe('the owed server copy is written compare-and-set', () => {
     expect(renameGroup).not.toHaveBeenCalled();
     expect(after.nameSync).toBeUndefined();
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('DROPPED, not written'));
+    warn.mockRestore();
+  });
+
+  it("the compare reads the server's name AGAIN for this group, not the list the sweep began with", async () => {
+    // The list said "Old"; a member's rename landed while the sweep worked through earlier groups.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { row: after, renameGroup } = await sweep(owing(), 'Old', { freshName: 'Y' });
+    expect(renameGroup).not.toHaveBeenCalled();
+    expect(after.nameSync).toBeUndefined();
     warn.mockRestore();
   });
 
@@ -118,6 +150,22 @@ describe('the owed server copy is written compare-and-set', () => {
     expect(after.nameSync?.serverCopy).toEqual({ name: 'X', from: 'Old' });
   });
 
+  it('P2-2 (ABA): not drained, nothing is written - the name may have come back to "Old" since', async () => {
+    // B renamed to Y and C back to Old: the server reads "Old" again, and only the frames this link
+    // has not read yet say the row's X is no longer the members' name.
+    const { row: after, renameGroup, log } = await sweep(owing(), 'Old', { drained: false });
+    expect(renameGroup).not.toHaveBeenCalled();
+    expect(after.nameSync).toEqual({ serverCopy: { name: 'X', from: 'Old' } });
+    expect(said(log)).toContain('left to the next sweep');
+  });
+
+  it('P2-2 (ABA): drained, the row moved back to "Old" with the members - dropped, never written', async () => {
+    const { row: after, renameGroup } = await sweep(owing({ name: 'Old', nameAt: T + 9 }), 'Old');
+    expect(renameGroup).not.toHaveBeenCalled();
+    expect(after.name).toBe('Old');
+    expect(after.nameSync).toBeUndefined();
+  });
+
   it('the recovery path neither settles nor relabels a row that owes something', async () => {
     const { row: after, renameGroup } = await sweep(owing({ nameAt: undefined }), 'Old', {
       nameSync: null,
@@ -146,32 +194,51 @@ describe('the pending frame (a send with no answer) is re-sent as the same frame
     expect(after.nameSync).toBeUndefined();
   });
 
+  it('the NAME decides, not the date: the same name restated under another date is re-sent over', async () => {
+    const { nameSync } = await sweep(pendingRow({ nameAt: T + 5 }), 'Old');
+    expect(nameSync!.resend).toHaveBeenCalled();
+  });
+
+  it('P2-2: the pull failed - nothing is re-sent, the frame stays pending, and the line says why', async () => {
+    const { row: after, nameSync, log } = await sweep(pendingRow(), 'Old', { drained: false });
+    expect(nameSync!.resend).not.toHaveBeenCalled();
+    expect(after.nameSync).toEqual({ pending: PENDING });
+    expect(said(log)).toContain('left to the next sweep');
+  });
+
+  it("P2-2: the pull succeeded and brought a member's later rename B - superseded, never re-sent over it", async () => {
+    const { row: after, nameSync } = await sweep(pendingRow({ name: 'B', nameAt: T + 5 }), 'B');
+    expect(nameSync!.resend).not.toHaveBeenCalled();
+    expect(after.name).toBe('B');
+    // Kept, never forgotten: its first copy may have landed after B (`ownRenameFromRelay`).
+    expect(after.nameSync).toEqual({ unconfirmed: PENDING });
+  });
+
   it('no answer again: still pending, nothing else written', async () => {
-    const s = settler({ resend: vi.fn().mockResolvedValue('unanswered') });
+    const s = settler({ resend: vi.fn().mockResolvedValue({ kept: 'unanswered' }) });
     const { row: after, renameGroup } = await sweep(pendingRow(), 'Old', { nameSync: s });
     expect(after.name).toBe('Old');
     expect(after.nameSync).toEqual({ pending: PENDING });
     expect(renameGroup).not.toHaveBeenCalled();
   });
 
-  it('an ANSWERED refusal of the re-send drops it', async () => {
+  it('P2-1: a re-send that was not made proves nothing about the first copy - still pending', async () => {
+    const s = settler({ resend: vi.fn().mockResolvedValue({ kept: 'not-sent' }) });
+    const { row: after } = await sweep(pendingRow(), 'Old', { nameSync: s });
+    expect(after.nameSync).toEqual({ pending: PENDING });
+  });
+
+  it('a re-send ANSWERED with a refusal that ends it is kept unconfirmed, not forgotten', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const s = settler({ resend: vi.fn().mockRejectedValue(new Error('403')) });
+    const s = settler({ resend: vi.fn().mockResolvedValue({ refused: 'group-deleted' }) });
     const { row: after } = await sweep(pendingRow(), 'Old', { nameSync: s });
     expect(after.name).toBe('Old');
-    expect(after.nameSync).toBeUndefined();
-    expect(error).toHaveBeenCalled();
+    expect(after.nameSync).toEqual({ unconfirmed: PENDING });
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('REFUSED (group-deleted)'));
     error.mockRestore();
   });
 
-  it('superseded by a later name read since: dropped, never re-sent over it', async () => {
-    const { row: after, nameSync } = await sweep(pendingRow({ name: 'Y', nameAt: T + 5 }), 'Y');
-    expect(nameSync!.resend).not.toHaveBeenCalled();
-    expect(after.name).toBe('Y');
-    expect(after.nameSync).toBeUndefined();
-  });
-
-  it('its own frame came back from the archive: not re-sent, only the server copy written', async () => {
+  it('its own frame came back: not re-sent, only the server copy written', async () => {
     const {
       row: after,
       nameSync,
@@ -182,13 +249,22 @@ describe('the pending frame (a send with no answer) is re-sent as the same frame
     expect(after.nameSync).toBeUndefined();
   });
 
-  it('minted beyond the receivers bound: dropped unsent, since every member would refuse it', async () => {
+  it('minted beyond the receivers bound: not re-sent, kept unconfirmed', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const s = settler({ now: () => T + BUNDLE_SERVER_TIME_SKEW_MS + 1 });
     const { row: after } = await sweep(pendingRow(), 'Old', { nameSync: s });
     expect(s.resend).not.toHaveBeenCalled();
-    expect(after.nameSync).toBeUndefined();
-    expect(error).toHaveBeenCalledWith(expect.stringContaining('DROPPED unsent'));
+    expect(after.nameSync).toEqual({ unconfirmed: PENDING });
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('NOT re-sent'));
     error.mockRestore();
+  });
+
+  it('an unconfirmed frame alone is never re-sent by a sweep', async () => {
+    const { row: after, nameSync } = await sweep(
+      row({ name: 'Old', nameAt: T - 1_000, nameSync: { unconfirmed: PENDING } }),
+      'Old'
+    );
+    expect(nameSync!.resend).not.toHaveBeenCalled();
+    expect(after.nameSync).toEqual({ unconfirmed: PENDING });
   });
 });

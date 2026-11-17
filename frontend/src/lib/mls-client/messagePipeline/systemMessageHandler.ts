@@ -12,6 +12,7 @@ import {
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import {
   memberLeftContent,
+  ownRenameSettledByRelay,
   receivedNoticeTime,
   visibleNoticeContent,
 } from '$lib/utils/chat/visibleNotices';
@@ -1811,6 +1812,36 @@ export async function handleSystemEvent(
             for (const item of toAdd) {
               await addMessageToChat(item.senderId, item.content, convoKey, item);
             }
+          }
+        }
+
+        // A ROW ADDED UNDER THE ID OF ONE OF THIS DEVICE'S OWN RENAME FRAMES whose fate it never
+        // learnt is the proof that frame landed, and its server time is the one every member dated
+        // the name by (`ownRenameFromRelay`, `groupName.ts`) - the heal of a rename this device
+        // stopped re-sending. Re-read after the adds, which rewrote the row.
+        if (toAdd.length > 0) {
+          const held = conversations.get(convoKey);
+          const healed = held
+            ? ownRenameSettledByRelay(
+                held,
+                toAdd.map((item) => ({
+                  id: item.messageId,
+                  content: item.content,
+                  ...(typeof item.serverTimestamp === 'number'
+                    ? { serverTimestamp: item.serverTimestamp }
+                    : {}),
+                })),
+                senderNorm,
+                log
+              )
+            : null;
+          if (healed) {
+            conversations.set(convoKey, healed);
+            await saveConversation?.(convoKey).catch((e: unknown) => {
+              log(
+                `[GROUP_NAME] name of ${convoKey.slice(0, 8)}… settled by a relayed copy but not persisted: ${String(e)}`
+              );
+            });
           }
         }
 

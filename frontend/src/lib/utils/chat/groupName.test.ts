@@ -9,7 +9,10 @@ import {
   restatedGroupName,
   withDatedGroupName,
   withRestatedGroupName,
+  nameSyncField,
+  ownRenameFromRelay,
   parseNameSync,
+  unconfirmedFrom,
   pendingRenameOutcome,
   pendingRenameVerdict,
   reportRenameRefusal,
@@ -206,10 +209,84 @@ describe('a rename whose frame got no answer', () => {
   it('is re-sent only while the row still holds what it was made over', () => {
     expect(pendingRenameVerdict({ name: 'Old', nameAt: T - 1 }, PENDING)).toBe('resend');
     expect(pendingRenameVerdict({ name: 'B', nameAt: T + 9 }, PENDING)).toBe('superseded');
-    // The same name under another date is another statement, not the row it was made over.
-    expect(pendingRenameVerdict({ name: 'Old', nameAt: T + 9 }, PENDING)).toBe('superseded');
+    // The NAME decides: the same name restated under another date (a join push dating an undated
+    // row) is no later rename.
+    expect(pendingRenameVerdict({ name: 'Old', nameAt: T + 9 }, PENDING)).toBe('resend');
+    expect(pendingRenameVerdict({ name: 'Old' }, PENDING)).toBe('resend');
     // Its own frame came back from the archive: it landed.
     expect(pendingRenameVerdict({ name: 'A', nameAt: T + 2 }, PENDING)).toBe('landed');
+  });
+});
+
+describe('the heal of an own rename whose fate was never learnt: a relayed copy of its notice', () => {
+  // S renamed to "A"; its send got no answer, it stopped re-sending (a later name, the 24 h bound,
+  // a refusal). The members hold the notice under the id S minted; S holds no row under it, so the
+  // history reconciliation's digest diff relays that row - and it is the proof the frame landed.
+  const FRAME = { name: 'A', messageId: 'own-1', sentAt: T, over: { name: 'Old', at: T - 1 } };
+
+  it('a relayed row under its id applies (A, t1) at the time the members dated it, and owes the copy', () => {
+    const s = group({ name: 'Old', nameAt: T - 1, nameSync: { unconfirmed: FRAME } });
+    const out = ownRenameFromRelay(s, [{ id: 'own-1', serverTimestamp: T + 5, renamedTo: 'A' }]);
+    expect(out).toMatchObject({ outcome: 'applied' });
+    const healed = (out as { row: Conversation }).row;
+    expect(healed).toMatchObject({ name: 'A', nameAt: T + 5 });
+    expect(healed.nameSync).toEqual({ serverCopy: { name: 'A', from: 'Old' } });
+  });
+
+  it('A landed BEFORE the later B this device holds: B stands, as it does for every member', () => {
+    const s = group({ name: 'B', nameAt: T + 10, nameSync: { unconfirmed: FRAME } });
+    const out = ownRenameFromRelay(s, [{ id: 'own-1', serverTimestamp: T + 5, renamedTo: 'A' }]);
+    expect(out).toMatchObject({ outcome: 'older' });
+    const kept = (out as { row: Conversation }).row;
+    expect(kept).toMatchObject({ name: 'B', nameAt: T + 10 });
+    expect(kept.nameSync).toBeUndefined();
+  });
+
+  it('A landed AFTER B: the members hold A, and so does this device now', () => {
+    const s = group({ name: 'B', nameAt: T + 3, nameSync: { unconfirmed: FRAME } });
+    const out = ownRenameFromRelay(s, [{ id: 'own-1', serverTimestamp: T + 5, renamedTo: 'A' }]);
+    expect((out as { row: Conversation }).row).toMatchObject({ name: 'A', nameAt: T + 5 });
+  });
+
+  it('settles a frame still pending too: it landed, nothing is re-sent', () => {
+    const s = group({ name: 'Old', nameAt: T - 1, nameSync: { pending: FRAME } });
+    const out = ownRenameFromRelay(s, [{ id: 'own-1', serverTimestamp: T + 5, renamedTo: 'A' }]);
+    expect((out as { row: Conversation }).row.nameSync).toEqual({
+      serverCopy: { name: 'A', from: 'Old' },
+    });
+  });
+
+  it("the relayer's server time is bounded by the sentAt THIS device minted", () => {
+    const s = group({ name: 'Old', nameAt: T - 1, nameSync: { unconfirmed: FRAME } });
+    const far = T + BUNDLE_SERVER_TIME_SKEW_MS + 1;
+    expect(
+      ownRenameFromRelay(s, [{ id: 'own-1', serverTimestamp: far, renamedTo: 'A' }])
+    ).toMatchObject({ refused: 'server-time-out-of-bound' });
+    expect(ownRenameFromRelay(s, [{ id: 'own-1', renamedTo: 'A' }])).toMatchObject({
+      refused: 'no-server-time',
+    });
+  });
+
+  it('a row under its id naming another name is refused; rows under other ids are not its business', () => {
+    const s = group({ name: 'Old', nameAt: T - 1, nameSync: { unconfirmed: FRAME } });
+    expect(
+      ownRenameFromRelay(s, [{ id: 'own-1', serverTimestamp: T + 5, renamedTo: 'Z' }])
+    ).toMatchObject({ refused: 'other-name' });
+    expect(
+      ownRenameFromRelay(s, [{ id: 'other', serverTimestamp: T + 5, renamedTo: 'A' }])
+    ).toBeNull();
+    expect(
+      ownRenameFromRelay(group({ name: 'Old' }), [{ id: 'own-1', renamedTo: 'A' }])
+    ).toBeNull();
+  });
+
+  it('a frame moved to unconfirmed leaves pending, and the record round-trips', () => {
+    const sync = unconfirmedFrom({ pending: FRAME, serverCopy: { name: 'P', from: 'Q' } }, FRAME);
+    expect(nameSyncField(sync).nameSync).toEqual({
+      serverCopy: { name: 'P', from: 'Q' },
+      unconfirmed: FRAME,
+    });
+    expect(parseNameSync(JSON.stringify({ unconfirmed: FRAME }))).toEqual({ unconfirmed: FRAME });
   });
 });
 

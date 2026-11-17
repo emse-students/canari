@@ -518,6 +518,9 @@ describe('discoverMissingGroups orphan cleanup', () => {
             ]),
           getLocalGroups: vi.fn().mockReturnValue(['g1']),
           renameGroup,
+          // This link's pull has drained the group, and the server's name read again is the list's.
+          isGroupDrained: vi.fn().mockReturnValue(true),
+          getGroupMeta: vi.fn().mockResolvedValue({ groupId: 'g1', name: 'Groupe', isGroup: true }),
         }),
         userId: 'user-a',
         deviceKeyB64: '1234',

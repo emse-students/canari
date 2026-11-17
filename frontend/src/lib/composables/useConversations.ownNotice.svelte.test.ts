@@ -35,6 +35,7 @@ vi.mock('$lib/stores/toast.svelte', async (importOriginal) => ({
 
 const { useConversations } = await import('./useConversations.svelte');
 const { DeliveryUnreachableError } = await import('$lib/mls-client/mlsDeliveryApi');
+const { FrameNotHandedError } = await import('$lib/mls-client/frameFromAnyTab');
 
 const GROUP_ID = 'e4c1f0aa-0000-4000-8000-00000000000a';
 
@@ -125,6 +126,17 @@ describe('the acting device keeps the notice its own send wrote', () => {
     expect(addMessageToChat).not.toHaveBeenCalled();
     expect(toasts.at(-1)).toMatchObject({ type: 'info' });
     expect(error).not.toHaveBeenCalled();
+  });
+
+  it("a FOLLOWER tab's rename whose leader died holding it is pending too, never failed", async () => {
+    const { convs, ctx, mls } = setup();
+    vi.mocked(mls.sendMessage).mockRejectedValue(new FrameNotHandedError(GROUP_ID, 'leader-gone'));
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await convs.handleRenameGroup('Apres', ctx);
+    const convo = convs.conversations.get(GROUP_ID)!;
+    expect(convo.name).toBe('Avant');
+    expect(convo.nameSync?.pending).toMatchObject({ name: 'Apres' });
+    expect(toasts.at(-1)).toMatchObject({ type: 'info' });
   });
 
   it('a send the server ANSWERED with a refusal is a failed rename: nothing pending', async () => {

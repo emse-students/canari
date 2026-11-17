@@ -219,11 +219,21 @@ export type OwedServerCopy = { name: string; from: string };
 export type PendingRename = { name: string; messageId: string; sentAt: number; over: RenameBase };
 
 /**
- * What this device still owes about a rename it made, on the row (`Conversation.nameSync`), settled by
- * the next connection's sweep - never on a clock. Both halves may stand at once: an older rename's
- * server copy, and a newer rename whose frame is pending.
+ * What this device still owes, or still does not know, about a rename it made - on the row
+ * (`Conversation.nameSync`), settled by the next connection's sweep or by a relayed copy of its
+ * notice, never on a clock:
+ * - `serverCopy`: the server's copy of a name the members hold, not written yet;
+ * - `pending`: a frame whose send got no answer, to be re-sent as the same frame;
+ * - `unconfirmed`: a frame this device will NOT re-send (a later name superseded it, the receivers'
+ *   bound has passed, a re-send was refused) and whose first copy may still have reached every
+ *   member. It acts only when a member relays that copy's notice under its id
+ *   ({@link ownRenameFromRelay}): this device then takes the name at the time the members hold it.
  */
-export type NameSync = { serverCopy?: OwedServerCopy; pending?: PendingRename };
+export type NameSync = {
+  serverCopy?: OwedServerCopy;
+  pending?: PendingRename;
+  unconfirmed?: PendingRename;
+};
 
 const nonEmptyString = (v: unknown): v is string => typeof v === 'string' && v.trim() !== '';
 const positiveNumber = (v: unknown): v is number =>
@@ -269,6 +279,7 @@ export function withNameSync<T extends { nameSync?: NameSync }>(row: T, sync: Na
   const kept: NameSync = {
     ...(sync.serverCopy ? { serverCopy: sync.serverCopy } : {}),
     ...(sync.pending ? { pending: sync.pending } : {}),
+    ...(sync.unconfirmed ? { unconfirmed: sync.unconfirmed } : {}),
   };
   return (Object.keys(kept).length ? { ...rest, nameSync: kept } : rest) as T;
 }
@@ -301,11 +312,15 @@ export function parseNameSync(raw: unknown): NameSync | undefined {
   const v = value as Record<string, unknown>;
   const serverCopy = v.serverCopy === undefined ? undefined : parseOwedServerCopy(v.serverCopy);
   const pending = v.pending === undefined ? undefined : parsePendingRename(v.pending);
-  if (serverCopy === null || pending === null) {
+  const unconfirmed = v.unconfirmed === undefined ? undefined : parsePendingRename(v.unconfirmed);
+  if (serverCopy === null || pending === null || unconfirmed === null) {
     console.error('[GROUP_NAME] stored nameSync holds an unreadable half - that half is dropped');
   }
-  return nameSyncField({ serverCopy: serverCopy ?? undefined, pending: pending ?? undefined })
-    .nameSync;
+  return nameSyncField({
+    serverCopy: serverCopy ?? undefined,
+    pending: pending ?? undefined,
+    unconfirmed: unconfirmed ?? undefined,
+  }).nameSync;
 }
 
 /**
@@ -355,19 +370,90 @@ export function pendingRenameOutcome(
 
 /**
  * What the sweep does with a pending rename before re-sending it, read off the row as it stands:
- * - `resend`: the row still holds what the rename was made over, so nothing has settled it;
- * - `landed`: the row holds the pending name, dated - this device's own frame came back to it (an
- *   archive replay), so it reached the server and only the server's copy is still owed;
- * - `superseded`: the row moved on to a name a later statement set - re-sending would put the older
- *   rename back on top of it, at a later server time.
+ * - `resend`: the row still shows the name the rename was made over, so nothing has settled it. The
+ *   NAME is compared, never the date: a statement restating the same name (a join push dating an
+ *   undated row) is not a later rename;
+ * - `landed`: the row holds the pending name, dated - its own frame came back to it, so it reached
+ *   the server and only the server's copy is still owed;
+ * - `superseded`: the row moved on to another name a later statement set - re-sending would put the
+ *   older rename back on top of it, at a later server time. Not dropped: kept `unconfirmed`, since
+ *   its first copy may have reached the members after that statement.
  */
 export function pendingRenameVerdict(
   row: Pick<Conversation, 'name' | 'nameAt'>,
   pending: PendingRename
 ): 'resend' | 'landed' | 'superseded' {
   if (row.name === pending.name && row.nameAt !== undefined) return 'landed';
-  if (row.name === pending.over.name && row.nameAt === pending.over.at) return 'resend';
+  if (row.name === pending.over.name) return 'resend';
   return 'superseded';
+}
+
+/**
+ * `sync` with `frame` moved out of `pending` into `unconfirmed`: this device stops re-sending it and
+ * waits for a relayed copy of its notice ({@link ownRenameFromRelay}) to tell whether it landed.
+ */
+export function unconfirmedFrom(sync: NameSync | undefined, frame: PendingRename): NameSync {
+  return { ...sync, pending: undefined, unconfirmed: frame };
+}
+
+/** A row a history bundle relays, as {@link ownRenameFromRelay} reads it. */
+export type RelayedRenameRow = {
+  id: string;
+  /** The relayed server time, already vetted against the bundle's own. */
+  serverTimestamp?: number;
+  /** The name its notice says the group was renamed to, when it is a rename notice. */
+  renamedTo?: string;
+};
+
+/**
+ * THE HEAL OF A RENAME WHOSE FATE THIS DEVICE NEVER LEARNT. A member's device holds the notice of
+ * every rename frame it took, under the id the sender minted; the sending device, whose send got no
+ * answer, holds no row under that id - so the history reconciliation's digest diff relays that row
+ * to it. A relayed row under the id of this device's own `pending` or `unconfirmed` frame is the
+ * proof the frame landed, and its server time is the one every member dated the name by. The name
+ * is then applied by the ordinary rule ({@link withDatedGroupName}): a later statement this device
+ * holds still wins, an earlier one loses - exactly what each member computed.
+ *
+ * The server time is the relayer's word, bounded by the `sentAt` THIS device minted - the same
+ * bound every receiver applied to the server's stamp ({@link readRenameFrame}), so a relayer gets
+ * no power over the order a server does not already have. A row naming another name under that id
+ * is refused (the frame said `name`, every member's notice says it too).
+ *
+ * @returns null when no relayed row is one of this device's own frames.
+ */
+export function ownRenameFromRelay(
+  convo: Conversation,
+  rows: Iterable<RelayedRenameRow>
+):
+  | { row: Conversation; outcome: 'applied' | 'older'; frame: PendingRename }
+  | { refused: 'other-name' | GroupNameRefusal; frame: PendingRename }
+  | null {
+  const sync = convo.nameSync;
+  const own = [sync?.pending, sync?.unconfirmed].filter((f): f is PendingRename => !!f);
+  if (own.length === 0) return null;
+  for (const relayed of rows) {
+    const frame = own.find((f) => f.messageId === relayed.id);
+    if (!frame) continue;
+    if (relayed.renamedTo !== frame.name) return { refused: 'other-name', frame };
+    const read = readRenameFrame(frame.name, relayed.serverTimestamp, frame.sentAt);
+    if ('refused' in read) return { refused: read.refused, frame };
+    const rest: NameSync = {
+      ...sync,
+      pending: sync?.pending?.messageId === frame.messageId ? undefined : sync?.pending,
+      unconfirmed: sync?.unconfirmed?.messageId === frame.messageId ? undefined : sync?.unconfirmed,
+    };
+    const applied = withDatedGroupName(withNameSync(convo, rest), read.kept);
+    if (!('row' in applied)) return { row: withNameSync(convo, rest), outcome: 'older', frame };
+    return {
+      row: withNameSync(applied.row, {
+        ...rest,
+        serverCopy: { name: frame.name, from: frame.over.name },
+      }),
+      outcome: 'applied',
+      frame,
+    };
+  }
+  return null;
 }
 
 /** The conversations a rename frame without a signed `sentAt` was already reported for. */

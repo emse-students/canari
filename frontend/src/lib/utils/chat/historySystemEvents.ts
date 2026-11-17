@@ -9,6 +9,7 @@ import type {
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import {
   memberLeftContent,
+  ownRenameSettledByRelay,
   receivedNoticeTime,
   visibleNoticeContent,
 } from '$lib/utils/chat/visibleNotices';
@@ -851,6 +852,24 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
           writeMergedPending(pm, merged);
           pushPendingMessage(pm);
         }
+        // The live handler's heal, on the same rows (`ownRenameSettledByRelay`): a row added under
+        // the id of one of this device's own rename frames proves that frame landed.
+        const held = getConversation(contactName);
+        const healed = held
+          ? ownRenameSettledByRelay(
+              held,
+              vetted.fresh.map(({ entry: m }) => ({
+                id: m.id,
+                content: m.content,
+                ...(typeof m.serverTimestamp === 'number'
+                  ? { serverTimestamp: m.serverTimestamp }
+                  : {}),
+              })),
+              senderNorm,
+              (line) => console.info(line)
+            )
+          : null;
+        if (healed) setConversation(contactName, healed);
       }
     }
   } catch {

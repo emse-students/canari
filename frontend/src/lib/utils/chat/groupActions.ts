@@ -45,7 +45,8 @@ import { readConfirmedTree } from './confirmedTree';
 import { anyHistoryWithheldIn, historyWithheldFrom } from './historyWithheld';
 import { refusesCommitsHere } from '$lib/mls-client/stateAuthority';
 import { MemberRemovalNotCommittedError } from './memberRemovalError';
-import { isTransportFailure } from '$lib/utils/transportFailure';
+import { isFrameFateUnknown } from '$lib/mls-client/frameFromAnyTab';
+import { classifyOutgoingSendError } from '$lib/mls-client/mlsSendError';
 import {
   GROUP_NAME_REFUSAL_TEXT,
   GroupRenameRefusedError,
@@ -287,11 +288,13 @@ export type RenameResult =
  * Sends one `groupRenamed` frame minted as `minted` and runs the receivers' check on its answer -
  * the one send path of a rename, the gesture's and the sweep's re-send alike.
  *
- * A TRANSPORT FAILURE IS NOT AN ANSWER (`isTransportFailure`, classified at the throw): the frame
- * may be on the server, routed to every member, with only the answer lost - so it returns
- * `'unanswered'`, and the caller keeps the frame pending. Reading it as "not renamed" split the group:
- * the members took the name, this device told its user it failed. Every OTHER error is an answer (a
- * status, a refused handover) that the frame was not taken, and is thrown.
+ * A SEND WITH NO ANSWER IS NOT A REFUSAL (`isFrameFateUnknown`, classified at the throw): the server
+ * did not answer (a transport failure), or the frame was handed to a leader tab that died holding it
+ * or failed without saying whether it posted - in both cases the frame may be on the server, routed
+ * to every member. It returns `'unanswered'`, and the caller keeps the frame pending. Reading it as
+ * "not renamed" split the group: the members took the name, this device told its user it failed.
+ * Every OTHER error is a proof the frame was not taken (a status answer, a handover refused before
+ * it ran), and is thrown.
  *
  * THE SENDER RUNS THE RECEIVERS' CHECK ON ITS OWN FRAME (`readRenameFrame`): a server time further
  * from the `sentAt` this device signed than every receiver believes - a clock off by more than a day -
@@ -321,7 +324,7 @@ async function sendRenameFrame(params: {
       minted
     );
   } catch (e) {
-    if (isTransportFailure(e)) {
+    if (isFrameFateUnknown(e)) {
       console.warn(
         `[GROUP_NAME] groupRenamed frame ${minted.messageId.slice(0, 8)} for ${groupId.slice(0, 8)}… got no answer - its fate is unknown: kept pending, re-sent under the same id at the next connection: ${String(e).slice(0, 120)}`
       );
@@ -405,11 +408,26 @@ export async function renameGroupAndBroadcast(params: {
 }
 
 /**
+ * What a re-send of a pending rename came to, typed so the sweep decides without reading an error:
+ * - `sent`: the server answered it;
+ * - `kept`: nothing proves anything about the frame - no answer again (`unanswered`), or this send
+ *   was not made (`not-sent`: a handover refused before it ran, a status that is no verdict on the
+ *   frame) - so it stays pending. A failed re-send proves something about the RE-SEND only, never
+ *   about the first copy;
+ * - `refused`: an answer that ends it - this device is no longer a member (`evicted`), the group is
+ *   gone (`group-deleted`), or the receivers' bound refuses its server time (`clock`). The first copy
+ *   may still have landed, so the sweep keeps it `unconfirmed`, never forgets it.
+ */
+export type RenameResendOutcome =
+  | { sent: SentNotice }
+  | { kept: 'unanswered' | 'not-sent' }
+  | { refused: 'evicted' | 'group-deleted' | 'clock' };
+
+/**
  * Re-sends a rename whose first send got no answer (`PendingRename`), as the SAME frame: the id and
  * the `sentAt` it was minted with, so a member that already took it draws no second notice and takes
  * the same name again, and the receivers bound its server time by the same signed instant. Run by
- * the connection sweep (`settleNameSync`), which decided the row still waits for it. Thrown errors
- * are the server's answers (and {@link GroupRenameRefusedError}); `'unanswered'` keeps it pending.
+ * the connection sweep (`settleNameSync`), which decided the row still waits for it.
  */
 export async function resendPendingRename(params: {
   mlsService: IMlsService;
@@ -418,14 +436,25 @@ export async function resendPendingRename(params: {
   userId: string;
   deviceKeyB64: string;
   ownNotice: Omit<OwnNotice, 'actor'>;
-}): Promise<SentNotice | 'unanswered'> {
-  const { pending, userId, ownNotice } = params;
-  return sendRenameFrame({
-    ...params,
-    newName: pending.name,
-    minted: { messageId: pending.messageId, sentAt: pending.sentAt },
-    ownNotice: { ...ownNotice, actor: userId },
-  });
+}): Promise<RenameResendOutcome> {
+  const { groupId, pending, userId, ownNotice } = params;
+  try {
+    const sent = await sendRenameFrame({
+      ...params,
+      newName: pending.name,
+      minted: { messageId: pending.messageId, sentAt: pending.sentAt },
+      ownNotice: { ...ownNotice, actor: userId },
+    });
+    return sent === 'unanswered' ? { kept: 'unanswered' } : { sent };
+  } catch (e) {
+    if (e instanceof GroupRenameRefusedError) return { refused: 'clock' };
+    const kind = classifyOutgoingSendError(e);
+    if (kind === 'evicted' || kind === 'group-deleted') return { refused: kind };
+    console.warn(
+      `[GROUP_NAME] re-send of rename ${pending.messageId.slice(0, 8)} in ${groupId.slice(0, 8)}… not made (${kind}) - it stays pending: ${String(e).slice(0, 120)}`
+    );
+    return { kept: 'not-sent' };
+  }
 }
 
 /**
