@@ -25,7 +25,6 @@ earliest version, as a checklist.
 - [P1 - encrypt the names of groups, communities and salons (raised 2026-10-21, tied to principle 1 of the charter on 2026-11-10)](backlog.d/p1-encrypt-the-names-of-groups-communities-and-salons.md)
 - [P1 - The ledgers that must follow the MLS state live in `localStorage`, which an unclean exit loses for seconds after each write (KILL-2, 2026-10-25; design owed)](backlog.d/p1-the-ledgers-that-must-follow-the-mls-state-live-in-localstorage-which-an.md)
 - [P1 - the admission rule's fix-forward: a conversation may refuse an entry no member made only once nothing legitimate produces one](backlog.d/p1-the-admission-rule-fix-forward.md)
-- [P1 - push payloads carry nothing for Google and Apple (owner, recorded 2026-11-01; decided and built 2026-11-02, switch OFF; raised from P2 on 2026-11-10 by principle 1 of the charter)](backlog.d/push-payloads-carry-nothing-for-google-and-apple.md)
 - [P1 - media-service holds the retention durations after the deploy that adds the relay (the boot notice carries them)](backlog.d/p1-media-retention-held-after-the-deploy-that-adds-the-relay.md)
 - [P1 - rows before ratchet: a live drain stores its rows only when its window closes, after a checkpoint may already hold their ratchet advance (raised by the second review of #3321, 2026-11-15)](backlog.d/p1-rows-before-ratchet.md)
 - [P1 - a salon push's seed frame opened against a key group of production size, on the bench (2026-11-17)](backlog.d/p1-salon-push-seed-frame-at-production-key-group-size.md)
@@ -120,6 +119,10 @@ earliest version, as a checklist.
 - [ ] [removing a login row that names an unlisted device erases that machine (2026-11-17)](backlog.d/reading-owed-removing-a-login-row-naming-an-unlisted-device-erases-that-machine.md)
 
 ## 1.7.1
+
+**P1 - security, or a user-facing path that is broken**
+
+- [P1 - push payloads carry nothing for Google and Apple (owner, recorded 2026-11-01; decided and built 2026-11-02, switch OFF; raised from P2 on 2026-11-10 by principle 1 of the charter)](backlog.d/push-payloads-carry-nothing-for-google-and-apple.md)
 
 **Chantiers, decisions and questions (no severity)**
 

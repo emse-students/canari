@@ -1,6 +1,11 @@
 ## P1 - push payloads carry nothing for Google and Apple (owner, recorded 2026-11-01; decided and built 2026-11-02, switch OFF; raised from P2 on 2026-11-10 by principle 1 of the charter)
 
-target: 1.7.0
+target: 1.7.1
+
+**Owner, 2026-11-17: the whole content-free push chantier goes AFTER `1.7.0`.** Only WP-W6 (the
+ring-end push without `groupId`, #3779) ships in `1.7.0`; its reading stays at `1.7.0`
+([reading-owed-call-ring-end-carries-no-conversation](reading-owed-call-ring-end-carries-no-conversation.md)).
+Everything listed under "What is left" below is planned from `1.7.1`.
 
 Recorded from the owner's sovereignty philosophy ([durable-rules](../durable-rules.md#product-philosophy---sovereignty)).
 Owner, 2026-11-02: build it, behind a SERVER-SIDE switch that is OFF by default, deterministic like
@@ -254,8 +259,8 @@ puts the readings before WP-W4 and before any lasting flip.
 7. **WP-W7** - retire the full path once section 8.1's two measures hold (7 consecutive days at
    least, after both platforms ship version 2): calendar weeks, not work days.
 
-So this entry cannot close inside `1.7.0` by building alone: steps 3 and 7 are measurement windows
-counted in days of production.
+This is why the owner moved the entry after `1.7.0` (2026-11-17): steps 3 and 7 are measurement
+windows counted in days of production.
 
 ### Readings owed (the code is verified only by COMPILING, and iOS not even that before a release)
 
