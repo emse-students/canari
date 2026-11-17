@@ -125,3 +125,35 @@ describe('the group start reaches a row that already exists', () => {
     expect(row?.startedAt).toBe(CREATED_MS);
   });
 });
+
+describe('the unreadable-name warning of a label repair', () => {
+  const deps = (conversations: Map<string, Conversation>) => ({
+    mlsService: { getLocalGroups: () => [GROUP_ID] } as unknown as IMlsService,
+    userId: 'me',
+    conversations,
+    owedExits: new Set<string>(),
+    log: () => {},
+  });
+
+  it.each([
+    ['empty', ''],
+    ['a raw id', GROUP_ID],
+  ])('warns when the server holds a name and the row is %s', async (_label, rowName) => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const conversations = held({ name: rowName, contactName: rowName });
+    await ensureConversationForServerGroup(serverRow({ name: 'Equipe' }), deps(conversations));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('[GROUP_LABEL]'));
+    expect(conversations.get(GROUP_ID)!.name).toBe('Equipe');
+    warn.mockRestore();
+  });
+
+  it.each([
+    ['a readable name is renamed', held(), 'Equipe'],
+    ['the server holds no name', held({ name: '' }), ''],
+  ])('stays silent when %s', async (_label, conversations, serverName) => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await ensureConversationForServerGroup(serverRow({ name: serverName }), deps(conversations));
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+});

@@ -236,6 +236,28 @@ describe('the panel answers to the creation, not to the click', () => {
     );
   });
 
+  it('leaves no group refusal on the main panel once the name step is closed', async () => {
+    mountSidebar({ ok: false, reason: 'duplicate-group-name' });
+    choose('Alice Martin', 'Bob Durand');
+    click(m.chat_modal_create_group_with_button({ count: 2 }));
+    submitName();
+    await settle();
+    expect(alertText()).toBe(m.chat_modal_error_duplicate_group());
+
+    // The name step's own close control (its dialog is the second one on screen).
+    const dialogs = document.querySelectorAll('[role="dialog"]');
+    const nameDialog = dialogs[dialogs.length - 1];
+    nameDialog
+      .querySelector<HTMLButtonElement>(`button[aria-label="${m.common_close_label()}"]`)!
+      .click();
+    flushSync();
+    await settle();
+
+    expect(nameField()).toBeNull();
+    expect(panelIsOpen()).toBe(true);
+    expect(document.querySelector('[role="alert"]')).toBeNull();
+  });
+
   it('shows no refusal before one has happened', () => {
     mountSidebar({ ok: false, reason: 'creation-failed' });
     openPanel();
