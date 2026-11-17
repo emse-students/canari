@@ -1158,8 +1158,8 @@ pub(crate) async fn store_graine_seed(
     .await
 }
 
-/// Runs a mirror edit for a foreground command: the app data directory, the install's cache key, off
-/// the main thread.
+/// Runs a mirror edit for a foreground command: the mirror's one home (`seed_mirror_home` - the App
+/// Group on iOS), the install's cache key, off the main thread.
 ///
 /// ON A DESKTOP THERE IS NOTHING TO MIRROR, and saying so is the whole branch: the mirror exists for
 /// a notification service that decrypts a push with the app shut, and a desktop build has none - no
