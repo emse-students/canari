@@ -313,9 +313,10 @@ export function graineMirrorSessions(channelId) {
 }
 
 /**
- * Removes BOTH seed mirrors - the state of an iPhone whose seed push never woke anything, which on
- * iOS is every silent frame. Both, because the app re-mirrors its own copy into the App Group at its
- * next resign-active: removing only the extension's would be undone by the app before the row sent.
+ * Removes the seed mirror - the state of an iPhone whose seed push never woke anything, which on
+ * iOS is every silent frame. The App Group's file is the only one since channel-encryption section
+ * 27; the app-directory copy an older build left is removed too, or the next foreground edit would
+ * fold it back in.
  *
  * @returns {{ removed: boolean, appHad?: boolean, groupHad?: boolean } | { error: string }}
  */
