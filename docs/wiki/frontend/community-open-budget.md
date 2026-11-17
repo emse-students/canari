@@ -1092,9 +1092,45 @@ an app defect, and the same on both arms.
   attributes through Svelte's `get_attributes`/`get_setters`. A bubble or row icon drawn as a plain
   inline SVG is the candidate, to be counted (how many icons does a first open mount?) before it is
   built.
-- Ordered next steps: (1) the four closed overlays per bubble, mounted on first intent (above);
+- Ordered next steps: (1) the four closed overlays per bubble, mounted on first intent (above;
+  built 2026-11-17, [below](#the-four-closed-overlays-mounted-on-first-intent-2026-11-17));
   (2) the `Icon` count and cost; (3) the Mi 9T first-open reading that names the 190 ms before the
   pane on `1.6.8-alpha.1`, which no desktop bench can.
+
+### The four closed overlays, mounted on first intent (2026-11-17)
+
+**What changed.** Step (1) of the list above. `MessageBubble` mounts the reaction picker, the info
+panel, the actions sheet and the delete confirmation under `{#if overlaysMounted}`, which turns true
+on the bubble's first `pointerdown` or `focusin` (capture phase, on the bubble's root) and stays true
+for the bubble's life. Every opener - a tap, a hold, a right-click, a toolbar button, the video
+chip, a key on the focused bubble - starts with one of those events, in an EARLIER event than the
+open, so the overlay is mounted closed first and its local intro still plays (Svelte plays a local
+transition only when its own `{#if}` is created after its parent has run; the reason the "Not
+moved" note above refused a plain `{#if open}`). The open states are part of `overlaysMounted` too,
+as a guarantee and not a path: an open with no intent before it (an assistive-technology click, a
+test's `.click()`) still draws its overlay, without the intro. Nothing else moves:
+`bindHistoryOverlay` in the sheet now registers at the first intent instead of at the mount, both
+times closed, so the history stack sees the same entries. A first touch on a bubble while
+scrolling mounts that one bubble's four, once, outside any open. Pinned by
+`MessageBubble.overlaysOnIntent.svelte.test.ts` (none mounted with the bubble, all four on a
+pointerdown or a focusin, once, and on an open with no intent).
+
+**Measured** (`frontend/bench/salon-mount`, 200 one-line own rows, x4, 9 runs interleaved against
+`origin/main` at `0ac9830b9`, this workstation shared with other sessions - the arms against each
+other only):
+
+| scene | open | gesture task, base -> this | reveal | long tasks after the gesture |
+| --- | --- | --- | --- | --- |
+| hub | first | 487 -> 434 | 502 -> 449 | 3 (254 ms) -> 1 (104 ms) |
+| hub | reopen | 174 -> 166 | 183 -> 171 | 2 (214 ms) -> 3 (209 ms) |
+| pane | first | 511 -> 512 | 562 -> 530 | 2 (217 ms) -> 3 (181 ms) |
+| pane | reopen | 106 -> 109 | 144 -> 130 | 3 (195 ms) -> 1 (70 ms) |
+
+Layouts and style recalculations are unchanged (same counts on every row). The run-to-run spread on
+this machine was 100-400 ms, so the profile's estimate (~0.3 ms a bubble at x4, 60 bubbles once the
+widen has run) is the size of the gain and these medians only say it is not negative. **Owed on the
+Mi 9T** with the next pre-release: `community-open.mjs`, cold and warm, `salon>msgs` and the long
+tasks inside the salon open, against the `1.7.0-alpha.7` reading taken in the same sitting.
 
 ## 7. Not measured, and owed
 

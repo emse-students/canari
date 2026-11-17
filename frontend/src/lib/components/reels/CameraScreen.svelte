@@ -71,6 +71,11 @@
      * tab's gallery), so a member who refused the camera is not left at a dead end.
      */
     faultActions?: Snippet;
+    /**
+     * What sits in the MIDDLE of the top row, between close and the lens controls: whom the take is
+     * for, when the camera was opened from a conversation (reels-in-chat section 22, path 2).
+     */
+    title?: Snippet;
     /** What a capture can take, handed to the owner of the shutter (bind it). */
     capture?: CameraCapture;
     /**
@@ -125,6 +130,7 @@
     flipAllowed = true,
     controls,
     faultActions,
+    title,
     paused = false,
     deferOpen = false,
     onreopen,
@@ -557,6 +563,12 @@
       <CameraControlButton label={m.reels_camera_close()} onclick={close}>
         <X size={24} strokeWidth={2.5} />
       </CameraControlButton>
+    {/if}
+
+    {#if title}
+      <div class="pointer-events-none min-w-0 flex-1 px-2 text-center" data-camera-title>
+        {@render title()}
+      </div>
     {/if}
 
     {#if session.phase === 'live'}

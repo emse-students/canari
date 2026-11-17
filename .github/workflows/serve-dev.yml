@@ -172,6 +172,7 @@ jobs:
           DEV_CLOUDFLARE_SFU_APP_ID: ${{ secrets.DEV_CLOUDFLARE_SFU_APP_ID }}
           DEV_CLOUDFLARE_SFU_APP_SECRET: ${{ secrets.DEV_CLOUDFLARE_SFU_APP_SECRET }}
           DEV_LIVE_REPLAY_TOTAL_MAX_GB: ${{ secrets.DEV_LIVE_REPLAY_TOTAL_MAX_GB }}
+          DEV_CAMPUS_TREND_THRESHOLD: ${{ secrets.DEV_CAMPUS_TREND_THRESHOLD }}
           DEV_MIGALLERY_API_KEY: ${{ secrets.DEV_MIGALLERY_API_KEY }}
           # Private `id=file.png,...` list for the dev-only avatar override (bench account ids). Optional.
           DEV_AVATAR_OVERRIDE_EXTRA: ${{ secrets.DEV_AVATAR_OVERRIDE_EXTRA }}

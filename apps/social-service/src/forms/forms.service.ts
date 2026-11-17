@@ -26,6 +26,14 @@ import {
   onlineOffered,
   publishPaymentRefusal,
 } from './payment-offer';
+import {
+  FORM_WINDOW_CLOSED,
+  FORM_WINDOW_NOT_YET,
+  FORM_WINDOW_OPEN,
+  assertMayCloseAt,
+  assertWindowOrdered,
+  formWindowState,
+} from './form-window';
 import { FORM_DRAFT, FORM_PUBLISHED, respondentFormWhere, type FormStatus } from './form-status';
 import { managesForm } from './form-ownership';
 import {
@@ -86,7 +94,7 @@ import axios from 'axios';
 import * as ExcelJS from 'exceljs';
 import { safeWorksheetName } from '../utils/worksheet-name';
 import { answerText, type AnswerQuestion, type AnswerWords } from './answer-text';
-import type { ExportLabels } from './export-labels';
+import { LEGACY_IDENTITY_EXPORT_LABELS, type ExportLabels } from './export-labels';
 import {
   conditionNamesProfile,
   formConfigConflicts,
@@ -125,11 +133,29 @@ import { receivedStatus } from '../users/entities/purchase-record.entity';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
 import { toManagerView, toSubmitterView } from './submission.projection';
 import {
+  askedFields,
   askedGuestFields,
   guestIdentityFor,
   guestPayerEmail,
+  legacyGuestFieldsMerge,
   storedGuestFields,
 } from './guest-identity';
+import {
+  DEFAULT_ACCOUNT_FIELDS,
+  accountSnapshot,
+  askedDeclaredFields,
+  declaredIdentityFor,
+  joinedAccountFields,
+  joinsNeedCore,
+  legacyNameIds,
+  predatesDeclaredFields,
+  identityCells,
+  identityColumnsOf,
+  respondentNames,
+  storedRespondentFields,
+  type RespondentIdentity,
+  type SharedAccountFields,
+} from './respondent-identity';
 import {
   describeCursus,
   dimensionsNeedProfile,
@@ -282,11 +308,9 @@ export function priceFingerprint(form: CreateFormDto): string {
   });
 }
 
-/** Whether a form takes answers now: past its opening, before its end (`closedAt`). */
+/** Whether a form takes answers now: `formWindowState`, the one rule. */
 function isFormOpen(form: Pick<Form, 'opensAt' | 'closedAt'>): boolean {
-  const now = new Date();
-  if (form.opensAt && new Date(form.opensAt) > now) return false;
-  return !(form.closedAt && new Date(form.closedAt) < now);
+  return formWindowState(form) === FORM_WINDOW_OPEN;
 }
 
 /**
@@ -294,10 +318,11 @@ function isFormOpen(form: Pick<Form, 'opensAt' | 'closedAt'>): boolean {
  * after its end (`closedAt`, its end date or the manager's close). Typed, worded by the page.
  */
 function assertFormOpen(form: Pick<Form, 'opensAt' | 'closedAt'>): void {
-  if (form.opensAt && new Date(form.opensAt) > new Date()) {
+  const state = formWindowState(form);
+  if (state === FORM_WINDOW_NOT_YET) {
     throw formRefusal(FORM_NOT_OPEN_YET, 'The form is not open yet.');
   }
-  if (form.closedAt && new Date(form.closedAt) < new Date()) {
+  if (state === FORM_WINDOW_CLOSED) {
     throw formRefusal(FORM_CLOSED, 'The form is closed.');
   }
 }
@@ -390,6 +415,15 @@ function hasProfileCriterion(item: any): boolean {
 
 /** Where a submission comes from: a signed-in member, or a guest on a public form's link. */
 export type SubmitOrigin = 'member' | 'guest';
+
+/**
+ * What the controller adds to a submit body from the request's headers, never from the body (the
+ * global `whitelist` strips an undeclared body property): the build the client names in
+ * `X-Canari-Client-Version`, undefined when it names none - an older store build.
+ */
+export interface SubmitClient {
+  clientVersion?: string;
+}
 
 /** Dynamic form engine: creation, submission (with optional online checkout), exports, and submission lifecycle. */
 /** The part of a form item the XLSX export needs: a column header, its key, and how to read an answer. */
@@ -953,11 +987,21 @@ export class FormsService {
       gridRequiredSwitch: _gridRequiredSwitch,
       ...rest
     } = input;
+    assertWindowOrdered(
+      opensAtRaw ? new Date(opensAtRaw) : null,
+      closedAtRaw ? new Date(closedAtRaw) : null
+    );
     const form = this.formRepo.create({
       ...rest,
       status,
       // One stored shape for "asks a guest nothing": null (`guest-identity.ts`).
       guestFields: storedGuestFields(input.guestFields),
+      // What a member's answer carries from the account: the sent list, else the two names every
+      // named form showed before it was a choice; none on an anonymous form (`respondent-identity.ts`).
+      respondentFields: storedRespondentFields(
+        input.respondentFields ?? DEFAULT_ACCOUNT_FIELDS,
+        input.anonymous === true
+      ),
       currency: 'eur',
       opensAt: opensAtRaw ? new Date(opensAtRaw) : null,
       closedAt: closedAtRaw ? new Date(closedAtRaw) : null,
@@ -1112,6 +1156,7 @@ export class FormsService {
       ...form,
       associationName: form.associationId ? (names.get(form.associationId) ?? null) : null,
       hasUnpublishedChanges: changed.has(form.id),
+      windowState: formWindowState(form),
     }));
   }
 
@@ -1157,11 +1202,17 @@ export class FormsService {
     const { ownerId, ...served } = form;
     return {
       ...served,
+      // What a member's answer carries from the account - the respondent notice reads it - read
+      // as the submit reads it: none on an anonymous form (`respondent-identity.ts`).
+      respondentFields: joinedAccountFields(form),
+      // What the form asks instead, canonical (the declared fields of an anonymous form included).
+      guestFields: askedFields(form.guestFields),
       ...(manages ? { ownerId } : {}),
       submissionCount,
       cotisationDisabled,
       paymentsPaused,
       associationName,
+      windowState: formWindowState(form),
     };
   }
 
@@ -1284,9 +1335,12 @@ export class FormsService {
       items: respondentItems(form.items ?? []),
       opensAt: form.opensAt,
       closedAt: form.closedAt,
+      // Judged by the server (`formWindowState`): a guest's phone never compares the two dates itself.
+      windowState: formWindowState(form),
       anonymous: form.anonymous,
-      // What the page asks a guest about who they are, canonical; [] asks nothing.
-      guestFields: askedGuestFields(form.guestFields),
+      // What the page asks a guest about who they are, canonical; [] asks nothing. The declared
+      // fields (promo and formation, status, campus) are asked here too (`respondent-identity.ts`).
+      guestFields: askedFields(form.guestFields),
       formFull,
       basePrice: form.basePrice,
       currency: form.currency,
@@ -1588,19 +1642,41 @@ export class FormsService {
       gridRequiredSwitch: _gridRequiredSwitch,
       ...rest
     } = input;
+    // The END is the manager's close as much as a date typed here (`setClosed`), and the editor
+    // sends it only when the field was touched: absent KEEPS the stored one, so saving an edit never
+    // reopens a closed form; `null` clears it.
+    const closedAtAfter =
+      closedAtRaw === undefined ? form.closedAt : closedAtRaw ? new Date(closedAtRaw) : null;
+    assertWindowOrdered(opensAtRaw ? new Date(opensAtRaw) : null, closedAtAfter);
     const citedBefore = questionImageIds(form.items);
     const opensBefore = form.opensAt ? new Date(form.opensAt).getTime() : null;
+    if (input.guestFields !== undefined && input.respondentFields === undefined) {
+      this.logger.log(
+        `[LEGACY] edit of ${formId.slice(0, 8)} sends guestFields without respondentFields: a client ` +
+          'older than the account fields, its declared asks kept'
+      );
+    }
     Object.assign(form, {
       ...rest,
       associationId,
       anonymous,
-      // Absent keeps the stored list; a sent one (null and [] included) is stored canonical.
+      // Absent keeps the stored list; a sent one (null and [] included) is stored canonical. A
+      // client older than the account fields sends `guestFields` alone: its declared asks are kept.
       ...(input.guestFields !== undefined
-        ? { guestFields: storedGuestFields(input.guestFields) }
+        ? {
+            guestFields:
+              input.respondentFields === undefined
+                ? legacyGuestFieldsMerge(input.guestFields, form.guestFields)
+                : storedGuestFields(input.guestFields),
+          }
         : {}),
+      respondentFields: storedRespondentFields(
+        input.respondentFields ?? form.respondentFields,
+        anonymous
+      ),
       currency: 'eur',
       opensAt: opensAtRaw ? new Date(opensAtRaw) : null,
-      closedAt: closedAtRaw ? new Date(closedAtRaw) : null,
+      closedAt: closedAtAfter,
       items: (input.items ?? form.items).map((item: any) => ({
         ...item,
         id: item.id || makeId('item'),
@@ -1615,7 +1691,16 @@ export class FormsService {
     // publication landing meanwhile would be written back as `draft` by a whole-entity save.
     // Publishing is its own conditional write; the edit leaves the column alone.
     const { status, ...written } = form;
-    const withStatus = <T extends object>(saved: T) => ({ ...saved, status });
+    // NOR IS AN END THE EDIT DID NOT CARRY: the manager's close (`setClosed`) writes `closedAt` on
+    // its own route, and one committing between the read above and this save would be written back
+    // as the value read - a closed form silently reopened. Absent, the column is left out of the
+    // write (a save leaves an undefined property's column alone); the answer still carries it.
+    if (closedAtRaw === undefined) delete (written as Partial<Form>).closedAt;
+    const withStatus = <T extends object>(saved: T) => ({
+      ...saved,
+      status,
+      closedAt: form.closedAt,
+    });
     // A MOVE was judged on the status read before the checks: a publication committing since would
     // otherwise see its form moved after it went live. Outside a publication (which holds the row
     // already), the write re-reads the status under the row's lock and refuses a form published
@@ -1896,6 +1981,45 @@ export class FormsService {
     const images = questionImageIds(form.items);
     if (images.length > 0) await this.formItemImages.releaseUncited(images, 'form deleted');
     return { ok: true };
+  }
+
+  /**
+   * "Clore le formulaire" and "Rouvrir" (owner, 2026-11-16): sets `closedAt` to now, or clears it,
+   * without going through an edit - the end is not part of the unpublished revision (it is excluded
+   * from its fingerprint), so closing never shows "Modifications non publiees". Gated by
+   * `assertFormManager`. Closing a form already closed keeps its first end date; reopening clears
+   * the column whether the end is past or still to come. A payment already issued settles through
+   * the submission's own paths, which never read `closedAt` (see forms.md). Closing a form whose
+   * opening is still to come is refused (`FORM_CLOSE_NOT_OPEN_YET`).
+   */
+  async setClosed(formId: string, closed: boolean, userId: string, isGlobalAdmin: boolean) {
+    const form = await this.assertFormManager(formId, userId, isGlobalAdmin);
+    if (form.deletedAt) throw new NotFoundException('Form not found');
+    const now = new Date();
+    const alreadyClosed = !!form.closedAt && new Date(form.closedAt) <= now;
+    // A form not open yet is not closed: its end would precede its opening (lead, 2026-11-16).
+    if (closed && !alreadyClosed) {
+      try {
+        assertMayCloseAt(form.opensAt, now);
+      } catch (e) {
+        this.logger.log(
+          `[FORMS] close of ${formId.slice(0, 8)} refused: it opens ${new Date(form.opensAt!).toISOString()}`
+        );
+        throw e;
+      }
+    }
+    const closedAt = closed ? (alreadyClosed ? new Date(form.closedAt!) : now) : null;
+    this.logger.log(
+      `[FORMS] ${closed ? 'close' : 'reopen'} form=${formId.slice(0, 8)} by=${userId.slice(0, 8)}` +
+        ` was=${form.closedAt ? new Date(form.closedAt).toISOString() : 'open'}`
+    );
+    await this.formRepo.update({ id: formId }, { closedAt });
+    // The state is judged HERE, on the server's clock: the row of a phone behind it follows this.
+    return {
+      id: formId,
+      closedAt,
+      windowState: formWindowState({ opensAt: form.opensAt, closedAt }),
+    };
   }
 
   /**
@@ -2407,7 +2531,7 @@ export class FormsService {
    */
   async submit(
     id: string,
-    input: SubmitFormDto,
+    input: SubmitFormDto & SubmitClient,
     origin: SubmitOrigin = 'member',
     visitorAddress?: string
   ) {
@@ -2449,6 +2573,11 @@ export class FormsService {
       guest ? 'guest' : 'member',
       id
     );
+
+    // WHO ANSWERED, as the form chose to keep it (`respondent-identity.ts`): read from the account
+    // NOW for a member of a named form, declared by whoever the form cannot read from one. Judged
+    // before anything is written or issued, like the guest's identity above.
+    const respondentIdentity = await this.respondentIdentityFor(form, input, guest);
 
     // A grid's answer is a map of rows, judged against the question's own rows and columns and
     // stripped of its empty rows - from here on, `answers` holds it in that form (D1).
@@ -2801,6 +2930,7 @@ export class FormsService {
             userId: null,
             email: undefined,
             ...guestIdentity,
+            respondentIdentity,
             answers: storedAnswers,
             lines,
             priceLockedItemIds,
@@ -2819,6 +2949,8 @@ export class FormsService {
         // The retry's lines replace the old ones with its answer: the row says what THIS request charges.
         existingPending.lines = lines;
         existingPending.priceLockedItemIds = priceLockedItemIds;
+        // The retry is a new submit: what it carries of the respondent is read again with it.
+        existingPending.respondentIdentity = respondentIdentity;
         existingPending.totalPaid = totalCents;
         existingPending.email = input.email;
         // Its old request is settled (above), so the row stops naming it: a late report about it
@@ -2843,6 +2975,7 @@ export class FormsService {
           userId: input.userId ?? null,
           email: input.email,
           ...guestIdentity,
+          respondentIdentity,
           answers: storedAnswers,
           lines,
           priceLockedItemIds,
@@ -4248,6 +4381,88 @@ export class FormsService {
   }
 
   /**
+   * What an answer stores about its respondent (`respondent-identity.ts`, owner 2026-11-16).
+   *
+   * - A guest, or any respondent of an ANONYMOUS form, is read from no account: the declared fields
+   *   the form asks are judged (every one required, none unasked), else null.
+   * - A member of a NAMED form is never asked: a declared field is refused, and the fields the form
+   *   joins are read from core-service at this moment - never from the request - and stored as a
+   *   snapshot. A form that joins nothing reads nothing and stores `{ source: 'account' }`.
+   */
+  private async respondentIdentityFor(
+    form: Form,
+    input: SubmitFormDto & SubmitClient,
+    guest: boolean
+  ): Promise<RespondentIdentity | null> {
+    if (guest || form.anonymous) {
+      return declaredIdentityFor(
+        askedDeclaredFields(form.guestFields),
+        input,
+        form.id,
+        predatesDeclaredFields(input.clientVersion)
+      );
+    }
+    declaredIdentityFor([], input, form.id);
+    const joined = joinedAccountFields(form);
+    if (joined.length === 0 || !input.userId) return accountSnapshot([], null);
+    // The names and the campus are read here, from the shared table: the default form (the two
+    // names) reaches no other service. Only a cursus or a status asks core-service its rule.
+    const core = joinsNeedCore(joined);
+    const account = core
+      ? await this.pricingFacts.accountIdentity(input.userId)
+      : await this.sharedAccountFields(input.userId);
+    this.logger.debug(
+      `[FORMS] submit form=${form.id.slice(0, 8)} joins ${joined.join(',')} from the account ` +
+        `(${core ? 'core-service' : 'shared users table'})`
+    );
+    return accountSnapshot(joined, account);
+  }
+
+  /**
+   * The names and the campus of an account, from the `users` table social-service shares with
+   * core-service - read as the responses list reads names (`legacyNames`). Null, accused, for an
+   * account the table does not hold (erased between sign-in and submit): joined empty, as
+   * core-service's `RESPONDENT_UNKNOWN` is.
+   */
+  private async sharedAccountFields(userId: string): Promise<SharedAccountFields | null> {
+    const rows: SharedAccountFields[] = await this.formRepo.manager.query(
+      `SELECT "firstName", "lastName", campus FROM users WHERE id = $1`,
+      [userId]
+    );
+    const row = rows[0];
+    if (!row) {
+      this.logger.warn(
+        `[FORMS] respondent identity MISS user=${userId.slice(0, 8)} - no such row in users, joined empty`
+      );
+      return null;
+    }
+    return {
+      firstName: row.firstName ?? null,
+      lastName: row.lastName ?? null,
+      campus: row.campus ?? null,
+    };
+  }
+
+  /**
+   * The account names of the answers given before migration 174 (no snapshot): read live, as every
+   * answer's always were. Only those rows' accounts are asked.
+   */
+  private async legacyNames(
+    manager: EntityManager,
+    rows: readonly { userId: string | null; respondentIdentity?: RespondentIdentity | null }[]
+  ): Promise<Map<string, { firstName: string | null; lastName: string | null }>> {
+    const ids = legacyNameIds(rows);
+    const live = new Map<string, { firstName: string | null; lastName: string | null }>();
+    if (ids.length === 0) return live;
+    const found: { id: string; firstName: string | null; lastName: string | null }[] =
+      await manager.query(`SELECT id, "firstName", "lastName" FROM users WHERE id = ANY($1)`, [
+        ids,
+      ]);
+    found.forEach((r) => live.set(r.id, { firstName: r.firstName, lastName: r.lastName }));
+    return live;
+  }
+
+  /**
    * Returns all submissions for a form enriched with the submitter's first/last name, a payment
    * that landed over capacity first (`overCapacityFirst`): it is the one row the organiser owes
    * something to.
@@ -4262,16 +4477,8 @@ export class FormsService {
         order: form?.anonymous ? { id: 'ASC' } : { createdAt: 'DESC' },
       })
     );
-    const userIds = [...new Set(subs.map((s) => s.userId).filter(Boolean))];
-    const nameMap = new Map<string, { firstName: string | null; lastName: string | null }>();
-    if (userIds.length > 0) {
-      const rows: { id: string; firstName: string | null; lastName: string | null }[] =
-        await this.submissionRepo.manager.query(
-          `SELECT id, "firstName", "lastName" FROM users WHERE id = ANY($1)`,
-          [userIds]
-        );
-      rows.forEach((r) => nameMap.set(r.id, { firstName: r.firstName, lastName: r.lastName }));
-    }
+    // A member's name is the answer's snapshot; only an answer older than it reads the account.
+    const live = await this.legacyNames(this.submissionRepo.manager, subs);
     // The files among these answers: a purged one reads "file deleted" instead of offering a
     // download, a live one is saved under its name. Asked only of a form that has a file question.
     const files = hasFileQuestion(form?.items)
@@ -4281,10 +4488,11 @@ export class FormsService {
       const cited = Object.values(s.answers ?? {}).filter(
         (value): value is string => typeof value === 'string' && files.has(value)
       );
+      const names = s.userId ? respondentNames(s, live) : { firstName: null, lastName: null };
       return {
         ...toManagerView(s),
-        firstName: nameMap.get(s.userId)?.firstName ?? null,
-        lastName: nameMap.get(s.userId)?.lastName ?? null,
+        firstName: names.firstName,
+        lastName: names.lastName,
         deletedFileIds: cited.filter((id) => files.get(id)!.purged),
         fileNames: Object.fromEntries(
           cited.filter((id) => !files.get(id)!.purged).map((id) => [id, files.get(id)!.fileName])
@@ -4325,17 +4533,23 @@ export class FormsService {
       })
     );
 
-    // Batch-fetch first/last names for all submitters
-    const userIds = [...new Set(submissions.map((s) => s.userId).filter(Boolean))];
-    const nameMap = new Map<string, { firstName: string | null; lastName: string | null }>();
-    if (userIds.length > 0) {
-      const rows: { id: string; firstName: string | null; lastName: string | null }[] =
-        await this.formRepo.manager.query(
-          `SELECT id, "firstName", "lastName" FROM users WHERE id = ANY($1)`,
-          [userIds]
-        );
-      rows.forEach((r) => nameMap.set(r.id, { firstName: r.firstName, lastName: r.lastName }));
+    // Each answer's name: its snapshot, the guest's typed one, or - for an answer given before the
+    // snapshot (migration 174) - the account's, read live as it always was. Keyed by answer.
+    const live = await this.legacyNames(this.formRepo.manager, submissions);
+    const nameMap = new Map(submissions.map((s) => [s.id, respondentNames(s, live)]));
+    // The promo and formation, status and campus columns (`respondent-identity.ts`): written when
+    // the form joins or asks the field, or an answer carries it from when it did.
+    const identityColumns = identityColumnsOf(form, submissions);
+    if (identityColumns.length > 0 && !labels.identity) {
+      // A store build older than the account fields sends no identity words: the organiser still
+      // gets the export, in the words that build's French would have sent.
+      this.logger.log(
+        `[LEGACY] export of ${formId.slice(0, 8)} without identity words (a build older than the ` +
+          'account fields): written in the default ones'
+      );
     }
+    const identityWords =
+      identityColumns.length > 0 ? (labels.identity ?? LEGACY_IDENTITY_EXPORT_LABELS) : undefined;
 
     const workbook = new ExcelJS.Workbook();
     // A title Excel refuses ("19/11") made the whole export a 500 (2026-11-13).
@@ -4370,6 +4584,16 @@ export class FormsService {
     if (emailColumn) {
       if (!labels.email) throw new BadRequestException('export label "email" is required');
       headers.push({ header: labels.email, key: 'guestEmail', width: 28 });
+    }
+    if (identityWords) {
+      for (const field of identityColumns) {
+        if (field === 'cursus') {
+          headers.push({ header: identityWords.promo, key: 'promo', width: 10 });
+          headers.push({ header: identityWords.formation, key: 'formation', width: 14 });
+        } else {
+          headers.push({ header: identityWords[field], key: field, width: 16 });
+        }
+      }
     }
     if (form.requiresPayment) {
       headers.push({ header: labels.amount, key: 'total', width: 14 });
@@ -4410,15 +4634,16 @@ export class FormsService {
     }
 
     submissions.forEach((sub) => {
-      const names = (sub.userId && nameMap.get(sub.userId)) || { firstName: null, lastName: null };
+      const names = nameMap.get(sub.id) ?? { firstName: null, lastName: null };
       const row: Record<string, unknown> = {
         date: sub.createdAt instanceof Date ? sub.createdAt : new Date(sub.createdAt as string),
       };
       if (!form.anonymous) {
         // A guest's answer is named by what the guest typed, when the form asked for it.
-        row.firstName = (sub.userId ? names.firstName : sub.guestFirstName) ?? '';
-        row.lastName = (sub.userId ? names.lastName : sub.guestLastName) ?? '';
+        row.firstName = names.firstName ?? '';
+        row.lastName = names.lastName ?? '';
       }
+      if (identityWords) Object.assign(row, identityCells(sub.respondentIdentity, identityWords));
       if (guestColumn) row.guest = sub.userId ? '' : guestReference(sub.id);
       if (emailColumn) row.guestEmail = sub.guestEmail ?? '';
       if (form.requiresPayment) {

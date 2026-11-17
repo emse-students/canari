@@ -1373,6 +1373,16 @@ ROLLBACK;
 
 ### R1 - the trend threshold
 
+**The threshold is a setting since 2026-11-16 (owner).** `CAMPUS_TREND_THRESHOLD`, read by
+`posts/trend-threshold.ts`; the default is production's `10` (`TREND_THRESHOLD_DEFAULT`), so production sets
+nothing and is unchanged. It exists so dev can LOWER it: the bench logs in as four accounts, and the
+crossing reading could not be staged against a constant. A value that is set and is not a positive integer
+stops social-service at boot (no silent fallback), and the effective value is logged at boot as
+`[TREND_THRESHOLD] <n>`. It is an optional GitHub secret with a `DEV_` twin
+([MIGRATION](../../infrastructure/MIGRATION.md)); a change announces nothing already past it (the
+crossing rule above). Charter: principle 3, the bench changes the threshold, a member's attention is not
+spent to stage a test.
+
 Per campus (the author's `users.campus`; an association post counts on its publishing member's
 campus, an approximation stated here), for each candidate threshold `t`, how many posts of the last
 90 days reached `t` distinct engaged accounts. Reactions carry no timestamps, so the reaction half is
@@ -1481,8 +1491,9 @@ AVERAGE rule above (superseded 2026-11-10):
 | saint-etienne | 106 posts (1.18/day) | at most 1.00/day - the smallest `t` meeting the rate | 60 (0.67/day) | 21 (0.23/day) |
 | gardanne | 0 | 0 | 0 | 0 |
 
-Gardanne has no post crossing at any threshold from 3, so it constrains nothing. `TREND_THRESHOLD =
-4` was Saint-Etienne's value by that rule, until the per-day reading above set it to 10.
+Gardanne has no post crossing at any threshold from 3, so it constrains nothing. The threshold (then a
+constant `TREND_THRESHOLD`) =
+4 was Saint-Etienne's value by that rule, until the per-day reading above set it to 10.
 
 **When no threshold up to 60 gets a campus to 1 per day or below** (more than 90 posts in 90 days
 reached 60 engaged accounts), the reading does NOT pick 60: it is re-run with the upper end of

@@ -136,7 +136,7 @@ jobs:
       # string that merely looks like one. That cannot be a warning: the step fails, and the
       # credential is rotated before anything else happens.
       - name: TruffleHog Secret Scan
-        uses: trufflesecurity/trufflehog@ea68ca03c865c5f324e86e849ced20ed3cf9dbbb # v3.99.8
+        uses: trufflesecurity/trufflehog@3bd2b5887eb0efb8fa18bfd1d296032924e4ffdc # v3.99.9
         with:
           path: ./
           extra_args: --debug --only-verified
@@ -238,19 +238,9 @@ jobs:
           # The frontend installs its scripts (Tauri and the WASM glue need them) and is audited at
           # bun's default level; every service skips scripts and is audited at `moderate`.
           #
-          # ONE SUPPRESSION, 2026-10-28 (the two SvelteKit GHSAs it carried left with kit 3), and it
-          # rests on a reachability argument: GHSA-gcqx-w48m-w2h4 is LOW, `deepmerge` <= 4.3.1
-          # (`mergeObject()` lets a crafted SOURCE object poison the prototype of the result), and NO
-          # fixed version is published. Read from the lockfile: it arrives only through
-          # `@sveltejs/vite-plugin-svelte` and `@rollup/plugin-node-resolve` (under
-          # `@sveltejs/adapter-node`), build tooling; the frontend declares no dependency of its own
-          # on it, and kit 3 with adapter-node 6 still resolves 4.3.1. The inputs it merges there are
-          # the project's own configuration, which no outsider supplies. NOT verified: that no copy
-          # ends up in the shipped bundle. Retires itself - the step `Every ignored advisory is
-          # still reported` fails once the audit stops naming it.
           - tree: frontend
             install: --frozen-lockfile
-            audit: --ignore=GHSA-gcqx-w48m-w2h4
+            audit: ""
           - tree: apps/core-service
             install: --frozen-lockfile --ignore-scripts
             audit: --audit-level=moderate

@@ -55,9 +55,12 @@
  *
  * ## What it refuses to do
  *
- * **It never uninstalls.** `adb install -r` keeps the app data, which is the enrolment and the MLS
- * store; an uninstall costs a new DEVICE with no history, and a HEAL row reasons about exactly that
- * history. If the signature ever mismatches, the fix is to build debug - not to uninstall.
+ * **It does not uninstall on its own** (except `--release`, below). `adb install -r` keeps the app
+ * data, which is the enrolment and the MLS store; an uninstall costs a new DEVICE with no history,
+ * and a HEAL row reasons about exactly that history. Uninstalling the app on a bench phone (the Mi
+ * 9T, the iPhone 12) is ALLOWED (owner, 2026-11-16: the bench phones are a sandbox) - it is a choice
+ * whose cost is named, never one this tool makes silently. If the signature mismatches, build debug,
+ * or uninstall by hand knowing the device is lost.
  */
 import { execFileSync, spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
@@ -502,7 +505,7 @@ export async function armA1({
     return { apk: APK, installed: false, dev };
   }
 
-  // ── install, and NEVER uninstall ────────────────────────────────────────────────────────────────
+  // ── install, and never uninstall silently ────────────────────────────────────────────────────────────────
   // AN APK THIS RUN DID NOT BUILD IS INSTALLED ONLY IF ITS BUNDLE VERDICT IS ON RECORD (R2 review):
   // the bundle cannot be re-read from the APK (Tauri embeds it compressed in the native library),
   // so the verdict a build recorded is bound to the file's sha256 and to the estate it was for.
@@ -566,8 +569,9 @@ export async function armA1({
           `a debug build, so the uninstall that put it there ALREADY destroyed the enrolment and ` +
           `the MLS store - re-check that with firstInstallTime, and if it holds, uninstalling now ` +
           `costs nothing that is not already lost.`
-        : `install -r failed: the APK is a RELEASE build. Build debug rather than uninstalling - ` +
-          `an uninstall destroys the enrolment and the MLS store this device is for.`
+        : `install -r failed: the APK is a RELEASE build. Build debug, or uninstall first (allowed on ` +
+          `the bench phones since 2026-11-16) knowing it destroys the enrolment and the MLS store ` +
+          `this device is for.`
     );
   }
 

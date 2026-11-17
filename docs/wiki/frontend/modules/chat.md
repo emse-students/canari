@@ -450,6 +450,41 @@ opening ([device-verification](../../device-verification.md#the-mi-9t-readings-o
 - **Owed:** [the reading](../../backlog.d/reading-owed-a-salon-message-arriving-before-its-seed-raises-its-badge.md)
   on both phones.
 
+### A salon's badge starts at the grant (owner, 2026-11-16)
+
+**The decision, under principle 3 of [the charter](../../../principes.md)** (*your attention is not for
+sale*): a private salon handed to a member counts as unread only what is posted AFTER access was
+granted. Its past stays readable (principle 2 is untouched); only the count changes. Before, a member
+granted a salon long after joining the community saw a badge of every non-own row since their
+community join (or the 2026-10-08 tracking floor), because nothing recorded when access was given.
+
+**The mechanism, server-side and without a migration.** Every write that lets someone see a salon's
+past raises that person's PRIVATE floor `channel_members."clearedMarks"[salon]` to the grant instant,
+in the grant's own transaction (`ChannelService.floorUnreadAtGrant`, social-service): a grant
+(`grantPrivateChannelAccess` - an accepted invite, an admin join, a member added from the panel), an
+access rewrite that adds a name to a private salon, and a private salon made public (every member it
+did not name). Making a public salon private floors nobody: they all saw it already. The floor is the
+one "Marquer tout comme lu" raises ([read-receipt-privacy](../../read-receipt-privacy.md)), so it
+claims nothing public - the "Lu par" read mark does not move - and `listUnreadCounts` already reads
+it. It is taken on the DATABASE clock (`clock_timestamp()`), the clock that stamps `createdAt`, ONE
+MILLISECOND BELOW the grant's: the count keeps a row only when its whole millisecond is above the
+floor, so a floor on the grant's own millisecond hid a row posted after the grant inside it (found in
+review, failing first); below it, the worst case is one row of that millisecond's past counted. It is
+only ever raised (`GREATEST`); a revoke leaves it, a re-grant raises it again. The client needs no
+change: a grantee was outside the salon's audience before, so no live message was tallied, and the
+count it draws is the server's.
+
+**Locks.** The grant writes the grantee's membership row, so it now reads that row `FOR UPDATE`
+instead of `FOR SHARE` (two grants of two salons to one member, each upgrading a shared lock, would
+deadlock), and the access rewrite reads the community's membership rows `FOR UPDATE`, in id order,
+when it floors anyone. The salon-before-member order of every path is unchanged.
+
+**Tests.** `channel-grant-unread-floor.integration.spec.ts` (PostgreSQL: ten rows of past, a grant,
+one row after it - the count is 1, not 11; a higher floor is never lowered; the rewrite's two cases);
+`channel-access-announcement.spec.ts` (who is floored per kind of rewrite, and the lock mode);
+`distribution-group.spec.ts` (the admin join). The live row is `bun unread-communities.mjs run
+grantlate`: the reader's badge after a restart, its floor and its untouched read mark.
+
 ### Every member list reads by family name, and a row never moves because its name arrived (2026-10-05)
 
 Asked by the user: the community admin panel listed its members by user id, the group panel and a
@@ -3293,6 +3328,12 @@ has answered. The walk removes one member per step and the proof is delivered ra
 which is what makes it terminate without a clock. Full reasoning in
 [history-reconciliation](../../protocols/history-reconciliation.md#the-fourth-trigger-an-answer-that-does-not-reach-far-enough-back).
 
+**Its sibling, `history_cannot_repair {from, to, since}`, answers an asker that PROVED itself
+incomplete** - its probe carried `incomplete: true` because it holds frames it cannot read - when
+the responder holds nothing it lacks (keys equal, or a digest leaving nothing to send). It replaces
+the coverage line in that case, and the asker excludes that member until a repair lands
+([HEAL-repair](../../protocols/history-reconciliation.md#the-fix-the-walk-advances-on-an-answer-built-2026-11-17)).
+
 **Every ask states its own window and the answer is clipped to it.** `since` rides on all three
 probe kinds and on the pull. Four rules hold the whole thing together and none may be undone: it is
 STATED by the asker and never recomputed by the answerer (the window slides, so two devices deriving
@@ -3984,6 +4025,22 @@ The writers, which are the mechanism that holds the invariant:
 | `onWelcomeProcessed` (`sessionAuth.ts`), the FCM merge, channel builders, tab sync | the group / conversation id they were handed |
 | every other `set` (retire, unread, watermarks, rename, avatar, messages) | read-modify-write of a key already in the map |
 
+### Telling a peer's deletion from a false "deleted" (a 1.6.12 report, 2026-11-16)
+
+A DM whose only content was a community-invitation notice showed "Cette conversation a ete supprimee"
+above "Supprimer localement". The device's log began weeks after the row was retired, so it could
+only say `[DISCOVERY] ... kept - already removed, awaiting a manual deletion` at every connection -
+the tombstone rule above, not the moment of retirement. **The server answers the question the log
+cannot**, read-only and in aggregates: the `dm_groups` row carried `deletedAt` (the same day it was
+created, some eight hours later), no member, seat or interval remained, and `dm_user_dismissed_groups`
+held exactly ONE row for it, written at the same instant as `deletedAt` - the shape of a manual
+deletion (959 of the 1089 dismissals on production share it). That dismissal belonged to the OTHER
+member: had it been the reporter's, discovery would have PURGED the row (`dismissed by user -
+removing`, which runs before the tombstone branch) instead of keeping it with the banner. **A real
+deletion by the peer, so the "deleted" state was the truth**; no 404/410, no sweep and no forgotten
+group was involved. The defect in that report was the footer's missing bottom inset
+([keyboard-and-send-motion](../keyboard-and-send-motion.md#7-a-banner-in-the-composers-place-stands-on-its-floor-2026-11-16)).
+
 ### A deleted DM is not carried into the next one
 
 Decided by the owner on 2026-11-10. When a peer deletes a DM, this device keeps it as a RETIRED
@@ -4537,6 +4594,31 @@ Extension first. Tests: `messageOrder.test.ts`, `readState.test.ts`, `outbox.tes
 place by the receivedAt"), `outboxMirror.serverTime.test.ts`, `systemMessageHandler.readState.test.ts`,
 `historySystemEvents.test.ts`, `messagesPage.test.ts`, `readWatermarkCache.test.ts`,
 `proto_fields.rs` (`build_read_watermark_app_message_*`).
+
+### A joined conversation is ordered by its admission (2026-11-16)
+
+**Seen on the iPhone 12 (`1.7.0-alpha.5`, dev), twice of twice:** a group the phone joined with the
+chat list in front (`[WELCOME] Group ... ready` within a second) was not drawn for minutes, through a
+tab change and a pull-down; after a resume it was on the first screen with the right age.
+
+**The cause.** The row a Welcome writes (`upsertConversation`, the placeholder before it, and the
+held-group row of `writeRowForHeldGroup`) carried no ordering seed, and it holds notices at most -
+"X a ajoute Y", a nickname - which are not activity. So `conversationRecency` fell through
+`lastMessageAt` and `startedAt` to **0: the last row of the list**, below the screen on a phone with a
+long list, where the rig's visible-tree reader (`tools/ios-device`, `isVisible`) never reaches. The
+resume "fixed" it because a new connection runs the group sweep, whose `recordGroupStart`
+(`serverGroupConversation.ts`) writes `startedAt` (the group's server creation, minutes before the
+join) onto a row that lacks one - so the row rose to the top only once the socket reconnected. The
+creator never had the defect: its row is seeded with its creation moment (`groupCreation.ts`).
+
+**The fix.** The Welcome's own server time (`deliveryMeta.queuedCreatedAt`, the moment this account
+was admitted, the same on each of its devices to within milliseconds, each holding its own queue row, and ties break by id) is the joined row's `lastMessageAt` seed
+(`admissionSeed`, `setupMessageHandler.ts`), on every path that creates the row: the fresh install,
+a DM's new row, and the "already held" Welcome of a group joined in the background. A row that
+already has a seed keeps it - a re-Welcome (a re-add, a repair) does not move a conversation. A
+Welcome with no server time is ACCUSED at warn and invents nothing. Tests:
+`setupMessageHandler.test.ts` ("a Welcome orders the joined conversation by the server time of its
+admission"). Read on the Mi 9T on `1.7.0-alpha.7` (2026-11-17, [readings](../../device-verification.md#the-mi-9t-readings-of-2026-11-17-170-alpha7-the-envoyer-a-retakes-on-section-22s-screens)): the row was on the first screen within seconds; the entry is deleted.
 
 ## A catch-up batch is merged with ONE sort (2026-10-12)
 

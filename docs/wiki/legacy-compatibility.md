@@ -498,6 +498,59 @@ as its one slice, logged `[FORMS] the server serves no cursusSlices`.
 estate older than it is served. Then delete the two fields from both answers and their types, the
 `cursusSlicesOf` branch, its test and this entry.
 
+### Removal once `minClientVersion` passes the release carrying the account fields - a form editor that sends `guestFields` alone (2026-11-16)
+
+**Site:** `legacyGuestFieldsMerge` (`apps/social-service/src/forms/guest-identity.ts`), called by
+`FormsService.update` when an edit carries `guestFields` and no `respondentFields`, logged
+`[LEGACY] edit of ... sends guestFields without respondentFields`.
+**What it humours:** an editor older than [the respondent's account fields](frontend/modules/forms.md#the-respondents-account-fields-owner-2026-11-16)
+knows the guest's name and e-mail only, and sends them as the whole `guestFields` list on every save
+(`[]` on a form that is not public). Taken as sent, it would erase the declared asks (promo and
+formation, status, campus) the new editor ticked. Its names and e-mail are taken, the stored declared
+asks kept; `respondentFields` is absent from its body, so it keeps the stored value as any absent field.
+**The cost while it stands:** one branch on the edit path.
+**Removal condition:** `minClientVersion` on both estates passes the first stable carrying the account
+fields, and the `[LEGACY]` line is absent from production for a week. Then delete the helper, its
+branch, its test and this entry.
+
+### Removal once `minClientVersion` passes the release carrying the account fields - an export asked without identity words (2026-11-16)
+
+**Site:** `LEGACY_IDENTITY_EXPORT_LABELS` (`apps/social-service/src/forms/export-labels.ts`), used by
+`FormsService.exportSubmissions` when the form writes a promo, status or campus column and the
+request's labels carry no `identity`, logged `[LEGACY] export of ... without identity words`.
+**What it humours:** a store build older than the account fields sends the export words it knows,
+and none for those columns. Refusing it would leave an organiser on an old app with no export at all
+(lead, 2026-11-16: an old client's ordinary request is never refused); the columns are written in
+French, the words that build's own French catalogue holds (`form_respondent_*`).
+**The cost while it stands:** one constant and one branch; an English-speaking organiser on an old
+build reads those four headers in French.
+**Removal condition:** `minClientVersion` on both estates passes the first stable carrying the account
+fields, and the `[LEGACY]` line is absent from production for a week. Then make `identity` required
+in `parseExportLabels`, delete the constant, its branch, its test and this entry.
+
+### Removal once `minClientVersion` passes `1.7.0` - an answer from a build that cannot draw the declared questions (2026-11-16)
+
+**Site:** `predatesDeclaredFields` and the `olderClient` branch of `declaredIdentityFor`
+(`apps/social-service/src/forms/respondent-identity.ts`), fed by `X-Canari-Client-Version` on both
+submit routes (`forms.controller.ts`, `public-forms.controller.ts`), logged `[LEGACY] answer to
+form=... from a build older than 1.7.0`.
+**What it humours:** a store build older than `RESPONDENT_FIELDS_MIN_CLIENT_VERSION` (`1.7.0`) cannot
+draw "Promo et formation", "Statut" or "Campus" on an ANONYMOUS form (or a guest page it embeds), and
+names no build on a submit. Its answer carrying NONE of them is taken, stored
+`{ source: 'declared', notDeclared: [...] }`, and the organiser reads "Non déclaré" in those columns of
+the responses list and the export - never a blank that looks like an answer, never a refusal. A
+build that names `1.7.0` or later is judged in full (`FORM_GUEST_IDENTITY_MISSING`), and so is any
+declared field an older build does send. The version is a FACT the client states, not inferred from
+what is missing: a current build that forgot a field is refused, not marked.
+**The cost while it stands:** one branch on the submit path; such answers stay marked for good (the
+data's meaning, not a shim - the cell keeps reading "not declared" after the removal).
+**Removal condition:** `minClientVersion` on both estates passes `1.7.0` and the `[LEGACY]` line is
+absent from production for a week. Then delete the `olderClient` branch, `predatesDeclaredFields`, the
+header plumbing of the two submit routes, their tests and this entry; keep `notDeclared` on the read
+side.
+The answers given before migration 174 carry no snapshot and read the account's name live, as every
+answer always did: that is the data's meaning, not a client shim, and has no removal date.
+
 ### Removal once both estates log `drained=0` - live segments an older release left in Garage (2026-11-09)
 
 **Site:** `LiveSegmentsService.drainObjectStore`, run by `onApplicationBootstrap`
@@ -580,19 +633,17 @@ that id (never the caller's own, which is the one the install is using). Permane
 date.
 **Condition:** every estate serves migration 040 (one deploy of each). The date is when to check.
 
-### Removal at deploy + one access-token lifetime - an access token that names no session
+### A tolerated breakage: a client older than `1.5.0` retiring its abandoned id (2026-11-17)
 
-**Site:** the `legacy` branch of `AuthController.sessionOfToken` in
-`apps/core-service/src/auth/auth.controller.ts`.
-**What it humours:** an access token minted before its issuer wrote `sid`. The issuer always writes it
-now, so such a token is pre-deploy by construction and dies by its own `exp` within
-`ACCESS_TOKEN_TTL_SECONDS` (1 h) of the deploy; it is accepted without a session read, `X-Session-Id`
-empty, logged once per process at `log`. Refusing it would answer every client signed in at the
-deploy anonymous for up to that hour. The dev estate cannot rehearse it (its tokens already carry
-`sid`).
-**Condition:** production has run the release carrying the check for longer than one access-token
-lifetime. Then delete the branch, so a token naming no session is answered anonymous like an ended
-one ([sessions](sessions.md#an-access-token-is-only-as-alive-as-its-session-2026-10-25)).
+**Site:** the own-device refusal of `DevicesController.deleteDevice` (chat-delivery,
+[auth](frontend/modules/auth.md#a-removed-row-whose-device-the-server-no-longer-lists)).
+**What breaks:** a client older than `1.5.0` (the `?reason=retired` parameter, #2450) retires the id
+its own rotation abandoned with a plain delete, read as an owner's; while its session is still bound to
+that id (until its next unlock rebinds it) the server now answers `409 OWN_DEVICE`, and the id is
+retired at a later round instead. Nothing is lost: the abandoned id holds no state the install uses.
+**Measured 2026-11-17 on production:** the KeyPackages published in the last 7 days name only
+`1.6.0` and later (the web is always current), so the population is ZERO.
+**Condition:** none - no shim was added.
 
 ### No date yet - a frontend image older than the target lists, drained by DNS (2026-11-01)
 

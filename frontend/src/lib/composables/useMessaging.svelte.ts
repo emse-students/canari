@@ -2012,14 +2012,27 @@ export function useMessaging() {
    * @param opts.files Send exactly these instead of draining the pending queue, and leave the
    *        queue untouched. One caller: a voice note, which the recorder's gesture has already
    *        committed and which must not carry along whatever else the composer happens to hold.
+   * @param opts.elsewhere The files were NOT sent from this conversation's composer (the camera
+   *        tab's "Envoyer a...", `sendImageTo`), so nothing of that composer is touched: the reply
+   *        armed there stays armed for the member's own next message, a refused file is never
+   *        re-staged there, and no banner is raised on whatever conversation is on screen (the
+   *        refusal is logged, and the caller says it). The answer is then exact: `true` when every
+   *        file was queued, `false` otherwise. No caption goes with such a send.
    */
   async function handleSendChat(
     ctx: MessagingContext,
     messageText: string,
-    opts?: { files?: import('$lib/media').PendingMediaFile[] }
+    opts?: { files?: import('$lib/media').PendingMediaFile[]; elsewhere?: boolean }
   ): Promise<boolean | undefined> {
-    const text = messageText.trim();
+    const elsewhere = opts?.elsewhere === true;
+    const text = elsewhere ? '' : messageText.trim();
     const sendsQueue = !opts?.files;
+    /** The banner of the conversation on screen - never raised by a send made from elsewhere. */
+    const sayOnScreen = (message: string) => {
+      if (elsewhere) {
+        if (message) ctx.log(`[SEND] (sent from elsewhere, no banner) ${message}`);
+      } else ctx.setSendError(message);
+    };
     const filesToSend = opts?.files ?? [...pendingMediaFilesFor(ctx.selectedContact)];
     const fileEntries = filesToSend;
     const mediaCaption = text || undefined;
@@ -2096,13 +2109,14 @@ export function useMessaging() {
         );
       }
       // No await since the tap: the conversation on screen is still `sentFrom`.
-      ctx.setSendError(m.chat_conversation_deleted_message());
+      sayOnScreen(m.chat_conversation_deleted_message());
       // FALSE: nothing was queued, so the composer gives back the caption it cleared at the tap.
       return false;
     }
 
-    const currentReplyingTo = replyByConversation.get(sentFrom) ?? null;
-    replyByConversation.delete(sentFrom);
+    // A send made from elsewhere is not an answer: the reply armed in this composer stays armed.
+    const currentReplyingTo = elsewhere ? null : (replyByConversation.get(sentFrom) ?? null);
+    if (!elsewhere) replyByConversation.delete(sentFrom);
     // THE REPLY ARMED AT THE TAP GOES WITH THE FIRST FILE, like the caption: a message that answers
     // another stays an answer whether it is typed or carries a photo (owner, 2026-11-10: the reply
     // was consumed here and the file went out as a plain message).
@@ -2115,7 +2129,7 @@ export function useMessaging() {
         `[REPLY] ${sentFrom.slice(0, 8)}… the reply to ${quoted.id.slice(0, 8)}… goes with the first of ${fileEntries.length} file(s)`
       );
     }
-    ctx.setSendError('');
+    sayOnScreen('');
 
     const mediaTypeFromMime = (mime: string): 'image' | 'video' | 'audio' | 'file' =>
       mime.startsWith('image/')
@@ -2291,7 +2305,7 @@ export function useMessaging() {
                   ctx.log(
                     `[MEDIA] ${messageId.slice(0, 8)}… dropped before its write: ${sendKey.slice(0, 8)}… left the conversation list since the tap - ${fileEntries.length - index} file(s) not sent`
                   );
-                  ctx.setSendError(m.chat_media_conversation_gone());
+                  sayOnScreen(m.chat_media_conversation_gone());
                   conversationGoneDuringSend = true;
                   break;
                 }
@@ -2368,7 +2382,8 @@ export function useMessaging() {
           }
           sentMediaMessageCount++;
         }
-        if (sentMediaMessageCount > 0) {
+        // A send from elsewhere is one of several: its caller plays the one tone.
+        if (sentMediaMessageCount > 0 && !elsewhere) {
           ctx.playSendTone?.();
         }
       } catch (error) {
@@ -2396,6 +2411,11 @@ export function useMessaging() {
           ctx.log(
             `[MEDIA] ${unsent} file(s) dropped, not re-staged: signed out since the tap (${String(error)})`
           );
+        } else if (elsewhere) {
+          // NOT FROM THIS COMPOSER: nothing goes back into it, and the caller counts the refusal.
+          console.error(
+            `[MEDIA] ${sentFrom.slice(0, 8)}… ${unsent} file(s) sent from elsewhere NOT queued (status=${status ?? 'none'}): ${String(error)}`
+          );
         } else if (ctx.selectedNow() === sentFrom) {
           if (unsent > 0) restageInOrder(sentFrom, fileEntries.slice(sentMediaMessageCount));
           mediaRestaged = unsent > 0;
@@ -2421,6 +2441,8 @@ export function useMessaging() {
       }
     }
 
+    // A send from elsewhere carries no caption: its answer is whether every file was queued.
+    if (elsewhere) return sentMediaMessageCount === fileEntries.length;
     if (sessionEndedDuringSend) {
       ctx.log('[SEND] caption not sent: the session ended during the media send');
       return;
@@ -2818,6 +2840,53 @@ export function useMessaging() {
     } finally {
       for (const end of endInflights) end();
     }
+  }
+
+  /**
+   * Sends a PHOTO from the camera tab's "Envoyer a..." (D-photo, owner 2026-11-16) to every
+   * conversation in `targetKeys` as an ORDINARY image message: prepared once, then sent through the
+   * composer's own path (`handleSendChat` with `files`, which queues it durably at the tap) once per
+   * conversation - so each one is exactly the image a member would have attached there, and the
+   * staging of the conversation is never touched. One upload per conversation (a photo is small);
+   * the one-file sharing of a reel take is the outbox's video take, which an image does not enter.
+   *
+   * @returns how many conversations the photo was handed to, or `null` when none (nothing held,
+   *   the preparation refused it - already said by `prepareMediaFiles` - or a sign-out came in).
+   */
+  async function sendImageTo(
+    file: File,
+    targetKeys: readonly string[],
+    ctx: MessagingContext
+  ): Promise<number | null> {
+    const keys = targetKeys.filter(
+      (k, i) => targetKeys.indexOf(k) === i && ctx.conversations.has(k)
+    );
+    ctx.log(`[MEDIA] a camera photo to ${keys.length} of ${targetKeys.length} conversation(s)`);
+    if (keys.length === 0) return null;
+    const tapGeneration = signOutGeneration();
+    const ready = await prepareMediaFiles([file], ctx);
+    if (ready.length === 0) return null;
+    let handed = 0;
+    for (const key of keys) {
+      if (signOutGeneration() !== tapGeneration) {
+        ctx.log(`[MEDIA] camera photo: signed out after ${handed} send(s) - the rest dropped`);
+        break;
+      }
+      // ONE CONVERSATION'S FAILURE IS ITS OWN: it is counted and said, and the others still go.
+      // `elsewhere`: the reply armed in that composer, its staging and the banner are not this send's.
+      try {
+        const queued = await handleSendChat({ ...ctx, selectedContact: key }, '', {
+          files: ready,
+          elsewhere: true,
+        });
+        if (queued) handed += 1;
+        else console.error(`[MEDIA] camera photo NOT queued in ${key.slice(0, 8)}…`);
+      } catch (e) {
+        console.error(`[MEDIA] camera photo NOT sent to ${key.slice(0, 8)}…:`, e);
+      }
+    }
+    if (handed > 0) ctx.playSendTone?.();
+    return handed > 0 ? handed : null;
   }
 
   /** Removes a staged (not yet sent) file from the pending media queue by its index. */
@@ -3745,6 +3814,8 @@ export function useMessaging() {
     handleFilesSelected,
     /** Queues a raw reel take to several conversations at once (RC-12's send-to sheet). */
     sendChatReelTakeTo,
+    /** A camera photo sent to several conversations as ordinary image messages (D-photo). */
+    sendImageTo,
     /** Sends a finished recording straight out, alone - the microphone gesture already said send. */
     sendVoiceNote,
     /** Removes a staged file from the pending media queue by index. */

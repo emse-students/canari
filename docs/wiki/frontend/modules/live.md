@@ -1305,7 +1305,7 @@ morts"*).
 
 | File | What it holds |
 | --- | --- |
-| `lib/live/liveScenes.ts` | PURE: the five scenes, the fixed frame, each scene's layout, `containRect` / `coverCrop`, the overlay's box, `snapCorner`, the arrow keys, the preview mapping, and the scene state machine (`planSceneChange`, `sceneAfterScreenEnded`). |
+| `lib/live/liveScenes.ts` | PURE: the four scenes, the fixed frame, each scene's layout, `containRect` / `coverCrop`, the overlay's box, `snapCorner`, the arrow keys, the preview mapping, and the scene state machine (`planSceneChange`, `sceneAfterScreenEnded`). |
 | `lib/live/liveCompositor.ts` | The canvas: draws the scene on every clock tick and pushes one frame (`captureStream(0)` + `requestFrame`). |
 | `lib/live/liveFrameClock.ts`, `workers/liveFrameClock.worker.ts` | The clock: a dedicated worker's `setInterval`, posting `tick` 30 times a second. |
 | `lib/live/liveAudioMixer.svelte.ts` | The sound: microphone and share mixed in one `AudioContext` into ONE track, a gain per input. |
@@ -1336,10 +1336,44 @@ sees the black bars, the overlay where the viewers see it, and the camera as the
 (unmirrored, as OBS shows it). A phone keeps its mirrored, cropped camera preview.
 
 **The scenes** (`LiveScene`): `camera`, `screen`, `screen-camera` (the screen whole, the camera as an
-overlay), `side-by-side` (the screen in the left 70 %, the camera cropped in the right 30 %), `pause`
+overlay), `pause`
 ("Je reviens tout de suite" on a dark card, nothing of either source). A camera switched off or not
 open draws its "Caméra coupée" card in its box - a scene never shows a source the member did not put
-in it.
+in it. A fifth scene, `side-by-side` (the screen in the left 70 %, the camera in the right 30 %), was
+REMOVED on 2026-11-16 (owner: "Cet agencement est un peu bizarre", [decision 23](../../backlog.d/owner-decisions-of-2026-11-16.md)).
+The scene lives only in the broadcaster's own client: the viewer receives ONE composed stream and the
+server stores and names no scene, so nothing on the wire or in the database carries the id and a live
+already on air in it simply keeps its recorded picture; the next build offers four scenes.
+
+**The control that draws them (owner, 2026-11-16, after a reading of the on-air bar: labelled pills
+wrapped onto a second line and rode over the comment field).** ONE icon-only row, a rounded-full
+track over the picture: camera, screen, screen + camera, then a rule and "Je reviens"
+as the last icon. No label is visible - the name is each button's \`aria-label\` and \`title\` (the same
+Paraglide keys as before) - and the chosen scene wears the bar's fill (\`aria-checked\`). It is one
+\`radiogroup\`, one tab stop, arrows move focus and Enter or Space chooses (a screen scene opens the
+picker, so passing over one never chooses it). The overlay's size (three squares of growing size) and
+shape (circle, rectangle) are the same kind of icon-only row under it, shown only in screen + camera;
+neither row wraps. On air the column sits at the bottom right, and the chat box and the
+column share ONE flex row (the chat \`flex-1 min-w-0\`, the column \`shrink-0\`), so the chat takes
+whatever the bar leaves and the two cannot meet at any window width - no width is written down; the camera-off and sound notices stay in the same column. Charter: principle
+7 (simplicity). Tested in \`LiveBroadcaster.svelte.test.ts\` (aria-labels and tooltips, no text, one
+row); the reading at 1280 and ~640 px on a desktop live is owed
+([backlog](../../backlog.d/reading-owed-the-live-scenes-bar-on-a-desktop-live.md)).
+
+**The control that draws them (owner, 2026-11-16, after a reading of the on-air bar: labelled pills
+wrapped onto a second line and rode over the comment field).** ONE icon-only row, a rounded-full
+track over the picture: camera, screen, screen + camera, then a rule and "Je reviens"
+as the last icon. No label is visible - the name is each button's \`aria-label\` and \`title\` (the same
+Paraglide keys as before) - and the chosen scene wears the bar's fill (\`aria-checked\`). It is one
+\`radiogroup\`, one tab stop, arrows move focus and Enter or Space chooses (a screen scene opens the
+picker, so passing over one never chooses it). The overlay's size (three squares of growing size) and
+shape (circle, rectangle) are the same kind of icon-only row under it, shown only in screen + camera;
+neither row wraps. On air the column sits at the bottom right, and the chat box and the
+column share ONE flex row (the chat \`flex-1 min-w-0\`, the column \`shrink-0\`), so the chat takes
+whatever the bar leaves and the two cannot meet at any window width - no width is written down; the camera-off and sound notices stay in the same column. Charter: principle
+7 (simplicity). Tested in \`LiveBroadcaster.svelte.test.ts\` (aria-labels and tooltips, no text, one
+row); the reading at 1280 and ~640 px on a desktop live is owed
+([backlog](../../backlog.d/reading-owed-the-live-scenes-bar-on-a-desktop-live.md)).
 
 **The scene state machine** (`planSceneChange`): the scene shown -> nothing; a scene showing the
 screen while none is held -> ASK for one (the picker, from that click), switch only once granted, a
@@ -1402,7 +1436,7 @@ was not needed, and would have been a Chromium-only path beside Safari's. Then t
 (`liveCompositor.ts`, bundled as is) ran in Chrome 157 with a fake camera and a canvas standing in for
 the share, RESIZED every 5 s through 1920x1080, 801x977, 3440x1440, 1280x720 and 640x1136, hidden
 60 s: 30 ticks a second throughout, the track at 1280x720 at every chunk, and the 76.6 s recording
-played back as ONE 1280x720 video. Screenshots of `screen-camera`, `side-by-side` and `pause` matched
+played back as ONE 1280x720 video. Screenshots of `screen-camera`, `side-by-side` (since removed) and `pause` matched
 the layouts. Not measured: Edge, Safari, a real `getDisplayMedia` share hidden (only the owner's
 reading can drive the picker).
 
@@ -1424,7 +1458,7 @@ the others.
 
 **Owed - the owner's real-browser reading**, one entry, re-filed 2026-11-16 on the `1.7.0`
 pre-releases that carry the scenes:
-[the scenes read by the owner](../../backlog.d/reading-owed-screen-share-in-a-desktop-live-the-scenes-read-by-the-owner.md).
+the scenes read by the owner (entry deleted 2026-11-17).
 
 ### Screen share in a desktop live: what `1.7.0` carries (2026-11-16)
 
@@ -1568,3 +1602,31 @@ push on both phones.
 back to set `open`, inside the effect that follows the roster prop: the first `@` of any roster-backed
 picker ended in `effect_update_depth_exceeded` when the component was MOUNTED (no existing test did).
 Fixed by reading the local value; pinned by `MentionComposerInput.roster.svelte.test.ts`.
+
+## The feed card follows the live (2026-11-16)
+
+Seen on `1.7.0-alpha.6` (iPhone sitting, PR #3715): after a broadcaster ENDED a live, its card stayed on a
+follower's feed (web seat); and the carousel of a live that STARTED did not appear until a relaunch.
+
+**How the feed learns.** There is no socket event for a live: `LiveFeedCard` reads `GET /api/lives` (no seat
+taken). It read it (1) when the feed bumped `refreshKey` (a first-page load) and (2) on a timer
+(`previewPeriodMs`, 16 s) armed ONLY while `lives.length > 0` AND the card was on screen AND the page visible.
+
+**Why a start was missed (b).** With no live on air nothing was drawn, so there was no element for the
+`IntersectionObserver`, so `onScreen` never became true and the timer never armed; the limits were also read only
+once a card existed. A feed already open when a live began could therefore learn it only from the next
+first-page load (a relaunch).
+
+**Why an end was missed (a).** The timer stops when the tab is hidden or the card scrolled off, and nothing read
+when it was watched again: the first read was a full period later, and never if the limits had not answered.
+The stale card stayed in between.
+
+**The fix, at the cause.** The observer watches an ANCHOR rendered whether or not a card is drawn, so the
+watched state does not depend on what is drawn; the limits are read the first time the place is watched; the
+timer runs whenever the place is watched; and each ENTRY into the watched state (tab visible, feed scrolled
+back to the top) reads once at once, skipped only if a read is already out. Idempotence is the existing state
+(`watching = onScreen && pageVisible`), not a clock: the timer stays a cost knob. Cost: a reader sitting on the
+top of an open feed now reads the (small) list every 16 s even with nothing on air, as with one on air before.
+A push event (a server-sent start/end) would remove that poll; it is not built (it would need a new
+channel). Tests: `LiveFeedCard.svelte.test.ts` (a start with no card drawn; an end read on re-entry).
+Read on the Mi 9T on `1.7.0-alpha.7` (2026-11-17, [readings](../../device-verification.md#the-mi-9t-readings-of-2026-11-17-170-alpha7-the-envoyer-a-retakes-on-section-22s-screens)): start, end and a backgrounded app all followed with no relaunch; the entry is deleted.

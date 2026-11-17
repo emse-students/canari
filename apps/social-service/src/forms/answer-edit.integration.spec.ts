@@ -133,6 +133,17 @@ maybe('a respondent changes their own answer, against PostgreSQL (migration 166)
       `CREATE TABLE associations (id uuid PRIMARY KEY, archived boolean NOT NULL DEFAULT false)`
     );
     await ds.query(`INSERT INTO associations (id) VALUES ($1), ($2)`, [ASSO, ARCHIVED_ASSO]);
+    // The `users` table social-service shares with core-service (same database): a member's
+    // submit reads the names and campus its form joins there (`sharedAccountFields`, migration 174).
+    await ds.query(
+      `CREATE TABLE users (id text PRIMARY KEY, "firstName" text, "lastName" text, campus text)`
+    );
+    await ds.query(
+      `INSERT INTO users (id, "firstName", "lastName", campus) VALUES
+         ($1, 'Owen', 'OWNER', NULL), ($2, 'Alice', 'ALPHA', 'gardanne'),
+         ($3, 'Bob', 'BRAVO', NULL), ($4, 'Carol', 'CHARLIE', 'saint-etienne')`,
+      [OWNER, ALICE, BOB, CAROL]
+    );
 
     service = new FormsService(
       ds.getRepository(Form),
@@ -221,7 +232,8 @@ maybe('a respondent changes their own answer, against PostgreSQL (migration 166)
   const row = async (id: string) =>
     (
       await ds.query(
-        `SELECT "paymentStatus", "totalPaid", answers, "editedAt", "paymentRequestId"
+        `SELECT "paymentStatus", "totalPaid", answers, "editedAt", "paymentRequestId",
+                "respondentIdentity"
            FROM submissions WHERE id = $1`,
         [id]
       )
@@ -231,6 +243,7 @@ maybe('a respondent changes their own answer, against PostgreSQL (migration 166)
       answers: Record<string, unknown>;
       editedAt: Date | null;
       paymentRequestId: string | null;
+      respondentIdentity: Record<string, unknown> | null;
     };
 
   const rowsOf = async (formId: string) =>
@@ -314,6 +327,24 @@ maybe('a respondent changes their own answer, against PostgreSQL (migration 166)
       sent.submissionId,
     ]);
     expect((await service.myEditableAnswers(formId, ALICE))[0].lockedItemIds).toEqual([]);
+  });
+
+  it("snapshots the joined names at submit and keeps them through the respondent's edit", async () => {
+    const formId = await makeForm({ requiresPayment: false, allowCashPayment: false });
+    const sent: any = await service.submit(formId, {
+      userId: ALICE,
+      answers: { 'q-name': 'Les Bleus', 'q-meal': 'm-none' },
+    } as any);
+    const snapshot = { source: 'account', lastName: 'ALPHA', firstName: 'Alice' };
+    expect((await row(sent.submissionId)).respondentIdentity).toEqual(snapshot);
+    // The account changes afterwards: the answer keeps what was true when it was given.
+    await ds.query(`UPDATE users SET "lastName" = 'RENAMED' WHERE id = $1`, [ALICE]);
+    await service.editAnswer(formId, sent.submissionId, ALICE, {
+      'q-name': 'Les Verts',
+      'q-meal': 'm-none',
+    });
+    expect((await row(sent.submissionId)).respondentIdentity).toEqual(snapshot);
+    await ds.query(`UPDATE users SET "lastName" = 'ALPHA' WHERE id = $1`, [ALICE]);
   });
 
   it('changes a free answer IN PLACE: one row, the date set, the single-answer guard intact', async () => {
