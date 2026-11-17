@@ -67,6 +67,12 @@ export const FALSE_LOSS_ACCUSATION = /\[History\] frame never read here and unre
  * ledgers inside the MLS state's own write. It is the row's subject, so it FAILS the run; the
  * classifier would only have made it `PASS-DIRTY`, and only in the last run's window.
  *
+ * THE ONE CASE IT CANNOT TELL APART: a frame W2 sent while W1 was dead, or after the checkpoint W1
+ * restarted from, can be genuinely "never read here". A human separates the two from the kept
+ * consoles: the accusation in `W1-run<n>-revived` names its `row` (a stream id, a server time); that
+ * row decrypted in `W1-run<n>-dying` is the defect, a row the dying page never mentions (or one
+ * stamped after the kill) never reached W1.
+ *
  * @param {string[]} lines the revived page's console, `level text`
  * @returns {string[]} each accusation's kind, in order
  */

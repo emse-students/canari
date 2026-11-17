@@ -8,7 +8,7 @@
  *   bun archive/kill-selftest.mjs
  */
 import { COOKIE_COMMIT_MS, KILL3_WINDOWS, KILL_BLOCKED, KILL_ROWS, REFRESH_COOKIE_TTL_S, UNSENT_LABELS, chromeExpiresToUnixS, refreshCookieAtKill, WINDOWS, kill3Outcome, kill3WindowOf, revivedAccusations, FALSE_LOSS_ACCUSATION, kill3WindowsOwn, cookieCommitWaitMs, delayOf, killRunsOwn, panelMissing, removalBoundOwn, runCommits, runOutcome, storageLost, strayCommits, strayCommitsOwn, stageKillsOwn, welcomeLines, welcomeOnceOwn, windowOf } from '../killrows.mjs';
-import { consoleEntries, consoleSinceAttach } from '../watch.mjs';
+import { consoleEntries, consoleSinceAttach, watch } from '../watch.mjs';
 
 let failures = 0;
 const ok = (label, cond) => {
@@ -154,15 +154,26 @@ ok("Chrome's 1601-epoch microseconds read as Unix seconds", Math.abs(chromeExpir
 
 // ── the revived console the accusation is read over ──────────────────────────────────────────────
 console.log('consoleSinceAttach');
-const line = (type, text) => ({ method: 'Runtime.consoleAPICalled', params: { type, args: [{ value: text }] } });
-const fakeCx = {
-  beforeWindow: [line('warning', ACCUSED.replace(/^warning /, ''))],
-  consumed: [line('log', 'drained')],
-  events: [line('log', 'live'), { method: 'Network.requestWillBeSent', params: {} }],
-};
-ok('the lines before the first watch() are read, then the window, in order', consoleSinceAttach(fakeCx).join('|') === `${ACCUSED}|info drained|info live`);
-ok('... while the classified window still leaves them out', consoleEntries(fakeCx).length === 2);
+const line = (type, text, timestamp) => ({ method: 'Runtime.consoleAPICalled', params: { type, args: [{ value: text }], ...(timestamp ? { timestamp } : {}) } });
+const logEntry = (level, text, timestamp) => ({ method: 'Log.entryAdded', params: { entry: { level, text, timestamp, source: 'console-api' } } });
+const NET = { method: 'Network.requestWillBeSent', params: {} };
+const ACCUSATION = ACCUSED.replace(/^warning /, '');
+// A cx the way `client()` leaves it: Runtime events buffered, nothing watched yet. `send` answers
+// every command, and the user-agent read answers '' - attached as Chromium.
+const fakeCx = { events: [line('warning', ACCUSATION, 1000), NET], send: async () => ({ result: { value: '' } }) };
+await watch(fakeCx, 'kill-selftest');
+fakeCx.events.push(line('log', 'live', 2000));
+ok('the gap before the first watch() is read, then the window, in order', consoleSinceAttach(fakeCx).join('|') === `${ACCUSED}|info live`);
+ok('... while the classified window still leaves it out', consoleEntries(fakeCx).length === 1);
 ok('the catch-up accusation logged before the watch is found', revivedAccusations(consoleSinceAttach(fakeCx)).join() === 'secret-reuse');
+ok('only console entries are set aside, never a Network event', fakeCx.beforeWindow.length === 1 && fakeCx.beforeWindow.every((e) => typeof e.text === 'string'));
+const kept = fakeCx.beforeWindow;
+fakeCx.events.push(line('log', 'next window', 3000), NET, NET);
+await watch(fakeCx, 'kill-selftest#2');
+ok('a second watch() on the same connection sets nothing more aside (no growth per window)', fakeCx.beforeWindow === kept && kept.length === 1);
+// ONE CALL SURFACED TWICE is one accusation; the same sentence said again later is two.
+const twice = { events: [line('warning', ACCUSATION, 5000), logEntry('warning', ACCUSATION, 5001), line('warning', ACCUSATION, 15000)] };
+ok('Log.entryAdded and consoleAPICalled of one call count once, a later repeat counts again', revivedAccusations(consoleSinceAttach(twice)).length === 2);
 
 if (failures) {
   console.error(`\n${failures} kill assertion(s) failed`);

@@ -1388,7 +1388,8 @@ export async function watch(cx, label) {
   // catch-up - so the first lines of that catch-up, the ones a lost seen-mark turns into a false
   // `frame never read here` accusation (KILL-2), were logged before `watch()` and discarded here.
   // The window itself is unchanged (the classifier never reads this); `consoleSinceAttach` does.
-  cx.beforeWindow = (cx.beforeWindow ?? []).concat(cx.consumed ?? [], cx.events);
+  // FIRST WATCH ONLY, CONSOLE ONLY: see `firstGapOf`.
+  cx.beforeWindow ??= firstGapOf(cx);
   cx.events.length = 0;
   // THE ARCHIVE `report` FILLS AS IT DRAINS. Classifying consumes `cx.events` on purpose - a
   // second report must cover only what happened since the first - but the RAW log has to survive
@@ -1460,31 +1461,68 @@ export function consoleDump(observers) {
  * @returns {{text: string, level: string}[]}
  */
 export function consoleEntries(cx) {
-  return entriesOf((cx.consumed ?? []).concat(cx.events));
+  return entriesOf((cx.consumed ?? []).concat(cx.events)).map(({ text, level }) => ({ text, level }));
 }
 
 /**
- * EVERY console line the page emitted since the rig CONNECTED to it (`client()` enables `Runtime`
- * at once), as `level text` lines - the lines before the first `watch()` included, which
- * {@link consoleEntries} leaves out on purpose because they are outside the classified window.
+ * The page's console as the rig FIRST found it, `level text` lines: what it said between `client()`
+ * (which enables `Runtime` at once) and the first `watch()` on that connection.
+ *
+ * Only that first gap, and only console events. A revived seat's history catch-up starts at its PIN
+ * unlock, before the row can watch it - that is the gap this keeps. A later `watch()` on the same
+ * connection opens a window after one the rig already read, so nothing is set aside again: a cx is
+ * watched again and again (about 180 call sites) and must not carry every window it ever had.
+ */
+function firstGapOf(cx) {
+  return entriesOf(cx.events);
+}
+
+/**
+ * EVERY console line the page emitted since the rig connected, as `level text` lines: the gap
+ * before the first `watch()` ({@link firstGapOf}) followed by the current window - which
+ * {@link consoleEntries} reads without that gap, on purpose, since it is outside the classified window.
  *
  * For a question about the WHOLE life of a page rather than about a window: a revived seat's
  * catch-up starts at its PIN unlock, before the row can watch it (KILL-1..3, `revivedAccusations`).
  *
+ * ONE CALL IS ONE LINE. `Log.entryAdded` and `Runtime.consoleAPICalled` surface the same call
+ * twice within a millisecond, which would count one accusation twice; the copies are collapsed on
+ * the sentence within {@link SAME_CALL_MS}, as the timeline does, and a genuine repeat later is kept.
+ *
  * @returns {string[]}
  */
 export function consoleSinceAttach(cx) {
-  return entriesOf((cx.beforeWindow ?? []).concat(cx.consumed ?? [], cx.events)).map((e) => `${e.level} ${e.text}`);
+  const entries = (cx.beforeWindow ?? []).concat(entriesOf((cx.consumed ?? []).concat(cx.events)));
+  const last = new Map();
+  const out = [];
+  for (const e of entries) {
+    const key = stripStamp(e.text);
+    const prev = last.get(key);
+    if (prev !== undefined && e.at !== null && Math.abs(e.at - prev) < SAME_CALL_MS) continue;
+    if (e.at !== null) last.set(key, e.at);
+    out.push(`${e.level} ${e.text}`);
+  }
+  return out;
 }
 
-/** The console entries among raw CDP (or WebKit) events, with the level each was printed at. */
+/** How close two surfacings of one sentence must be to be one console call (the timeline's bound). */
+const SAME_CALL_MS = 250;
+
+/**
+ * The console entries among raw CDP (or WebKit) events: the text, the level it was printed at, and
+ * when (`at`, epoch ms, null when the event carries no clock).
+ */
 function entriesOf(events) {
   return events
     .map(fromWebKit)
     .filter((e) => e.method === 'Runtime.consoleAPICalled' || e.method === 'Log.entryAdded')
     .map((e) =>
       e.method === 'Log.entryAdded'
-        ? { text: String(e.params.entry.text ?? '').slice(0, 260), level: e.params.entry.level }
+        ? {
+            text: String(e.params.entry.text ?? '').slice(0, 260),
+            level: e.params.entry.level,
+            at: Number.isFinite(e.params.entry.timestamp) ? e.params.entry.timestamp : null,
+          }
         : {
             text: e.params.args
               .map((a) => a.value ?? a.description ?? '')
@@ -1496,6 +1534,7 @@ function entriesOf(events) {
                 : e.params.type === 'error'
                   ? 'error'
                   : 'info',
+            at: Number.isFinite(e.params.timestamp) ? e.params.timestamp : null,
           }
     );
 }
