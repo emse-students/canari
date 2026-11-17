@@ -1,11 +1,9 @@
 /**
  * The Graine session store, exercised against the REAL IndexedDB backend.
  *
- * The SQLite backend cannot be reached from here - it needs a live Tauri SQL plugin - so what
- * holds the two together is the shared codec every method on both sides goes through
- * (`graineCodec`), which is covered below on its own. That split is deliberate and is the same one
- * `sqliteBatch` / `sqliteMigrations` already use: the decisions are pure functions and are tested
- * as such, and the one backend a test runner can actually open is tested for real.
+ * What holds the two backends together is the shared codec every method on both sides goes through
+ * (`graineCodec`), covered below on its own; the SQLite half of the outbound count's
+ * compare-and-swap is run for real over `node:sqlite` in `graineStoreSqlite.test.ts`.
  */
 // happy-dom ships no IndexedDB, so the backend is given a real one rather than a mock: these
 // tests then exercise the actual cursors, indexes and version migration, which is the only part
@@ -67,6 +65,33 @@ describe('Graine sessions in IndexedDB', () => {
     // Held at the put: written.
     await storage.saveGraineSession(session({ sentCount: 6 }), KEY, () => true);
     expect((await storage.getGraineSession('sess-1', KEY))?.sentCount).toBe(6);
+  });
+
+  it('a compare-and-swap write lands only while the stored count is the one it was read at', async () => {
+    const storage = await freshStorage();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    await storage.saveGraineSession(session({ sentCount: 5 }), KEY);
+
+    // Read at 3, the row says 5: another writer reserved since. Refused, typed, nothing written.
+    const stale = storage.saveGraineSession(session({ sentCount: 4 }), KEY, undefined, 3);
+    await expect(stale).rejects.toBeInstanceOf(StoreWriteRefusedError);
+    expect((await storage.getGraineSession('sess-1', KEY))?.sentCount).toBe(5);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('moved from 3 to 5'));
+
+    // A row gone since the read (a purge) is not brought back by the swap.
+    const gone = storage.saveGraineSession(
+      session({ sessionId: 'sess-2', sentCount: 1 }),
+      KEY,
+      undefined,
+      0
+    );
+    await expect(gone).rejects.toBeInstanceOf(StoreWriteRefusedError);
+    expect(await storage.getGraineSession('sess-2', KEY)).toBeNull();
+
+    // Read at the count the row still carries: written.
+    await storage.saveGraineSession(session({ sentCount: 6 }), KEY, () => true, 5);
+    expect((await storage.getGraineSession('sess-1', KEY))?.sentCount).toBe(6);
+    error.mockRestore();
   });
 
   it('round-trips the distribution frame a sender keeps with its session', async () => {
