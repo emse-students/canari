@@ -243,6 +243,13 @@ export interface LiveWithdrawalResult {
   cutsOnRecord: number;
 }
 
+/** `DELETE /api/lives/broadcasters/:userId/withdrawal`: whether a withdrawal row was there to lift. */
+export interface LiveWithdrawalLift {
+  userId: string;
+  /** False when nothing was withdrawn (a repeat, or another moderator lifted it first). */
+  lifted: boolean;
+}
+
 /** `POST /api/lives/:id/removed-viewers`. */
 export interface LiveRemovedViewer {
   liveId: string;
