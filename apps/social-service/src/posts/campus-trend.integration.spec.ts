@@ -688,13 +688,13 @@ maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
 
     it('a bell read of a row whose naming no longer holds logs nothing, however often it is read', async () => {
       await follow('s1', 'e0');
-      await post(P(41), 'a', { reactions: { ...likers(T), e0: "J'aime" } });
-      expect(await announceCampusTrend({ manager, notifications }, P(41))).toBe(4);
-      await q(`UPDATE posts SET reactions = reactions - 'e0' WHERE id = $1`, [P(41)]);
+      await post(P(48), 'a', { reactions: { ...likers(T), e0: "J'aime" } });
+      expect(await announceCampusTrend({ manager, notifications }, P(48))).toBe(4);
+      await q(`UPDATE posts SET reactions = reactions - 'e0' WHERE id = $1`, [P(48)]);
       const debug = jest.spyOn(Logger.prototype, 'debug').mockImplementation(() => undefined);
       try {
-        expect((await served(P(41))).s1).toEqual({});
-        expect((await served(P(41))).s1).toEqual({});
+        expect((await served(P(48))).s1).toEqual({});
+        expect((await served(P(48))).s1).toEqual({});
         expect(debug.mock.calls.filter(([m]) => String(m).includes('[TREND] bell'))).toEqual([]);
       } finally {
         debug.mockRestore();
