@@ -22,7 +22,7 @@
   import ModerationMuteDialog from '$lib/components/moderation/ModerationMuteDialog.svelte';
   import ModerationLiveBlock from '$lib/components/moderation/ModerationLiveBlock.svelte';
   import ModerationChatLineBlock from '$lib/components/moderation/ModerationChatLineBlock.svelte';
-  import type { LiveCutResult, LiveWithdrawalResult } from '$lib/live/types';
+  import type { LiveCutResult, LiveWithdrawalLift, LiveWithdrawalResult } from '$lib/live/types';
   import { liveStateLabels } from '$lib/moderation/liveState';
   import { describeModerationRefusal } from '$lib/moderation/moderationRefusal';
   import { createLatestOnly } from '$lib/utils/latestOnly';
@@ -385,6 +385,16 @@
     await loadReports();
   }
 
+  /** A broadcaster's right was given back from a report row: say what the server did, then re-read. */
+  async function handleLiveLifted(result: LiveWithdrawalLift) {
+    Log.d(
+      'admin.moderation.handleLiveLifted',
+      `${result.userId} ${result.lifted ? 'lifted' : 'was not withdrawn'}`
+    );
+    showToast(result.lifted ? m.moderation_live_lift_done() : m.moderation_live_lift_already());
+    await loadReports();
+  }
+
   /** A broadcaster's right was withdrawn from a report row: say what the server did, then re-read. */
   async function handleLiveWithdrawn(result: LiveWithdrawalResult) {
     Log.d(
@@ -546,6 +556,7 @@
                 onCut={handleLiveCut}
                 onWithdrawn={handleLiveWithdrawn}
                 onStale={() => void loadReports()}
+                onLifted={handleLiveLifted}
                 mayActOnBroadcaster={report.canMuteReportedUser === true}
               />
             {/if}

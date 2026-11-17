@@ -1014,11 +1014,20 @@ it per broadcaster. The "Retirer le droit" button exists ONLY while the server s
 is all that is left to restrict. It opens `ModerationLiveWithdrawDialog` (reason, details, one red
 confirm) and calls `withdrawBroadcaster` = `POST /api/lives/broadcasters/:userId/withdrawal`; refusals
 are sentenced by `code` (`LIVE_WITHDRAWAL_FORBIDDEN`, `LIVE_WITHDRAWAL_NOT_DUE`, the two invalid-input
-codes); a repeat (`newlyWithdrawn: false`) is a success the page words "already withdrawn". **Not
-built:** lifting a withdrawal (`DELETE` of the same path exists, no control yet) and a standing view
-for a broadcaster with no reported live (there is no per-account staff read; the caller's own
-`GET /api/lives/standing` is not for staff). Tests: the standing and withdrawal blocks of
-`ModerationLiveBlock.svelte.test.ts`.
+codes); a repeat (`newlyWithdrawn: false`) is a success the page words "already withdrawn".
+**Lifting a withdrawal (2026-11-17, built):** on a row whose standing carries `withdrawnAt`, the same
+people who may withdraw (`canMuteReportedUser`) get "Rétablir le droit"; ONE `showConfirm` naming the
+broadcaster says a running suspension stays (the standing is derived from the cuts, which the lift
+leaves on record), then `liftBroadcasterWithdrawal` = `DELETE /api/lives/broadcasters/:userId/withdrawal`.
+The answer goes to the page, which toasts "rétabli" or, on `lifted: false` (a repeat, or another
+moderator first), "n'était plus retiré", and re-reads the queue; a refusal is a sentence under the
+row by `code` (`LIVE_WITHDRAWAL_FORBIDDEN`, `LIVE_ACCOUNT_INVALID`, anything else a retry). No notice
+reaches the member: the server writes none for a lift, and the pre-live screen reads the standing
+again at its next open. **Not built:** a standing view for a broadcaster with no reported live (there
+is no per-account staff read; the caller's own `GET /api/lives/standing` is not for staff), so a
+withdrawal is lifted from one of the broadcaster's report rows, which the queue lists, pending first,
+while they are among its 50 newest. Tests: the standing, withdrawal and lift blocks of
+`ModerationLiveBlock.svelte.test.ts`, the route in `live/api.test.ts`.
 
 **The viewer's report control (2026-10-19, built).** `LiveReportControl` sits in the viewer's TOP BAR
 (the strip above the picture: it never covers the video, a double-tap region or the chat panel), a

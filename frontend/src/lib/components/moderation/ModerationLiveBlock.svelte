@@ -1,10 +1,14 @@
 <script lang="ts">
-  import { Ban, Copy, Scissors, ShieldAlert } from '@lucide/svelte';
+  import { Ban, Copy, RotateCcw, Scissors, ShieldAlert } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
+  import Button from '$lib/components/ui/Button.svelte';
   import { copyId } from '$lib/utils/copyId';
   import type { ReportedLive } from '$lib/moderation/api';
   import { liveStateLabels } from '$lib/moderation/liveState';
-  import type { LiveCutResult, LiveWithdrawalResult } from '$lib/live/types';
+  import type { LiveCutResult, LiveWithdrawalLift, LiveWithdrawalResult } from '$lib/live/types';
+  import { liftBroadcasterWithdrawal, LiveRefusalError } from '$lib/live/api';
+  import { showConfirm } from '$lib/stores/confirm.svelte';
+  import { isTransportFailure } from '$lib/utils/transportFailure';
   import { LIVE_STRIKE_WINDOW_DAYS, LIVE_WITHDRAWAL_FROM_CUTS } from '$lib/live/constants';
   import ModerationLiveCutDialog from './ModerationLiveCutDialog.svelte';
   import ModerationLiveWithdrawDialog from './ModerationLiveWithdrawDialog.svelte';
@@ -24,6 +28,8 @@
     onWithdrawn: (result: LiveWithdrawalResult) => void;
     /** Told the standing drawn here is stale (a withdrawal was refused as not due): re-read the queue. */
     onStale: () => void;
+    /** Told after a lift (`lifted: false` is a repeat) so the queue is read again. */
+    onLifted: (result: LiveWithdrawalLift) => void;
     /**
      * The caller moderates the broadcaster as a person (a BDE: one of its own spaces, 2026-11-02),
      * the server's `canMuteReportedUser`. Required: only true draws the withdrawal, so a caller that
@@ -40,6 +46,7 @@
     onCut,
     onWithdrawn,
     onStale,
+    onLifted,
     mayActOnBroadcaster,
   }: Props = $props();
 
@@ -57,6 +64,60 @@
     Boolean(standing?.withdrawalDue && live.broadcasterId && mayActOnBroadcaster)
   );
   let withdrawOpen = $state(false);
+
+  /** A withdrawn right can be given back by the same people who may withdraw it. */
+  const liftable = $derived(
+    Boolean(standing?.withdrawnAt && live.broadcasterId && mayActOnBroadcaster)
+  );
+  let lifting = $state(false);
+  let liftError = $state('');
+
+  /** The sentence for a refused lift, decided on the typed code, never on a message. */
+  function liftErrorText(e: unknown): string {
+    if (e instanceof LiveRefusalError) {
+      if (e.code === 'LIVE_WITHDRAWAL_FORBIDDEN') return m.moderation_live_lift_forbidden();
+      if (e.code === 'LIVE_ACCOUNT_INVALID') return m.moderation_live_withdraw_account_invalid();
+    }
+    return m.moderation_live_lift_error();
+  }
+
+  /**
+   * Gives the broadcaster back the right to broadcast, after one confirmation naming them. A running
+   * suspension is not lifted with it: the standing is derived from the cuts, which stay on record.
+   */
+  async function lift() {
+    const userId = live.broadcasterId;
+    if (!userId || lifting) return;
+    const yes = await showConfirm(
+      m.moderation_live_lift_prompt({
+        name: broadcasterName || m.moderation_live_withdraw_this_account(),
+      }),
+      { confirmLabel: m.moderation_live_lift_button() }
+    );
+    if (!yes) {
+      console.debug(`[MODERATION] lift of ${userId}'s withdrawal declined`);
+      return;
+    }
+    lifting = true;
+    liftError = '';
+    console.debug(`[MODERATION] lifting the withdrawal of ${userId}`);
+    try {
+      const result = await liftBroadcasterWithdrawal(userId);
+      console.log(
+        `[MODERATION] withdrawal of ${userId} ${result.lifted ? 'lifted' : 'was not there'}`
+      );
+      onLifted(result);
+    } catch (e) {
+      // A refusal is an answer (the server said no); no answer at all is a transport failure.
+      console.warn(
+        `[MODERATION] lifting the withdrawal of ${userId} failed${isTransportFailure(e) ? ' (no answer)' : ''}`,
+        e
+      );
+      liftError = liftErrorText(e);
+    } finally {
+      lifting = false;
+    }
+  }
 
   function handleWithdrawn(result: LiveWithdrawalResult) {
     console.log(
@@ -168,6 +229,18 @@
         {m.moderation_live_withdraw_button()}
       </button>
     {/if}
+    {#if liftable}
+      <Button
+        variant="secondary"
+        size="compact"
+        onclick={() => void lift()}
+        loading={lifting}
+        data-moderation-live-lift
+      >
+        <RotateCcw size={13} />
+        {m.moderation_live_lift_button()}
+      </Button>
+    {/if}
     {#if cuttable}
       <button
         type="button"
@@ -180,6 +253,9 @@
       </button>
     {/if}
   </div>
+  {#if liftError}
+    <p class="text-red-err" role="alert" data-moderation-live-lift-error>{liftError}</p>
+  {/if}
 </div>
 
 {#if withdrawable && live.broadcasterId}

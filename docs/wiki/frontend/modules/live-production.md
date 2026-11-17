@@ -39,9 +39,9 @@ through the 60 s sweep, and the client hides the surfaces on its next `/api/vers
 and from the `/admin/moderation` queue's live row, and withdraw a broadcaster's right there; the
 first-live rules gate a first start; a suspended or withdrawn broadcaster's start is refused with its
 own screen (`LIVE_BROADCAST_SUSPENDED` with its date, `LIVE_BROADCAST_WITHDRAWN`); the three
-broadcaster pushes and bell rows exist. **Not built, client side:** the LIFT of a withdrawal in
-`/admin/moderation` (`DELETE /api/lives/broadcasters/:userId/withdrawal` has no button); the pre-live
-screen reading `GET /api/lives/standing` (a suspended member learns it only at Start). **A reported
+broadcaster pushes and bell rows exist. **Built since:** the pre-live screen reading
+`GET /api/lives/standing` (2026-11-15) and the LIFT of a withdrawal in `/admin/moderation`
+(2026-11-17, [live](live.md#the-moderation-client-wp-l8s-client-half-2026-10-19)). **A reported
 chat line was always LISTED** in `/admin/moderation`, with its text as the preview when the server
 verified it; what it lacked - its type label, a sentence saying why an `altered`, `key-rotated` or
 `unverifiable` line shows no text, and the live it was written in - came with the flip pull request
@@ -57,9 +57,9 @@ estate; `owed` = not done. A gate closes only when its last column is true.
 | G1 | **WP-L8 server**: report a live (`content_reports`, `contentType: 'live'`), the staff cut (410 `endReason: 'cut'`), the first-live rules (L11) | **built** ([lives](../../services/lives.md#moderation-wp-l8-server-half)) | done |
 | G2 | **WP-L8b server**: the strike ladder (warning, 30-day suspension, withdrawal from the 3rd cut), cuts kept 90 days, a reported chat line kept signed until handled (90 days max), five reaction kinds, `LIVE_RULES_VERSION` 2 | **built** (#2172) | done |
 | G3 | **The signing secrets** `LIVE_REPORT_SIGNING_KEY` and `DEV_LIVE_REPORT_SIGNING_KEY` (REQUIRED in both estates: a deploy without them is refused by `render-env.sh`) | **set** - both names listed by `gh secret list`, 2026-10-21 05:56 UTC (names only; the values were not read, and their length is checked by the deploy) | done; the first production deploy carrying #2172 proves it |
-| G4 | **The 24 h commitment, measured** (`[LIVE_REPORT_AGE]`, hourly, `error` past 24 working hours) | **built** (#2189); one reading of the line on dev **owed** | the line read in dev's social-service log |
+| G4 | **The 24 h commitment, measured** (`[LIVE_REPORT_AGE]`, hourly, `error` past 24 working hours) | **built** (#2189); **read on dev 2026-11-17**: `pending=0` every hour at :53 ([lives](../../services/lives.md#the-24-h-alarm-on-the-live-report-queue-wp-l8b-item-e)) | done |
 | G5 | **WP-L8 client**: the viewer's report control, the cut screens, the `live_cut` bell row, the admin queue's live row with its cut button, the rules sheet | **built** (dev builds) | G9's readings |
-| G6 | **WP-L8b client**: (a) the three pushes and two bell rows - **built** (#2192); (b) the admin standing on a live report and the withdraw button - **built** (#2190); (c) the five reaction kinds, the posts' rules on the sheet, reporting ONE chat line - **built** (`LiveChatReportDialog`, read 2026-10-30); (d) the two start refusals (`LIVE_BROADCAST_SUSPENDED` with its date, `LIVE_BROADCAST_WITHDRAWN`) - **built** (`LiveBroadcaster`); `GET /api/lives/standing` on the pre-live screen - **owed**; (e) the LIFT of a withdrawal in `/admin/moderation` (the endpoint exists, no control) - **owed**; (f) the `live_chat` report row showing its integrity (`altered` / `key-rotated` / `unverifiable` with one weight) - **built** in the flip pull request (`ModerationChatLineBlock.svelte.test.ts`) | mostly built | (d)(e) built, each with its test |
+| G6 | **WP-L8b client**: (a) the three pushes and two bell rows - **built** (#2192); (b) the admin standing on a live report and the withdraw button - **built** (#2190); (c) the five reaction kinds, the posts' rules on the sheet, reporting ONE chat line - **built** (`LiveChatReportDialog`, read 2026-10-30); (d) the two start refusals (`LIVE_BROADCAST_SUSPENDED` with its date, `LIVE_BROADCAST_WITHDRAWN`) - **built** (`LiveBroadcaster`); `GET /api/lives/standing` on the pre-live screen - **built** (2026-11-15); (e) the LIFT of a withdrawal in `/admin/moderation` - **built** (2026-11-17, `ModerationLiveBlock.svelte.test.ts`); (f) the `live_chat` report row showing its integrity (`altered` / `key-rotated` / `unverifiable` with one weight) - **built** in the flip pull request (`ModerationChatLineBlock.svelte.test.ts`) | **built** - the device readings of (a) and (e) are [an entry](../../backlog.d/reading-owed-live-moderation-pushes-lift-and-the-lives-switch.md) | done in code |
 | G7 | **Crypto reviews**: the segment seal v1 and the chat seal C12, each "owed an adversarial crypto review" ([live](live.md#the-segment-seal-format-v1), [lives](../../services/lives.md#live-chat-and-floating-reactions-wp-l6)) | **owed** (no review is on record on either page) | one adversarial review each, its verdict written where the format is |
 | G8 | **WP-L6 load**: several dev viewers chatting while a broadcaster sends segments (the chat shares the live's row lock with the ingest; nothing measured that contention) | **owed** | one dev reading, numbers on [lives](../../services/lives.md#the-row-lock-extended) |
 | G9 | **Phone readings**: check Y (watching) and LIVE-B1 (broadcasting) of [device-verification](../../device-verification.md#live-b1-the-broadcaster-on-both-bench-phones---owed-on-both) on the Mi 9T and the iPhone 12; the moderation screens; the chat panel and the floating reactions; the three pushes once a store build carries their strings | **owed as rows** - read 2026-10-29/30 short of them: the iPhone broadcast flow on TestFlight `1.5.1-alpha.8`/`.9`, and the web rig's LIVE-WEB-2 and LIVE-STALL-1 `PASS` on `1.5.1-alpha.9` (#2705); check Y and LIVE-B1 stay owed row by row on both phones | the board rows `PASS`, never `PASS-DIRTY` |
@@ -164,6 +164,8 @@ the heading "quand la fonction est ouverte", as calls did. Every claim was read 
   Google and Apple (section 5 of the policy) now also cover the live push.
 
 ## 6. The viewer cap - from 24 to none, in measured steps
+
+> **Planned as [its own entry](../../backlog.d/live-viewer-cap-lifted-in-measured-steps.md)** (2026-11-17), split from the WP-L8 moderation entry, which is closed in code.
 
 > **The owner, 2026-10-21: no VISIBLE ceiling.** The bounds with their arithmetic, the five options, the staged path and the decisions O-1..O-7 (O-3 revisits D-4 below) are on [live-scaling](live-scaling.md); S5 there moves from a Cache Rule to an R2 bucket, Cloudflare's terms being read.
 

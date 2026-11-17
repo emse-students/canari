@@ -6066,6 +6066,12 @@
   "moderation_live_withdraw_account_invalid": "The server does not recognise this account.",
   "moderation_live_withdraw_invalid": "The server refused the reason or the details.",
   "moderation_live_withdraw_error": "The right could not be withdrawn. Try again.",
+  "moderation_live_lift_button": "Restore the right",
+  "moderation_live_lift_prompt": "Give {name} back the right to start lives? A suspension still running stays until it ends.",
+  "moderation_live_lift_done": "The right to broadcast was restored.",
+  "moderation_live_lift_already": "The right to broadcast was no longer withdrawn.",
+  "moderation_live_lift_forbidden": "You are not allowed to restore the right to broadcast.",
+  "moderation_live_lift_error": "The right could not be restored. Try again.",
   "moderation_live_prior_cuts": [
     {
       "declarations": ["input count", "local countPlural = count: plural"],

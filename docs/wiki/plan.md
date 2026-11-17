@@ -21,7 +21,6 @@ earliest version, as a checklist.
 - [P1 - the cause of a REVOKED device's partial restore is not established](backlog.d/p1-the-cause-of-a-revoked-device-s-partial-restore-is-not-established.md)
 - [P1 - Opening a community: F1-F7 BUILT, the 200 ms budget is what is left (user, 2026-10-14; state re-read 2026-10-22)](backlog.d/p1-opening-a-community-f1-f7-built-the-200-ms-budget-is-what-is-left-user-2026.md)
 - [P1 - The MiConnect terms stage reaches production with the next STABLE: three things come first (2026-10-16)](backlog.d/p1-the-miconnect-terms-stage-reaches-production-with-the-next-stable-three.md)
-- [P1 - Live moderation (WP-L8): merged; the client's standing refusals, the viewer cap and the readings are owed (2026-10-19)](backlog.d/p1-live-moderation-wp-l8-merged-the-client-s-standing-refusals-the-vie.md)
 - [P1 - A new member of a group conversation receives its whole past; decided 2026-10-21 that they must not](backlog.d/p1-a-new-member-of-a-group-conversation-receives-its-whole-past-decided-2026-10.md)
 - [P1 - encrypt the names of groups, communities and salons (raised 2026-10-21, tied to principle 1 of the charter on 2026-11-10)](backlog.d/p1-encrypt-the-names-of-groups-communities-and-salons.md)
 - [P1 - The ledgers that must follow the MLS state live in `localStorage`, which an unclean exit loses for seconds after each write (KILL-2, 2026-10-25; design owed)](backlog.d/p1-the-ledgers-that-must-follow-the-mls-state-live-in-localstorage-which-an.md)
@@ -115,6 +114,7 @@ earliest version, as a checklist.
 - [ ] [the live viewer's top bar at 360-436 css px portrait (name whole, no button over the second row)](backlog.d/reading-owed-the-live-viewer-top-bar-at-360-436-px.md)
 - [ ] [a menu ends above the iOS tab bar, and a group notification keeps its title (2026-11-16)](backlog.d/reading-owed-the-popover-and-notification-fixes-of-the-iphone-sitting.md)
 - [ ] [the repair of a rewound sender walks to the member that holds the messages (2026-11-17)](backlog.d/reading-owed-heal-repair-walks-to-the-holder.md)
+- [ ] [live moderation: the three broadcaster pushes, the withdrawal lift and the lives switch](backlog.d/reading-owed-live-moderation-pushes-lift-and-the-lives-switch.md)
 
 ## 1.7.1
 
@@ -143,6 +143,7 @@ earliest version, as a checklist.
 - [Decided by the user on 2026-10-18 - every design question answered](backlog.d/decided-by-the-user-on-2026-10-18-every-design-question-answered.md)
 - [Decided by the user on 2026-10-19 - lives before calls, and what a live owes before a stable](backlog.d/decided-by-the-user-on-2026-10-19-lives-before-calls-and-what-a-live-owes.md)
 - [Found by the dev payment end-to-end of 2026-10-21 (Lydia, sandbox)](backlog.d/found-by-the-dev-payment-end-to-end-of-2026-10-21-lydia-sandbox.md)
+- [The live viewer cap (24 seats for the whole host) lifted in measured steps - the owner's "no visible ceiling" (2026-10-21)](backlog.d/live-viewer-cap-lifted-in-measured-steps.md)
 - [Live replays - a finished live is kept three days and shown as a CanaReel (owner, 2026-11-07; designed and decided 2026-11-09, WP-R1 built)](backlog.d/live-replays-kept-three-days-as-canareels.md)
 - [The moderation authority grid is asserted by one table-driven spec per service (owner, 2026-11-15)](backlog.d/the-moderation-authority-grid-is-asserted-by-table-driven-specs.md)
 - [The server images keep themselves up to date: pinned digests, Dependabot, a server-only release and a weekly scan](backlog.d/container-auto-update.md)
