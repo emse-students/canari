@@ -1026,7 +1026,7 @@ reaches the member: the server writes none for a lift, and the pre-live screen r
 again at its next open. **Not built:** a standing view for a broadcaster with no reported live (there
 is no per-account staff read; the caller's own `GET /api/lives/standing` is not for staff), so a
 withdrawal is lifted from one of the broadcaster's report rows, which the queue lists, pending first,
-while they are among its 50 newest. Tests: the standing, withdrawal and lift blocks of
+while they are among its 50 newest ([the entry that closes it](../../backlog.d/p2-no-staff-view-of-a-broadcaster-s-standing-without-a-report.md)). Tests: the standing, withdrawal and lift blocks of
 `ModerationLiveBlock.svelte.test.ts`, the route in `live/api.test.ts`.
 
 **The viewer's report control (2026-10-19, built).** `LiveReportControl` sits in the viewer's TOP BAR
