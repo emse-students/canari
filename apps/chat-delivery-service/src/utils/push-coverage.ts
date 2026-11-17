@@ -164,7 +164,7 @@ const PUSH_OUTCOMES: ReadonlySet<string> = new Set([
  * phones had sent no registration and no report, and the bare terms could not say which branch or
  * which await to fix (the client's `UnauthorizedCause` and `RegistrationStage`).
  */
-const REGISTRATION_STAGES = ['permission', 'os-token', 'session-token', 'sending', 'retry-wait'];
+const REGISTRATION_STAGES = ['permission', 'os-token', 'session-token', 'sending'];
 const OUTCOME_QUALIFIERS: Readonly<Record<string, ReadonlySet<string>>> = {
   unauthorized: new Set([
     'renewed-refused',

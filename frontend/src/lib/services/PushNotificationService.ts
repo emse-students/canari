@@ -31,6 +31,7 @@ import { GROUP_CALL_VERSION } from '$lib/utils/callRoomToken';
 import { readApiJson } from '$lib/utils/apiJson';
 import { isTransportFailure, RefreshFailedError } from '$lib/utils/transportFailure';
 import { sendRenewingOn401 } from '$lib/utils/renewOn401';
+import { tokenVerdictOf, type TokenVerdict } from '$lib/utils/tokenVerdict';
 
 /** Push gateway platform tag sent to the backend (mirrors the server's PushPlatform). */
 type PushPlatform = 'android' | 'ios';
@@ -108,29 +109,11 @@ export class PushRegistrationUnauthorizedError extends Error {
  *
  * - `renewed-refused`: the server answered 401 to a token renewed for this registration;
  * - `session-expired`, `device-revoked`, `signing-out`, `identity-split`: what the session's token
- *   source threw instead of a token (the auth store's verdicts, by the type each is thrown as);
+ *   source threw instead of a token - the {@link TokenVerdict} each of those types carries, set at
+ *   its throw (`tokenVerdict.ts`);
  * - `other`: any other failure to obtain a token - a branch nobody has named yet.
  */
-export type UnauthorizedCause =
-  | 'renewed-refused'
-  | 'session-expired'
-  | 'device-revoked'
-  | 'signing-out'
-  | 'identity-split'
-  | 'other';
-
-/**
- * The token-source failures by the NAME each type gives itself (`this.name`, explicit in every
- * constructor, so it survives minification). Read by name and not by `instanceof` because their
- * module, the auth store, imports this one. The name feeds the REPORT only: the control flow already
- * decided, by type, that this is a failure another attempt cannot lift.
- */
-const UNAUTHORIZED_CAUSE_BY_ERROR_NAME: Readonly<Record<string, UnauthorizedCause>> = {
-  SessionExpiredError: 'session-expired',
-  SessionEndedByDeviceRevocationError: 'device-revoked',
-  SignOutInProgressError: 'signing-out',
-  IdentitySplitError: 'identity-split',
-};
+export type UnauthorizedCause = 'renewed-refused' | TokenVerdict | 'other';
 
 /**
  * The session that started this registration ended (a sign-out bumped `pushSessionGeneration`):
@@ -152,9 +135,7 @@ export class PushRegistrationSupersededError extends Error {
 function classifyTokenFailure(error: unknown): unknown {
   if (error instanceof RefreshFailedError || isTransportFailure(error)) return error;
   const name = error instanceof Error ? error.name : typeof error;
-  const kind = Object.hasOwn(UNAUTHORIZED_CAUSE_BY_ERROR_NAME, name)
-    ? UNAUTHORIZED_CAUSE_BY_ERROR_NAME[name]
-    : 'other';
+  const kind = tokenVerdictOf(error) ?? 'other';
   return new PushRegistrationUnauthorizedError(kind, `no session token (${name})`, error);
 }
 
@@ -220,15 +201,13 @@ export type PushOutcomeRecord =
  * - `permission`: the rationale or the OS notification dialog, i.e. an answer from the USER;
  * - `os-token`: the OS push token (`getFcmToken`, up to 30 s per attempt);
  * - `session-token`: the session's bearer (`tokenNow`, a refresh at most);
- * - `sending`: the registration request, sent and not answered;
- * - `retry-wait`: the pause between two attempts of the ladder.
+ * - `sending`: the registration request, sent and not answered.
+ *
+ * NO STAGE FOR THE PAUSE BETWEEN TWO ATTEMPTS: every attempt that fails records its final outcome
+ * first, which the report states over any stage and which clears the `started` marker - so a stage
+ * named there could never be read (review of #3765).
  */
-export type RegistrationStage =
-  | 'permission'
-  | 'os-token'
-  | 'session-token'
-  | 'sending'
-  | 'retry-wait';
+export type RegistrationStage = 'permission' | 'os-token' | 'session-token' | 'sending';
 
 /** The stage of the registration running in this process; meaningful only while one runs. */
 let registrationStage: RegistrationStage | null = null;
@@ -256,7 +235,6 @@ const REGISTRATION_STAGES: ReadonlySet<string> = new Set<RegistrationStage>([
   'os-token',
   'session-token',
   'sending',
-  'retry-wait',
 ]);
 
 /** localStorage key of {@link PushOutcomeRecord}; cleared at sign-out with the registration. */
@@ -821,7 +799,6 @@ export async function startPushService(
         console.warn(`[Push] registration ${outcome.reason} - an answer, so no retry`);
         break;
       }
-      noteStage('retry-wait', generation);
       await new Promise((resolve) => setTimeout(resolve, BACKGROUND_RETRY_DELAY_MS));
       if (superseded()) {
         console.info('[Push] the session that started this registration ended - ladder stopped');
@@ -978,6 +955,7 @@ export async function endPushRegistration(cause: SignOutCause): Promise<void> {
   // and the next account starts its own ladder - permission, attempts, report - not a re-check.
   pushSessionGeneration++;
   ladderGeneration = null;
+  registrationStage = null;
   pushAttempted = false;
   const platform = pushPlatform();
   if (!platform) {

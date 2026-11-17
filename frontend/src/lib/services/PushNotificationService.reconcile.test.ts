@@ -348,20 +348,31 @@ describe('the outcome a device states on register-device', { timeout: 30_000 }, 
 
   it('names the session verdict that stood in for a token - no request, and the branch is known', async () => {
     registerAnswers(200);
-    const cases: Array<[string, string]> = [
-      ['SessionExpiredError', 'unauthorized:session-expired'],
-      ['SessionEndedByDeviceRevocationError', 'unauthorized:device-revoked'],
-      ['SignOutInProgressError', 'unauthorized:signing-out'],
-      ['IdentitySplitError', 'unauthorized:identity-split'],
+    // The verdict travels as the `tokenVerdict` field the auth types set at their throw (the real
+    // types are pinned in `tokenVerdict.test.ts`); a class NAME alone says nothing.
+    const cases: Array<[Error, string]> = [
+      [
+        Object.assign(new Error('x'), { tokenVerdict: 'session-expired' }),
+        'unauthorized:session-expired',
+      ],
+      [
+        Object.assign(new Error('x'), { tokenVerdict: 'device-revoked' }),
+        'unauthorized:device-revoked',
+      ],
+      [Object.assign(new Error('x'), { tokenVerdict: 'signing-out' }), 'unauthorized:signing-out'],
+      [
+        Object.assign(new Error('x'), { tokenVerdict: 'identity-split' }),
+        'unauthorized:identity-split',
+      ],
+      [Object.assign(new Error('x'), { name: 'SessionExpiredError' }), 'unauthorized:other'],
+      [Object.assign(new Error('x'), { tokenVerdict: 'forged' }), 'unauthorized:other'],
     ];
-    for (const [name, stated] of cases) {
+    for (const [thrown, stated] of cases) {
       localStorage.clear();
       const push = await freshModule();
       const verdict: PushAuth = {
         tokenNow: async () => {
-          const e = new Error('no token');
-          e.name = name;
-          throw e;
+          throw thrown;
         },
         renew: async () => 'jwt',
       };

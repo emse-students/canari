@@ -2060,13 +2060,15 @@ on an older build hold their row (0 of 145) - so the build, not the enrolment, c
 **Why `last=` was not enough, and what it now says.** The client-side branches that end without a
 request are an `unauthorized` ladder (the session's token source threw, or a renewed token was
 refused) and a ladder parked on an await (the permission rationale or dialog, the OS token, the
-session token, the request itself, the pause between attempts). The bare terms merged them:
+session token, the request itself). The bare terms merged them:
 `unauthorized` covered six causes and `in-progress` / `started` named no await. They are now
 QUALIFIED - `unauthorized:<session-expired|device-revoked|signing-out|identity-split|renewed-refused|other>`
-(the token source's verdict by the name its type gives itself, since the auth store cannot be imported
-here) and `in-progress:<stage>` / `started:<stage>` with `permission`, `os-token`, `session-token`,
-`sending`, `retry-wait` (the durable `started` marker carries the stage, so a process that died
-parked leaves where). The server allowlists the qualifier per term (`parsePushOutcome`); an older
+(the token source's verdict, a `tokenVerdict` field each of its error types sets at the throw -
+`utils/tokenVerdict.ts` - since the auth store cannot be imported by the push service, and a class
+name would turn into `other` on a rename) and `in-progress:<stage>` / `started:<stage>` with
+`permission`, `os-token`, `session-token`, `sending` (the durable `started` marker carries the
+stage, so a process that died parked leaves where). No stage names the pause between two attempts:
+each failed attempt records its final outcome first, which the report states over any stage. The server allowlists the qualifier per term (`parsePushOutcome`); an older
 build's bare term is still accepted.
 
 Tests: `PushNotificationService.reconcile.test.ts`, `mlsDeliveryApi.pushRegistered.test.ts`,
