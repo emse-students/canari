@@ -159,7 +159,14 @@ push, and each device keeps it beside the row it names.
     later one, and is read as later - the frame is kept `unconfirmed`, never re-sent, and settles only
     if its first copy landed and a member relays it. The window is the time since the server last
     said anything to this account; a device that renames with a live link has heard from it within
-    seconds. With no server time ever seen, nothing dates the base. A row
+    seconds. The likeliest undated base - a name the group list returned at boot, its frame not yet
+    drained - is covered: the list answer's `Date` is noted as a server time (`getUserGroups`, the
+    API's own answer only), and every name it returns was stamped before it; so is the sweep's read
+    of the group row (#3785 round 9). What is left there is sub-second: `Date` is floored to the
+    second, so a statement stamped in the same second as the answer, after its floor, reads as
+    later. With no server time ever seen, nothing dates the base. A join push dates the base with
+    the inviter's relayed `at` (`withRestatedGroupName`), so an inviter may pick any value up to
+    `serverSeenAt` to date it - a tighter bound than before, not a new power. A row
     that holds the pending name, dated, saw it land, so only the server's copy is owed. Otherwise the
     SAME frame is re-sent (`resendPendingRename`: the same id and the same signed `sentAt`), so a
     member that already took it draws no second notice. Its outcome is a type

@@ -26,6 +26,7 @@ import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { isTransportFailure, TransportFailureError } from '$lib/utils/transportFailure';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { ApiRefusalError, responseOrigin, type ResponseOrigin } from '$lib/utils/apiRefusal';
+import { noteServerTime } from '$lib/utils/chat/serverClock';
 import {
   assertAnsweredByApi,
   isAwaitingAdmissionBody,
@@ -3072,6 +3073,11 @@ export class MlsDeliveryApi {
       if (!res.ok) {
         throw await refusalFromResponse(res, 'getUserGroups failed');
       }
+      // THE LIST'S `Date` IS A SERVER TIME AFTER EVERY NAME IT RETURNS was stated: a row named from
+      // it shows a name whose frame was stamped no later than this answer. Noted (serverClock.ts),
+      // it is what a rename made over such an undated name dates its base by (`PendingRename
+      // .serverSeenAt`) - only from the API's own answer, never a portal's.
+      if (responseOrigin(res) === 'gateway') noteServerTime(userId, serverDateOf(res));
       return (await res.json()) as UserGroupRow[];
     });
   }

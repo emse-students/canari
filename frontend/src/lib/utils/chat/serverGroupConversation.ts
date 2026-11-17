@@ -18,6 +18,7 @@ import {
   type PendingRename,
 } from './groupName';
 import { BUNDLE_SERVER_TIME_SKEW_MS } from './messageTime';
+import { noteServerTime } from './serverClock';
 import type { RenameResendOutcome } from './groupActions';
 
 /**
@@ -285,6 +286,7 @@ async function settleNameSync(
   group: ServerGroupRow,
   settler: NameSyncSettler,
   mlsService: IMlsService,
+  userId: string,
   conversations: Map<string, Conversation>,
   saveConversation: ((key: string) => Promise<void>) | undefined,
   log: (msg: string) => void
@@ -320,6 +322,7 @@ async function settleNameSync(
       pending,
       settler,
       mlsService,
+      userId,
       conversations,
       replace,
       log
@@ -381,6 +384,7 @@ async function settlePendingRename(
   pending: PendingRename,
   settler: NameSyncSettler,
   mlsService: IMlsService,
+  userId: string,
   conversations: Map<string, Conversation>,
   replace: (sync: NameSync, row?: Conversation) => Promise<void>,
   log: (msg: string) => void
@@ -426,6 +430,8 @@ async function settlePendingRename(
     );
     return;
   }
+  // A server time like any other: noted, it bounds what the next rename's base is dated by.
+  noteServerTime(userId, status.serverNow);
   if (status.serverNow === undefined) {
     if (!clocklessFramesSaid.has(pending.messageId)) {
       clocklessFramesSaid.add(pending.messageId);
@@ -527,6 +533,7 @@ export async function ensureConversationForServerGroup(
         group,
         deps.nameSync,
         mlsService,
+        userId,
         conversations,
         saveConversation,
         log

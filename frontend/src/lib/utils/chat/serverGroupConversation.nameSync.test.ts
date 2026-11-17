@@ -16,6 +16,7 @@ import type { IMlsService } from '$lib/mls-client/IMlsService';
 import type { PendingRename } from './groupName';
 import type { RenameResendOutcome } from './groupActions';
 import { BUNDLE_SERVER_TIME_SKEW_MS } from './messageTime';
+import { resetServerClockForTests, serverTimeSeen } from './serverClock';
 import {
   ensureConversationForServerGroup,
   RENAME_RESEND_MARGIN_MS,
@@ -304,6 +305,12 @@ describe('the pending frame (a send with no answer) is re-sent as the same frame
     expect(after.nameSync).toEqual({ unconfirmed: PENDING });
     expect(error).toHaveBeenCalledWith(expect.stringContaining('NOT re-sent'));
     error.mockRestore();
+  });
+
+  it("the sweep's server clock is noted: a later rename's base is dated by it", async () => {
+    resetServerClockForTests();
+    await sweep(pendingRow(), 'Old', { nameSync: settler(), serverNow: T + 2_000 });
+    expect(serverTimeSeen('u1')).toBe(T + 2_000);
   });
 
   it("the server's clock exactly the margin before the bound: re-sent", async () => {
