@@ -108,6 +108,11 @@ of its adversarial review.
      written, and the erasure also removes the id
      (`post_notifications_liked_by`, `meta - 'likedBy'`). The push is sent at once and carries the
      name of that moment (`actorName` plus `contentCount`); a delivered push cannot be recalled.
+     **A dropped naming is not logged (2026-11-17)**: the bell is polled every 60 s by each open client, and
+     a row whose naming went (the like taken back, the switch off) is dropped again at EVERY read, so a
+     line per drop (`[TREND] bell: N of N naming(s) no longer hold`, about 37 in 15 minutes on dev) said the
+     same stable, designed state again and again. The read is a pure function of durable state; nothing
+     was decided, so there is nothing to say. `campus-trend.integration.spec.ts` pins the silence.
    - The three trend keys stay; every native table chooses one of three sentences by the count
      ("Aimée par Léa", "... et 1 autre personne", "... et 9 autres", English "Liked by ..." at
      parity), and the bell row draws the same through Paraglide from the served `{name, others}`.

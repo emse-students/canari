@@ -2156,14 +2156,16 @@ preview's "Ferme"); only the manager's way to write it was missing.
   Closing asks a confirmation, reopening does not.
 - **THE SERVER DECIDES WHETHER A FORM IS OPEN, NEVER THE DEVICE CLOCK** (read on the Mi 9T,
   2026-11-17; owner directive "deterministe, pas de pansements"). `formWindowState`
-  (`form-window.ts`) is the ONE rule - `not-yet` before the opening, `closed` strictly after the end,
+  (`form-window.ts`) is the ONE rule - `not-yet` before the opening, `closed` from the end instant on,
   else `open` - and `isFormOpen` / `assertFormOpen` (the refusals `FORM_NOT_OPEN_YET` /
   `FORM_CLOSED`) are built on it. `GET /forms`, `GET /forms/:id`, `GET /public/forms/:id` and the
   close/reopen answer all carry its verdict as `windowState`. The client's `formWindowState` /
   `isClosedForm` / `opensLater` (`formWindow.ts`) read that field, so the list badge, the public
   page and the member page share one implementation and a phone whose clock is behind the server no
   longer reads a just-closed form open (after the close answer, and after a refetch). The old
-  `<=` (client) against `<` (server) mismatch is gone: an end is passed only when strictly past.
+  `<=` (client) against `<` (server) mismatch is gone: the end INSTANT is closed on both sides (`<=`),
+  so a close, which writes `closedAt = now`, answers `closed` from the very instant it stored - the
+  answer is computed from that same `now`, never from a second clock read.
   - **Additive**: an older server sends no `windowState`; the client then falls back to comparing the
     dates with its own clock and logs ONCE at warn that the server sent none (reaching it means the
     server is older than the client: a signal, not a path). An older client ignores the field.

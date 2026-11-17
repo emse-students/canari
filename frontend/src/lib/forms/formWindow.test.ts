@@ -47,8 +47,9 @@ describe('formWindowState and isClosedForm', () => {
     expect(String(warn.mock.calls[0][1])).toContain('windowState');
     warn.mockRestore();
   });
-  it('is open AT the end instant, as the server refusal is (strictly past is closed)', () => {
-    expect(isClosedForm({ closedAt: '2026-11-16T12:00:00Z' }, now)).toBe(false);
+  it('is closed AT the end instant, as the server rule is (a close writes the end as now)', () => {
+    expect(isClosedForm({ closedAt: '2026-11-16T12:00:00Z' }, now)).toBe(true);
+    expect(isClosedForm({ closedAt: '2026-11-16T12:00:01Z' }, now)).toBe(false);
   });
 });
 

@@ -31,6 +31,7 @@ import type {
   LiveLimits,
   LiveCutReason,
   LiveCutResult,
+  LiveWithdrawalLift,
   LiveWithdrawalResult,
   LiveEndReason,
   LiveListItem,
@@ -548,6 +549,22 @@ export async function withdrawBroadcaster(
   console.log(
     `[LIVE] right of ${userId} withdrawn (${done.newlyWithdrawn ? 'new' : 'repeat'}, ${done.cutsOnRecord} cuts)`
   );
+  return done;
+}
+
+/**
+ * `DELETE /api/lives/broadcasters/:userId/withdrawal` - a content moderator gives an account back its
+ * right to broadcast. Idempotent (`lifted: false` when nothing was withdrawn). Refusals, read by
+ * `code`: `LIVE_WITHDRAWAL_FORBIDDEN` (403), `LIVE_ACCOUNT_INVALID` (400).
+ */
+export async function liftBroadcasterWithdrawal(userId: string): Promise<LiveWithdrawalLift> {
+  console.debug(`[LIVE] lift the withdrawal of ${userId}`);
+  const done = await liveJson<LiveWithdrawalLift>(
+    `${livesBase()}/broadcasters/${encodeURIComponent(userId)}/withdrawal`,
+    'Live withdrawal lift',
+    { method: 'DELETE' }
+  );
+  console.log(`[LIVE] withdrawal of ${userId} ${done.lifted ? 'lifted' : 'was not there'}`);
   return done;
 }
 

@@ -1767,10 +1767,10 @@ static void CanariOnDidBecomeActive(__unused NSNotification *note) {
   CanariDrainAppGroupFcmCache();
   // A share the Share Extension made while Canari was away - the banner's tap lands here.
   CanariImportAppGroupShareIfUnlocked(@"activation");
-  // Refresh the App Group mirror: the push context, the seeds and the secret. Its mls.bin half is
-  // no longer what keeps the extension current - every write of the state carries the copy along
-  // (`write_slot_mls_bin`, concurrency.rs), since a process killed in the foreground never reaches
-  // willResignActive; here it only re-copies the slot as it stands.
+  // Refresh the App Group mirror: the push context and the secret (the seed mirror lives there
+  // already). Its mls.bin half is no longer what keeps the extension current - every write of the
+  // state carries the copy along (`write_slot_mls_bin`, concurrency.rs), since a process killed in
+  // the foreground never reaches willResignActive; here it only re-copies the slot as it stands.
   CanariMirrorPushStateToAppGroup();
   // The FCM token, asked for HERE and not at bootstrap. By the time the app is active,
   // registerForRemoteNotifications has run and APNs has usually answered - which is the
@@ -1785,7 +1785,7 @@ static void CanariOnWillResignActive(__unused NSNotification *note) {
   g_isInForeground = false;
   CanariSetAppGroupForegroundFlag(NO);
   canari_ios_on_pause();
-  // Snapshot the push context, seeds and secret into the App Group container before suspending
+  // Snapshot the push context and secret into the App Group container before suspending
   // (mls.bin already follows each of its writes - see didBecomeActive).
   CanariMirrorPushStateToAppGroup();
   // The quick-action titles are the one native string iOS lets us re-register, and this is the last
