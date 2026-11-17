@@ -323,3 +323,16 @@ describe('LivesController', () => {
     expect(read).not.toHaveBeenCalled();
   });
 });
+
+describe('the routes that answer a live key (adversarial review G7, 2026-11-17)', () => {
+  // A key never sits in any cache: every route whose answer carries one says `no-store`, the
+  // START included (its answer is `toView(row, key)`, the broadcaster's own key echoed back).
+  it.each(['list', 'start', 'get', 'replay'] as const)(
+    '%s answers Cache-Control: no-store',
+    (name) => {
+      const route = Object.getOwnPropertyDescriptor(LivesController.prototype, name);
+      const headers = Reflect.getMetadata('__headers__', route?.value as object) as unknown[];
+      expect(headers).toContainEqual({ name: 'Cache-Control', value: 'no-store' });
+    }
+  );
+});

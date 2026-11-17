@@ -1,6 +1,10 @@
 ## P1 - the admission rule's fix-forward: a conversation may refuse an entry no member made only once nothing legitimate produces one
 
-target: 1.7.0
+target: 1.7.1
+
+_2026-11-17: moved to 1.7.1 by the owner's 2026-11-17 scope cut ([decisions](owner-decisions-of-2026-11-17.md)).
+Step 1's table (#3774) ships in `1.7.0`; its reading needs two weeks of production after that
+stable, and steps 2-5 are `1.7.1` and `1.8.0` work._
 
 #2815 made a conversation refuse an external commit by a user holding no leaf, then freeze. Its
 post-merge review found it froze legitimate members out for good and dropped every later frame, so
@@ -47,8 +51,10 @@ re-armed:
    members as an ask (the `JoinRequestRow` card, a member's Add on Accept), and a Decline of a seat
    that is not a link ask is defined server-side (today `declineJoinRequest` answers
    `not-awaiting`). *Size: about one week (client, chat-delivery, Paraglide fr/en, tests, one rig
-   reading). Owner decision owed: the card's wording for a person coming back, and whether a
-   Decline removes their seat.*
+   reading).* **Decided by the owner, 2026-11-17:** the card reuses the existing join-request card
+   as it stands - "X veut rejoindre la conversation", "Accepter" / "Refuser" - with no wording of its
+   own for a person coming back, and a Decline REMOVES the seat
+   ([decisions](owner-decisions-of-2026-11-17.md)).
 3. **The emission side**, only once step 2 is in every client allowed to connect (`minClientVersion`
    raised once BOTH stores serve it - before that, an older member asks nobody and the asker waits
    for ever). A user holding no leaf ASKS a member instead of entering alone, mirroring the
