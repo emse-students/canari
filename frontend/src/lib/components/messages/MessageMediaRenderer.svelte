@@ -717,7 +717,7 @@
         {#if segment.type === 'link'}
           <AppLink href={segment.value} />
         {:else}
-          <MessageInlineText text={segment.value} />
+          <MessageInlineText text={segment.value} onOwnBubble={onAmber} />
         {/if}
       {/each}
     </p>
