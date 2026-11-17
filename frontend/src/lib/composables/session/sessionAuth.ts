@@ -2592,7 +2592,7 @@ export async function loginImpl(
     // calling it here before the WebSocket is opened is redundant.
 
     if ('onWelcomeProcessed' in mlsService) {
-      (mlsService as any).onWelcomeProcessed(async (groupId?: string) => {
+      (mlsService as any).onWelcomeProcessed(async (groupId?: string, installed?: boolean) => {
         if (groupId) {
           cb.log(`[SYNC] Welcome processed for ${groupId}, refreshing...`);
           if (!cb.conversations.has(groupId)) {
@@ -2618,11 +2618,12 @@ export async function loginImpl(
           // FRESH JOIN: the Welcome lands us at the current epoch with no pre-join history, and our
           // own reconciliation is what brings it - the inviter's push carries the conversation's
           // state and no message since 2026-11-17, and a device it never reached is owed even that
-          // (`registerOwed.ts`: this probe asks for it). Run for EVERY processed Welcome: inside the
+          // (`registerOwed.ts`: this probe asks for it). Run for every Welcome that INSTALLED the
+          // group - a fact the handler records (`noteWelcomeInstalled`), not the row: inside the
           // branch above it ran only when the envelope's id differed from the joined one, because the
           // Welcome handler has already written the joined group's row by the time this callback
-          // runs - so an ordinary fresh join waited for the next connection to compare.
-          await reconcileGroup(mlsService, groupId, cb.log);
+          // runs. A redelivered Welcome of a group already held joins nothing and asks nothing.
+          if (installed) await reconcileGroup(mlsService, groupId, cb.log);
           cb.onLoadHistoryForConversation(groupId, groupId).catch((e) =>
             cb.log(`[WARN] Error refreshing conv ${groupId}: ${e}`)
           );

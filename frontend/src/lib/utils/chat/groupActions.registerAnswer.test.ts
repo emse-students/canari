@@ -11,6 +11,7 @@ import {
   resetConversationNicknamesForTests,
 } from '$lib/utils/users/conversationNicknames.svelte';
 import type { FrameDelivery } from '$lib/mls-client/frameDelivery';
+import { noteRegisterOwed } from './registerOwed';
 
 /**
  * THE RESPONDER'S HALF OF THE REGISTER ASK (`registerOwed.ts`, history-answer-addressing.md, "The
@@ -22,8 +23,15 @@ const ASKER = 'user-b:device-b';
 const ANSWERER = digestIdentity('user-a', 'device-a');
 const REQUEST = 'req-0000000a';
 
+/** A conversation row holding a floor and read marks - none of which a register answer may carry. */
 function storage(): IStorage {
-  return { getConversation: vi.fn().mockResolvedValue(null) } as unknown as IStorage;
+  return {
+    getConversation: vi.fn().mockResolvedValue({
+      id: GROUP,
+      historyFloor: 1_700_000_000_000,
+      readWatermarks: { 'user-a': 5 },
+    }),
+  } as unknown as IStorage;
 }
 
 async function answer(mlsService: ReturnType<typeof createMlsServiceStub>, log = vi.fn()) {
@@ -49,6 +57,7 @@ function frames(mlsService: ReturnType<typeof createMlsServiceStub>) {
 describe('sendRegisterAnswer', () => {
   beforeEach(() => {
     localStorage.clear();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
     resetConversationNicknamesForTests();
     applyNickname(GROUP, 'user-c', { nickname: 'Capitaine', setBy: 'user-a', at: 10 });
   });
@@ -79,6 +88,19 @@ describe('sendRegisterAnswer', () => {
       register: true,
       nicknames: [expect.objectContaining({ userId: 'user-c', nickname: 'Capitaine' })],
     });
+    // THE REGISTER AND NOTHING ELSE: any member can answer a register ask, so no floor, no read
+    // marks, no pins ride it (history-answer-addressing.md, "The newcomer asks for its register").
+    expect(Object.keys(content).sort()).toEqual(['messages', 'nicknames', 'register']);
+  });
+
+  it('is not answered by a device still owed its own register - it has none to restate', async () => {
+    noteRegisterOwed('user-a', GROUP);
+    const mlsService = createMlsServiceStub();
+    const { sent, log } = await answer(mlsService);
+
+    expect(sent).toBe(false);
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('still owed its own'));
   });
 
   it('is never broadcast - a server that does not address gets no register at all', async () => {

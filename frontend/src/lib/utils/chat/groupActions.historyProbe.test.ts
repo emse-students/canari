@@ -1,6 +1,11 @@
 // @vitest-environment happy-dom
 import { sendHistoryProbe } from './groupActions';
-import { clearRegisterOwed, noteRegisterOwed } from './registerOwed';
+import {
+  REGISTER_ASKS_MAX,
+  clearRegisterOwed,
+  isRegisterOwed,
+  noteRegisterOwed,
+} from './registerOwed';
 import { forgetHistoryAsks, takeAddressedAsk } from './historyAddressing';
 import { createMlsServiceStub } from '$lib/mls-client/test/fixtures/mlsServiceStub';
 import { decodeAppMessage } from '$lib/proto/codec';
@@ -175,6 +180,47 @@ describe('sendHistoryProbe - a register owed', () => {
     });
 
     expect('register' in sentBodies(mlsService)[0]).toBe(false);
+  });
+
+  it('counts every register ask that left, and goes back to the state key once the bound is spent', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    noteRegisterOwed('user-a', GROUP);
+    const held = [
+      { id: 'm1', senderId: 'u', content: 'x', timestamp: Date.now() } as StoredMessage,
+    ];
+    const mlsService = createMlsServiceStub();
+    const probe = () =>
+      sendHistoryProbe(GROUP, SELF, {
+        storage: storageHolding(1, held),
+        deviceKeyB64: 'k',
+        mlsService,
+        log: vi.fn(),
+      });
+
+    for (let i = 0; i < REGISTER_ASKS_MAX; i++) await probe();
+    expect(isRegisterOwed('user-a', GROUP)).toBe(false);
+    await probe();
+
+    expect(sentEvents(mlsService)).toEqual([
+      ...Array(REGISTER_ASKS_MAX).fill('history_digest'),
+      'history_state',
+    ]);
+  });
+
+  it('an ask that did not leave is not counted', async () => {
+    noteRegisterOwed('user-a', GROUP);
+    const mlsService = createMlsServiceStub();
+    vi.mocked(mlsService.sendMessage).mockRejectedValue(new Error('offline'));
+    for (let i = 0; i < REGISTER_ASKS_MAX + 1; i++) {
+      await sendHistoryProbe(GROUP, SELF, {
+        storage: storageHolding(0),
+        deviceKeyB64: 'k',
+        mlsService,
+        log: vi.fn(),
+      });
+    }
+
+    expect(isRegisterOwed('user-a', GROUP)).toBe(true);
   });
 
   it("is the asking ACCOUNT's marker - another account's owed register asks nothing here", async () => {

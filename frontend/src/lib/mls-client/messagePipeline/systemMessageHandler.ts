@@ -1512,7 +1512,11 @@ export async function handleSystemEvent(
           `[HISTORY_ADDRESSED] an unsealed history_bundle from ${senderNorm.slice(0, 8)} in ${convoKey.slice(0, 8)}… claims to answer a register ask - taken as an ordinary answer, its state ignored`
         );
       }
-      addOnly = !joinPush && !registerAnswer;
+      // A REGISTER ANSWER STAYS ADD-ONLY: it hands over the nickname register and nothing else. Any
+      // member can answer a register ask (its key rides the ask), and a floor or read marks taken
+      // from one would let that member hide history from this device for good; the nickname merge
+      // bounds what it can do (history-answer-addressing.md, "The newcomer asks for its register").
+      addOnly = !joinPush;
       // It carries the STATE and nothing else: a message riding it would be one an answer to an ask
       // could then change rather than only add, so none is taken from it (the responder sends none).
       if (registerAnswer && incoming.length > 0) {
@@ -1564,6 +1568,9 @@ export async function handleSystemEvent(
       //    ordinary answer. Both merges are `max`, so a value restated by every chunk is free.
       //    Not from an addressed answer to an ask (`addOnly`): it may only add messages.
       const beforeMerge = addOnly ? undefined : conversations.get(convoKey);
+      // Whether every merge of the state this bundle restates HAD its input - what ends the
+      // register this device is owed (below). A merge that could not run took nothing.
+      let stateTaken = !joinPush || beforeMerge !== undefined;
       if (beforeMerge) {
         const mergedWatermarks = mergeReadWatermarks(
           beforeMerge.readWatermarks,
@@ -1604,6 +1611,7 @@ export async function handleSystemEvent(
             }
           }
           await saveConversation?.(convoKey).catch((e: unknown) => {
+            stateTaken = false;
             log(
               `[HISTORY_BUNDLE] conversation state of ${convoKey.slice(0, 8)}… not persisted: ${String(e)}`
             );
@@ -1635,6 +1643,7 @@ export async function handleSystemEvent(
           convoKey,
           joinPush ? 'join push' : 'register answer'
         );
+        if (members === null) stateTaken = false;
         const nicknamesMerged = members
           ? mergeBundleNicknames(convoKey, bundleState.nicknames, {
               members,
@@ -1647,9 +1656,19 @@ export async function handleSystemEvent(
           );
         }
       }
-      // THE STATE ARRIVED: the register this device was owed since its admission is no longer asked.
+      // THE STATE WAS TAKEN: the register this device was owed since its admission is no longer
+      // asked - but only when every merge had its input. One that could not run (no row, a save
+      // refused, no roster to check the nicknames against) took nothing, and ending the ask then
+      // would leave this device without the state for good.
       if (joinPush || registerAnswer) {
-        clearRegisterOwed(userId, convoKey, joinPush ? 'join push' : 'register answer');
+        const how = joinPush ? 'join push' : 'register answer';
+        if (stateTaken) {
+          clearRegisterOwed(userId, convoKey, how);
+        } else {
+          console.warn(
+            `[REGISTER] ${convoKey.slice(0, 8)}… - the ${how} from ${senderNorm.slice(0, 8)} could not be taken whole - the register is still owed, and asked again`
+          );
+        }
       }
 
       if (msgs.length > 0) {

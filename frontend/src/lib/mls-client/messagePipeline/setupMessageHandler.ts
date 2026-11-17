@@ -756,6 +756,9 @@ async function handleWelcome(args: WelcomeArgs): Promise<boolean> {
       // durably here so a device the push never reached - offline at the delivery, or reloaded
       // before it - asks for it by its own reconciliation. A key group has no conversation state.
       if (!mlsService.isDistributionGroup(joinedGroupId)) noteRegisterOwed(userId, joinedGroupId);
+      // A FRESH JOIN, told to the announcement as a fact (`onWelcomeProcessed`'s `installed`): it is
+      // what runs the newcomer's reconciliation, which a redelivered Welcome must not.
+      mlsService.noteWelcomeInstalled(groupId ?? joinedGroupId);
       log(
         `[HISTORY_ADDRESSED] ${joinedGroupId.slice(0, 8)}… admitted - the inviter's push is solicited`
       );

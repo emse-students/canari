@@ -412,49 +412,80 @@ ASKS, on facts it holds durably:
    the ask this device keeps says `register` too (`noteHistoryAsk`). Like every ask, it carries a key.
 3. **Answered first by the elected responder.** `answerHistoryDigest`, seeing `register`, sends ONE
    frame before the diff (`sendRegisterAnswer`): addressed to the asker alone, SEALED to its ask, its
-   content the state and `register: true` and no message, not closing the ask (the diff's last chunk
+   content the NICKNAME REGISTER and `register: true` and no message, not closing the ask (the diff's last chunk
    does). Never broadcast (a server that does not address gets no register), withheld from an
    unvouched device, nothing sent when the engine cannot seal. A register ask with no key is a defect
-   of its sender: no state is sent, said at error, and the diff still goes.
-4. **Taken only from what opened under the ask.** The receiver takes the state - nicknames under
-   `mergeBundleNicknames`' limits (unverified, current members only), pins, floor, read marks - from
-   an answer only when its ask said `register` AND the SEALED content says `register`. The flag is
+   of its sender: no state is sent, said at error, and the diff still goes. A responder still owed
+   its OWN register for the group answers none (said in its log): it has none to restate, and an
+   empty one would end the asker's marker on nothing.
+4. **Taken only from what opened under the ask.** The receiver takes the nicknames - under
+   `mergeBundleNicknames`' limits (unverified, current members only) - from an answer only when its ask said `register` AND the SEALED content says `register`. The flag is
    never in the clear routing: one a relaying server could set would turn an ordinary answer into one
    the reader takes state from. An unsealed frame saying `register` is taken as an ordinary answer
    and said at error. A message riding a register answer is dropped (at error): it carries the state
    only.
-5. **Cleared by the first state accepted** - a register answer, or the inviter's join push.
+5. **Cleared by the first state TAKEN** - a register answer, or the inviter's join push - and only
+   when every merge had its input (`stateTaken` in `systemMessageHandler.ts`): a push finding no
+   conversation row, a save refused, or a register with no roster to check its nicknames against took
+   nothing, so the marker stays (said at warn) and the next reconciliation asks again.
 
-It terminates on facts: the marker is durable, the reconciliation runs at every connection and every
-processed Welcome, its deferral already waits for a member to come back, and the marker clears on the
-first accepted state. An older responder ignores `register` and answers the digest as before: the
-marker stays, and the next connection asks again, at the cost of a digest instead of a state key.
+**The register answer carries the nickname register and nothing else (decided 2026-11-17).** The
+ask's key rides the ask, so ANY member of the group can seal an answer to it, and the receiver does
+not track which member the election chose. Two ways out were weighed: accept a register answer only
+from the elected answerer, or keep what can do lasting harm out of it. The second was taken, because
+the first would need the receiver to re-run the election on a roster it may not hold yet (it has just
+joined), and a floor or read marks taken from a forged answer would hide history from the device for
+good. The nicknames are bounded by the merge (unverified, current members only, dated within the
+bundle's server time), so a forged register can at worst mislabel, and the next real one corrects it.
+The pins, the floor and the read marks still ride the inviter's join push, whose sender the receiver
+checks against its Welcome.
+
+**It terminates on a count, never a clock.** Every register ask SENT is counted in the marker
+(`noteRegisterAsked`), durably; the fifth (`REGISTER_ASKS_MAX`) drops it, said at warn. The asks
+leave on state edges - every connection, every Welcome that INSTALLED the group, a member coming back
+- so the bound is several elections' worth. It counts at the ask, not at an answer, because silence is
+an answer: an older responder ignores `register`, and when its store matches ours it sends nothing,
+so no answer-side count would ever move. Without the bound such a group would send the full digest
+instead of the state key at every connection until the FIFO pushed it out
+([legacy](../legacy-compatibility.md)).
+
+**Only a Welcome that installed the group asks at once.** The fresh-join reconciliation runs in
+`sessionAuth`'s `onWelcomeProcessed` callback, told by the drain whether the handler INSTALLED the
+group (`noteWelcomeInstalled`, read once per announcement). A redelivered Welcome of a group already
+held joins nothing and asks nothing; the marker it would have re-opened is not re-opened either.
 
 ### What proves the register ask and the state-only push
 
 - `registerOwed.test.ts` - the marker: durable, per account, bounded FIFO, an unreadable list reads
-  as nothing owed at error, clearing what is not owed says nothing.
+  as nothing owed at error, clearing what is not owed says nothing; the asks counted across a reload,
+  the fifth dropping it at warn, a re-admission asking from zero.
 - `setupMessageHandler.test.ts` - a processed Welcome makes a conversation group owe its register,
-  a key group none.
+  a key group none; a fresh install is told to the announcement, a redelivery is not.
+- `BaseMlsService.welcomeBuffer.test.ts` - the announcement says `installed` for the Welcome that
+  installed the group, not for its redelivery.
 - `groupActions.historyProbe.test.ts` - an owed register sends the digest with `register` whatever
-  the store holds, and keeps the ask with it; none once cleared; another account's marker asks nothing.
+  the store holds, and keeps the ask with it; none once cleared; another account's marker asks nothing;
+  each ask that left is counted, one that did not leave is not.
 - `systemMessageHandler.lateDigest.test.ts` - the digest handler carries `register` to the answer.
 - `historyDiffAnswer.register.test.ts` - the register frame leaves BEFORE the diff, sealed and bound
   to this answerer; none for an ordinary digest; a keyless register ask gets no state, at error.
 - `groupActions.registerAnswer.test.ts` - one frame, addressed, its clear routing only `to`,
-  `requestId`, `sealed`; its content the register and no message; never broadcast, withheld from an
-  unvouched device, nothing when the engine cannot seal.
+  `requestId`, `sealed`; its content the nickname register and no message, no floor, pin or read
+  mark even when the store holds them; never broadcast, withheld from an unvouched device, nothing
+  when the engine cannot seal, none from a device still owed its own.
 - `systemMessageHandler.nickname.test.ts` - the register is taken from a sealed register answer and
   the marker cleared; no message from it; no state from an answer to a non-register digest, nor from
   `register` said in clear (beside sealed content, or on an unsealed frame, at error); the push
-  clears the marker.
+  clears the marker; a register answer takes no floor or read mark; the marker is KEPT when the
+  roster is unreadable, the push finds no row, or its save fails.
 - `groupActions.historyBundle.test.ts`, `groupActions.historyEntitlement.test.ts` - the push sends
   the state and no message, never reading the store, addressed or (an older server) broadcast; the
   entitlement cases it used to carry are asserted on the answer to an ask.
 - **Owed on a pre-release**: reading 2 of the nicknames row with the new member's device NOT
   connected at "Ajouter" ([backlog](../backlog.d/p2-an-offline-newcomer-receives-no-join-push.md)).
   The `sessionAuth` callback that runs the fresh-join reconciliation is not drivable from a unit test
-  (`buildConversationRow.onePolicy.test.ts` says why); that reading is its proof.
+  (`buildConversationRow.onePolicy.test.ts` says why); its `installed` input is proven above, and
+  that reading is the proof of the callback itself.
 
 ### What proves the seal
 

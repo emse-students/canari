@@ -356,6 +356,9 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     await onMsg('peer-user', new Uint8Array([1, 2]), groupId, true, undefined, false);
 
     expect(isRegisterOwed('user-a', groupId)).toBe(owed);
+    // A FRESH JOIN, told to the announcement as a fact: what runs the newcomer's reconciliation. A
+    // key group's Welcome takes the Graine handler, which announces nothing to the conversation layer.
+    expect(mls.noteWelcomeInstalled.mock.calls).toEqual(keyGroup ? [] : [[groupId]]);
   });
 
   /**
@@ -1028,6 +1031,8 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     expect(mls.processWelcome).not.toHaveBeenCalled();
     expect(mls.sendWelcomeRequest).not.toHaveBeenCalled();
     expect(onGroupReady).toHaveBeenCalledWith(groupId);
+    // Joins nothing, so the announcement must not reconcile it as a fresh join.
+    expect(mls.noteWelcomeInstalled).not.toHaveBeenCalled();
   });
 
   it("a conversation Welcome arriving while this device's own external commit awaits the gate installs once it is refused", async () => {

@@ -20,7 +20,7 @@ import { cachedHistoryStateKey } from './historyStateKey';
 import { sendVisibleNotice, type OwnNotice } from './visibleNotices';
 import { readerHistorySelection } from './historyEntitlement';
 import { mintHistoryRequestId, noteHistoryAsk } from './historyAddressing';
-import { isRegisterOwed } from './registerOwed';
+import { isRegisterOwed, noteRegisterAsked } from './registerOwed';
 import {
   historySealAad,
   mintHistoryAnswerKey,
@@ -1175,13 +1175,7 @@ export async function sendFullHistoryBundle(
   // before a later member's arrival. The messages reach the newcomer by its own reconciliation (a
   // fresh join is one of its edges), whose answers ARE sealed; the state left here is the
   // conversation's, which every member holds. The one read that decides how it is routed is here.
-  const mode = await readerHistorySelection(
-    groupId,
-    [],
-    { mlsService, log },
-    userIdOfLeaf(to),
-    true
-  );
+  const mode = await readerHistorySelection(groupId, [], { mlsService, log }, userIdOfLeaf(to));
   return sendStateOnly(
     mode === null
       ? 'exclusion windows unreadable'
@@ -1287,8 +1281,7 @@ async function sendBundleChunks(
       groupId,
       selection.slice(i, i + chunkSize),
       { mlsService, log },
-      reader,
-      false
+      reader
     );
     if (chosen === null) {
       if (!read) return { kind: 'unreadable' };
@@ -1554,7 +1547,10 @@ export async function sendHistoryProbe(
   // A REGISTER OWED ASKS WITH THE DIGEST (`registerOwed.ts`): a state key that matches is answered
   // by silence, which would never deliver the state this device was admitted without.
   if (isRegisterOwed(userIdOfLeaf(from), groupId)) {
-    return sendHistoryDigest(groupId, from, deps, incomplete, true);
+    const asked = await sendHistoryDigest(groupId, from, deps, incomplete, true);
+    // Counted once it LEFT: the bound ends the marker after that many asks brought nothing.
+    if (asked) noteRegisterAsked(userIdOfLeaf(from), groupId);
+    return asked;
   }
   let held: number | null = null;
   if (storage) {
@@ -2007,15 +2003,25 @@ function withinTombstoneCeiling(
 
 /**
  * Answers a REGISTER ask (`registerOwed.ts`): a newcomer's digest that also asked for the
- * conversation's STATE - the nickname register, the pins, the floor and the read marks - which the
- * join push may never have brought it (an offline newcomer is pushed nothing).
+ * conversation's NICKNAME REGISTER, which the join push may never have brought it (an offline
+ * newcomer is pushed nothing).
  *
  * ONE frame, no message, sent before the diff by the same elected responder: addressed to the asker
  * alone and sealed to its ask's key, like every answer to an ask, and never closing the ask (the
  * diff's last chunk does). A register ask is only ever made with a key (it is new with the seal), so
- * there is no unsealed form: the caller answers an unkeyed one with nothing. Sent ONLY addressed: the register is a relayer's word about what others
- * did, taken by its one reader on the strength of its own ask, and a broadcast would hand it to every
- * member without that. Withheld from an unvouched device like everything else it could be told.
+ * there is no unsealed form: the caller answers an unkeyed one with nothing. Sent ONLY addressed: the
+ * register is a relayer's word about what others did, taken by its one reader on the strength of its
+ * own ask, and a broadcast would hand it to every member without that. Withheld from an unvouched
+ * device like everything else it could be told.
+ *
+ * **THE REGISTER AND NOTHING ELSE** - not the pins, the floor or the read marks the push carries. The
+ * ask's key is public (it rides the ask), so ANY member can answer it and take one of its answerer
+ * slots; the nickname merge bounds what such an answer can do (unverified, current members only,
+ * dated within the bundle's server time), while a floor taken from it would hide history from this
+ * device for good (history-answer-addressing.md, "The newcomer asks for its register").
+ *
+ * **NOT ANSWERED BY A DEVICE STILL OWED ITS OWN REGISTER**: it holds no register to restate, and an
+ * empty one would end the asker's marker on nothing.
  *
  * @returns whether the frame left.
  */
@@ -2024,12 +2030,14 @@ export async function sendRegisterAnswer(
   deps: HistoryStoreDeps,
   opts: { to: string; requestId: string; seal: AnswerSeal }
 ): Promise<boolean> {
-  const { storage, mlsService, log } = deps;
+  const { mlsService, log } = deps;
   const { to, requestId, seal } = opts;
   const short = groupId.slice(0, 8);
   if (followerTabSendsNoHistoryFrame('register answer', groupId, log)) return false;
-  if (!storage) {
-    log(`[REGISTER] No storage - cannot answer ${to}'s register in ${short}…`);
+  if (isRegisterOwed(userIdOfLeaf(seal.answerer), groupId)) {
+    log(
+      `[REGISTER] ${to}'s register in ${short}… not answered - this device is still owed its own, so it has none to restate`
+    );
     return false;
   }
   if (await historyWithheldAfterSettling(groupId, to, mlsService, log)) {
@@ -2038,24 +2046,18 @@ export async function sendRegisterAnswer(
     );
     return false;
   }
-  const routing = await readerHistorySelection(
-    groupId,
-    [],
-    { mlsService, log },
-    userIdOfLeaf(to),
-    false
-  );
+  const routing = await readerHistorySelection(groupId, [], { mlsService, log }, userIdOfLeaf(to));
   if (routing?.mode !== 'addressed') {
     log(
       `[REGISTER] ${to}'s register in ${short}… not answered - ${routing === null ? 'the windows could not be read' : 'the server does not address history answers'}, and a register is never broadcast`
     );
     return false;
   }
-  const state = await storedConversationState(groupId, storage);
+  const nicknames = nicknameEntries(groupId);
   let bytes: Uint8Array;
   try {
     bytes = await sealedBundleFrame(groupId, [], to, mlsService, {
-      state,
+      state: nicknames.length > 0 ? { nicknames } : {},
       answer: { requestId, seal, register: true },
       last: false,
     });
@@ -2068,7 +2070,7 @@ export async function sendRegisterAnswer(
   try {
     await mlsService.sendMessage(groupId, bytes, undefined, addressedHistoryAnswer(to));
     log(
-      `[REGISTER] Answered ${to}'s register in ${short}… (${state.nicknames?.length ?? 0} nickname(s), ${state.pins?.length ?? 0} pin(s), sealed)`
+      `[REGISTER] Answered ${to}'s register in ${short}… (${nicknames.length} nickname(s), sealed)`
     );
     return true;
   } catch (e) {

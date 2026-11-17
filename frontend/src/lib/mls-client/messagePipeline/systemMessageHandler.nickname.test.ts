@@ -404,6 +404,94 @@ describe('handleSystemEvent - the answer to OUR register ask', () => {
     expect(error.mock.calls.join(' ')).toContain('claims to answer a register ask');
   });
 
+  it('takes NOTHING but the register from it - no floor, no read marks, whatever it carries', async () => {
+    // Any member can answer a register ask (the key rides the ask): a floor taken from one would
+    // let that member hide history from this device for good.
+    const seal = await ask(true);
+    const ctx = makeCtx(RESPONDER);
+    await handleSystemEvent(
+      'history_bundle',
+      {
+        to: TO_ME,
+        requestId: REQ,
+        sealed: await seal({
+          messages: [],
+          register: true,
+          nicknames: NICKNAMES,
+          floor: 900_000,
+          readWatermarks: { ann: 999 },
+        }),
+      },
+      ctx as any
+    );
+
+    expect(nicknameEntry('g1', 'bob')?.nickname).toBe('Capitaine');
+    expect(ctx.conversations.get('g1').historyFloor).toBeUndefined();
+    expect(ctx.conversations.get('g1').readWatermarks).toEqual({});
+  });
+
+  it('keeps the register owed when the roster could not be read - nothing was taken', async () => {
+    const seal = await ask(true);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await handleSystemEvent(
+      'history_bundle',
+      {
+        to: TO_ME,
+        requestId: REQ,
+        sealed: await seal({ messages: [], register: true, nicknames: NICKNAMES }),
+      },
+      makeCtx({
+        ...RESPONDER,
+        mlsService: {
+          ...RESPONDER.mlsService,
+          getGroupMemberIdentities: vi.fn(async () => {
+            throw new Error('tree unreadable');
+          }),
+        },
+      }) as any
+    );
+
+    expect(nicknameEntry('g1', 'bob')).toBeNull();
+    expect(isRegisterOwed('me', 'g1')).toBe(true);
+    expect(warn.mock.calls.join(' ')).toContain('the register is still owed');
+  });
+
+  it('keeps the register owed when a join push finds no conversation row to merge into', async () => {
+    noteJoinSolicited('g1', 1);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const ctx = makeCtx({
+      ...RESPONDER,
+      senderNorm: 'inviter',
+      deliveryMeta: { ...RESPONDER.deliveryMeta, senderDeviceId: 'inviter-device' },
+    });
+    ctx.conversations.delete('g1');
+    await handleSystemEvent(
+      'history_bundle',
+      { messages: [], to: TO_ME, join: true, last: true, floor: 900_000 },
+      ctx as any
+    );
+
+    expect(isRegisterOwed('me', 'g1')).toBe(true);
+  });
+
+  it('keeps the register owed when the merged state of a join push could not be saved', async () => {
+    noteJoinSolicited('g1', 1);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const ctx = makeCtx({
+      ...RESPONDER,
+      senderNorm: 'inviter',
+      deliveryMeta: { ...RESPONDER.deliveryMeta, senderDeviceId: 'inviter-device' },
+      saveConversation: vi.fn().mockRejectedValue(new Error('disk full')),
+    });
+    await handleSystemEvent(
+      'history_bundle',
+      { messages: [], to: TO_ME, join: true, last: true, floor: 900_000 },
+      ctx as any
+    );
+
+    expect(isRegisterOwed('me', 'g1')).toBe(true);
+  });
+
   it("the inviter's join push, accepted, clears the marker too", async () => {
     noteJoinSolicited('g1', 1);
     await handleSystemEvent(

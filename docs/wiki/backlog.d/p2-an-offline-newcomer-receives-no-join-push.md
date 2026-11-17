@@ -48,9 +48,10 @@ must come back while the newcomer is online. Neither terminates on a fact.
    that group is the DIGEST (never the state key, whose match is answered by silence), with
    `register: true`; the ask is recorded with that flag (`noteHistoryAsk`).
 3. **Answered by the elected responder on the existing path.** `answerHistoryDigest`, seeing
-   `register: true`, sends one addressed state frame carrying the register (`bundleFrame` with the
-   digest's `requestId`, no message), behind the same `historyWithheldAfterSettling` check, before the
-   diff - the asker is online by construction (it just asked), so it is addressable.
+   `register: true`, sends one addressed frame carrying the nickname register only
+   (`bundleFrame` with the digest's `requestId`, no message, sealed), behind the same
+   `historyWithheldAfterSettling` check, before the diff - the asker is online by construction (it just asked), so
+   it is addressable.
 4. **Taken under the same four limits.** The receiver merges `nicknames` from an addressed answer only
    when the ask it answers carried `register` (`takeAddressedAsk` returns it), with
    `mergeBundleNicknames`' limits unchanged (unverified, current members only, at most as many entries

@@ -588,10 +588,6 @@ describe('every answer withholds the span before ITS READER arrived', () => {
     // The state alone, for a new device and for a newcomer alike, broadcast: no message rides it.
     expect(sentIds(mlsService)).toEqual([]);
     expect(deliveries(mlsService).every((d) => d.recipients === undefined)).toBe(true);
-    // No message is selected, so no withheld set is read: nothing to accuse on that count.
-    expect(
-      error.mock.calls.filter(([l]) => String(l).includes('predates the withheld'))
-    ).toHaveLength(0);
     // The addressing accusation was already made by the first legacy answer of this module's
     // session (above), so these two pushes add none.
     expect(
