@@ -6295,7 +6295,38 @@ as before. Either way `createGroupWithMembers` (`useConversations`) creates the 
 account's own devices, then invites the people chosen into it, addressed by the key the creation
 answered - two commits, the order every creation already took. An invitation that reaches only some
 of them is told by `reportBulkAdditionOutcome` like any other; the group exists and is completed
-from its panel.
+from its panel. **An invitation that added NOBODY names everyone it invited** - "Non ajouté : {names}.
+{reason}" / "Not added: {names}. {reason}" (`chat_invite_not_added`), every refusal except the kept
+Add that finishes by itself (owner, 2026-11-17).
+
+#### Nothing of the creator's own takes the add lock it does not commit under (2026-11-17)
+
+Read on `1.7.0-alpha.10`: a group created on the iPhone held its creator alone. The creation's own
+commit admitted the creator's other devices; the web seat processed its Welcome, and the
+group-ready sweep (`announceGroupReady` -> `processDeviceInvitationsLocally` ->
+`processPendingInvitations`) found the group's `pending` rows - the creator's devices not yet
+`active`, all already leaves of that very commit - and **took the group's add lock before reading
+a single row**, only to vouch for them. In that second the iPhone's invitation asked for the lock,
+was refused (`add-lock-busy`), and nobody was added.
+
+Every taker of the add lock, and what it commits under it:
+
+| Caller | What it commits |
+| --- | --- |
+| `processPendingInvitations` (`actions.ts`), the sweep | an Add of a pending device NOT in the tree - **the lock is now taken lazily, by the first row that needs that Add (`takeLockForAnAdd`)**; vouching, an ask raised for a member and a refused package's cleanup commit nothing and take nothing |
+| `handleWelcomeRequest` (`actions.ts`) | the Add or replace answering a device's `welcome_request` |
+| `createGroup` (`groupCreation.ts`) | the creator's own other devices, in the creation's commit |
+| `processBulkAddition` (`groupCreation.ts`) | the invitation |
+| `performDirectAdd` (`groupCreation.ts`) | a 1:1's peer and own devices |
+| `admitNewcomer` (`graine/admitNewcomer.ts`) | a newcomer into a key-distribution group |
+| `processWelcomeRequestBackground` (Android FCM service) | the background answer to a `welcome_request` |
+
+The sweep was the one taker whose lock covered reads. A lazily taken lock decides nothing the eager
+one did: it never made the local tree current (a holder's commit may still be queued here when it
+releases) - the server's epoch gate does, and the Add staged on a moved tree is refused and rebuilt.
+A refused lock ends the group's pass at that row, the rows left reported not swept
+(`onGroupNotSwept`). Tests: `actions.pendingInvitations.test.ts` ("the add lock is taken only for an
+Add").
 
 **Decisions taken here (reversible):**
 - **Layout**: the chosen people are removable chips ABOVE the search, the Messenger pattern; the

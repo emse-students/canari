@@ -8,7 +8,7 @@
  */
 import type { SvelteMap } from 'svelte/reactivity';
 import type { IMlsService } from '$lib/mlsService';
-import type { BulkIngestObserver, BulkIngestPhase } from '$lib/mls-client';
+import type { BulkIngestObserver } from '$lib/mls-client';
 import type { IStorage } from '$lib/db';
 import type { MessageHandlerDeps } from '$lib/mls-client/messagePipeline/deps';
 import type { LoginErrorCode } from './loginErrors';

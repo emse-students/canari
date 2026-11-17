@@ -210,6 +210,37 @@ describe('reportBulkAdditionOutcome', () => {
     expect(showToast).toHaveBeenCalledExactlyOnceWith(m.chat_invite_error_add_lock_busy());
   });
 
+  // AN INVITATION THAT ADDED NOBODY NAMES WHO IS MISSING (owner, 2026-11-17): a new group's creation
+  // reads as a success, so the sentence has to say who did not come in.
+  it('a refusal names every person invited, by display name, before its reason', async () => {
+    await reportBulkAdditionOutcome({ kind: 'not-added', reason: 'add-lock-busy' }, [
+      'carol',
+      'dave',
+    ]);
+    expect(showToast).toHaveBeenCalledExactlyOnceWith(
+      m.chat_invite_not_added({
+        names: 'Carol, Dave',
+        reason: m.chat_invite_error_add_lock_busy(),
+      })
+    );
+  });
+
+  it('a kept Add still finishing names nobody: it is no refusal', async () => {
+    await reportBulkAdditionOutcome({ kind: 'not-added', reason: 'outcome-unknown' }, ['carol']);
+    expect(showToast).toHaveBeenCalledExactlyOnceWith(
+      m.chat_invite_pending_connection(),
+      'warning'
+    );
+  });
+
+  it('a refusal said as a warning keeps its level when it names people', async () => {
+    await reportBulkAdditionOutcome({ kind: 'not-added', reason: 'unreachable' }, ['dave']);
+    expect(showToast).toHaveBeenCalledExactlyOnceWith(
+      m.chat_invite_not_added({ names: 'Dave', reason: m.chat_invite_error_unreachable() }),
+      'warning'
+    );
+  });
+
   it('a re-plan that completed but left someone out names them with the conversation', async () => {
     reportLostInvitation(
       { kind: 'completed', leftOut: [{ userId: 'carol', why: 'unchecked' }] },

@@ -729,14 +729,30 @@ export async function processPendingInvitations(params: {
       continue;
     }
 
-    // Acquire distributed lock to prevent concurrent Add commits (the server's ADD_LOCK_TTL_SEC
-    // covers the worst case mobile: bulk add + Argon2 + commit + Welcomes, H1).
-    const lockAcquired = await mlsService.acquireAddLock(groupId).catch(() => false);
-    if (!lockAcquired) {
-      log(`[PENDING] Group ${groupId}: lock held by another device - skip, its asks stay as shown`);
-      onGroupNotSwept?.(groupId);
-      continue;
-    }
+    // THE ADD LOCK IS TAKEN FOR AN ADD, NEVER FOR A READ - lazily, by the first row that needs a
+    // commit (`takeLockForAnAdd` below), and never by a pass whose rows all end without one.
+    //
+    // It used to be taken here, before any row was read, and the commonest pass ends with no commit
+    // at all: a row whose device already holds a leaf is only vouched for. A group's creation is
+    // exactly that pass on the creator's other devices - its commit admitted them all, the ones not
+    // yet `active` keep a `pending` row, and the first of them to process its Welcome swept the new
+    // group and held its lock for that vouch, in the very second the creator's own invitation asked
+    // for it: the invitation was refused and the group created holding its creator alone (1.7.0-alpha.10,
+    // `docs/wiki/frontend/modules/chat.md#one-new-discussion-panel`). Vouching, an ask raised for a
+    // member and a refused package's cleanup commit nothing, so they serialise against nothing.
+    // The server's ADD_LOCK_TTL_SEC covers the worst-case mobile Add once it is taken (H1).
+    let lockHeld = false;
+    const takeLockForAnAdd = async (): Promise<boolean> => {
+      if (lockHeld) return true;
+      lockHeld = await mlsService.acquireAddLock(groupId).catch(() => false);
+      if (!lockHeld) {
+        log(
+          `[PENDING] Group ${groupId}: lock held by another device - the rows left are not swept, its asks stay as shown`
+        );
+        onGroupNotSwept?.(groupId);
+      }
+      return lockHeld;
+    };
 
     try {
       // ── Add pending devices ───────────────────────────────────────────────
@@ -897,6 +913,14 @@ export async function processPendingInvitations(params: {
             );
             continue;
           }
+
+          // THIS ROW NEEDS A COMMIT, so the lock is taken now. The tree read above is as good as one
+          // read under the lock: the lock never made the local tree current (a holder's commit may
+          // still be in this device's queue when it releases), the server's epoch gate does - an Add
+          // staged on a tree another commit moved is refused and rebuilt below, its premise
+          // re-checked. A refusal ends this group's pass: the rows left are another device's to
+          // serve (`takeLockForAnAdd` says so, once).
+          if (!(await takeLockForAnAdd())) break;
 
           // One staged transaction (C7-A): stage the Add, validate the epoch server-side, then
           // merge + broadcast on accept (excluding the inviter self and the newly-welcomed device)
@@ -1091,7 +1115,7 @@ export async function processPendingInvitations(params: {
         }
       }
     } finally {
-      await mlsService.releaseAddLock(groupId).catch(() => {});
+      if (lockHeld) await mlsService.releaseAddLock(groupId).catch(() => {});
     }
   }
 

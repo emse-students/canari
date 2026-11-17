@@ -54,7 +54,7 @@ only a member holding the tree can mint a base, so there is nothing for a reset 
   contains owns that epoch for ever. Three paths publish one - the refresh after a staged
   commit, a distribution group's create path, and the external join that carries its own
   successor inside the submission - and all three go through that function.
-- **`POST/DELETE /api/mls/add-lock`** — Redis lock **`mls:addlock:{groupId}`** so only one inviter runs **add member + Welcome** at a time for that group. Used from **`processPendingInvitations`** and discovery re-bootstrap.
+- **`POST/DELETE /api/mls/add-lock`** — Redis lock **`mls:addlock:{groupId}`** so only one inviter runs **add member + Welcome** at a time for that group. Used from **`processPendingInvitations`** (taken by the first row that needs an Add, never for a pass that only vouches - [chat](../frontend/modules/chat.md#nothing-of-the-creators-own-takes-the-add-lock-it-does-not-commit-under-2026-11-17)) and discovery re-bootstrap.
   **THE LOCK HAS TWO DOORS AND ONE IMPLEMENTATION** (`utils/add-lock.ts`): this JWT route, and
   `mls/push/acquire-add-lock` for the Android background service, which cannot mint a JWT. The
   key, the `userId:deviceId` owner, the `ADD_LOCK_TTL_SEC` lifetime and the ownership-checked

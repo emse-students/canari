@@ -712,3 +712,96 @@ describe('processPendingInvitations - a duplicate signature key', () => {
     error.mockRestore();
   });
 });
+
+// THE ADD LOCK IS TAKEN FOR AN ADD, NEVER FOR A READ (1.7.0-alpha.10): a creator's other device that
+// swept the new group to vouch for its siblings held the lock in the second the creator's own
+// invitation asked for it, and the group was created holding its creator alone.
+describe('processPendingInvitations - the add lock is taken only for an Add', () => {
+  const sweep = (mlsService: IMlsService, onGroupNotSwept?: (groupId: string) => void) =>
+    processPendingInvitations({
+      mlsService,
+      userId: 'self',
+      deviceKeyB64: 'pin',
+      conversations: new Map<string, Conversation>([['g1', readyConversation('g1')]]),
+      requestReAdd: () => Promise.resolve(),
+      log: vi.fn(),
+      ...(onGroupNotSwept ? { onGroupNotSwept } : {}),
+    });
+
+  it('vouches for every sibling already in the tree without taking the lock', async () => {
+    // The creation's shape: its commit admitted the creator's devices, two of them still `pending`.
+    const mlsService = makeMls({
+      getPendingInvitations: vi.fn().mockResolvedValue([
+        { id: 'i1', userId: 'self', deviceId: 'tablet', groupId: 'g1', status: 'pending' },
+        { id: 'i2', userId: 'self', deviceId: 'laptop', groupId: 'g1', status: 'pending' },
+      ]),
+      getGroupMemberIdentities: vi
+        .fn()
+        .mockResolvedValue([
+          'self:creator-phone',
+          'self:self-device',
+          'self:tablet',
+          'self:laptop',
+        ]),
+      fetchDeviceKeyPackage: devicePackages([
+        { deviceId: 'tablet', keyPackage: new Uint8Array([1]) },
+        { deviceId: 'laptop', keyPackage: new Uint8Array([2]) },
+      ]),
+    });
+    const notSwept = vi.fn();
+
+    await sweep(mlsService, notSwept);
+
+    expect(mlsService.acquireAddLock).not.toHaveBeenCalled();
+    expect(mlsService.releaseAddLock).not.toHaveBeenCalled();
+    expect(mlsService.addMember).not.toHaveBeenCalled();
+    expect(mlsService.updateInvitationStatus).toHaveBeenCalledTimes(2);
+    expect(notSwept).not.toHaveBeenCalled();
+  });
+
+  it('takes the lock at the first row that needs an Add, and releases it', async () => {
+    const mlsService = makeMls({
+      getPendingInvitations: vi.fn().mockResolvedValue([
+        { id: 'i1', userId: 'peer', deviceId: 'old-phone', groupId: 'g1', status: 'pending' },
+        { id: 'i2', userId: 'peer', deviceId: 'peer-dev', groupId: 'g1', status: 'pending' },
+      ]),
+      fetchDeviceKeyPackage: devicePackages([
+        { deviceId: 'old-phone', keyPackage: new Uint8Array([1]) },
+        { deviceId: 'peer-dev', keyPackage: new Uint8Array([2]) },
+      ]),
+      addMember: vi.fn().mockResolvedValue({ welcome: null, notAdmitted: undefined }),
+    });
+
+    await sweep(mlsService);
+
+    // `old-phone` is vouched before any lock; `peer-dev` needs the Add, which takes it.
+    expect(mlsService.acquireAddLock).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(mlsService.updateInvitationStatus).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(mlsService.acquireAddLock).mock.invocationCallOrder[0]
+    );
+    expect(mlsService.addMember).toHaveBeenCalledTimes(1);
+    expect(mlsService.releaseAddLock).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves the rows still owed an Add when the lock is refused, and says the group was not swept', async () => {
+    const mlsService = makeMls({
+      getPendingInvitations: vi.fn().mockResolvedValue([
+        { id: 'i1', userId: 'peer', deviceId: 'peer-dev', groupId: 'g1', status: 'pending' },
+        { id: 'i2', userId: 'peer', deviceId: 'peer-tab', groupId: 'g1', status: 'pending' },
+      ]),
+      fetchDeviceKeyPackage: devicePackages([
+        { deviceId: 'peer-dev', keyPackage: new Uint8Array([1]) },
+        { deviceId: 'peer-tab', keyPackage: new Uint8Array([2]) },
+      ]),
+      acquireAddLock: vi.fn().mockResolvedValue(false),
+    });
+    const notSwept = vi.fn();
+
+    await sweep(mlsService, notSwept);
+
+    expect(mlsService.acquireAddLock).toHaveBeenCalledTimes(1);
+    expect(mlsService.addMember).not.toHaveBeenCalled();
+    expect(mlsService.releaseAddLock).not.toHaveBeenCalled();
+    expect(notSwept).toHaveBeenCalledWith('g1');
+  });
+});
