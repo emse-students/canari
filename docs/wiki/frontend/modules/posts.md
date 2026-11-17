@@ -226,7 +226,7 @@ The user's two decisions, for posts, reels and comments alike:
   else (`viewerSeesWriter`). The association stays the name and the avatar, big; the writer is the
   same small line, with a pen instead of the mask (`RevealedAuthorLine`, `under: 'association'`,
   from `revealedPostAuthor`). Test: `PostHeader.anonymous` ("PostHeader association post").
-  **Read by tests only; no phone has looked at it** ([reading owed](../../backlog.d/reading-owed-association-post-writer-line.md)).
+  **Read on both phones and the web on `1.7.0-alpha.8`** ([readings](../../device-verification.md#the-phone-readings-of-2026-11-17-170-alpha8-both-phones-one-sitting)).
 
 **The row is ONE floating glass pill, not a band (owner, 2026-10-31, iPhone: unequal margins, a grey
 band "in the middle of nowhere").** The three tabs are a segmented control inside one `.glass-chrome`
