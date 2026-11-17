@@ -88,11 +88,16 @@ earliest version, as a checklist.
 
 ### Readings owed
 
+- [ ] [the CanaReels composer, viewer and editor on real content](backlog.d/reading-owed-the-canareels-composer-viewer-and-editor-on-real-content.md)
+- [ ] [a HISTORY ask answered "I hold nothing" is final for its roster](backlog.d/reading-owed-a-history-ask-answered-i-hold-nothing-is-final-for-its-roster.md)
 - [ ] [sharing into Canari on iOS](backlog.d/reading-owed-sharing-into-canari-on-ios.md)
+- [ ] [seeds mirrored before the writer label](backlog.d/reading-owed-seeds-mirrored-before-the-writer-label.md)
 - [ ] [a deploy's `502`/`503`/`504` is "not now", never a send failure](backlog.d/reading-owed-a-deploy-s-502-503-504-is-not-now-never-a-send-failure.md)
 - [ ] [birthdays on profiles (#3180, first stable `v1.6.9`; birthdays)](backlog.d/reading-owed-birthdays-on-profiles-3180-first-stable-v1-6-9-birthdays.md)
+- [ ] ["Modifier les pseudos" for a group and a community](backlog.d/reading-owed-modifier-les-pseudos-for-a-group-and-a-community.md)
 - [ ] [an institution chooses each post's spaces and public](backlog.d/reading-owed-an-institution-chooses-each-post-s-spaces-and-public.md)
 - [ ] [campus trends and the daily cap, WP-8, WP-10 and the quieter batch](backlog.d/reading-owed-campus-trends-and-the-daily-cap-wp-8-wp-10-and-the-quieter-batch.md)
+- [ ] [CanaReels "Voir plus" clears the seek line: the just-overflowing caption and a phone with no bottom inset](backlog.d/reading-owed-canareels-voir-plus-clears-the-seek-line.md)
 - [ ] [rotation on the video, live and camera screens on both phones](backlog.d/rotation-on-video-and-camera-screens.md)
 - [ ] [overlays stacked by open order, not by rung](backlog.d/reading-owed-overlays-stacked-by-open-order-not-by-rung.md)
 - [ ] [the Emojis preference row and its neighbours at 390 pt, on a phone](backlog.d/p3-the-emojis-preference-row-squeezes-its-description-on-a-phone.md)
