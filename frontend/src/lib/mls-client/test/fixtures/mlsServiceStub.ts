@@ -1,5 +1,6 @@
 import { vi } from 'vitest';
 import type { IMlsService } from '../../IMlsService';
+import { fakeHistorySealEngine } from './fakeHistorySealEngine';
 
 /** Builds an `IMlsService` mock with sensible defaults; shallow-merge `overrides` (e.g. `processWelcome`). */
 export function createMlsServiceStub(
@@ -108,6 +109,8 @@ export function createMlsServiceStub(
     whenDistributionEpochSettled: vi.fn().mockResolvedValue(undefined),
     onDistributionGapVerdict: vi.fn(),
     getDeviceId: vi.fn().mockReturnValue('device-test'),
+    // The seal's refusals without its cryptography - `fakeHistorySealEngine` says what it keeps.
+    historySealEngine: vi.fn(() => fakeHistorySealEngine()),
     resolveDeviceId: vi.fn().mockResolvedValue('device-test'),
     fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
     // Not destroyed by default: `openGatewayConnection` reads it outside its `try`.

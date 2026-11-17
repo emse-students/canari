@@ -32,6 +32,7 @@ export {
   loadAndInitWasm,
   migrateLegacyMlsStateBlob,
   wasmGraineSignatureEngine,
+  wasmHistorySealEngine,
 } from './mlsWasmLoader';
 export {
   shouldAckAfterSuccess,
