@@ -103,6 +103,8 @@ export function raiseReconcile(
     pending.absorbed++;
     return pending.done;
   }
+  // THE FRAME IS THE PROOF, so it is recorded before the ask that carries it.
+  openUnrepairedProof(groupId);
   const entry = { done: Promise.resolve(false), absorbed: 0 };
   raised.set(groupId, entry);
   entry.done = reconcileGroup(mlsService, groupId, log).finally(() => {
@@ -133,6 +135,46 @@ const electedFor = new Map<string, string>();
  * runs. A fresh, non-escalating ask starts a new walk and clears it.
  */
 const chased = new Map<string, Set<string>>();
+
+/**
+ * The groups this device can PROVE incomplete, with the members that answered "I hold nothing you
+ * lack" to an ask carrying that proof - specified before it was built, because three earlier
+ * attempts at carrying "this group is incomplete" across an exchange were each wrong in a different
+ * way (a durable marker read as "have I already asked", a coalescing clock, an absence read as
+ * silence). See history-reconciliation.md, "HEAL-repair lands on a coin flip".
+ *
+ * - **WHAT is remembered**: an entry exists while this device holds a frame of the group it cannot
+ *   read (an evidence edge opened it: {@link raiseReconcile}, {@link escalateReconciliation}) and no
+ *   repair has landed since. Its set names the members that ANSWERED such an ask with
+ *   `history_cannot_repair` - each one compared our store against its own over our window and holds
+ *   nothing in it we lack. Never an absence: a member that said nothing is not in it.
+ * - **For HOW LONG**: in memory, until the repair lands. Not a session-crossing fact - the next boot
+ *   replays the frames and proves the gap again, which re-opens it.
+ * - **WHAT discharges it**: {@link noteRepairLanded} - a history bundle that added messages to this
+ *   group's store. An agreement is a statement about TWO stores, and the one this device can watch
+ *   change is its own: once a repair changed it, every recorded agreement compared against a store
+ *   that no longer exists. Never a peer saying anything, never the coalescing window, never a clock.
+ *
+ * WHY IT FIXES THE COIN FLIP: the server elects a random online member, and on the measured run one
+ * of three held the messages. Each answer excludes one member that cannot help, the set only grows
+ * while the proof stands, and the server answers `no_peer_online` with a positive `excludedOnline`
+ * when nobody reachable is left - so the walk reaches the holder or ends on a delivered fact, in at
+ * most one election per member.
+ */
+const unrepaired = new Map<string, Set<string>>();
+
+/**
+ * Opens the proof for a group: this device holds a frame of it that it cannot read. Idempotent - a
+ * proof already open keeps the members it has already excluded.
+ */
+function openUnrepairedProof(groupId: string): void {
+  if (!unrepaired.has(groupId)) unrepaired.set(groupId, new Set());
+}
+
+/** Whether this device holds an open proof of incompleteness for `groupId` (see {@link unrepaired}). */
+export function holdsUnrepairedProof(groupId: string): boolean {
+  return unrepaired.has(groupId);
+}
 
 /**
  * Why a reconciliation could not even be ATTEMPTED - which is also the name of the edge that would
@@ -187,7 +229,17 @@ const coverageStated = new Map<string, Map<string, number>>();
  * Registered by the session rather than threaded through every caller: reconciliation is triggered
  * from four places and only the session holds the store, the device key and the MLS client at once.
  */
-export type HistoryProbeSender = (groupId: string) => Promise<boolean>;
+export type HistoryProbeSender = (
+  groupId: string,
+  ask: {
+    /**
+     * This device holds frames of the group it cannot read and no repair has landed since - see
+     * {@link unrepaired}. Carried on the probe so a responder that holds nothing we lack ANSWERS
+     * instead of staying silent: the one case where silence would end a walk on a false proof.
+     */
+    incomplete: boolean;
+  }
+) => Promise<boolean>;
 
 let sendProbe: HistoryProbeSender | null = null;
 
@@ -585,6 +637,18 @@ export async function reconcileGroup(
   // woken up since.
   if (exclude.length === 0) chased.delete(groupId);
 
+  // AND AN OPEN PROOF RIDES ON EVERY ASK, whatever raised it. The members it names answered that
+  // they hold nothing this store lacks, and that stays true until a repair changes this store - so
+  // the plain connection pass and the deferred retry exclude them as surely as the walk that heard
+  // them. Without this, an ask past the coalescing window re-drew from the whole membership: the
+  // coin flip of 2026-09-08, three asks ~33 s apart and each a fresh random draw.
+  const cannotRepair = unrepaired.get(groupId);
+  const incomplete = cannotRepair !== undefined;
+  const excluding = [...exclude];
+  for (const member of cannotRepair ?? []) {
+    if (!excludes(excluding, member)) excluding.push(member);
+  }
+
   if (recentlyAsked(groupId, now)) {
     // SAID, because the caller has usually already announced a repair. `history.ts` prints
     // "holds N frame(s) it can never read - reconciling" and then calls this, and a silent return
@@ -655,7 +719,7 @@ export async function reconcileGroup(
   // the election is an MLS frame every member decrypts, for an exchange that was never started.
   let outcome;
   try {
-    outcome = await mlsService.sendHistoryRequest(groupId, { exclude: [...exclude] });
+    outcome = await mlsService.sendHistoryRequest(groupId, { exclude: excluding });
   } catch (e) {
     // A THROW MEANS IT NEVER LEFT THE DEVICE - offline, DNS, TLS, a 502 from the proxy, an abort.
     // None of them is an answer about anybody else, so nothing is recorded about the peers.
@@ -705,6 +769,19 @@ export async function reconcileGroup(
         );
         return false;
       }
+      if (cannotRepair && cannotRepair.size > 0) {
+        // THE END OF THE WALK ON AN ANSWER, not on a silence: every member the server could reach
+        // has told us it holds nothing we lack (or was skipped by a coverage chase). Kept, not
+        // cleared, because it stays true until a repair changes this store (see `unrepaired`).
+        // NOT DEFERRED to a presence edge: the holder of a frame this device cannot read is the
+        // device that sent it, which was online to send it - a returning member outside the set is
+        // elected by the next evidence edge (a lost frame, a replay), and a presence edge would only
+        // replay this same election every time a member flaps.
+        log(
+          `[HISTORY_RECONCILE] every reachable member (${outcome.excludedOnline}) holds nothing ${short}… lacks - ${cannotRepair.size} said so; the frames this device cannot read wait for a member that holds them`
+        );
+        return false;
+      }
       // THE TERMINATION PROOF, and the reason this walk cannot run away. Every member that was
       // reachable has already stated its coverage, so there is nobody left who could close the gap -
       // and that is a fact the server delivered, not a duration we waited out. It is NOT a deferral:
@@ -723,7 +800,7 @@ export async function reconcileGroup(
     return false;
   }
 
-  if (exclude.length > 0 && outcome?.target && excludes(exclude, outcome.target)) {
+  if (excluding.length > 0 && outcome?.target && excludes(excluding, outcome.target)) {
     // THE SERVER ELECTED SOMEBODY WE ASKED IT TO SKIP, which can only mean it does not honour the
     // exclusion - an older build, mid-rollout. Left alone this is the one shape that would not
     // terminate: the walk advances by adding one member per step, and a step that re-draws a member
@@ -735,7 +812,7 @@ export async function reconcileGroup(
     return false;
   }
 
-  const sent = await sendProbe(groupId).catch((e) => {
+  const sent = await sendProbe(groupId, { incomplete }).catch((e) => {
     log(`[HISTORY_RECONCILE] probe failed for ${short}…: ${String(e).slice(0, 120)}`);
     return false;
   });
@@ -802,6 +879,9 @@ export async function escalateReconciliation(
   now: number = Date.now()
 ): Promise<boolean> {
   const short = groupId.slice(0, 8);
+  // THE CALLER HOLDS A FRAME IT CANNOT READ - this function's precondition - so the proof is open
+  // whichever road the ask below takes.
+  openUnrepairedProof(groupId);
 
   // NOT AN ESCALATION AT ALL - no ask is in flight, so this is the ordinary first ask and takes the
   // ordinary road, chase state cleared with it.
@@ -836,6 +916,69 @@ export async function escalateReconciliation(
     `[HISTORY_RECONCILE] ${short}… still holds frames it cannot read while ${elected} answers nothing - electing somebody else`
   );
   return reconcileGroup(mlsService, groupId, log, now, [...walked], 'stayed-silent');
+}
+
+/**
+ * A member answered an ask that carried this device's proof of incompleteness with *"I hold nothing
+ * in your window that you lack"* - so it is excluded, and somebody else is elected at once.
+ *
+ * **THE WALK ADVANCES ON AN ANSWER, the only safe form.** The 2026-09-08 attempt that advanced it on
+ * an ABSENCE excluded the holder 200 ms after electing it. An answer is a fact the member stated
+ * about its own store, compared against ours over our window: it cannot be early, and it cannot be
+ * mistaken for a member that is still working.
+ *
+ * Ignored, and said, when no proof is open any more: the repair landed between the ask and this
+ * answer, so the answer is about a store this device no longer has and must not exclude anybody.
+ */
+export async function noteCannotRepair(
+  mlsService: Parameters<typeof reconcileGroup>[0],
+  groupId: string,
+  from: string,
+  log: (msg: string) => void,
+  now: number = Date.now()
+): Promise<void> {
+  const short = groupId.slice(0, 8);
+  const cannotRepair = unrepaired.get(groupId);
+  if (!cannotRepair) {
+    log(
+      `[HISTORY_RECONCILE] ${from} holds nothing ${short}… lacks, but no proof of incompleteness is open here any more - a repair landed first, nobody excluded`
+    );
+    return;
+  }
+  const member = from.toLowerCase();
+  if (cannotRepair.has(member)) {
+    // A SECOND answer from a member already excluded: the server re-elected it, which only a server
+    // ignoring the exclusion does, and `reconcileGroup` already stops the walk on that, loudly.
+    log(
+      `[HISTORY_RECONCILE] ${from} already said it holds nothing ${short}… lacks - nothing to add`
+    );
+    return;
+  }
+  cannotRepair.add(member);
+  // THE ASK THIS ANSWERS IS OVER, so neither its coalescing window nor its elected member may hold up
+  // the next step - the same release every other "this ask produced no repair" path makes.
+  asked.delete(groupId);
+  electedFor.delete(groupId);
+  log(
+    `[HISTORY_RECONCILE] ${from} holds nothing ${short}… lacks while this device holds frames it cannot read - ${cannotRepair.size} member(s) excluded, electing another`
+  );
+  await reconcileGroup(mlsService, groupId, log, now);
+}
+
+/**
+ * A history bundle ADDED messages to this group's store: the repair landed, and the proof of
+ * incompleteness is discharged with every member it excluded (see {@link unrepaired}).
+ *
+ * Silent when no proof was open - a bundle reaching a device that asked for nothing is the ordinary
+ * case (a join push, an overheard pull) and the bundle line already says it.
+ */
+export function noteRepairLanded(groupId: string, from: string, log: (msg: string) => void): void {
+  const cannotRepair = unrepaired.get(groupId);
+  if (!cannotRepair) return;
+  unrepaired.delete(groupId);
+  log(
+    `[HISTORY_RECONCILE] a repair landed for ${groupId.slice(0, 8)}… from ${from} - proof of incompleteness discharged (${cannotRepair.size} member(s) had said they held nothing we lacked)`
+  );
 }
 
 /** Whether `member` is in `exclude`, comparing the two spellings one identity has. */
@@ -1093,13 +1236,14 @@ export function forgetGroupReconciliation(groupId: string): void {
   // The seam exists because this state once outlived its conversation, so a run leaves evidence of
   // WHAT it held - the one thing a reader wants when it leaks again.
   appendLog(
-    `[HISTORY_RECONCILE] forgetting ${groupId.slice(0, 8)}…: asked=${asked.has(groupId)} deferred=${deferred.get(groupId) ?? 'none'} owedPulls=${owedPullsIn(groupId)} coverageStated=${coverageStated.get(groupId)?.size ?? 0} peer(s) electedFor=${electedFor.has(groupId)} chased=${chased.get(groupId)?.size ?? 0}`
+    `[HISTORY_RECONCILE] forgetting ${groupId.slice(0, 8)}…: asked=${asked.has(groupId)} deferred=${deferred.get(groupId) ?? 'none'} owedPulls=${owedPullsIn(groupId)} coverageStated=${coverageStated.get(groupId)?.size ?? 0} peer(s) electedFor=${electedFor.has(groupId)} chased=${chased.get(groupId)?.size ?? 0} unrepaired=${unrepaired.get(groupId)?.size ?? 'none'}`
   );
   asked.delete(groupId);
   deferred.delete(groupId);
   coverageStated.delete(groupId);
   electedFor.delete(groupId);
   chased.delete(groupId);
+  unrepaired.delete(groupId);
   forgetOwedPulls(groupId);
 }
 
@@ -1111,5 +1255,6 @@ export function resetHistoryReconciliation(): void {
   coverageStated.clear();
   electedFor.clear();
   chased.clear();
+  unrepaired.clear();
   resetOwedPulls();
 }

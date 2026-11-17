@@ -87,11 +87,13 @@
    * The groups whose members were asked, so the effect asks each once. NOT reactive on purpose: the
    * effect writes it, and a reactive set would re-run the effect on its own write.
    */
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive on purpose, see above
   const subtitlesAsked = new Set<string>();
   /**
    * ONE NAME LOOKUP PER DISTINCT USER, whichever groups they are in (not three per group): the
    * pending or settled answer by user id. Not reactive, for the reason above.
    */
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive on purpose, see above
   const memberNames = new Map<string, Promise<string | null>>();
   let blockedPeerIds = $state<ReadonlySet<string>>(new Set());
   /**
