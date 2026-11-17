@@ -1019,7 +1019,9 @@ F4, question 3 is F5, question 4 is F6 (section 0).
 **BUILT (2026-11-03, branch `feat/space-pins`)** - as designed below; what was built, where:
 
 - **One SQL module**, `apps/social-service/src/posts/space-pins.ts`: who pins (`bdePinsInSpaceSql` =
-  `bdeStandingInSpaceSql` at `MODERATE`, the platform admin decided by the caller), what is pinnable
+  `bdeStandingInSpaceSql` at `MODERATE`, the governor of type `association` since 2026-11-17 - an
+  institution governing a space is no BDE there, [moderation-authority](moderation-authority.md)
+  decision 3 - the platform admin decided by the caller), what is pinnable
   (`postPinnableInSpaceSql` = `postReachesSpaceSql` in `spaces/reader-spaces.ts` + the feed's own
   lifecycle terms: published, not hidden by moderation, not a dead reel), THE rank (`rankedPinsSql`),
   the reader's pins (`pinnedForViewerSql`, over `isPinSpaceOfUserSql` = own spaces + read-grant
