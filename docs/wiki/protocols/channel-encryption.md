@@ -5169,7 +5169,9 @@ design of its own, decided on the phone readings below. (2) The fetch: ~0.9 MB f
 production's commit size, under a 5 s read timeout - a slow link fails it and the banner is
 generic; that belongs to the slow-link chantier. (3) Heap: 12.2 MiB peak with 2535 KeyPackages in
 the state, the Rust heap only; a state the size of the 15.5 MB one a store phone carried is not
-measured here. Both readings on phones, and the log line they read (`catchup: replay since
-epoch=... took ... ms`, added to the Android service and the iOS extension; it is written for a
-refused replay too), are in
-[the reading](../backlog.d/reading-owed-salon-push-catch-up-at-production-key-group-size.md).
+measured here. The log line the phones are read by (`catchup: replay since epoch=... took ... ms`,
+added to the Android service and the iOS extension; it is written for a refused replay too) was
+read on both bench phones on `1.7.0-alpha.9`, 32 commits behind: 363 ms on the Mi 9T and 67 ms in
+the iPhone 12's extension (peak 3 MB), the banner showing the text on both
+([readings](../device-verification.md#the-phone-readings-of-2026-11-17-170-alpha9-both-phones-and-the-rig)).
+Neither figure is near the ~10 s that would make persisting the catch-up the next step.

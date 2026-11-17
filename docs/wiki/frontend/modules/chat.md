@@ -531,6 +531,39 @@ channel's member list in the server's order. All three now render through `membe
 Association rosters (`EditMembersTab`, `AssociationDetailView`) are NOT sorted: their order is the
 one the bureau arranges by drag (`sortOrder`), and the president is its first row.
 
+### A removal names its member, and no remove control is live while the order is settling (2026-11-17)
+
+Read on the `1.7.0-alpha.9` bench ([device-verification](../../device-verification.md#the-phone-readings-of-2026-11-17-170-alpha9-both-phones-and-the-rig)):
+a community removal aimed at `beta` removed `alpha`, four times out of four. **The removal was
+always bound to an identity** - each row's control closes over its own member's id, in the four
+paths (group `ChatGroupPanel` -> `useConversations.handleRemoveMember`, community
+`SidebarCommunityAdminPanel`, salon access `ChannelSettingsPanel`, association `EditMembersTab`) -
+so what moved was the ROW UNDER THE POINTER, which a finger meets as well as the rig.
+
+**The cause is the "a member who joins appears at their place" rule above.** The list draws once ANY
+lookup has settled; a member whose lookup is still in flight (the re-invited `alpha`, a cold cache)
+is inserted later at their family-name place, moving every row below it. A tap aimed at `beta`'s
+control during that window lands on whichever row has taken its place. Not a re-sort on a live signal:
+no member list re-sorts on presence, typing or last-seen (`ChannelMembersList` only splits admins
+from members; the salon access list and the association roster are in server or drag order).
+
+- **No remove control is live while a lookup is pending** (`removeControlDisabled` in
+  `memberOrder.svelte.ts`, used by `ChatGroupPanel` and `SidebarCommunityAdminPanel`, the two lists
+  that order by name). A count of lookups, not a clock. **It NARROWS the window and does not close
+  it**: rows still move when a newcomer's lookup settles later, or when a member leaves or another
+  admin removes one.
+- **THE GUARANTEE: every removal dialog names the member** (`confirmMemberRemoval`, `utils/users/memberRemovalConfirm.ts`,
+  `{member}` in the four messages, both locales), as the row draws them: the group's nickname there,
+  the profile name elsewhere, the id when no name is known (at warn). The name is the one already
+  known (the row drew it), so a stalled link never keeps the dialog from opening; the network is
+  asked only when nothing is known. A tap that lands on a moved row is read before it is confirmed.
+- **The rig asserts it**: `removeCommunityMember` (`tools/cross-client-harness/comm.mjs`) waits for the
+  control to be live and refuses to confirm a dialog that does not name the member it was asked for.
+
+Pinned by `ChatGroupPanel.removeMember.svelte.test.ts` (alpha inserted above beta after beta's row is
+drawn: the control is dead until then, and beta's control removes beta),
+`memberOrder.svelte.test.ts` (`removeControlDisabled`, both panels) and `memberRemovalConfirm.test.ts`.
+
 ### One attachment menu, and a GIF panel in the keyboard's place (2026-10-02)
 
 Two reports from the user on the iPhone 12, with a screen recording. *"Deux menus similaires, n'en
@@ -6304,7 +6337,9 @@ find that out**: the Welcome's answer says whether the server can address the de
 (`DeliveredWelcome.addressability`, [history-answer-addressing rule 3](../../protocols/history-answer-addressing.md#the-rules-as-built)),
 and a device answered `offline` or `undeclared` is sent nothing. That outcome - or, for a device that
 left between the Welcome and the push, the send's own refusal (`sendFullHistoryBundle` ->
-`unaddressable`) - is said at warn (`[JOIN_PUSH] NOT DELIVERED`), never swallowed. **The fix is the newcomer asking, not the inviter retrying**, and the reasoning is the
+`unaddressable`) - is said at debug (`[JOIN_PUSH] ... no push to <device>`), naming the follow-up:
+since #3777 the newcomer asks for its register at its next connection, so an offline newcomer is the
+ordinary case and no longer a warning (it was until 2026-11-17, and named a step that had shipped). **The fix is the newcomer asking, not the inviter retrying**, and the reasoning is the
 choice: an inviter retry "when the device becomes present" rests on two things nobody holds durably -
 the newcomer's `join` ask lives in memory (`noteJoinSolicited`), so a reload between the Welcome and the
 retried push refuses it, and the inviter's own device has to come back while the newcomer is online.
