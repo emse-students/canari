@@ -22,8 +22,13 @@ lead's own reversible readings, taken under the owner's delegation, are marked a
 - Group calls, the content-free push chantier, the reaction foreground trigger and the
   new-discussion panel were already `1.7.1` or later.
 
-Each moved entry carries a dated line; the [plan](../plan.md) shows what stayed and what moved, and
-the [roadmap log](../roadmap.md#log-of-replannings-and-milestones) the counts.
+Each entry the cut MOVED carries a dated line saying so, and each entry it KEPT on a judgement
+(a regression, new code, a path changed since `v1.6.12`, a merged fix awaiting its reading) carries a
+dated KEPT line naming that evidence. The readings, the decision records and the entries owned by
+the pull requests then open stand as they were; the seven entries filed the same day (below) are
+written straight at their version. The
+[plan](../plan.md) shows the result, the [roadmap log](../roadmap.md#log-of-replannings-and-milestones)
+the counts.
 
 ### The morning
 
@@ -61,9 +66,11 @@ the [roadmap log](../roadmap.md#log-of-replannings-and-milestones) the counts.
   which REVERSES D2 (O-5 yes); what remains meets the soft "Connexion au direct..." retry of (e),
   never "live complet"; O-4 is moot (a cap remains, and Redis down fails closed as today). The entry
   stays `1.8.0` ([live-scaling 3 and 7](../frontend/modules/live-scaling.md#3-the-recommendation)).
-  Researched for the owner: Cloudflare's CDN terms ask for a paid Developer Platform service to serve
-  video; a third-party project reports Cloudflare Support confirming R2 behind a custom domain on
-  the paid Workers plan (about 5 $ a month); the free case is unresolved.
+  Researched for the owner: Cloudflare's CDN terms ask for a paid service of the Developer Platform
+  (or Images, or Stream) to serve video
+  ([Service-Specific Terms](https://www.cloudflare.com/service-specific-terms-application-services/),
+  "Content Delivery Network", read on [live-scaling (a)](../frontend/modules/live-scaling.md#a-segments-from-cloudflare-not-from-the-host));
+  whether a free R2 bucket qualifies is unresolved.
 - **Push payloads (content-free push): the whole chantier goes after `1.7.0`** (`1.7.1`,
   [entry](push-payloads-carry-nothing-for-google-and-apple.md)); only its ring-end step ships in
   `1.7.0` (#3779, merged the same day).
@@ -94,3 +101,15 @@ the [roadmap log](../roadmap.md#log-of-replannings-and-milestones) the counts.
   [a CSP refusal on every dev page load](p3-dev-logs-a-csp-inline-script-error-on-every-page-load.md),
   [a dropped 1:1 logged as a key group](p3-a-dropped-1-1-is-logged-as-a-distribution-group-left.md),
   and [the iPhone's landscape close circle clipped](p3-iphone-landscape-close-circle-clipped.md).
+- **Seat counting for capped forms stays at submit, under the form's lock, for now.** A hold taken
+  when the form is opened is refused (every browser that opens it blocks a seat, and a script can hold
+  every seat of a public form); a 10-minute hold behind an explicit "Réserver ma place" button, one per
+  signed-in person with a countdown, is the design kept: *"Plus tard (1.8.0)"*
+  ([entry](a-capped-form-holds-a-seat-behind-a-reserve-button.md)).
+- **An organiser's test no longer notifies the people who asked** (seen on production that day: an
+  opening moved to "now" for a test sent the opening reminder to everyone who had pressed the bell).
+  *"A + B + affichage, en 1.7.1"*: (A) a "Tester l'envoi" in the preview, a test submission counted
+  nowhere and the form not opened; (B) moving the opening earlier asks first, naming how many people
+  asked to be told; (display) the reminder names the association (its logo) and the form's title.
+  Refused: (C) notifying only once the link "was distributed", which nothing can know
+  ([entry](p2-an-organiser-test-of-a-form-notifies-everyone-who-asked.md), `1.7.1`).

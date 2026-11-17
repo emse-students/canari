@@ -1,8 +1,8 @@
 ## P2 - a live ended itself (`upload-too-slow`) after 256 s on the iPhone, cause unproven
 
-target: 1.7.1
+target: 1.7.0
 
-_2026-11-17: moved to 1.7.1 by the owner's 2026-11-17 scope cut ([decisions](owner-decisions-of-2026-11-17.md))._
+_2026-11-17, scope cut: KEPT in `1.7.0` - the broadcaster that ends on `upload-too-slow` changed since `v1.6.12`: `git log v1.6.12..origin/main` on `frontend/src/lib/live/liveBroadcast.svelte.ts` lists #3508 (desktop scenes), #3521 and #3604, and `LiveBroadcaster.svelte` #3690 and #3701 ([decisions](owner-decisions-of-2026-11-17.md))._
 
 **Read once, 2026-11-16, iPhone 12, `1.7.0-alpha.5`, dev ([readings](../device-verification.md#the-iphone-12-readings-of-2026-11-16-fourth-sitting-b-170-alpha5)):** a live ("IPH5B on air") ended on its own at 11:59:18 with `ended (upload-too-slow) after 256 s: 124 segments`. The log before it: reconnecting at 11:56:48 and 11:58:21, `segment 41/79 not stored`, `manifest had no response after 20000 ms`, `LIVE_POSTER_TOO_FAST 429`, then `36 segments waiting, over the 35 the reconnect window holds`.
 

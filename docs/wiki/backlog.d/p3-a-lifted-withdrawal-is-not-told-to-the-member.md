@@ -1,8 +1,8 @@
 ## P3 - a member whose right to broadcast is given back is not told
 
-target: 1.7.1
+target: 1.7.0
 
-_2026-11-17: moved to 1.7.1 by the owner's 2026-11-17 scope cut ([decisions](owner-decisions-of-2026-11-17.md))._
+_2026-11-17, scope cut: KEPT in `1.7.0` - the lift control it completes (#3772, `liftWithdrawal`) is new in `1.7.0`, the same reason the [staff view](p2-no-staff-view-of-a-broadcaster-s-standing-without-a-report.md) and the [pending-report lift](p2-a-withdrawn-broadcaster-can-be-lifted-only-from-a-pending-live-report.md) stay ([decisions](owner-decisions-of-2026-11-17.md))._
 
 Found by the review of #3772 (2026-11-17). A withdrawal is told (`live_withdrawn`: a bell row and a
 push), but its lift (`DELETE /api/lives/broadcasters/:userId/withdrawal`, `liftWithdrawal` in

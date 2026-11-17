@@ -23,8 +23,8 @@ earliest version, as a checklist.
 - [P1 - lives are a release blocker (D3): the two crypto reviews, the chat load reading and the phone readings are owed](backlog.d/p1-lives-release-blocker-crypto-reviews-load-and-phone-readings.md)
 - [P1 - A new member of a group conversation receives its whole past; decided 2026-10-21 that they must not](backlog.d/p1-a-new-member-of-a-group-conversation-receives-its-whole-past-decided-2026-10.md)
 - [P1 - encrypt the names of groups, communities and salons (raised 2026-10-21, tied to principle 1 of the charter on 2026-11-10)](backlog.d/p1-encrypt-the-names-of-groups-communities-and-salons.md)
-- [P1 - media-service holds the retention durations after the deploy that adds the relay (the boot notice carries them)](backlog.d/p1-media-retention-held-after-the-deploy-that-adds-the-relay.md)
 - [P1 - rows before ratchet: a live drain stores its rows only when its window closes, after a checkpoint may already hold their ratchet advance (raised by the second review of #3321, 2026-11-15)](backlog.d/p1-rows-before-ratchet.md)
+- [P1 - media-service holds the retention durations after the deploy that adds the relay (the boot notice carries them)](backlog.d/p1-media-retention-held-after-the-deploy-that-adds-the-relay.md)
 - [P1 - a salon push's seed frame opened against a key group of production size, on the bench (2026-11-17)](backlog.d/p1-salon-push-seed-frame-at-production-key-group-size.md)
 
 **Chantiers, decisions and questions (no severity)**
@@ -43,14 +43,19 @@ earliest version, as a checklist.
 
 **P2 - correctness**
 
-- [P2 - the reply swipe along a thumb's arc does nothing on WebKit: the thread scrolls instead](backlog.d/p2-the-reply-swipe-along-a-thumb-s-arc-does-nothing-on-webkit.md)
+- [P2 - A community joined from another device, or just joined, is not drawn until a cold start or a reload](backlog.d/p2-a-community-joined-elsewhere-is-not-drawn-until-a-cold-start.md)
 - [P2 - a device that accuses frames falsely walks the whole online membership at every cold start (#3762)](backlog.d/p2-a-false-accuser-costs-n-online-elections-per-cold-start.md)
+- [P2 - a live ended itself (`upload-too-slow`) after 256 s on the iPhone, cause unproven](backlog.d/p2-a-live-ended-itself-upload-too-slow-after-256-s-on-the-iphone.md)
 - [P2 - A withdrawn broadcaster can be given the right back only from a PENDING live report](backlog.d/p2-a-withdrawn-broadcaster-can-be-lifted-only-from-a-pending-live-report.md)
 - [P2 - staff have no view of a broadcaster's standing without a report, so a withdrawal is lifted only from a report row among the 50 newest](backlog.d/p2-no-staff-view-of-a-broadcaster-s-standing-without-a-report.md)
+- [P2 - The notifications list is not re-read when a push opens it while it is already mounted](backlog.d/p2-the-notifications-list-is-not-reread-when-a-push-opens-it.md)
+- [P2 - the reply swipe along a thumb's arc does nothing on WebKit: the thread scrolls instead](backlog.d/p2-the-reply-swipe-along-a-thumb-s-arc-does-nothing-on-webkit.md)
 
 **P3 - hygiene**
 
 - [P3 - a 13 MB upload on the iPhone restarted at about half and ran at 40 to 65 KB/s](backlog.d/p3-a-13-mb-upload-on-the-iphone-restarted-at-half-and-ran-at-40-to-65-kb-s.md)
+- [P3 - A device's revocation reset logs a `\[seenHelps\]` read failure at error level](backlog.d/p3-a-device-revocation-reset-logs-seenhelps-at-error-level.md)
+- [P3 - a member whose right to broadcast is given back is not told](backlog.d/p3-a-lifted-withdrawal-is-not-told-to-the-member.md)
 - [P3 - the feed offset restored after a Back from an association lands about 226 px lower than it was left (Mi 9T, `1.7.0-alpha.2`)](backlog.d/p3-the-feed-offset-restored-after-a-back-from-an-association-lands-about-226-px.md)
 
 ### Readings owed
@@ -110,14 +115,12 @@ earliest version, as a checklist.
 - [P2 - A post's pictures and videos: the layout from one to many, designed (owner, 2026-11-15)](backlog.d/p2-a-post-s-media-layout-one-to-many-pictures-and-videos.md)
 - [P2 - a group call answered into an empty room, and a ring that outlives an outcome-less end](backlog.d/group-call-empty-room-answer-and-outcome-less-ring.md)
 - [P2 - a group call holds one device per user: prove the second device replaces the first](backlog.d/group-calls-one-device-per-user.md)
-- [P2 - A community joined from another device, or just joined, is not drawn until a cold start or a reload](backlog.d/p2-a-community-joined-elsewhere-is-not-drawn-until-a-cold-start.md)
 - [P2 - a late write of an incoming seed can raise a floor a repair lowered since](backlog.d/p2-a-late-incoming-seed-write-can-raise-a-floor-a-repair-lowered.md)
-- [P2 - a live ended itself (`upload-too-slow`) after 256 s on the iPhone, cause unproven](backlog.d/p2-a-live-ended-itself-upload-too-slow-after-256-s-on-the-iphone.md)
+- [P2 - an organiser testing a form by moving its opening to "now" notifies everyone who asked to be told](backlog.d/p2-an-organiser-test-of-a-form-notifies-everyone-who-asked.md)
 - [P2 - an Android blind salon banner `held=true` with the seed frame attached (2026-11-17)](backlog.d/p2-android-blind-salon-banner-held-true.md)
 - [P2 - no gate proves that an older build reads, and writes back, the MLS state this build writes](backlog.d/p2-no-gate-proves-an-older-build-reads-the-mls-state-this-build-writes.md)
 - [P2 - about six devices a day become orphans, nearly all of them browsers](backlog.d/p2-orphan-devices-refill-the-queue-watched-daily-cleaned-by-hand.md)
 - [P2 - a rolling replace answered two 502s once: its evidence must survive the retire first](backlog.d/p2-the-deploy-s-rolling-replace-two-posts-answered-502-across-a-release-cause.md)
-- [P2 - The notifications list is not re-read when a push opens it while it is already mounted](backlog.d/p2-the-notifications-list-is-not-reread-when-a-push-opens-it.md)
 - [P2 - a frame read before a browser kill is called "never read here" on the next cold start](backlog.d/reading-owed-the-live-seen-cipher-mark-written-at-the-checkpoint.md)
 - [P2 - the organiser alert for a payment over capacity: its precondition is met, the flip is owed](backlog.d/reading-owed-the-organiser-alert-for-a-payment-over-capacity.md)
 - [P2 - the retention durations a sweep applies are not yet admin settings](backlog.d/retention-durations-not-yet-settings.md)
@@ -129,8 +132,6 @@ earliest version, as a checklist.
 - [P3 - Connectivity stays "reachable" through a captive portal, so the send waits for the ladder (review of #2428, 2026-10-25)](backlog.d/p3-connectivity-stays-reachable-through-a-captive-portal-so-the-send-waits-for.md)
 - [P3 - `frontend/` holds three Cargo lockfiles that one `mls-core` bump must all move: one workspace](backlog.d/p2-a-cargo-bump-in-mls-core-leaves-two-committed-lockfiles-dependabot-will.md)
 - [P3 - an unsigned restored message is only marked, and a history bundle has no byte cap per chunk](backlog.d/p2-signed-authorship-of-restored-history-built-2276-owed-rig-rows-and-a-version.md)
-- [P3 - A device's revocation reset logs a `\[seenHelps\]` read failure at error level](backlog.d/p3-a-device-revocation-reset-logs-seenhelps-at-error-level.md)
-- [P3 - a member whose right to broadcast is given back is not told](backlog.d/p3-a-lifted-withdrawal-is-not-told-to-the-member.md)
 - [P3 - the dev estate logs one CSP `inline script` refusal on every page load](backlog.d/p3-dev-logs-a-csp-inline-script-error-on-every-page-load.md)
 - [P3 - a lives integration spec failed once: the association's live pushed to nobody](backlog.d/p3-flaky-lives-spec-member-live-after-association-live.md)
 - [P3 - on the iPhone in landscape, the close circle looks clipped at the right edge](backlog.d/p3-iphone-landscape-close-circle-clipped.md)
@@ -161,6 +162,7 @@ earliest version, as a checklist.
 - [The moderation authority grid is asserted by one table-driven spec per service (owner, 2026-11-15)](backlog.d/the-moderation-authority-grid-is-asserted-by-table-driven-specs.md)
 - [The server images keep themselves up to date: pinned digests, Dependabot, a server-only release and a weekly scan](backlog.d/container-auto-update.md)
 - [The usage dashboard: who uses Canari, and how - anonymously (owner, 2026-11-16)](backlog.d/usage-dashboard-who-uses-canari-anonymously.md)
+- [A capped form may hold a seat for 10 minutes behind a "Réserver ma place" button (owner, 2026-11-17: "Plus tard (1.8.0)")](backlog.d/a-capped-form-holds-a-seat-behind-a-reserve-button.md)
 
 **P2 - correctness**
 
