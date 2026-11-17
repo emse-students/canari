@@ -45,6 +45,7 @@ export interface ChatSessionCallbacks extends Pick<
   | 'onWorkspaceDeleted'
   | 'onChannelMessageDeleted'
   | 'onReadStateAdvanced'
+  | 'onInboundReaction'
 > {
   /** Reactive map of all open conversations, keyed by conversation ID. */
   conversations: SvelteMap<string, Conversation>;

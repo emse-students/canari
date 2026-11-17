@@ -9,6 +9,18 @@ import {
 import { holdsGroupState } from './groupUsability';
 import { isGroupInCreation } from './groupsInCreation';
 import { Log } from '$lib/utils/Log';
+import {
+  GROUP_NAME_SKIP_TEXT,
+  ownRenameOutcome,
+  pendingRenameVerdict,
+  unconfirmedFrom,
+  withNameSync,
+  type NameSync,
+  type PendingRename,
+} from './groupName';
+import { BUNDLE_SERVER_TIME_SKEW_MS } from './messageTime';
+import { noteServerTime } from './serverClock';
+import type { RenameResendOutcome } from './groupActions';
 
 /**
  * THE CONVERSATION ROW FOR A GROUP THE SERVER LISTS - written in ONE place, by every path that
@@ -83,7 +95,25 @@ export type EnsureConversationDeps = {
    */
   owedExits: ReadonlySet<string>;
   log: (msg: string) => void;
+  /**
+   * What settles a rename this device still owes (`Conversation.nameSync`) - passed by the
+   * connection sweep only. ABSENT ON THE RECOVERY PATH, deliberately: a re-join runs before this
+   * device has drained what arrived while it was out, so it would compare an owed copy with a list
+   * whose later rename it has not read. A row that owes something is then neither settled nor
+   * relabelled - the next sweep does both, in order.
+   */
+  nameSync?: NameSyncSettler;
 };
+
+/** How the connection sweep re-sends a pending rename, and the instant it reads its bound against. */
+export interface NameSyncSettler {
+  /** `resendPendingRename`, bound to this device's key and notice writer. */
+  resend: (
+    pending: PendingRename,
+    groupId: string,
+    contactName: string
+  ) => Promise<RenameResendOutcome>;
+}
 
 /**
  * Why no row was created, when none was - each one a DIFFERENT next move for the caller.
@@ -102,8 +132,32 @@ export type EnsureConversationOutcome =
   | 'exit-owed'
   | 'in-creation';
 
+/** The (group, server name) pairs already reported by {@link noteServerNameDisagreement}. */
+const reportedServerNames = new Set<string>();
+
 /**
- * Brings a KNOWN group row's label back in line with the server's, which is the only authority on it.
+ * Says, ONCE per group and server name for the life of the page, that the server's list names a
+ * group differently from the name an MLS frame dated on this device. A line repeated by every sweep
+ * is one its reader learns to skip; a new server name is a new fact and is said again.
+ */
+function noteServerNameDisagreement(
+  groupId: string,
+  serverName: string,
+  nameAt: number,
+  log: (msg: string) => void
+): void {
+  const key = `${groupId}|${serverName}`;
+  if (reportedServerNames.has(key)) return;
+  reportedServerNames.add(key);
+  log(
+    `[DISCOVERY] ${groupIdShort(groupId)} - the server's list names it differently (${serverName.length} chars) from the name a frame dated ${new Date(nameAt).toISOString()}; the dated name stands until a later frame`
+  );
+}
+
+/**
+ * Brings a KNOWN group row's label back in line with the server's, for as long as no MLS frame has
+ * dated the row's name (`Conversation.nameAt`, `groupName.ts`) - once one has, the members' frames
+ * are the authority and the server's undated list is not.
  *
  * **THIS SEAM WAS THE ONLY ONE THAT COULD, AND IT WAS THE ONE THAT RETURNED EARLY.** A group's name
  * reaches a device by exactly two routes: the `groupRenamed` system message, which a device offline
@@ -132,6 +186,24 @@ async function repairGroupLabel(
   if (!group.isGroup) return;
   const serverName = (group.name ?? '').trim();
   if (!serverName || serverName === convo.name) return;
+  if (convo.nameSync?.serverCopy?.name === convo.name) {
+    // THE MEMBERS HOLD THIS NAME AND THE SERVER'S COPY OF IT IS OWED (`settleNameSync`): the list
+    // is behind by exactly that write, so it is no correction - relabelling here put the old name
+    // back on the device that renamed (an undated rename, its answer carrying no server time).
+    Log.d(
+      'Discovery',
+      `${groupIdShort(group.groupId)} label kept - the server's copy of it is owed, not wrong`
+    );
+    return;
+  }
+  if (convo.nameAt !== undefined) {
+    // A NAME AN MLS FRAME DATED IS THE MEMBERS' WORD, AND THE SERVER'S LIST NO LONGER OVERRIDES IT
+    // (`groupName.ts`): the list carries no date, so it cannot say it is newer. A disagreement is a
+    // rename whose frame this device has not read yet - or one an older build sent without one - and
+    // it is said once per name, never on every sweep.
+    noteServerNameDisagreement(group.groupId, serverName, convo.nameAt, log);
+    return;
+  }
   if (isRawId(convo.name)) {
     // The row carried a RAW ID as its name while the server holds a real one: the list drew this
     // group by its members' first names (`resolveConversationListPresentation`). An EMPTY row name
@@ -143,7 +215,7 @@ async function repairGroupLabel(
   }
   conversations.set(key, { ...convo, name: serverName, contactName: serverName });
   log(
-    `[DISCOVERY] ${groupIdShort(group.groupId)} relabelled "${convo.name}" -> "${serverName}" (the server is the authority on a group's name)`
+    `[DISCOVERY] ${groupIdShort(group.groupId)} relabelled "${convo.name}" -> "${serverName}" (no frame has dated this name, so the server's list still corrects it)`
   );
   // AWAITED, NOT FIRE-AND-FORGET. The block this replaced in `discoverMissingGroups` awaited its
   // save, and a repair whose write may not have landed re-runs on the next sweep and logs again -
@@ -184,6 +256,255 @@ async function recordGroupStart(
   await saveConversation?.(key).catch(() => {});
 }
 
+/**
+ * Settles what this device still owes about a rename it made (`Conversation.nameSync`,
+ * `groupName.ts`), first the frame then the server's copy. Run by the sweep every connection makes,
+ * which visits every active group - never on a clock.
+ *
+ * ONLY ONCE THIS LINK HAS DRAINED THE GROUP (`isGroupDrained`: a pull listed the whole mailbox since
+ * the socket opened, and the group's frames are all processed). Both halves compare the row with
+ * what the members said since the rename; a row read before this device has read what arrived while
+ * it was out answers "nothing happened since" for a group where a member renamed it - and a re-send
+ * then put the older rename over the newer one, for every member, and an owed copy went over a name
+ * that had come back (A -> O). A connection whose pull failed still runs this sweep, so the group is
+ * asked, never assumed: not drained, the settlement waits for the next sweep, and says so.
+ *
+ * THE PENDING FRAME (its first send got no answer). Read off the row (`pendingRenameVerdict`): a row
+ * that no longer holds the statement it was made over - another name, or the same name under another
+ * date - keeps the frame `unconfirmed`, since re-sending would put it over that statement; a row that
+ * holds the name, dated, saw it land, so only the server's copy is owed. Otherwise the SAME frame is
+ * re-sent (`NameSyncSettler.resend`) - only within the receivers' bound, less a margin for the
+ * send's own latency (`RENAME_RESEND_MARGIN_MS`), as the server's clock read in this sweep proves it:
+ * past it every member would refuse the frame and still draw its notice, so it is kept `unconfirmed`,
+ * unsent. No answer to that read, or an answer with no readable clock, keeps it pending; a group the
+ * server holds no live row for keeps it `unconfirmed` - this device's clock decides nothing here. A
+ * re-send with no answer, or not made, keeps it pending; a re-send ANSWERED with a refusal that ends
+ * it keeps it `unconfirmed`. Every frame this device stops re-sending may still have reached the
+ * members: a member's relayed copy of its notice settles it (`ownRenameFromRelay`).
+ *
+ * THE SERVER'S COPY, COMPARE-AND-SET, on the server's name READ AGAIN for this group right before the
+ * write (`getGroupMeta`), never on the list the sweep read at its start, which every group before
+ * this one in the sweep has aged. Written only while the row still holds the owed name AND the server
+ * still holds the name the rename was made over (`OwedServerCopy.from`): a server naming anything
+ * else was written by a later rename, and an owed copy never goes over it. The residual race is one
+ * round trip wide: a member's write landing between that read and this write.
+ *
+ * @returns true when this pass wrote the server's copy (the list in hand is then stale for this group).
+ */
+async function settleNameSync(
+  key: string,
+  group: ServerGroupRow,
+  settler: NameSyncSettler,
+  mlsService: IMlsService,
+  userId: string,
+  conversations: Map<string, Conversation>,
+  saveConversation: ((key: string) => Promise<void>) | undefined,
+  log: (msg: string) => void
+): Promise<boolean> {
+  const start = conversations.get(key);
+  if (!start?.nameSync) return false;
+  const short = groupIdShort(group.groupId);
+  if (!start.nameSync.pending && !start.nameSync.serverCopy) return false;
+  if (!mlsService.isGroupDrained(group.groupId)) {
+    log(
+      `[GROUP_NAME] ${short} owes a rename's frame or server copy - left to the next sweep: this link has not drained the group yet, so the row may not hold what the members said since`
+    );
+    return false;
+  }
+  const save = async () => {
+    await saveConversation?.(key).catch((e) => {
+      console.error(
+        `[GROUP_NAME] ${short} name sync settled but not saved - it runs again next connection: ${String(e).slice(0, 120)}`
+      );
+    });
+  };
+  const replace = async (sync: NameSync, row?: Conversation) => {
+    const base = row ?? conversations.get(key);
+    if (!base) return;
+    conversations.set(key, withNameSync(base, sync));
+    await save();
+  };
+  const pending = start.nameSync.pending;
+  if (pending) {
+    await settlePendingRename(
+      key,
+      group,
+      pending,
+      settler,
+      mlsService,
+      userId,
+      conversations,
+      replace,
+      log
+    );
+  }
+
+  const convo = conversations.get(key);
+  const owed = convo?.nameSync?.serverCopy;
+  if (!convo || !owed) return false;
+  const dropCopy = () => replace({ ...convo.nameSync, serverCopy: undefined });
+  if (convo.name !== owed.name) {
+    await dropCopy();
+    log(
+      `[GROUP_NAME] ${short} server copy owed dropped - the row moved on to a later name, whose own rename writes the copy`
+    );
+    return false;
+  }
+  let serverName: string;
+  try {
+    const meta = await mlsService.getGroupMeta(group.groupId);
+    if (!meta) throw new Error('no group row answered');
+    serverName = (meta.name ?? '').trim();
+  } catch (e) {
+    console.warn(
+      `[GROUP_NAME] ${short} server copy still owed - the server's name could not be read again before the write: ${String(e).slice(0, 120)}`
+    );
+    return false;
+  }
+  if (serverName === owed.name) {
+    await dropCopy();
+    log(`[GROUP_NAME] ${short} server copy owed already held by the server - nothing owed`);
+    return false;
+  }
+  if (serverName !== owed.from) {
+    await dropCopy();
+    console.warn(
+      `[GROUP_NAME] ${short} server copy owed DROPPED, not written - the server no longer holds the name the rename was made over, so a later rename wrote it and an owed copy never goes over that`
+    );
+    return false;
+  }
+  try {
+    await mlsService.renameGroup(convo.id, convo.name);
+  } catch (e) {
+    console.warn(
+      `[GROUP_NAME] ${short} server copy still owed - the write failed again: ${String(e).slice(0, 120)}`
+    );
+    return false;
+  }
+  const after = conversations.get(key) ?? convo;
+  await replace({ ...after.nameSync, serverCopy: undefined }, after);
+  log(`[GROUP_NAME] ${short} server copy owed written - nothing owed`);
+  return true;
+}
+
+/** The pending half of {@link settleNameSync}: leaves the row's `nameSync` saying what is still owed. */
+async function settlePendingRename(
+  key: string,
+  group: ServerGroupRow,
+  pending: PendingRename,
+  settler: NameSyncSettler,
+  mlsService: IMlsService,
+  userId: string,
+  conversations: Map<string, Conversation>,
+  replace: (sync: NameSync, row?: Conversation) => Promise<void>,
+  log: (msg: string) => void
+): Promise<void> {
+  const id = `${groupIdShort(group.groupId)} rename ${pending.messageId.slice(0, 8)}`;
+  const current = conversations.get(key);
+  if (!current) return;
+  const verdict = pendingRenameVerdict(current, pending);
+  if (verdict === 'superseded') {
+    await replace(unconfirmedFrom(current.nameSync, pending));
+    log(
+      `[GROUP_NAME] ${id} not re-sent - another name was stated since; kept unconfirmed, settled by a member's relayed copy if it landed`
+    );
+    return;
+  }
+  if (verdict === 'landed') {
+    await replace({
+      ...current.nameSync,
+      pending: undefined,
+      serverCopy: { name: pending.name, from: pending.over.name },
+    });
+    log(`[GROUP_NAME] ${id} pending frame came back - only the server copy owed`);
+    return;
+  }
+  // RE-SENT ONLY WITHIN A BOUND THE SERVER'S OWN CLOCK PROVES. Every receiver measures its bound on
+  // the server's stamp, and a re-send past it is refused by every one of them while each still
+  // draws the rename's notice - a notice for a name nobody took. So the server's clock is read NOW,
+  // in this sweep (`GroupMeta.serverNow`, the `Date` of its answer), never this device's clock nor
+  // an older server time it holds. The group row read is answered by TYPE: no answer keeps the frame
+  // pending; a group the server holds no live row for keeps it `unconfirmed` (no member is left to
+  // re-send to); an answer with no clock it can read is an unknown, not a refusal, so the frame stays
+  // pending until one is readable - a phone build reaches the stores before production serves the
+  // exposed header, and shelving every rename swept in that window lost them for good.
+  const status = await mlsService.getGroupServerStatus(group.groupId);
+  if (status === 'error') {
+    log(`[GROUP_NAME] ${id} still pending - the group row read got no answer this sweep`);
+    return;
+  }
+  if (status === 'absent' || status.deletedAt) {
+    await replace(unconfirmedFrom(current.nameSync, pending));
+    log(
+      `[GROUP_NAME] ${id} not re-sent - the server holds no live group (${status === 'absent' ? 'no row' : 'deleted'}); kept unconfirmed, settled by a member's relayed copy if its first copy landed`
+    );
+    return;
+  }
+  // A server time like any other: noted, it bounds what the next rename's base is dated by.
+  noteServerTime(userId, status.serverNow);
+  if (status.serverNow === undefined) {
+    if (!clocklessFramesSaid.has(pending.messageId)) {
+      clocklessFramesSaid.add(pending.messageId);
+      console.warn(
+        `[GROUP_NAME] ${id} still pending - the server's answer carried no readable clock (an estate older than this build?), so whether the receivers would take a re-send cannot be proven; re-sent once a clock is readable`
+      );
+    }
+    return;
+  }
+  const lead = status.serverNow - pending.sentAt;
+  if (
+    lead > BUNDLE_SERVER_TIME_SKEW_MS - RENAME_RESEND_MARGIN_MS ||
+    -lead > BUNDLE_SERVER_TIME_SKEW_MS
+  ) {
+    await replace(unconfirmedFrom(current.nameSync, pending));
+    console.error(
+      `[GROUP_NAME] ${id} NOT re-sent - the server's clock lies ${lead >= 0 ? 'too close to or past' : 'beyond'} the receivers' bound from its signed sentAt, so the members could refuse it; kept unconfirmed, settled by a member's relayed copy if its first copy landed`
+    );
+    return;
+  }
+  const outcome = await settler.resend(pending, group.groupId, key);
+  if ('kept' in outcome) {
+    log(`[GROUP_NAME] ${id} re-send ${outcome.kept} - still pending`);
+    return;
+  }
+  // Re-read: the re-send wrote this device's own notice row meanwhile.
+  const after = conversations.get(key);
+  if (!after) return;
+  if ('refused' in outcome) {
+    await replace(unconfirmedFrom(after.nameSync, pending));
+    console.error(
+      `[GROUP_NAME] ${id} re-send REFUSED (${outcome.refused}) - not sent again; kept unconfirmed, settled by a member's relayed copy if its first copy landed`
+    );
+    return;
+  }
+  const sent = outcome.sent;
+  const own = ownRenameOutcome(after, pending.name, sent.receivedAt, true, pending.over);
+  if ('row' in own) {
+    await replace(own.row.nameSync ?? {}, own.row);
+    log(`[GROUP_NAME] ${id} re-sent and delivered - the server copy follows`);
+  } else {
+    await replace({ ...after.nameSync, pending: undefined });
+    log(`[GROUP_NAME] ${id} re-sent and delivered, row kept: ${GROUP_NAME_SKIP_TEXT[own.skipped]}`);
+  }
+}
+
+/**
+ * How far INSIDE the receivers' late bound a re-send must be, as the server's clock reads it in the
+ * sweep. The frame is stamped after that read, by the send's latency - seconds, minutes on a slow
+ * link - and the `Date` it is read from is floored to the second; a re-send read at the bound's last
+ * second is stamped past it, refused by every member, and each still draws its notice. Ten minutes
+ * is a margin, not a proof: a send stamped later than that after the read still crosses the bound,
+ * and its answer then comes back typed `clock` (`sendRenameFrame`), which ends the re-sending. The
+ * early side needs none: a later stamp only moves the frame inside the bound.
+ */
+export const RENAME_RESEND_MARGIN_MS = 10 * 60_000;
+
+/**
+ * The pending frames whose missing server clock this tab has already said - once per frame, not once
+ * per sweep: the state repeats on every connection until the estate serves the header.
+ */
+const clocklessFramesSaid = new Set<string>();
+
 /** The 8-character prefix every line in this file names a group by. */
 const groupIdShort = (groupId: string) => `${groupId.slice(0, 8)}...`;
 
@@ -205,7 +526,34 @@ export async function ensureConversationForServerGroup(
   // `mergeDirectConversationDuplicates` exists to clean up afterwards.
   const known = [...conversations.entries()].find(([, c]) => c.id === groupId);
   if (known) {
-    await repairGroupLabel(known[0], known[1], group, conversations, saveConversation, log);
+    // What a rename still owes first: once the server's copy is written, the list in hand is the
+    // one stale fact, and the label repair would report a disagreement the write has just ended.
+    if (!deps.nameSync && (known[1].nameSync?.pending || known[1].nameSync?.serverCopy)) {
+      Log.d(
+        'Discovery',
+        `${groupIdShort(groupId)} owes a rename's frame or server copy - left to the connection sweep, label not repaired here`
+      );
+      await recordGroupStart(known[0], group, conversations, saveConversation);
+      return 'existed';
+    }
+    if (
+      deps.nameSync &&
+      (await settleNameSync(
+        known[0],
+        group,
+        deps.nameSync,
+        mlsService,
+        userId,
+        conversations,
+        saveConversation,
+        log
+      ))
+    ) {
+      await recordGroupStart(known[0], group, conversations, saveConversation);
+      return 'existed';
+    }
+    const row = conversations.get(known[0]) ?? known[1];
+    await repairGroupLabel(known[0], row, group, conversations, saveConversation, log);
     await recordGroupStart(known[0], group, conversations, saveConversation);
     return 'existed';
   }

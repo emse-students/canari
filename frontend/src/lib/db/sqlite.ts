@@ -1,3 +1,4 @@
+import { nameSyncField, parseNameSync } from '$lib/utils/chat/groupName';
 import { encryptData, decryptData, PayloadUnreadableError } from '../encryption';
 import { readStoredTimestampMs, storedTimeInWindow } from '$lib/utils/dates';
 import { normalizeConversationLifecycle } from '$lib/utils/chat/groupLifecycle';
@@ -81,6 +82,8 @@ import {
   conversationAwaitingAdmissionStatement,
   conversationServerReadWatermarksStatement,
   conversationStartedAtStatement,
+  conversationNameAtStatement,
+  conversationNameSyncStatement,
   conversationLocalReadSeedStatement,
   CONVERSATION_LOCAL_READ_SEED_VALUE,
   CONVERSATION_LOCAL_READ_SEED_FILL,
@@ -270,7 +273,9 @@ export class SqliteStorage implements IStorage {
                 awaiting_admission INTEGER,
                 server_read_watermarks TEXT,
                 started_at       INTEGER,
-                local_read_seed  INTEGER
+                local_read_seed  INTEGER,
+                name_at          INTEGER,
+                name_sync        TEXT
             )
         `);
 
@@ -637,6 +642,21 @@ export class SqliteStorage implements IStorage {
       await this.db.execute('PRAGMA user_version = 20');
     }
 
+    if (currentVersion < 21) {
+      // v20->v21: the conversation keeps the server time of the MLS statement that set its name
+      // (`name_at`, `groupName.ts`). Additive and NULL on arrival, read as "never stated".
+      const cols: any[] = await this.db.select('PRAGMA table_info(conversations)');
+      const names = cols.map((c) => String(c.name));
+      for (const add of [
+        conversationNameAtStatement(names),
+        conversationNameSyncStatement(names),
+      ]) {
+        if (add) await this.db.execute(add);
+      }
+      // Stamped at 21, NOT at SCHEMA_VERSION, for the reason spelled out in the v6 branch.
+      await this.db.execute('PRAGMA user_version = 21');
+    }
+
     // EVERY OPEN, not a migration: a build older than v16 that opened this file meanwhile wrote its
     // rows with no order key (`MESSAGE_ORDER_MISSING_INDEX_STATEMENT`), and no page would reach
     // them. Re-keyed provisionally through the partial index - nothing read when there are none. The
@@ -651,9 +671,9 @@ export class SqliteStorage implements IStorage {
   /** Upsert a conversation metadata row (INSERT OR REPLACE). */
   async saveConversation(conv: ConversationMeta): Promise<void> {
     await this.db.execute(
-      'INSERT OR REPLACE INTO conversations (id, name, lifecycle, updated_at, read_watermarks, history_floor, image_media_id, awaiting_admission, server_read_watermarks, started_at, local_read_seed) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, ' +
+      'INSERT OR REPLACE INTO conversations (id, name, lifecycle, updated_at, read_watermarks, history_floor, image_media_id, awaiting_admission, server_read_watermarks, started_at, local_read_seed, name_at, name_sync) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, ' +
         CONVERSATION_LOCAL_READ_SEED_VALUE +
-        ')',
+        ', $12, $13)',
       [
         conv.id,
         conv.name,
@@ -666,6 +686,8 @@ export class SqliteStorage implements IStorage {
         conv.serverReadWatermarks ? JSON.stringify(conv.serverReadWatermarks) : null,
         conv.startedAt ?? null,
         typeof conv.localReadSeed === 'number' ? conv.localReadSeed : null,
+        conv.nameAt ?? null,
+        conv.nameSync ? JSON.stringify(conv.nameSync) : null,
       ]
     );
   }
@@ -690,6 +712,10 @@ export class SqliteStorage implements IStorage {
       awaitingAdmission: Number(r.awaiting_admission) === 1,
       // INTEGER, so a string on Android too; absent or unusable reads as unknown.
       ...(Number(r.started_at) > 0 ? { startedAt: Number(r.started_at) } : {}),
+      // INTEGER too; NULL (never stated) and an unusable value both read as absent.
+      ...(Number(r.name_at) > 0 ? { nameAt: Number(r.name_at) } : {}),
+      // JSON TEXT, validated on the way out: an unreadable value reads as nothing owed.
+      ...nameSyncField(parseNameSync(r.name_sync)),
       // NULL is a state of its own here (no seed: a backup import or an older build), never read as 0.
       localReadSeed: parseLocalReadSeed(r.local_read_seed),
     };
@@ -1507,7 +1533,7 @@ export class SqliteStorage implements IStorage {
     await this.db.execute(
       // An imported row keeps the seed state it was exported with; one from before the column is
       // NULL and covers nothing: only the v20 migration writes a seed, and no load seeds a row.
-      'INSERT OR IGNORE INTO conversations (id, name, lifecycle, updated_at, read_watermarks, history_floor, image_media_id, awaiting_admission, server_read_watermarks, started_at, local_read_seed) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)',
+      'INSERT OR IGNORE INTO conversations (id, name, lifecycle, updated_at, read_watermarks, history_floor, image_media_id, awaiting_admission, server_read_watermarks, started_at, local_read_seed, name_at, name_sync) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)',
       [
         conv.id,
         conv.name,
@@ -1520,6 +1546,8 @@ export class SqliteStorage implements IStorage {
         conv.serverReadWatermarks ? JSON.stringify(conv.serverReadWatermarks) : null,
         conv.startedAt ?? null,
         typeof conv.localReadSeed === 'number' ? conv.localReadSeed : null,
+        conv.nameAt ?? null,
+        conv.nameSync ? JSON.stringify(conv.nameSync) : null,
       ]
     );
   }

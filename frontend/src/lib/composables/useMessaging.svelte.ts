@@ -73,7 +73,13 @@ import {
   notificationGroupName,
   notificationIsGroup,
   type NativeMessageNotification,
+  type NativeReactionNotification,
 } from '$lib/utils/nativeNotification';
+import {
+  inboundReactionVerdict,
+  reactionTriggerRefusal,
+  type InboundReaction,
+} from '$lib/utils/chat/reactionNotification';
 import {
   getUserDisplayNameSync,
   resolveNotificationSenderName,
@@ -251,6 +257,12 @@ export interface MessagingContext {
     mentionsMe?: boolean,
     native?: NativeMessageNotification
   ) => Promise<void>;
+  /**
+   * Raises a REACTION's notification (`useNotifications.sendReactionNotification`). Optional only so
+   * a test context may leave it out; a context without it says so, because a reaction it would have
+   * raised is then raised by nobody.
+   */
+  sendReactionNotification?: (reaction: NativeReactionNotification) => Promise<void>;
   /**
    * Tells this user's OTHER devices that a salon has been read, so any of them still showing its
    * notification drops it. Optional: only the layer holding a channel client can provide it, and
@@ -1191,6 +1203,105 @@ export function useMessaging() {
           covers,
           authorProven,
         })
+      );
+  }
+
+  /**
+   * THE FRAME TRIGGER OF A REACTION TO ONE OF MY MESSAGES - the second trigger a message has always
+   * had (`notifyInbound`) and a reaction had not, so a reaction landing while the app was open on any
+   * other screen notified nobody (owner, 2026-11-17). Called for every reaction frame applied, DM,
+   * group or salon; the decision is `reactionNotification.ts`, whose matrix is asserted beside it.
+   *
+   * NEVER A LOSS, NEVER A DOUBLE: this trigger does not ask whether the app is in front - a flag read
+   * now and a push gate read when the push lands can disagree, and their disagreement lost the
+   * reaction (review of #3792, round 2). It posts whenever the conversation is off screen, and the
+   * reaction's own identity makes its post and the push's ONE notification (`reactionNotification.ts`).
+   * Only for a LIVE frame: a catch-up on resume may carry a reaction already announced and dismissed.
+   */
+  /** Whether the once-per-session line of an `unattributed` reaction has been said. */
+  let unattributedSaid = false;
+
+  function notifyInboundReaction(reaction: InboundReaction, ctx: MessagingContext): void {
+    const key = reaction.conversationKey;
+    const tag = `${reaction.messageId.slice(0, 8)} in ${key.slice(0, 16)}`;
+    const verdict = inboundReactionVerdict(reaction, ctx.userId);
+    // The ordinary frame - a reaction to someone else's message - is said nowhere: a salon of two
+    // hundred would print a line per heart. A reaction to MINE that is not news is said.
+    if (verdict.kind === 'not-mine') return;
+    if (verdict.kind === 'unattributed') {
+      // ONCE PER SESSION, NOT PER HEART: until its reactor updates, every reaction in a salon this
+      // device never drew reads this way, mine or not. The one line names the cause and the cure.
+      if (!unattributedSaid) {
+        unattributedSaid = true;
+        console.warn(
+          `[NOTIF] Reaction ${tag} - ${verdict.why}: such a reaction to my message is left to the push alone (said once this session).`
+        );
+      }
+      return;
+    }
+    if (verdict.kind === 'unresolved') {
+      // A LOSS, SAID AS ONE: if this was a reaction to my message, the push was dropped in front
+      // and nothing else announces it.
+      console.warn(
+        `[NOTIF] Reaction ${tag} - ${verdict.why}: whether it is to my message is unknown, so nothing is raised.`
+      );
+      return;
+    }
+    if (verdict.kind === 'refused') {
+      console.log(`[NOTIF] Reaction to my message ${tag} - ${verdict.why}; nothing raised.`);
+      return;
+    }
+    if (typeof document === 'undefined') return;
+    const convo = ctx.conversations.get(key);
+    const isSalon = key.startsWith('channel_');
+    const refusal = reactionTriggerRefusal({
+      conversationOnScreen: canSeeArrival(ctx, key),
+      // A phone has a reaction push that may draw it too; web and desktop have none.
+      pushMayDraw: isMobileTauriRuntime(),
+      at: reaction.at,
+      reactionsAllowed: notificationPreferences.pushAllowed('reactions'),
+      // A salon's level is not the server's to apply to a reaction, so neither is it this trigger's
+      // (`ReactionTriggerFacts.level`); a private conversation's is read by its MLS group id.
+      level: isSalon ? undefined : notificationPreferences.groupLevel(convo?.id ?? key),
+    });
+    if (refusal) {
+      console.log(`[NOTIF] Reaction to my message ${tag} - ${refusal}; nothing raised.`);
+      return;
+    }
+    if (!ctx.sendReactionNotification) {
+      console.error(
+        `[NOTIF] Reaction to my message ${tag} is owed a notification and this context has no poster for it.`
+      );
+      return;
+    }
+    const send = ctx.sendReactionNotification;
+    console.log(
+      `[NOTIF] Reaction to my message ${tag} while the app is open on ${window.location.pathname} showing ${ctx.selectedContact || 'the list'} - asking.`
+    );
+    void resolveNotificationSenderName(
+      reaction.reactorId,
+      key,
+      convo ?? { name: '', contactName: '', conversationType: isSalon ? 'channel' : undefined }
+    )
+      .then(async (actorName) => {
+        // The native builder looks the actor's nickname up in the mirrors, which this resolution
+        // feeds: on disk before the post, as for a message (`notifyInbound`).
+        await flushNameMirror();
+        await flushNicknameMirror();
+        return actorName;
+      })
+      .then((actorName) =>
+        send({
+          conversationId: key,
+          messageId: reaction.messageId,
+          actorId: reaction.reactorId,
+          actorName,
+          emoji: reaction.emoji,
+          at: reaction.at,
+        })
+      )
+      .catch((e: unknown) =>
+        console.error(`[NOTIF] Reaction to my message ${tag} was not raised: ${String(e)}`)
       );
   }
 
@@ -4174,6 +4285,8 @@ export function useMessaging() {
   return {
     /** Reactive map of emoji reactions keyed by message ID. */
     messageReactions,
+    /** The frame trigger of a reaction to one of this account's messages - see the function. */
+    notifyInboundReaction,
 
     /** The message the user is replying to IN a given conversation (null when none is pending there). */
     replyFor,

@@ -73,7 +73,6 @@ earliest version, as a checklist.
 - [ ] [overlays stacked by open order, not by rung](backlog.d/reading-owed-overlays-stacked-by-open-order-not-by-rung.md)
 - [ ] [the Emojis preference row and its neighbours at 390 pt, on a phone](backlog.d/p3-the-emojis-preference-row-squeezes-its-description-on-a-phone.md)
 - [ ] [an institution's moderator moderates its own content, and no student](backlog.d/reading-owed-an-institution-moderator-moderates-its-own-content.md)
-- [ ] [KILL-3 on dev: a browser killed after a send or a receive accuses no frame it read (KILL-2 ledgers)](backlog.d/reading-owed-kill-3-a-revived-browser-accuses-no-frame-it-read.md)
 - [ ] [a private salon granted after an in-session join is readable on the iPhone, with its badge](backlog.d/p2-a-private-salon-granted-after-an-in-session-join-is-unreadable-on-the-iphone.md)
 - [ ] [a private salon granted late badges only what is posted after the grant](backlog.d/p3-a-private-salon-granted-late-badges-its-whole-past.md)
 - [ ] [one "server already unreachable" line per spell, read on a phone log after a real outage](backlog.d/p3-server-already-unreachable-is-logged-per-request.md)
@@ -84,13 +83,14 @@ earliest version, as a checklist.
 - [ ] [the live scenes bar (one icon row) on a desktop live at two window widths](backlog.d/reading-owed-the-live-scenes-bar-on-a-desktop-live.md)
 - [ ] [a menu ends above the iOS tab bar, and a group notification keeps its title (2026-11-16)](backlog.d/reading-owed-the-popover-and-notification-fixes-of-the-iphone-sitting.md)
 - [ ] [a native device with no push token row now says why, and registers again (production, after the `1.7.0` stable)](backlog.d/reading-owed-a-device-with-no-push-token-now-says-so.md)
+- [ ] [a reaction to my message notifies a backgrounded and a killed phone, on both platforms (2026-11-17)](backlog.d/reading-owed-a-reaction-to-my-message-notifies-in-the-background.md)
 - [ ] [a ring's end no longer names the conversation, and still stops the ring (2026-11-17)](backlog.d/reading-owed-call-ring-end-carries-no-conversation.md)
 - [ ] [the repair of a rewound sender walks to the member that holds the messages (2026-11-17)](backlog.d/reading-owed-heal-repair-walks-to-the-holder.md)
+- [ ] [on an iPhone, a reaction's push and the page's notification of it are ONE entry, and neither erases the other (2026-11-17)](backlog.d/reading-owed-ios-reaction-push-replaces-the-page-notification.md)
 - [ ] [the iPhone's one seed mirror keeps the extension's seeds through a foreground (2026-11-17)](backlog.d/reading-owed-ios-seed-mirror-one-copy.md)
 - [ ] [live moderation: the three broadcaster pushes, the withdrawal lift and the lives switch](backlog.d/reading-owed-live-moderation-pushes-lift-and-the-lives-switch.md)
 - [ ] [Minesweeper replay as a global admin](backlog.d/reading-owed-minesweeper-replay-as-a-global-admin.md)
 - [ ] [a message received inside a drain survives a kill right after a checkpoint (2026-11-17)](backlog.d/reading-owed-rows-before-ratchet.md)
-- [ ] [a salon push's catch-up at a key group of production size, on the phones (2026-11-17)](backlog.d/reading-owed-salon-push-catch-up-at-production-key-group-size.md)
 
 ## 1.7.1
 
@@ -118,6 +118,7 @@ earliest version, as a checklist.
 - [P2 - a group call answered into an empty room, and a ring that outlives an outcome-less end](backlog.d/group-call-empty-room-answer-and-outcome-less-ring.md)
 - [P2 - a group call holds one device per user: prove the second device replaces the first](backlog.d/group-calls-one-device-per-user.md)
 - [P2 - a late write of an incoming seed can raise a floor a repair lowered since](backlog.d/p2-a-late-incoming-seed-write-can-raise-a-floor-a-repair-lowered.md)
+- [P2 - A reaction to my message notifies nobody while the app is open, on any screen (2026-11-17)](backlog.d/p2-a-reaction-to-my-message-notifies-nobody-while-the-app-is-open.md)
 - [P2 - an organiser testing a form by moving its opening to "now" notifies everyone who asked to be told](backlog.d/p2-an-organiser-test-of-a-form-notifies-everyone-who-asked.md)
 - [P2 - an Android blind salon banner `held=true` with the seed frame attached (2026-11-17)](backlog.d/p2-android-blind-salon-banner-held-true.md)
 - [P2 - no gate proves that an older build reads, and writes back, the MLS state this build writes](backlog.d/p2-no-gate-proves-an-older-build-reads-the-mls-state-this-build-writes.md)
@@ -136,10 +137,12 @@ earliest version, as a checklist.
 - [P3 - Connectivity stays "reachable" through a captive portal, so the send waits for the ladder (review of #2428, 2026-10-25)](backlog.d/p3-connectivity-stays-reachable-through-a-captive-portal-so-the-send-waits-for.md)
 - [P3 - `frontend/` holds three Cargo lockfiles that one `mls-core` bump must all move: one workspace](backlog.d/p2-a-cargo-bump-in-mls-core-leaves-two-committed-lockfiles-dependabot-will.md)
 - [P3 - an unsigned restored message is only marked, and a history bundle has no byte cap per chunk](backlog.d/p2-signed-authorship-of-restored-history-built-2276-owed-rig-rows-and-a-version.md)
+- [P3 - a live that ends normally makes every viewer log a warning (2026-11-17)](backlog.d/p3-a-live-that-ends-normally-warns-on-every-viewer.md)
 - [P3 - the dev estate logs one CSP `inline script` refusal on every page load](backlog.d/p3-dev-logs-a-csp-inline-script-error-on-every-page-load.md)
 - [P3 - a lives integration spec failed once: the association's live pushed to nobody](backlog.d/p3-flaky-lives-spec-member-live-after-association-live.md)
 - [P3 - on the iPhone in landscape, the close circle looks clipped at the right edge](backlog.d/p3-iphone-landscape-close-circle-clipped.md)
 - [P3 - the gated `video-switch` and `video-off-on` call rows read 19.6-25 fps against a threshold of 27](backlog.d/p3-the-gated-video-switch-and-video-off-on-rig-rows-read-19-6-25-fps-threshold-27.md)
+- [P3 - the rig's console classifier calls a seat's ordinary start lines "unexplained", so a KILL row cannot read clean (2026-11-17)](backlog.d/p3-the-rig-console-classifier-calls-ordinary-start-lines-unexplained.md)
 - [P3 - the thread's render window only grows, at 0.13 MB a bubble: reopen it](backlog.d/p3-the-thread-s-render-window-only-grows-with-listeners-per-bubble.md)
 - [P3 - an accepted but unannounced Add: audit the adder paths, then one rig row](backlog.d/p3-verify-an-add-accepted-but-unannounced-lets-the-joiner-rejoin-over-its-own.md)
 - [P3 - EXIT-FORTIFY: closing the app on the Mi 9T logs `FORTIFY: pthread_mutex_lock called on a destroyed mutex` from the render thread](backlog.d/reading-owed-exit-fortify-closing-the-app-on-the-mi-9t-logged-fortify-pthread.md)
@@ -268,7 +271,6 @@ earliest version, as a checklist.
 **P3 - hygiene**
 
 - [P3 - a success-page poll during a retry is a second trigger of the self-caused cancel (review of #2210, 2026-10-21)](backlog.d/p3-a-success-page-poll-during-a-retry-is-a-second-trigger-of-the-self-caused.md)
-- [P3 - Names in the clear: conversation, community and salon names (user, 2026-10-21, not designed)](backlog.d/p3-names-in-the-clear-conversation-community-and-salon-names-user-2026-10-21.md)
 - [P3 - Nothing warns a manager whose free-amount bounds fall outside the payable range (review of #2208, 2026-10-21, not built)](backlog.d/p3-nothing-warns-a-manager-whose-free-amount-bounds-fall-outside-the-payable.md)
 - [P3 - while core-service is mid-deploy, a retry meeting an older core's `closed` is refused (review of #2215, 2026-10-21)](backlog.d/p3-while-core-service-is-mid-deploy-a-retry-meeting-an-older-core-s-closed-is.md)
 - [P3 - A device id is held by one account, checked before the insert and not by an index (2026-10-22)](backlog.d/p3-a-device-id-is-held-by-one-account-checked-before-the-insert-and-not-by-an.md)
