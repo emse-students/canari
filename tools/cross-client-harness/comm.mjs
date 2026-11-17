@@ -55,7 +55,7 @@ export {
   saysMessage,
   wordingsOf,
 } from './messages.mjs';
-import { caption, captionWith, control, pluralPattern } from './messages.mjs';
+import { caption, captionWith, control, pluralPattern, saysMessage } from './messages.mjs';
 import { assertCampaignOwned, recordCreated } from './campaign.mjs';
 
 
