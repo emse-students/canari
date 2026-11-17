@@ -252,6 +252,8 @@ import {
   BDE_MODERATES_COMMENT_SQL,
   BDE_MODERATES_LIVE_SQL,
   BDE_MODERATES_REPORT_SQL,
+  MODERATED_INSTITUTION_IDS_SQL,
+  MODERATES_SOMEWHERE_SQL,
   MODERATION_OUT_OF_SCOPE,
   MODERATION_RESERVED_SQL,
   MODERATION_RESERVED_TO_PLATFORM_ADMIN,
@@ -3160,9 +3162,11 @@ export class AssociationsService {
   }
 
   /**
-   * Returns true if userId holds `flag` in ANY BDE association. For `MANAGE_ASSO` - management - an
-   * institution governing a space does not count: it answers for that space's agenda and people,
-   * and manages nothing (reform 2.3, `governorIsAnAssociationSql`).
+   * Returns true if userId holds `flag` in ANY BDE association - of type `association`: an
+   * institution governing a space answers for that space's agenda only, and neither manages nor
+   * moderates anything as a BDE (reform 2.3, `governorIsAnAssociationSql`; owner, 2026-11-15,
+   * decision 3). The moderation door, which an institution's own moderators also pass, is
+   * `isContentModerator`.
    */
   async callerHasAnyBdeFlag(userId: string, flag: AssociationPermissionFlag): Promise<boolean> {
     const qb = this.memberRepo
@@ -3170,8 +3174,8 @@ export class AssociationsService {
       .innerJoin(Association, 'a', 'a.id = m.associationId')
       .where('m.userId = :userId', { userId })
       .andWhere(isBdeAssociationSql('a'))
+      .andWhere(`a.type = 'association'`)
       .andWhere('(m.permissions & :flag) <> 0', { flag });
-    if (flag === AssociationPermissionFlag.MANAGE_ASSO) qb.andWhere(`a.type = 'association'`);
     return (await qb.getCount()) > 0;
   }
 
@@ -3198,8 +3202,9 @@ export class AssociationsService {
   }
 
   /**
-   * Does `userId` moderate SOMEWHERE - a platform administrator, or a member holding `MODERATE` in
-   * the BDE of at least one space?
+   * Does `userId` moderate SOMEWHERE - a platform administrator, a member holding `MODERATE` in the
+   * BDE of at least one space, or in an INSTITUTION, which moderates its own content (owner,
+   * 2026-11-15, decision 4; `MODERATES_SOMEWHERE_SQL`)?
    *
    * THE DOOR, NOT THE REACH (owner, 2026-11-02): since `MODERATE` is scoped (`spaces/bde-moderation.ts`)
    * this answers only who may open the moderation surfaces at all - the queue, the lists - and
@@ -3211,7 +3216,12 @@ export class AssociationsService {
   async isContentModerator(userId: string, opts?: { isGlobalAdmin?: boolean }): Promise<boolean> {
     if (opts?.isGlobalAdmin) return true;
     if (!userId) return false;
-    return this.callerHasAnyBdeFlag(userId, AssociationPermissionFlag.MODERATE);
+    const rows: { moderates: boolean }[] = await this.memberRepo.query(MODERATES_SOMEWHERE_SQL, [
+      userId,
+    ]);
+    const moderates = rows[0]?.moderates === true;
+    this.logger.debug(`[MODERATION] door user=${sanitizeLog(userId.slice(0, 8))} -> ${moderates}`);
+    return moderates;
   }
 
   /**
@@ -3377,10 +3387,11 @@ export class AssociationsService {
   }
 
   /**
-   * Of `associationIds`, those whose PUBLISHED content `userId` moderates (`bdeModeratesPublisherSql`):
-   * every one for a platform admin; for a BDE `MODERATE` holder, the associations its
-   * BDE is the PARENT of (WP-D2) and the BDE itself - never an institution, never another BDE.
-   * What `commentRights` reads for a comment in an association's name; empty for an unknown caller.
+   * Of `associationIds`, those whose PUBLISHED content `userId` moderates (`moderatesPublisherSql`):
+   * every one for a platform admin; for a BDE `MODERATE` holder, the associations its BDE is the
+   * PARENT of (WP-D2) and the BDE itself - never an institution, never another BDE; for an
+   * institution's `MODERATE` member, that institution (decision 4). What `commentRights` reads for a
+   * comment in an association's name under a post the reader moderates; empty for an unknown caller.
    */
   async moderatedAssociationIds(
     userId: string | undefined,
@@ -3401,9 +3412,34 @@ export class AssociationsService {
   }
 
   /**
+   * Of `associationIds`, the INSTITUTIONS in which `userId` holds `MODERATE`
+   * (`MODERATED_INSTITUTION_IDS_SQL`): a comment in such a name is that institution's content
+   * wherever it sits, so `commentRights` reads this set without asking the post (owner, 2026-11-15,
+   * decision 4). Every one for a platform admin; empty for an unknown caller.
+   */
+  async moderatedInstitutionIds(
+    userId: string | undefined,
+    associationIds: string[],
+    opts?: { isGlobalAdmin?: boolean }
+  ): Promise<Set<string>> {
+    const unique = [...new Set(associationIds.filter(Boolean).map((id) => id.toLowerCase()))];
+    if (opts?.isGlobalAdmin) return new Set(unique);
+    if (!userId || unique.length === 0) return new Set();
+    const rows: { id: string }[] = await this.memberRepo.query(MODERATED_INSTITUTION_IDS_SQL, [
+      userId,
+      unique,
+    ]);
+    this.logger.debug(
+      `[MODERATION] institutions user=${sanitizeLog(userId.slice(0, 8))} asked=${unique.length} moderated=${rows.length}`
+    );
+    return new Set(rows.map((r) => r.id));
+  }
+
+  /**
    * THE TYPED REFUSAL of a moderation act, classified at the throw: 403 `MODERATOR_REQUIRED` when the
    * caller moderates nowhere; 403 `MODERATION_RESERVED_TO_PLATFORM_ADMIN` when the target is published
-   * in an institution's or a BDE's name (owner, 2026-11-03: only the platform admin moderates those);
+   * in an institution's or a BDE's name (owner, 2026-11-03 and 2026-11-15: only its own moderators,
+   * who pass the act, and the platform admin moderate those);
    * 403 `MODERATION_OUT_OF_SCOPE` otherwise - outside the spaces the caller's BDE governs. Logged with
    * the target's kind, never its content.
    */
@@ -3423,7 +3459,7 @@ export class AssociationsService {
       message: !somewhere
         ? 'BDE MODERATE permission or global admin required'
         : reserved
-          ? "Content in an institution's or a BDE's name is moderated by the platform admin only"
+          ? "Content in an institution's or a BDE's name is moderated by its own moderators and the platform admin only"
           : 'Outside the spaces your BDE governs',
     });
   }

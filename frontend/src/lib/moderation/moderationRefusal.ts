@@ -8,7 +8,8 @@ import { Log } from '$lib/utils/Log';
  * `apps/social-service/src/spaces/bde-moderation.ts`, pinned to them by `moderationRefusal.test.ts`.
  *
  * `MODERATION_RESERVED_TO_PLATFORM_ADMIN` is the owner's rule of 2026-11-03: no BDE moderates what
- * is published in an institution's or another BDE's name - only the platform admin does.
+ * is published in an institution's or another BDE's name - only its own moderators (owner,
+ * 2026-11-15, decision 4) and the platform admin do.
  */
 export const MODERATION_REFUSAL_CODES = {
   MODERATION_RESERVED_TO_PLATFORM_ADMIN: 'MODERATION_RESERVED_TO_PLATFORM_ADMIN',

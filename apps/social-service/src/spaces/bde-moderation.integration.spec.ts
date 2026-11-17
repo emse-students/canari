@@ -28,9 +28,11 @@ import {
   BDE_MODERATES_COMMENT_SQL,
   BDE_MODERATES_LIVE_SQL,
   BDE_MODERATES_REPORT_SQL,
+  BDE_MODERATION_READ_OPENS_POST_SQL,
   MODERATION_OUT_OF_SCOPE,
   MODERATION_RESERVED_SQL,
   MODERATION_RESERVED_TO_PLATFORM_ADMIN,
+  MODERATOR_REQUIRED,
   reportInBdeScopeSql,
 } from './bde-moderation';
 
@@ -54,7 +56,13 @@ const A = {
   // bdeSe's CHILD whose audience reaches only gardanne (bdeGa's spaces): moderated by its parent,
   // never by the BDE of the spaces it reaches (WP-R4).
   clubAway: '00000000-0000-4000-8000-0000000000e2', // rule (ICM, gardanne), parent bdeSe
+  // An INSTITUTION that GOVERNS a space with no BDE (PDIS x saint-etienne, WP-D1): it answers for
+  // that space's agenda, never for its students (owner, 2026-11-15, decision 3).
+  instGov: '00000000-0000-4000-8000-0000000000d2',
 } as const;
+
+/** The institutions of the fixture; every other entity is an association, but the list. */
+const INSTITUTIONS: ReadonlySet<string> = new Set([A.instSe, A.instGov]);
 
 /** The governing parents (WP-D2); clubNone, the BDEs and the institution depend on nobody. */
 const PARENT: [string, string][] = [
@@ -78,13 +86,19 @@ const P = {
   bdeGaPost: '10000000-0000-4000-8000-000000000009',
   listSePost: '10000000-0000-4000-8000-00000000000b',
   clubAwayPost: '10000000-0000-4000-8000-00000000000d',
+  // A student of the space the institution governs, with no BDE.
+  pdisStudentPost: '10000000-0000-4000-8000-00000000000e',
 } as const;
 
 const L = {
   seLive: '20000000-0000-4000-8000-000000000001', // personal, by seStudent
   gaAssoLive: '20000000-0000-4000-8000-000000000002', // clubGa's
   cutSeLive: '20000000-0000-4000-8000-000000000003', // purged, only its cut is left
+  pdisLive: '20000000-0000-4000-8000-000000000004', // personal, by pdisStudent
 } as const;
+
+/** Under the institution's own post: a student's comment, and one in a club's name. */
+const INST_THREAD = { student: 'cm-inst-st', club: 'cm-inst-club' } as const;
 
 /**
  * THE MATRIX OF THE OWNER'S RULE OF 2026-11-03: BDE A is bdeSe (seMod), BDE B is bdeGa (gaMod). Each
@@ -210,7 +224,7 @@ maybe('BDE moderation scope against PostgreSQL', () => {
       CREATE TABLE association_calendar_events (id serial PRIMARY KEY, "associationId" uuid NOT NULL);
       CREATE TABLE users (id varchar(255) PRIMARY KEY, campus varchar, cursus jsonb);
       CREATE TABLE posts (id uuid PRIMARY KEY, "authorId" varchar(255), "associationId" uuid, "studentsOnly" boolean NOT NULL DEFAULT false, "reachPublic" varchar(16), "reachSpaces" jsonb,
-        comments jsonb);
+        comments jsonb, "scheduledAt" timestamptz);
       CREATE TABLE lives (id uuid PRIMARY KEY, "broadcasterId" varchar(255) NOT NULL,
         "associationId" uuid);
       CREATE TABLE live_cuts ("liveId" uuid PRIMARY KEY, "broadcasterId" varchar(255) NOT NULL,
@@ -225,7 +239,7 @@ maybe('BDE moderation scope against PostgreSQL', () => {
         "commentId" varchar(255), text varchar NOT NULL);
     `);
     for (const [key, id] of Object.entries(A)) {
-      const type = key === 'instSe' ? 'institution' : key === 'listSe' ? 'list' : 'association';
+      const type = INSTITUTIONS.has(id) ? 'institution' : key === 'listSe' ? 'list' : 'association';
       await client.query(
         `INSERT INTO associations (id, name, "isBDE", type) VALUES ($1, $2, $3, $4)`,
         [id, key, key === 'bdeSe', type]
@@ -260,11 +274,17 @@ maybe('BDE moderation scope against PostgreSQL', () => {
       `UPDATE spaces SET "bdeAssociationId" = $1 WHERE campus = 'gardanne' AND formation IN ('ISMIN', 'ICM')`,
       [A.bdeGa]
     );
+    await client.query(
+      `UPDATE spaces SET "bdeAssociationId" = $1 WHERE campus = 'saint-etienne' AND formation = 'PDIS'`,
+      [A.instGov]
+    );
     const members: [string, string, number][] = [
       ['seMod', A.bdeSe, MODERATE],
       ['gaMod', A.bdeGa, MODERATE],
       ['seVal', A.bdeSe, VALIDATE_EVENTS], // another BDE flag: moderates nothing
       ['clubMod', A.clubSe, MODERATE], // MODERATE in a mere club: inert
+      ['instMod', A.instSe, MODERATE], // the institution's own moderator (decision 4)
+      ['govMod', A.instGov, MODERATE], // MODERATE in an institution governing a space (decision 3)
     ];
     for (const [userId, asso, permissions] of members) {
       await client.query(
@@ -278,6 +298,7 @@ maybe('BDE moderation scope against PostgreSQL', () => {
       ['staff', 'saint-etienne', []], // a campus and no cursus: no space
       ['seMod', 'saint-etienne', [{ formation: 'ICM', promo: 2026 }]],
       ['gaMod', 'gardanne', [{ formation: 'ICM', promo: 2026 }]],
+      ['pdisStudent', 'saint-etienne', [{ formation: 'PDIS', promo: 2027 }]],
     ];
     for (const [id, campus, cursus] of users) {
       await client.query(`INSERT INTO users (id, campus, cursus) VALUES ($1, $2, $3)`, [
@@ -319,11 +340,20 @@ maybe('BDE moderation scope against PostgreSQL', () => {
         [{ id: 'cm-ga', userId: 'seStudent' }, ...matrixComments('ga')],
       ],
       [P.staffPost, 'staff', null, []],
-      [P.instSePost, 'seStudent', A.instSe, []],
+      [
+        P.instSePost,
+        'seStudent',
+        A.instSe,
+        [
+          { id: INST_THREAD.student, userId: 'gaStudent' },
+          { id: INST_THREAD.club, userId: 'seStudent', associationId: A.clubSe },
+        ],
+      ],
       [P.bdeSePost, 'seMod', A.bdeSe, []],
       [P.bdeGaPost, 'gaMod', A.bdeGa, []],
       [P.listSePost, 'seStudent', A.listSe, []],
       [P.clubAwayPost, 'gaStudent', A.clubAway, []],
+      [P.pdisStudentPost, 'pdisStudent', null, []],
     ];
     for (const [id, author, asso, comments] of postRows) {
       await client.query(
@@ -336,6 +366,7 @@ maybe('BDE moderation scope against PostgreSQL', () => {
       L.gaAssoLive,
       A.clubGa,
     ]);
+    await client.query(`INSERT INTO lives VALUES ($1, 'pdisStudent', NULL)`, [L.pdisLive]);
     await client.query(`INSERT INTO live_cuts VALUES ($1, 'seStudent', NULL)`, [L.cutSeLive]);
     for (const [i, row] of MATRIX.entries()) {
       await client.query(`INSERT INTO lives VALUES ($1, $2, $3)`, [
@@ -619,6 +650,10 @@ maybe('BDE moderation scope against PostgreSQL', () => {
             officer,
             stored.map((c) => c.associationId ?? '').filter(Boolean)
           ),
+          moderatedInstitutionIds: await svc.moderatedInstitutionIds(
+            officer,
+            stored.map((c) => c.associationId ?? '').filter(Boolean)
+          ),
         };
         for (const c of stored) {
           const served = commentRights(c, v).canDelete;
@@ -728,6 +763,7 @@ maybe('BDE moderation scope against PostgreSQL', () => {
         isModerator: true,
         managedAssociationIds: new Set(),
         moderatedAssociationIds: new Set(),
+        moderatedInstitutionIds: new Set(),
       };
       const institutional = { id: THREAD.instReply, userId: 'seStudent', associationId: A.instSe };
       expect(commentRights(institutional, v).canDelete).toBe(true);
@@ -840,6 +876,174 @@ maybe('BDE moderation scope against PostgreSQL', () => {
         expect(await stored()).toEqual([]);
       } finally {
         await ds.destroy();
+      }
+    });
+  });
+
+  describe("an institution's moderators (owner, 2026-11-15, decisions 3 and 4)", () => {
+    /** `AssociationsService` on the real SQL, its door (`isContentModerator`) included. */
+    const service = () =>
+      Object.assign(Object.create(AssociationsService.prototype), {
+        memberRepo: {
+          query: async (sql: string, params: unknown[]) => (await client.query(sql, params)).rows,
+        },
+        logger: new Logger('bde-moderation.it'),
+      }) as AssociationsService;
+    const users = async (moderator: string) =>
+      (
+        await client.query(BDE_MODERATED_USER_IDS_SQL, [
+          moderator,
+          ['seStudent', 'gaStudent', 'pdisStudent', 'staff'],
+        ])
+      ).rows
+        .map((r) => r.id as string)
+        .sort();
+    const live = async (moderator: string, id: string) =>
+      (await client.query(BDE_MODERATES_LIVE_SQL, [moderator, id])).rows[0].moderates as boolean;
+    const comment = async (moderator: string, postId: string, commentId: string) =>
+      (await client.query(BDE_MODERATES_COMMENT_SQL, [moderator, postId, commentId])).rows[0]
+        .moderates as boolean;
+    const reads = async (moderator: string, postId: string) =>
+      (await client.query(BDE_MODERATION_READ_OPENS_POST_SQL, [moderator, postId])).rows[0]
+        .reads as boolean;
+
+    it('an institution governing a space with no BDE moderates none of its students (decision 3)', async () => {
+      // pdisStudent belongs to PDIS x saint-etienne, which instGov governs: no person, no personal
+      // post, no personal live of that space is govMod's - they stay with the platform admin.
+      expect(await users('govMod')).toEqual([]);
+      expect(await posts('govMod')).toEqual([]);
+      expect(await live('govMod', L.pdisLive)).toBe(false);
+      expect(await reads('govMod', P.pdisStudentPost)).toBe(false);
+      // Nor does an institution's moderator reach students through its own audience.
+      expect(await users('instMod')).toEqual([]);
+      // The platform admin keeps the space.
+      const svc = service();
+      expect(await svc.mayModerateUser('admin', 'pdisStudent', { isGlobalAdmin: true })).toBe(true);
+      expect(await svc.mayModeratePost('admin', P.pdisStudentPost, { isGlobalAdmin: true })).toBe(
+        true
+      );
+    });
+
+    it("refuses the institution's moderator a mute of a governed space's student, typed", async () => {
+      const route = new ModerationController({} as never, service());
+      const refusal = await route
+        .muteUser('pdisStudent', 'govMod', undefined, { reason: 'x' } as never)
+        .catch((e: unknown) => e);
+      expect(refusal).toBeInstanceOf(ForbiddenException);
+      // It moderates SOMEWHERE (its institution's content), so the refusal is the scope's.
+      expect((refusal as ForbiddenException).getResponse()).toMatchObject({
+        code: MODERATION_OUT_OF_SCOPE,
+      });
+    });
+
+    it("its own MODERATE members moderate the institution's own content (decision 4)", async () => {
+      // Posts: hide, unhide, delete, unmask, read the anonymous author.
+      expect(await posts('instMod')).toEqual([P.instSePost]);
+      expect(await reads('instMod', P.instSePost)).toBe(true);
+      // Its live (matrix row 1 is the institution's): cut it, hide a line of its chat.
+      expect(await live('instMod', matrixLive(1))).toBe(true);
+      expect(await live('instMod', L.seLive)).toBe(false);
+      // A person's comment under its post.
+      expect(await comment('instMod', P.instSePost, INST_THREAD.student)).toBe(true);
+      // A club's comment under its post is the club's content, as it is under a BDE's post.
+      expect(await comment('instMod', P.instSePost, INST_THREAD.club)).toBe(false);
+      // A comment in its name, under a student's post it does not otherwise moderate.
+      expect(await comment('instMod', P.seStudentPost, THREAD.instReply)).toBe(true);
+      expect(await comment('instMod', P.seStudentPost, matrixComment('se', 1))).toBe(true);
+      // The student's comment that reply answers is not the institution's.
+      expect(await comment('instMod', P.seStudentPost, THREAD.instReplied)).toBe(false);
+      // An institution governing a space moderates nothing of ANOTHER institution.
+      expect(await posts('govMod')).not.toContain(P.instSePost);
+      expect(await comment('govMod', P.seStudentPost, THREAD.instReply)).toBe(false);
+    });
+
+    it('a BDE still moderates none of it', async () => {
+      for (const bdeMod of ['seMod', 'gaMod']) {
+        expect(await posts(bdeMod)).not.toContain(P.instSePost);
+        expect(await live(bdeMod, matrixLive(1))).toBe(false);
+        expect(await comment(bdeMod, P.instSePost, INST_THREAD.student)).toBe(false);
+        expect(await comment(bdeMod, P.seStudentPost, THREAD.instReply)).toBe(false);
+      }
+    });
+
+    it('narrows the report queue: its own content, never a person', async () => {
+      const reports: [string, string, string][] = [
+        ['32000000-0000-4000-8000-000000000001', 'post', P.instSePost],
+        ['32000000-0000-4000-8000-000000000002', 'comment', INST_THREAD.student],
+        ['32000000-0000-4000-8000-000000000003', 'live', matrixLive(1)],
+        ['32000000-0000-4000-8000-000000000004', 'comment', THREAD.instReply],
+        ['32000000-0000-4000-8000-000000000005', 'user', 'pdisStudent'],
+        ['32000000-0000-4000-8000-000000000006', 'post', P.pdisStudentPost],
+        ['32000000-0000-4000-8000-000000000007', 'comment', INST_THREAD.club],
+      ];
+      for (const [id, type, contentId] of reports) {
+        await client.query(
+          `INSERT INTO content_reports (id, "contentType", "contentId") VALUES ($1, $2, $3)`,
+          [id, type, contentId]
+        );
+      }
+      const mine = async (moderator: string) =>
+        (
+          await client.query(
+            `SELECT r.id FROM content_reports r WHERE r.id::text LIKE '32%' AND ${reportInBdeScopeSql('r', '$1')} ORDER BY r.id`,
+            [moderator]
+          )
+        ).rows.map((r) => (r.id as string).slice(-1));
+      expect(await mine('instMod')).toEqual(['1', '2', '3', '4']);
+      expect(await mine('govMod')).toEqual([]);
+    });
+
+    it('opens the door to an institution moderator, and to no other flag', async () => {
+      const svc = service();
+      for (const who of ['seMod', 'gaMod', 'instMod', 'govMod']) {
+        expect({ who, door: await svc.isContentModerator(who) }).toEqual({ who, door: true });
+      }
+      for (const who of ['seVal', 'clubMod', 'seStudent']) {
+        expect({ who, door: await svc.isContentModerator(who) }).toEqual({ who, door: false });
+      }
+    });
+
+    it('classifies a refusal: reserved for a BDE on its content, out of scope for its act on a student', async () => {
+      const svc = service();
+      const codeOf = async (
+        who: string,
+        target: Parameters<AssociationsService['refuseModeration']>[1]
+      ) => {
+        const refusal = await svc.refuseModeration(who, target).catch((e: unknown) => e);
+        return ((refusal as ForbiddenException).getResponse() as { code: string }).code;
+      };
+      expect(await codeOf('seMod', { kind: 'post', id: P.instSePost })).toBe(
+        MODERATION_RESERVED_TO_PLATFORM_ADMIN
+      );
+      expect(await codeOf('govMod', { kind: 'post', id: P.pdisStudentPost })).toBe(
+        MODERATION_OUT_OF_SCOPE
+      );
+      expect(await codeOf('seStudent', { kind: 'post', id: P.instSePost })).toBe(
+        MODERATOR_REQUIRED
+      );
+    });
+
+    it('serves the same bin as the route answers, under its post and in its name', async () => {
+      const svc = service();
+      for (const postId of [P.instSePost, P.seStudentPost]) {
+        const stored = (await client.query(`SELECT comments FROM posts WHERE id = $1`, [postId]))
+          .rows[0].comments as StoredComment[];
+        const publishers = stored.map((c) => c.associationId ?? '').filter(Boolean);
+        const v: CommentViewer = {
+          viewerId: 'instMod',
+          isGlobalAdmin: false,
+          isModerator: await svc.mayModeratePost('instMod', postId),
+          managedAssociationIds: new Set(),
+          moderatedAssociationIds: await svc.moderatedAssociationIds('instMod', publishers),
+          moderatedInstitutionIds: await svc.moderatedInstitutionIds('instMod', publishers),
+        };
+        for (const c of stored) {
+          expect({ postId, id: c.id, served: commentRights(c, v).canDelete }).toEqual({
+            postId,
+            id: c.id,
+            served: await comment('instMod', postId, c.id ?? ''),
+          });
+        }
       }
     });
   });

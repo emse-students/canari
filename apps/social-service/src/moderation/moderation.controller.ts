@@ -205,16 +205,22 @@ export class ModerationController {
     // Each descendant the delete meets is judged by the same rule: a reply in a name this moderator
     // does not moderate stays, under a tombstone of what it answered (lead, 2026-11-04).
     const comments = await this.service.commentsOfPost(postId);
+    const publishers = comments.map((c) => c.associationId ?? '').filter(Boolean);
+    // `isModerator` stands for the post: the door above asked the comment, and an institution's
+    // moderator passes it for a comment in its name under a post it does not moderate - the
+    // descendants are then judged by the publisher sets alone, as `bdeModeratesCommentSql` judges.
+    const [moderatedAssociationIds, moderatedInstitutionIds, isModerator] = await Promise.all([
+      this.assocService.moderatedAssociationIds(userId, publishers, { isGlobalAdmin }),
+      this.assocService.moderatedInstitutionIds(userId, publishers, { isGlobalAdmin }),
+      this.assocService.mayModeratePost(userId, postId, { isGlobalAdmin }),
+    ]);
     const viewer: CommentViewer = {
       viewerId: userId,
       isGlobalAdmin,
-      isModerator: true,
+      isModerator,
       managedAssociationIds: new Set(),
-      moderatedAssociationIds: await this.assocService.moderatedAssociationIds(
-        userId,
-        comments.map((c) => c.associationId ?? '').filter(Boolean),
-        { isGlobalAdmin }
-      ),
+      moderatedAssociationIds,
+      moderatedInstitutionIds,
     };
     return this.service.deleteCommentById(commentId, (c) => mayRemoveAsModerator(c, viewer));
   }

@@ -5,6 +5,7 @@
     AssociationPermissionFlag,
     BDE_ONLY_FLAGS,
     hasPermissionFlag,
+    offersBdeOnlyFlag,
   } from '$lib/associations/api';
   import { kindOffersFlag } from '$lib/associations/editSections';
   import { Trash2, ChevronDown } from '@lucide/svelte';
@@ -76,7 +77,7 @@
       { flag: AssociationPermissionFlag.MANAGE_ASSO, label: m.asso_flag_manage_asso() },
       { flag: AssociationPermissionFlag.MODERATE, label: m.asso_flag_moderate() },
     ]
-      .filter(({ flag }) => isBDE || !BDE_ONLY_FLAGS.has(flag))
+      .filter(({ flag }) => !BDE_ONLY_FLAGS.has(flag) || offersBdeOnlyFlag(kind, isBDE, flag))
       .filter(({ flag }) => BDE_ONLY_FLAGS.has(flag) || kindOffersFlag(kind, flag))
   );
 

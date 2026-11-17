@@ -62,6 +62,7 @@ describe('PostInteractionsService - comment identity', () => {
       moderatedPostIds: () => Promise.resolve(new Set<string>()),
       mayModeratePost: jest.fn(() => Promise.resolve(false)),
       mayActOnAny: jest.fn((_u: string, ids: string[]) => Promise.resolve(new Set(ids))),
+      moderatedInstitutionIds: jest.fn(() => Promise.resolve(new Set<string>())),
       listFlagHolders: jest.fn(() => Promise.resolve(holders)),
     };
     const identity = new CommentIdentityService(
@@ -94,6 +95,8 @@ describe('PostInteractionsService - comment identity', () => {
       associations.moderatedAssociationIds = jest.fn((_u: string, ids: string[]) =>
         Promise.resolve(new Set(ids.filter((id) => id === CLUB)))
       );
+      // A BDE's moderator holds MODERATE in no institution.
+      associations.moderatedInstitutionIds = jest.fn(() => Promise.resolve(new Set<string>()));
       associations.refuseModeration = jest.fn(() =>
         Promise.reject(new ForbiddenException({ code: 'MODERATION_RESERVED_TO_PLATFORM_ADMIN' }))
       );

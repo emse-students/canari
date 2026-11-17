@@ -4,8 +4,8 @@ target: 1.8.0
 
 **Owner, 2026-11-15** ([moderation-authority](../moderation-authority.md), decision 11): the writer of
 an association's post is visible to its moderators - the platform admin and the BDE in scope, and the
-institution's IM for its own posts once
-[the institution entry](p1-institution-moderators-moderate-their-own-content-not-students.md) lands -
+institution's IM for its own posts (built 2026-11-17: an IM is in `mayModeratePost` for them, so a
+writer served to whoever moderates the post reaches it) -
 the same as an association COMMENT's writer already is (`seesAccount`, `posts/comment-identity.ts`).
 And the raw `authorId` of `/posts/hidden` is closed.
 
