@@ -1,9 +1,14 @@
 const showToast = vi.hoisted(() => vi.fn());
 vi.mock('$lib/stores/toast.svelte', () => ({ showToast }));
-// The people an Add left out are named by display name: resolved here from a fixed table.
+// The people an Add left out are named by display name: resolved here from a fixed table. A refusal
+// names them from the LOCAL cache only (`getUserDisplayNameSync`), never awaiting the network.
+const NAMES: Record<string, string> = { carol: 'Carol', dave: 'Dave' };
+const resolveDisplayNames = vi.hoisted(() => vi.fn());
 vi.mock('$lib/utils/users/displayName', () => ({
-  resolveDisplayNames: async () => (id: string) => ({ carol: 'Carol', dave: 'Dave' })[id] ?? id,
+  resolveDisplayNames,
+  getUserDisplayNameSync: (id: string, fallback: string) => NAMES[id] ?? fallback,
 }));
+resolveDisplayNames.mockImplementation(async () => (id: string) => NAMES[id] ?? id);
 
 import { FollowerTabCommitError } from '$lib/mls-client/commitSubmission';
 import { m } from '$lib/paraglide/messages';
@@ -229,6 +234,27 @@ describe('reportBulkAdditionOutcome', () => {
     await reportBulkAdditionOutcome({ kind: 'not-added', reason: 'outcome-unknown' }, ['carol']);
     expect(showToast).toHaveBeenCalledExactlyOnceWith(
       m.chat_invite_pending_connection(),
+      'warning'
+    );
+  });
+
+  it('names a refusal from the local cache, without a profile read', async () => {
+    resolveDisplayNames.mockClear();
+    await reportBulkAdditionOutcome({ kind: 'not-added', reason: 'commit-race-lost' }, ['erin']);
+    expect(resolveDisplayNames).not.toHaveBeenCalled();
+    expect(showToast).toHaveBeenCalledExactlyOnceWith(
+      m.chat_invite_not_added({ names: 'erin', reason: m.chat_invite_error_commit_race_lost() })
+    );
+  });
+
+  // OWED IS NOT REFUSED: the invitation met another device's add lock and finishes when it ends.
+  it("an invitation owed on another device's lock says when it will finish, naming them, as a warning", async () => {
+    await reportBulkAdditionOutcome({ kind: 'not-added', reason: 'add-lock-owed' }, [
+      'carol',
+      'dave',
+    ]);
+    expect(showToast).toHaveBeenCalledExactlyOnceWith(
+      m.chat_invite_owed_add_lock_named({ names: 'Carol, Dave' }),
       'warning'
     );
   });

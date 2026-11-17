@@ -1854,6 +1854,8 @@
   "chat_group_remove_member_keys_pending": "Member removed from the group: no message reaches them any more. The key change will finish at the next connection.",
   "chat_group_remove_member_failed": "The member could not be removed. Try again.",
   "chat_invite_not_added": "Not added: {names}. {reason}",
+  "chat_invite_error_add_lock_owed": "Another device is already adding someone to this conversation: yours will follow as soon as it is done.",
+  "chat_invite_owed_add_lock_named": "Another device is already adding someone to this conversation: adding {names} will follow as soon as it is done.",
   "chat_invite_error_nobody_named": "Nobody to add.",
   "chat_invite_error_nobody_reachable": "Nobody was added: a block stands between you and the people chosen, or it could not be checked.",
   "chat_invite_error_no_devices": "Nobody was added: the people chosen have no device available.",

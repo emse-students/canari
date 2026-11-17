@@ -4934,7 +4934,10 @@ export abstract class BaseMlsService implements IMlsService {
    * another device holds the lock; `unanswered` is a transport error or a non-2xx answer, which says
    * nothing about anyone else.
    */
-  async acquireAddLockAnswer(groupId: string): Promise<'taken' | 'held' | 'unanswered'> {
+  async acquireAddLockAnswer(
+    groupId: string,
+    oweIfHeld?: () => Promise<CommitInvitation | null>
+  ): Promise<'taken' | 'held' | 'owed' | 'unanswered'> {
     const short = groupId.slice(0, 8);
     if (!this.addLocksHeld.has(groupId)) {
       const owed = claimAddLockMarker(this.userId, groupId);
@@ -4953,8 +4956,62 @@ export abstract class BaseMlsService implements IMlsService {
       markAddLock(this.userId, groupId, answer.token);
       return 'taken';
     }
+    // RECORDED BEFORE THE WAKE IS ARMED: the wake is armed only for a group that owes a re-plan.
+    const owed =
+      answer.answered && oweIfHeld ? await this.oweInvitationOnHeldLock(groupId, oweIfHeld) : false;
     this.wakeAtAddLockExpiry(groupId, answer.retryAfterMs);
+    if (owed) return 'owed';
     return answer.answered ? 'held' : 'unanswered';
+  }
+
+  /**
+   * Records a member's first invitation that another device's add lock refused, as owed at this
+   * group's current epoch (see {@link IMlsService.acquireAddLockAnswer}). An entry already owed at
+   * that epoch - a second invitation refused by the same lock - is merged into, never overwritten.
+   *
+   * @returns whether it is recorded; `false` tells the caller the refusal is the member's to retry.
+   */
+  private async oweInvitationOnHeldLock(
+    groupId: string,
+    oweIfHeld: () => Promise<CommitInvitation | null>
+  ): Promise<boolean> {
+    const short = groupId.slice(0, 8);
+    const invitation = await oweIfHeld();
+    if (!invitation) return false;
+    const baseEpoch = this.getEpoch(groupId);
+    const earlier = listOwedInvitations(this.userId).find(
+      (o) => o.groupId === groupId && o.baseEpoch === baseEpoch && o.cause === 'race'
+    );
+    const union = (a: readonly string[] = [], b: readonly string[] = []) => [
+      ...new Set([...a, ...b]),
+    ];
+    const merged: CommitInvitation = earlier
+      ? {
+          ...invitation,
+          users: union(earlier.invitation.users, invitation.users),
+          ...(earlier.invitation.rostered || invitation.rostered
+            ? { rostered: union(earlier.invitation.rostered, invitation.rostered) }
+            : {}),
+        }
+      : invitation;
+    try {
+      recordOwedInvitation(this.userId, {
+        groupId,
+        baseEpoch,
+        invitation: merged,
+        cause: 'race',
+      });
+    } catch (e) {
+      if (!(e instanceof OwedInvitationNotRecordedError)) throw e;
+      console.warn(
+        `[INVITE_OWED] ${short}... an invitation of ${invitation.users.length} person(s) met another device's add lock and could NOT be recorded (${e.reason}) - refused, the member is told`
+      );
+      return false;
+    }
+    console.log(
+      `[INVITE_OWED] ${short}... an invitation of ${invitation.users.length} person(s) met another device's add lock - recorded at epoch ${baseEpoch}, re-planned when that lock ends`
+    );
+    return true;
   }
 
   /**

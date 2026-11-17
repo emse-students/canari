@@ -237,6 +237,7 @@ function ctx(
     'acquireAddLockAnswer',
     'releaseAddLock',
     'wakeAtAddLockExpiry',
+    'oweInvitationOnHeldLock',
     'cancelAddLockExpiryWakes',
     'notifyCommitsApplied',
   ]) {
@@ -1490,7 +1491,11 @@ describe('settleUnresolvedCommits - a kept invitation that did not land', () => 
     };
     c.delivery.acquireAddLock = vi.fn(async () => {
       if (server.value !== null) {
-        return { acquired: false, retryAfterMs: tokens ? server.ttlMs : undefined } as const;
+        return {
+          acquired: false,
+          retryAfterMs: tokens ? server.ttlMs : undefined,
+          answered: true,
+        } as const;
       }
       const token = tokens ? `t${++server.minted}` : undefined;
       server.value = server.valueOf(token);
@@ -1648,6 +1653,66 @@ describe('settleUnresolvedCommits - a kept invitation that did not land', () => 
     expect(await lock.acquireAddLockAnswer(G)).toBe('held');
     expect(await lock.acquireAddLockAnswer(G)).toBe('unanswered');
     expect(await lock.acquireAddLockAnswer(G)).toBe('taken');
+  });
+
+  // A MEMBER'S FIRST INVITATION THAT MEETS ANOTHER DEVICE'S LOCK IS OWED (1.7.0-alpha.10): recorded
+  // BEFORE the refusal arms its wake, so the server-stated end of that lock re-plans it.
+  it("a FIRST invitation refused by another device's lock is recorded as owed, and re-planned when the server says the lock ends", async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const c = ctx(submitting());
+      const server = fakeLockServer(c);
+      server.value = `${U}:other-device#theirs`;
+      server.ttlMs = 4_000;
+      const replanner = vi.fn(async (): Promise<ReplanVerdict> => {
+        if (!(await lockOf(c).acquireAddLock(G))) return 'waiting';
+        await lockOf(c).releaseAddLock(G);
+        return 'concluded';
+      });
+      register(c, replanner);
+      const lock = c as unknown as {
+        acquireAddLockAnswer(
+          g: string,
+          oweIfHeld?: () => Promise<unknown>
+        ): Promise<'taken' | 'held' | 'owed' | 'unanswered'>;
+      };
+
+      expect(await lock.acquireAddLockAnswer(G, async () => INVITATION)).toBe('owed');
+      // A second invitation refused by the same lock at the same epoch is merged, never lost.
+      expect(
+        await lock.acquireAddLockAnswer(G, async () => ({ users: ['w6'], rostered: [] }))
+      ).toBe('owed');
+      expect(listOwedInvitations(U)).toEqual([
+        {
+          groupId: G,
+          baseEpoch: 5,
+          invitation: { users: ['w5', 'w6'], rostered: [] },
+          cause: 'race',
+        },
+      ]);
+      expect(replanner).not.toHaveBeenCalled();
+
+      // Their Add ends - its release sends no frame - and the server-stated moment comes.
+      server.value = null;
+      await vi.advanceTimersByTimeAsync(4_000);
+      await drained(c);
+      expect(replanner).toHaveBeenCalledTimes(1);
+      expect(listOwedInvitations(U)).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('records nothing when the invitation cannot be stated, and the answer stays `held`', async () => {
+    const c = ctx(submitting());
+    const server = fakeLockServer(c);
+    server.value = `${U}:other-device#theirs`;
+    const lock = c as unknown as {
+      acquireAddLockAnswer(g: string, oweIfHeld?: () => Promise<unknown>): Promise<string>;
+    };
+
+    expect(await lock.acquireAddLockAnswer(G, async () => null)).toBe('held');
+    expect(listOwedInvitations(U)).toEqual([]);
   });
 
   it('a DESTROYED client keeps no wake: the server-stated moment comes and nothing re-plans', async () => {

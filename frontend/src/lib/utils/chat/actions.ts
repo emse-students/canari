@@ -747,7 +747,7 @@ export async function processPendingInvitations(params: {
       lockHeld = await mlsService.acquireAddLock(groupId).catch(() => false);
       if (!lockHeld) {
         log(
-          `[PENDING] Group ${groupId}: lock held by another device - the rows left are not swept, its asks stay as shown`
+          `[PENDING] Group ${groupId}: the add lock is held by another device - the rows left stay pending for the next sweep, its asks stay as shown`
         );
         onGroupNotSwept?.(groupId);
       }
@@ -813,9 +813,64 @@ export async function processPendingInvitations(params: {
         // asking which leaf carries THIS package's key (`duplicateKeyHolder`).
         let packageAdded: Uint8Array | null = null;
         try {
-          // CLAIM ONE DEVICE'S PACKAGE, NEVER THE ACCOUNT'S. It is claimed before the leaf check
-          // below, so a fulfilled invitation (vouched) still discards it - that order is owed a
-          // decision (`docs/wiki/backlog.d/p2-what-the-key-package-claim-fix-left.md`).
+          // Idempotence: if the device's leaf is already in the MLS tree, the invitation is
+          // fulfilled - SKIP regardless of server status. Never kick here.
+          //
+          // An offline device will join via its already-queued Welcome when it reconnects;
+          // a device that has truly lost its state will itself emit a welcome_request
+          // (signal-driven path, with anti-livelock limiter in handleWelcomeRequest).
+          // Proactively kicking a valid leaf is purely harmful: it inflates the epoch on
+          // every sync, invalidates the queued Welcome (device receives a stale Welcome
+          // -> re-welcome_request -> churn) and resends the history bundle for nothing. This
+          // was the cause of repeated kick+re-add cycles on every reconnect for offline peer
+          // devices (status stuck at 'pending' because they never confirm 'active').
+          // Read the TREE, not the routing table - see `leafIsInLocalTree`. `=== true` because a
+          // tree we could not read is not a "no": it falls through to the Add exactly as the
+          // swallowed catch here used to, but says so first.
+          const alreadyALeaf = await leafIsInLocalTree({
+            mlsService,
+            groupId,
+            userId: inv.userId,
+            deviceId: inv.deviceId,
+            tag: '[PENDING]',
+            log,
+          });
+          if (alreadyALeaf === true) {
+            // AND THE ROW IS RETIRED, NOT JUST SKIPPED. Skipping answered this sync and left the
+            // `pending` row exactly as it found it, so every member of the group re-derived the
+            // same answer on every sync, for ever: production held 104 pending rows across 47
+            // groups on 2026-09-15, 98 of them older than a day and 19 thirteen days old, and one
+            // client's own startup trace spent 25 of its 31 invitations printing this line.
+            //
+            // The server has authorised this vouch since the endpoint was written - its docblock
+            // says a member confirming a fulfilled invitation "adds no new authority; it only
+            // stops getPendingInvitations from re-serving a device provably already in the tree
+            // every sync" - and no caller was ever written for it. The authority argument holds
+            // here specifically: this same local tree read is ALREADY trusted for the more
+            // dangerous decision, which is not to Add. Vouching risks nothing the skip does not.
+            //
+            // Best-effort and re-driven: a failure leaves the row pending and the next sync says
+            // this again, which is exactly today's behaviour.
+            vouchInvitationFulfilled(mlsService, inv, groupId, log);
+            log(
+              `[PENDING] ${inv.deviceId} already in tree for ${groupId} - invitation fulfilled, vouching`
+            );
+            continue;
+          }
+
+          // THIS ROW NEEDS A COMMIT, so the lock is taken now - before the package is claimed. The
+          // tree read above is as good as one read under the lock: the lock never made the local
+          // tree current (a holder's commit may still be in this device's queue when it releases),
+          // the server's epoch gate does - an Add staged on a tree another commit moved is refused
+          // and rebuilt below, its premise re-checked. A refusal ends this group's pass: the rows
+          // left stay `pending`, for the next sweep (`takeLockForAnAdd` says so, once).
+          if (!(await takeLockForAnAdd())) break;
+
+          // CLAIM ONE DEVICE'S PACKAGE, NEVER THE ACCOUNT'S - and only for an Add that will be
+          // built: AFTER the leaf check (a fulfilled invitation spends none) and AFTER the lock (a
+          // refused lock spends none). A revoked device already in the tree is then vouched rather
+          // than its row deleted, and that changes nothing: the server never serves its row
+          // (`getPendingInvitations` filters revoked devices) and refuses to activate it.
           // This read used to be the user's whole device list, which claims a one-time package from
           // EVERY device of theirs: production
           // 2026-11-06, a new device admitted to 131 groups by another device of the account
@@ -868,59 +923,6 @@ export async function processPendingInvitations(params: {
           }
 
           const targetDevice: DeviceKeyPackage = answer.device;
-
-          // Idempotence: if the device's leaf is already in the MLS tree, the invitation is
-          // fulfilled - SKIP regardless of server status. Never kick here.
-          //
-          // An offline device will join via its already-queued Welcome when it reconnects;
-          // a device that has truly lost its state will itself emit a welcome_request
-          // (signal-driven path, with anti-livelock limiter in handleWelcomeRequest).
-          // Proactively kicking a valid leaf is purely harmful: it inflates the epoch on
-          // every sync, invalidates the queued Welcome (device receives a stale Welcome
-          // -> re-welcome_request -> churn) and resends the history bundle for nothing. This
-          // was the cause of repeated kick+re-add cycles on every reconnect for offline peer
-          // devices (status stuck at 'pending' because they never confirm 'active').
-          // Read the TREE, not the routing table - see `leafIsInLocalTree`. `=== true` because a
-          // tree we could not read is not a "no": it falls through to the Add exactly as the
-          // swallowed catch here used to, but says so first.
-          const alreadyALeaf = await leafIsInLocalTree({
-            mlsService,
-            groupId,
-            userId: inv.userId,
-            deviceId: inv.deviceId,
-            tag: '[PENDING]',
-            log,
-          });
-          if (alreadyALeaf === true) {
-            // AND THE ROW IS RETIRED, NOT JUST SKIPPED. Skipping answered this sync and left the
-            // `pending` row exactly as it found it, so every member of the group re-derived the
-            // same answer on every sync, for ever: production held 104 pending rows across 47
-            // groups on 2026-09-15, 98 of them older than a day and 19 thirteen days old, and one
-            // client's own startup trace spent 25 of its 31 invitations printing this line.
-            //
-            // The server has authorised this vouch since the endpoint was written - its docblock
-            // says a member confirming a fulfilled invitation "adds no new authority; it only
-            // stops getPendingInvitations from re-serving a device provably already in the tree
-            // every sync" - and no caller was ever written for it. The authority argument holds
-            // here specifically: this same local tree read is ALREADY trusted for the more
-            // dangerous decision, which is not to Add. Vouching risks nothing the skip does not.
-            //
-            // Best-effort and re-driven: a failure leaves the row pending and the next sync says
-            // this again, which is exactly today's behaviour.
-            vouchInvitationFulfilled(mlsService, inv, groupId, log);
-            log(
-              `[PENDING] ${inv.deviceId} already in tree for ${groupId} - invitation fulfilled, vouching`
-            );
-            continue;
-          }
-
-          // THIS ROW NEEDS A COMMIT, so the lock is taken now. The tree read above is as good as one
-          // read under the lock: the lock never made the local tree current (a holder's commit may
-          // still be in this device's queue when it releases), the server's epoch gate does - an Add
-          // staged on a tree another commit moved is refused and rebuilt below, its premise
-          // re-checked. A refusal ends this group's pass: the rows left are another device's to
-          // serve (`takeLockForAnAdd` says so, once).
-          if (!(await takeLockForAnAdd())) break;
 
           // One staged transaction (C7-A): stage the Add, validate the epoch server-side, then
           // merge + broadcast on accept (excluding the inviter self and the newly-welcomed device)
@@ -1858,14 +1860,12 @@ export async function handleWelcomeRequest(params: {
   }
   welcomeRequestInProgress.add(groupId);
 
-  // Acquire the distributed lock to prevent races with
-  // processPendingInvitations on another device of the same group (default TTL, cf. H1)
-  const lockAcquired = await mlsService.acquireAddLock(groupId).catch(() => false);
-  if (!lockAcquired) {
-    log(`[WELCOME_REQ] Lock busy for ${groupId} - another device in progress, skip`);
-    welcomeRequestInProgress.delete(groupId);
-    return;
-  }
+  // THE ADD LOCK IS TAKEN ONCE AN ADD IS DECIDED, never for the checks that answer without one
+  // (the cooldown, a refused device, the anti-livelock limit): those are local reads, and a lock
+  // held for them refuses another device's real Add - an invitation included - in that second
+  // (`docs/wiki/frontend/modules/chat.md#nothing-takes-the-add-lock-it-does-not-commit-under-2026-11-17`).
+  // It is taken BEFORE the requester's package is claimed, so a refused lock spends none.
+  let lockHeld = false;
 
   // The package the Add or the replace is built from, kept for the catch: a duplicate key is
   // attributed by asking which leaf carries THIS package's key (`duplicateKeyHolder`).
@@ -1902,14 +1902,22 @@ export async function handleWelcomeRequest(params: {
     // (republish); here we simply stop looping.
     const prev = reAddAttempts.get(attemptKey);
     const attempt = prev && now - prev.first < READD_WINDOW_MS ? prev : { count: 0, first: now };
-    attempt.count += 1;
-    reAddAttempts.set(attemptKey, attempt);
-    if (attempt.count > MAX_READD_ATTEMPTS) {
+    if (attempt.count + 1 > MAX_READD_ATTEMPTS) {
       log(
-        `[WELCOME_REQ] ${requesterDeviceId.slice(0, 12)}... re-added ${attempt.count - 1}x in vain on ${groupId.slice(0, 8)}... - re-add suspended (fix needed client-side)`
+        `[WELCOME_REQ] ${requesterDeviceId.slice(0, 12)}... re-added ${attempt.count}x in vain on ${groupId.slice(0, 8)}... - re-add suspended (fix needed client-side)`
       );
       return;
     }
+
+    // The Add is decided: the lock now (see above). A refusal is another device's Add in progress
+    // - this request is not counted as an attempt, and the requester asks again by itself.
+    lockHeld = await mlsService.acquireAddLock(groupId).catch(() => false);
+    if (!lockHeld) {
+      log(`[WELCOME_REQ] Lock busy for ${groupId} - another device in progress, skip`);
+      return;
+    }
+    attempt.count += 1;
+    reAddAttempts.set(attemptKey, attempt);
 
     // Fetch a fresh KeyPackage for the requesting device.
     // If absent: the device has not yet published its KP -> cannot invite it.
@@ -2112,7 +2120,7 @@ export async function handleWelcomeRequest(params: {
       log(`[WELCOME_REQ] Error for ${requesterDeviceId}: ${errStr.slice(0, 100)}`);
     }
   } finally {
-    await mlsService.releaseAddLock(groupId).catch(() => {});
+    if (lockHeld) await mlsService.releaseAddLock(groupId).catch(() => {});
     welcomeRequestInProgress.delete(groupId);
   }
 }

@@ -755,6 +755,8 @@ describe('processPendingInvitations - the add lock is taken only for an Add', ()
     expect(mlsService.acquireAddLock).not.toHaveBeenCalled();
     expect(mlsService.releaseAddLock).not.toHaveBeenCalled();
     expect(mlsService.addMember).not.toHaveBeenCalled();
+    // A fulfilled invitation spends no one-time package either.
+    expect(mlsService.fetchDeviceKeyPackage).not.toHaveBeenCalled();
     expect(mlsService.updateInvitationStatus).toHaveBeenCalledTimes(2);
     expect(notSwept).not.toHaveBeenCalled();
   });
@@ -774,8 +776,13 @@ describe('processPendingInvitations - the add lock is taken only for an Add', ()
 
     await sweep(mlsService);
 
-    // `old-phone` is vouched before any lock; `peer-dev` needs the Add, which takes it.
+    // `old-phone` is vouched before any lock; `peer-dev` needs the Add, which takes it - and only
+    // then is its package claimed.
     expect(mlsService.acquireAddLock).toHaveBeenCalledTimes(1);
+    expect(mlsService.fetchDeviceKeyPackage).toHaveBeenCalledExactlyOnceWith('peer', 'peer-dev');
+    expect(vi.mocked(mlsService.acquireAddLock).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(mlsService.fetchDeviceKeyPackage).mock.invocationCallOrder[0]
+    );
     expect(vi.mocked(mlsService.updateInvitationStatus).mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(mlsService.acquireAddLock).mock.invocationCallOrder[0]
     );
@@ -802,6 +809,8 @@ describe('processPendingInvitations - the add lock is taken only for an Add', ()
     expect(mlsService.acquireAddLock).toHaveBeenCalledTimes(1);
     expect(mlsService.addMember).not.toHaveBeenCalled();
     expect(mlsService.releaseAddLock).not.toHaveBeenCalled();
+    // THE PACKAGE IS CLAIMED UNDER THE LOCK: a refused lock spends none of the device's pool.
+    expect(mlsService.fetchDeviceKeyPackage).not.toHaveBeenCalled();
     expect(notSwept).toHaveBeenCalledWith('g1');
   });
 });

@@ -8,7 +8,7 @@ import type {
 } from '$lib/utils/chat/groupCreation';
 import { FollowerTabCommitError } from '$lib/mls-client/commitSubmission';
 import { showToast } from '$lib/stores/toast.svelte';
-import { resolveDisplayNames } from '$lib/utils/users/displayName';
+import { getUserDisplayNameSync, resolveDisplayNames } from '$lib/utils/users/displayName';
 import { MemberRemovalNotCommittedError } from './memberRemovalError';
 import type { DelegationRefusal } from './tabCommitDelegation';
 
@@ -122,6 +122,7 @@ const INVITE_SENTENCES: Record<BulkAdditionRefusal, () => string> = {
   'nobody-reachable': () => m.chat_invite_error_nobody_reachable(),
   'no-devices': () => m.chat_invite_error_no_devices(),
   'add-lock-busy': () => m.chat_invite_error_add_lock_busy(),
+  'add-lock-owed': () => m.chat_invite_error_add_lock_owed(),
   'add-lock-unanswered': () => m.chat_invite_error_unreachable(),
   'no-device-added': () => m.chat_invite_error_no_device_added(),
   'commit-race-lost': () => m.chat_invite_error_commit_race_lost(),
@@ -140,20 +141,30 @@ const INVITE_SENTENCES: Record<BulkAdditionRefusal, () => string> = {
  */
 const INVITE_WARNINGS: ReadonlySet<BulkAdditionRefusal> = new Set([
   'outcome-unknown',
+  'add-lock-owed',
   'unreachable',
   'add-lock-unanswered',
 ]);
 
 /**
- * The refusals said with the names of the people left out (owner, 2026-11-17: an invitation that
- * added nobody says so, naming who is missing). Not `nobody-named` - there is nobody to name - nor
- * `outcome-unknown`, which is no refusal: its commit is kept and finishes by itself.
+ * The outcomes said with the names of the people not added (owner, 2026-11-17: an invitation that
+ * added nobody says so, naming who is missing) - every one but `nobody-named`, which has nobody to
+ * name, and `outcome-unknown`, which is no refusal: its commit is kept and finishes by itself.
  */
 const NAMES_THE_MISSING: ReadonlySet<BulkAdditionRefusal> = new Set(
   (Object.keys(INVITE_SENTENCES) as BulkAdditionRefusal[]).filter(
     (r) => r !== 'nobody-named' && r !== 'outcome-unknown'
   )
 );
+
+/**
+ * The sentence naming `names`: the owed invitation says when it will finish; every refusal says who
+ * was not added, then why.
+ */
+function namedInviteSentence(reason: BulkAdditionRefusal, names: string): string {
+  if (reason === 'add-lock-owed') return m.chat_invite_owed_add_lock_named({ names });
+  return m.chat_invite_not_added({ names, reason: INVITE_SENTENCES[reason]() });
+}
 
 /**
  * Tells the member that an invitation they made added nobody, and why - read from the outcome's
@@ -169,15 +180,20 @@ const NAMES_THE_MISSING: ReadonlySet<BulkAdditionRefusal> = new Set(
  * second line here would be the same fact said twice.
  *
  * @param reason - the refusal `inviteMembersToGroup` returned.
- * @param names - the display names of the people invited, already joined: the sentence then
- *   starts by naming them ({@link NAMES_THE_MISSING}).
+ * @param invited - the user ids the invitation named: the sentence names them, for every outcome
+ *   in {@link NAMES_THE_MISSING}.
  */
-export function reportBulkAdditionRefusal(reason: BulkAdditionRefusal, names?: string): void {
-  const sentence = INVITE_SENTENCES[reason]();
+export function reportBulkAdditionRefusal(
+  reason: BulkAdditionRefusal,
+  invited: readonly string[] = []
+): void {
+  // Named FROM THE LOCAL CACHE, and only for the outcomes that show names: the people were just
+  // chosen in a panel that drew their names, and a refusal - an offline one first - must not wait on
+  // the network to be said. An id the cache lacks is said as itself.
   const message =
-    names !== undefined && NAMES_THE_MISSING.has(reason)
-      ? m.chat_invite_not_added({ names, reason: sentence })
-      : sentence;
+    invited.length > 0 && NAMES_THE_MISSING.has(reason)
+      ? namedInviteSentence(reason, invited.map((id) => getUserDisplayNameSync(id, id)).join(', '))
+      : INVITE_SENTENCES[reason]();
   if (INVITE_WARNINGS.has(reason)) showToast(message, 'warning');
   else showToast(message);
 }
@@ -196,24 +212,17 @@ export async function reportBulkAdditionOutcome(
   invited: readonly string[] = []
 ): Promise<void> {
   if (outcome.kind === 'not-added') {
-    reportBulkAdditionRefusal(
-      outcome.reason,
-      invited.length > 0 ? await namesOfIds(invited) : undefined
-    );
+    reportBulkAdditionRefusal(outcome.reason, invited);
     return;
   }
   if (outcome.leftOut?.length) await reportLeftOut(outcome.leftOut);
 }
 
-/** The display names of `ids`, joined for a sentence - an id where no name resolves. */
-async function namesOfIds(ids: readonly string[]): Promise<string> {
-  const nameOf = await resolveDisplayNames([...ids]);
+/** The display names of `people`, joined for a sentence - an id where no name resolves. */
+async function namesOf(people: readonly InviteeLeftOut[]): Promise<string> {
+  const ids = people.map((p) => p.userId);
+  const nameOf = await resolveDisplayNames(ids);
   return ids.map(nameOf).join(', ');
-}
-
-/** The display names of `people`, joined for a sentence. */
-function namesOf(people: readonly InviteeLeftOut[]): Promise<string> {
-  return namesOfIds(people.map((p) => p.userId));
 }
 
 /**

@@ -1291,8 +1291,18 @@ export interface IMlsService {
    * {@link acquireAddLock} naming WHY a refusal happened: `held` - the server answered that another
    * device holds the lock; `unanswered` - a transport error or a non-2xx answer, which says nothing
    * about anyone else.
+   *
+   * `oweIfHeld`: a member's first invitation, asked for only when the server answered `held`. The
+   * invitation it returns is RECORDED as owed (`owedInvitations.ts`, at this group's current epoch)
+   * before the refusal arms its wake, and the answer is `owed`: it is re-planned by the events that
+   * end another device's lock - the server-stated end of the lock, a commit applied in the group, the
+   * next connection - exactly as a lost invitation waiting on `add-lock` is. `null` (its roster
+   * baseline unreadable) records nothing, and the answer stays `held`.
    */
-  acquireAddLockAnswer(groupId: string): Promise<'taken' | 'held' | 'unanswered'>;
+  acquireAddLockAnswer(
+    groupId: string,
+    oweIfHeld?: () => Promise<CommitInvitation | null>
+  ): Promise<'taken' | 'held' | 'owed' | 'unanswered'>;
   /** Releases the lock acquired via acquireAddLock. */
   releaseAddLock(groupId: string): Promise<void>;
   /**
