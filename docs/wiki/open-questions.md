@@ -506,7 +506,13 @@ Two shapes, and the choice is the user's:
 started - it is a real work package, and NOTIF-12 records the current behaviour rather than failing
 on it, so nothing here blocks the campaign.
 
-### QUESTION - a reconciler's SILENCE means both "we agree" and "nobody answered", and only one of them is safe to escalate on
+### ~~QUESTION - a reconciler's SILENCE means both "we agree" and "nobody answered", and only one of them is safe to escalate on~~
+
+**ANSWERED 2026-11-17, by a fourth option.** The agreeing responder acks only when the ask carries the
+asker's proof of incompleteness (`incomplete: true` on the probe, answered by `history_cannot_repair`),
+so the ack costs nothing on the common path and the walk past an agreeing member advances on an
+answer rather than on a silence ([history-reconciliation](protocols/history-reconciliation.md#the-fix-the-walk-advances-on-an-answer-built-2026-11-17)).
+The text below is kept for why the other options were not taken.
 
 Split out of the responder P1 on 2026-09-08, when that entry closed on its measurement. **The defect
 is fixed and measured; what is left is a design choice nobody has made**, which is why it belongs
