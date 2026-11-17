@@ -7,6 +7,6 @@ member may start a live; the v1 bitrate is fixed at launch by the server from th
 transcoding, no mid-live change). Built since: the WP-L7 card ("{name} est en live"), and the gate list
 and the return with `1.5.4` ([live-production](../frontend/modules/live-production.md)). What is still
 owed is in the entries: WP-L8's moderation is closed in code and owes [its readings](reading-owed-live-moderation-pushes-lift-and-the-lives-switch.md),
-the [viewer cap](live-viewer-cap-lifted-in-measured-steps.md), and [WP-L6, the chat](p2-live-chat-and-floating-reactions-wp-l6-shipped-behind-lives-mode-21.md).
+the [viewer cap](live-viewer-cap-lifted-in-measured-steps.md), and [WP-L6, the chat](reading-owed-lives-on-both-phones-watching-broadcasting-chat-and-reactions.md).
 The question to the school IT department matters only if an audience would exceed the shared host's
 nginx connection budget (G14, half answered in live-production).

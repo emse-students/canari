@@ -124,4 +124,17 @@ describe('the other direction (h)', () => {
       );
     }
   });
+
+  it('opens only what the v1 composer can write: past 300 UTF-16 units is out-of-format (review G7)', async () => {
+    // The server stores up to 928 sealed bytes - 900 of text - so a modified client could post a
+    // line three times the composer's length; it must never be drawn.
+    const longest = await sealLiveChatMessage(KEY, LIVE, CLIENT, ALICE, 'x'.repeat(300));
+    expect(await openLiveChatMessage(KEY, LIVE, CLIENT, ALICE, longest)).toHaveLength(300);
+    const over = await sealLiveChatMessage(KEY, LIVE, CLIENT, ALICE, 'x'.repeat(301));
+    expect(await reason(openLiveChatMessage(KEY, LIVE, CLIENT, ALICE, over))).toBe('out-of-format');
+    const pairs = await sealLiveChatMessage(KEY, LIVE, CLIENT, ALICE, '🐤'.repeat(151));
+    expect(await reason(openLiveChatMessage(KEY, LIVE, CLIENT, ALICE, pairs))).toBe(
+      'out-of-format'
+    );
+  });
 });

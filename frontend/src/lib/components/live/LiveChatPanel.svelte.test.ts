@@ -260,6 +260,13 @@ describe('LiveChatPanel', () => {
     expect(runs[1].textContent).toBe('‮evil');
   });
 
+  it('draws a line as ONE run: line breaks a modified client sealed collapse, never stack (review G7)', () => {
+    const { target } = render({ lines: [line({ text: `a${'\n'.repeat(40)}b` })] });
+    const text = target.querySelectorAll('[data-live-chat-line] bdi')[1];
+    expect(text.className).not.toMatch(/whitespace-pre/);
+    expect(text.className).toMatch(/whitespace-normal/);
+  });
+
   it('names my own line "You"', () => {
     const { target } = render({ lines: [line({ authorId: ME, mine: true })] });
     expect(target.querySelector('[data-live-chat-line]')!.textContent).toContain(m.live_chat_you());

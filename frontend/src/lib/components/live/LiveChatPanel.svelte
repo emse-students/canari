@@ -247,8 +247,10 @@
               {#if hostId !== null && line.authorId === hostId.toLowerCase()}
                 <span class="live-chat-host" data-live-chat-host>{m.live_chat_host()}</span>
               {/if}
-              <bdi class="whitespace-pre-wrap" dir="auto"><LiveChatLineText text={line.text} /></bdi
-              >
+              <!-- ONE run: a live chat line is one line (the composer is single-line), so line
+                   breaks a modified client sealed collapse instead of stacking over the video
+                   (review G7, 2026-11-17). -->
+              <bdi class="whitespace-normal" dir="auto"><LiveChatLineText text={line.text} /></bdi>
               {#if line.status === 'pending'}
                 <span class="sr-only">{m.live_chat_pending()}</span>
               {/if}
