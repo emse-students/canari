@@ -180,7 +180,28 @@ a ~100 Mb/s shaping on the VM or the School link fits it, so does the path betwe
 and the School. It is ONE client at ONE hour. Campus viewers on the School LAN may not cross the
 border at all, and that path is **unmeasured**.
 
-**What it means in viewers, at the measured ~90-107 Mb/s:**
+**Re-measured 2026-11-17 from two other clients: the ~90-107 Mb/s plateau was the WORKSTATION's
+path, not the host's.** Owner-approved, from two client hosts of the owner's own (never the shared
+host), downloading a production static file of 1 MB, cache-busted, `accept-encoding: identity`;
+every request answered `200`. Each client's own control (a download that does not touch our host)
+is given to show which side binds.
+
+| Client | TCP connect | Its own control | 1 conn | 5 conn | 20 conn | 50 conn |
+| --- | --- | --- | --- | --- | --- | --- |
+| near the school's network | 2.4 ms | 498 Mb/s | ~150 Mb/s | ~452 Mb/s | **~600-660 Mb/s** | ~517 Mb/s |
+| far | 41 ms | 85 Mb/s | - | - | plateau **~80 Mb/s** | - |
+
+**Reading.** The near client went past its own control figure and reached ~600-660 Mb/s at 20
+connections, so **the host serves at least ~600 Mb/s to a close client**; the far client stopped at
+its OWN link (80 of its 85 Mb/s), which says nothing about the host. The border path for far
+viewers is still unmeasured beyond 85 Mb/s, and the host's link is shared with the other sites on it
+(the share lives may take is the school IT department's to agree, G14). **Every figure built on the
+~90 Mb/s - the viewer table below, `LIVE_HOST_EGRESS_BPS` and the 24-seat live cap - rests on the
+wrong number** ([re-derive it](../backlog.d/live-host-egress-constant-rests-on-the-workstation-path.md),
+[live-scaling](../frontend/modules/live-scaling.md#3-the-recommendation)).
+
+**What it means in viewers, at the ~90-107 Mb/s of 2026-10-15** (the workstation's path - a floor,
+not the host's ceiling, since 2026-11-17):
 
 | Per-viewer bitrate | Viewers before the ceiling |
 | --- | --- |

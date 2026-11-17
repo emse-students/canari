@@ -43,8 +43,9 @@
       if (err.isLiveNotFound) return { text: m.live_chat_report_gone(), close: true };
       if (err.isLiveChatReportMismatch)
         return { text: m.live_chat_report_mismatch(), close: false };
-      // Over the server's 900 UTF-8 bytes. The client sets no bound of its own: a line another
-      // client sent can exceed the composer's 300 characters and is still reportable.
+      // Over the server's 900 UTF-8 bytes. Unreachable from a drawn line since the v1 bound: a line
+      // past 300 UTF-16 units is out-of-format and never drawn, so never reported (review of #3783);
+      // kept as the server's answer to an older client that drew one.
       if (err.isLiveChatReportInvalid) return { text: m.live_chat_report_too_long(), close: false };
       // 503: the server cannot sign, so the evidence cannot be kept and nothing is filed.
       if (err.isLiveReportSigningUnavailable) {

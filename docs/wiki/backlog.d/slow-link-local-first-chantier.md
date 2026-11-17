@@ -1,6 +1,13 @@
 ## P2 - the slow-link chantier: no screen waits for the network to draw (owner, 2026-11-10; starts right after 1.6.10)
 
-target: 1.7.0
+target: 1.7.1
+
+_2026-11-17: moved to 1.7.1 by the owner's 2026-11-17 scope cut ([decisions](owner-decisions-of-2026-11-17.md))._
+_The same day the owner moved the community-open **200 ms budget** here: the
+[community entry](p1-opening-a-community-f1-f7-built-the-200-ms-budget-is-what-is-left-user-2026.md)
+closes for `1.7.0` on #3769's reading, and its "what is left" list (the `Icon` count, whatever the
+`--chain` run names, the section 7 readings of
+[community-open-budget](../frontend/community-open-budget.md)) is carried on by this chantier._
 
 **Decision.** The owner, 2026-11-10: *"a slow connection is common and a real plague"*. The chantier
 starts right after `1.6.10` and is carried to the end, not abandoned at the first improvement.

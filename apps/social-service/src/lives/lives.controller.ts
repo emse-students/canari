@@ -167,9 +167,11 @@ export class LivesController {
   /**
    * Starts a live: `{ key: <64 hex>, associationId?: <uuid>, acceptedRulesVersion?: <int> }`. 409 if
    * the caller has one open; 403 `LIVE_RULES_NOT_ACCEPTED` while the first-live rules are not
-   * accepted (send `acceptedRulesVersion` when the member tapped Start on them).
+   * accepted (send `acceptedRulesVersion` when the member tapped Start on them). `no-store`: the
+   * answer echoes the live key, and a key never sits in any cache (review G7, 2026-11-17).
    */
   @Post()
+  @Header('Cache-Control', 'no-store')
   start(
     @Headers('x-user-id') userId: string,
     @Body()
