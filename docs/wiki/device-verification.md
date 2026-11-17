@@ -4369,3 +4369,31 @@ Mi 9T, `1.7.0-alpha.6` (`versionCode` `100700006`, read with `dumpsys package`),
 **Traps met.** `adb input tap` on the comment send arrow while the AdbKeyboard bar is up lands on the IME's "Switch IME" row (the layout moved): click the button with `document.querySelector('[aria-label="Envoyer le commentaire"]').click()`. A hardware Back with the comments sheet open and the keyboard up closes the sheet. A tap computed before the pre-live sheet's layout settles misses "Demarrer le live": read its rectangle again after the title fill, then tap.
 
 Dev data written (all in `WRITTEN-IDS.txt`, undone through the product): two lives of `alpha` (ended on the phone) and one of `beta` (ended from W2), community `NPK1` (made, populated and deleted by `beta` from W2); no comment landed. **Phone state at the end:** `1.7.0-alpha.6`, `alpha` signed in and unlocked on the feed, font scale 0.85, density 396 (436 css px), Wi-Fi and mobile data on.
+
+## The decision (20) review of 2026-11-17 - each deletion re-verified against what the bench can stage
+
+Scope: every reading deleted under owner decisions (16) and (20) in the pull requests merged from 2026-11-16 to 2026-11-17 (the Mi 9T readings-ready, uninstall, fifth, sixth and night sittings, the iPhone sixth, seventh and eighth sittings, and #3697 and #3695). The test applied: could the bench (Mi 9T, iPhone 12, web seats, `alpha` `beta` `gamma` `delta`, the dev estate; no Pixel, no production write, no host change) stage it in under an hour, by a product gesture, a CDP override, an older release APK, or the other phone's recorder? **Restored** below carry a dated line in their entry; every other deletion is confirmed.
+
+| Deleted reading | Verdict | Reason or how to stage |
+| --- | --- | --- |
+| Seed mirror step 5 and the push-writer steps 2, 4, 6 | **RESTORED** | A fresh install of `v1.6.7-alpha.1` with one account, updated, its device removed from its web seat (the way the partial reading was taken); a release APK has a push token |
+| "Modifier les pseudos" item 5 (older build in the same group) | **RESTORED** | Same install of `v1.6.7-alpha.1` (older than `v1.6.9-alpha.1`, accepted by the floor). Its "row 3" stays deleted: no text defines it |
+| "Voir plus", the zero-bottom-inset phone | **RESTORED** | CDP override of `--safe-area-inset-bottom` to 0 on the Mi, the same emulation as the 360 px density rows |
+| CanaReels viewer swipe frame timing, iPhone | **RESTORED** | Control Center screen recording, pulled over AFC, frames counted |
+| "Server already unreachable", Mi half | **half stays deleted, line RESTORED on a web seat** | CDP `Fetch` holding the requests; the module is shared code |
+| 360 css px small Android (on-air top row, viewer bar) | confirmed | Read by `wm density` emulation on the Mi; no more hardware needed |
+| Android 9-12, a second Android 13+ maker, iPad Split View | confirmed | Hardware the bench lacks (decision 16) |
+| Rotation lock-OFF physical turn, Mi | confirmed | The app sees the same configuration change from `wm user-rotation`, already read |
+| Longest display name on a live | confirmed | The name comes from the identity provider; no product gesture edits it |
+| Universal link on the real host | confirmed | The entitlements associate only the production hosts; a read needs a production write |
+| PK2 (a) answering a `welcome_request`, PK2 (b) the app opened inside a Welcome round trip, PK2 (c) push-join route | confirmed | (a) needs a join failing for a reason the rig cannot build (a close call: a CDP-forced 5xx on a web seat's external commit might, unproven), (b) is a timed coincidence, (c) needs the admitter offline, which breaks the community |
+| F1 deep-link `url` runs and the App Group half, sealed-cache header and NSE cache, re-key hold time | confirmed | The timings were read through the notification tap (F1's claim holds); the header needs a code change to the bench IPA, the NSE copy a real APNs credential on a build whose container cannot be read |
+| Sealed caches, Mi: legacy pass, "file opened on the other phone", new-backup notice | confirmed | A pre-seal build the server still accepts does not exist (floor `v1.6.6` is later than the seal); a debuggable APK would need a CI build and the local estate (over the hour) |
+| First share's copies leaving the disk (Mi) | confirmed | A release build refuses `run-as` |
+| History ask, Mi premise | confirmed | The web rig read the three-account case (PASS) and the Mi's ring holds the ask, the answer and three starts with no re-ask; the Mi's join hands it a seed |
+| Salon-invitation notice, account C | confirmed | Needs a third account that is neither inviter nor invitee on the Mi; the web half passed |
+| Openings for followers, production booking-space event | confirmed | A production write; the dev openings read PASS 3 of 3 |
+| Call noise, iPhone `unavailable` WARN | confirmed | Read PASS from the pulled log |
+| "Envoyer a..." rows (Mi sixth sitting, iPhone eighth sitting) | nothing was deleted | Rows left (Mi 1, 8, 12; iPhone 9, 11 group) are still owed in the entry, not deleted |
+
+**Open pull request #3753 (the iPhone night sitting, not merged when this review ran)** deletes four things that this review judges stageable, to be restored there or after it merges: the history ask's iPhone half (the answerers can be `alpha` and `beta` web seats, as in the web rig reading; "gamma and delta alone" was a scope limit of that sitting, not of the bench), the institution TEXT post's edit form on the iPhone (grant `gamma` a manager role of the institution through the product's members panel on dev), the "Reconnexion..." pill of the on-air row (Control Center's airplane switch keeps the app on screen, as the seventh and eighth sittings used it), and the rotation rows (the lock ON was set from Control Center in the seventh sitting; the lock-OFF turn is a WDA orientation set; only the iPad-like resize stays deleted). That pull request also deletes the CanaReels composer entry as "every half read" while the iPhone frame timing, restored above, was not measured.
