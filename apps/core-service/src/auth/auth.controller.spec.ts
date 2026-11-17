@@ -85,8 +85,11 @@ function signRefresh(claims: Record<string, unknown>): string {
   return jwt.sign(claims, JWT_SECRET, { expiresIn: '7d' });
 }
 
-function signAccess(sub: string, admin = false): string {
-  return jwt.sign({ sub, admin }, JWT_SECRET, { expiresIn: '1h' });
+/** An access token as the one issuer mints it - naming its session - or, with `sid: null`, without. */
+function signAccess(sub: string, admin = false, sid: string | null = 'sid-of-the-token'): string {
+  return jwt.sign(sid === null ? { sub, admin } : { sub, admin, sid }, JWT_SECRET, {
+    expiresIn: '1h',
+  });
 }
 
 describe('AuthController sessions', () => {
@@ -1314,28 +1317,23 @@ describe('AuthController sessions', () => {
     });
 
     /**
-     * A TOKEN NAMING NO SESSION IS ACCEPTED, BY CONSTRUCTION: the one issuer always writes `sid`, so
-     * such a token was minted before the deploy and dies by its own `exp` within one token lifetime.
-     * No session is read for it, X-Session-Id stays empty, and the acceptance is said once per
-     * process, not per request.
+     * A TOKEN NAMING NO SESSION IS REFUSED, like an ended one. The one issuer has written `sid` since
+     * 2026-10-25 and an access token lives one hour, so no legitimate token lacks it any more; the
+     * acceptance kept for the deploy's hour is gone (docs/wiki/legacy-compatibility.md).
      */
-    it('accepts an unexpired access token that names no session, without a read, said once', async () => {
-      const said = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    it('answers anonymous for an access token that names no session, without a read, at warn', async () => {
+      const warned = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
       try {
-        for (let i = 0; i < 3; i++) {
-          const out = makeRes();
-          await controller.verify(makeReq({ bearer: signAccess('user-1') }), out.res);
-          expect(out.headers['X-Logged-In']).toBe('true');
-          expect(out.headers['X-User-Id']).toBe('user-1');
-          expect(out.headers['X-Session-Id']).toBe('');
-        }
+        const out = makeRes();
+        await controller.verify(makeReq({ bearer: signAccess('user-1', false, null) }), out.res);
+        expect(out.status()).toBe(200);
+        expect(out.headers['X-Logged-In']).toBe('false');
+        expect(out.headers['X-User-Id']).toBe('');
+        expect(out.headers['X-Session-Id']).toBe('');
         expect(sessions.isLive).not.toHaveBeenCalled();
-        const legacyLines = said.mock.calls.filter((c) =>
-          String(c[0]).includes('naming no session')
-        );
-        expect(legacyLines).toHaveLength(1);
+        expect(warned.mock.calls.some((c) => String(c[0]).includes('names no session'))).toBe(true);
       } finally {
-        said.mockRestore();
+        warned.mockRestore();
       }
     });
 
