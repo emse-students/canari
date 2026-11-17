@@ -29,7 +29,13 @@ import { answerHistoryDigest, pullFromOverheardDigest } from '$lib/utils/chat/hi
 import { parseHistoryDigest, selectEntryIdsForPrefixes } from '$lib/utils/chat/historyManifest';
 import { mergeHistoryFloor, parseHistorySince } from '$lib/utils/chat/historyWindow';
 import { parseHistoryStateKey } from '$lib/utils/chat/historyStateKey';
-import { answerAfterMailboxDrained, noteCoverageShortfall } from '$lib/utils/chat/historyReconcile';
+import {
+  answerAfterMailboxDrained,
+  holdsUnrepairedProof,
+  noteCannotRepair,
+  noteCoverageShortfall,
+  noteRepairLanded,
+} from '$lib/utils/chat/historyReconcile';
 import { owedPullTicket } from '$lib/utils/chat/historyOverheardPull';
 import { dropOwnExcludedMessages } from '$lib/utils/chat/historyEntitlement';
 import {
@@ -733,7 +739,14 @@ export async function handleSystemEvent(
       log(`[HISTORY_STATE] No window stated by ${senderNorm} for ${convoKey.slice(0, 8)}…`);
       return true;
     }
-    noteProbeReceived(convoKey, from, { kind: 'state', key, since });
+    // `incomplete` is read as a strict `true`: anything else is an ordinary probe, which is what
+    // every older build sends.
+    noteProbeReceived(convoKey, from, {
+      kind: 'state',
+      key,
+      since,
+      ...(data?.incomplete === true ? { incomplete: true } : {}),
+    });
     log(
       `[HISTORY_STATE] From ${senderNorm} for ${convoKey.slice(0, 8)}… - ${key}, from ${since > 0 ? new Date(since).toISOString() : 'the beginning'}`
     );
@@ -754,13 +767,20 @@ export async function handleSystemEvent(
     // OUR MAILBOX FIRST: a digest computed while this device is still applying its own queue
     // describes a store it is in the middle of completing, so the asker diffs against a snapshot
     // that was already wrong when it was taken.
+    // The digest carries the same proof the state key did, read again NOW: a repair that landed in
+    // between discharged it, and this second leg must not claim a gap that is closed.
     answerAfterMailboxDrained(mlsService, convoKey, () =>
-      sendHistoryDigest(convoKey, me, {
-        storage,
-        deviceKeyB64: deviceKey(),
-        mlsService,
-        log,
-      }).catch((e) =>
+      sendHistoryDigest(
+        convoKey,
+        me,
+        {
+          storage,
+          deviceKeyB64: deviceKey(),
+          mlsService,
+          log,
+        },
+        holdsUnrepairedProof(convoKey)
+      ).catch((e) =>
         log(`[HISTORY_DIGEST] Could not answer ${senderNorm}: ${String(e).slice(0, 120)}`)
       )
     );
@@ -787,11 +807,13 @@ export async function handleSystemEvent(
     }
     const requestId = historyAskId(data, senderNorm, convoKey, log, 'HISTORY_DIGEST');
     if (requestId === null) return true;
+    const incomplete = data?.incomplete === true;
     const takenByAWaiter = noteProbeReceived(convoKey, from, {
       kind: 'digest',
       digest,
       since,
       requestId,
+      ...(incomplete ? { incomplete: true } : {}),
     });
     const size =
       digest.mode === 'ids'
@@ -828,6 +850,7 @@ export async function handleSystemEvent(
           digest,
           since,
           requestId,
+          incomplete,
           deps: { storage, deviceKeyB64: deviceKey(), mlsService, log },
         }).catch((e) =>
           log(
@@ -928,6 +951,22 @@ export async function handleSystemEvent(
     ).catch((e) =>
       log(
         `[HISTORY_COVERAGE] Chase failed for ${convoKey.slice(0, 8)}…: ${String(e).slice(0, 120)}`
+      )
+    );
+    return true;
+  }
+
+  // A member we asked while holding frames we cannot read compared its store against ours and holds
+  // nothing we lack - so it cannot be the one that repairs them. THE WALK ADVANCES ON THIS ANSWER:
+  // it is excluded and another member elected (HEAL-repair, the coin flip of 2026-09-08).
+  if (event === 'history_cannot_repair') {
+    const me = digestIdentity(userId, mlsService.getDeviceId());
+    if (String(data?.to ?? '').toLowerCase() !== me.toLowerCase()) return true;
+    const from = probeSender(data, senderNorm, log, 'HISTORY_RECONCILE');
+    if (!from) return true;
+    void noteCannotRepair(mlsService, convoKey, from, log).catch((e) =>
+      log(
+        `[HISTORY_RECONCILE] Walk past ${from} failed for ${convoKey.slice(0, 8)}…: ${String(e).slice(0, 120)}`
       )
     );
     return true;
@@ -1610,6 +1649,10 @@ export async function handleSystemEvent(
           log(
             `[HISTORY_BUNDLE] ${toAdd.length} messages received for ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)}`
           );
+          // THE REPAIR LANDED - the one thing that discharges a proof of incompleteness. Our store
+          // changed, so every member that said it holds nothing we lack compared against a store
+          // this device no longer has (`historyReconcile.ts`, `unrepaired`).
+          noteRepairLanded(convoKey, senderNorm.slice(0, 8), log);
           if (batchAddMessages) {
             // A RESTORE, AND THE WHOLE POINT OF THE DISTINCTION. A member answered this device's
             // ask with its own archive; every message in it has been delivered before, which is why
