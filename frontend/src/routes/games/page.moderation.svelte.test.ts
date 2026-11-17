@@ -18,6 +18,7 @@ const api = vi.hoisted(() => ({
   unban: vi.fn(),
 }));
 const admin = vi.hoisted(() => ({ value: true }));
+const replayOpened = vi.hoisted(() => [] as string[]);
 const confirmAnswer = vi.hoisted(() => ({ value: true, asked: [] as string[] }));
 
 vi.mock('$lib/minesweeper/api', async (importOriginal) => ({
@@ -33,6 +34,12 @@ vi.mock('$lib/minesweeper/api', async (importOriginal) => ({
 }));
 vi.mock('$lib/stores/user', () => ({ currentUserId: () => 'u-1' }));
 vi.mock('$lib/components/settings/MinesweeperModal.svelte', () => ({ default: () => {} }));
+// The replay viewer has its own test; here only WHICH score it is opened on matters.
+vi.mock('$lib/components/games/MinesweeperReplay.svelte', () => ({
+  default: (_anchor: unknown, props: { scoreId: string }) => {
+    replayOpened.push(props.scoreId);
+  },
+}));
 vi.mock('$lib/stores/userState.svelte', () => ({ globalAdminState: () => admin.value }));
 vi.mock('$lib/stores/confirm.svelte', () => ({
   showConfirm: async (message: string) => {
@@ -78,6 +85,7 @@ beforeEach(() => {
   admin.value = true;
   confirmAnswer.value = true;
   confirmAnswer.asked = [];
+  replayOpened.length = 0;
   api.leaderboard.mockResolvedValue({ entries: ENTRIES, total: ENTRIES.length });
   api.bans.mockResolvedValue(BANS);
   api.me.mockResolvedValue({ personalBestMs: null, rank: null });
@@ -120,6 +128,7 @@ describe('Games page - moderation', () => {
     await openLeaderboard();
     expect(button('Retirer ce score')).toHaveLength(2);
     expect(button('Bannir ce joueur')).toHaveLength(2);
+    expect(button('Revoir cette partie')).toHaveLength(2);
     expect(document.body.textContent).toContain('Mallory');
     expect(button('Débannir')).toHaveLength(1);
   });
@@ -129,6 +138,7 @@ describe('Games page - moderation', () => {
     await openLeaderboard();
     expect(button('Retirer ce score')).toHaveLength(0);
     expect(button('Bannir ce joueur')).toHaveLength(0);
+    expect(button('Revoir cette partie')).toHaveLength(0);
     expect(api.bans).not.toHaveBeenCalled();
   });
 
@@ -140,6 +150,15 @@ describe('Games page - moderation', () => {
     expect(confirmAnswer.asked[0]).toContain('Bob');
     expect(api.remove).toHaveBeenCalledExactlyOnceWith('s2');
     expect(api.leaderboard).toHaveBeenCalled();
+  });
+
+  it('opens the replay of the row it was pressed on, without asking anything', async () => {
+    await openLeaderboard();
+    expect(replayOpened).toEqual([]);
+    button('Revoir cette partie')[1].click();
+    await settle();
+    expect(replayOpened).toEqual(['s2']);
+    expect(confirmAnswer.asked).toEqual([]);
   });
 
   it('bans the player of that row, after asking', async () => {

@@ -1,8 +1,8 @@
 # Content-free push - the whole design (2026-11-04)
 
 **Step 1 built (switch OFF); WP-W3, the server half of step 2 (the envelope), built 2026-11-07
-behind the same switch and inert until a client declares version 2 (WP-W4); everything else is
-design.** Owner, 2026-11-04: start with the design. Goal: what
+behind the same switch and inert until a client declares version 2 (WP-W4); WP-W6 (`call_ring_end`
+without `groupId`) built 2026-11-17, unswitched; everything else is design.** Owner, 2026-11-04: start with the design. Goal: what
 Google (FCM) and Apple (APNs) receive is a wake-up and nothing they can read beyond it; the device
 fetches the rest from our server over our own TLS, decrypts it locally and builds the notification
 itself. The backlog entry is
@@ -36,7 +36,7 @@ so either reading leaks nothing more.
 | **Join ask** (a person asks to join a group conversation) | `pushJoinAsk` (`utils/join-ask-announce.ts`, from `invitations.controller.ts`) -> `sendPushToUser` | `type=social`, `contentKey` (the join-ask key), `actorName` (the asker's name), `contentArg` (the group's name), `deepLink` (`chat/<groupId>`), `groupId`, `senderId` (the asker); title = the asker's name, body = the French legacy sentence naming the asker and the group | no |
 | **Welcome request pending** (wake the other members so one of them admits a device) | `sendFcmWelcomeRequestPending` (`messaging.service.ts`, its own direct `getMessaging().send`) - `notifyWelcomeRequest` itself is a WebSocket signal | `type=welcome_request_pending`, `groupId`, `requesterUserId`, `requesterDeviceId`; Android high priority, iOS a background push (`content-available`), to every token of every other member | no |
 | **Call ring** | `CallsService` (`calls.service.ts`): Android and VoIP-less iPhones through FCM (`ringViaFcm`), iPhones with a VoIP token through APNs VoIP direct (`apns-voip.service.ts`, `call-ring-payload.ts`) | ids only since decision 6: `type=call_ring`, `groupId`, `callId`, `callerId`, `hasVideo`, and on VoIP `ringUntil`; the FCM iOS alert is generic (`Canari` / `Appel entrant`) | no - and see section 6 |
-| **Ring end** | `CallsService.endRing` | `type=call_ring_end`, `groupId`, `callId`, `reason` (`cancelled`, `answered` or `ended`); silent / background, to EVERY token of EVERY admitted member | no |
+| **Ring end** | `CallsService.endRing` | `type=call_ring_end`, `callId`, `reason` (`cancelled`, `answered` or `ended`) - **no `groupId` since WP-W6 (2026-11-17)**; silent / background, to EVERY token of EVERY admitted member | no - and see section 6 |
 
 **On iOS the legacy sentences are what the lock screen shows when the extension does not run**: for a
 social push, a reaction and a join ask, `title` / `body` are the visible `aps.alert`
@@ -376,6 +376,15 @@ ships (WP-W6): `call_ring_end` drops `groupId`** and carries `type`, `callId`, `
 ended by its `callId`, which is all both platforms need to find it. So what Google and Apple keep
 learning about calls is the `call_ring` row of section 1, and the register says so.
 
+**Built 2026-11-17, with no switch and no version gate**, because none is needed: every receiver
+ever shipped already finds the ring by `callId` alone - Android `cancelIncomingCallNotification`
+and iOS `CanariEndCallKitCall` since the branch was written (WP-XP-5), and the iOS `canariCallId`
+alert sweep since it was added - and reads `groupId` on this push only in a log line. So an old build loses nothing, and the change
+needs no legacy row. Pinned by `calls.service.spec.ts` (the `data` map and the APNs custom keys
+are exactly `type`, `callId`, `reason`) and by the native source read as text
+(`androidCallRing.test.ts`, `callsCompiled.test.ts`: the ring-end branch names no `groupId`).
+Owed: the reading [reading-owed-call-ring-end-carries-no-conversation](../backlog.d/reading-owed-call-ring-end-carries-no-conversation.md).
+
 ## 7. Several accounts on one device
 
 - **One account owns an install's pushes at a time.** `push_context.json` names it; a signed-out device
@@ -542,7 +551,7 @@ both platforms and deletes the full builders, `push_mode` and the legacy-sentenc
 | WP-W3c | The held migration that DROPS `push_token.wakeCapable` | no reader of `wakeCapable` left in any shipped server; the approval line merged by the owner or the lead under the delegation, before the release carrying it |
 | WP-W4 | Android: envelope wakes (`envelopeId` -> fetch -> `dispatchPush`), the notification tag = `envelopeId` so a repeat answer redraws and never adds, the account bound at arrival and checked at dispatch, `PUSH_WAKE_DECLARED.android = 2` | `:app:compileArmDebugKotlin`; JVM tests (`WakeAnswerTest` for `push`, a repeated answer for one `envelopeId` drawing one notification, `WakeOrderTest` for an envelope ticket between a Welcome and its salon, a switch between arrival and dispatch); vitest `pushWakeCompiled.test.ts` extended; then on the Mi 9T: a salon text, a comment, a chat reaction, each with content; the blind-banner `not-inlined` reason reads zero on wake |
 | WP-W5 | iOS: envelope wakes in the extension and in `canari_push.mm`, applying the answer's `presentation` (thread, sound, interruption level), the notification identifier = `envelopeId`, the account check, the first-unlock cause evidence, `PUSH_WAKE_DECLARED.ios = 2` | the compile-only iOS job ([p2](../cicd.md#a-pull-request-compiles-the-ios-app-unsigned-compile-ios-app-2026-11-04)) green; iPhone 12: reading 2 of the backlog entry for DMs, then salons and social, `[NSE_OUTCOME] kind=wake outcome=decrypted`, `peakMB` read for the largest salon; two reactions to one post and two salon messages stack under ONE thread each with their own sounds (the grouping a full push gives today) |
-| WP-W6 | Calls: `call_ring_end` drops `groupId` (N2: the ring itself is unchanged) | jest: the ring-end payload's keys are exactly `type`, `callId`, `reason`; the Android and iOS ring-end handlers find the ring by `callId` alone (a test that would fail if either still read `groupId`); one ring hung up by the caller, read on both phones locked |
+| WP-W6 | **BUILT 2026-11-17** (section 6): `call_ring_end` drops `groupId` (N2: the ring itself is unchanged) | jest: the ring-end payload's keys are exactly `type`, `callId`, `reason`; the Android and iOS ring-end handlers find the ring by `callId` alone (a test that would fail if either still read `groupId`); one ring hung up by the caller, read on both phones locked |
 | WP-W7 | Retire the `full` path (N3): raise `minClientVersion` to the first stable declaring version 2 on both platforms; the register and the privacy policy say "a wake-up and an opaque id" for every push but a ring | the two readings of section 8.1 under their thresholds, written into the `legacy-compatibility.md` row; then the full builders, `push_mode` and the legacy-sentence shim deleted in one pull request |
 
 ## 11. Open questions
