@@ -44,6 +44,7 @@ export interface ChannelEventContext extends Pick<
   | 'onWorkspaceRoleChanged'
   | 'onWorkspaceDeleted'
   | 'onChannelMessageDeleted'
+  | 'onInboundReaction'
   | 'log'
 > {
   /** Called when a commit is rejected (desynced epoch) - triggers a re-add request. */
@@ -96,6 +97,7 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     onOutOfSync,
     onJoinAsk,
     onJoinAskSettled,
+    onInboundReaction,
   } = ctx;
 
   // NO LINE ON ENTRY. It used to log every event here, which meant a line per `typing` and
@@ -487,13 +489,30 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
             log(
               `Channel reaction applied to ${String(msg.reaction.messageId ?? '')} (removed=${msg.reaction.removed === true})`
             );
-            applyChannelReactionFrame(
-              String(msg.reaction.messageId ?? ''),
-              String(sender || '').toLowerCase(),
+            const targetId = String(msg.reaction.messageId ?? '');
+            const reactorId = String(sender || '').toLowerCase();
+            const changed = applyChannelReactionFrame(
+              targetId,
+              reactorId,
               String(msg.reaction.emoji ?? ''),
               Number(msg.reaction.at ?? 0),
               msg.reaction.removed === true
             );
+            // The frame trigger of a reaction notification. A salon frame on this path is LIVE by
+            // construction - the server fans it out the moment it is posted; a page of history is
+            // read by `useConversations`, which raises nothing. The author is the row's proven
+            // sender as this device shows it; a row not loaded here names nobody.
+            const target = conversations.get(channelId)?.messages.find((m) => m.id === targetId);
+            onInboundReaction?.({
+              conversationKey: channelId,
+              messageId: targetId,
+              reactorId,
+              emoji: String(msg.reaction.emoji ?? ''),
+              removed: msg.reaction.removed === true,
+              changed,
+              messageAuthorId: target?.senderId ?? null,
+              live: true,
+            });
             return;
           }
           // An edit is a silent row as well, and changes a bubble instead of adding one. The

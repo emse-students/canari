@@ -118,12 +118,66 @@ export async function postNativeMessageNotification(
       covers: notification.covers,
       authorProven: notification.authorProven,
       isGroup: notification.isGroup,
+      reaction: false,
     });
   } catch (e) {
     // NOT a fallback to the plain builder: reaching here means the one path failed, and the fix
     // belongs there. Logged at a level that accuses, because the reader got nothing.
     console.error(
       `[NOTIF] The native builder threw for ${notification.conversationId}: ${String(e)}`
+    );
+    return false;
+  }
+}
+
+/**
+ * What the native builder needs for a REACTION to one of this account's messages - the frame
+ * trigger of `reactionNotification.ts`. The push's own fields, no more: the push carries an id, an
+ * emoji and who reacted, never the message, and the builder composes the sentence itself from the
+ * string the push uses (`notif_reaction_body`), so both triggers read the same words.
+ */
+export type NativeReactionNotification = {
+  /** The conversation - the notification is filed under `reaction:<conversationId>`. */
+  conversationId: string;
+  /** Who reacted: whose face to draw, and whose nickname in this conversation to look up. */
+  actorId: string;
+  /** The actor's name as this device resolved it - the fallback behind their nickname. */
+  actorName: string;
+  emoji: string;
+};
+
+/**
+ * Asks the Android builder to post (or update) a conversation's REACTION notification, through the
+ * same command a message takes with its `reaction` flag set - `body` then carries the emoji.
+ *
+ * @returns whether the native side ACCEPTED the work, exactly as {@link postNativeMessageNotification};
+ *   always `false` off Android.
+ */
+export async function postNativeReactionNotification(
+  reaction: NativeReactionNotification
+): Promise<boolean> {
+  if (!isAndroidTauriRuntime()) return false;
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return await invoke<boolean>('notifier_message_natif', {
+      groupId: reaction.conversationId,
+      senderId: reaction.actorId,
+      senderName: reaction.actorName,
+      // A reaction is drawn as the push draws it: no conversation title, no group shape.
+      groupName: '',
+      body: reaction.emoji,
+      mentionsMe: false,
+      sentAt: 0,
+      serverAt: 0,
+      covers: 1,
+      authorProven: false,
+      isGroup: null,
+      reaction: true,
+    });
+  } catch (e) {
+    // NOT a fallback: in the foreground this is the only path to the reaction's notification.
+    console.error(
+      `[NOTIF] The native builder threw for the reaction in ${reaction.conversationId}: ${String(e)}`
     );
     return false;
   }

@@ -63,6 +63,7 @@ import { receiveSkipBudgetFromServer } from '../receiveCheckpointSkip';
 import { installMlsStatePersisterLifecycle } from '../mlsStatePersisterLifecycle';
 import { registerMlsStatePersister } from '../mlsStatePersisterRegistry';
 import { applyReactionFrame } from './reactionFrame';
+import { isLiveDelivery } from '$lib/utils/chat/reactionNotification';
 import type { MessageHandlerDeps } from './deps';
 import {
   membershipIsDurablyLost,
@@ -270,6 +271,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
       onOutOfSync,
       onJoinAsk: deps.onJoinAsk,
       onJoinAskSettled: deps.onJoinAskSettled,
+      onInboundReaction: deps.onInboundReaction,
     });
   };
 
@@ -1371,7 +1373,7 @@ async function handleKnownGroup({
         log(`[MLS] Empty envelope for ${convoKey.slice(0, 8)}… - nothing to display`);
       }
     } else if (msg.reaction) {
-      await applyReactionFrame(
+      const outcome = await applyReactionFrame(
         {
           storage,
           deviceKey,
@@ -1385,6 +1387,18 @@ async function handleKnownGroup({
         authorship,
         deliveryMeta?.queuedCreatedAt
       );
+      // The frame trigger of a reaction notification: the decision is the caller's
+      // (`reactionNotification.ts`), this only says what the frame was and how it arrived.
+      deps.onInboundReaction?.({
+        conversationKey: convoKey,
+        messageId: msg.reaction.messageId ?? '',
+        reactorId: sender,
+        emoji: msg.reaction.emoji ?? '',
+        removed: msg.reaction.removed === true,
+        changed: outcome.changed,
+        messageAuthorId: outcome.messageAuthorId,
+        live: isLiveDelivery(deliveryMeta),
+      });
     } else if (msg.call || msg.groupCall) {
       // A GROUP call's signal travels under its own kind (`group_call`, WP-GC2), which a build
       // older than group calls drops as a kind it does not know; this build hands both to the call

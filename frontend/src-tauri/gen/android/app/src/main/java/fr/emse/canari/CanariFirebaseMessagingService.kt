@@ -2219,6 +2219,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          *   conversation type - the fact the push carries as `isGroup`, so both triggers draw an
          *   unnamed group as a group ([ConversationShape.isGroup]). Null when the row has no type:
          *   not said, and the name rule decides.
+         * @param reaction whether this frame is a REACTION to one of this account's messages rather
+         *   than a message (2026-11-17): [body] is then the emoji, [senderId] / [senderName] the
+         *   actor, and the post is [showReactionNotification] - the push's own composition, on
+         *   [CHANNEL_REACTIONS] under [reactionNotifKey].
          */
         @JvmStatic
         fun notifyMessageFromWebSocket(
@@ -2233,11 +2237,26 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             covers: Int,
             authorProven: Boolean,
             isGroup: Boolean?,
+            reaction: Boolean,
         ): Boolean {
             val context = CanariApplication.appContext()
             if (context == null) {
                 Log.w(TAG, "notifyMessageFromWebSocket: no Application context - nothing posted")
                 return false
+            }
+            if (reaction) {
+                // THE FRAME TRIGGER OF A REACTION: the WebView decided the app is in front with this
+                // conversation off screen - where the push is dropped - so nothing else draws it.
+                Log.d(TAG, "notifyMessageFromWebSocket: reaction queued groupId=${groupId.take(8)} actor=${senderId.take(8)}")
+                WS_NOTIF_LANE.execute {
+                    try {
+                        context.showReactionNotification(groupId, senderId, senderName, body, suppressInForeground = false)
+                    } catch (e: Exception) {
+                        // EVERY SWALLOWED BRANCH LOGS: in the foreground this lane is the only path.
+                        Log.e(TAG, "notifyMessageFromWebSocket: reaction build failed for ${groupId.take(8)}: ${throwableSite(e)}")
+                    }
+                }
+                return true
             }
             Log.d(TAG, "notifyMessageFromWebSocket: queued groupId=${groupId.take(8)} mentionsMe=$mentionsMe sentAt=$sentAt serverAt=$serverAt covers=$covers authorProven=$authorProven isGroup=$isGroup")
             WS_NOTIF_LANE.execute {
@@ -2308,6 +2327,48 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 }
             }
             return true
+        }
+
+        /**
+         * Posts (or updates) a conversation's REACTION notification - the ONE composition both
+         * triggers of a reaction share: the push ([handleReactionNotification], app not in front)
+         * and the WebSocket frame ([notifyMessageFromWebSocket] with `reaction = true`, app in front
+         * with that conversation off screen, decided in the WebView by `reactionNotification.ts`).
+         *
+         * Filed on [CHANNEL_REACTIONS] under [reactionNotifKey], so it never overwrites the
+         * conversation's unread message notification, a second reaction UPDATES the first, and a
+         * push and a frame for one reaction - should both ever fire across a foreground transition -
+         * land on one notification rather than two. No quick actions: there is nothing to reply to
+         * and nothing to mark read. The sentence is `notif_reaction_body`, the same string for both.
+         *
+         * @param fallbackName the actor's name when this conversation holds no nickname for them -
+         *   the push's title, or the name the WebView resolved.
+         * @param suppressInForeground TRUE for the push, which knows only whether the app is in
+         *   front; FALSE for the frame, whose trigger already asked the finer question.
+         */
+        internal fun Context.showReactionNotification(
+            groupId: String,
+            actorId: String,
+            fallbackName: String,
+            emoji: String,
+            suppressInForeground: Boolean = true,
+        ) {
+            // The actor's nickname in that conversation first (owner, 2026-11-14), else the fallback.
+            val actorName = nicknameLookup(
+                this, MlsContextLoader.loadPushContext(this)?.userId, salon = false, conversation = groupId, label = "[REACTION_NAME]",
+            )(actorId) ?: fallbackName
+            val largeIcon = (if (actorId.isNotEmpty()) fetchAvatar(actorId) else null)
+                ?: generateInitialsBitmap(actorName)
+            showMessageNotification(
+                senderName = actorName,
+                groupName = "",
+                body = appLocaleContext(this).getString(R.string.notif_reaction_body, emoji),
+                largeIcon = largeIcon,
+                groupId = groupId,
+                channel = CHANNEL_REACTIONS,
+                quickActions = false,
+                suppressInForeground = suppressInForeground,
+            )
         }
 
         // --- The message notification, and the avatar chain it needs -------------------
@@ -5996,10 +6057,6 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val groupId = data["groupId"] ?: ""
         val emoji = data["emoji"] ?: ""
         val actorId = data["senderId"] ?: ""
-        // The actor's nickname in that conversation first (owner, 2026-11-14), else the push's title.
-        val actorName = nicknameLookup(
-            this, MlsContextLoader.loadPushContext(this)?.userId, salon = false, conversation = groupId, label = "[REACTION_NAME]",
-        )(actorId) ?: data["title"] ?: getString(R.string.app_name)
 
         if (groupId.isEmpty()) {
             // Without it there is no conversation to attach to and no stable id to reuse, so the
@@ -6009,18 +6066,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         Log.d(TAG, "reaction: group=${groupId.take(8)} actor=${actorId.take(8)}")
-        val largeIcon = (if (actorId.isNotEmpty()) fetchAvatar(actorId) else null)
-            ?: generateInitialsBitmap(actorName)
-
-        showMessageNotification(
-            senderName = actorName,
-            groupName = "",
-            body = appLocaleContext(this).getString(R.string.notif_reaction_body, emoji),
-            largeIcon = largeIcon,
-            groupId = groupId,
-            channel = CHANNEL_REACTIONS,
-            quickActions = false,
-        )
+        // The push's title is the server's name for the actor - the fallback behind their nickname.
+        showReactionNotification(groupId, actorId, data["title"] ?: getString(R.string.app_name), emoji)
     }
 
     // --- Channel (community) message push --------------------------------------

@@ -4076,6 +4076,7 @@
   "asso_statement_balance": "Solde",
   "notif_form_paid_over_capacity_text": "signale un paiement reçu alors que le formulaire était complet (remboursement à faire) :",
   "notif_reaction_text": "a réagi à votre publication",
+  "notif_reaction_message_body": "a réagi {emoji} à votre message",
   "notif_mention_text": "vous a mentionné",
   "notif_reply_text": "a répondu à votre commentaire",
   "notif_unknown_type_text": "Une notification que cette version de l'application ne peut pas afficher. Mettez l'application à jour.",

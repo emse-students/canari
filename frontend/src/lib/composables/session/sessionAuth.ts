@@ -2330,6 +2330,7 @@ export async function loginImpl(
       },
       onJoinAskSettled: settleJoinRequest,
       onReadStateAdvanced: cb.onReadStateAdvanced,
+      onInboundReaction: cb.onInboundReaction,
       onCallSignal: (senderId: string, groupId: string, callMsg, at, group) => {
         void handleCallSignalForChat(
           getCallSystemMessageContext(),

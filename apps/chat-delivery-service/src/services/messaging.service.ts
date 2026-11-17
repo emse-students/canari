@@ -42,7 +42,7 @@ import { KeyPackage } from '../entities/key-package.entity';
 import { OneTimeKeyPackage } from '../entities/one-time-key-package.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { PushToken } from '../entities/push-token.entity';
-import { categoryOfDataPush } from './push-category';
+import { categoryOfDataPush, pushKindOf } from './push-category';
 import { appVersionAtLeast, MIN_APP_VERSION_DATA_KEY } from '../utils/app-version';
 import { readDisabledCategories, readGroupNotificationLevel } from './notification-preferences';
 import { MlsCommitLog } from '../entities/mls-commit-log.entity';
@@ -8606,7 +8606,7 @@ export class MessagingService {
           sent++;
           this.logger.log(
             `[SOCIAL_PUSH][${traceId}] sent user=${userId} device=${pt.deviceId} platform=${pt.platform} ` +
-              `mode=wake kind=${data.type ?? 'none'} envelope=${envelopeId.slice(0, 8)}`
+              `mode=wake kind=${pushKindOf(data)} envelope=${envelopeId.slice(0, 8)}`
           );
           continue;
         }
@@ -8638,7 +8638,7 @@ export class MessagingService {
         sent++;
         this.logger.log(
           `[SOCIAL_PUSH][${traceId}] sent user=${userId} device=${pt.deviceId} platform=${pt.platform} ` +
-            `mode=full inline=${Object.keys(inline).length === 0 ? 'none' : half.inlined} bytes=${half.bytes}`
+            `mode=full kind=${pushKindOf(data)} inline=${Object.keys(inline).length === 0 ? 'none' : half.inlined} bytes=${half.bytes}`
         );
         if (Object.keys(inline).length > 0 && !half.inlined) {
           // Not a failure - the device fetches the message and draws the fallback - but a budget

@@ -20,8 +20,11 @@ import { isAndroidTauriRuntime } from '$lib/utils/appVersion';
 import {
   composePlainNotificationText,
   postNativeMessageNotification,
+  postNativeReactionNotification,
   type NativeMessageNotification,
+  type NativeReactionNotification,
 } from '$lib/utils/nativeNotification';
+import { reactionNotificationKey } from '$lib/utils/chat/reactionNotification';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { appendLog } from '$lib/utils/sessionLog';
 import { systemNotificationsBlockedAnnounceOnce } from '$lib/utils/systemNotificationsBlocked';
@@ -94,6 +97,12 @@ export const CHANNEL_CALLS = 'canari_calls_v2';
  * WebSocket landed on `canari_messages`, the same mention pushed landed on `canari_mentions`.
  */
 export const CHANNEL_MENTIONS = 'canari_mentions_v2';
+/**
+ * The channel a REACTION to one of this account's messages is filed on (`canari_reactions_v2`,
+ * IMPORTANCE_DEFAULT: a sound and a shade entry, no heads-up). Named by the plain path below for
+ * completeness only: on Android a reaction is posted by the native builder, never by the plugin.
+ */
+export const CHANNEL_REACTIONS = 'canari_reactions_v2';
 
 /** Returns a stable positive integer ID derived from a conversation ID string, used to replace existing Tauri notifications for the same conversation. */
 function stableNotifId(conversationId: string): number {
@@ -638,21 +647,88 @@ export function useNotifications() {
     // ONE COMPOSITION FOR EVERY NON-ANDROID BUILDER: a group is titled by its name, never by the
     // sender alone (see `composePlainNotificationText`).
     const shown = composePlainNotificationText(title, body, native);
+    await postPlainNotification({
+      convKey,
+      title: shown.title,
+      body: shown.body,
+      channelId: mentionsMe ? CHANNEL_MENTIONS : CHANNEL_MESSAGES,
+      idKey: conversationId,
+      conversationId,
+    });
+  }
+
+  /**
+   * Raises the notification of a REACTION to one of this account's messages - the frame trigger
+   * decided by `useMessaging.notifyInboundReaction` (`reactionNotification.ts`): the app is in front
+   * and the conversation is off screen, where the push is dropped.
+   *
+   * Android asks the native builder, which composes the push's own reaction notification under the
+   * push's own key; iOS, desktop and the browser post a plain one, keyed `reaction:<conversation>` so
+   * it never replaces the conversation's message notification and a second reaction updates the
+   * first. Throttled per that key, as a message is per conversation.
+   */
+  async function sendReactionNotification(reaction: NativeReactionNotification) {
+    if (typeof window === 'undefined') return;
+    const convKey = reactionNotificationKey(reaction.conversationId);
+    if (systemNotificationsBlockedAnnounceOnce()) return;
+    const now = Date.now();
+    const lastAt = lastNotifAtByConv.get(convKey) ?? 0;
+    if (now - lastAt < 800) {
+      console.log(`[NOTIF] Throttled for ${convKey} - ${now - lastAt} ms since the last (800 ms).`);
+      return;
+    }
+    lastNotifAtByConv.set(convKey, now);
+    if (isAndroidTauriRuntime()) {
+      const accepted = await postNativeReactionNotification(reaction);
+      console.log(
+        accepted
+          ? `[NOTIF] Raised for ${convKey} by the native builder on ${CHANNEL_REACTIONS}.`
+          : `[NOTIF] Not raised for ${convKey} - the native builder refused it; nothing else posts on Android.`
+      );
+      return;
+    }
+    await postPlainNotification({
+      convKey,
+      title: reaction.actorName,
+      body: m.notif_reaction_message_body({ emoji: reaction.emoji }),
+      channelId: CHANNEL_REACTIONS,
+      idKey: convKey,
+      conversationId: reaction.conversationId,
+    });
+  }
+
+  /**
+   * THE PLAIN BUILDERS - the plugin (iOS, desktop) and the browser's Notification API - shared by a
+   * message and a reaction, so neither can drift from the other's permission, tap and sound rules.
+   *
+   * @param p.idKey what the notification's id (plugin) or tag (browser) is derived from: the
+   *   conversation for a message, `reaction:<conversation>` for a reaction - so the two never
+   *   replace each other, and a second of either kind updates the first.
+   * @param p.conversationId where a tap leads.
+   */
+  async function postPlainNotification(p: {
+    convKey: string;
+    title: string;
+    body: string;
+    channelId: string;
+    idKey?: string;
+    conversationId?: string;
+  }) {
+    const { convKey, title, body, channelId, idKey, conversationId } = p;
     if (isTauriRuntime()) {
       try {
         if (await isPermissionGranted()) {
           await sendNotification({
-            title: shown.title,
-            ...androidNotificationOptions(
-              shown.body,
-              mentionsMe ? CHANNEL_MENTIONS : CHANNEL_MESSAGES
-            ),
-            ...(conversationId ? { id: stableNotifId(conversationId) } : {}),
+            title,
+            ...androidNotificationOptions(body, channelId),
+            ...(idKey ? { id: stableNotifId(idKey) } : {}),
           });
           // THE CHOICE IS LOGGED BECAUSE IT IS INVISIBLE OTHERWISE. A channel does not appear on
           // the notification; it decides which of the reader's own switches apply to it, and the
           // only place it can be read back is `dumpsys notification`, with the phone in hand.
-          if (mentionsMe) console.log(`[NOTIF] Filed on ${CHANNEL_MENTIONS} - it names this user.`);
+          if (channelId === CHANNEL_MENTIONS) {
+            console.log(`[NOTIF] Filed on ${CHANNEL_MENTIONS} - it names this user.`);
+          }
           // TAPPING THIS NOTIFICATION CANNOT REACH THE CONVERSATION, AND THE PLUGIN IS WHY -
           // measured on a Mi 9T on 2026-09-07 with a real message, which opened the app and landed
           // on nothing.
@@ -680,8 +756,8 @@ export function useNotifications() {
           // activity with no way to pass a link. So ONE builder posts every message notification
           // natively and this call site asks it: `notifier_message_natif`, and
           // `nativeNotification.ts` for the pair of notifications that removed.
-          if (conversationId) {
-            notifTargetsById.set(stableNotifId(conversationId), conversationId);
+          if (idKey && conversationId) {
+            notifTargetsById.set(stableNotifId(idKey), conversationId);
             armNotificationTapListener();
           }
         }
@@ -723,9 +799,9 @@ export function useNotifications() {
         // sound - the message arrives, the call is not interrupted by it.
         const silent = callHoldsAppSound();
         if (silent) console.log(`[NOTIF] ${convKey} raised silent - a call holds the app's sound.`);
-        const n = new Notification(shown.title, {
-          body: shown.body,
-          tag: `canari-${conversationId ?? 'message'}`,
+        const n = new Notification(title, {
+          body,
+          tag: `canari-${idKey ?? 'message'}`,
           silent,
         });
         n.onclick = () => {
@@ -756,6 +832,7 @@ export function useNotifications() {
     playReadTone,
     requestSystemNotificationPermission,
     sendSystemNotification,
+    sendReactionNotification,
     startIncomingCallRingtone,
     stopIncomingCallRingtone,
     startBlinkingTitle,

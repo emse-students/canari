@@ -4044,6 +4044,7 @@
   "asso_statement_balance": "Balance",
   "notif_form_paid_over_capacity_text": "reports a payment received after the form was full (a refund is owed):",
   "notif_reaction_text": "reacted to your post",
+  "notif_reaction_message_body": "reacted {emoji} to your message",
   "notif_mention_text": "mentioned you",
   "notif_reply_text": "replied to your comment",
   "notif_unknown_type_text": "A notification this version of the app cannot show. Update the app.",

@@ -9,7 +9,9 @@ Production showed every call answered by a sent push on 2026-11-17; nothing show
 one. While the app is open nothing is drawn, which is a known defect
 ([backlog](p2-a-reaction-to-my-message-notifies-nobody-while-the-app-is-open.md)) and not this reading.
 
-**The reading that closes it:** on the `1.7.0` pre-release, a third seat reacts to a message the
+**The reading that closes it** (the background half, which `1.7.0` already ships; the foreground
+half is the [P2's own reading](p2-a-reaction-to-my-message-notifies-nobody-while-the-app-is-open.md),
+owed on the `1.7.1` pre-release): on the `1.7.0` pre-release, a third seat reacts to a message the
 Mi 9T wrote in a 1:1, then in a group, then in a salon - first with the Mi 9T's app in the background
 (screen on, home screen), then with the app swiped away. Each time the shade shows one "a reagi"
 notification for that conversation with the emoji, a second reaction in the same conversation

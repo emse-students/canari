@@ -3279,7 +3279,50 @@ after that phone's app socket opened, and the socket closed 20 s later - the pus
 nothing else could draw it. The rest of this paragraph's list is unchanged: in the background the
 reaction is posted on `canari_reactions_v2` (IMPORTANCE_DEFAULT: a sound and a shade entry, no
 heads-up, no vibration - by design), and `MainActivity.onResume` clears it with the message
-notifications. The fix is open ([backlog](../backlog.d/p2-a-reaction-to-my-message-notifies-nobody-while-the-app-is-open.md)).
+notifications. Fixed for `1.7.1` by the frame trigger below ([backlog](../backlog.d/p2-a-reaction-to-my-message-notifies-nobody-while-the-app-is-open.md)).
+
+#### The frame trigger of a reaction (2026-11-17)
+
+A reaction now has the second trigger a message has. Every applied reaction frame - the MLS path
+(`setupMessageHandler` -> `applyReactionFrame`, which returns what it changed and whose message it
+landed on) and the live salon path (`channelEventHandler`, `channel.message.created`) - is handed to
+`useMessaging.notifyInboundReaction`, and the decision is
+[reactionNotification.ts](../../../frontend/src/lib/utils/chat/reactionNotification.ts), pure, with
+its whole matrix asserted beside it:
+
+| term | refused when |
+| --- | --- |
+| the frame (`inboundReactionVerdict`) | my own reaction, a reaction to somebody else's message or to one this device holds no copy of (all said nowhere: the ordinary frame); a removal, a replay or older state, or a frame that is not LIVE (said: it is a reaction to me) |
+| live (`isLiveDelivery`) | not `channel === 'live'`, or `aheadOfMailbox`, or an `addressed` history answer - a catch-up on resume may carry a reaction the push already drew in the background. A page of salon history raises nothing |
+| the screen (`reactionTriggerRefusal`) | the app is NOT in the foreground (`isAppInForeground`, the push draws it - checked FIRST); the conversation is on screen (`canSeeArrival`); the `reactions` category is off; a private conversation's level is not `all` (a reaction is never a mention) |
+
+**A salon's level is not applied**, on either path: the server cannot read it for a reaction
+(`sendPushToUser` reads a level only for a group uuid), and one rule written in only one builder is
+decided by the route ([durable-rules](../durable-rules.md)).
+
+**Disjoint from the push by construction.** The push is drawn only while the app is NOT in the
+foreground (`dispatchPush` / `CanariHandleFcmData` return before the reaction branch), this trigger
+only while it IS, and on Android both read ONE fact: the activity's `isInForeground`, which it also
+writes into the page as `__canariForeground`. On Android both post the ONE composition,
+`showReactionNotification` (the push's sentence `notif_reaction_body`, `CHANNEL_REACTIONS`, no quick
+actions) under the ONE key `reaction:<groupId>`, so a transition falling between the two reads
+replaces rather than doubles. The frame reaches it through `notifier_message_natif` with
+`reaction = true` (`body` is then the emoji). `reactionNotification.test.ts` reads both native
+guards and both call sites.
+
+**iOS, desktop and the browser post a plain one** (`useNotifications.sendReactionNotification` ->
+`postPlainNotification`, the message's own plain path): titled with the actor, body
+`notif_reaction_message_body`, id/tag derived from `reaction:<conversation>` so it never replaces the
+conversation's message notification. Web and desktop have no push, so `isAppInForeground` is always
+true there and a hidden tab or an idle window is told.
+
+**What only a phone can say (the reading, [backlog](../backlog.d/reading-owed-a-reaction-to-my-message-notifies-in-the-background.md)).**
+On iOS the two predicates are not one fact: the push guard reads `canari_ios_is_in_foreground()`
+(ACTIVE only), the page's flag is published at the end of a resume and cleared at
+`didEnterBackground`. Two windows are therefore unproven by any test here: a reaction while the app is
+INACTIVE in front (Control Center pulled down), and a live frame a suspended process's socket buffered
+and delivers after the resume, whose push the extension already drew. Each would show two banners for
+one reaction; the reading on the iPhone 12 says whether either occurs.
 
 #### Background MLS decrypt ladder
 
@@ -4314,7 +4357,7 @@ from it. A refusal now logs the origin once, budget-capped, at a level that accu
 500 on the request itself, which is a separate incident this repo already had (prod 2026-08-19, on
 `GET /api/media/public/:id`).
 
-Rules, in [`durable-rules.md`](../durable-rules.md#mobile-and-native---frontendmobile): a server's origin allowlist is a
+Rules, in [`durable-rules.md`](../durable-rules.md): a server's origin allowlist is a
 fact about its CLIENTS, and a Tauri client has one origin per platform; and platform parity is not a
 property of the native project.
 
