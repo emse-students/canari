@@ -379,4 +379,95 @@ describe('a checkpoint during a bulk-ingest window (rows before ratchet)', () =>
     // The cause of every refusal named once per session.
     expect(lines.filter((l) => l.includes('every checkpoint is refused'))).toHaveLength(1);
   });
+
+  /**
+   * ONE EXCEPTION MUST NOT POISON THE STORE CHAIN (re-review of #3786, P2). A step that threw left
+   * the chain rejected: every later hold and close rejected for the rest of the page, and the hold's
+   * counter never came down, so buffering stayed off.
+   */
+  it('a step that throws costs one store: the next hold and close still work, buffering comes back', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const messaging = useMessaging();
+    const { ctx, conversations, saveMessage } = makeContext();
+    const storage = ctx.storage as unknown as Record<string, ReturnType<typeof vi.fn>>;
+    storage.saveMessagesIfAbsent
+      .mockRejectedValueOnce(new Error('AbortError'))
+      .mockRejectedValueOnce(new Error('AbortError'));
+
+    messaging.beginBulkMessageIngest(LIVE_DRAIN);
+    await messaging.addMessageToChat(PEER, 'kept', CONVO, ctx, { messageId: 'in-14' });
+    await expect(messaging.holdRowsForCheckpoint(ctx)).rejects.toBeInstanceOf(
+      BufferedRowsNotStoredError
+    );
+
+    // The next step meets an exception where nothing expected one.
+    const has = conversations.has.bind(conversations);
+    const get = conversations.get.bind(conversations);
+    let armed = true;
+    const trap = () => {
+      if (!armed) return;
+      armed = false;
+      throw new Error('unexpected');
+    };
+    conversations.has = (key: string) => (trap(), has(key));
+    conversations.get = (key: string) => (trap(), get(key));
+    await expect(messaging.holdRowsForCheckpoint(ctx)).rejects.toThrow();
+
+    // The chain is whole: this hold stores the kept row and resolves.
+    (await messaging.holdRowsForCheckpoint(ctx))();
+    expect(storedIds(saveMessage)).toEqual(['in-14']);
+    // Every hold was given back: a message buffers again, and the close stores it.
+    await messaging.addMessageToChat(PEER, 'after', CONVO, ctx, { messageId: 'in-15' });
+    expect(storedIds(saveMessage)).toEqual(['in-14']);
+    await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
+    expect(storedIds(saveMessage)).toEqual(['in-14', 'in-15']);
+  });
+
+  it('a batch that THROWS at a window close is kept, and the next hold stores it', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const messaging = useMessaging();
+    const { ctx, conversations, saveMessage } = makeContext();
+
+    messaging.beginBulkMessageIngest(LIVE_DRAIN);
+    await messaging.addMessageToChat(PEER, 'closing', CONVO, ctx, { messageId: 'in-16' });
+    const get = conversations.get.bind(conversations);
+    let armed = true;
+    conversations.get = (key: string) => {
+      if (armed) {
+        armed = false;
+        throw new Error('unexpected');
+      }
+      return get(key);
+    };
+    await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
+    expect(storedIds(saveMessage)).toEqual([]);
+
+    (await messaging.holdRowsForCheckpoint(ctx))();
+    expect(storedIds(saveMessage)).toEqual(['in-16']);
+  });
+
+  it('a 1:1 re-keyed onto the group it joined keeps its unstored rows, written under the new key', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const messaging = useMessaging();
+    const { ctx, conversations, saveMessage } = makeContext();
+    const storage = ctx.storage as unknown as Record<string, ReturnType<typeof vi.fn>>;
+    storage.saveMessagesIfAbsent
+      .mockRejectedValueOnce(new Error('AbortError'))
+      .mockRejectedValueOnce(new Error('AbortError'));
+
+    messaging.beginBulkMessageIngest(LIVE_DRAIN);
+    await messaging.addMessageToChat(PEER, 'moving', CONVO, ctx, { messageId: 'in-17' });
+    await expect(messaging.holdRowsForCheckpoint(ctx)).rejects.toBeInstanceOf(
+      BufferedRowsNotStoredError
+    );
+
+    // The Welcome's re-key: the thread moves, with the rows it shows, under the joined group's id.
+    const thread = conversations.get(CONVO)!;
+    conversations.delete(CONVO);
+    conversations.set('joined-group', { ...thread, id: 'joined-group' });
+
+    (await messaging.holdRowsForCheckpoint(ctx))();
+    const row = saveMessage.mock.calls.map(([r]) => r as { id: string; conversationId: string });
+    expect(row).toEqual([expect.objectContaining({ id: 'in-17', conversationId: 'joined-group' })]);
+  });
 });

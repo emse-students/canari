@@ -3220,9 +3220,15 @@ keeps the state dirty. One refusal per trigger, no timer: the next checkpoint's 
 window's close only logs, as it always did - it is not a checkpoint. A retried write that lands
 SETTLES what arrived meanwhile (`settlePendingFor`, as the batch does after its own write): an edit,
 a deletion or a reaction that met the row shown and not stored was kept "for its write", and the
-snapshot the retry stores predates it (re-review of #3786). A kept write whose conversation left the
-map since (deleted, purged) is dropped, never written back. Each write's failure is said once, by
-the batch; a retry says ONE line for all its writes, with the first cause.
+snapshot the retry stores predates it (re-review of #3786). A kept write is written under the
+conversation that SHOWS its rows now - its own, or the group a 1:1 was re-keyed onto at a Welcome -
+and dropped only when none does (deleted, purged). Each write's failure is said once, by the batch;
+a retry says ONE line for all its writes, with the first cause. A batch that THREW (before it
+rendered anything - nothing after the render may skip the write, so the announcement is guarded)
+is kept too (`unstoredBatches`), whichever path took it, and the next hold runs it again first.
+**The chain never rejects:** a step that throws resolves `false` with one line, and the hold gives
+its counter back in a `finally` - one exception costs one store, never every later checkpoint and
+close of the page.
 
 **What a refused checkpoint leaves, exactly.** The state on disk stays behind those frames, and a
 reload repairs it from what still holds them: a frame the server still lists (a commit or a Welcome,
