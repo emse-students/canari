@@ -636,6 +636,14 @@ export type BulkIngestHandle = number;
 export interface BulkIngestObserver {
   onBulkIngestStart(phase: BulkIngestPhase): void;
   onBulkIngestEnd(phase: BulkIngestPhase): void | Promise<void>;
+  /**
+   * ROWS BEFORE RATCHET: stores every row this observer holds in memory for a frame already
+   * applied, and keeps the frames applied from now on out of that memory until the returned release
+   * is called. Called by `persistCheckpoint` BEFORE it exports the state, which holds those frames'
+   * ratchet advance and seen marks: exported first, a kill before the rows were stored lost them for
+   * good. Optional - only an observer that holds rows implements it.
+   */
+  holdRowsForCheckpoint?(): Promise<() => void>;
 }
 
 /** Row from `GET /api/mls/users/:id/groups`. */
