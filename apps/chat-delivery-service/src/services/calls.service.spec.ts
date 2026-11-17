@@ -900,9 +900,14 @@ describe('CallsService', () => {
       expect(result.notified).toBe(2);
       const lookup = pushTokenRepo.find.mock.calls[0][0].where.userId._value as string[];
       expect(lookup).toContain('caller');
-      expect(fcmSend.mock.calls[0][0].data).toEqual(
-        expect.objectContaining({ type: 'call_ring_end', callId: 'call-1', reason: 'answered' })
-      );
+      // Content-free push WP-W6 (owner, 2026-11-04, N2): Google and Apple read EXACTLY these three
+      // keys - no `groupId`, so a ring's end no longer names the conversation. Both receivers find
+      // the ring by `callId` alone (callsCompiled.test.ts, androidCallRing.test.ts).
+      const sent = fcmSend.mock.calls[0][0];
+      expect(sent.data).toEqual({ type: 'call_ring_end', callId: 'call-1', reason: 'answered' });
+      const { aps, ...apnsCustom } = sent.apns.payload;
+      expect(aps).toEqual({ 'content-available': 1 });
+      expect(apnsCustom).toEqual({ type: 'call_ring_end', callId: 'call-1', reason: 'answered' });
     });
 
     /**

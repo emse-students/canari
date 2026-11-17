@@ -226,6 +226,37 @@ rewrite opens the app at the list (no `groupId` in clear for `CanariTapDeepLink`
   Owed: the device row [CFP-W3](../device-verification.md#cfp-w3-the-step-1-wake-still-wakes-after-migration-046---owed-on-the-mi-9t-on-dev)
   and section 9's production volume counts; next is WP-W4 (Android).
 
+- **2026-11-17 - WP-W6 built** (no switch needed): `call_ring_end` no longer carries `groupId`;
+  every shipped receiver already found the ring by `callId` alone
+  ([section 6](../protocols/content-free-push.md#6-calls---the-ring-stays-immediate)). Its phone
+  reading is its own entry: [reading-owed-call-ring-end-carries-no-conversation](reading-owed-call-ring-end-carries-no-conversation.md).
+
+### What is left, in order, with an honest size (re-measured against `main` on 2026-11-17)
+
+Premise re-measured: step 1 (MLS frames) and WP-W3 (the envelope's server half) are on `main`,
+switch `push_mode` OFF on both estates as far as the code says; `PUSH_WAKE_DECLARED` is still
+`{android: true, ios: false}` (a boolean - version 1 on the wire); WP-W3b, W4, W5, W3c and W7 are
+not started. The owner's order of 2026-11-14
+([decisions](owner-decisions-of-2026-11-14.md#content-free-push---the-order-answers-of-the-afternoon))
+puts the readings before WP-W4 and before any lasting flip.
+
+1. **Readings 1 and 3 + the device row CFP-W3** - one Mi 9T sitting on dev with `push_mode = wake`
+   for the sitting (about 1 hour).
+2. **WP-W3b** - the welcome-request-pending push as a silent envelope wake, server only, inert
+   until a version-2 client (about 1 day, jest + the PostgreSQL integration suite).
+3. **WP-W1, then WP-W2** - the flips, Android; WP-W2 then needs reading 4 over **a week** of
+   production and reading 5 (register + privacy policy) in the same change.
+4. **WP-W4** - Android envelope wakes, `wakeVersion: 2` (3 to 5 days, then a Mi 9T sitting).
+5. **The iPhone 12 wake reading** (the owner's gate for `PUSH_WAKE_DECLARED.ios`, 2026-11-14) and
+   **WP-W5** - iOS envelope wakes in the extension and `canari_push.mm` (1 to 2 weeks: Swift and
+   ObjC++ checked only by the compile-only iOS job, then an iPhone sitting).
+6. **WP-W3c** - the held migration dropping `wakeCapable` (half a day + its approval line).
+7. **WP-W7** - retire the full path once section 8.1's two measures hold (7 consecutive days at
+   least, after both platforms ship version 2): calendar weeks, not work days.
+
+So this entry cannot close inside `1.7.0` by building alone: steps 3 and 7 are measurement windows
+counted in days of production.
+
 ### Readings owed (the code is verified only by COMPILING, and iOS not even that before a release)
 
 1. Dev estate, `push_mode = wake`, Mi 9T on a build carrying the client half: three texts (1:1,

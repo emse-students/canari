@@ -114,6 +114,7 @@ earliest version, as a checklist.
 - [ ] [the live scenes bar (one icon row) on a desktop live at two window widths](backlog.d/reading-owed-the-live-scenes-bar-on-a-desktop-live.md)
 - [ ] [a menu ends above the iOS tab bar, and a group notification keeps its title (2026-11-16)](backlog.d/reading-owed-the-popover-and-notification-fixes-of-the-iphone-sitting.md)
 - [ ] [an association post's writer, drawn small under its name for its moderators (2026-11-17)](backlog.d/reading-owed-association-post-writer-line.md)
+- [ ] [a ring's end no longer names the conversation, and still stops the ring (2026-11-17)](backlog.d/reading-owed-call-ring-end-carries-no-conversation.md)
 - [ ] [the repair of a rewound sender walks to the member that holds the messages (2026-11-17)](backlog.d/reading-owed-heal-repair-walks-to-the-holder.md)
 - [ ] [the iPhone's one seed mirror keeps the extension's seeds through a foreground (2026-11-17)](backlog.d/reading-owed-ios-seed-mirror-one-copy.md)
 - [ ] [live moderation: the three broadcaster pushes, the withdrawal lift and the lives switch](backlog.d/reading-owed-live-moderation-pushes-lift-and-the-lives-switch.md)
