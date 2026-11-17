@@ -1,6 +1,8 @@
 ## P3 - a member whose right to broadcast is given back is not told
 
-target: 1.7.0
+target: 1.7.1
+
+_2026-11-17: moved to 1.7.1 by the owner's 2026-11-17 scope cut ([decisions](owner-decisions-of-2026-11-17.md))._
 
 Found by the review of #3772 (2026-11-17). A withdrawal is told (`live_withdrawn`: a bell row and a
 push), but its lift (`DELETE /api/lives/broadcasters/:userId/withdrawal`, `liftWithdrawal` in

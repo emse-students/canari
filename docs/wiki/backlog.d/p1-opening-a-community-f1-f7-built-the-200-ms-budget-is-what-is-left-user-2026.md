@@ -2,6 +2,11 @@
 
 target: 1.7.0
 
+_2026-11-17, the owner: this entry CLOSES for `1.7.0` once #3769 (merged 2026-11-17) and its phone
+reading are in; the 200 ms budget itself moves to the
+[slow-link chantier](slow-link-local-first-chantier.md) (`1.7.1`)
+([decisions](owner-decisions-of-2026-11-17.md))._
+
 **Re-read 2026-11-11.** The goal (user): on a slow network and a poor phone, opening a community is almost instantaneous - rail, salons and a salon opened before **<= 200 ms from local state, with 0 request on the path**. F1-F7 are built, and since 2026-11-02 the salon mount was cut three times (#2914, #3117's 20-row reveal, the per-bubble and per-day work, the composer's warm-up). **Latest reading, Mi 9T, `1.6.8-alpha.1`, 2026-11-08, cold Wi-Fi 1x medians: tap to rail and salons 452 ms, salon to pane 601, salon to messages 1041, cached reopen 314; the budget is met on NO row** ([readings](../frontend/community-open-budget.md#the-budget-reading-on-168-alpha1-2026-11-08-the-reopen-halved-the-first-open-did-not-move)). **Next:** a `--chain` / `--profile-salon` run of the cold first open to name the ~190 ms before the pane, then the items of [section 7](../frontend/community-open-budget.md#7-not-measured-and-owed) (the warm resume at 4x, iOS). Re-readable now on the bench with `bun tools/cold-start/community-open.mjs` on the current pre-release.
 
 **2026-11-17: the four closed overlays of every bubble are mounted on its first touch** (step 1 of the
