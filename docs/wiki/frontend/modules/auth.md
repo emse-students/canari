@@ -2172,15 +2172,24 @@ only while `devicesKnown` is true - false from the start of every load until the
 answers, and after a failed one, which also drops the list a reopen still held. Read off a list that
 did not load, every healthy device is "not listed", and one delete would wipe the user's phone; so
 while the list is unknown every login is a plain sign-out row and `revocableDeviceId` returns null.
+**And only the LATEST load writes** (`createDevicePanelLoader`, `devicePanelLoad.ts`): each load
+carries a generation, and one that answers after a later load started writes nothing - neither
+devices, logins, `devicesKnown` nor a message. Without it a slow load that failed after a reopen's
+load succeeded left `devices = []` beside `devicesKnown = true`. The state an applied load writes is
+`panelStateFrom`, every field at once.
 
 **And the panel never bans the device it runs on, checked twice.** Client side, a row naming
 `myDeviceId` or holding the current login only signs out, and logs that decision. That check reads
 the client's own idea of its id, which an identity rotation or a moved binding can leave stale, so
 the server holds the fact: an owner's `DELETE /mls/devices/...` first asks core-service which device
-the calling session is bound to (`sessionBoundDevice`, `GET /internal/sessions/:sid/device`) and
-refuses, before anything is purged, with a typed `409 OWN_DEVICE` when it is the id asked; an
-unreadable binding answers 503 and destroys nothing. A retirement (`reason=retired`) is exempt -
-its id is the caller's own abandoned one, still bound until the next unlock. The client types the
+the calling session of that user is bound to (`sessionBoundDevice`,
+`GET /internal/sessions/users/:userId/sessions/:sid/device`) and refuses, before anything is purged,
+with a typed `409 OWN_DEVICE` when it is the id asked; an unreadable binding answers 503, and a
+request naming no session a typed `400 SESSION_UNNAMED` (every access token has carried `sid` since
+2026-10-25), destroying nothing either way. A retirement (`reason=retired`) is exempt - its id is the
+caller's own abandoned one, still bound until the next unlock; a client older than `1.5.0` retires
+without the reason and meets the refusal until then, a population measured at zero
+([legacy-compatibility](../../legacy-compatibility.md)). The client types the
 refusal at the throw (`status: 'own_device'`), and the panel then signs no login out and says the
 device is the one in use (`chat_device_remove_own_refused`).
 

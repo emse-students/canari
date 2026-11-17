@@ -29,6 +29,7 @@
     revocableDeviceId,
     type PanelRow as PanelRowOf,
   } from './deviceRowRemoval';
+  import { createDevicePanelLoader, panelStateFrom, type PanelLoadResult } from './devicePanelLoad';
 
   interface DeviceInfo {
     deviceId: string;
@@ -84,6 +85,13 @@
   let editingName = $state('');
   /** Key of the row being deleted, so only its own control shows a spinner. */
   let deleting = $state<string | null>(null);
+
+  /** The panel's loads: only the latest one writes (`devicePanelLoad.ts`). */
+  const loader = createDevicePanelLoader<DeviceInfo, AuthSessionInfo>({
+    listDevices: () => mlsService.listUserDevices(userId),
+    fetchSessions: fetchAuthSessions,
+    apply: applyLoad,
+  });
 
   /**
    * Whether the device we are running on appears in the list the server returned.
@@ -160,45 +168,42 @@
    */
   async function loadDeviceData() {
     loading = true;
+    // Unknown from the moment a load starts: rows built meanwhile name no unlisted device.
     devicesKnown = false;
     error = '';
     sessionError = '';
-    try {
-      console.log('[DevicePanel] Loading devices and sessions for user:', userId);
-      const [deviceResult, sessionResult] = await Promise.allSettled([
-        mlsService.listUserDevices(userId),
-        fetchAuthSessions(),
-      ]);
+    console.log('[DevicePanel] Loading devices and sessions for user:', userId);
+    await loader.load();
+  }
 
-      if (sessionResult.status === 'fulfilled') {
-        sessions = sessionResult.value;
-        sessionsKnown = true;
-        console.log(`[DevicePanel] ${sessions.length} live session(s)`);
-      } else {
-        sessions = [];
-        sessionsKnown = false;
-        sessionError = m.settings_sessions_load_error();
-        console.error('[DevicePanel] Failed to load sessions', sessionResult.reason);
-      }
-
-      if (deviceResult.status === 'rejected') {
-        devices = [];
-        throw deviceResult.reason;
-      }
-      devices = deviceResult.value;
-      devicesKnown = true;
-      console.log(`[DevicePanel] Found ${devices.length} device(s)`);
-      // Worth a loud line: this is the state in which every self-protection in this panel is
-      // inert, and the cause is server-side (retention filter, unresolvable KeyPackage) so it
-      // cannot be diagnosed from what the UI shows.
-      if (!devices.some((d) => d.deviceId === myDeviceId)) {
-        console.warn(`[DevicePanel] Current device ${myDeviceId} is ABSENT from its own list`);
-      }
-    } catch (e) {
-      console.error('[DevicePanel] Failed to load device data', e);
+  /**
+   * Writes the latest load's answer - every field of it, so nothing of an earlier load survives
+   * (`panelStateFrom`). A superseded load never reaches here (`createDevicePanelLoader`).
+   */
+  function applyLoad(result: PanelLoadResult<DeviceInfo, AuthSessionInfo>) {
+    const state = panelStateFrom(result);
+    devices = state.devices;
+    devicesKnown = state.devicesKnown;
+    sessions = state.sessions;
+    sessionsKnown = state.sessionsKnown;
+    loading = false;
+    if (result.sessions.status === 'rejected') {
+      sessionError = m.settings_sessions_load_error();
+      console.error('[DevicePanel] Failed to load sessions', result.sessions.reason);
+    } else {
+      console.log(`[DevicePanel] ${sessions.length} live session(s)`);
+    }
+    if (result.devices.status === 'rejected') {
       error = m.chat_devices_load_error();
-    } finally {
-      loading = false;
+      console.error('[DevicePanel] Failed to load device data', result.devices.reason);
+      return;
+    }
+    console.log(`[DevicePanel] Found ${devices.length} device(s)`);
+    // Worth a loud line: this is the state in which every self-protection in this panel is
+    // inert, and the cause is server-side (retention filter, unresolvable KeyPackage) so it
+    // cannot be diagnosed from what the UI shows.
+    if (!devices.some((d) => d.deviceId === myDeviceId)) {
+      console.warn(`[DevicePanel] Current device ${myDeviceId} is ABSENT from its own list`);
     }
   }
 
@@ -259,6 +264,9 @@
     }
 
     deleting = row.key;
+    // Said AFTER the reload below, which clears the panel's messages when it starts.
+    let failure = '';
+    let sessionFailure = '';
     try {
       const { outcome } = await removeDeviceRow(row, {
         deleteDevice: (deviceId) => mlsService.deleteDevice(userId, deviceId),
@@ -268,14 +276,14 @@
       });
       if (outcome === 'own-device') {
         // The server refused to ban the device this session is bound to; nothing was signed out.
-        error = m.chat_device_remove_own_refused();
+        failure = m.chat_device_remove_own_refused();
       } else if (outcome === 'device-incomplete') {
         // The removal did not complete; whatever is left is still listed after the reload below.
-        error = m.chat_device_delete_retry_error();
+        failure = m.chat_device_delete_retry_error();
       } else if (outcome === 'sessions-left') {
         // The device is gone but a credential for it survived: say so, because the two halves
         // have different consequences and only one of them is visible in the list.
-        sessionError = m.settings_sessions_revoke_error();
+        sessionFailure = m.settings_sessions_revoke_error();
       } else {
         showToast(
           revokes ? m.chat_device_removed_toast() : m.settings_sessions_revoked_toast(),
@@ -284,11 +292,13 @@
       }
     } catch (e) {
       console.error('[DevicePanel] Failed to remove row', e);
-      error = revokes ? m.chat_device_remove_error() : m.settings_sessions_revoke_error();
+      failure = revokes ? m.chat_device_remove_error() : m.settings_sessions_revoke_error();
     } finally {
       deleting = null;
     }
     await loadDeviceData();
+    if (failure) error = failure;
+    if (sessionFailure) sessionError = sessionFailure;
   }
 
   function startEditing(deviceId: string) {

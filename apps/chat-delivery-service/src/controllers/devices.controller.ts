@@ -1052,7 +1052,9 @@ export class DevicesController {
   /**
    * Throws a typed `OWN_DEVICE` 409 when the calling session is bound to `deviceId`, and a 503 when
    * the binding cannot be read (the delete it gates destroys, so an unknown answer refuses). A call
-   * with no session id (nginx forwards the verified token's `sid`) cannot be checked, and says so.
+   * naming no session is refused too, as a typed 400 `SESSION_UNNAMED` (never a 401/403, which
+   * would end the client's session): nginx forwards the verified token's `sid`, every access token
+   * has carried one since 2026-10-25 and lives one hour, so no legitimate caller arrives without.
    */
   private async refuseOwnDevice(
     userId: string,
@@ -1060,14 +1062,17 @@ export class DevicesController {
     callerSessionId: string | null
   ): Promise<void> {
     if (!callerSessionId) {
-      this.logger.warn(
-        `[DELETE_DEVICE] user=${userId} device=${deviceId} carries no session id - its own-device binding cannot be checked`
+      this.logger.error(
+        `[DELETE_DEVICE] user=${userId} device=${deviceId} REFUSED: the request names no calling session, so its own-device binding cannot be checked (SESSION_UNNAMED)`
       );
-      return;
+      throw new BadRequestException({
+        code: 'SESSION_UNNAMED',
+        message: 'An owner device delete must come from a named session.',
+      });
     }
     let bound: string | null;
     try {
-      bound = await sessionBoundDevice(callerSessionId);
+      bound = await sessionBoundDevice(userId, callerSessionId);
     } catch (e) {
       if (!(e instanceof SessionBindingUnknownError)) throw e;
       this.logger.error(

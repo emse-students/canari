@@ -391,14 +391,10 @@ out.
   beside the platform config the verifier already reads. Every ending of a session DELETES its row,
   so absence is the ended state; `expiresAt` is compared too because an idle-expired row may not have
   been swept yet. No cache and no clock: the deletion is what flips it.
-- **A token naming no session is ACCEPTED, by construction - and the branch has a removal date.**
-  The one issuer (`signAccessToken`) always writes `sid`, so a sid-less token was minted by a release
-  older than this check, before its deploy, and dies by its own `exp` within one
-  `ACCESS_TOKEN_TTL_SECONDS` of it. Refusing it would answer every client signed in at the deploy
-  anonymous for up to that hour. No session is read for it, `X-Session-Id` stays empty, and the
-  acceptance is logged ONCE per process at `log`, not per request. The branch is deleted one token
-  lifetime after the deploy ([legacy-compatibility](legacy-compatibility.md)). The dev estate cannot
-  rehearse it: its tokens already carry `sid`.
+- **A token naming no session is REFUSED, like an ended one (since 2026-11-17).** The one issuer
+  (`signAccessToken`) has written `sid` since 2026-10-25 and a token lives one
+  `ACCESS_TOKEN_TTL_SECONDS`, so no legitimate token lacks it; the hour's acceptance kept for that
+  deploy is gone. Answered anonymous with no session read, logged at `warn`.
 - **An ended session is said once.** The refusal is logged at `warn` the first time per session per
   process (a bounded set of 4096 ids), then at `debug`: a client sends several requests before its
   refresh is refused, and the refusal is one fact.
@@ -435,10 +431,12 @@ was the caller's own install's. Not covered, stated: a session bound to NO devic
 id - the panel's own session revocation (`DELETE /api/auth/sessions/:id`) ends those.
 
 **And an owner's revocation never bans the caller's own device** (2026-11-17). Before anything is
-purged, chat-delivery asks core-service which device the CALLING session is bound to
-(`GET /api/internal/sessions/:sessionId/device`, internal secret, `AuthSessionsService.boundDevice`)
-and refuses with a typed `409 OWN_DEVICE` when it is the id asked; an unreadable binding answers 503
-(`SessionBindingUnknownError`) and destroys nothing. A retirement is exempt, for the reason above
+purged, chat-delivery asks core-service which device the CALLING session of that user is bound to
+(`GET /api/internal/sessions/users/:userId/sessions/:sessionId/device`, internal secret,
+`AuthSessionsService.boundDevice(userId, sid)`) and refuses with a typed `409 OWN_DEVICE` when it is
+the id asked; an unreadable binding answers 503 (`SessionBindingUnknownError`) and a request naming
+no session a typed `400 SESSION_UNNAMED` - never a 401/403, and nothing destroyed in either. A
+retirement is exempt, for the reason above
 ([auth](frontend/modules/auth.md#a-removed-row-whose-device-the-server-no-longer-lists)).
 
 ## A refresh refused because the device was revoked says so (2026-10-25)
@@ -835,8 +833,8 @@ which also holds **the contract a site implements**. This section is what Canari
 - **The mint.** `POST /api/auth/handoff { aud, dest }` -> `{ url, expiresInSeconds }` on
   core-service (`auth/handoff/handoff.service.ts`, the route in `auth.controller.ts`). It needs a
   LIVE access token (`requireAccessToken`, [the session's liveness](#an-access-token-is-only-as-alive-as-its-session-2026-10-25)
-  included), so an ended Canari session mints nothing, and a sid-less (legacy) token, which names no
-  session at all, is refused too; the subject is the token's, never the body's. Throttled per account (20 a minute). One audit line per mint,
+  included), so an ended Canari session mints nothing, and neither does a sid-less token, which names no
+  session at all; the subject is the token's, never the body's. Throttled per account (20 a minute). One audit line per mint,
   `[HANDOFF] minted aud=<site> user=<sub> jti=<jti> dest=<path>`, and **the token itself is never
   logged**.
 - **The token.** A compact JWS, `ES256`, header `typ: canari-handoff+jwt` and `kid` (RFC 7638),

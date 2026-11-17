@@ -66,7 +66,7 @@ export class SessionBindingUnknownError extends Error {
 }
 
 /**
- * The device id the session `sessionId` is bound to (`auth_sessions."deviceId"`), or null when it is
+ * The device id the session `sessionId` of `userId` is bound to (`auth_sessions."deviceId"`), or null when it is
  * bound to none or no longer exists - asked of core-service, which holds the binding. The owner's
  * device delete reads it to refuse banning the caller's own device, whatever id the client thinks
  * it has.
@@ -74,15 +74,23 @@ export class SessionBindingUnknownError extends Error {
  * Throws {@link SessionBindingUnknownError} on every way it can fail: the delete it gates is
  * destructive, so an unknown binding refuses rather than proceeds.
  */
-export async function sessionBoundDevice(sessionId: string): Promise<string | null> {
+export async function sessionBoundDevice(
+  userId: string,
+  sessionId: string
+): Promise<string | null> {
   const secret = process.env.INTERNAL_SECRET ?? '';
   if (!secret) throw new SessionBindingUnknownError('INTERNAL_SECRET unset');
   let res: globalThis.Response;
   try {
-    res = await fetch(coreUrl(`internal/sessions/${encodeURIComponent(sessionId)}/device`), {
-      headers: { 'x-internal-secret': secret },
-      signal: AbortSignal.timeout(5_000),
-    });
+    res = await fetch(
+      coreUrl(
+        `internal/sessions/users/${encodeURIComponent(userId)}/sessions/${encodeURIComponent(sessionId)}/device`
+      ),
+      {
+        headers: { 'x-internal-secret': secret },
+        signal: AbortSignal.timeout(5_000),
+      }
+    );
   } catch (e) {
     throw new SessionBindingUnknownError(
       `unreachable ${e instanceof Error ? `${e.name} ${e.message}` : String(e)}`

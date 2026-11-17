@@ -179,9 +179,22 @@ describe('DevicesController - the cause of a ban', () => {
       expect(notify).toHaveBeenCalledWith('u1', 'd2');
     });
 
-    it('ends them with no exception when the caller names no session', async () => {
-      await controller.deleteDevice('u1', 'd2', undefined, 'u1', undefined);
-      expect(endSessions).toHaveBeenCalledWith('u1', 'd2', null);
+    /*
+     * Every access token has named its session since 2026-10-25 and lives one hour, so an owner's
+     * delete arriving with none is no legitimate caller: refused, typed, never a 401/403, before
+     * anything is destroyed - the own-device check it would skip is not a step to proceed without.
+     */
+    it("refuses an owner's delete that names no calling session, typed SESSION_UNNAMED, destroying nothing", async () => {
+      const failure = await controller
+        .deleteDevice('u1', 'd2', undefined, 'u1', undefined)
+        .catch((e: unknown) => e);
+      expect(failure).toBeInstanceOf(BadRequestException);
+      expect((failure as BadRequestException).getResponse()).toMatchObject({
+        code: 'SESSION_UNNAMED',
+      });
+      expect(boundDevice).not.toHaveBeenCalled();
+      expect(purge).not.toHaveBeenCalled();
+      expect(query).not.toHaveBeenCalled();
     });
 
     it('ends no session for a retirement - the id was the caller install’s own', async () => {
@@ -218,7 +231,7 @@ describe('DevicesController - the cause of a ban', () => {
       const failure = await del(undefined).catch((e: unknown) => e);
       expect(failure).toBeInstanceOf(ConflictException);
       expect((failure as ConflictException).getResponse()).toMatchObject({ code: 'OWN_DEVICE' });
-      expect(boundDevice).toHaveBeenCalledWith(CALLER_SID);
+      expect(boundDevice).toHaveBeenCalledWith('u1', CALLER_SID);
       expect(purge).not.toHaveBeenCalled();
       expect(query).not.toHaveBeenCalled();
       expect(notify).not.toHaveBeenCalled();

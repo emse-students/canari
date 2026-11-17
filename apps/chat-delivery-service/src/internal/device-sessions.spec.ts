@@ -101,12 +101,12 @@ describe('sessionBoundDevice', () => {
 
   it('asks core-service with the internal secret and returns the bound id, or null', async () => {
     answer(200, { deviceId: 'web-a' });
-    await expect(sessionBoundDevice('sid-1')).resolves.toBe('web-a');
+    await expect(sessionBoundDevice('u1', 'sid-1')).resolves.toBe('web-a');
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe('http://core.test:3012/api/internal/sessions/sid-1/device');
+    expect(url).toBe('http://core.test:3012/api/internal/sessions/users/u1/sessions/sid-1/device');
     expect(init.headers).toEqual({ 'x-internal-secret': 'secret' });
     answer(200, { deviceId: null });
-    await expect(sessionBoundDevice('sid-1')).resolves.toBeNull();
+    await expect(sessionBoundDevice('u1', 'sid-1')).resolves.toBeNull();
   });
 
   it.each([
@@ -115,6 +115,8 @@ describe('sessionBoundDevice', () => {
     ['core unreachable', () => fetchMock.mockRejectedValue(new TypeError('fetch failed'))],
   ])('throws the typed error on %s', async (_label, arrange) => {
     arrange();
-    await expect(sessionBoundDevice('sid-1')).rejects.toBeInstanceOf(SessionBindingUnknownError);
+    await expect(sessionBoundDevice('u1', 'sid-1')).rejects.toBeInstanceOf(
+      SessionBindingUnknownError
+    );
   });
 });
