@@ -309,3 +309,50 @@ a worker would keep the interface alive for the ~0.3 s a phone spends, and is no
 stops short is unexplained beyond "the budget ended". The boards were rated on ONE phone, and the first
 Challenge-sized game of a player who has only met generator 1 is the real reading
 (written as a reading once generator 2 ships in a stable; [the worker](../../backlog.d/p3-minesweeper-generation-off-the-main-thread.md)).
+
+## The replay: timed moves, and a moderator who can watch a win (owner, 2026-11-17)
+
+*"register the timings of each action (place flags, mine) during each game, and send them to the server
+(they should match the game length), and add a button to replay a game for the moderators, so they can
+see if a game is legit"* (owner). The server's replay proved a log CLEARS the board; it said nothing of
+HOW - a solver driving the real board, a pace no hand holds - and kept nothing to look at.
+
+**Timestamps.** Every dig and flag the client logs carries `t`, whole milliseconds from the first dig
+(`moveTime()` in the modal; the first move is 0, the timer starts right after it, so board generation is
+not the player's time). `claimedDurationMs` is now the winning move's `t`, not the last 100 ms tick, and
+the win clock shows that same number.
+
+**What the server checks** (`timingsFault`, `minesweeper.timings.ts`, before the replay, a failure is a
+400 and the challenge is stored as `rejected`): the first move is at 0, no move precedes the one before
+it, and **the last `t` equals `claimedDurationMs`** - the log describes ONE game of the claimed length.
+`t` is REQUIRED (no fallback for a client that omits it: ranked is already closed to a build that cannot
+make generator 2, and generator 2 had not shipped in a stable, so no ranked client predates timings).
+Nothing judges the PACE: whether it is humanly possible is the moderator's call, watching.
+
+**What is kept.** A verified win stores its log in `minesweeper_replays` (migration 175): one row per
+score, `moves jsonb` of `{type, x, y, t}`, `ON DELETE CASCADE` from the score - so removing a score, or an
+account's erasure (which deletes its scores), removes the replay too (`account-erasure.ts` classifies
+the column as holding no account id). Its own table because the leaderboard, the ranks and `me` read the
+score on every request and a few hundred moves must not ride along. The BOARD is not stored: it is
+regenerated from the challenge's seed, generator and size, as the server's replay does. Storing the log
+is best-effort AFTER the score is saved: a failure is logged at `error` (a score with no replay cannot be
+checked) and the player's win stands.
+
+**The viewer.** `GET /minesweeper/scores/:scoreId/replay` (global admins; `RouteParams` declares
+`scoreId` a uuid) returns the player's name, the recipe and the log, and logs who read it. On the Games
+page an admin gets a "Revoir cette partie" button per row; it opens `MinesweeperReplay.svelte`: the
+board (read-only, the last action ringed), play / pause, restart, a scrubber over the game's length, and
+1x / 2x / 4x / 8x. `replay.ts` rebuilds the board after any move: generation runs ONCE, up front, the
+board right after the first move is copied, and going backwards restarts from that copy and replays the
+few moves between. A score won before this shipped has no replay: 404, said as "no recording was kept".
+
+**Charter.** Principle 1 (your messages are yours) is not touched - a game is not a message - and the
+log is read by global admins only, each read logged; the register (C28) names it, and it lives exactly as
+long as its score.
+
+**Verified:** server specs for the timings (start, order, length), the stored log keeping its
+timestamps, a failed store not failing the win, the replay read (and its 404s, and the trace of who
+read it); client specs for the board after n moves forwards and backwards without regenerating, the
+clock to move count, the viewer's states, the modal stamping a won game (moves from 0, non-decreasing,
+claimed = last `t`) and the Games page button. **NOT verified:** migration 175 on a real PostgreSQL
+(none available locally), and the viewer on a phone and as a real admin ([reading owed](../../backlog.d/reading-owed-minesweeper-replay-as-a-global-admin.md)).
