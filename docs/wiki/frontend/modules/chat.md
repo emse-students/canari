@@ -1672,7 +1672,7 @@ also keeps RUNNING after a hand-over (unlike an unload), and its tails had to be
   review): a drain restarting behind each close would otherwise hold it for good. What remains is a
   window that never closes - a hung handler or observer, which `guarded` reports every minute - and
   then this document, out of the election (`leaving`), stays a stale copy until it is reloaded by
-  hand. The loss itself is not closed by this wait: [rows before ratchet](../../backlog.d/p1-rows-before-ratchet.md);
+  hand. The loss itself is closed by an order, not by this wait: [rows before ratchet](#rows-before-ratchet-a-checkpoint-stores-the-buffered-rows-first-2026-11-17);
 - **a lead handed over and not yet taken is released at `freeze`**: the old leader is a follower
   from the grant, but holds the lock until the asker steals it, and an asker that closed in between
   never will. Frozen with that hold, it left every tab a follower until it was thawed;
@@ -3184,6 +3184,100 @@ The run also surfaced a harness artifact worth keeping in mind for any marker co
 failed to submit and left its text in the box, the next `Input.insertText` appended to it, and the
 app faithfully delivered ONE message carrying TWO markers - twelve markers on screen for eleven
 sends. The app was right and the count was wrong; the harness now clears the composer before arming.
+
+#### Rows before ratchet: a checkpoint stores the buffered rows first (2026-11-17)
+
+**The defect (P1, second review of #3321).** A live drain decrypts each frame and holds its row in
+the UI buffer above until its window closes (`endBulkMessageIngest`). A checkpoint was not ordered
+behind that close: one started by a send, by an earlier window, by the persister's coalescing - and
+by the window's OWN close, since `BaseMlsService.endBulkIngest` runs the persister observer (registered
+in `setupMessageHandler`) before the UI one (registered in `sessionAuth`) - exported the frame's
+ratchet advance and its seen mark (staged INTO the state, KILL-2) while the row was only in memory. A
+kill there (a browser closed, a crash, an app swiped away) lost the message from the device: the
+generation is spent on disk (`SecretReuseError`) and the frame is marked seen, so it is neither
+decrypted again nor replayed. Principle 2 of the [charter](../../../principes.md): the essential is
+never lost.
+
+**The fix is an order.** `persistCheckpoint` asks every bulk-ingest observer that holds rows
+(`BulkIngestObserver.holdRowsForCheckpoint`, implemented by `useMessaging.holdRowsForCheckpoint`)
+to store them BEFORE it stages the ledgers and exports, and keeps the hold until its write settled
+(on native the export runs inside the command, so releasing at the capture would not be enough).
+While a hold is taken, an inbound message does not enter the buffer: it takes the live path, whose
+handler stores its own row - which is what makes the wait end after ONE store of what is held,
+without a clock and without racing a drain that keeps refilling the buffer. Every store of the buffer
+(the hold's and the window close's) goes through ONE chain (`storeBufferedRows`), so a hold that
+meets a close already storing waits for that store's rows too. Nothing in the hold waits on a drain
+handler, so a handler that awaits a checkpoint (a commit's structural checkpoint) cannot deadlock it.
+
+**A row that could not be stored refuses the checkpoint (review of #3786).** `batchAddMessages`
+renders a batch and then writes it, and a failed write was only logged: the hold resolved and the
+export went through with the rows in memory alone. A failed write is now kept whole
+(`unstoredRowWrites`, the batch's own `writeBatchRows` seam), whichever path wrote it - the hold's
+store, a window's close, a restore. A hold retries every kept write ONCE, puts back in the buffer a
+conversation whose batch threw, and rejects (`BufferedRowsNotStoredError`) while anything stands;
+`persistCheckpoint` then refuses (`MlsCheckpointNotWrittenError` at step `rows`) and the persister
+keeps the state dirty. One refusal per trigger, no timer: the next checkpoint's hold retries. The
+window's close only logs, as it always did - it is not a checkpoint. A retried write that lands
+SETTLES what arrived meanwhile (`settlePendingFor`, as the batch does after its own write): an edit,
+a deletion or a reaction that met the row shown and not stored was kept "for its write", and the
+snapshot the retry stores predates it (re-review of #3786). A kept write is written under the
+conversation that SHOWS its rows now - its own, or the group a 1:1 was re-keyed onto at a Welcome -
+and dropped only when none does (deleted, purged). Each write's failure is said once, by the batch;
+a retry says ONE line for all its writes, with the first cause. A batch that THREW (before it
+rendered anything - nothing after the render may skip the write or throw, so the announcement and
+the settle after the write are guarded) is kept too (`unstoredBatches`), whichever path took it, and
+run again first by the next store of EITHER kind - a close shows it without waiting for a hold -
+each on its own, so a later message of that conversation never joins a batch that keeps failing; it
+is said once per batch, and replayed under the key that shows its thread now (the ids it showed when
+kept anchor it across a re-key). **A batch that always throws blocks every checkpoint - commits,
+joins and sends - until a reload**, said once per page as the cause.
+**The chain never rejects:** a step that throws resolves `false` with one line, and the hold gives
+its counter back in a `finally` - one exception costs one store, never every later checkpoint and
+close of the page.
+
+**What a refused checkpoint leaves, exactly.** The state on disk stays behind those frames, and a
+reload repairs it from what still holds them: a frame the server still lists (a commit or a Welcome,
+held by `DrainAckHold`, or one not acknowledged) is decrypted again; an APPLICATION frame a leader
+tab already acknowledged at the drain's end is gone from the server and comes back through the
+history archive, whose replay reads it because no landed checkpoint marked it seen.
+
+**A hung row write holds every checkpoint.** An IndexedDB write that never settles leaves the hold
+pending: that checkpoint never exports, and the persister's in-flight one (`inFlightEncrypted`)
+never clears, so no later checkpoint starts either. No timeout, deliberately - exporting past a row
+write that has not answered is the loss this order exists to prevent; the hung store is the defect,
+and every other write to it hangs too.
+
+**A store that keeps refusing the rows blocks every checkpoint too** - commits and joins included
+(`externalJoin` awaits one), until a write lands or the page reloads; said once per page as the
+cause (`[ADD_MSG] Rows of applied frames cannot be stored - every checkpoint is refused until they
+are ...`). Accepted for the same reason: a checkpoint that lands past them is the loss.
+
+**One observer, every hook required.** Each page hands the session ONE object,
+`useMessaging.bulkIngestObserver(msgCtx)` (`SessionCallbacks.messageIngestObserver`,
+`Required<BulkIngestObserver>`), so the window's open, its close and the checkpoint's hold are
+registered together or not at all; `messageIngestObserver.wiring.test.ts` pins both pages and the
+session's registration.
+
+**What it costs.** A checkpoint that lands inside an open window renders the buffered messages at
+that moment instead of at the close, and messages arriving while it writes render one by one (the
+live path). The persister defers its own checkpoints inside a window, so this is the rare case. The
+log says it once per hold that stored something: `[ADD_MSG] A checkpoint is about to export: storing
+the N buffered message(s) first, the window stays open`.
+
+**Pinned by** `useMessaging.rowsBeforeRatchet.svelte.test.ts` (the buffered rows are in the store
+when the hold resolves, the window still open - the simulated kill; a message during the hold is
+stored by its handler; buffering resumes after release; a hold waits for a close already storing; a
+failing store rejects the hold and the next hold retries it, from the hold's own store and from a
+close's; the observer's hold is the messaging hold) and `BaseMlsService.rowsBeforeRatchet.test.ts`
+(rows stored, then export, then write, then release; released on a failed write; a failed hold
+refuses the checkpoint and exports nothing).
+
+**What it does not close, stated.** Narrower windows of the same class remain, in the
+[backlog entry](../../backlog.d/p1-rows-before-ratchet.md): a row not yet STORED when the export is
+taken (a frame whose handler has not reached `addMessageToChat`, or a live-path write still in
+flight); an application frame acknowledged at the drain's end (`announceAck` in `onDrainEnd`) before
+the close stores its row, whose backstop is the history archive; the orphan buffer (`bufferOrphan`);
+and the device reading of a kill inside a window.
 
 ### Forwarding
 
