@@ -1199,7 +1199,42 @@ async function awaitMemberRole(cx, displayName, role, timeoutMs = 20000) {
 export async function removeCommunityMember(cx, displayName) {
   const before = await openCommunityMembers(cx);
   const row = await markMemberRow(cx, displayName);
-  await realClick(cx, `${row} button:not([aria-haspopup="listbox"])`);
+  const remove = `${row} button:not([aria-haspopup="listbox"])`;
+  // THE CONTROL IS DEAD WHILE THE ROSTER'S ORDER IS STILL SETTLING (a member whose lookup is in
+  // flight will be inserted and move the rows): a click now would land on nothing, so wait for it.
+  await until(
+    cx,
+    `(function () {
+       var b = document.querySelector(${JSON.stringify(remove)});
+       return !!b && !b.disabled;
+     })()`,
+    20000
+  );
+  // The rows may have been re-rendered while the order settled: mark the member's row again.
+  await markMemberRow(cx, displayName);
+  await realClick(cx, remove);
+  // THE DIALOG MUST NAME WHOM IT REMOVES (1.7.0-alpha.9: a removal aimed at beta removed alpha, 4/4,
+  // and the dialog said only "this member"). Read before confirming, so a click on the wrong row is
+  // a refusal here and never a removal of the wrong person.
+  const namedBy = Date.now() + 10000;
+  for (;;) {
+    const texts = await evaluate(
+      cx,
+      `(function () {
+         var name = ${JSON.stringify(displayName)};
+         return [].slice.call(document.querySelectorAll('p'))
+           .map(function (el) { return (el.innerText || '').trim(); })
+           .filter(function (t) { return t.indexOf(name) >= 0; });
+       })()`
+    );
+    if ((texts ?? []).some((t) => saysMessage('chat_community_remove_member_confirm', t))) break;
+    if (Date.now() > namedBy) {
+      throw new Error(
+        `removeCommunityMember: the confirmation does not name "${displayName}" - not confirmed`
+      );
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
   await confirmDialog(cx, 'common_remove_label');
 
   // GONE FROM A ROSTER THAT STILL HAS PEOPLE IN IT. "The marked row no longer names them" is also

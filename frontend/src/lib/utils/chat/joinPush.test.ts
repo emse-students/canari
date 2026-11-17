@@ -244,7 +244,7 @@ describe('the join push of a delivered Welcome', () => {
    * Welcome whether it can address the device, and a push it would refuse is not sent.
    */
   it.each(['offline', 'undeclared'] as const)(
-    'sends nothing to a device whose Welcome was answered `%s`, and counts it at warn',
+    'sends nothing to a device whose Welcome was answered `%s`, and says at debug that the newcomer asks',
     async (addressability) => {
       const { mlsService, deps } = inviter();
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -252,10 +252,17 @@ describe('the join push of a delivered Welcome', () => {
       await queueJoinPush(mlsService, { ...DELIVERED, addressability }, deps);
 
       expect(mlsService.sendMessage).not.toHaveBeenCalled();
+      // The newcomer asks for its register itself (#3777): an expected path, never a warning.
+      expect(warn).not.toHaveBeenCalled();
       expect(
-        warn.mock.calls.filter(([l]) =>
-          String(l).includes('[JOIN_PUSH] g1... NOT DELIVERED to beta:beta-dev')
-        )
+        vi
+          .mocked(deps.log)
+          .mock.calls.filter(([l]) =>
+            String(l).includes(
+              '[JOIN_PUSH] g1... no push to beta:beta-dev - the server answered its Welcome'
+            )
+          )
+          .filter(([l]) => String(l).includes('the newcomer asks for its register'))
       ).toHaveLength(1);
       // Claimed like any other: the same bytes delivered again decide nothing a second time.
       await queueJoinPush(mlsService, { ...DELIVERED, addressability: 'addressable' }, deps);
@@ -275,7 +282,7 @@ describe('the join push of a delivered Welcome', () => {
     );
   });
 
-  it('says at warn when the newcomer could not be addressed at the push although its Welcome answer allowed it - it left in between', async () => {
+  it('says at debug when the newcomer could not be addressed at the push although its Welcome answer allowed it - it left in between, and asks itself', async () => {
     const { mlsService, deps } = inviter();
     vi.mocked(mlsService.sendMessage).mockRejectedValueOnce(
       new AddressedUnsupportedError(GROUP, ['beta:beta-dev'])
@@ -284,8 +291,15 @@ describe('the join push of a delivered Welcome', () => {
 
     await queueJoinPush(mlsService, DELIVERED, deps);
 
+    expect(warn.mock.calls.some(([l]) => String(l).includes('[JOIN_PUSH]'))).toBe(false);
     expect(
-      warn.mock.calls.some(([l]) => String(l).includes('[JOIN_PUSH] g1... NOT DELIVERED'))
+      vi
+        .mocked(deps.log)
+        .mock.calls.some(
+          ([l]) =>
+            String(l).includes('[JOIN_PUSH] g1... no push to beta:beta-dev') &&
+            String(l).includes('the newcomer asks for its register at its next connection')
+        )
     ).toBe(true);
     warn.mockRestore();
   });

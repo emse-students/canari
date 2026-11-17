@@ -48,6 +48,7 @@
   import { resolveUserDisplayName } from '$lib/utils/users/displayName';
   import { membersByFamilyName } from '$lib/utils/users/memberOrder.svelte';
   import { Log } from '$lib/utils/Log';
+  import { confirmMemberRemoval } from '$lib/utils/users/memberRemovalConfirm';
   import { copyText } from '$lib/utils/clipboard';
   import Picker from '../ui/Picker.svelte';
   import type { PickerOption } from '../ui/picker';
@@ -465,12 +466,8 @@
   async function handleRemoveMember(userId: string) {
     const workspaceDbId = selectedWorkspace?.workspaceDbId;
     if (!workspaceDbId) return;
-    if (
-      !(await showConfirm(m.chat_community_remove_member_confirm(), {
-        danger: true,
-        confirmLabel: m.common_remove_label(),
-      }))
-    ) {
+    if (!(await confirmMemberRemoval(userId, m.chat_community_remove_member_confirm))) {
+      Log.d('communityAdmin.handleRemoveMember declined at its confirmation', { userId });
       return;
     }
     memberRemoving = { ...memberRemoving, [userId]: true };
@@ -982,10 +979,19 @@
                             </span>
                           {/if}
                         </div>
+                        <!--
+                          NOT LIVE WHILE THE ORDER IS STILL SETTLING. A member whose profile lookup
+                          is in flight is not listed yet and WILL be inserted at their place, moving
+                          every row below it - so a remove control under the pointer now may sit on
+                          another member's row at the tap (1.7.0-alpha.9: a removal aimed at beta
+                          removed alpha, 4/4). `pending` is a count of lookups, not a clock: the
+                          control comes back the moment the last one settles.
+                        -->
                         <button
                           type="button"
+                          data-remove-member={member.userId}
                           onclick={() => handleRemoveMember(member.userId)}
-                          disabled={memberRemoving[member.userId]}
+                          disabled={memberRemoving[member.userId] || memberOrder.pending > 0}
                           class="ui-icon-button text-red-err hover:bg-red-err/10 rounded-lg transition-all"
                           title={m.chat_community_remove_member_title()}
                           aria-label={m.chat_community_remove_member_title()}

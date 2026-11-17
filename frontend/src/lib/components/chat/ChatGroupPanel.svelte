@@ -562,14 +562,21 @@
                           which used to address members through the label - the same one-attribute
                           pattern `data-conversation-tile` and `data-channel-row` already use.
                         -->
+                  <!--
+                          NOT LIVE WHILE THE ORDER IS STILL SETTLING: a member whose lookup is in
+                          flight will be inserted at their place and move the rows below it, so the
+                          control under the pointer could be another member's at the tap. A count of
+                          lookups, not a clock (see `membersByFamilyName`).
+                        -->
                   <button
                     data-remove-member={member}
+                    disabled={memberOrder.pending > 0}
                     onclick={() => onRemoveMember?.(member)}
                     aria-label={m.chat_group_remove_member_label({
                       member: memberNames.get(member) ?? member,
                     })}
                     title={m.chat_group_remove_member_title()}
-                    class="ui-icon-button text-text-muted rounded-xl bg-black/5 transition-all outline-none hover:bg-red-500/10 hover:text-red-500 focus-visible:ring-2 focus-visible:ring-red-500 active:scale-95 dark:bg-white/5"
+                    class="ui-icon-button text-text-muted rounded-xl bg-black/5 transition-all outline-none hover:bg-red-500/10 hover:text-red-500 focus-visible:ring-2 focus-visible:ring-red-500 active:scale-95 disabled:opacity-40 dark:bg-white/5"
                   >
                     <UserMinus size={16} />
                   </button>

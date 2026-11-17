@@ -56,7 +56,6 @@ earliest version, as a checklist.
 - [P3 - A device's revocation reset logs a `\[seenHelps\]` read failure at error level](backlog.d/p3-a-device-revocation-reset-logs-seenhelps-at-error-level.md)
 - [P3 - a member whose right to broadcast is given back is not told](backlog.d/p3-a-lifted-withdrawal-is-not-told-to-the-member.md)
 - [P3 - the feed offset restored after a Back from an association lands about 226 px lower than it was left (Mi 9T, `1.7.0-alpha.2`)](backlog.d/p3-the-feed-offset-restored-after-a-back-from-an-association-lands-about-226-px.md)
-- [P3 - the inviter's "join push NOT DELIVERED" line is a warning naming a step that has shipped (2026-11-17)](backlog.d/p3-the-join-push-not-delivered-line-is-a-stale-warning.md)
 
 ### Readings owed
 
@@ -120,7 +119,6 @@ earliest version, as a checklist.
 - [P2 - an Android blind salon banner `held=true` with the seed frame attached (2026-11-17)](backlog.d/p2-android-blind-salon-banner-held-true.md)
 - [P2 - no gate proves that an older build reads, and writes back, the MLS state this build writes](backlog.d/p2-no-gate-proves-an-older-build-reads-the-mls-state-this-build-writes.md)
 - [P2 - about six devices a day become orphans, nearly all of them browsers](backlog.d/p2-orphan-devices-refill-the-queue-watched-daily-cleaned-by-hand.md)
-- [P2 - removing a community member: the confirmation does not name who, and a removal aimed at one member removed another on the bench (2026-11-17)](backlog.d/p2-removing-a-community-member-the-confirmation-does-not-name-who.md)
 - [P2 - a rolling replace answered two 502s once: its evidence must survive the retire first](backlog.d/p2-the-deploy-s-rolling-replace-two-posts-answered-502-across-a-release-cause.md)
 - [P2 - a frame read before a browser kill is called "never read here" on the next cold start](backlog.d/reading-owed-the-live-seen-cipher-mark-written-at-the-checkpoint.md)
 - [P2 - the organiser alert for a payment over capacity: its precondition is met, the flip is owed](backlog.d/reading-owed-the-organiser-alert-for-a-payment-over-capacity.md)

@@ -30,9 +30,8 @@ import {
   chat_group_remove_member_confirm,
   chat_system_removed_from_group,
   chat_unopenable_start_again_failed,
-  common_remove_label,
 } from '$lib/paraglide/messages';
-import { showConfirm } from '$lib/stores/confirm.svelte';
+import { confirmMemberRemoval } from '$lib/utils/users/memberRemovalConfirm';
 import { showToast } from '$lib/stores/toast.svelte';
 import { withMlsBulkIngest } from '$lib/mls-client/mlsBulkIngest';
 import { publishConversationRead } from '$lib/mls-client/tabMessageSync';
@@ -2990,11 +2989,17 @@ export function useConversations() {
     if (!key) return;
     const convo = conversations.get(key);
     if (!convo) return;
-    const confirmed = await showConfirm(chat_group_remove_member_confirm(), {
-      danger: true,
-      confirmLabel: common_remove_label(),
-    });
-    if (!confirmed) return;
+    // The question NAMES the member, as their row draws them (the group's nickname): `memberId` is
+    // the identity the tapped row carried, and the person confirms whom, not "this member".
+    const confirmed = await confirmMemberRemoval(
+      memberId,
+      chat_group_remove_member_confirm,
+      convo.id
+    );
+    if (!confirmed) {
+      ctx.log(`[REMOVE_MEMBER] ${memberId.slice(0, 8)} removal declined at its confirmation`);
+      return;
+    }
     // THE ROSTER IS REREAD WHENEVER THE SERVER RECORDED THE REMOVAL - on success, and when only its
     // commit is owed (`MemberRemovalNotCommittedError`): the person is out either way. Outside the
     // `try`, so a failed reread is never reported as a failed removal.
