@@ -26,6 +26,7 @@
     type MissingAnswer,
     type Selections,
   } from '$lib/forms/fillAnswers';
+  import { useFormWindow } from '$lib/forms/useFormWindow.svelte';
   import { gridRequiredSwitchOn } from '$lib/forms/gridRequiredGate';
   import {
     cursusSlicesOf,
@@ -110,8 +111,10 @@
   const askedFields = $derived(askedGuestFields(form?.guestFields));
   /** What the form asks a guest to declare (owner, 2026-11-16): a guest has no account to read. */
   const askedDeclared = $derived(askedDeclaredFields(form?.guestFields));
-  const isNotOpenYet = $derived(!!form?.opensAt && new Date(form.opensAt) > new Date());
-  const isClosed = $derived(!!form?.closedAt && new Date(form.closedAt) < new Date());
+  /** The window: the server's verdict of the load, or of the last typed refusal (`useFormWindow`). */
+  const win = useFormWindow(() => form, 'PublicForm');
+  const isNotOpenYet = $derived(win.notYet);
+  const isClosed = $derived(win.closed);
   // No profile half: the server refuses a public form whose questions depend on who answers.
   const visibleItems = $derived(form ? visibleItemsOf(form.items, selections) : []);
   /** The slices the server sent: a guest has no cursus, so one (its "everyone else" row). */
@@ -156,6 +159,7 @@
     }
     try {
       form = await getPublicForm(formId);
+      win.clear();
       selections = initialSelections(form.items);
       Log.d('PublicForm', `loaded form=${formId} items=${form.items.length}`);
     } catch (e) {
@@ -242,6 +246,7 @@
       submitted = true;
     } catch (e) {
       Log.d('PublicForm', `submit refused form=${form.id}: ${e}`);
+      win.adopt(e);
       // Worded in the reader's language from the refusal's code (a form's, then a payment's); the
       // server's sentence is English and for the log - the guest reads ours.
       error = formSubmitRefusalMessage(e, m.form_guest_submit_failed());
@@ -360,11 +365,14 @@
         </Button>
       </div>
     {:else}
-      {#if isNotOpenYet && form.opensAt}
+      {#if isNotOpenYet}
         <p
           class="border-accent/40 bg-accent/20 text-accent-text mb-4 rounded-2xl border px-4 py-4 text-sm font-semibold"
+          data-testid="form-not-open-notice"
         >
-          {m.form_view_opens_at({ date: formatFormOpensAt(form.opensAt) })}
+          {form.opensAt
+            ? m.form_view_opens_at({ date: formatFormOpensAt(form.opensAt) })
+            : m.form_view_not_open_yet()}
         </p>
       {:else if isClosed}
         <p class="text-text-muted mb-4 text-center text-sm font-medium">{m.form_view_closed()}</p>

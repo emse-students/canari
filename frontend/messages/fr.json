@@ -3291,6 +3291,7 @@
   "chat_community_invite_qr_intro": "Scannez ce code pour rejoindre la communauté.",
   "form_view_event_linked": "Événement lié",
   "form_view_event_see": "Voir →",
+  "form_view_not_open_yet": "Ce formulaire n'est pas encore ouvert.",
   "form_view_opens_at": "Ouverture le {date}",
   "form_view_reminder_active": "Rappel activé",
   "form_view_remind_me": "Me prévenir",
