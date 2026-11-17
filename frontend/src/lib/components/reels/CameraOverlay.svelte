@@ -65,6 +65,8 @@
     onpublished?: (identity: string) => void;
     /** A `chat` camera that may film a reel message (`chatReelWriter.ts`); photos only otherwise. */
     chatFilms?: boolean;
+    /** The conversation a filming chat camera was opened from (`ReelCapture.chatTarget`, path 2). */
+    chatTarget?: { id: string; name: string } | null;
   }
 
   let {
@@ -75,6 +77,7 @@
     composerStart,
     onpublished,
     chatFilms = false,
+    chatTarget = null,
   }: Props = $props();
 
   /** Registered while open: z-index by open order, the last opened on top (`utils/overlayStack.ts`). */
@@ -140,5 +143,6 @@
     {composerStart}
     {onpublished}
     {chatFilms}
+    {chatTarget}
   />
 </div>

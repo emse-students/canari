@@ -86,7 +86,6 @@ earliest version, as a checklist.
 - [P3 - EXIT-FORTIFY: closing the app on the Mi 9T logs `FORTIFY: pthread_mutex_lock called on a destroyed mutex` from the render thread](backlog.d/reading-owed-exit-fortify-closing-the-app-on-the-mi-9t-logged-fortify-pthread.md)
 - [P3 - a 13 MB upload on the iPhone restarted at about half and ran at 40 to 65 KB/s](backlog.d/p3-a-13-mb-upload-on-the-iphone-restarted-at-half-and-ran-at-40-to-65-kb-s.md)
 - [P3 - A private salon granted to a long-standing member badges its whole past as unread (review of #3682, 2026-11-16)](backlog.d/p3-a-private-salon-granted-late-badges-its-whole-past.md)
-- [P3 - the "Envoyer a..." sheet names a ticked target by its raw id while the search hides it](backlog.d/p3-the-envoyer-a-sheet-names-a-ticked-target-by-its-raw-id-while-the-search-hides-it.md)
 - [P3 - the feed offset restored after a Back from an association lands about 226 px lower than it was left (Mi 9T, `1.7.0-alpha.2`)](backlog.d/p3-the-feed-offset-restored-after-a-back-from-an-association-lands-about-226-px.md)
 - [P3 - Settings > Preferences: at a doubled root font the "Langue" text is squeezed and the "Revoir la visite" button runs past the card (Mi 9T, 2026-11-17)](backlog.d/p3-settings-preferences-rows-clip-at-a-doubled-root-font.md)
 
@@ -112,6 +111,12 @@ earliest version, as a checklist.
 - [ ] [the live viewer's top bar at 360-436 css px portrait (name whole, no button over the second row)](backlog.d/reading-owed-the-live-viewer-top-bar-at-360-436-px.md)
 - [ ] [a menu ends above the iOS tab bar, and a group notification keeps its title (2026-11-16)](backlog.d/reading-owed-the-popover-and-notification-fixes-of-the-iphone-sitting.md)
 
+## 1.7.1
+
+**Chantiers, decisions and questions (no severity)**
+
+- [CanaReels sent to community salons (RC-8): the salon send path and the salon rows of "Envoyer à..."](backlog.d/reels-in-salons.md)
+
 ## 1.8.0
 
 **P1 - security, or a user-facing path that is broken**
@@ -135,6 +140,7 @@ earliest version, as a checklist.
 - [Found by the dev payment end-to-end of 2026-10-21 (Lydia, sandbox)](backlog.d/found-by-the-dev-payment-end-to-end-of-2026-10-21-lydia-sandbox.md)
 - [Live replays - a finished live is kept three days and shown as a CanaReel (owner, 2026-11-07; designed and decided 2026-11-09, WP-R1 built)](backlog.d/live-replays-kept-three-days-as-canareels.md)
 - [The moderation authority grid is asserted by one table-driven spec per service (owner, 2026-11-15)](backlog.d/the-moderation-authority-grid-is-asserted-by-table-driven-specs.md)
+- [The server images keep themselves up to date: pinned digests, Dependabot, a server-only release and a weekly scan](backlog.d/container-auto-update.md)
 
 **P2 - correctness**
 

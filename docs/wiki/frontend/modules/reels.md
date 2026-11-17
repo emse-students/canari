@@ -196,6 +196,15 @@ The app's own, never the system camera (`components/reels/ReelCapture.svelte` ov
 a full-screen preview, the close and lens controls at the top (switch, and the torch where the lens
 has one), the gallery bottom-left, and the shutter in the middle.
 
+**The review's bottom bar (owner, 2026-11-16).** With the chat reel writer off (production) the review
+of a take holds ONE button, "Suivant", to the publish step - unchanged. With it on (dev and pre-release
+builds) and the server serving the chat cap and the target count, the review of a VIDEO holds TWO:
+"Publier" on the left (the publish step, exactly what "Suivant" did) and "Envoyer à..." on the right,
+accent-coloured, opening the send sheet. No save button. A photo gets the same two buttons (D-photo,
+owner 2026-11-16) and reaches each chosen conversation as an ordinary image message. The editor's
+Next then comes back to the review rather than choosing for the member. The mechanism and the second
+path (a conversation's camera) are in [reels-in-chat section 22](reels-in-chat.md#22-the-two-paths-owner-2026-11-16).
+
 **ONE shutter: a TAP is a photo, a LONG PRESS is a video** (`reels/reelCapture.ts`, user, 2026-10-05;
 it replaced the tap-to-toggle take and the separate Photo button). A press arms a timer of
 `SHUTTER_HOLD_THRESHOLD_MS` (350 ms); if the finger is still down when it fires the press is a video

@@ -10,7 +10,10 @@ Left, in order: the 13 bench readings of
 [section 21.4](../frontend/modules/reels-in-chat.md#214-the-bench-readings-before-the-flip) on a
 pre-release, then a NEW one-line flip pull request (not the stale #2861,
 [21.1](../frontend/modules/reels-in-chat.md#211-the-switch-and-the-flip-pr)). Not built and not part
-of the flip: the photo through the sheet (D-photo, needs a server hold change) and salons (RC-8),
+of the flip: salons (RC-8, moved to `1.7.1`, [reels-in-salons](reels-in-salons.md)); the photo through
+the sheet was built on 2026-11-16 as ordinary image messages
+([section 22](../frontend/modules/reels-in-chat.md#22-the-two-paths-owner-2026-11-16)), which also
+moved the screens rows 2, 3, 11 and 13 are read on,
 both in [section 21](../frontend/modules/reels-in-chat.md#21-what-stands-between-main-and-the-production-flip-2026-11-08).
 
 **Mi 9T as the sender, 2026-11-16 ([section](../device-verification.md#the-mi-9t-readings-of-2026-11-16-the-uninstall-sitting-170-alpha5-the-seed-mirrors-wipe-and-the-envoyer-a-rows)), `v1.7.0-alpha.5` on dev (the writer switch is ON there: the sheet and the chat camera's video are offered).** `PASS`: rows 2 (one preparation, one upload, 3 of 3 went, the tiles played on `beta`'s web seat), 4 (a removed target fails alone, ONE named notice, the DM goes), 5 ("Annuler partout" withdrew three queued sends; the release path was not exercised because the take was queued before its upload began), 6, 7, 9 (a Wi-Fi cut and a kill in the upload, both resumed with the server holding k/n, k > 0), 10, 13, and 3 and 11 for the send (3: the same video rests on the adopted file id, no pixel comparison; 11: the 60 s ring was not recorded). **Not taken:** 1 and 12 (the iPhone as phone B), 8 (needs an admin seat), and the iPhone as the sender of every row. The entry stays until those and the flip pull request are done.
@@ -36,4 +39,4 @@ both in [section 21](../frontend/modules/reels-in-chat.md#21-what-stands-between
 - Row 11 PASS in a DM (60.16 s on the other seat, one bubble); the group half was not taken on the iPhone.
 - Row 13 PASS: no salon in the sheet, a salon's camera yields a photo.
 
-Rows 1 and 12 were read earlier (sixth sitting); the iPhone alone does not close all 13: row 9 and the group half of row 11 rest on the Mi 9T sitting. One P3 defect: [the sheet's chip shows a raw id](p3-the-envoyer-a-sheet-names-a-ticked-target-by-its-raw-id-while-the-search-hides-it.md). The entry stays open; the flip pull request closes it.
+Rows 1 and 12 were read earlier (sixth sitting); the iPhone alone does not close all 13: row 9 and the group half of row 11 rest on the Mi 9T sitting. One P3 defect, the sheet's chip showing a raw id, fixed in the two-paths pull request ([reels-in-chat section 22](../frontend/modules/reels-in-chat.md#22-the-two-paths-owner-2026-11-16)); a read on a pre-release is owed with the other rows. The entry stays open; the flip pull request closes it.
