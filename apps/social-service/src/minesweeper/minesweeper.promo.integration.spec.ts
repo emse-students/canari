@@ -19,6 +19,7 @@ import { Client } from 'pg';
 import { DataSource } from 'typeorm';
 import { MinesweeperBan } from './entities/minesweeper-ban.entity';
 import { MinesweeperChallenge } from './entities/minesweeper-challenge.entity';
+import { MinesweeperReplay } from './entities/minesweeper-replay.entity';
 import { MinesweeperScore } from './entities/minesweeper-score.entity';
 import { MinesweeperService } from './minesweeper.service';
 
@@ -94,7 +95,7 @@ maybe('minesweeper per-promo ranking against PostgreSQL', () => {
     ds = new DataSource({
       type: 'postgres',
       url: URL,
-      entities: [MinesweeperChallenge, MinesweeperScore, MinesweeperBan],
+      entities: [MinesweeperChallenge, MinesweeperScore, MinesweeperBan, MinesweeperReplay],
       synchronize: false,
       extra: { options: `-c search_path=${schema}` },
     });
@@ -102,7 +103,8 @@ maybe('minesweeper per-promo ranking against PostgreSQL', () => {
     service = new MinesweeperService(
       ds.getRepository(MinesweeperChallenge),
       ds.getRepository(MinesweeperScore),
-      ds.getRepository(MinesweeperBan)
+      ds.getRepository(MinesweeperBan),
+      ds.getRepository(MinesweeperReplay)
     );
   });
 

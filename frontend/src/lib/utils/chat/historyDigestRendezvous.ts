@@ -56,6 +56,8 @@ export type SolicitedProbe =
       since: number;
       /** The asker's id for this ask, echoed on the answer (an ask without one is never stored). */
       requestId: string;
+      /** The key the ask carried (`parseHistoryAnswerKey`), if any - the answer is sealed to it. */
+      answerKey?: string;
       /**
        * The asker holds frames of this group it cannot read and no repair has landed since. A
        * responder that then holds nothing the asker lacks ANSWERS so (`history_cannot_repair`)
@@ -72,6 +74,8 @@ export type SolicitedProbe =
       since: number;
       /** The asker's id for this ask, echoed on the answer (an ask without one is never stored). */
       requestId: string;
+      /** The key the ask carried (`parseHistoryAnswerKey`), if any - the answer is sealed to it. */
+      answerKey?: string;
     };
 
 type StoredProbe = { probe: SolicitedProbe; at: number };
