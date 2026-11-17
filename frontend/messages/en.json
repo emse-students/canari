@@ -4086,6 +4086,7 @@
   "community_join_btn": "Join the community",
   "group_join_page_title": "Join a group",
   "group_rename_failed": "The group could not be renamed. Try again.",
+  "group_rename_failed_clock": "The group could not be renamed: this device's clock looks wrong. Check the date and time, then try again.",
   "group_join_error_fallback": "Failed to join the group",
   "group_join_action": "Join this conversation",
   "group_join_sent_title": "Request sent!",

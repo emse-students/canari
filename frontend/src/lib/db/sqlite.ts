@@ -82,6 +82,7 @@ import {
   conversationServerReadWatermarksStatement,
   conversationStartedAtStatement,
   conversationNameAtStatement,
+  conversationServerNameOwedAtStatement,
   conversationLocalReadSeedStatement,
   CONVERSATION_LOCAL_READ_SEED_VALUE,
   CONVERSATION_LOCAL_READ_SEED_FILL,
@@ -272,7 +273,8 @@ export class SqliteStorage implements IStorage {
                 server_read_watermarks TEXT,
                 started_at       INTEGER,
                 local_read_seed  INTEGER,
-                name_at          INTEGER
+                name_at          INTEGER,
+                server_name_owed_at INTEGER
             )
         `);
 
@@ -643,8 +645,13 @@ export class SqliteStorage implements IStorage {
       // v20->v21: the conversation keeps the server time of the MLS statement that set its name
       // (`name_at`, `groupName.ts`). Additive and NULL on arrival, read as "never stated".
       const cols: any[] = await this.db.select('PRAGMA table_info(conversations)');
-      const add = conversationNameAtStatement(cols.map((c) => String(c.name)));
-      if (add) await this.db.execute(add);
+      const names = cols.map((c) => String(c.name));
+      for (const add of [
+        conversationNameAtStatement(names),
+        conversationServerNameOwedAtStatement(names),
+      ]) {
+        if (add) await this.db.execute(add);
+      }
       // Stamped at 21, NOT at SCHEMA_VERSION, for the reason spelled out in the v6 branch.
       await this.db.execute('PRAGMA user_version = 21');
     }
@@ -663,9 +670,9 @@ export class SqliteStorage implements IStorage {
   /** Upsert a conversation metadata row (INSERT OR REPLACE). */
   async saveConversation(conv: ConversationMeta): Promise<void> {
     await this.db.execute(
-      'INSERT OR REPLACE INTO conversations (id, name, lifecycle, updated_at, read_watermarks, history_floor, image_media_id, awaiting_admission, server_read_watermarks, started_at, local_read_seed, name_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, ' +
+      'INSERT OR REPLACE INTO conversations (id, name, lifecycle, updated_at, read_watermarks, history_floor, image_media_id, awaiting_admission, server_read_watermarks, started_at, local_read_seed, name_at, server_name_owed_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, ' +
         CONVERSATION_LOCAL_READ_SEED_VALUE +
-        ', $12)',
+        ', $12, $13)',
       [
         conv.id,
         conv.name,
@@ -679,6 +686,7 @@ export class SqliteStorage implements IStorage {
         conv.startedAt ?? null,
         typeof conv.localReadSeed === 'number' ? conv.localReadSeed : null,
         conv.nameAt ?? null,
+        conv.serverNameOwedAt ?? null,
       ]
     );
   }
@@ -705,6 +713,9 @@ export class SqliteStorage implements IStorage {
       ...(Number(r.started_at) > 0 ? { startedAt: Number(r.started_at) } : {}),
       // INTEGER too; NULL (never stated) and an unusable value both read as absent.
       ...(Number(r.name_at) > 0 ? { nameAt: Number(r.name_at) } : {}),
+      ...(Number(r.server_name_owed_at) > 0
+        ? { serverNameOwedAt: Number(r.server_name_owed_at) }
+        : {}),
       // NULL is a state of its own here (no seed: a backup import or an older build), never read as 0.
       localReadSeed: parseLocalReadSeed(r.local_read_seed),
     };
@@ -1522,7 +1533,7 @@ export class SqliteStorage implements IStorage {
     await this.db.execute(
       // An imported row keeps the seed state it was exported with; one from before the column is
       // NULL and covers nothing: only the v20 migration writes a seed, and no load seeds a row.
-      'INSERT OR IGNORE INTO conversations (id, name, lifecycle, updated_at, read_watermarks, history_floor, image_media_id, awaiting_admission, server_read_watermarks, started_at, local_read_seed, name_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)',
+      'INSERT OR IGNORE INTO conversations (id, name, lifecycle, updated_at, read_watermarks, history_floor, image_media_id, awaiting_admission, server_read_watermarks, started_at, local_read_seed, name_at, server_name_owed_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)',
       [
         conv.id,
         conv.name,
@@ -1536,6 +1547,7 @@ export class SqliteStorage implements IStorage {
         conv.startedAt ?? null,
         typeof conv.localReadSeed === 'number' ? conv.localReadSeed : null,
         conv.nameAt ?? null,
+        conv.serverNameOwedAt ?? null,
       ]
     );
   }

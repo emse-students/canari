@@ -49,6 +49,8 @@ export interface ConversationMeta {
    * Persisted beside the name so both are written by one save; absent reads as "never stated".
    */
   nameAt?: number;
+  /** `Conversation.serverNameOwedAt`: the date of a name whose server copy is owed. Absent: none. */
+  serverNameOwedAt?: number;
   /**
    * The group photo's media id. Persisted so the sidebar draws the photo from the local row at first
    * render: it used to be learned only from the server's group list, after the connection came up,

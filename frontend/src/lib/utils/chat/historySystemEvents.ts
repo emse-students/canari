@@ -221,6 +221,9 @@ export function replayMutationIsAuthorised(
   return false;
 }
 
+/** The conversations a legacy rename without a signed `sentAt` was already reported for. */
+const legacyRenameReported = new Set<string>();
+
 /**
  * Interprets a decoded MLS `system` event during history replay and routes its effect to the
  * accumulators in {@link ReplaySystemEventCtx}. Behaviour mirrors the live
@@ -303,6 +306,15 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
         : null;
       if (outcome && 'row' in outcome) {
         setConversation(contactName, outcome.row);
+      } else if (outcome && 'refused' in outcome && outcome.refused === 'no-signed-time') {
+        // A frame from a build before `sentAt` existed: an expected LEGACY state, refused all the
+        // same (nothing bounds its server time), said once per conversation, never per replay.
+        if (!legacyRenameReported.has(conversationId)) {
+          legacyRenameReported.add(conversationId);
+          console.info(
+            `[GROUP_NAME] a replayed rename in ${conversationId.slice(0, 8)}… predates the signed sentAt - not applied (said once per conversation)`
+          );
+        }
       } else if (outcome && 'refused' in outcome) {
         console.error(
           `[GROUP_NAME] replayed rename in ${conversationId.slice(0, 8)}… NOT applied: ${GROUP_NAME_REFUSAL_TEXT[outcome.refused]}`

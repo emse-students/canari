@@ -151,6 +151,9 @@ export function receivedNoticeTime(
   };
 }
 
+/** What a sent notice frame came to: the server's acceptance time, and the `sentAt` it carried. */
+export type SentNotice = { receivedAt: number | null; sentAt: number };
+
 /**
  * Sends a visible notice frame and, once the delivery service has ACCEPTED it, writes the acting
  * device's own row under the id the frame carries.
@@ -171,7 +174,9 @@ export function receivedNoticeTime(
  * row and there is still nothing to diverge.
  *
  * Returns the server's acceptance time of the frame (`null` when the answer named none) - the
- * instant every member's copy is dated by, which a rename dates its own row with (`groupName.ts`).
+ * instant every member's copy is dated by, which a rename dates its own row with (`groupName.ts`) -
+ * and the `sentAt` the frame carries, which every receiver bounds that time by: the sender runs the
+ * same bound on its own frame (`renameGroupAndBroadcast`).
  */
 export async function sendVisibleNotice(
   mlsService: IMlsService,
@@ -179,18 +184,18 @@ export async function sendVisibleNotice(
   event: VisibleNoticeEvent | 'memberLeft' | 'groupDeleted',
   payload: Record<string, unknown>,
   own?: OwnNotice
-): Promise<number | null> {
+): Promise<SentNotice> {
   const frame = mkVisibleSystem(event, JSON.stringify(payload));
   const noOwnRow = event === 'memberLeft' || event === 'groupDeleted' || !own;
   const text = noOwnRow ? null : await visibleNoticeContent(event, payload, own.actor);
   // From whichever tab acts: a follower's gesture hands its notice to the leader (`frameFromAnyTab`).
   const sent = await sendFrameFromThisTab(mlsService, groupId, encodeAppMessage(frame));
-  if (noOwnRow) return sent.receivedAt;
+  if (noOwnRow) return { receivedAt: sent.receivedAt, sentAt: frame.sentAt };
   if (text === null) {
     console.warn(
       `[NOTICE] ${event} sent in ${groupId.slice(0, 8)}… names nothing to draw - no row written here, and none on the members' devices`
     );
-    return sent.receivedAt;
+    return { receivedAt: sent.receivedAt, sentAt: frame.sentAt };
   }
   // THE ACTING DEVICE'S COPY GETS THE SERVER TIME every member's copy carries, exactly as an own
   // text row gets it from its send (`patchServerTimestamp` in the outbox): MLS never hands this
@@ -214,10 +219,10 @@ export async function sendVisibleNotice(
     console.error(
       `[NOTICE] ${event} was DELIVERED in ${groupId.slice(0, 8)}… but this device's own row ${frame.messageId.slice(0, 8)} was not written - the members hold it and this device does not: ${String(e).slice(0, 120)}`
     );
-    return sent.receivedAt;
+    return { receivedAt: sent.receivedAt, sentAt: frame.sentAt };
   }
   console.debug(
     `[NOTICE] ${event} written on the acting device in ${groupId.slice(0, 8)}… as ${frame.messageId.slice(0, 8)} - the id every member's device writes`
   );
-  return sent.receivedAt;
+  return { receivedAt: sent.receivedAt, sentAt: frame.sentAt };
 }

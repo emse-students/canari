@@ -275,6 +275,12 @@ export interface Conversation {
    * that list still corrects it. Once present, only a later dated statement changes the name.
    */
   nameAt?: number;
+  /**
+   * The `nameAt` of a name this device renamed the group to whose SERVER copy is still owed: the
+   * frame reached the members, the server's write failed. Settled by the next connection's sweep,
+   * and only while the row still holds that dated name (`settleOwedServerName`). Absent: nothing owed.
+   */
+  serverNameOwedAt?: number;
   conversationType?: 'direct' | 'group' | 'channel';
   directPeerId?: string;
   /** Media-service ID of the group image (unencrypted avatar). Channels never carry one. */

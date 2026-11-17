@@ -214,6 +214,19 @@ export function conversationNameAtStatement(columns: readonly string[]): string 
 }
 
 /**
+ * The v20 -> v21 step, second column: `server_name_owed_at` (`ConversationMeta.serverNameOwedAt`),
+ * the date of a name this device renamed the group to whose server copy is still owed. NULL on
+ * arrival: nothing owed. Returns `null` when the column is there.
+ *
+ * @param columns Column names of the `conversations` table, from `PRAGMA table_info(conversations)`.
+ */
+export function conversationServerNameOwedAtStatement(columns: readonly string[]): string | null {
+  return columns.includes('server_name_owed_at')
+    ? null
+    : 'ALTER TABLE conversations ADD COLUMN server_name_owed_at INTEGER';
+}
+
+/**
  * The v19 -> v20 step, second half: EVERY conversation's local read seed, written INSIDE THE
  * MIGRATION. It runs at open, before `init` resolves, so no app code - no push-cache poll, no boot
  * pull, no socket - can have stored a message yet: "held before the upgrade" is a property of the

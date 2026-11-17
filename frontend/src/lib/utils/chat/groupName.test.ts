@@ -154,4 +154,17 @@ describe("the acting device's own rename, written over the row as it is AFTER th
     expect(row.name).toBe('A');
     expect('nameAt' in row).toBe(false);
   });
+
+  it('an owed server copy is recorded under the date of the name it is owed for', () => {
+    expect(rowOf(ownRenameOutcome(group({ nameAt: T }), 'A', T + 1, true))).toMatchObject({
+      name: 'A',
+      nameAt: T + 1,
+      serverNameOwedAt: T + 1,
+    });
+  });
+
+  it('a rename whose server copy was written clears what an older one owed', () => {
+    const row = rowOf(ownRenameOutcome(group({ nameAt: T, serverNameOwedAt: T }), 'A', T + 1));
+    expect('serverNameOwedAt' in row).toBe(false);
+  });
 });

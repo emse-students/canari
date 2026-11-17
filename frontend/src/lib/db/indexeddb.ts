@@ -829,11 +829,14 @@ export class IndexedDbStorage implements IStorage {
    * whatever was written, including a value an older build got wrong.
    */
   private rowToMeta(r: ConversationMeta & { isReady?: boolean }): ConversationMeta {
-    const { nameAt, ...rest } = r;
+    const { nameAt, serverNameOwedAt, ...rest } = r;
+    const positive = (v: unknown): v is number =>
+      typeof v === 'number' && Number.isFinite(v) && v > 0;
     return {
       ...rest,
       // A positive server time or nothing: "never stated" is absence, never a 0 or a NaN.
-      ...(typeof nameAt === 'number' && Number.isFinite(nameAt) && nameAt > 0 ? { nameAt } : {}),
+      ...(positive(nameAt) ? { nameAt } : {}),
+      ...(positive(serverNameOwedAt) ? { serverNameOwedAt } : {}),
       lifecycle: normalizeConversationLifecycle(r.lifecycle, r.isReady),
       readWatermarks: parseReadWatermarks(r.readWatermarks),
       serverReadWatermarks: parseReadWatermarks(r.serverReadWatermarks),

@@ -17,7 +17,7 @@ import { forgetGroupReconciliation } from './historyReconcile';
 import { clearGroupNotReady } from './notReadyRegistry';
 import { historyRangeStart, isWithinHistoryRange } from './historyWindow';
 import { cachedHistoryStateKey } from './historyStateKey';
-import { sendVisibleNotice, type OwnNotice } from './visibleNotices';
+import { sendVisibleNotice, type OwnNotice, type SentNotice } from './visibleNotices';
 import { readerHistorySelection } from './historyEntitlement';
 import { mintHistoryRequestId, noteHistoryAsk } from './historyAddressing';
 import {
@@ -45,7 +45,13 @@ import { readConfirmedTree } from './confirmedTree';
 import { anyHistoryWithheldIn, historyWithheldFrom } from './historyWithheld';
 import { refusesCommitsHere } from '$lib/mls-client/stateAuthority';
 import { MemberRemovalNotCommittedError } from './memberRemovalError';
-import { restatedGroupName, type DatedGroupName } from './groupName';
+import {
+  GROUP_NAME_REFUSAL_TEXT,
+  GroupRenameRefusedError,
+  readRenameFrame,
+  restatedGroupName,
+  type DatedGroupName,
+} from './groupName';
 
 /**
  * The trust refusals this session already reported, as `deviceId|reason` - a sweep re-derives the
@@ -274,12 +280,20 @@ export async function deleteGroupAndBroadcast(params: {
  * older builds took the new name from the list, dated devices kept the old one. Now a frame that does
  * not leave is a failed rename that changed nothing anywhere, thrown to the caller.
  *
- * The server's copy serves only the builds that read nothing else. Once the frame is out, a failed
- * write there is logged at ERROR and NOT thrown: the members have the name, and calling the rename
- * failed would invite a retry that renames the group a second time.
+ * THE SENDER RUNS THE RECEIVERS' CHECK ON ITS OWN FRAME (`readRenameFrame`): a server time further
+ * from the `sentAt` this device signed than every receiver believes - a clock off by more than a day -
+ * means no member will take the name, so neither does this device nor the server's copy. Thrown as a
+ * {@link GroupRenameRefusedError}, which the screen tells apart from a lost network.
  *
- * @returns the server's acceptance time of the frame - the date this device writes beside the new
- *   name, the same one every member's copy carries - or `null` when the answer named none.
+ * The server's copy serves only the builds that read nothing else. A failed write there, once the
+ * frame is out, is not a failed rename - the members have the name - so it is not thrown: it is
+ * returned as `serverCopyOwed`, which the caller records on the row (`serverNameOwedAt`) and the next
+ * connection's sweep retries. The write is idempotent - it sets the same name again - so retrying it
+ * renames nothing twice; what must never be retried is the FRAME, which would draw a second notice.
+ *
+ * @returns `nameAt`: the server's acceptance time of the frame - the date this device writes beside
+ *   the new name, the one every member's copy carries - or `null` when the answer named none; and
+ *   whether the server's copy is still owed.
  */
 export async function renameGroupAndBroadcast(params: {
   mlsService: IMlsService;
@@ -289,11 +303,11 @@ export async function renameGroupAndBroadcast(params: {
   deviceKeyB64: string;
   /** Where this device writes its own copy of the notice. */
   ownNotice: Omit<OwnNotice, 'actor'>;
-}): Promise<number | null> {
+}): Promise<{ nameAt: number | null; serverCopyOwed: boolean }> {
   const { mlsService, groupId, newName, userId, deviceKeyB64, ownNotice } = params;
-  let receivedAt: number | null;
+  let sent: SentNotice;
   try {
-    receivedAt = await sendVisibleNotice(
+    sent = await sendVisibleNotice(
       mlsService,
       groupId,
       'groupRenamed',
@@ -309,14 +323,24 @@ export async function renameGroupAndBroadcast(params: {
     // Whatever the send did to the ratchet is checkpointed, delivered or not.
     await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64);
   }
+  if (sent.receivedAt !== null) {
+    const own = readRenameFrame(newName, sent.receivedAt, sent.sentAt);
+    if ('refused' in own) {
+      console.error(
+        `[GROUP_NAME] own rename of ${groupId.slice(0, 8)}… refused by the receivers' own check - ${GROUP_NAME_REFUSAL_TEXT[own.refused]} (sentAt ${sent.sentAt}, server ${sent.receivedAt}): no member takes it, so neither this device nor the server's copy does`
+      );
+      throw new GroupRenameRefusedError(own.refused);
+    }
+  }
   try {
     await mlsService.renameGroup(groupId, newName);
   } catch (e) {
     console.error(
-      `[GROUP_NAME] ${groupId.slice(0, 8)}… renamed for the members, but the server's copy was not written - builds that read only the server's list keep the old name until the next rename: ${String(e).slice(0, 120)}`
+      `[GROUP_NAME] ${groupId.slice(0, 8)}… renamed for the members, but the server's copy was not written - owed, retried at the next connection: ${String(e).slice(0, 120)}`
     );
+    return { nameAt: sent.receivedAt, serverCopyOwed: true };
   }
-  return receivedAt;
+  return { nameAt: sent.receivedAt, serverCopyOwed: false };
 }
 
 /**

@@ -89,5 +89,12 @@ describe('SqliteStorage - the dated group name v21 added (`name_at`, groupName.t
     });
     expect((await storage.getConversation('g4'))?.nameAt).toBe(NAME_AT);
     expect((await storage.getConversation('g5'))?.nameAt).toBeUndefined();
+    await storage.saveConversation({
+      ...conversation('g6'),
+      nameAt: NAME_AT,
+      serverNameOwedAt: NAME_AT,
+    });
+    expect((await storage.getConversation('g6'))?.serverNameOwedAt).toBe(NAME_AT);
+    expect((await storage.getConversation('g5'))?.serverNameOwedAt).toBeUndefined();
   });
 });

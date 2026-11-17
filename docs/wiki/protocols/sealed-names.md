@@ -59,10 +59,20 @@ push, and each device keeps it beside the row it names.
   future would lock a name in for good, because nothing could be later. So a frame's server time is
   believed only within `BUNDLE_SERVER_TIME_SKEW_MS` (24 h) of the `sentAt` its author signed inside
   the frame. Past that bound the rename is refused at ERROR. What remains is the power to order two
-  renames sent within 24 h of each other, or to withhold one. Both are visible to the members as
-  notices, and neither reveals or invents a name. A rename whose send took longer than 24 h to be
-  accepted is refused on every device, which the synchronous rename below makes unreachable from
-  this build.
+  renames whose signed `sentAt` lie within **48 h** of each other: each stamp may move up to 24 h
+  either way from its own `sentAt`, so a server can put a rename sent up to 48 h earlier after a later
+  one. It can also withhold a rename. Both are visible to the members as notices, and neither reveals
+  or invents a name.
+- **The sender runs the same check on its own frame.** A device whose clock is off by more than 24 h
+  sends a frame that every receiver refuses. Its own row and the server's copy used to take the name
+  anyway, which split the group silently. Now `renameGroupAndBroadcast` bounds its own frame's server
+  time by the `sentAt` it signed. When the check fails, the device writes no name, writes no server
+  copy, and throws a `GroupRenameRefusedError`. The person is told to check the date and time
+  (`group_rename_failed_clock`). The notice the frame drew stays in every member's history, and no
+  device takes the name.
+- **Pre-#752 rename frames carry no signed `sentAt`.** On an archive replay they are refused all the
+  same, because nothing bounds their server time. This is an expected legacy state, so it is said once
+  per conversation at INFO, never at ERROR on every replay.
 - **Communities** have no MLS frame per salon: their state is sealed under a key handed out through the
   community's key group (Graine), the channel the seeds already travel on. A member who joins reads the
   current state, and one who left cannot open a state sealed after the rotation that removed them.
@@ -99,8 +109,15 @@ push, and each device keeps it beside the row it names.
   sent first. If it does not leave, nothing was renamed anywhere: the error is thrown, and the person
   is told (`group_rename_failed`, a toast, because the panel has already closed). The server's copy
   is written afterwards, for the older builds only. If that write fails once the frame is out, it is
-  logged at ERROR and not thrown, because the members already have the name and a retry would rename
-  the group twice.
+  logged at ERROR and not thrown, because the members already have the name. It becomes **a server
+  copy owed**: `serverNameOwedAt` on the row (local SQLite v21 column `server_name_owed_at`) records
+  the date of the name whose copy is owed. The sweep that every connection makes
+  (`settleOwedServerName`, beside `repairGroupLabel`) retries only the PATCH. That PATCH is
+  idempotent, since it sets the same name again, so the retry renames nothing twice. What must never
+  be retried is the FRAME, which would draw a second notice. The retry runs only while the row still
+  holds that dated name. Once a later name supersedes it, the owed copy is dropped unwritten, because
+  writing it would put an older name back on the server. A server list that already holds the name
+  clears the owed copy without a write.
 - **The acting device writes its own rename over the row as it is AFTER the send**
   (`ownRenameOutcome`). The row is dated by the server time the send was answered with, and written
   only when newer, so a peer's later rename applied while the send was in flight stays. If the answer

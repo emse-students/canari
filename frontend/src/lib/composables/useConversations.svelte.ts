@@ -31,6 +31,7 @@ import {
   chat_system_removed_from_group,
   chat_unopenable_start_again_failed,
   group_rename_failed,
+  group_rename_failed_clock,
   common_remove_label,
 } from '$lib/paraglide/messages';
 import { showConfirm } from '$lib/stores/confirm.svelte';
@@ -47,7 +48,11 @@ import { salonKeysNow } from '$lib/utils/graine/salonReadGate';
 import { watchSalonRemovals } from '$lib/utils/chat/salonRemovals';
 import type { ChannelPollMeta } from '$lib/services/ChannelService';
 import { applyChannelReactionFrame } from '$lib/stores/reactionStore.svelte';
-import { GROUP_NAME_SKIP_TEXT, ownRenameOutcome } from '$lib/utils/chat/groupName';
+import {
+  GROUP_NAME_SKIP_TEXT,
+  GroupRenameRefusedError,
+  ownRenameOutcome,
+} from '$lib/utils/chat/groupName';
 import {
   fetchGroupRoster,
   fetchUniqueGroupMembers,
@@ -2788,7 +2793,7 @@ export function useConversations() {
     if (!convo) return;
     if ((convo.conversationType ?? 'group') !== 'group') return; // only named groups can be renamed
     try {
-      const nameAt = await renameGroupAndBroadcast({
+      const { nameAt, serverCopyOwed } = await renameGroupAndBroadcast({
         mlsService: ctx.ensureMls(),
         groupId: convo.id,
         newName: name,
@@ -2801,7 +2806,7 @@ export function useConversations() {
       // taken before the await erased the first, and writing the name blindly overwrote the second.
       const current = conversations.get(key);
       if (current) {
-        const outcome = ownRenameOutcome(current, name, nameAt);
+        const outcome = ownRenameOutcome(current, name, nameAt, serverCopyOwed);
         if ('row' in outcome) {
           conversations.set(key, outcome.row);
           await saveConversation(key, ctx);
@@ -2813,10 +2818,16 @@ export function useConversations() {
       }
       ctx.log(`Group ${key} renamed`);
     } catch (e) {
-      // The frame did not leave, so nothing was renamed anywhere (`renameGroupAndBroadcast`): the
-      // person who typed the name is told, the panel having closed already.
+      // The frame did not leave, or no member will take it, so nothing was renamed anywhere
+      // (`renameGroupAndBroadcast`): the person who typed the name is told, the panel having closed
+      // already - and told to check the clock when that is what refused it (classified at the throw).
       ctx.log(`[GROUP_NAME] rename of ${key.slice(0, 8)}… failed: ${String(e).slice(0, 120)}`);
-      showToast(group_rename_failed(), 'error');
+      showToast(
+        e instanceof GroupRenameRefusedError && e.refusal === 'server-time-out-of-bound'
+          ? group_rename_failed_clock()
+          : group_rename_failed(),
+        'error'
+      );
     }
   }
 

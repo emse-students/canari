@@ -40,6 +40,11 @@ function setup() {
   } as unknown as Conversation);
   convs.selectConversation(GROUP_ID);
   const mls = createMlsServiceStub();
+  // The server accepts each send 40 ms after this clock: a rename bounds its own frame's server time
+  // by the sentAt it signed (`renameGroupAndBroadcast`), so a fixed 2023 answer would refuse it.
+  vi.mocked(mls.sendMessage).mockImplementation(
+    async () => ({ sealed: new Uint8Array(), receivedAt: Date.now() + 40 }) as never
+  );
   // What `addMessageToChat` does to the map, reduced to the write this test is about.
   const addMessageToChat = vi.fn(
     async (senderId: string, content: string, key: string, options?: AddMessageToChatOptions) => {
@@ -70,7 +75,7 @@ function setup() {
     log: vi.fn(),
     addMessageToChat,
   } as never;
-  return { convs, ctx, addMessageToChat };
+  return { convs, ctx, addMessageToChat, mls };
 }
 
 describe('the acting device keeps the notice its own send wrote', () => {
@@ -82,6 +87,29 @@ describe('the acting device keeps the notice its own send wrote', () => {
     const convo = convs.conversations.get(GROUP_ID)!;
     expect(convo.name).toBe('Apres');
     expect(convo.messages.map((m) => m.id)).toEqual([addMessageToChat.mock.calls[0][3]!.messageId]);
+  });
+
+  it('a rename whose server copy failed keeps the name, dated, and records the copy as owed', async () => {
+    const { convs, ctx, mls } = setup();
+    vi.mocked(mls.renameGroup).mockRejectedValue(new Error('503'));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await convs.handleRenameGroup('Apres', ctx);
+    const convo = convs.conversations.get(GROUP_ID)!;
+    expect(convo.name).toBe('Apres');
+    expect(convo.nameAt).toEqual(expect.any(Number));
+    expect(convo.serverNameOwedAt).toBe(convo.nameAt);
+  });
+
+  it('a clock off by more than a day: no name taken, no server copy written', async () => {
+    const { convs, ctx, mls } = setup();
+    vi.mocked(mls.sendMessage).mockImplementation(
+      async () =>
+        ({ sealed: new Uint8Array(), receivedAt: Date.now() + 2 * 24 * 60 * 60 * 1000 }) as never
+    );
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await convs.handleRenameGroup('Apres', ctx);
+    expect(convs.conversations.get(GROUP_ID)!.name).toBe('Avant');
+    expect(mls.renameGroup).not.toHaveBeenCalled();
   });
 
   it('after a photo change: the new photo AND the notice', async () => {

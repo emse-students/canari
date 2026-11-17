@@ -201,14 +201,38 @@ export function applyRenameFrame(
  * the send was in flight stays (`not-newer`). With no server time in the answer the row is written
  * UNDATED, honestly: keeping the previous `nameAt` beside the new name would claim a date for it
  * that belongs to another statement, and the server's list still corrects an undated name.
+ *
+ * `serverCopyOwed` says the members have the name but the server's copy was not written: the row
+ * then carries `serverNameOwedAt` - the date of the name whose copy is owed - which the next
+ * connection's sweep settles (`settleOwedServerName`, `serverGroupConversation.ts`). A rename
+ * whose copy WAS written clears whatever an older one owed: the server now holds a later name.
  */
 export function ownRenameOutcome(
   current: Conversation,
   name: string,
-  receivedAt: number | null
+  receivedAt: number | null,
+  serverCopyOwed = false
 ): { row: Conversation } | { skipped: GroupNameSkip } {
-  if (receivedAt !== null) return withDatedGroupName(current, { name, at: receivedAt });
-  if ((current.conversationType ?? 'group') !== 'group') return { skipped: 'not-a-group' };
-  const { nameAt: _undated, ...rest } = current;
-  return { row: { ...rest, name } };
+  if (receivedAt === null) {
+    if ((current.conversationType ?? 'group') !== 'group') return { skipped: 'not-a-group' };
+    const { nameAt: _undated, serverNameOwedAt: _owed, ...rest } = current;
+    return { row: { ...rest, name } };
+  }
+  const outcome = withDatedGroupName(current, { name, at: receivedAt });
+  if (!('row' in outcome)) return outcome;
+  const { serverNameOwedAt: _previous, ...row } = outcome.row;
+  return { row: serverCopyOwed ? { ...row, serverNameOwedAt: receivedAt } : row };
+}
+
+/**
+ * A rename the SENDER's own check refused: the frame left, but its server time and the `sentAt` this
+ * device signed lie further apart than {@link readRenameFrame} believes - so every receiver refuses it
+ * too, and the sender must not write the name its members will never hold. Classified here, at the
+ * throw, so the screen tells a wrong clock from a lost network without reading a message.
+ */
+export class GroupRenameRefusedError extends Error {
+  constructor(readonly refusal: GroupNameRefusal) {
+    super(`groupRenamed refused by its own sender: ${GROUP_NAME_REFUSAL_TEXT[refusal]}`);
+    this.name = 'GroupRenameRefusedError';
+  }
 }

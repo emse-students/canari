@@ -479,6 +479,73 @@ describe('discoverMissingGroups orphan cleanup', () => {
     expect(said.join('\n')).not.toContain('Groupe');
   });
 
+  // AN OWED SERVER COPY IS RETRIED BY THE NEXT CONNECTION'S SWEEP, ONLY WHILE THE ROW STILL HOLDS
+  // THAT DATED NAME (settleOwedServerName). The write is idempotent; the frame is never re-sent.
+  describe('the server copy a rename still owes', () => {
+    const DATED = Date.UTC(2026, 10, 17, 9, 0, 0);
+    const owedRow = (extra: Partial<Conversation> = {}): Conversation => ({
+      id: 'g1',
+      contactName: 'g1',
+      name: 'Les ROOTz',
+      nameAt: DATED,
+      serverNameOwedAt: DATED,
+      messages: [],
+      lifecycle: 'active',
+      mlsStateHex: null,
+      conversationType: 'group',
+      imageMediaId: null,
+      ...extra,
+    });
+    const sweepWith = async (
+      row: Conversation,
+      renameGroup = vi.fn().mockResolvedValue(undefined)
+    ) => {
+      const conversations = new Map<string, Conversation>([['g1', row]]);
+      const log = vi.fn();
+      await discoverMissingGroups({
+        mlsService: makeMls({
+          getUserGroups: vi
+            .fn()
+            .mockResolvedValue([
+              { groupId: 'g1', name: 'Groupe', isGroup: true, imageMediaId: null },
+            ]),
+          getLocalGroups: vi.fn().mockReturnValue(['g1']),
+          renameGroup,
+        }),
+        userId: 'user-a',
+        deviceKeyB64: '1234',
+        conversations,
+        deleteConversation: vi.fn().mockResolvedValue(undefined),
+        saveConversation: vi.fn().mockResolvedValue(undefined),
+        log,
+      });
+      return { row: conversations.get('g1')!, renameGroup, log };
+    };
+
+    it('writes it, clears it, and reports no disagreement the write has just ended', async () => {
+      const { row, renameGroup, log } = await sweepWith(owedRow());
+      expect(renameGroup).toHaveBeenCalledWith('g1', 'Les ROOTz');
+      expect('serverNameOwedAt' in row).toBe(false);
+      expect(log.mock.calls.map((c) => String(c[0])).join('\n')).not.toContain(
+        'names it differently'
+      );
+    });
+
+    it('keeps it owed when the write fails again', async () => {
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const { row } = await sweepWith(owedRow(), vi.fn().mockRejectedValue(new Error('503')));
+      expect(row.serverNameOwedAt).toBe(DATED);
+    });
+
+    it('drops it, unwritten, once a later name superseded the one it was owed for', async () => {
+      const { row, renameGroup } = await sweepWith(
+        owedRow({ name: 'Plus tard', nameAt: DATED + 1 })
+      );
+      expect(renameGroup).not.toHaveBeenCalled();
+      expect('serverNameOwedAt' in row).toBe(false);
+    });
+  });
+
   // CONTROL: a DM whose stored label differs from the server row must NOT be relabelled. The
   // server's name for a DM is the canonical `self::peer` KEY, so adopting it would put a pair of
   // uuids in the sidebar where a first name belongs - the defect the `isGroup` guard exists for.

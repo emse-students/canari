@@ -110,6 +110,7 @@ export function toConversationMeta(
     historyFloor: convo.historyFloor,
     startedAt: convo.startedAt,
     ...(convo.nameAt !== undefined ? { nameAt: convo.nameAt } : {}),
+    ...(convo.serverNameOwedAt !== undefined ? { serverNameOwedAt: convo.serverNameOwedAt } : {}),
     // A number when this session knows it; absent otherwise, which the store reads as "keep what
     // the row holds", never as 0: the store migration wrote it, and only it.
     ...(typeof convo.localReadSeed === 'number' ? { localReadSeed: convo.localReadSeed } : {}),
@@ -494,6 +495,8 @@ export interface ConversationRowSpec {
   startedAt?: Conversation['startedAt'];
   /** See {@link Conversation.nameAt}; absent keeps `existing`'s. */
   nameAt?: Conversation['nameAt'];
+  /** See {@link Conversation.serverNameOwedAt}; absent keeps `existing`'s. */
+  serverNameOwedAt?: Conversation['serverNameOwedAt'];
   /** See {@link Conversation.localReadSeed}; only a number is carried, absent keeps `existing`'s. */
   localReadSeed?: Conversation['localReadSeed'];
   /** See {@link Conversation.awaitingAdmission}; absent keeps what `existing` holds. */
@@ -545,6 +548,10 @@ export function buildConversationRow(spec: ConversationRowSpec): Conversation {
     conversationType === 'group' && spec.nameAt === undefined && existing?.nameAt !== undefined;
   const nameAt = conversationType === 'group' ? (spec.nameAt ?? existing?.nameAt) : undefined;
   const name = keepsDatedName && existing ? existing.name : identity.displayName;
+  const serverNameOwedAt =
+    conversationType === 'group'
+      ? (spec.serverNameOwedAt ?? existing?.serverNameOwedAt)
+      : undefined;
   const awaitingAdmission = spec.awaitingAdmission ?? existing?.awaitingAdmission;
   // A number, or nothing: the seed is written by the STORE MIGRATION (SQLite v20, IndexedDB 14), and a save that
   // states nothing keeps it (`saveConversation`).
@@ -569,6 +576,7 @@ export function buildConversationRow(spec: ConversationRowSpec): Conversation {
     ...(historyFloor !== undefined ? { historyFloor } : {}),
     ...(startedAt !== undefined ? { startedAt } : {}),
     ...(nameAt !== undefined ? { nameAt } : {}),
+    ...(serverNameOwedAt !== undefined ? { serverNameOwedAt } : {}),
     ...(typeof localReadSeed === 'number' ? { localReadSeed } : {}),
     ...(awaitingAdmission === true ? { awaitingAdmission } : {}),
   };
@@ -1050,6 +1058,7 @@ export function restoredConversationRow(
     historyFloor: meta.historyFloor,
     startedAt: meta.startedAt,
     nameAt: meta.nameAt,
+    serverNameOwedAt: meta.serverNameOwedAt,
     localReadSeed: meta.localReadSeed,
     awaitingAdmission: meta.awaitingAdmission,
   });

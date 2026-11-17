@@ -206,6 +206,59 @@ async function recordGroupStart(
   await saveConversation?.(key).catch(() => {});
 }
 
+/**
+ * Writes the server's copy of a name this device renamed the group to, when that write failed at the
+ * rename (`Conversation.serverNameOwedAt`, `renameGroupAndBroadcast`). Run by the sweep every
+ * connection makes, which visits every active group - so an owed copy is retried at the next start or
+ * reconnect, and never on a clock.
+ *
+ * GUARDED BY THE ROW STILL HOLDING THAT DATED NAME. A later rename - this device's or a peer's - has
+ * its own server copy, so an owed copy whose name was since superseded is DROPPED, never written: it
+ * would put an older name back on the server. The write is idempotent (it sets the same name), so a
+ * retry renames nothing twice, and no frame is ever re-sent. A server list that already names the
+ * group so needs no write at all.
+ *
+ * @returns true when this pass wrote the owed copy (the list in hand is then stale for this group).
+ */
+async function settleOwedServerName(
+  key: string,
+  group: ServerGroupRow,
+  mlsService: IMlsService,
+  conversations: Map<string, Conversation>,
+  saveConversation: ((key: string) => Promise<void>) | undefined,
+  log: (msg: string) => void
+): Promise<boolean> {
+  const convo = conversations.get(key);
+  if (!convo || convo.serverNameOwedAt === undefined) return false;
+  const { serverNameOwedAt: owedAt, ...settled } = convo;
+  if (convo.nameAt !== owedAt) {
+    conversations.set(key, settled);
+    await saveConversation?.(key).catch(() => {});
+    log(
+      `[GROUP_NAME] ${groupIdShort(group.groupId)} server copy owed for the name dated ${owedAt} dropped - a later name (${convo.nameAt ?? 'undated'}) superseded it`
+    );
+    return false;
+  }
+  let wrote = false;
+  if ((group.name ?? '').trim() !== convo.name) {
+    try {
+      await mlsService.renameGroup(convo.id, convo.name);
+      wrote = true;
+    } catch (e) {
+      console.warn(
+        `[GROUP_NAME] ${groupIdShort(group.groupId)} server copy of the name dated ${owedAt} still owed - the write failed again: ${String(e).slice(0, 120)}`
+      );
+      return false;
+    }
+  }
+  conversations.set(key, settled);
+  await saveConversation?.(key).catch(() => {});
+  log(
+    `[GROUP_NAME] ${groupIdShort(group.groupId)} server copy of the name dated ${owedAt} ${wrote ? 'written' : 'already held by the server'} - nothing owed`
+  );
+  return wrote;
+}
+
 /** The 8-character prefix every line in this file names a group by. */
 const groupIdShort = (groupId: string) => `${groupId.slice(0, 8)}...`;
 
@@ -227,6 +280,14 @@ export async function ensureConversationForServerGroup(
   // `mergeDirectConversationDuplicates` exists to clean up afterwards.
   const known = [...conversations.entries()].find(([, c]) => c.id === groupId);
   if (known) {
+    // The owed server copy first: once it is written, the list in hand is the one stale fact, and
+    // the label repair would report a disagreement the write has just ended.
+    if (
+      await settleOwedServerName(known[0], group, mlsService, conversations, saveConversation, log)
+    ) {
+      await recordGroupStart(known[0], group, conversations, saveConversation);
+      return 'existed';
+    }
     await repairGroupLabel(known[0], known[1], group, conversations, saveConversation, log);
     await recordGroupStart(known[0], group, conversations, saveConversation);
     return 'existed';
