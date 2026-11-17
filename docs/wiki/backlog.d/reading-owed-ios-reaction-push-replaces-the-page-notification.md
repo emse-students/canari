@@ -18,7 +18,7 @@ a message the iPhone wrote:
 1. App open on ANOTHER conversation: Notification Center then shows exactly ONE entry for that
    reaction (two is a tolerated double, written here with the syslog; ZERO is a FAIL - the loss the
    `List` answer exists to prevent). `python -m pymobiledevice3 syslog live` shows
-   `reaction push while active: the page's twin delivered - kept in the list`.
+   `push while active: a delivered twin delivered - kept in the list`.
 2. App open under Control Center (inactive): ONE entry; a second sound on the replacement is
    acceptable.
 3. App open ON the reacted-to conversation: no entry, and the syslog line says `absent - not

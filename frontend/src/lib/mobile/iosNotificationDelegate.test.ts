@@ -147,15 +147,16 @@ describe('willPresent: only a remote push is an arrival (no re-post loop)', () =
     }
     // Canari's own local notification is ANSWERED, never handled.
     expect(w).toContain('completionHandler(CanariOwnLocalPresentation(request));');
-    // And the push is handled only while active, where it is not presented itself.
+    // And the push is handled only while active, where it is presented only to keep a delivered
+    // twin of the same identifier (`CanariPresentForegroundPush`: List, else None).
     const active = w.indexOf('if (canari_ios_is_in_foreground()) {');
     expect(at).toBeGreaterThan(active);
     expect(w.slice(at, w.indexOf('} else {', at))).toContain(
-      'completionHandler(UNNotificationPresentationOptionNone);'
+      'CanariPresentForegroundPush(center, request.identifier, completionHandler);'
     );
   });
 
-  it('NEVER A LOSS: a reaction push while active keeps a list entry when the page posted its twin', () => {
+  it('NEVER A LOSS: a push while active keeps a list entry when the page posted its twin', () => {
     // The page files its post of a reaction under the push's `apns-collapse-id` (#3792). Should iOS
     // REPLACE that delivered request by the arriving push, answering None would erase the record;
     // so the answer is read from what is delivered, never from a guess: the same identifier
@@ -163,10 +164,14 @@ describe('willPresent: only a remote push is an arrival (no re-post loop)', () =
     const w = willPresent();
     const at = w.indexOf('CanariPushProcessRemoteNotificationUserInfo(');
     const branch = w.slice(at, w.indexOf('} else {', at));
+    // EVERY active push, chosen by IDENTIFIER, never by its data: a wake whose fetch failed or came
+    // back `gone` keeps `type=wake` in its userInfo yet carries the reaction's collapse id (round 4).
     expect(branch).toMatch(
-      /if \(CanariIsReactionData\(CanariFcmDataFromUserInfo\(request\.content\.userInfo\)\)\) \{\s*CanariPresentForegroundReaction\(center, request\.identifier, completionHandler\);\s*return;\s*\}/
+      /CanariPushProcessRemoteNotificationUserInfo\(request\.content\.userInfo\);\s*(\/\/[^\n]*\n\s*)*CanariPresentForegroundPush\(center, request\.identifier, completionHandler\);\s*$/
     );
-    const present = body('static void CanariPresentForegroundReaction(');
+    expect(branch).not.toContain('CanariIsReactionData');
+    expect(branch).not.toContain('UNNotificationPresentationOptionNone');
+    const present = body('static void CanariPresentForegroundPush(');
     expect(present).toContain('[center getDeliveredNotificationsWithCompletionHandler:');
     expect(present).toContain('[n.request.identifier isEqualToString:identifier]');
     expect(present).toContain(
@@ -475,7 +480,7 @@ describe('a notification response is completed on the main thread (iPhone 12, 1.
       for (const use of m.matchAll(/\bcompletionHandler\b/g)) {
         const line = m.slice(m.lastIndexOf('\n', use.index) + 1, m.indexOf('\n', use.index));
         expect(line.trim(), line).toMatch(
-          /^(completionHandler\(|withCompletionHandler:completionHandler\]|void \(\^finish\)\(void\) = CanariFinishOnMain\(completionHandler,|\(void \(\^\)\(UNNotificationPresentationOptions options\)\)completionHandler \{|withCompletionHandler:\(void \(\^\)\(void\)\)completionHandler \{|CanariPresentForegroundReaction\(center, request\.identifier, completionHandler\);)/
+          /^(completionHandler\(|withCompletionHandler:completionHandler\]|void \(\^finish\)\(void\) = CanariFinishOnMain\(completionHandler,|\(void \(\^\)\(UNNotificationPresentationOptions options\)\)completionHandler \{|withCompletionHandler:\(void \(\^\)\(void\)\)completionHandler \{|CanariPresentForegroundPush\(center, request\.identifier, completionHandler\);)/
         );
       }
     }

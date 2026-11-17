@@ -4607,7 +4607,7 @@ static BOOL CanariGraineSeedHeld(NSString *channelId, NSString *sessionId) {
 /// Whether a push's data is a REACTION: it rides on `social` without being one (see the Android
 /// service and notify-reaction in chat-delivery-service). The wire type stays `social` so clients
 /// predating it render it instead of dropping it into the MLS ladder; the discriminator is a separate
-/// field. ONE reading, for the arrival (`CanariHandleFcmData`) and the presentation (`willPresent`).
+/// field. ONE reading, wherever a reaction's data is told apart (`CanariHandleFcmData`).
 static BOOL CanariIsReactionData(NSDictionary *_Nullable data) {
   return [data[@"type"] isKindOfClass:[NSString class]] &&
          [(NSString *)data[@"type"] isEqualToString:@"social"] &&
@@ -5849,15 +5849,17 @@ static void (^CanariFinishOnMain(void (^handler)(void), NSString *what))(void) {
   };
 }
 
-/// A remote REACTION arriving while ACTIVE (review of #3792, round 3). The page posts its own
+/// A remote push arriving while ACTIVE (review of #3792, rounds 3 and 4). The page posts its own
 /// notification of a reaction to my message under the push's `apns-collapse-id`
 /// (`reactionCollapseId`), so the two are one request. Should iOS REPLACE the page's delivered request
 /// by this push on arrival, answering None would erase the only record of the reaction - so the answer
 /// is read from what is DELIVERED, not from a belief about iOS: the same identifier delivered -> List
-/// (the entry stays; worst case a double, never a loss), none -> None (the page refused it: the
-/// reaction is on screen, or its notification is off). The iPhone reading is owed
-/// (backlog.d/reading-owed-ios-reaction-push-replaces-the-page-notification.md).
-static void CanariPresentForegroundReaction(
+/// (the entry stays; worst case a double, never a loss), none -> None (nothing of ours carries it, or
+/// the page refused it: the reaction is on screen, or its notification is off). EVERY active push
+/// comes here, keyed by its IDENTIFIER and never by its data: a content-free wake whose fetch failed
+/// or answered `gone` keeps `type=wake` in its userInfo yet still carries the reaction's collapse id.
+/// The iPhone reading is owed (backlog.d/reading-owed-ios-reaction-push-replaces-the-page-notification.md).
+static void CanariPresentForegroundPush(
     UNUserNotificationCenter *center, NSString *identifier,
     void (^completionHandler)(UNNotificationPresentationOptions options)) {
   [center getDeliveredNotificationsWithCompletionHandler:^(NSArray<UNNotification *> *delivered) {
@@ -5871,7 +5873,7 @@ static void CanariPresentForegroundReaction(
     // Completed back ON MAIN: this block runs on a queue of the center's choosing, and iOS asserts
     // the main thread inside a delegate's handler (the 1.6.12-alpha.2 abort, `CanariFinishOnMain`).
     dispatch_async(dispatch_get_main_queue(), ^{
-      NSLog(@"[CanariPush] reaction push while active: the page's twin %@ - %@",
+      NSLog(@"[CanariPush] push while active: a delivered twin %@ - %@",
             pagePosted ? @"delivered" : @"absent",
             pagePosted ? @"kept in the list" : @"not presented");
       completionHandler(pagePosted ? UNNotificationPresentationOptionList
@@ -5927,12 +5929,8 @@ static void CanariPresentForegroundReaction(
   //   `call_ring` rang CallKit beside its own banner.
   if (canari_ios_is_in_foreground()) {
     CanariPushProcessRemoteNotificationUserInfo(request.content.userInfo);
-    // A reaction's push and the page's post of it share ONE identifier: never answer None blind.
-    if (CanariIsReactionData(CanariFcmDataFromUserInfo(request.content.userInfo))) {
-      CanariPresentForegroundReaction(center, request.identifier, completionHandler);
-      return;
-    }
-    completionHandler(UNNotificationPresentationOptionNone);
+    // A push may share ONE identifier with a page post (a reaction): never answer None blind.
+    CanariPresentForegroundPush(center, request.identifier, completionHandler);
   } else {
     completionHandler(UNNotificationPresentationOptionBanner | UNNotificationPresentationOptionSound |
                       UNNotificationPresentationOptionList);

@@ -127,7 +127,14 @@ something to fetch:
   the caller in clear, and a few thousand candidate instants would confirm "A reacted in G"). So
   `sendPushToUser` keeps the header on the wake for `reaction=true` alone
   ([mobile](../frontend/mobile.md#the-frame-trigger-of-a-reaction-2026-11-17)); any new opaque id
-  must pass the same test - nothing Apple sees elsewhere may confirm it. A content-free post activity loses
+  must pass the same test - nothing Apple sees elsewhere may confirm it. **One bounded exception**:
+  a message whose frame named no `messageId` (a client predating it; every current sender stamps one)
+  is filed under its queue row id (`setupMessageHandler`, `deliveryMeta.queuedMessageId`), and that id
+  rides the MLS wake of the message itself - so for a reaction to such a legacy message, Apple holds
+  the message id and could confirm "this reactor, at this instant, reacted to that message" by trying
+  candidate reactors and instants; bounded because only messages from those old clients take that
+  id, and what is confirmed is a reaction to a message whose existence and recipients Apple already
+  saw, never its content. A content-free post activity loses
   replace-in-place on iOS unless WP-W5 finds a carrier for it (an opaque per-recipient id, or the
   extension removing the post's earlier delivered notification by thread) - owed by WP-W5, not by
   the collapse ([one per post](../engagement.md#the-owners-decision-of-2026-11-14---what-concerns-you-directly-is-never-dropped-one-live-notification-per-post)).

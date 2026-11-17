@@ -3325,11 +3325,12 @@ identity makes the two posts one:
   ring names the group and the caller in clear, so a hash over `<group>:<reactor>:<at>` could be
   confirmed by trying a few thousand instants. No wake and no ring names the message
   ([content-free-push](../protocols/content-free-push.md)).
-- **iOS, while ACTIVE**: `willPresent` never answers a reaction's push with `None` blind - should iOS
-  have replaced the page's delivered request by the push, that would erase the record. It reads the
-  delivered notifications (`CanariPresentForegroundReaction`, completed on the main queue): the same
-  identifier delivered -> `List`, none -> `None` (the page refused it: on screen, or off). Worst case
-  a double, never a loss.
+- **iOS, while ACTIVE**: `willPresent` never answers a push with `None` blind - should iOS have
+  replaced the page's delivered request by the push, that would erase the record. It reads the
+  delivered notifications (`CanariPresentForegroundPush`, completed on the main queue) for EVERY
+  active push, by identifier and never by data (a wake whose fetch failed or answered `gone` keeps
+  `type=wake` yet carries the reaction's collapse id): the same identifier delivered -> `List`, none
+  -> `None`. Worst case a double, never a loss.
 - A frame with no `at` (a reactor predating it, whose push carries none either) cannot be made one with
   its push: on a phone it is left to the push, as before #3792. `notify-reaction` forwards `at` only
   as a positive integer at most a day ahead of the server (`REACTION_AT_MAX_AHEAD_MS`).
