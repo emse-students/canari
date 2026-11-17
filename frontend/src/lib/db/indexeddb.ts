@@ -2329,7 +2329,8 @@ export class IndexedDbStorage implements IStorage {
   async saveGraineSession(
     session: StoredGraineSession,
     deviceKeyB64: string,
-    onlyWhile?: () => boolean
+    onlyWhile?: () => boolean,
+    sentCountWas?: number
   ): Promise<void> {
     const db = this.ensureDb();
     const encrypted = await encryptData(encodeGraineSensitive(session), deviceKeyB64);
@@ -2341,9 +2342,33 @@ export class IndexedDbStorage implements IStorage {
     }
     return new Promise((resolve, reject) => {
       const tx = db.transaction('graine', 'readwrite');
-      tx.objectStore('graine').put(row);
+      const store = tx.objectStore('graine');
+      let refused: StoreWriteRefusedError | null = null;
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(refused ?? tx.error);
+      if (sentCountWas === undefined) {
+        store.put(row);
+        return;
+      }
+      // THE COMPARE-AND-SWAP, read and written in ONE readwrite transaction: every other
+      // document's transaction on this store is ordered entirely before or after it.
+      const current = store.get(session.sessionId);
+      current.onsuccess = () => {
+        const stored = (current.result as { sentCount?: number } | undefined)?.sentCount;
+        if (stored === sentCountWas) {
+          store.put(row);
+          return;
+        }
+        // AT A LEVEL THAT ACCUSES: another writer moved this session's count between this
+        // reservation's read and its write - two documents both reserved on it, so the leadership
+        // guard let an overlap through. Refused, so no index is handed out a second time.
+        console.error(
+          `[GRAINE] session ${session.sessionId} not written: its count moved from ${sentCountWas} to ${stored ?? 'none'} since it was read - another writer reserved on it`
+        );
+        refused = new StoreWriteRefusedError(`the Graine session ${session.sessionId}`);
+        tx.abort();
+      };
     });
   }
 
