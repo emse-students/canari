@@ -1072,18 +1072,20 @@ export async function addReaction(
   deps: MessageActionDeps
 ): Promise<boolean> {
   const { userId, conversation, currentUserDisplayName } = deps;
+  // The author as this device holds it: stated in the frame (`target_author_id`) and named to the
+  // server below - the ONE claim both of the author's triggers read.
+  const targetMsg = conversation.messages.find((m) => m.id === messageId);
 
   const queued = await enqueueControlEvent(
     'reaction',
     conversation.id,
-    encodeAppMessage(mkReaction(messageId, emoji, at))
+    encodeAppMessage(mkReaction(messageId, emoji, at, false, targetMsg?.senderId))
   );
   // A refused reaction reaches nobody, so nobody is notified either.
   if (!queued) return false;
 
   // Notify the message author (fire-and-forget, non-fatal). The message's CONTENT is deliberately
   // not read here - see notifyReaction: the author's own devices hold it already.
-  const targetMsg = conversation.messages.find((m) => m.id === messageId);
   if (targetMsg?.senderId && targetMsg.senderId !== userId) {
     void notifyReaction({
       groupId: conversation.id,
@@ -1091,6 +1093,7 @@ export async function addReaction(
       emoji,
       messageId,
       actorName: currentUserDisplayName ?? userId,
+      at,
     }).catch(() => {});
   }
   return true;

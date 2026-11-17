@@ -44,6 +44,9 @@ export interface ChannelEventContext extends Pick<
   | 'onWorkspaceRoleChanged'
   | 'onWorkspaceDeleted'
   | 'onChannelMessageDeleted'
+  | 'onInboundReaction'
+  | 'storage'
+  | 'deviceKey'
   | 'log'
 > {
   /** Called when a commit is rejected (desynced epoch) - triggers a re-add request. */
@@ -96,6 +99,7 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     onOutOfSync,
     onJoinAsk,
     onJoinAskSettled,
+    onInboundReaction,
   } = ctx;
 
   // NO LINE ON ENTRY. It used to log every event here, which meant a line per `typing` and
@@ -487,13 +491,42 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
             log(
               `Channel reaction applied to ${String(msg.reaction.messageId ?? '')} (removed=${msg.reaction.removed === true})`
             );
-            applyChannelReactionFrame(
-              String(msg.reaction.messageId ?? ''),
-              String(sender || '').toLowerCase(),
+            const targetId = String(msg.reaction.messageId ?? '');
+            const reactorId = String(sender || '').toLowerCase();
+            const changed = applyChannelReactionFrame(
+              targetId,
+              reactorId,
               String(msg.reaction.emoji ?? ''),
               Number(msg.reaction.at ?? 0),
               msg.reaction.removed === true
             );
+            // The frame trigger of a reaction notification. A salon frame on this path is LIVE by
+            // construction - the server fans it out the moment it is posted; a page of history is
+            // read by `useConversations`, which raises nothing.
+            if (onInboundReaction) {
+              const removed = msg.reaction.removed === true;
+              const author = await salonMessageAuthor(
+                channelId,
+                targetId,
+                msg.reaction.targetAuthorId || null,
+                // Only NEWS pays for a store read: a replay or a removal is discarded by the
+                // trigger whoever wrote the message.
+                changed && !removed,
+                ctx
+              );
+              onInboundReaction({
+                conversationKey: channelId,
+                messageId: targetId,
+                reactorId,
+                emoji: String(msg.reaction.emoji ?? ''),
+                at: Number(msg.reaction.at ?? 0),
+                removed,
+                changed,
+                messageAuthorId: author.id,
+                authorLookupFailed: author.lookupFailed,
+                live: true,
+              });
+            }
             return;
           }
           // An edit is a silent row as well, and changes a bubble instead of adding one. The
@@ -642,6 +675,44 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
   // informs, and it can never fire on a matched pair.
   log(`[ERROR] Unhandled channel event type: ${event?.type}`);
   console.error('[Channel Event] no handler for type', event?.type);
+}
+
+/**
+ * The author of a salon row a reaction landed on, in the order `InboundReaction.messageAuthorId`
+ * states and the MLS path follows (`setupMessageHandler`: the held row, else the stated author):
+ * SCREEN, STORE, CLAIM. The row in memory (its sender proven by Graine), else - for a frame that is
+ * news, and only then - the salon's stored page (`storeSalonPage` in `useConversations`, the last
+ * page an earlier session drew), else the author the frame STATES (`ReactionMsg.target_author_id`, the
+ * reactor's own claim - the one its push to the author already rests on). A row this device holds
+ * outranks a claim (review of #3792, round 3). `lookupFailed` says the store was asked and could not
+ * answer; it is warned here, and it decides only when no claim stands in (`unresolved`).
+ */
+async function salonMessageAuthor(
+  channelId: string,
+  messageId: string,
+  statedAuthorId: string | null,
+  isNews: boolean,
+  ctx: Pick<ChannelEventContext, 'conversations' | 'storage' | 'deviceKey'>
+): Promise<{ id: string | null; lookupFailed: boolean }> {
+  const shown = ctx.conversations.get(channelId)?.messages.find((m) => m.id === messageId);
+  if (shown) return { id: shown.senderId, lookupFailed: false };
+  // A frame that is no news, or a session with no store: nothing to ask, and nothing failed.
+  if (!isNews || !ctx.storage) return { id: statedAuthorId, lookupFailed: false };
+  try {
+    const found = await ctx.storage.getMessagesByIds(channelId, [messageId], ctx.deviceKey());
+    if (found.unreadable.has(messageId)) {
+      console.warn(
+        `[REACTION] ${messageId.slice(0, 8)} is stored under a key this device cannot open - its author is ${statedAuthorId ? 'the one the frame states' : 'unknown'}`
+      );
+      return { id: statedAuthorId, lookupFailed: true };
+    }
+    return { id: found.rows.get(messageId)?.senderId ?? statedAuthorId, lookupFailed: false };
+  } catch (e) {
+    console.warn(
+      `[REACTION] the stored row of ${messageId.slice(0, 8)} could not be read - its author is ${statedAuthorId ? 'the one the frame states' : 'unknown'}: ${String(e)}`
+    );
+    return { id: statedAuthorId, lookupFailed: true };
+  }
 }
 
 /** Whether `value` is one of the three salon write policies. */

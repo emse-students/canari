@@ -34,6 +34,16 @@ import {
   sanitizeQueryValue,
 } from '../utils/sanitize';
 import { RouteParams } from '../common/route-params';
+import { reactionCollapseId } from '../services/push-payload';
+
+/** The longest reacted-to message id `notify-reaction` hashes: a uuid is 36, a server row id shorter. */
+export const REACTION_MESSAGE_ID_MAX_LENGTH = 128;
+
+/**
+ * How far ahead of this server a reaction's instant may be and still be forwarded (`notify-reaction`):
+ * a day covers any phone's clock drift, and refuses a stamp no real reaction could carry.
+ */
+export const REACTION_AT_MAX_AHEAD_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Commits one user may submit per minute on `POST /mls/commit`, across all their devices.
@@ -653,6 +663,13 @@ export class MessagingController {
       /** The reacted-to message, so the device can find its own copy. Never its content. */
       messageId?: string;
       actorName: string;
+      /**
+       * The reaction's own instant (`ReactionMsg.at`, the reactor's clock), so the author's device
+       * recognises a push and a WebSocket frame for the SAME reaction (Android's `alreadyPosted`; on
+       * iOS the `collapseId` derived from it). Absent from a client predating it: the push then
+       * carries neither, as before.
+       */
+      at?: number;
     }
   ): Promise<{ sent: number; failed: number }> {
     if (!callerId) throw new BadRequestException('x-user-id header required');
@@ -666,6 +683,38 @@ export class MessagingController {
 
     const emoji = String(body.emoji ?? '').slice(0, 20);
     const actor = String(body.actorName ?? callerId).slice(0, 100);
+    // Forwarded only as a plausible instant: a positive integer of ms no later than a day ahead of
+    // this server (a reactor's clock may run fast, never by days). Anything else is a client's bug,
+    // never a stamp - and a stamp is an identity on the author's devices, so a wild one is refused
+    // rather than allowed to collide with or outlive the reactions it would be compared with.
+    const at = Number(body.at);
+    // A message id is a server row id or a client uuid, never long: one past the bound is a client's
+    // bug, and hashing it (`reactionCollapseId` walks every character) would let a caller buy CPU
+    // with a body. Refused by length, said once, and the push then carries the stamp alone.
+    const rawMessageId = typeof body.messageId === 'string' ? body.messageId : '';
+    const messageId = rawMessageId.length <= REACTION_MESSAGE_ID_MAX_LENGTH ? rawMessageId : '';
+    if (rawMessageId && !messageId) {
+      this.logger.warn(
+        `[notify-reaction] a message id of ${rawMessageId.length} characters from ${sanitizeLogValue(callerId)} was not used: no collapse id`
+      );
+    }
+    const atIsPlausible =
+      Number.isSafeInteger(at) && at > 0 && at <= Date.now() + REACTION_AT_MAX_AHEAD_MS;
+    // The collapse id needs the reacted-to message (`reactionCollapseId`: never the conversation).
+    // A reactor that names none gets the stamp alone - Android's dedup needs no more.
+    const stamp = atIsPlausible
+      ? {
+          at: String(at),
+          ...(messageId
+            ? { collapseId: reactionCollapseId(messageId, canonicalUserId(callerId), at) }
+            : {}),
+        }
+      : {};
+    if (body.at !== undefined && !('at' in stamp)) {
+      this.logger.warn(
+        `[notify-reaction] an implausible reaction instant from ${sanitizeLogValue(callerId)} was not forwarded: ${sanitizeLogValue(String(body.at))}`
+      );
+    }
 
     // Legacy body only - carries the emoji and the actor, never the message. Clients that
     // understand `reaction` compose their own from `strings.xml` / `Localizable.strings`.
@@ -676,11 +725,12 @@ export class MessagingController {
       reaction: 'true',
       deepLink: `fr.emse.canari://chat/${groupId}`,
       groupId,
-      messageId: String(body.messageId ?? ''),
+      messageId,
       emoji,
       // The ACTOR, so the device can fetch their avatar - the message path needs it and the
       // social path never carried one.
       senderId: callerId,
+      ...stamp,
     });
   }
 }

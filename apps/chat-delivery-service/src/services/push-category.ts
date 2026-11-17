@@ -252,3 +252,16 @@ export function categoryOfDataPush(data: Record<string, string>): NotificationCa
       return null;
   }
 }
+
+/**
+ * The KIND a `[SOCIAL_PUSH] sent` line names, so a count of one kind of push is one `grep` away.
+ *
+ * A reaction to a MESSAGE rides on `type: social` without being one (`mls/notify-reaction`), so its
+ * `type` cannot name it: it is `message_reaction`, distinct from `social_reaction`, the content key
+ * of a reaction to a POST. Without it the share of message reactions a device actually draws could
+ * not be measured against the ones sent (2026-11-17). Otherwise the content key, else the type.
+ */
+export function pushKindOf(data: Record<string, string>): string {
+  if (data.reaction === 'true') return 'message_reaction';
+  return data.contentKey || data.type || 'none';
+}

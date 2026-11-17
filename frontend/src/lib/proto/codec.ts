@@ -262,14 +262,22 @@ export function mkReply(
  * Builds the frame for BOTH legs of a reaction. `removed` says which one, `at` is the sender's
  * clock for this `(user, emoji)` pair - the merge on the far side keeps the larger one, so the two
  * legs need the same shape and neither may be undated.
+ *
+ * @param targetAuthorId the reacted-to message's author as the reactor holds it - the claim
+ *   `notify-reaction` makes to the server - so the author's devices know a reaction is to them
+ *   without holding the message (`ReactionMsg.target_author_id`). Omitted on a removal, which is
+ *   never news.
  */
 export function mkReaction(
   messageId: string,
   emoji: string,
   at: number,
-  removed = false
+  removed = false,
+  targetAuthorId?: string
 ): canari.AppMessage.$Properties {
-  return { reaction: { messageId, emoji, at, removed } };
+  return {
+    reaction: { messageId, emoji, at, removed, ...(targetAuthorId ? { targetAuthorId } : {}) },
+  };
 }
 
 /**

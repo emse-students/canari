@@ -42,7 +42,7 @@ import { KeyPackage } from '../entities/key-package.entity';
 import { OneTimeKeyPackage } from '../entities/one-time-key-package.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { PushToken } from '../entities/push-token.entity';
-import { categoryOfDataPush } from './push-category';
+import { categoryOfDataPush, pushKindOf } from './push-category';
 import { appVersionAtLeast, MIN_APP_VERSION_DATA_KEY } from '../utils/app-version';
 import { readDisabledCategories, readGroupNotificationLevel } from './notification-preferences';
 import { MlsCommitLog } from '../entities/mls-commit-log.entity';
@@ -159,6 +159,7 @@ import {
   LONGEST_FALLBACK_LOCALE,
   buildInternalAndroidHalf,
   buildInternalApnsHalf,
+  buildInternalApnsRequest,
   decideProtoCarriage,
   measureDataFields,
   measureApnsPayload,
@@ -1302,7 +1303,15 @@ export class MessagingService {
     key: WakeKey,
     silent: boolean,
     mentionsOnly: boolean,
-    android: { priority: 'high'; ttl?: number }
+    android: { priority: 'high'; ttl?: number },
+    /**
+     * The `apns-collapse-id` the FULL push of the same content would carry (`buildInternalApnsRequest`),
+     * for a REACTION only: the identifier the device files it under, which a wake must keep - one
+     * reaction's push and the page's own notification of it are ONE request only if both carry it
+     * (review of #3792). It is a hash over the message id, which nothing else sent to Apple names;
+     * an id that names content - or hashes only what Apple can learn elsewhere - never goes here.
+     */
+    collapseId?: string
   ): Message {
     if (pt.platform === 'ios') {
       const request = buildWakeApnsRequest(key, silent, mentionsOnly, pt.locale);
@@ -1313,6 +1322,7 @@ export class MessagingService {
           headers: {
             'apns-push-type': request.pushType,
             'apns-priority': String(request.priority),
+            ...(collapseId ? { 'apns-collapse-id': collapseId } : {}),
           },
         },
       };
@@ -8599,14 +8609,25 @@ export class MessagingService {
           // The content-free wake: the device fetches the envelope and runs it through the path
           // this full push would have taken. Android keeps the full push's options.
           await getMessaging().send(
-            this.buildWakeMessage(pt, { envelopeId }, isInternalSilent(data), false, {
-              priority: 'high',
-            })
+            this.buildWakeMessage(
+              pt,
+              { envelopeId },
+              isInternalSilent(data),
+              false,
+              { priority: 'high' },
+              // A REACTION's collapse id is kept: a hash of the reacted-to message's id - which no
+              // wake and no ring carries, so it cannot be checked against a guess
+              // (`reactionCollapseId`) - and what makes its push and the page's notification one.
+              // A post's names the post (`post_activity_<id>`), which a wake must never carry.
+              data.reaction === 'true'
+                ? buildInternalApnsRequest(title, body, data, pt.locale).collapseId
+                : undefined
+            )
           );
           sent++;
           this.logger.log(
             `[SOCIAL_PUSH][${traceId}] sent user=${userId} device=${pt.deviceId} platform=${pt.platform} ` +
-              `mode=wake kind=${data.type ?? 'none'} envelope=${envelopeId.slice(0, 8)}`
+              `mode=wake kind=${pushKindOf(data)} envelope=${envelopeId.slice(0, 8)}`
           );
           continue;
         }
@@ -8638,7 +8659,7 @@ export class MessagingService {
         sent++;
         this.logger.log(
           `[SOCIAL_PUSH][${traceId}] sent user=${userId} device=${pt.deviceId} platform=${pt.platform} ` +
-            `mode=full inline=${Object.keys(inline).length === 0 ? 'none' : half.inlined} bytes=${half.bytes}`
+            `mode=full kind=${pushKindOf(data)} inline=${Object.keys(inline).length === 0 ? 'none' : half.inlined} bytes=${half.bytes}`
         );
         if (Object.keys(inline).length > 0 && !half.inlined) {
           // Not a failure - the device fetches the message and draws the fallback - but a budget
