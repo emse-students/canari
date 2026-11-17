@@ -29,7 +29,6 @@ earliest version, as a checklist.
 - [P1 - a third of the `1.6.12` native devices hold no push token row: no push can reach them (production, 2026-11-15)](backlog.d/p1-a-third-of-the-1-6-12-native-devices-hold-no-push-token-row.md)
 - [P1 - media-service holds the retention durations after the deploy that adds the relay (the boot notice carries them)](backlog.d/p1-media-retention-held-after-the-deploy-that-adds-the-relay.md)
 - [P1 - rows before ratchet: a live drain stores its rows only when its window closes, after a checkpoint may already hold their ratchet advance (raised by the second review of #3321, 2026-11-15)](backlog.d/p1-rows-before-ratchet.md)
-- [P1 - a salon push's seed frame opened against a key group of production size, on the bench (2026-11-17)](backlog.d/p1-salon-push-seed-frame-at-production-key-group-size.md)
 
 **Chantiers, decisions and questions (no severity)**
 
@@ -118,6 +117,7 @@ earliest version, as a checklist.
 - [ ] [the iPhone's one seed mirror keeps the extension's seeds through a foreground (2026-11-17)](backlog.d/reading-owed-ios-seed-mirror-one-copy.md)
 - [ ] [live moderation: the three broadcaster pushes, the withdrawal lift and the lives switch](backlog.d/reading-owed-live-moderation-pushes-lift-and-the-lives-switch.md)
 - [ ] [removing a login row that names an unlisted device erases that machine (2026-11-17)](backlog.d/reading-owed-removing-a-login-row-naming-an-unlisted-device-erases-that-machine.md)
+- [ ] [a salon push's catch-up at a key group of production size, on the phones (2026-11-17)](backlog.d/reading-owed-salon-push-catch-up-at-production-key-group-size.md)
 
 ## 1.7.1
 

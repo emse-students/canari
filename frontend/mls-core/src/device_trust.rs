@@ -45,7 +45,7 @@ use openmls_traits::OpenMlsProvider;
 use openmls_traits::crypto::OpenMlsCrypto;
 use openmls_traits::types::HashType;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::admission::AdmissionPolicy;
 use crate::member_sightings::{MemberSighting, MemberSightings, MembershipEvidence};
@@ -369,6 +369,8 @@ pub fn canonical_user_id(user_id: &str) -> String {
 /// ([`identity_names`]), the pins, the lookups, the leaf a replace removes. Two spellings the
 /// binding accepts as one device must be one device everywhere else too.
 pub fn canonical_identity(identity: &str) -> Option<String> {
+    #[cfg(test)]
+    tests::CANONICALISATIONS.with(|n| n.set(n.get() + 1));
     if !is_well_formed_identity(identity) {
         return None;
     }
@@ -675,10 +677,16 @@ impl DeviceTrust {
         }
         // EVERY DEVICE whose leaf went, its user staying or not: the record that tells a device
         // coming back by its own commit from one that was never here ([`DeviceEvent::first_in_group`]).
+        // Canonicalised once, for the reason `observe_merged_commit` gives: a scan of the tree after
+        // for each leaf before was quadratic. An identity that is not well formed is dropped either way.
+        let after_devices: HashSet<String> = after
+            .iter()
+            .filter_map(|(_, id, _)| canonical_identity(id))
+            .collect();
         let mut devices_gone: Vec<(String, String)> = before
             .iter()
-            .filter(|(_, id, _)| !after.iter().any(|(_, a, _)| same_identity(a, id)))
             .filter_map(|(_, id, _)| canonical_identity(id))
+            .filter(|id| !after_devices.contains(id))
             .filter_map(|id| {
                 id.split_once(':')
                     .map(|(u, d)| (u.to_string(), d.to_string()))
@@ -1081,10 +1089,19 @@ impl DeviceTrust {
         {
             wrote |= self.reaffirm(committer, key);
         }
+        // EVERY LEAF OF THE TREE BEFORE, CANONICALISED ONCE. Each leaf after the commit used to be
+        // compared with each leaf before it through `same_identity`, which canonicalises both sides:
+        // quadratic in the tree, and on a 400-device key group 95% of what a merged commit cost. A
+        // shut phone's salon push replays every commit since the app last ran, so it paid that on
+        // each (`tests/push_catchup_at_scale.rs`, channel-encryption section 28). Same predicate:
+        // an identity that is not well formed matches nothing, as `same_identity` answers.
+        let before_leaves: HashSet<(String, &[u8])> = before
+            .iter()
+            .filter_map(|(_, id, k)| canonical_identity(id).map(|c| (c, k.as_slice())))
+            .collect();
         for (_, identity, key) in after {
-            let existed = before
-                .iter()
-                .any(|(_, id, k)| same_identity(id, identity) && k == key);
+            let existed = canonical_identity(identity)
+                .is_some_and(|c| before_leaves.contains(&(c, key.as_slice())));
             if existed {
                 continue;
             }
@@ -1176,6 +1193,48 @@ impl DeviceTrust {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    thread_local! {
+        /// How many identities [`canonical_identity`] canonicalised on this thread - the unit the
+        /// cost of a merged commit's observation is counted in, rather than a clock.
+        pub(super) static CANONICALISATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    /// A MERGED COMMIT IS OBSERVED IN TIME LINEAR IN THE TREE (2026-11-17). A shut phone's salon
+    /// push re-applies every commit of the key group since the app last ran
+    /// (`decrypt_push_message_with_commits_with_key`), and this observation ran on each of them,
+    /// comparing every leaf after the commit with every leaf before it - canonicalising both sides
+    /// of each comparison. On a 400-device key group it was 95% of a commit's cost: ~74 ms of ~78 ms
+    /// on a desktop core, the MLS work itself under 4 ms (`tests/push_catchup_at_scale.rs`). Counted
+    /// in canonicalisations, not milliseconds, so the bound holds on any machine.
+    #[test]
+    fn a_merged_commit_is_observed_in_time_linear_in_the_tree() {
+        const LEAVES: usize = 400;
+        let mut t = DeviceTrust::default();
+        let own = ("me:phone", &[0u8; 32][..]);
+        let before: Vec<LeafKey> = (0..LEAVES as u32)
+            .map(|i| (i, format!("user{i}:dev{i}"), vec![(i % 251) as u8; 32]))
+            .collect();
+        let mut after = before.clone();
+        after.push((LEAVES as u32, "newcomer:dev".to_string(), vec![7u8; 32]));
+        let open = Some(AdmissionPolicy::Open);
+        t.observe_merged_commit("kg", 10, &before, &before, None, own, open);
+        CANONICALISATIONS.with(|n| n.set(0));
+        t.observe_merged_commit("kg", 11, &before, &after, Some("newcomer:dev"), own, open);
+        let counted = CANONICALISATIONS.with(|n| n.get());
+        assert!(
+            counted <= 20 * LEAVES,
+            "one merged commit canonicalised {counted} identities for a tree of {LEAVES} leaves - \
+             quadratic, and a push replaying a key group's commits pays it on every one"
+        );
+        let events = t.take_events();
+        assert_eq!(
+            events.len(),
+            1,
+            "the newcomer, and only it, is a new device"
+        );
+        assert_eq!(events[0].identity, "newcomer:dev");
+    }
 
     fn lk(index: u32, identity: &str, key: u8) -> LeafKey {
         (index, identity.to_string(), vec![key; 32])

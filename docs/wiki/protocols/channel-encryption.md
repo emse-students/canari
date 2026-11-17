@@ -5090,5 +5090,70 @@ seed file, and the app-alive path reads `CanariAppGroupPath()`.
 **Not established, and said:** the one Android line of 2026-11-14 (`held=true`). Android has one
 file, so this cause cannot reach it: [its own entry](../backlog.d/p2-android-blind-salon-banner-held-true.md).
 The bench run against a key group of production size, which this section does not cover, is
-[another](../backlog.d/p1-salon-push-seed-frame-at-production-key-group-size.md). What is owed for
+[section 28](#28-a-salon-pushs-catch-up-against-a-key-group-of-production-size---measured-2026-11-17). What is owed for
 this fix is in [the reading](../backlog.d/reading-owed-ios-seed-mirror-one-copy.md).
+
+## 28. A salon push's catch-up against a key group of production size - MEASURED 2026-11-17
+
+**The question.** Section 27's bench reached the seed frame's commit catch-up only with a key group
+of a few devices, at epochs 6 to 9. A shut phone re-applies EVERY key-group commit since the app
+last ran, in memory, on EVERY salon push (`decrypt_push_message_with_commits_with_key`; nothing in
+the background persists a commit), under `MlsStateLock` on Android and inside the notification
+extension's time and memory on iOS. Does it still open the frame at production's size, and at what
+cost?
+
+**Production, read-only aggregates, 2026-11-17.** The largest key group stood at epoch 403 with 206
+active devices and took 3 commits in a day, 28 in a week, 148 in thirty days; the next one 107
+devices, 23 a week. Their commits averaged 6.2 KB in the log (base64), 7.3 KB at most: a phone shut
+for a month asks `POST mls/push/commits` for ~0.9 MB.
+
+**The bench** is `frontend/mls-core/tests/push_catchup_at_scale.rs`, on a workstation, no phone:
+every member enters by its own external commit as a key group is entered, 200 more join and leave
+(every other leaf, so the tree carries the blanks departures leave), the measured device is sealed
+at epoch E, K device joins land, a member seals a frame at E + K, and the push path's own sequence
+runs on the sealed bytes - `load_with_key`, K x `process_incoming_message`, the frame. A counting
+allocator gives the peak heap. Its churn is heavier than production's (~21 KB per commit against
+6.2 KB), so its wire column is pessimistic.
+
+```
+cargo test --release --test push_catchup_at_scale -- --ignored --nocapture
+```
+
+**The frame always opened. The cost did not hold, and one observer was 85-95% of it** (desktop
+core, release; a phone is ~3-5x slower):
+
+| key group | behind | apply, before | apply, after | per commit, after | peak heap |
+| --- | --- | --- | --- | --- | --- |
+| 206 devices | 30 (a week) | 0.6 s | 0.10 s | 3.3 ms | 2.0 MiB |
+| 206 devices | 150 (a month) | 4.5 s | 0.57 s | 3.8 ms | 2.7 MiB |
+| 206 devices | 400 | 31.5 s | 2.4 s | 5.9 ms | 4.9 MiB |
+| 400 devices | 150 | 11.4 s | 0.87 s | 5.8 ms | 4.6 MiB |
+| 400 devices | 400 | 56.7 s | 2.8 s | 7.1 ms | 6.7 MiB |
+| 400 devices + 2535 KeyPackages | 400 | 87.7 s | 2.7 s | 6.9 ms | 12.2 MiB |
+
+Before, a phone a month behind in production's largest community spent an estimated 15-20 s per
+salon push replaying commits - every push again, on a lane that serialises them; an iPhone's
+extension has ~30 s in all. **The cause was not MLS**: instrumented, a commit's openmls work
+(`process_message` + `merge_staged_commit`) was under 4 ms on a 400-device tree, and the
+device-trust observer that runs on every merged commit (`DeviceTrust::observe_merged_commit`,
+`record_departures`) took ~74 ms. It compared each leaf after the commit with each leaf before it
+through `same_identity`, which canonicalises - allocates - both identities on every call: quadratic
+in the tree, ~325 000 canonicalisations per commit at 400 leaves.
+
+**The fix indexes each tree once** (a set of canonical identities, with the key where the question
+asks for it) and asks the set: the same predicate - an identity that is not well formed matches
+nothing, as `same_identity` answers - linear in the tree. Pinned in a unit of work, not a clock:
+`a_merged_commit_is_observed_in_time_linear_in_the_tree` counts canonicalisations (red at 324 811
+for 400 leaves, now under 20 per leaf). The rule is in
+[durable-rules](../durable-rules.md#mls-state-and-keys---mls-protocol-auth).
+
+**What it leaves, said.** (1) The replay is still paid on every push - after the fix ~0.5 s of
+desktop work for a month behind, ~2-3 s on a phone; persisting it from the background would make a
+second writer of `mls.bin`, which section 26's compare-and-swap install shows is possible but is a
+design of its own, not needed at these numbers. (2) The fetch: ~0.9 MB for a month at production's
+commit size, under a 5 s read timeout - a slow link fails it and the banner is generic; that belongs
+to the slow-link chantier. (3) Heap: 12.2 MiB peak with 2535 KeyPackages in the state, the Rust heap
+only; a state the size of the 15.5 MB one a store phone carried is not measured here. Both readings
+on phones, and the log line they read (`catchup: applied commits since epoch=... in ... ms`, added to
+the Android service and the iOS extension), are in
+[the reading](../backlog.d/reading-owed-salon-push-catch-up-at-production-key-group-size.md).
