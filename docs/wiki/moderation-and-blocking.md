@@ -369,10 +369,13 @@ others they are not it.
 ### Anonymous posts - the fourth control that predicate now gates
 
 A personal post (never an association one - the two are mutually exclusive, and an association
-post already anonymizes its author for everyone unconditionally) can be marked `anonymous` at
+post already withholds its writer from everyone but its moderators and the writer, by the same rule)
+can be marked `anonymous` at
 creation - one option in the same "who is publishing" identity picker as the personal profile and
 each managed association, open to every user rather than gated to association admins.
-`PostsService.mustHideAnonymousAuthor` strips `authorId` from the response for every viewer
+`PostsService.viewerSeesWriter` (via `withholdWriterUnlessSeen`, the one writer rule, the same for
+an association's post since 2026-11-17 - [moderation-authority](moderation-authority.md), decision 11)
+strips `authorId` from the response for every viewer
 **except** a moderator of THAT post (the platform admin, or since 2026-11-02 a BDE whose governed
 spaces hold it), or the post's own author (2026-09-17: a moderator
 must be able to tell WHO published an anonymous post, and so must the author looking at their own
@@ -394,7 +397,7 @@ comment stores no name, so the client resolves the name from that id
 (`commentRevealedAuthorId`). The client never decides who may see an author; it draws what the
 server sent ([posts](frontend/modules/posts.md#who-wrote-it-anonyme-big-the-real-author-small-2026-10-24)).
 
-**`mustHideAnonymousAuthor` was never wrong; the two feed queries never asked it the real
+**`mustHideAnonymousAuthor` (now `viewerSeesWriter`) was never wrong; the two feed queries never asked it the real
 question (2026-09-18, reported by a user who posted "test" anonymously and read their own name
 off a second account's feed).** `listPosts`'s shared `selectBody` and `searchPosts`'s own copy
 both named `posts."authorId"` but never `posts.anonymous`, so every raw row arrived with

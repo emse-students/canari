@@ -307,6 +307,7 @@ maybe("writes and notifications on a post follow the read's gate, against Postgr
       plainMember: BDE_SE,
     } as const;
     let service: PostsService;
+    let scope: AssociationsService;
 
     beforeAll(async () => {
       // An OPEN report is what lets a BDE moderator read a post scheduled later (owner, 2026-11-15).
@@ -344,7 +345,7 @@ maybe("writes and notifications on a post follow the read's gate, against Postgr
           [bde, userId, userId === 'plainMember' ? 0 : MODERATE]
         );
       }
-      const scope = Object.assign(Object.create(AssociationsService.prototype), {
+      scope = Object.assign(Object.create(AssociationsService.prototype), {
         memberRepo: { query: (sql: string, params?: unknown[]) => manager.query(sql, params) },
         logger: new Logger('post-openable-it-moderation-scope'),
       }) as AssociationsService;
@@ -471,6 +472,76 @@ maybe("writes and notifications on a post follow the read's gate, against Postgr
       } finally {
         await client.query(`DELETE FROM content_reports`);
         await client.query(`DELETE FROM posts WHERE id = $1`, [post]);
+      }
+    });
+
+    it("an association's post: its writer is served in /posts/hidden and on the card to the BDE moderator in scope and the platform admin, never to one out of scope, another holder or a reader (decision 11)", async () => {
+      const asso = id(804);
+      const post = id(805);
+      const POST_AS_ASSO = AssociationPermissionFlag.POST_AS_ASSO;
+      await client.query(
+        `ALTER TABLE posts ADD COLUMN IF NOT EXISTS markdown text,
+           ADD COLUMN IF NOT EXISTS "createdAt" timestamp NOT NULL DEFAULT now()`
+      );
+      // A club whose parent is the BDE governing ICM x Saint-Etienne: `modInScope` moderates it.
+      await client.query(
+        `INSERT INTO associations (id, name, "parentAssociationId") VALUES ($1, 'Club', $2)`,
+        [asso, BDE_SE]
+      );
+      await client.query(
+        `INSERT INTO users (id, campus, cursus) VALUES ('officer', 'gardanne', $1), ('colleague', 'gardanne', $1)`,
+        [JSON.stringify(ISMIN_GA)]
+      );
+      await client.query(
+        `INSERT INTO association_members ("associationId", "userId", permissions)
+           VALUES ($1, 'officer', $2), ($1, 'colleague', $2)`,
+        [asso, POST_AS_ASSO]
+      );
+      await client.query(
+        `INSERT INTO posts (id, "authorId", "associationId", "hiddenByModeration", markdown)
+           VALUES ($1, 'officer', $2, true, 'in the club''s name')`,
+        [post, asso]
+      );
+      const hiddenRow = async (userId: string, isGlobalAdmin = false) =>
+        (await service.getHiddenPosts({ userId, isGlobalAdmin })).find(
+          (r: { id?: unknown }) => r.id === post
+        );
+      // The card's shaping, on the real BDE scope (`moderatedPostIds`): what `viewerContext` hands it.
+      const card = async (viewerId: string, isGlobalAdmin = false) => {
+        const viewer = {
+          viewerId,
+          isGlobalAdmin,
+          moderatedIds: isGlobalAdmin
+            ? new Set<string>()
+            : await scope.moderatedPostIds(viewerId, [post]),
+        };
+        const out: Record<string, unknown> = { authorId: 'officer' };
+        (
+          service as unknown as {
+            withholdWriterUnlessSeen: (o: object, p: object, v: object) => void;
+          }
+        ).withholdWriterUnlessSeen(
+          out,
+          { id: post, associationId: asso, authorId: 'officer', anonymous: false },
+          viewer
+        );
+        return out.authorId;
+      };
+      try {
+        expect(await hiddenRow('modInScope')).toMatchObject({ authorId: 'officer' });
+        expect(await hiddenRow('adminOutside', true)).toMatchObject({ authorId: 'officer' });
+        expect(await hiddenRow('modOutOfScope')).toBeUndefined();
+        expect(await card('modInScope')).toBe('officer');
+        expect(await card('adminOutside', true)).toBe('officer');
+        expect(await card('officer')).toBe('officer');
+        for (const who of ['modOutOfScope', 'plainMember', 'colleague', 'reader']) {
+          expect(await card(who)).toBeUndefined();
+        }
+      } finally {
+        await client.query(`DELETE FROM posts WHERE id = $1`, [post]);
+        await client.query(`DELETE FROM association_members WHERE "associationId" = $1`, [asso]);
+        await client.query(`DELETE FROM associations WHERE id = $1`, [asso]);
+        await client.query(`DELETE FROM users WHERE id IN ('officer', 'colleague')`);
       }
     });
 

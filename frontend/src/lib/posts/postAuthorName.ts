@@ -2,6 +2,9 @@ import { m } from '$lib/paraglide/messages';
 import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 import type { PostEntity } from './api';
 
+/** The name a revealed writer is drawn under: "Anonyme", or an association's. */
+export type RevealedUnder = 'anonymous' | 'association';
+
 /**
  * The name a post is published under, as its header prints it and as the media viewer's
  * information panel names who sent a post's photo.
@@ -43,11 +46,13 @@ function personalPostAuthorName(
 }
 
 /**
- * WHO WROTE AN ANONYMOUS POST, for the one reader the server told: a moderator, a platform admin
- * and the post's own author receive `authorId` on an anonymous post (server-side,
- * `PostsService.mustHideAnonymousAuthor`; user, 2026-09-17), every other reader does not. `null`
- * for any other post, and for an anonymous one whose `authorId` was withheld - the client never
- * decides who may see an author, it draws what it was served.
+ * WHO WROTE A POST PUBLISHED UNDER ANOTHER NAME - "Anonyme" or an association's - for the reader the
+ * server told: it serves `authorId` on such a post to whoever moderates it and to its writer
+ * (`PostsService.viewerSeesWriter`; user, 2026-09-17, for an anonymous post; owner, 2026-11-15,
+ * decision 11 of `docs/wiki/moderation-authority.md`, for an association's), every other reader is
+ * served none. `under` says which name the writer is drawn under. `null` for a personal post signed
+ * by its author, and whenever `authorId` was withheld - the client never decides who may see a
+ * writer, it draws what it was served.
  */
 export function revealedPostAuthor(
   post: Pick<
@@ -59,9 +64,13 @@ export function revealedPostAuthor(
     | 'authorLastName'
     | 'authorDisplayName'
   >
-): { userId: string; name: string } | null {
-  if (post.association || !post.anonymous || !post.authorId) return null;
-  return { userId: post.authorId, name: personalPostAuthorName(post) };
+): { userId: string; name: string; under: RevealedUnder } | null {
+  if (!post.authorId) return null;
+  if (post.association) {
+    return { userId: post.authorId, name: personalPostAuthorName(post), under: 'association' };
+  }
+  if (!post.anonymous) return null;
+  return { userId: post.authorId, name: personalPostAuthorName(post), under: 'anonymous' };
 }
 
 /**
