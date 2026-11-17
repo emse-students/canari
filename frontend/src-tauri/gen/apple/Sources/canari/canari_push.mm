@@ -571,6 +571,16 @@ static NSString *const kAppGroupId = @"group.fr.emse.canari";
 static NSString *const kGraineSeedsFileName = @"graine_seeds.json";
 static NSString *const kAppGroupPushSecretFileName = @"push_secret.txt";
 
+// The App Group container's path, or nil without the entitlement. The Graine seed mirror lives HERE
+// and nowhere else since 2026-11-17: the foreground writes it (Rust's `seed_mirror_home`) and the
+// notification extension writes it, one file under one lock, so neither erases the other's seeds
+// (channel-encryption section 27). The app-alive push path reads it from here too.
+static NSString *_Nullable CanariAppGroupPath(void) {
+  return [[NSFileManager defaultManager]
+             containerURLForSecurityApplicationGroupIdentifier:kAppGroupId]
+      .path;
+}
+
 void CanariMirrorPushStateToAppGroup(void) {
   NSURL *container = [[NSFileManager defaultManager]
       containerURLForSecurityApplicationGroupIdentifier:kAppGroupId];
@@ -582,9 +592,11 @@ void CanariMirrorPushStateToAppGroup(void) {
   if (src == nil) {
     return;
   }
-  // The Notification Service Extension reads these three inputs to decrypt a push in its
-  // own process. Write atomically (temp + rename) so the cross-process reader never sees a
-  // torn file, and keep the same at-rest protection class as the source.
+  // The Notification Service Extension reads these inputs to decrypt a push in its own process. The
+  // Graine seed mirror is not among them since 2026-11-17: it lives in the App Group already, and the
+  // byte copy made here erased every seed the extension had stored (channel-encryption section 27).
+  // Write atomically (temp + rename) so the cross-process reader never sees a torn file, and keep
+  // the same at-rest protection class as the source.
   //
   // mls.bin IS RUST'S TO COPY, UNDER THE STATE FILES' LOCK (re-review of #2919, one state per
   // account): an account switch moves the slot and refreshes this copy inside that lock, so a copy
@@ -603,13 +615,6 @@ void CanariMirrorPushStateToAppGroup(void) {
   int contextMirrored = canari_ios_mirror_push_context_to_app_group(src.UTF8String);
   if (contextMirrored != CANARI_MLS_MIRROR_OK) {
     NSLog(@"[CanariPush] mirror %@ failed: code %d", kPushContextFileName, contextMirrored);
-  }
-  // graine_seeds.json IS RUST'S TO COPY TOO, UNDER THE GROUP COPY'S WRITERS' LOCK
-  // (`graine_seeds.lock`): copied here without it, a copy read before an account's wipe could land
-  // after the wipe edited the group's copy, and the extension would hold the wiped seeds again.
-  int seedsMirrored = canari_ios_mirror_graine_seeds_to_app_group(src.UTF8String);
-  if (seedsMirrored != CANARI_MLS_MIRROR_OK) {
-    NSLog(@"[CanariPush] mirror %@ failed: code %d", kGraineSeedsFileName, seedsMirrored);
   }
   NSDataWritingOptions opts =
       NSDataWritingAtomic | NSDataWritingFileProtectionCompleteUntilFirstUserAuthentication;
@@ -4574,8 +4579,8 @@ static NSString *CanariBuildChannelFallbackText(NSString *channelName) {
   return [NSString stringWithFormat:CanariLocalized(@"notif.channel.message"), channelName];
 }
 
-// Whether graine_seeds.json (written by the foreground, sealed under the install's native cache
-// key) holds a Graine session - asked of Rust, which alone opens the file, so the seed never
+// Whether graine_seeds.json (in the App Group, written by the foreground and the extension, sealed
+// under the install's native cache key) holds a Graine session - asked of Rust, which alone opens the file, so the seed never
 // enters Objective-C.
 //
 // The mirror is BOUNDED to the newest sessions per channel, so a miss on an old session is
@@ -4585,8 +4590,9 @@ static BOOL CanariGraineSeedHeld(NSString *channelId, NSString *sessionId) {
   if (sessionId.length == 0) {
     return NO;
   }
-  NSString *dir = CanariTauriDataDir();
+  NSString *dir = CanariAppGroupPath();
   if (dir == nil) {
+    NSLog(@"[CanariPush] graineSeedHeld: ERROR the App Group is unavailable channel=%@", channelId);
     return NO;
   }
   int32_t held = canari_native_graine_seed_held(dir.UTF8String,
@@ -4650,7 +4656,7 @@ static void CanariHandleChannelMessage(NSDictionary *data) {
       // `seedHeld` above only says whether the mirror holds it.
       NSString *signature =
           [data[@"signature"] isKindOfClass:[NSString class]] ? data[@"signature"] : @"";
-      NSString *dir = CanariTauriDataDir();
+      NSString *dir = CanariAppGroupPath();
       // The app language Rust words its own sentences in; "" when none was mirrored.
       NSString *locale = CanariLoadPushContext().locale ?: @"";
       char *jsonPtr =
