@@ -33,7 +33,11 @@
   import { MediaService } from '$lib/media';
   import { getToken } from '$lib/stores/auth';
   import { userDisplayNames } from '$lib/utils/users/displayNames.svelte';
-  import { joiningRows, membersByFamilyName } from '$lib/utils/users/memberOrder.svelte';
+  import {
+    joiningRows,
+    membersByFamilyName,
+    removeControlDisabled,
+  } from '$lib/utils/users/memberOrder.svelte';
   import NotificationLevelControl from './NotificationLevelControl.svelte';
   import NicknamesPanel from './NicknamesPanel.svelte';
   import CallPermissionControl from './CallPermissionControl.svelte';
@@ -563,14 +567,15 @@
                           pattern `data-conversation-tile` and `data-channel-row` already use.
                         -->
                   <!--
-                          NOT LIVE WHILE THE ORDER IS STILL SETTLING: a member whose lookup is in
-                          flight will be inserted at their place and move the rows below it, so the
-                          control under the pointer could be another member's at the tap. A count of
-                          lookups, not a clock (see `membersByFamilyName`).
+                          NOT LIVE WHILE A LOOKUP IS PENDING (`removeControlDisabled`): a member
+                          whose lookup is in flight will be inserted and move the rows below it.
+                          This only NARROWS the window - rows still move when a newcomer settles
+                          later, or a member leaves or is removed elsewhere. The GUARANTEE is the
+                          confirmation, which names the member this row carries.
                         -->
                   <button
                     data-remove-member={member}
-                    disabled={memberOrder.pending > 0}
+                    disabled={removeControlDisabled(false, memberOrder.pending)}
                     onclick={() => onRemoveMember?.(member)}
                     aria-label={m.chat_group_remove_member_label({
                       member: memberNames.get(member) ?? member,

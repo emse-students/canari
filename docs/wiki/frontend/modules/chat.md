@@ -547,19 +547,22 @@ control during that window lands on whichever row has taken its place. Not a re-
 no member list re-sorts on presence, typing or last-seen (`ChannelMembersList` only splits admins
 from members; the salon access list and the association roster are in server or drag order).
 
-- **No remove control is live while `membersByFamilyName().pending > 0`** (`ChatGroupPanel`,
-  `SidebarCommunityAdminPanel`, the two lists that order by name). A count of lookups, not a clock:
-  the order is final exactly when the last one settles, and the controls come back then.
-- **Every removal dialog names the member** (`confirmMemberRemoval`, `utils/users/memberRemovalConfirm.ts`,
+- **No remove control is live while a lookup is pending** (`removeControlDisabled` in
+  `memberOrder.svelte.ts`, used by `ChatGroupPanel` and `SidebarCommunityAdminPanel`, the two lists
+  that order by name). A count of lookups, not a clock. **It NARROWS the window and does not close
+  it**: rows still move when a newcomer's lookup settles later, or when a member leaves or another
+  admin removes one.
+- **THE GUARANTEE: every removal dialog names the member** (`confirmMemberRemoval`, `utils/users/memberRemovalConfirm.ts`,
   `{member}` in the four messages, both locales), as the row draws them: the group's nickname there,
-  the profile name elsewhere, the id when no name is known (at warn). A tap that still lands on the
-  wrong row is now read before it is confirmed.
+  the profile name elsewhere, the id when no name is known (at warn). The name is the one already
+  known (the row drew it), so a stalled link never keeps the dialog from opening; the network is
+  asked only when nothing is known. A tap that lands on a moved row is read before it is confirmed.
 - **The rig asserts it**: `removeCommunityMember` (`tools/cross-client-harness/comm.mjs`) waits for the
   control to be live and refuses to confirm a dialog that does not name the member it was asked for.
 
 Pinned by `ChatGroupPanel.removeMember.svelte.test.ts` (alpha inserted above beta after beta's row is
-drawn: the control is dead until then, and beta's control removes beta) and
-`memberRemovalConfirm.test.ts`.
+drawn: the control is dead until then, and beta's control removes beta),
+`memberOrder.svelte.test.ts` (`removeControlDisabled`, both panels) and `memberRemovalConfirm.test.ts`.
 
 ### One attachment menu, and a GIF panel in the keyboard's place (2026-10-02)
 

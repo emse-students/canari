@@ -46,7 +46,7 @@
   } from '$lib/crypto/graineConstants';
   import { m } from '$lib/paraglide/messages';
   import { resolveUserDisplayName } from '$lib/utils/users/displayName';
-  import { membersByFamilyName } from '$lib/utils/users/memberOrder.svelte';
+  import { membersByFamilyName, removeControlDisabled } from '$lib/utils/users/memberOrder.svelte';
   import { Log } from '$lib/utils/Log';
   import { confirmMemberRemoval } from '$lib/utils/users/memberRemovalConfirm';
   import { copyText } from '$lib/utils/clipboard';
@@ -980,18 +980,21 @@
                           {/if}
                         </div>
                         <!--
-                          NOT LIVE WHILE THE ORDER IS STILL SETTLING. A member whose profile lookup
-                          is in flight is not listed yet and WILL be inserted at their place, moving
-                          every row below it - so a remove control under the pointer now may sit on
-                          another member's row at the tap (1.7.0-alpha.9: a removal aimed at beta
-                          removed alpha, 4/4). `pending` is a count of lookups, not a clock: the
-                          control comes back the moment the last one settles.
+                          NOT LIVE WHILE A LOOKUP IS PENDING (`removeControlDisabled`). A member
+                          whose profile lookup is in flight WILL be inserted at their place, moving
+                          every row below it (1.7.0-alpha.9: a removal aimed at beta removed alpha,
+                          4/4). This only NARROWS the window: rows still move when a newcomer
+                          settles later, or when a member leaves or another admin removes one. The
+                          GUARANTEE is the dialog, which names the member the tapped row carried.
                         -->
                         <button
                           type="button"
                           data-remove-member={member.userId}
                           onclick={() => handleRemoveMember(member.userId)}
-                          disabled={memberRemoving[member.userId] || memberOrder.pending > 0}
+                          disabled={removeControlDisabled(
+                            memberRemoving[member.userId],
+                            memberOrder.pending
+                          )}
                           class="ui-icon-button text-red-err hover:bg-red-err/10 rounded-lg transition-all"
                           title={m.chat_community_remove_member_title()}
                           aria-label={m.chat_community_remove_member_title()}

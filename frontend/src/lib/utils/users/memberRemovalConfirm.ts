@@ -1,7 +1,7 @@
 import { m } from '$lib/paraglide/messages';
 import { showConfirm } from '$lib/stores/confirm.svelte';
 import { Log } from '$lib/utils/Log';
-import { getUserDisplayNameSync, resolveUserDisplayName } from './displayName';
+import { getUserDisplayNameSync, peekUserDisplayName, resolveUserDisplayName } from './displayName';
 
 /**
  * Asks before removing ONE member, and the question NAMES THEM.
@@ -11,7 +11,9 @@ import { getUserDisplayNameSync, resolveUserDisplayName } from './displayName';
  * member": on the `1.7.0-alpha.9` bench a tap on a row that had just moved under the pointer was
  * confirmed four times out of four against the wrong person, because nothing on the dialog said
  * whose removal it was. The name shown here is the one the row itself draws (the conversation's
- * nickname when `scope` is given, the profile name otherwise), resolved before the dialog opens.
+ * nickname when `scope` is given, the profile name otherwise), read from what is already known; the
+ * network is asked only when nothing is. THIS NAMING IS THE GUARANTEE: the rows can still move under
+ * a pointer (see `removeControlDisabled`), and only the dialog says whose removal is confirmed.
  *
  * Every remove-a-member path calls this one function (a group, a community, a salon's access, an
  * association), so the dialog's danger styling and its button are one decision too.
@@ -26,14 +28,16 @@ export async function confirmMemberRemoval(
   message: (inputs: { member: string }) => string,
   scope?: string
 ): Promise<boolean> {
-  const resolved = await resolveUserDisplayName(userId);
-  if (resolved === null) {
+  // THE NAME THE ROW ALREADY DREW, never a fetch first: on a stalled link a tap must still open the
+  // dialog. The resolver is asked only when nothing at all is known about this member.
+  const known = peekUserDisplayName(userId) ?? (await resolveUserDisplayName(userId));
+  const member = getUserDisplayNameSync(userId, known ?? userId, scope);
+  if (member === userId) {
     // The id is what the dialog says then: a removal must never be confirmed against no name.
     console.warn(
       `[REMOVE_MEMBER] no display name for ${userId.slice(0, 8)} - the confirmation names its id`
     );
   }
-  const member = getUserDisplayNameSync(userId, resolved ?? userId, scope);
   Log.d('memberRemovalConfirm.confirmMemberRemoval asking', { userId, scoped: !!scope });
   const confirmed = await showConfirm(message({ member }), {
     danger: true,

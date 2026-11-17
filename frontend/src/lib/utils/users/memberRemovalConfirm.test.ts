@@ -12,14 +12,23 @@ const confirm = vi.hoisted(() => ({
 }));
 const names = vi.hoisted(() => ({
   resolved: new Map<string, string | null>(),
+  known: new Map<string, string>(),
   nicknames: new Map<string, string>(),
+  resolverAsked: 0,
 }));
 
 vi.mock('$lib/stores/confirm.svelte', () => ({ showConfirm: confirm.showConfirm }));
 vi.mock('./displayName', () => ({
-  resolveUserDisplayName: async (id: string) => names.resolved.get(id) ?? null,
+  peekUserDisplayName: (id: string) => names.known.get(id) ?? null,
+  resolveUserDisplayName: async (id: string) => {
+    names.resolverAsked += 1;
+    return names.resolved.get(id) ?? null;
+  },
   getUserDisplayNameSync: (id: string, fallback?: string, scope?: string) =>
-    (scope ? names.nicknames.get(`${scope}:${id}`) : undefined) ?? fallback ?? id,
+    (scope ? names.nicknames.get(`${scope}:${id}`) : undefined) ??
+    names.known.get(id) ??
+    fallback ??
+    id,
 }));
 
 import { m } from '$lib/paraglide/messages';
@@ -28,7 +37,9 @@ import { confirmMemberRemoval } from './memberRemovalConfirm';
 beforeEach(() => {
   confirm.showConfirm.mockClear();
   names.resolved.clear();
+  names.known.clear();
   names.nicknames.clear();
+  names.resolverAsked = 0;
 });
 
 describe('confirmMemberRemoval', () => {
@@ -66,6 +77,28 @@ describe('confirmMemberRemoval', () => {
 
     expect(confirm.showConfirm.mock.calls[0][0]).toContain('usr_beta');
     expect(warn.mock.calls.some(([l]) => String(l).includes('[REMOVE_MEMBER]'))).toBe(true);
+    warn.mockRestore();
+  });
+
+  it('opens with the name the row already drew, never waiting on the network for it', async () => {
+    names.known.set('beta', 'Beta BETA');
+
+    await confirmMemberRemoval('beta', m.chat_community_remove_member_confirm);
+
+    expect(names.resolverAsked).toBe(0);
+    expect(confirm.showConfirm.mock.calls[0][0]).toBe(
+      m.chat_community_remove_member_confirm({ member: 'Beta BETA' })
+    );
+  });
+
+  it('does not warn when the resolver had nothing but a nickname names the member', async () => {
+    names.nicknames.set('g1:beta', 'Bebe');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await confirmMemberRemoval('beta', m.chat_group_remove_member_confirm, 'g1');
+
+    expect(confirm.showConfirm.mock.calls[0][0]).toContain('Bebe');
+    expect(warn).not.toHaveBeenCalled();
     warn.mockRestore();
   });
 
