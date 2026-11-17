@@ -55,7 +55,7 @@ const CBOR_STRING_HEADER_BYTES = 5;
 const SEEN_LEDGERS_BYTE_BUDGET = APP_LEDGERS_BYTE_BUDGET - 64 * 1024;
 
 /** No character from 0x80 up: every one is a single UTF-8 byte, so the length IS the byte count. */
-const NON_ASCII = /[-￿]/;
+const NON_ASCII = /[\u0080-\uffff]/;
 
 /**
  * UTF-8 length of `s`, without allocating: the unit the state is written in (a lone surrogate counts
