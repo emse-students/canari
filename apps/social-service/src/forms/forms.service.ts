@@ -26,6 +26,7 @@ import {
   onlineOffered,
   publishPaymentRefusal,
 } from './payment-offer';
+import { assertMayCloseAt, assertWindowOrdered } from './form-window';
 import { FORM_DRAFT, FORM_PUBLISHED, respondentFormWhere, type FormStatus } from './form-status';
 import { managesForm } from './form-ownership';
 import {
@@ -980,6 +981,10 @@ export class FormsService {
       gridRequiredSwitch: _gridRequiredSwitch,
       ...rest
     } = input;
+    assertWindowOrdered(
+      opensAtRaw ? new Date(opensAtRaw) : null,
+      closedAtRaw ? new Date(closedAtRaw) : null
+    );
     const form = this.formRepo.create({
       ...rest,
       status,
@@ -1627,6 +1632,12 @@ export class FormsService {
       gridRequiredSwitch: _gridRequiredSwitch,
       ...rest
     } = input;
+    // The END is the manager's close as much as a date typed here (`setClosed`), and the editor
+    // sends it only when the field was touched: absent KEEPS the stored one, so saving an edit never
+    // reopens a closed form; `null` clears it.
+    const closedAtAfter =
+      closedAtRaw === undefined ? form.closedAt : closedAtRaw ? new Date(closedAtRaw) : null;
+    assertWindowOrdered(opensAtRaw ? new Date(opensAtRaw) : null, closedAtAfter);
     const citedBefore = questionImageIds(form.items);
     const opensBefore = form.opensAt ? new Date(form.opensAt).getTime() : null;
     if (input.guestFields !== undefined && input.respondentFields === undefined) {
@@ -1655,7 +1666,7 @@ export class FormsService {
       ),
       currency: 'eur',
       opensAt: opensAtRaw ? new Date(opensAtRaw) : null,
-      closedAt: closedAtRaw ? new Date(closedAtRaw) : null,
+      closedAt: closedAtAfter,
       items: (input.items ?? form.items).map((item: any) => ({
         ...item,
         id: item.id || makeId('item'),
@@ -1670,7 +1681,16 @@ export class FormsService {
     // publication landing meanwhile would be written back as `draft` by a whole-entity save.
     // Publishing is its own conditional write; the edit leaves the column alone.
     const { status, ...written } = form;
-    const withStatus = <T extends object>(saved: T) => ({ ...saved, status });
+    // NOR IS AN END THE EDIT DID NOT CARRY: the manager's close (`setClosed`) writes `closedAt` on
+    // its own route, and one committing between the read above and this save would be written back
+    // as the value read - a closed form silently reopened. Absent, the column is left out of the
+    // write (a save leaves an undefined property's column alone); the answer still carries it.
+    if (closedAtRaw === undefined) delete (written as Partial<Form>).closedAt;
+    const withStatus = <T extends object>(saved: T) => ({
+      ...saved,
+      status,
+      closedAt: form.closedAt,
+    });
     // A MOVE was judged on the status read before the checks: a publication committing since would
     // otherwise see its form moved after it went live. Outside a publication (which holds the row
     // already), the write re-reads the status under the row's lock and refuses a form published
@@ -1951,6 +1971,40 @@ export class FormsService {
     const images = questionImageIds(form.items);
     if (images.length > 0) await this.formItemImages.releaseUncited(images, 'form deleted');
     return { ok: true };
+  }
+
+  /**
+   * "Clore le formulaire" and "Rouvrir" (owner, 2026-11-16): sets `closedAt` to now, or clears it,
+   * without going through an edit - the end is not part of the unpublished revision (it is excluded
+   * from its fingerprint), so closing never shows "Modifications non publiees". Gated by
+   * `assertFormManager`. Closing a form already closed keeps its first end date; reopening clears
+   * the column whether the end is past or still to come. A payment already issued settles through
+   * the submission's own paths, which never read `closedAt` (see forms.md). Closing a form whose
+   * opening is still to come is refused (`FORM_CLOSE_NOT_OPEN_YET`).
+   */
+  async setClosed(formId: string, closed: boolean, userId: string, isGlobalAdmin: boolean) {
+    const form = await this.assertFormManager(formId, userId, isGlobalAdmin);
+    if (form.deletedAt) throw new NotFoundException('Form not found');
+    const now = new Date();
+    const alreadyClosed = !!form.closedAt && new Date(form.closedAt) <= now;
+    // A form not open yet is not closed: its end would precede its opening (lead, 2026-11-16).
+    if (closed && !alreadyClosed) {
+      try {
+        assertMayCloseAt(form.opensAt, now);
+      } catch (e) {
+        this.logger.log(
+          `[FORMS] close of ${formId.slice(0, 8)} refused: it opens ${new Date(form.opensAt!).toISOString()}`
+        );
+        throw e;
+      }
+    }
+    const closedAt = closed ? (alreadyClosed ? new Date(form.closedAt!) : now) : null;
+    this.logger.log(
+      `[FORMS] ${closed ? 'close' : 'reopen'} form=${formId.slice(0, 8)} by=${userId.slice(0, 8)}` +
+        ` was=${form.closedAt ? new Date(form.closedAt).toISOString() : 'open'}`
+    );
+    await this.formRepo.update({ id: formId }, { closedAt });
+    return { id: formId, closedAt };
   }
 
   /**
