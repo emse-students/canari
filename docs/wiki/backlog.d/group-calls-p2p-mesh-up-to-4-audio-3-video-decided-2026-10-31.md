@@ -1,6 +1,8 @@
 ## Group calls go peer to peer in a MESH up to 4 in audio and 3 in video, a relay SFU beyond (owner decision D-A, 2026-10-31, not built - feeds WP-C11)
 
-target: 1.7.0
+target: 1.7.1
+
+_2026-11-17: moved to 1.7.1 by the owner's 2026-11-17 scope cut ([decisions](owner-decisions-of-2026-11-17.md))._
 
 **The decision.** A group call is a full mesh of the 1:1 peer connections the app already makes -
 every participant holds one `RTCPeerConnection` per other participant, each with its own E2E

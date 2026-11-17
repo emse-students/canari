@@ -1,6 +1,8 @@
 ## P2 - a group call holds one device per user: prove the second device replaces the first
 
-target: 1.7.0
+target: 1.7.1
+
+_2026-11-17: moved to 1.7.1 by the owner's 2026-11-17 scope cut ([decisions](owner-decisions-of-2026-11-17.md))._
 
 Group-call keys are per user, so two devices of one person must never both be in one group call
 (decided 2026-11-13, reversible:

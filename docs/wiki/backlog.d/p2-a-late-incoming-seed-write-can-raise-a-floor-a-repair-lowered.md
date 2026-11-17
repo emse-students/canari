@@ -1,6 +1,8 @@
 ## P2 - a late write of an incoming seed can raise a floor a repair lowered since
 
-target: 1.7.0
+target: 1.7.1
+
+_2026-11-17: moved to 1.7.1 by the owner's 2026-11-17 scope cut ([decisions](owner-decisions-of-2026-11-17.md))._
 
 **What is wrong** (read against the code on 2026-11-15, re-read 2026-11-17). `storeIncomingSeed`
 (`frontend/src/lib/utils/graine/frameHandler.ts`) moves a held received session's floor by writing
