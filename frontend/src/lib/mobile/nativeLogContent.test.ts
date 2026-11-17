@@ -312,7 +312,6 @@ const REVIEWED_GROUPS: [string, string[]][] = [
       'canari_ios.mm|taken ? "the page rides it" : [NSString stringWithFormat:"no ride (%@)", error ?: result]',
       '2x canari_push.mm|delegateClass',
       '2x canari_push.mm|kCanariRingtoneSound',
-      'canari_push.mm|kGraineSeedsFileName',
       'canari_push.mm|kMlsBinFileName',
       'canari_push.mm|kPushContextFileName',
       '2x NotificationService.swift|Self.pushContextRefusal(), privacy: .public',
@@ -419,6 +418,8 @@ const REVIEWED_GROUPS: [string, string[]][] = [
       'app_group_share.rs|manifest .get("files") .and_then(Value::as_array) .map_or(0, Vec::len)',
       '2x push.rs|done.gone()',
       'push.rs|f.bytes',
+      'push.rs|fold.added',
+      'push.rs|fold.merged',
       '2x push_registration.rs|completed(done)',
       // A `'static` literal of the closed `SignOutCause` list, `unknown` for anything else.
       'push_registration.rs|sign_out_cause_label(&cause)',

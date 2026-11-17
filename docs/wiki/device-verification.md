@@ -1110,9 +1110,10 @@ page and the push decrypt) and that one account's wipe removes its own seeds and
 account's ([auth](frontend/modules/auth.md#the-seed-mirror-labels-each-entry-with-its-writers-2026-11-07)).
 Verified so far by host tests only, and no mobile target was compiled on the Windows box that wrote
 it: the Kotlin absorber now reads `{stored, leftToApp}` from the JNI writer, and the Objective-C
-activation mirror hands the seed file to Rust (`canari_ios_mirror_graine_seeds_to_app_group`) instead
-of copying it. Needs a pre-release carrying the change, the iPhone 12 (`tools/ios-device`) - the
-platform with TWO copies of the mirror (app and App Group) - then the Mi 9T, and two test accounts A
+activation mirror handed the seed file to Rust instead of copying it (since 2026-11-17 there is
+no copy: iOS holds one mirror, the App Group's -
+[channel-encryption section 27](protocols/channel-encryption.md#27-the-iphone-held-two-seed-mirrors-and-the-one-without-the-extensions-seeds-won---fixed-2026-11-17)). Needs a pre-release carrying the change, the iPhone 12 (`tools/ios-device`) - the
+platform that held TWO copies of the mirror until 2026-11-17 - then the Mi 9T, and two test accounts A
 and B that are both members of one community with two salons S and T, plus a second device for B. A
 message is "under a session" until that salon rotates (a member joining rotates it): keep T quiet of
 joins for the whole reading.
