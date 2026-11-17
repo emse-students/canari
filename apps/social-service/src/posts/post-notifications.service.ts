@@ -189,18 +189,68 @@ export const COMMENT_BORNE_NOTIFICATION_TYPES: readonly string[] = ['comment', '
  * (`mentionRecipientsOf` with `'COMMENT'`); this hides the ones written before, and any row whose
  * reader's switch was turned off since.
  *
- * A `comment` or `reply` row always is. A `mention` row is when a comment wrote it: classified at
- * the write since migration 132 (`commentId`), and for a row written before, by what the row already
- * holds - a post's own mention (`notifyPostMentions`) names the post's author as its actor, or the
- * anonymous actor on an anonymous post, so a mention naming ANYBODY ELSE came from a comment. Two
- * old comment mentions look like a post's and stay shown: one written by the post's author in a
- * comment of their own post, and an anonymous or association comment's on an anonymous post.
+ * A `comment` or `reply` row always is. A `mention` row is when a comment wrote it, and that is
+ * READ, never inferred, on every row written now: a comment's mention names its comment
+ * (`commentId`, since migration 132) and a post's own mention says so (`meta.mentionIn = 'post'`,
+ * {@link POST_MENTION_META}, since 2026-11-17 - an association's post names nobody as its actor, so
+ * the actor could not tell). Only a row written before both is classified by its actor: a post's
+ * own mention named the post's author, or the anonymous actor on an anonymous post, so a mention
+ * naming ANYBODY ELSE came from a comment. Two old comment mentions look like a post's and stay
+ * shown: one written by the post's author in a comment of their own post, and an anonymous or
+ * association comment's on an anonymous post.
  */
 export function commentBorneNotificationSql(n: string, post: string): string {
   const types = COMMENT_BORNE_NOTIFICATION_TYPES.map((t) => `'${t}'`).join(', ');
   return `(${n}.type IN (${types}) OR (${n}.type = 'mention' AND (${n}."commentId" IS NOT NULL
-    OR (${n}."actorId" IS DISTINCT FROM ${post}."authorId"
+    OR ((${n}.meta->>'mentionIn') IS DISTINCT FROM '${POST_MENTION_META.mentionIn}'
+      AND ${n}."actorId" IS DISTINCT FROM ${post}."authorId"
       AND NOT (${n}."actorId" = '${ANONYMOUS_NOTIFICATION_ACTOR_ID}' AND ${post}.anonymous)))))`;
+}
+
+/**
+ * What a POST's own mention stores in `meta`: the bell's discriminator between a post's mention and
+ * a comment's (`commentBorneNotificationSql`), written rather than read off the actor.
+ */
+export const POST_MENTION_META = { mentionIn: 'post' } as const;
+
+/**
+ * The bell types whose actor is the MEMBER who acted in an association's name - `association_post`
+ * (who pressed publish) and `association_repost` (who republished). The member is stored, for the
+ * actor exclusion and the review cohort's filter, and NEVER SERVED: the row speaks as the
+ * association (decision 11 of moderation-authority; {@link withholdPublishingMember}).
+ */
+export const ASSOCIATION_VOICE_NOTIFICATION_TYPES: readonly string[] = [
+  'association_post',
+  'association_repost',
+];
+
+/**
+ * A bell row as served: the member behind an association's voice withheld
+ * ({@link ASSOCIATION_VOICE_NOTIFICATION_TYPES}). The ONE shaping of what the bell serves of an
+ * actor, so a row written before this rule is covered with the rest - nothing is rewritten.
+ */
+export function withholdPublishingMember<T extends { type: string; actorId: string }>(row: T): T {
+  if (ASSOCIATION_VOICE_NOTIFICATION_TYPES.includes(row.type)) row.actorId = '';
+  return row;
+}
+
+/**
+ * THE PICTURE OF A PUSH: an association's logo when the notice speaks for one, the actor's face
+ * otherwise - and NO FACE AT ALL for an association whose logo is absent or refused, because the
+ * actor of such a notice is the member who acted in its name, whom the notice must never show
+ * (decision 11 of moderation-authority). Nor for a notice with no person as its actor (the anonymous
+ * or system actor). Callers log the association case: it is a data gap, not a path.
+ */
+export function pushIconOf(data: {
+  actorId: string;
+  associationId?: string | null;
+  associationLogoMediaId?: string | null;
+}): PushIcon | undefined {
+  const logoId = publicMediaIconId(data.associationLogoMediaId);
+  if (logoId) return { kind: 'publicMedia', mediaId: logoId };
+  if (data.associationId) return undefined;
+  if (!data.actorId || data.actorId === SYSTEM_ACTOR_ID) return undefined;
+  return { kind: 'user', userId: data.actorId };
 }
 
 /**
@@ -591,7 +641,10 @@ export class PostNotificationsService {
    * publishes the post - within a sweep for a post published at once, at its date for a scheduled
    * one. One teller is what makes "told once" a fact rather than a reconciliation.
    *
-   * An anonymous post stays anonymous to the people it mentions: the row carries no author.
+   * An anonymous post stays anonymous to the people it mentions: the row carries no author. An
+   * association's post speaks as the association: its name and logo, never the member who wrote it
+   * (decision 11 of moderation-authority - only its moderators see the writer, and a bell row has
+   * no per-reader shaping). Every row says it is the post's own mention ({@link POST_MENTION_META}).
    * Each recipient is isolated: one failed row does not silence the others.
    *
    * @returns how many were notified.
@@ -606,10 +659,7 @@ export class PostNotificationsService {
       'READ_OR_REACT'
     );
     if (recipients.length === 0) return 0;
-    const actorId = post.anonymous ? ANONYMOUS_NOTIFICATION_ACTOR_ID : post.authorId;
-    const actorName = post.anonymous
-      ? ANONYMOUS_NOTIFICATION_ACTOR_NAME
-      : await this.resolveActorName(post.authorId);
+    const voice = await this.mentionVoiceOf(post);
     let sent = 0;
     for (const recipientId of recipients) {
       try {
@@ -618,9 +668,9 @@ export class PostNotificationsService {
           recipientId,
           type: 'mention',
           postId: post.id,
-          actorId,
+          ...voice,
           text: previewOf(post.markdown ?? ''),
-          actorName,
+          meta: { ...POST_MENTION_META },
         });
         sent++;
       } catch (e) {
@@ -632,6 +682,44 @@ export class PostNotificationsService {
     }
     this.logger.debug(`[MENTION] post ${post.id.slice(0, 8)}: ${sent} mention(s) notified`);
     return sent;
+  }
+
+  /**
+   * WHO A POST'S MENTION SAYS IT IS FROM: nobody for an anonymous post, the association for an
+   * association's (its name, its logo for the bell row and for the push), the author otherwise.
+   * An association with no name is a broken row and THROWS - the caller isolates it - rather than
+   * telling a reader "someone" mentioned them.
+   */
+  private async mentionVoiceOf(post: Post): Promise<{
+    actorId: string;
+    actorName: string;
+    associationId?: string;
+    associationLogoUrl?: string | null;
+    associationLogoMediaId?: string | null;
+  }> {
+    if (post.anonymous) {
+      return {
+        actorId: ANONYMOUS_NOTIFICATION_ACTOR_ID,
+        actorName: ANONYMOUS_NOTIFICATION_ACTOR_NAME,
+      };
+    }
+    if (!post.associationId) {
+      return { actorId: post.authorId, actorName: await this.resolveActorName(post.authorId) };
+    }
+    const rows: { name: string | null; logoUrl: string | null; logoMediaId: string | null }[] =
+      await this.postRepo.manager.query(
+        `SELECT name, "logoUrl", "logoMediaId" FROM associations WHERE id = $1`,
+        [post.associationId]
+      );
+    const name = rows[0]?.name ?? '';
+    if (!name) throw new Error(`association ${post.associationId} has no name`);
+    return {
+      actorId: ANONYMOUS_NOTIFICATION_ACTOR_ID,
+      actorName: name,
+      associationId: post.associationId,
+      associationLogoUrl: rows[0].logoUrl ?? null,
+      associationLogoMediaId: rows[0].logoMediaId ?? null,
+    };
   }
 
   /**
@@ -718,9 +806,13 @@ export class PostNotificationsService {
     actorId: string;
     text: string;
     actorName?: string;
-    /** The association whose logo the bell row draws instead of the actor's face (row only, never the push). */
+    /** The association the notice speaks for: its logo is the bell row's picture and the push's. */
     associationId?: string;
     associationLogoUrl?: string | null;
+    /** The logo's media id, which is what a push icon may carry (`pushIconOf`); never stored. */
+    associationLogoMediaId?: string | null;
+    /** Structured facts stored on the row, see `PostNotification.meta`. */
+    meta?: Record<string, unknown>;
     /** The comment the row is about, for every row a comment writes (`PostNotification.commentId`). */
     commentId?: string;
     skipPush?: boolean;
@@ -735,7 +827,7 @@ export class PostNotificationsService {
       data.recipientId,
     ]);
     if (!stillOn) return;
-    const { skipPush, pushData, ...notifData } = data;
+    const { skipPush, pushData, associationLogoMediaId, ...notifData } = data;
     const actorName = data.actorName ?? (await this.resolveActorName(data.actorId));
     await this.notifRepo.save(this.notifRepo.create({ ...notifData, actorName }));
 
@@ -745,13 +837,19 @@ export class PostNotificationsService {
     if (!pushTo) return;
 
     // FCM push so every visible notification also triggers a system notification, even with the app closed. Fire-and-forget.
-    // THE PICTURE IS THE ACTOR'S, because every type reaching this method is one person acting on
-    // something of yours. The batch method below is the one that also has an association to show.
+    // THE PICTURE IS THE ACTOR'S, or the association's when the notice speaks for one (a mention in
+    // an association's post) - never the member behind it (`pushIconOf`).
+    if (data.associationId && !publicMediaIconId(associationLogoMediaId)) {
+      this.logger.warn(
+        `[NOTIFY] association ${data.associationId} pushes no picture, not its logo - ` +
+          `logoMediaId=${associationLogoMediaId ? 'present but refused' : 'absent'}`
+      );
+    }
     const content = this.pushContent(
       data.type,
       actorName,
       await this.renderMentionsForPush(data.text),
-      { kind: 'user', userId: data.actorId }
+      pushIconOf({ ...data, associationLogoMediaId })
     );
     if (!content) {
       this.logger.warn(
@@ -1032,22 +1130,18 @@ export class PostNotificationsService {
     const actorName = data.actorName;
     // THE LOGO WHEN THE PUBLISHER IS AN ASSOCIATION, THE PERSON OTHERWISE - the same split the
     // notifications page makes, and for the same reason: `actorId` on an `association_post` row is
-    // the member who pressed publish, so keying the picture off it shows a face where the reader
-    // expects a logo. An association with no logo, or one whose `logoUrl` is not a public-media
-    // path, falls back to the actor rather than to nothing.
+    // the member who pressed publish, whom the notice must never show (decision 11). An
+    // association with no usable logo pushes NO picture (`pushIconOf`), never the member's face.
     const logoId = publicMediaIconId(data.associationLogoMediaId);
-    const icon: PushIcon = logoId
-      ? { kind: 'publicMedia', mediaId: logoId }
-      : { kind: 'user', userId: data.actorId };
-    // A FALLBACK IS A SIGNAL. Showing the member's face for an association's post is wrong on its
-    // face and was wrong for 40 of 91 associations for as long as the icon was parsed out of
-    // `logoUrl` - and nothing said so, which is why it took a reader to find it. The only case
-    // left that is NOT a defect is an association with no logo at all (one row on production), and
-    // the line separates them: an id that is present and refused is a broken column, an absent one
-    // is a logo nobody uploaded.
+    const icon = pushIconOf(data);
+    // A GAP IS A SIGNAL. The member's face was pushed for an association's post on 40 of 91
+    // associations for as long as the icon was parsed out of `logoUrl` - and nothing said so. The
+    // only case left that is NOT a defect is an association with no logo at all, and the line
+    // separates them: an id that is present and refused is a broken column, an absent one is a logo
+    // nobody uploaded.
     if (data.associationId && !logoId) {
       this.logger.warn(
-        `[NOTIFY] association ${data.associationId} pushes the actor's face, not its logo - ` +
+        `[NOTIFY] association ${data.associationId} pushes no picture, not its logo - ` +
           `logoMediaId=${data.associationLogoMediaId ? 'present but refused' : 'absent'}`
       );
     }
@@ -1130,7 +1224,9 @@ export class PostNotificationsService {
    * build serves it.
    */
   async getNotifications(userId: string, limit = 30, clientVersion?: string) {
-    const rows = await this.bellPageQuery(userId, limit, clientVersion).getMany();
+    const rows = (await this.bellPageQuery(userId, limit, clientVersion).getMany()).map(
+      withholdPublishingMember
+    );
     await this.resolveTrendLikedBy(rows);
     await this.serveReplacedPartyNotices(rows);
     const proposed = rows.filter((r) => r.type === 'repost_proposed' && r.text);

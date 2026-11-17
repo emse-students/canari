@@ -41,6 +41,11 @@ describe('PostNotificationsService.notifyPostMentions - the read gate', () => {
         return Promise.resolve(hit ? [{ '?column?': 1 }] : []);
       }
       if (sql.includes('FROM users')) return Promise.resolve([{ displayName: 'Real Name' }]);
+      if (sql.includes('FROM associations')) {
+        return Promise.resolve([
+          { name: 'BDE', logoUrl: '/api/media/public/logo1', logoMediaId: 'logo1' },
+        ]);
+      }
       return Promise.resolve([]);
     });
     const service = new PostNotificationsService(
@@ -132,6 +137,36 @@ describe('PostNotificationsService.notifyPostMentions - the read gate', () => {
     expect(resolve).not.toHaveBeenCalled();
     expect(created).toEqual([
       expect.objectContaining({ recipientId: 'friend', actorId: '', actorName: 'Anonyme' }),
+    ]);
+  });
+
+  it("names the association, never its writer, on an association's post (decision 11)", async () => {
+    const { service, created } = make();
+    const resolve = jest.spyOn(service, 'resolveActorName');
+    await service.notifyPostMentions(post({ associationId: 'asso-1' } as Partial<Post>));
+    expect(resolve).not.toHaveBeenCalled();
+    expect(created).toEqual([
+      expect.objectContaining({
+        recipientId: 'friend',
+        actorId: '',
+        actorName: 'BDE',
+        associationId: 'asso-1',
+        associationLogoUrl: '/api/media/public/logo1',
+        associationLogoMediaId: 'logo1',
+      }),
+    ]);
+    expect(JSON.stringify(created)).not.toContain(AUTHOR);
+  });
+
+  it("marks every row as the post's own mention, so the bell never reads it from its actor", async () => {
+    const { service, created } = make();
+    await service.notifyPostMentions(post());
+    await service.notifyPostMentions(post({ associationId: 'asso-1' } as Partial<Post>));
+    await service.notifyPostMentions(post({ anonymous: true }));
+    expect(created.map((c) => (c as { meta?: unknown }).meta)).toEqual([
+      { mentionIn: 'post' },
+      { mentionIn: 'post' },
+      { mentionIn: 'post' },
     ]);
   });
 

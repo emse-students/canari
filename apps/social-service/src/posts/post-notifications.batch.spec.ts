@@ -289,12 +289,12 @@ describe('PostNotificationsService.createNotifications', () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
-  it('falls back to the actor for an association with no logo, and ACCUSES', async () => {
+  it("shows NO face for an association with no logo - never its writer's - and ACCUSES", async () => {
     await service().createNotifications(
       assoPost({ associationLogoUrl: null, associationLogoMediaId: null })
     );
 
-    expect(pushes[0].content.icon).toEqual({ kind: 'user', userId: 'the-officer' });
+    expect(pushes[0].content.icon).toBeUndefined();
     // `absent` and `present but refused` are a logo nobody uploaded and a broken column - the two
     // causes this line exists to separate, since the icon itself cannot.
     expect(String(warn.mock.calls[0][0])).toContain('asso1');
@@ -305,8 +305,50 @@ describe('PostNotificationsService.createNotifications', () => {
     // The security floor: whatever reaches the device is appended to `/api/media/public/`.
     await service().createNotifications(assoPost({ associationLogoMediaId: '../../etc/passwd' }));
 
-    expect(pushes[0].content.icon).toEqual({ kind: 'user', userId: 'the-officer' });
+    expect(pushes[0].content.icon).toBeUndefined();
     expect(String(warn.mock.calls[0][0])).toContain('present but refused');
+  });
+
+  it.each([
+    ['its logo', 'logo1', { kind: 'publicMedia', mediaId: 'logo1' }],
+    ['no face at all', null, undefined],
+  ])(
+    "a mention in an association's post pushes %s, never its writer's face",
+    async (_case, mediaId, icon) => {
+      await service().createNotification({
+        recipientId: 'a',
+        type: 'mention',
+        postId: 'p1',
+        actorId: '',
+        actorName: 'BDE',
+        associationId: 'asso1',
+        associationLogoUrl: mediaId ? '/api/media/public/logo1' : null,
+        associationLogoMediaId: mediaId,
+        text: 'salut',
+        meta: { mentionIn: 'post' },
+      });
+      expect(pushes[0].content.icon).toEqual(icon);
+      expect(saved[0]).toMatchObject({
+        associationId: 'asso1',
+        actorId: '',
+        meta: { mentionIn: 'post' },
+      });
+      expect(saved[0]).not.toHaveProperty('associationLogoMediaId');
+    }
+  );
+
+  it("never serves the member who published an association's post or republication on a bell row - stored rows included", async () => {
+    const svc = service();
+    const rows = [
+      { id: 'n1', type: 'association_post', actorId: 'the-officer', associationId: 'asso1' },
+      { id: 'n2', type: 'association_repost', actorId: 'the-officer', associationId: 'asso2' },
+      { id: 'n3', type: 'comment', actorId: 'claire', associationId: null },
+    ];
+    jest
+      .spyOn(svc, 'bellPageQuery')
+      .mockReturnValue({ getMany: () => Promise.resolve(rows.map((r) => ({ ...r }))) } as never);
+    const served = await svc.getNotifications('reader');
+    expect(served.map((r) => r.actorId)).toEqual(['', '', 'claire']);
   });
 
   it('says nothing for a post no association published - a face is correct there', async () => {

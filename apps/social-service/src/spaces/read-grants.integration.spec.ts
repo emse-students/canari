@@ -667,14 +667,15 @@ maybe('nominative read grants against PostgreSQL (migration 078 included)', () =
       type: string,
       recipientId: string,
       actorId = 'isminGa',
-      commentId: string | null = null
+      commentId: string | null = null,
+      meta: Record<string, unknown> | null = null
     ) =>
       (
         await client.query(
           `SELECT ${bellRowShownSql('n')} AS shown FROM (VALUES ($1::varchar, $2::varchar,
-             $3::varchar, $4::varchar, $5::varchar, NULL::jsonb))
+             $3::varchar, $4::varchar, $5::varchar, $6::jsonb))
              AS n(type, "postId", "recipientId", "actorId", "commentId", meta)`,
-          [type, POST, recipientId, actorId, commentId]
+          [type, POST, recipientId, actorId, commentId, meta === null ? null : JSON.stringify(meta)]
         )
       ).rows[0].shown;
 
@@ -702,6 +703,11 @@ maybe('nominative read grants against PostgreSQL (migration 078 included)', () =
           shown: true,
         });
       }
+    });
+
+    it("a row marked as the post's own mention keeps the post's rule, whatever its actor (an association's post names nobody)", async () => {
+      expect(await shown('mention', 'grantGa', '', null, { mentionIn: 'post' })).toBe(true);
+      expect(await shown('mention', 'grantGa', '', 'c1', { mentionIn: 'post' })).toBe(false);
     });
 
     it("the anonymous actor on an ANONYMOUS post is the post's own mention", async () => {

@@ -1024,9 +1024,10 @@ export interface PostNotification {
   actorId: string;
   actorName: string;
   /**
-   * Set only for `type === 'association_post'`. `actorId` on this row is the publishing MEMBER,
-   * not the association - see the backend `PostNotification` entity's own docblock for why - so
-   * the association's identity/logo has nowhere else to come from for rendering an avatar.
+   * The association the row speaks for (an association's post, republication, or a mention in its
+   * post; a proposal, a booking, a live). Its logo is the row's avatar. On an association's post or
+   * republication `actorId` is served empty: the member who acted is never shown (decision 11 of
+   * moderation-authority).
    */
   associationId?: string | null;
   associationLogoUrl?: string | null;
