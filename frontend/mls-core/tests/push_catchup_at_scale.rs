@@ -225,13 +225,15 @@ fn mb(bytes: usize) -> f64 {
     bytes as f64 / (1024.0 * 1024.0)
 }
 
-/// The pin, at a size a debug build finishes: a device far behind in a group bigger than any the
-/// rig ever reached still opens the frame through the push path's sequence.
+/// The pin, small enough that a debug build finishes it in seconds on every CI run: a device
+/// sealed in a key group whose tree carries departures, then a dozen device joins behind, still
+/// opens the frame through the push path's sequence. The production sizes are the measurement
+/// below, run by hand in release.
 #[test]
-fn a_device_many_commits_behind_in_a_large_key_group_opens_the_frame() {
-    let readings = run(40, 20, &[30], 0, "pin");
+fn a_device_commits_behind_a_key_group_with_departures_opens_the_frame() {
+    let readings = run(16, 8, &[12], 0, "pin");
     assert_eq!(readings.len(), 1);
-    assert_eq!(readings[0].0, 30);
+    assert_eq!(readings[0].0, 12);
 }
 
 #[test]

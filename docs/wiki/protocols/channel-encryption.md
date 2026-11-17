@@ -5119,17 +5119,19 @@ allocator gives the peak heap. Its churn is heavier than production's (~21 KB pe
 cargo test --release --test push_catchup_at_scale -- --ignored --nocapture
 ```
 
-**The frame always opened. The cost did not hold, and one observer was 85-95% of it** (desktop
-core, release; a phone is ~3-5x slower):
+**The frame always opened. The cost did not hold, and one observer was 85-95% of it.** Every figure
+below is from ONE workstation (release build), shared with other work while it ran: the "after"
+column is the range of two runs, and a second reviewer's machine measured 1.4-2x slower. A phone is
+slower again, roughly 3-5x.
 
 | key group | behind | apply, before | apply, after | per commit, after | peak heap |
 | --- | --- | --- | --- | --- | --- |
-| 206 devices | 30 (a week) | 0.6 s | 0.10 s | 3.3 ms | 2.0 MiB |
-| 206 devices | 150 (a month) | 4.5 s | 0.57 s | 3.8 ms | 2.7 MiB |
-| 206 devices | 400 | 31.5 s | 2.4 s | 5.9 ms | 4.9 MiB |
-| 400 devices | 150 | 11.4 s | 0.87 s | 5.8 ms | 4.6 MiB |
-| 400 devices | 400 | 56.7 s | 2.8 s | 7.1 ms | 6.7 MiB |
-| 400 devices + 2535 KeyPackages | 400 | 87.7 s | 2.7 s | 6.9 ms | 12.2 MiB |
+| 206 devices | 30 (a week) | 0.6 s | 0.10-0.19 s | 3.3-6.2 ms | 2.0 MiB |
+| 206 devices | 150 (a month) | 4.5 s | 0.57-0.89 s | 3.8-6.0 ms | 2.7 MiB |
+| 206 devices | 400 | 31.5 s | 2.4-3.5 s | 5.9-8.8 ms | 4.9 MiB |
+| 400 devices | 150 | 11.4 s | 0.87-2.8 s | 5.8-18.9 ms | 4.6 MiB |
+| 400 devices | 400 | 56.7 s | 2.8-4.0 s | 7.1-10.1 ms | 6.7 MiB |
+| 400 devices + 2535 KeyPackages | 400 | 87.7 s | 2.7-3.1 s | 6.9-7.9 ms | 12.2 MiB |
 
 Before, a phone a month behind in production's largest community spent an estimated 15-20 s per
 salon push replaying commits - every push again, on a lane that serialises them; an iPhone's
@@ -5137,23 +5139,37 @@ extension has ~30 s in all. **The cause was not MLS**: instrumented, a commit's 
 (`process_message` + `merge_staged_commit`) was under 4 ms on a 400-device tree, and the
 device-trust observer that runs on every merged commit (`DeviceTrust::observe_merged_commit`,
 `record_departures`) took ~74 ms. It compared each leaf after the commit with each leaf before it
-through `same_identity`, which canonicalises - allocates - both identities on every call: quadratic
-in the tree, ~325 000 canonicalisations per commit at 400 leaves.
+through `same_identity` - and each new leaf with each leaf before it through `same_user` - both of
+which normalise (allocate) the two identities on every call: quadratic in the tree, 325 612
+normalisations for one commit at 400 leaves on `main`.
 
-**The fix indexes each tree once** (a set of canonical identities, with the key where the question
-asks for it) and asks the set: the same predicate - an identity that is not well formed matches
-nothing, as `same_identity` answers - linear in the tree. Pinned in a unit of work, not a clock:
-`a_merged_commit_is_observed_in_time_linear_in_the_tree` counts canonicalisations (red at 324 811
-for 400 leaves, now under 20 per leaf). The rule is in
+**The fix normalises the tree before the commit ONCE** - its devices with their keys, and the set of
+its user halves - and every question of the loop asks those sets: the same predicates (an identity
+that is not well formed matches no device, as `same_identity` answers; a user half compares as
+`same_user` compares it), linear in the tree. Pinned in a unit of work, not a clock:
+`a_merged_commit_is_observed_in_time_linear_in_the_tree` counts every normalisation (both
+`canonical_identity` and the user half), on a commit bringing 120 leaves of every kind the loop
+tells apart, under a bound of 20 per leaf; the shape with only the first scan removed still
+counted 134 524. The rule is in
 [durable-rules](../durable-rules.md#mls-state-and-keys---mls-protocol-auth).
 
-**What it leaves, said.** (1) The replay is still paid on every push - after the fix ~0.5 s of
-desktop work for a month behind, ~2-3 s on a phone; persisting it from the background would make a
+**Why a commit costs more the further behind the device is.** In the bench the key group GROWS by one
+device per commit behind (206 to 606), and every term rises with it in proportion: instrumented over
+400 commits, openmls's merge went from ~0.8 to ~2.4 ms, the observer from ~0.7 to ~2.0 ms, Graine's
+departure tracker from ~0.16 to ~0.42 ms - all linear in the tree, none in the distance. Two scans
+inside the observer are bounded rather than linear: `device_left_group` reads the recorded departures
+(at most `MAX_RECORDED_DEPARTURES`, 8192) once per NEW device, and `insert_pin` the pruned list (at
+most `MAX_REMEMBERED_PRUNED`, 8192) once per first sight - plain string comparisons, no allocation,
+and empty on the bench's device.
+
+**What it leaves, said.** (1) The replay is still paid on every push: a month behind production's
+largest key group could take 3-6 s on a phone. Persisting it from the background would make a
 second writer of `mls.bin`, which section 26's compare-and-swap install shows is possible but is a
-design of its own, not needed at these numbers. (2) The fetch: ~0.9 MB for a month at production's
-commit size, under a 5 s read timeout - a slow link fails it and the banner is generic; that belongs
-to the slow-link chantier. (3) Heap: 12.2 MiB peak with 2535 KeyPackages in the state, the Rust heap
-only; a state the size of the 15.5 MB one a store phone carried is not measured here. Both readings
-on phones, and the log line they read (`catchup: applied commits since epoch=... in ... ms`, added to
-the Android service and the iOS extension), are in
+design of its own, decided on the phone readings below. (2) The fetch: ~0.9 MB for a month at
+production's commit size, under a 5 s read timeout - a slow link fails it and the banner is
+generic; that belongs to the slow-link chantier. (3) Heap: 12.2 MiB peak with 2535 KeyPackages in
+the state, the Rust heap only; a state the size of the 15.5 MB one a store phone carried is not
+measured here. Both readings on phones, and the log line they read (`catchup: replay since
+epoch=... took ... ms`, added to the Android service and the iOS extension; it is written for a
+refused replay too), are in
 [the reading](../backlog.d/reading-owed-salon-push-catch-up-at-production-key-group-size.md).

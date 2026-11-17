@@ -5275,7 +5275,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 locale = ctx.locale,
             )
             val elapsedMs = android.os.SystemClock.elapsedRealtime() - startedAt
-            Log.i(TAG, "catchup: applied commits since epoch=$epoch in $elapsedMs ms (state ${stateBytes.size} B, commits ${commitsJson.length} ch) outcome=${outcome.javaClass.simpleName} group=${groupId.take(8)}")
+            Log.i(TAG, "catchup: replay since epoch=$epoch took $elapsedMs ms (state ${stateBytes.size} B, commits ${commitsJson.length} ch) outcome=${outcome.javaClass.simpleName} group=${groupId.take(8)}")
             outcome
         }
     }

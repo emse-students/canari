@@ -1577,7 +1577,7 @@ class NotificationService: UNNotificationServiceExtension {
       }
     }
     let elapsedMs = (DispatchTime.now().uptimeNanoseconds - startedAt) / 1_000_000
-    NseLog.log.info("[CanariNSE] catchup: applied commits since epoch=\(epoch, privacy: .public) in \(elapsedMs, privacy: .public) ms (state \(state.count, privacy: .public) B, commits \(commitsJson.count, privacy: .public) ch) answered=\(json != nil, privacy: .public) group=\(groupId.prefix(8), privacy: .public)")
+    NseLog.log.info("[CanariNSE] catchup: replay since epoch=\(epoch, privacy: .public) took \(elapsedMs, privacy: .public) ms (state \(state.count, privacy: .public) B, commits \(commitsJson.count, privacy: .public) ch) answered=\(json != nil, privacy: .public) group=\(groupId.prefix(8), privacy: .public)")
     Self.announceOwnDevicesAdded(json, ctx: ctx, source: "catchup")
     return json
   }
