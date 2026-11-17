@@ -1386,7 +1386,7 @@ landing on two unrelated commits with nothing comparing them; and each chain res
 itself. All three are the same defect - a decision taken more than once, and a precondition
 asserted nowhere.
 
-#### The six gates, and the one that makes a lag impossible
+#### The seven gates, and the one that makes a lag impossible
 
 `.github/scripts/release-preflight.sh` runs before the bump, so a refusal refuses the deployment,
 both store uploads and the version bump itself:
@@ -1399,6 +1399,7 @@ both store uploads and the version bump itself:
 | 4   | Is it EXACTLY the latest pre-release's commit, and has the dev estate already served it? (stable only) | **production cannot be ahead of dev**, and a stable is built from its last alpha, never from `main` ([2026-11-14](#the-stables-commit-is-asserted-not-only-derived-2026-11-14)) |
 | 5   | Do the App Store release notes name THIS version?    | Apple refuses a submission without them, and refusing at the END of a release costs the whole release |
 | 6   | Does it ship a held migration the owner has not approved? | the deploy would refuse it after the bump and the store builds ([held](#a-migration-the-owner-must-approve-is-held-2026-11-01)) |
+| 7   | Does an advisory touch what it ships? (stable only)  | an advisory published after the commit's CI is exactly what production would receive ([2026-11-17](#the-audit-blocks-on-what-we-ship-2026-11-17)) |
 
 **Gate 4 is why this file exists** (user, 2026-09-03: _"Je ne veux pas un detecteur de retard, je ne
 veux pas que ca soit possible"_). It compares the released commit against the `dev-deployed` marker
@@ -1983,7 +1984,7 @@ gh release create vX.Y.Z --target <latest alpha's commit> --generate-notes
   |
   '- Release (release.yml), ONE run
        |
-       |- preflight   six gates; a refusal ends it here, having moved nothing
+       |- preflight   seven gates; a refusal ends it here, having moved nothing
        |- bump        writes the version into 18 files, commits, pushes to release/vX.Y.Z, outputs the SHA
        |- land        (parallel, blocks nothing) carries the version / the changelog onto main
        |
@@ -3083,6 +3084,65 @@ merge, exit 2 (npm never answered) passes as a warning. The cost accepted with i
 untouched code turns every pull request red until its fix merges, and an outage makes the job slow
 without making it red. The block above `dependency-audit` in `ci.yml` is the only other copy.
 
+### The audit blocks on what we ship (2026-11-17)
+
+**Owner, 2026-11-17 ("Ce qu'on livre"):** a pull request and a stable are refused only by an advisory
+in what we SHIP. An advisory in build or test tooling is reported by the nightly `scheduled.yml`
+audit, where it is still a failure, and freezes no merge. #1229's hole stays closed for shipped code.
+
+**What forced it.** `GHSA-fc5q-39xc-vjpf` (high, picomatch ReDoS through single-branch repeated
+extglobs, every version `<= 4.0.7`, which covers the 2.x copies too) was reviewed on 2026-11-17 and
+turned the audit red in all five trees. **No fixed release exists**: 4.0.7 is the latest, so no
+upgrade or override can clear it, and `bun audit fix` does nothing. It arrives through vite, vitest,
+knip, svelte-check and paraglide (frontend) and through `@nestjs/cli`, `@angular-devkit` and jest
+(services). The ReDoS needs an attacker to choose the glob PATTERN.
+
+**One table, three readers.** `.github/scripts/lib/audit-trees.sh` holds every tree's install flags,
+level, closure and ignores. The pull-request audit reads it with `closure: production`
+(`ci.yml` passes it to `code-analysis.yml`). The nightly reads it with `full`. Gate 7 of
+`release-preflight.sh` reads it with `production`, stables only. `audit-dependencies.test.sh`
+asserts the matrix's trees are that table's, and pins the flags.
+
+**What "what we ship" means, per tree. It is measured, not assumed:**
+
+| Tree | Production closure | Why |
+| ---- | ------------------ | --- |
+| the four services | `bun audit --prod` | the image runs `bun dist/main.js`, which loads only what `dependencies` reaches. `--prod` (and `--production`, `-p`) is missing from `bun audit --help` in bun 1.4.0 but works: it reads the lockfile alone, and on 2026-11-17 it dropped picomatch from media-service while keeping its five minio advisories |
+| frontend | **the full audit, never `--prod`** | `svelte`, `@sveltejs/kit`, `protobufjs`, `parse5` and `emoji-picker-element-data` are devDependencies and are BUNDLED. The SSR image copies only `build/`, with no `node_modules`. `--prod` would stop auditing the code users run. Treating kit as shipped does not help either: `bun audit --prod` follows kit's PEER `vite` and brings picomatch back |
+
+**picomatch, measured on 2026-11-17:**
+
+- **frontend**: outside what ships. Its shipped closure (dependencies plus every devDependency not
+  declared build-only, 137 packages) reaches no picomatch. The `1.7.0-alpha.9` `frontend-build`
+  artefact holds none of its code: no `picomatch`, `POSIX_REGEX_SOURCE` or `REGEX_NON_SPECIAL_CHARS`,
+  object keys that minification keeps.
+- **media-service**: `--prod` reports no picomatch at all.
+- **core, social, chat-delivery**: **picomatch is shipped and loaded** as
+  `typeorm@1.1.3 > tinyglobby > picomatch`. `ConnectionMetadataBuilder` requires the loader when the
+  service boots. But TypeORM calls `globSync` only for the STRING entries of `entities`, `migrations`
+  and `subscribers`. All three pass classes only (social uses `autoLoadEntities`), so no pattern is
+  ever compiled, and a pattern would be ours anyway.
+
+So `--ignore=GHSA-fc5q-39xc-vjpf` is granted in the frontend (its only closure) and in the three
+TypeORM trees (production closure only: the full nightly audit still reports it there).
+`.github/scripts/picomatch-premise.mjs` asserts the premise on each installed tree, and
+`tests/picomatch-premise.test.mjs` is its self-test:
+
+- frontend: picomatch is unreached. A new devDependency counts as shipped until declared build-only.
+- the three TypeORM trees: picomatch's only shipped parent is tinyglobby, and tinyglobby's is typeorm.
+  Inside typeorm only `util/DirectoryExportedClassesLoader.js` imports tinyglobby, and no shipped
+  `src` file hands TypeORM a string there.
+
+`Every ignored advisory is still reported` retires the ignore the day picomatch ships a fix.
+
+**What else the production audit reads (2026-11-17):** a LOW `fast-xml-parser` advisory
+(GHSA-474x-hrwr-fgx4, via minio and firebase-admin) is below the services' `moderate` level.
+
+**What the service images really contain is a separate defect.** Each service Dockerfile installs
+without `--production` and copies the whole `node_modules`, dev tools included, into the runtime
+stage ([backlog](backlog.d/p2-service-images-ship-their-dev-dependencies.md)). Those tools are
+never loaded, so the closure above is what RUNS. They are still on the image's disk.
+
 **THE BACKOFF IS WHAT MAKES AN EXHAUSTED BUDGET MEAN SOMETHING.** `BACKOFF_BASE_S=20` sleeps 20s
 then 40s, so three attempts span a minute plus `bun audit`'s own timeout. Three consecutive 503s are
 therefore not three independent draws; they are one npm blip lasting minutes. That is what the
@@ -3278,9 +3338,9 @@ The open line is in [backlog](backlog.d/p3-audit-advisories-are-suppressed-becau
 
 **Retirement is ASSERTED, not polled (2026-10-10).** The premises step audits media-service without its ignores and fails when any ignored id is no longer reported (`ignored-advisories-still-reported.sh`, `tests/ignored-advisories-still-reported.test.sh`; a registry that did not answer concludes nothing). The five hand re-checks logged here until 2026-10-09 each found `minio` still 8.0.7, `query-string: ^7.1.3`, `stream-json: ^1.8.0`.
 
-### The frontend audit carries no ignore (2026-11-16)
+### The frontend audit carries one ignore, picomatch's (2026-11-17)
 
-`GHSA-gcqx-w48m-w2h4` (LOW, `deepmerge` <= 4.3.1) was ignored from 2026-10-28; the audit stopped reporting it (the dependency moved) and `Every ignored advisory is still reported` failed, as designed, so the `--ignore` was deleted. The frontend is audited at bun's default level with no suppression.
+`GHSA-gcqx-w48m-w2h4` (LOW, `deepmerge` <= 4.3.1) was ignored from 2026-10-28. The audit stopped reporting it (the dependency moved), `Every ignored advisory is still reported` failed as designed, and the `--ignore` was deleted on 2026-11-16. Since 2026-11-17 the frontend carries `GHSA-fc5q-39xc-vjpf` only, with its asserted premise ([what we ship](#the-audit-blocks-on-what-we-ship-2026-11-17)). It is audited at bun's default level.
 
 ### The Rust ignores live in `.cargo/audit.toml` and retire themselves too (2026-10-24)
 

@@ -228,6 +228,72 @@ else
   indent "$caller_out"
   failures=$((failures + 1))
 fi
+echo "=== the one table of what each tree is asked (lib/audit-trees.sh, owner 2026-11-17) ==="
+
+# THE TABLE IS READ BY THREE CALLERS (the PR audit, the nightly, the stable gate), so what it
+# answers is pinned here: a closure that silently stopped reaching `--prod`, a frontend that
+# silently became `--prod` (its bundled devDependencies would stop being audited - #1229's hole), or
+# an ignore that leaked to a tree nobody measured would each change a gate without a red test.
+# shellcheck source-path=SCRIPTDIR source=../lib/audit-trees.sh
+source "$(dirname "$0")/../lib/audit-trees.sh"
+
+# flags <tree> <closure> <expected flags>
+flags() {
+  local got
+  got="$(audit_flags "$1" "$2" 2>&1)"
+  if [ "$got" = "$3" ]; then
+    echo "PASS $1 ($2): ${3:-<no flags>}"
+  else
+    echo "FAIL $1 ($2): expected '$3', got '$got'"
+    failures=$((failures + 1))
+  fi
+}
+MINIO='--ignore=GHSA-vcc3-ghjq-m6fr --ignore=GHSA-qr28-fpjm-wq7f --ignore=GHSA-528h-pc64-c93x --ignore=GHSA-hqr4-qq8f-hg3x --ignore=GHSA-mjw6-4jj6-33hc'
+flags frontend production '--ignore=GHSA-fc5q-39xc-vjpf'
+flags frontend full '--ignore=GHSA-fc5q-39xc-vjpf'
+flags apps/core-service production '--prod --audit-level=moderate --ignore=GHSA-fc5q-39xc-vjpf'
+flags apps/core-service full '--audit-level=moderate'
+flags apps/social-service production '--prod --audit-level=moderate --ignore=GHSA-fc5q-39xc-vjpf'
+flags apps/chat-delivery-service production '--prod --audit-level=moderate --ignore=GHSA-fc5q-39xc-vjpf'
+flags apps/chat-delivery-service full '--audit-level=moderate'
+flags apps/media-service production "--prod --audit-level=moderate $MINIO"
+flags apps/media-service full "--audit-level=moderate $MINIO"
+
+if grep -q -- '--prod' <<<"$(audit_flags frontend production)"; then
+  echo "FAIL the frontend is audited --prod: svelte, kit and protobufjs are devDependencies that SHIP"
+  failures=$((failures + 1))
+else
+  echo "PASS the frontend is never --prod, so its bundled devDependencies stay audited"
+fi
+if audit_flags apps/nope production >/dev/null 2>&1; then
+  echo "FAIL an unknown tree got flags instead of a refusal"
+  failures=$((failures + 1))
+else
+  echo "PASS an unknown tree is refused, never audited with defaults"
+fi
+if audit_flags frontend prod >/dev/null 2>&1; then
+  echo "FAIL a misspelt closure was accepted"
+  failures=$((failures + 1))
+else
+  echo "PASS a misspelt closure is refused"
+fi
+
+# THE MATRIX AND THE TABLE NAME THE SAME TREES. A tree added to one and not the other is either
+# never audited on a pull request or never asked at a stable.
+matrix_trees=$(grep -E '^\s*tree: \[' "$wf_dir/code-analysis.yml" | sed -E 's/.*\[(.*)\].*/\1/; s/, */ /g')
+if [ "$matrix_trees" = "${AUDIT_TREES[*]}" ]; then
+  echo "PASS code-analysis.yml's matrix audits exactly the table's trees"
+else
+  echo "FAIL the matrix names '$matrix_trees', the table '${AUDIT_TREES[*]}'"
+  failures=$((failures + 1))
+fi
+if grep -qE '^\s*closure: production\s*$' "$wf_dir/ci.yml"; then
+  echo "PASS the pull-request audit asks for the production closure"
+else
+  echo "FAIL ci.yml's dependency-audit does not pass closure: production"
+  failures=$((failures + 1))
+fi
+
 echo
 if [ "$failures" -gt 0 ]; then
   echo "$failures assertion(s) failed."

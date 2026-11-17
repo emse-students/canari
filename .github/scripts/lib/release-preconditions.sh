@@ -289,3 +289,19 @@ held_migrations_since() {
   done <<<"$files"
   return "$refused"
 }
+
+# Gate 7, stables only: what `audit-dependencies.sh` answered for ONE tree's production closure
+# (owner, 2026-11-17: a stable is refused while an advisory touches what it ships). The script's
+# own three exits, read with an outage TOLERATED so that "the registry never answered" stays
+# distinguishable from "it named an advisory" - and BOTH refuse a stable, since an unaudited
+# closure is no evidence. Anything else is undecidable, and refuses too.
+#
+#   classify_shipped_audit <exit status>  ->  clean | advisory | unanswered | undecidable <status>
+classify_shipped_audit() {
+  case "$1" in
+    0) printf 'clean\n' ;;
+    1) printf 'advisory\n' ;;
+    2) printf 'unanswered\n' ;;
+    *) printf 'undecidable %s\n' "${1:-nothing}" ;;
+  esac
+}

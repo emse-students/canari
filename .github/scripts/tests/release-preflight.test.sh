@@ -433,6 +433,29 @@ else
   fail "gate 6 does not diff from the prod-released marker"
 fi
 
+printf '\ngate 7: a stable is refused while an advisory touches what it ships (owner, 2026-11-17)\n'
+# =================================================================================================
+# THE AUDIT'S THREE EXITS, AND ONLY ONE OF THEM IS PERMISSION. An outage is not a clean tree: a
+# stable whose shipped closure nobody audited has no evidence, so it is refused like an advisory,
+# and anything the script never returns is undecidable - a refusal too.
+shipped() {
+  local got
+  got="$(classify_shipped_audit "$1")"
+  if [ "$got" = "$2" ]; then pass "$3"; else fail "$3 - expected '$2', got '$got'"; fi
+}
+shipped 0 'clean'          'exit 0 is a clean production closure, the only permission'
+shipped 1 'advisory'       'exit 1 is an advisory in what ships'
+shipped 2 'unanswered'     'exit 2 is an unanswered registry, told apart so the refusal says why'
+shipped 127 'undecidable 127' 'any other exit decides nothing'
+shipped '' 'undecidable nothing' 'no exit at all decides nothing'
+# shellcheck disable=SC2016 # the patterns are the script's literal text
+if grep -qF 'audit_flags "$tree" production' "$PREFLIGHT" && grep -qF 'source "$HERE/lib/audit-trees.sh"' "$PREFLIGHT" &&
+  grep -qF 'for tree in "${AUDIT_TREES[@]}"' "$PREFLIGHT"; then
+  pass "release-preflight.sh asks gate 7 of every tree, through the pull-request audit's own table"
+else
+  fail "release-preflight.sh does not run gate 7 from lib/audit-trees.sh"
+fi
+
 printf '\n'
 if [ "$FAIL" -ne 0 ]; then
   printf '%s of %s assertions FAILED\n' "$FAIL" "$((PASS + FAIL))"

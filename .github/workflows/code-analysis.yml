@@ -49,6 +49,18 @@ on:
         default: all
         type: string
 
+      # WHICH CLOSURE THE npm AUDIT READS (owner, 2026-11-17: "Ce qu'on livre"). A pull request
+      # blocks only on an advisory in what we SHIP (`production`); the nightly pass reads every
+      # dependency (`full`), where an advisory in build or test tooling is still a failure. What
+      # each means per tree - the frontend is never `--prod`, its bundled devDependencies ship - is
+      # `.github/scripts/lib/audit-trees.sh`, which the stable gate of `release-preflight.sh` reads
+      # too. `default: full` so `scheduled.yml` needs no change.
+      closure:
+        description: 'What the npm audit reads: `production` (a pull request: what ships) or `full` (the nightly: every dependency).'
+        required: false
+        default: full
+        type: string
+
 jobs:
   codeql:
     name: CodeQL Security Analysis
@@ -234,29 +246,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          # The frontend installs its scripts (Tauri and the WASM glue need them) and is audited at
-          # bun's default level; every service skips scripts and is audited at `moderate`.
-          #
-          - tree: frontend
-            install: --frozen-lockfile
-            audit: ""
-          - tree: apps/core-service
-            install: --frozen-lockfile --ignore-scripts
-            audit: --audit-level=moderate
-          - tree: apps/social-service
-            install: --frozen-lockfile --ignore-scripts
-            audit: --audit-level=moderate
-          # THE ONE TREE WITH SUPPRESSIONS, and they are keyed to it rather than applied to the
-          # matrix: an `--ignore` spread across every tree would hide the same advisory in four
-          # places where nobody measured whether it is reachable. The reachability arguments, and
-          # the assertions that void them, are below.
-          - tree: apps/media-service
-            install: --frozen-lockfile --ignore-scripts
-            audit: --audit-level=moderate --ignore=GHSA-vcc3-ghjq-m6fr --ignore=GHSA-qr28-fpjm-wq7f --ignore=GHSA-528h-pc64-c93x --ignore=GHSA-hqr4-qq8f-hg3x --ignore=GHSA-mjw6-4jj6-33hc
-          - tree: apps/chat-delivery-service
-            install: --frozen-lockfile --ignore-scripts
-            audit: --audit-level=moderate
+        # THE TREES ONLY. How each is installed and audited - level, closure, ignores - is ONE table,
+        # `.github/scripts/lib/audit-trees.sh`, read by this job, the nightly and the stable gate of
+        # `release-preflight.sh`; `audit-dependencies.test.sh` asserts this list is that table's.
+        # Ignores stay keyed PER TREE there: an `--ignore` spread across every tree would hide an
+        # advisory where nobody measured whether it is reachable.
+        tree: [frontend, apps/core-service, apps/social-service, apps/media-service, apps/chat-delivery-service]
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -276,16 +271,18 @@ jobs:
       # `audit-dependencies.sh`, the one place that tells the registry's ANSWER apart from its
       # SILENCE, and the script turns its 2 into a 1 by itself when the input says an unaudited tree
       # is a failure.
-      - name: Audit ${{ matrix.tree }}
+      - name: Audit ${{ matrix.tree }} (${{ inputs.closure }} closure)
         env:
           REGISTRY_OUTAGE_IS_FAILURE: ${{ inputs.registry_outage_is_failure }}
           TREE: ${{ matrix.tree }}
-          INSTALL_FLAGS: ${{ matrix.install }}
-          AUDIT_FLAGS: ${{ matrix.audit }}
+          CLOSURE: ${{ inputs.closure }}
         run: |
           set -uo pipefail
+          source .github/scripts/lib/audit-trees.sh
+          INSTALL_FLAGS="$(audit_install_flags "$TREE")"
+          AUDIT_FLAGS="$(audit_flags "$TREE" "$CLOSURE")"
           # `$INSTALL_FLAGS` and `$AUDIT_FLAGS` are deliberately word-split lists, and `$AUDIT_FLAGS`
-          # is EMPTY for the frontend - quoting either would pass one empty argument.
+          # may be EMPTY - quoting either would pass one empty argument.
           # shellcheck disable=SC2086
           ( cd "$TREE" && bun install $INSTALL_FLAGS )
           # `rc=0` FIRST, AND `|| rc=$?` RATHER THAN A BARE CALL. GitHub runs a `run:` block as
@@ -419,19 +416,56 @@ jobs:
             exit 1
           fi
 
-      # THE RETIREMENT, ASSERTED INSTEAD OF POLLED, for EVERY tree that suppresses something (the
-      # media-service premises above, the frontend's kit 3 wait). The audit run WITHOUT the ignores
-      # must still report every id the matrix suppresses (read from `matrix.audit`, so the list is
-      # never copied here); one that it does not report has retired itself - the dependency moved -
-      # and the ignore is dead weight to delete. It replaces a dated hand re-check of the registry.
-      - name: Every ignored advisory is still reported
-        if: ${{ !cancelled() && contains(matrix.audit, '--ignore=') }}
+      # THE PREMISE BEHIND THE picomatch IGNORE (GHSA-fc5q-39xc-vjpf, 2026-11-17). A ReDoS through
+      # an attacker-chosen glob PATTERN, every picomatch <= 4.0.7, and no fixed release exists - so no
+      # upgrade or override can clear it. Measured per tree:
+      #
+      #   frontend   picomatch is outside what ships. Its shipped closure is `dependencies` plus
+      #              every devDependency not declared build-only (svelte, kit, protobufjs and parse5
+      #              are bundled); picomatch arrives only through vite, vitest, knip, svelte-check and
+      #              paraglide. The alpha.9 `frontend-build` artefact holds none of its code.
+      #   the three  `typeorm > tinyglobby > picomatch` IS shipped and loaded at boot, but TypeORM
+      #   TypeORM    globs only the STRING entries of `entities`/`migrations`/`subscribers`, and these
+      #   services   services pass classes - no pattern is ever compiled, and one would be ours.
+      #              Ignored in the production closure only: the full nightly audit still reports it
+      #              through @nestjs/cli and jest.
+      #   media      picomatch is not in its production closure, so `--prod` already says nothing.
+      #
+      # `picomatch-premise.mjs` (self-tested) asserts each of those on the installed tree and refuses
+      # the ignore the moment one stops being true. It runs only where the table grants the ignore.
+      - name: The premise behind the picomatch ignore
+        if: ${{ !cancelled() }}
         env:
           TREE: ${{ matrix.tree }}
-          AUDIT_FLAGS: ${{ matrix.audit }}
+          CLOSURE: ${{ inputs.closure }}
         run: |
           set -uo pipefail
+          source .github/scripts/lib/audit-trees.sh
+          if ! grep -qF -- '--ignore=GHSA-fc5q-39xc-vjpf' <<<"$(audit_ignores "$TREE" "$CLOSURE")"; then
+            echo "    $TREE does not ignore GHSA-fc5q-39xc-vjpf in the $CLOSURE closure; no premise to check."
+            exit 0
+          fi
+          bun .github/scripts/picomatch-premise.mjs "$TREE"
+
+      # THE RETIREMENT, ASSERTED INSTEAD OF POLLED, for EVERY tree that suppresses something (the
+      # media-service premises, the picomatch premise). The audit run WITHOUT the ignores, in the
+      # same closure, must still report every id the tree suppresses (read from `audit-trees.sh`, so
+      # the list is never copied here); one that it does not report has retired itself - the
+      # dependency moved, or picomatch shipped a fix - and the ignore is dead weight to delete.
+      - name: Every ignored advisory is still reported
+        if: ${{ !cancelled() }}
+        env:
+          TREE: ${{ matrix.tree }}
+          CLOSURE: ${{ inputs.closure }}
+        run: |
+          set -uo pipefail
+          source .github/scripts/lib/audit-trees.sh
+          AUDIT_FLAGS="$(audit_flags "$TREE" "$CLOSURE")"
           ignored=$(printf '%s\n' "$AUDIT_FLAGS" | grep -oE -- '--ignore=GHSA-[a-z0-9-]+' | sed 's/^--ignore=//' || true)
+          if [ -z "$ignored" ]; then
+            echo "    $TREE ignores nothing in the $CLOSURE closure; there is nothing to retire."
+            exit 0
+          fi
           # The tree's own flags minus its ignores, so the level is the one the audit step used.
           kept=$(printf '%s\n' "$AUDIT_FLAGS" | tr ' ' '\n' | grep -v -- '^--ignore=' | tr '\n' ' ' || true)
           unignored=$(mktemp)
