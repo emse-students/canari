@@ -1,3 +1,4 @@
+import type { NameSync } from '$lib/utils/chat/groupName';
 /**
  * Lifecycle state of a conversation - the SINGLE source replacing the old
  * `(isReady, deletedRemotely)` pair.
@@ -268,6 +269,19 @@ export interface Conversation {
    * and unknown ASKS, which is the safe direction.
    */
   startedAt?: number;
+  /**
+   * The server time of the MLS statement that set {@link Conversation.name} - a `groupRenamed` frame
+   * or the name a join push restates (`groupName.ts`). A GROUP row only. Absent means the name was
+   * never stated by a frame this device read: it came from the server's list or the creation, and
+   * that list still corrects it. Once present, only a later dated statement changes the name.
+   */
+  nameAt?: number;
+  /**
+   * What this device still owes about a rename it made (`groupName.ts`, `NameSync`): the server's
+   * copy of a name its members already hold, and/or a `groupRenamed` frame whose send ended with no
+   * answer. Settled by the next connection's sweep (`settleNameSync`). Absent: nothing owed.
+   */
+  nameSync?: NameSync;
   conversationType?: 'direct' | 'group' | 'channel';
   directPeerId?: string;
   /** Media-service ID of the group image (unencrypted avatar). Channels never carry one. */

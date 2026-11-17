@@ -12,6 +12,7 @@ import {
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import {
   memberLeftContent,
+  ownRenameSettledByRelay,
   receivedNoticeTime,
   visibleNoticeContent,
 } from '$lib/utils/chat/visibleNotices';
@@ -96,6 +97,14 @@ import { mergeStoredMessage } from '$lib/db/messagePayload';
 import { isPushPreview } from '$lib/utils/chat/messageMerge';
 import { applyReactionFrame } from './reactionFrame';
 import { publishReadState } from '$lib/mls-client/tabMessageSync';
+import {
+  applyRenameFrame,
+  boundedRestatedGroupName,
+  GROUP_NAME_REFUSAL_TEXT,
+  GROUP_NAME_SKIP_TEXT,
+  reportRenameRefusal,
+  withRestatedGroupName,
+} from '$lib/utils/chat/groupName';
 
 /**
  * Context passed to handleSystemEvent - extends MessageHandlerDeps with
@@ -1157,11 +1166,29 @@ export async function handleSystemEvent(
   }
 
   if (event === 'groupRenamed' && data.newName) {
-    conversations.set(convoKey, { ...convo, name: data.newName });
-    if (storage) await saveConversation(convoKey);
+    // DATED BY THE SERVER'S ACCEPTANCE OF THE FRAME, and applied only when it is the newest statement
+    // this device holds (`groupName.ts`): a rename read after a later one - a drain, a replay page -
+    // no longer puts the older name back. The notice is history and is drawn either way.
+    // The server time is BOUNDED by the frame's signed sentAt, so a hostile server cannot lock a name
+    // in by stamping it far in the future.
+    const outcome = applyRenameFrame(convo, data.newName, deliveryMeta?.queuedCreatedAt, sentAt);
+    if ('row' in outcome) {
+      conversations.set(convoKey, outcome.row);
+      if (storage) await saveConversation(convoKey);
+      log(`📝 Group renamed by ${senderNorm}`);
+    } else if ('refused' in outcome) {
+      reportRenameRefusal(convo.id, outcome.refused, `rename by ${senderNorm.slice(0, 8)}`);
+    } else if (outcome.skipped === 'not-a-group') {
+      console.warn(
+        `[GROUP_NAME] rename by ${senderNorm.slice(0, 8)} in ${convoKey.slice(0, 8)}… NOT applied: ${GROUP_NAME_SKIP_TEXT[outcome.skipped]}`
+      );
+    } else {
+      log(
+        `[GROUP_NAME] rename by ${senderNorm.slice(0, 8)} in ${convoKey.slice(0, 8)}… kept the name held (${convo.nameAt ?? 'undated'}): ${GROUP_NAME_SKIP_TEXT[outcome.skipped]}`
+      );
+    }
     const text = await visibleNoticeContent('groupRenamed', data, senderNorm);
     if (text) await writeNotice(text, messageId);
-    log(`📝 Group renamed by ${senderNorm}`);
     return true;
   }
 
@@ -1666,6 +1693,40 @@ export async function handleSystemEvent(
       // carries them even when every message is withheld). Its entries are the relayer's word about
       // what others did, so they are taken UNVERIFIED, only about current members of the tree, dated
       // within the bundle's server time - and a broadcast or a replayed bundle carries none at all.
+      // And the group's dated name - from the inviter's JOIN PUSH only, like the nicknames: it is
+      // how a member admitted after the last rename learns the name from the members rather than
+      // from the server's list (`groupName.ts`). Bounded by the push's own server time, and taken
+      // only onto a row no frame has dated yet.
+      if (joinPush && bundleState?.groupName !== undefined) {
+        const restated = boundedRestatedGroupName(
+          bundleState.groupName,
+          deliveryMeta?.queuedCreatedAt
+        );
+        if ('refused' in restated) {
+          console.error(
+            `[GROUP_NAME] REFUSED the name ${senderNorm.slice(0, 8)}'s join push restates for ${convoKey.slice(0, 8)}…: ${GROUP_NAME_REFUSAL_TEXT[restated.refused]}`
+          );
+        } else {
+          const held = conversations.get(convoKey);
+          // Taken only onto a row no frame has dated: a relay never beats a frame read here.
+          const named = held ? withRestatedGroupName(held, restated.kept) : null;
+          if (named && 'row' in named) {
+            conversations.set(convoKey, named.row);
+            await saveConversation?.(convoKey).catch((e: unknown) => {
+              log(
+                `[GROUP_NAME] name of ${convoKey.slice(0, 8)}… taken from the join push but not persisted: ${String(e)}`
+              );
+            });
+            log(
+              `[GROUP_NAME] name of ${convoKey.slice(0, 8)}… dated ${restated.kept.at} taken from ${senderNorm.slice(0, 8)}'s join push`
+            );
+          } else if (named) {
+            log(
+              `[GROUP_NAME] name ${senderNorm.slice(0, 8)}'s join push restates for ${convoKey.slice(0, 8)}… not taken: ${GROUP_NAME_SKIP_TEXT[named.skipped]}`
+            );
+          }
+        }
+      }
       if (
         (joinPush || registerAnswer) &&
         Array.isArray(bundleState?.nicknames) &&
@@ -1852,6 +1913,36 @@ export async function handleSystemEvent(
             for (const item of toAdd) {
               await addMessageToChat(item.senderId, item.content, convoKey, item);
             }
+          }
+        }
+
+        // A ROW ADDED UNDER THE ID OF ONE OF THIS DEVICE'S OWN RENAME FRAMES whose fate it never
+        // learnt is the proof that frame landed, and its server time is the one every member dated
+        // the name by (`ownRenameFromRelay`, `groupName.ts`) - the heal of a rename this device
+        // stopped re-sending. Re-read after the adds, which rewrote the row.
+        if (toAdd.length > 0) {
+          const held = conversations.get(convoKey);
+          const healed = held
+            ? ownRenameSettledByRelay(
+                held,
+                toAdd.map((item) => ({
+                  id: item.messageId,
+                  content: item.content,
+                  ...(typeof item.serverTimestamp === 'number'
+                    ? { serverTimestamp: item.serverTimestamp }
+                    : {}),
+                })),
+                senderNorm,
+                log
+              )
+            : null;
+          if (healed) {
+            conversations.set(convoKey, healed);
+            await saveConversation?.(convoKey).catch((e: unknown) => {
+              log(
+                `[GROUP_NAME] name of ${convoKey.slice(0, 8)}… settled by a relayed copy but not persisted: ${String(e)}`
+              );
+            });
           }
         }
 

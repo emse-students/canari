@@ -113,7 +113,6 @@
     Conversation,
     MessageBatchOrigin,
   } from '$lib/types';
-  import type { BulkIngestPhase } from '$lib/mls-client';
   import { buildMentionRoster } from '$lib/utils/users/mentionRoster';
   import { describeCaughtError } from '$lib/utils/describeCaughtError';
   import { communityNicknameScope } from '$lib/utils/users/conversationNicknames.svelte';
@@ -506,9 +505,7 @@
       endConversationSource: () => convs.endConversationSource(),
       addMessageToChat: (sid: string, content: string, contactName: string, options?: any) =>
         messaging.addMessageToChat(sid, content, contactName, msgCtx(), options),
-      beginBulkMessageIngest: (phase: BulkIngestPhase) => messaging.beginBulkMessageIngest(phase),
-      endBulkMessageIngest: (phase: BulkIngestPhase) =>
-        messaging.endBulkMessageIngest(msgCtx(), phase),
+      messageIngestObserver: messaging.bulkIngestObserver(msgCtx),
       batchAddMessages: (
         msgs: Parameters<typeof messaging.batchAddMessages>[0],
         contactName: string,

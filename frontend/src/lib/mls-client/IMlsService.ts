@@ -636,6 +636,14 @@ export type BulkIngestHandle = number;
 export interface BulkIngestObserver {
   onBulkIngestStart(phase: BulkIngestPhase): void;
   onBulkIngestEnd(phase: BulkIngestPhase): void | Promise<void>;
+  /**
+   * ROWS BEFORE RATCHET: stores every row this observer holds in memory for a frame already
+   * applied, and keeps the frames applied from now on out of that memory until the returned release
+   * is called. Called by `persistCheckpoint` BEFORE it exports the state, which holds those frames'
+   * ratchet advance and seen marks: exported first, a kill before the rows were stored lost them for
+   * good. Optional - only an observer that holds rows implements it.
+   */
+  holdRowsForCheckpoint?(): Promise<() => void>;
 }
 
 /** Row from `GET /api/mls/users/:id/groups`. */
@@ -714,6 +722,15 @@ export type GroupMeta = {
   name?: string;
   isGroup?: boolean;
   deletedAt?: string | null;
+  /**
+   * The server's clock when it answered (ms), read from the HTTP `Date` header of the delivery
+   * service's own answer - a fact the server states, to the second, never this device's clock.
+   * Undefined when the answer was not the API's or carried no readable `Date` (a phone app reads it
+   * only once the service exposes the header, `main.ts`). What the rename sweep bounds a re-send by
+   * (`settleNameSync`): the receivers measure their bound on the server's clock, so only it proves a
+   * re-send would still be taken.
+   */
+  serverNow?: number;
   /**
    * The community whose Graine key-distribution group this is, null on a conversation.
    *

@@ -111,7 +111,7 @@
   import { readGroupMembersOnceReady, registerReelSendHost } from '$lib/reels/reelSendBridge';
   import { whenMlsReady } from '$lib/composables/session/mlsReadiness';
   import { adoptOutboxPublishedUpload, endOutboxPublishWait } from '$lib/utils/chat/outbox';
-  import { MlsSessionVacantError, type BulkIngestPhase } from '$lib/mls-client';
+  import { MlsSessionVacantError } from '$lib/mls-client';
   import type { IStorage, StoredMessage } from '$lib/db';
   import { deliveryUrl } from '$lib/utils/apiUrl';
   import { firstPinSetupFromDevice } from '$lib/utils/pinFirstSetup';
@@ -1132,10 +1132,7 @@
         globalMessaging.addMessageToChat(sid, content, contactName, msgCtx(), options),
       drainOrphanMessages: (convoKey: string) =>
         globalMessaging.drainOrphanMessages(convoKey, msgCtx()),
-      beginBulkMessageIngest: (phase: BulkIngestPhase) =>
-        globalMessaging.beginBulkMessageIngest(phase),
-      endBulkMessageIngest: (phase: BulkIngestPhase) =>
-        globalMessaging.endBulkMessageIngest(msgCtx(), phase),
+      messageIngestObserver: globalMessaging.bulkIngestObserver(msgCtx),
       batchAddMessages: (
         msgs: Parameters<typeof globalMessaging.batchAddMessages>[0],
         contactName: string,

@@ -30,6 +30,9 @@ import {
   chat_group_remove_member_confirm,
   chat_system_removed_from_group,
   chat_unopenable_start_again_failed,
+  group_rename_failed,
+  group_rename_failed_clock,
+  group_rename_pending,
   common_remove_label,
 } from '$lib/paraglide/messages';
 import { showConfirm } from '$lib/stores/confirm.svelte';
@@ -46,6 +49,12 @@ import { salonKeysNow } from '$lib/utils/graine/salonReadGate';
 import { watchSalonRemovals } from '$lib/utils/chat/salonRemovals';
 import type { ChannelPollMeta } from '$lib/services/ChannelService';
 import { applyChannelReactionFrame } from '$lib/stores/reactionStore.svelte';
+import {
+  GROUP_NAME_SKIP_TEXT,
+  GroupRenameRefusedError,
+  ownRenameOutcome,
+  pendingRenameOutcome,
+} from '$lib/utils/chat/groupName';
 import {
   fetchGroupRoster,
   fetchUniqueGroupMembers,
@@ -2786,7 +2795,13 @@ export function useConversations() {
     if (!convo) return;
     if ((convo.conversationType ?? 'group') !== 'group') return; // only named groups can be renamed
     try {
-      await renameGroupAndBroadcast({
+      // What the row held when the rename was made over it - what the rename's unfinished business
+      // is compared with later (`groupName.ts`, `RenameBase`).
+      const over = {
+        name: convo.name,
+        ...(convo.nameAt !== undefined ? { at: convo.nameAt } : {}),
+      };
+      const result = await renameGroupAndBroadcast({
         mlsService: ctx.ensureMls(),
         groupId: convo.id,
         newName: name,
@@ -2794,14 +2809,51 @@ export function useConversations() {
         deviceKeyB64: ctx.deviceKeyB64,
         ownNotice: { contactName: key, addMessageToChat: ctx.addMessageToChat },
       });
-      // RE-READ AFTER THE AWAIT, AND PATCH THE NAME ONLY. The send wrote our own notice into this
-      // conversation meanwhile (`sendVisibleNotice`); writing back the snapshot taken before the
-      // await erased it from this device's screen - the one device that had never drawn it.
-      patchConversation(key, { name });
-      await saveConversation(key, ctx);
+      // RE-READ AFTER THE AWAIT. The send wrote our own notice into this conversation meanwhile
+      // (`sendVisibleNotice`), and a peer's rename may have landed too: writing back the snapshot
+      // taken before the await erased the first, and writing the name blindly overwrote the second.
+      const current = conversations.get(key);
+      if (current) {
+        const outcome =
+          'unanswered' in result
+            ? pendingRenameOutcome(current, { name, ...result.unanswered, over })
+            : ownRenameOutcome(
+                current,
+                name,
+                result.delivered.nameAt,
+                result.delivered.serverCopyOwed,
+                over
+              );
+        if ('row' in outcome) {
+          conversations.set(key, outcome.row);
+          await saveConversation(key, ctx);
+        } else {
+          ctx.log(
+            `[GROUP_NAME] own rename of ${key.slice(0, 8)}… not written over the row: ${GROUP_NAME_SKIP_TEXT[outcome.skipped]}`
+          );
+        }
+      }
+      if ('unanswered' in result) {
+        // NO ANSWER IS NOT A FAILURE: the members may already hold the name. The person who typed
+        // it is told it is on its way, and the next connection re-sends the same frame.
+        showToast(group_rename_pending(), 'info');
+        ctx.log(
+          `[GROUP_NAME] rename of ${key.slice(0, 8)}… pending - re-sent at the next connection`
+        );
+        return;
+      }
       ctx.log(`Group ${key} renamed`);
     } catch (e) {
-      ctx.log(`Erreur renommage: ${String(e)}`);
+      // The server refused the frame, or no member will take it, so nothing was renamed anywhere
+      // (`renameGroupAndBroadcast`): the person who typed the name is told, the panel having closed
+      // already - and told to check the clock when that is what refused it (classified at the throw).
+      ctx.log(`[GROUP_NAME] rename of ${key.slice(0, 8)}… failed: ${String(e).slice(0, 120)}`);
+      showToast(
+        e instanceof GroupRenameRefusedError && e.refusal === 'server-time-out-of-bound'
+          ? group_rename_failed_clock()
+          : group_rename_failed(),
+        'error'
+      );
     }
   }
 
