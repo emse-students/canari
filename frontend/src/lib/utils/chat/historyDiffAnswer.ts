@@ -13,6 +13,7 @@ import {
   historyRangeStartFor,
   readHistoryEntries,
   sendHistoryBundleForIds,
+  sendHistoryCannotRepair,
   sendHistoryCoverage,
   sendHistoryPull,
 } from '$lib/utils/chat/groupActions';
@@ -67,6 +68,29 @@ export async function stateOurCoverage(params: {
 }
 
 /**
+ * The end of an answer to an asker that holds frames it cannot read, when we had nothing to give:
+ * says so, and nothing else - see `sendHistoryCannotRepair`.
+ *
+ * It REPLACES the coverage statement rather than following it. Both frames would start a walk on the
+ * asker, and this one already excludes us whatever our coverage, so a second frame would only start
+ * a second, concurrent walk over the same membership.
+ */
+export async function stateWeCannotRepair(params: {
+  groupId: string;
+  selfIdentity: string;
+  requesterIdentity: string;
+  since: number;
+  deps: HistoryAnswerDeps;
+}): Promise<void> {
+  const { groupId, selfIdentity, requesterIdentity, since, deps } = params;
+  await sendHistoryCannotRepair(
+    groupId,
+    { from: selfIdentity, to: requesterIdentity, since },
+    deps
+  );
+}
+
+/**
  * Answers a digest: diff it against our store, send what the asker lacks, ask for what we lack.
  *
  * **THE LAST LEG OF A SOLICITATION, AND IT NEEDS NOTHING REMEMBERED.** The digest carries the
@@ -90,6 +114,8 @@ export async function answerHistoryDigest(params: {
   since: number;
   /** The asker's id for its digest, echoed on the bundle so it can be accepted addressed. */
   requestId: string;
+  /** The asker holds frames it cannot read - see `stateWeCannotRepair`. */
+  incomplete?: boolean;
   deps: HistoryAnswerDeps;
 }): Promise<void> {
   const { groupId, requesterIdentity, selfIdentity, digest, since, requestId, deps } = params;
@@ -134,6 +160,13 @@ export async function answerHistoryDigest(params: {
   log(
     `[HISTORY_REQ] ${short}... diff with ${requesterIdentity}: ${idsToSend.length} to send, ${pulled} to pull${isEmptyHistoryDiff(diff) ? ' (identical stores)' : ''}`
   );
+
+  // NOTHING TO GIVE TO AN ASKER THAT IS PROVABLY INCOMPLETE: it must hear that, or it reads our
+  // silence as "you are complete" and stops on the member that cannot help (HEAL-repair).
+  if (params.incomplete && idsToSend.length === 0) {
+    await stateWeCannotRepair({ groupId, selfIdentity, requesterIdentity, since, deps });
+    return;
+  }
 
   // Last, after everything this device had to give. The diff above names what we hold and it does
   // not, which says nothing about the range below OUR window - a device that pruned to ninety days
