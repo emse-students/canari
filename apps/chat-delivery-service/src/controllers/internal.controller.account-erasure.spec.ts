@@ -296,6 +296,19 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
     expect(repos.deviceGroup.delete).not.toHaveBeenCalled();
   });
 
+  it('deletes the uninvited entries counted against the account, by the shortened user id the rows hold', async () => {
+    // `uninvited_entries.entrantUserDevice` holds `<8 of the user>:<device>` - pseudonymous, and
+    // re-identifiable by the device id, so the rows go with the account (migration 053).
+    const { controller, manager } = make();
+    await controller.deleteUserData('a1'.repeat(32), SECRET);
+
+    const [sql, params] = manager.query.mock.calls.find(([q]) =>
+      String(q).includes('DELETE FROM uninvited_entries')
+    ) as unknown as [string, unknown[]];
+    expect(sql).toMatch(/split_part\("entrantUserDevice", ':', 1\) = \$1/);
+    expect(params).toEqual(['a1a1a1a1']);
+  });
+
   it('anonymises the invite links the account minted instead of breaking them', async () => {
     const { controller, repos } = make();
     await controller.deleteUserData(USER, SECRET);

@@ -101,6 +101,19 @@ describe('FormsService - closing and reopening a form', () => {
       expect(reopened.windowState).toBe('open');
     });
 
+    it('answers closed from the very instant it stored, on a frozen clock', async () => {
+      jest.useFakeTimers({ now: new Date('2026-11-17T12:00:00.000Z') });
+      try {
+        const { service, row } = makeService();
+        const closed = await service.setClosed('f1', true, OWNER, false);
+        expect((row.closedAt as Date).toISOString()).toBe('2026-11-17T12:00:00.000Z');
+        // closedAt equals now: the end instant itself is closed, not open until the next tick.
+        expect(closed.windowState).toBe('closed');
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
     it('refuses a stranger, on both routes, and writes nothing', async () => {
       const { service, formRepo } = makeService();
       await expect(service.setClosed('f1', true, STRANGER, false)).rejects.toThrow(

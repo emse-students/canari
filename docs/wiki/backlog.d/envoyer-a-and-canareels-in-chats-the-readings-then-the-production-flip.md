@@ -6,10 +6,18 @@ Built and merged (RC-12 the sheet, RC-13 the outbox take row, RC-14 the media-se
 migration 122, "Annuler/Supprimer partout" #3154), all behind `CHAT_REEL_WRITER_ENABLED` - on in
 pre-release store builds and on dev web, off in production (owner, 2026-11-08).
 
-Left, in order: the 13 bench readings of
-[section 21.4](../frontend/modules/reels-in-chat.md#214-the-bench-readings-before-the-flip) on a
-pre-release, then a NEW one-line flip pull request (not the stale #2861,
-[21.1](../frontend/modules/reels-in-chat.md#211-the-switch-and-the-flip-pr)). Not built and not part
+**The flip is merged (2026-11-16):** `CHAT_REEL_WRITER_ENABLED = true` in every build, its
+preconditions re-read ([21.1](../frontend/modules/reels-in-chat.md#211-the-switch-and-the-flip-pr):
+the `minClientVersion` floor `1.6.6` on both estates is above every reader, so the floor does not
+move and no legacy fallback text is owed). The stable carries it only if it lands before the last
+`1.7.0` pre-release is cut.
+
+Left: the bench readings of
+[section 21.4](../frontend/modules/reels-in-chat.md#214-the-bench-readings-before-the-flip) not yet
+recorded, read on a `1.7.0` pre-release carrying the flip before the stable ships it (rows 1-13:
+RC-0 on the iPhone, one take to three targets, feed and chats, a refused target, "Annuler partout",
+"Supprimer partout", the sender's other device, a moderator's purge, weak network, a kill during
+preparation, the chat camera's single send, the lock screen, no salon offered). Not built and not part
 of the flip: salons (RC-8, moved to `1.7.1`, [reels-in-salons](reels-in-salons.md)); the photo through
 the sheet was built on 2026-11-16 as ordinary image messages
 ([section 22](../frontend/modules/reels-in-chat.md#22-the-two-paths-owner-2026-11-16)), which also
@@ -44,3 +52,5 @@ Rows 1 and 12 were read earlier (sixth sitting); the iPhone alone does not close
 **iPhone 12, ninth sitting, 2026-11-17 (`1.7.0-alpha.7`, [readings](../device-verification.md#the-iphone-12-readings-of-2026-11-17-ninth-sitting-170-alpha7-the-envoyer-a-rows-on-the-new-screens)): rows 2 (video AND photo), 3, 11 (DM AND group) and 13 retaken on section 22's screens, all PASS on the iPhone.** The review reads "Publier" and "Envoyer a..."; the conversation camera reads "Envoyer a <name>", the name button sends one bubble and returns to the conversation, "Ajouter des destinataires" pre-ticks it and a second target went in ONE take; a photo from the tab arrived as an ordinary image in each chosen conversation; no salon is offered. The old "a take opened its review with Suivant" oddity did not recur in seven reviews. Observed once and not separated: the idle tab camera lost its microphone 41 s after a send (`photos only` warnings), see the sitting.
 
 **Mi 9T as the sender on `1.7.0-alpha.7`, 2026-11-17 ([readings](../device-verification.md#the-mi-9t-readings-of-2026-11-17-170-alpha7-the-envoyer-a-retakes-on-section-22s-screens)): the retakes on section 22's screens, rows 2 (video AND photo), 3, 11 (DM and group, both halves: the name button, "Ajouter des destinataires" with the pre-tick) and 13 all `PASS`.** The list reads as section 22 describes it (the "Publier" row under "CanaReels", six "Récents", the rest alphabetically, group rows naming members, no salon); the photo arrived in each conversation as an ordinary image; the conversation camera's ring stopped at 60.0 s. With the iPhone's rows of 2026-11-16, only the flip pull request is left.
+
+**iPhone 12 as the sender on `1.7.0-alpha.7` (PR #3756):** the "Envoyer a..." rows 2 (video and photo), 3, 11 (DM and group) and 13 read `PASS`.

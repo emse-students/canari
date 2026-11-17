@@ -19,13 +19,13 @@ describe('formWindowState', () => {
       formWindowState({ opensAt: new Date('2026-11-17T12:00:00Z'), closedAt: null }, now)
     ).toBe(FORM_WINDOW_OPEN);
   });
-  it('is closed once the end is strictly past, open AT the end instant (the refusal rule)', () => {
+  it('is closed AT the end instant and after it, open before it', () => {
+    const at = { opensAt: null, closedAt: new Date('2026-11-17T12:00:00Z') };
+    // A close writes closedAt = now and must read closed in that same instant.
+    expect(formWindowState(at, now)).toBe(FORM_WINDOW_CLOSED);
     expect(
       formWindowState({ opensAt: null, closedAt: new Date('2026-11-17T11:59:59Z') }, now)
     ).toBe(FORM_WINDOW_CLOSED);
-    expect(
-      formWindowState({ opensAt: null, closedAt: new Date('2026-11-17T12:00:00Z') }, now)
-    ).toBe(FORM_WINDOW_OPEN);
     expect(
       formWindowState({ opensAt: null, closedAt: new Date('2026-11-17T12:00:01Z') }, now)
     ).toBe(FORM_WINDOW_OPEN);

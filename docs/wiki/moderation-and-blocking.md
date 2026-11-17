@@ -153,13 +153,14 @@ The lazy purge is gone, the cron is the only mechanism, and its clock is `review
 
 ### Who may read the queue
 
-`isContentModerator`: a platform admin, or a member holding `MODERATE` in the governor of a space.
-One predicate, shared by
+`isContentModerator` (`MODERATES_SOMEWHERE_SQL`): a platform admin, a member holding `MODERATE` in a
+BDE (an association of type `association` governing a space), or a member holding `MODERATE` in an
+INSTITUTION, which moderates its own content (owner, 2026-11-15, decision 4). One predicate, shared by
 `/api/moderation/*` and by the post controls that give the same people the same reach - and, since
-WP-L8, by the staff cut of a live. **A space's governor may be an INSTITUTION (WP-D1)**, and
-the code counts its `MODERATE` members like a BDE's - at the door, and over the people of that space
-(`bdeStandingInSpaceSql` reads no type). The owner refused that on 2026-11-15; the target and its
-work package are in [moderation-authority](moderation-authority.md#the-roles).
+WP-L8, by the staff cut of a live. **A space's governor may be an INSTITUTION (WP-D1)**: it answers
+for that space's agenda, never for its people - `bdeModeratesUserSql` asks `governorIsAnAssociationSql`
+of the space's governor, so the students of a space with no BDE are the platform admin's (owner,
+2026-11-15, decision 3). The grid is [moderation-authority](moderation-authority.md#the-roles).
 
 **SCOPED SINCE 2026-11-02 (owner).** That predicate is now only the DOOR: a BDE moderator reads the
 reports, the hidden posts and the muted people of the spaces its BDE governs, and every act (hide,
@@ -180,7 +181,10 @@ when it moderates that association too (next paragraph) - which `commentRights.c
 
 **No BDE moderates content in an INSTITUTION's or ANOTHER BDE's name (owner, 2026-11-03).** Whatever
 the path - hide, delete, unmask, reading an association comment's writer, cutting a live, a report on
-any of them - only the platform admin acts on it; a BDE keeps moderating, in its governed spaces, what
+any of them - only the platform admin and that publisher's OWN moderators act on it (an institution's
+`MODERATE` members since 2026-11-15, decision 4: `institutionModeratesOwnSql`, ORed into the publisher
+predicate `moderatesPublisherSql`, so its posts, lives, the comments under them and the comments in its
+name - wherever they sit - follow); a BDE keeps moderating, in its governed spaces, what
 students and the associations and lists it governs publish. ONE predicate decides every act:
 `bdeModeratesPublisherSql` (`spaces/bde-moderation.ts`, the management predicate read for `MODERATE`,
 false for an institution and for another BDE) for whatever is in an association's name, the per-space
@@ -191,8 +195,9 @@ A comment is judged on ITSELF: its replies never shield it (decision below). **T
 only what the BDE may act on** - an escalated item is simply absent from it, and stays in the platform
 admin's queue (decided 2026-11-04, the simpler and reversible of the two options: no "escalated" row to
 render). A refused act is classified at the throw: 403 `MODERATION_RESERVED_TO_PLATFORM_ADMIN` when the
-target is in an institution's or a BDE's name, `MODERATION_OUT_OF_SCOPE` otherwise,
-`MODERATOR_REQUIRED` for a caller who moderates nowhere - each worded by the client through
+target is in an institution's or a BDE's name, `MODERATION_OUT_OF_SCOPE` otherwise for a BDE
+moderator, `MODERATION_OUTSIDE_OWN_INSTITUTION` for a caller who moderates only as an institution
+(2026-11-15), `MODERATOR_REQUIRED` for a caller who moderates nowhere - each worded by the client through
 `describeModerationRefusal` (`frontend/src/lib/moderation/moderationRefusal.ts`), on the post card and
 in the reports queue alike (`ModerationApiError` is an `ApiRefusalError`, so `refusalCode` reads it).
 **Not moderation, and so unchanged:** pinning a post in a space (WP-PIN, a promotion - a BDE may pin
@@ -369,10 +374,13 @@ others they are not it.
 ### Anonymous posts - the fourth control that predicate now gates
 
 A personal post (never an association one - the two are mutually exclusive, and an association
-post already anonymizes its author for everyone unconditionally) can be marked `anonymous` at
+post already withholds its writer from everyone but its moderators and the writer, by the same rule)
+can be marked `anonymous` at
 creation - one option in the same "who is publishing" identity picker as the personal profile and
 each managed association, open to every user rather than gated to association admins.
-`PostsService.mustHideAnonymousAuthor` strips `authorId` from the response for every viewer
+`PostsService.viewerSeesWriter` (via `withholdWriterUnlessSeen`, the one writer rule, the same for
+an association's post since 2026-11-17 - [moderation-authority](moderation-authority.md), decision 11)
+strips `authorId` from the response for every viewer
 **except** a moderator of THAT post (the platform admin, or since 2026-11-02 a BDE whose governed
 spaces hold it), or the post's own author (2026-09-17: a moderator
 must be able to tell WHO published an anonymous post, and so must the author looking at their own
@@ -394,7 +402,7 @@ comment stores no name, so the client resolves the name from that id
 (`commentRevealedAuthorId`). The client never decides who may see an author; it draws what the
 server sent ([posts](frontend/modules/posts.md#who-wrote-it-anonyme-big-the-real-author-small-2026-10-24)).
 
-**`mustHideAnonymousAuthor` was never wrong; the two feed queries never asked it the real
+**`mustHideAnonymousAuthor` (now `viewerSeesWriter`) was never wrong; the two feed queries never asked it the real
 question (2026-09-18, reported by a user who posted "test" anonymously and read their own name
 off a second account's feed).** `listPosts`'s shared `selectBody` and `searchPosts`'s own copy
 both named `posts."authorId"` but never `posts.anonymous`, so every raw row arrived with

@@ -84,7 +84,14 @@ describe('ensureMyAssociations', () => {
     const { ensureMyAssociations, AssociationPermissionFlag } = await freshApi();
     const { MANAGE_ASSO, MODERATE, VALIDATE_EVENTS } = AssociationPermissionFlag;
     request.mockResolvedValue(
-      ok([{ id: 'bde', isBDE: true, permissions: MANAGE_ASSO | MODERATE | VALIDATE_EVENTS }])
+      ok([
+        {
+          id: 'bde',
+          type: 'association',
+          isBDE: true,
+          permissions: MANAGE_ASSO | MODERATE | VALIDATE_EVENTS,
+        },
+      ])
     );
 
     await ensureMyAssociations(true);
@@ -149,7 +156,14 @@ describe('ensureMyAssociations', () => {
     expect(request).toHaveBeenCalledTimes(1);
 
     request.mockResolvedValue(
-      ok([{ id: 'a', isBDE: true, permissions: AssociationPermissionFlag.MODERATE }])
+      ok([
+        {
+          id: 'a',
+          type: 'association',
+          isBDE: true,
+          permissions: AssociationPermissionFlag.MODERATE,
+        },
+      ])
     );
     fireReconnect();
     await settle();
