@@ -24,7 +24,6 @@ earliest version, as a checklist.
 - [P1 - A new member of a group conversation receives its whole past; decided 2026-10-21 that they must not](backlog.d/p1-a-new-member-of-a-group-conversation-receives-its-whole-past-decided-2026-10.md)
 - [P1 - encrypt the names of groups, communities and salons (raised 2026-10-21, tied to principle 1 of the charter on 2026-11-10)](backlog.d/p1-encrypt-the-names-of-groups-communities-and-salons.md)
 - [P1 - the admission rule's fix-forward: a conversation may refuse an entry no member made only once nothing legitimate produces one](backlog.d/p1-the-admission-rule-fix-forward.md)
-- [P1 - push payloads carry nothing for Google and Apple (owner, recorded 2026-11-01; decided and built 2026-11-02, switch OFF; raised from P2 on 2026-11-10 by principle 1 of the charter)](backlog.d/push-payloads-carry-nothing-for-google-and-apple.md)
 - [P1 - media-service holds the retention durations after the deploy that adds the relay (the boot notice carries them)](backlog.d/p1-media-retention-held-after-the-deploy-that-adds-the-relay.md)
 - [P1 - rows before ratchet: a live drain stores its rows only when its window closes, after a checkpoint may already hold their ratchet advance (raised by the second review of #3321, 2026-11-15)](backlog.d/p1-rows-before-ratchet.md)
 - [P1 - a salon push's seed frame opened against a key group of production size, on the bench (2026-11-17)](backlog.d/p1-salon-push-seed-frame-at-production-key-group-size.md)
@@ -113,6 +112,7 @@ earliest version, as a checklist.
 - [ ] [a menu ends above the iOS tab bar, and a group notification keeps its title (2026-11-16)](backlog.d/reading-owed-the-popover-and-notification-fixes-of-the-iphone-sitting.md)
 - [ ] [a native device with no push token row now says why, and registers again (production, after the `1.7.0` stable)](backlog.d/reading-owed-a-device-with-no-push-token-now-says-so.md)
 - [ ] [an association post's writer, drawn small under its name for its moderators (2026-11-17)](backlog.d/reading-owed-association-post-writer-line.md)
+- [ ] [a ring's end no longer names the conversation, and still stops the ring (2026-11-17)](backlog.d/reading-owed-call-ring-end-carries-no-conversation.md)
 - [ ] [the repair of a rewound sender walks to the member that holds the messages (2026-11-17)](backlog.d/reading-owed-heal-repair-walks-to-the-holder.md)
 - [ ] [the iPhone's one seed mirror keeps the extension's seeds through a foreground (2026-11-17)](backlog.d/reading-owed-ios-seed-mirror-one-copy.md)
 - [ ] [live moderation: the three broadcaster pushes, the withdrawal lift and the lives switch](backlog.d/reading-owed-live-moderation-pushes-lift-and-the-lives-switch.md)
@@ -120,6 +120,10 @@ earliest version, as a checklist.
 - [ ] [removing a login row that names an unlisted device erases that machine (2026-11-17)](backlog.d/reading-owed-removing-a-login-row-naming-an-unlisted-device-erases-that-machine.md)
 
 ## 1.7.1
+
+**P1 - security, or a user-facing path that is broken**
+
+- [P1 - push payloads carry nothing for Google and Apple (owner, recorded 2026-11-01; decided and built 2026-11-02, switch OFF; raised from P2 on 2026-11-10 by principle 1 of the charter)](backlog.d/push-payloads-carry-nothing-for-google-and-apple.md)
 
 **Chantiers, decisions and questions (no severity)**
 
