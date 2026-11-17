@@ -35,6 +35,7 @@ import { SeatEviction } from '../entities/seat-eviction.entity';
 import { JoinAskPush } from '../entities/join-ask-push.entity';
 import { RevokedDeviceGroup } from '../entities/revoked-device-group.entity';
 import { SentFrameReceipt } from '../entities/sent-frame-receipt.entity';
+import { UninvitedEntry } from '../entities/uninvited-entry.entity';
 import { MessagingService } from '../services/messaging.service';
 import { AppController } from '../app.controller';
 import { tombstoneGroups } from './group-purge';
@@ -110,6 +111,7 @@ const ENTITIES = [
   JoinAskPush,
   RevokedDeviceGroup,
   SentFrameReceipt,
+  UninvitedEntry,
 ];
 
 /** A throwaway schema on the test database, dropped afterwards. */

@@ -6077,6 +6077,12 @@
   "moderation_live_withdraw_account_invalid": "Le serveur ne reconnaît pas ce compte.",
   "moderation_live_withdraw_invalid": "Le serveur a refusé le motif ou les précisions.",
   "moderation_live_withdraw_error": "Impossible de retirer le droit. Réessayez.",
+  "moderation_live_lift_button": "Rétablir le droit",
+  "moderation_live_lift_prompt": "Rendre à {name} le droit de lancer des lives ? Une suspension en cours reste appliquée jusqu'à sa fin.",
+  "moderation_live_lift_done": "Le droit de diffuser a été rétabli.",
+  "moderation_live_lift_already": "Le droit de diffuser n'était plus retiré.",
+  "moderation_live_lift_forbidden": "Vous n'avez pas le droit de rétablir le droit de diffuser.",
+  "moderation_live_lift_error": "Impossible de rétablir le droit. Réessayez.",
   "moderation_live_prior_cuts": [
     {
       "declarations": ["input count", "local countPlural = count: plural"],
