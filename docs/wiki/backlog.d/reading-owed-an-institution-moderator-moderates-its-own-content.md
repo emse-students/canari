@@ -16,5 +16,6 @@ nothing renders it in a browser.
 members and grant "Moderer" to a test account (the box is offered); as that account, the admin shell
 opens on the moderation queue, a report on the institution's post is listed and the post hides and
 comes back from its menu; a student's comment under that post shows its bin. Then, as the same
-account, a mute of a student is refused with the "outside your spaces" wording. Any dev row written
+account, a mute of a student is refused with the "outside your spaces" wording, and where the
+institution governs a space, no pin control is offered on a post there (`bdePinsInSpaceSql`). Any dev row written
 goes to the harness's written-ids list. The admin shell staying shut, or the hide refused, is a FAIL.

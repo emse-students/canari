@@ -179,7 +179,7 @@ the table above defines it.
 - (P7) `mustHideAnonymousAuthor` (`SS/posts/posts.service.ts`).
 - (P8) `shapeListRow` and `toPublicPostFromEntity` delete `authorId` from every association post for every reader; `getHiddenPosts` selects the raw `p."authorId"` and the controller returns it unshaped.
 - (P9) `assertMayEdit` -> 403 `POST_EDIT_PUBLISHER_ONLY` (owner, 2026-11-02, [D23 amended](profiles-and-access.md#d23-amended---moderate-is-scoped-and-only-the-author-edits-a-post-2026-11-02)).
-- (P10) `SS/posts/space-pins.ts`: `MODERATE` in the BDE OF THE SPACE (owner: pinning is not moderating).
+- (P10) `SS/posts/space-pins.ts` `bdePinsInSpaceSql`: `MODERATE` in the BDE OF THE SPACE (owner: pinning is not moderating), its governor of type `association` (`governorIsAnAssociationSql`, 2026-11-17): an institution governing a space with no BDE pins nothing there (decision 3), the platform admin does. Asserted in `SS/posts/space-pins.integration.spec.ts`.
 - (P11) `SS/moderation/moderation.service.ts`, `createReport` - posts only.
 
 ### Comments (plain, anonymous, in an association's name)

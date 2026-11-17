@@ -1,5 +1,5 @@
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
-import { bdeStandingInSpaceSql } from '../spaces/bde';
+import { bdeStandingInSpaceSql, governorIsAnAssociationSql } from '../spaces/bde';
 import { isPinSpaceOfUserSql, postReachesSpaceSql } from '../spaces/reader-spaces';
 
 /**
@@ -26,7 +26,10 @@ export const SPACE_PIN_LIMIT = 3;
 
 /** 409 `code`: the space already shows {@link SPACE_PIN_LIMIT} pins - unpin one first. */
 export const SPACE_PIN_LIMIT_CODE = 'space_pin_limit';
-/** 403 `code`: the caller neither administers the platform nor holds `MODERATE` in this space's BDE. */
+/**
+ * 403 `code`: the caller neither administers the platform nor holds `MODERATE` in this space's BDE
+ * (an institution governing the space is no BDE there).
+ */
 export const SPACE_PIN_FORBIDDEN = 'space_pin_forbidden';
 /** 409 `code`: the post is not visible to this space's readers, so it cannot be promoted there. */
 export const POST_NOT_IN_SPACE = 'post_not_in_space';
@@ -53,10 +56,16 @@ export function postPinnableInSpaceSql(post: string, space: string): string {
 /**
  * User `user` (a SQL expression) holds the pin right in space row `space` AS A BDE: `MODERATE` in the
  * BDE governing that space. The platform admin is decided by the caller, before splicing this.
+ *
+ * The governor must be of type `association` (`governorIsAnAssociationSql`): an INSTITUTION governing
+ * a space with no BDE (WP-D1) answers for that space's agenda only, and is no BDE there (owner,
+ * 2026-11-15, decision 3; the pin decisions of 2026-11-03 name "le BDE" of the space). Such a space is
+ * pinned by the platform admin.
  */
 export function bdePinsInSpaceSql(user: string, space: string): string {
   return `EXISTS (SELECT 1 FROM association_members pin_member
-    WHERE ${bdeStandingInSpaceSql('pin_member', space, user, MODERATE)})`;
+    WHERE ${bdeStandingInSpaceSql('pin_member', space, user, MODERATE)}
+      AND ${governorIsAnAssociationSql(`${space}."bdeAssociationId"`)})`;
 }
 
 /**
