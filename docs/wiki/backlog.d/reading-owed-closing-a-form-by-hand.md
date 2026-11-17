@@ -15,3 +15,5 @@ The reading, on the `1.7.0` pre-release on dev, with two accounts:
    "Ce formulaire est ferme" and sends nothing; the link preview says "Ferme".
 3. The manager picks "Rouvrir": the badge goes and the second account can answer.
 4. In the editor, a closing date before the opening date is refused under the field and at the save.
+
+**Mi 9T (respondent) and one web seat (manager), 2026-11-17 (`1.7.0-alpha.7`, dev):** step 1 `PASS` (the menu swaps to "Rouvrir" at once; the "Ferme" badge shows once the list is re-entered); **step 2 FAILS on the member page**: the closed form is drawn open and refused only at "Envoyer" (`FORM_CLOSED`, "Ce formulaire est ferme." after the press) - filed as [a P3](p3-the-member-form-page-draws-a-form-a-manager-ended-as-open.md); the public page `/f/:id` was not read (no signed-out browser seat); step 3 `PASS` (after "Rouvrir" the answer was accepted, 201); step 4 (closing date before opening, web) not read. The entry stays until the P3 is fixed and step 2 and the public page are re-read.
