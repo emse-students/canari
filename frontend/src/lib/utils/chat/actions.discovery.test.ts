@@ -189,6 +189,7 @@ describe('discoverMissingGroups - the reads of one sweep leave together (weak-ne
       mlsService,
       userId: 'user-a',
       deviceKeyB64: '1234',
+      addMessageToChat: vi.fn().mockResolvedValue(undefined),
       conversations,
       saveConversation: vi.fn().mockResolvedValue(undefined),
       deleteConversation: vi.fn().mockResolvedValue(undefined),
@@ -213,6 +214,7 @@ describe('discoverMissingGroups - the reads of one sweep leave together (weak-ne
       mlsService,
       userId: 'user-a',
       deviceKeyB64: '1234',
+      addMessageToChat: vi.fn().mockResolvedValue(undefined),
       conversations,
       saveConversation: vi.fn().mockResolvedValue(undefined),
       deleteConversation: vi.fn().mockResolvedValue(undefined),
@@ -320,6 +322,7 @@ describe('discoverMissingGroups orphan cleanup', () => {
       mlsService,
       userId: 'user-a',
       deviceKeyB64: '1234',
+      addMessageToChat: vi.fn().mockResolvedValue(undefined),
       conversations,
       deleteConversation,
       saveConversation,
@@ -366,6 +369,7 @@ describe('discoverMissingGroups orphan cleanup', () => {
       mlsService,
       userId: 'user-a',
       deviceKeyB64: '1234',
+      addMessageToChat: vi.fn().mockResolvedValue(undefined),
       conversations,
       deleteConversation: vi.fn().mockResolvedValue(undefined),
       saveConversation,
@@ -418,6 +422,7 @@ describe('discoverMissingGroups orphan cleanup', () => {
       }),
       userId: 'user-a',
       deviceKeyB64: '1234',
+      addMessageToChat: vi.fn().mockResolvedValue(undefined),
       conversations,
       deleteConversation: vi.fn().mockResolvedValue(undefined),
       saveConversation,
@@ -426,6 +431,130 @@ describe('discoverMissingGroups orphan cleanup', () => {
 
     expect(log.mock.calls.map((c) => String(c[0])).join('\n')).not.toContain('relabelled');
     expect(saveConversation).not.toHaveBeenCalled();
+  });
+
+  // ONCE AN MLS FRAME DATED THE NAME, THE SERVER'S UNDATED LIST NO LONGER OVERRIDES IT (groupName.ts):
+  // the members' frames are the authority on a group's name, and the server's copy is going away.
+  // The disagreement is said once per name, not on every sweep.
+  it('leaves a name an MLS frame dated, and says so once across sweeps', async () => {
+    const conversations = new Map<string, Conversation>([
+      [
+        'g1',
+        {
+          id: 'g1',
+          contactName: 'g1',
+          name: 'Les ROOTz',
+          nameAt: Date.UTC(2026, 10, 17, 9, 0, 0),
+          messages: [],
+          lifecycle: 'active',
+          mlsStateHex: null,
+          conversationType: 'group',
+          imageMediaId: null,
+        },
+      ],
+    ]);
+    const saveConversation = vi.fn().mockResolvedValue(undefined);
+    const log = vi.fn();
+    const sweep = () =>
+      discoverMissingGroups({
+        mlsService: makeMls({
+          getUserGroups: vi
+            .fn()
+            .mockResolvedValue([
+              { groupId: 'g1', name: 'Groupe', isGroup: true, imageMediaId: null },
+            ]),
+          getLocalGroups: vi.fn().mockReturnValue(['g1']),
+        }),
+        userId: 'user-a',
+        deviceKeyB64: '1234',
+        addMessageToChat: vi.fn().mockResolvedValue(undefined),
+        conversations,
+        deleteConversation: vi.fn().mockResolvedValue(undefined),
+        saveConversation,
+        log,
+      });
+
+    await sweep();
+    await sweep();
+
+    expect(conversations.get('g1')?.name).toBe('Les ROOTz');
+    const said = log.mock.calls.map((c) => String(c[0]));
+    expect(said.join('\n')).not.toContain('relabelled');
+    expect(said.filter((l) => l.includes('names it differently'))).toHaveLength(1);
+    // The line carries no group name - only its length.
+    expect(said.join('\n')).not.toContain('Groupe');
+  });
+
+  // AN OWED SERVER COPY IS WRITTEN BY THE NEXT CONNECTION'S SWEEP, COMPARE-AND-SET (settleNameSync):
+  // only while the row holds the name and the server still holds the one it was renamed over. The
+  // whole matrix, the pending frame included, is serverGroupConversation.nameSync.test.ts.
+  describe('the server copy a rename still owes', () => {
+    const DATED = Date.UTC(2026, 10, 17, 9, 0, 0);
+    const owedRow = (extra: Partial<Conversation> = {}): Conversation => ({
+      id: 'g1',
+      contactName: 'g1',
+      name: 'Les ROOTz',
+      nameAt: DATED,
+      nameSync: { serverCopy: { name: 'Les ROOTz', from: 'Groupe' } },
+      messages: [],
+      lifecycle: 'active',
+      mlsStateHex: null,
+      conversationType: 'group',
+      imageMediaId: null,
+      ...extra,
+    });
+    const sweepWith = async (
+      row: Conversation,
+      renameGroup = vi.fn().mockResolvedValue(undefined)
+    ) => {
+      const conversations = new Map<string, Conversation>([['g1', row]]);
+      const log = vi.fn();
+      await discoverMissingGroups({
+        mlsService: makeMls({
+          getUserGroups: vi
+            .fn()
+            .mockResolvedValue([
+              { groupId: 'g1', name: 'Groupe', isGroup: true, imageMediaId: null },
+            ]),
+          getLocalGroups: vi.fn().mockReturnValue(['g1']),
+          renameGroup,
+          // This link's pull has drained the group, and the server's name read again is the list's.
+          isGroupDrained: vi.fn().mockReturnValue(true),
+          getGroupMeta: vi.fn().mockResolvedValue({ groupId: 'g1', name: 'Groupe', isGroup: true }),
+        }),
+        userId: 'user-a',
+        deviceKeyB64: '1234',
+        addMessageToChat: vi.fn().mockResolvedValue(undefined),
+        conversations,
+        deleteConversation: vi.fn().mockResolvedValue(undefined),
+        saveConversation: vi.fn().mockResolvedValue(undefined),
+        log,
+      });
+      return { row: conversations.get('g1')!, renameGroup, log };
+    };
+
+    it('writes it, clears it, and reports no disagreement the write has just ended', async () => {
+      const { row, renameGroup, log } = await sweepWith(owedRow());
+      expect(renameGroup).toHaveBeenCalledWith('g1', 'Les ROOTz');
+      expect('nameSync' in row).toBe(false);
+      expect(log.mock.calls.map((c) => String(c[0])).join('\n')).not.toContain(
+        'names it differently'
+      );
+    });
+
+    it('keeps it owed when the write fails again', async () => {
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const { row } = await sweepWith(owedRow(), vi.fn().mockRejectedValue(new Error('503')));
+      expect(row.nameSync?.serverCopy).toEqual({ name: 'Les ROOTz', from: 'Groupe' });
+    });
+
+    it('drops it, unwritten, once a later name superseded the one it was owed for', async () => {
+      const { row, renameGroup } = await sweepWith(
+        owedRow({ name: 'Plus tard', nameAt: DATED + 1 })
+      );
+      expect(renameGroup).not.toHaveBeenCalled();
+      expect('nameSync' in row).toBe(false);
+    });
   });
 
   // CONTROL: a DM whose stored label differs from the server row must NOT be relabelled. The
@@ -460,6 +589,7 @@ describe('discoverMissingGroups orphan cleanup', () => {
       }),
       userId: 'user-a',
       deviceKeyB64: '1234',
+      addMessageToChat: vi.fn().mockResolvedValue(undefined),
       conversations,
       deleteConversation: vi.fn().mockResolvedValue(undefined),
       saveConversation,
@@ -497,6 +627,7 @@ describe('discoverMissingGroups orphan cleanup', () => {
       mlsService,
       userId: 'user-a',
       deviceKeyB64: '1234',
+      addMessageToChat: vi.fn().mockResolvedValue(undefined),
       conversations,
       deleteConversation,
       log: vi.fn(),
@@ -534,6 +665,7 @@ describe('discoverMissingGroups orphan cleanup', () => {
       mlsService,
       userId: 'user-a',
       deviceKeyB64: '1234',
+      addMessageToChat: vi.fn().mockResolvedValue(undefined),
       conversations,
       deleteConversation,
       saveConversation,
@@ -573,6 +705,7 @@ describe('discoverMissingGroups orphan cleanup', () => {
       mlsService,
       userId: 'user-a',
       deviceKeyB64: '1234',
+      addMessageToChat: vi.fn().mockResolvedValue(undefined),
       conversations,
       deleteConversation,
       saveConversation,
@@ -608,6 +741,7 @@ describe('discoverMissingGroups orphan cleanup', () => {
       mlsService,
       userId: 'user-a',
       deviceKeyB64: '1234',
+      addMessageToChat: vi.fn().mockResolvedValue(undefined),
       conversations,
       deleteConversation,
       log: vi.fn(),
@@ -633,6 +767,7 @@ describe('discoverMissingGroups orphan cleanup', () => {
       mlsService,
       userId: 'user-a',
       deviceKeyB64: '1234',
+      addMessageToChat: vi.fn().mockResolvedValue(undefined),
       conversations,
       log: vi.fn(),
     });
@@ -672,6 +807,7 @@ describe('discoverMissingGroups orphan cleanup', () => {
       mlsService,
       userId: 'user-a',
       deviceKeyB64: '1234',
+      addMessageToChat: vi.fn().mockResolvedValue(undefined),
       conversations,
       deleteConversation,
       log: vi.fn(),
@@ -708,6 +844,7 @@ describe('discoverMissingGroups orphan cleanup', () => {
       mlsService,
       userId: 'user-a',
       deviceKeyB64: '1234',
+      addMessageToChat: vi.fn().mockResolvedValue(undefined),
       conversations,
       log,
     });
@@ -741,6 +878,7 @@ describe('discoverMissingGroups orphan cleanup', () => {
       mlsService,
       userId: 'user-a',
       deviceKeyB64: '1234',
+      addMessageToChat: vi.fn().mockResolvedValue(undefined),
       conversations,
       deleteConversation,
       log: vi.fn(),
@@ -771,6 +909,7 @@ describe('discoverMissingGroups orphan cleanup', () => {
       mlsService,
       userId: 'user-a',
       deviceKeyB64: '1234',
+      addMessageToChat: vi.fn().mockResolvedValue(undefined),
       conversations: new Map<string, Conversation>(),
       deleteConversation: vi.fn().mockResolvedValue(undefined),
       saveConversation: vi.fn().mockResolvedValue(undefined),
@@ -821,6 +960,7 @@ describe('discoverMissingGroups - a group with an exit still owed', () => {
       mlsService,
       userId: 'user-a',
       deviceKeyB64: '1234',
+      addMessageToChat: vi.fn().mockResolvedValue(undefined),
       conversations,
       log,
       storage: storageOwing([OWED]),
@@ -842,6 +982,7 @@ describe('discoverMissingGroups - a group with an exit still owed', () => {
       mlsService,
       userId: 'user-a',
       deviceKeyB64: '1234',
+      addMessageToChat: vi.fn().mockResolvedValue(undefined),
       conversations,
       log: vi.fn(),
       storage: storageOwing([]),
@@ -862,6 +1003,7 @@ describe('discoverMissingGroups - a group with an exit still owed', () => {
       mlsService,
       userId: 'user-a',
       deviceKeyB64: '1234',
+      addMessageToChat: vi.fn().mockResolvedValue(undefined),
       conversations,
       log: vi.fn(),
       storage: {
@@ -925,6 +1067,7 @@ describe('discoverMissingGroups - a 1v1 pending deletion must not block its repl
       mlsService: mlsWithPeer(),
       userId: 'user-a',
       deviceKeyB64: '1234',
+      addMessageToChat: vi.fn().mockResolvedValue(undefined),
       conversations,
       log: vi.fn(),
     });
@@ -957,6 +1100,7 @@ describe('discoverMissingGroups - a 1v1 pending deletion must not block its repl
       mlsService: mlsWithPeer(),
       userId: 'user-a',
       deviceKeyB64: '1234',
+      addMessageToChat: vi.fn().mockResolvedValue(undefined),
       conversations,
       log: vi.fn(),
     });
@@ -1006,6 +1150,7 @@ describe('discoverMissingGroups - a never-admitted conversation', () => {
       mlsService,
       userId: 'joiner',
       deviceKeyB64: '1234',
+      addMessageToChat: vi.fn().mockResolvedValue(undefined),
       conversations,
       saveConversation,
       deleteConversation,
@@ -1117,6 +1262,7 @@ describe('discoverMissingGroups - removed rows', () => {
       mlsService: mls,
       userId: 'user-a',
       deviceKeyB64: '1234',
+      addMessageToChat: vi.fn().mockResolvedValue(undefined),
       conversations,
       deleteConversation: vi.fn().mockResolvedValue(undefined),
       log,

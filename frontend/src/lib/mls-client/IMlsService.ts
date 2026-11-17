@@ -723,6 +723,15 @@ export type GroupMeta = {
   isGroup?: boolean;
   deletedAt?: string | null;
   /**
+   * The server's clock when it answered (ms), read from the HTTP `Date` header of the delivery
+   * service's own answer - a fact the server states, to the second, never this device's clock.
+   * Undefined when the answer was not the API's or carried no readable `Date` (a phone app reads it
+   * only once the service exposes the header, `main.ts`). What the rename sweep bounds a re-send by
+   * (`settleNameSync`): the receivers measure their bound on the server's clock, so only it proves a
+   * re-send would still be taken.
+   */
+  serverNow?: number;
+  /**
    * The community whose Graine key-distribution group this is, null on a conversation.
    *
    * THE DISCRIMINATOR A DESTRUCTIVE SWEEP NEEDS, carried from where it is already known. A

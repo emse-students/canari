@@ -319,7 +319,7 @@ service answers the preflight an `Authorization` header raises from the three We
 (`cors-origins.ts` in the Nest services, `chat_gateway_cors_layer`), measured from the Android origin for the
 whole cold start (0 warnings, every read answered). A cross-origin client sees only the safelisted response
 headers plus the exposed ones: the reads consume `Content-Type` and `Content-Length` (safelisted),
-`X-History-Head` (exposed by chat-delivery, and read by the MLS client, which keeps its own plugin `fetch`) and
+`X-History-Head` and `Date` (exposed by chat-delivery, and read by the MLS client, which keeps its own plugin `fetch`; `Date` is the server's clock a group row read states, `GroupMeta.serverNow`) and
 `Content-Disposition` (the XLSX exports, exposed by social-service with this change). A new response header a
 read depends on must be added to its service's `exposedHeaders`, or the phone reads `null`.
 
@@ -330,7 +330,7 @@ read depends on must be added to its service's `exposedHeaders`, or the phone re
 | The preflight names `Authorization` back. A `*` in `Access-Control-Allow-Headers` does NOT cover it (Fetch standard) | Nest: `corsOptions` in `apps/*/src/cors-origins.ts` leaves `allowedHeaders` unset, so `cors` mirrors the request (asserted in `cors-origins.spec.ts`). The chat gateway answered `*` and now mirrors (`AllowHeaders::mirror_request()`, test `names_back_the_authorization_header_a_bearer_read_preflights`): `GET /api/presence` carries a Bearer token |
 | The preflight is cached | `Access-Control-Max-Age: 7200` on the four Nest services and the gateway (Chromium caps it at 2 h, WebKit at 10 min). Without it Chromium kept a preflight 5 s per URL |
 | An error nginx makes ITSELF is readable | A 502/504 while a service restarts, or the 500 of a failed `auth_request` (maintenance included), carried no CORS header, so a native read got a `TypeError` - "unreachable" - where the status was an answer. `error_page 500/502/503/504` at server level now answers through `@api_error_<code>` with `Access-Control-Allow-Origin` mapped from an ALLOWLIST of the three WebView origins (`$api_error_cors_origin`). Gate: `.github/scripts/tests/api-error-cors.test.mjs`, which also holds the map equal to `TAURI_WEBVIEW_ORIGINS`. Checked with `nginx -t` and a container: a failed auth sub-request answers `500` with `Access-Control-Allow-Origin: http://tauri.localhost`, and nothing for a foreign origin |
-| The response headers a read consumes | `Content-Disposition` (social-service), `X-History-Head` (chat-delivery) |
+| The response headers a read consumes | `Content-Disposition` (social-service), `X-History-Head` and `Date` (chat-delivery) |
 
 Not covered by this repository: a 502 made by the HOST proxy in front of the container (the Portail-etu host's
 own nginx, the Cloudflare edge) while this container itself is down, which still reaches a native read as a

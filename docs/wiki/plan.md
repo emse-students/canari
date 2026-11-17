@@ -267,7 +267,6 @@ earliest version, as a checklist.
 **P3 - hygiene**
 
 - [P3 - a success-page poll during a retry is a second trigger of the self-caused cancel (review of #2210, 2026-10-21)](backlog.d/p3-a-success-page-poll-during-a-retry-is-a-second-trigger-of-the-self-caused.md)
-- [P3 - Names in the clear: conversation, community and salon names (user, 2026-10-21, not designed)](backlog.d/p3-names-in-the-clear-conversation-community-and-salon-names-user-2026-10-21.md)
 - [P3 - Nothing warns a manager whose free-amount bounds fall outside the payable range (review of #2208, 2026-10-21, not built)](backlog.d/p3-nothing-warns-a-manager-whose-free-amount-bounds-fall-outside-the-payable.md)
 - [P3 - while core-service is mid-deploy, a retry meeting an older core's `closed` is refused (review of #2215, 2026-10-21)](backlog.d/p3-while-core-service-is-mid-deploy-a-retry-meeting-an-older-core-s-closed-is.md)
 - [P3 - A device id is held by one account, checked before the insert and not by an index (2026-10-22)](backlog.d/p3-a-device-id-is-held-by-one-account-checked-before-the-insert-and-not-by-an.md)
