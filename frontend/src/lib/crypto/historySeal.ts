@@ -43,11 +43,14 @@ export interface HistorySealEngine {
 
 /**
  * A sealed answer that could not be sealed or opened, classified by the engine's CODE at the
- * boundary - so no caller reads a sentence to tell a forged answer from a broken bridge.
+ * boundary - so no caller reads a sentence to tell a forged answer from a broken bridge. Beyond the
+ * engine's own codes: `contract` is OUR engine failing (a rejection that is no known code - a broken
+ * bridge, a missing export), and `malformed-content` is bytes that opened under our ask to something
+ * that is not an answer's content (the answerer's fault, never ours).
  */
 export class HistorySealError extends Error {
   constructor(
-    readonly code: HistorySealCode | 'contract',
+    readonly code: HistorySealCode | 'contract' | 'malformed-content',
     detail: string
   ) {
     super(`[HISTORY_SEAL] ${code}: ${detail}`);
@@ -92,19 +95,20 @@ export function parseHistoryAnswerKey(raw: unknown): string | undefined {
 }
 
 /**
- * The AAD a sealed answer is bound to: the conversation, the ask, the asker and the ANSWERING
- * DEVICE (the one MLS verified on receipt). A sealed answer relayed by another member inside its
- * own MLS frame, replayed into another ask or another conversation, therefore does not open.
- * Identities compare case-insensitively everywhere in this protocol, so they are lowered here.
+ * The AAD a sealed answer is bound to: the conversation, the ask, the asker and the ANSWERER - its
+ * user AND device, as `digestIdentity` spells them, the identity the open ask counts its answerers
+ * by (`takeAddressedAsk`) and the one MLS verified on receipt. A sealed answer relayed by another
+ * member inside its own MLS frame, replayed into another ask or another conversation, therefore does
+ * not open. Identities compare case-insensitively everywhere in this protocol, so they are lowered.
  */
 export function historySealAad(
   groupId: string,
   requestId: string,
   asker: string,
-  answererDeviceId: string
+  answerer: string
 ): Uint8Array {
   return new TextEncoder().encode(
-    `canari-history-answer-v1|${groupId}|${requestId}|${asker.toLowerCase()}|${answererDeviceId.toLowerCase()}`
+    `canari-history-answer-v1|${groupId}|${requestId}|${asker.toLowerCase()}|${answerer.toLowerCase()}`
   );
 }
 
@@ -129,8 +133,9 @@ export async function sealHistoryContent(
 
 /**
  * Opens a sealed answer's content. Rejects with a {@link HistorySealError}: `refused` for bytes that
- * do not open under this ask, `malformed-sealed` for bytes that are no sealed answer, `contract` for
- * a plaintext that is not a JSON object (an honest answerer seals one).
+ * do not open under this ask, `malformed-sealed` for bytes that are no sealed answer,
+ * `malformed-content` for a plaintext that is not a JSON object (an honest answerer seals one), and
+ * `contract` when our own engine failed.
  */
 export async function openHistoryContent(
   engine: HistorySealEngine,
@@ -154,10 +159,10 @@ export async function openHistoryContent(
   try {
     content = JSON.parse(new TextDecoder().decode(plain));
   } catch {
-    throw new HistorySealError('contract', 'the opened content is not JSON');
+    throw new HistorySealError('malformed-content', 'the opened content is not JSON');
   }
   if (content === null || typeof content !== 'object' || Array.isArray(content)) {
-    throw new HistorySealError('contract', 'the opened content is not an object');
+    throw new HistorySealError('malformed-content', 'the opened content is not an object');
   }
   return content as Record<string, unknown>;
 }

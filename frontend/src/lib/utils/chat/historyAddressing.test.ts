@@ -3,6 +3,7 @@ import {
   MAX_OPEN_ASKS_PER_GROUP,
   openHistoryAskCount,
   boundAddressedMessages,
+  answerSecretOf,
   forgetHistoryAsks,
   noteHistoryAsk,
   noteJoinSolicited,
@@ -260,8 +261,8 @@ describe('every ask carries its own answer key, and keeps the secret that opens 
     expect(new Set(sent.map((a) => a.answerKey)).size).toBe(3);
     for (const { requestId, answerKey } of sent) {
       expect(parseHistoryAnswerKey(answerKey)).toBe(answerKey);
-      const taken = takeAddressedAsk(GROUP, requestId, ANSWERER, true);
-      expect(pairs(taken?.answerSecret, answerKey)).toBe(true);
+      expect(pairs(answerSecretOf(GROUP, requestId), answerKey)).toBe(true);
+      expect(takeAddressedAsk(GROUP, requestId, ANSWERER, true)?.keyed).toBe(true);
     }
   });
 
@@ -289,6 +290,56 @@ describe('every ask carries its own answer key, and keeps the secret that opens 
 
   it('the join push is an ask with no key', () => {
     noteJoinSolicited(GROUP, ASKED_AT);
-    expect(takeAddressedAsk(GROUP, undefined, ANSWERER, true)?.answerSecret).toBeNull();
+    expect(takeAddressedAsk(GROUP, undefined, ANSWERER, true)?.keyed).toBe(false);
+  });
+});
+
+/**
+ * The secret an ask keeps is OVERWRITTEN the moment the ask lets it go (review of #3775): JS frees
+ * nothing on demand, so a secret dropped from the map would otherwise linger until collected.
+ */
+describe('a kept answer secret is wiped when its ask lets it go', () => {
+  beforeEach(() => forgetHistoryAsks());
+  const DIGEST = { kind: 'digest' as const, since: 0, askedAt: ASKED_AT };
+  const zeroed = (secret: Uint8Array) => secret.every((b) => b === 0);
+  const secret = () => crypto.getRandomValues(new Uint8Array(32)).map((b) => b | 1);
+
+  it('when the ask is closed by its last answerer', () => {
+    const kept = secret();
+    noteHistoryAsk(GROUP, 'req-a', DIGEST, kept);
+    takeAddressedAsk(GROUP, 'req-a', 'bob:p1', true);
+    expect(zeroed(kept)).toBe(false);
+    takeAddressedAsk(GROUP, 'req-a', 'carol:p2', true);
+    expect(zeroed(kept)).toBe(true);
+  });
+
+  it('when the same request id is noted again', () => {
+    const first = secret();
+    noteHistoryAsk(GROUP, 'req-a', DIGEST, first);
+    noteHistoryAsk(GROUP, 'req-a', DIGEST, secret());
+    expect(zeroed(first)).toBe(true);
+  });
+
+  it('when the ask is evicted as the oldest', () => {
+    const oldest = secret();
+    noteHistoryAsk(GROUP, 'req-0', DIGEST, oldest);
+    for (let i = 1; i <= MAX_OPEN_ASKS_PER_GROUP; i++)
+      noteHistoryAsk(GROUP, `req-${i}`, DIGEST, null);
+    expect(zeroed(oldest)).toBe(true);
+  });
+
+  it('when every ask is forgotten', () => {
+    const kept = secret();
+    noteHistoryAsk(GROUP, 'req-a', DIGEST, kept);
+    forgetHistoryAsks();
+    expect(zeroed(kept)).toBe(true);
+  });
+
+  it('hands out a COPY, which closing the ask does not wipe from under an open in flight', () => {
+    const kept = secret();
+    noteHistoryAsk(GROUP, 'req-a', DIGEST, kept);
+    const copy = answerSecretOf(GROUP, 'req-a');
+    forgetHistoryAsks();
+    expect(copy && !zeroed(copy)).toBe(true);
   });
 });

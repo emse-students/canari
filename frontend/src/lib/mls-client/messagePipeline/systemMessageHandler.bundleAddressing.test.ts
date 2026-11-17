@@ -501,6 +501,8 @@ describe('history_bundle - an answer sealed to our ask', () => {
     deliveryMeta: { channel: 'live', addressed: true, senderDeviceId: ANSWERER_DEVICE },
   };
   const TO_ME = digestIdentity(ME, MY_DEVICE);
+  /** The answerer as the seal binds it: its user AND its device (`digestIdentity`). */
+  const ANSWERER = digestIdentity('peer', ANSWERER_DEVICE);
   const ASKED_AT = 1_700_000_000_000;
   const REQUEST = 'req-00000001';
 
@@ -512,7 +514,7 @@ describe('history_bundle - an answer sealed to our ask', () => {
   /** Opens our ask with a key, and seals `content` the way an answerer bound to `aad` would. */
   async function sealedAnswer(
     content: Record<string, unknown>,
-    aad = historySealAad(GROUP, REQUEST, TO_ME, ANSWERER_DEVICE)
+    aad = historySealAad(GROUP, REQUEST, TO_ME, ANSWERER)
   ): Promise<string> {
     const key = await mintHistoryAnswerKey(sealEngine);
     noteHistoryAsk(GROUP, REQUEST, { kind: 'digest', since: 0, askedAt: ASKED_AT }, key.secret);
@@ -542,7 +544,7 @@ describe('history_bundle - an answer sealed to our ask', () => {
   it('refuses at error a sealed answer bound to ANOTHER answering device - a relayed answer', async () => {
     const sealed = await sealedAnswer(
       { messages: [BUNDLE_MSG] },
-      historySealAad(GROUP, REQUEST, TO_ME, 'another-member-device')
+      historySealAad(GROUP, REQUEST, TO_ME, digestIdentity('peer', 'another-device'))
     );
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const ctx = makeCtx(ADDRESSED);
@@ -558,6 +560,94 @@ describe('history_bundle - an answer sealed to our ask', () => {
     error.mockRestore();
   });
 
+  it('refuses a sealed answer bound to the same device id under ANOTHER user - the AAD names both', async () => {
+    const sealed = await sealedAnswer(
+      { messages: [BUNDLE_MSG] },
+      historySealAad(GROUP, REQUEST, TO_ME, digestIdentity('mallory', ANSWERER_DEVICE))
+    );
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const ctx = makeCtx(ADDRESSED);
+
+    await handleSystemEvent(
+      'history_bundle',
+      { to: TO_ME, requestId: REQUEST, last: true, sealed },
+      ctx as any
+    );
+
+    expect(ctx.batchAddMessages).not.toHaveBeenCalled();
+    expect(lines(error, 'does not open under our ask (refused)')).toHaveLength(1);
+    error.mockRestore();
+  });
+
+  it('bytes that do not open take NO answerer slot - the honest answers after them still land', async () => {
+    const key = await mintHistoryAnswerKey(sealEngine);
+    noteHistoryAsk(GROUP, REQUEST, { kind: 'digest', since: 0, askedAt: ASKED_AT }, key.secret);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    // Two forgeries from two devices: under take-then-open they would fill both answerer slots.
+    for (const device of ['forger-1', 'forger-2']) {
+      const forged = await sealHistoryContent(
+        sealEngine,
+        key.answerKey,
+        historySealAad(GROUP, REQUEST, TO_ME, digestIdentity('peer', 'not-' + device)),
+        { messages: [{ ...BUNDLE_MSG, id: 'forged-' + device }] }
+      );
+      await handleSystemEvent(
+        'history_bundle',
+        { to: TO_ME, requestId: REQUEST, last: false, sealed: forged },
+        makeCtx({ deliveryMeta: { ...ADDRESSED.deliveryMeta, senderDeviceId: device } }) as any
+      );
+    }
+    const honest = await sealHistoryContent(
+      sealEngine,
+      key.answerKey,
+      historySealAad(GROUP, REQUEST, TO_ME, ANSWERER),
+      { messages: [BUNDLE_MSG] }
+    );
+    const ctx = makeCtx(ADDRESSED);
+
+    await handleSystemEvent(
+      'history_bundle',
+      { to: TO_ME, requestId: REQUEST, last: true, sealed: honest },
+      ctx as any
+    );
+
+    expect(lines(error, 'does not open under our ask')).toHaveLength(2);
+    const added = (ctx.batchAddMessages.mock.calls[0][0] as Array<{ messageId: string }>).map(
+      (m) => m.messageId
+    );
+    expect(added).toEqual(['m1']);
+    error.mockRestore();
+  });
+
+  it('OUR engine failing to open is said apart from bytes that do not open - a defect of this build', async () => {
+    const key = await mintHistoryAnswerKey(sealEngine);
+    noteHistoryAsk(GROUP, REQUEST, { kind: 'digest', since: 0, askedAt: ASKED_AT }, key.secret);
+    const sealed = await sealHistoryContent(
+      sealEngine,
+      key.answerKey,
+      historySealAad(GROUP, REQUEST, TO_ME, ANSWERER),
+      { messages: [BUNDLE_MSG] }
+    );
+    const broken = {
+      ...sealEngine,
+      open: () => Promise.reject(new Error('the bridge is gone')),
+    };
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const ctx = makeCtx(ADDRESSED);
+    ctx.mlsService.historySealEngine = () => broken;
+
+    await handleSystemEvent(
+      'history_bundle',
+      { to: TO_ME, requestId: REQUEST, last: true, sealed },
+      ctx as any
+    );
+
+    expect(ctx.batchAddMessages).not.toHaveBeenCalled();
+    expect(lines(error, '[HISTORY_SEAL] OUR engine failed to open')).toHaveLength(1);
+    expect(lines(error, 'does not open under our ask')).toHaveLength(0);
+    error.mockRestore();
+  });
+
   it('a sealed answer still holds to the bound of its ask', async () => {
     const key = await mintHistoryAnswerKey(sealEngine);
     noteHistoryAsk(
@@ -569,7 +659,7 @@ describe('history_bundle - an answer sealed to our ask', () => {
     const sealed = await sealHistoryContent(
       sealEngine,
       key.answerKey,
-      historySealAad(GROUP, REQUEST, TO_ME, ANSWERER_DEVICE),
+      historySealAad(GROUP, REQUEST, TO_ME, ANSWERER),
       { messages: [BUNDLE_MSG, { ...BUNDLE_MSG, id: 'newer', timestamp: 2000 }] }
     );
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});

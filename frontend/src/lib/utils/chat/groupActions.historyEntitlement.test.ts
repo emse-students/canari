@@ -28,6 +28,10 @@ import {
 } from '$lib/mls-client/mlsDeliveryApi';
 import type { FrameDelivery } from '$lib/mls-client/frameDelivery';
 import { historySealAad, mintHistoryAnswerKey, openHistoryContent } from '$lib/crypto/historySeal';
+import { digestIdentity } from './historyDigestRendezvous';
+
+/** This device as the seal binds an answerer: its user and its device (`digestIdentity`). */
+const ANSWERER = digestIdentity('alice-answering', 'alice-answering-device');
 
 /**
  * A REMOVE HOLDS AGAINST A LATER RE-ADD (user, 2026-10-14).
@@ -209,7 +213,7 @@ describe('a Remove holds against a later re-add - every history sender withholds
   /**
    * Option B (history-answer-addressing.md, "Sealing the answer to the asker"): an ask that carried
    * a key is answered with its CONTENT sealed to it - the routing stays in clear, and the content
-   * opens only with the asker's secret, bound to this answering device.
+   * opens only with the asker's secret, bound to this answerer (its user and device).
    */
   it('an addressed answer to a keyed ask is SEALED to it, and opens to what the reader may read', async () => {
     const mlsService = stubWithBobsWindow();
@@ -220,7 +224,12 @@ describe('a Remove holds against a later re-add - every history sender withholds
       GROUP,
       STORE.map((m) => m.id),
       { storage: storageWith(STORE), deviceKeyB64: 'k', mlsService, log: vi.fn() },
-      { to: BOB_NEW_DEVICE, since: 0, requestId: ASK, answerKey: key.answerKey }
+      {
+        to: BOB_NEW_DEVICE,
+        since: 0,
+        requestId: ASK,
+        seal: { answerKey: key.answerKey, answerer: ANSWERER },
+      }
     );
 
     const [frame] = sentPayloads(mlsService) as Array<Record<string, unknown>>;
@@ -233,13 +242,18 @@ describe('a Remove holds against a later re-add - every history sender withholds
     const content = await openHistoryContent(
       engine,
       key.secret,
-      historySealAad(GROUP, ASK, BOB_NEW_DEVICE, mlsService.getDeviceId()),
+      historySealAad(GROUP, ASK, BOB_NEW_DEVICE, ANSWERER),
       frame.sealed as string
     );
     expect((content.messages as Array<{ id: string }>).map((m) => m.id)).toEqual(EXPECTED_KEPT);
   });
 
-  it('a BROADCAST answer (a server that predates addressing) is not sealed, even to a keyed ask', async () => {
+  /**
+   * The server cannot switch the seal off (review of #3775): a keyed ask proves its asker seals, so
+   * a server saying it does not address is not taken at its word - the answer is NOTHING, never the
+   * content broadcast in clear to every member.
+   */
+  it('a keyed ask the server would have answered by BROADCAST is answered nothing, at error', async () => {
     const mlsService = stubWithBobsWindow();
     vi.mocked(mlsService.getAddressedAnswersSupported).mockResolvedValue(false);
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -249,11 +263,39 @@ describe('a Remove holds against a later re-add - every history sender withholds
       GROUP,
       STORE.map((m) => m.id),
       { storage: storageWith(STORE), deviceKeyB64: 'k', mlsService, log: vi.fn() },
-      { to: ALICE, since: 0, requestId: ASK, answerKey: key.answerKey }
+      {
+        to: ALICE,
+        since: 0,
+        requestId: ASK,
+        seal: { answerKey: key.answerKey, answerer: ANSWERER },
+      }
     );
 
-    expect(sentIds(mlsService)).toEqual(EXPECTED_KEPT);
-    expect((sentPayloads(mlsService)[0] as Record<string, unknown>).sealed).toBeUndefined();
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(error.mock.calls.join(' ')).toContain('answering nothing rather than unsealed');
+    error.mockRestore();
+  });
+
+  it('a keyed RANGE ask the server would have answered by broadcast is answered nothing too', async () => {
+    const mlsService = stubWithBobsWindow();
+    vi.mocked(mlsService.getAddressedAnswersSupported).mockResolvedValue(false);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const key = await mintHistoryAnswerKey(mlsService.historySealEngine());
+
+    await sendHistoryRangeBundle(
+      GROUP,
+      { storage: storageWith(STORE), deviceKeyB64: 'k', mlsService, log: vi.fn() },
+      {
+        to: ALICE,
+        before: T_BACK + 10,
+        limit: 50,
+        requestId: ASK,
+        seal: { answerKey: key.answerKey, answerer: ANSWERER },
+      }
+    );
+
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(error.mock.calls.join(' ')).toContain('answering nothing rather than unsealed');
     error.mockRestore();
   });
 
@@ -271,7 +313,12 @@ describe('a Remove holds against a later re-add - every history sender withholds
       GROUP,
       STORE.map((m) => m.id),
       { storage: storageWith(STORE), deviceKeyB64: 'k', mlsService, log: vi.fn() },
-      { to: ALICE, since: 0, requestId: ASK, answerKey: key.answerKey }
+      {
+        to: ALICE,
+        since: 0,
+        requestId: ASK,
+        seal: { answerKey: key.answerKey, answerer: ANSWERER },
+      }
     );
 
     expect(mlsService.sendMessage).not.toHaveBeenCalled();

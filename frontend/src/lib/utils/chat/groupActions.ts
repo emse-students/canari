@@ -897,7 +897,7 @@ function bundleContent(
 
 /**
  * Builds one SEALED `history_bundle` frame: the routing in clear, the content sealed to the ask's
- * `answerKey` and bound to the conversation, the ask, the asker and this answering device
+ * `answerKey` and bound to the conversation, the ask, the asker and this answerer (its user and device)
  * (`historySealAad`). Rejects with a `HistorySealError` when the engine cannot seal.
  */
 async function sealedBundleFrame(
@@ -907,15 +907,15 @@ async function sealedBundleFrame(
   mlsService: IMlsService,
   opts: {
     state?: ConversationHistoryState;
-    answer: { requestId: string; answerKey: string };
+    answer: { requestId: string; seal: AnswerSeal };
     last: boolean;
   }
 ): Promise<Uint8Array> {
   const { state, answer, last } = opts;
   const sealed = await sealHistoryContent(
     mlsService.historySealEngine(),
-    answer.answerKey,
-    historySealAad(groupId, answer.requestId, to, mlsService.getDeviceId()),
+    answer.seal.answerKey,
+    historySealAad(groupId, answer.requestId, to, answer.seal.answerer),
     bundleContent(messages, { state, join: false })
   );
   return encodeAppMessage(
@@ -934,10 +934,16 @@ type BundleAnswer =
        * The public key the ask carried (base64), when it carried one: an ADDRESSED answer is then
        * sealed to it. Absent from an asker that predates sealing.
        */
-      answerKey?: string;
+      seal?: AnswerSeal;
       join?: never;
     }
-  | { join: true; requestId?: never; answerKey?: never };
+  | { join: true; requestId?: never; seal?: never };
+
+/**
+ * What an answer to a KEYED ask is sealed with: the key the ask carried (base64) and THIS answerer's
+ * identity (`digestIdentity`: user and device), which the seal is bound to.
+ */
+export type AnswerSeal = { answerKey: string; answerer: string };
 
 /** What a conversation carries beyond its messages, and what every bundle restates. */
 type ConversationHistoryState = {
@@ -1325,11 +1331,21 @@ async function sendBundleChunks(
     // every other member; the seal keeps it from them even if the server hands it on. A broadcast
     // (a server that predates addressed answers) stays as it was - its readers are everyone.
     let bytes: Uint8Array;
-    if (addressed && answer.answerKey !== undefined) {
+    if (answer.seal !== undefined && !addressed) {
+      // AN ASK THAT CARRIED A KEY IS ANSWERED SEALED OR NOT AT ALL (review of #3775). The key proves
+      // the asker seals, so a broadcast here could only mean the server said it does not address -
+      // and taking that word would let the server switch the seal off and hand the answer to the
+      // whole group. Nothing is sent in its place.
+      console.error(
+        `[HISTORY_SEAL] ${to} asked with a key in ${groupId.slice(0, 8)}… but the server would broadcast the answer - answering nothing rather than unsealed to every member`
+      );
+      return sent === 0 ? { kind: 'refused' } : { kind: 'sent', count: sent };
+    }
+    if (answer.seal !== undefined) {
       try {
         bytes = await sealedBundleFrame(groupId, payload, to, mlsService, {
           state,
-          answer: { requestId: answer.requestId, answerKey: answer.answerKey },
+          answer: { requestId: answer.requestId, seal: answer.seal },
           last,
         });
       } catch (e) {
@@ -1352,7 +1368,7 @@ async function sendBundleChunks(
       );
       sent += payload.length;
       log(
-        `[HISTORY_BUNDLE] Chunk ${chunkNo}/${totalChunks} - ${payload.length} msg → ${groupId.slice(0, 8)}…${addressed ? ` (addressed to ${to}${answer.answerKey !== undefined ? ', sealed' : ''})` : ' (broadcast)'}`
+        `[HISTORY_BUNDLE] Chunk ${chunkNo}/${totalChunks} - ${payload.length} msg → ${groupId.slice(0, 8)}…${addressed ? ` (addressed to ${to}${answer.seal !== undefined ? ', sealed' : ''})` : ' (broadcast)'}`
       );
     } catch (e) {
       if (e instanceof AddressedUnsupportedError) {
@@ -1906,8 +1922,8 @@ export async function sendHistoryBundleForIds(
     since: number;
     /** The `requestId` of the ask this answers - echoed so the asker can accept it addressed. */
     requestId: string;
-    /** The `answerKey` the ask carried, if any - an addressed answer is sealed to it. */
-    answerKey?: string;
+    /** The ask carried an `answerKey`: the answer is sealed to it, or not sent. */
+    seal?: AnswerSeal;
     /**
      * Also send every TOMBSTONE this device holds in the window, whether the asker lacks the id or
      * not - the answer to a digest. The digest names ids only, while the state key that asked for
@@ -1920,7 +1936,7 @@ export async function sendHistoryBundleForIds(
   }
 ): Promise<void> {
   const { storage, mlsService, log } = deps;
-  const { to, chunkSize = 200, since, requestId, answerKey, withTombstones = false } = opts;
+  const { to, chunkSize = 200, since, requestId, seal, withTombstones = false } = opts;
   if (followerTabSendsNoHistoryFrame('bundle for ids', groupId, log)) return;
   if (!storage) {
     log(`[HISTORY_BUNDLE] No storage - cannot serve ${groupId.slice(0, 8)}…`);
@@ -1958,7 +1974,7 @@ export async function sendHistoryBundleForIds(
     groupId,
     selected,
     { mlsService, log },
-    { chunkSize, to, state, answer: { requestId, answerKey } }
+    { chunkSize, to, state, answer: { requestId, seal } }
   );
   if (outcome.kind !== 'sent') return;
   log(
@@ -2012,12 +2028,12 @@ export async function sendHistoryRangeBundle(
     since?: number;
     /** The `requestId` of the range ask this answers. */
     requestId: string;
-    /** The `answerKey` the range ask carried, if any - an addressed answer is sealed to it. */
-    answerKey?: string;
+    /** The range ask carried an `answerKey`: the answer is sealed to it, or not sent. */
+    seal?: AnswerSeal;
   }
 ): Promise<void> {
   const { storage, mlsService, log } = deps;
-  const { to, before, limit, since = 0, requestId, answerKey } = opts;
+  const { to, before, limit, since = 0, requestId, seal } = opts;
   if (followerTabSendsNoHistoryFrame('range bundle', groupId, log)) return;
   if (!storage) {
     log(`[HISTORY_RANGE] No storage - cannot serve ${groupId.slice(0, 8)}…`);
@@ -2047,7 +2063,7 @@ export async function sendHistoryRangeBundle(
     groupId,
     page,
     { mlsService, log },
-    { chunkSize: 200, to, state, answer: { requestId, answerKey } }
+    { chunkSize: 200, to, state, answer: { requestId, seal } }
   );
   if (outcome.kind !== 'sent') return;
   log(

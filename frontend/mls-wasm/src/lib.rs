@@ -242,10 +242,12 @@ pub fn seal_history_answer(
         .map_err(|e| JsValue::from_str(e.code()))
 }
 
-/// Opens a sealed history answer with the ask's secret. Rejects with the engine's CODE.
+/// Opens a sealed history answer with the ask's secret. Rejects with the engine's CODE. The secret
+/// is taken OWNED, so the copy wasm-bindgen makes in linear memory is zeroized on return rather than
+/// freed with the bytes still in it.
 #[wasm_bindgen]
-pub fn open_history_answer(secret: &[u8], aad: &[u8], sealed: &[u8]) -> Result<Vec<u8>, JsValue> {
-    mls_core::history_seal::open_history_answer(secret, aad, sealed)
+pub fn open_history_answer(secret: Vec<u8>, aad: &[u8], sealed: &[u8]) -> Result<Vec<u8>, JsValue> {
+    mls_core::history_seal::open_history_answer_owned(secret, aad, sealed)
         .map_err(|e| JsValue::from_str(e.code()))
 }
 

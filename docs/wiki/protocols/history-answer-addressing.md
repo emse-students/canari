@@ -268,9 +268,9 @@ trust in the server.
    `history_range` carry `answerKey`: the base64 public half of an X25519 pair minted for THAT ask
    (`mintHistoryAnswerKey`, `$lib/crypto/historySeal.ts`), inside the asker's MLS-signed frame - so
    the key is authenticated as the asking device's by the signature that authenticates the ask. The
-   secret is kept beside the open ask (`noteHistoryAsk`, `historyAddressing.ts`), in memory, and
-   dies with it: there is nothing to store, rotate or back up, and a reloaded page, which accepts no
-   answer anyway (rule 5), holds none.
+   secret is kept beside the open ask (`noteHistoryAsk`, `historyAddressing.ts`), in memory only:
+   there is nothing to store, rotate or back up, and a reloaded page, which accepts no answer anyway
+   (rule 5), holds none. See "The secret's lifetime" below for what overwrites it.
 2. **An engine that cannot mint a key sends no ask** (`askKeyOrNothing`, at error). An ask without a
    key would invite the unsealed answer this device asked not to receive; the next reconciliation
    asks again, nothing retries.
@@ -279,19 +279,54 @@ trust in the server.
    carries the rest (the messages, and the conversation state an answer restates) as `sealed`. The
    key is checked where the ask is parsed (`parseHistoryAnswerKey`: the base64 of 32 bytes), so a
    malformed one reaches no engine and the ask reads as one from an older build. An engine that
-   cannot seal answers NOTHING (at error), never the content in clear. A BROADCAST answer (a server
-   that predates addressed answers, rule 2) is not sealed: its readers are everyone by design.
-4. **The receiver opens it with the ask's secret** (`systemMessageHandler.ts`, after rule 5 found
-   the ask). Bytes that do not open are refused at error and not ingested
+   cannot seal answers NOTHING (at error), never the content in clear. **A keyed ask is answered
+   sealed or not at all** (review of #3775): when the server says it does not address history
+   answers (`getAddressedAnswersSupported` false, rule 2's legacy broadcast), the answer to a keyed
+   ask is NOTHING, logged at error (`[HISTORY_SEAL] ... answering nothing rather than unsealed to
+   every member`). The key proves the asker seals, so it reached a build that addresses; taking the
+   server's word that it cannot would let the server switch the seal off and hand the content to
+   every member. Only an ask with no key (an older asker) may still get the broadcast.
+4. **The receiver opens it with the ask's secret BEFORE rule 5 takes an answerer slot**
+   (`systemMessageHandler.ts`, `answerSecretOf` then `takeAddressedAsk`): bytes that do not open
+   consume no slot, so a member relaying garbage cannot crowd the honest answer out of the two an ask
+   accepts. Bytes that do not open are refused at error and not ingested
    (`[HISTORY_ADDRESSED] REFUSED a sealed history_bundle ... does not open under our ask (<code>)`).
+   OUR engine failing (code `contract`: a rejection that is no engine code, a broken bridge) is
+   said apart, as a defect of this build (`[HISTORY_SEAL] OUR engine failed to open ...`); an
+   opened plaintext that is no answer content is `malformed-content`, the answerer's fault.
    A sealed answer to an ask that carried no key (the join push) and a sealed BROADCAST are refused
    the same way: nothing honest produces either. Everything rule 5 says still holds on the opened
    content - the bound of the ask, add-only.
-5. **The binding (AAD)** is `canari-history-answer-v1|<group>|<requestId>|<asker>|<answering
-   device>`, identities lowered (`historySealAad`, the one builder both sides call). The answering
-   device is the one MLS verified on receipt (`senderDeviceId`). So a member that relays another's
-   sealed answer inside its own MLS frame, or replays it into another ask or another conversation,
-   hands over bytes that do not open.
+5. **The binding (AAD)** is `canari-history-answer-v1|<group>|<requestId>|<asker>|<answerer>`,
+   identities lowered (`historySealAad`, the one builder both sides call). The answerer is its user
+   AND device as `digestIdentity` spells them - the identity rule 5 counts answerers by - built on
+   receipt from the MLS-verified sender and `senderDeviceId`, so a device id alone (which another
+   user could carry) binds nothing. So a member that relays another's sealed answer inside its own
+   MLS frame, or replays it into another ask or another conversation, hands over bytes that do not
+   open.
+
+### The secret's lifetime
+
+The secret is OVERWRITTEN (`fill(0)`), not merely dropped, whenever its ask lets it go: closed by
+its last answerer, replaced by a re-noted request id, evicted as the oldest open ask, or forgotten
+with every ask on a session reset (`forgetHistoryAsks`, which also re-arms the once-per-session
+`[LEGACY]` notice). The receiver opens with a COPY (`answerSecretOf`), wiped when the open returns,
+so closing the ask mid-open cannot pull the bytes from under it. On the engine side, `mls-core`
+holds the minted secret in `Zeroizing`. On the web, the WASM `open_history_answer` takes the secret
+OWNED (`open_history_answer_owned`), so its copy in linear memory is zeroized on return. On the
+phones it crosses the Tauri bridge as base64: minting returns it once as a string (a JS string cannot
+be overwritten - the one copy this design cannot wipe, collected like any other), and opening hands
+it back, where `open_history_answer_with_b64_secret` holds the string and the decoded bytes in
+`Zeroizing` so neither outlives the call.
+
+### What members still see
+
+The seal hides the CONTENT from a device the server misroutes the frame to. It does not hide that an
+exchange took place. Every member that receives the frame, or the ask, still reads: the ask itself
+(its `requestId`, its kind, its bounds - `since`, `before`, `limit` or the ids it pulls - and the
+public `answerKey`), and on the answer `to`, `requestId`, `last` and the LENGTH of `sealed` (so,
+roughly, how much was answered). Addressing keeps all of it from the members the server routes
+correctly; nothing here hides it from one it misroutes to.
 
 ### The crypto
 
@@ -344,13 +379,16 @@ push can then be retired. Its planning is the owner's call (the P1 entry says wh
   WASM engine: a relayed answer (another answering device), another ask, another conversation are
   refused; identities bind case-insensitively; non-sealed bytes are `malformed-sealed`.
 - client: `historyAddressing.test.ts` - every ask carries a distinct key paired with the secret kept
-  beside it; an engine that cannot mint sends no ask; the join ask holds no secret.
+  beside it; an engine that cannot mint sends no ask; the join ask holds no secret; the secret is
+  wiped on close, replace, eviction and forget, and the copy an open holds survives them.
 - client: `groupActions.historyEntitlement.test.ts` - an addressed answer to a keyed ask is sealed and
-  opens to exactly what its reader may read; a broadcast is not sealed; an engine that cannot seal
-  sends nothing.
+  opens to exactly what its reader may read; a keyed ask (digest, pull or range) the server would have
+  answered by broadcast is answered nothing, at error; an engine that cannot seal sends nothing.
 - client: `systemMessageHandler.bundleAddressing.test.ts` - a sealed answer is opened and ingested,
-  still held to its ask's bound; one bound to another answering device is refused; a sealed join push
-  and a sealed broadcast are refused; an unsealed answer to a keyed ask is ingested and said once.
+  still held to its ask's bound; one bound to another device, or to the same device id under another
+  user, is refused; bytes that do not open take no answerer slot; our engine failing is said apart
+  from bytes that do not open; a sealed join push and a sealed broadcast are refused; an unsealed
+  answer to a keyed ask is ingested and said once.
 - **Owed on the rig: GRP-ADDR-1**, now with the seal: A's new device logs its chunks `addressed to ...,
   sealed`, restores M1..Mn, and nothing logs a `REFUSED`.
 

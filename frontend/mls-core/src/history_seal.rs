@@ -188,6 +188,38 @@ pub fn open_history_answer(
         })
 }
 
+/// Opens with a secret handed over OWNED - the WASM export's shape, whose copy of the secret in linear
+/// memory is zeroized on return rather than freed with the bytes still in it (review of #3775).
+pub fn open_history_answer_owned(
+    secret: Vec<u8>,
+    aad: &[u8],
+    sealed: &[u8],
+) -> Result<Vec<u8>, HistorySealError> {
+    let secret = Zeroizing::new(secret);
+    open_history_answer(&secret, aad, sealed)
+}
+
+/// Opens with a secret that arrives as BASE64 - the Tauri bridge's shape. The string and the bytes it
+/// decodes to are zeroized on drop: the secret crossed the bridge as a string once (review of #3775),
+/// and nothing here keeps a copy of it beyond this call.
+pub fn open_history_answer_with_b64_secret(
+    secret_b64: String,
+    aad: &[u8],
+    sealed: &[u8],
+) -> Result<Vec<u8>, HistorySealError> {
+    use base64::Engine;
+    let secret_b64 = Zeroizing::new(secret_b64);
+    let secret = Zeroizing::new(
+        base64::engine::general_purpose::STANDARD
+            .decode(secret_b64.as_bytes())
+            .map_err(|_| {
+                log::warn!("[HISTORY_SEAL] refusing to open: the secret is not base64");
+                HistorySealError::MalformedSecretKey(0)
+            })?,
+    );
+    open_history_answer(&secret, aad, sealed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -258,6 +290,22 @@ mod tests {
         let a = seal_history_answer(&pair.public, AAD, b"past").unwrap();
         let b = seal_history_answer(&pair.public, AAD, b"past").unwrap();
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn a_base64_secret_opens_what_its_bytes_open() {
+        use base64::Engine;
+        let pair = history_answer_keypair().unwrap();
+        let sealed = seal_history_answer(&pair.public, AAD, b"past").unwrap();
+        let b64 = base64::engine::general_purpose::STANDARD.encode(pair.secret.as_slice());
+        assert_eq!(
+            open_history_answer_with_b64_secret(b64, AAD, &sealed).unwrap(),
+            b"past"
+        );
+        assert_eq!(
+            open_history_answer_with_b64_secret("not base64!".to_string(), AAD, &sealed),
+            Err(HistorySealError::MalformedSecretKey(0))
+        );
     }
 
     #[test]

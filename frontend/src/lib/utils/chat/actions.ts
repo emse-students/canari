@@ -2191,7 +2191,9 @@ export async function handleHistoryRequest(params: {
       limit: probe.limit,
       since: probe.since,
       requestId: probe.requestId,
-      answerKey: probe.answerKey,
+      ...(probe.answerKey !== undefined
+        ? { seal: { answerKey: probe.answerKey, answerer: selfIdentity } }
+        : {}),
     }).catch((e) => log(`[HISTORY_RANGE] Answer failed for ${short}...: ${String(e)}`));
     await ourCoverage(probe.since);
     return;

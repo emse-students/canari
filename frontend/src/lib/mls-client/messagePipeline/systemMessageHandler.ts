@@ -51,6 +51,7 @@ import type { RecordedAuthorship } from '$lib/crypto/messageAuthorship';
 import { noteIntegrityFinding } from '$lib/mls-client/integrityFindings';
 import {
   boundAddressedMessages,
+  answerSecretOf,
   parseHistoryRequestId,
   takeAddressedAsk,
 } from '$lib/utils/chat/historyAddressing';
@@ -1079,7 +1080,7 @@ export async function handleSystemEvent(
         to: puller,
         since,
         requestId,
-        answerKey,
+        ...(answerKey !== undefined ? { seal: { answerKey, answerer: me } } : {}),
       }).catch((e) => log(`[HISTORY_PULL] Answer failed: ${String(e).slice(0, 120)}`));
     });
     return true;
@@ -1405,6 +1406,43 @@ export async function handleSystemEvent(
       // credential, which it can only do when the envelope names one - so an answer naming none has
       // no device to close the ask for, and is refused.
       const answeringDevice = deliveryMeta.senderDeviceId;
+      // SEALED TO OUR ASK (option B, `$lib/crypto/historySeal`): an ask that carried a key is
+      // answered with its content sealed to it, and only the secret kept beside the ask opens it.
+      // OPENED BEFORE THE ASK IS TAKEN (review of #3775): bytes that do not open take no answerer
+      // slot, so a member relaying garbage cannot crowd out the honest answer.
+      const sealed = typeof data?.sealed === 'string' ? (data.sealed as string) : undefined;
+      if (
+        sealed !== undefined &&
+        addressee.toLowerCase() === me &&
+        answeringDevice &&
+        requestId !== undefined
+      ) {
+        const secret = answerSecretOf(convoKey, requestId);
+        if (secret) {
+          try {
+            const content = await openHistoryContent(
+              mlsService.historySealEngine(),
+              secret,
+              historySealAad(convoKey, requestId, me, digestIdentity(senderNorm, answeringDevice)),
+              sealed
+            );
+            incoming = Array.isArray(content.messages) ? (content.messages as BundleMsg[]) : [];
+          } catch (e) {
+            const code = e instanceof HistorySealError ? e.code : 'contract';
+            // At error, never ingested, and the two causes said apart: OUR engine failing is a
+            // defect of this build; bytes that do not open under our ask were sealed to another key
+            // or another context (a member relaying another's answer), or are no answer at all.
+            console.error(
+              code === 'contract'
+                ? `[HISTORY_SEAL] OUR engine failed to open a sealed history_bundle in ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)} - not ingested: ${String(e).slice(0, 160)}`
+                : `[HISTORY_ADDRESSED] REFUSED a sealed history_bundle in ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)} - it does not open under our ask (${code})`
+            );
+            return true;
+          } finally {
+            secret.fill(0);
+          }
+        }
+      }
       const taken =
         addressee.toLowerCase() === me && answeringDevice && (requestId !== undefined || claimsJoin)
           ? takeAddressedAsk(
@@ -1427,34 +1465,13 @@ export async function handleSystemEvent(
         );
         return true;
       }
-      // SEALED TO OUR ASK (option B, `$lib/crypto/historySeal`): an ask that carried a key is
-      // answered with its content sealed to it, and only the secret kept beside the ask opens it.
-      const sealed = typeof data?.sealed === 'string' ? (data.sealed as string) : undefined;
-      if (taken.answerSecret !== null && sealed !== undefined && requestId !== undefined) {
-        try {
-          const content = await openHistoryContent(
-            mlsService.historySealEngine(),
-            taken.answerSecret,
-            historySealAad(convoKey, requestId, me, answeringDevice ?? ''),
-            sealed
-          );
-          incoming = Array.isArray(content.messages) ? (content.messages as BundleMsg[]) : [];
-        } catch (e) {
-          // At error, never ingested: bytes that do not open under our ask were sealed to another
-          // key or another context (a member relaying another's answer), or are no answer at all.
-          const code = e instanceof HistorySealError ? e.code : 'contract';
-          console.error(
-            `[HISTORY_ADDRESSED] REFUSED a sealed history_bundle in ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)} - it does not open under our ask (${code})`
-          );
-          return true;
-        }
-      } else if (sealed !== undefined) {
+      if (sealed !== undefined && !taken.keyed) {
         // Nothing honest seals an answer to an ask that carried no key - the join push today.
         console.error(
           `[HISTORY_ADDRESSED] REFUSED a sealed history_bundle in ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)} - it answers a ${ask.kind} ask that carried no key`
         );
         return true;
-      } else if (taken.answerSecret !== null) {
+      } else if (sealed === undefined && taken.keyed) {
         // [LEGACY] An answerer that predates sealing answers our keyed ask in clear - still routed
         // to us alone (step A). Accepted until the floor passes the first stable that seals
         // (docs/wiki/legacy-compatibility.md, "an unsealed answer to a keyed ask"), said once per

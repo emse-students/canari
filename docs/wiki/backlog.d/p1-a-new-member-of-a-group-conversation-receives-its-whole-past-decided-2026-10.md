@@ -14,9 +14,9 @@ arrival
 ([history-reconciliation](../protocols/history-reconciliation.md#a-new-member-receives-nothing-from-before-their-arrival-decided-by-the-user-2026-10-21)).
 `minClientVersion` past A is MET (the floor is `1.6.6`, read on `GET /api/version` 2026-11-11).
 **Option B is built (draft pull request, 2026-11-17):** every ask carries an X25519 key minted for it
-inside its MLS-signed frame, and every addressed answer to it is sealed with HPKE in `mls-core`
-(`history_seal.rs`) and opens only with the asker's secret, bound to the conversation, the ask, the
-asker and the answering device
+inside its MLS-signed frame, and every answer to it is sealed with HPKE in `mls-core`
+(`history_seal.rs`), or not sent at all, and opens only with the asker's secret, bound to the conversation, the ask, the
+asker and the answerer (user and device)
 ([history-answer-addressing](../protocols/history-answer-addressing.md#sealing-the-answer-to-the-asker---option-b-2026-11-17)).
 **DECIDED by the user, 2026-10-22:** a reply quoting a pre-arrival message SHOWS a newcomer the quoted
 text; nothing is built for it

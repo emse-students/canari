@@ -77,8 +77,16 @@ type OpenAsk = {
   answerSecret: Uint8Array | null;
 };
 
-/** What {@link takeAddressedAsk} hands the receiver: the ask, and the secret its answer opens with. */
-export type TakenAsk = { ask: HistoryAsk; answerSecret: Uint8Array | null };
+/**
+ * What {@link takeAddressedAsk} hands the receiver: the ask, and whether it carried a key (its answer
+ * must then have come sealed). The secret itself is read before the take ({@link answerSecretOf}).
+ */
+export type TakenAsk = { ask: HistoryAsk; keyed: boolean };
+
+/** Overwrites a secret this module is letting go of - JS frees nothing on demand, so it is wiped. */
+function wipe(open: OpenAsk | undefined): void {
+  open?.answerSecret?.fill(0);
+}
 
 /** Open asks, per conversation, in the order they were made. Insertion order is the FIFO. */
 const openAsks = new Map<string, Map<string, OpenAsk>>();
@@ -111,11 +119,13 @@ function remember(
     asks = new Map();
     openAsks.set(groupId, asks);
   }
+  wipe(asks.get(requestId));
   asks.delete(requestId);
   asks.set(requestId, { ask, answerers: new Set(), closedBy: new Set(), answerSecret });
   while (asks.size > MAX_OPEN_ASKS_PER_GROUP) {
     const oldest = asks.keys().next().value;
     if (oldest === undefined) break;
+    wipe(asks.get(oldest));
     asks.delete(oldest);
   }
 }
@@ -149,7 +159,8 @@ export function noteJoinSolicited(groupId: string, now: number = Date.now()): vo
  * `answerer` is the device the answer came from (`sender:senderDeviceId`, checked against the MLS
  * credential on decrypt): its chunk marked `last` closes the ask FOR IT, a device beyond the first
  * {@link MAX_ANSWERERS_PER_ASK} is refused, and the ask is gone once every answerer it took is done.
- * The ask comes back with the secret its answer is sealed to ({@link TakenAsk}).
+ * The ask comes back with whether it carried a key ({@link TakenAsk}); its secret is wiped when the
+ * ask is closed, so a sealed answer is opened BEFORE it is taken.
  */
 export function takeAddressedAsk(
   groupId: string,
@@ -169,10 +180,21 @@ export function takeAddressedAsk(
     open.closedBy.add(answerer);
     if (open.closedBy.size >= MAX_ANSWERERS_PER_ASK) {
       asks?.delete(id);
+      wipe(open);
       if (asks?.size === 0) openAsks.delete(groupId);
     }
   }
-  return { ask: open.ask, answerSecret: open.answerSecret };
+  return { ask: open.ask, keyed: open.answerSecret !== null };
+}
+
+/**
+ * A COPY of the secret an open ask's answer is sealed to, or `undefined` when `groupId` holds no
+ * such ask or it carried no key. A copy, because the ask may be closed (and its secret wiped) while
+ * the caller's open is in flight; the caller wipes the copy when done.
+ */
+export function answerSecretOf(groupId: string, requestId: string): Uint8Array | undefined {
+  const secret = openAsks.get(groupId)?.get(requestId)?.answerSecret;
+  return secret ? secret.slice() : undefined;
 }
 
 /** How many asks `groupId` holds open - the tests, and a diagnostic. */
@@ -182,6 +204,7 @@ export function openHistoryAskCount(groupId: string): number {
 
 /** Forgets every open ask - a sign-out, and the tests. */
 export function forgetHistoryAsks(): void {
+  for (const asks of openAsks.values()) for (const open of asks.values()) wipe(open);
   openAsks.clear();
 }
 
