@@ -77,7 +77,7 @@
     visibleItems as visibleItemsOf,
     type MissingAnswer,
   } from '$lib/forms/fillAnswers';
-  import { formWindowState, windowRefusalState, type FormWindowState } from '$lib/forms/formWindow';
+  import { useFormWindow } from '$lib/forms/useFormWindow.svelte';
   import { gridRequiredSwitchOn } from '$lib/forms/gridRequiredGate';
   import {
     ArrowLeft,
@@ -121,18 +121,12 @@
   }
 
   let form = $state<Form | null>(null);
-  /**
-   * What a TYPED refusal of an answer proved while the page stayed open (`FORM_CLOSED`: a manager
-   * closed the form, or its end came; `FORM_NOT_OPEN_YET`). The server's newer verdict, not a
-   * clock: it overrides the state the page was loaded with until the form is loaded again.
-   */
-  let refusedWindow = $state<FormWindowState | null>(null);
-  /** What the window says now: the server's verdict of the load, or of the last refusal. */
-  const windowNow = $derived(refusedWindow ?? formWindowState(form));
+  /** The window of the form: the server's verdict of the load, or of the last typed refusal. */
+  const win = useFormWindow(() => form, 'FormView');
   const opensLaterIso = $derived(form?.opensAt ? formOpensAtIso(form.opensAt) : null);
-  const isNotOpenYet = $derived(windowNow === 'not-yet' && !!form?.opensAt);
+  const isNotOpenYet = $derived(win.notYet);
   /** The end has passed (the manager's close or a date that came): the rule of the public page and the list. */
-  const isClosed = $derived(windowNow === 'closed');
+  const isClosed = $derived(win.closed);
   const reminder = useFormReminder(() => formId ?? '');
   let selections = $state<Record<string, any>>({});
   let submitted = $state(false);
@@ -340,7 +334,7 @@
    */
   function resetFormState(): void {
     form = null;
-    refusedWindow = null;
+    win.clear();
     selections = {};
     submitted = false;
     paymentPending = false;
@@ -388,6 +382,7 @@
       const f = await getForm(id);
       if (stale()) return;
       form = f;
+      win.clear();
       selections = initialSelections(f.items);
       // A draft, or a link asking for the revision ("Voir le formulaire"): what the managers are
       // building is drawn when THIS reader may read it. The flag alone never shuts a published
@@ -677,17 +672,6 @@
       : initialSelections(form.items);
   }
 
-  /**
-   * A refusal that proves the form's window moved while this page was open (`FORM_CLOSED`,
-   * `FORM_NOT_OPEN_YET`) redraws the page in that state: notice shown, questions locked, send off.
-   */
-  function adoptRefusedWindow(e: unknown): void {
-    const state = windowRefusalState(refusalCode(e));
-    if (!state) return;
-    Log.d('FormView', `the server refused an answer: the form is now ${state}`);
-    refusedWindow = state;
-  }
-
   /** Sends the changed answer; nothing about the price or the payment moves (server-enforced). */
   async function saveEdit() {
     if (!form || !editing) return;
@@ -708,7 +692,7 @@
       void loadEditableAnswers(form.id);
     } catch (e: unknown) {
       Log.d('FormView', `answer change refused status=${refusalStatus(e) ?? 'transport'}`);
-      adoptRefusedWindow(e);
+      win.adopt(e);
       error = formSubmitRefusalMessage(e, m.form_guest_submit_failed());
     } finally {
       submitting = false;
@@ -750,8 +734,10 @@
       error = m.form_file_wait_upload();
       return;
     }
-    if (isNotOpenYet && form.opensAt) {
-      error = m.form_view_error_not_open({ date: formatFormOpensAt(form.opensAt) });
+    if (isNotOpenYet) {
+      error = form.opensAt
+        ? m.form_view_error_not_open({ date: formatFormOpensAt(form.opensAt) })
+        : m.form_view_not_open_yet();
       return;
     }
     if (isClosed) {
@@ -847,7 +833,7 @@
       }
     } catch (e: unknown) {
       Log.d('FormView', `submit refused status=${refusalStatus(e) ?? 'transport'}`);
-      adoptRefusedWindow(e);
+      win.adopt(e);
       // Worded from the refusal's CODE, never from the server's English (D6).
       error = formSubmitRefusalMessage(e, m.form_guest_submit_failed());
     } finally {
@@ -1097,11 +1083,18 @@
     {/if}
 
     <!-- ── Not open yet ── -->
-    {#if isNotOpenYet && form.opensAt}
+    {#if isNotOpenYet && !form.opensAt}
+      <p
+        class="border-accent/40 bg-accent/20 text-accent-text mb-4 rounded-2xl border px-4 py-4 text-sm font-semibold"
+        data-testid="form-not-open-notice"
+      >
+        {m.form_view_not_open_yet()}
+      </p>
+    {:else if isNotOpenYet && form.opensAt}
       <div
         class="border-accent/40 bg-accent/20 mb-4 flex items-center justify-between gap-4 rounded-2xl border px-4 py-4"
       >
-        <p class="text-accent-text text-sm font-semibold">
+        <p class="text-accent-text text-sm font-semibold" data-testid="form-not-open-notice">
           {m.form_view_opens_at({ date: formatFormOpensAt(form.opensAt) })}
         </p>
         {#if reminder.loaded}

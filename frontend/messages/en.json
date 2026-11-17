@@ -3258,6 +3258,7 @@
   "chat_community_invite_qr_intro": "Scan this code to join the community.",
   "form_view_event_linked": "Linked event",
   "form_view_event_see": "See →",
+  "form_view_not_open_yet": "This form is not open yet.",
   "form_view_opens_at": "Opens on {date}",
   "form_view_reminder_active": "Reminder set",
   "form_view_remind_me": "Remind me",

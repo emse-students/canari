@@ -156,16 +156,42 @@ describe('the member form page and a form ended by hand', () => {
     expect(sendButton()?.hasAttribute('disabled')).toBe(false);
   });
 
-  it('falls back to the comparison on a server that sends no state', async () => {
+  it('falls back to the comparison on a server that sends no state, both ways', async () => {
+    // Without the fallback a missing state reads open: the past end must close it, the future end must not.
     state.closedAt = '2026-01-01T00:00:00.000Z';
     await render();
     expect(notice()).not.toBeNull();
+    expect(sendButton()?.hasAttribute('disabled') ?? true).toBe(true);
+    while (mounted.length) mounted.pop()!();
+    document.body.innerHTML = '';
+    state.closedAt = '2099-01-01T00:00:00.000Z';
+    await render();
+    expect(notice()).toBeNull();
+    expect(sendButton()?.hasAttribute('disabled')).toBe(false);
   });
 
-  it('draws the form open when it has no end', async () => {
+  it('draws the form open with no end, and the send really is live', async () => {
     state.windowState = 'open';
     await render();
     expect(notice()).toBeNull();
+    expect(sendButton()?.hasAttribute('disabled')).toBe(false);
+    // The server state is what disables it: the same page told closed has the send off.
+    while (mounted.length) mounted.pop()!();
+    document.body.innerHTML = '';
+    state.windowState = 'closed';
+    await render();
+    expect(sendButton()?.hasAttribute('disabled') ?? true).toBe(true);
+  });
+
+  it('redraws not-yet, with no opening date to show, when a send is refused FORM_NOT_OPEN_YET', async () => {
+    state.windowState = 'open';
+    state.submit = () => Promise.reject(refused('FORM_NOT_OPEN_YET'));
+    await render();
+    await press(sendButton());
+    expect(document.querySelector('[data-testid="form-not-open-notice"]')?.textContent).toContain(
+      m.form_view_not_open_yet()
+    );
+    expect(sendButton()?.hasAttribute('disabled')).toBe(true);
   });
 
   it('redraws closed when a send is refused FORM_CLOSED while the page is open', async () => {

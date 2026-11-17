@@ -2167,11 +2167,23 @@ preview's "Ferme"); only the manager's way to write it was missing.
   - **Additive**: an older server sends no `windowState`; the client then falls back to comparing the
     dates with its own clock and logs ONCE at warn that the server sent none (reaching it means the
     server is older than the client: a signal, not a path). An older client ignores the field.
+  - **Every screen reads it**: the list, both fill pages and the link-preview card
+    (`formStateLabel`, "Ouvre le ...") call `formWindowState`; none compares `opensAt` / `closedAt`
+    with `Date.now()` any more (a phone behind the server drew an already-open form as "opens on
+    ..." and locked it). The two fill pages share `useFormWindow` (`useFormWindow.svelte.ts`).
+  - **The link-preview cache is acceptable as is**: the label it keeps is the server's verdict AT THE
+    READ (`windowState` of the fetched form), held for the session, like the rest of the card. It is a
+    snapshot of a past server answer, not a clock judgement that drifts - a form closed afterwards
+    shows its old card until the next session, and the page behind the card says the truth.
+    `FormCard` (a post's own form card) still takes its "opens on" from the post's `opensAt`; it
+    does not decide whether the form takes answers.
   - **The member page** shows "Ce formulaire est ferme.", locks the questions and disables send; and
     `handleSubmit` and `saveEdit` each refuse a closed form without a request.
   - **While the page stays open**: a typed `FORM_CLOSED` / `FORM_NOT_OPEN_YET` refusal of a send or a
     changed answer is the server's NEWER verdict (`windowRefusalState`): the page takes it
-    (`refusedWindow`) and redraws closed (or not-yet) at once. That covers a manager closing the
+    (`useFormWindow.adopt`) and redraws closed (or not-yet) at once, on the public page as on the member
+    page. A not-yet refusal on a form loaded with no `opensAt` draws "Ce formulaire n'est pas encore
+    ouvert." (no date) and disables send; a successful read of the form clears the adopted state. That covers a manager closing the
     form, or a scheduled end coming, while a respondent has it open. **No timer switches the page at
     the scheduled end**: the refusal path alone is judged sufficient - nothing is lost (the refused
     answer is not stored) and a timer or a `closesInMs` countdown would be a second clock to keep
