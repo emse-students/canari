@@ -896,7 +896,13 @@ value is never ahead of the state it moves into. Shim recorded in
 `BaseMlsService.checkpointLedgers.test.ts`, `BaseMlsService.sendRatchet.test.ts`, five `app_ledgers`
 unit tests in `mls-core`, and `storage.rs`'s
 `a_reload_keeps_the_ledgers_the_app_staged_into_the_live_manager`. The rig: the KILL-3 row (web kill
-after a send and after a receive) is the reading that confirms it on dev; `seenset.mjs` is gone, the
+after a send and after a receive) is the reading that confirms it on dev, and since 2026-11-17 it
+ASKS the defect by name - each run FAILS if the revived W1 prints `frame never read here and
+unreadable for good` (`revivedAccusations`, `killrows.mjs`; KILL-1 and KILL-2 too). Before, a run
+counted the killed message on screen, which a cached bubble shows whatever the catch-up then
+accuses, and the revived console it kept began after the PIN unlock, which is what starts the
+catch-up; the accusation is now read over the page's whole console since the rig connected
+(`consoleSinceAttach`, `watch.mjs`). `seenset.mjs` is gone, the
 ledger being no longer readable from `localStorage`. `archive/burn.mjs` reads its premise from the
 two witnesses left: the `emitted` count in IndexedDB fires the reload, and the load's own repair line
 (`Restored state for ... was N generation(s) behind`) proves the window was entered - a run that
