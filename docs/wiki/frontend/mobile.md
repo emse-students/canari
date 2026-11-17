@@ -3267,6 +3267,20 @@ reaction), and both compose the sentence in the app's own Français/English rath
 readers. The push carries an id, an emoji and who reacted - never the message text, since the
 recipient is its author and already holds it.
 
+**THE FOREGROUND SUPPRESSION IS COARSER THAN ITS REASON, AND THAT IS A DEFECT (measured 2026-11-17).**
+The guard says the bubble on screen already carries the reaction, which is true only while THAT
+conversation is open; `MainActivity.isInForeground` (and iOS `willPresent`) is true on the feed and in
+any other conversation too. A message has a second trigger for exactly that case - the WebSocket frame,
+decided by `canSeeArrival` ([nativeNotification.ts](../../../frontend/src/lib/utils/nativeNotification.ts)) -
+and a reaction has none: its MLS frame is silent and `notifyInbound` never sees it. So a reaction that
+lands while the app is open anywhere notifies nobody, and the web and desktop are never told at all.
+Production, 2026-11-17: a reaction push left `sendPushToUser` for an Android account three seconds
+after that phone's app socket opened, and the socket closed 20 s later - the push was suppressed and
+nothing else could draw it. The rest of this paragraph's list is unchanged: in the background the
+reaction is posted on `canari_reactions_v2` (IMPORTANCE_DEFAULT: a sound and a shade entry, no
+heads-up, no vibration - by design), and `MainActivity.onResume` clears it with the message
+notifications. The fix is open ([backlog](../backlog.d/p2-a-reaction-to-my-message-notifies-nobody-while-the-app-is-open.md)).
+
 #### Background MLS decrypt ladder
 
 Both Android and the iOS NSE run the same ladder when an encrypted MLS message push arrives:
