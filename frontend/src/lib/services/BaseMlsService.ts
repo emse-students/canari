@@ -5419,7 +5419,9 @@ export abstract class BaseMlsService implements IMlsService {
    * AND A HUNG ROW WRITE HOLDS EVERY CHECKPOINT: an IndexedDB write that never settles leaves the
    * hold pending, so this checkpoint never exports and the persister's in-flight one never clears.
    * No timeout, deliberately - exporting past a row write that has not answered is the loss this
-   * order exists to prevent; the hung store is the defect, and every write after it hangs too.
+   * order exists to prevent; the hung store is the defect, and every write after it hangs too. A
+   * store that keeps REFUSING the rows does the same - every checkpoint, commits and joins included,
+   * is refused until a write lands or the page reloads - and the observer names it once per page.
    */
   private async holdRowsForExport(): Promise<() => void> {
     const releases: Array<() => void> = [];

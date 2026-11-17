@@ -52,6 +52,7 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
 const { useMessaging, BufferedRowsNotStoredError } = await import('./useMessaging.svelte');
 type MessagingContext = import('./useMessaging.svelte').MessagingContext;
 import type { Conversation } from '$lib/types';
+import { envelopeBodyText, mkTextEnvelope, serializeEnvelope } from '$lib/envelope';
 
 const ME = 'me-user-id';
 const PEER = 'peer-user-id';
@@ -258,5 +259,124 @@ describe('a checkpoint during a bulk-ingest window (rows before ratchet)', () =>
     (await observer.holdRowsForCheckpoint())();
     expect(storedIds(saveMessage)).toEqual(['in-9']);
     await observer.onBulkIngestEnd(LIVE_DRAIN);
+  });
+
+  /**
+   * A RETRIED WRITE SETTLES WHAT ARRIVED WHILE ITS ROW WAS UNSTORED (re-review of #3786, P2). An edit
+   * that meets a shown-and-not-stored row is kept "for its write" (`settlePendingFor`); the retry
+   * stored the old snapshot and settled nothing, so the edit was lost at rest.
+   */
+  it('a retried write carries an edit that arrived after the failed write', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const messaging = useMessaging();
+    const { ctx } = makeContext();
+    const saved = new Map<string, Record<string, unknown>>();
+    let pending: unknown[] = [];
+    const storage = ctx.storage as unknown as Record<string, ReturnType<typeof vi.fn>>;
+    storage.saveMessagesIfAbsent
+      .mockRejectedValueOnce(new Error('QuotaExceededError'))
+      .mockRejectedValueOnce(new Error('QuotaExceededError'))
+      .mockImplementation(async (rows: Array<{ id: string }>) => {
+        for (const row of rows) saved.set(row.id, { ...row });
+        return new Set(rows.map((row) => row.id));
+      });
+    storage.getMessagesByIds.mockImplementation(async (_c: string, ids: string[]) => ({
+      rows: new Map(ids.filter((id) => saved.has(id)).map((id) => [id, saved.get(id)])),
+      unreadable: new Set(),
+    }));
+    storage.mergeMessages.mockImplementation(
+      async (_c: string, ids: string[], merge: (row: unknown) => unknown) => {
+        for (const id of ids) {
+          const next = saved.has(id) ? merge(saved.get(id)) : null;
+          if (next) saved.set(id, next as Record<string, unknown>);
+        }
+        return new Set(ids);
+      }
+    );
+    storage.getPendingMutations.mockImplementation(async () => ({
+      entries: pending,
+      removedUnreadable: 0,
+    }));
+    storage.deletePendingMutations = vi.fn(async () => {
+      pending = [];
+    });
+
+    messaging.beginBulkMessageIngest(LIVE_DRAIN);
+    const body = serializeEnvelope(mkTextEnvelope('before the edit'));
+    await messaging.addMessageToChat(PEER, body, CONVO, ctx, { messageId: 'in-10' });
+    await expect(messaging.holdRowsForCheckpoint(ctx)).rejects.toBeInstanceOf(
+      BufferedRowsNotStoredError
+    );
+
+    // The author's edit arrives while the row is shown and not stored: kept for its write.
+    pending = [
+      {
+        conversationId: CONVO,
+        messageId: 'in-10',
+        sender: PEER,
+        kind: 'edit',
+        slot: '',
+        rank: Date.now(),
+        at: Date.now(),
+        text: 'after the edit',
+      },
+    ];
+
+    (await messaging.holdRowsForCheckpoint(ctx))();
+    expect(envelopeBodyText(String(saved.get('in-10')?.content))).toBe('after the edit');
+    expect(saved.get('in-10')?.isEdited).toBe(true);
+    expect(storage.deletePendingMutations).toHaveBeenCalled();
+  });
+
+  it('drops a failed write whose conversation left the map, instead of bringing its rows back', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const messaging = useMessaging();
+    const { ctx, conversations, saveMessage } = makeContext();
+    const storage = ctx.storage as unknown as Record<string, ReturnType<typeof vi.fn>>;
+    storage.saveMessagesIfAbsent
+      .mockRejectedValueOnce(new Error('AbortError'))
+      .mockRejectedValueOnce(new Error('AbortError'));
+
+    messaging.beginBulkMessageIngest(LIVE_DRAIN);
+    await messaging.addMessageToChat(PEER, 'doomed', CONVO, ctx, { messageId: 'in-11' });
+    await expect(messaging.holdRowsForCheckpoint(ctx)).rejects.toBeInstanceOf(
+      BufferedRowsNotStoredError
+    );
+
+    // The conversation is deleted locally: nothing of it is written back.
+    conversations.delete(CONVO);
+    (await messaging.holdRowsForCheckpoint(ctx))();
+    expect(storedIds(saveMessage)).toEqual([]);
+  });
+
+  it('says a recurring failure ONCE per write, and once per retry in one line', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const messaging = useMessaging();
+    const { ctx, conversations } = makeContext();
+    conversations.set('other', {
+      id: 'other',
+      name: 'other',
+      messages: [],
+      unreadCount: 0,
+      lastMessageAt: 0,
+    } as never);
+    const storage = ctx.storage as unknown as Record<string, ReturnType<typeof vi.fn>>;
+    storage.saveMessagesIfAbsent.mockRejectedValue(new Error('QuotaExceededError'));
+
+    messaging.beginBulkMessageIngest(LIVE_DRAIN);
+    await messaging.addMessageToChat(PEER, 'a', CONVO, ctx, { messageId: 'in-12' });
+    await messaging.addMessageToChat(PEER, 'b', 'other', ctx, { messageId: 'in-13' });
+    for (let i = 0; i < 3; i++) {
+      await expect(messaging.holdRowsForCheckpoint(ctx)).rejects.toBeInstanceOf(
+        BufferedRowsNotStoredError
+      );
+    }
+    const lines = errors.mock.calls.map((call) => String(call[0]));
+    // Each write's own failure once - two conversations, two writes - however many holds retry it.
+    expect(lines.filter((l) => l.startsWith('[DB] batchAddMessages failed'))).toHaveLength(2);
+    // One combined line per retry, whatever the number of writes.
+    expect(lines.filter((l) => l.startsWith('[DB] Retry of'))).toHaveLength(3);
+    // The cause of every refusal named once per session.
+    expect(lines.filter((l) => l.includes('every checkpoint is refused'))).toHaveLength(1);
   });
 });

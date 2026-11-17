@@ -11,8 +11,9 @@ That closes the window this entry was raised for - the whole length of a drain's
 a catch-up. The device reading is [its own entry](reading-owed-rows-before-ratchet.md).
 
 **Accepted, stated:** a hung IndexedDB row write holds every checkpoint (the hold never resolves, the
-persister's in-flight checkpoint never clears). No timeout: exporting past an unanswered row write is
-the loss itself.
+persister's in-flight checkpoint never clears), and a store that keeps refusing the rows refuses
+every checkpoint - commits and joins included (`externalJoin` awaits one) - until a write lands or
+the page reloads, said once per page. No timeout: exporting past an unstored row is the loss itself.
 
 **Left, in order (same class, narrower windows):**
 

@@ -3217,7 +3217,12 @@ store, a window's close, a restore. A hold retries every kept write ONCE, puts b
 conversation whose batch threw, and rejects (`BufferedRowsNotStoredError`) while anything stands;
 `persistCheckpoint` then refuses (`MlsCheckpointNotWrittenError` at step `rows`) and the persister
 keeps the state dirty. One refusal per trigger, no timer: the next checkpoint's hold retries. The
-window's close only logs, as it always did - it is not a checkpoint.
+window's close only logs, as it always did - it is not a checkpoint. A retried write that lands
+SETTLES what arrived meanwhile (`settlePendingFor`, as the batch does after its own write): an edit,
+a deletion or a reaction that met the row shown and not stored was kept "for its write", and the
+snapshot the retry stores predates it (re-review of #3786). A kept write whose conversation left the
+map since (deleted, purged) is dropped, never written back. Each write's failure is said once, by
+the batch; a retry says ONE line for all its writes, with the first cause.
 
 **What a refused checkpoint leaves, exactly.** The state on disk stays behind those frames, and a
 reload repairs it from what still holds them: a frame the server still lists (a commit or a Welcome,
@@ -3230,6 +3235,11 @@ pending: that checkpoint never exports, and the persister's in-flight one (`inFl
 never clears, so no later checkpoint starts either. No timeout, deliberately - exporting past a row
 write that has not answered is the loss this order exists to prevent; the hung store is the defect,
 and every other write to it hangs too.
+
+**A store that keeps refusing the rows blocks every checkpoint too** - commits and joins included
+(`externalJoin` awaits one), until a write lands or the page reloads; said once per page as the
+cause (`[ADD_MSG] Rows of applied frames cannot be stored - every checkpoint is refused until they
+are ...`). Accepted for the same reason: a checkpoint that lands past them is the loss.
 
 **One observer, every hook required.** Each page hands the session ONE object,
 `useMessaging.bulkIngestObserver(msgCtx)` (`SessionCallbacks.messageIngestObserver`,

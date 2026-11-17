@@ -553,18 +553,57 @@ export function useMessaging() {
     return unstoredRowWrites.reduce((sum, w) => sum + w.upgradeRows.length + w.newRows.length, 0);
   }
 
-  /** Retries every write {@link unstoredRowWrites} holds; returns how many rows still stand unstored. */
+  /**
+   * Retries every write {@link unstoredRowWrites} holds; returns how many rows still stand unstored.
+   *
+   * A WRITE OF A CONVERSATION NO LONGER IN THE MAP IS DROPPED, not retried: the conversation was
+   * deleted or purged since, and writing its rows back would resurrect what the reader removed.
+   *
+   * A WRITE THAT LANDS SETTLES WHAT ARRIVED MEANWHILE: an edit, a deletion or a reaction that met
+   * the row shown and not stored was kept "for its write" (`settlePendingFor`), and this IS its
+   * write - the snapshot stored is the one taken before it, so it is settled now, as
+   * `batchAddMessages` settles after its own write.
+   *
+   * ONE LINE PER RETRY, whatever the number of writes: each write's own failure was said once, by
+   * the batch that made it, and a store that keeps failing refuses checkpoints at their own rate.
+   */
   async function retryUnstoredRowWrites(ctx: MessagingContext): Promise<number> {
     if (unstoredRowWrites.length === 0) return 0;
     const pending = unstoredRowWrites.splice(0);
-    console.log(
-      `[ADD_MSG] Retrying ${pending.length} batch write(s) that failed - a checkpoint is waiting for them`
-    );
-    for (const write of pending) {
-      if (!(await writeBatchRows(ctx, write))) unstoredRowWrites.push(write);
+    const gone = pending.filter((write) => !ctx.conversations.has(write.conversationId));
+    if (gone.length > 0) {
+      console.warn(
+        `[ADD_MSG] ${gone.length} failed batch write(s) dropped: their conversation left the map since (deleted or purged) - nothing of it is written back`
+      );
     }
-    return unstoredRowCount();
+    let firstCause: unknown = null;
+    let stored = 0;
+    for (const write of pending) {
+      if (gone.includes(write)) continue;
+      const failure = await writeBatchRows(ctx, write);
+      if (failure !== null) {
+        firstCause ??= failure;
+        unstoredRowWrites.push(write);
+        continue;
+      }
+      stored += 1;
+      const ids = [...write.upgradeRows, ...write.newRows].map((row) => row.id);
+      await settlePendingFor(pendingDeps(ctx), write.conversationId, ids);
+    }
+    const left = unstoredRowCount();
+    if (left > 0) {
+      console.error(
+        `[DB] Retry of ${pending.length - gone.length} batch write(s) failed - ${left} row(s) still shown and NOT stored, the checkpoint is refused; first cause:`,
+        firstCause
+      );
+    } else if (stored > 0) {
+      console.log(`[ADD_MSG] ${stored} batch write(s) that had failed are stored now`);
+    }
+    return left;
   }
+
+  /** Whether the once-per-page line naming a failing row store as the cause of refusals was said. */
+  let rowStoreBlockingSaid = false;
 
   /**
    * Stores (and renders) every message the bulk buffer holds now, in the order they arrived, behind
@@ -653,6 +692,14 @@ export function useMessaging() {
     const allStored = await storeBufferedRows(ctx, 'hold');
     if (!allStored) {
       release();
+      if (!rowStoreBlockingSaid) {
+        rowStoreBlockingSaid = true;
+        // THE CAUSE, ONCE: while the store refuses these rows, every checkpoint is refused - commits
+        // and joins included - until a write lands or the page reloads.
+        console.error(
+          '[ADD_MSG] Rows of applied frames cannot be stored - every checkpoint is refused until they are (a commit, a join, a send), or until a reload. Said once per page.'
+        );
+      }
       const buffered = [...bulkIngestBuffer.values()].reduce((sum, msgs) => sum + msgs.length, 0);
       throw new BufferedRowsNotStoredError(unstoredRowCount() + buffered);
     }
@@ -2144,9 +2191,15 @@ export function useMessaging() {
         newRows,
         consumedById,
       };
-      if (!(await writeBatchRows(ctx, write))) {
+      const failure = await writeBatchRows(ctx, write);
+      if (failure !== null) {
         // SHOWN AND NOT STORED: kept for the next checkpoint's hold, which retries it and refuses
-        // the export while it fails (rows before ratchet).
+        // the export while it fails (rows before ratchet). Said once, here; the retries say one
+        // line each.
+        console.error(
+          `[DB] batchAddMessages failed - ${upgradeRows.length + newRows.length} row(s) of "${normalized}" shown and NOT stored, kept for the next checkpoint's hold:`,
+          failure
+        );
         unstoredRowWrites.push(write);
       }
       // Kept between the read above and the writes: settled now, against the rows that stand.
@@ -2162,12 +2215,13 @@ export function useMessaging() {
 
   /**
    * A batch's write, its own seam so a checkpoint's hold can retry what failed
-   * ({@link unstoredRowWrites}). Resolves `true` once every row is on disk (or another writer's row
-   * stands for it); a failure is logged here and answered `false`, never thrown.
+   * ({@link unstoredRowWrites}). Resolves `null` once every row is on disk (or another writer's row
+   * stands for it), and the failure otherwise - never thrown, and NOT logged here: the batch says it
+   * once and a retry says one line for all its writes.
    */
-  async function writeBatchRows(ctx: MessagingContext, write: BatchRowWrite): Promise<boolean> {
+  async function writeBatchRows(ctx: MessagingContext, write: BatchRowWrite): Promise<unknown> {
     const { conversationId, upgradeRows, newRows, consumedById } = write;
-    if (!ctx.storage) return true;
+    if (!ctx.storage) return null;
     try {
       // An upgrade row carries no reactions, edit or deletion of its own: written by
       // compare-and-set onto the stored row, it adds to them and never erases them.
@@ -2180,13 +2234,9 @@ export function useMessaging() {
         [...upgraded, ...written].flatMap((id) => consumedById.get(id) ?? [])
       );
       await ctx.saveConversation(conversationId);
-      return true;
+      return null;
     } catch (e) {
-      console.error(
-        `[DB] batchAddMessages failed - ${upgradeRows.length + newRows.length} row(s) of "${conversationId}" shown and NOT stored, kept for the next checkpoint's hold:`,
-        e
-      );
-      return false;
+      return e ?? new Error('batch write failed');
     }
   }
 
