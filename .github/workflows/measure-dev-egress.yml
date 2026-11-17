@@ -1,0 +1,47 @@
+name: measure-dev-egress
+on:
+  pull_request:
+    paths:
+      - .github/workflows/measure-dev-egress.yml
+permissions: {}
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Measure
+        shell: bash
+        run: |
+          set -u
+          B=https://dev.canari-emse.fr
+          echo "runner: $(curl -s --max-time 10 https://speed.cloudflare.com/meta | cut -c1-400)"
+          WASM=assets/mls_wasm_bg.ERopDwy-.wasm
+          URL=$B/_app/immutable/$WASM
+          echo "asset: $URL"
+          curl -s -o /dev/null -w 'asset status=%{http_code} size=%{size_download}\n' -H 'accept-encoding: identity' "$URL"
+          run() { # label url conns total
+            label=$1; url=$2; conns=$3; total=$4; per=$((total / conns))
+            rm -rf out; mkdir out
+            args=""; for i in $(seq $per); do args="$args $url"; done
+            t0=$(date +%s.%N)
+            for c in $(seq $conns); do
+              curl -s -H 'accept-encoding: identity' -o /dev/null -w '%{http_code} %{size_download}\n' $args > out/$c.txt &
+            done
+            wait
+            t1=$(date +%s.%N)
+            cat out/*.txt > all.txt
+            bytes=$(awk '{s+=$2} END{print s}' all.txt)
+            codes=$(awk '{print $1}' all.txt | sort | uniq -c | tr '\n' ' ')
+            mbps=$(awk -v b=$bytes -v a=$t0 -v z=$t1 'BEGIN{printf "%.1f", b*8/(z-a)/1e6}')
+            echo "RESULT $label conns=$conns reqs=$total bytes=$bytes secs=$(awk -v a=$t0 -v z=$t1 'BEGIN{printf "%.2f", z-a}') Mbps=$mbps status: $codes"
+            if awk '$1!=200{f=1} END{exit !f}' all.txt; then echo "NON-200 seen, stopping"; exit 1; fi
+          }
+          echo "--- control"
+          for i in 1 2 3; do
+            curl -s -o /dev/null -w "RESULT control run$i status=%{http_code} bytes=%{size_download} secs=%{time_total} Mbps=%{speed_download}\n" 'https://speed.cloudflare.com/__down?bytes=25000000' | awk '{split($NF,a,"="); sub(a[2],sprintf("%.1f",a[2]*8/1e6)); print}'
+          done
+          echo "--- dev"
+          for r in 1 2 3; do run "1conn run$r" "$URL" 1 5; done
+          run "5conn run1" "$URL" 5 15
+          for r in 1 2; do run "20conn run$r" "$URL" 20 40; done
+          run "50conn run1" "$URL" 50 100
