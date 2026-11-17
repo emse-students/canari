@@ -17,3 +17,5 @@ it, and no row of the page keeps a text column narrower than half the card. A sc
 closing reading; the entry is then deleted.
 
 **iPhone 12, `1.7.0-alpha.6`, 2026-11-16/17 (seventh sitting, [verdicts](../device-verification.md)):** iPhone half PASS at 390 pt (two lines, full card width, control below) and at a doubled font (four lines, control below). Narrowest switch-row text column about 52 % of the card: borderline, to weigh with the Mi reading.
+
+**Mi 9T, 2026-11-17 (`1.7.0-alpha.6`, 390 css px, [readings](../device-verification.md#the-mi-9t-night-readings-of-2026-11-17-170-alpha6)): the Emojis row `PASS`, its neighbours `FAIL`.** At the normal root font and at `font_scale` 2.0 the Emojis description sits at 255 of 358 css px with the control below it. At 2.0 "Langue" reads one word per line and the "Visite guidee" row keeps a 0.41 text column with its button cut off at the screen edge: [filed](p3-settings-preferences-rows-clip-at-a-doubled-root-font.md). This entry stays until that is fixed and read.

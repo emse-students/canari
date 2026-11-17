@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Conversation } from '$lib/types';
 import { m } from '$lib/paraglide/messages';
 import {
@@ -6,9 +6,13 @@ import {
   reelSendCandidates,
   reelSendFailedName,
   reelSendFailedNotice,
+  reelSendKeyOf,
   reelSendPlan,
+  reelSendSections,
+  REEL_SEND_RECENT_COUNT,
   toggleReelTarget,
 } from './reelSendTargets';
+import { readGroupMembersOnceReady, userIdsOfIdentities } from './reelSendBridge';
 
 const ME = '11111111-1111-4111-8111-111111111111';
 const PEER = '22222222-2222-4222-8222-222222222222';
@@ -154,5 +158,117 @@ describe('reelSendFailedNotice (15.2): ONE notice per cause', () => {
       text: m.reel_sendto_failed_in_chosen(),
       form: 'unknown',
     });
+  });
+});
+
+describe('reelSendSections (owner, 2026-11-16): Recents, then the rest alphabetically', () => {
+  const cands = (names: string[]) =>
+    reelSendCandidates({
+      conversations: names.map((name, i) =>
+        convo({ id: `g-${name}`, name, lastMessageAt: 100 - i })
+      ),
+      currentUserId: ME,
+      peerNames: {},
+      query: '',
+      blockedPeerIds: new Set(),
+    });
+
+  it('puts the latest conversations under "Recents" and every other one alphabetically after', () => {
+    const names = ['Zulu', 'Yankee', 'Xray', 'Whiskey', 'Victor', 'Uniform', 'Mike', 'Bravo'];
+    const sections = reelSendSections(cands(names), '');
+    expect(sections.map((s) => s.title)).toEqual([
+      m.reel_sendto_section_recent(),
+      m.reel_sendto_section_all(),
+    ]);
+    expect(sections[0].rows.map((r) => r.label)).toEqual(names.slice(0, REEL_SEND_RECENT_COUNT));
+    expect(sections[1].rows.map((r) => r.label)).toEqual(['Bravo', 'Mike']);
+  });
+
+  it('draws no empty section: a short list is "Recents" alone', () => {
+    const sections = reelSendSections(cands(['Alpha', 'Bravo']), '');
+    expect(sections.map((s) => s.id)).toEqual(['recent']);
+  });
+
+  it('a search is one untitled list, alphabetical', () => {
+    const sections = reelSendSections(cands(['Zulu', 'Alpha', 'Mike']), 'u');
+    expect(sections).toHaveLength(1);
+    expect(sections[0].title).toBeNull();
+    expect(sections[0].rows.map((r) => r.label)).toEqual(['Alpha', 'Mike', 'Zulu']);
+  });
+});
+
+describe('reelSendKeyOf: the conversation a camera came from, by its id', () => {
+  it('finds the map key of the conversation, and null for one this device does not hold', () => {
+    const rows = [
+      convo({ id: 'g-1', name: 'One' }),
+      ['dm-key', { ...convo({ id: 'd-1', name: 'Dee' })[1] }],
+    ] as [string, Conversation][];
+    expect(reelSendKeyOf(rows, 'd-1')).toBe('dm-key');
+    expect(reelSendKeyOf(rows, 'gone')).toBeNull();
+  });
+});
+
+describe('userIdsOfIdentities: a group subtitle names each member once', () => {
+  it('splits userId:deviceId leaves, keeps tree order, dedupes a member with two devices', () => {
+    expect(userIdsOfIdentities(['a:web-1', 'b:tauri-2', 'a:tauri-3'])).toEqual(['a', 'b']);
+  });
+
+  it('skips a leaf that is not an identity, said at warn', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(userIdsOfIdentities(['nocolon', 'b:web-1'])).toEqual(['b']);
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+});
+
+describe('readGroupMembersOnceReady: one batch, once MLS is ready, never one line per group', () => {
+  it('asks no tree before MLS is ready, then reads every group of the batch', async () => {
+    let ready!: () => void;
+    const readTree = vi.fn(async (id: string) => [`${id}-u:web-1`]);
+    const pending = readGroupMembersOnceReady(['g-1', 'g-2'], {
+      whenReady: () => new Promise<void>((resolve) => (ready = resolve)),
+      readTree,
+    });
+    await Promise.resolve();
+    expect(readTree).not.toHaveBeenCalled();
+    ready();
+    const members = await pending;
+    expect([...members]).toEqual([
+      ['g-1', ['g-1-u']],
+      ['g-2', ['g-2-u']],
+    ]);
+  });
+
+  it('a session that ends before MLS is ready reads nothing and warns nothing', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const readTree = vi.fn(async () => []);
+    const members = await readGroupMembersOnceReady(['g-1', 'g-2', 'g-3'], {
+      whenReady: async () => {
+        throw new Error('signed out');
+      },
+      readTree,
+    });
+    expect(members.size).toBe(0);
+    expect(readTree).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+    expect(debug).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+    debug.mockRestore();
+  });
+
+  it('groups with no tree here are left out and said in ONE warn line for the batch', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const members = await readGroupMembersOnceReady(['g-1', 'g-2', 'g-3'], {
+      whenReady: async () => {},
+      readTree: async (id) => {
+        if (id !== 'g-2') throw new Error('not held');
+        return ['a:web-1'];
+      },
+    });
+    expect([...members.keys()]).toEqual(['g-2']);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain('2 of 3');
+    warn.mockRestore();
   });
 });

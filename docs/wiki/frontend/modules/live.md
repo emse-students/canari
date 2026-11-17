@@ -1458,7 +1458,7 @@ the others.
 
 **Owed - the owner's real-browser reading**, one entry, re-filed 2026-11-16 on the `1.7.0`
 pre-releases that carry the scenes:
-[the scenes read by the owner](../../backlog.d/reading-owed-screen-share-in-a-desktop-live-the-scenes-read-by-the-owner.md).
+the scenes read by the owner (entry deleted 2026-11-17).
 
 ### Screen share in a desktop live: what `1.7.0` carries (2026-11-16)
 

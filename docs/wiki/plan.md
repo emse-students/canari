@@ -86,32 +86,23 @@ earliest version, as a checklist.
 - [P3 - EXIT-FORTIFY: closing the app on the Mi 9T logs `FORTIFY: pthread_mutex_lock called on a destroyed mutex` from the render thread](backlog.d/reading-owed-exit-fortify-closing-the-app-on-the-mi-9t-logged-fortify-pthread.md)
 - [P3 - a 13 MB upload on the iPhone restarted at about half and ran at 40 to 65 KB/s](backlog.d/p3-a-13-mb-upload-on-the-iphone-restarted-at-half-and-ran-at-40-to-65-kb-s.md)
 - [P3 - A private salon granted to a long-standing member badges its whole past as unread (review of #3682, 2026-11-16)](backlog.d/p3-a-private-salon-granted-late-badges-its-whole-past.md)
-- [P3 - the "Envoyer a..." sheet names a ticked target by its raw id while the search hides it](backlog.d/p3-the-envoyer-a-sheet-names-a-ticked-target-by-its-raw-id-while-the-search-hides-it.md)
 - [P3 - the feed offset restored after a Back from an association lands about 226 px lower than it was left (Mi 9T, `1.7.0-alpha.2`)](backlog.d/p3-the-feed-offset-restored-after-a-back-from-an-association-lands-about-226-px.md)
+- [P3 - Settings > Preferences: at a doubled root font the "Langue" text is squeezed and the "Revoir la visite" button runs past the card (Mi 9T, 2026-11-17)](backlog.d/p3-settings-preferences-rows-clip-at-a-doubled-root-font.md)
 
 ### Readings owed
 
 - [ ] [the CanaReels composer, viewer and editor on real content](backlog.d/reading-owed-the-canareels-composer-viewer-and-editor-on-real-content.md)
-- [ ] [the in-session community join through the deep link on the phones](backlog.d/p1-owed-one-live-reading-of-the-in-session-join-fix-2026-10-08.md)
-- [ ] [a group joined in the background before its row existed: the "already held" Welcome writes and announces the row, the...](backlog.d/reading-owed-a-group-joined-in-the-background-before-its-row-existed-the.md)
-- [ ] [a HISTORY ask answered "I hold nothing" is final for its roster](backlog.d/reading-owed-a-history-ask-answered-i-hold-nothing-is-final-for-its-roster.md)
-- [ ] [the native caches sealed at rest (2026-10-22): the upgrade readings on both phones](backlog.d/reading-owed-the-native-caches-sealed-at-rest-2026-10-22-the-upgrade-readings.md)
 - [ ] [sharing into Canari on iOS](backlog.d/reading-owed-sharing-into-canari-on-ios.md)
-- [ ] [seeds mirrored before the writer label](backlog.d/reading-owed-seeds-mirrored-before-the-writer-label.md)
 - [ ] [a deploy's `502`/`503`/`504` is "not now", never a send failure](backlog.d/reading-owed-a-deploy-s-502-503-504-is-not-now-never-a-send-failure.md)
 - [ ] [birthdays on profiles (#3180, first stable `v1.6.9`; birthdays)](backlog.d/reading-owed-birthdays-on-profiles-3180-first-stable-v1-6-9-birthdays.md)
-- [ ] ["Modifier les pseudos" for a group and a community](backlog.d/reading-owed-modifier-les-pseudos-for-a-group-and-a-community.md)
 - [ ] [an institution chooses each post's spaces and public](backlog.d/reading-owed-an-institution-chooses-each-post-s-spaces-and-public.md)
 - [ ] [campus trends and the daily cap, WP-8, WP-10 and the quieter batch](backlog.d/reading-owed-campus-trends-and-the-daily-cap-wp-8-wp-10-and-the-quieter-batch.md)
 - [ ] [rotation on the video, live and camera screens on both phones](backlog.d/rotation-on-video-and-camera-screens.md)
 - [ ] [overlays stacked by open order, not by rung](backlog.d/reading-owed-overlays-stacked-by-open-order-not-by-rung.md)
-- [ ] [a salon opened on a cold start reads its rows after the key-group drain, with no "unreadable - missing seed" warning (1.6.11 logs, 2026-11-14)](backlog.d/p3-a-salon-is-read-before-the-key-group-drain-finishes.md)
-- [ ] [screen share in a desktop live: the scenes, what the bench read and what is left to the owner's hand](backlog.d/reading-owed-screen-share-in-a-desktop-live-the-scenes-read-by-the-owner.md)
 - [ ] [the Emojis preference row and its neighbours at 390 pt, on a phone](backlog.d/p3-the-emojis-preference-row-squeezes-its-description-on-a-phone.md)
 - [ ] [a private salon granted after an in-session join is readable on the iPhone, with its badge](backlog.d/p2-a-private-salon-granted-after-an-in-session-join-is-unreadable-on-the-iphone.md)
 - [ ] [one "server already unreachable" line per spell, read on a phone log after a real outage](backlog.d/p3-server-already-unreachable-is-logged-per-request.md)
 - [ ] [a banner in the composer's place clears the Android navigation bar (2026-11-16)](backlog.d/reading-owed-a-banner-in-the-composer-place-clears-the-navigation-bar.md)
-- [ ] [a salon invitation's notice still reads as a sentence, live and from history (2026-11-16)](backlog.d/reading-owed-a-channel-invite-notice-names-ids-and-draws-live.md)
 - [ ] [a group joined with the list in front is ordered by its admission, and drawn at once](backlog.d/reading-owed-a-group-joined-with-the-list-in-front-is-ordered-by-its-admission.md)
 - [ ] [a salon message arriving before its seed raises its badge (granted salon, in-session join)](backlog.d/reading-owed-a-salon-message-arriving-before-its-seed-raises-its-badge.md)
 - [ ] [a form's respondent account fields, on a phone and on the web (owner, 2026-11-16)](backlog.d/reading-owed-form-respondent-account-fields.md)
@@ -119,6 +110,12 @@ earliest version, as a checklist.
 - [ ] [the live scenes bar (one icon row) on a desktop live at two window widths](backlog.d/reading-owed-the-live-scenes-bar-on-a-desktop-live.md)
 - [ ] [the live viewer's top bar at 360-436 css px portrait (name whole, no button over the second row)](backlog.d/reading-owed-the-live-viewer-top-bar-at-360-436-px.md)
 - [ ] [a menu ends above the iOS tab bar, and a group notification keeps its title (2026-11-16)](backlog.d/reading-owed-the-popover-and-notification-fixes-of-the-iphone-sitting.md)
+
+## 1.7.1
+
+**Chantiers, decisions and questions (no severity)**
+
+- [CanaReels sent to community salons (RC-8): the salon send path and the salon rows of "Envoyer à..."](backlog.d/reels-in-salons.md)
 
 ## 1.8.0
 
@@ -143,6 +140,7 @@ earliest version, as a checklist.
 - [Found by the dev payment end-to-end of 2026-10-21 (Lydia, sandbox)](backlog.d/found-by-the-dev-payment-end-to-end-of-2026-10-21-lydia-sandbox.md)
 - [Live replays - a finished live is kept three days and shown as a CanaReel (owner, 2026-11-07; designed and decided 2026-11-09, WP-R1 built)](backlog.d/live-replays-kept-three-days-as-canareels.md)
 - [The moderation authority grid is asserted by one table-driven spec per service (owner, 2026-11-15)](backlog.d/the-moderation-authority-grid-is-asserted-by-table-driven-specs.md)
+- [The server images keep themselves up to date: pinned digests, Dependabot, a server-only release and a weekly scan](backlog.d/container-auto-update.md)
 
 **P2 - correctness**
 
