@@ -11,7 +11,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 
-/** One dig / flag action from the client move log. */
+/** One timed dig / flag action from the client move log. */
 export class MinesweeperMoveDto {
   @IsIn(['reveal', 'flag'])
   type!: 'reveal' | 'flag';
@@ -25,6 +25,15 @@ export class MinesweeperMoveDto {
   @Min(0)
   @Max(63)
   y!: number;
+
+  /**
+   * Milliseconds since the first dig (which is 0), when the player made this move. Checked against
+   * the claimed game length and kept with the score for a moderator's replay (`timingsFault`).
+   */
+  @IsInt()
+  @Min(0)
+  @Max(7_200_000)
+  t!: number;
 }
 
 /**
