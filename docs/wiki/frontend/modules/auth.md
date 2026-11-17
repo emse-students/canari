@@ -2131,6 +2131,43 @@ evidence is gone), logs `[ERROR] Partial restore: n/m ...` and `console.error`, 
 `pending` and the re-add that follow are the existing recovery, and this is only its report.
 
 
+#### Why the old PC of 2026-08-23 came back with its store - established 2026-11-17
+
+The report that opened this chantier: an old PC, removed from the connected devices through the
+panel, still held its local store, and reconnecting it brought back some conversations and not
+others. Three causes were candidates - a SESSION-only removal, a device revoked whose sessions
+survived, or a wipe the watchdog undid - and the entry waited on a measurement. It was taken from
+production's own tables, read-only:
+
+- **Only two of the account's devices committed that week, both on 2026-08-22.** At 12:04:16.379 a
+  web id minted on 2026-08-12 was revoked, and a fresh web id minted 0.44 s later (its own id
+  carries `Date.now()` in base 36) external-joined nine groups. At 13:09:05 a web id **minted on
+  2026-06-09** - the old PC - external-joined the same nine groups under its OWN id, and again at
+  13:10. That id was first revoked on 2026-08-25, after the report.
+- **A device on the denylist cannot do that.** Every connection publishes a KeyPackage first
+  (`syncConnectionAfterWsOpen`), registration was refused for an active revocation, and the client
+  answered a refusal by minting a new id; the PIN check's one-shot reset also ended in a new id. The
+  revocation window was ten years, and the account's revocation rows from June survive, so no PIN
+  reset cleared the list in between. **So the PC had never been revoked: cause 1, the removal
+  signed a login out and revoked nothing.** Causes 2 and 3 both need a revocation and are refuted
+  for this machine (cause 3 is the 12:04 browser's shape, fixed 2026-08-28 above; cause 2 is
+  structurally gone since the device route ends the sessions itself).
+- **Nothing MLS was missing.** The nine groups were every live group the account held; both
+  devices rejoined all nine. The conversations that did not come back were rows of groups the
+  server no longer held for the account, and one of them was the tombstone that blocked the new
+  DM - the half fixed with `canRepresentThePeer`.
+
+#### A removed row whose device the server no longer lists
+
+That shape is still reachable: the panel gives a login its own row when the device it names is not
+listed (`unlistedDeviceId` - a KeyPackage aged out of the retention window or unresolvable), and
+removing such a row only signed it out. The machine kept everything, and at its next login it
+re-registered under the same id. Since 2026-11-17 `revocableDeviceId` (`deviceRowRemoval.ts`)
+revokes the id such a row names, exactly as a listed device is revoked - the ban, the frame, the
+sessions ended server-side, and the wipe at the machine's next exchange - and the confirmation says
+the machine is erased. The one id never revoked from the panel is its own: a row naming
+`myDeviceId`, or holding the current login, still only signs out, and logs that decision.
+
 ### The same erasure when the USER asks, and the three things the button never did
 
 **REMOVED 2026-09-25, by the user's decision: a developer tool had no place under the sign-in

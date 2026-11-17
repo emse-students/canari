@@ -23,7 +23,7 @@
   import { showToast } from '$lib/stores/toast.svelte';
   import { exactDate, timeAgo } from '$lib/utils/time';
   import { m } from '$lib/paraglide/messages';
-  import { removeDeviceRow } from './deviceRowRemoval';
+  import { removeDeviceRow, revocableDeviceId } from './deviceRowRemoval';
 
   interface DeviceInfo {
     deviceId: string;
@@ -270,7 +270,8 @@
    * (`removeDeviceRow`): the logins it ends are the ones the server may not have
    * ended, and what survives stays listed for the user's retry. A device with no
    * live login is still deletable, and a login with no device only has the
-   * sign-out half to perform.
+   * sign-out half to perform - unless that login names a device the server no longer lists, which
+   * is revoked as a device is (`revocableDeviceId`).
    */
   async function handleRemoveRow(row: PanelRow) {
     if (row.isCurrentDevice) return;
@@ -284,8 +285,11 @@
       return;
     }
 
+    // A login row that names an unlisted device revokes that device too (`revocableDeviceId`), so
+    // its confirmation says the machine is erased, exactly as a listed device's does.
+    const revokes = revocableDeviceId(row, myDeviceId) !== null;
     const confirmed = await showConfirm(
-      row.device
+      revokes
         ? m.chat_delete_device_confirm({ name: rowLabel(row) })
         : m.chat_device_revoke_session_confirm(),
       { danger: true, confirmLabel: m.common_delete_button() }
@@ -300,6 +304,7 @@
       const { outcome } = await removeDeviceRow(row, {
         deleteDevice: (deviceId) => mlsService.deleteDevice(userId, deviceId),
         revokeSession: revokeAuthSession,
+        myDeviceId,
       });
       if (outcome === 'device-incomplete') {
         // The removal did not complete; whatever is left is still listed after the reload below.
@@ -310,13 +315,13 @@
         sessionError = m.settings_sessions_revoke_error();
       } else {
         showToast(
-          row.device ? m.chat_device_removed_toast() : m.settings_sessions_revoked_toast(),
+          revokes ? m.chat_device_removed_toast() : m.settings_sessions_revoked_toast(),
           'info'
         );
       }
     } catch (e) {
       console.error('[DevicePanel] Failed to remove row', e);
-      error = row.device ? m.chat_device_remove_error() : m.settings_sessions_revoke_error();
+      error = revokes ? m.chat_device_remove_error() : m.settings_sessions_revoke_error();
     } finally {
       deleting = null;
     }

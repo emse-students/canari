@@ -8,12 +8,20 @@
  * means the ban was written but the server could not end the bound logins yet, and those are
  * exactly the logins this panel can end itself. Whatever survives stays listed (a login whose device
  * is no longer listed gets its own row), so the user's retry is always reachable.
+ *
+ * A login row with no listed device is still a MACHINE when its login names a device id: the server
+ * stops listing a device whose KeyPackage aged out or cannot be resolved, and the machine keeps its
+ * whole local store. Signing that login out alone is what let an old PC come back under its own id
+ * with everything it held (measured on production, 2026-08-22) - so the id it names is revoked too,
+ * which wipes the machine at its next exchange. The one id never revoked is the one this panel runs on.
  */
 
 /** A panel row, reduced to what removing it needs. */
 export interface RemovableRow {
   device: { deviceId: string } | null;
-  sessions: ReadonlyArray<{ id: string }>;
+  /** For a device-less row, the device id its login names but the server does not list. */
+  unlistedDeviceId: string | null;
+  sessions: ReadonlyArray<{ id: string; current: boolean }>;
 }
 
 /**
@@ -26,6 +34,22 @@ export type RowRemovalOutcome = 'removed' | 'sessions-left' | 'device-incomplete
 export interface RowRemovalDeps {
   deleteDevice: (deviceId: string) => Promise<{ status: string }>;
   revokeSession: (sessionId: string) => Promise<unknown>;
+  /** The device this panel runs on: never revoked from here, listed or not. */
+  myDeviceId: string;
+}
+
+/**
+ * The device id removing this row revokes, or null when the row only signs logins out.
+ *
+ * A listed device is revoked as itself. A device-less row revokes the id its login names, unless that
+ * id is this panel's own device or the row holds the current login - the server may omit the device
+ * we run on from its list, and banning it would wipe the machine the user is holding.
+ */
+export function revocableDeviceId(row: RemovableRow, myDeviceId: string): string | null {
+  if (row.device) return row.device.deviceId;
+  if (row.unlistedDeviceId === null) return null;
+  if (row.unlistedDeviceId === myDeviceId || row.sessions.some((s) => s.current)) return null;
+  return row.unlistedDeviceId;
 }
 
 /** Removes a row - see the module comment for the order and why the second half always runs. */
@@ -34,10 +58,18 @@ export async function removeDeviceRow(
   deps: RowRemovalDeps
 ): Promise<{ outcome: RowRemovalOutcome; failedSessions: number }> {
   let deviceOk = true;
-  if (row.device) {
-    const short = row.device.deviceId.slice(0, 8);
-    console.log(`[DevicePanel] Deleting device ${short}…`);
-    const result = await deps.deleteDevice(row.device.deviceId);
+  const deviceId = revocableDeviceId(row, deps.myDeviceId);
+  if (!deviceId && row.unlistedDeviceId !== null) {
+    console.log(
+      `[DevicePanel] Login row names this device (${row.unlistedDeviceId.slice(0, 8)}…) - signing out only, the device we run on is never revoked from here`
+    );
+  }
+  if (deviceId) {
+    const short = deviceId.slice(0, 8);
+    console.log(
+      `[DevicePanel] Deleting device ${short}…${row.device ? '' : ' (named by a login, not listed by the server)'}`
+    );
+    const result = await deps.deleteDevice(deviceId);
     deviceOk = result.status === 'device_deleted';
     if (deviceOk) console.log(`[DevicePanel] Deleted device ${short}…`);
     else
