@@ -48,7 +48,7 @@ export type FormWindowState =
 
 /**
  * THE rule that says whether a form takes answers, judged on THE SERVER's clock: before the opening
- * it is `not-yet`, strictly after the end (the manager's close or a date that came) it is `closed`,
+ * it is `not-yet`, from the end instant on (the manager's close or a date that came) it is `closed`,
  * else `open`. Every refusal (`assertFormOpen`) and every read (`windowState` on the list, the
  * single read, the public read and the close answer) takes its answer from here, so a client never
  * compares a stored timestamp with its OWN clock - a phone behind the server would read a
@@ -59,6 +59,6 @@ export function formWindowState(
   now: Date = new Date()
 ): FormWindowState {
   if (form.opensAt && new Date(form.opensAt) > now) return FORM_WINDOW_NOT_YET;
-  if (form.closedAt && new Date(form.closedAt) < now) return FORM_WINDOW_CLOSED;
+  if (form.closedAt && new Date(form.closedAt) <= now) return FORM_WINDOW_CLOSED;
   return FORM_WINDOW_OPEN;
 }

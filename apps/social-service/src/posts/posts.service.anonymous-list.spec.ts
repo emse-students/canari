@@ -10,7 +10,7 @@ import { PostMediaRetentionService } from './post-media-retention.service';
 /**
  * `listPosts` AND `searchPosts` NEVER SELECTED `posts.anonymous`, SO THE MASK NEVER FIRED.
  *
- * `mustHideAnonymousAuthor` and `shapeListRow` were both correct - reported by a user who posted
+ * `mustHideAnonymousAuthor` (now `viewerSeesWriter`) and `shapeListRow` were both correct - reported by a user who posted
  * anonymously and watched a second account read the real name straight off the feed. The two raw
  * SQL queries that actually populate the feed (`listPosts`'s shared `selectBody`, `searchPosts`'s
  * own copy) built their row from a fixed column list that named `authorId` but never `anonymous`,

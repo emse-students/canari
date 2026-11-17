@@ -419,6 +419,7 @@
       <RevealedAuthorLine
         userId={revealed.userId}
         fallback={revealed.name}
+        under={revealed.under}
         class="pointer-events-auto ml-8 shrink-0 text-white/80"
         tall
       />

@@ -112,6 +112,7 @@ earliest version, as a checklist.
 - [ ] [a form's respondent account fields, on a phone and on the web (owner, 2026-11-16)](backlog.d/reading-owed-form-respondent-account-fields.md)
 - [ ] [the live scenes bar (one icon row) on a desktop live at two window widths](backlog.d/reading-owed-the-live-scenes-bar-on-a-desktop-live.md)
 - [ ] [a menu ends above the iOS tab bar, and a group notification keeps its title (2026-11-16)](backlog.d/reading-owed-the-popover-and-notification-fixes-of-the-iphone-sitting.md)
+- [ ] [an association post's writer, drawn small under its name for its moderators (2026-11-17)](backlog.d/reading-owed-association-post-writer-line.md)
 - [ ] [the repair of a rewound sender walks to the member that holds the messages (2026-11-17)](backlog.d/reading-owed-heal-repair-walks-to-the-holder.md)
 - [ ] [the iPhone's one seed mirror keeps the extension's seeds through a foreground (2026-11-17)](backlog.d/reading-owed-ios-seed-mirror-one-copy.md)
 - [ ] [live moderation: the three broadcaster pushes, the withdrawal lift and the lives switch](backlog.d/reading-owed-live-moderation-pushes-lift-and-the-lives-switch.md)
@@ -127,7 +128,6 @@ earliest version, as a checklist.
 
 **P1 - security, or a user-facing path that is broken**
 
-- [P1 - `/posts/hidden` serves an association post's raw writer, while the card hides it from every moderator](backlog.d/p1-hidden-posts-list-serves-an-association-post-s-raw-writer.md)
 - [P1 - an institution's MODERATE member moderates the students of a space it governs, and not the institution's own content](backlog.d/p1-institution-moderators-moderate-their-own-content-not-students.md)
 
 **Chantiers, decisions and questions (no severity)**

@@ -90,6 +90,24 @@ describe('NotificationRow avatar', () => {
     expect(target.querySelector('[aria-label^="Avatar de"]')).toBeNull();
   });
 
+  it("renders the association's logo for a mention in its post - it names no member (decision 11)", () => {
+    const target = renderRow({
+      id: 'n4',
+      type: 'mention',
+      postId: 'p4',
+      actorId: '',
+      actorName: 'BDE',
+      associationId: 'asso-1',
+      associationLogoUrl: '/api/media/public/logo1',
+      text: 'salut',
+      read: false,
+      createdAt: new Date().toISOString(),
+    });
+
+    expect(target.querySelector('[aria-label^="Logo de"]')).not.toBeNull();
+    expect(target.querySelector('[aria-label^="Avatar de"]')).toBeNull();
+  });
+
   it('still renders a user avatar for a personal notification', () => {
     const notif: PostNotification = {
       id: 'n2',

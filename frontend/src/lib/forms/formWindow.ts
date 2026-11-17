@@ -58,9 +58,9 @@ export function formWindowState(
     if (!Number.isNaN(opens) && opens > nowMs) return 'not-yet';
   }
   if (form.closedAt) {
-    // Strictly past, as the server's refusal is: the end instant itself still takes answers.
+    // From the end instant on, as the server's rule is: a close writes the end as `now`.
     const end = Date.parse(form.closedAt);
-    if (!Number.isNaN(end) && end < nowMs) return 'closed';
+    if (!Number.isNaN(end) && end <= nowMs) return 'closed';
   }
   return 'open';
 }
