@@ -160,7 +160,7 @@ let unstubCameras = () => {};
 let unregister = () => {};
 beforeEach(() => {
   // Each test reads ITS toasts: one left by an earlier test would satisfy, or break, its assertions.
-  // A COPY, because `dismissToast` removes from the list being walked.
+  // A copy: each dismissal removes from the list being walked.
   for (const t of toastStore.toasts.slice()) dismissToast(t.id);
   writer.on = true;
   unstubCameras = stubCameraCount(2);
