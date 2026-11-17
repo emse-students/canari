@@ -1152,13 +1152,14 @@ before the column existed was minted under a roster nobody recorded, which is th
 exists for; the codec keeps absent absent rather than letting `Number(null)` turn it into a real
 epoch.
 
-**Three orderings in `reserveOutboundSlot`, each the answer to a failure that leaves no trace:**
+**Four rules in `reserveOutboundSlot`, each the answer to a failure that leaves no trace:**
 
 | Rule | What the other order costs |
 | --- | --- |
 | Serialised per (channel, sender) | Two racing sends read one `sentCount`, seal two messages under one AES-GCM key. No symptom at either end. |
 | Distribute the seed, THEN persist the session | Persisting first leaves a session in hand that nobody can read; it is reused, so every message under it is lost, permanently. Distributing first means a failure leaves the seed nowhere and the next attempt mints again. |
 | Burn the index before the send, and leave it burned on failure | A gap costs nothing - every message carries its index and the key is derived directly. Re-handing one out after a send that the server did receive costs the session. |
+| The count is written by compare-and-swap (2026-11-17) | The chain above serialises ONE document. Two tabs share the store, and only the leader writes it (`mayWrite`), but leadership is read at the write: between a lock steal and the rejection that tells it, the old leader still answers "I lead". Resumed with the count it read before the new leader sent, it wrote that count back, and both tabs then handed out indices already sealed (refused by the server as `CHANNEL_MESSAGE_KEY_REUSED`, so lost sends rather than a repeated nonce - every seal draws a fresh one). `saveGraineSession(..., sentCountWas)` reads and writes the row in ONE transaction (one `UPDATE ... WHERE sent_count = $n` on SQLite) and refuses with `StoreWriteRefusedError` when the count moved or the row is gone, logged `[GRAINE] session ... not written: its count moved` at `error` - two writers overlapped, which the lead guard exists to prevent. The seal answers it as the lead lost during the reservation (`main-tab-lead-lost`, nothing sealed, Retry safe). Pinned by `sessionManager.twoTabs.test.ts`, two module instances over one IndexedDB. |
 
 **The sender id is lower-cased at the one place a session is written and the one place it is looked
 up.** A row stored as `Alice` and searched for as `alice` is never found, so every send mints - a
