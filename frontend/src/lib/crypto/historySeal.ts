@@ -70,7 +70,7 @@ const KNOWN_CODES: ReadonlySet<string> = new Set<HistorySealCode>([
  * Types a rejection of an engine call. The engines reject with the bare code (a string); anything
  * else is a broken bridge (`contract`), never a verdict about the bytes.
  */
-export function historySealErrorOf(e: unknown): HistorySealError {
+function historySealErrorOf(e: unknown): HistorySealError {
   if (e instanceof HistorySealError) return e;
   const raw = String(e);
   return KNOWN_CODES.has(raw)
