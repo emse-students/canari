@@ -100,9 +100,8 @@ describe('PostInteractionsService - comment identity', () => {
       associations.moderatedAssociationIds = jest.fn((_u: string, ids: string[]) =>
         Promise.resolve(new Set(ids.filter((id) => id === CLUB)))
       );
-      // A BDE's moderator holds MODERATE in no institution.
       // A BDE's moderator holds MODERATE in no institution, and the pencil is nobody's here.
-      associations.commentStandings = jest.fn(() =>
+      associations.commentStandings = jest.fn((_u: string, _ids: string[]) =>
         Promise.resolve({ postAs: new Set<string>(), moderatedInstitutions: new Set<string>() })
       );
       associations.refuseModeration = jest.fn(() =>

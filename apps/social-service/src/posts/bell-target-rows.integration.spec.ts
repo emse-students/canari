@@ -110,7 +110,9 @@ maybe('bell rows bound to something other than a post (PostgreSQL)', () => {
         "associationId" uuid, "studentsOnly" boolean NOT NULL DEFAULT false, "reachPublic" varchar(16),
         "reachSpaces" jsonb, anonymous boolean NOT NULL DEFAULT false,
         "hiddenByModeration" boolean NOT NULL DEFAULT false, "scheduledAt" timestamptz,
-        "publishedAt" timestamptz NOT NULL DEFAULT now());
+        "publishedAt" timestamptz NOT NULL DEFAULT now(),
+        -- The bell reads a comment's writer behind an empty actor (bellRowActorAccountSql).
+        comments jsonb NOT NULL DEFAULT '[]');
       CREATE TABLE association_members (id serial PRIMARY KEY, "associationId" uuid NOT NULL,
         "userId" varchar(255) NOT NULL, permissions int NOT NULL DEFAULT 0);
       CREATE TABLE user_blocks ("blockerId" varchar(255) NOT NULL, "blockedId" varchar(255) NOT NULL);

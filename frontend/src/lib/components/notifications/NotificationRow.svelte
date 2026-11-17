@@ -261,6 +261,8 @@
   /** The actor is an association, whose logo stands in for a person's avatar. */
   const actorIsAssociation = $derived(
     (notif.type === 'association_post' ||
+      // A mention in an association's post names the association, never its writer (decision 11).
+      notif.type === 'mention' ||
       isRepostNotif ||
       isCoorganiseNotif ||
       notif.type === 'repost_personal_requested' ||

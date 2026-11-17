@@ -2018,7 +2018,7 @@ export class FormsService {
     return {
       id: formId,
       closedAt,
-      windowState: formWindowState({ opensAt: form.opensAt, closedAt }),
+      windowState: formWindowState({ opensAt: form.opensAt, closedAt }, now),
     };
   }
 
