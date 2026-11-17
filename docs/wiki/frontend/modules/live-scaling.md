@@ -32,7 +32,7 @@ then the arithmetic.
 | B5 | **media-service and Garage fan-out** | the `live_segments` cache with `proxy_cache_lock`: ONE upstream read per segment per 2 min, whatever the audience ([lives](../../services/lives.md#serving-a-segment-from-the-nginx-cache-wp-l4), read on a running container) | **does not bind on audience** - ~0.5 reads/s per live. It binds on the NUMBER OF LIVES through the cache size (arithmetic C) | per live, not per viewer |
 | B6 | **Redis seats** | `live:seats`, ONE sorted set for the estate; one Lua script per key read and per manifest poll (`live-seats.ts`): `ZREMRANGEBYSCORE` + `ZSCORE` + `ZCARD` + `ZADD`, O(log S) | not at 24. **With #2202 (open) the script also walks the WHOLE set (`ZRANGE 0 -1`) to count one live's viewers: O(S) per poll, O(N^2) per second** - fine at 24, the first thing to change past it (arithmetic D) | yes |
 | B7 | **The per-viewer manifest poll** | 1 poll/s per viewer (`LIVE_MANIFEST_POLL_MS`, client), each: one `auth_request` to core-service (an HS256 verify), then in social-service up to **7 PostgreSQL queries** (`assertMayWatch`: the live with its visibility SQL, the block, the removal; the segment window; with the chat cursors: the viewer's blocks, the messages, the reaction bursts) and **1 Redis script**; pool of 10 connections, of which ingest may use 4 | **unmeasured**: invisible at 24, the wall at a few hundred (arithmetic E) | yes |
-| B8 | **The broadcaster's encode and upload** | the phone encodes and seals; the server transcodes nothing (C3). 3.08 Mb/s from the Mi 9T app WebView at a 2.5 Mb/s ask, the Android encoder floored at ~2.6 Mb/s even at 480p; 2.32 Mb/s from iPhone Safari (WP-L1, draft #2109); 4 stores at once per social-service instance (`LIVE_INGEST_MAX_CONCURRENT`) | **never on audience** - a viewer costs the broadcaster nothing. It bounds the number of simultaneous LIVES and the live's own length (battery: ~40 %/h on a charger) | per live |
+| B8 | **The broadcaster's encode and upload** | the phone encodes and seals; the server transcodes nothing (C3). 3.08 Mb/s from the Mi 9T app WebView at a 2.5 Mb/s ask, the Android encoder floored at ~2.6 Mb/s even at 480p - a `MediaRecorder` floor, WebCodecs on the same phone delivers 1.00 for 1.0 ([stage 0 (ii)](#stage-0-ii---the-bitrate-floor-measured-2026-11-17)); 2.32 Mb/s from iPhone Safari (WP-L1, draft #2109); 4 stores at once per social-service instance (`LIVE_INGEST_MAX_CONCURRENT`) | **never on audience** - a viewer costs the broadcaster nothing. It bounds the number of simultaneous LIVES and the live's own length (battery: ~40 %/h on a charger) | per live |
 
 ### The arithmetic
 
@@ -45,6 +45,7 @@ then the arithmetic.
 | 3.0 Mb/s | `LIVE_VIEWER_BITRATE_BPS` (the code) | **24** |
 | 2.6 Mb/s | the Android floor at a lower ask (480p, WP-L1) | 27.7 |
 | 2.32 Mb/s | iPhone Safari, 2.5 Mb/s ask (WP-L1) | 31.0 |
+| 1.06 Mb/s | WebCodecs H.264 `constant` at 1.0 Mb/s, 720p, both phones, plus 0.064 audio ([stage 0 (ii)](#stage-0-ii---the-bitrate-floor-measured-2026-11-17)) | 67.7 |
 | 107 x 0.8 = 85.6 Mb/s at 3.0 | the upper measured ceiling | 28.5 |
 
 One viewer-hour is 3.08 Mb/s x 3 600 s = 11 088 Mb = **1.39 GB out of the host**. A live of 100 viewers
@@ -218,7 +219,7 @@ and (before (a2)) the uplink. A guard there is legitimate; a `live complet` scre
 
 | Stage | What changes | Measured on | Measured how | Moves on when |
 | --- | --- | --- | --- | --- |
-| **0 - measure, no code** | nothing | LOCAL estate (a load test on the shared host is not ours to run unasked), then dev | (i) a headless VIEWER load script - **owed: the WP-L1 rig (`tools/live-bench`, draft #2109) injects a broadcaster and collects, it has no viewer swarm**; with it, 24 / 100 / 300 viewers polling the dev-shaped stack: polls/s, social-service CPU, pool wait, Redis scripts/s, p95 manifest latency (B7, B6). (ii) WP-L1 again from the APP WebViews at 360p and at 1.0 / 0.6 Mb/s asks (does the Android floor hold?) - feeds (c). (iii) the written question to Cloudflare on R2-served video | the B7 curve is on this page |
+| **0 - measure, no code** | nothing | LOCAL estate (a load test on the shared host is not ours to run unasked), then dev | (i) a headless VIEWER load script - **owed: the WP-L1 rig (`tools/live-bench`, draft #2109) injects a broadcaster and collects, it has no viewer swarm**; with it, 24 / 100 / 300 viewers polling the dev-shaped stack: polls/s, social-service CPU, pool wait, Redis scripts/s, p95 manifest latency (B7, B6). (ii) WP-L1 again from the APP WebViews at 360p and at 1.0 / 0.6 Mb/s asks (does the Android floor hold?) - feeds (c). **Measured 2026-11-17 ([below](#stage-0-ii---the-bitrate-floor-measured-2026-11-17)): the floor is `MediaRecorder`'s; WebCodecs holds 1.0 Mb/s at 720p on both phones.** (iii) the written question to Cloudflare on R2-served video | the B7 curve is on this page |
 | **1 - the manifest stops costing a full check per poll** | F1, F2, F3 below; helps at 24 too; no infrastructure | local, then dev | stage 0 (i) again, before / after | polls cost one indexed read + one O(1) Redis op |
 | **2 - segments to R2 on dev** | (a2) on dev only: the bucket, `segmentBase`, CORS, CSP, the purge against R2; register C19 and the privacy text drafted (HELD, as the lives text was until [live-production](live-production.md#5-the-privacy-policy-and-the-terms---written-2026-10-29-owed-the-owners-reread) 5) | dev, behind its real edge | `X-Canari-Cache` gone from the viewer path; the host's interface bytes during a live (`/proc/net/dev`, read-only) ~3 Mb/s per live whatever N; R2's operation counts per live-hour against the table above; glass-to-glass with the WP-L1 collector (does R2 add to the 5.8-7.3 s?); the purge's empty listing in R2 after an end and after a cut | host egress independent of N, latency unchanged within a second |
 | **3 - the visible cap goes** | seats -> counter (F1 done), `LIVE_FULL` and its screen retired, the guards of (e) in place, `limit_conn` per address deleted (segments no longer reach our nginx), Redis-down behaviour per O-4 | dev, then the first announced production live | the admission spike of a real follower push (stage 0's script firing N joins in a second); 429 rates; no `LIVE_FULL` in any log | the owner's yes on O-1..O-4 |
@@ -231,6 +232,121 @@ and (before (a2)) the uplink. A guard there is legitimate; a `live complet` scre
 3. Before or alongside it, make the manifest poll cheap (per-live seat set, the watch rule checked once per seat lease, a server-told poll interval) - the next wall at a few hundred viewers.
 4. Then retire `LIVE_FULL`: seats only count, and what still needs a guard answers "Connexion au direct..." with an automatic retry, never "complet".
 5. Quality step-down (c) bounds the number of simultaneous lives, not the audience; tiers (b) and peer assist (d) are not on the path.
+
+### Stage 0 (ii) - the bitrate floor, measured 2026-11-17
+
+**The question**: can a live go down to about 1 Mb/s, so that (c) - quality steps down when the
+audience grows, the owner's choice of 2026-11-17 with lives kept on our own server - has room to
+step into? Taken with [`tools/live-bench/codec-bench.js`](../../../../tools/live-bench/README.md#the-bitrate-floor-and-codec-bench-live-scaling-stage-0-ii-2026-11-17),
+no network and no account.
+
+**How.** Mi 9T **inside the app's WebView** (Android 16, WebView 152); iPhone 12 in **Safari**
+(iOS 27.0.1: the TestFlight WKWebView is not inspectable, and a LAN `http://` test page gets no
+camera; Safari runs the same WebKit and VideoToolbox). Each run: 60 s, video only, 30 fps asked,
+**2 s keyframes** as the product asks. Two sources: the **back camera** (portrait track,
+720x1280 / 480x848; both phones lie on a desk, so the scene is near-static and flatters every
+encoder), and a **synthetic busy scene** (seeded circles and text panned 2 px a frame, a turning bar,
+1280x720 / 848x480, the same on both phones - the worst case the camera could not give).
+`MediaRecorder` (MR) runs exactly the product's shape: `video/mp4;codecs=avc1.42E01F`, a 2 s
+timeslice, `videoKeyFrameIntervalDuration` 2 s. WebCodecs (WC) runs `VideoEncoder` with `bitrate`,
+`bitrateMode: 'constant'`, `latencyMode: 'realtime'`, `hardwareAcceleration: 'prefer-hardware'`
+(every probe answered supported on both phones), and a keyframe every 60 frames. **Delivered** =
+bytes x 8 / wall time; **steady** leaves out the first 10 s; a segment is 2 s of output. Audio is
+not in these numbers: the product adds `LIVE_AUDIO_BPS` = 0.064 Mb/s.
+
+**Mi 9T (app WebView), Mb/s**
+
+| API | Source | Codec | Size | Ask | Delivered (steady) | 2 s segment p50 / max | Keyframes | fps out |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| MR | camera | H.264 baseline | 720p | 1.0 | **2.49** (2.50) | 618 / 1 248 KB | 28/28 aligned | - |
+| MR | camera | H.264 baseline | 720p | 1.5 | **2.48** (2.49) | 618 / 1 243 KB | 28/28 | - |
+| MR | camera | H.264 baseline | 480p | 1.0 | **2.47** (2.58) | 614 / 1 245 KB | 25/25 | - |
+| MR | camera | H.264 baseline | 480p | 1.5 | **2.47** (2.48) | 617 / 1 245 KB | 27/27 | - |
+| MR | synthetic | H.264 baseline | 720p | 1.0 | 1.27 | 313 / 664 KB | 29/29 | - |
+| MR | synthetic | H.264 baseline | 480p | 1.0 | 0.85 | 205 / 448 KB | 29/29 | - |
+| WC | camera | H.264 baseline `avc1.42E01F` | 720p | 1.0 / 1.5 | **1.00 / 1.50** | 244 / 248, 366 / 373 KB | 1 per 60 frames | 30 |
+| WC | camera | H.264 baseline | 480p | 1.0 / 1.5 | **1.00 / 1.50** | 244 / 249, 366 / 373 KB | idem | 30 |
+| WC | camera | H.264 main `avc1.4D401F` | 720p | 1.0 / 1.5 | **1.00 / 1.50** | 244 / 248, 366 / 372 KB | idem | 30 |
+| WC | camera | H.264 main | 480p | 1.0 / 1.5 | **1.00 / 1.50** | 244 / 249, 366 / 373 KB | idem | 30 |
+| WC | camera | H.264 baseline | 720p | **0.6** | **0.60** | 146 / 149 KB | idem | 30 |
+| WC | camera | H.265 `hvc1` | 720p | 1.0 | 1.00 | 244 / 248 KB | idem | 30 |
+| WC | synthetic | H.264 baseline | 720p | 1.0 / 1.5 | 0.93 / 1.39 | 229 / 246, 341 / 369 KB | idem | 27.9 |
+| WC | synthetic | H.264 baseline | 480p | 1.0 | 0.99 | 242 / 320 KB | idem | 29.8 |
+| WC | synthetic | H.265 `hvc1` | 720p | 1.0 | 0.93 | 230 / 243 KB | idem | 27.9 |
+
+**iPhone 12 (Safari), Mb/s**
+
+| API | Source | Codec | Size | Ask | Delivered (steady) | 2 s segment p50 / max | Keyframes | fps out (frames skipped by the encoder) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| MR | camera | H.264 baseline | 720p | 1.0 / 1.5 | 0.94 / 1.34 | 232 / 237, 330 / 337 KB | 30/30 aligned | - |
+| MR | camera | H.264 baseline | 480p | 1.0 / 1.5 | 0.88 / 1.34 | 217 / 221, 331 / 336 KB | 30/30 | - |
+| MR | synthetic | H.264 baseline | 720p | 1.0 | **1.70** | 416 / 558 KB | 30/30 | - |
+| MR | synthetic | H.264 baseline | 480p | 1.0 | **1.70** | 420 / 456 KB | 30/30 | - |
+| WC | camera | H.264 baseline | 720p | 1.0 / 1.5 | 0.89 / 1.37 | 218 / 233, 330 / 360 KB | 1 per 60 frames | 29.5 (1.5 %) / 30 |
+| WC | camera | H.264 baseline | 480p | 1.0 / 1.5 | 0.90 / 1.35 | 219 / 227, 331 / 339 KB | idem | 30 |
+| WC | camera | H.264 main | 720p | 1.0 / 1.5 | 0.88 / 1.34 | 214 / 230, 326 / 345 KB | idem | 29.6 (1.5 %) / 30 |
+| WC | camera | H.264 main | 480p | 1.0 / 1.5 | 0.89 / 1.35 | 217 / 226, 329 / 338 KB | idem | 30 |
+| WC | camera | H.264 baseline | 720p | **0.6** | 0.51 | 125 / 133 KB | idem | 28.5 (5 %) |
+| WC | camera | H.265 `hvc1` | 720p | 1.0 | 0.95 | 233 / 245 KB | idem | 30 |
+| WC | synthetic | H.264 baseline | 720p | 1.0 / 1.5 | **0.94** / 1.41 | 230 / 248, 347 / 382 KB | idem | 25.8 (7 %) / 27.8 |
+| WC | synthetic | H.264 baseline | 480p | 1.0 | 0.94 | 232 / 248 KB | idem | 27.8 |
+| WC | synthetic | H.265 `hvc1` | 720p | 1.0 | **1.13** | 286 / 400 KB | idem (keyframes 146 KB) | 27.8 |
+
+The synthetic source reached the encoders at ~27.8 fps (the page draws it), so a WC delivery of 0.93
+there is the 1.0 ask per frame. Every MR chunk carrying a fragment started on a sync sample, on both
+phones and every run; the Mi's chunks still come in pairs (the 2 x p50 maxima: L-F1).
+
+**The picture.** A decoded frame of each run (~30 s; for WC the 15th frame after a keyframe, so a
+predicted frame) was put full screen on the phone and screenshotted; the screenshots are not
+committed (they carry the phone's status bar). Read by eye, at phone size: on the camera scene, WC at
+1.0 and even 0.6 Mb/s shows no blocking on either phone, only a slight softening at 0.6 - which says
+little, the scene being static. On the **synthetic** scene, **720p at 1.0 Mb/s (WC on both phones,
+MR on the Mi at 1.27) is acceptable**: text from ~14 px up is legible, the 10 px text smears, the
+moving bar has no blocking. 480p at 1.0 is softer still once scaled to the screen width and is not
+better per bit, so at ~1 Mb/s 720p is the better use of the bits on this content. 0.6 Mb/s on a busy
+scene was not measured.
+
+**What it says.**
+
+1. **The Android floor is a `MediaRecorder` artefact, and WebCodecs avoids it.** In the same app
+   WebView, the same phone's hardware H.264 encoder delivers exactly what WebCodecs asks - 0.60, 1.00,
+   1.50 Mb/s at 720p and 480p, 30 fps, nothing skipped - while `MediaRecorder` on the camera delivers
+   ~2.48 Mb/s whatever the ask (1.0 or 1.5) and whatever the size (720p or 480p), as WP-L1 found
+   (2.6). It is not the content: `MediaRecorder` fed the busier synthetic canvas delivers 1.27 for 1.0.
+   It is the camera-to-recorder path. **Asking `MediaRecorder` for less on Android changes nothing.**
+2. **The iPhone honours its ask only on an easy scene.** MR delivers 0.94 for 1.0 on the camera but
+   **1.70 for 1.0 on the busy scene** - the ask is a target, not a cap. WC `constant` holds the rate
+   (0.94 for 1.0 on the busy scene) by skipping frames when pressed (7 % at 720p 1.0; 5 % at 0.6 on
+   the camera).
+3. **The lowest delivered bitrate at acceptable quality: ~1.0 Mb/s at 720p, both phones, by
+   WebCodecs H.264 (`constant`)** - Mi 0.93-1.00, iPhone 0.89-0.94. 480p at the same rate holds too
+   and buys nothing. By `MediaRecorder` it is **~2.5 Mb/s on Android** (a floor) and **0.9-1.7 Mb/s on
+   the iPhone** (scene-dependent), so a 1 Mb/s step-down is not reachable with the recorder the
+   product uses today.
+4. **Arithmetic A at 1.0 Mb/s**: 72 / 1.06 (with audio) = **~67 viewers** on the share, against 24
+   today - the (c) step-down is real, but only through a WebCodecs broadcaster.
+
+**What a WebCodecs broadcaster would owe (not built, not measured here):** an fMP4 muxer of our own
+(WC hands out raw chunks; `MediaRecorder` muxed them), audio through `AudioEncoder` (AAC or Opus in
+MP4 on both engines: unmeasured), and a sealed segment cut at each requested keyframe. In exchange,
+the bitrate is a `configure()` away mid-live _(unverified: a reconfigure's gap was not measured)_,
+which is what (c) and [O-5](#7-the-decisions-owed-by-the-owner) need instead of a recorder restart.
+
+**Codec support** (S = supported; hw = the `prefer-hardware` probe; the iPhone answers `true` to
+every hint, so its hw column does not discriminate):
+
+| Codec | Mi 9T record (MR) | Mi 9T encode (WC, hw) | Mi 9T decode (MSE / WC) | iPhone record (MR) | iPhone encode (WC) | iPhone decode (ManagedMediaSource / WC) |
+| --- | --- | --- | --- | --- | --- | --- |
+| H.264 baseline / main | S / S | S, hw, `constant` | S / S, power-efficient | S / S | S, `constant` | S / S, power-efficient |
+| H.264 high | S | hw only (no software) | S / S | S | S | S / S |
+| H.265 `hvc1` / `hev1` | S / S | hw only | S / S, power-efficient | S / S | S | S / S, not smooth per `mediaCapabilities` |
+| AV1 `av01` | no | no | S / S, software (not power-efficient) | no | no | no / no |
+
+**Which codecs.** **H.264 stays** - everything encodes and decodes it in hardware, and the viewers'
+desktop browsers decode it. H.265 encodes on both phones but saved nothing at the same rate here
+(1.00 vs 1.00 on the Mi; on the iPhone its `constant` mode overshot, 1.13 for 1.0), and desktop
+decode of it is not universal _(not measured here)_. AV1 is out: neither phone encodes it, and the
+iPhone 12 cannot decode it.
 
 ## 4. The follow-ups this design writes and does not build
 
