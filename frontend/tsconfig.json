@@ -3,7 +3,13 @@
   "compilerOptions": {
     "allowArbitraryExtensions": true,
     "sourceMap": true,
-    "strict": true
+    "strict": true,
+    // `$lib` for TypeScript, since kit.config.js no longer declares `kit.alias` (deprecated in
+    // SvelteKit 3); Vite reads the same mapping from `LIB_ALIAS` in vite.config.js.
+    "paths": {
+      "$lib": ["./src/lib"],
+      "$lib/*": ["./src/lib/*"]
+    }
   },
   // `$app/tsconfig` carries no `include`/`exclude`. The two generated JS bundles are imported (so
   // typed through their `.d.ts`) but never checked as source.
