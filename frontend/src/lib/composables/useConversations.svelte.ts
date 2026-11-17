@@ -2786,7 +2786,7 @@ export function useConversations() {
     if (!convo) return;
     if ((convo.conversationType ?? 'group') !== 'group') return; // only named groups can be renamed
     try {
-      await renameGroupAndBroadcast({
+      const nameAt = await renameGroupAndBroadcast({
         mlsService: ctx.ensureMls(),
         groupId: convo.id,
         newName: name,
@@ -2797,7 +2797,8 @@ export function useConversations() {
       // RE-READ AFTER THE AWAIT, AND PATCH THE NAME ONLY. The send wrote our own notice into this
       // conversation meanwhile (`sendVisibleNotice`); writing back the snapshot taken before the
       // await erased it from this device's screen - the one device that had never drawn it.
-      patchConversation(key, { name });
+      // Dated by the server's acceptance of the frame, as every member's copy is (`groupName.ts`).
+      patchConversation(key, nameAt !== null ? { name, nameAt } : { name });
       await saveConversation(key, ctx);
       ctx.log(`Group ${key} renamed`);
     } catch (e) {

@@ -169,6 +169,9 @@ export function receivedNoticeTime(
  * `own` is absent where the acting user's devices deliberately draw nothing - a departure or a
  * deletion, whose conversation this device is about to drop - so no device of that user holds the
  * row and there is still nothing to diverge.
+ *
+ * Returns the server's acceptance time of the frame (`null` when the answer named none) - the
+ * instant every member's copy is dated by, which a rename dates its own row with (`groupName.ts`).
  */
 export async function sendVisibleNotice(
   mlsService: IMlsService,
@@ -176,18 +179,18 @@ export async function sendVisibleNotice(
   event: VisibleNoticeEvent | 'memberLeft' | 'groupDeleted',
   payload: Record<string, unknown>,
   own?: OwnNotice
-): Promise<void> {
+): Promise<number | null> {
   const frame = mkVisibleSystem(event, JSON.stringify(payload));
   const noOwnRow = event === 'memberLeft' || event === 'groupDeleted' || !own;
   const text = noOwnRow ? null : await visibleNoticeContent(event, payload, own.actor);
   // From whichever tab acts: a follower's gesture hands its notice to the leader (`frameFromAnyTab`).
   const sent = await sendFrameFromThisTab(mlsService, groupId, encodeAppMessage(frame));
-  if (noOwnRow) return;
+  if (noOwnRow) return sent.receivedAt;
   if (text === null) {
     console.warn(
       `[NOTICE] ${event} sent in ${groupId.slice(0, 8)}… names nothing to draw - no row written here, and none on the members' devices`
     );
-    return;
+    return sent.receivedAt;
   }
   // THE ACTING DEVICE'S COPY GETS THE SERVER TIME every member's copy carries, exactly as an own
   // text row gets it from its send (`patchServerTimestamp` in the outbox): MLS never hands this
@@ -211,9 +214,10 @@ export async function sendVisibleNotice(
     console.error(
       `[NOTICE] ${event} was DELIVERED in ${groupId.slice(0, 8)}… but this device's own row ${frame.messageId.slice(0, 8)} was not written - the members hold it and this device does not: ${String(e).slice(0, 120)}`
     );
-    return;
+    return sent.receivedAt;
   }
   console.debug(
     `[NOTICE] ${event} written on the acting device in ${groupId.slice(0, 8)}… as ${frame.messageId.slice(0, 8)} - the id every member's device writes`
   );
+  return sent.receivedAt;
 }

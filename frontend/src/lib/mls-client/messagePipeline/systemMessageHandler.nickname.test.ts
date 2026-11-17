@@ -254,3 +254,73 @@ describe('handleSystemEvent - nickname, the sender clock', () => {
     expect(nicknameEntry('g1', 'bob')?.nickname).toBeNull();
   });
 });
+
+describe('handleSystemEvent - history_bundle restates the dated group name (groupName.ts)', () => {
+  const TO_ME = digestIdentity('me', 'device-me');
+  const JOIN_PUSH = {
+    senderNorm: 'inviter',
+    deliveryMeta: {
+      channel: 'live',
+      addressed: true,
+      senderDeviceId: 'inviter-device',
+      queuedCreatedAt: 1_000_000,
+    },
+  };
+  const groupRow = (ctx: ReturnType<typeof makeCtx>) => {
+    ctx.conversations.set('g1', {
+      ...ctx.conversations.get('g1'),
+      name: 'Groupe',
+      conversationType: 'group',
+    });
+    return ctx;
+  };
+
+  beforeEach(() => forgetHistoryAsks());
+
+  it("the inviter's join push names the group for a member admitted after the last rename", async () => {
+    noteJoinSolicited('g1', 1);
+    const ctx = groupRow(makeCtx(JOIN_PUSH));
+    await handleSystemEvent(
+      'history_bundle',
+      {
+        messages: [],
+        to: TO_ME,
+        join: true,
+        last: true,
+        groupName: { name: 'Les ROOTz', at: 900_000 },
+      },
+      ctx as any
+    );
+    expect(ctx.conversations.get('g1')).toMatchObject({ name: 'Les ROOTz', nameAt: 900_000 });
+  });
+
+  it('a date later than the push carrying it is refused at ERROR', async () => {
+    noteJoinSolicited('g1', 1);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const ctx = groupRow(makeCtx(JOIN_PUSH));
+    await handleSystemEvent(
+      'history_bundle',
+      {
+        messages: [],
+        to: TO_ME,
+        join: true,
+        last: true,
+        groupName: { name: 'Faux', at: 2_000_000 },
+      },
+      ctx as any
+    );
+    expect(ctx.conversations.get('g1').name).toBe('Groupe');
+    expect(error.mock.calls.map((c) => String(c[0])).join('\n')).toContain('[GROUP_NAME] REFUSED');
+    error.mockRestore();
+  });
+
+  it('a broadcast bundle names nothing - only the join push restates the name', async () => {
+    const ctx = groupRow(makeCtx({ senderNorm: 'inviter' }));
+    await handleSystemEvent(
+      'history_bundle',
+      { messages: [], groupName: { name: 'Les ROOTz', at: 900_000 } },
+      ctx as any
+    );
+    expect(ctx.conversations.get('g1').name).toBe('Groupe');
+  });
+});

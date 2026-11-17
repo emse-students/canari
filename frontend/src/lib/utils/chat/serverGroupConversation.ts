@@ -101,8 +101,32 @@ export type EnsureConversationOutcome =
   | 'exit-owed'
   | 'in-creation';
 
+/** The (group, server name) pairs already reported by {@link noteServerNameDisagreement}. */
+const reportedServerNames = new Set<string>();
+
 /**
- * Brings a KNOWN group row's label back in line with the server's, which is the only authority on it.
+ * Says, ONCE per group and server name for the life of the page, that the server's list names a
+ * group differently from the name an MLS frame dated on this device. A line repeated by every sweep
+ * is one its reader learns to skip; a new server name is a new fact and is said again.
+ */
+function noteServerNameDisagreement(
+  groupId: string,
+  serverName: string,
+  nameAt: number,
+  log: (msg: string) => void
+): void {
+  const key = `${groupId}|${serverName}`;
+  if (reportedServerNames.has(key)) return;
+  reportedServerNames.add(key);
+  log(
+    `[DISCOVERY] ${groupIdShort(groupId)} - the server's list names it differently (${serverName.length} chars) from the name a frame dated ${new Date(nameAt).toISOString()}; the dated name stands until a later frame`
+  );
+}
+
+/**
+ * Brings a KNOWN group row's label back in line with the server's, for as long as no MLS frame has
+ * dated the row's name (`Conversation.nameAt`, `groupName.ts`) - once one has, the members' frames
+ * are the authority and the server's undated list is not.
  *
  * **THIS SEAM WAS THE ONLY ONE THAT COULD, AND IT WAS THE ONE THAT RETURNED EARLY.** A group's name
  * reaches a device by exactly two routes: the `groupRenamed` system message, which a device offline
@@ -131,9 +155,17 @@ async function repairGroupLabel(
   if (!group.isGroup) return;
   const serverName = (group.name ?? '').trim();
   if (!serverName || serverName === convo.name) return;
+  if (convo.nameAt !== undefined) {
+    // A NAME AN MLS FRAME DATED IS THE MEMBERS' WORD, AND THE SERVER'S LIST NO LONGER OVERRIDES IT
+    // (`groupName.ts`): the list carries no date, so it cannot say it is newer. A disagreement is a
+    // rename whose frame this device has not read yet - or one an older build sent without one - and
+    // it is said once per name, never on every sweep.
+    noteServerNameDisagreement(group.groupId, serverName, convo.nameAt, log);
+    return;
+  }
   conversations.set(key, { ...convo, name: serverName, contactName: serverName });
   log(
-    `[DISCOVERY] ${groupIdShort(group.groupId)} relabelled "${convo.name}" -> "${serverName}" (the server is the authority on a group's name)`
+    `[DISCOVERY] ${groupIdShort(group.groupId)} relabelled "${convo.name}" -> "${serverName}" (no frame has dated this name, so the server's list still corrects it)`
   );
   // AWAITED, NOT FIRE-AND-FORGET. The block this replaced in `discoverMissingGroups` awaited its
   // save, and a repair whose write may not have landed re-runs on the next sweep and logs again -

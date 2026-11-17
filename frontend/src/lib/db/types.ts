@@ -45,6 +45,11 @@ export interface ConversationMeta {
    */
   startedAt?: number;
   /**
+   * The server time of the MLS statement that set `name` (`Conversation.nameAt`, `groupName.ts`).
+   * Persisted beside the name so both are written by one save; absent reads as "never stated".
+   */
+  nameAt?: number;
+  /**
    * The group photo's media id. Persisted so the sidebar draws the photo from the local row at first
    * render: it used to be learned only from the server's group list, after the connection came up,
    * so group photos appeared seconds after people's (which need no id). `null` = no photo.

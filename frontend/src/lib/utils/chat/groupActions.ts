@@ -39,6 +39,7 @@ import { readConfirmedTree } from './confirmedTree';
 import { anyHistoryWithheldIn, historyWithheldFrom } from './historyWithheld';
 import { refusesCommitsHere } from '$lib/mls-client/stateAuthority';
 import { MemberRemovalNotCommittedError } from './memberRemovalError';
+import { restatedGroupName, type DatedGroupName } from './groupName';
 
 /**
  * The trust refusals this session already reported, as `deviceId|reason` - a sweep re-derives the
@@ -257,8 +258,17 @@ export async function deleteGroupAndBroadcast(params: {
 }
 
 /**
- * Renames the group on the server, then broadcasts a "groupRenamed" system message to all members so
- * their UIs update, and writes this device's own notice under the frame's id (`sendVisibleNotice`).
+ * Renames the group on the server, then states the new name to every member in a `groupRenamed`
+ * frame, and writes this device's own notice under the frame's id (`sendVisibleNotice`).
+ *
+ * THE FRAME IS THE RENAME, NOT A COURTESY ABOUT IT. A member's device dates a group's name by the
+ * frame that stated it and no longer lets the server's undated list override that
+ * (`groupName.ts`), so a rename whose frame did not leave reached nobody who holds a dated name: it
+ * throws, and the caller reports a failed rename rather than one only the server saw. The server
+ * copy is still written first, for the builds that read only that list.
+ *
+ * @returns the server's acceptance time of the frame - the date this device writes beside the new
+ *   name, the same one every member's copy carries - or `null` when the answer named none.
  */
 export async function renameGroupAndBroadcast(params: {
   mlsService: IMlsService;
@@ -268,15 +278,11 @@ export async function renameGroupAndBroadcast(params: {
   deviceKeyB64: string;
   /** Where this device writes its own copy of the notice. */
   ownNotice: Omit<OwnNotice, 'actor'>;
-}) {
+}): Promise<number | null> {
   const { mlsService, groupId, newName, userId, deviceKeyB64, ownNotice } = params;
   await mlsService.renameGroup(groupId, newName);
-
-  // Broadcast the rename notification - best-effort: the local rename is
-  // already committed to the server; if the MLS message fails, peers will
-  // still see the new name when they next fetch group metadata.
   try {
-    await sendVisibleNotice(
+    return await sendVisibleNotice(
       mlsService,
       groupId,
       'groupRenamed',
@@ -284,11 +290,14 @@ export async function renameGroupAndBroadcast(params: {
       { ...ownNotice, actor: userId }
     );
   } catch (e) {
-    console.warn(
-      `[GROUP] groupRenamed notice for ${groupId.slice(0, 8)}… NOT delivered - the rename stands, the members read it from the group metadata: ${String(e).slice(0, 120)}`
+    console.error(
+      `[GROUP_NAME] groupRenamed frame for ${groupId.slice(0, 8)}… NOT delivered - the members were not told, so the rename is reported as failed: ${String(e).slice(0, 120)}`
     );
+    throw e;
+  } finally {
+    // Whatever the send did to the ratchet is checkpointed, delivered or not.
+    await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64);
   }
-  await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64);
 }
 
 /**
@@ -860,6 +869,10 @@ function bundleFrame(
         // (`mergeBundleNicknames`): in a broadcast it would be a relayer's word nobody believes.
         // An older reader ignores the field.
         ...(answer?.join && state?.nicknames?.length ? { nicknames: state.nicknames } : {}),
+        // The group's dated name rides the join push too, and for the same reason: a member admitted
+        // after the last `groupRenamed` frame was never sent it (`groupName.ts`). An older reader
+        // ignores the field and keeps reading the server's list.
+        ...(answer?.join && state?.groupName ? { groupName: state.groupName } : {}),
       })
     )
   );
@@ -896,6 +909,11 @@ type ConversationHistoryState = {
    * it even when every message is withheld - by a merge that converges, never by a re-announcement.
    */
   nicknames?: NicknameWireEntry[];
+  /**
+   * The group's name as an MLS frame dated it on this device (`Conversation.nameAt`), restated to a
+   * newcomer by the join push. Absent while no frame has dated it.
+   */
+  groupName?: DatedGroupName;
 };
 
 /**
@@ -918,12 +936,15 @@ async function storedConversationState(
     const pins = pinEntries(groupId);
     // Device-local and keyed by the group id, like the pins - see `conversationNicknames.svelte.ts`.
     const nicknames = nicknameEntries(groupId);
+    // On the row, beside the name it dates - only a group row ever carries one.
+    const groupName = row ? restatedGroupName(row) : undefined;
     return {
       readWatermarks: row?.readWatermarks,
       serverReadWatermarks: row?.serverReadWatermarks,
       historyFloor: row?.historyFloor,
       ...(pins.length > 0 ? { pins } : {}),
       ...(nicknames.length > 0 ? { nicknames } : {}),
+      ...(groupName ? { groupName } : {}),
     };
   } catch (e) {
     // The empty state is deliberate (see the docstring) but it must not be SILENT: an unreadable row

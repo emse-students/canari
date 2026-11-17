@@ -142,7 +142,7 @@ describe('the SQLite upgrade to v20 writes every seed, per row, inside the migra
     // The same engine, opened again by this build (the plugin mock is still the one over it).
     const upgraded = new SqliteStorage(`seed-${n++}`);
     await upgraded.init();
-    expect(engine.prepare('PRAGMA user_version').get()).toEqual({ user_version: 20 });
+    expect(engine.prepare('PRAGMA user_version').get()).toEqual({ user_version: 21 });
     return { storage: upgraded, engine };
   }
 

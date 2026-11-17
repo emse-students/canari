@@ -109,6 +109,7 @@ export function toConversationMeta(
     serverReadWatermarks: convo.serverReadWatermarks,
     historyFloor: convo.historyFloor,
     startedAt: convo.startedAt,
+    ...(convo.nameAt !== undefined ? { nameAt: convo.nameAt } : {}),
     // A number when this session knows it; absent otherwise, which the store reads as "keep what
     // the row holds", never as 0: the store migration wrote it, and only it.
     ...(typeof convo.localReadSeed === 'number' ? { localReadSeed: convo.localReadSeed } : {}),
@@ -491,6 +492,8 @@ export interface ConversationRowSpec {
   serverReadWatermarks?: Conversation['serverReadWatermarks'];
   historyFloor?: Conversation['historyFloor'];
   startedAt?: Conversation['startedAt'];
+  /** See {@link Conversation.nameAt}; absent keeps `existing`'s. */
+  nameAt?: Conversation['nameAt'];
   /** See {@link Conversation.localReadSeed}; only a number is carried, absent keeps `existing`'s. */
   localReadSeed?: Conversation['localReadSeed'];
   /** See {@link Conversation.awaitingAdmission}; absent keeps what `existing` holds. */
@@ -534,6 +537,14 @@ export function buildConversationRow(spec: ConversationRowSpec): Conversation {
   const serverReadWatermarks = spec.serverReadWatermarks ?? existing?.serverReadWatermarks;
   const historyFloor = spec.historyFloor ?? existing?.historyFloor;
   const startedAt = spec.startedAt ?? existing?.startedAt;
+  // A DATED NAME IS NOT A SITE'S TO REPLACE. Once an MLS frame stated this group's name, only a later
+  // statement changes it (`groupName.ts`); a site rebuilding the row from the server's list or a
+  // placeholder carries an undated name, which it beats by definition. Groups only - a DM's or a
+  // channel's name is never dated.
+  const keepsDatedName =
+    conversationType === 'group' && spec.nameAt === undefined && existing?.nameAt !== undefined;
+  const nameAt = conversationType === 'group' ? (spec.nameAt ?? existing?.nameAt) : undefined;
+  const name = keepsDatedName && existing ? existing.name : identity.displayName;
   const awaitingAdmission = spec.awaitingAdmission ?? existing?.awaitingAdmission;
   // A number, or nothing: the seed is written by the STORE MIGRATION (SQLite v20, IndexedDB 14), and a save that
   // states nothing keeps it (`saveConversation`).
@@ -544,7 +555,7 @@ export function buildConversationRow(spec: ConversationRowSpec): Conversation {
   return {
     id,
     contactName: identity.contactName,
-    name: identity.displayName,
+    name,
     messages: existing?.messages ?? [],
     lifecycle,
     mlsStateHex: null,
@@ -557,6 +568,7 @@ export function buildConversationRow(spec: ConversationRowSpec): Conversation {
     ...(serverReadWatermarks !== undefined ? { serverReadWatermarks } : {}),
     ...(historyFloor !== undefined ? { historyFloor } : {}),
     ...(startedAt !== undefined ? { startedAt } : {}),
+    ...(nameAt !== undefined ? { nameAt } : {}),
     ...(typeof localReadSeed === 'number' ? { localReadSeed } : {}),
     ...(awaitingAdmission === true ? { awaitingAdmission } : {}),
   };
@@ -1037,6 +1049,7 @@ export function restoredConversationRow(
     serverReadWatermarks: meta.serverReadWatermarks,
     historyFloor: meta.historyFloor,
     startedAt: meta.startedAt,
+    nameAt: meta.nameAt,
     localReadSeed: meta.localReadSeed,
     awaitingAdmission: meta.awaitingAdmission,
   });

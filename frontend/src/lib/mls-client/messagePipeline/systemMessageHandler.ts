@@ -88,6 +88,11 @@ import { mergeStoredMessage } from '$lib/db/messagePayload';
 import { isPushPreview } from '$lib/utils/chat/messageMerge';
 import { applyReactionFrame } from './reactionFrame';
 import { publishReadState } from '$lib/mls-client/tabMessageSync';
+import {
+  boundedRestatedGroupName,
+  parseDatedGroupName,
+  withDatedGroupName,
+} from '$lib/utils/chat/groupName';
 
 /**
  * Context passed to handleSystemEvent - extends MessageHandlerDeps with
@@ -1118,11 +1123,26 @@ export async function handleSystemEvent(
   }
 
   if (event === 'groupRenamed' && data.newName) {
-    conversations.set(convoKey, { ...convo, name: data.newName });
-    if (storage) await saveConversation(convoKey);
+    // DATED BY THE SERVER'S ACCEPTANCE OF THE FRAME, and applied only when it is the newest statement
+    // this device holds (`groupName.ts`): a rename read after a later one - a drain, a replay page -
+    // no longer puts the older name back. The notice is history and is drawn either way.
+    const stated = parseDatedGroupName(data.newName, deliveryMeta?.queuedCreatedAt);
+    const renamed = stated ? withDatedGroupName(convo, stated) : null;
+    if (renamed) {
+      conversations.set(convoKey, renamed);
+      if (storage) await saveConversation(convoKey);
+      log(`📝 Group renamed by ${senderNorm}`);
+    } else if (!stated) {
+      console.error(
+        `[GROUP_NAME] rename by ${senderNorm.slice(0, 8)} in ${convoKey.slice(0, 8)}… NOT applied: its delivery carries no server time to date it, and this device's clock is not one`
+      );
+    } else {
+      log(
+        `[GROUP_NAME] rename by ${senderNorm.slice(0, 8)} in ${convoKey.slice(0, 8)}… dated ${stated.at} is not newer than the name held (${convo.nameAt ?? 'undated'}) - kept`
+      );
+    }
     const text = await visibleNoticeContent('groupRenamed', data, senderNorm);
     if (text) await writeNotice(text, messageId);
-    log(`📝 Group renamed by ${senderNorm}`);
     return true;
   }
 
@@ -1499,6 +1519,31 @@ export async function handleSystemEvent(
       // carries them even when every message is withheld). Its entries are the relayer's word about
       // what others did, so they are taken UNVERIFIED, only about current members of the tree, dated
       // within the bundle's server time - and a broadcast or a replayed bundle carries none at all.
+      // And the group's dated name - from the inviter's JOIN PUSH only, like the nicknames: it is
+      // how a member admitted after the last rename learns the name from the members rather than
+      // from the server's list (`groupName.ts`). Bounded by the push's own server time.
+      if (joinPush && data?.groupName !== undefined) {
+        const restated = boundedRestatedGroupName(data.groupName, deliveryMeta?.queuedCreatedAt);
+        if ('refused' in restated) {
+          console.error(
+            `[GROUP_NAME] REFUSED the name ${senderNorm.slice(0, 8)}'s join push restates for ${convoKey.slice(0, 8)}…: ${restated.refused}`
+          );
+        } else {
+          const held = conversations.get(convoKey);
+          const named = held ? withDatedGroupName(held, restated.kept) : null;
+          if (named) {
+            conversations.set(convoKey, named);
+            await saveConversation?.(convoKey).catch((e: unknown) => {
+              log(
+                `[GROUP_NAME] name of ${convoKey.slice(0, 8)}… taken from the join push but not persisted: ${String(e)}`
+              );
+            });
+            log(
+              `[GROUP_NAME] name of ${convoKey.slice(0, 8)}… dated ${restated.kept.at} taken from ${senderNorm.slice(0, 8)}'s join push`
+            );
+          }
+        }
+      }
       if (joinPush && Array.isArray(data?.nicknames) && data.nicknames.length > 0) {
         const members = await nicknameMembersOf(mlsService, convoKey, 'join push');
         const nicknamesMerged = members

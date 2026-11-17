@@ -251,16 +251,20 @@ describe('the other notices the acting device used to miss', () => {
   it('writes nothing when the frame was not accepted - a row only this device holds diverges too', async () => {
     const mlsService = createMlsServiceStub();
     vi.mocked(mlsService.sendMessage).mockRejectedValue(new Error('offline'));
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
     const ownNotice = own();
-    await renameGroupAndBroadcast({
-      mlsService,
-      groupId: GROUP,
-      newName: 'Nouveau nom',
-      userId: ALICE,
-      deviceKeyB64: 'k',
-      ownNotice,
-    });
+    // A rename whose frame did not leave reached no member holding a dated name (groupName.ts), so
+    // it is a FAILED rename, thrown to the caller - never one only the server saw.
+    await expect(
+      renameGroupAndBroadcast({
+        mlsService,
+        groupId: GROUP,
+        newName: 'Nouveau nom',
+        userId: ALICE,
+        deviceKeyB64: 'k',
+        ownNotice,
+      })
+    ).rejects.toThrow('offline');
     expect(ownNotice.addMessageToChat).not.toHaveBeenCalled();
   });
 
@@ -297,7 +301,7 @@ describe('the other notices the acting device used to miss', () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     await expect(
       sendVisibleNotice(createMlsServiceStub(), GROUP, 'groupRenamed', { newName: 'x' }, writer)
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual(expect.any(Number));
     expect(error).toHaveBeenCalledTimes(1);
     error.mockRestore();
   });

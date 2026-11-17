@@ -16,6 +16,7 @@ import { appMessageSentAtMs } from '$lib/utils/chat/messageUtils';
 import { applyPin, mergePinEntries } from '$lib/stores/pinStore.svelte';
 import { applyNicknameFrame, nicknameMembersOf, type NicknameRosterSource } from './nicknameFrame';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
+import { parseDatedGroupName, withDatedGroupName } from '$lib/utils/chat/groupName';
 import { boundedByVerifiedSentAt, withVettedBundleServerTimes } from '$lib/utils/chat/messageTime';
 import { applyReaction } from '$lib/utils/chat/messageReactions';
 import { editSupersedes } from '$lib/utils/chat/editPrecedence';
@@ -284,9 +285,18 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
     }
 
     if (parsed.system.event === 'groupRenamed' && data.newName) {
+      // The live handler's rule (`groupName.ts`): dated by the archive row's server time, applied only
+      // when newer than the name held - a page of old renames replayed after a live one no longer
+      // walks the name back through them.
       const convo = getConversation(contactName);
-      if (convo && convo.name !== data.newName) {
-        setConversation(contactName, { ...convo, name: data.newName });
+      const stated = parseDatedGroupName(data.newName, parseServerTimestampMs(msg.timestamp));
+      const renamed = convo && stated ? withDatedGroupName(convo, stated) : null;
+      if (renamed) {
+        setConversation(contactName, renamed);
+      } else if (!stated) {
+        console.error(
+          `[GROUP_NAME] replayed rename in ${conversationId.slice(0, 8)}… NOT applied: the archive row carries no readable server time (${String(msg.timestamp).slice(0, 40)})`
+        );
       }
       systemContent = await visibleNoticeContent('groupRenamed', data, senderNorm);
     } else if (parsed.system.event === 'memberRemoved' && data.targetUser) {

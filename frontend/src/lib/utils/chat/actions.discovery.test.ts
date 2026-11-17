@@ -428,6 +428,57 @@ describe('discoverMissingGroups orphan cleanup', () => {
     expect(saveConversation).not.toHaveBeenCalled();
   });
 
+  // ONCE AN MLS FRAME DATED THE NAME, THE SERVER'S UNDATED LIST NO LONGER OVERRIDES IT (groupName.ts):
+  // the members' frames are the authority on a group's name, and the server's copy is going away.
+  // The disagreement is said once per name, not on every sweep.
+  it('leaves a name an MLS frame dated, and says so once across sweeps', async () => {
+    const conversations = new Map<string, Conversation>([
+      [
+        'g1',
+        {
+          id: 'g1',
+          contactName: 'g1',
+          name: 'Les ROOTz',
+          nameAt: Date.UTC(2026, 10, 17, 9, 0, 0),
+          messages: [],
+          lifecycle: 'active',
+          mlsStateHex: null,
+          conversationType: 'group',
+          imageMediaId: null,
+        },
+      ],
+    ]);
+    const saveConversation = vi.fn().mockResolvedValue(undefined);
+    const log = vi.fn();
+    const sweep = () =>
+      discoverMissingGroups({
+        mlsService: makeMls({
+          getUserGroups: vi
+            .fn()
+            .mockResolvedValue([
+              { groupId: 'g1', name: 'Groupe', isGroup: true, imageMediaId: null },
+            ]),
+          getLocalGroups: vi.fn().mockReturnValue(['g1']),
+        }),
+        userId: 'user-a',
+        deviceKeyB64: '1234',
+        conversations,
+        deleteConversation: vi.fn().mockResolvedValue(undefined),
+        saveConversation,
+        log,
+      });
+
+    await sweep();
+    await sweep();
+
+    expect(conversations.get('g1')?.name).toBe('Les ROOTz');
+    const said = log.mock.calls.map((c) => String(c[0]));
+    expect(said.join('\n')).not.toContain('relabelled');
+    expect(said.filter((l) => l.includes('names it differently'))).toHaveLength(1);
+    // The line carries no group name - only its length.
+    expect(said.join('\n')).not.toContain('Groupe');
+  });
+
   // CONTROL: a DM whose stored label differs from the server row must NOT be relabelled. The
   // server's name for a DM is the canonical `self::peer` KEY, so adopting it would put a pair of
   // uuids in the sidebar where a first name belongs - the defect the `isGroup` guard exists for.
