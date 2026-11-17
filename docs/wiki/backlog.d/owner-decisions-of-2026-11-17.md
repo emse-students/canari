@@ -121,3 +121,21 @@ the counts.
   stamped as told, so the real opening tells nobody - every kind's moved opening must re-arm what has
   not really opened; that day's case was repaired by hand on production with the owner's yes
   ([entry](p2-an-organiser-test-of-a-form-notifies-everyone-who-asked.md), `1.7.1`).
+
+### The evening (the owner present)
+
+- **The lead's autonomy runs THROUGH `1.7.1`, included**: pre-releases and the stable of `1.7.0`
+  and of `1.7.1`, each stable once its pre-release is read on both bench phones and nothing blocks.
+- **The dependency audit blocks a pull request only on what we ship** (#3795, decided that evening;
+  [cicd](../cicd.md#the-audit-blocks-on-what-we-ship-2026-11-17)).
+- **The new-discussion panel (#3793):**
+  - a push for an UNNAMED group shows the sender alone;
+  - the members' first names in that notification are a `1.7.1` entry, native on Android and iOS
+    ([entry](an-unnamed-group-s-push-names-its-members-by-first-name.md));
+  - an older build shows "Groupe" for an unnamed group until step 3 of
+    [sealed names](p1-encrypt-the-names-of-groups-communities-and-salons.md) raises the minimum
+    version - accepted;
+  - **a named group can NEVER be un-named** - a decision, not an open question;
+  - group creation stays create-then-invite, and a partial invite names who is missing (the
+    `alpha.10` reading found an invite that added nobody:
+    [entry](p2-a-new-group-s-invitation-is-refused-by-the-creator-s-own-other-device.md), `1.7.0`).

@@ -4,7 +4,7 @@ target: 1.7.1
 
 **Owner, 2026-11-17: the whole content-free push chantier goes AFTER `1.7.0`.** Only WP-W6 (the
 ring-end push without `groupId`, #3779) ships in `1.7.0`; its reading stays at `1.7.0`
-([reading-owed-call-ring-end-carries-no-conversation](reading-owed-call-ring-end-carries-no-conversation.md)).
+(read PASS on both phones on `1.7.0-alpha.10`, [readings](../device-verification.md#the-phone-readings-of-2026-11-17-170-alpha10-both-phones-and-the-rig)).
 Everything listed under "What is left" below is planned from `1.7.1`.
 
 Recorded from the owner's sovereignty philosophy ([durable-rules](../durable-rules.md#product-philosophy---sovereignty)).
@@ -234,7 +234,7 @@ rewrite opens the app at the list (no `groupId` in clear for `CanariTapDeepLink`
 - **2026-11-17 - WP-W6 built** (no switch needed): `call_ring_end` no longer carries `groupId`;
   every shipped receiver already found the ring by `callId` alone
   ([section 6](../protocols/content-free-push.md#6-calls---the-ring-stays-immediate)). Its phone
-  reading is its own entry: [reading-owed-call-ring-end-carries-no-conversation](reading-owed-call-ring-end-carries-no-conversation.md).
+  reading was read PASS on both phones on `1.7.0-alpha.10` ([readings](../device-verification.md#the-phone-readings-of-2026-11-17-170-alpha10-both-phones-and-the-rig)).
 
 ### What is left, in order, with an honest size (re-measured against `main` on 2026-11-17)
 

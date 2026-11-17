@@ -397,7 +397,7 @@ alert sweep since it was added - and reads `groupId` on this push only in a log 
 needs no legacy row. Pinned by `calls.service.spec.ts` (the `data` map and the APNs custom keys
 are exactly `type`, `callId`, `reason`) and by the native source read as text
 (`androidCallRing.test.ts`, `callsCompiled.test.ts`: the ring-end branch names no `groupId`).
-Owed: the reading [reading-owed-call-ring-end-carries-no-conversation](../backlog.d/reading-owed-call-ring-end-carries-no-conversation.md).
+Read PASS on the Mi 9T and the iPhone 12 on `1.7.0-alpha.10` ([readings](../device-verification.md#the-phone-readings-of-2026-11-17-170-alpha10-both-phones-and-the-rig)).
 
 ## 7. Several accounts on one device
 
