@@ -496,7 +496,7 @@ chat and reactions (WP-L6) are [below](#the-chat-and-the-floating-reactions-clie
 
 ### The top bar at narrow widths (2026-11-16)
 
-The bar is a wrapping flex row: the identity column (`data-live-top-identity`: name, then LIVE, time, count) has `min-w-40 flex-1 basis-40`, and the six actions (report, sound, rotate, chat, share, close) are ONE group (`data-live-top-actions`, `ml-auto shrink-0`, each `.ui-icon-button` at 44 px). With room (landscape, wide phones) they share a row; below the name's floor the whole group drops to its own row under the second line, so the name is never crushed to "Canari Te..." and no button sits over the count (Mi 9T, 436 css px, found 2026-11-16). Test: `LiveViewer.svelte.test.ts` (structure; happy-dom has no layout). A 360-436 px reading is owed ([entry](../../backlog.d/reading-owed-the-live-viewer-top-bar-at-360-436-px.md)).
+The bar is a wrapping flex row: the identity column (`data-live-top-identity`: name, then LIVE, time, count) has `min-w-40 flex-1 basis-40`, and the six actions (report, sound, rotate, chat, share, close) are ONE group (`data-live-top-actions`, `ml-auto shrink-0`, each `.ui-icon-button` at 44 px). With room (landscape, wide phones) they share a row; below the name's floor the whole group drops to its own row under the second line, so the name is never crushed to "Canari Te..." and no button sits over the count (Mi 9T, 436 css px, found 2026-11-16). Test: `LiveViewer.svelte.test.ts` (structure; happy-dom has no layout). A 360-436 px reading is owed (entry (entry deleted 2026-11-17)).
 
 ### What stacks over the viewer (2026-11-07)
 

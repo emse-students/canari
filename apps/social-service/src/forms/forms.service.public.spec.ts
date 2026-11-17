@@ -109,6 +109,15 @@ describe('FormsService - public forms', () => {
       expect(form.id).toBe('f1');
       expect(form.submissionCount).toBe(0);
       expect(form.associationName).toBeNull();
+      expect(form.windowState).toBe('open');
+    });
+
+    it('says closed on the single read of a form whose end has passed, whatever the reader clock', async () => {
+      const { service } = makeService({
+        form: baseForm({ closedAt: new Date(Date.now() - 1000) }),
+      });
+      expect((await service.get('f1')).windowState).toBe('closed');
+      expect((await service.getPublic('f1')).windowState).toBe('closed');
     });
 
     it('carries the association name on the single read, as the list does', async () => {
@@ -190,6 +199,7 @@ describe('FormsService - public forms', () => {
           'pricing',
           'productGridPrices',
           'title',
+          'windowState',
         ].sort()
       );
       expect(form).toMatchObject({ basePrice: 1200, allowCashPayment: true, pricing: null });
