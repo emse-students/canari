@@ -23,7 +23,12 @@
   import { showToast } from '$lib/stores/toast.svelte';
   import { exactDate, timeAgo } from '$lib/utils/time';
   import { m } from '$lib/paraglide/messages';
-  import { removeDeviceRow, revocableDeviceId } from './deviceRowRemoval';
+  import {
+    buildPanelRows,
+    removeDeviceRow,
+    revocableDeviceId,
+    type PanelRow as PanelRowOf,
+  } from './deviceRowRemoval';
 
   interface DeviceInfo {
     deviceId: string;
@@ -33,34 +38,14 @@
   }
 
   /**
-   * One entry in the list. A device and a login are two records of the same
-   * physical thing, held by two services, so a row carries both - joined on the
-   * device id the session was stamped with at unlock.
-   *
-   * Either half can be missing, and each absence means something different:
-   *  - sessions empty: an enrolled device holding no live login. It can still
-   *    decrypt what it already has, so it is still worth deleting when lost.
-   *  - device null: a login that never named a device, or names one the server
-   *    no longer lists. That is the shape a stolen cookie takes, so it gets a
-   *    row of its own instead of being folded into a device it cannot claim.
-   *
-   * `sessions` is a list rather than a single value even though `bindDevice`
-   * enforces one live login per device: rows opened before that rule existed,
-   * and devices that have not unlocked since, are still legitimately plural.
+   * One entry in the list (`buildPanelRows`). A device and a login are two records of the same
+   * physical thing, held by two services, so a row carries both - joined on the device id the
+   * session was stamped with at unlock. Either half can be missing: no login means an enrolled
+   * device holding no live login (still worth deleting when lost); no device means a login that
+   * never named one, or names one the server no longer lists - the shape a stolen cookie takes, so
+   * it gets a row of its own.
    */
-  interface PanelRow {
-    key: string;
-    device: DeviceInfo | null;
-    /** Live logins on this device, most recently used first. */
-    sessions: AuthSessionInfo[];
-    isCurrentDevice: boolean;
-    /**
-     * For a device-less row, the device id the login claimed but that the server
-     * did not list - null when it claimed none at all. The two are told apart
-     * because only the second means "never unlocked MLS".
-     */
-    unlistedDeviceId: string | null;
-  }
+  type PanelRow = PanelRowOf<DeviceInfo, AuthSessionInfo>;
 
   interface Props {
     /** Whether the modal is visible. */
@@ -86,6 +71,12 @@
    * would state as fact something this panel does not know.
    */
   let sessionsKnown = $state(false);
+  /**
+   * Whether the device list is KNOWN on this load. False until the last fetch answered, and after a
+   * failed one: a login "not in the list" read off a list that did not load is every healthy device,
+   * and such a row revokes what it names - one delete would wipe the user's phone.
+   */
+  let devicesKnown = $state(false);
   let loading = $state(false);
   let error = $state('');
   let sessionError = $state('');
@@ -111,50 +102,13 @@
    * activity is most recent; logins with no device close the list because they
    * are the ones the user is being asked to look at hardest.
    */
-  const rows = $derived.by((): PanelRow[] => {
-    const listedIds = devices.map((d) => d.deviceId);
-    const deviceRows: PanelRow[] = devices.map((device) => ({
-      key: device.deviceId,
-      device,
-      sessions: sessions
-        .filter((s) => s.deviceId === device.deviceId)
-        .sort((a, b) => Date.parse(b.lastUsedAt) - Date.parse(a.lastUsedAt)),
-      isCurrentDevice: device.deviceId === myDeviceId,
-      unlistedDeviceId: null,
-    }));
-
-    // A login belongs to no row above when it named no device at all, or named
-    // one the server did not list. Stated as a predicate over the two lists
-    // rather than as a mark left behind by the loop: there is then no order in
-    // which the two can disagree.
-    const orphanRows: PanelRow[] = sessions
-      .filter((s) => s.deviceId === null || !listedIds.includes(s.deviceId))
-      .sort((a, b) => Date.parse(b.lastUsedAt) - Date.parse(a.lastUsedAt))
-      .map((s) => ({
-        key: `session:${s.id}`,
-        device: null,
-        sessions: [s],
-        isCurrentDevice: false,
-        unlistedDeviceId: s.deviceId,
-      }));
-
-    deviceRows.sort((a, b) => {
-      if (a.isCurrentDevice !== b.isCurrentDevice) return a.isCurrentDevice ? -1 : 1;
-      return lastActivity(b) - lastActivity(a);
-    });
-    return [...deviceRows, ...orphanRows];
-  });
+  const rows = $derived(buildPanelRows({ devices, devicesKnown, sessions, myDeviceId }));
 
   $effect(() => {
     if (open && userId) {
       void loadDeviceData();
     }
   });
-
-  /** Most recent login instant of a row, 0 when it holds none (such rows sort last). */
-  function lastActivity(row: PanelRow): number {
-    return row.sessions.length > 0 ? Date.parse(row.sessions[0].lastUsedAt) : 0;
-  }
 
   function getDeviceOsLabel(device: DeviceInfo): string {
     const os = (device.deviceOs || '').toLowerCase();
@@ -206,6 +160,7 @@
    */
   async function loadDeviceData() {
     loading = true;
+    devicesKnown = false;
     error = '';
     sessionError = '';
     try {
@@ -226,8 +181,12 @@
         console.error('[DevicePanel] Failed to load sessions', sessionResult.reason);
       }
 
-      if (deviceResult.status === 'rejected') throw deviceResult.reason;
+      if (deviceResult.status === 'rejected') {
+        devices = [];
+        throw deviceResult.reason;
+      }
       devices = deviceResult.value;
+      devicesKnown = true;
       console.log(`[DevicePanel] Found ${devices.length} device(s)`);
       // Worth a loud line: this is the state in which every self-protection in this panel is
       // inert, and the cause is server-side (retention filter, unresolvable KeyPackage) so it
@@ -287,7 +246,7 @@
 
     // A login row that names an unlisted device revokes that device too (`revocableDeviceId`), so
     // its confirmation says the machine is erased, exactly as a listed device's does.
-    const revokes = revocableDeviceId(row, myDeviceId) !== null;
+    const revokes = revocableDeviceId(row, { myDeviceId, devicesKnown }) !== null;
     const confirmed = await showConfirm(
       revokes
         ? m.chat_delete_device_confirm({ name: rowLabel(row) })
@@ -305,8 +264,12 @@
         deleteDevice: (deviceId) => mlsService.deleteDevice(userId, deviceId),
         revokeSession: revokeAuthSession,
         myDeviceId,
+        devicesKnown,
       });
-      if (outcome === 'device-incomplete') {
+      if (outcome === 'own-device') {
+        // The server refused to ban the device this session is bound to; nothing was signed out.
+        error = m.chat_device_remove_own_refused();
+      } else if (outcome === 'device-incomplete') {
         // The removal did not complete; whatever is left is still listed after the reload below.
         error = m.chat_device_delete_retry_error();
       } else if (outcome === 'sessions-left') {

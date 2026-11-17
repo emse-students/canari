@@ -13,6 +13,7 @@ const CALLER = '0A0A0A0A-0000-4000-8000-0000000000A1';
  */
 describe('InternalSessionsController', () => {
   let endDeviceSessions: jest.Mock;
+  let boundDevice: jest.Mock;
   let controller: InternalSessionsController;
   const previous = process.env.INTERNAL_SECRET;
 
@@ -28,8 +29,10 @@ describe('InternalSessionsController', () => {
 
   beforeEach(() => {
     endDeviceSessions = jest.fn().mockResolvedValue(2);
+    boundDevice = jest.fn().mockResolvedValue('phone-1');
     controller = new InternalSessionsController({
       endDeviceSessions,
+      boundDevice,
     } as unknown as AuthSessionsService);
   });
 
@@ -66,5 +69,22 @@ describe('InternalSessionsController', () => {
       controller.endDeviceSessions('', 'phone-1', undefined, SECRET)
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(endDeviceSessions).not.toHaveBeenCalled();
+  });
+
+  it("answers the device a session is bound to - the owner's delete refuses its own", async () => {
+    await expect(controller.sessionDevice(CALLER, SECRET)).resolves.toEqual({
+      deviceId: 'phone-1',
+    });
+    expect(boundDevice).toHaveBeenCalledWith(CALLER.toLowerCase());
+  });
+
+  it('refuses the binding read without the secret, or for a malformed session id', async () => {
+    await expect(controller.sessionDevice(CALLER, 'wrong')).rejects.toBeInstanceOf(
+      ForbiddenException
+    );
+    await expect(controller.sessionDevice('not-a-uuid', SECRET)).rejects.toBeInstanceOf(
+      BadRequestException
+    );
+    expect(boundDevice).not.toHaveBeenCalled();
   });
 });

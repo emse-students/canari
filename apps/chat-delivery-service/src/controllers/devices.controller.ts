@@ -59,7 +59,12 @@ import {
   upsertRevocation,
 } from '../utils/revocation';
 import { parseSessionId } from '../utils/session-id';
-import { DeviceSessionsNotEndedError, endDeviceSessions } from '../internal/device-sessions';
+import {
+  DeviceSessionsNotEndedError,
+  SessionBindingUnknownError,
+  endDeviceSessions,
+  sessionBoundDevice,
+} from '../internal/device-sessions';
 import type { RevocationReason } from '../entities/revoked-device.entity';
 import { RefusalCode } from '../utils/refusal-codes';
 import { upsertDeviceKeyPackage } from '../utils/device-key-package';
@@ -968,6 +973,14 @@ export class DevicesController {
     // every conversation. No admin exemption (owner, 2026-11-02).
     assertCallerOwnsUserId(headerUserId, safeUserId, 'Cannot delete another user device');
 
+    // 0. AN OWNER NEVER BANS THE DEVICE HE IS CALLING FROM. The panel checks its own id, but that is
+    //    the client's idea of it - stale after an identity rotation, or when the binding moved - and
+    //    banning it wipes the machine in the user's hand. The calling session's binding is the fact,
+    //    held by core-service: read it BEFORE anything is purged, and refuse when it names this id.
+    //    A retirement is exempt: its id IS the caller's own abandoned one, still bound until the
+    //    next unlock rebinds the session.
+    if (reason === 'owner') await this.refuseOwnDevice(safeUserId, safeDeviceId, callerSessionId);
+
     // 1. Purge the full per-device footprint (shared helper with the stale-device GC), recording the
     //    key groups the device held: its rows were the binding the revoked-leaves question reads.
     const purge = await this.messagingService.purgeDeviceFootprint(safeUserId, safeDeviceId, {
@@ -1034,5 +1047,44 @@ export class DevicesController {
       status: 'device_deleted',
       ...purge,
     };
+  }
+
+  /**
+   * Throws a typed `OWN_DEVICE` 409 when the calling session is bound to `deviceId`, and a 503 when
+   * the binding cannot be read (the delete it gates destroys, so an unknown answer refuses). A call
+   * with no session id (nginx forwards the verified token's `sid`) cannot be checked, and says so.
+   */
+  private async refuseOwnDevice(
+    userId: string,
+    deviceId: string,
+    callerSessionId: string | null
+  ): Promise<void> {
+    if (!callerSessionId) {
+      this.logger.warn(
+        `[DELETE_DEVICE] user=${userId} device=${deviceId} carries no session id - its own-device binding cannot be checked`
+      );
+      return;
+    }
+    let bound: string | null;
+    try {
+      bound = await sessionBoundDevice(callerSessionId);
+    } catch (e) {
+      if (!(e instanceof SessionBindingUnknownError)) throw e;
+      this.logger.error(
+        `[DELETE_DEVICE] user=${userId} device=${deviceId} REFUSED: the caller session's binding is unknown (${e.detail}) - answering 503, nothing destroyed`
+      );
+      throw new ServiceUnavailableException({
+        message: "The calling session's device could not be read yet. Retry.",
+      });
+    }
+    if (bound === deviceId) {
+      this.logger.warn(
+        `[DELETE_DEVICE] user=${userId} device=${deviceId} REFUSED: it is the device the calling session is bound to (OWN_DEVICE)`
+      );
+      throw new ConflictException({
+        code: 'OWN_DEVICE',
+        message: 'This is the device the calling session is bound to; it cannot ban itself.',
+      });
+    }
   }
 }

@@ -464,6 +464,18 @@ export class AuthSessionsService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
+  /**
+   * The device id session `sessionId` is bound to ({@link bindDevice}), or null when it is bound to
+   * none or does not exist. The owner's device delete reads it to refuse banning its own device.
+   */
+  async boundDevice(sessionId: string): Promise<string | null> {
+    const row = await this.sessions.findOne({
+      where: { id: sessionId },
+      select: { deviceId: true },
+    });
+    return row?.deviceId ?? null;
+  }
+
   /** Live sessions of a user, most recently used first. Expired rows are filtered out, not waited on. */
   async listForUser(userId: string): Promise<SessionSummary[]> {
     const rows = await this.sessions.find({

@@ -434,6 +434,13 @@ retry. A retirement (`reason=retired`) ends none - the id
 was the caller's own install's. Not covered, stated: a session bound to NO device, or to a different
 id - the panel's own session revocation (`DELETE /api/auth/sessions/:id`) ends those.
 
+**And an owner's revocation never bans the caller's own device** (2026-11-17). Before anything is
+purged, chat-delivery asks core-service which device the CALLING session is bound to
+(`GET /api/internal/sessions/:sessionId/device`, internal secret, `AuthSessionsService.boundDevice`)
+and refuses with a typed `409 OWN_DEVICE` when it is the id asked; an unreadable binding answers 503
+(`SessionBindingUnknownError`) and destroys nothing. A retirement is exempt, for the reason above
+([auth](frontend/modules/auth.md#a-removed-row-whose-device-the-server-no-longer-lists)).
+
 ## A refresh refused because the device was revoked says so (2026-10-25)
 
 **Ending the device's sessions destroyed the only fact the device could still learn its revocation

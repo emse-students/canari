@@ -14,5 +14,5 @@ device unlisted for A (delete B's `key_package` rows on the DEV database, ids in
 then on A open the device panel: B shows as a login row; remove it - the confirmation is the
 device one ("Supprimer ... de votre compte ?"). B is then wiped at its next exchange
 (`[RESET] wiping this device back to a fresh install`, then `/login`), and its old id is on the
-denylist. A's own row is never removable. A machine that keeps its store, or comes back under its
+denylist. A's own row is never removable, and the note on B's row says removing it erases the machine. A machine that keeps its store, or comes back under its
 old id, is a FAIL.
