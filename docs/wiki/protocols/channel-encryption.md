@@ -4999,3 +4999,96 @@ Device readings: on the Mi 9T, a member whose phone never opened community X rec
 for X - a generic banner, `joinKeyGroupFromPush: settled joined`, the next push readable, and the
 app's next start logging `[KEY_GROUP_PUSH_JOIN] ... registered`; on the iPhone, the generic banner
 and the join at the next foreground.
+
+## 27. The iPhone held two seed mirrors, and the one without the extension's seeds won - FIXED 2026-11-17
+
+**The question the [`[PUSH_BLIND]`](#14-the-seed-was-pushed-to-a-shut-phone-and-the-push-service-threw-it-away-unread---fixed-2026-09-21-android)
+count left open.** Since `v1.6.5` every blind salon banner on production read
+`missing=seed refused=none` - the seed was not in the mirror, so no open ran - mostly on iOS
+(8 lines on 2026-11-14, 6 of them iOS; the one line of 2026-11-16, iOS). The line could not say WHY
+the seed was absent, when [section 19](#19-design-the-seed-travels-with-the-message---decided-by-the-user-2026-09-27)
+puts the seed's frame on every message.
+
+**Read on production, 2026-11-16, read-only.** One salon, one iPhone receiver, one sender session:
+
+| time (UTC) | what the server logs say |
+| --- | --- |
+| 13:06:39 | session `S` index 0 sealed; `[CHANNEL_PUSH] ... seedFrame=<n>ch`, the iPhone's push `inline=true` - no blind report |
+| 13:08:08 | `S` index 1, same - no blind report: the seed was held |
+| 13:08:15-19 | the iPhone comes to the FOREGROUND: `PUSH_REFRESH`, `PUSH_REGISTER`, `MSG_FETCH count=2`, `ACK deleted=2` |
+| 13:08:19.7 | `S` index 2 sealed, its frame attached; the push leaves at 13:08:20.06 |
+| 13:08:20.66 | `[PUSH_BLIND] platform=ios missing=seed held=false refused=none` |
+
+The key group had not moved since the day before (its last commit 21 hours earlier), so no epoch gap
+explains it. The seed was HELD at 13:08:08 and ABSENT at 13:08:20, and the only thing between the two
+is the app becoming active.
+
+**The cause, in the code.** iOS kept TWO copies of `graine_seeds.json`: the app's
+(`app_data_dir`), written by the foreground, and the App Group's, which the notification extension
+reads and writes - it is where `openSeedFrame` stores a seed it opened from a frame. Every
+`didBecomeActive` and `willResignActive` copied the app's file over the group's AS BYTES
+(`CanariMirrorPushStateToAppGroup` -> `sync_seed_mirror_copy`). So:
+
+- a seed the extension stored while the app was shut was ERASED the moment the app came to the
+  foreground - the 13:08:15 activation above;
+- the frame on the next push could not stand in for it: the foreground had just drained the key
+  group (`ACK deleted=2`) and applied that very frame, so the state the extension decrypts with no
+  longer opens it (an MLS application secret is deleted once used);
+- and a seed the foreground absorbed reached the extension only at the next lifecycle copy.
+
+A STATE that lasts until the next lifecycle copy, on the phone that matters most to an active
+salon: the one being opened. That fits the shape of the 2026-11-14 lines too - six in fifteen
+minutes in ONE salon, three accounts.
+
+**The fix deletes the overlap rather than reconciling it.** One file per install, as Android has
+always had: on iOS the foreground now writes the App Group's file (`seed_mirror_home`, `push.rs`), the
+extension writes the same file, and every writer already holds its `graine_seeds.lock`
+(section 19's lock, which orders processes). The lifecycle copy of the seeds is gone, and the
+app-alive push path in `canari_push.mm` (`CanariGraineSeedHeld`, `CanariHandleChannelMessage`) reads
+the App Group's file. The copy an older build left in `app_data_dir` is folded in ONCE, at the first
+foreground edit (`fold_legacy_seed_mirror`): a UNION under both writers' locks, never an overwrite -
+a session the group holds keeps its entry, with both writers' labels; a session it lacks is added; a
+copy no key opens, or that is not JSON, is deleted unfolded (`MirrorReadError::Unopenable` /
+`Unparsable`), while a copy that merely failed to READ (`MirrorReadError::Io`) is kept and the edit
+fails, so the next one folds it. An account's wipe edits the one file
+([auth](../frontend/modules/auth.md#the-seed-mirror-labels-each-entry-with-its-writers-2026-11-07)),
+and the factory wipe now deletes it under its lock (`storage::wipe_app_group`): with no lifecycle copy
+left to replace it, it would otherwise outlive the wipe. Retiring the fold is in
+[legacy-compatibility](../legacy-compatibility.md).
+
+**What the union cannot undo, stated.** A removal the older build made in its OWN copy only - a salon
+left, a session the retention sweep forgot, after the last lifecycle copy and before the upgrade -
+is not in the app's file, while the group's still holds the entry, so the union keeps it. Nothing
+in the two files tells that entry from a seed the extension stored meanwhile, and the forgets were
+never recorded, so they cannot be re-run. What it costs: sealed seeds of a salon this account once
+read, at most `GRAINE_MIRROR_SESSIONS_PER_CHANNEL` (20) per channel, in a file only Rust opens; no
+push of a salon left reaches the phone to use them. It ends with the per-channel bound when that
+channel is written again, an account's wipe, or the factory wipe - and nothing else, which is the
+window, said rather than guessed around.
+
+**Every foreground edit now takes a lock IN the App Group, so it holds background time.** An app
+suspended while it holds a lock on a shared-container file is killed (`0xdead10cc`) - the rule the
+Share Extension's capture already obeys under `performExpiringActivity`
+([sharing](../frontend/sharing.md)). An edit can start in the seconds after the app leaves the
+screen (a frame the page absorbs on its way out), so `with_app_mirror` holds a
+`beginBackgroundTaskWithName:` assertion (`app_group::BackgroundTime`) across the fold and the edit,
+and ends it when the edit returns; its expiry, never the expected path for a lock held milliseconds,
+is said at ERROR and the task ended as the API requires.
+
+**What is proved where, and what is not compiled here.** The home the foreground writes is chosen
+under `cfg(target_os = "ios")` (`seed_mirror_home`), and so is the background-time assertion: no
+host build or test compiles either. The ONLY proof that the foreground writes the App Group is the
+source scan in `iosMlsMirror.test.ts`; the iOS branch is first compiled by the release's iOS build,
+and first run on the iPhone reading below. The fold itself, the union, the refusals and the factory
+wipe's removal run in host tests.
+
+**What holds it.** `a_seed_the_extension_stored_survives_the_app_becoming_active` (`push.rs`, red
+against the byte copy), the fold's union, refusal and unreadable-copy cases, and
+`iosMlsMirror.test.ts`, which reads the Objective-C no CI compiles: the activation mirror names no
+seed file, and the app-alive path reads `CanariAppGroupPath()`.
+
+**Not established, and said:** the one Android line of 2026-11-14 (`held=true`). Android has one
+file, so this cause cannot reach it: [its own entry](../backlog.d/p2-android-blind-salon-banner-held-true.md).
+The bench run against a key group of production size, which this section does not cover, is
+[another](../backlog.d/p1-salon-push-seed-frame-at-production-key-group-size.md). What is owed for
+this fix is in [the reading](../backlog.d/reading-owed-ios-seed-mirror-one-copy.md).

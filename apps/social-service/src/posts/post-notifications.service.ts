@@ -1243,11 +1243,10 @@ export class PostNotificationsService {
       const others = typeof likedBy.others === 'number' ? Math.max(0, likedBy.others) : 0;
       row.meta = name ? { ...rest, likedBy: { name, others } } : rest;
     }
-    if (shown.length < named.length) {
-      this.logger.debug(
-        `[TREND] bell: ${named.length - shown.length} of ${named.length} naming(s) no longer hold, not shown`
-      );
-    }
+    // A dropped naming is the DESIGNED answer for a row whose condition went (a like taken back,
+    // the share switch off, an unfollow), served as `rest`, and the bell is polled every 60 s by
+    // each open client: a line per drop would repeat the same stable state at every read, so none
+    // is written (the read is a pure function of durable state, and the SQL above is the record).
   }
 
   /**

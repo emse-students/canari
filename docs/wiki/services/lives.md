@@ -1269,7 +1269,10 @@ report and prints ONE line:
 
 Pinned by `live-report-age.spec.ts` (the arithmetic across a weekend and the October DST night, the
 three levels, no id in the line) and `lives.integration.spec.ts` (the SQL: only pending live and
-live_chat reports, the cast).
+live_chat reports, the cast). **Read on dev 2026-11-17** (G4 of
+[live-production](../frontend/modules/live-production.md#2-the-gates-each-with-its-evidence)): dev's
+social-service printed `[LIVE_REPORT_AGE] pending=0` at :53 every hour since its start that day,
+fourteen lines, its `debug` entry line before each.
 
 ### The first-live rules (L11)
 
@@ -1320,13 +1323,15 @@ What is left:
   [the pre-live read](../frontend/modules/live.md#the-broadcaster-as-built)); in `/admin/moderation`, the standing on a live
   report, the withdraw button and the `live_chat` row with its integrity (`altered`, `key-rotated`
   and `unverifiable` shown with ONE weight, "not proven", [why](#a-reported-chat-line-wp-l8b)) are
-  built too (`ModerationLiveBlock`, `ModerationChatLineBlock`). Left: a control lifting a withdrawal.
+  built too (`ModerationLiveBlock`, `ModerationChatLineBlock`), and so is the control lifting a
+  withdrawal (2026-11-17, [the moderation client](../frontend/modules/live.md#the-moderation-client-wp-l8s-client-half-2026-10-19)).
+  Nothing is left in code; the readings are [their own entry](../backlog.d/reading-owed-live-moderation-pushes-lift-and-the-lives-switch.md).
 
 ## Decisions of 2026-10-20: moderation, reactions, the audience
 
 The user's answers to the open moderation questions. **The ladder, the 90 days, the reported line
-and the reactions are BUILT (2026-10-21, server)**, and so is [the 24 h alarm](#the-24-h-alarm-on-the-live-report-queue-wp-l8b-item-e); the viewer cap is not - WP-L8b in the
-[backlog](../backlog.d/p1-live-moderation-wp-l8-merged-the-client-s-standing-refusals-the-vie.md).
+and the reactions are BUILT (2026-10-21, server)**, and so is [the 24 h alarm](#the-24-h-alarm-on-the-live-report-queue-wp-l8b-item-e); the viewer cap is not - its staged lifting is
+[its own entry](../backlog.d/live-viewer-cap-lifted-in-measured-steps.md).
 
 | Question | Decision | What it changes in what exists |
 | --- | --- | --- |
