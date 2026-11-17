@@ -81,6 +81,7 @@ import {
 import { boundedByVerifiedSentAt, withVettedBundleServerTimes } from '$lib/utils/chat/messageTime';
 import { applyPin, mergePinEntries } from '$lib/stores/pinStore.svelte';
 import { mergeBundleNicknames } from '$lib/utils/users/conversationNicknames.svelte';
+import { clearRegisterOwed } from '$lib/utils/chat/registerOwed';
 import { applyNicknameFrame, nicknameMembersOf } from '$lib/utils/chat/nicknameFrame';
 import { m } from '$lib/paraglide/messages';
 import type { MessageHandlerDeps } from './deps';
@@ -837,6 +838,7 @@ export async function handleSystemEvent(
     if (requestId === null) return true;
     const answerKey = parseHistoryAnswerKey(data?.answerKey);
     const incomplete = data?.incomplete === true;
+    const register = data?.register === true;
     const takenByAWaiter = noteProbeReceived(convoKey, from, {
       kind: 'digest',
       digest,
@@ -844,6 +846,7 @@ export async function handleSystemEvent(
       requestId,
       ...(answerKey !== undefined ? { answerKey } : {}),
       ...(incomplete ? { incomplete: true } : {}),
+      ...(register ? { register: true as const } : {}),
     });
     const size =
       digest.mode === 'ids'
@@ -882,6 +885,7 @@ export async function handleSystemEvent(
           requestId,
           answerKey,
           incomplete,
+          register,
           deps: { storage, deviceKeyB64: deviceKey(), mlsService, log },
         }).catch((e) =>
           log(
@@ -1396,9 +1400,15 @@ export async function handleSystemEvent(
     };
     let incoming: BundleMsg[] = Array.isArray(data?.messages) ? data.messages : [];
     let addOnly = false;
-    // The inviter's join push to THIS device, accepted below: the one bundle a nickname register is
-    // taken from (see the nickname merge).
+    // The inviter's join push to THIS device, accepted below: one of the two bundles a nickname
+    // register is taken from (see the nickname merge).
     let joinPush = false;
+    // The answer to OUR register ask (`registerOwed.ts`): the other one - the state this device was
+    // owed since its admission, asked for because the push may never have reached it.
+    let registerAnswer = false;
+    // Where the conversation STATE an answer restates is read from: the frame itself, or - for a
+    // sealed answer - what opened under our ask, never the clear routing beside it.
+    let bundleState: any = data;
     if (deliveryMeta?.addressed === true) {
       const requestId = parseHistoryRequestId(data?.requestId);
       const claimsJoin = data?.join === true && requestId === undefined;
@@ -1427,6 +1437,7 @@ export async function handleSystemEvent(
               sealed
             );
             incoming = Array.isArray(content.messages) ? (content.messages as BundleMsg[]) : [];
+            bundleState = content;
           } catch (e) {
             const code = e instanceof HistorySealError ? e.code : 'contract';
             // At error, never ingested, and the two causes said apart: OUR engine failing is a
@@ -1485,8 +1496,31 @@ export async function handleSystemEvent(
         );
       }
       incoming = bounded.kept;
-      addOnly = ask.kind !== 'join';
       joinPush = ask.kind === 'join';
+      // A REGISTER ANSWER is solicited by the register ask this device made, and says it answers one
+      // INSIDE what opened under that ask: only then may an answer to an ask hand over the
+      // conversation's state, as the push does. A register ask always carries a key, so an answer
+      // that opened nothing (`bundleState` is still the clear frame) is never one.
+      registerAnswer =
+        ask.kind === 'digest' &&
+        ask.register === true &&
+        bundleState !== data &&
+        bundleState?.register === true;
+      if (!registerAnswer && sealed === undefined && data?.register === true) {
+        // Nothing honest says `register` in clear: the flag rides the sealed content only.
+        console.error(
+          `[HISTORY_ADDRESSED] an unsealed history_bundle from ${senderNorm.slice(0, 8)} in ${convoKey.slice(0, 8)}… claims to answer a register ask - taken as an ordinary answer, its state ignored`
+        );
+      }
+      addOnly = !joinPush && !registerAnswer;
+      // It carries the STATE and nothing else: a message riding it would be one an answer to an ask
+      // could then change rather than only add, so none is taken from it (the responder sends none).
+      if (registerAnswer && incoming.length > 0) {
+        console.error(
+          `[HISTORY_ADDRESSED] a register answer from ${senderNorm.slice(0, 8)} in ${convoKey.slice(0, 8)}… carried ${incoming.length} message(s) - dropped, it carries the state only`
+        );
+        incoming = [];
+      }
     } else if (typeof data?.sealed === 'string') {
       // A BROADCAST is never sealed by an honest answerer - only an addressed answer is.
       console.error(
@@ -1533,12 +1567,12 @@ export async function handleSystemEvent(
       if (beforeMerge) {
         const mergedWatermarks = mergeReadWatermarks(
           beforeMerge.readWatermarks,
-          parseReadWatermarks(data.readWatermarks)
+          parseReadWatermarks(bundleState.readWatermarks)
         );
         // The server-clock marks travel beside the stamped ones; an older sender has none.
         // Bounded like a read_watermark frame: none above the server's time for this bundle.
         const bundleServerMarks = boundedServerMarks(
-          parseReadWatermarks(data.serverReadWatermarks),
+          parseReadWatermarks(bundleState.serverReadWatermarks),
           deliveryMeta?.queuedCreatedAt
         );
         if (bundleServerMarks.dropped > 0) {
@@ -1550,7 +1584,7 @@ export async function handleSystemEvent(
           beforeMerge.serverReadWatermarks,
           bundleServerMarks.kept ?? undefined
         );
-        const mergedFloor = mergeHistoryFloor(beforeMerge.historyFloor, data.floor);
+        const mergedFloor = mergeHistoryFloor(beforeMerge.historyFloor, bundleState.floor);
         if (mergedWatermarks || mergedServerWatermarks || mergedFloor !== null) {
           const merged = {
             ...beforeMerge,
@@ -1580,7 +1614,7 @@ export async function handleSystemEvent(
       // The pin register rides beside them, merged entry by entry on the same `at` the frames
       // carry. Reported only when something actually moved - a bundle restating what we already
       // hold is the common case and says nothing.
-      const pinsMerged = addOnly ? 0 : mergePinEntries(convoKey, data.pins);
+      const pinsMerged = addOnly ? 0 : mergePinEntries(convoKey, bundleState.pins);
       if (pinsMerged > 0) {
         log(
           `[HISTORY_BUNDLE] ${pinsMerged} pin state(s) converged for ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)}`
@@ -1591,19 +1625,31 @@ export async function handleSystemEvent(
       // carries them even when every message is withheld). Its entries are the relayer's word about
       // what others did, so they are taken UNVERIFIED, only about current members of the tree, dated
       // within the bundle's server time - and a broadcast or a replayed bundle carries none at all.
-      if (joinPush && Array.isArray(data?.nicknames) && data.nicknames.length > 0) {
-        const members = await nicknameMembersOf(mlsService, convoKey, 'join push');
+      if (
+        (joinPush || registerAnswer) &&
+        Array.isArray(bundleState?.nicknames) &&
+        bundleState.nicknames.length > 0
+      ) {
+        const members = await nicknameMembersOf(
+          mlsService,
+          convoKey,
+          joinPush ? 'join push' : 'register answer'
+        );
         const nicknamesMerged = members
-          ? mergeBundleNicknames(convoKey, data.nicknames, {
+          ? mergeBundleNicknames(convoKey, bundleState.nicknames, {
               members,
               serverAt: deliveryMeta?.queuedCreatedAt,
             })
           : 0;
         if (nicknamesMerged > 0) {
           log(
-            `[HISTORY_BUNDLE] ${nicknamesMerged} nickname(s) taken (unverified) for ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)}'s join push`
+            `[HISTORY_BUNDLE] ${nicknamesMerged} nickname(s) taken (unverified) for ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)}'s ${joinPush ? 'join push' : 'register answer'}`
           );
         }
+      }
+      // THE STATE ARRIVED: the register this device was owed since its admission is no longer asked.
+      if (joinPush || registerAnswer) {
+        clearRegisterOwed(userId, convoKey, joinPush ? 'join push' : 'register answer');
       }
 
       if (msgs.length > 0) {

@@ -49,6 +49,7 @@ import { digestIdentity } from '$lib/utils/chat/historyDigestRendezvous';
 import { retryOverheardPull } from '$lib/utils/chat/historyDiffAnswer';
 import { takeOwedPulls } from '$lib/utils/chat/historyOverheardPull';
 import { forgetHistoryAsks, noteJoinSolicited } from '$lib/utils/chat/historyAddressing';
+import { noteRegisterOwed } from '$lib/utils/chat/registerOwed';
 import {
   hasHistoryFrameBeenConsumed,
   markHistoryFrameConsumed,
@@ -751,6 +752,10 @@ async function handleWelcome(args: WelcomeArgs): Promise<boolean> {
       // carries no request id: recorded here, before any frame of the group can be read, so the
       // push is accepted as the answer to it (`historyAddressing.ts`).
       noteJoinSolicited(joinedGroupId);
+      // AND OUR ADMISSION IS WHAT MAKES US OWE THE CONVERSATION'S STATE (`registerOwed.ts`), written
+      // durably here so a device the push never reached - offline at the delivery, or reloaded
+      // before it - asks for it by its own reconciliation. A key group has no conversation state.
+      if (!mlsService.isDistributionGroup(joinedGroupId)) noteRegisterOwed(userId, joinedGroupId);
       log(
         `[HISTORY_ADDRESSED] ${joinedGroupId.slice(0, 8)}… admitted - the inviter's push is solicited`
       );

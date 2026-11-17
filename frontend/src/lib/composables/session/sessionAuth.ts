@@ -2614,12 +2614,15 @@ export async function loginImpl(
             await reportRejectionOnce(cb.loadAndRestoreConversations(), (e) =>
               cb.log(`[WARN] Error resyncing convs (Welcome): ${e}`)
             );
-            // Fresh join: the Welcome lands us at the current epoch with no pre-join history. The
-            // inviter pushes a bundle on the foreground add path, but its background twin
-            // (send-welcome-and-commit) does not, so we compare here as well - which costs one
-            // frame when the bundle already arrived, and repairs the group when it did not.
-            await reconcileGroup(mlsService, groupId, cb.log);
           }
+          // FRESH JOIN: the Welcome lands us at the current epoch with no pre-join history, and our
+          // own reconciliation is what brings it - the inviter's push carries the conversation's
+          // state and no message since 2026-11-17, and a device it never reached is owed even that
+          // (`registerOwed.ts`: this probe asks for it). Run for EVERY processed Welcome: inside the
+          // branch above it ran only when the envelope's id differed from the joined one, because the
+          // Welcome handler has already written the joined group's row by the time this callback
+          // runs - so an ordinary fresh join waited for the next connection to compare.
+          await reconcileGroup(mlsService, groupId, cb.log);
           cb.onLoadHistoryForConversation(groupId, groupId).catch((e) =>
             cb.log(`[WARN] Error refreshing conv ${groupId}: ${e}`)
           );

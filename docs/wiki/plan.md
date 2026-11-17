@@ -51,6 +51,7 @@ earliest version, as a checklist.
 
 - [P2 - about six devices a day become orphans, nearly all of them browsers](backlog.d/p2-orphan-devices-refill-the-queue-watched-daily-cleaned-by-hand.md)
 - [P2 - the organiser alert for a payment over capacity: its precondition is met, the flip is owed](backlog.d/reading-owed-the-organiser-alert-for-a-payment-over-capacity.md)
+- [P2 - a newcomer offline when its Welcome is delivered receives no join push, so no nickname set before it (found by the round-2 review of #3185, 2026-11-09) - built (draft pull request, 2026-11-17)](backlog.d/p2-an-offline-newcomer-receives-no-join-push.md)
 - [P2 - the slow-link chantier: no screen waits for the network to draw (owner, 2026-11-10; starts right after 1.6.10)](backlog.d/slow-link-local-first-chantier.md)
 - [P2 - the app is slow everywhere on a weak link (owner, 2026-11-10): five serial chains cut, the rest designed](backlog.d/weak-network-audit-2-what-is-left.md)
 - [P2 - a rolling replace answered two 502s once: its evidence must survive the retire first](backlog.d/p2-the-deploy-s-rolling-replace-two-posts-answered-502-across-a-release-cause.md)
@@ -322,7 +323,6 @@ earliest version, as a checklist.
 - [P2 - what the key-package claim fix left: the sweep claims before reading the tree, and the empty-pool WARN fires once per serve](backlog.d/p2-what-the-key-package-claim-fix-left.md)
 - [P2 - MLS checkpoint and queue stalls of 30-54 s on web, with a worker timeout and an add-device failure on `lock_budget_spent` (web log, 2026-11-08)](backlog.d/p2-mls-queue-and-checkpoint-stalls-of-30-to-54-seconds-on-web.md)
 - [P2 - a CanaReel that never loads (owner, Android, 1.6.8, 2026-11-09): the outcome line is built, the cause is owed one reading](backlog.d/p2-a-canareel-that-never-loads.md)
-- [P2 - a newcomer offline when its Welcome is delivered receives no join push, so no nickname set before it (found by the round-2 review of #3185, 2026-11-09) - designed, not built](backlog.d/p2-an-offline-newcomer-receives-no-join-push.md)
 - [P2 - Native push: an unresolvable host reads as `Redis lock not acquired`, and the FCM token registration is retried into HTTP 429 (1.6.8 logs, 2026-11-09)](backlog.d/p2-native-push-lock-and-token-registration-noise.md)
 - [P2 - three public names are not watched from outside: the edge challenges GitHub's runners (a gap the lead decides)](backlog.d/p2-the-edge-challenges-the-upstream-monitor.md)
 - [P2 - `GET /api/posts/notifications` takes 1.1-3.6 s on every call (13.8 s and 12.8 s on one account), and the bell polls it every 60 s (1.6.8 logs, 2026-11-09)](backlog.d/p2-the-post-notifications-bell-read-takes-1-to-3-seconds-every-poll.md)

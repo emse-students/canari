@@ -57,6 +57,7 @@ vi.mock('$lib/utils/chat/recovery', () => ({
 }));
 
 import { setupMessageHandler } from './setupMessageHandler';
+import { isRegisterOwed } from '$lib/utils/chat/registerOwed';
 import { messageRowStore, placement, storedRow } from '../test/fixtures/messageRowStore';
 import { resetUnackedFrames } from './unackedFrames';
 import { activeMlsStatePersister } from '../mlsStatePersisterRegistry';
@@ -76,6 +77,17 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
   // Console spies a test installs, restored even when one of its assertions fails.
   const restores: (() => void)[] = [];
   afterEach(() => restores.splice(0).forEach((restore) => restore()));
+  // This file runs without a DOM, and a processed Welcome writes the durable register-owed marker
+  // (`registerOwed.ts`): a store in memory, so the write is real and nothing says it failed.
+  beforeEach(() => {
+    const map = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => map.get(k) ?? null,
+      setItem: (k: string, v: string) => void map.set(k, v),
+      removeItem: (k: string) => void map.delete(k),
+    });
+  });
+  afterEach(() => vi.unstubAllGlobals());
 
   const groupId = '11111111-1111-4111-8111-111111111111';
 
@@ -316,6 +328,34 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     // the messages the outbox held for it (`resumeOutboxGroup`). Pinned since 2026-10-31 - only the
     // redelivered-Welcome path was.
     expect(onGroupReady).toHaveBeenCalledWith(groupId);
+  });
+
+  /**
+   * THE ADMISSION MAKES THE DEVICE OWE ITSELF THE CONVERSATION'S STATE (`registerOwed.ts`): written
+   * durably beside the in-memory join ask, so a device the inviter's push never reached - offline at
+   * the delivery, or reloaded before it - asks for it by its own reconciliation.
+   */
+  it.each([
+    ['a conversation group owes its register', false, true],
+    ['a key group owes none - it has no conversation state', true, false],
+  ])('a processed Welcome: %s', async (_case, keyGroup, owed) => {
+    const deps = baseDeps();
+    const mls = deps.mlsService as any;
+    mls.processWelcome = vi.fn().mockResolvedValue(groupId);
+    mls.getDeviceId = vi.fn().mockReturnValue('dev-x');
+    mls.isDistributionGroup = vi.fn(() => keyGroup);
+    setupMessageHandler(deps as any);
+    const onMsg = mls.onMessage.mock.calls[0][0] as (
+      a: string,
+      b: Uint8Array,
+      c?: string,
+      d?: boolean,
+      e?: Uint8Array,
+      f?: boolean
+    ) => Promise<boolean>;
+    await onMsg('peer-user', new Uint8Array([1, 2]), groupId, true, undefined, false);
+
+    expect(isRegisterOwed('user-a', groupId)).toBe(owed);
   });
 
   /**

@@ -35,7 +35,16 @@ import { isWithinHistoryRange } from '$lib/utils/chat/historyWindow';
  * clock when the ask left: no answer can carry a message sent after the question.
  */
 export type HistoryAsk =
-  | { kind: 'digest'; since: number; askedAt: number }
+  | {
+      kind: 'digest';
+      since: number;
+      askedAt: number;
+      /**
+       * The digest also asked for the conversation's STATE (`registerOwed.ts`): its answer may then
+       * hand over the register, the pins, the floor and the read marks, as the join push does.
+       */
+      register?: boolean;
+    }
   | {
       kind: 'pull';
       since: number;

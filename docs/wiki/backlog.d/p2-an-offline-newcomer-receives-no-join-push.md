@@ -1,6 +1,17 @@
-## P2 - a newcomer offline when its Welcome is delivered receives no join push, so no nickname set before it (found by the round-2 review of #3185, 2026-11-09) - designed, not built
+## P2 - a newcomer offline when its Welcome is delivered receives no join push, so no nickname set before it (found by the round-2 review of #3185, 2026-11-09) - built (draft pull request, 2026-11-17)
 
-target: 1.10.0
+target: 1.7.0
+
+**Status: BUILT in a draft pull request stacked on option B (#3775), retargeted to `1.7.0` by the
+owner's "everything before the stable" (2026-11-17).** The mechanism as built, which tightened the
+design below in three places, is in
+[history-answer-addressing](../protocols/history-answer-addressing.md#the-newcomer-asks-for-its-register-2026-11-17):
+
+- the register travels SEALED, its flag inside the sealed content and never in the clear routing;
+- the join push carries no message any more;
+- the fresh-join reconciliation runs at every processed Welcome. It was dead in the ordinary case.
+
+Left: the adversarial review, the merge, and the reading below.
 
 **What is true after #3185.** The inviter's join push (`joinPush.ts`, `sendFullHistoryBundle`) is an
 ADDRESSED history answer, and an addressed frame is transport-only: the server publishes it only to a
@@ -52,10 +63,10 @@ keeps the marker and asks again on the next connection, at the cost of a digest 
 
 **It also seals the last unsealed history answer (option B, 2026-11-17).** Since option B every ask
 carries a key and its addressed answer is sealed to it; the join push answers no ask and stays unsealed
-([history-answer-addressing](../protocols/history-answer-addressing.md#what-is-not-sealed-the-inviters-join-push)).
-The register digest above IS a keyed ask, so its answer is sealed with nothing more; once it ships, the
-unsolicited push can be retired. Whether that moves this entry forward is owed to the owner (the P1
-[entry](p1-a-new-member-of-a-group-conversation-receives-its-whole-past-decided-2026-10.md), step 2).
+([history-answer-addressing](../protocols/history-answer-addressing.md#what-is-not-sealed-the-inviters-join-push---so-it-carries-no-message-2026-11-17)).
+The register digest above IS a keyed ask, so its answer is sealed with nothing more; with it, the
+push carries no message (2026-11-17), which closes the P1's residual
+([entry](p1-a-new-member-of-a-group-conversation-receives-its-whole-past-decided-2026-10.md), step 2).
 
 **Why it is not in #3185.** It changes the reconciliation's wire (a field on the digest and its answer),
 adds a durable marker on the newcomer and a mixed-version behaviour; the MLS chat path deserves its own

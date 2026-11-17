@@ -20,6 +20,7 @@ import { cachedHistoryStateKey } from './historyStateKey';
 import { sendVisibleNotice, type OwnNotice } from './visibleNotices';
 import { readerHistorySelection } from './historyEntitlement';
 import { mintHistoryRequestId, noteHistoryAsk } from './historyAddressing';
+import { isRegisterOwed } from './registerOwed';
 import {
   historySealAad,
   mintHistoryAnswerKey,
@@ -872,10 +873,24 @@ function bundleRouting(
  */
 function bundleContent(
   messages: unknown[],
-  { state, join }: { state?: ConversationHistoryState; join: boolean }
+  {
+    state,
+    join,
+    register = false,
+  }: {
+    state?: ConversationHistoryState;
+    join: boolean;
+    /**
+     * The answer to a REGISTER ask (`registerOwed.ts`). Said INSIDE the sealed content, never in the
+     * clear routing: a flag a relaying server could set would let it turn an ordinary answer into one
+     * the reader takes the conversation's state from.
+     */
+    register?: boolean;
+  }
 ): Record<string, unknown> {
   return {
     messages,
+    ...(register ? { register: true } : {}),
     // The conversation's own state - read watermarks and the shared history floor. A handful of
     // numbers, sent whole with every frame because both merges are `max` and therefore free to
     // repeat. Sending them once would make their delivery depend on which chunk survived.
@@ -888,10 +903,10 @@ function bundleContent(
     // would make it depend on which chunk survived. Merged per entry on `at`, so repeating it
     // is free in exactly the way a `max` is.
     ...(state?.pins?.length ? { pins: state.pins } : {}),
-    // The nickname register rides the JOIN PUSH only - the one bundle a reader takes it from
-    // (`mergeBundleNicknames`): in a broadcast it would be a relayer's word nobody believes.
-    // An older reader ignores the field.
-    ...(join && state?.nicknames?.length ? { nicknames: state.nicknames } : {}),
+    // The nickname register rides the JOIN PUSH and the REGISTER ANSWER only - the two bundles a
+    // reader takes it from (`mergeBundleNicknames`): in a broadcast it would be a relayer's word
+    // nobody believes. An older reader ignores the field.
+    ...((join || register) && state?.nicknames?.length ? { nicknames: state.nicknames } : {}),
   };
 }
 
@@ -907,7 +922,7 @@ async function sealedBundleFrame(
   mlsService: IMlsService,
   opts: {
     state?: ConversationHistoryState;
-    answer: { requestId: string; seal: AnswerSeal };
+    answer: { requestId: string; seal: AnswerSeal; register?: true };
     last: boolean;
   }
 ): Promise<Uint8Array> {
@@ -916,7 +931,7 @@ async function sealedBundleFrame(
     mlsService.historySealEngine(),
     answer.seal.answerKey,
     historySealAad(groupId, answer.requestId, to, answer.seal.answerer),
-    bundleContent(messages, { state, join: false })
+    bundleContent(messages, { state, join: false, register: answer.register === true })
   );
   return encodeAppMessage(
     mkSystem('history_bundle', JSON.stringify({ ...bundleRouting(to, { answer, last }), sealed }))
@@ -1074,14 +1089,11 @@ function followerTabSendsNoHistoryFrame(
 }
 
 /**
- * Sends the full local history of `groupId` to active group members, encrypted under the
- * current MLS epoch, in chunks of `chunkSize` messages (default 200).
- *
- * Used on new member invitation (handleWelcomeRequest, processPendingInvitations): the bundle
- * arrives after the Welcome, guaranteed in-order by MLS.
- *
- * The recipient deduplicates messages by `id` on receipt - multiple calls are idempotent.
- * Stops at the first chunk error to avoid spamming the network.
+ * The inviter's JOIN PUSH (`joinPush.ts`): the conversation's STATE - the nickname register, the
+ * pins, the floor and the read marks - addressed to the admitted device, in one frame with no
+ * message. The name is historical: it pushed the whole store until 2026-10-21, then the reader's
+ * entitled messages until 2026-11-17, when the messages moved to the newcomer's own sealed
+ * reconciliation (history-answer-addressing.md, "What is not sealed").
  *
  * @returns {@link JoinPushOutcome} - whether anything reached the device, and when nothing did
  *          because the server could not address it, that fact rather than a log line alone: an
@@ -1101,10 +1113,9 @@ export async function sendFullHistoryBundle(
     log: (msg: string) => void;
     /** The device that asked, as `digestIdentity` spells it - see {@link bundleFrame}. */
     to: string;
-  },
-  chunkSize = 200
+  }
 ): Promise<JoinPushOutcome> {
-  const { storage, deviceKeyB64, mlsService, log, to } = deps;
+  const { storage, mlsService, log, to } = deps;
   if (followerTabSendsNoHistoryFrame('bundle', groupId, log)) return 'not-sent';
   if (!storage) {
     log(`[HISTORY_BUNDLE] No storage - cannot serve ${groupId.slice(0, 8)}…`);
@@ -1118,15 +1129,6 @@ export async function sendFullHistoryBundle(
     return 'not-sent';
   }
 
-  let messages: StoredMessage[];
-  try {
-    messages = await storage.getMessages(groupId, deviceKeyB64);
-  } catch (e) {
-    // A read that FAILED proves nothing about the group: stay silent so the requester retries
-    // against another member rather than concluding the history is empty.
-    log(`[HISTORY_BUNDLE] Read failed for ${groupId.slice(0, 8)}…: ${String(e).slice(0, 120)}`);
-    return 'not-sent';
-  }
   const state = await storedConversationState(groupId, storage);
   // A group with no messages can still have read state, a floor and pins worth handing over - and
   // so can one whose every message was withheld, or whose exclusion windows could not be read: the
@@ -1167,38 +1169,25 @@ export async function sendFullHistoryBundle(
       return 'not-sent';
     }
   };
-  if (messages.length === 0) {
-    // No chunk will read the windows, so the one read that decides how this frame is routed is here.
-    const mode = await readerHistorySelection(
-      groupId,
-      [],
-      { mlsService, log },
-      userIdOfLeaf(to),
-      true
-    );
-    return sendStateOnly('group has no history', mode?.mode === 'addressed');
-  }
-
-  // ADDRESSED TO THE INVITEE AND FILTERED ON THEIR OWN WINDOWS (step A; user, 2026-10-21: a new
-  // member of a group conversation reads nothing from before their arrival). The push is sent
-  // to the invitee's device alone and carries that reader's own span. A 1:1 has no span (the server's
-  // rule).
-  const outcome = await sendBundleChunks(
+  // THE PUSH CARRIES THE STATE AND NO MESSAGE (2026-11-17). It answers no ask, so it cannot be
+  // sealed to its reader (history-answer-addressing.md, "What is not sealed"), and a message in it
+  // would be readable by any member a server handed it to - for a RETURNING member, messages from
+  // before a later member's arrival. The messages reach the newcomer by its own reconciliation (a
+  // fresh join is one of its edges), whose answers ARE sealed; the state left here is the
+  // conversation's, which every member holds. The one read that decides how it is routed is here.
+  const mode = await readerHistorySelection(
     groupId,
-    messages,
+    [],
     { mlsService, log },
-    { chunkSize, to, state, answer: { join: true }, push: true }
+    userIdOfLeaf(to),
+    true
   );
-  if (outcome.kind === 'refused') return 'not-sent';
-  if (outcome.kind === 'unaddressable') return 'unaddressable';
-  if (outcome.kind === 'unreadable') {
-    return sendStateOnly('exclusion windows unreadable - no message carried', false);
-  }
-  if (outcome.kind === 'withheld-all') {
-    return sendStateOnly('every message withheld', outcome.addressed);
-  }
-  log(`[HISTORY_BUNDLE] Full history sent: ${outcome.count} of ${messages.length} message(s)`);
-  return outcome.count > 0 ? 'sent' : 'not-sent';
+  return sendStateOnly(
+    mode === null
+      ? 'exclusion windows unreadable'
+      : `the push carries the state only - the messages come by the newcomer's own sealed reconciliation`,
+    mode?.mode === 'addressed'
+  );
 }
 
 /**
@@ -1267,15 +1256,12 @@ async function sendBundleChunks(
     to,
     state,
     answer,
-    push = false,
   }: {
     chunkSize: number;
     to: string;
     state?: ConversationHistoryState;
     /** The ask this answers - see {@link BundleAnswer}. */
     answer: BundleAnswer;
-    /** The inviter's push - its legacy broadcast form adds the reader's span to the union. */
-    push?: boolean;
   }
 ): Promise<BundleOutcome> {
   // HISTORY IS WITHHELD FROM AN UNVERIFIED DEVICE (`historyWithheld.ts`): whatever the answer path,
@@ -1302,7 +1288,7 @@ async function sendBundleChunks(
       selection.slice(i, i + chunkSize),
       { mlsService, log },
       reader,
-      push
+      false
     );
     if (chosen === null) {
       if (!read) return { kind: 'unreadable' };
@@ -1565,6 +1551,11 @@ export async function sendHistoryProbe(
   incomplete = false
 ): Promise<boolean> {
   const { storage, log } = deps;
+  // A REGISTER OWED ASKS WITH THE DIGEST (`registerOwed.ts`): a state key that matches is answered
+  // by silence, which would never deliver the state this device was admitted without.
+  if (isRegisterOwed(userIdOfLeaf(from), groupId)) {
+    return sendHistoryDigest(groupId, from, deps, incomplete, true);
+  }
   let held: number | null = null;
   if (storage) {
     try {
@@ -1768,7 +1759,9 @@ export async function sendHistoryDigest(
   from: string,
   deps: HistoryStoreDeps,
   /** This device holds frames of the group it cannot read - see `holdsUnrepairedProof`. */
-  incomplete = false
+  incomplete = false,
+  /** This device is owed the conversation's state - see `registerOwed.ts`. */
+  register = false
 ): Promise<boolean> {
   const { mlsService, log, storage } = deps;
   if (followerTabSendsNoHistoryFrame('digest', groupId, log)) return false;
@@ -1789,7 +1782,12 @@ export async function sendHistoryDigest(
   const key = await askKeyOrNothing(groupId, 'HISTORY_DIGEST', deps);
   if (key === null) return false;
   const requestId = mintHistoryRequestId();
-  noteHistoryAsk(groupId, requestId, { kind: 'digest', since, askedAt: Date.now() }, key.secret);
+  noteHistoryAsk(
+    groupId,
+    requestId,
+    { kind: 'digest', since, askedAt: Date.now(), ...(register ? { register: true } : {}) },
+    key.secret
+  );
   const bytes = encodeAppMessage(
     mkSystem(
       'history_digest',
@@ -1800,13 +1798,14 @@ export async function sendHistoryDigest(
         requestId,
         answerKey: key.answerKey,
         ...(incomplete ? { incomplete: true } : {}),
+        ...(register ? { register: true } : {}),
       })
     )
   );
   try {
     await mlsService.sendMessage(groupId, bytes, undefined, DELIVERY.transport);
     log(
-      `[HISTORY_DIGEST] Sent for ${groupId.slice(0, 8)}… - ${digest.mode} mode, ${summary}, asking from ${new Date(since).toISOString()}`
+      `[HISTORY_DIGEST] Sent for ${groupId.slice(0, 8)}… - ${digest.mode} mode, ${summary}, asking from ${new Date(since).toISOString()}${register ? ', and for the register' : ''}`
     );
     return true;
   } catch (e) {
@@ -2004,6 +2003,84 @@ function withinTombstoneCeiling(
   console.warn(line);
   log(line);
   return selected.filter((m) => wanted.has(m.id) || kept.has(m.id));
+}
+
+/**
+ * Answers a REGISTER ask (`registerOwed.ts`): a newcomer's digest that also asked for the
+ * conversation's STATE - the nickname register, the pins, the floor and the read marks - which the
+ * join push may never have brought it (an offline newcomer is pushed nothing).
+ *
+ * ONE frame, no message, sent before the diff by the same elected responder: addressed to the asker
+ * alone and sealed to its ask's key, like every answer to an ask, and never closing the ask (the
+ * diff's last chunk does). A register ask is only ever made with a key (it is new with the seal), so
+ * there is no unsealed form: the caller answers an unkeyed one with nothing. Sent ONLY addressed: the register is a relayer's word about what others
+ * did, taken by its one reader on the strength of its own ask, and a broadcast would hand it to every
+ * member without that. Withheld from an unvouched device like everything else it could be told.
+ *
+ * @returns whether the frame left.
+ */
+export async function sendRegisterAnswer(
+  groupId: string,
+  deps: HistoryStoreDeps,
+  opts: { to: string; requestId: string; seal: AnswerSeal }
+): Promise<boolean> {
+  const { storage, mlsService, log } = deps;
+  const { to, requestId, seal } = opts;
+  const short = groupId.slice(0, 8);
+  if (followerTabSendsNoHistoryFrame('register answer', groupId, log)) return false;
+  if (!storage) {
+    log(`[REGISTER] No storage - cannot answer ${to}'s register in ${short}…`);
+    return false;
+  }
+  if (await historyWithheldAfterSettling(groupId, to, mlsService, log)) {
+    log(
+      `[REGISTER] ${to} entered ${short}... unvouched - its register is not answered until a member vouches for it`
+    );
+    return false;
+  }
+  const routing = await readerHistorySelection(
+    groupId,
+    [],
+    { mlsService, log },
+    userIdOfLeaf(to),
+    false
+  );
+  if (routing?.mode !== 'addressed') {
+    log(
+      `[REGISTER] ${to}'s register in ${short}… not answered - ${routing === null ? 'the windows could not be read' : 'the server does not address history answers'}, and a register is never broadcast`
+    );
+    return false;
+  }
+  const state = await storedConversationState(groupId, storage);
+  let bytes: Uint8Array;
+  try {
+    bytes = await sealedBundleFrame(groupId, [], to, mlsService, {
+      state,
+      answer: { requestId, seal, register: true },
+      last: false,
+    });
+  } catch (e) {
+    console.error(
+      `[REGISTER] Could not seal ${to}'s register in ${short}… - ${String(e).slice(0, 160)}; nothing sent`
+    );
+    return false;
+  }
+  try {
+    await mlsService.sendMessage(groupId, bytes, undefined, addressedHistoryAnswer(to));
+    log(
+      `[REGISTER] Answered ${to}'s register in ${short}… (${state.nicknames?.length ?? 0} nickname(s), ${state.pins?.length ?? 0} pin(s), sealed)`
+    );
+    return true;
+  } catch (e) {
+    if (e instanceof AddressedUnsupportedError) {
+      log(
+        `[REGISTER] ${to} cannot be addressed in ${short}… - its register waits for its next ask`
+      );
+      return false;
+    }
+    log(`[REGISTER] Send failed for ${to} in ${short}…: ${String(e).slice(0, 120)}`);
+    return false;
+  }
 }
 
 /**
