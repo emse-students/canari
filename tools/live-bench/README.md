@@ -11,6 +11,7 @@ manifest and play a growing source through MSE). The readings it produced are on
 | `inject.mjs` | Evaluates `bench.js` (or any expression) in a page over CDP. Target: a `ws://` url or `<port>:<url substring>`. |
 | `collect.mjs` | Drains each page's `__LB` into ndjson every N s, and samples the Mi 9T (`adb`) and iPhone (`pymobiledevice3 diagnostics battery`) beside it. |
 | `analyze.mjs` | Turns a run directory into the quoted numbers (percentiles of upload, fetch, glass-to-glass, stalls; battery and heat). |
+| `chatload.js` | **The G8 chat-load instrument (2026-11-17)**, evaluated in app pages with `inject.mjs ... eval`: `probe` times the broadcaster app's own segment `PUT`s; `chat` seals v1 chat lines and posts them and reaction bursts at a set pace from a viewer page. Its reading and how it was taken: [lives](../../docs/wiki/services/lives.md#the-g8-reading-dev-2026-11-17). |
 | `server.mjs` | Optional bench server: a clock, a STATIC MIRROR of a live (sealed files, no auth - the WP-L4 shape) and a log sink, for a page that cannot reach dev. |
 
 ## How a run is taken

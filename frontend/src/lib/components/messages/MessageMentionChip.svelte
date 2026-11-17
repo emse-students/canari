@@ -6,9 +6,11 @@
 
   interface Props {
     userId: string;
+    /** Inside the sender's own accent-filled bubble: take its colour, the accent text would vanish. */
+    onOwnBubble?: boolean;
   }
 
-  let { userId }: Props = $props();
+  let { userId, onOwnBubble = false }: Props = $props();
 
   /**
    * `null` while the name is genuinely not known YET, which is not the same as knowing there is
@@ -44,10 +46,17 @@
   }
 </script>
 
+<!-- TWO SURFACES, TWO ANSWERS. On the OWN bubble (filled with the accent) the chip names no colour:
+     it inherits the bubble's, like a hashtag, because `text-accent-text` there was yellow on yellow
+     (owner, 2026-11-17, Android dark: a blank gap where the name is). On any other bubble it keeps
+     the accent text. NO TINT in either case: `bg-accent/N` falls back to the SOLID accent on a
+     WebView without `color-mix`, which would be yellow on yellow again on an incoming dark bubble. -->
 <button
   type="button"
   onclick={openProfile}
-  class="bg-accent/10 text-accent-text hover:bg-accent/20 inline cursor-pointer rounded-full px-1 align-baseline text-[0.9em] font-semibold transition-colors"
+  class="{onOwnBubble
+    ? ''
+    : 'text-accent-text'} inline cursor-pointer align-baseline text-[0.9em] font-semibold hover:underline"
 >
   @<EmojiText text={resolved ?? ''} />
 </button>
