@@ -83,9 +83,15 @@
       adopt: (takeId: string, uploaded: PublishedReelUpload) => Promise<void>;
       endWait: (takeId: string) => void;
     } | null;
+    /**
+     * The step was opened over a CONVERSATION (its camera's "Ajouter des destinataires" with
+     * "Publier" ticked, reels-in-chat section 22): once published the camera closes back onto the
+     * conversation instead of navigating to the feed.
+     */
+    onpublishedHere?: () => void;
   }
 
-  let { clip, limits, onclose, deps, composer, chatTake = null }: Props = $props();
+  let { clip, limits, onclose, deps, composer, chatTake = null, onpublishedHere }: Props = $props();
 
   // Read once: the step starts from the composer and is the member's to change from there.
   let caption = $state(untrack(() => composer?.start.caption ?? ''));
@@ -252,6 +258,11 @@
       if (composer) {
         // Over the composer on the feed already: the composer closes, no navigation.
         composer.onpublished(identity);
+        return;
+      }
+      if (onpublishedHere) {
+        console.debug('[reel-publish] published from a conversation camera: back to it');
+        onpublishedHere();
         return;
       }
       await goto(resolve('/posts'), { replace: true });

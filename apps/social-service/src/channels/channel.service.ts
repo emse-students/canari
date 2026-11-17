@@ -1186,11 +1186,14 @@ export class ChannelService implements OnApplicationBootstrap {
    * transaction - never by saving a copy read earlier, which would write back an allowlist a
    * concurrent removal had already changed (the removed member restored with no seat).
    *
-   * THE GRANTEE IS RE-CHECKED UNDER THE SAME TRANSACTION: their membership row (and, given
-   * `requiredPermission`, the roles it names) is read with a shared row lock, so a kick or a
+   * THE GRANTEE IS RE-CHECKED UNDER THE SAME TRANSACTION: their membership row is read `FOR UPDATE`
+   * (and, given `requiredPermission`, the roles it names with a shared row lock), so a kick or a
    * demotion that committed since the caller's reads refuses the grant, and one still in flight waits
    * for it. A kick's roster write re-reads the community's private salons under its lock
    * ({@link removeFromWorkspace}), so a grant committed before it is seen there.
+   *
+   * A GRANT THAT ADDS THE GRANTEE FLOORS THEIR UNREAD COUNT at that instant
+   * ({@link floorUnreadAtGrant}), in the same transaction as the allowlist write.
    *
    * @returns `granted` with the row as written, or why nothing was granted: the salon is `gone`,
    *   is `public` now, or the grantee is `not_member` / `not_allowed` any more
@@ -1211,9 +1214,12 @@ export class ChannelService implements OnApplicationBootstrap {
       });
       if (!locked) return { outcome: 'gone' as const };
       if (!locked.isPrivate) return { outcome: 'public' as const };
+      // AN EXCLUSIVE LOCK, not a shared one: a grant that adds the grantee writes their row below
+      // (the unread floor), and two grants of different salons to the same member, each holding a
+      // shared lock and each upgrading it, are a deadlock Postgres resolves by aborting one.
       const member = await m.getRepository(ChannelMember).findOne({
         where: { workspaceId: locked.workspaceId, userId },
-        lock: { mode: 'pessimistic_read' },
+        lock: { mode: 'pessimistic_write' },
       });
       if (!member) return { outcome: 'not_member' as const };
       if (
@@ -1233,6 +1239,7 @@ export class ChannelService implements OnApplicationBootstrap {
             { id: channelId },
             { allowedUsers: locked.allowedUsers, accessRevision: locked.accessRevision }
           );
+        await this.floorUnreadAtGrant(m, channelId, [member.id], 'grant');
       }
       return { outcome: 'granted' as const, channel: locked };
     });
@@ -1242,6 +1249,49 @@ export class ChannelService implements OnApplicationBootstrap {
       );
     }
     return result;
+  }
+
+  /**
+   * Raises each of `memberIds`' private `clearedMarks[channelId]` to NOW, inside the transaction `m`
+   * that grants them the salon - so its unread count starts at the grant and its past is history to
+   * read, not a backlog to clear (owner, 2026-11-16, principle 3 of `docs/principes.md`; the decision
+   * is in `docs/wiki/frontend/modules/chat.md`).
+   *
+   * THE PRIVATE FLOOR, NEVER THE READ MARK: `readMarks` is the "Lu par" receipt the salon's members
+   * see, and being handed a salon is not reading it ({@link clearWorkspaceUnread} raises the same
+   * column for the same reason). `listUnreadCounts` already reads it, so no query changes.
+   *
+   * THE DATABASE'S CLOCK (`clock_timestamp()`), the clock that stamps every row's `createdAt`, so a
+   * message posted after the grant can never fall under its floor by a skew between two machines.
+   * AND ONE MILLISECOND BELOW IT: the count keeps a row when its WHOLE millisecond is above the
+   * floor (`listUnreadCounts`), so a floor on the grant's own millisecond hid a row posted after the
+   * grant within that millisecond. Below it, the worst case is a row of the past posted in that same
+   * millisecond counted once - a badge too many, never a message hidden (principle 2 before 3).
+   * Only ever raised, by the same `GREATEST` merge as {@link clearWorkspaceUnread}: a member who had
+   * cleared further keeps it. A revoke leaves the mark; a re-grant raises it again.
+   */
+  private async floorUnreadAtGrant(
+    m: EntityManager,
+    channelId: string,
+    memberIds: readonly string[],
+    reason: 'grant' | 'access_rewrite'
+  ): Promise<void> {
+    if (memberIds.length === 0) return;
+    await m.query(
+      `UPDATE channel_members cm
+          SET "clearedMarks" = cm."clearedMarks" || jsonb_build_object(
+                $1::text,
+                GREATEST(
+                  floor(extract(epoch from clock_timestamp()) * 1000)::bigint - 1,
+                  COALESCE((cm."clearedMarks" ->> $1::text)::bigint, 0)
+                )
+              )
+        WHERE cm.id = ANY($2::uuid[])`,
+      [channelId, [...memberIds]]
+    );
+    this.logger.debug(
+      `[UNREAD] floor at grant channel=${channelId} members=${memberIds.length} reason=${reason}`
+    );
   }
 
   /**
@@ -3701,14 +3751,31 @@ export class ChannelService implements OnApplicationBootstrap {
           if (locked.accessRevision !== channel.accessRevision) {
             this.refuseStaleAccessRewrite(locked, actorUserId, channel.accessRevision);
           }
-          // THE COMMUNITY'S MEMBERSHIP ROWS, READ ONCE AND SHARE-LOCKED, for both checks below. A
-          // kick that committed while this waited on the removal lock cut no salon when it read none
-          // naming its target, so the revision above did not move: only a membership read here sees
-          // it. The actor first (a kicked actor is a 403), then whoever this save adds - without
-          // that, a non-member would be saved onto the allowlist.
+          // WHO GAINS SIGHT OF THE SALON'S PAST, read from the locked row: a private salon's new
+          // names, or, when it goes public, every member it did not name. Their unread count starts
+          // at this save (`floorUnreadAtGrant`). Going private gains nobody: they all saw it already.
+          // Captured now: the save below overwrites `locked.isPrivate` before the floor is written.
+          const lockedWasPrivate = locked.isPrivate;
+          const heldBefore = new Set(lockedWasPrivate ? locked.allowedUsers || [] : []);
+          const gainsSight = (userId: string): boolean => {
+            const u = userId.trim().toLowerCase();
+            return (
+              lockedWasPrivate && !heldBefore.has(u) && (!isPrivate || nextAllowed.includes(u))
+            );
+          };
+          const anyoneGains =
+            lockedWasPrivate && (!isPrivate || nextAllowed.some((u) => !heldBefore.has(u)));
+          // THE COMMUNITY'S MEMBERSHIP ROWS, READ ONCE AND LOCKED, for both checks below. A kick that
+          // committed while this waited on the removal lock cut no salon when it read none naming
+          // its target, so the revision above did not move: only a membership read here sees it. The
+          // actor first (a kicked actor is a 403), then whoever this save adds - without that, a
+          // non-member would be saved onto the allowlist. SHARE-LOCKED, unless this save writes the
+          // gainers' rows: then `FOR UPDATE`, because two writers each upgrading a shared lock on the
+          // same row deadlock. In id order, so two such saves meet on their first common row.
           const lockedMembers = await m.getRepository(ChannelMember).find({
             where: { workspaceId: channel.workspaceId },
-            lock: { mode: 'pessimistic_read' },
+            order: { id: 'ASC' },
+            lock: { mode: anyoneGains ? 'pessimistic_write' : 'pessimistic_read' },
           });
           await this.assertActorMayRemoveMembers(
             channel.workspaceId,
@@ -3727,6 +3794,16 @@ export class ChannelService implements OnApplicationBootstrap {
           locked.accessRevision += 1;
           await m.getRepository(Channel).save(locked);
           channel.accessRevision = locked.accessRevision;
+          if (anyoneGains) {
+            await this.floorUnreadAtGrant(
+              m,
+              channelId,
+              lockedMembers
+                .filter((member) => gainsSight(member.userId))
+                .map((member) => member.id),
+              'access_rewrite'
+            );
+          }
         }
       );
     } catch (e) {

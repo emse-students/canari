@@ -26,7 +26,7 @@
   import { isBiometricPromptDue } from '$lib/services/biometricCadence';
   import {
     loadDeviceKey,
-    isDeviceKeyPersistenceEnabled,
+    pinGateStaySignedInDefault,
     setDeviceKeyPersistence,
   } from '$lib/utils/deviceKeyVault';
   import type { SessionExpiredOutcome } from '$lib/composables/session/sessionTypes';
@@ -107,7 +107,8 @@
     type WorkspacePurgeContext,
   } from '$lib/composables/useChannelWorkspaces.svelte';
   import type { MessagingContext } from '$lib/composables/useMessaging.svelte';
-  import { registerReelSendHost } from '$lib/reels/reelSendBridge';
+  import { readGroupMembersOnceReady, registerReelSendHost } from '$lib/reels/reelSendBridge';
+  import { whenMlsReady } from '$lib/composables/session/mlsReadiness';
   import { adoptOutboxPublishedUpload, endOutboxPublishWait } from '$lib/utils/chat/outbox';
   import { MlsSessionVacantError, type BulkIngestPhase } from '$lib/mls-client';
   import type { IStorage, StoredMessage } from '$lib/db';
@@ -479,11 +480,13 @@
   let pinStep = $state('');
   let biometricConfigured = $state(false);
   // "Stay signed in" opt-in (browser only): persists the PIN vault across browser restarts.
-  // Offered on the PIN modal; initialised from the stored preference so it reflects a prior choice.
+  // Offered on the PIN modal; initialised from the stored preference so it reflects a prior choice,
+  // and, on an install that never made one, TICKED in the app and UNTICKED on the web (owner,
+  // 2026-11-16, decisions 14 and 24; docs/wiki/sessions.md).
   // Disabled once biometrics are configured, because the saved PIN would never be used (the
   // biometric flow takes over at the next launch).
   let showStaySignedIn = $derived(!biometricConfigured);
-  let pinStaySignedIn = $state(isDeviceKeyPersistenceEnabled());
+  let pinStaySignedIn = $state(pinGateStaySignedInDefault());
 
   // Post-login biometric enrolment offer sheet (Tauri only)
   let showBiometricEnrollSheet = $state(false);
@@ -1576,8 +1579,17 @@
         globalSession.isLoggedIn
           ? globalMessaging.sendChatReelTakeTo(file, keys, msgCtx(), opts)
           : Promise.resolve(null),
+      sendImage: (file, keys) =>
+        globalSession.isLoggedIn
+          ? globalMessaging.sendImageTo(file, keys, msgCtx())
+          : Promise.resolve(null),
       adopt: adoptOutboxPublishedUpload,
       endWait: endOutboxPublishWait,
+      groupMembers: (ids) =>
+        readGroupMembersOnceReady(ids, {
+          whenReady: whenMlsReady,
+          readTree: (id) => globalSession.ensureMls().getGroupMemberIdentities(id),
+        }),
     });
 
     return () => {
