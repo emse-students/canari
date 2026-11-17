@@ -16,34 +16,23 @@ import { destinationRules } from './reelCapture';
 import { REEL_TAKE_MAX_SENDS } from '$lib/db/sqliteBatch';
 
 describe('the chat reel writer', () => {
-  it('is OFF in a production build (VITE_DEPLOY_ENVIRONMENT unset): production stays off', async () => {
-    // Stubbed, never inherited: a developer's local .env must not decide this test.
-    vi.stubEnv('VITE_DEPLOY_ENVIRONMENT', '');
-    vi.resetModules();
-    try {
-      const fresh = await import('./chatReelWriter');
-      expect(fresh.CHAT_REEL_WRITER_ENABLED).toBe(false);
-      expect(fresh.chatReelAllowed(false)).toBe(false);
-    } finally {
-      vi.unstubAllEnvs();
-      vi.resetModules();
-    }
-  });
-
+  // THE PRODUCTION FLIP (1.7.0, reels-in-chat 21.1): the writer no longer reads the build's
+  // environment. Every label - production's unset value first - turns it ON, and a salon stays out.
   it.each([
-    ['development', true],
-    ['dev', true],
-    ['production', false],
-    ['prod', false],
-    ['', false],
-    ['staging', false],
-  ])('VITE_DEPLOY_ENVIRONMENT=%j turns the writer %s', async (env, on) => {
+    ['', 'production (unset)'],
+    ['production', 'production'],
+    ['prod', 'production'],
+    ['development', 'dev'],
+    ['dev', 'dev'],
+    ['staging', 'an unknown label'],
+  ])('VITE_DEPLOY_ENVIRONMENT=%j (%s) turns the writer ON', async (env) => {
+    // Stubbed, never inherited: a developer's local .env must not decide this test.
     vi.stubEnv('VITE_DEPLOY_ENVIRONMENT', env);
     vi.resetModules();
     try {
       const fresh = await import('./chatReelWriter');
-      expect(fresh.CHAT_REEL_WRITER_ENABLED).toBe(on);
-      expect(fresh.chatReelAllowed(false)).toBe(on);
+      expect(fresh.CHAT_REEL_WRITER_ENABLED).toBe(true);
+      expect(fresh.chatReelAllowed(false)).toBe(true);
       expect(fresh.chatReelAllowed(true)).toBe(false);
     } finally {
       vi.unstubAllEnvs();

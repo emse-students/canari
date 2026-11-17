@@ -136,7 +136,9 @@ export function typeExcludedFlags(kind: string): number {
  *   VALIDATE_EVENTS follows the spaces an event reaches, MANAGE_ASSO the associations it is the
  *   PARENT of (WP-D2). MODERATE has two halves (`bde-moderation.ts`): what is published in the
  *   name of an association it is the parent of, AND the people of every space it governs, with
- *   their personal posts (`bdeModeratesUserSql`).
+ *   their personal posts (`bdeModeratesUserSql`). In an INSTITUTION, MODERATE is not inert: it
+ *   moderates that institution's own content and no person, governing a space or not (owner,
+ *   2026-11-15, decisions 3 and 4; `institutionModeratesOwnSql`).
  */
 export const ALL_CORE_FLAGS =
   AssociationPermissionFlag.POST_AS_ASSO |

@@ -122,9 +122,9 @@ export class LivesController {
   }
 
   /**
-   * The ONE staff predicate of this API (`isContentModerator`: a platform admin or a BDE member
-   * holding `MODERATE`, the posts' moderation controls'), asked before anything is read. Returns the
-   * caller; refuses 403 with `code`.
+   * The ONE staff predicate of this API (`isContentModerator`: a platform admin, or a member holding
+   * `MODERATE` in a BDE or an institution - the posts' moderation controls'), asked before anything
+   * is read. Returns the caller; refuses 403 with `code`. The scope is asked after it, per act.
    */
   private async assertStaff(
     userId: string,
@@ -347,9 +347,10 @@ export class LivesController {
 
   /**
    * STAFF CUT a live (WP-L8): `{ reason: 'spam'|'harassment'|'inappropriate'|'other', details? }`.
-   * Who may: `isContentModerator` - a platform admin or a BDE member holding `MODERATE`, the ONE
-   * predicate of the posts' moderation controls and of `/api/moderation` - and, for a BDE, only a
-   * live of its governed spaces (`mayModerateLive`, 403 `MODERATION_OUT_OF_SCOPE`). Anyone else is 403
+   * Who may: `isContentModerator` - a platform admin, or a member holding `MODERATE` in a BDE or an
+   * institution, the ONE predicate of the posts' moderation controls and of `/api/moderation` - and
+   * then only a live it moderates (`mayModerateLive`: a BDE's governed spaces, an institution's own
+   * live; refused 403 `MODERATION_OUT_OF_SCOPE` or `MODERATION_OUTSIDE_OWN_INSTITUTION`). Anyone else is 403
    * `LIVE_CUT_FORBIDDEN`, asked BEFORE the live is looked up, so the refusal says nothing about
    * whether the live exists. Idempotent: a repeat answers the first cut with `newlyCut: false`.
    */
