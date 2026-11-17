@@ -10,6 +10,7 @@ pub mod fork_check;
 pub mod graine_run;
 pub mod graine_signature;
 pub mod group;
+pub mod history_seal;
 pub mod keystore;
 pub mod logging;
 pub mod member_sightings;

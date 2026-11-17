@@ -34,7 +34,7 @@ import {
 import { replayAndRecord } from '$lib/utils/chat/commitReplay';
 import { runExclusiveForGroup } from '$lib/utils/chat/groupMutationQueue';
 import { settlePendingFor } from '$lib/utils/chat/pendingMutationStore';
-import { handleSystemEvent } from './systemMessageHandler';
+import { forgetUnsealedAnswerNotice, handleSystemEvent } from './systemMessageHandler';
 import { handleChannelEvent } from './channelEventHandler';
 import { noteUnackedFrame, refusedBacklogIsQueued } from './unackedFrames';
 import type { IStorage, StoredMessage } from '$lib/db';
@@ -190,6 +190,8 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   resetReAddCooldowns();
   // And the open history asks: an addressed answer is accepted only by the session that asked.
   forgetHistoryAsks();
+  // And the once-per-session [LEGACY] line of an unsealed answer: a new session counts again.
+  forgetUnsealedAnswerNotice();
   // And what a dev build of #2815 left behind (review of #2817): nothing reads it any more.
   forgetLegacyAdmissionFreeze(log);
 
