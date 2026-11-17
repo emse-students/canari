@@ -5332,12 +5332,19 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         return withMlsStateLock(5) {
             if (foregroundTookOver("catchup")) return@withMlsStateLock null
             val stateBytes = MlsContextLoader.loadMlsState(this) ?: return@withMlsStateLock null
-            decryptProtoWithCommits(
+            // WHAT THE CATCH-UP COST, said on every one: nothing persists it, so every salon push of
+            // a shut phone pays it again, and its size grows with the key group and the days the
+            // app stayed shut (channel-encryption section 28). Read on the rig from logcat.
+            val startedAt = android.os.SystemClock.elapsedRealtime()
+            val outcome = decryptProtoWithCommits(
                 stateBytes, ctx.userId, ctx.deviceId, groupId, commitsJson, cipherBytes,
                 senderId = senderId,
                 deviceKeyB64 = ctx.deviceKeyB64,
                 locale = ctx.locale,
             )
+            val elapsedMs = android.os.SystemClock.elapsedRealtime() - startedAt
+            Log.i(TAG, "catchup: replay since epoch=$epoch took $elapsedMs ms (state ${stateBytes.size} B, commits ${commitsJson.length} ch) outcome=${outcome.javaClass.simpleName} group=${groupId.take(8)}")
+            outcome
         }
     }
 

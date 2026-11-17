@@ -1,6 +1,21 @@
-## P2 - a newcomer offline when its Welcome is delivered receives no join push, so no nickname set before it (found by the round-2 review of #3185, 2026-11-09) - designed, not built
+## P2 - a newcomer offline when its Welcome is delivered receives no join push, so no nickname set before it (found by the round-2 review of #3185, 2026-11-09) - built (draft pull request, 2026-11-17)
 
-target: 1.10.0
+target: 1.7.0
+
+**Status: BUILT in a draft pull request stacked on option B (#3775), retargeted to `1.7.0` by the
+owner's "everything before the stable" (2026-11-17).** The mechanism as built, which tightened the
+design below in three places, is in
+[history-answer-addressing](../protocols/history-answer-addressing.md#the-newcomer-asks-for-its-register-2026-11-17):
+
+- the register travels SEALED, its flag inside the sealed content and never in the clear routing;
+- the join push carries no message any more;
+- the fresh-join reconciliation runs at every Welcome that INSTALLED the group. It was dead in the
+  ordinary case;
+- a group the Android push service joined while the app was shut is owed its register too (a native
+  ledger the app takes at its start), and the asking ends on proofs: unanswered asks, or a decline
+  from every other device.
+
+Left: the merge, and the reading below.
 
 **What is true after #3185.** The inviter's join push (`joinPush.ts`, `sendFullHistoryBundle`) is an
 ADDRESSED history answer, and an addressed frame is transport-only: the server publishes it only to a
@@ -37,9 +52,10 @@ must come back while the newcomer is online. Neither terminates on a fact.
    that group is the DIGEST (never the state key, whose match is answered by silence), with
    `register: true`; the ask is recorded with that flag (`noteHistoryAsk`).
 3. **Answered by the elected responder on the existing path.** `answerHistoryDigest`, seeing
-   `register: true`, sends one addressed state frame carrying the register (`bundleFrame` with the
-   digest's `requestId`, no message), behind the same `historyWithheldAfterSettling` check, before the
-   diff - the asker is online by construction (it just asked), so it is addressable.
+   `register: true`, sends one addressed frame carrying the nickname register only
+   (`bundleFrame` with the digest's `requestId`, no message, sealed), behind the same
+   `historyWithheldAfterSettling` check, before the diff - the asker is online by construction (it just asked), so
+   it is addressable.
 4. **Taken under the same four limits.** The receiver merges `nicknames` from an addressed answer only
    when the ask it answers carried `register` (`takeAddressedAsk` returns it), with
    `mergeBundleNicknames`' limits unchanged (unverified, current members only, at most as many entries
@@ -52,10 +68,10 @@ keeps the marker and asks again on the next connection, at the cost of a digest 
 
 **It also seals the last unsealed history answer (option B, 2026-11-17).** Since option B every ask
 carries a key and its addressed answer is sealed to it; the join push answers no ask and stays unsealed
-([history-answer-addressing](../protocols/history-answer-addressing.md#what-is-not-sealed-the-inviters-join-push)).
-The register digest above IS a keyed ask, so its answer is sealed with nothing more; once it ships, the
-unsolicited push can be retired. Whether that moves this entry forward is owed to the owner (the P1
-[entry](p1-a-new-member-of-a-group-conversation-receives-its-whole-past-decided-2026-10.md), step 2).
+([history-answer-addressing](../protocols/history-answer-addressing.md#what-is-not-sealed-the-inviters-join-push---so-it-carries-no-message-2026-11-17)).
+The register digest above IS a keyed ask, so its answer is sealed with nothing more; with it, the
+push carries no message (2026-11-17), which closes the P1's residual
+([entry](p1-a-new-member-of-a-group-conversation-receives-its-whole-past-decided-2026-10.md), step 2).
 
 **Why it is not in #3185.** It changes the reconciliation's wire (a field on the digest and its answer),
 adds a durable marker on the newcomer and a mixed-version behaviour; the MLS chat path deserves its own

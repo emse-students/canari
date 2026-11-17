@@ -30,15 +30,14 @@ text; nothing is built for it
    arrival; A's new device logs its chunks `addressed to ..., sealed` and restores M1..Mn; nothing logs
    `REFUSED` ([what proves it](../protocols/history-answer-addressing.md#what-proves-the-seal)).
 2. **The join push is not sealed** - it answers no ask, so no key of the newcomer's reaches the inviter.
-   The residual: a server that misroutes the push of a RETURNING member hands a member admitted after
-   that member's first arrival what it is not entitled to. The fix that terminates is the newcomer
-   ASKING for its register with a keyed digest, already designed in
-   [p2-an-offline-newcomer-receives-no-join-push](p2-an-offline-newcomer-receives-no-join-push.md)
-   (target `1.10.0`), then retiring the unsolicited push: about two to three days with its adversarial
-   review. **Owner decision owed:** keep that residual in this P1 for `1.7.0` (pulling the offline
-   newcomer's step forward), or record it as accepted until that entry ships. Recommended: pull it
-   into `1.8.0` with the offline newcomer's fix, the two being one mechanism, and close this P1 on the
-   GRP-ADDR-1 reading.
+   The residual was a server misrouting the push of a RETURNING member to a member admitted after
+   that member's first arrival. **Owner, 2026-11-17: closed in `1.7.0`.** Built in a draft pull
+   request stacked on option B, with the offline newcomer's fix
+   ([p2-an-offline-newcomer-receives-no-join-push](p2-an-offline-newcomer-receives-no-join-push.md)).
+   The push carries the state and no message. The newcomer asks for its messages and its register with
+   a keyed digest, whose answers are sealed
+   ([history-answer-addressing](../protocols/history-answer-addressing.md#the-newcomer-asks-for-its-register-2026-11-17)).
+   What remains is its adversarial review and its reading.
 3. The [LEGACY] half of option B goes once the floor passes the stable that seals:
    [p3-a-history-answer-is-sealed-or-refused-once-the-floor-seals](p3-a-history-answer-is-sealed-or-refused-once-the-floor-seals.md)
    (`1.8.0`).
