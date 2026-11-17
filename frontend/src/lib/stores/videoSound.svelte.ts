@@ -109,10 +109,12 @@ let muted = $state(
     : initialVideoMuted(readStored(), engineAllowsAudibleStart())
 );
 
+/** The level this run starts at, read once: both variables below begin from it. */
+const startingLevel = typeof localStorage === 'undefined' ? DEFAULT_VIDEO_LEVEL : readStoredLevel();
 /** The last NON-ZERO level: what an unmute restores and what the volume slider rests at. */
-let level = $state(typeof localStorage === 'undefined' ? DEFAULT_VIDEO_LEVEL : readStoredLevel());
+let level = $state(startingLevel);
 /** What the device has stored (or the default): `commitLevel` writes only a difference. */
-let persistedLevel = level;
+let persistedLevel = startingLevel;
 
 export const videoSound = {
   /** The app's one volume, in (0, 1], applied to every video's `volume`; mute is separate. */

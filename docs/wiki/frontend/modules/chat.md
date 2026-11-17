@@ -3328,6 +3328,12 @@ has answered. The walk removes one member per step and the proof is delivered ra
 which is what makes it terminate without a clock. Full reasoning in
 [history-reconciliation](../../protocols/history-reconciliation.md#the-fourth-trigger-an-answer-that-does-not-reach-far-enough-back).
 
+**Its sibling, `history_cannot_repair {from, to, since}`, answers an asker that PROVED itself
+incomplete** - its probe carried `incomplete: true` because it holds frames it cannot read - when
+the responder holds nothing it lacks (keys equal, or a digest leaving nothing to send). It replaces
+the coverage line in that case, and the asker excludes that member until a repair lands
+([HEAL-repair](../../protocols/history-reconciliation.md#the-fix-the-walk-advances-on-an-answer-built-2026-11-17)).
+
 **Every ask states its own window and the answer is clipped to it.** `since` rides on all three
 probe kinds and on the pull. Four rules hold the whole thing together and none may be undone: it is
 STATED by the asker and never recomputed by the answerer (the window slides, so two devices deriving
