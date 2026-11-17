@@ -2283,7 +2283,7 @@ export async function handleHistoryRequest(params: {
     return;
   }
 
-  const { digest, since, requestId, answerKey, incomplete } = probe;
+  const { digest, since, requestId, answerKey, incomplete, register } = probe;
   await answerHistoryDigest({
     groupId,
     requesterIdentity,
@@ -2293,6 +2293,7 @@ export async function handleHistoryRequest(params: {
     requestId,
     answerKey,
     incomplete,
+    register: register === true,
     deps,
   });
 }

@@ -2209,10 +2209,14 @@ pub(crate) async fn open_history_answer(
     sealed_b64: String,
 ) -> Result<String, String> {
     use base64::Engine;
+    // WRAPPED BEFORE ANYTHING CAN FAIL: an argument below that is not base64 returns early, and the
+    // secret's string is then zeroized on drop rather than freed with the bytes still in it.
+    let mut secret_b64 = mls_core::history_seal::Zeroizing::new(secret_b64);
     let aad = history_seal_arg("aad", &aad_b64)?;
     let sealed = history_seal_arg("sealed", &sealed_b64)?;
-    // The secret is handed to mls-core still base64: it decodes and zeroizes both the string and the
-    // bytes (`open_history_answer_with_b64_secret`), so no copy of it outlives the call here.
+    // The secret is handed to mls-core still base64, its buffer MOVED out (no copy): it decodes and
+    // zeroizes both the string and the bytes (`open_history_answer_with_b64_secret`).
+    let secret_b64 = std::mem::take(&mut *secret_b64);
     tauri::async_runtime::spawn_blocking(move || {
         mls_core::history_seal::open_history_answer_with_b64_secret(secret_b64, &aad, &sealed)
             .map(|plain| base64::engine::general_purpose::STANDARD.encode(plain))

@@ -108,6 +108,8 @@ Everything that touches the device key, the PIN, `mls.bin` or an unlock path is 
 
 - **A QUESTION WHOSE ANSWER DESTROYS SOMETHING TAKES ITS SUBJECT AS AN ARGUMENT, NEVER FROM AMBIENT STATE.** `isDeviceRevoked()` read fields that are `unknown`/`pending` until `init()` runs, so asking before init would answer "not revoked" for a reason having nothing to do with revocation - a wrong answer no caller could see was wrong. [auth](frontend/modules/auth.md#pin-and-device-key)
 
+- **WHAT RUNS ON EVERY MERGED COMMIT IS LINEAR IN THE TREE, AND ITS BOUND IS COUNTED, NEVER TIMED.** A shut phone's salon push replays every key-group commit since the app last ran, on every push, so a per-commit cost is multiplied by the commits behind AND by the pushes. The device-trust observer compared each leaf after a commit with each leaf before it, normalising both sides every time: on a 400-device key group 95% of a commit's cost (~74 of ~78 ms on one workstation, the MLS work under 4 ms), found only by the bench `mls-core/tests/push_catchup_at_scale.rs`. Normalise a tree once (a set), and pin the bound in a unit of work counting EVERY normalisation the loop does (`a_merged_commit_is_observed_in_time_linear_in_the_tree`), so it holds on any machine. [channel-encryption section 28](protocols/channel-encryption.md#28-a-salon-pushs-catch-up-against-a-key-group-of-production-size---measured-2026-11-17)
+
 ## Community channels -> [chat](frontend/modules/chat.md), [social-service](services/social-service.md)
 
 Deep links, system events, rosters and the channel/DM asymmetry are on those two pages;

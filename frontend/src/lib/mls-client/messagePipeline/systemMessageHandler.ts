@@ -82,6 +82,7 @@ import {
 import { boundedByVerifiedSentAt, withVettedBundleServerTimes } from '$lib/utils/chat/messageTime';
 import { applyPin, mergePinEntries } from '$lib/stores/pinStore.svelte';
 import { mergeBundleNicknames } from '$lib/utils/users/conversationNicknames.svelte';
+import { clearRegisterOwed, noteRegisterDeclined } from '$lib/utils/chat/registerOwed';
 import { applyNicknameFrame, nicknameMembersOf } from '$lib/utils/chat/nicknameFrame';
 import { m } from '$lib/paraglide/messages';
 import type { MessageHandlerDeps } from './deps';
@@ -846,6 +847,7 @@ export async function handleSystemEvent(
     if (requestId === null) return true;
     const answerKey = parseHistoryAnswerKey(data?.answerKey);
     const incomplete = data?.incomplete === true;
+    const register = data?.register === true;
     const takenByAWaiter = noteProbeReceived(convoKey, from, {
       kind: 'digest',
       digest,
@@ -853,6 +855,7 @@ export async function handleSystemEvent(
       requestId,
       ...(answerKey !== undefined ? { answerKey } : {}),
       ...(incomplete ? { incomplete: true } : {}),
+      ...(register ? { register: true as const } : {}),
     });
     const size =
       digest.mode === 'ids'
@@ -891,6 +894,7 @@ export async function handleSystemEvent(
           requestId,
           answerKey,
           incomplete,
+          register,
           deps: { storage, deviceKeyB64: deviceKey(), mlsService, log },
         }).catch((e) =>
           log(
@@ -1423,9 +1427,15 @@ export async function handleSystemEvent(
     };
     let incoming: BundleMsg[] = Array.isArray(data?.messages) ? data.messages : [];
     let addOnly = false;
-    // The inviter's join push to THIS device, accepted below: the one bundle a nickname register is
-    // taken from (see the nickname merge).
+    // The inviter's join push to THIS device, accepted below: one of the two bundles a nickname
+    // register is taken from (see the nickname merge).
     let joinPush = false;
+    // The answer to OUR register ask (`registerOwed.ts`): the other one - the state this device was
+    // owed since its admission, asked for because the push may never have reached it.
+    let registerAnswer = false;
+    // Where the conversation STATE an answer restates is read from: the frame itself, or - for a
+    // sealed answer - what opened under our ask, never the clear routing beside it.
+    let bundleState: any = data;
     if (deliveryMeta?.addressed === true) {
       const requestId = parseHistoryRequestId(data?.requestId);
       const claimsJoin = data?.join === true && requestId === undefined;
@@ -1454,6 +1464,7 @@ export async function handleSystemEvent(
               sealed
             );
             incoming = Array.isArray(content.messages) ? (content.messages as BundleMsg[]) : [];
+            bundleState = content;
           } catch (e) {
             const code = e instanceof HistorySealError ? e.code : 'contract';
             // At error, never ingested, and the two causes said apart: OUR engine failing is a
@@ -1512,8 +1523,68 @@ export async function handleSystemEvent(
         );
       }
       incoming = bounded.kept;
-      addOnly = ask.kind !== 'join';
       joinPush = ask.kind === 'join';
+      // A REGISTER ANSWER is solicited by the register ask this device made, and says it answers one
+      // INSIDE what opened under that ask: only then may an answer to an ask hand over the
+      // conversation's state, as the push does. A register ask always carries a key, so an answer
+      // that opened nothing (`bundleState` is still the clear frame) is never one.
+      registerAnswer =
+        ask.kind === 'digest' &&
+        ask.register === true &&
+        bundleState !== data &&
+        bundleState?.register === true;
+      if (!registerAnswer && sealed === undefined && data?.register === true) {
+        // Nothing honest says `register` in clear: the flag rides the sealed content only.
+        console.error(
+          `[HISTORY_ADDRESSED] an unsealed history_bundle from ${senderNorm.slice(0, 8)} in ${convoKey.slice(0, 8)}… claims to answer a register ask - taken as an ordinary answer, its state ignored`
+        );
+      }
+      // A REGISTER ANSWER STAYS ADD-ONLY: it hands over the nickname register and nothing else. Any
+      // member can answer a register ask (its key rides the ask), and a floor or read marks taken
+      // from one would let that member hide history from this device for good; the nickname merge
+      // bounds what it can do (history-answer-addressing.md, "The newcomer asks for its register").
+      addOnly = !joinPush;
+      // It carries the STATE and nothing else: a message riding it would be one an answer to an ask
+      // could then change rather than only add, so none is taken from it (the responder sends none).
+      if (registerAnswer && incoming.length > 0) {
+        console.error(
+          `[HISTORY_ADDRESSED] a register answer from ${senderNorm.slice(0, 8)} in ${convoKey.slice(0, 8)}… carried ${incoming.length} message(s) - dropped, it carries the state only`
+        );
+        incoming = [];
+      }
+      // A DECLINE (`register: 'none'`, sealed under our register ask): the elected device never took
+      // a register either. It carries nothing to take; it gives the ask back and rules that device
+      // out (`noteRegisterDeclined`), against the group's OTHER devices as the TREE lists them.
+      if (
+        ask.kind === 'digest' &&
+        ask.register === true &&
+        bundleState !== data &&
+        bundleState?.register === 'none'
+      ) {
+        if (incoming.length > 0) {
+          console.error(
+            `[HISTORY_ADDRESSED] a register decline from ${senderNorm.slice(0, 8)} in ${convoKey.slice(0, 8)}… carried ${incoming.length} message(s) - dropped, it carries nothing`
+          );
+        }
+        let others: string[] = [];
+        try {
+          others = (await mlsService.getGroupMemberIdentities(convoKey))
+            .map((leaf) => leaf.toLowerCase())
+            .filter((leaf) => leaf !== me);
+        } catch (e) {
+          // The decline still gives its ask back; only "every device declined" cannot be decided.
+          console.warn(
+            `[REGISTER] ${convoKey.slice(0, 8)}… roster unreadable - the decline from ${senderNorm.slice(0, 8)} rules nobody else out: ${String(e).slice(0, 120)}`
+          );
+        }
+        noteRegisterDeclined(
+          userId,
+          convoKey,
+          digestIdentity(senderNorm, answeringDevice ?? '').toLowerCase(),
+          others
+        );
+        return true;
+      }
     } else if (typeof data?.sealed === 'string') {
       // A BROADCAST is never sealed by an honest answerer - only an addressed answer is.
       console.error(
@@ -1557,15 +1628,18 @@ export async function handleSystemEvent(
       //    ordinary answer. Both merges are `max`, so a value restated by every chunk is free.
       //    Not from an addressed answer to an ask (`addOnly`): it may only add messages.
       const beforeMerge = addOnly ? undefined : conversations.get(convoKey);
+      // Whether every merge of the state this bundle restates HAD its input - what ends the
+      // register this device is owed (below). A merge that could not run took nothing.
+      let stateTaken = !joinPush || beforeMerge !== undefined;
       if (beforeMerge) {
         const mergedWatermarks = mergeReadWatermarks(
           beforeMerge.readWatermarks,
-          parseReadWatermarks(data.readWatermarks)
+          parseReadWatermarks(bundleState.readWatermarks)
         );
         // The server-clock marks travel beside the stamped ones; an older sender has none.
         // Bounded like a read_watermark frame: none above the server's time for this bundle.
         const bundleServerMarks = boundedServerMarks(
-          parseReadWatermarks(data.serverReadWatermarks),
+          parseReadWatermarks(bundleState.serverReadWatermarks),
           deliveryMeta?.queuedCreatedAt
         );
         if (bundleServerMarks.dropped > 0) {
@@ -1577,7 +1651,7 @@ export async function handleSystemEvent(
           beforeMerge.serverReadWatermarks,
           bundleServerMarks.kept ?? undefined
         );
-        const mergedFloor = mergeHistoryFloor(beforeMerge.historyFloor, data.floor);
+        const mergedFloor = mergeHistoryFloor(beforeMerge.historyFloor, bundleState.floor);
         if (mergedWatermarks || mergedServerWatermarks || mergedFloor !== null) {
           const merged = {
             ...beforeMerge,
@@ -1597,6 +1671,7 @@ export async function handleSystemEvent(
             }
           }
           await saveConversation?.(convoKey).catch((e: unknown) => {
+            stateTaken = false;
             log(
               `[HISTORY_BUNDLE] conversation state of ${convoKey.slice(0, 8)}… not persisted: ${String(e)}`
             );
@@ -1607,7 +1682,7 @@ export async function handleSystemEvent(
       // The pin register rides beside them, merged entry by entry on the same `at` the frames
       // carry. Reported only when something actually moved - a bundle restating what we already
       // hold is the common case and says nothing.
-      const pinsMerged = addOnly ? 0 : mergePinEntries(convoKey, data.pins);
+      const pinsMerged = addOnly ? 0 : mergePinEntries(convoKey, bundleState.pins);
       if (pinsMerged > 0) {
         log(
           `[HISTORY_BUNDLE] ${pinsMerged} pin state(s) converged for ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)}`
@@ -1622,8 +1697,11 @@ export async function handleSystemEvent(
       // how a member admitted after the last rename learns the name from the members rather than
       // from the server's list (`groupName.ts`). Bounded by the push's own server time, and taken
       // only onto a row no frame has dated yet.
-      if (joinPush && data?.groupName !== undefined) {
-        const restated = boundedRestatedGroupName(data.groupName, deliveryMeta?.queuedCreatedAt);
+      if (joinPush && bundleState?.groupName !== undefined) {
+        const restated = boundedRestatedGroupName(
+          bundleState.groupName,
+          deliveryMeta?.queuedCreatedAt
+        );
         if ('refused' in restated) {
           console.error(
             `[GROUP_NAME] REFUSED the name ${senderNorm.slice(0, 8)}'s join push restates for ${convoKey.slice(0, 8)}…: ${GROUP_NAME_REFUSAL_TEXT[restated.refused]}`
@@ -1649,17 +1727,40 @@ export async function handleSystemEvent(
           }
         }
       }
-      if (joinPush && Array.isArray(data?.nicknames) && data.nicknames.length > 0) {
-        const members = await nicknameMembersOf(mlsService, convoKey, 'join push');
+      if (
+        (joinPush || registerAnswer) &&
+        Array.isArray(bundleState?.nicknames) &&
+        bundleState.nicknames.length > 0
+      ) {
+        const members = await nicknameMembersOf(
+          mlsService,
+          convoKey,
+          joinPush ? 'join push' : 'register answer'
+        );
+        if (members === null) stateTaken = false;
         const nicknamesMerged = members
-          ? mergeBundleNicknames(convoKey, data.nicknames, {
+          ? mergeBundleNicknames(convoKey, bundleState.nicknames, {
               members,
               serverAt: deliveryMeta?.queuedCreatedAt,
             })
           : 0;
         if (nicknamesMerged > 0) {
           log(
-            `[HISTORY_BUNDLE] ${nicknamesMerged} nickname(s) taken (unverified) for ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)}'s join push`
+            `[HISTORY_BUNDLE] ${nicknamesMerged} nickname(s) taken (unverified) for ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)}'s ${joinPush ? 'join push' : 'register answer'}`
+          );
+        }
+      }
+      // THE STATE WAS TAKEN: the register this device was owed since its admission is no longer
+      // asked - but only when every merge had its input. One that could not run (no row, a save
+      // refused, no roster to check the nicknames against) took nothing, and ending the ask then
+      // would leave this device without the state for good.
+      if (joinPush || registerAnswer) {
+        const how = joinPush ? 'join push' : 'register answer';
+        if (stateTaken) {
+          clearRegisterOwed(userId, convoKey, how);
+        } else {
+          console.warn(
+            `[REGISTER] ${convoKey.slice(0, 8)}… - the ${how} from ${senderNorm.slice(0, 8)} could not be taken whole - the register is still owed, and asked again`
           );
         }
       }

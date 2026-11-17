@@ -49,6 +49,8 @@ import { digestIdentity } from '$lib/utils/chat/historyDigestRendezvous';
 import { retryOverheardPull } from '$lib/utils/chat/historyDiffAnswer';
 import { takeOwedPulls } from '$lib/utils/chat/historyOverheardPull';
 import { forgetHistoryAsks, noteJoinSolicited } from '$lib/utils/chat/historyAddressing';
+import { noteRegisterOwed } from '$lib/utils/chat/registerOwed';
+import { forgetBackgroundJoin, takeBackgroundJoined } from '$lib/utils/chat/backgroundJoins';
 import {
   hasHistoryFrameBeenConsumed,
   markHistoryFrameConsumed,
@@ -704,6 +706,18 @@ async function handleWelcome(args: WelcomeArgs): Promise<boolean> {
     void mlsService
       .updateInvitationStatus(mlsService.getDeviceId(), userId, terminalId, 'active')
       .catch(() => {});
+    // HELD BECAUSE THE PUSH SERVICE JOINED IT, which the app was told at its start
+    // (`backgroundJoins.ts`): this redelivery is the first Welcome the page sees for the group, so it
+    // is the admission the background join made - the inviter's push solicited (from the user this
+    // Welcome came from) and the fresh join announced, as on the install path below. The register
+    // owed was written at the start.
+    if (takeBackgroundJoined(terminalId)) {
+      noteJoinSolicited(terminalId, sender);
+      if (groupId) mlsService.noteWelcomeInstalled(groupId);
+      log(
+        `[WELCOME] ${terminalId.slice(0, 8)}… joined in the background - its redelivered Welcome taken as the admission`
+      );
+    }
     onGroupReady(terminalId);
     log(
       `[WELCOME] ${terminalId.slice(0, 8)}… already held - redelivered Welcome ignored (idempotent)`
@@ -750,7 +764,19 @@ async function handleWelcome(args: WelcomeArgs): Promise<boolean> {
       // OUR ADMISSION IS WHAT SOLICITS THE INVITER'S PUSH, which is addressed to this device and
       // carries no request id: recorded here, before any frame of the group can be read, so the
       // push is accepted as the answer to it (`historyAddressing.ts`).
-      noteJoinSolicited(joinedGroupId);
+      noteJoinSolicited(joinedGroupId, sender);
+      // AND OUR ADMISSION IS WHAT MAKES US OWE THE CONVERSATION'S STATE (`registerOwed.ts`), written
+      // durably here so a device the push never reached - offline at the delivery, or reloaded
+      // before it - asks for it by its own reconciliation. A key group has no conversation state.
+      if (!mlsService.isDistributionGroup(joinedGroupId)) noteRegisterOwed(userId, joinedGroupId);
+      // THE PAGE'S OWN INSTALL MAKES ANY BACKGROUND NOTE FOR THIS GROUP STALE (`backgroundJoins.ts`):
+      // forgotten, so the next start does not owe again a register this device is about to take.
+      void forgetBackgroundJoin(joinedGroupId);
+      // A FRESH JOIN, told to the announcement as a fact (`onWelcomeProcessed`'s `installed`): it is
+      // what runs the newcomer's reconciliation, which a redelivered Welcome must not.
+      // Keyed by the ENVELOPE's id, the one the drain reads it by: a Welcome delivered without one is
+      // not announced, so a mark under another id would never be read.
+      if (groupId) mlsService.noteWelcomeInstalled(groupId);
       log(
         `[HISTORY_ADDRESSED] ${joinedGroupId.slice(0, 8)}… admitted - the inviter's push is solicited`
       );

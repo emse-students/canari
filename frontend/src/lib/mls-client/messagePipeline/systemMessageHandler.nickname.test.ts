@@ -12,7 +12,21 @@ import {
   resetConversationNicknamesForTests,
 } from '$lib/utils/users/conversationNicknames.svelte';
 import { digestIdentity } from '$lib/utils/chat/historyDigestRendezvous';
-import { forgetHistoryAsks, noteJoinSolicited } from '$lib/utils/chat/historyAddressing';
+import {
+  forgetHistoryAsks,
+  noteHistoryAsk,
+  noteJoinSolicited,
+} from '$lib/utils/chat/historyAddressing';
+import { historySealAad, mintHistoryAnswerKey, sealHistoryContent } from '$lib/crypto/historySeal';
+import { fakeHistorySealEngine } from '$lib/mls-client/test/fixtures/fakeHistorySealEngine';
+import {
+  REGISTER_ASKS_MAX,
+  endSpentRegisterAsks,
+  isRegisterOwed,
+  noteRegisterAsked,
+  noteRegisterOwed,
+  registerNeverTaken,
+} from '$lib/utils/chat/registerOwed';
 
 /**
  * "MODIFIER LES PSEUDOS" ON THE LIVE PATH: the silent `nickname` frame, and the register a
@@ -124,7 +138,7 @@ describe('handleSystemEvent - history_bundle restates the nicknames', () => {
   beforeEach(() => forgetHistoryAsks());
 
   it("the inviter's join push hands a late joiner the register, unverified", async () => {
-    noteJoinSolicited('g1', 1);
+    noteJoinSolicited('g1', 'inviter', 1);
     await handleSystemEvent(
       'history_bundle',
       { messages: [], to: TO_ME, join: true, last: true, nicknames: NICKNAMES },
@@ -148,7 +162,7 @@ describe('handleSystemEvent - history_bundle restates the nicknames', () => {
   });
 
   it('an entry naming no member of the tree is refused', async () => {
-    noteJoinSolicited('g1', 1);
+    noteJoinSolicited('g1', 'inviter', 1);
     await handleSystemEvent(
       'history_bundle',
       {
@@ -164,7 +178,7 @@ describe('handleSystemEvent - history_bundle restates the nicknames', () => {
   });
 
   it('keeps an entry whose setter has left - a nickname stays when its setter leaves', async () => {
-    noteJoinSolicited('g1', 1);
+    noteJoinSolicited('g1', 'inviter', 1);
     await handleSystemEvent(
       'history_bundle',
       {
@@ -185,7 +199,7 @@ describe('handleSystemEvent - history_bundle restates the nicknames', () => {
       { userId: 'bob', nickname: 'New', at: 5 },
       makeCtx() as any
     );
-    noteJoinSolicited('g1', 1);
+    noteJoinSolicited('g1', 'inviter', 1);
     await handleSystemEvent(
       'history_bundle',
       {
@@ -279,7 +293,7 @@ describe('handleSystemEvent - history_bundle restates the dated group name (grou
   beforeEach(() => forgetHistoryAsks());
 
   it("the inviter's join push names the group for a member admitted after the last rename", async () => {
-    noteJoinSolicited('g1', 1);
+    noteJoinSolicited('g1', 'inviter', 1);
     const ctx = groupRow(makeCtx(JOIN_PUSH));
     await handleSystemEvent(
       'history_bundle',
@@ -296,7 +310,7 @@ describe('handleSystemEvent - history_bundle restates the dated group name (grou
   });
 
   it('a date later than the push carrying it is refused at ERROR', async () => {
-    noteJoinSolicited('g1', 1);
+    noteJoinSolicited('g1', 'inviter', 1);
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const ctx = groupRow(makeCtx(JOIN_PUSH));
     await handleSystemEvent(
@@ -316,7 +330,7 @@ describe('handleSystemEvent - history_bundle restates the dated group name (grou
   });
 
   it('a restated name never beats a name a frame already dated here - an inviter cannot rename for the newcomer', async () => {
-    noteJoinSolicited('g1', 1);
+    noteJoinSolicited('g1', 'inviter', 1);
     const ctx = groupRow(makeCtx(JOIN_PUSH));
     ctx.conversations.set('g1', {
       ...ctx.conversations.get('g1'),
@@ -390,5 +404,303 @@ describe('handleSystemEvent - history_bundle restates the dated group name (grou
       ctx as any
     );
     expect(ctx.conversations.get('g1').name).toBe('Groupe');
+  });
+});
+
+/**
+ * THE NEWCOMER ASKS FOR ITS REGISTER (`registerOwed.ts`; history-answer-addressing.md, "The newcomer
+ * asks for its register"): a device the join push never reached asks with a keyed digest carrying
+ * `register`, and the elected responder answers with one SEALED frame holding the state. It is taken
+ * like the push - unverified, current members only - and only when the sealed content says it is a
+ * register answer to a register ask; the first one accepted clears the durable marker.
+ */
+describe('handleSystemEvent - the answer to OUR register ask', () => {
+  const TO_ME = digestIdentity('me', 'device-me');
+  const REQ = 'req-0000000a';
+  const NICKNAMES = [{ userId: 'bob', nickname: 'Capitaine', setBy: 'ann', at: 10 }];
+  const engine = fakeHistorySealEngine();
+  const RESPONDER = {
+    senderNorm: 'ann',
+    deliveryMeta: {
+      channel: 'live',
+      addressed: true,
+      senderDeviceId: 'a1',
+      queuedCreatedAt: 1_000_000,
+    },
+    mlsService: {
+      getDeviceId: () => 'device-me',
+      historySealEngine: () => engine,
+      getGroupMemberIdentities: vi.fn(async () => ['me:device-me', 'ann:a1', 'bob:b1']),
+    },
+  };
+
+  /** Opens OUR digest ask (`register` or not) and returns what seals its answer. */
+  async function ask(register: boolean) {
+    const key = await mintHistoryAnswerKey(engine);
+    noteHistoryAsk(
+      'g1',
+      REQ,
+      { kind: 'digest', since: 0, askedAt: 1, ...(register ? { register: true } : {}) },
+      key.secret
+    );
+    return (content: Record<string, unknown>) =>
+      sealHistoryContent(
+        engine,
+        key.answerKey,
+        historySealAad('g1', REQ, TO_ME, digestIdentity('ann', 'a1')),
+        content
+      );
+  }
+
+  beforeEach(() => {
+    forgetHistoryAsks();
+    noteRegisterOwed('me', 'g1');
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it('takes the register from the sealed answer, unverified, and stops asking', async () => {
+    const seal = await ask(true);
+    await handleSystemEvent(
+      'history_bundle',
+      {
+        to: TO_ME,
+        requestId: REQ,
+        sealed: await seal({ messages: [], register: true, nicknames: NICKNAMES }),
+      },
+      makeCtx(RESPONDER) as any
+    );
+
+    expect(nicknameEntry('g1', 'bob')).toEqual({
+      nickname: 'Capitaine',
+      setBy: 'ann',
+      at: 10,
+      verified: false,
+    });
+    expect(isRegisterOwed('me', 'g1')).toBe(false);
+  });
+
+  it('a DECLINE gives its ask back, takes nothing, and leaves the register owed (P2-b)', async () => {
+    for (let i = 0; i < REGISTER_ASKS_MAX; i++) noteRegisterAsked('me', 'g1');
+    const seal = await ask(true);
+    const ctx = makeCtx(RESPONDER);
+    await handleSystemEvent(
+      'history_bundle',
+      { to: TO_ME, requestId: REQ, sealed: await seal({ messages: [], register: 'none' }) },
+      ctx as any
+    );
+
+    expect(ctx.batchAddMessages).not.toHaveBeenCalled();
+    expect(nicknameEntry('g1', 'bob')).toBeNull();
+    expect(isRegisterOwed('me', 'g1')).toBe(true);
+    // The fifth unanswered ask was given back: the bound is not spent.
+    expect(endSpentRegisterAsks('me', 'g1')).toBe(false);
+  });
+
+  it('a decline from EVERY other device of the tree ends the asking - none holds a register', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const tree = vi.fn(async () => ['me:device-me', 'ann:a1']);
+    const seal = await ask(true);
+    await handleSystemEvent(
+      'history_bundle',
+      { to: TO_ME, requestId: REQ, sealed: await seal({ messages: [], register: 'none' }) },
+      makeCtx({
+        ...RESPONDER,
+        mlsService: { ...RESPONDER.mlsService, getGroupMemberIdentities: tree },
+      }) as any
+    );
+
+    expect(isRegisterOwed('me', 'g1')).toBe(false);
+    expect(registerNeverTaken('me', 'g1')).toBe(true);
+    expect(warn.mock.calls.join(' ')).toContain('every other device (1) declined');
+  });
+
+  it('a decline answering a NON-register ask rules nobody out', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const tree = vi.fn(async () => ['me:device-me', 'ann:a1']);
+    const seal = await ask(false);
+    await handleSystemEvent(
+      'history_bundle',
+      { to: TO_ME, requestId: REQ, sealed: await seal({ messages: [], register: 'none' }) },
+      makeCtx({
+        ...RESPONDER,
+        mlsService: { ...RESPONDER.mlsService, getGroupMemberIdentities: tree },
+      }) as any
+    );
+
+    expect(isRegisterOwed('me', 'g1')).toBe(true);
+    expect(tree).not.toHaveBeenCalled();
+  });
+
+  it('takes no message from it - a register answer carries the state only', async () => {
+    const seal = await ask(true);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const ctx = makeCtx(RESPONDER);
+    await handleSystemEvent(
+      'history_bundle',
+      {
+        to: TO_ME,
+        requestId: REQ,
+        sealed: await seal({
+          messages: [{ id: 'm1', senderId: 'ann', content: 'x', timestamp: 500 }],
+          register: true,
+          nicknames: NICKNAMES,
+        }),
+      },
+      ctx as any
+    );
+
+    expect(ctx.batchAddMessages).not.toHaveBeenCalled();
+    expect(error.mock.calls.join(' ')).toContain('it carries the state only');
+  });
+
+  it('an answer to a digest that did NOT ask for the register hands over no state, and the marker stays', async () => {
+    const seal = await ask(false);
+    await handleSystemEvent(
+      'history_bundle',
+      {
+        to: TO_ME,
+        requestId: REQ,
+        sealed: await seal({ messages: [], register: true, nicknames: NICKNAMES }),
+      },
+      makeCtx(RESPONDER) as any
+    );
+
+    expect(nicknameEntry('g1', 'bob')).toBeNull();
+    expect(isRegisterOwed('me', 'g1')).toBe(true);
+  });
+
+  it('`register` said in CLEAR beside a sealed answer is not believed - only the sealed content says it', async () => {
+    const seal = await ask(true);
+    await handleSystemEvent(
+      'history_bundle',
+      {
+        to: TO_ME,
+        requestId: REQ,
+        register: true,
+        sealed: await seal({ messages: [], nicknames: NICKNAMES }),
+      },
+      makeCtx(RESPONDER) as any
+    );
+
+    expect(nicknameEntry('g1', 'bob')).toBeNull();
+    expect(isRegisterOwed('me', 'g1')).toBe(true);
+  });
+
+  it('an UNSEALED answer claiming to answer a register ask is taken as an ordinary answer, at error', async () => {
+    await ask(true);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await handleSystemEvent(
+      'history_bundle',
+      { to: TO_ME, requestId: REQ, register: true, messages: [], nicknames: NICKNAMES },
+      makeCtx(RESPONDER) as any
+    );
+
+    expect(nicknameEntry('g1', 'bob')).toBeNull();
+    expect(isRegisterOwed('me', 'g1')).toBe(true);
+    expect(error.mock.calls.join(' ')).toContain('claims to answer a register ask');
+  });
+
+  it('takes NOTHING but the register from it - no floor, no read marks, whatever it carries', async () => {
+    // Any member can answer a register ask (the key rides the ask): a floor taken from one would
+    // let that member hide history from this device for good.
+    const seal = await ask(true);
+    const ctx = makeCtx(RESPONDER);
+    await handleSystemEvent(
+      'history_bundle',
+      {
+        to: TO_ME,
+        requestId: REQ,
+        sealed: await seal({
+          messages: [],
+          register: true,
+          nicknames: NICKNAMES,
+          floor: 900_000,
+          readWatermarks: { ann: 999 },
+        }),
+      },
+      ctx as any
+    );
+
+    expect(nicknameEntry('g1', 'bob')?.nickname).toBe('Capitaine');
+    expect(ctx.conversations.get('g1').historyFloor).toBeUndefined();
+    expect(ctx.conversations.get('g1').readWatermarks).toEqual({});
+  });
+
+  it('keeps the register owed when the roster could not be read - nothing was taken', async () => {
+    const seal = await ask(true);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await handleSystemEvent(
+      'history_bundle',
+      {
+        to: TO_ME,
+        requestId: REQ,
+        sealed: await seal({ messages: [], register: true, nicknames: NICKNAMES }),
+      },
+      makeCtx({
+        ...RESPONDER,
+        mlsService: {
+          ...RESPONDER.mlsService,
+          getGroupMemberIdentities: vi.fn(async () => {
+            throw new Error('tree unreadable');
+          }),
+        },
+      }) as any
+    );
+
+    expect(nicknameEntry('g1', 'bob')).toBeNull();
+    expect(isRegisterOwed('me', 'g1')).toBe(true);
+    expect(warn.mock.calls.join(' ')).toContain('the register is still owed');
+  });
+
+  it('keeps the register owed when a join push finds no conversation row to merge into', async () => {
+    noteJoinSolicited('g1', 'inviter', 1);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const ctx = makeCtx({
+      ...RESPONDER,
+      senderNorm: 'inviter',
+      deliveryMeta: { ...RESPONDER.deliveryMeta, senderDeviceId: 'inviter-device' },
+    });
+    ctx.conversations.delete('g1');
+    await handleSystemEvent(
+      'history_bundle',
+      { messages: [], to: TO_ME, join: true, last: true, floor: 900_000 },
+      ctx as any
+    );
+
+    expect(isRegisterOwed('me', 'g1')).toBe(true);
+  });
+
+  it('keeps the register owed when the merged state of a join push could not be saved', async () => {
+    noteJoinSolicited('g1', 'inviter', 1);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const ctx = makeCtx({
+      ...RESPONDER,
+      senderNorm: 'inviter',
+      deliveryMeta: { ...RESPONDER.deliveryMeta, senderDeviceId: 'inviter-device' },
+      saveConversation: vi.fn().mockRejectedValue(new Error('disk full')),
+    });
+    await handleSystemEvent(
+      'history_bundle',
+      { messages: [], to: TO_ME, join: true, last: true, floor: 900_000 },
+      ctx as any
+    );
+
+    expect(isRegisterOwed('me', 'g1')).toBe(true);
+  });
+
+  it("the inviter's join push, accepted, clears the marker too", async () => {
+    noteJoinSolicited('g1', 'inviter', 1);
+    await handleSystemEvent(
+      'history_bundle',
+      { messages: [], to: TO_ME, join: true, last: true },
+      makeCtx({
+        ...RESPONDER,
+        senderNorm: 'inviter',
+        deliveryMeta: { ...RESPONDER.deliveryMeta, senderDeviceId: 'inviter-device' },
+      }) as any
+    );
+
+    expect(isRegisterOwed('me', 'g1')).toBe(false);
   });
 });
