@@ -56,6 +56,7 @@ earliest version, as a checklist.
 - [P3 - A device's revocation reset logs a `\[seenHelps\]` read failure at error level](backlog.d/p3-a-device-revocation-reset-logs-seenhelps-at-error-level.md)
 - [P3 - a member whose right to broadcast is given back is not told](backlog.d/p3-a-lifted-withdrawal-is-not-told-to-the-member.md)
 - [P3 - the feed offset restored after a Back from an association lands about 226 px lower than it was left (Mi 9T, `1.7.0-alpha.2`)](backlog.d/p3-the-feed-offset-restored-after-a-back-from-an-association-lands-about-226-px.md)
+- [P3 - the inviter's "join push NOT DELIVERED" line is a warning naming a step that has shipped (2026-11-17)](backlog.d/p3-the-join-push-not-delivered-line-is-a-stale-warning.md)
 
 ### Readings owed
 
@@ -73,7 +74,6 @@ earliest version, as a checklist.
 - [ ] [overlays stacked by open order, not by rung](backlog.d/reading-owed-overlays-stacked-by-open-order-not-by-rung.md)
 - [ ] [the Emojis preference row and its neighbours at 390 pt, on a phone](backlog.d/p3-the-emojis-preference-row-squeezes-its-description-on-a-phone.md)
 - [ ] [an institution's moderator moderates its own content, and no student](backlog.d/reading-owed-an-institution-moderator-moderates-its-own-content.md)
-- [ ] [KILL-3 on dev: a browser killed after a send or a receive accuses no frame it read (KILL-2 ledgers)](backlog.d/reading-owed-kill-3-a-revived-browser-accuses-no-frame-it-read.md)
 - [ ] [a private salon granted after an in-session join is readable on the iPhone, with its badge](backlog.d/p2-a-private-salon-granted-after-an-in-session-join-is-unreadable-on-the-iphone.md)
 - [ ] [a private salon granted late badges only what is posted after the grant](backlog.d/p3-a-private-salon-granted-late-badges-its-whole-past.md)
 - [ ] [one "server already unreachable" line per spell, read on a phone log after a real outage](backlog.d/p3-server-already-unreachable-is-logged-per-request.md)
@@ -89,7 +89,6 @@ earliest version, as a checklist.
 - [ ] [the iPhone's one seed mirror keeps the extension's seeds through a foreground (2026-11-17)](backlog.d/reading-owed-ios-seed-mirror-one-copy.md)
 - [ ] [live moderation: the three broadcaster pushes, the withdrawal lift and the lives switch](backlog.d/reading-owed-live-moderation-pushes-lift-and-the-lives-switch.md)
 - [ ] [Minesweeper replay as a global admin](backlog.d/reading-owed-minesweeper-replay-as-a-global-admin.md)
-- [ ] [a salon push's catch-up at a key group of production size, on the phones (2026-11-17)](backlog.d/reading-owed-salon-push-catch-up-at-production-key-group-size.md)
 
 ## 1.7.1
 
@@ -121,6 +120,7 @@ earliest version, as a checklist.
 - [P2 - an Android blind salon banner `held=true` with the seed frame attached (2026-11-17)](backlog.d/p2-android-blind-salon-banner-held-true.md)
 - [P2 - no gate proves that an older build reads, and writes back, the MLS state this build writes](backlog.d/p2-no-gate-proves-an-older-build-reads-the-mls-state-this-build-writes.md)
 - [P2 - about six devices a day become orphans, nearly all of them browsers](backlog.d/p2-orphan-devices-refill-the-queue-watched-daily-cleaned-by-hand.md)
+- [P2 - removing a community member: the confirmation does not name who, and a removal aimed at one member removed another on the bench (2026-11-17)](backlog.d/p2-removing-a-community-member-the-confirmation-does-not-name-who.md)
 - [P2 - a rolling replace answered two 502s once: its evidence must survive the retire first](backlog.d/p2-the-deploy-s-rolling-replace-two-posts-answered-502-across-a-release-cause.md)
 - [P2 - a frame read before a browser kill is called "never read here" on the next cold start](backlog.d/reading-owed-the-live-seen-cipher-mark-written-at-the-checkpoint.md)
 - [P2 - the organiser alert for a payment over capacity: its precondition is met, the flip is owed](backlog.d/reading-owed-the-organiser-alert-for-a-payment-over-capacity.md)
@@ -133,10 +133,12 @@ earliest version, as a checklist.
 - [P3 - Connectivity stays "reachable" through a captive portal, so the send waits for the ladder (review of #2428, 2026-10-25)](backlog.d/p3-connectivity-stays-reachable-through-a-captive-portal-so-the-send-waits-for.md)
 - [P3 - `frontend/` holds three Cargo lockfiles that one `mls-core` bump must all move: one workspace](backlog.d/p2-a-cargo-bump-in-mls-core-leaves-two-committed-lockfiles-dependabot-will.md)
 - [P3 - an unsigned restored message is only marked, and a history bundle has no byte cap per chunk](backlog.d/p2-signed-authorship-of-restored-history-built-2276-owed-rig-rows-and-a-version.md)
+- [P3 - a live that ends normally makes every viewer log a warning (2026-11-17)](backlog.d/p3-a-live-that-ends-normally-warns-on-every-viewer.md)
 - [P3 - the dev estate logs one CSP `inline script` refusal on every page load](backlog.d/p3-dev-logs-a-csp-inline-script-error-on-every-page-load.md)
 - [P3 - a lives integration spec failed once: the association's live pushed to nobody](backlog.d/p3-flaky-lives-spec-member-live-after-association-live.md)
 - [P3 - on the iPhone in landscape, the close circle looks clipped at the right edge](backlog.d/p3-iphone-landscape-close-circle-clipped.md)
 - [P3 - the gated `video-switch` and `video-off-on` call rows read 19.6-25 fps against a threshold of 27](backlog.d/p3-the-gated-video-switch-and-video-off-on-rig-rows-read-19-6-25-fps-threshold-27.md)
+- [P3 - the rig's console classifier calls a seat's ordinary start lines "unexplained", so a KILL row cannot read clean (2026-11-17)](backlog.d/p3-the-rig-console-classifier-calls-ordinary-start-lines-unexplained.md)
 - [P3 - the thread's render window only grows, at 0.13 MB a bubble: reopen it](backlog.d/p3-the-thread-s-render-window-only-grows-with-listeners-per-bubble.md)
 - [P3 - an accepted but unannounced Add: audit the adder paths, then one rig row](backlog.d/p3-verify-an-add-accepted-but-unannounced-lets-the-joiner-rejoin-over-its-own.md)
 - [P3 - EXIT-FORTIFY: closing the app on the Mi 9T logs `FORTIFY: pthread_mutex_lock called on a destroyed mutex` from the render thread](backlog.d/reading-owed-exit-fortify-closing-the-app-on-the-mi-9t-logged-fortify-pthread.md)
