@@ -490,11 +490,12 @@ client's guard against a server that ignores an exclusion stopped it instead. Fi
 measured against a real key, a warning when an exclusion cannot be used, and a test whose fixture is
 the shape this platform issues rather than `ua:da`.
 
-**What is still open is that SILENCE CARRIES TWO MEANINGS.** *We agree* and *nobody answered* are the
-same observation, which is why the escalation has to be gated on local evidence instead of on the
-absence of a reply. Making the agreeing responder ack would cost one frame per group per ask - the
-saving the state key exists for - so it is a design question, not an oversight
-([backlog](../backlog.md)).
+**SILENCE CARRIES TWO MEANINGS**, *we agree* and *nobody answered*, which is why the escalation
+is gated on local evidence instead of on the absence of a reply. **Answered 2026-11-17 for the case
+that matters:** the agreeing responder acks (`history_cannot_repair`) only when the ask carried the
+asker's proof of incompleteness, so the common agreement still costs one frame and the walk past an
+agreeing member advances on an answer - see
+[the fix](#the-fix-the-walk-advances-on-an-answer-built-2026-11-17).
 
 ### The second leg does not need a live waiter, and requiring one cost three messages for ever
 
@@ -3109,7 +3110,7 @@ it is not that. On a phone this is a minute of an empty conversation.
 
 ## HEAL-repair lands on a coin flip: the measurement and the root cause (2026-09-08)
 
-The open line is in [backlog](../backlog.d/p1-the-repair-of-a-rewound-sender-lands-on-a-coin-flip-the-ask-cadence-is.md). The row HEAL-repair and its `PASS` of 2026-09-06 were one draw of a three-sided coin (ten runs across three builds, 2026-09-08). Two candidate causes were refuted by A/B and are not to be re-opened without new evidence ([durable-rules](../durable-rules.md)).
+**Built 2026-11-17** - see [the fix](#the-fix-the-walk-advances-on-an-answer-built-2026-11-17) below; the harness batch that confirms it is owed in [backlog](../backlog.d/reading-owed-heal-repair-walks-to-the-holder.md). The row HEAL-repair and its `PASS` of 2026-09-06 were one draw of a three-sided coin (ten runs across three builds, 2026-09-08). Two candidate causes were refuted by A/B and are not to be re-opened without new evidence ([durable-rules](../durable-rules.md)).
 
 **What separates a healed run from a partial one is not the asking.** The cadence is identical: three asks about 33 s apart, `escalated: true` every time. The difference is whether any one is ANSWERED. Every PARTIAL run contains zero `[HISTORY_BUNDLE]` lines; every HEALED run contains exactly one, answering the LAST ask (172 ms after it in the sampled run), never the first.
 
@@ -3121,7 +3122,28 @@ The open line is in [backlog](../backlog.d/p1-the-repair-of-a-rewound-sender-lan
 
 **The rule that makes it fixable**: the asker holds POSITIVE PROOF that it is incomplete (frames it has and cannot read - the evidence `escalateReconciliation` is already gated on), so *a peer's agreement is not a termination while this device holds frames it cannot read; it is a reason to EXCLUDE that peer and elect another*. That drives the exclusion walk from an ANSWER rather than from an absence, the only safe form - the 2026-09-08 attempt that drove it from an absence excluded W1 200 ms after electing it. [durable-rules](../durable-rules.md) already says a deadline is not a termination proof, and a leg that needs no remembered state to answer must not require a live waiter.
 
-**Not built, deliberately**: three earlier attempts to carry "this group is incomplete" across an exchange were each wrong in a different way (a durable marker read as "have I already asked", a coalescing clock, an absence read as silence). This one needs its state specified first: WHAT is remembered, for HOW LONG, and WHAT discharges it - the discharge being the repair landing, never any peer saying anything.
+Three earlier attempts to carry "this group is incomplete" across an exchange were each wrong in a different way (a durable marker read as "have I already asked", a coalescing clock, an absence read as silence), so the state was specified before it was built.
+
+### The fix: the walk advances on an answer (built 2026-11-17)
+
+**Re-measured against the code first.** By 2026-11-17 `escalateReconciliation` already excluded a member that stayed SILENT, but only while the ask it argued with was inside the 30 s coalescing window. The measured asks were ~33 s apart, so each was a fresh `reconcileGroup` that cleared the walk and drew again from the whole membership - the coin flip was still there, and an AGREEING member was never excluded at all.
+
+**The state, specified** (`unrepaired` in `historyReconcile.ts`):
+
+| | |
+| --- | --- |
+| WHAT | per group: an entry exists while this device holds a frame it cannot read and no repair has landed since; its set names the members that ANSWERED an ask carrying that proof with `history_cannot_repair`. A member that said nothing is never in it. |
+| opened by | an evidence edge only: `raiseReconcile` (a live `LOST frame`) and `escalateReconciliation` (a replay's unreadable frames). A LIVE loss (`raiseReconcile`) also EMPTIES the set: a frame lost after the answers is a message their senders may hold, and keeping them excluded ended every later ask of the session on an empty election (review of #3762). A replay re-accuses frames already asked about and keeps it |
+| HOW LONG | in memory, until discharged. The next boot replays the frames and proves the gap again |
+| WHAT discharges it | `noteRepairLanded`: a `history_bundle` that ADDED messages to this group's store. An agreement compares two stores; once a repair changed ours, every recorded agreement was about a store we no longer have. Never a peer's statement, never the window, never a clock. Also `forgetGroupReconciliation` and the session reset |
+
+**The exchange.** While the entry is open, EVERY ask for the group (whatever raised it: the escalation, the connection pass, the deferred retry) excludes the members in the set and carries `incomplete: true` on its first leg (`history_state` or, from an empty store, `history_digest`; the second-leg digest re-reads the proof when it is sent). A responder that would otherwise stay silent - keys equal, or a digest leaving it nothing to send - answers `history_cannot_repair {from, to, since}` instead (`stateWeCannotRepair`), and that frame REPLACES its coverage statement, because both would start a walk on the asker. The asker's `noteCannotRepair` adds the member to the set and elects again at once. The ordinary agreement, from an asker with no proof, is still one frame and silence.
+
+**Why it terminates.** Each answer adds one member, the set only grows while the proof stands, and the server answers `no_peer_online` with a positive `excludedOnline` when nobody reachable is left - logged `every reachable member (n) holds nothing <group> lacks`, not deferred: the holder of a frame this device cannot read is its sender, which was online to send it, and a presence edge would only replay the same election each time a member flaps. A server that re-elects an excluded member is stopped by the existing guard (`which we asked it to skip`). The walk therefore reaches the holder, or ends on a delivered fact, in at most one election per member.
+
+**Mixed versions.** An older responder ignores `incomplete` and stays silent - the silence escalation still applies. An older asker never sends `incomplete`, so it never receives the new frame; an unknown system event is acked silently anyway.
+
+**Known costs, stated.** A device that ACCUSES frames falsely (the TAB-3b shape below) now walks the online membership once per evidence edge instead of asking once - bounded and logged at each step, but about 2·N_online·M decrypts per cold start where it used to be about M; the figures, the measurement owed and the candidate answers are in [backlog](../backlog.d/p2-a-false-accuser-costs-n-online-elections-per-cold-start.md). And the 01:07 `same state` anomaly above is not explained by this fix: if a state key ever agrees falsely, the walk excludes a member that held the messages. The reading entry says what would show that.
 
 ## Open questions
 

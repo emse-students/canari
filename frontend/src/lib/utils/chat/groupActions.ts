@@ -1401,7 +1401,9 @@ export async function historyStateKeyFor(
 export async function sendHistoryStateKey(
   groupId: string,
   from: string,
-  deps: HistoryStoreDeps
+  deps: HistoryStoreDeps,
+  /** This device holds frames of the group it cannot read - see `holdsUnrepairedProof`. */
+  incomplete = false
 ): Promise<boolean> {
   const { mlsService, log, storage } = deps;
   if (followerTabSendsNoHistoryFrame('state key', groupId, log)) return false;
@@ -1412,7 +1414,13 @@ export async function sendHistoryStateKey(
     return false;
   }
 
-  const bytes = encodeAppMessage(mkSystem('history_state', JSON.stringify({ from, key, since })));
+  // `incomplete` only when true: the ordinary probe keeps its exact shape on the wire.
+  const bytes = encodeAppMessage(
+    mkSystem(
+      'history_state',
+      JSON.stringify({ from, key, since, ...(incomplete ? { incomplete: true } : {}) })
+    )
+  );
   try {
     await mlsService.sendMessage(groupId, bytes, undefined, DELIVERY.transport);
     log(
@@ -1447,7 +1455,9 @@ export async function sendHistoryStateKey(
 export async function sendHistoryProbe(
   groupId: string,
   from: string,
-  deps: HistoryStoreDeps
+  deps: HistoryStoreDeps,
+  /** This device holds frames of the group it cannot read - carried on whichever leg is chosen. */
+  incomplete = false
 ): Promise<boolean> {
   const { storage, log } = deps;
   let held: number | null = null;
@@ -1460,8 +1470,8 @@ export async function sendHistoryProbe(
       );
     }
   }
-  if (held === 0) return sendHistoryDigest(groupId, from, deps);
-  return sendHistoryStateKey(groupId, from, deps);
+  if (held === 0) return sendHistoryDigest(groupId, from, deps, incomplete);
+  return sendHistoryStateKey(groupId, from, deps, incomplete);
 }
 
 /**
@@ -1534,6 +1544,38 @@ export async function sendHistoryCoverage(
 }
 
 /**
+ * Tells an asker that holds frames it cannot read that THIS member holds nothing in its window that
+ * it lacks - so it cannot be the one that repairs them, and the asker should elect another.
+ *
+ * **The one case where silence would be a lie.** Silence means "we agree", and for an ordinary asker
+ * agreeing is the end of the exchange. An asker that can PROVE its store incomplete is not done when
+ * a peer agrees: two members can hold the same gap while a third holds the messages (HEAL-repair,
+ * 2026-09-08: the random election reached the holder one time in three, and the walk stopped on the
+ * other two). Sent only when the probe carried that proof, so the common agreement still costs one
+ * frame. Answered by `noteCannotRepair` on the asker.
+ */
+export async function sendHistoryCannotRepair(
+  groupId: string,
+  answer: { from: string; to: string; since: number },
+  { mlsService, log }: HistorySendDeps
+): Promise<void> {
+  if (followerTabSendsNoHistoryFrame('cannot-repair', groupId, log)) return;
+  const bytes = encodeAppMessage(mkSystem('history_cannot_repair', JSON.stringify({ ...answer })));
+  try {
+    await mlsService.sendMessage(groupId, bytes, undefined, DELIVERY.transport);
+    log(
+      `[HISTORY_REQ] Told ${answer.to} we hold nothing it lacks in ${groupId.slice(0, 8)}… - it should ask another member`
+    );
+  } catch (e) {
+    // Losing this leaves the asker waiting on a member that has finished - the silence this frame
+    // exists to end - so it is never swallowed.
+    log(
+      `[HISTORY_REQ] Could not tell ${answer.to} we hold nothing it lacks in ${groupId.slice(0, 8)}…: ${String(e).slice(0, 120)}`
+    );
+  }
+}
+
+/**
  * Asks the elected responder for a bounded slice of history OLDER than anything this device holds -
  * the scrollback, driven by a reader rather than by a connection.
  *
@@ -1596,7 +1638,9 @@ export async function sendHistoryRangeRequest(
 export async function sendHistoryDigest(
   groupId: string,
   from: string,
-  deps: HistoryStoreDeps
+  deps: HistoryStoreDeps,
+  /** This device holds frames of the group it cannot read - see `holdsUnrepairedProof`. */
+  incomplete = false
 ): Promise<boolean> {
   const { mlsService, log, storage } = deps;
   if (followerTabSendsNoHistoryFrame('digest', groupId, log)) return false;
@@ -1617,7 +1661,16 @@ export async function sendHistoryDigest(
   const requestId = mintHistoryRequestId();
   noteHistoryAsk(groupId, requestId, { kind: 'digest', since, askedAt: Date.now() });
   const bytes = encodeAppMessage(
-    mkSystem('history_digest', JSON.stringify({ from, digest, since, requestId }))
+    mkSystem(
+      'history_digest',
+      JSON.stringify({
+        from,
+        digest,
+        since,
+        requestId,
+        ...(incomplete ? { incomplete: true } : {}),
+      })
+    )
   );
   try {
     await mlsService.sendMessage(groupId, bytes, undefined, DELIVERY.transport);
