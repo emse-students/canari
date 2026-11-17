@@ -2,6 +2,8 @@
 
 target: 1.7.0
 
+_2026-11-17, scope cut: KEPT in `1.7.0` - a regression of `1.7.0`: the walk it describes is #3762's, merged 2026-11-17, after `v1.6.12` ([decisions](owner-decisions-of-2026-11-17.md))._
+
 **What changed.** Since #3762, an ask raised by a frame this device cannot read carries
 `incomplete: true`. Every member that holds nothing the asker lacks answers
 `history_cannot_repair`, and the asker elects another member at once, until the server answers
