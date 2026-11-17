@@ -9,10 +9,15 @@ the ladder of steps is section 6 of [live-production](../frontend/modules/live-p
 Today: `LIVE_VIEWER_CAP` = 24 seats for every live together, a refusal ("Live complet"), never a
 failure. Charter: principle 4 (independence) and 7 (simplicity) weigh the R2 processor below.
 
-**Owed by the owner first** ([live-scaling 7](../frontend/modules/live-scaling.md#7-the-decisions-owed-by-the-owner)):
-O-1 R2 as the segment store and delivery (recommended yes), O-2 the written question to Cloudflare
-(yes), O-3 production at 24 before stage 2 (recommended (i)), O-4 Redis down with no cap (keep
-playing after stage 2), O-6 and O-7 (yes). The link-speed question to the school IT department (G14).
+**ANSWERED by the owner on 2026-11-17** ([live-scaling 7](../frontend/modules/live-scaling.md#7-the-decisions-owed-by-the-owner),
+[decisions](owner-decisions-of-2026-11-17.md)): **no R2 and no Cloudflare Stream - the lives stay on
+the server, the quality steps down** (O-1 no for now, the storage kept S3-generic so a self-hosted
+store stays possible; O-2 and O-4 moot; O-3 (i) as the standing state, a refused viewer meeting the
+"Connexion au direct..." retry, never `live complet`; O-5 yes, D2 reversed). **The steps below that
+name R2 (stage 2) are superseded by [live-scaling 3](../frontend/modules/live-scaling.md#3-the-recommendation)**:
+the cap is re-derived from the measured egress
+([entry](live-host-egress-constant-rests-on-the-workstation-path.md)), then the live's tier steps
+down instead of refusing. The link-speed question to the school IT department (G14) stays.
 
 **The ordered steps, each a pull request ending on its measurement:**
 

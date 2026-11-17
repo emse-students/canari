@@ -2,6 +2,8 @@
 
 target: 1.7.0
 
+_2026-11-17, scope cut: KEPT in `1.7.0` - only the two bench phone readings are left before the hold is lifted ([decisions](owner-decisions-of-2026-11-17.md))._
+
 **Re-read 2026-11-11: still HELD, and nothing moved since 2026-10-18.** `45-consent.yaml` still waits
 in `infrastructure/authentik/blueprints/held/` (`held-blueprints.test.sh`, `test-blueprints.sh`), so
 the 8 providers keep `default-provider-authorization-implicit-consent`. Lifting it is a `git revert`

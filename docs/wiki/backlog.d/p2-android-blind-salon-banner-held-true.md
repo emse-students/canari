@@ -1,6 +1,8 @@
 ## P2 - an Android blind salon banner `held=true` with the seed frame attached (2026-11-17)
 
-target: 1.7.0
+target: 1.7.1
+
+_2026-11-17: moved to 1.7.1 by the owner's 2026-11-17 scope cut ([decisions](owner-decisions-of-2026-11-17.md))._
 
 **What is known.** On production, 2026-11-14, one `[PUSH_BLIND] platform=android missing=seed
 held=true refused=none` line among eight (the rest iOS, explained and fixed by

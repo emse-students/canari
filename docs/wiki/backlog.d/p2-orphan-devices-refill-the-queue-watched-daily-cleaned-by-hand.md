@@ -1,6 +1,8 @@
 ## P2 - about six devices a day become orphans, nearly all of them browsers
 
-target: 1.7.0
+target: 1.7.1
+
+_2026-11-17: moved to 1.7.1 by the owner's 2026-11-17 scope cut ([decisions](owner-decisions-of-2026-11-17.md))._
 
 A device with queued rows, no session row, no push token, no ban and no life in 7 days drains
 nothing and keeps collecting fan-out while it holds seats. Four hand passes revoked 43, 118, 109 and

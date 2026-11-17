@@ -2,6 +2,8 @@
 
 target: 1.7.0
 
+_2026-11-17, scope cut: KEPT in `1.7.0` - a regression of #3648 (`1.7.0`); its fix is merged, one Mi 9T reading is left ([decisions](owner-decisions-of-2026-11-17.md))._
+
 **Found by:** the `1.7.0-alpha.2` reading of #3648 ([device-verification](../device-verification.md#170-alpha2)). On the Mi 9T, feed scrolled to 1500 css px, a profile opened from a post, an association opened from that profile, then the hardware Back twice: the app returned to the feed with the page scroll box at 1726 css px, so the posts sit about 226 px (a quarter of the screen) lower in the viewport than where the reader left them. The route is right; the offset is not exact. The iPhone 12 read the same restore as exact on the Organisations tab.
 
 **Fixed in the next pre-release (fix, not yet read on a phone):** the entry records an anchor post and its distance from the top beside the offset, and the restore aligns the post, not the number, following the page until it is quiet ([section-navigation](../frontend/section-navigation.md)). The cause stays an unverified hypothesis; Pour toi and Organisations are both feed tabs, so both are covered, and the directory keeps the raw offset. The reading below stays owed on the Mi 9T, and the entry is deleted when it passes.
