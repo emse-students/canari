@@ -8,7 +8,7 @@ import {
   type PublicForm,
 } from '$lib/forms/api';
 import { formatAmount } from '$lib/forms/fillAnswers';
-import { isClosedForm } from '$lib/forms/formWindow';
+import { formWindowState, isClosedForm } from '$lib/forms/formWindow';
 import { formatFormOpensAt } from '$lib/posts/postComposerDraft';
 import { refusalStatus } from '$lib/utils/apiRefusal';
 import { avatarUrl } from '$lib/utils/avatarUrl';
@@ -74,11 +74,11 @@ async function fetchPostPreview(postId: string): Promise<CanariLinkPreview> {
  * form (`isClosedForm`). `now` is a parameter so a test never asserts a wall clock.
  */
 export function formStateLabel(
-  form: Pick<Form, 'closedAt' | 'opensAt'> & { formFull?: boolean },
+  form: Pick<Form, 'closedAt' | 'opensAt' | 'windowState'> & { formFull?: boolean },
   now: number = Date.now()
 ): string {
   if (isClosedForm(form, now)) return m.link_preview_form_closed();
-  if (form.opensAt && new Date(form.opensAt).getTime() > now) {
+  if (form.opensAt && formWindowState(form, now) === 'not-yet') {
     return m.link_preview_form_opens_on({ date: formatFormOpensAt(form.opensAt) });
   }
   if (form.formFull) return m.link_preview_form_full();

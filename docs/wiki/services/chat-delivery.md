@@ -2383,6 +2383,38 @@ per member token:
   no FCM alert instead) - [calls](../frontend/modules/calls.md#the-native-ring-on-the-iphone---pushkit-and-callkit-wp-c6-owner-2026-10-22).
 - **iOS without `voipToken`** (legacy builds) → FCM alert banner ("📞 Appel entrant").
 
+**A dead FCM token is told by its CODE, never by its prose** (2026-11-17). A ring or ring-end send
+that FCM refuses deletes the `push_token` row only when `isTerminalPushTokenError`
+(`src/utils/fcm-errors.ts`, the ONE classifier, shared with the message pushes of
+`MessagingService`) reads `messaging/registration-token-not-registered` or
+`messaging/invalid-registration-token` from the error's structured `code`. The ring path used to
+read `String(e)`, and a real `FirebaseMessagingError` stringifies to `Error: Requested entity was
+not found.` - so a ring never removed a dead token; it also deleted on a bare `invalid-argument`,
+which the v1 endpoint returns for a malformed PAYLOAD as well, an allowlist it did not have. Every
+other failure is a WARN naming the code, and the row stays.
+
+**A token FCM calls malformed (`invalid-argument`) is kept, and that is measured, not assumed.**
+FCM v1 answers `INVALID_ARGUMENT` -> `messaging/invalid-argument` both for a garbage token and for a
+bad payload, and nothing structured tells the two apart, so no path deletes on it: a ring would
+retry such a token, with one WARN per ring. Measured read-only on production chat-delivery
+2026-11-17: the reachable log is the running container's (32 h - a deploy replaces the container and
+its log, so seven days do not exist anywhere), holding 1195 sends and ONE failure, a social push to
+a token FCM called not registered; **zero** `invalid-argument`, on zero tokens; the dev container,
+zero failures. A discriminator (the same ring payload accepted for another token, or a durable
+per-token strike cleared by a success) would be machinery for a case that has not happened.
+**What reveals it later:** every FCM failure line, on every path (`[ring]`, `[ring-end]`,
+`[PUSH_SEND]`, `[WELCOME_REQ]`, `[SOCIAL_PUSH]`), now carries `code=` (`describeFcmFailure`, the
+same file); before, the message paths printed only the prose, so this very count could not be
+taken from them. `grep 'FCM failed' | grep -c 'code=messaging/invalid-argument'` over a window, and
+the distinct `device=` values, answer it; a non-zero count with a recurring device is the trigger.
+
+**A refused credential is OUR misconfiguration, logged at ERROR** (2026-11-17).
+`messaging/mismatched-credential`, `third-party-auth-error` (the APNs key Firebase holds for us) and
+`authentication-error` (our service account) blame the project, not the device: every device fails
+the same way until a human fixes the configuration. They were a WARN reading `FCM failed ... err=`
+like any token's failure; `describeFcmFailure` now logs them at ERROR, saying `OUR credentials were
+refused ... not this device's token`, and none of them deletes a row.
+
 `/api/calls/ring-end` (reason `answered`/`cancelled`/`ended`) is sent to **all** members
 including the caller's own devices and stops the ring everywhere; both platforms also arm a
 local 60 s timeout as a safety net. Ordering gotcha: `call_ring_end` must be processed **before**
@@ -2608,6 +2640,30 @@ the top: every outbound call inside `resolveLinkPreview` goes through its `reach
 "the site said something unusable" and "the site said nothing" cannot be confused by the handler.
 An unexpected error - a parser fault, a bug in this file - is neither cached nor blamed on the
 caller: it is a `500`, logged at `error`.
+
+**The guard's own DNS lookup is classified at the throw too** (2026-11-17). `assertSafeExternalUrl`
+resolves the host before anything is fetched, and that lookup used to fail RAW: measured in
+production on 2026-11-16, a one-minute outbound degradation (image fetches timing out to other
+hosts in the same seconds - the only outbound failures of that container's first day) made it
+throw Bun's `DNSException: getaddrinfo EAI_AGAIN` on `link-preview` and `link-safety`, and Nest's
+`ExceptionsHandler` printed an ERROR stack and answered `500` for each. It was a passing resolver
+hiccup, not a URL that can never resolve (that is `ENOTFOUND`, of which there were none), so the fix
+is code, not container DNS. The guard now answers `ENOTFOUND`/`ENODATA` (the name has no address)
+as the caller's `400`, and every other resolver failure - an error carrying a `code` and
+`syscall: 'getaddrinfo'`, as node and bun both throw it - as an `UpstreamUnreachableError` carrying
+the host and the resolver code; anything else thrown by the lookup is a bug of ours and is rethrown
+untouched, never dressed as an outage (each route's last `throw error` is that path, tested); `link-preview` and `link-safety` turn it into a `502`, `no-store`,
+with one WARN (`... unreachable (dns EAI_AGAIN)`), the image proxy into a `502` instead of the `400`
+of a refused URL, and the GIF relay types it rather than inferring it by elimination.
+
+**The oEmbed follow-up never fails silently either** (2026-11-17). `fetchOEmbedData` used to catch
+everything into `null`, so a page pointing at a private address, an endpoint that said nothing and a
+site answering HTML read the same: as nothing. It now returns an `OEmbedUnavailable` typed where the
+failure happens - `refused` (the guard refused the declared endpoint), `unreachable` (DNS, connect,
+abort, a body that died), `status` / `not-json` / `malformed` (it answered, unusably). The preview is
+served either way; `resolveLinkPreview` logs one line per resolution (the preview is then cached):
+WARN for `refused` and `unreachable`, debug for a third party's unusable answer, which nobody here
+can act on.
 
 **One budget, and every mechanism that can enforce it agrees.** `OUTBOUND_BUDGET_MS` (4 000 ms) arms
 the endpoint's `AbortController` for the whole operation - redirect chain and oEmbed follow-up - AND

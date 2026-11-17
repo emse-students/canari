@@ -99,7 +99,7 @@ describe('Handoff routes', () => {
     ).rejects.toBeInstanceOf(UnauthorizedException);
   });
 
-  it('mints nothing for a sid-less (legacy) access token, which names no live session', async () => {
+  it('mints nothing for a sid-less access token, which names no session', async () => {
     const { controller, sessions } = build();
     await expect(
       controller.mintHandoff(req(bearer({ sub: 'user-a' })), { aud: 'migallery' })

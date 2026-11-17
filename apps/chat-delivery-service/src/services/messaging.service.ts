@@ -22,6 +22,7 @@ import {
 } from 'typeorm';
 import * as crypto from 'crypto';
 import { RefusalCode, refusalBody } from '../utils/refusal-codes';
+import { describeFcmFailure, fcmErrorCode, isTerminalPushTokenError } from '../utils/fcm-errors';
 import Redis from 'ioredis';
 import {
   ADDRESSED_HISTORY_CAPABILITY,
@@ -1264,19 +1265,6 @@ export class MessagingService {
     }
   }
 
-  private isTerminalPushTokenError(error: unknown): boolean {
-    const rawCode =
-      typeof error === 'object' && error && 'code' in error
-        ? (error as { code?: unknown }).code
-        : undefined;
-    const code = typeof rawCode === 'string' ? rawCode : '';
-
-    return (
-      code === 'messaging/invalid-registration-token' ||
-      code === 'messaging/registration-token-not-registered'
-    );
-  }
-
   /**
    * Whether FCM refused a message for SIZE rather than for the token or the network.
    *
@@ -1289,9 +1277,9 @@ export class MessagingService {
    * @param error - Whatever `getMessaging().send()` threw.
    */
   private isPayloadTooLargeError(error: unknown): boolean {
-    const asRecord = typeof error === 'object' && error ? (error as Record<string, unknown>) : {};
-    const code = typeof asRecord.code === 'string' ? asRecord.code : '';
+    const code = fcmErrorCode(error);
     if (code === 'messaging/payload-size-limit-exceeded') return true;
+    const asRecord = typeof error === 'object' && error ? (error as Record<string, unknown>) : {};
     const message = typeof asRecord.message === 'string' ? asRecord.message : '';
     return code === 'messaging/invalid-argument' && /too large/i.test(message);
   }
@@ -1625,14 +1613,15 @@ export class MessagingService {
           );
         }
       } catch (e) {
-        if (this.isTerminalPushTokenError(e)) {
+        if (isTerminalPushTokenError(e)) {
           await this.pushTokenRepo.delete({ id: pt.id });
           this.logger.warn(
             `[PUSH_SEND][${traceId}] Deleted invalid push token user=${queued.recipientId} device=${pt.deviceId}`
           );
         }
-        this.logger.warn(
-          `[PUSH_SEND][${traceId}] FCM failed user=${queued.recipientId} device=${pt.deviceId} err=${String(e)}`
+        const failure = describeFcmFailure(e);
+        this.logger[failure.level](
+          `[PUSH_SEND][${traceId}] FCM failed user=${queued.recipientId} device=${pt.deviceId} ${failure.text}`
         );
         // A size refusal is the one failure whose cause is entirely in our hands, and the error
         // FCM returns names no quantity at all - ten of them in one run said only "too large".
@@ -8371,14 +8360,15 @@ export class MessagingService {
             `[WELCOME_REQ][${traceId}] FCM welcome_request_pending user=${pt.userId} device=${pt.deviceId}`
           );
         } catch (e) {
-          if (this.isTerminalPushTokenError(e)) {
+          if (isTerminalPushTokenError(e)) {
             await this.pushTokenRepo.delete({ id: pt.id });
             this.logger.warn(
               `[WELCOME_REQ][${traceId}] Deleted invalid push token user=${pt.userId} device=${pt.deviceId}`
             );
           }
-          this.logger.warn(
-            `[WELCOME_REQ][${traceId}] FCM failed user=${pt.userId} device=${pt.deviceId} err=${String(e)}`
+          const failure = describeFcmFailure(e);
+          this.logger[failure.level](
+            `[WELCOME_REQ][${traceId}] FCM failed user=${pt.userId} device=${pt.deviceId} ${failure.text}`
           );
         }
       })
@@ -8653,14 +8643,15 @@ export class MessagingService {
         }
       } catch (e) {
         failed++;
-        if (this.isTerminalPushTokenError(e)) {
+        if (isTerminalPushTokenError(e)) {
           await this.pushTokenRepo.delete({ id: pt.id });
           this.logger.warn(
             `[SOCIAL_PUSH][${traceId}] deleted invalid token user=${userId} device=${pt.deviceId}`
           );
         }
-        this.logger.warn(
-          `[SOCIAL_PUSH][${traceId}] FCM failed user=${userId} device=${pt.deviceId} err=${String(e)}`
+        const failure = describeFcmFailure(e);
+        this.logger[failure.level](
+          `[SOCIAL_PUSH][${traceId}] FCM failed user=${userId} device=${pt.deviceId} ${failure.text}`
         );
       }
     }
