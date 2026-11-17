@@ -107,7 +107,7 @@
     orig(path, {
       ...init,
       headers: {
-        ...(init.headers || {}),
+        ...init.headers,
         Authorization: CL.auth,
         'Content-Type': 'application/json',
         'X-Canari-Client-Version': C.clientVersion,
