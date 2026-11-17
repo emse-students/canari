@@ -239,14 +239,16 @@ every member, the other newcomers included, skips all of them. The distance a me
 read the inviter's next frame in that epoch is the SUM, over the devices of that Add, of the frames
 each push took:
 
-- a first-time newcomer: **1** frame (everything before the arrival is withheld, so the push is the
-  state-only frame, or one chunk of what was sent since the Add);
-- a returning member: up to `ceil(entitled messages / 200)` frames (a chunk is 200 messages).
+- **1** frame, for every newcomer: since 2026-11-17 the push carries the conversation's state and no
+  message ("What is NOT sealed", below), so a returning member no longer costs a chunk per 200
+  entitled messages here. Those messages now come by the newcomer's own digest, answered by ONE
+  elected responder with `ceil(entitled messages / 200)` addressed chunks plus one register frame -
+  consecutive frames of THAT member, so the same sum bounds them, per ask rather than per Add.
 
 **Nothing caps the devices of one Add** (`addMembersBulk` takes the whole list), so the bound is stated
-here rather than enforced: the 2 000 is crossed by one Add of more than **2 000 first-time devices**
-(about 1 000 people at two devices each), or by fewer returning members whose entitled stores add up
-to more than **400 000 messages**. Past it, the members who skipped the run do not decrypt the
+here rather than enforced: the 2 000 is crossed by one Add of more than **2 000 devices** (about
+1 000 people at two devices each), or by one answer to a returning member whose entitled store
+exceeds **400 000 messages**. Past it, the members who skipped the run do not decrypt the
 inviter's next frame of that epoch. A group conversation approaching either number is the moment to bound the Add in code (a cap on `inviteMembersToGroup`'s list, with
 a test), not to raise `maximum_forward_distance`, whose 2 000 caps the keys a receiver derives.
 Graine accepted the same bound
@@ -256,8 +258,8 @@ The durable rule that forbade addressing an application message is narrowed acco
 
 ## Sealing the answer to the asker - option B (2026-11-17)
 
-**Status: BUILT (draft pull request) for every answer that has an asker; the join push is NOT sealed
-(below).** Addressing keeps an answer from every other member only as long as the server routes it
+**Status: BUILT for every answer that has an asker (#3775); the join push answers no ask and is not
+sealed, so since 2026-11-17 it carries no message (draft pull request, below).** Addressing keeps an answer from every other member only as long as the server routes it
 as told: the frame is still an MLS application message, encrypted under the group's epoch secret,
 so a device the server hands it to by mistake (or on purpose) can read it. Option B removes that
 trust in the server.
@@ -313,11 +315,26 @@ with every ask on a session reset (`forgetHistoryAsks`, which also re-arms the o
 `[LEGACY]` notice). The receiver opens with a COPY (`answerSecretOf`), wiped when the open returns,
 so closing the ask mid-open cannot pull the bytes from under it. On the engine side, `mls-core`
 holds the minted secret in `Zeroizing`. On the web, the WASM `open_history_answer` takes the secret
-OWNED (`open_history_answer_owned`), so its copy in linear memory is zeroized on return. On the
-phones it crosses the Tauri bridge as base64: minting returns it once as a string (a JS string cannot
-be overwritten - the one copy this design cannot wipe, collected like any other), and opening hands
-it back, where `open_history_answer_with_b64_secret` holds the string and the decoded bytes in
-`Zeroizing` so neither outlives the call.
+OWNED (`open_history_answer_owned`), so its copy in linear memory is zeroized on return.
+
+**On the phones the secret crosses the Tauri bridge as base64, and the JS half of that cannot be
+wiped.** The residue, exactly (`tauriHistorySealEngine.ts`):
+
+- **minting** returns it once as a base64 string inside the IPC response, decoded at once into the
+  `Uint8Array` the ask keeps (and wipes); the response string and its JSON are not overwritable;
+- **every open** builds a fresh base64 string of it (`toBase64(secret)`) and serialises it into the
+  invoke's JSON payload - one more unwipeable string, and payload buffer, per answer frame received.
+
+Those strings are garbage like any other and are collected, never overwritten: a memory dump of the
+webview taken before collection can hold the secret of an ask that is still open or recently closed.
+On the native side nothing is left behind: `open_history_answer` (`src-tauri`) wraps the argument
+in `Zeroizing` before parsing anything, so an argument error returning early zeroizes it too, then
+MOVES its buffer into `open_history_answer_with_b64_secret` (`mls-core`), which holds the string and
+the decoded bytes in `Zeroizing` so neither outlives the call. **Not built: keeping the secret native
+behind a handle**, which would leave no JS copy at all - it needs a native store of open asks' secrets
+released by the webview's own close, eviction and forget, and released somehow when the webview
+reloads without saying so (a reloaded page holds no ask, rule 5); that lifecycle is a change of its
+own, weighed against a LOW finding (review of #3775, 2026-11-17).
 
 ### What members still see
 
@@ -352,24 +369,212 @@ keyed ask is then refused, and an ask with no key is malformed and answered noth
 no `requestId` (D211) - planned in
 [backlog](../backlog.d/p3-a-history-answer-is-sealed-or-refused-once-the-floor-seals.md).
 
-### What is NOT sealed: the inviter's join push
+### What is NOT sealed: the inviter's join push - so it carries no message (2026-11-17)
 
 The push is solicited by the newcomer's own admission, not by an ask, so no key of the newcomer's
-reaches the inviter: it stays addressed and unsealed. **What that leaves exposed to a server that
-misroutes it**: a first-time newcomer is pushed only what was sent since the Add, which every member
-holds; a RETURNING member is pushed what they are entitled to since their first arrival, which a
-member admitted after that arrival is not. That second case is the residual. Two keys were considered
-and rejected:
+reaches the inviter: it stays addressed and unsealed. **What that left exposed to a server that
+misroutes it**: a first-time newcomer was pushed only what was sent since the Add, which every member
+holds; a RETURNING member was pushed what they are entitled to since their first arrival, which a
+member admitted after that arrival is not. That second case was the residual, and it is closed by
+taking the messages OUT of the push (draft pull request): `sendFullHistoryBundle` sends one frame
+with the conversation's state (read marks, floor, pins, nickname register) and `messages: []`, and
+never reads the store. The state is the conversation's, every member holds it. The messages reach the
+newcomer by its own reconciliation - a keyed digest, sealed by rule 3 - which now runs at every
+Welcome that INSTALLED the group (`sessionAuth.ts`, `onWelcomeProcessed`: the call was inside a
+branch that the Welcome handler's own row made dead in the ordinary case, so a fresh join used to
+wait for the next connection to compare). Two keys to seal the push itself were considered and
+rejected:
 
 - **the KeyPackage's init key** - its secret is deleted once the Welcome is processed;
 - **the newcomer's MLS leaf encryption key** - the secret is openmls's to manage (read from its
   storage by an internal type), and it rotates on the newcomer's first commit, which can land before
   the push: a key that may be gone when the answer arrives is not one an answer can be sealed to.
 
-The answer that terminates is the one already designed for the offline newcomer
-([backlog](../backlog.d/p2-an-offline-newcomer-receives-no-join-push.md)): the newcomer ASKS for its
-register with a keyed digest, so its answer is sealed by rule 3 like any other, and the unsolicited
-push can then be retired. Its planning is the owner's call (the P1 entry says what is owed).
+**Mixed versions.** A newcomer on an older build reconciles at its next connection (its
+fresh-join trigger is the dead one), so from a new inviter it receives the state at once and the
+messages on that connection - only a RETURNING member has any to receive, a first-time one is
+entitled to what was sent since the Add. An older inviter still pushes the messages, unsealed, as
+before; a new newcomer takes them (rule 5, the join ask) and asks for the rest anyway.
+
+### The newcomer asks for its register (2026-11-17)
+
+The push is addressed and transport-only: a newcomer whose device is not connected when its Welcome
+is delivered - the usual phone in a pocket - is pushed nothing, not even the state, and nothing
+retried ([backlog](../backlog.d/p2-an-offline-newcomer-receives-no-join-push.md)). So the newcomer
+ASKS, on facts it holds durably:
+
+1. **Owed from the admission.** Processing a Welcome into a conversation group (not a key group)
+   writes a per-account entry for it (`registerOwed.ts`, `ACCOUNT_KEY.registerOwed`, a 256-entry FIFO
+   in `localStorage`), beside the in-memory join ask (`setupMessageHandler.ts`). Durable because the
+   question outlives the page: a reload between the Welcome and the answer still asks.
+2. **Owed from a background join too (review of #3777, P2-a).** The Android push service installs a
+   Welcome into `mls.bin` with no page running (`process_welcome_background_with_key`); the page
+   later sees that Welcome redelivered for a group it holds, which the Welcome handler treats as
+   idempotent - so the admission's notes were never written. The native join now notes every group
+   it installs in `background_joins.json` (written before the `mls.bin` write, so no join goes
+   unnoted; it leaves with `mls.bin`), and the app takes and clears that ledger once per start,
+   before the drain (`take_background_joins`, `backgroundJoins.ts`). Each conversation it names is
+   believed only when the state just loaded holds the group - the ledger is a claim, the tree is the
+   fact - and is then owed its register; its redelivered Welcome is taken, once, as the admission it
+   was (the inviter's push solicited, the fresh join announced). This is a FACT written by the code
+   that joined; "held, no row, Welcome in hand" was the alternative, and it is a guess (a row can be
+   missing for other reasons).
+
+   **A note the page installed over is forgotten (review of #3777, P2-2).** The note is written
+   before the `mls.bin` write. When that write is REFUSED (the page changed the bytes since the
+   engine loaded them - possibly by installing the same Welcome, its forget having run while the
+   ledger was still empty), the engine takes back the note it inserted itself, and only that one
+   (`unnote_refused_background_join`). When the write LANDS and the page's own persist later erases
+   it, the page installs the same Welcome itself and takes the register.
+   Left in the ledger, the note would make the next start find the group held and owe its register
+   again - and this device, a holder, would DECLINE newcomers, possibly the last device one of them
+   waits on. So for that second case - the only one the page can see - its own install
+   (`handleWelcome`) forgets the group in the ledger (`forget_background_join`). Chosen over a durable "register taken" set because it removes the
+   stale claim where it lives rather than keeping a second, ever-growing fact to overrule it; the
+   residue is a kill between the install and that call, before the install is persisted - which
+   loses the install itself.
+
+   **Late on a warm resume, never lost.** The ledger is taken at a cold start only: a background
+   join made while the app's process stayed alive in the background is owed its register at the
+   next cold start, not at the resume.
+3. **Asked by the reconciliation it already runs.** While the entry still asks, `sendHistoryProbe`
+   sends the DIGEST (never the state key, whose match is answered by silence) with `register: true`,
+   and the ask this device keeps says `register` too (`noteHistoryAsk`). Like every ask, it carries
+   a key.
+4. **Answered first by the elected responder.** `answerHistoryDigest`, seeing `register`, sends ONE
+   frame before the diff (`sendRegisterAnswer`): addressed to the asker alone, SEALED to its ask, no
+   message, not closing the ask (the diff's last chunk does). Its content is the NICKNAME REGISTER and
+   `register: true` - or, from a device that never took its own register, `register: 'none'`, a typed
+   DECLINE: it holds none to restate, and an empty register would end the asker's entry on nothing.
+   Never broadcast (a server that does not address gets no register), withheld from an unvouched
+   device, nothing sent when the engine cannot seal. A register ask with no key is a defect of its
+   sender: no state is sent, said at error, and the diff still goes.
+5. **Taken only from what opened under the ask.** The receiver takes the nicknames - under
+   `mergeBundleNicknames`' limits (unverified, current members only) - from an answer only when its
+   ask said `register` AND the SEALED content says `register: true`. The flag is never in the clear
+   routing: one a relaying server could set would turn an ordinary answer into one the reader takes
+   state from. An unsealed frame saying `register` is taken as an ordinary answer and said at error.
+   A message riding a register answer or a decline is dropped (at error).
+6. **Ended by the first state TAKEN** - a register answer, or the inviter's join push - and only when
+   every merge had its input (`stateTaken` in `systemMessageHandler.ts`): a push finding no
+   conversation row, a save refused, or a register with no roster to check its nicknames against took
+   nothing, so the entry stays (said at warn) and the next reconciliation asks again.
+
+**Two questions, two durable facts (review of #3777, P2-b).** "Was a register ever taken here?" is
+the entry's EXISTENCE (`registerNeverTaken`), and it ends only when one is taken: the responder reads
+it to decide between answering and declining. "Do I still ask?" is the entry's `asking` field
+(`isRegisterOwed`), which ends on a proof that asking is useless. They used to be one marker, and two
+newcomers - or one person's phone and laptop, each elected for the other's ask - each refused, the
+bound dropped both markers, and both then answered later newcomers with an empty register.
+
+**It terminates on proofs, never a clock.** The asking ends when either holds:
+
+- **`REGISTER_ASKS_MAX` (5) counted asks.** Every register ask that leaves is counted
+  (`noteRegisterAsked`); the FIRST decline from each device gives one ask back
+  (`noteRegisterDeclined`), and any later decline from that device is counted like silence (review
+  of #3777, P2-1: giving back on every decline let a device declining at each election - or a hostile
+  member - keep the count at zero, and two answerers of one ask erase an earlier silent ask). So at
+  most `REGISTER_ASKS_MAX` asks plus one per distinct declining device (an MLS-verified member) ever
+  leave, whoever is online. The bound is checked before the next ask (`endSpentRegisterAsks`), so a
+  decline that came back meanwhile is already counted out. Counted at the ask, because silence is an
+  answer: an older responder ignores `register`, and when its store matches ours it sends nothing, so no answer-side count would ever
+  move ([legacy](../legacy-compatibility.md)). A device of this account is treated like any other
+  device: on this build it answers or declines, and one on an older build is the legacy case the
+  bound exists for.
+- **Every other device of the tree DECLINED.** The decliners are kept in the entry; once they cover
+  every leaf of the group but this one (`getGroupMemberIdentities`), nobody holds a register to give.
+
+Asks leave on state edges - every connection, every Welcome that INSTALLED the group, a member coming
+back - so no ask repeats without one.
+
+**What is still lost, honestly.** A conversation in which NO device holds a register - every member
+admitted offline, the inviter's push lost to each, and the inviter gone or itself never having taken
+one - never gets the nicknames set before those admissions: nobody can give them, and the asking ends
+on the declines. A group whose only holders run a build that ignores `register` - or are offline
+at every election while other devices decline - is asked `REGISTER_ASKS_MAX` plus one per other
+device times, and then not again until a re-admission. A FIFO-evicted entry (more than 256 conversations owed at
+once) answers as a holder would. Each is said at warn where it ends.
+
+**The register answer carries the nickname register and nothing else (decided 2026-11-17).** The
+ask's key rides the ask, so ANY member of the group can seal an answer to it, and the receiver does
+not track which member the election chose. Two ways out were weighed: accept a register answer only
+from the elected answerer, or keep what can do lasting harm out of it. The second was taken, because
+the first would need the receiver to re-run the election on a roster it may not hold yet (it has just
+joined), and a floor or read marks taken from a forged answer would hide history from the device for
+good. The nicknames are bounded by the merge (unverified, current members only, dated within the
+bundle's server time), so a forged register can at worst mislabel. **It is NOT corrected by a later
+one:** the first register taken ends the entry, so this device asks no more, and from then on it
+answers newcomers as a holder - passing on the forged (or an empty) register it took. A nickname set
+live afterwards, by its `nickname` frame, does overrule it.
+The pins, the floor and the read marks ride only the inviter's join push, which is taken only from a
+device of the user the Welcome came from (review of #3777, P2-c): the join ask records that user
+(`noteJoinSolicited`) and `takeAddressedAsk` refuses any other member's device for it, whatever slot
+is free. That user is the delivery envelope's word, as the routing of every addressed answer is.
+
+**A newcomer the push never reached does not learn the floor - and that is not noise today.** The
+floor rides only the push, so such a newcomer states its `since` from a floor of zero. Nothing moves
+the floor yet (`historyWindow.ts`: it ships worth zero, no member prunes inside the five-year
+window), so every member's floor is zero too and `coverageFallsShort` compares the same windows it
+always did. The day something moves the floor, it owes the newcomer the floor through an answer it
+can trust, or a member's `coveredFrom` above the newcomer's `since` starts a walk for a past the floor
+says is gone.
+
+**Only a Welcome that installed the group asks at once.** The fresh-join reconciliation runs in
+`sessionAuth`'s `onWelcomeProcessed` callback, told by the drain whether the handler INSTALLED the
+group (`noteWelcomeInstalled`) - or, for a background join, took its first redelivery as the
+admission. The mark is keyed by the envelope's group id - the one the drain reads it by, so a
+Welcome delivered without one leaves none - and read ONCE per Welcome, on success and on a handler
+that threw alike. A
+redelivered Welcome of a group already held joins nothing and asks nothing.
+
+### What proves the register ask and the state-only push
+
+- `registerOwed.test.ts` - the entry: durable, per account, bounded FIFO, an unreadable list reads
+  as nothing owed at error, clearing what is not owed says nothing; the asks counted across a reload,
+  the bound ending the asking at warn while the register stays never-taken, a decline giving its ask
+  back, every other device declining ending the asking, a re-admission asking from zero.
+- `registerOwed.test.ts` (P2-1) - a device declining at every election spends the bound like
+  silence; two declines on every ask give back at most one ask per device.
+- `backgroundJoins.test.ts` (P2-2), `setupMessageHandler.test.ts`, `mobile/background.rs`
+  (`a_note_the_page_installed_over_is_forgotten`) - the page's own install forgets the group's
+  background note, so the next start does not owe a register the page took; a Welcome with no
+  envelope group id leaves no install mark.
+- `backgroundJoins.test.ts`, `mobile/background.rs` (`a_background_join_is_noted_and_taken_once`,
+  `a_welcome_that_does_not_install_notes_nothing`, `a_full_background_join_ledger_keeps_what_it_holds`):
+  a background join is noted and taken once, a refused one not at all; a group the loaded state does
+  not hold, or a key group, owes nothing.
+- `setupMessageHandler.test.ts` - a processed Welcome makes a conversation group owe its register,
+  a key group none; a fresh install is told to the announcement, a redelivery is not; the first
+  redelivery of a background-joined group is its admission, the second is not.
+- `BaseMlsService.welcomeBuffer.test.ts` - the announcement says `installed` for the Welcome that
+  installed the group, not for its redelivery, nor after a handler that threw.
+- `historyAddressing.test.ts`, `systemMessageHandler.bundleAddressing.test.ts` - the join push is
+  taken only from a device of the user the Welcome came from.
+- `groupActions.historyProbe.test.ts` - an owed register sends the digest with `register` whatever
+  the store holds, and keeps the ask with it; none once cleared; another account's entry asks nothing;
+  each ask that left is counted, one that did not leave is not, one a decline gave back is not spent.
+- `systemMessageHandler.lateDigest.test.ts` - the digest handler carries `register` to the answer.
+- `historyDiffAnswer.register.test.ts` - the register frame leaves BEFORE the diff, sealed and bound
+  to this answerer; none for an ordinary digest; a keyless register ask gets no state, at error.
+- `groupActions.registerAnswer.test.ts` - one frame, addressed, its clear routing only `to`,
+  `requestId`, `sealed`; its content the nickname register and no message, no floor, pin or read
+  mark even when the store holds them; never broadcast, withheld from an unvouched device, nothing
+  when the engine cannot seal; a sealed `register: 'none'` from a device that never took its own,
+  asking or not.
+- `systemMessageHandler.nickname.test.ts` - the register is taken from a sealed register answer and
+  the entry ended; no message from it; no state from an answer to a non-register digest, nor from
+  `register` said in clear (beside sealed content, or on an unsealed frame, at error); the push
+  ends the entry; a register answer takes no floor or read mark; the entry is KEPT when the roster
+  is unreadable, the push finds no row, or its save fails; a decline gives its ask back and takes
+  nothing, and declines from every other device end the asking.
+- `groupActions.historyBundle.test.ts`, `groupActions.historyEntitlement.test.ts` - the push sends
+  the state and no message, never reading the store, addressed or (an older server) broadcast; the
+  entitlement cases it used to carry are asserted on the answer to an ask.
+- **Owed on a pre-release**: reading 2 of the nicknames row with the new member's device NOT
+  connected at "Ajouter" ([backlog](../backlog.d/p2-an-offline-newcomer-receives-no-join-push.md)).
+  The `sessionAuth` callback that runs the fresh-join reconciliation is not drivable from a unit test
+  (`buildConversationRow.onePolicy.test.ts` says why); its `installed` input is proven above, and
+  that reading is the proof of the callback itself.
 
 ### What proves the seal
 

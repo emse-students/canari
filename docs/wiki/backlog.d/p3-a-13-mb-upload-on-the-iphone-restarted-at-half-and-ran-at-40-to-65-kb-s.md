@@ -2,6 +2,8 @@
 
 target: 1.7.0
 
+_2026-11-17, scope cut: KEPT in `1.7.0` - its fix is merged in `1.7.0`; one iPhone bench reading is left ([decisions](owner-decisions-of-2026-11-17.md))._
+
 **Seen 2026-11-15 (iPhone 12, `1.7.0-alpha.1`, dev, [readings](../device-verification.md#the-iphone-12-readings-of-2026-11-15-170-alpha1-third-sitting)):** a 13 631 488-byte file queued offline, the app killed and relaunched, then sent. The bubble's progress went from 2 % to 50 %, then read 6 % and climbed again to the sent state: one attempt was restarted at about half. The whole send took about 5 minutes (roughly 40 to 65 KB/s) on a Wi-Fi where the same phone downloaded the same file from the workstation in seconds. The file arrived complete.
 
 **Built 2026-11-16, owed one iPhone reading** ([offline-and-weak-network 13.9](../frontend/offline-and-weak-network.md#139-a-queued-file-over-one-request-body-resumes-and-its-figure-never-goes-back-2026-11-16)):

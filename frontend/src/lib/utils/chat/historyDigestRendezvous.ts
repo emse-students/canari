@@ -59,6 +59,11 @@ export type SolicitedProbe =
       /** The key the ask carried (`parseHistoryAnswerKey`), if any - the answer is sealed to it. */
       answerKey?: string;
       /**
+       * The asker is owed the conversation's STATE (`registerOwed.ts`): the responder sends it one
+       * sealed register frame before the diff (`sendRegisterAnswer`). Absent from older builds.
+       */
+      register?: true;
+      /**
        * The asker holds frames of this group it cannot read and no repair has landed since. A
        * responder that then holds nothing the asker lacks ANSWERS so (`history_cannot_repair`)
        * instead of staying silent. Absent on every ordinary probe and from older builds.

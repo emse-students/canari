@@ -2375,6 +2375,12 @@ predicate is unchanged (`landingFeed.ts`, `postVisibleToViewerSql`).
   (`posts/scheduledDue.ts`): a post moved to another future date takes its new place at once; one the
   edit published now (or un-scheduled) leaves the strip and the feed is re-read. A deleted card leaves
   by its own `onDelete`. `ScheduledPostsPanel` (a preview with a delete button only) is gone.
+- **The strip draws its cards with `{@render guardedCard(...)}`.** It shipped in 1.6.12 as a bare
+  `{guardedCard(sp, ...)}`: a snippet takes the DOM anchor as its first argument, so the post became the
+  anchor and `post.before(...)` threw `e.before is not a function`, which crashed the whole `/posts` page
+  for every editor of a scheduled post until it was due (production, 2026-11-17, the first scheduled
+  association post). The compiler and svelte-check accept the bare call; `styles/snippetRenderCalls.test.ts`
+  refuses it in every `.svelte` file.
 
 The "link to an event" picker (`linkableEventPickerOptions`, `utils/time.ts`, used by the composer
 and the editor) lists the furthest future event first and the furthest past last; the server answers

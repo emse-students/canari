@@ -453,8 +453,31 @@ describe('history_bundle - an addressed answer is the answer to OUR ask or nothi
     expect(ctx.conversations.get(GROUP).readWatermarks).toBeUndefined();
   });
 
+  it('a join push from a member the Welcome did not come from is refused - it could set the floor', async () => {
+    noteJoinSolicited(GROUP, 'inviter', ASKED_AT);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const ctx = makeCtx(ADDRESSED);
+
+    await handleSystemEvent(
+      'history_bundle',
+      {
+        messages: [BUNDLE_MSG],
+        to: TO_ME,
+        join: true,
+        last: true,
+        readWatermarks: { peer: 5000 },
+      },
+      ctx as any
+    );
+
+    expect(ctx.batchAddMessages).not.toHaveBeenCalled();
+    expect(ctx.conversations.get(GROUP).readWatermarks).toBeUndefined();
+    expect(error.mock.calls.join(' ')).toContain('REFUSED an addressed history_bundle');
+    error.mockRestore();
+  });
+
   it("the inviter's push is solicited by our admission, and may hand over the conversation state", async () => {
-    noteJoinSolicited(GROUP, ASKED_AT);
+    noteJoinSolicited(GROUP, 'peer', ASKED_AT);
     const ctx = makeCtx(ADDRESSED);
 
     await handleSystemEvent(
@@ -679,7 +702,7 @@ describe('history_bundle - an answer sealed to our ask', () => {
   });
 
   it('refuses a sealed join push and a sealed broadcast - nothing honest seals either', async () => {
-    noteJoinSolicited(GROUP, ASKED_AT);
+    noteJoinSolicited(GROUP, 'peer', ASKED_AT);
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const pushed = makeCtx(ADDRESSED);
     const broadcast = makeCtx();

@@ -1905,8 +1905,18 @@ export interface IMlsService {
   ): void;
   /** Registers a callback invoked when the WebSocket connection is lost. */
   onDisconnect(callback: () => void): void;
-  /** Registers a callback invoked after a Welcome message has been successfully processed. */
-  onWelcomeProcessed(callback: (groupId?: string) => void): void;
+  /**
+   * Registers a callback invoked after a Welcome message has been processed. `installed` says
+   * whether the handler INSTALLED the group from it ({@link noteWelcomeInstalled}) - false for a
+   * redelivered Welcome of a group already held, which joins nothing.
+   */
+  onWelcomeProcessed(callback: (groupId?: string, installed?: boolean) => void): void;
+  /**
+   * Records, from the Welcome handler, that the Welcome it is processing for `groupId` (the
+   * envelope's id, the one the drain announces) INSTALLED the group - read once by the announcement
+   * ({@link onWelcomeProcessed}), so a fresh join is told from a redelivery by a fact, not by a row.
+   */
+  noteWelcomeInstalled(groupId: string): void;
 
   /**
    * Installs THE listener of every Welcome this device delivers: called once per send the server

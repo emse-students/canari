@@ -168,3 +168,19 @@ describe('a digest that arrives after the wait ended', () => {
     expect(pullFromOverheardDigest).not.toHaveBeenCalled();
   });
 });
+
+describe('a digest asking for the register (`registerOwed.ts`)', () => {
+  it('carries `register` to the answer, and an ordinary digest carries none', async () => {
+    noteDigestSolicited(GROUP, PEER);
+    await handleSystemEvent(
+      'history_digest',
+      { ...DIGEST_FRAME, register: true },
+      makeCtx() as any
+    );
+    noteDigestSolicited(GROUP, PEER);
+    await handleSystemEvent('history_digest', DIGEST_FRAME, makeCtx() as any);
+    await settle();
+
+    expect(answerHistoryDigest.mock.calls.map(([call]) => call.register)).toEqual([true, false]);
+  });
+});

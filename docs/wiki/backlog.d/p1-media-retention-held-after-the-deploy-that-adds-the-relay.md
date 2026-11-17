@@ -2,6 +2,8 @@
 
 target: 1.7.0
 
+_2026-11-17, scope cut: KEPT in `1.7.0` - a regression of `1.7.0`: the relay it holds the durations for is new, and production's deploy of that stable is exactly the ordering ([decisions](owner-decisions-of-2026-11-17.md))._
+
 Found on dev at the `1.7.0-alpha.1` rolling deploy (2026-11-15) and raised from P3 to P1: it blocks the
 `1.7.0` stable, whose production deploy is exactly that ordering (production `1.6.12` has no retention
 holder: no `[RETENTION]` line in its media-service's last 48 h). The read that answered a social-service
