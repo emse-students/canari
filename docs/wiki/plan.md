@@ -90,6 +90,7 @@ earliest version, as a checklist.
 ### Readings owed
 
 - [ ] [the CanaReels composer, viewer and editor on real content](backlog.d/reading-owed-the-canareels-composer-viewer-and-editor-on-real-content.md)
+- [ ] [a HISTORY ask answered "I hold nothing" is final for its roster](backlog.d/reading-owed-a-history-ask-answered-i-hold-nothing-is-final-for-its-roster.md)
 - [ ] [sharing into Canari on iOS](backlog.d/reading-owed-sharing-into-canari-on-ios.md)
 - [ ] [seeds mirrored before the writer label](backlog.d/reading-owed-seeds-mirrored-before-the-writer-label.md)
 - [ ] [a deploy's `502`/`503`/`504` is "not now", never a send failure](backlog.d/reading-owed-a-deploy-s-502-503-504-is-not-now-never-a-send-failure.md)
