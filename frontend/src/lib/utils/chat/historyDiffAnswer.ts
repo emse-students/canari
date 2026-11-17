@@ -16,6 +16,7 @@ import {
   sendHistoryCannotRepair,
   sendHistoryCoverage,
   sendHistoryPull,
+  sendRegisterAnswer,
 } from '$lib/utils/chat/groupActions';
 import {
   type OwedPull,
@@ -118,12 +119,31 @@ export async function answerHistoryDigest(params: {
   answerKey?: string;
   /** The asker holds frames it cannot read - see `stateWeCannotRepair`. */
   incomplete?: boolean;
+  /** The asker is owed the conversation's state - see `registerOwed.ts`. */
+  register?: boolean;
   deps: HistoryAnswerDeps;
 }): Promise<void> {
   const { groupId, requesterIdentity, selfIdentity, digest, since, requestId, answerKey, deps } =
     params;
   const { log } = deps;
   const short = groupId.slice(0, 8);
+
+  // THE STATE FIRST, the messages after (`registerOwed.ts`): one sealed frame that never closes the
+  // ask, so the diff's last chunk below still does. A register ask is new with the seal and always
+  // carries a key; one that does not is a defect of its sender, answered with no state.
+  if (params.register) {
+    if (answerKey === undefined) {
+      console.error(
+        `[REGISTER] ${requesterIdentity} asked for ${short}…'s register with no key - nothing honest does; its state is not sent`
+      );
+    } else {
+      await sendRegisterAnswer(groupId, deps, {
+        to: requesterIdentity,
+        requestId,
+        seal: { answerKey, answerer: selfIdentity },
+      });
+    }
+  }
 
   const entries = await readHistoryEntries(groupId, deps);
   if (entries === null) {

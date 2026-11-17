@@ -11,7 +11,8 @@
  * - every ask (`history_digest`, `history_pull`, `history_range`) carries a fresh `requestId`, kept
  *   here with the BOUND it stated; the answer echoes it;
  * - the inviter's push is solicited by this device's own admission: processing a Welcome records a
- *   `join` ask for the group;
+ *   `join` ask for the group, with the user the Welcome came from - and only a device of THAT user
+ *   may answer it (the push restates the floor and the read marks, which no other member may set);
  * - an ask takes at most {@link MAX_ANSWERERS_PER_ASK} answering devices - the elected responder and
  *   one re-elected over a stored probe - each closing it for itself with its chunk marked `last`,
  *   and is gone once they all have. The answerer is the device MLS verified (the caller refuses an
@@ -26,6 +27,7 @@
  * the ask carried the public half, the answerer sealed the answer's content to it, and the secret
  * lives here beside the ask, in memory, for exactly as long as the ask is open.
  */
+import { canonicalUserId, userIdOfLeaf } from '$lib/mls-client/leafIdentity';
 import { UNDATED_SKEW_MARGIN_MS } from '$lib/utils/chat/historyEntitlement';
 import { selectEntryIdsForPrefixes } from '$lib/utils/chat/historyManifest';
 import { isWithinHistoryRange } from '$lib/utils/chat/historyWindow';
@@ -35,7 +37,16 @@ import { isWithinHistoryRange } from '$lib/utils/chat/historyWindow';
  * clock when the ask left: no answer can carry a message sent after the question.
  */
 export type HistoryAsk =
-  | { kind: 'digest'; since: number; askedAt: number }
+  | {
+      kind: 'digest';
+      since: number;
+      askedAt: number;
+      /**
+       * The digest also asked for the conversation's STATE (`registerOwed.ts`): its answer may then
+       * hand over the register, the pins, the floor and the read marks, as the join push does.
+       */
+      register?: boolean;
+    }
   | {
       kind: 'pull';
       since: number;
@@ -45,7 +56,15 @@ export type HistoryAsk =
       askedAt: number;
     }
   | { kind: 'range'; since: number; before: number; askedAt: number }
-  | { kind: 'join'; askedAt: number };
+  | {
+      kind: 'join';
+      askedAt: number;
+      /**
+       * The user the Welcome came from (canonical): the inviter, whose devices alone may answer this
+       * ask. The delivery envelope's word, as the routing of every addressed answer is.
+       */
+      inviter: string;
+    };
 
 /**
  * How many asks one conversation keeps open. A reconciliation asks one digest and at most a handful
@@ -147,10 +166,20 @@ export function noteHistoryAsk(
 
 /**
  * Records that this device was just ADMITTED to `groupId` (its Welcome was processed), which is what
- * solicits the inviter's push. A Welcome processed again re-opens it, which is the same fact.
+ * solicits the inviter's push - from `inviter`, the user the Welcome came from, and no one else. A
+ * Welcome processed again re-opens it, which is the same fact.
  */
-export function noteJoinSolicited(groupId: string, now: number = Date.now()): void {
-  remember(groupId, JOIN_ASK, { kind: 'join', askedAt: now }, null);
+export function noteJoinSolicited(
+  groupId: string,
+  inviter: string,
+  now: number = Date.now()
+): void {
+  remember(
+    groupId,
+    JOIN_ASK,
+    { kind: 'join', askedAt: now, inviter: canonicalUserId(inviter) },
+    null
+  );
 }
 
 /**
@@ -172,6 +201,10 @@ export function takeAddressedAsk(
   const id = requestId ?? JOIN_ASK;
   const open = asks?.get(id);
   if (!open || open.closedBy.has(answerer)) return null;
+  // THE PUSH IS THE INVITER'S: a join ask takes no device of another member, whatever slot is free.
+  if (open.ask.kind === 'join' && userIdOfLeaf(answerer) !== open.ask.inviter) {
+    return null;
+  }
   if (!open.answerers.has(answerer)) {
     if (open.answerers.size >= MAX_ANSWERERS_PER_ASK) return null;
     open.answerers.add(answerer);
