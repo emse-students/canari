@@ -44,10 +44,13 @@
   }
 </script>
 
+<!-- IT TAKES THE BUBBLE'S OWN COLOUR (`currentColor`), like the hashtag: `text-accent-text` was the
+     accent drawn on the accent-filled OWN bubble, a blank gap where the name is (owner,
+     2026-11-17, Android dark). Weight, the `@` and the faint tint tell it apart on any fill. -->
 <button
   type="button"
   onclick={openProfile}
-  class="bg-accent/10 text-accent-text hover:bg-accent/20 inline cursor-pointer rounded-full px-1 align-baseline text-[0.9em] font-semibold transition-colors"
+  class="bg-accent/10 hover:bg-accent/20 inline cursor-pointer rounded-full px-1 align-baseline text-[0.9em] font-semibold transition-colors"
 >
   @<EmojiText text={resolved ?? ''} />
 </button>

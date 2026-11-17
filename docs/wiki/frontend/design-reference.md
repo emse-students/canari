@@ -3544,3 +3544,15 @@ Owner report: in the desktop `Navbar` the apps grid, the sign-out and the avatar
 All three are now `.ui-icon-button` (38px under a pointer, 44px on touch), the avatar is the 32px `md` step centred in its box (the same as `MobileHeader`'s), and the grid and the sign-out are both a 22px glyph at stroke 2.5. The connection ring stays a `box-shadow` on the photo's own span, so it cannot move the row. Measured after: three 38x38 boxes at 1280px and three 44x44 on touch, centres all 35.5, glyphs 22/22/32. `MobileHeader` already used this shape and has no sign-out. `headerControlRow.test.ts` holds the cause (shared box, one glyph size, no bare tap target on the avatar); a layout engine is not available to unit tests.
 
 **A settings row pairing a long description with a control wider than a switch stacks on a phone (2026-11-16).** The Emojis row kept its text beside a fixed `w-44 shrink-0` two-segment control and the description wrapped to one to three words per line at 390 pt. Such a row is `flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4` with the control `w-full shrink-0 sm:w-<n>`, the Theme and video-autoplay rows' shape; a 48 px switch beside its text needs no stacking. Guard: `SettingsPreferencesSection.emojiStyle.svelte.test.ts`.
+
+## A mention chip in the sender's own bubble took the bubble's fill as its text colour (2026-11-17)
+
+Owner, Android dark mode: a mention in a message the user SENT read as a blank gap. `MessageMentionChip`
+drew `text-accent-text`, the accent family for text on a NEUTRAL surface (`#ffd45d` in dark, section
+31's own measurement of the same family: 1.13:1 on the yellow outgoing bubble in dark, 1.68:1 in
+light). It is the hashtag defect of section 31 again, in the one inline element that kept its own
+colour. **The chip now takes `currentColor`**, the rule of section 31: it cannot know what its bubble
+is filled with, so it names no colour. It stays told apart by the `@`, `font-semibold`, and a faint
+`bg-accent/10` pill (Tailwind emits a solid fallback before the `color-mix` form, so the text colour
+being `currentColor` keeps it legible on a WebView without `color-mix`). Pinned by
+`MessageMentionChip.svelte.test.ts`.
