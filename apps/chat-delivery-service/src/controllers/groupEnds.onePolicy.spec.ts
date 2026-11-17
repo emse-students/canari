@@ -18,6 +18,7 @@ import { SeatEviction } from '../entities/seat-eviction.entity';
 import { JoinAskPush } from '../entities/join-ask-push.entity';
 import { RevokedDeviceGroup } from '../entities/revoked-device-group.entity';
 import { SentFrameReceipt } from '../entities/sent-frame-receipt.entity';
+import { UninvitedEntry } from '../entities/uninvited-entry.entity';
 import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
 import { PushToken } from '../entities/push-token.entity';
 import { KeyPackage } from '../entities/key-package.entity';
@@ -61,6 +62,7 @@ const SWEPT = [
   JoinAskPush,
   RevokedDeviceGroup,
   SentFrameReceipt,
+  UninvitedEntry,
 ];
 
 interface Doors {

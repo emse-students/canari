@@ -50,9 +50,6 @@ import { RouteParams } from '../common/route-params';
  */
 export const MLS_COMMIT_LIMIT_PER_MINUTE = 600;
 
-/** How many uninvited entries are remembered for deduplication; the oldest goes first past it. */
-export const MAX_REMEMBERED_UNINVITED_ENTRIES = 5000;
-
 /** The classes a client may name an uninvited entry as (`UninvitedEntryKind` on the client). */
 const UNINVITED_ENTRY_KINDS: readonly string[] = [
   'new-person',
@@ -65,13 +62,23 @@ const UNINVITED_ENTRY_KINDS: readonly string[] = [
 /** The kinds a device decides from its own record of the group, so their line prints `watched_from`. */
 const EVIDENCED_UNINVITED_ENTRY_KINDS: readonly string[] = ['new-person', 'returning'];
 
+/**
+ * An epoch field of an uninvited-entry report as it is printed AND stored: a safe integer's digits
+ * (at most 17 characters with the sign), `unstated` when absent, `invalid` for anything else - a
+ * digit STRING included, since the client sends a JSON number. Never the generic sanitizer's
+ * 128-character string: the columns are VARCHAR(32), and an oversized value would make every report
+ * of the entry fail its INSERT (migration 053).
+ */
+export function uninvitedEntryEpochField(value: unknown): string {
+  if (value === undefined || value === null || value === '') return 'unstated';
+  return typeof value === 'number' && Number.isSafeInteger(value) ? String(value) : 'invalid';
+}
+
 /** MLS message send, commit validation, welcome delivery, history, and ACK. */
 @RouteParams({ groupId: 'uuid', userId: 'opaque', deviceId: 'opaque' })
 @Controller()
 export class MessagingController {
   private readonly logger = new Logger(MessagingController.name);
-  /** The entries `mls/uninvited-entry` already counted, as (group, entrant, epoch), oldest first. */
-  private readonly reportedUninvitedEntries = new Set<string>();
 
   constructor(private readonly messagingService: MessagingService) {}
 
@@ -330,14 +337,25 @@ export class MessagingController {
    * `new-person` - NOT PROVEN a member by that device. The line carries it so the classes are
    * counted apart, and `watched_from` - the first epoch the device's record of the group covers - so
    * a `new-person` from a device that was not there yet when a member left is told apart from one
-   * that watched the whole time. It stores nothing; the WARN line and its date are the count.
+   * that watched the whole time.
    *
    * ONE LINE PER ENTRY AND KIND, NOT PER REPORTER: every member device sees the same commit and
    * reports it, so the count is deduplicated on (group, entrant, epoch, kind) - an entry is one
    * commit, and a later entry of the same device is another. Each device decides from what IT saw,
    * so two members may disagree - one proving a return, one that cannot - and both lines are
-   * printed: the disagreement measures what devices lack. In memory and bounded: a restart may
-   * print an entry once more, never lose one.
+   * printed: the disagreement measures what devices lack.
+   *
+   * THE COUNT IS A TABLE (`uninvited_entries`, migration 053). The first report of an entry under a
+   * kind writes its row and prints the WARN line; a repeat finds the row, by any replica and after
+   * any deploy. It used to be a set in this process's memory, so every deploy reset it and a reading
+   * of production covered only the hours since the last one.
+   *
+   * A ROW THAT COULD NOT BE WRITTEN IS LOST TO THE COUNT, AND SAID SO ON THE SERVER ONLY. It is
+   * printed at ERROR with all its evidence (`NOT COUNTED`) and answered `{ recorded: false }` with a
+   * 2xx. No client reports an entry twice (once per app session, and a failure is never retried), so a
+   * 503 would buy nothing but a warning in the reporter's console for a fault that is the server's
+   * and is already accused here. Only a database failure reaches that branch: every value is
+   * classified to fit its column before the INSERT ({@link uninvitedEntryEpochField}).
    *
    * The reporter is the authenticated user and device and a MEMBER of the group (anyone else is
    * refused, 403, as `mls/integrity-finding`). Every field goes through `sanitizeLogValue`.
@@ -356,7 +374,7 @@ export class MessagingController {
       kind?: unknown;
       watchedFromEpoch?: unknown;
     }
-  ): Promise<{ recorded: true }> {
+  ): Promise<{ recorded: boolean }> {
     const reporter = sanitizeDevicePairLogValue(authUserId, reporterDeviceId);
     const groupId = typeof body.groupId === 'string' ? body.groupId : '';
     if (
@@ -372,12 +390,8 @@ export class MessagingController {
         message: 'not a member of this group',
       });
     }
-    // The one numeric field, printed as its digits; anything else is `invalid` like every field.
-    const epoch = sanitizeLogValue(
-      typeof body.epoch === 'number' && Number.isSafeInteger(body.epoch)
-        ? String(body.epoch)
-        : body.epoch
-    );
+    // The numeric fields, printed as their digits; anything else is `invalid` like every field.
+    const epoch = uninvitedEntryEpochField(body.epoch);
     const entrant = sanitizeLeafLogValue(body.entrant);
     const group = sanitizeLogValue(groupId);
     const kind =
@@ -392,27 +406,33 @@ export class MessagingController {
       ? '-'
       : body.watchedFromEpoch === null
         ? 'none'
-        : sanitizeLogValue(
-            typeof body.watchedFromEpoch === 'number' && Number.isSafeInteger(body.watchedFromEpoch)
-              ? String(body.watchedFromEpoch)
-              : body.watchedFromEpoch
-          );
-    const entry = `${group}\0${entrant}\0${epoch}\0${kind}`;
-    if (this.reportedUninvitedEntries.has(entry)) {
+        : uninvitedEntryEpochField(body.watchedFromEpoch);
+    const evidence =
+      `kind=${kind} reporter=${reporter} group=${group} entrant=${entrant} ` +
+      `epoch=${epoch} key=${sanitizeLogValue(body.keyFingerprint)} watched_from=${watchedFrom}`;
+    let first: boolean;
+    try {
+      first = await this.messagingService.claimUninvitedEntry({
+        groupId,
+        entrantUserDevice: entrant,
+        epoch,
+        kind,
+        watchedFrom,
+      });
+    } catch (e) {
+      this.logger.error(
+        `[UNINVITED_ENTRY] NOT COUNTED ${evidence} - the row could not be written: ` +
+          String(e).replace(/\s+/g, ' ').slice(0, 160)
+      );
+      return { recorded: false };
+    }
+    if (!first) {
       this.logger.debug(
         `[UNINVITED_ENTRY] repeat kind=${kind} reporter=${reporter} group=${group} entrant=${entrant} epoch=${epoch} - already counted`
       );
       return { recorded: true };
     }
-    if (this.reportedUninvitedEntries.size >= MAX_REMEMBERED_UNINVITED_ENTRIES) {
-      const oldest = this.reportedUninvitedEntries.values().next().value;
-      if (oldest !== undefined) this.reportedUninvitedEntries.delete(oldest);
-    }
-    this.reportedUninvitedEntries.add(entry);
-    this.logger.warn(
-      `[UNINVITED_ENTRY] kind=${kind} reporter=${reporter} group=${group} entrant=${entrant} ` +
-        `epoch=${epoch} key=${sanitizeLogValue(body.keyFingerprint)} watched_from=${watchedFrom}`
-    );
+    this.logger.warn(`[UNINVITED_ENTRY] ${evidence}`);
     return { recorded: true };
   }
 
