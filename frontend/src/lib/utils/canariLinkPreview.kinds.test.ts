@@ -160,4 +160,15 @@ describe('formStateLabel', () => {
   it('calls an end still to come open, not closed', () => {
     expect(formStateLabel({ closedAt: '2026-07-01T00:00:00Z' }, NOW)).toBe('Ouvert');
   });
+
+  it("reads the server's window state, not this clock, for the opening too", () => {
+    // The opening is ahead of this (slow) clock but the server calls the form open.
+    expect(formStateLabel({ opensAt: '2026-07-01T00:00:00Z', windowState: 'open' }, NOW)).toBe(
+      'Ouvert'
+    );
+    // The server says not yet, whatever this clock reads.
+    expect(
+      formStateLabel({ opensAt: '2026-05-01T00:00:00Z', windowState: 'not-yet' }, NOW)
+    ).toMatch(/^Ouvre le /);
+  });
 });

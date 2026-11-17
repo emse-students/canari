@@ -26,7 +26,14 @@ import {
   onlineOffered,
   publishPaymentRefusal,
 } from './payment-offer';
-import { assertMayCloseAt, assertWindowOrdered } from './form-window';
+import {
+  FORM_WINDOW_CLOSED,
+  FORM_WINDOW_NOT_YET,
+  FORM_WINDOW_OPEN,
+  assertMayCloseAt,
+  assertWindowOrdered,
+  formWindowState,
+} from './form-window';
 import { FORM_DRAFT, FORM_PUBLISHED, respondentFormWhere, type FormStatus } from './form-status';
 import { managesForm } from './form-ownership';
 import {
@@ -301,11 +308,9 @@ export function priceFingerprint(form: CreateFormDto): string {
   });
 }
 
-/** Whether a form takes answers now: past its opening, before its end (`closedAt`). */
+/** Whether a form takes answers now: `formWindowState`, the one rule. */
 function isFormOpen(form: Pick<Form, 'opensAt' | 'closedAt'>): boolean {
-  const now = new Date();
-  if (form.opensAt && new Date(form.opensAt) > now) return false;
-  return !(form.closedAt && new Date(form.closedAt) < now);
+  return formWindowState(form) === FORM_WINDOW_OPEN;
 }
 
 /**
@@ -313,10 +318,11 @@ function isFormOpen(form: Pick<Form, 'opensAt' | 'closedAt'>): boolean {
  * after its end (`closedAt`, its end date or the manager's close). Typed, worded by the page.
  */
 function assertFormOpen(form: Pick<Form, 'opensAt' | 'closedAt'>): void {
-  if (form.opensAt && new Date(form.opensAt) > new Date()) {
+  const state = formWindowState(form);
+  if (state === FORM_WINDOW_NOT_YET) {
     throw formRefusal(FORM_NOT_OPEN_YET, 'The form is not open yet.');
   }
-  if (form.closedAt && new Date(form.closedAt) < new Date()) {
+  if (state === FORM_WINDOW_CLOSED) {
     throw formRefusal(FORM_CLOSED, 'The form is closed.');
   }
 }
@@ -1150,6 +1156,7 @@ export class FormsService {
       ...form,
       associationName: form.associationId ? (names.get(form.associationId) ?? null) : null,
       hasUnpublishedChanges: changed.has(form.id),
+      windowState: formWindowState(form),
     }));
   }
 
@@ -1205,6 +1212,7 @@ export class FormsService {
       cotisationDisabled,
       paymentsPaused,
       associationName,
+      windowState: formWindowState(form),
     };
   }
 
@@ -1327,6 +1335,8 @@ export class FormsService {
       items: respondentItems(form.items ?? []),
       opensAt: form.opensAt,
       closedAt: form.closedAt,
+      // Judged by the server (`formWindowState`): a guest's phone never compares the two dates itself.
+      windowState: formWindowState(form),
       anonymous: form.anonymous,
       // What the page asks a guest about who they are, canonical; [] asks nothing. The declared
       // fields (promo and formation, status, campus) are asked here too (`respondent-identity.ts`).
@@ -2004,7 +2014,12 @@ export class FormsService {
         ` was=${form.closedAt ? new Date(form.closedAt).toISOString() : 'open'}`
     );
     await this.formRepo.update({ id: formId }, { closedAt });
-    return { id: formId, closedAt };
+    // The state is judged HERE, on the server's clock: the row of a phone behind it follows this.
+    return {
+      id: formId,
+      closedAt,
+      windowState: formWindowState({ opensAt: form.opensAt, closedAt }),
+    };
   }
 
   /**
