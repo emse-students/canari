@@ -7,7 +7,8 @@
  *
  *   bun archive/kill-selftest.mjs
  */
-import { COOKIE_COMMIT_MS, KILL3_WINDOWS, KILL_BLOCKED, KILL_ROWS, REFRESH_COOKIE_TTL_S, UNSENT_LABELS, chromeExpiresToUnixS, refreshCookieAtKill, WINDOWS, kill3Outcome, kill3WindowOf, kill3WindowsOwn, cookieCommitWaitMs, delayOf, killRunsOwn, panelMissing, removalBoundOwn, runCommits, runOutcome, storageLost, strayCommits, strayCommitsOwn, stageKillsOwn, welcomeLines, welcomeOnceOwn, windowOf } from '../killrows.mjs';
+import { COOKIE_COMMIT_MS, KILL3_WINDOWS, KILL_BLOCKED, KILL_ROWS, REFRESH_COOKIE_TTL_S, UNSENT_LABELS, chromeExpiresToUnixS, refreshCookieAtKill, WINDOWS, kill3Outcome, kill3WindowOf, revivedAccusations, FALSE_LOSS_ACCUSATION, kill3WindowsOwn, cookieCommitWaitMs, delayOf, killRunsOwn, panelMissing, removalBoundOwn, runCommits, runOutcome, storageLost, strayCommits, strayCommitsOwn, stageKillsOwn, welcomeLines, welcomeOnceOwn, windowOf } from '../killrows.mjs';
+import { consoleEntries, consoleSinceAttach } from '../watch.mjs';
 
 let failures = 0;
 const ok = (label, cond) => {
@@ -31,7 +32,7 @@ ok('KILL-3 is no longer blocked, KILL-4 still is', !KILL_BLOCKED['KILL-3'] && !!
 
 // ── KILL-3 ───────────────────────────────────────────────────────────────────────────────────────
 console.log('KILL-3 kill3Outcome');
-const k3 = (over = {}) => kill3Outcome({ window: 'after-send', killedShown: 1, outShown: 1, inShown: 1, accepts: 0, moved: 0, caughtUpMs: 900, ...over });
+const k3 = (over = {}) => kill3Outcome({ window: 'after-send', killedShown: 1, outShown: 1, inShown: 1, accepts: 0, moved: 0, caughtUpMs: 900, accusations: [], ...over });
 const tw3 = Array.from({ length: KILL_ROWS['KILL-3'].runs }, (_, i) => kill3WindowOf(i));
 ok('twelve runs are three of each window', Object.keys(KILL3_WINDOWS).every((w) => tw3.filter((x) => x === w).length === 3));
 ok('the held windows hold, the others observe', KILL3_WINDOWS['send-before-server'].startsWith('hold ') && KILL3_WINDOWS['send-after-accept'].startsWith('hold-answer') && KILL3_WINDOWS['after-send'] === null);
@@ -44,6 +45,13 @@ ok('... and resent once is fine', allOk(k3({ window: 'send-before-server', kille
 ok('... but absent with no unsent state is a SILENT LOSS, and fails', failing(k3({ window: 'send-before-server', killedShown: 0 }).assertions) === 1 && k3({ window: 'send-before-server', killedShown: 0 }).outcome === 'silently lost');
 ok('the unsent labels are the four states, in the French interface', UNSENT_LABELS.length === 4 && UNSENT_LABELS.includes('\u00c9chec'));
 ok('... but never twice', failing(k3({ window: 'send-before-server', killedShown: 2 }).assertions) >= 1);
+// THE KILL-2 DEFECT, ASKED BY THE ROW (#2515): a revived seat accusing a frame it read before the kill.
+const ACCUSED = 'warning [History] frame never read here and unreadable for good (secret-reuse); will reconcile (group 11111111, frame ab, row 1700000000000-0)';
+ok('the accusation line is the one history.ts prints', revivedAccusations([ACCUSED]).join() === 'secret-reuse' && FALSE_LOSS_ACCUSATION.test(ACCUSED));
+ok('every printed kind is counted, in order', revivedAccusations([ACCUSED, ACCUSED.replace('secret-reuse', 'same-epoch-refusal'), 'info [History] replay done']).join() === 'secret-reuse,same-epoch-refusal');
+ok('a quiet revival accuses nothing', revivedAccusations(['info [History] replay done', 'warning [MLS] something else']).length === 0);
+ok('after a receive, a revived W1 accusing the frame it read fails the run', failing(k3({ window: 'after-receive', accusations: ['secret-reuse'] }).assertions) === 1);
+ok('... and after a send too', failing(k3({ accusations: ['secret-reuse'] }).assertions) === 1);
 ok('a commit coming of a plain send is a heal, and fails', failing(k3({ accepts: 1, moved: 1 }).assertions) === 1);
 ok('a row that skipped a window fails its coverage', failing(kill3WindowsOwn([{ window: 'after-send' }, { window: 'after-receive' }])) === 1);
 ok('every window played -> coverage holds', allOk(kill3WindowsOwn(Object.keys(KILL3_WINDOWS).map((window) => ({ window })))));
@@ -60,7 +68,8 @@ ok('the delay stays inside 0..maxDelayMs', delayOf(KILL_ROWS['KILL-1'], () => 0)
 
 // ── runOutcome ───────────────────────────────────────────────────────────────────────────────────
 console.log('runOutcome');
-const run = (over = {}) => runOutcome({ window: 'after-accept', seq: [A, D], fromEpoch: 4, serverEpoch: 5, caughtUpMs: 300, outShown: 1, inShown: 1, ...over });
+const run = (over = {}) => runOutcome({ window: 'after-accept', seq: [A, D], fromEpoch: 4, serverEpoch: 5, caughtUpMs: 300, outShown: 1, inShown: 1, accusations: [], ...over });
+ok('a KILL-1/2 revival accusing a frame fails its run as well', failing(run({ accusations: ['same-epoch-refusal'] }).assertions) === 1);
 ok('accepted, resubmitted duplicate, caught up, traffic both ways -> merged, all hold', run().outcome === 'merged' && allOk(run().assertions));
 ok('before the server, resubmitted and accepted -> merged', allOk(run({ window: 'before-server', seq: [A] }).assertions));
 const cleared = run({ window: 'before-server', seq: [], serverEpoch: 4 });
@@ -129,11 +138,11 @@ ok('control: an unreadable panel misses everyone', panelMissing(null, ['a', 'b']
 // KILL-2 run 2 on alpha.4: a commit landing between the window opening and the epoch read (2026-10-25).
 const RUN2 = [{ kind: 'ACCEPT', trace: 'commit-e48a5d06', newEpoch: 4 }, { kind: 'ACCEPT', trace: 'commit-efef320a', newEpoch: 5 }];
 ok('the replayed run 2: the commit the epoch read already saw is a stray', strayCommits(RUN2, 4).map((d) => d.trace).join() === 'commit-e48a5d06');
-ok('the replayed run 2: the run keeps only its own commit, so it merged once', runOutcome({ window: 'after-accept', seq: runCommits(RUN2, 4), fromEpoch: 4, serverEpoch: 5, caughtUpMs: 3, outShown: 1, inShown: 1 }).outcome === 'merged');
+ok('the replayed run 2: the run keeps only its own commit, so it merged once', runOutcome({ window: 'after-accept', seq: runCommits(RUN2, 4), fromEpoch: 4, serverEpoch: 5, caughtUpMs: 3, outShown: 1, inShown: 1, accusations: [] }).outcome === 'merged');
 ok('the replayed run 2: the stray fails its own assertion, by trace', !strayCommitsOwn(strayCommits(RUN2, 4), 'between run 1 and run 2').ok && strayCommitsOwn(strayCommits(RUN2, 4), 'x').what.includes('commit-e48a5d06->4'));
 ok('control: a run with no stray passes it', strayCommitsOwn([], 'between run 1 and run 2').ok);
 ok('control: a REJECT or DUPLICATE is never a stray', strayCommits([{ kind: 'REJECT', trace: 't', reason: 'epoch_mismatch' }, { kind: 'DUPLICATE', trace: 'u' }], 9).length === 0);
-ok('control: two accepts past the read are still neither', runOutcome({ window: 'after-accept', seq: runCommits(RUN2, 3), fromEpoch: 3, serverEpoch: 5, caughtUpMs: 3, outShown: 1, inShown: 1 }).outcome === 'neither');
+ok('control: two accepts past the read are still neither', runOutcome({ window: 'after-accept', seq: runCommits(RUN2, 3), fromEpoch: 3, serverEpoch: 5, caughtUpMs: 3, outShown: 1, inShown: 1, accusations: [] }).outcome === 'neither');
 
 // WHERE THE REFRESH COOKIE WAS WHEN THE BROWSER DIED: memory over CDP before, the file after.
 const MEM = 1_793_027_622.5;
@@ -142,6 +151,18 @@ ok('a cookie memory held and the file did not is the product finding', refreshCo
 ok('an earlier rotation on disk is the product finding too', refreshCookieAtKill({ memoryExpiresS: MEM, diskExpiresS: MEM - 300 }) === 'older-on-disk');
 ok('control: no cookie in memory before the kill is the premise unmet, whatever the file holds', refreshCookieAtKill({ memoryExpiresS: null, diskExpiresS: MEM }) === 'not-signed-in');
 ok("Chrome's 1601-epoch microseconds read as Unix seconds", Math.abs(chromeExpiresToUnixS((MEM + 11_644_473_600) * 1e6) - MEM) < 1e-3 && chromeExpiresToUnixS(null) === null);
+
+// ── the revived console the accusation is read over ──────────────────────────────────────────────
+console.log('consoleSinceAttach');
+const line = (type, text) => ({ method: 'Runtime.consoleAPICalled', params: { type, args: [{ value: text }] } });
+const fakeCx = {
+  beforeWindow: [line('warning', ACCUSED.replace(/^warning /, ''))],
+  consumed: [line('log', 'drained')],
+  events: [line('log', 'live'), { method: 'Network.requestWillBeSent', params: {} }],
+};
+ok('the lines before the first watch() are read, then the window, in order', consoleSinceAttach(fakeCx).join('|') === `${ACCUSED}|info drained|info live`);
+ok('... while the classified window still leaves them out', consoleEntries(fakeCx).length === 2);
+ok('the catch-up accusation logged before the watch is found', revivedAccusations(consoleSinceAttach(fakeCx)).join() === 'secret-reuse');
 
 if (failures) {
   console.error(`\n${failures} kill assertion(s) failed`);

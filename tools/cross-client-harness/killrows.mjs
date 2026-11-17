@@ -50,6 +50,35 @@ export const KILL3_WINDOWS = {
  */
 export const UNSENT_LABELS = ['En attente\u2026', 'Envoi\u2026', '\u00c9chec', 'Non confirm\u00e9'];
 
+/**
+ * THE APP ACCUSING ITSELF OF A LOSS, as `history.ts` spells it: a history frame it holds no mark for
+ * and cannot decrypt. Every kind it prints is a frame this device should have read (`secret-reuse`,
+ * `same-epoch-refusal`; `past-epoch-application`, the frame before the device joined, is not printed).
+ */
+export const FALSE_LOSS_ACCUSATION = /\[History\] frame never read here and unreadable for good \(([a-z-]+)\)/;
+
+/**
+ * The loss accusations a REVIVED seat printed, read over its whole console since the rig connected
+ * (`consoleSinceAttach`: the history catch-up starts at the PIN unlock, before the row can watch).
+ *
+ * WHY A KILL ROW ASKS IT. Every frame a kill row sends is one this device read or wrote before the
+ * kill, so an accusation after the relaunch is a seen-mark or a send count that did not reach disk
+ * with the ratchet it describes - the KILL-2 defect (2026-10-25), closed by #2515, which put both
+ * ledgers inside the MLS state's own write. It is the row's subject, so it FAILS the run; the
+ * classifier would only have made it `PASS-DIRTY`, and only in the last run's window.
+ *
+ * @param {string[]} lines the revived page's console, `level text`
+ * @returns {string[]} each accusation's kind, in order
+ */
+export function revivedAccusations(lines) {
+  return (lines ?? []).map((l) => FALSE_LOSS_ACCUSATION.exec(l)?.[1]).filter(Boolean);
+}
+
+/** The assertion {@link revivedAccusations} answers. */
+export function noAccusationOwn(kinds) {
+  return { what: `the revived seat accused no frame it had read of being lost (${kinds.length}${kinds.length ? `: ${kinds.join(', ')}` : ''})`, ok: kinds.length === 0 };
+}
+
 /** The window run `i` of KILL-3 plays, in rotation, so twelve runs are three of each. */
 export const kill3WindowOf = (i) => Object.keys(KILL3_WINDOWS)[i % 4];
 
@@ -77,8 +106,9 @@ export const kill3WindowOf = (i) => Object.keys(KILL3_WINDOWS)[i % 4];
  * @param {number} p.moved
  * @param {number|null} p.caughtUpMs
  * @param {string|null} [p.unsentLabel] the unsent state W1's own bubble showed, read before any later send
+ * @param {string[]} p.accusations the revived W1's loss accusations ({@link revivedAccusations})
  */
-export function kill3Outcome({ window, killedShown, outShown, inShown, accepts, moved, caughtUpMs, unsentLabel = null }) {
+export function kill3Outcome({ window, killedShown, outShown, inShown, accepts, moved, caughtUpMs, unsentLabel = null, accusations }) {
   const mustLand = window !== 'send-before-server';
   return {
     outcome: killedShown === 1 ? 'delivered once' : killedShown === 0 ? (unsentLabel ? `shown unsent (${unsentLabel})` : 'silently lost') : 'duplicated',
@@ -104,6 +134,7 @@ export function kill3Outcome({ window, killedShown, outShown, inShown, accepts, 
         what: `the ratchet survived: the next message out shows once (${outShown}) and one in shows once (${inShown})`,
         ok: outShown === 1 && inShown === 1,
       },
+      noAccusationOwn(accusations),
     ],
   };
 }
@@ -158,7 +189,8 @@ export const KILL_ROWS = {
       'Pass conditions after the relaunch:\n' +
       '- the killed message shows once (one that never reached the server is resent once or shown unsent on W1 - never silently lost);\n' +
       '- no commit comes of it;\n' +
-      '- the next message each way arrives.',
+      '- the next message each way arrives;\n' +
+      '- the revived W1 accuses no frame it read of being lost (`revivedAccusations`).',
     note:
       'Moved from A1 to a web seat on 2026-10-26 (coordinator). The swipe needed a hold on the Tauri commit POST, which no rig tool can make. ' +
       'The hazard under study is web-side anyway: the checkpoint is lazy. Since KILL-2 (2026-10-26) the seen-marks and the send counts a checkpoint declares ' +
@@ -210,8 +242,9 @@ export const delayOf = (spec, rand = Math.random) => Math.round(rand() * spec.ma
  * @param {number|null} p.caughtUpMs the revived seat reached `serverEpoch`
  * @param {number} p.outShown the revived seat's message, as W2 shows it
  * @param {number} p.inShown W2's message, as the revived seat shows it
+ * @param {string[]} p.accusations the revived seat's loss accusations ({@link revivedAccusations})
  */
-export function runOutcome({ window, seq, fromEpoch, serverEpoch, caughtUpMs, outShown, inShown }) {
+export function runOutcome({ window, seq, fromEpoch, serverEpoch, caughtUpMs, outShown, inShown, accusations }) {
   const accepts = seq.filter((d) => d.kind === 'ACCEPT').length;
   const duplicates = seq.filter((d) => d.kind === 'DUPLICATE').length;
   const moved = serverEpoch - fromEpoch;
@@ -226,6 +259,7 @@ export function runOutcome({ window, seq, fromEpoch, serverEpoch, caughtUpMs, ou
       { what: `a commit the server accepted before the kill stayed merged (${window})`, ok: window !== 'after-accept' || outcome === 'merged' },
       { what: `the revived seat caught up to the server (${caughtUpMs ?? 'never'} ms)`, ok: caughtUpMs !== null },
       { what: `the group is not blocked: its next message out shows once (${outShown}) and one in shows once (${inShown})`, ok: outShown === 1 && inShown === 1 },
+      noAccusationOwn(accusations),
     ],
   };
 }

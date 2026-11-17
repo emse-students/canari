@@ -1383,6 +1383,12 @@ export async function watch(cx, label) {
   await cx.send(isWebKitAgent(ua) ? 'Console.enable' : 'Log.enable');
   await cx.send('Network.enable');
   await cx.send('Page.enable');
+  // WHAT THE PAGE SAID BEFORE THIS WINDOW OPENED IS SET ASIDE, NOT DROPPED. A revived seat is
+  // watched only once its PIN is cleared (`reviveSeat`), and the unlock is what starts the history
+  // catch-up - so the first lines of that catch-up, the ones a lost seen-mark turns into a false
+  // `frame never read here` accusation (KILL-2), were logged before `watch()` and discarded here.
+  // The window itself is unchanged (the classifier never reads this); `consoleSinceAttach` does.
+  cx.beforeWindow = (cx.beforeWindow ?? []).concat(cx.consumed ?? [], cx.events);
   cx.events.length = 0;
   // THE ARCHIVE `report` FILLS AS IT DRAINS. Classifying consumes `cx.events` on purpose - a
   // second report must cover only what happened since the first - but the RAW log has to survive
@@ -1454,8 +1460,26 @@ export function consoleDump(observers) {
  * @returns {{text: string, level: string}[]}
  */
 export function consoleEntries(cx) {
-  return (cx.consumed ?? [])
-    .concat(cx.events)
+  return entriesOf((cx.consumed ?? []).concat(cx.events));
+}
+
+/**
+ * EVERY console line the page emitted since the rig CONNECTED to it (`client()` enables `Runtime`
+ * at once), as `level text` lines - the lines before the first `watch()` included, which
+ * {@link consoleEntries} leaves out on purpose because they are outside the classified window.
+ *
+ * For a question about the WHOLE life of a page rather than about a window: a revived seat's
+ * catch-up starts at its PIN unlock, before the row can watch it (KILL-1..3, `revivedAccusations`).
+ *
+ * @returns {string[]}
+ */
+export function consoleSinceAttach(cx) {
+  return entriesOf((cx.beforeWindow ?? []).concat(cx.consumed ?? [], cx.events)).map((e) => `${e.level} ${e.text}`);
+}
+
+/** The console entries among raw CDP (or WebKit) events, with the level each was printed at. */
+function entriesOf(events) {
+  return events
     .map(fromWebKit)
     .filter((e) => e.method === 'Runtime.consoleAPICalled' || e.method === 'Log.entryAdded')
     .map((e) =>
