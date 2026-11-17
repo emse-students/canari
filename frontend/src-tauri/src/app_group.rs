@@ -61,12 +61,16 @@ pub(crate) fn app_group_dir() -> Result<PathBuf, String> {
 /// linked into the notification extension, which has no `UIApplication` to ask - and never runs
 /// the foreground commands that take this, so a missing application is said and nothing is held.
 pub(crate) struct BackgroundTime {
-    /// The task identifier, 0 (`UIBackgroundTaskInvalid`) once ended - shared with the expiration
-    /// handler, so exactly one of the two ends it.
+    /// The task identifier, shared with the expiration handler so exactly one of the two ends it:
+    /// 0 before `begin` stored it, [`EXPIRED`] once ended (by either side).
     id: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     /// `UIApplication.sharedApplication`, as an address: it lives as long as the process.
     app: usize,
 }
+
+/// The value a [`BackgroundTime`]'s slot takes once its task is ended - never a task identifier
+/// UIKit hands out, and not 0, which means "not stored yet".
+const EXPIRED: usize = usize::MAX;
 
 impl BackgroundTime {
     /// Begins the assertion, named for the system's diagnostics. `None` (said) when there is no
@@ -81,7 +85,10 @@ impl BackgroundTime {
             log::error!("[AppGroup] background time: UIApplication is not loaded");
             return None;
         };
-        let str_class = AnyClass::get(c"NSString")?;
+        let Some(str_class) = AnyClass::get(c"NSString") else {
+            log::error!("[AppGroup] background time: NSString is not loaded");
+            return None;
+        };
         objc2::rc::autoreleasepool(|_| {
             // SAFETY: plain UIKit/Foundation messages with the argument and return types their
             // headers declare (`UIBackgroundTaskIdentifier` is an `NSUInteger`); the block is
@@ -96,12 +103,14 @@ impl BackgroundTime {
                     msg_send![str_class, stringWithUTF8String: name.as_ptr()];
                 let id = Arc::new(AtomicUsize::new(0));
                 let (expired_id, app_addr) = (Arc::clone(&id), app as usize);
+                // The handler may run before `begin` has stored the task: it then marks the slot
+                // EXPIRED, and the compare-exchange below sees it and ends the task itself.
                 let handler = block2::RcBlock::new(move || {
-                    let task = expired_id.swap(0, Ordering::SeqCst);
-                    if task != 0 {
-                        log::error!(
-                            "[AppGroup] background time EXPIRED during a locked App Group edit - ended"
-                        );
+                    let task = expired_id.swap(EXPIRED, Ordering::SeqCst);
+                    log::error!(
+                        "[AppGroup] background time EXPIRED during a locked App Group edit - ended"
+                    );
+                    if task != 0 && task != EXPIRED {
                         let app = app_addr as *mut AnyObject;
                         let _: () = msg_send![app, endBackgroundTask: task];
                     }
@@ -115,7 +124,14 @@ impl BackgroundTime {
                     log::warn!("[AppGroup] background time: the system granted none");
                     return None;
                 }
-                id.store(task, Ordering::SeqCst);
+                if id
+                    .compare_exchange(0, task, Ordering::SeqCst, Ordering::SeqCst)
+                    .is_err()
+                {
+                    // Expired before it was stored: the handler could not end it, so it ends here.
+                    let _: () = msg_send![app, endBackgroundTask: task];
+                    return None;
+                }
                 Some(Self {
                     id,
                     app: app as usize,
@@ -128,8 +144,8 @@ impl BackgroundTime {
 impl Drop for BackgroundTime {
     fn drop(&mut self) {
         use std::sync::atomic::Ordering;
-        let task = self.id.swap(0, Ordering::SeqCst);
-        if task != 0 {
+        let task = self.id.swap(EXPIRED, Ordering::SeqCst);
+        if task != 0 && task != EXPIRED {
             let app = self.app as *mut objc2::runtime::AnyObject;
             // SAFETY: the application object lives for the whole process; `task` came from it.
             unsafe {

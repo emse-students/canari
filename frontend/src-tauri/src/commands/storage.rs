@@ -1013,6 +1013,9 @@ fn wipe_native_app_data(
     // no container is logged at ERROR and returned, after everything else was removed.
     #[cfg(target_os = "ios")]
     {
+        // `wipe_app_group` locks `graine_seeds.lock` in the App Group: an app suspended holding a
+        // shared-container lock is killed (`0xdead10cc`, `app_group::BackgroundTime`).
+        let _background = crate::app_group::BackgroundTime::begin(c"canari-factory-wipe");
         let group = crate::app_group::app_group_dir().and_then(|g| wipe_app_group(&g));
         if let Err(e) = group {
             log::error!("[RESET] the App Group was not entirely wiped: {e}");
