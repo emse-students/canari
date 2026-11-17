@@ -1681,19 +1681,35 @@ across replicas, its history is not bounded by the Actions log retention, and it
 
 **The mechanism.** `POST mls/uninvited-entry` claims the entry with ONE statement,
 `INSERT INTO uninvited_entries ... ON CONFLICT DO NOTHING RETURNING` on the primary key
-`(groupId, entrant, epoch, kind)` (`claimUninvitedEntry`, `utils/uninvited-entries.ts`): the call
-that wrote the row prints the WARN line, every later report of the same entry under the same kind -
-any replica, any deploy - finds it and prints the DEBUG `repeat`. Two members reporting at the same
-instant serialise on the key, so it is one line, never two and never none. A row that cannot be
-written is printed at ERROR as `[UNINVITED_ENTRY] NOT COUNTED` with all the line's evidence, and
-answered 503: the line is then the trace, and the entry's other members report it too.
+`(groupId, entrantUserDevice, epoch, kind)` (`claimUninvitedEntry`, `utils/uninvited-entries.ts`):
+the call that wrote the row prints the WARN line, every later report of the same entry under the
+same kind - any replica, any deploy - finds it and prints the DEBUG `repeat`. Two members reporting
+at the same instant serialise on the key, so it is one line, never two and never none.
+
+**Every value fits its column before the INSERT.** `epoch` and `watchedFrom` are a safe integer's
+digits or a fixed word (`unstated`, `none`, `invalid`; `uninvitedEntryEpochField`) - never the
+generic log sanitizer's 128-character string, which would overflow `VARCHAR(32)` and let any member
+turn every report into a failed write (review of #3774). A digit STRING is `invalid`: the client
+sends a JSON number.
+
+**A row that cannot be written is lost to the count, and said so on the server only.** Only a
+database failure reaches that branch. It is printed at ERROR as `[UNINVITED_ENTRY] NOT COUNTED` with
+all the line's evidence, and answered `{ recorded: false }` with a 2xx, NOT a 503. No client re-reports:
+`reportUninvitedEntry` sends an entry once per app session and never retries, so the count of THAT
+reporter's entry is lost whatever the status - another member's report of the same entry still
+counts it if theirs is written. A 503 would add only a warning in the reporter's console for a fault
+that is the server's and already accused at ERROR here (CLAUDE.md, noise is never acceptable).
 
 **What a row holds, and for how long.** Exactly what the line prints, sanitized the same way: the
 conversation, the entrant as `userId:deviceId` with the user id cut to eight characters (never a
-full user id), the epoch, the kind, and the first reporter's `watched_from`. `firstSeenAt` is aged
-out, never compared. Rows are deleted daily past the retention window (90 days, the log line's own
-ceiling: `pruneUninvitedEntries`), and with the conversation (`GROUP_OWNED_TABLES`). Register:
-C13 ([register-of-processing](../compliance/register-of-processing.md)).
+full user id), the epoch, the kind, and the first reporter's `watched_from`. **Pseudonymous, not
+anonymous**: the device id re-identifies the person while their key package exists. `firstSeenAt` is
+aged out, never compared. Rows are deleted past the retention window (90 days, the log line's own
+ceiling, on the DATABASE's clock: `pruneUninvitedEntries`, daily AND in the boot sweep, since a daily
+interval never fires in a service redeployed more often than daily), with the conversation
+(`GROUP_OWNED_TABLES`), and with the account at its erasure (`ACCOUNT_ERASURE_COVERAGE`, matched by
+the shortened user id; an account sharing those eight characters loses its rows of the count too).
+Register: C13 ([register-of-processing](../compliance/register-of-processing.md)).
 
 **Reading it** - read-only, any time, the whole window in one statement:
 

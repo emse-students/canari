@@ -19,7 +19,8 @@ import { DataSource } from 'typeorm';
 import { UninvitedEntry } from '../entities/uninvited-entry.entity';
 import {
   claimUninvitedEntry,
-  deleteUninvitedEntriesBefore,
+  deleteUninvitedEntriesOfAccount,
+  deleteUninvitedEntriesPastRetention,
   type UninvitedEntryRow,
 } from '../utils/uninvited-entries';
 
@@ -41,7 +42,7 @@ maybe('migration 053 (uninvited_entries) against PostgreSQL', () => {
 
   const entry = (over: Partial<UninvitedEntryRow> = {}): UninvitedEntryRow => ({
     groupId: GROUP,
-    entrant: 'c3c3c3c3:dev1',
+    entrantUserDevice: 'c3c3c3c3:dev1',
     epoch: '7',
     kind: 'new-person',
     watchedFrom: '4',
@@ -110,16 +111,30 @@ maybe('migration 053 (uninvited_entries) against PostgreSQL', () => {
     expect(both.filter(Boolean)).toHaveLength(1);
   });
 
-  it('the sweep deletes by age only, and answers how many went', async () => {
+  it('the sweep deletes by age only, on the database clock, and answers how many went', async () => {
     await ds.query(
-      `UPDATE uninvited_entries SET "firstSeenAt" = '2026-01-01T00:00:00Z' WHERE epoch = '7'`
+      `UPDATE uninvited_entries SET "firstSeenAt" = now() - interval '91 days' WHERE epoch = '7'`
+    );
+    await ds.query(
+      `UPDATE uninvited_entries SET "firstSeenAt" = now() - interval '89 days' WHERE epoch = '10'`
     );
 
-    await expect(deleteUninvitedEntriesBefore(ds, new Date('2026-06-01T00:00:00Z'))).resolves.toBe(
-      1
-    );
+    await expect(deleteUninvitedEntriesPastRetention(ds, 90 * 86_400_000)).resolves.toBe(1);
 
     const left = await ds.getRepository(UninvitedEntry).find();
     expect(left.map((r) => r.epoch).sort()).toEqual(['10', '20', '9', '9']);
+  });
+
+  it('the erasure deletes the rows of the account by its shortened id, and no other', async () => {
+    await claimUninvitedEntry(
+      ds,
+      entry({ entrantUserDevice: 'a1a1a1a1:web-a1a1a1a1-x', epoch: '30' })
+    );
+
+    await expect(deleteUninvitedEntriesOfAccount(ds, 'a1'.repeat(32))).resolves.toBe(1);
+
+    const left = await ds.getRepository(UninvitedEntry).find();
+    expect(left.every((r) => r.entrantUserDevice.startsWith('c3c3c3c3:'))).toBe(true);
+    expect(left).toHaveLength(4);
   });
 });

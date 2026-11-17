@@ -10,10 +10,11 @@ import { Entity, PrimaryColumn, Column, Index } from 'typeorm';
  * evidence that the entrant is or is not a member (each reporting device decides that from its own
  * tree, and `kind` is what it decided).
  *
- * Every column is the value the log line prints, sanitized the same way: `entrant` carries the
- * user id cut to eight characters, never a full one, so this table holds nothing the line did not.
- * Bounded by the retention window (`pruneUninvitedEntries`, daily) and deleted with the group
- * (`GROUP_OWNED_TABLES`).
+ * Every column is the value the log line prints, sanitized the same way: `entrantUserDevice` carries
+ * the user id cut to eight characters, never a full one, so this table holds nothing the line did
+ * not. PSEUDONYMOUS, NOT ANONYMOUS: the device id re-identifies the person while their key package
+ * exists. Bounded by the retention window (`pruneUninvitedEntries`, daily and at boot), deleted with
+ * the group (`GROUP_OWNED_TABLES`) and with the account (`ACCOUNT_ERASURE_COVERAGE`).
  */
 @Entity('uninvited_entries')
 @Index('IDX_uninvited_entries_firstSeenAt', ['firstSeenAt'])
@@ -24,9 +25,9 @@ export class UninvitedEntry {
 
   /** The admitted leaf as the line prints it, `userId:deviceId` with the user id shortened. */
   @PrimaryColumn({ type: 'varchar', length: 255 })
-  entrant: string;
+  entrantUserDevice: string;
 
-  /** The epoch the entering commit created, as printed (`invalid`/`unstated` included). */
+  /** The epoch the entering commit created: its digits, or `invalid`/`unstated` (never longer). */
   @PrimaryColumn({ type: 'varchar', length: 32 })
   epoch: string;
 

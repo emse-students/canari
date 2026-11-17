@@ -1,3 +1,4 @@
+import { cutUserId } from './log-repeat';
 import type { Queryable } from './report-accusations';
 
 /**
@@ -13,10 +14,11 @@ import type { Queryable } from './report-accusations';
  * table"): `SELECT kind, count(*) FROM uninvited_entries GROUP BY kind`.
  */
 
-/** One entry as the log line prints it - every field already sanitized by the controller. */
+/** One entry as the log line prints it - every field already classified by the controller. */
 export interface UninvitedEntryRow {
   groupId: string;
-  entrant: string;
+  /** `<8 of the user>:<device>`, the line's `entrant=` (pseudonymous: the device id re-identifies). */
+  entrantUserDevice: string;
   epoch: string;
   kind: string;
   watchedFrom: string;
@@ -35,23 +37,48 @@ export async function claimUninvitedEntry(
   entry: UninvitedEntryRow
 ): Promise<boolean> {
   const rows = (await db.query(
-    `INSERT INTO uninvited_entries ("groupId", entrant, epoch, kind, "watchedFrom")
+    `INSERT INTO uninvited_entries ("groupId", "entrantUserDevice", epoch, kind, "watchedFrom")
      VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT DO NOTHING
      RETURNING "groupId"`,
-    [entry.groupId, entry.entrant, entry.epoch, entry.kind, entry.watchedFrom]
+    [entry.groupId, entry.entrantUserDevice, entry.epoch, entry.kind, entry.watchedFrom]
   )) as unknown[];
   return rows.length > 0;
 }
 
 /**
- * Deletes the entries first counted before `before`, and returns how many went: the count keeps
- * what the log line would have kept (the retention window), and no longer.
+ * Deletes the entries first counted more than `retentionMs` ago, and returns how many went: the
+ * count keeps what the log line would have kept (the retention window), and no longer.
+ *
+ * THE DATABASE'S CLOCK, `now()`, the one that wrote `firstSeenAt` - never this process's, so a
+ * replica whose clock drifts neither keeps nor deletes a row early.
  */
-export async function deleteUninvitedEntriesBefore(db: Queryable, before: Date): Promise<number> {
+export async function deleteUninvitedEntriesPastRetention(
+  db: Queryable,
+  retentionMs: number
+): Promise<number> {
   // TypeORM answers a DELETE on PostgreSQL as `[rows, rowCount]`.
-  const [, removed] = (await db.query(`DELETE FROM uninvited_entries WHERE "firstSeenAt" < $1`, [
-    before,
-  ])) as [unknown[], number];
+  const [, removed] = (await db.query(
+    `DELETE FROM uninvited_entries WHERE "firstSeenAt" < now() - make_interval(secs => $1)`,
+    [retentionMs / 1000]
+  )) as [unknown[], number];
+  return removed;
+}
+
+/**
+ * Deletes the entries counted against an erased account, and returns how many went.
+ *
+ * A row holds the user id cut to eight characters ({@link cutUserId}) before the `:`, so that is what
+ * is matched. Another account whose id shares those eight characters loses its rows too: a count,
+ * never a decision, and the collision is one in 4 billion for the hex ids this estate mints.
+ */
+export async function deleteUninvitedEntriesOfAccount(
+  db: Queryable,
+  userId: string
+): Promise<number> {
+  const [, removed] = (await db.query(
+    `DELETE FROM uninvited_entries WHERE split_part("entrantUserDevice", ':', 1) = $1`,
+    [cutUserId(userId)]
+  )) as [unknown[], number];
   return removed;
 }

@@ -20,7 +20,7 @@ re-armed:
    one container's log, so every deploy reset the count, and the deploy-log archive holding earlier
    windows is readable only by the deploy account - is closed: one row per `(group, entrant, epoch,
    kind)`, claimed by `INSERT ... ON CONFLICT DO NOTHING`, aged out at 90 days, deleted with the
-   conversation. Of the two fixes this entry left open, the table was taken (reversible): the
+   conversation and with the account (the rows are pseudonymous: the device id re-identifies). Of the two fixes this entry left open, the table was taken (reversible): the
    `scheduled.yml` line would have been public, bounded by the Actions log retention, and would not
    have made the deduplication survive a deploy.
 

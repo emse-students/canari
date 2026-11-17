@@ -9,10 +9,12 @@
 -- reached, across deploys and replicas - and the count is one `GROUP BY kind`.
 -- Mechanism: docs/wiki/protocols/mls-protocol.md ("The count is a table").
 --
--- The same content as the log line it de-duplicates, and the same lifetime: `entrant` is the
--- line's own shortened form (the user id cut to eight characters, `sanitizeLeafLogValue`), never a
--- full user id. Rows older than the retention window (90 days) are deleted daily, and with the
--- group by its purge.
+-- The same content as the log line it de-duplicates, and the same lifetime: "entrantUserDevice" is
+-- the line's own shortened form (the user id cut to eight characters, `sanitizeLeafLogValue`), never
+-- a full user id - pseudonymous, since the device id re-identifies the person. "epoch" and
+-- "watchedFrom" hold a safe integer's digits or a fixed word, classified before the INSERT. Rows
+-- older than the retention window (90 days, the database's clock) are deleted daily and at boot,
+-- with the group by its purge, and with the account by its erasure.
 --
 -- Additive: a new table, no existing row touched, nothing deleted. Reversible: a release that
 -- predates it never reads it; `DROP TABLE uninvited_entries` undoes it (the count then restarts).
@@ -25,12 +27,12 @@ SET lock_timeout = '5s';
 
 CREATE TABLE IF NOT EXISTS "uninvited_entries" (
     "groupId"     UUID         NOT NULL,
-    "entrant"     VARCHAR(255) NOT NULL,
+    "entrantUserDevice" VARCHAR(255) NOT NULL,
     "epoch"       VARCHAR(32)  NOT NULL,
     "kind"        VARCHAR(32)  NOT NULL,
     "watchedFrom" VARCHAR(32)  NOT NULL,
     "firstSeenAt" TIMESTAMPTZ  NOT NULL DEFAULT now(),
-    PRIMARY KEY ("groupId", "entrant", "epoch", "kind")
+    PRIMARY KEY ("groupId", "entrantUserDevice", "epoch", "kind")
 );
 
 -- The daily sweep deletes by age.

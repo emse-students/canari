@@ -1,7 +1,7 @@
 /// <reference types="jest" />
 
 import { Test, TestingModule } from '@nestjs/testing';
-import { ForbiddenException, Logger, ServiceUnavailableException } from '@nestjs/common';
+import { ForbiddenException, Logger } from '@nestjs/common';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { MessagingController } from './messaging.controller';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
@@ -61,7 +61,7 @@ describe('MessagingController - POST mls/uninvited-entry', () => {
     isGroupMember.mockReset().mockResolvedValue(true);
     table = new Set();
     claimUninvitedEntry.mockReset().mockImplementation(async (row: UninvitedEntryRow) => {
-      const key = `${row.groupId}|${row.entrant}|${row.epoch}|${row.kind}`;
+      const key = `${row.groupId}|${row.entrantUserDevice}|${row.epoch}|${row.kind}`;
       if (table.has(key)) return false;
       table.add(key);
       return true;
@@ -238,14 +238,49 @@ describe('MessagingController - POST mls/uninvited-entry', () => {
 
     expect(claimUninvitedEntry).toHaveBeenCalledWith({
       groupId: 'g-1234',
-      entrant: 'c3c3c3c3:dev1',
+      entrantUserDevice: 'c3c3c3c3:dev1',
       epoch: '7',
       kind: 'new-person',
       watchedFrom: '4',
     });
   });
 
-  it('a count that could not be written is printed at ERROR with its evidence, and refused so a member reports it again', async () => {
+  it('writes only what fits its column: a number that is not one is `invalid`, never a 128-character string', async () => {
+    // `epoch` and `watchedFrom` are VARCHAR(32). A string the generic log sanitizer accepts (up to
+    // 128 characters) would make the INSERT fail - any member could turn every report into an ERROR.
+    const long = '7'.repeat(100);
+    await controller.reportUninvitedEntry('alice', 'web-alice-1', {
+      groupId: 'g-1234',
+      entrant: 'mallory:dev1',
+      epoch: long,
+      kind: 'new-person',
+      watchedFromEpoch: long,
+    });
+    await controller.reportUninvitedEntry('alice', 'web-alice-1', {
+      groupId: 'g-1234',
+      entrant: 'mallory:dev1',
+      epoch: '8',
+      kind: 'new-person',
+      watchedFromEpoch: 'none',
+    });
+
+    expect(claimUninvitedEntry.mock.calls[0][0]).toMatchObject({
+      epoch: 'invalid',
+      watchedFrom: 'invalid',
+    });
+    // A digit string is not a number either: only a JSON number is an epoch.
+    expect(claimUninvitedEntry.mock.calls[1][0]).toMatchObject({
+      epoch: 'invalid',
+      watchedFrom: 'invalid',
+    });
+    for (const [row] of claimUninvitedEntry.mock.calls) {
+      expect(row.epoch.length).toBeLessThanOrEqual(32);
+      expect(row.watchedFrom.length).toBeLessThanOrEqual(32);
+    }
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it('a count that could not be written is printed at ERROR with its evidence and answered as not recorded - the count of that entry is lost', async () => {
     claimUninvitedEntry.mockRejectedValue(new Error('connection terminated'));
 
     await expect(
@@ -255,7 +290,7 @@ describe('MessagingController - POST mls/uninvited-entry', () => {
         epoch: 7,
         kind: 'new-person',
       })
-    ).rejects.toBeInstanceOf(ServiceUnavailableException);
+    ).resolves.toEqual({ recorded: false });
 
     expect(warn).not.toHaveBeenCalled();
     expect(error).toHaveBeenCalledTimes(1);

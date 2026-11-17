@@ -48,7 +48,7 @@ import { checkDatabaseClockAgreement } from './utils/clock-agreement';
 import { reportOrphanDevices } from './utils/orphan-devices';
 import { reportPushCoverage } from './utils/push-coverage';
 import { deleteSentFrameReceiptsBefore } from './utils/sent-frame-receipt';
-import { deleteUninvitedEntriesBefore } from './utils/uninvited-entries';
+import { deleteUninvitedEntriesPastRetention } from './utils/uninvited-entries';
 import { takeSafeBrowsingRefusalCount } from './utils/safe-browsing';
 import {
   REPORT_KINDS,
@@ -338,7 +338,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
         'soft-deleted groups purge (24h), stale push tokens purge (24h), ' +
         'stale pending invitations purge (24h), ' +
         'expired device revocations purge (24h), orphan device report (24h), push coverage report (24h), ' +
-        'known accusations summary (24h) scheduled'
+        'known accusations summary (24h), uninvited-entry count prune (24h) scheduled'
     );
 
     // A `setInterval` FIRES FOR THE FIRST TIME ONE INTERVAL LATER, so a job scheduled every 24 h
@@ -368,6 +368,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       ['cleanupExpiredRevocations', () => this.cleanupExpiredRevocations()],
       ['reclaimExpiredKeyPackages', () => this.reclaimExpiredKeyPackages()],
       ['pruneExpiredCommitLog', () => this.messagingService.pruneExpiredCommitLog()],
+      ['pruneUninvitedEntries', () => this.pruneUninvitedEntries()],
       // Last on purpose: they report the estate as the GC leaves it, not as it found it -
       // `cleanupStalePendingInvitations` above is the job that deletes what the second one reads.
       ['reportQueueDepth', () => this.reportQueueDepth()],
@@ -1634,12 +1635,15 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   /**
    * Deletes the counted uninvited entries (`uninvited_entries`, migration 053) first counted before
    * the retention window: the row holds what the `[UNINVITED_ENTRY]` line printed, so it is kept as
-   * long as that line could be, and no longer. A row deleted early only lets one more report of the
-   * same entry print again; it never decides anything else.
+   * long as that line could be, and no longer, on the database's clock. A row deleted early only
+   * lets one more report of the same entry print again; it never decides anything else. Also in the
+   * initial sweep: a daily interval never fires in a service redeployed more often than daily.
    */
   private async pruneUninvitedEntries() {
-    const before = new Date(Date.now() - AppController.MESSAGE_RETENTION_MS);
-    const removed = await deleteUninvitedEntriesBefore(this.queuedMessageRepo.manager, before);
+    const removed = await deleteUninvitedEntriesPastRetention(
+      this.queuedMessageRepo.manager,
+      RETENTION_WINDOW_MS
+    );
     if (removed > 0) {
       this.logger.log(
         `[CRON] pruneUninvitedEntries: deleted ${removed} counted entr${removed === 1 ? 'y' : 'ies'} past the retention window`
