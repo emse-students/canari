@@ -8,7 +8,7 @@
 # 2026-09-03, when the bump's push was rejected and the whole chain quietly declined to run. This is
 # the same mechanism, used on purpose.
 #
-# THE SIX QUESTIONS, in the order that makes a refusal cheapest to read:
+# THE SEVEN QUESTIONS, in the order that makes a refusal cheapest to read:
 #
 #   1. Is the version a version?          - a typo must not reach a store band computation
 #   2. Is the released commit on `main`?  - it reached the trunk through a pull request; where
@@ -25,6 +25,8 @@
 #   6. Does it ship a held migration      - one the owner must approve (a marker, or a statement
 #      without the owner's approval?        that is not plainly additive) and has not; the deploy
 #                                           would refuse it, after the store builds
+#   7. Does an advisory touch what it     - stable releases only (owner, 2026-11-17); the PR
+#      ships?                               audit's production closure, asked again at shipping
 #
 # WHY THERE IS NO BYPASS INPUT. A skip flag is a fallback path, and reaching one means the primary
 # path failed - so the fix belongs there. The emergency path is unchanged and is not in software: a
@@ -41,6 +43,9 @@ source "$HERE/lib/release-preconditions.sh"
 # The owner's hold on a migration - the deploy's own judge, read here by gate 6.
 # shellcheck source-path=SCRIPTDIR source=../../infrastructure/lib/migration-hold.sh
 source "$HERE/../../infrastructure/lib/migration-hold.sh"
+# What each tree's shipped closure is, and what it ignores - the PR audit's own table, read by gate 7.
+# shellcheck source-path=SCRIPTDIR source=lib/audit-trees.sh
+source "$HERE/lib/audit-trees.sh"
 
 REPO="${REPO:-${GITHUB_REPOSITORY:-emse-students/canari}}"
 VERSION="${VERSION:-}"
@@ -323,6 +328,19 @@ else
       refuse "could not decide - ${HELD_OUT##*undecidable }"
       ;;
   esac
+fi
+
+# -- 7 -------------------------------------------------------------------------------------------
+step 'no advisory touches what this stable ships'
+if [ "$KIND" != 'stable' ]; then
+  ok 'not asked of a pre-release - dev and the tester tracks are where a fresh advisory is found'
+else
+  # THE PULL-REQUEST AUDIT, ASKED AGAIN AT THE MOMENT OF SHIPPING (owner, 2026-11-17). The commit
+  # passed `CI passed`, which audited its production closure - but an advisory published since is
+  # what that run could not see, and it is exactly what production would receive. Same table
+  # (`lib/audit-trees.sh`, `production`), same script, so the merge and the release cannot disagree
+  # on what counts; the ignores' premises were asserted by that same `CI passed` on this commit.
+  shipped_closure_gate
 fi
 
 printf '\n'
