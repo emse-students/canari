@@ -113,3 +113,11 @@ the counts.
   asked to be told; (display) the reminder names the association (its logo) and the form's title.
   Refused: (C) notifying only once the link "was distributed", which nothing can know
   ([entry](p2-an-organiser-test-of-a-form-notifies-everyone-who-asked.md), `1.7.1`).
+- **A form notifies only the people who pressed its bell.** *"Je ne pense pas que les formulaires
+  doivent notifier les gens (sauf quand ils ont cliqué sur la cloche du formulaire)."* A form's opening
+  writes no row for the association's followers any more; only an "asked" row ("Me prévenir") gets
+  the 5-minute heads-up and the opening. Events and booking spaces are untouched. Filed in the same
+  entry, with a defect found that day: an opening moved later after it fired leaves the follower rows
+  stamped as told, so the real opening tells nobody - every kind's moved opening must re-arm what has
+  not really opened; that day's case was repaired by hand on production with the owner's yes
+  ([entry](p2-an-organiser-test-of-a-form-notifies-everyone-who-asked.md), `1.7.1`).
