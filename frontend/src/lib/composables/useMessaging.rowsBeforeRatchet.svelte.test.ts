@@ -470,4 +470,75 @@ describe('a checkpoint during a bulk-ingest window (rows before ratchet)', () =>
     const row = saveMessage.mock.calls.map(([r]) => r as { id: string; conversationId: string });
     expect(row).toEqual([expect.objectContaining({ id: 'in-17', conversationId: 'joined-group' })]);
   });
+
+  /** One `conversations.get` that throws the first `times` times it is asked for `key`. */
+  function trapGet(conversations: SvelteMap<string, Conversation>, key: string, times: number) {
+    const get = conversations.get.bind(conversations);
+    let left = times;
+    conversations.get = (k: string) => {
+      if (k === key && left > 0) {
+        left -= 1;
+        throw new Error('unexpected');
+      }
+      return get(k);
+    };
+  }
+
+  it('a batch kept at a window close is replayed at the NEXT close, without waiting for a checkpoint', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const messaging = useMessaging();
+    const { ctx, conversations, saveMessage } = makeContext();
+
+    messaging.beginBulkMessageIngest(LIVE_DRAIN);
+    await messaging.addMessageToChat(PEER, 'first window', CONVO, ctx, { messageId: 'in-18' });
+    trapGet(conversations, CONVO, 1);
+    await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
+    expect(storedIds(saveMessage)).toEqual([]);
+
+    messaging.beginBulkMessageIngest(LIVE_DRAIN);
+    await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
+    expect(storedIds(saveMessage)).toEqual(['in-18']);
+    expect(idsIn(conversations)).toEqual(['in-18']);
+  });
+
+  it('a kept batch follows its thread when the 1:1 is re-keyed onto the group it joined', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const messaging = useMessaging();
+    const { ctx, conversations, saveMessage } = makeContext();
+    // A message already shown in the thread, outside any window.
+    await messaging.addMessageToChat(PEER, 'shown before', CONVO, ctx, { messageId: 'in-19' });
+
+    messaging.beginBulkMessageIngest(LIVE_DRAIN);
+    await messaging.addMessageToChat(PEER, 'kept', CONVO, ctx, { messageId: 'in-20' });
+    trapGet(conversations, CONVO, 1);
+    await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
+
+    // The Welcome's re-key moves the thread, and what it shows, under the joined group's id.
+    const thread = conversations.get(CONVO)!;
+    conversations.delete(CONVO);
+    conversations.set('joined-group', { ...thread, id: 'joined-group' });
+
+    (await messaging.holdRowsForCheckpoint(ctx))();
+    const rows = saveMessage.mock.calls.map(([r]) => r as { id: string; conversationId: string });
+    expect(rows).toContainEqual(
+      expect.objectContaining({ id: 'in-20', conversationId: 'joined-group' })
+    );
+  });
+
+  it('an always-throwing kept batch says its error ONCE, and the refusal counts its messages', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const messaging = useMessaging();
+    const { ctx, conversations } = makeContext();
+
+    messaging.beginBulkMessageIngest(LIVE_DRAIN);
+    await messaging.addMessageToChat(PEER, 'doomed', CONVO, ctx, { messageId: 'in-21' });
+    trapGet(conversations, CONVO, 1000);
+    for (let i = 0; i < 3; i++) {
+      const refusal = await messaging.holdRowsForCheckpoint(ctx).catch((e: unknown) => e);
+      expect(refusal).toBeInstanceOf(BufferedRowsNotStoredError);
+      expect((refusal as InstanceType<typeof BufferedRowsNotStoredError>).rows).toBe(1);
+    }
+    const lines = errors.mock.calls.map((call) => String(call[0]));
+    expect(lines.filter((l) => l.includes('threw'))).toHaveLength(1);
+  });
 });

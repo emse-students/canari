@@ -184,6 +184,14 @@ import { voiceNoteEntry } from '$lib/utils/chat/voiceNote';
 import type { MediaLoudness } from '$lib/video/loudnessMeter';
 
 /** Runtime dependencies injected into all messaging operations. */
+/** A buffered batch that threw before it changed anything, kept to run again. */
+interface KeptBatch {
+  contactName: string;
+  messages: Array<{ senderId: string; content: string } & AddMessageToChatOptions>;
+  /** Ids its thread showed when it was kept: how a re-keyed thread is found again. */
+  anchors: string[];
+}
+
 /** One batch's rows to write, kept whole so a failed write can be retried as it was. */
 interface BatchRowWrite {
   conversationId: string;
@@ -550,14 +558,61 @@ export function useMessaging() {
 
   /**
    * The batches that THREW before they changed anything (`batchAddMessages` reads, then renders, then
-   * writes, and nothing after the render throws): neither shown nor stored. Kept whatever the path
-   * that took them - a hold or a window's close, whose `finally` clears the buffer - and handed back
-   * to the next hold, which runs them again first.
+   * writes, and nothing after the render may throw - its announcement and its settle are guarded):
+   * neither shown nor stored. Kept whatever the path that took them - a hold or a window's close,
+   * whose `finally` clears the buffer - and run again, each ON ITS OWN, by the next store of either
+   * kind: a later message of the same conversation is never folded into a batch that keeps failing.
    */
-  const unstoredBatches: Array<{
-    contactName: string;
-    messages: Array<{ senderId: string; content: string } & AddMessageToChatOptions>;
-  }> = [];
+  const unstoredBatches: KeptBatch[] = [];
+
+  /**
+   * Where a kept batch's thread lives NOW: its own key while it is in the map; else the conversation
+   * that shows one of the messages its thread showed when it was kept (`anchors`) - a 1:1 re-keyed
+   * onto the group it joined carries them under the new key; else nowhere (deleted or purged).
+   */
+  function homeOfBatch(ctx: MessagingContext, kept: KeptBatch): string | null {
+    if (ctx.conversations.has(kept.contactName)) return kept.contactName;
+    if (kept.anchors.length === 0) return null;
+    const anchors = new Set(kept.anchors);
+    for (const [key, convo] of ctx.conversations) {
+      if (convo.messages.some((m) => anchors.has(m.id))) return key;
+    }
+    return null;
+  }
+
+  /** Keeps a batch that threw, anchored to what its thread shows now, and says it ONCE per batch. */
+  function keepThrownBatch(
+    ctx: MessagingContext,
+    contactName: string,
+    messages: KeptBatch['messages'],
+    origin: 'hold' | 'close',
+    e: unknown,
+    already?: KeptBatch
+  ): void {
+    if (already) {
+      unstoredBatches.push({ ...already, contactName });
+      return;
+    }
+    let anchors: string[] = [];
+    try {
+      anchors = (ctx.conversations.get(contactName)?.messages ?? []).slice(-3).map((m) => m.id);
+    } catch (readError) {
+      console.error(
+        `[ADD_MSG] the thread of "${contactName}" could not be read to anchor a kept batch:`,
+        readError
+      );
+    }
+    console.error(
+      `[ADD_MSG] storing ${messages.length} buffered message(s) of "${contactName}" threw (${origin}) - kept, and run again by the next store (said once for this batch):`,
+      e
+    );
+    unstoredBatches.push({ contactName, messages, anchors });
+  }
+
+  /** How many messages {@link unstoredBatches} holds. */
+  function keptMessageCount(): number {
+    return unstoredBatches.reduce((sum, kept) => sum + kept.messages.length, 0);
+  }
 
   /** How many rows {@link unstoredRowWrites} holds. */
   function unstoredRowCount(): number {
@@ -673,15 +728,33 @@ export function useMessaging() {
    * THE CHAIN NEVER REJECTS: a step that throws all the same resolves `false` with one line, so an
    * exception costs one store, never every later checkpoint and close of the page.
    */
-  function storeBufferedRows(ctx: MessagingContext, origin: 'hold' | 'close'): Promise<boolean> {
+  function storeBufferedRows(
+    ctx: MessagingContext,
+    origin: 'hold' | 'close'
+  ): Promise<{ stored: boolean; left: number }> {
     const step = bufferedRowsStored
       .then(async () => {
-        if (origin === 'hold' && unstoredBatches.length > 0) {
-          // In front of whatever came since, in the order they first arrived.
-          for (const kept of unstoredBatches.splice(0).reverse()) {
-            const since = bulkIngestBuffer.get(kept.contactName) ?? [];
-            bulkIngestBuffer.set(kept.contactName, [...kept.messages, ...since]);
+        // The batches an earlier store kept run first, each on its own, under the key that shows
+        // their thread now - at a close too, so their messages show without waiting for a hold.
+        const kept = unstoredBatches.splice(0);
+        let dropped = 0;
+        for (const batch of kept) {
+          let home: string | null = null;
+          try {
+            home = homeOfBatch(ctx, batch);
+            if (home === null) {
+              dropped += batch.messages.length;
+              continue;
+            }
+            await batchAddMessages(batch.messages, home, ctx, 'arrival');
+          } catch (e) {
+            keepThrownBatch(ctx, home ?? batch.contactName, batch.messages, origin, e, batch);
           }
+        }
+        if (dropped > 0) {
+          console.warn(
+            `[ADD_MSG] ${dropped} kept message(s) dropped: no conversation shows their thread any more (deleted or purged)`
+          );
         }
         if (bulkIngestBuffer.size > 0) {
           const entries = [...bulkIngestBuffer.entries()].sort(([, a], [, b]) => {
@@ -702,11 +775,7 @@ export function useMessaging() {
                 // A failed write is kept in `unstoredRowWrites`, answered by the retry below.
                 await batchAddMessages(messages, contactName, ctx, 'arrival');
               } catch (e) {
-                console.error(
-                  `[ADD_MSG] storing the buffered messages of "${contactName}" threw (${origin}) - kept for the next checkpoint's hold:`,
-                  e
-                );
-                unstoredBatches.push({ contactName, messages });
+                keepThrownBatch(ctx, contactName, messages, origin, e);
               }
               await yieldToMainThread().catch((e: unknown) => {
                 console.error('[ADD_MSG] yielding between buffered batches failed:', e);
@@ -719,11 +788,13 @@ export function useMessaging() {
         // On a hold, ONE retry of every write that failed - this step's and any earlier close's.
         const writesLeft =
           origin === 'hold' ? await retryUnstoredRowWrites(ctx) : unstoredRowCount();
-        return writesLeft === 0 && unstoredBatches.length === 0;
+        // The count is THIS step's, read before a store queued behind it can take the kept batches.
+        const left = writesLeft + keptMessageCount();
+        return { stored: left === 0, left };
       })
       .catch((e: unknown) => {
         console.error(`[ADD_MSG] a store of the buffered messages threw (${origin}):`, e);
-        return false;
+        return { stored: false, left: unstoredRowCount() + keptMessageCount() };
       });
     bufferedRowsStored = step;
     return step;
@@ -757,8 +828,11 @@ export function useMessaging() {
       );
     }
     let allStored = false;
+    let left = 0;
     try {
-      allStored = await storeBufferedRows(ctx, 'hold');
+      const outcome = await storeBufferedRows(ctx, 'hold');
+      allStored = outcome.stored;
+      left = outcome.left;
     } finally {
       // HANDED OVER ONLY ON SUCCESS: on any other way out the hold is given back here, so buffering
       // can never stay off for the rest of the page.
@@ -773,8 +847,7 @@ export function useMessaging() {
           '[ADD_MSG] Rows of applied frames cannot be stored - every checkpoint is refused until they are (a commit, a join, a send), or until a reload. Said once per page.'
         );
       }
-      const batched = unstoredBatches.reduce((sum, kept) => sum + kept.messages.length, 0);
-      throw new BufferedRowsNotStoredError(unstoredRowCount() + batched);
+      throw new BufferedRowsNotStoredError(left);
     }
     return release;
   }
@@ -2285,8 +2358,17 @@ export function useMessaging() {
         );
         unstoredRowWrites.push(write);
       }
-      // Kept between the read above and the writes: settled now, against the rows that stand.
-      await settlePendingFor(pendingDeps(ctx), normalized, batchIds);
+      // Kept between the read above and the writes: settled now, against the rows that stand. The
+      // batch is rendered and written by now, so a failure here is ITS OWN line - never a throw
+      // that would make the caller keep a batch that is already done.
+      try {
+        await settlePendingFor(pendingDeps(ctx), normalized, batchIds);
+      } catch (e) {
+        console.error(
+          `[PENDING] the mutations kept for ${batchIds.length} message(s) of "${normalized}" were not settled after their write - they stay kept:`,
+          e
+        );
+      }
     }
 
     // NOTHING HERE MOVES THE PANE. Persisting a message used to end with a bare

@@ -3224,8 +3224,13 @@ snapshot the retry stores predates it (re-review of #3786). A kept write is writ
 conversation that SHOWS its rows now - its own, or the group a 1:1 was re-keyed onto at a Welcome -
 and dropped only when none does (deleted, purged). Each write's failure is said once, by the batch;
 a retry says ONE line for all its writes, with the first cause. A batch that THREW (before it
-rendered anything - nothing after the render may skip the write, so the announcement is guarded)
-is kept too (`unstoredBatches`), whichever path took it, and the next hold runs it again first.
+rendered anything - nothing after the render may skip the write or throw, so the announcement and
+the settle after the write are guarded) is kept too (`unstoredBatches`), whichever path took it, and
+run again first by the next store of EITHER kind - a close shows it without waiting for a hold -
+each on its own, so a later message of that conversation never joins a batch that keeps failing; it
+is said once per batch, and replayed under the key that shows its thread now (the ids it showed when
+kept anchor it across a re-key). **A batch that always throws blocks every checkpoint - commits,
+joins and sends - until a reload**, said once per page as the cause.
 **The chain never rejects:** a step that throws resolves `false` with one line, and the hold gives
 its counter back in a `finally` - one exception costs one store, never every later checkpoint and
 close of the page.
