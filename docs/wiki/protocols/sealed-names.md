@@ -121,7 +121,9 @@ push, and each device keeps it beside the row it names.
     server and with every member, so this is never "not renamed". The rename returns `unanswered`
     with the id and `sentAt` the frame was minted with. The row keeps the name it shows and records
     `nameSync.pending` (`PendingRename`), and the person is told the name is on its way
-    (`group_rename_pending`). Reading it as a failure split the group: the members took the name and
+    (`group_rename_pending`). A second unanswered rename replaces the first as the frame to re-send,
+    and the first moves to `unconfirmed`: its copy may have landed, and its id is the only thing a
+    member's relayed copy can settle it by (`pendingRenameOutcome`, #3785 round 6). Reading it as a failure split the group: the members took the name and
     the sender's user was told it failed (#3785 re-reviews, P2-b and P2-1).
 - **What a rename still owes, or still does not know, lives on the row as `nameSync`** (local SQLite
   v21 column `name_sync`, JSON; IndexedDB stores the object; `parseNameSync` reads both and reports an
@@ -135,17 +137,25 @@ push, and each device keeps it beside the row it names.
     over a member's newer one for everyone, and an owed copy went over a name that had come back
     (A, then back to O). Not drained, the settlement waits for the next sweep and says so in a line
     (#3785 re-review 2, P2-2).
-  - **`pending`, the frame.** Read off the row first (`pendingRenameVerdict`), comparing the NAME and
-    never only the date (a join push dating an undated row restates the same name, it is no later
-    rename). A row that shows another name keeps the frame `unconfirmed`, because re-sending would put
-    it over that name. A row that holds the pending name, dated, saw it land, so only the server's
+  - **`pending`, the frame.** Read off the row first (`pendingRenameVerdict`), comparing the
+    statement the rename was made over (`over`), NAME AND DATE. A row that shows another name keeps
+    the frame `unconfirmed`, because re-sending would put it over that name. So does the SAME name
+    under another date: the members renaming Old -> B -> Old leave the row showing "Old" again, dated
+    after this device's rename, and a name-only compare re-sent the older rename over their later
+    statement for everyone (#3785 round 6, P2). The one statement that dates the same name without
+    being a later one is a join push dating an undated row (`withRestatedGroupName`); it dates the
+    pending frame's `over` in the same write, so the frame is still recognised and re-sent. A row that holds the pending name, dated, saw it land, so only the server's
     copy is owed. Otherwise the SAME frame is re-sent (`resendPendingRename`: the same id and the
     same signed `sentAt`), so a member that already took it draws no second notice. Its outcome is a
     type (`RenameResendOutcome`): no answer again, or a send that was not made, keeps it pending - a
     failed re-send proves something about the re-send only, never about the first copy. Only a typed
     refusal that ends it (`evicted`, `group-deleted`, or the receivers' bound, `clock`) stops the
-    re-sending, and even then the frame is kept `unconfirmed`. So is a frame minted more than the 24 h
-    bound ago, unsent, because every receiver would refuse it.
+    re-sending, and even then the frame is kept `unconfirmed`. So is a frame the 24 h bound has
+    provably passed for, unsent, because every receiver would refuse it. The proof is a SERVER time,
+    never this device's clock: the receivers measure the bound on the server's stamp, and the newest
+    row this device holds for the group (`latestServerTimeOf`) was accepted no later than the server's
+    now. A clock running ahead shelved a frame every member would still take; with no such proof the
+    frame is re-sent, and a receivers' refusal comes back typed (`clock`).
   - **`unconfirmed`, and the heal every stopped frame relies on.** A frame this device stopped
     re-sending may still have reached every member: its first copy's answer was lost, not the copy.
     The members then hold its notice under the id this device minted, and this device holds no row
@@ -156,8 +166,12 @@ push, and each device keeps it beside the row it names.
     in `historySystemEvents`). The name is applied at the relayed server time by the ordinary rule
     (`withDatedGroupName`): a later name this device holds still wins and an earlier one loses,
     exactly as every member computed, and the server's copy becomes owed. The relayed time is bounded
-    by the `sentAt` this device minted, the same bound every receiver put on the server's stamp, so a
-    relayer gains no power over the order that a server does not already have. A row under that id
+    by the `sentAt` this device minted, the same bound every receiver put on the server's stamp. That
+    bound is not the server's own time, though: a relayer may pick ANY time within 24 h of `sentAt`,
+    and against a peer rename stamped inside that window this decides which of the two wins - on THIS
+    device only. Every other member dated the frame by the server's stamp. The worst a relayer can do
+    is a single-device divergence of the name, inside the window, until the next rename; it cannot
+    move the name anyone else holds. A row under that id
     naming another name is refused at ERROR. A frame whose first copy never landed has no notice
     anywhere, so nothing is relayed and the record stays inert until the next own rename replaces it.
     Tested end to end: `systemMessageHandler.nickname.test.ts` ("a relayed copy of this device's own

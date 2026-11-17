@@ -46,7 +46,6 @@ const DELIVERED: RenameResendOutcome = { sent: { receivedAt: T + 60_000, sentAt:
 function settler(over: Partial<NameSyncSettler> = {}): NameSyncSettler {
   return {
     resend: vi.fn().mockResolvedValue(DELIVERED),
-    now: () => T + 60_000,
     ...over,
   };
 }
@@ -194,8 +193,29 @@ describe('the pending frame (a send with no answer) is re-sent as the same frame
     expect(after.nameSync).toBeUndefined();
   });
 
-  it('the NAME decides, not the date: the same name restated under another date is re-sent over', async () => {
-    const { nameSync } = await sweep(pendingRow({ nameAt: T + 5 }), 'Old');
+  // ROUND 6, P2: the members renamed Old -> B -> Old after this device's unanswered Old -> X. After
+  // the drain the row shows "Old" again - the name the rename was made over - but under the date of
+  // the members' LATER statement. Re-sending X then beat that statement for every member.
+  it('Old -> B -> Old: the same name under a later date is a later statement - never re-sent over', async () => {
+    const { row: after, nameSync } = await sweep(pendingRow({ nameAt: T + 5 }), 'Old');
+    expect(nameSync!.resend).not.toHaveBeenCalled();
+    expect(after).toMatchObject({ name: 'Old', nameAt: T + 5 });
+    expect(after.nameSync).toEqual({ unconfirmed: PENDING });
+  });
+
+  it('a base that was undated is re-sent over once a join push dated that very name', async () => {
+    const undatedBase = { ...PENDING, over: { name: 'Old' } };
+    const s = settler();
+    // The join push restated "Old" at T - 500 (`withRestatedGroupName`), and dated `over` with it.
+    const { nameSync } = await sweep(
+      row({
+        name: 'Old',
+        nameAt: T - 500,
+        nameSync: { pending: { ...undatedBase, over: { name: 'Old', at: T - 500 } } },
+      }),
+      'Old',
+      { nameSync: s }
+    );
     expect(nameSync!.resend).toHaveBeenCalled();
   });
 
@@ -249,14 +269,41 @@ describe('the pending frame (a send with no answer) is re-sent as the same frame
     expect(after.nameSync).toBeUndefined();
   });
 
-  it('minted beyond the receivers bound: not re-sent, kept unconfirmed', async () => {
+  // The bound the receivers apply is measured on the SERVER's stamp, so only a server time proves
+  // it has passed - never this device's clock, which may run ahead (a valid frame shelved) or behind.
+  const accepted = (serverTimestamp: number) =>
+    ({
+      id: 'r1',
+      senderId: 'u2',
+      content: 'x',
+      timestamp: new Date(serverTimestamp),
+      serverTimestamp,
+    }) as never;
+
+  it('a row the server accepted past the receivers bound proves it: not re-sent, kept unconfirmed', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const s = settler({ now: () => T + BUNDLE_SERVER_TIME_SKEW_MS + 1 });
-    const { row: after } = await sweep(pendingRow(), 'Old', { nameSync: s });
+    const s = settler();
+    const { row: after } = await sweep(
+      pendingRow({ messages: [accepted(T + BUNDLE_SERVER_TIME_SKEW_MS + 1)] }),
+      'Old',
+      { nameSync: s }
+    );
     expect(s.resend).not.toHaveBeenCalled();
     expect(after.nameSync).toEqual({ unconfirmed: PENDING });
     expect(error).toHaveBeenCalledWith(expect.stringContaining('NOT re-sent'));
     error.mockRestore();
+  });
+
+  it('no server time proving the bound passed: re-sent, whatever this device clock says', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(T + 10 * BUNDLE_SERVER_TIME_SKEW_MS);
+    try {
+      const s = settler();
+      await sweep(pendingRow({ messages: [accepted(T + 1_000)] }), 'Old', { nameSync: s });
+      expect(s.resend).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('an unconfirmed frame alone is never re-sent by a sweep', async () => {

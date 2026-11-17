@@ -11,6 +11,7 @@ import { Log } from '$lib/utils/Log';
 import {
   GROUP_NAME_SKIP_TEXT,
   ownRenameOutcome,
+  latestServerTimeOf,
   pendingRenameVerdict,
   unconfirmedFrom,
   withNameSync,
@@ -111,8 +112,6 @@ export interface NameSyncSettler {
     groupId: string,
     contactName: string
   ) => Promise<RenameResendOutcome>;
-  /** The clock `PendingRename.sentAt` was minted on - this device's, the same one. */
-  now: () => number;
 }
 
 /**
@@ -261,10 +260,12 @@ async function recordGroupStart(
  * asked, never assumed: not drained, the settlement waits for the next sweep, and says so.
  *
  * THE PENDING FRAME (its first send got no answer). Read off the row (`pendingRenameVerdict`): a row
- * that moved on to another name keeps the frame `unconfirmed` - re-sending would put it over that
- * name - and a row that holds the name, dated, saw it land, so only the server's copy is owed.
- * Otherwise the SAME frame is re-sent (`NameSyncSettler.resend`). A frame minted more than the
- * receivers' bound ago would be refused by every one of them, so it is kept `unconfirmed`, unsent. A
+ * that no longer holds the statement it was made over - another name, or the same name under another
+ * date - keeps the frame `unconfirmed`, since re-sending would put it over that statement; a row that
+ * holds the name, dated, saw it land, so only the server's copy is owed. Otherwise the SAME frame is
+ * re-sent (`NameSyncSettler.resend`). A frame the server's own time (the newest row it accepted here,
+ * `latestServerTimeOf`) puts past the receivers' bound would be refused by every one of them, so it
+ * is kept `unconfirmed`, unsent - this device's clock decides nothing here. A
  * re-send with no answer, or not made, keeps it pending; a re-send ANSWERED with a refusal that ends
  * it keeps it `unconfirmed`. Every frame this device stops re-sending may still have reached the
  * members: a member's relayed copy of its notice settles it (`ownRenameFromRelay`).
@@ -391,10 +392,15 @@ async function settlePendingRename(
     log(`[GROUP_NAME] ${id} pending frame came back - only the server copy owed`);
     return;
   }
-  if (settler.now() - pending.sentAt > BUNDLE_SERVER_TIME_SKEW_MS) {
+  // A SERVER TIME PROVES THE BOUND HAS PASSED, never this device's clock: the receivers measure it
+  // on the server's stamp. The newest row this device holds was accepted no later than the server's
+  // now, so once it lies past the bound every member would refuse the re-send. With no such proof
+  // the frame is re-sent, and its answer is checked by the receivers' own rule (`sendRenameFrame`).
+  const seen = latestServerTimeOf(current);
+  if (seen !== undefined && seen - pending.sentAt > BUNDLE_SERVER_TIME_SKEW_MS) {
     await replace(unconfirmedFrom(current.nameSync, pending));
     console.error(
-      `[GROUP_NAME] ${id} NOT re-sent - minted more than the receivers' bound ago, so every member would refuse it; kept unconfirmed, settled by a member's relayed copy if its first copy landed`
+      `[GROUP_NAME] ${id} NOT re-sent - the server has already accepted a row of this group more than the receivers' bound after it was minted, so every member would refuse it; kept unconfirmed, settled by a member's relayed copy if its first copy landed`
     );
     return;
   }

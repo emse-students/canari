@@ -1497,7 +1497,6 @@ export async function discoverMissingGroups(params: {
         deviceKeyB64,
         ownNotice: { contactName, addMessageToChat: params.addMessageToChat },
       }),
-    now: () => Date.now(),
   };
   for (const g of activeServerGroups) {
     await ensureConversationForServerGroup(g, {

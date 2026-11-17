@@ -13,6 +13,7 @@ import {
   ownRenameFromRelay,
   parseNameSync,
   unconfirmedFrom,
+  latestServerTimeOf,
   pendingRenameOutcome,
   pendingRenameVerdict,
   reportRenameRefusal,
@@ -206,13 +207,48 @@ describe('a rename whose frame got no answer', () => {
     expect(row.nameSync).toEqual({ serverCopy: { name: 'Old', from: 'Z' }, pending: PENDING });
   });
 
+  it('a second unanswered rename moves the first frame to unconfirmed - its id is the only heal', () => {
+    const second = { ...PENDING, name: 'A2', messageId: 'm2', sentAt: T + 9 };
+    const row = rowOf(
+      pendingRenameOutcome(
+        group({ name: 'Old', nameAt: T - 1, nameSync: { pending: PENDING } }),
+        second
+      )
+    );
+    expect(row.nameSync).toEqual({ pending: second, unconfirmed: PENDING });
+  });
+
+  it("a join push dating the undated name a pending rename was made over dates that rename's base", () => {
+    const undated = { ...PENDING, over: { name: 'Old' } };
+    const row = rowOf(
+      withRestatedGroupName(group({ name: 'Old', nameSync: { pending: undated } }), {
+        name: 'Old',
+        at: T - 500,
+      })
+    );
+    expect(row.nameSync?.pending?.over).toEqual({ name: 'Old', at: T - 500 });
+    expect(pendingRenameVerdict(row, row.nameSync!.pending!)).toBe('resend');
+  });
+
+  it('the latest server time held is the newest row the server accepted, never a clock', () => {
+    const at = (serverTimestamp?: number) =>
+      ({ id: 'x', senderId: 'u', content: '', timestamp: new Date(0), serverTimestamp }) as never;
+    expect(latestServerTimeOf({ messages: [] })).toBeUndefined();
+    expect(latestServerTimeOf({ messages: [at(T), at(undefined), at(T + 7), at(T + 2)] })).toBe(
+      T + 7
+    );
+  });
+
   it('is re-sent only while the row still holds what it was made over', () => {
     expect(pendingRenameVerdict({ name: 'Old', nameAt: T - 1 }, PENDING)).toBe('resend');
     expect(pendingRenameVerdict({ name: 'B', nameAt: T + 9 }, PENDING)).toBe('superseded');
-    // The NAME decides: the same name restated under another date (a join push dating an undated
-    // row) is no later rename.
-    expect(pendingRenameVerdict({ name: 'Old', nameAt: T + 9 }, PENDING)).toBe('resend');
-    expect(pendingRenameVerdict({ name: 'Old' }, PENDING)).toBe('resend');
+    // The same name under ANOTHER date is another statement (Old -> B -> Old): never re-sent over.
+    expect(pendingRenameVerdict({ name: 'Old', nameAt: T + 9 }, PENDING)).toBe('superseded');
+    expect(pendingRenameVerdict({ name: 'Old' }, PENDING)).toBe('superseded');
+    // An undated base is re-sent while the row is still undated.
+    const undated = { ...PENDING, over: { name: 'Old' } };
+    expect(pendingRenameVerdict({ name: 'Old' }, undated)).toBe('resend');
+    expect(pendingRenameVerdict({ name: 'Old', nameAt: T + 9 }, undated)).toBe('superseded');
     // Its own frame came back from the archive: it landed.
     expect(pendingRenameVerdict({ name: 'A', nameAt: T + 2 }, PENDING)).toBe('landed');
   });

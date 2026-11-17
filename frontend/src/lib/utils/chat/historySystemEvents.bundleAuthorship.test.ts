@@ -6,7 +6,7 @@ import { applyReplaySystemEvent, type PendingHistoryMessage } from './historySys
 import { keySource, newTestAuthor, signedBy } from '$lib/crypto/messageAuthorship.testKit';
 import type { RecordedAuthorship } from '$lib/crypto/messageAuthorship';
 import { mkSystem } from '$lib/proto/codec';
-import { mkTextEnvelope, serializeEnvelope } from '$lib/envelope';
+import { mkNoticeEnvelope, mkTextEnvelope, serializeEnvelope } from '$lib/envelope';
 import {
   recordedIntegrityFindings,
   resetIntegrityFindings,
@@ -49,9 +49,16 @@ async function replayBundle(
   relayer: string,
   messages: Record<string, unknown>[],
   rows: ChatMessage[] = [],
-  pending: PendingHistoryMessage[] = []
+  pending: PendingHistoryMessage[] = [],
+  base: Partial<Conversation> = {}
 ) {
-  let convo = { id: CONVO, name: 't', messages: rows, lifecycle: 'active' } as Conversation;
+  let convo = {
+    id: CONVO,
+    name: 't',
+    messages: rows,
+    lifecycle: 'active',
+    ...base,
+  } as Conversation;
   const sinks = {
     pushed: [] as Record<string, unknown>[],
     pendingById: new Map(pending.map((p) => [String(p.messageId), p])),
@@ -517,5 +524,69 @@ describe('a history_bundle replayed from the archive', () => {
         restoredUnverified: false,
       })
     );
+  });
+});
+
+/**
+ * THE HEAL ON THE REPLAY PATH (#3785 round 6): an archived bundle relaying a copy of one of this
+ * device's own rename frames, whose fate it never learnt, proves the frame landed - the same rule the
+ * live handler applies (`ownRenameSettledByRelay`), the members' name at the members' time.
+ */
+describe("a replayed bundle relaying this device's own rename", () => {
+  const ARCHIVED = Date.parse('2026-10-23T10:00:00.000Z');
+  const FRAME = {
+    name: 'A',
+    messageId: 'own-rename-1',
+    sentAt: ARCHIVED - 60_000,
+    over: { name: 'Groupe', at: ARCHIVED - 3_600_000 },
+  };
+  const notice = serializeEnvelope(
+    mkNoticeEnvelope('me renamed the group to A', { event: 'groupRenamed', actor: 'me', name: 'A' })
+  );
+  const relayed = (id: string, serverTimestamp: number) => ({
+    id,
+    senderId: 'system',
+    content: notice,
+    timestamp: FRAME.sentAt,
+    serverTimestamp,
+  });
+  const base = (slot: 'pending' | 'unconfirmed') => ({
+    name: 'Groupe',
+    nameAt: FRAME.over.at,
+    nameSync: { [slot]: FRAME },
+  });
+
+  it.each(['pending', 'unconfirmed'] as const)(
+    'a %s frame settles at the relayed server time, and its server copy is owed',
+    async (slot) => {
+      const { keys } = await cast();
+      const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+      const { convo } = await replayBundle(
+        keys,
+        'mallory',
+        [relayed(FRAME.messageId, FRAME.sentAt + 1_000)],
+        [],
+        [],
+        base(slot)
+      );
+      expect(convo()).toMatchObject({ name: 'A', nameAt: FRAME.sentAt + 1_000 });
+      expect(convo().nameSync).toEqual({ serverCopy: { name: 'A', from: 'Groupe' } });
+      expect(info).toHaveBeenCalledWith(expect.stringContaining('landed'));
+      info.mockRestore();
+    }
+  );
+
+  it('a relayed row under another id settles nothing', async () => {
+    const { keys } = await cast();
+    const { convo } = await replayBundle(
+      keys,
+      'mallory',
+      [relayed('someone-else', FRAME.sentAt + 1_000)],
+      [],
+      [],
+      base('unconfirmed')
+    );
+    expect(convo()).toMatchObject({ name: 'Groupe', nameAt: FRAME.over.at });
+    expect(convo().nameSync).toEqual({ unconfirmed: FRAME });
   });
 });
