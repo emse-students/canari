@@ -1,11 +1,9 @@
 /**
  * The Graine session store, exercised against the REAL IndexedDB backend.
  *
- * The SQLite backend cannot be reached from here - it needs a live Tauri SQL plugin - so what
- * holds the two together is the shared codec every method on both sides goes through
- * (`graineCodec`), which is covered below on its own. That split is deliberate and is the same one
- * `sqliteBatch` / `sqliteMigrations` already use: the decisions are pure functions and are tested
- * as such, and the one backend a test runner can actually open is tested for real.
+ * What holds the two backends together is the shared codec every method on both sides goes through
+ * (`graineCodec`), covered below on its own; the SQLite half of the outbound count's
+ * compare-and-swap is run for real over `node:sqlite` in `graineStoreSqlite.test.ts`.
  */
 // happy-dom ships no IndexedDB, so the backend is given a real one rather than a mock: these
 // tests then exercise the actual cursors, indexes and version migration, which is the only part
