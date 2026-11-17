@@ -50,6 +50,7 @@ export function runGroupDiscoveryImpl(
     conversations: cb.conversations,
     saveConversation: cb.saveConversation,
     deleteConversation: st ? (id) => st.deleteConversation(id) : undefined,
+    addMessageToChat: cb.addMessageToChat,
     log: cb.log,
     storage: st,
     verdicts,

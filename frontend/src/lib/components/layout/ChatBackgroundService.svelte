@@ -2,6 +2,7 @@
   import { forgetPostComposerMedia } from '$lib/posts/postComposerDraft';
   import { takeKeyGroupPushJoins } from '$lib/utils/graine/keyGroupPushJoins';
   import { noteServerTime } from '$lib/utils/chat/serverClock';
+  import type { InboundReaction } from '$lib/utils/chat/reactionNotification';
   import { drainNseOutcomes } from '$lib/mobile/nseOutcomes';
   import { drainNativePushLog } from '$lib/mobile/nativePushLog';
   import { resolve } from '$app/paths';
@@ -1016,6 +1017,7 @@
       playReceiveTone: globalNotifs.playReceiveTone,
       playReadTone: globalNotifs.playReadTone,
       sendSystemNotification: globalNotifs.sendSystemNotification,
+      sendReactionNotification: globalNotifs.sendReactionNotification,
       signalChannelRead: (channelId: string) => void channelService.markChannelRead(channelId),
       onChannelWriteRefused: globalChannels.handleChannelWriteRefused,
     };
@@ -1450,6 +1452,8 @@
         if (e.conversationKey !== globalConvs.selectedContact) return;
         globalNotifs.playReadTone();
       },
+      onInboundReaction: (reaction: InboundReaction) =>
+        globalMessaging.notifyInboundReaction(reaction, msgCtx()),
       onSendError: (msg: string) => {
         globalConvs.sendError = msg;
       },

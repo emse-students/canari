@@ -5,6 +5,7 @@ vi.mock('$lib/stores/userState.svelte', () => ({ currentUserId: () => 'me' }));
 vi.mock('$lib/users/blocks', () => ({ isBlockedWith: vi.fn(async () => false) }));
 
 import { handleSystemEvent } from './systemMessageHandler';
+import { mkNoticeEnvelope, serializeEnvelope } from '$lib/envelope';
 import {
   NICKNAME_CLOCK_SKEW_MS,
   nicknameEntry,
@@ -266,6 +267,143 @@ describe('handleSystemEvent - nickname, the sender clock', () => {
       makeCtx({ senderNorm: 'bob', deliveryMeta: { queuedCreatedAt: later } }) as any
     );
     expect(nicknameEntry('g1', 'bob')?.nickname).toBeNull();
+  });
+});
+
+describe('handleSystemEvent - history_bundle restates the dated group name (groupName.ts)', () => {
+  const TO_ME = digestIdentity('me', 'device-me');
+  const JOIN_PUSH = {
+    senderNorm: 'inviter',
+    deliveryMeta: {
+      channel: 'live',
+      addressed: true,
+      senderDeviceId: 'inviter-device',
+      queuedCreatedAt: 1_000_000,
+    },
+  };
+  const groupRow = (ctx: ReturnType<typeof makeCtx>) => {
+    ctx.conversations.set('g1', {
+      ...ctx.conversations.get('g1'),
+      name: 'Groupe',
+      conversationType: 'group',
+    });
+    return ctx;
+  };
+
+  beforeEach(() => forgetHistoryAsks());
+
+  it("the inviter's join push names the group for a member admitted after the last rename", async () => {
+    noteJoinSolicited('g1', 'inviter', 1);
+    const ctx = groupRow(makeCtx(JOIN_PUSH));
+    await handleSystemEvent(
+      'history_bundle',
+      {
+        messages: [],
+        to: TO_ME,
+        join: true,
+        last: true,
+        groupName: { name: 'Les ROOTz', at: 900_000 },
+      },
+      ctx as any
+    );
+    expect(ctx.conversations.get('g1')).toMatchObject({ name: 'Les ROOTz', nameAt: 900_000 });
+  });
+
+  it('a date later than the push carrying it is refused at ERROR', async () => {
+    noteJoinSolicited('g1', 'inviter', 1);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const ctx = groupRow(makeCtx(JOIN_PUSH));
+    await handleSystemEvent(
+      'history_bundle',
+      {
+        messages: [],
+        to: TO_ME,
+        join: true,
+        last: true,
+        groupName: { name: 'Faux', at: 2_000_000 },
+      },
+      ctx as any
+    );
+    expect(ctx.conversations.get('g1').name).toBe('Groupe');
+    expect(error.mock.calls.map((c) => String(c[0])).join('\n')).toContain('[GROUP_NAME] REFUSED');
+    error.mockRestore();
+  });
+
+  it('a restated name never beats a name a frame already dated here - an inviter cannot rename for the newcomer', async () => {
+    noteJoinSolicited('g1', 'inviter', 1);
+    const ctx = groupRow(makeCtx(JOIN_PUSH));
+    ctx.conversations.set('g1', {
+      ...ctx.conversations.get('g1'),
+      name: 'Les ROOTz',
+      nameAt: 800_000,
+    });
+    await handleSystemEvent(
+      'history_bundle',
+      { messages: [], to: TO_ME, join: true, last: true, groupName: { name: 'Faux', at: 999_999 } },
+      ctx as any
+    );
+    expect(ctx.conversations.get('g1')).toMatchObject({ name: 'Les ROOTz', nameAt: 800_000 });
+  });
+
+  // THE HEAL A DROPPED RE-SEND RELIES ON (#3785 re-review 2). This device renamed to "A", its send
+  // got no answer and it stopped re-sending; the frame landed at t1 all the same, and every member
+  // holds its notice under the id this device minted. This device holds no row under that id, so the
+  // digest diff relays it - and the relayed row applies (A, t1) here, by the ordinary rule.
+  it("a relayed copy of this device's own rename notice applies (A, t1): the members' name, at their time", async () => {
+    const ctx = groupRow(makeCtx({ senderNorm: 'ann' }));
+    // No exclusion window holds this device out of anything (`dropOwnExcludedMessages`).
+    Object.assign(ctx.mlsService, {
+      getGroupWithheld: vi.fn().mockResolvedValue(new Map([['me', []]])),
+    });
+    ctx.conversations.set('g1', {
+      ...ctx.conversations.get('g1'),
+      name: 'Groupe',
+      nameAt: 700_000,
+      nameSync: {
+        unconfirmed: {
+          name: 'A',
+          messageId: 'own-rename-1',
+          sentAt: 899_000,
+          over: { name: 'Groupe', at: 700_000 },
+        },
+      },
+    });
+    const notice = serializeEnvelope(
+      mkNoticeEnvelope('me renamed the group to A', {
+        event: 'groupRenamed',
+        actor: 'me',
+        name: 'A',
+      })
+    );
+    await handleSystemEvent(
+      'history_bundle',
+      {
+        messages: [
+          {
+            id: 'own-rename-1',
+            senderId: 'system',
+            content: notice,
+            timestamp: 899_000,
+            serverTimestamp: 900_000,
+          },
+        ],
+      },
+      ctx as any
+    );
+    expect(ctx.conversations.get('g1')).toMatchObject({ name: 'A', nameAt: 900_000 });
+    expect(ctx.conversations.get('g1').nameSync).toEqual({
+      serverCopy: { name: 'A', from: 'Groupe' },
+    });
+  });
+
+  it('a broadcast bundle names nothing - only the join push restates the name', async () => {
+    const ctx = groupRow(makeCtx({ senderNorm: 'inviter' }));
+    await handleSystemEvent(
+      'history_bundle',
+      { messages: [], groupName: { name: 'Les ROOTz', at: 900_000 } },
+      ctx as any
+    );
+    expect(ctx.conversations.get('g1').name).toBe('Groupe');
   });
 });
 

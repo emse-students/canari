@@ -319,7 +319,7 @@ service answers the preflight an `Authorization` header raises from the three We
 (`cors-origins.ts` in the Nest services, `chat_gateway_cors_layer`), measured from the Android origin for the
 whole cold start (0 warnings, every read answered). A cross-origin client sees only the safelisted response
 headers plus the exposed ones: the reads consume `Content-Type` and `Content-Length` (safelisted),
-`X-History-Head` (exposed by chat-delivery, and read by the MLS client, which keeps its own plugin `fetch`) and
+`X-History-Head` and `Date` (exposed by chat-delivery, and read by the MLS client, which keeps its own plugin `fetch`; `Date` is the server's clock a group row read states, `GroupMeta.serverNow`) and
 `Content-Disposition` (the XLSX exports, exposed by social-service with this change). A new response header a
 read depends on must be added to its service's `exposedHeaders`, or the phone reads `null`.
 
@@ -330,7 +330,7 @@ read depends on must be added to its service's `exposedHeaders`, or the phone re
 | The preflight names `Authorization` back. A `*` in `Access-Control-Allow-Headers` does NOT cover it (Fetch standard) | Nest: `corsOptions` in `apps/*/src/cors-origins.ts` leaves `allowedHeaders` unset, so `cors` mirrors the request (asserted in `cors-origins.spec.ts`). The chat gateway answered `*` and now mirrors (`AllowHeaders::mirror_request()`, test `names_back_the_authorization_header_a_bearer_read_preflights`): `GET /api/presence` carries a Bearer token |
 | The preflight is cached | `Access-Control-Max-Age: 7200` on the four Nest services and the gateway (Chromium caps it at 2 h, WebKit at 10 min). Without it Chromium kept a preflight 5 s per URL |
 | An error nginx makes ITSELF is readable | A 502/504 while a service restarts, or the 500 of a failed `auth_request` (maintenance included), carried no CORS header, so a native read got a `TypeError` - "unreachable" - where the status was an answer. `error_page 500/502/503/504` at server level now answers through `@api_error_<code>` with `Access-Control-Allow-Origin` mapped from an ALLOWLIST of the three WebView origins (`$api_error_cors_origin`). Gate: `.github/scripts/tests/api-error-cors.test.mjs`, which also holds the map equal to `TAURI_WEBVIEW_ORIGINS`. Checked with `nginx -t` and a container: a failed auth sub-request answers `500` with `Access-Control-Allow-Origin: http://tauri.localhost`, and nothing for a foreign origin |
-| The response headers a read consumes | `Content-Disposition` (social-service), `X-History-Head` (chat-delivery) |
+| The response headers a read consumes | `Content-Disposition` (social-service), `X-History-Head` and `Date` (chat-delivery) |
 
 Not covered by this repository: a 502 made by the HOST proxy in front of the container (the Portail-etu host's
 own nginx, the Cloudflare edge) while this container itself is down, which still reaches a native read as a
@@ -3267,6 +3267,85 @@ reaction), and both compose the sentence in the app's own Français/English rath
 readers. The push carries an id, an emoji and who reacted - never the message text, since the
 recipient is its author and already holds it.
 
+**THE FOREGROUND SUPPRESSION IS COARSER THAN ITS REASON, AND THAT IS A DEFECT (measured 2026-11-17).**
+The guard says the bubble on screen already carries the reaction, which is true only while THAT
+conversation is open; `MainActivity.isInForeground` (and iOS `willPresent`) is true on the feed and in
+any other conversation too. A message has a second trigger for exactly that case - the WebSocket frame,
+decided by `canSeeArrival` ([nativeNotification.ts](../../../frontend/src/lib/utils/nativeNotification.ts)) -
+and a reaction has none: its MLS frame is silent and `notifyInbound` never sees it. So a reaction that
+lands while the app is open anywhere notifies nobody, and the web and desktop are never told at all.
+Production, 2026-11-17: a reaction push left `sendPushToUser` for an Android account three seconds
+after that phone's app socket opened, and the socket closed 20 s later - the push was suppressed and
+nothing else could draw it. The rest of this paragraph's list is unchanged: in the background the
+reaction is posted on `canari_reactions_v2` (IMPORTANCE_DEFAULT: a sound and a shade entry, no
+heads-up, no vibration - by design), and `MainActivity.onResume` clears it with the message
+notifications. Fixed for `1.7.1` by the frame trigger below ([backlog](../backlog.d/p2-a-reaction-to-my-message-notifies-nobody-while-the-app-is-open.md)).
+
+#### The frame trigger of a reaction (2026-11-17)
+
+A reaction now has the second trigger a message has. Every applied reaction frame - the MLS path
+(`setupMessageHandler` -> `applyReactionFrame`, which returns what it changed and whose message it
+landed on) and the live salon path (`channelEventHandler`, `channel.message.created`) - is handed to
+`useMessaging.notifyInboundReaction`, and the decision is
+[reactionNotification.ts](../../../frontend/src/lib/utils/chat/reactionNotification.ts), pure, with
+its whole matrix asserted beside it:
+
+| term | refused when |
+| --- | --- |
+| the frame (`inboundReactionVerdict`) | my own reaction, or a reaction to somebody else's message (said nowhere: the ordinary frame); a removal, a replay or older state, or a frame that is not LIVE (said: it is a reaction to me). The author is the row held (window, then store), else the one the frame STATES (`ReactionMsg.target_author_id`, the reactor's own claim - the one `notify-reaction` already rests on). News whose author is still unknown is `unresolved` (WARNED each time) when the store FAILED to answer, `unattributed` (said ONCE per session) when the frame comes from a reactor predating `target_author_id` |
+| live (`isLiveDelivery`) | not `channel === 'live'`, or `aheadOfMailbox`, or an `addressed` history answer - a catch-up on resume may carry a reaction already announced and dismissed. A page of salon history raises nothing |
+| the screen (`reactionTriggerRefusal`) | the conversation is on screen (`canSeeArrival`); on a phone, a frame with no `at` (it could not be made one with its push, so the push draws it); the `reactions` category is off; a private conversation's level is not `all` (a reaction is never a mention). **The app's foreground state is NOT a term** |
+
+**A salon's level is not applied**, on either path: the server cannot read it for a reaction
+(`sendPushToUser` reads a level only for a group uuid), and one rule written in only one builder is
+decided by the route ([durable-rules](../durable-rules.md)).
+
+**Deduplicated by identity, never by a flag read at two moments (review of #3792, round 2).** The
+first design made the two triggers disjoint on a foreground flag: the page deferred while the app
+was not active, the push drew only then. But the page decides when the frame lands and the push gate
+when the push lands - a page that deferred while iOS was inactive (Control Center) or Android just
+paused, then a push landing after the user came back, was dropped as foreground too: nobody
+announced it. So the frame trigger ignores the app's state, both may post, and the REACTION's own
+identity makes the two posts one:
+
+- **Android**: both stamp the line with the reaction's own instant (`ReactionMsg.at`; the push carries
+  it as `at`, forwarded by `notify-reaction`), and post the ONE composition `showReactionNotification`
+  (`notif_reaction_body`, `CHANNEL_REACTIONS`, no quick actions) under the ONE key `reaction:<groupId>`
+  and ONE lock (`REACTION_POST_LOCK`), so whichever lands second is recognised by `alreadyPosted` or,
+  once dismissed, by the alerted ledger. The frame reaches it through `notifier_message_natif` with
+  `reaction = true`.
+- **iOS**: the page posts through the plugin, whose request identifier is `"\(notification.id)"`;
+  the id is `stableNotifId(reaction:<messageId>:<reactor>:<at>)` (`reactionCollapseId`), and the
+  server sends the push with `apns-collapse-id` = the same decimal (`reactionCollapseId` in
+  `push-payload.ts`, from the `messageId` the reactor posts to `notify-reaction`; none when it names
+  no message), so the system files both under one request and replaces one by the other, as a post's
+  local twin already does (`CanariPostLocalNotification`). The two copies of the hash are held
+  together by one vector asserted in both test suites. **The key is the reacted-to MESSAGE, never the
+  conversation** (round 3): the id rides the content-free wake as a header Apple reads, and a call
+  ring names the group and the caller in clear, so a hash over `<group>:<reactor>:<at>` could be
+  confirmed by trying a few thousand instants. No wake and no ring names the message
+  ([content-free-push](../protocols/content-free-push.md)).
+- **iOS, while ACTIVE**: `willPresent` never answers a push with `None` blind - should iOS have
+  replaced the page's delivered request by the push, that would erase the record. It reads the
+  delivered notifications (`CanariPresentForegroundPush`, completed on the main queue) for EVERY
+  active push, by identifier and never by data (a wake whose fetch failed or answered `gone` keeps
+  `type=wake` yet carries the reaction's collapse id): the same identifier delivered -> `List`, none
+  -> `None`. Worst case a double, never a loss.
+- A frame with no `at` (a reactor predating it, whose push carries none either) cannot be made one with
+  its push: on a phone it is left to the push, as before #3792. `notify-reaction` forwards `at` only
+  as a positive integer at most a day ahead of the server (`REACTION_AT_MAX_AHEAD_MS`).
+
+**Desktop and the browser** post the plain one too, with the same per-reaction id/tag; they have no
+push, so the frame is their only trigger and a hidden tab or an idle window is told.
+
+**What only a phone can say** (the background reading,
+[backlog](../backlog.d/reading-owed-a-reaction-to-my-message-notifies-in-the-background.md); the iOS
+identity reading, [backlog](../backlog.d/reading-owed-ios-reaction-push-replaces-the-page-notification.md),
+owed on `1.7.0`). That iOS replaces a delivered LOCAL notification by a remote one with the same
+`apns-collapse-id` (and the reverse) is what a post's twin already relies on, and is proven by no
+test here: a reaction under Control Center shows ONE entry (a second sound on the replacement is
+acceptable), and a reaction while ACTIVE on another screen keeps an entry (the `List` answer).
+
 #### Background MLS decrypt ladder
 
 Both Android and the iOS NSE run the same ladder when an encrypted MLS message push arrives:
@@ -4300,7 +4379,7 @@ from it. A refusal now logs the origin once, budget-capped, at a level that accu
 500 on the request itself, which is a separate incident this repo already had (prod 2026-08-19, on
 `GET /api/media/public/:id`).
 
-Rules, in [`durable-rules.md`](../durable-rules.md#mobile-and-native---frontendmobile): a server's origin allowlist is a
+Rules, in [`durable-rules.md`](../durable-rules.md): a server's origin allowlist is a
 fact about its CLIENTS, and a Tauri client has one origin per platform; and platform parity is not a
 property of the native project.
 

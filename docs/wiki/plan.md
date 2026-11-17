@@ -83,8 +83,10 @@ earliest version, as a checklist.
 - [ ] [the live scenes bar (one icon row) on a desktop live at two window widths](backlog.d/reading-owed-the-live-scenes-bar-on-a-desktop-live.md)
 - [ ] [a menu ends above the iOS tab bar, and a group notification keeps its title (2026-11-16)](backlog.d/reading-owed-the-popover-and-notification-fixes-of-the-iphone-sitting.md)
 - [ ] [a native device with no push token row now says why, and registers again (production, after the `1.7.0` stable)](backlog.d/reading-owed-a-device-with-no-push-token-now-says-so.md)
+- [ ] [a reaction to my message notifies a backgrounded and a killed phone, on both platforms (2026-11-17)](backlog.d/reading-owed-a-reaction-to-my-message-notifies-in-the-background.md)
 - [ ] [a ring's end no longer names the conversation, and still stops the ring (2026-11-17)](backlog.d/reading-owed-call-ring-end-carries-no-conversation.md)
 - [ ] [the repair of a rewound sender walks to the member that holds the messages (2026-11-17)](backlog.d/reading-owed-heal-repair-walks-to-the-holder.md)
+- [ ] [on an iPhone, a reaction's push and the page's notification of it are ONE entry, and neither erases the other (2026-11-17)](backlog.d/reading-owed-ios-reaction-push-replaces-the-page-notification.md)
 - [ ] [the iPhone's one seed mirror keeps the extension's seeds through a foreground (2026-11-17)](backlog.d/reading-owed-ios-seed-mirror-one-copy.md)
 - [ ] [live moderation: the three broadcaster pushes, the withdrawal lift and the lives switch](backlog.d/reading-owed-live-moderation-pushes-lift-and-the-lives-switch.md)
 - [ ] [Minesweeper replay as a global admin](backlog.d/reading-owed-minesweeper-replay-as-a-global-admin.md)
@@ -116,6 +118,7 @@ earliest version, as a checklist.
 - [P2 - a group call answered into an empty room, and a ring that outlives an outcome-less end](backlog.d/group-call-empty-room-answer-and-outcome-less-ring.md)
 - [P2 - a group call holds one device per user: prove the second device replaces the first](backlog.d/group-calls-one-device-per-user.md)
 - [P2 - a late write of an incoming seed can raise a floor a repair lowered since](backlog.d/p2-a-late-incoming-seed-write-can-raise-a-floor-a-repair-lowered.md)
+- [P2 - A reaction to my message notifies nobody while the app is open, on any screen (2026-11-17)](backlog.d/p2-a-reaction-to-my-message-notifies-nobody-while-the-app-is-open.md)
 - [P2 - an organiser testing a form by moving its opening to "now" notifies everyone who asked to be told](backlog.d/p2-an-organiser-test-of-a-form-notifies-everyone-who-asked.md)
 - [P2 - an Android blind salon banner `held=true` with the seed frame attached (2026-11-17)](backlog.d/p2-android-blind-salon-banner-held-true.md)
 - [P2 - no gate proves that an older build reads, and writes back, the MLS state this build writes](backlog.d/p2-no-gate-proves-an-older-build-reads-the-mls-state-this-build-writes.md)
@@ -267,7 +270,6 @@ earliest version, as a checklist.
 **P3 - hygiene**
 
 - [P3 - a success-page poll during a retry is a second trigger of the self-caused cancel (review of #2210, 2026-10-21)](backlog.d/p3-a-success-page-poll-during-a-retry-is-a-second-trigger-of-the-self-caused.md)
-- [P3 - Names in the clear: conversation, community and salon names (user, 2026-10-21, not designed)](backlog.d/p3-names-in-the-clear-conversation-community-and-salon-names-user-2026-10-21.md)
 - [P3 - Nothing warns a manager whose free-amount bounds fall outside the payable range (review of #2208, 2026-10-21, not built)](backlog.d/p3-nothing-warns-a-manager-whose-free-amount-bounds-fall-outside-the-payable.md)
 - [P3 - while core-service is mid-deploy, a retry meeting an older core's `closed` is refused (review of #2215, 2026-10-21)](backlog.d/p3-while-core-service-is-mid-deploy-a-retry-meeting-an-older-core-s-closed-is.md)
 - [P3 - A device id is held by one account, checked before the insert and not by an index (2026-10-22)](backlog.d/p3-a-device-id-is-held-by-one-account-checked-before-the-insert-and-not-by-an.md)

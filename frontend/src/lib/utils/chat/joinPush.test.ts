@@ -113,6 +113,26 @@ describe('the join push of a delivered Welcome', () => {
     expect(nicknameEntry(GROUP, 'gamma')).toMatchObject({ nickname: 'Gam', verified: false });
   });
 
+  it('restates the group name an MLS frame dated, and none while the name is undated', async () => {
+    const dated = inviter();
+    vi.mocked(dated.storage.getConversation).mockResolvedValue({
+      id: GROUP,
+      name: 'Les ROOTz',
+      nameAt: ARRIVAL - 10_000,
+      lifecycle: 'active',
+      updatedAt: 1,
+    });
+    await queueJoinPush(dated.mlsService, DELIVERED, dated.deps);
+    expect(bundlesSent(dated.mlsService)[0].data.groupName).toEqual({
+      name: 'Les ROOTz',
+      at: ARRIVAL - 10_000,
+    });
+
+    const undated = inviter();
+    await queueJoinPush(undated.mlsService, { ...DELIVERED, deviceId: 'beta-dev-2' }, undated.deps);
+    expect(bundlesSent(undated.mlsService)[0].data).not.toHaveProperty('groupName');
+  });
+
   it('pushes once per Welcome: the same bytes delivered again (a reload that lost the clear) push nothing', async () => {
     const { mlsService, deps } = inviter();
 

@@ -10,6 +10,7 @@ import {
   isNotificationCategory,
   NOTIFICATION_CATEGORIES,
   OPT_IN_CATEGORIES,
+  pushKindOf,
   storedSwitches,
 } from './push-category';
 import { appVersionAtLeast, HEADERLESS_CLIENT_VERSION } from '../utils/app-version';
@@ -215,5 +216,31 @@ describe('storedSwitches', () => {
         enabledCategories: ['suggestions', 'posts'],
       })
     ).toEqual({ disabled: ['posts'], enabled: ['suggestions'] });
+  });
+});
+
+/**
+ * The kind a `[SOCIAL_PUSH] sent` line names (2026-11-17): what makes the reactions SENT countable
+ * against the reactions a device draws, which no line said before.
+ */
+describe('pushKindOf', () => {
+  it('names a reaction to a MESSAGE apart from its `social` type and from a post reaction', () => {
+    expect(
+      pushKindOf({ type: 'social', reaction: 'true', groupId: 'g', emoji: 'x', senderId: 'u' })
+    ).toBe('message_reaction');
+    expect(pushKindOf({ type: 'social', contentKey: 'social_reaction' })).toBe('social_reaction');
+  });
+
+  it('falls back to the content key, then the type, then says none', () => {
+    expect(pushKindOf({ type: 'social', contentKey: 'social_mention' })).toBe('social_mention');
+    expect(pushKindOf({ type: 'channel' })).toBe('channel');
+    expect(pushKindOf({})).toBe('none');
+  });
+
+  it('is what both sent lines print', () => {
+    const service = readFileSync(resolve(__dirname, 'messaging.service.ts'), 'utf8');
+    const sentLines = service.match(/\[SOCIAL_PUSH\]\[\$\{traceId\}\] sent [^;]*/g) ?? [];
+    expect(sentLines.length).toBe(2);
+    for (const line of sentLines) expect(line).toContain('kind=${pushKindOf(data)}');
   });
 });

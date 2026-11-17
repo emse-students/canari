@@ -9,6 +9,7 @@ import type {
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import {
   memberLeftContent,
+  ownRenameSettledByRelay,
   receivedNoticeTime,
   visibleNoticeContent,
 } from '$lib/utils/chat/visibleNotices';
@@ -16,6 +17,11 @@ import { appMessageSentAtMs } from '$lib/utils/chat/messageUtils';
 import { applyPin, mergePinEntries } from '$lib/stores/pinStore.svelte';
 import { applyNicknameFrame, nicknameMembersOf, type NicknameRosterSource } from './nicknameFrame';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
+import {
+  applyRenameFrame,
+  GROUP_NAME_SKIP_TEXT,
+  reportRenameRefusal,
+} from '$lib/utils/chat/groupName';
 import { boundedByVerifiedSentAt, withVettedBundleServerTimes } from '$lib/utils/chat/messageTime';
 import { applyReaction } from '$lib/utils/chat/messageReactions';
 import { editSupersedes } from '$lib/utils/chat/editPrecedence';
@@ -284,9 +290,26 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
     }
 
     if (parsed.system.event === 'groupRenamed' && data.newName) {
+      // The live handler's rule (`groupName.ts`): dated by the archive row's server time, applied only
+      // when newer than the name held - a page of old renames replayed after a live one no longer
+      // walks the name back through them.
       const convo = getConversation(contactName);
-      if (convo && convo.name !== data.newName) {
-        setConversation(contactName, { ...convo, name: data.newName });
+      const outcome = convo
+        ? applyRenameFrame(
+            convo,
+            data.newName,
+            parseServerTimestampMs(msg.timestamp),
+            appMessageSentAtMs(parsed.sentAt)
+          )
+        : null;
+      if (outcome && 'row' in outcome) {
+        setConversation(contactName, outcome.row);
+      } else if (outcome && 'refused' in outcome) {
+        reportRenameRefusal(conversationId, outcome.refused, 'replayed rename');
+      } else if (outcome?.skipped === 'not-a-group') {
+        console.warn(
+          `[GROUP_NAME] replayed rename in ${conversationId.slice(0, 8)}… NOT applied: ${GROUP_NAME_SKIP_TEXT[outcome.skipped]}`
+        );
       }
       systemContent = await visibleNoticeContent('groupRenamed', data, senderNorm);
     } else if (parsed.system.event === 'memberRemoved' && data.targetUser) {
@@ -829,6 +852,24 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
           writeMergedPending(pm, merged);
           pushPendingMessage(pm);
         }
+        // The live handler's heal, on the same rows (`ownRenameSettledByRelay`): a row added under
+        // the id of one of this device's own rename frames proves that frame landed.
+        const held = getConversation(contactName);
+        const healed = held
+          ? ownRenameSettledByRelay(
+              held,
+              vetted.fresh.map(({ entry: m }) => ({
+                id: m.id,
+                content: m.content,
+                ...(typeof m.serverTimestamp === 'number'
+                  ? { serverTimestamp: m.serverTimestamp }
+                  : {}),
+              })),
+              senderNorm,
+              (line) => console.info(line)
+            )
+          : null;
+        if (healed) setConversation(contactName, healed);
       }
     }
   } catch {

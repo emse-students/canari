@@ -9,6 +9,7 @@
 
 <script lang="ts">
   import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
+  import type { InboundReaction } from '$lib/utils/chat/reactionNotification';
   import { onDestroy, onMount, untrack } from 'svelte';
   import { foldForSearch } from '$lib/utils/textFold';
   import { goto } from '$app/navigation';
@@ -487,6 +488,7 @@
       playReceiveTone: notifs.playReceiveTone,
       playReadTone: notifs.playReadTone,
       sendSystemNotification: notifs.sendSystemNotification,
+      sendReactionNotification: notifs.sendReactionNotification,
       signalChannelRead: (channelId: string) => void channelService.markChannelRead(channelId),
       onChannelWriteRefused: channels.handleChannelWriteRefused,
     };
@@ -522,6 +524,8 @@
         if (e.conversationKey !== convs.selectedContact) return;
         notifs.playReadTone();
       },
+      onInboundReaction: (reaction: InboundReaction) =>
+        messaging.notifyInboundReaction(reaction, msgCtx()),
       log,
       messageReactions: messaging.messageReactions,
       getSelectedContact: () => convs.selectedContact,
