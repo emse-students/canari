@@ -1,3 +1,4 @@
+import { claimUninvitedEntry, type UninvitedEntryRow } from '../utils/uninvited-entries';
 import {
   Injectable,
   Logger,
@@ -4790,6 +4791,14 @@ export class MessagingService {
     });
     if (!group) return false;
     return (await this.memberOfGroupKind(group, groupId, userId)).isMember;
+  }
+
+  /**
+   * Counts one uninvited entry ({@link claimUninvitedEntry}): `true` when this call wrote its row,
+   * so the caller prints it; `false` when it was counted before - by any replica, before any deploy.
+   */
+  async claimUninvitedEntry(entry: UninvitedEntryRow): Promise<boolean> {
+    return claimUninvitedEntry(this.groupRepo.manager, entry);
   }
 
   /** Whether `userId` is on the user roster of `groupId`, admitted or still awaiting a member. */

@@ -1543,8 +1543,13 @@ build wrote deafens nothing) and its announcement are deleted. Pinned by
 **What the fix-forward owes before the rule refuses anything again** ([backlog](../backlog.d/p1-the-admission-rule-fix-forward.md)):
 
 1. **Read the `[UNINVITED_ENTRY]` count on production first**, by `kind`, so the legitimate paths are
-   measured before anything else is built.
-2. **The emission side.** A user holding no leaf ASKS a member and waits for that member's Add,
+   measured before anything else is built. The count is durable since migration 053
+   ([the count is a table](#the-count-is-a-table-uninvited_entries-migration-053-2026-11-17)).
+2. **The emission side**, and BEFORE it the member side (found 2026-11-17): a user with no leaf
+   whose seat is not an invitation-link ask is asked about to nobody (`askAMemberToAdmit` returns
+   "nobody is asked"), so an asker on any of the paths below would wait for ever until members raise
+   such a seat as an ask and that build is the client floor ([backlog](../backlog.d/p1-the-admission-rule-fix-forward.md)).
+   A user holding no leaf ASKS a member and waits for that member's Add,
    never entering alone, and never in a 1:1. This is NOT the further-device door: since D1 a further
    device asks first but lets itself in when no member device can answer, because its user's leaf
    already vouches for it in every member's tree. A user with no leaf has nothing in the tree to vouch
@@ -1662,6 +1667,43 @@ The server takes the report from a member of the group only (403
 `not-a-member` otherwise), accepts `kind` from that list alone, and writes one line per
 (group, entrant, epoch, kind), so N members reporting one entry make one line per kind they reached,
 not N.
+
+#### The count is a table (`uninvited_entries`, migration 053, 2026-11-17)
+
+**Why.** The deduplication above lived in a `Set` in one replica's memory and the line in one
+container's log, so a deploy reset both: every reading of production covered the hours since the
+last deploy (4 h on 2026-11-01, 24 h on 2026-11-13, about 38 h on 2026-11-17), and the deploy-log
+archive that holds earlier windows is readable only by the deploy account. Item 1 of the fix-forward
+(below) cannot be closed on a count that never accumulates. Of the two fixes the backlog entry left
+open - an additive table, or one public line a day from a `scheduled.yml` job - the table was taken
+(2026-11-17, reversible, recorded here): it also makes the deduplication survive a deploy and hold
+across replicas, its history is not bounded by the Actions log retention, and it publishes nothing.
+
+**The mechanism.** `POST mls/uninvited-entry` claims the entry with ONE statement,
+`INSERT INTO uninvited_entries ... ON CONFLICT DO NOTHING RETURNING` on the primary key
+`(groupId, entrant, epoch, kind)` (`claimUninvitedEntry`, `utils/uninvited-entries.ts`): the call
+that wrote the row prints the WARN line, every later report of the same entry under the same kind -
+any replica, any deploy - finds it and prints the DEBUG `repeat`. Two members reporting at the same
+instant serialise on the key, so it is one line, never two and never none. A row that cannot be
+written is printed at ERROR as `[UNINVITED_ENTRY] NOT COUNTED` with all the line's evidence, and
+answered 503: the line is then the trace, and the entry's other members report it too.
+
+**What a row holds, and for how long.** Exactly what the line prints, sanitized the same way: the
+conversation, the entrant as `userId:deviceId` with the user id cut to eight characters (never a
+full user id), the epoch, the kind, and the first reporter's `watched_from`. `firstSeenAt` is aged
+out, never compared. Rows are deleted daily past the retention window (90 days, the log line's own
+ceiling: `pruneUninvitedEntries`), and with the conversation (`GROUP_OWNED_TABLES`). Register:
+C13 ([register-of-processing](../compliance/register-of-processing.md)).
+
+**Reading it** - read-only, any time, the whole window in one statement:
+
+```sql
+SELECT kind, "watchedFrom" = 'none' AS no_record, count(*)
+FROM uninvited_entries GROUP BY 1, 2 ORDER BY 1, 2;
+```
+
+The count starts at the deploy that carries migration 053; earlier windows stay in the readings the
+backlog entry records.
 
 **The rule holds for every client allowed to connect since the `1.6.6` floor** (#2358 is in every
 stable since `v1.5.0`, migration 038 with it): its compatibility entry closed on 2026-11-11, with

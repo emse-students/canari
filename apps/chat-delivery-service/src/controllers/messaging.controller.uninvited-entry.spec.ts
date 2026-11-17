@@ -1,12 +1,13 @@
 /// <reference types="jest" />
 
 import { Test, TestingModule } from '@nestjs/testing';
-import { ForbiddenException, Logger } from '@nestjs/common';
+import { ForbiddenException, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { ThrottlerGuard } from '@nestjs/throttler';
-import { MAX_REMEMBERED_UNINVITED_ENTRIES, MessagingController } from './messaging.controller';
+import { MessagingController } from './messaging.controller';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { UserThrottlerGuard } from '../guards/user-throttler.guard';
 import { MessagingService } from '../services/messaging.service';
+import type { UninvitedEntryRow } from '../utils/uninvited-entries';
 
 /**
  * `POST /mls/uninvited-entry` - a client saying a new person entered one of its conversations by
@@ -16,23 +17,30 @@ import { MessagingService } from '../services/messaging.service';
  * `mls/sender-mismatch` is: a reader can tell who reported which entry without asking the device, and
  * no field of the body can forge a line of its own. Two more things make it a count rather than a
  * stream: only a member of the group may report, and one entry is one line however many member
- * devices report it.
+ * devices report it - decided by the `uninvited_entries` row the first report writes (migration
+ * 053), so a deploy or a second replica does not count it again. The table's SQL is proven against a
+ * real PostgreSQL by `053_uninvited_entries.integration.spec.ts`; here it is a set with the same
+ * answer.
  */
 describe('MessagingController - POST mls/uninvited-entry', () => {
   let controller: MessagingController;
   let warn: jest.SpyInstance;
   let debug: jest.SpyInstance;
+  let error: jest.SpyInstance;
   const isGroupMember = jest.fn();
+  /** The `uninvited_entries` table: its key, as the primary key spells it. */
+  let table: Set<string>;
+  const claimUninvitedEntry = jest.fn();
 
-  beforeEach(async () => {
-    // Mocked rather than merely spied: the assertion is on the ARGUMENT, never on the output.
-    warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
-    debug = jest.spyOn(Logger.prototype, 'debug').mockImplementation(() => {});
-    isGroupMember.mockReset().mockResolvedValue(true);
+  /** A controller over the SAME table - what a second replica, or the process after a deploy, is. */
+  const makeController = async (): Promise<MessagingController> => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [MessagingController],
       providers: [
-        { provide: MessagingService, useValue: { isGroupMember } as unknown as MessagingService },
+        {
+          provide: MessagingService,
+          useValue: { isGroupMember, claimUninvitedEntry } as unknown as MessagingService,
+        },
       ],
     })
       .overrideGuard(ThrottlerGuard)
@@ -42,12 +50,29 @@ describe('MessagingController - POST mls/uninvited-entry', () => {
       .overrideGuard(HeaderAuthGuard)
       .useValue({ canActivate: () => true })
       .compile();
-    controller = module.get(MessagingController);
+    return module.get(MessagingController);
+  };
+
+  beforeEach(async () => {
+    // Mocked rather than merely spied: the assertion is on the ARGUMENT, never on the output.
+    warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+    debug = jest.spyOn(Logger.prototype, 'debug').mockImplementation(() => {});
+    error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+    isGroupMember.mockReset().mockResolvedValue(true);
+    table = new Set();
+    claimUninvitedEntry.mockReset().mockImplementation(async (row: UninvitedEntryRow) => {
+      const key = `${row.groupId}|${row.entrant}|${row.epoch}|${row.kind}`;
+      if (table.has(key)) return false;
+      table.add(key);
+      return true;
+    });
+    controller = await makeController();
   });
 
   afterEach(() => {
     warn.mockRestore();
     debug.mockRestore();
+    error.mockRestore();
   });
 
   it('prints its kind, who reported it, the group, the entrant, the epoch and the key', async () => {
@@ -190,29 +215,53 @@ describe('MessagingController - POST mls/uninvited-entry', () => {
     expect(debug.mock.calls[0][0]).toContain('already counted');
   });
 
-  it('forgets the oldest entry past its bound rather than growing without one', async () => {
-    for (let epoch = 0; epoch <= MAX_REMEMBERED_UNINVITED_ENTRIES; epoch++) {
-      await controller.reportUninvitedEntry('alice', 'web-alice-1', {
-        groupId: 'g-1234',
-        entrant: 'mallory:dev1',
-        epoch,
-      });
-    }
-    warn.mockClear();
-    // Epoch 0 was the oldest and has been forgotten; the newest is still remembered.
-    await controller.reportUninvitedEntry('alice', 'web-alice-1', {
-      groupId: 'g-1234',
-      entrant: 'mallory:dev1',
-      epoch: 0,
-    });
-    await controller.reportUninvitedEntry('alice', 'web-alice-1', {
-      groupId: 'g-1234',
-      entrant: 'mallory:dev1',
-      epoch: MAX_REMEMBERED_UNINVITED_ENTRIES,
-    });
+  it('counts an entry once across a deploy or a second replica: the row, not the process, remembers', async () => {
+    const entry = { groupId: 'g-1234', entrant: 'mallory:dev1', epoch: 7, kind: 'new-person' };
+    await controller.reportUninvitedEntry('alice', 'web-alice-1', entry);
+
+    const afterDeploy = await makeController();
+    await afterDeploy.reportUninvitedEntry('bob', 'web-bob', entry);
 
     expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn.mock.calls[0][0]).toContain('epoch=0 ');
+    expect(debug.mock.calls[0][0]).toContain('already counted');
+  });
+
+  it('writes the row with the values the line prints, the entrant shortened', async () => {
+    const mallory = 'c3'.repeat(32);
+    await controller.reportUninvitedEntry('alice', 'web-alice-1', {
+      groupId: 'g-1234',
+      entrant: `${mallory}:dev1`,
+      epoch: 7,
+      kind: 'new-person',
+      watchedFromEpoch: 4,
+    });
+
+    expect(claimUninvitedEntry).toHaveBeenCalledWith({
+      groupId: 'g-1234',
+      entrant: 'c3c3c3c3:dev1',
+      epoch: '7',
+      kind: 'new-person',
+      watchedFrom: '4',
+    });
+  });
+
+  it('a count that could not be written is printed at ERROR with its evidence, and refused so a member reports it again', async () => {
+    claimUninvitedEntry.mockRejectedValue(new Error('connection terminated'));
+
+    await expect(
+      controller.reportUninvitedEntry('alice', 'web-alice-1', {
+        groupId: 'g-1234',
+        entrant: 'mallory:dev1',
+        epoch: 7,
+        kind: 'new-person',
+      })
+    ).rejects.toBeInstanceOf(ServiceUnavailableException);
+
+    expect(warn).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(error.mock.calls[0][0]).toMatch(
+      /^\[UNINVITED_ENTRY\] NOT COUNTED kind=new-person reporter=alice:web-alice-1 group=g-1234 entrant=mallory:dev1 epoch=7 .*connection terminated/
+    );
   });
 
   it('cannot be made to forge a log line: a value outside the allowlist prints as invalid', async () => {

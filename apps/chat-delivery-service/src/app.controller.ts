@@ -48,6 +48,7 @@ import { checkDatabaseClockAgreement } from './utils/clock-agreement';
 import { reportOrphanDevices } from './utils/orphan-devices';
 import { reportPushCoverage } from './utils/push-coverage';
 import { deleteSentFrameReceiptsBefore } from './utils/sent-frame-receipt';
+import { deleteUninvitedEntriesBefore } from './utils/uninvited-entries';
 import { takeSafeBrowsingRefusalCount } from './utils/safe-browsing';
 import {
   REPORT_KINDS,
@@ -72,6 +73,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   private cleanupStalePushTokensInterval: ReturnType<typeof setInterval>;
   private cleanupStalePendingInvitationsInterval: ReturnType<typeof setInterval>;
   private cleanupExpiredRevocationsInterval: ReturnType<typeof setInterval>;
+  private pruneUninvitedEntriesInterval: ReturnType<typeof setInterval>;
   private reclaimExpiredKeyPackagesInterval: ReturnType<typeof setInterval>;
   private reportQueueDepthInterval: ReturnType<typeof setInterval>;
   private reportStrandedMembershipsInterval: ReturnType<typeof setInterval>;
@@ -228,6 +230,14 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     this.cleanupExpiredRevocationsInterval = setInterval(() => {
       void this.cleanupExpiredRevocations().catch((e) =>
         this.logger.error('[CRON] cleanupExpiredRevocations failed', e)
+      );
+    }, 24 * ONE_HOUR);
+
+    // Age the uninvited-entry count out with the log line it de-duplicates (migration 053) - see
+    // pruneUninvitedEntries.
+    this.pruneUninvitedEntriesInterval = setInterval(() => {
+      void this.pruneUninvitedEntries().catch((e) =>
+        this.logger.error('[CRON] pruneUninvitedEntries failed', e)
       );
     }, 24 * ONE_HOUR);
 
@@ -418,6 +428,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     clearInterval(this.cleanupStalePushTokensInterval);
     clearInterval(this.cleanupStalePendingInvitationsInterval);
     clearInterval(this.cleanupExpiredRevocationsInterval);
+    clearInterval(this.pruneUninvitedEntriesInterval);
     clearInterval(this.reclaimExpiredKeyPackagesInterval);
     clearInterval(this.reportQueueDepthInterval);
     clearInterval(this.reportStrandedMembershipsInterval);
@@ -1616,6 +1627,22 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     if (result.affected && result.affected > 0) {
       this.logger.log(
         `[CRON] cleanupExpiredRevocations: deleted ${result.affected} revocation(s) past their window`
+      );
+    }
+  }
+
+  /**
+   * Deletes the counted uninvited entries (`uninvited_entries`, migration 053) first counted before
+   * the retention window: the row holds what the `[UNINVITED_ENTRY]` line printed, so it is kept as
+   * long as that line could be, and no longer. A row deleted early only lets one more report of the
+   * same entry print again; it never decides anything else.
+   */
+  private async pruneUninvitedEntries() {
+    const before = new Date(Date.now() - AppController.MESSAGE_RETENTION_MS);
+    const removed = await deleteUninvitedEntriesBefore(this.queuedMessageRepo.manager, before);
+    if (removed > 0) {
+      this.logger.log(
+        `[CRON] pruneUninvitedEntries: deleted ${removed} counted entr${removed === 1 ? 'y' : 'ies'} past the retention window`
       );
     }
   }

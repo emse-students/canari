@@ -11,6 +11,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Logger,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import type { Response } from 'express';
@@ -50,9 +51,6 @@ import { RouteParams } from '../common/route-params';
  */
 export const MLS_COMMIT_LIMIT_PER_MINUTE = 600;
 
-/** How many uninvited entries are remembered for deduplication; the oldest goes first past it. */
-export const MAX_REMEMBERED_UNINVITED_ENTRIES = 5000;
-
 /** The classes a client may name an uninvited entry as (`UninvitedEntryKind` on the client). */
 const UNINVITED_ENTRY_KINDS: readonly string[] = [
   'new-person',
@@ -70,8 +68,6 @@ const EVIDENCED_UNINVITED_ENTRY_KINDS: readonly string[] = ['new-person', 'retur
 @Controller()
 export class MessagingController {
   private readonly logger = new Logger(MessagingController.name);
-  /** The entries `mls/uninvited-entry` already counted, as (group, entrant, epoch), oldest first. */
-  private readonly reportedUninvitedEntries = new Set<string>();
 
   constructor(private readonly messagingService: MessagingService) {}
 
@@ -330,14 +326,20 @@ export class MessagingController {
    * `new-person` - NOT PROVEN a member by that device. The line carries it so the classes are
    * counted apart, and `watched_from` - the first epoch the device's record of the group covers - so
    * a `new-person` from a device that was not there yet when a member left is told apart from one
-   * that watched the whole time. It stores nothing; the WARN line and its date are the count.
+   * that watched the whole time.
    *
    * ONE LINE PER ENTRY AND KIND, NOT PER REPORTER: every member device sees the same commit and
    * reports it, so the count is deduplicated on (group, entrant, epoch, kind) - an entry is one
    * commit, and a later entry of the same device is another. Each device decides from what IT saw,
    * so two members may disagree - one proving a return, one that cannot - and both lines are
-   * printed: the disagreement measures what devices lack. In memory and bounded: a restart may
-   * print an entry once more, never lose one.
+   * printed: the disagreement measures what devices lack.
+   *
+   * THE COUNT IS A TABLE (`uninvited_entries`, migration 053). The first report of an entry under a
+   * kind writes its row and prints the WARN line; a repeat finds the row, by any replica and after
+   * any deploy. It used to be a set in this process's memory, so every deploy reset it and a reading
+   * of production covered only the hours since the last one. A row that could not be written is
+   * printed at ERROR with all its evidence and answered 503 - the line is then the only trace, and
+   * the reporter's peers report the same entry.
    *
    * The reporter is the authenticated user and device and a MEMBER of the group (anyone else is
    * refused, 403, as `mls/integrity-finding`). Every field goes through `sanitizeLogValue`.
@@ -397,22 +399,35 @@ export class MessagingController {
               ? String(body.watchedFromEpoch)
               : body.watchedFromEpoch
           );
-    const entry = `${group}\0${entrant}\0${epoch}\0${kind}`;
-    if (this.reportedUninvitedEntries.has(entry)) {
+    const evidence =
+      `kind=${kind} reporter=${reporter} group=${group} entrant=${entrant} ` +
+      `epoch=${epoch} key=${sanitizeLogValue(body.keyFingerprint)} watched_from=${watchedFrom}`;
+    let first: boolean;
+    try {
+      first = await this.messagingService.claimUninvitedEntry({
+        groupId,
+        entrant,
+        epoch,
+        kind,
+        watchedFrom,
+      });
+    } catch (e) {
+      this.logger.error(
+        `[UNINVITED_ENTRY] NOT COUNTED ${evidence} - the row could not be written: ` +
+          String(e).replace(/\s+/g, ' ').slice(0, 160)
+      );
+      throw new ServiceUnavailableException({
+        error: 'not-counted',
+        message: 'the entry could not be counted',
+      });
+    }
+    if (!first) {
       this.logger.debug(
         `[UNINVITED_ENTRY] repeat kind=${kind} reporter=${reporter} group=${group} entrant=${entrant} epoch=${epoch} - already counted`
       );
       return { recorded: true };
     }
-    if (this.reportedUninvitedEntries.size >= MAX_REMEMBERED_UNINVITED_ENTRIES) {
-      const oldest = this.reportedUninvitedEntries.values().next().value;
-      if (oldest !== undefined) this.reportedUninvitedEntries.delete(oldest);
-    }
-    this.reportedUninvitedEntries.add(entry);
-    this.logger.warn(
-      `[UNINVITED_ENTRY] kind=${kind} reporter=${reporter} group=${group} entrant=${entrant} ` +
-        `epoch=${epoch} key=${sanitizeLogValue(body.keyFingerprint)} watched_from=${watchedFrom}`
-    );
+    this.logger.warn(`[UNINVITED_ENTRY] ${evidence}`);
     return { recorded: true };
   }
 
