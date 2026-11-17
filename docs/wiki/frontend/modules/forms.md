@@ -2154,14 +2154,28 @@ preview's "Ferme"); only the manager's way to write it was missing.
 - **The list**: a closed form (its end has passed; a future end is a scheduled close and shows
   nothing) carries a "Ferme" badge and its menu offers "Rouvrir" instead of "Clore le formulaire".
   Closing asks a confirmation, reopening does not.
-- **ONE closed rule on every screen** (read on the Mi 9T, 2026-11-17): `isClosedForm`
-  (`formWindow.ts`, an end that has passed) is what the list badge, the public page `/f/:id` and the
-  member page `/forms/:id` all read. The member page used to draw a closed form open and refuse only at
-  "Envoyer" (`FORM_CLOSED`); it now shows "Ce formulaire est ferme.", locks the questions and disables
-  the send button (editing an answer included).
-- **The badge follows the close answer**: the answer carries the SERVER's `closedAt`, which a few seconds
-  ahead of the device's clock read as a scheduled close, so the badge waited for a re-entry of the list.
-  The row stores `closedByAnswer(closedAt)`: an end this clock has not reached is pulled back to now.
+- **THE SERVER DECIDES WHETHER A FORM IS OPEN, NEVER THE DEVICE CLOCK** (read on the Mi 9T,
+  2026-11-17; owner directive "deterministe, pas de pansements"). `formWindowState`
+  (`form-window.ts`) is the ONE rule - `not-yet` before the opening, `closed` strictly after the end,
+  else `open` - and `isFormOpen` / `assertFormOpen` (the refusals `FORM_NOT_OPEN_YET` /
+  `FORM_CLOSED`) are built on it. `GET /forms`, `GET /forms/:id`, `GET /public/forms/:id` and the
+  close/reopen answer all carry its verdict as `windowState`. The client's `formWindowState` /
+  `isClosedForm` / `opensLater` (`formWindow.ts`) read that field, so the list badge, the public
+  page and the member page share one implementation and a phone whose clock is behind the server no
+  longer reads a just-closed form open (after the close answer, and after a refetch). The old
+  `<=` (client) against `<` (server) mismatch is gone: an end is passed only when strictly past.
+  - **Additive**: an older server sends no `windowState`; the client then falls back to comparing the
+    dates with its own clock and logs ONCE at warn that the server sent none (reaching it means the
+    server is older than the client: a signal, not a path). An older client ignores the field.
+  - **The member page** shows "Ce formulaire est ferme.", locks the questions and disables send; and
+    `handleSubmit` and `saveEdit` each refuse a closed form without a request.
+  - **While the page stays open**: a typed `FORM_CLOSED` / `FORM_NOT_OPEN_YET` refusal of a send or a
+    changed answer is the server's NEWER verdict (`windowRefusalState`): the page takes it
+    (`refusedWindow`) and redraws closed (or not-yet) at once. That covers a manager closing the
+    form, or a scheduled end coming, while a respondent has it open. **No timer switches the page at
+    the scheduled end**: the refusal path alone is judged sufficient - nothing is lost (the refused
+    answer is not stored) and a timer or a `closesInMs` countdown would be a second clock to keep
+    right for what the typed refusal already says.
 - **A form not open yet cannot be closed** (lead, 2026-11-16, during the owner's absence; reversible,
   option (a) of the PR review). Closing writes `closedAt = now`, which would fall BEFORE a future
   `opensAt`: every later edit was then refused `FORM_CLOSE_BEFORE_OPEN` over a date the manager

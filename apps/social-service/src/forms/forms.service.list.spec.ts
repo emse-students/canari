@@ -116,6 +116,20 @@ describe('FormsService.list', () => {
     expect((await service.list('user1')).map((f) => f.id)).toEqual(['f03', 'f02', 'f01']);
   });
 
+  it('carries the server-judged window state of each form', async () => {
+    const { service } = makeService({
+      owned: [
+        form('f01'),
+        { ...form('f02'), closedAt: new Date(Date.now() - 1000) },
+        { ...form('f03'), opensAt: new Date(Date.now() + 86_400_000) },
+      ],
+    });
+    const byId = Object.fromEntries(
+      (await service.list('user1')).map((f) => [f.id, f.windowState])
+    );
+    expect(byId).toEqual({ f01: 'open', f02: 'closed', f03: 'not-yet' });
+  });
+
   it('labels a personal form with no association name', async () => {
     const { service } = makeService({ owned: [form('f01')] });
     expect((await service.list('user1'))[0].associationName).toBeNull();

@@ -15,6 +15,7 @@ const api = vi.hoisted(() => ({
   setFormClosed: vi.fn(async (id: string, closed: boolean) => ({
     id,
     closedAt: closed ? '2026-11-16T10:00:00.000Z' : null,
+    windowState: closed ? 'closed' : 'open',
   })),
   deleteSubmission: vi.fn(),
   listPendingCashSubmissions: vi.fn(async (): Promise<unknown[]> => []),
@@ -460,10 +461,11 @@ describe('FormsManagerList - cash awaiting validation', () => {
 });
 
 describe('FormsManagerList - closing a form (owner, 2026-11-16)', () => {
-  it('shows the badge at once when the server clock is ahead of this device', async () => {
+  it('shows the badge at once on the server verdict, whatever this device clock says', async () => {
     api.setFormClosed.mockResolvedValueOnce({
       id: 'f1',
       closedAt: new Date(Date.now() + 5000).toISOString(),
+      windowState: 'closed',
     });
     const target = await render([form({})]);
     await openMenu(target, 'f1');

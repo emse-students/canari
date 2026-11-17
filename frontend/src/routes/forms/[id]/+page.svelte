@@ -3,7 +3,7 @@
   import { gotoAppPath } from '$lib/navigation/gotoAppPath';
   import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
-  import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
+  import { describeApiRefusal, refusalCode, refusalStatus } from '$lib/utils/apiRefusal';
   import { page } from '$app/state';
   import { onMount, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
@@ -77,7 +77,7 @@
     visibleItems as visibleItemsOf,
     type MissingAnswer,
   } from '$lib/forms/fillAnswers';
-  import { isClosedForm } from '$lib/forms/formWindow';
+  import { formWindowState, windowRefusalState, type FormWindowState } from '$lib/forms/formWindow';
   import { gridRequiredSwitchOn } from '$lib/forms/gridRequiredGate';
   import {
     ArrowLeft,
@@ -121,10 +121,18 @@
   }
 
   let form = $state<Form | null>(null);
+  /**
+   * What a TYPED refusal of an answer proved while the page stayed open (`FORM_CLOSED`: a manager
+   * closed the form, or its end came; `FORM_NOT_OPEN_YET`). The server's newer verdict, not a
+   * clock: it overrides the state the page was loaded with until the form is loaded again.
+   */
+  let refusedWindow = $state<FormWindowState | null>(null);
+  /** What the window says now: the server's verdict of the load, or of the last refusal. */
+  const windowNow = $derived(refusedWindow ?? formWindowState(form));
   const opensLaterIso = $derived(form?.opensAt ? formOpensAtIso(form.opensAt) : null);
-  const isNotOpenYet = $derived(!!opensLaterIso);
+  const isNotOpenYet = $derived(windowNow === 'not-yet' && !!form?.opensAt);
   /** The end has passed (the manager's close or a date that came): the rule of the public page and the list. */
-  const isClosed = $derived(isClosedForm(form));
+  const isClosed = $derived(windowNow === 'closed');
   const reminder = useFormReminder(() => formId ?? '');
   let selections = $state<Record<string, any>>({});
   let submitted = $state(false);
@@ -332,6 +340,7 @@
    */
   function resetFormState(): void {
     form = null;
+    refusedWindow = null;
     selections = {};
     submitted = false;
     paymentPending = false;
@@ -668,11 +677,27 @@
       : initialSelections(form.items);
   }
 
+  /**
+   * A refusal that proves the form's window moved while this page was open (`FORM_CLOSED`,
+   * `FORM_NOT_OPEN_YET`) redraws the page in that state: notice shown, questions locked, send off.
+   */
+  function adoptRefusedWindow(e: unknown): void {
+    const state = windowRefusalState(refusalCode(e));
+    if (!state) return;
+    Log.d('FormView', `the server refused an answer: the form is now ${state}`);
+    refusedWindow = state;
+  }
+
   /** Sends the changed answer; nothing about the price or the payment moves (server-enforced). */
   async function saveEdit() {
     if (!form || !editing) return;
     const answer = editing;
     error = '';
+    if (isClosed) {
+      Log.d('FormView', 'answer change refused: the form is closed');
+      error = m.form_refusal_closed();
+      return;
+    }
     submitting = true;
     try {
       const sent = editedAnswers(visibleItems, selections, answer.lockedItemIds);
@@ -683,6 +708,7 @@
       void loadEditableAnswers(form.id);
     } catch (e: unknown) {
       Log.d('FormView', `answer change refused status=${refusalStatus(e) ?? 'transport'}`);
+      adoptRefusedWindow(e);
       error = formSubmitRefusalMessage(e, m.form_guest_submit_failed());
     } finally {
       submitting = false;
@@ -821,6 +847,7 @@
       }
     } catch (e: unknown) {
       Log.d('FormView', `submit refused status=${refusalStatus(e) ?? 'transport'}`);
+      adoptRefusedWindow(e);
       // Worded from the refusal's CODE, never from the server's English (D6).
       error = formSubmitRefusalMessage(e, m.form_guest_submit_failed());
     } finally {

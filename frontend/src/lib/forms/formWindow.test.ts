@@ -1,5 +1,12 @@
-import { describe, expect, it } from 'vitest';
-import { closedByAnswer, formWindowInvalid, isClosedForm, opensLater } from './formWindow';
+import { describe, expect, it, vi } from 'vitest';
+import { Log } from '$lib/utils/Log';
+import {
+  formWindowInvalid,
+  formWindowState,
+  isClosedForm,
+  opensLater,
+  windowRefusalState,
+} from './formWindow';
 
 describe('formWindowInvalid', () => {
   it('is false while either bound is missing', () => {
@@ -16,16 +23,41 @@ describe('formWindowInvalid', () => {
   });
 });
 
-describe('isClosedForm', () => {
+describe('formWindowState and isClosedForm', () => {
   const now = Date.parse('2026-11-16T12:00:00Z');
-  it('is closed once its end has passed', () => {
-    expect(isClosedForm({ closedAt: '2026-11-16T11:59:59Z' }, now)).toBe(true);
+  it('reads the state the SERVER sent, never the device clock', () => {
+    // The end is ahead of this device's clock (a phone behind the server), the server says closed.
+    expect(isClosedForm({ closedAt: '2026-11-16T12:00:05Z', windowState: 'closed' }, now)).toBe(
+      true
+    );
+    // The end has passed by this clock, the server says open (a reopened form read stale): the server wins.
+    expect(isClosedForm({ closedAt: '2026-11-16T11:00:00Z', windowState: 'open' }, now)).toBe(
+      false
+    );
+    expect(formWindowState({ windowState: 'not-yet' }, now)).toBe('not-yet');
   });
-  it('is open with no end, or an end still to come', () => {
+  it('falls back to the comparison against a server that sends none, and says so at warn, once', () => {
+    const warn = vi.spyOn(Log, 'w').mockImplementation(() => {});
+    expect(isClosedForm({ closedAt: '2026-11-16T11:59:59Z' }, now)).toBe(true);
+    expect(isClosedForm({ closedAt: '2026-11-16T12:00:01Z' }, now)).toBe(false);
     expect(isClosedForm({ closedAt: null }, now)).toBe(false);
     expect(isClosedForm({}, now)).toBe(false);
-    expect(isClosedForm({ closedAt: '2026-11-16T12:00:01Z' }, now)).toBe(false);
     expect(isClosedForm(null, now)).toBe(false);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][1])).toContain('windowState');
+    warn.mockRestore();
+  });
+  it('is open AT the end instant, as the server refusal is (strictly past is closed)', () => {
+    expect(isClosedForm({ closedAt: '2026-11-16T12:00:00Z' }, now)).toBe(false);
+  });
+});
+
+describe('windowRefusalState', () => {
+  it('turns the two typed refusals into the state they prove, and nothing else', () => {
+    expect(windowRefusalState('FORM_CLOSED')).toBe('closed');
+    expect(windowRefusalState('FORM_NOT_OPEN_YET')).toBe('not-yet');
+    expect(windowRefusalState('FORM_FULL')).toBeNull();
+    expect(windowRefusalState(null)).toBeNull();
   });
 });
 
@@ -37,19 +69,8 @@ describe('opensLater', () => {
     expect(opensLater({}, now)).toBe(false);
     expect(opensLater(null, now)).toBe(false);
   });
-});
-
-describe('closedByAnswer', () => {
-  const now = Date.parse('2026-11-16T12:00:00Z');
-  it('keeps an end the client clock already agrees has passed', () => {
-    expect(closedByAnswer('2026-11-16T11:00:00Z', now)).toBe('2026-11-16T11:00:00Z');
-  });
-  it('pulls an end the server stamped ahead of this clock back to now, so the row reads closed', () => {
-    const answered = closedByAnswer('2026-11-16T12:00:03Z', now);
-    expect(answered).toBe('2026-11-16T12:00:00.000Z');
-    expect(isClosedForm({ closedAt: answered }, now)).toBe(true);
-  });
-  it('passes null through', () => {
-    expect(closedByAnswer(null, now)).toBeNull();
+  it('reads the server state when it sends one', () => {
+    expect(opensLater({ windowState: 'not-yet' }, now)).toBe(true);
+    expect(opensLater({ opensAt: '2030-01-01T00:00:00Z', windowState: 'open' }, now)).toBe(false);
   });
 });
