@@ -554,7 +554,10 @@ export abstract class BaseMlsService implements IMlsService {
     | ((requesterUserId: string, requesterDeviceId: string, groupId: string) => void)
     | null = null;
 
-  protected welcomeProcessedCallback: ((groupId?: string) => void) | null = null;
+  protected welcomeProcessedCallback: ((groupId?: string, installed?: boolean) => void) | null =
+    null;
+  /** The groups whose Welcome the handler INSTALLED, read once by the announcement (see below). */
+  private readonly welcomesInstalled = new Set<string>();
   /** @see onWelcomeDelivered */
   private welcomeDeliveredListener: ((delivered: DeliveredWelcome) => void) | null = null;
 
@@ -1764,7 +1767,11 @@ export abstract class BaseMlsService implements IMlsService {
     this.historyRequestCallback = callback;
   }
 
-  onWelcomeProcessed(callback: (groupId?: string) => void): void {
+  noteWelcomeInstalled(groupId: string): void {
+    this.welcomesInstalled.add(groupId);
+  }
+
+  onWelcomeProcessed(callback: (groupId?: string, installed?: boolean) => void): void {
     this.welcomeProcessedCallback = callback;
   }
 
@@ -3159,6 +3166,9 @@ export abstract class BaseMlsService implements IMlsService {
 
           if (msg.isWelcome && groupId) {
             this.messageScheduler.releaseWelcomeBuffer(groupId, 'Welcome complete');
+            // Read ONCE, whatever follows: a mark left behind would make the next redelivery of
+            // this group's Welcome look like a fresh join.
+            const installed = this.welcomesInstalled.delete(groupId);
             // A KEY GROUP'S WELCOME IS NOT A CONVERSATION'S, and the listener below is the
             // conversation layer: it writes a sidebar row for any group it does not hold one for,
             // then restores, reconciles and loads history for it. A key group is in the set this
@@ -3172,7 +3182,7 @@ export abstract class BaseMlsService implements IMlsService {
                 `[QUEUE] Welcome for key group ${groupId.slice(0, 8)}... - not announced to the conversation layer`
               );
             } else {
-              this.welcomeProcessedCallback?.(groupId);
+              this.welcomeProcessedCallback?.(groupId, installed);
               // A re-admission's Welcome is what makes a `pending` conversation active again: a
               // lost invitation that waited for it can be re-planned now.
               this.replanOwedInvitationsIn(groupId, 'Welcome processed');
@@ -3205,6 +3215,10 @@ export abstract class BaseMlsService implements IMlsService {
             // is still unknown, so the handler records it against that group and the Welcome that
             // eventually lands re-fetches it - the seam that exists for exactly this.
             if (groupId) this.messageScheduler.releaseWelcomeBuffer(groupId, 'Welcome failed');
+            // And the install mark is read here too - ONCE, whatever happened: a handler that threw
+            // after installing announces nothing, and its mark left behind would make the next
+            // redelivery look like a fresh join. The register owed is durable and asks anyway.
+            if (groupId) this.welcomesInstalled.delete(groupId);
           } else {
             const exFlags = {
               isWelcome: msg.isWelcome,

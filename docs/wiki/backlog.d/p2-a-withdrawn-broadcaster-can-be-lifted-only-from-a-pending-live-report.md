@@ -2,6 +2,8 @@
 
 target: 1.7.0
 
+_2026-11-17, scope cut: KEPT in `1.7.0` - the lift control and its toasts are new in `1.7.0` (a regression of that version); one fix with [the staff view of a standing](p2-no-staff-view-of-a-broadcaster-s-standing-without-a-report.md)._
+
 Read on dev, `1.7.0-alpha.8`, 2026-11-17 ([readings](../device-verification.md#the-phone-readings-of-2026-11-17-170-alpha8-both-phones-one-sitting)). The lift control ("Rétablir le droit",
 `ModerationLiveBlock`) renders only inside a pending report row whose content is a live
 (`/admin/moderation`, `pendingReports`); resolved rows are drawn as one line with no block. A

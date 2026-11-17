@@ -272,6 +272,7 @@ import {
 } from './sessionConnection';
 import { startSyncWatchdogImpl } from './sessionWatchdogs';
 import { takeKeyGroupPushJoins } from '$lib/utils/graine/keyGroupPushJoins';
+import { takeBackgroundJoins } from '$lib/utils/chat/backgroundJoins';
 import { drainNseOutcomes } from '$lib/mobile/nseOutcomes';
 import { drainNativePushLog } from '$lib/mobile/nativePushLog';
 import { uploadClassFor } from '$lib/reels/chatReelWriter';
@@ -1991,6 +1992,10 @@ export async function loginImpl(
     // 26): their trees are in the state just loaded, their registry rows are not - until this.
     // Info level: one line per ledger entry at start, each a decision a device reading must name.
     await takeKeyGroupPushJoins(mlsService, (line) => Log.i('LOGIN', line));
+    // And the CONVERSATIONS it joined: each owes its register (`registerOwed.ts`) as one the page
+    // joined does, and its redelivered Welcome is taken as the admission it was (`backgroundJoins.ts`).
+    // After the registry restore above, which is what tells a key group apart; before the drain.
+    await takeBackgroundJoins(mlsService, ctx.getUserId(), (line) => Log.i('LOGIN', line));
     stopIfSignedOut('distribution-groups');
     // What the iOS notification extension did while the app was shut: decrypted, fell back, timed
     // out or killed - one `[NSE_OUTCOME]` line each (`nseOutcomes.ts`). Not awaited: nothing below
@@ -2598,7 +2603,7 @@ export async function loginImpl(
     // calling it here before the WebSocket is opened is redundant.
 
     if ('onWelcomeProcessed' in mlsService) {
-      (mlsService as any).onWelcomeProcessed(async (groupId?: string) => {
+      (mlsService as any).onWelcomeProcessed(async (groupId?: string, installed?: boolean) => {
         if (groupId) {
           cb.log(`[SYNC] Welcome processed for ${groupId}, refreshing...`);
           if (!cb.conversations.has(groupId)) {
@@ -2620,12 +2625,16 @@ export async function loginImpl(
             await reportRejectionOnce(cb.loadAndRestoreConversations(), (e) =>
               cb.log(`[WARN] Error resyncing convs (Welcome): ${e}`)
             );
-            // Fresh join: the Welcome lands us at the current epoch with no pre-join history. The
-            // inviter pushes a bundle on the foreground add path, but its background twin
-            // (send-welcome-and-commit) does not, so we compare here as well - which costs one
-            // frame when the bundle already arrived, and repairs the group when it did not.
-            await reconcileGroup(mlsService, groupId, cb.log);
           }
+          // FRESH JOIN: the Welcome lands us at the current epoch with no pre-join history, and our
+          // own reconciliation is what brings it - the inviter's push carries the conversation's
+          // state and no message since 2026-11-17, and a device it never reached is owed even that
+          // (`registerOwed.ts`: this probe asks for it). Run for every Welcome that INSTALLED the
+          // group - a fact the handler records (`noteWelcomeInstalled`), not the row: inside the
+          // branch above it ran only when the envelope's id differed from the joined one, because the
+          // Welcome handler has already written the joined group's row by the time this callback
+          // runs. A redelivered Welcome of a group already held joins nothing and asks nothing.
+          if (installed) await reconcileGroup(mlsService, groupId, cb.log);
           cb.onLoadHistoryForConversation(groupId, groupId).catch((e) =>
             cb.log(`[WARN] Error refreshing conv ${groupId}: ${e}`)
           );

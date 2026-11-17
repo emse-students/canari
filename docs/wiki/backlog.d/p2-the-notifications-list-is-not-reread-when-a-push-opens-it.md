@@ -2,6 +2,8 @@
 
 target: 1.7.0
 
+_2026-11-17, scope cut: KEPT in `1.7.0` - the `onMount`-only read predates `v1.6.12`, but the pushes that met it, `live_suspended` and `live_withdrawn`, are new in `1.7.0` ([decisions](owner-decisions-of-2026-11-17.md))._
+
 Read on the Mi 9T, `1.7.0-alpha.8`, 2026-11-17 ([readings](../device-verification.md#the-phone-readings-of-2026-11-17-170-alpha8-both-phones-one-sitting)): the app in the background on
 `/notifications`, the `live_suspended` and then the `live_withdrawn` push tapped. The page logged
 `[notifNav] deep link received: fr.emse.canari://notifications -> /notifications` and the resume

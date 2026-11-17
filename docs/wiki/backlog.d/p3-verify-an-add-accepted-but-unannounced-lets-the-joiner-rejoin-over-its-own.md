@@ -1,6 +1,8 @@
 ## P3 - an accepted but unannounced Add: audit the adder paths, then one rig row
 
-target: 1.7.0
+target: 1.7.1
+
+_2026-11-17: moved to 1.7.1 by the owner's 2026-11-17 scope cut ([decisions](owner-decisions-of-2026-11-17.md))._
 
 A joiner decides its door from its membership row (`readWelcomeOwedFromRow`). An Add the server
 ACCEPTED whose answer the adder lost leaves the seat with `admittedAtEpoch` and the joiner's leaf in

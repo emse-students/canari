@@ -96,6 +96,27 @@ answer to a keyed ask is refused at error, an ask with no `answerKey` is malform
 nothing (as one with no `requestId` is, D211), `noteHistoryAsk`'s `null` secret goes, and so does
 this entry.
 
+### Removal once `minClientVersion` passes the first stable carrying it - the bound on register asks (2026-11-17)
+
+**Site:** `REGISTER_ASKS_MAX`, `noteRegisterAsked` and `endSpentRegisterAsks` (`registerOwed.ts`),
+called from `sendHistoryProbe` (`groupActions.ts`).
+**What it humours:** a responder older than the register ask
+([history-answer-addressing](protocols/history-answer-addressing.md#the-newcomer-asks-for-its-register-2026-11-17))
+ignores `register` and answers the digest alone - or, its store matching ours, sends nothing: no
+register and no decline. Such an ask stays counted, and after five unanswered asks the newcomer stops
+asking, said at warn. A responder on this build declines instead, and its FIRST decline gives its
+ask back (later ones from the same device count like silence), so at most five asks plus one per
+other device ever leave; the asking also ends when every other device of the tree has declined.
+**The cost while it stands:** a newcomer whose only register holders run an older build asks five
+times (a digest instead of the state key each time), keeps the nicknames it had, and declines -
+never answers empty - while it has taken none.
+**Removal condition:** `minClientVersion` at or above the first stable carrying the register ask, on
+both estates. Every responder then answers or declines `register`; the bound stays (a server that
+cannot address) but its line is raised from warn to error, since only a defect reaches it - in the
+same pull request as the sealed-answer refusal
+([planned](backlog.d/p3-a-history-answer-is-sealed-or-refused-once-the-floor-seals.md)) - and this
+entry goes.
+
 ### Removal once `minClientVersion` passes the first stable carrying it - the iOS fold of the app's former seed mirror (2026-11-17)
 
 **Site:** `fold_legacy_seed_mirror` and its call in `seed_mirror_home` (`frontend/src-tauri/src/commands/push.rs`).
@@ -1320,18 +1341,18 @@ to close what PKCE alone does not.
 
 ### No date yet - the exclusions route answered without `withheld`, by a server older than 2026-10-22
 
-**Sites:** `entitledHistorySelection` (the inviter's push) and `dropOwnExcludedMessages` (the
-receiver), both in `frontend/src/lib/utils/chat/historyEntitlement.ts`, on `WithheldUnsupportedError`
-(thrown by `MlsDeliveryApi.getGroupWithheld`) and on nothing else.
+**Site:** `dropOwnExcludedMessages` (the receiver), in
+`frontend/src/lib/utils/chat/historyEntitlement.ts`, on `WithheldUnsupportedError` (thrown by
+`MlsDeliveryApi.getGroupWithheld`) and on nothing else. The push's site (`entitledHistorySelection`,
+with its once-per-session accusation) was DELETED on 2026-11-17: the push carries no message since,
+so it reads no withheld set
+([history-answer-addressing](protocols/history-answer-addressing.md#what-is-not-sealed-the-inviters-join-push---so-it-carries-no-message-2026-11-17)).
 **Shim (2026-10-22):** a server that predates the field answers the exclusions route without
-`withheld`, which is an ordinary state while a store build runs ahead of production. Both sites then
-do exactly what they did before the field existed. The push filters on the union of gaps, so a
-continuous member's new device and a 1:1 keep their restore. The receiver filters on its own gaps.
-**What it costs:** in that window a genuine newcomer to a group conversation is still pushed what
-preceded their arrival - the leak the field exists to close, unchanged from before it. That is why
-the push's branch is a FALLBACK and accuses: one `console.error` per session. The receiver's line is
-per bundle. Every other failure of the read still sends and ingests nothing.
-**Removal condition:** every estate's chat-delivery answers `withheld`; then both branches go and the
+`withheld`, which is an ordinary state while a store build runs ahead of production. The receiver
+then filters on its own gaps, as it did before the field existed.
+**What it costs:** nothing on the sending side any more. The receiver's line is per bundle. Every
+other failure of the read still ingests nothing.
+**Removal condition:** every estate's chat-delivery answers `withheld`; then the branch goes and the
 error is an ordinary refusal. A server version, not a client floor.
 
 ### No date yet - the exclusions route answered without `addressedAnswers`, by a server older than step A
@@ -1341,7 +1362,7 @@ error is an ordinary refusal. A server version, not a client floor.
 ([history-answer-addressing](protocols/history-answer-addressing.md), rule 2).
 **Shim (2026-10-22):** a server that predates step A refuses an addressed conversation frame, so
 every history answer - the push, the diff, the scrollback - is sent as the broadcast it was before,
-filtered on the union of gaps (plus the invitee's span on a push).
+filtered on the union of gaps (the push carries no message since 2026-11-17).
 **What it costs:** against such a server the answer is a broadcast, filtered on the union of gaps
 and, on the receiving side, on that receiver's own windows. It is a FALLBACK and accuses: one
 `console.error` per session.
