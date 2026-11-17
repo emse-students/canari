@@ -2,6 +2,8 @@
 
 target: 1.7.0
 
+_2026-11-17, scope cut: KEPT in `1.7.0` - the paths it names changed since `v1.6.12`: `git log v1.6.12..origin/main` on `useChannelWorkspaces.svelte.ts` and `workspaceSnapshot.ts` lists #3676, #3682 and #3687 (2026-11-16), and `ChatBackgroundService.svelte` #3704 and #3725 ([decisions](owner-decisions-of-2026-11-17.md))._
+
 Two observations of 2026-11-17 on `1.7.0-alpha.8` ([readings](../device-verification.md#the-phone-readings-of-2026-11-17-170-alpha8-both-phones-one-sitting)), cause not established:
 
 - **iPhone 12 (`gamma`)**: `gamma` had joined a community from its web seat; the iPhone app, brought

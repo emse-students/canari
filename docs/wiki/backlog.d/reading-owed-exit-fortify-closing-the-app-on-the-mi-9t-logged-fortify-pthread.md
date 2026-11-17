@@ -1,6 +1,8 @@
 ## P3 - EXIT-FORTIFY: closing the app on the Mi 9T logs `FORTIFY: pthread_mutex_lock called on a destroyed mutex` from the render thread
 
-target: 1.7.0
+target: 1.7.1
+
+_2026-11-17: moved to 1.7.1 by the owner's 2026-11-17 scope cut ([decisions](owner-decisions-of-2026-11-17.md))._
 
 **What was seen:** closing the app on the Mi 9T logged `FORTIFY: pthread_mutex_lock called on a
 destroyed mutex`, recorded as a normal exit (`v1.3.1-alpha.5`, [device-readings](../device-readings-2026-10.md), "the stable gate", #2178).

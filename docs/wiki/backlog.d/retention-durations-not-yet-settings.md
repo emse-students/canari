@@ -1,6 +1,8 @@
 ## P2 - the retention durations a sweep applies are not yet admin settings
 
-target: 1.7.0
+target: 1.7.1
+
+_2026-11-17: moved to 1.7.1 by the owner's 2026-11-17 scope cut ([decisions](owner-decisions-of-2026-11-17.md))._
 
 The owner decided on 2026-11-14 that every retention duration becomes a platform admin setting, the
 privacy policy rendering the values in force, a lowered duration applying to new content only. Four
