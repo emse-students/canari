@@ -19,7 +19,7 @@ import { send } from '../chat.mjs';
 import { armFault } from '../fault.mjs';
 import { closeOverlays, openGroup } from '../groupnav.mjs';
 import { checkInvariant, receivedOn } from '../invariant.mjs';
-import { KILL3_WINDOWS, KILL_BLOCKED, KILL_ROWS, UNSENT_LABELS, WINDOWS, kill3Outcome, kill3WindowOf, kill3WindowsOwn, cookieCommitWaitMs, delayOf, killRunsOwn, panelMissing, removalBoundOwn, runCommits, runOutcome, stageKillsOwn, strayCommits, strayCommitsOwn, welcomeLines, welcomeOnceOwn, windowOf } from '../killrows.mjs';
+import { KILL3_WINDOWS, KILL_BLOCKED, KILL_ROWS, UNSENT_LABELS, WINDOWS, kill3Outcome, kill3WindowOf, revivedAccusations, kill3WindowsOwn, cookieCommitWaitMs, delayOf, killRunsOwn, panelMissing, removalBoundOwn, runCommits, runOutcome, stageKillsOwn, strayCommits, strayCommitsOwn, welcomeLines, welcomeOnceOwn, windowOf } from '../killrows.mjs';
 import { SITE } from '../site.mjs';
 import { activeSeats, onRoster } from '../ccrows.mjs';
 import {
@@ -43,7 +43,7 @@ import { errorDetail, finishObserved, keepConsoles, record } from '../results.mj
 import { composeVerdict, invariantDetail, rowMessageMark } from '../rowkit.mjs';
 import { commitSequence, settleNarration } from '../settlerows.mjs';
 import { RM8_W1_NARRATION } from '../offlinerows.mjs';
-import { GROUP_CREATION_NARRATION, consoleDump, consoleLines, report } from '../watch.mjs';
+import { GROUP_CREATION_NARRATION, consoleDump, consoleLines, consoleSinceAttach, report } from '../watch.mjs';
 import { addMembers, openGroupSettings, removeMember } from './addmember.mjs';
 import { killSeat, reviveSeat } from './reopen.mjs';
 
@@ -192,9 +192,10 @@ async function killRun(c, i, { window = null, delayMs = 0, fraction = null, wind
   const { revived, serverEpoch, caughtUpMs } = await revivingKeepsDying(`${killer}-run${i + 1}`, dying, () => reviveAndSettle(c, seat, spec.kill, `${id}:${killer}#${i + 1}`, fromEpoch), killed);
   const seq = runCommits(commitSequence(commitLines(c.group.id, runStart)), fromEpoch);
   const { outShown, inShown } = await trafficBothWays(c, seat, other, i);
-  const judged = runOutcome({ window: window ?? 'stage', seq, fromEpoch, serverEpoch, caughtUpMs, outShown, inShown });
+  const revivedConsole = consoleSinceAttach(seat.cx);
+  const judged = runOutcome({ window: window ?? 'stage', seq, fromEpoch, serverEpoch, caughtUpMs, outShown, inShown, accusations: revivedAccusations(revivedConsole) });
   judged.assertions.push(strayCommitsOwn(strays, i === 0 ? 'before the first run armed anything' : `between run ${i} and run ${i + 1}`));
-  const consoles = keepConsoles(id, { [`${killer}-run${i + 1}-dying`]: dying, [`${killer}-run${i + 1}-revived`]: consoleDump({ page: { cx: seat.cx } }).page ?? '' });
+  const consoles = keepConsoles(id, { [`${killer}-run${i + 1}-dying`]: dying, [`${killer}-run${i + 1}-revived`]: revivedConsole.join('\n') });
   const run = { run: i + 1, window: window ?? 'stage', delayMs, fraction, msAfterSend: Date.now() - sentAt, cookieWaitMs, heldAtKill, acceptedAtKill, killed, revived, dead, strays, consoles, endAt: now(), ...judged };
   console.log(`[${id}] run ${i + 1}: ${run.window}${fraction === null ? ` +${delayMs} ms` : ` at ${fraction}`} -> ${judged.outcome}${judged.assertions.every((a) => a.ok) ? '' : ' (FAILING)'}`);
   return run;
@@ -251,9 +252,12 @@ async function kill3Run(c, i, { window, delayMs, prevEnd }) {
   // READ LAST, after the traffic both ways: a resend the revival owes has had its moment by then.
   const killedShown = (await receivedOn(receiving ? seat.cx : other.cx, mark)).count;
   const seq = runCommits(commitSequence(commitLines(c.group.id, runStart)), fromEpoch);
-  const judged = kill3Outcome({ window, killedShown, outShown, inShown, accepts: accepts(seq), moved: serverView(c.group.id).activeEpoch - fromEpoch, caughtUpMs, unsentLabel: unsent?.label ?? null });
+  // THE REVIVED PAGE'S WHOLE CONSOLE, the catch-up its PIN unlock started included: the window
+  // `reviveSeat` watches opens after the unlock, and a lost seen-mark is accused at the catch-up.
+  const revivedConsole = consoleSinceAttach(seat.cx);
+  const judged = kill3Outcome({ window, killedShown, outShown, inShown, accepts: accepts(seq), moved: serverView(c.group.id).activeEpoch - fromEpoch, caughtUpMs, unsentLabel: unsent?.label ?? null, accusations: revivedAccusations(revivedConsole) });
   judged.assertions.push(strayCommitsOwn(strays, i === 0 ? 'before the first run armed anything' : `between run ${i} and run ${i + 1}`));
-  const consoles = keepConsoles(id, { [`W1-run${i + 1}-dying`]: dying, [`W1-run${i + 1}-revived`]: consoleDump({ page: { cx: seat.cx } }).page ?? '' });
+  const consoles = keepConsoles(id, { [`W1-run${i + 1}-dying`]: dying, [`W1-run${i + 1}-revived`]: revivedConsole.join('\n') });
   const run = { run: i + 1, window, delayMs, cookieWaitMs, killed, revived, dead, sendGesture, unsent, strays, consoles, endAt: now(), ...judged };
   console.log(`[${id}] run ${i + 1}: ${window} +${delayMs} ms -> ${judged.outcome}${judged.assertions.every((a) => a.ok) ? '' : ' (FAILING)'}`);
   return run;
