@@ -267,8 +267,6 @@ export function useConversations() {
   let sendError = $state('');
 
   // ── Input state ───────────────────────────────────────────────────────────
-  let newContactInput = $state('');
-  let newGroupInput = $state('');
   let newChannelInput = $state('');
   let chatContainer = $state<HTMLElement | undefined>(undefined);
 
@@ -2588,7 +2586,41 @@ export function useConversations() {
   /** Invites one or more users (by ID) to the currently selected group, then refreshes the member list. No-op for DMs or channels. */
   async function inviteMembersToCurrentGroup(memberIds: string[], ctx: ConversationContext) {
     if (!selectedContact) return;
-    const convo = conversations.get(selectedContact);
+    await inviteMembersToGroupAt(selectedContact, memberIds, ctx);
+  }
+
+  /**
+   * Creates a group of `memberIds` from the "Nouvelle discussion" panel - named `nameRaw`, or
+   * UNNAMED when it is blank (owner, 2026-11-17: the members' first names are then drawn on every
+   * device, and nothing is stored) - and invites them into it.
+   *
+   * Two commits, in the order every creation already takes: the creation adds this account's own
+   * devices, then the invitation adds the people chosen. The invitation's outcome is told by
+   * `inviteMembersToGroupAt` like any other (`reportBulkAdditionOutcome`), so a person it could not
+   * reach is named, and the group the creator now holds can be completed from its panel. Addressed
+   * by the KEY the creation answered, never by whatever happens to be selected by then.
+   */
+  async function createGroupWithMembers(
+    nameRaw: string,
+    memberIds: string[],
+    ctx: ConversationContext
+  ): Promise<ConversationOutcome> {
+    const outcome = await createNewGroup(nameRaw, ctx);
+    if (!outcome.ok || outcome.key === null) return outcome;
+    ctx.log(
+      `[GROUP] created ${nameRaw.trim() ? 'a named' : 'an unnamed'} group; inviting the ${memberIds.length} person(s) chosen`
+    );
+    await inviteMembersToGroupAt(outcome.key, memberIds, ctx);
+    return outcome;
+  }
+
+  /** Invites one or more users (by ID) to the group stored at `key`, then refreshes the member list. No-op for DMs or channels. */
+  async function inviteMembersToGroupAt(
+    key: string,
+    memberIds: string[],
+    ctx: ConversationContext
+  ) {
+    const convo = conversations.get(key);
     if (!convo) return;
     if ((convo.conversationType ?? 'group') !== 'group') return; // DMs and channels cannot be invaded
     const normalized = [
@@ -2921,8 +2953,7 @@ export function useConversations() {
         showToast(chat_unopenable_start_again_failed(), 'error');
         return;
       }
-      // `createNewGroup` selected the new group, so the invitation goes to it.
-      if (people.length > 0) await inviteMembersToCurrentGroup(people, ctx);
+      if (people.length > 0) await inviteMembersToGroupAt(outcome.key, people, ctx);
     } catch (e) {
       ctx.log(`[NO_HOLDER] start again failed: ${String(e)}`);
       showToast(chat_unopenable_start_again_failed(), 'error');
@@ -3147,20 +3178,6 @@ export function useConversations() {
     set sendError(v: string) {
       sendError = v;
     },
-    /** Controlled value of the "new direct conversation" input field. */
-    get newContactInput() {
-      return newContactInput;
-    },
-    set newContactInput(v: string) {
-      newContactInput = v;
-    },
-    /** Controlled value of the "new group" input field. */
-    get newGroupInput() {
-      return newGroupInput;
-    },
-    set newGroupInput(v: string) {
-      newGroupInput = v;
-    },
     /** Controlled value of the "new channel" input field. */
     get newChannelInput() {
       return newChannelInput;
@@ -3221,6 +3238,7 @@ export function useConversations() {
     createNewGroup,
     /** Invites one or more users to the currently selected group. */
     inviteMembersToCurrentGroup,
+    createGroupWithMembers,
     approveJoinRequest,
     declineJoinRequest,
     /** Opens or creates a direct 1-to-1 conversation with the given user. */

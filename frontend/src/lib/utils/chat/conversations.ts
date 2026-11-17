@@ -25,6 +25,7 @@ import type { IMlsService } from '$lib/mlsService';
 import type { Conversation, ConversationLifecycle } from '$lib/types';
 import { getUserDisplayNameSync, peekUserDisplayName } from '$lib/utils/users/displayName';
 import { foldForSearch } from '$lib/utils/textFold';
+import { unnamedGroupLabelOf } from './groupTreeMembers';
 import { forgetGroupReconciliation } from './historyReconcile';
 import { mergeMessagePage } from './messageMerge';
 import { countingReadPoint, derivedUnreadCount } from './readState';
@@ -661,14 +662,20 @@ export function resolveConversationListPresentation(
   }
 
   const fb = input.name.trim();
+  // A GROUP WITH NO NAME IS DRAWN BY ITS MEMBERS' FIRST NAMES (owner, 2026-11-17), read from this
+  // device's own copy of the tree and its own name cache - nothing is stored or sent, and the label
+  // follows who joins and leaves (`groupTreeMembers.ts`). A salon is never unnamed.
+  const membersLabel = isChannelConversationId(input.id)
+    ? null
+    : unnamedGroupLabelOf(input.id, userId);
   return {
     conversationType: 'group',
     contactId: input.id,
     // The last resort, and the ONE place the word is written now that the Welcome handler's early
     // placeholder no longer invents it: a raw id is not a name, and saying "Groupe" is the honest
-    // answer. Through Paraglide because it reaches a reader's screen - a `.ts` util is not an
-    // exemption, it is just where nothing reminds you.
-    displayName: fb && !isRawId(fb) ? fb : m.conversation_unnamed_group(),
+    // answer while the tree is unread or holds nobody else. Through Paraglide because it reaches a
+    // reader's screen - a `.ts` util is not an exemption, it is just where nothing reminds you.
+    displayName: membersLabel ?? (fb && !isRawId(fb) ? fb : m.conversation_unnamed_group()),
     displayNameResolved: true,
   };
 }

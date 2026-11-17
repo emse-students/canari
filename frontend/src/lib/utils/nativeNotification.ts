@@ -143,15 +143,21 @@ export async function postNativeMessageNotification(
  * `contactName` as the raw `channel_<uuid>` id - the key seed routing reads - and puts the
  * community's actual channel name in `name`. Preferring `contactName` there titled every channel
  * notification with its own conversation id.
+ *
+ * `groupTitle` is a GROUP's title as the list draws it (`resolveConversationListPresentation`),
+ * and wins when given: an unnamed group's row holds no name, or only its id, and the list names it
+ * by its members' first names (owner, 2026-11-17) - a notification titled otherwise would name the
+ * same conversation differently from the row it opens.
  */
 export function notificationGroupName(
   conversationType: 'direct' | 'group' | 'channel' | undefined,
   contactName: string,
-  name: string
+  name: string,
+  groupTitle?: string | null
 ): string {
   if (conversationType === 'direct') return '';
   if (conversationType === 'channel') return name || contactName;
-  return contactName || name;
+  return groupTitle || contactName || name;
 }
 
 /**

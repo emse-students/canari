@@ -2230,14 +2230,17 @@ export class MlsDeliveryApi {
     }
   }
 
-  /** Creates a new group row on the delivery service and returns the assigned `groupId`. */
-  async createRemoteGroup(name: string, isGroup: boolean): Promise<string> {
+  /**
+   * Creates a new group row on the delivery service and returns the assigned `groupId`. A `null`
+   * name (an unnamed group) sends no `name` at all, and the row's column stays NULL.
+   */
+  async createRemoteGroup(name: string | null, isGroup: boolean): Promise<string> {
     try {
       const res = await this.f(`${this.historyUrl}/api/mls/groups`, {
         method: 'POST',
         headers: await this.auth({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
-          name,
+          ...(name !== null ? { name } : {}),
           createdBy: this.userId,
           isGroup,
           creatorDeviceId: this.deviceId,

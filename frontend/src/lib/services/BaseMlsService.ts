@@ -85,6 +85,7 @@ import { adoptLegacyLedgers } from '$lib/mls-client/stateLedgerMigration';
 import { sealedFrameEpoch } from '$lib/mls-client/sealedFrameEpoch';
 import { fingerprintKeyPackage, type DatedKeyPackage } from '$lib/mls-client/keyPackages';
 import { noteOwnLeafRefreshed, refreshLeafIfDue } from '$lib/mls-client/leafRefresh';
+import { noteGroupTreeChanged } from '$lib/utils/chat/groupTreeMembers';
 import { UnpublishedBranchError } from '$lib/mls-client/publishedBranch';
 import {
   MlsStateUnreadableNowError,
@@ -5006,7 +5007,7 @@ export abstract class BaseMlsService implements IMlsService {
     this.addLockExpiryWakes.clear();
   }
 
-  async createRemoteGroup(name: string, isGroup = true): Promise<string> {
+  async createRemoteGroup(name: string | null, isGroup = true): Promise<string> {
     return this.delivery.createRemoteGroup(name, isGroup);
   }
 
@@ -6753,6 +6754,8 @@ export abstract class BaseMlsService implements IMlsService {
     // periodic one is not owed again for an interval. Dated HERE, the one merge both the transaction
     // and a settlement go through.
     await this.noteOwnLeafReplaced(submission.groupId, submission.baseEpoch + 1);
+    // An Add or a Remove of our own moves who the tree holds: an unnamed group's label re-reads it.
+    noteGroupTreeChanged(submission.groupId, 'a commit of this device');
     return recipients;
   }
 

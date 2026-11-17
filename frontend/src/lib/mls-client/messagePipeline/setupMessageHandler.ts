@@ -9,6 +9,7 @@ import {
   resolveDirectPeerId,
   restoredConversationRow,
 } from '$lib/utils/chat/conversations';
+import { noteGroupTreeChanged } from '$lib/utils/chat/groupTreeMembers';
 import { decodeAppMessage, type IAppMessage } from '$lib/proto/codec';
 import { recordAuthorship } from '$lib/crypto/messageAuthorship';
 import { canonicalUserId } from '$lib/mls-client/leafIdentity';
@@ -795,6 +796,7 @@ async function handleWelcome(args: WelcomeArgs): Promise<boolean> {
 
       // Persist immediately after Welcome (epoch initialised).
       statePersister.persistNow();
+      noteGroupTreeChanged(joinedGroupId, 'a Welcome');
 
       // A stray in-memory duplicate for the same DM peer (independent group created concurrently)
       // is reconciled by upsertConversation (below): it re-keys the Map entry, and every stored row
@@ -1281,6 +1283,8 @@ async function handleKnownGroup({
       // The commit consumed its generation the moment it merged; say so first.
       noteConsumed();
       statePersister.persistNow();
+      // The commit may have moved who the tree holds: an unnamed group's label is re-read from it.
+      noteGroupTreeChanged(groupId, 'an inbound commit');
       // THE COMMIT NAMED US, SO THIS IS WHERE THE EVICTION IS LEARNT. A Remove commit carrying our
       // own leaf leaves the group inactive the instant it merges, and asking is one cheap call on a
       // path that only runs for commits. Before this, the fact was discarded and the client found

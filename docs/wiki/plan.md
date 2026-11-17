@@ -129,6 +129,10 @@ earliest version, as a checklist.
 
 - [CanaReels sent to community salons (RC-8): the salon send path and the salon rows of "Envoyer à..."](backlog.d/reels-in-salons.md)
 
+**P2 - correctness**
+
+- [P2 - one "Nouvelle discussion" panel, and groups unnamed by default (owner, 2026-11-17)](backlog.d/p2-one-new-discussion-panel-and-unnamed-groups.md)
+
 ## 1.8.0
 
 **Chantiers, decisions and questions (no severity)**

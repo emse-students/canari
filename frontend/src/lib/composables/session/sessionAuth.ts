@@ -5,6 +5,7 @@
  * Each function receives `ctx: SessionContext` instead of the closure,
  * and `cb: ChatSessionCallbacks` to interact with conversations / UI.
  */
+import { bindGroupTreeReader } from '$lib/utils/chat/groupTreeMembers';
 import { forgetConversationNicknames } from '$lib/utils/users/conversationNicknames.svelte';
 import { forgetConversationPins } from '$lib/stores/pinStore.svelte';
 import { clearConversationAnchors } from '$lib/utils/chat/scrollAnchors';
@@ -2283,6 +2284,8 @@ export async function loginImpl(
         patchCallRecordServerTime(getCallSystemMessageContext(), groupId, callId, serverTimestamp),
     });
 
+    // An unnamed group is labelled by who its tree holds, read from THIS session's MLS state.
+    bindGroupTreeReader((groupId) => mlsService.getGroupMemberIdentities(groupId));
     setupMessageHandler({
       mlsService,
       storage: ctx.getStorage(),
@@ -3717,6 +3720,8 @@ export function tearDownLiveSession(
   uiKeptLatch.reset();
   cb.setSelectedContact(null);
   setCallSystemMessageContext(null);
+  // The trees an unnamed group's label was read from belong to the account that just left.
+  bindGroupTreeReader(null);
   // Decrypted Graine seeds and the channel-to-community map belong to the account that just left.
   setGraineRuntime(null);
   // So are the seed asks parked for a drain (sender ids, request ids); the MLS service's destroy

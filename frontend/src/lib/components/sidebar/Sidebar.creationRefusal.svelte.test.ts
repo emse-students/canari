@@ -1,16 +1,16 @@
 // @vitest-environment happy-dom
 /**
- * A REFUSED CREATION KEEPS THE PANEL OPEN AND SAYS WHY.
+ * "NOUVELLE DISCUSSION" IS ONE PANEL, AND IT ANSWERS TO THE CREATION, NOT TO THE CLICK.
  *
- * `createNewGroup` and `startNewConversation` used to answer `void`, so this panel closed on every
- * submit: the modal shut, the sidebar was unchanged, the conversation was not there, and the only
- * trace was a console line. Now they answer a typed refusal and this component decides what to do
- * with it, which is the behaviour pinned here - the discriminators themselves are pinned in
- * `groupCreation.refusal.test.ts`.
+ * People are chosen first (owner, 2026-11-17): one person opens the conversation with them, several
+ * open the name step, and an empty name creates an UNNAMED group. Whatever was created, a refusal
+ * keeps the panel open and says why - `createNewGroup` and `startNewConversation` answer a typed
+ * refusal, and this component decides what to do with it. The discriminators themselves are pinned
+ * in `groupCreation.refusal.test.ts`.
  *
  * Mounting the SIDEBAR rather than the modal is the point. The modal has no idea whether a creation
- * worked; the decision to stay open, to keep the typed text, and to close on success all live in
- * the component that makes the call, and a test of the modal alone would assert none of them.
+ * worked; the decision to stay open, to keep the choice, and to close on success all live in the
+ * component that makes the call, and a test of the modal alone would assert none of them.
  */
 import { describe, it, expect, afterEach, afterAll, vi } from 'vitest';
 
@@ -26,6 +26,15 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', async () => ({
   globalNotifs: {},
 }));
 
+// The rows draw no picture here: an avatar asks the network, and this suite is about the panel.
+vi.mock('$lib/components/shared/Avatar.svelte', () => ({ default: () => {} }));
+
+// Names are seeded below; a profile is never fetched in this suite.
+vi.mock('$lib/utils/users/displayName', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/utils/users/displayName')>()),
+  resolveUserDisplayName: async () => null,
+}));
+
 import { flushSync, mount, unmount, tick } from 'svelte';
 import { SvelteMap } from 'svelte/reactivity';
 import type { Conversation } from '$lib/types';
@@ -33,17 +42,14 @@ import type { ConversationOutcome } from '$lib/utils/chat/groupCreation';
 import Sidebar from './Sidebar.svelte';
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
 import { m } from '$lib/paraglide/messages';
+import { seedUserDisplayName } from '$lib/utils/users/displayName';
 
 const mounted: (() => void)[] = [];
 
 /**
  * The panel opens with a 220 ms `fly`, and every case here closes or unmounts long before that ends.
- *
- * Svelte cancels an interrupted transition; happy-dom's `Animation.cancel()` REJECTS the animation's
- * `finished` promise, and nothing in the app ever reads it - so an interrupted intro raises an
- * unhandled `AbortError` and the run exits 1 for a reason that belongs entirely to the environment.
- * Claiming the promise is the fix. Waiting the animation out instead would put a wall clock in five
- * tests to work around one of happy-dom's.
+ * happy-dom's `Animation.cancel()` REJECTS the animation's `finished` promise, which nothing in the
+ * app reads; claiming it keeps an environment artefact from failing the run.
  */
 afterAll(adoptTransitionAnimations());
 
@@ -52,21 +58,39 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
-/** Mounts an empty sidebar whose two creation callbacks answer whatever a case hands them. */
-function mountSidebar(answer: ConversationOutcome) {
-  const onCreateGroup = vi.fn(async () => answer);
-  const onAddContact = vi.fn(async () => answer);
+/** A 1:1 row with `peer`, so the panel offers them among the recent conversations. */
+function dmRow(peer: string, at: number): Conversation {
+  return {
+    id: `g-${peer}`,
+    name: `me::${peer}`,
+    contactName: peer,
+    conversationType: 'direct',
+    directPeerId: peer,
+    messages: [],
+    lifecycle: 'active',
+    mlsStateHex: null,
+    unreadCount: 0,
+    lastMessageAt: at,
+  } as Conversation;
+}
+
+/** Mounts a sidebar holding 1:1s with Alice and Bob, whose two callbacks answer what a case says. */
+function mountSidebar(answer: ConversationOutcome | Promise<ConversationOutcome>) {
+  seedUserDisplayName('alice', 'Alice Martin', 'Alice');
+  seedUserDisplayName('bob', 'Bob Durand', 'Bob');
+  const conversations = new SvelteMap<string, Conversation>([
+    ['g-alice', dmRow('alice', 2)],
+    ['g-bob', dmRow('bob', 1)],
+  ]);
+  const onCreateGroup = vi.fn((_name: string, _ids: string[]) => Promise.resolve(answer));
+  const onAddContact = vi.fn((_id: string) => Promise.resolve(answer));
   const target = document.createElement('div');
   document.body.appendChild(target);
   const app = mount(Sidebar, {
     target,
     props: {
-      conversations: new SvelteMap<string, Conversation>(),
+      conversations,
       selectedContact: null,
-      newContactInput: '',
-      newGroupInput: '',
-      onContactInputChange: () => {},
-      onGroupInputChange: () => {},
       onAddContact,
       onCreateGroup,
       onSelectConversation: () => {},
@@ -78,111 +102,160 @@ function mountSidebar(answer: ConversationOutcome) {
   return { onCreateGroup, onAddContact };
 }
 
-/** Clicks the first button whose visible text is exactly `label`. */
-function clickByText(label: string): void {
+/** The first button whose visible text is exactly `label`. */
+function buttonByText(label: string): HTMLButtonElement {
   const button = Array.from(document.querySelectorAll('button')).find(
     (b) => b.textContent?.trim() === label
   );
   if (!button) throw new Error(`no button labelled "${label}"`);
-  button.click();
+  return button;
+}
+
+function click(label: string): void {
+  buttonByText(label).click();
   flushSync();
 }
 
-/** Opens the panel on its group tab and submits `name`. */
-function submitGroup(name: string): void {
-  clickByText(m.chat_new_discussion_label());
-  document.querySelector<HTMLButtonElement>('#tab-group')!.click();
+/** Opens the panel from the sidebar header's "+". */
+function openPanel(): void {
+  document
+    .querySelector<HTMLButtonElement>(`[aria-label="${m.chat_new_discussion_label()}"]`)!
+    .click();
   flushSync();
-  const input = document.querySelector<HTMLInputElement>('#new-group-name')!;
-  input.value = name;
-  input.dispatchEvent(new Event('input', { bubbles: true }));
-  flushSync();
+}
+
+/** Opens the panel and chooses `names` among the recent conversations. */
+function choose(...names: string[]): void {
+  openPanel();
+  for (const name of names) click(name);
+}
+
+const nameField = () => document.querySelector<HTMLInputElement>('#new-group-name');
+const submitName = () =>
   document
     .querySelector<HTMLFormElement>('#new-group-form')!
     .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-}
-
-/** The panel is open exactly when its group form is in the document. */
-const panelIsOpen = () => document.querySelector('#new-group-form') !== null;
+const panelIsOpen = () => document.querySelector('#new-chat-search') !== null;
 const alertText = () => document.querySelector('[role="alert"]')?.textContent?.trim() ?? '';
 
-describe('the new-chat panel answers to the creation, not to the click', () => {
-  it('stays open and renders the refusal when the creation is declined', async () => {
-    const { onCreateGroup } = mountSidebar({ ok: false, reason: 'duplicate-group-name' });
+async function settle(): Promise<void> {
+  await tick();
+  flushSync();
+}
 
-    submitGroup('Equipe');
-    await tick();
+describe('one "Nouvelle discussion" panel', () => {
+  it('opens the conversation with the ONE person chosen', async () => {
+    const { onAddContact, onCreateGroup } = mountSidebar({ ok: true, key: 'g-alice' });
+    choose('Alice Martin');
+    click(m.chat_modal_start_discussion_button());
+    await settle();
+
+    expect(onAddContact).toHaveBeenCalledWith('alice');
+    expect(onCreateGroup).not.toHaveBeenCalled();
+    expect(panelIsOpen()).toBe(false);
+  });
+
+  it('asks for a name once SEVERAL are chosen, suggesting their first names greyed', () => {
+    mountSidebar({ ok: true, key: 'g-new' });
+    choose('Alice Martin', 'Bob Durand');
+    click(m.chat_modal_create_group_with_button({ count: 2 }));
+
+    const field = nameField()!;
+    expect(field.value).toBe('');
+    expect(field.placeholder).toBe(m.group_default_name_two({ first: 'Alice', second: 'Bob' }));
+  });
+
+  it('creates an UNNAMED group when the suggestion is kept', async () => {
+    const { onCreateGroup } = mountSidebar({ ok: true, key: 'g-new' });
+    choose('Alice Martin', 'Bob Durand');
+    click(m.chat_modal_create_group_with_button({ count: 2 }));
+    submitName();
+    await settle();
+
+    expect(onCreateGroup).toHaveBeenCalledWith('', ['alice', 'bob']);
+    expect(panelIsOpen()).toBe(false);
+  });
+
+  it('creates a named group when a name is typed', async () => {
+    const { onCreateGroup } = mountSidebar({ ok: true, key: 'g-new' });
+    choose('Alice Martin', 'Bob Durand');
+    click(m.chat_modal_create_group_with_button({ count: 2 }));
+    const field = nameField()!;
+    field.value = '  Equipe  ';
+    field.dispatchEvent(new Event('input', { bubbles: true }));
     flushSync();
+    submitName();
+    await settle();
 
-    expect(onCreateGroup).toHaveBeenCalledWith('Equipe');
+    expect(onCreateGroup).toHaveBeenCalledWith('Equipe', ['alice', 'bob']);
+  });
+
+  it('removes a person by their chip, and the action follows the count', async () => {
+    const { onAddContact } = mountSidebar({ ok: true, key: 'g-alice' });
+    choose('Alice Martin', 'Bob Durand');
+    document
+      .querySelector<HTMLButtonElement>(
+        `[aria-label="${m.chat_modal_remove_person_label({ name: 'Bob Durand' })}"]`
+      )!
+      .click();
+    flushSync();
+    click(m.chat_modal_start_discussion_button());
+    await settle();
+
+    expect(onAddContact).toHaveBeenCalledWith('alice');
+  });
+});
+
+describe('the panel answers to the creation, not to the click', () => {
+  it('stays open, keeps the name typed and renders the refusal when a group is declined', async () => {
+    mountSidebar({ ok: false, reason: 'duplicate-group-name' });
+    choose('Alice Martin', 'Bob Durand');
+    click(m.chat_modal_create_group_with_button({ count: 2 }));
+    const field = nameField()!;
+    field.value = 'Equipe';
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+    flushSync();
+    submitName();
+    await settle();
+
     expect(panelIsOpen()).toBe(true);
+    expect(nameField()!.value).toBe('Equipe');
     expect(alertText()).toBe(m.chat_modal_error_duplicate_group());
   });
 
-  it('keeps the text that was typed, so the member can read what was refused', async () => {
+  it('stays open on a refused 1:1 and keeps the person chosen', async () => {
     mountSidebar({ ok: false, reason: 'peer-has-no-device' });
+    choose('Alice Martin');
+    click(m.chat_modal_start_discussion_button());
+    await settle();
 
-    submitGroup('Equipe');
-    await tick();
-    flushSync();
-
-    expect(document.querySelector<HTMLInputElement>('#new-group-name')!.value).toBe('Equipe');
-  });
-
-  it('closes on success, because the sidebar row is the signal', async () => {
-    mountSidebar({ ok: true, key: 'g-new' });
-
-    submitGroup('Equipe');
-    await tick();
-    flushSync();
-
-    expect(panelIsOpen()).toBe(false);
+    expect(panelIsOpen()).toBe(true);
+    expect(alertText()).toBe(m.chat_modal_error_peer_has_no_device());
+    expect(document.querySelector('[data-testid="new-chat-chips"]')?.textContent).toContain(
+      'Alice Martin'
+    );
   });
 
   it('shows no refusal before one has happened', () => {
     mountSidebar({ ok: false, reason: 'creation-failed' });
-
-    clickByText(m.chat_new_discussion_label());
-
+    openPanel();
     expect(document.querySelector('[role="alert"]')).toBeNull();
   });
 
-  it('runs one creation per submit however many times the button is pressed', async () => {
+  it('runs one creation per submit however many times it is pressed', async () => {
     // The creation takes seconds. Without the busy gate a second press starts a SECOND group, and
     // the member who pressed twice because nothing happened ends up with two.
     let release: (v: ConversationOutcome) => void = () => {};
     const pending = new Promise<ConversationOutcome>((resolve) => {
       release = resolve;
     });
-    const onCreateGroup = vi.fn(() => pending);
-    const target = document.createElement('div');
-    document.body.appendChild(target);
-    const app = mount(Sidebar, {
-      target,
-      props: {
-        conversations: new SvelteMap<string, Conversation>(),
-        selectedContact: null,
-        newContactInput: '',
-        newGroupInput: '',
-        onContactInputChange: () => {},
-        onGroupInputChange: () => {},
-        onAddContact: async () => ({ ok: true, key: null }) as ConversationOutcome,
-        onCreateGroup,
-        onSelectConversation: () => {},
-        currentUserId: 'me',
-      },
-    });
-    mounted.push(() => unmount(app));
-    flushSync();
-
-    submitGroup('Equipe');
-    await tick();
-    flushSync();
-    // Second press, while the first is still in flight.
-    document
-      .querySelector<HTMLFormElement>('#new-group-form')!
-      .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-    await tick();
+    const { onCreateGroup } = mountSidebar(pending);
+    choose('Alice Martin', 'Bob Durand');
+    click(m.chat_modal_create_group_with_button({ count: 2 }));
+    submitName();
+    await settle();
+    submitName();
+    await settle();
 
     expect(onCreateGroup).toHaveBeenCalledTimes(1);
     release({ ok: true, key: 'g-new' });
