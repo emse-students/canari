@@ -2662,7 +2662,7 @@ export function useConversations() {
           reportDelegationRefusal(answer.reason);
           return;
         }
-        void reportBulkAdditionOutcome(answer.value).catch((e: unknown) =>
+        void reportBulkAdditionOutcome(answer.value, normalized).catch((e: unknown) =>
           console.warn(
             `[GROUP] the outcome of an invitation could not be told: ${String(e).slice(0, 120)}`
           )
@@ -2684,7 +2684,7 @@ export function useConversations() {
       });
       // NEVER A SILENT REFUSAL, NOR A SILENT PARTIAL ADD: the member is the only one who can retry an
       // invitation, for everybody or for the people it left out.
-      void reportBulkAdditionOutcome(outcome).catch((e: unknown) =>
+      void reportBulkAdditionOutcome(outcome, normalized).catch((e: unknown) =>
         console.warn(
           `[GROUP] the outcome of an invitation could not be told: ${String(e).slice(0, 120)}`
         )

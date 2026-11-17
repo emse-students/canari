@@ -6295,7 +6295,8 @@ as before. Either way `createGroupWithMembers` (`useConversations`) creates the 
 account's own devices, then invites the people chosen into it, addressed by the key the creation
 answered - two commits, the order every creation already took. An invitation that reaches only some
 of them is told by `reportBulkAdditionOutcome` like any other; the group exists and is completed
-from its panel.
+from its panel. An invitation that added NOBODY names everyone it invited, and one that met another
+device's add lock is owed rather than refused ([below](#nothing-takes-the-add-lock-it-does-not-commit-under-2026-11-17)).
 
 **Decisions taken here (reversible):**
 - **Layout**: the chosen people are removable chips ABOVE the search, the Messenger pattern; the
@@ -6307,6 +6308,61 @@ from its panel.
   in the panel the owner asked to simplify.
 - **The button** with several chosen says what it does and how many: "Créer un groupe avec N
   personnes" / "Create a group with N people". N counts the people chosen, not the creator.
+
+#### Nothing takes the add lock it does not commit under (2026-11-17)
+
+Read on `1.7.0-alpha.10`: a group created on the iPhone held its creator alone. The creation's own
+commit admitted the creator's other devices; the web seat processed its Welcome, and the
+group-ready sweep (`announceGroupReady` -> `processDeviceInvitationsLocally` ->
+`processPendingInvitations`) found the group's `pending` rows - the creator's devices not yet
+`active`, all already leaves of that very commit - and **took the group's add lock before reading
+a single row**, only to vouch for them. In that second the iPhone's invitation asked for the lock,
+was refused (`add-lock-busy`), and nobody was added.
+
+Every taker of the add lock, and when it takes it:
+
+| Caller | Takes the lock | What it commits under it |
+| --- | --- | --- |
+| `processPendingInvitations` (`actions.ts`), the sweep | **at the first row that needs an Add** (`takeLockForAnAdd`), after its leaf check and BEFORE its package is claimed; vouching, an ask raised for a member and a cleanup take none | the Add of a pending device NOT in the tree |
+| `handleWelcomeRequest` (`actions.ts`) | **once the Add is decided**: after the cooldown, the refused-device check and the anti-livelock limit (a refused lock is not counted as an attempt), before the package is claimed | the Add or replace answering a `welcome_request`; a package missing or refused by the vetting is still learned under it |
+| `processWelcomeRequestBackground` (Android FCM service) | on entry, after its "already refused from these bytes" check, before the package is claimed | the background answer; its native stage may still decline (`already-member`, `stale-epoch-known`, `foreground-active`), which only the stage - built from the claimed package - can tell. Left as it is: changing it means a native build, for a path that answers a request with an Add as its purpose; its `Thread.sleep` retry of the lock is a [backlog entry](../../backlog.d/p2-the-android-background-welcome-answer-retries-the-add-lock-on-a-clock.md) |
+| `createGroup` (`groupCreation.ts`) | before the creation's Add of the creator's other devices | that Add |
+| `processBulkAddition` (`groupCreation.ts`) | before the invitation's Add | the invitation |
+| `performDirectAdd` (`groupCreation.ts`) | before the 1:1's Add | the peer's and own devices |
+| `admitNewcomer` (`graine/admitNewcomer.ts`) | before the Add | a newcomer into a key-distribution group |
+
+A lazily taken lock decides nothing the eager one did: it never made the local tree current (a
+holder's commit may still be queued here when it releases) - the server's epoch gate does, and the
+Add staged on a moved tree is refused and rebuilt. A refused lock ends the sweep's pass for that
+group; its rows stay `pending` for the next sweep (`onGroupNotSwept`).
+
+**A REAL Add in that second is still possible** - a sibling answering a `welcome_request`, or
+adding a device it was owed - so **a member's FIRST invitation that meets another device's lock is
+OWED, never refused** (`add-lock-owed`). `processBulkAddition` hands `acquireAddLockAnswer` an
+`oweIfHeld` that states the invitation with its roster baseline (`owedInvitationOf`); on `held` the
+service records it (`oweInvitationOnHeldLock`, at the group's current epoch) BEFORE the refusal
+arms its wake. **The record merges, and a conclusion settles only what it covered**
+(`owedInvitations.ts`): two gestures owed at one epoch - this one and a kept commit lost at the same
+base, or a second invitation refused by the lock a drain holds - are one entry holding both people,
+and a re-plan that concludes removes the people IT re-planned, never the entry. It then takes the path a lost invitation
+waiting on `add-lock` takes ([mls-protocol](../../protocols/mls-protocol.md)): re-planned at the
+server-stated end of the lock (`wakeAtAddLockExpiry`), a commit applied in the group, the release of
+this device's own lock, or the next connection - events, never a retry on a clock - and every ending
+that does not complete is told by `reportLostInvitation`. Not for a re-plan (it already is the owed
+entry) nor for a join ask's answer (the member tapped it, and is told it is busy). A roster that
+cannot be read records nothing: an entry without a baseline could never be re-planned, so that
+refusal stays the member's to retry.
+
+**What the member is told.** An invitation that added nobody names everyone it invited, from the
+local name cache (they were just chosen in a panel that drew them): "Ajout non effectué pour
+{names}. {reason}" / "Not added: {names}. {reason}" (`chat_invite_not_added`, owner 2026-11-17); an
+owed one says when it will finish (`chat_invite_owed_add_lock_named`, a warning); the kept Add that
+finishes by itself (`outcome-unknown`) names nobody.
+
+Tests: `actions.pendingInvitations.test.ts` ("the add lock is taken only for an Add"),
+`actions.welcomeRequest.test.ts` (the lock and the claim), `lostInvitation.test.ts` ("another device
+holds the add lock"), `BaseMlsService.unresolvedCommit.test.ts` (the record and its wake),
+`conversationRefusalMessage.test.ts`.
 
 #### An unnamed group: no name stored, the members' first names drawn
 

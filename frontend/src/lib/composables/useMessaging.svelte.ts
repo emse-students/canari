@@ -609,7 +609,7 @@ export function useMessaging() {
   function homeOfBatch(ctx: MessagingContext, kept: KeptBatch): string | null {
     if (ctx.conversations.has(kept.contactName)) return kept.contactName;
     if (kept.anchors.length === 0) return null;
-    const anchors = new Set(kept.anchors);
+    const anchors = new SvelteSet(kept.anchors);
     for (const [key, convo] of ctx.conversations) {
       if (convo.messages.some((m) => anchors.has(m.id))) return key;
     }
@@ -662,7 +662,7 @@ export function useMessaging() {
    */
   function homeOfWrite(ctx: MessagingContext, write: BatchRowWrite): string | null {
     if (ctx.conversations.has(write.conversationId)) return write.conversationId;
-    const ids = new Set([...write.upgradeRows, ...write.newRows].map((row) => row.id));
+    const ids = new SvelteSet([...write.upgradeRows, ...write.newRows].map((row) => row.id));
     for (const [key, convo] of ctx.conversations) {
       if (convo.messages.some((m) => ids.has(m.id))) return key;
     }

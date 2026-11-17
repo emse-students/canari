@@ -706,6 +706,10 @@ took the group to 5, W1's return logged `refused - cleared`, healed, and W5 neve
   with the session (sign-out) and with the client (`destroy`). The holder's
   release sends no frame, and its Add commit lands BEFORE its release (the holder still persists,
   registers and sends Welcomes, 5-8 s), so the commit-applied wake alone would find the lock still up.
+- **A member's FIRST invitation refused by another device's add lock is owed the same way**
+  (`add-lock-owed`, 2026-11-17): recorded at the group's current epoch by `acquireAddLockAnswer`'s
+  `oweIfHeld` before the refusal arms its wake, and drained by the same events
+  ([chat](../frontend/modules/chat.md#nothing-takes-the-add-lock-it-does-not-commit-under-2026-11-17)).
 - **The re-planner exists only on a RESTORED map** (`makeLostInvitationReplanner`, registered by
   `useConversations` after a restore that succeeded, removed at sign-out). It answers what happens to
   the entry (`ReplanVerdict`): a `pending` conversation, a row not there yet while the group is held,

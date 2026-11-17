@@ -43,7 +43,6 @@ earliest version, as a checklist.
 - [P2 - A community joined from another device, or just joined, is not drawn until a cold start or a reload](backlog.d/p2-a-community-joined-elsewhere-is-not-drawn-until-a-cold-start.md)
 - [P2 - a device that accuses frames falsely walks the whole online membership at every cold start (#3762)](backlog.d/p2-a-false-accuser-costs-n-online-elections-per-cold-start.md)
 - [P2 - a live ended itself (`upload-too-slow`) after 256 s on the iPhone, cause unproven](backlog.d/p2-a-live-ended-itself-upload-too-slow-after-256-s-on-the-iphone.md)
-- [P2 - a new group's invitation is refused by the creator's own other device: the group is created without the people chosen (2026-11-17)](backlog.d/p2-a-new-group-s-invitation-is-refused-by-the-creator-s-own-other-device.md)
 - [P2 - A withdrawn broadcaster can be given the right back only from a PENDING live report](backlog.d/p2-a-withdrawn-broadcaster-can-be-lifted-only-from-a-pending-live-report.md)
 - [P2 - staff have no view of a broadcaster's standing without a report, so a withdrawal is lifted only from a report row among the 50 newest](backlog.d/p2-no-staff-view-of-a-broadcaster-s-standing-without-a-report.md)
 - [P2 - The notifications list is not re-read when a push opens it while it is already mounted](backlog.d/p2-the-notifications-list-is-not-reread-when-a-push-opens-it.md)
@@ -81,6 +80,7 @@ earliest version, as a checklist.
 - [ ] [a form's respondent account fields, on a phone and on the web (owner, 2026-11-16)](backlog.d/reading-owed-form-respondent-account-fields.md)
 - [ ] [the live scenes bar (one icon row) on a desktop live at two window widths](backlog.d/reading-owed-the-live-scenes-bar-on-a-desktop-live.md)
 - [ ] [a menu ends above the iOS tab bar, and a group notification keeps its title (2026-11-16)](backlog.d/reading-owed-the-popover-and-notification-fixes-of-the-iphone-sitting.md)
+- [ ] [a new group invites everyone chosen while the creator's other device is online (2026-11-17)](backlog.d/p2-a-new-group-s-invitation-is-refused-by-the-creator-s-own-other-device.md)
 - [ ] [a native device with no push token row now says why, and registers again (production, after the `1.7.0` stable)](backlog.d/reading-owed-a-device-with-no-push-token-now-says-so.md)
 - [ ] [a reaction to my message notifies a backgrounded and a killed phone, on both platforms (2026-11-17)](backlog.d/reading-owed-a-reaction-to-my-message-notifies-in-the-background.md)
 - [ ] [the iPhone's one seed mirror keeps the extension's seeds through a foreground (2026-11-17)](backlog.d/reading-owed-ios-seed-mirror-one-copy.md)
@@ -129,6 +129,7 @@ earliest version, as a checklist.
 - [P2 - the organiser alert for a payment over capacity: its precondition is met, the flip is owed](backlog.d/reading-owed-the-organiser-alert-for-a-payment-over-capacity.md)
 - [P2 - the retention durations a sweep applies are not yet admin settings](backlog.d/retention-durations-not-yet-settings.md)
 - [P2 - a salon reaction that opens its sender's new seed session is never notified while the app is open (2026-11-18)](backlog.d/p2-a-salon-reaction-that-opens-its-sender-s-new-seed-session-is-never-notified-in-the-foreground.md)
+- [P2 - the Android background answer to a `welcome_request` retries the add lock on a clock (2026-11-18)](backlog.d/p2-the-android-background-welcome-answer-retries-the-add-lock-on-a-clock.md)
 
 **P3 - hygiene**
 
@@ -137,6 +138,7 @@ earliest version, as a checklist.
 - [P3 - Connectivity stays "reachable" through a captive portal, so the send waits for the ladder (review of #2428, 2026-10-25)](backlog.d/p3-connectivity-stays-reachable-through-a-captive-portal-so-the-send-waits-for.md)
 - [P3 - `frontend/` holds three Cargo lockfiles that one `mls-core` bump must all move: one workspace](backlog.d/p2-a-cargo-bump-in-mls-core-leaves-two-committed-lockfiles-dependabot-will.md)
 - [P3 - an unsigned restored message is only marked, and a history bundle has no byte cap per chunk](backlog.d/p2-signed-authorship-of-restored-history-built-2276-owed-rig-rows-and-a-version.md)
+- [P3 - a chosen person's chip pushes the recent list under the finger in "Nouvelle discussion" (2026-11-17)](backlog.d/p3-a-chosen-person-s-chip-pushes-the-recent-list-under-the-finger.md)
 - [P3 - a community member's remove control does not name them for a screen reader (2026-11-17)](backlog.d/p3-a-community-member-s-remove-control-does-not-name-them.md)
 - [P3 - a live that ends normally makes every viewer log a warning (2026-11-17)](backlog.d/p3-a-live-that-ends-normally-warns-on-every-viewer.md)
 - [P3 - the dev estate logs one CSP `inline script` refusal on every page load](backlog.d/p3-dev-logs-a-csp-inline-script-error-on-every-page-load.md)
