@@ -50,3 +50,15 @@ export function isClosedForm(
   const end = Date.parse(form.closedAt);
   return !Number.isNaN(end) && end <= nowMs;
 }
+
+/**
+ * The `closedAt` a close ANSWER stores on a row. The answer means "closed now", but the server
+ * stamped it with ITS clock: a few seconds ahead of this device's, `isClosedForm` would read the
+ * form open until they caught up and the "Ferme" badge would wait for a re-entry of the list.
+ * An end this clock has not reached is pulled back to now; one it has passed is kept as is.
+ */
+export function closedByAnswer(closedAt: string | null, nowMs: number = Date.now()): string | null {
+  if (!closedAt) return null;
+  const end = Date.parse(closedAt);
+  return Number.isNaN(end) || end <= nowMs ? closedAt : new Date(nowMs).toISOString();
+}

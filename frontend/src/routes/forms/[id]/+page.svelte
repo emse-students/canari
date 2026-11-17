@@ -77,6 +77,7 @@
     visibleItems as visibleItemsOf,
     type MissingAnswer,
   } from '$lib/forms/fillAnswers';
+  import { isClosedForm } from '$lib/forms/formWindow';
   import { gridRequiredSwitchOn } from '$lib/forms/gridRequiredGate';
   import {
     ArrowLeft,
@@ -122,6 +123,8 @@
   let form = $state<Form | null>(null);
   const opensLaterIso = $derived(form?.opensAt ? formOpensAtIso(form.opensAt) : null);
   const isNotOpenYet = $derived(!!opensLaterIso);
+  /** The end has passed (the manager's close or a date that came): the rule of the public page and the list. */
+  const isClosed = $derived(isClosedForm(form));
   const reminder = useFormReminder(() => formId ?? '');
   let selections = $state<Record<string, any>>({});
   let submitted = $state(false);
@@ -725,6 +728,11 @@
       error = m.form_view_error_not_open({ date: formatFormOpensAt(form.opensAt) });
       return;
     }
+    if (isClosed) {
+      Log.d('FormView', 'submit refused: the form is closed');
+      error = m.form_refusal_closed();
+      return;
+    }
     if (!userId.trim()) {
       error = m.form_view_error_login_required();
       return;
@@ -905,6 +913,7 @@
     disabled={preview ||
       submitting ||
       isNotOpenYet ||
+      isClosed ||
       (!editing &&
         (submitted || formFull || !maySubmit || priceUnavailable || onlinePaymentPaused))}
     loading={submitting}
@@ -1050,6 +1059,16 @@
       </a>
     {/if}
 
+    <!-- ── Closed (the manager's close or a date that came) ── -->
+    {#if isClosed}
+      <p
+        class="text-text-muted mb-4 text-center text-sm font-medium"
+        data-testid="form-closed-notice"
+      >
+        {m.form_view_closed()}
+      </p>
+    {/if}
+
     <!-- ── Not open yet ── -->
     {#if isNotOpenYet && form.opensAt}
       <div
@@ -1174,7 +1193,10 @@
             {item}
             grid={item.productGrid}
             bind:value={selections[item.id]}
-            disabled={(submitted && !editing) || isNotOpenYet || editLocked.has(item.id)}
+            disabled={(submitted && !editing) ||
+              isNotOpenYet ||
+              isClosed ||
+              editLocked.has(item.id)}
             prices={price.productGridPrices[item.id]}
             currency={form.currency}
             error={questionError(item)}
@@ -1184,7 +1206,10 @@
             {item}
             index={qi}
             bind:value={selections[item.id]}
-            disabled={(submitted && !editing) || isNotOpenYet || editLocked.has(item.id)}
+            disabled={(submitted && !editing) ||
+              isNotOpenYet ||
+              isClosed ||
+              editLocked.has(item.id)}
             formId={form.id}
             currency={form.currency}
             fileRetentionDays={form.fileRetentionDays}

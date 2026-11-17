@@ -52,7 +52,7 @@
   import FormRowMenu from '$lib/components/forms/FormRowMenu.svelte';
   import { productGridQuestions } from '$lib/forms/responsesView';
   import { formViewHref, isDraftForm } from '$lib/forms/publish';
-  import { isClosedForm, opensLater } from '$lib/forms/formWindow';
+  import { closedByAnswer, isClosedForm, opensLater } from '$lib/forms/formWindow';
   import Button from '$lib/components/ui/Button.svelte';
   import { markdownToPlainText } from '$lib/seo/text';
 
@@ -198,7 +198,9 @@
       }
       Log.d('FormsManagerList', `${closing ? 'closing' : 'reopening'} form ${form.id.slice(0, 8)}`);
       const { closedAt } = await setFormClosed(form.id, closing);
-      setForms(forms.map((f) => (f.id === form.id ? { ...f, closedAt } : f)));
+      setForms(
+        forms.map((f) => (f.id === form.id ? { ...f, closedAt: closedByAnswer(closedAt) } : f))
+      );
       showToast(closing ? m.form_list_closed_toast() : m.form_list_reopened_toast());
     } catch (e) {
       console.error(

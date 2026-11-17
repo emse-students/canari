@@ -26,6 +26,7 @@
     type MissingAnswer,
     type Selections,
   } from '$lib/forms/fillAnswers';
+  import { isClosedForm } from '$lib/forms/formWindow';
   import { gridRequiredSwitchOn } from '$lib/forms/gridRequiredGate';
   import {
     cursusSlicesOf,
@@ -111,7 +112,7 @@
   /** What the form asks a guest to declare (owner, 2026-11-16): a guest has no account to read. */
   const askedDeclared = $derived(askedDeclaredFields(form?.guestFields));
   const isNotOpenYet = $derived(!!form?.opensAt && new Date(form.opensAt) > new Date());
-  const isClosed = $derived(!!form?.closedAt && new Date(form.closedAt) < new Date());
+  const isClosed = $derived(isClosedForm(form));
   // No profile half: the server refuses a public form whose questions depend on who answers.
   const visibleItems = $derived(form ? visibleItemsOf(form.items, selections) : []);
   /** The slices the server sent: a guest has no cursus, so one (its "everyone else" row). */

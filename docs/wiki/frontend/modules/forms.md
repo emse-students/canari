@@ -2154,6 +2154,14 @@ preview's "Ferme"); only the manager's way to write it was missing.
 - **The list**: a closed form (its end has passed; a future end is a scheduled close and shows
   nothing) carries a "Ferme" badge and its menu offers "Rouvrir" instead of "Clore le formulaire".
   Closing asks a confirmation, reopening does not.
+- **ONE closed rule on every screen** (read on the Mi 9T, 2026-11-17): `isClosedForm`
+  (`formWindow.ts`, an end that has passed) is what the list badge, the public page `/f/:id` and the
+  member page `/forms/:id` all read. The member page used to draw a closed form open and refuse only at
+  "Envoyer" (`FORM_CLOSED`); it now shows "Ce formulaire est ferme.", locks the questions and disables
+  the send button (editing an answer included).
+- **The badge follows the close answer**: the answer carries the SERVER's `closedAt`, which a few seconds
+  ahead of the device's clock read as a scheduled close, so the badge waited for a re-entry of the list.
+  The row stores `closedByAnswer(closedAt)`: an end this clock has not reached is pulled back to now.
 - **A form not open yet cannot be closed** (lead, 2026-11-16, during the owner's absence; reversible,
   option (a) of the PR review). Closing writes `closedAt = now`, which would fall BEFORE a future
   `opensAt`: every later edit was then refused `FORM_CLOSE_BEFORE_OPEN` over a date the manager

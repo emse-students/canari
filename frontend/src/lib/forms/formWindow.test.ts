@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formWindowInvalid, isClosedForm, opensLater } from './formWindow';
+import { closedByAnswer, formWindowInvalid, isClosedForm, opensLater } from './formWindow';
 
 describe('formWindowInvalid', () => {
   it('is false while either bound is missing', () => {
@@ -36,5 +36,20 @@ describe('opensLater', () => {
     expect(opensLater({ opensAt: '2026-11-16T12:00:00Z' }, now)).toBe(false);
     expect(opensLater({}, now)).toBe(false);
     expect(opensLater(null, now)).toBe(false);
+  });
+});
+
+describe('closedByAnswer', () => {
+  const now = Date.parse('2026-11-16T12:00:00Z');
+  it('keeps an end the client clock already agrees has passed', () => {
+    expect(closedByAnswer('2026-11-16T11:00:00Z', now)).toBe('2026-11-16T11:00:00Z');
+  });
+  it('pulls an end the server stamped ahead of this clock back to now, so the row reads closed', () => {
+    const answered = closedByAnswer('2026-11-16T12:00:03Z', now);
+    expect(answered).toBe('2026-11-16T12:00:00.000Z');
+    expect(isClosedForm({ closedAt: answered }, now)).toBe(true);
+  });
+  it('passes null through', () => {
+    expect(closedByAnswer(null, now)).toBeNull();
   });
 });
