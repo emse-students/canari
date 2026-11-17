@@ -142,6 +142,7 @@ describe('postNativeReactionNotification', () => {
 
   const REACTION = {
     conversationId: 'grp-aaaa-bbbb',
+    messageId: 'msg-1',
     actorId: 'peer-1',
     actorName: 'Alice',
     emoji: '❤️',

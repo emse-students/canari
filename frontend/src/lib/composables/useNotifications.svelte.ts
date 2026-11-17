@@ -672,7 +672,7 @@ export function useNotifications() {
    * notification. Throttled per that reaction, so a burst of different reactions loses none.
    */
   async function sendReactionNotification(reaction: NativeReactionNotification) {
-    const reactionKey = reactionCollapseKey(reaction.conversationId, reaction.actorId, reaction.at);
+    const reactionKey = reactionCollapseKey(reaction.messageId, reaction.actorId, reaction.at);
     if (!mayRaise(reactionKey)) return;
     if (isAndroidTauriRuntime()) {
       const accepted = await postNativeReactionNotification(reaction);

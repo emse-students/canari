@@ -312,7 +312,7 @@ describe('the relay routes refuse a caller with no seat in the group they name',
         expect.any(String),
         expect.objectContaining({
           at: '1700000000123',
-          collapseId: reactionCollapseId(GROUP, MEMBER, 1_700_000_000_123),
+          collapseId: reactionCollapseId('m-1', MEMBER, 1_700_000_000_123),
         })
       );
     });
@@ -333,6 +333,13 @@ describe('the relay routes refuse a caller with no seat in the group they name',
         expect(call[3]).not.toHaveProperty('collapseId');
       }
       expect(warned).toHaveBeenCalledTimes(3);
+    });
+
+    it('forwards the stamp but NO collapse id when the reactor names no message - never one over the conversation', async () => {
+      const { messageId: _, ...unnamed } = reaction(GROUP);
+      await controller.notifyReaction(MEMBER, { ...unnamed, at: 1_700_000_000_123 });
+      expect(push.mock.calls[0][3]).toHaveProperty('at', '1700000000123');
+      expect(push.mock.calls[0][3]).not.toHaveProperty('collapseId');
     });
 
     it('forwards an instant up to a day ahead of the server', async () => {

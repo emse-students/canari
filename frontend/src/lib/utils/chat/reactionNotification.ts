@@ -200,16 +200,17 @@ export function reactionNotificationKey(conversationKey: string): string {
 }
 
 /**
- * The identity of ONE reaction - `reaction:<conversation>:<reactor>:<at>` - from which the plain
+ * The identity of ONE reaction - `reaction:<messageId>:<reactor>:<at>` - from which the plain
  * builders derive the notification's id ({@link reactionCollapseId}). The reactor is folded to lower
  * case as the server's `canonicalUserId` folds it (ids are ASCII), so both sides spell it alike.
+ *
+ * THE REACTED-TO MESSAGE, NEVER THE CONVERSATION: the server sends this hash to Apple on the
+ * content-free wake, and a hash over the conversation, the reactor and an instant could be checked
+ * against what a call ring names in clear (review of #3792, round 3). No wake and no ring names the
+ * message.
  */
-export function reactionCollapseKey(
-  conversationKey: string,
-  reactorId: string,
-  at: number
-): string {
-  return `reaction:${conversationKey}:${reactorId.toLowerCase()}:${at}`;
+export function reactionCollapseKey(messageId: string, reactorId: string, at: number): string {
+  return `reaction:${messageId}:${reactorId.toLowerCase()}:${at}`;
 }
 
 /**
@@ -217,6 +218,6 @@ export function reactionCollapseKey(
  * page's post (`stableNotifId` of {@link reactionCollapseKey}) and the `apns-collapse-id` the server
  * sends with the push (chat-delivery-service `reactionCollapseId`, pinned to this by a shared vector).
  */
-export function reactionCollapseId(conversationKey: string, reactorId: string, at: number): string {
-  return String(stableNotifId(reactionCollapseKey(conversationKey, reactorId, at)));
+export function reactionCollapseId(messageId: string, reactorId: string, at: number): string {
+  return String(stableNotifId(reactionCollapseKey(messageId, reactorId, at)));
 }

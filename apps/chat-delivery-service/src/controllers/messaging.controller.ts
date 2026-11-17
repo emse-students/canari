@@ -685,10 +685,19 @@ export class MessagingController {
     // never a stamp - and a stamp is an identity on the author's devices, so a wild one is refused
     // rather than allowed to collide with or outlive the reactions it would be compared with.
     const at = Number(body.at);
-    const stamp =
-      Number.isSafeInteger(at) && at > 0 && at <= Date.now() + REACTION_AT_MAX_AHEAD_MS
-        ? { at: String(at), collapseId: reactionCollapseId(groupId, canonicalUserId(callerId), at) }
-        : {};
+    const messageId = String(body.messageId ?? '');
+    const atIsPlausible =
+      Number.isSafeInteger(at) && at > 0 && at <= Date.now() + REACTION_AT_MAX_AHEAD_MS;
+    // The collapse id needs the reacted-to message (`reactionCollapseId`: never the conversation).
+    // A reactor that names none gets the stamp alone - Android's dedup needs no more.
+    const stamp = atIsPlausible
+      ? {
+          at: String(at),
+          ...(messageId
+            ? { collapseId: reactionCollapseId(messageId, canonicalUserId(callerId), at) }
+            : {}),
+        }
+      : {};
     if (body.at !== undefined && !('at' in stamp)) {
       this.logger.warn(
         `[notify-reaction] an implausible reaction instant from ${sanitizeLogValue(callerId)} was not forwarded: ${sanitizeLogValue(String(body.at))}`
@@ -704,7 +713,7 @@ export class MessagingController {
       reaction: 'true',
       deepLink: `fr.emse.canari://chat/${groupId}`,
       groupId,
-      messageId: String(body.messageId ?? ''),
+      messageId,
       emoji,
       // The ACTOR, so the device can fetch their avatar - the message path needs it and the
       // social path never carried one.

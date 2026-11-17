@@ -4604,6 +4604,17 @@ static BOOL CanariGraineSeedHeld(NSString *channelId, NSString *sessionId) {
   return held == 1;
 }
 
+/// Whether a push's data is a REACTION: it rides on `social` without being one (see the Android
+/// service and notify-reaction in chat-delivery-service). The wire type stays `social` so clients
+/// predating it render it instead of dropping it into the MLS ladder; the discriminator is a separate
+/// field. ONE reading, for the arrival (`CanariHandleFcmData`) and the presentation (`willPresent`).
+static BOOL CanariIsReactionData(NSDictionary *_Nullable data) {
+  return [data[@"type"] isKindOfClass:[NSString class]] &&
+         [(NSString *)data[@"type"] isEqualToString:@"social"] &&
+         [data[@"reaction"] isKindOfClass:[NSString class]] &&
+         [(NSString *)data[@"reaction"] isEqualToString:@"true"];
+}
+
 // Decrypts a community-channel push sealed under a Graine session (AES-256-GCM, not MLS) and shows
 // a notification. The seed is read from graine_seeds.json and the message key derived from it in
 // Rust; the inline ciphertext is decrypted natively so the plaintext never transits FCM. Falls back
@@ -4808,12 +4819,8 @@ static void CanariHandleFcmData(NSDictionary *data) {
     return;
   }
 
-  // A REACTION RIDES ON `social` WITHOUT BEING ONE - see the Android service and notify-reaction in
-  // chat-delivery-service. The wire type stays `social` so clients predating this change render it
-  // instead of dropping it into the MLS ladder; the discriminator is a separate field.
-  BOOL isReaction = [msgType isEqualToString:@"social"] &&
-                    [data[@"reaction"] isKindOfClass:[NSString class]] &&
-                    [(NSString *)data[@"reaction"] isEqualToString:@"true"];
+  // A REACTION RIDES ON `social` WITHOUT BEING ONE (`CanariIsReactionData`).
+  BOOL isReaction = CanariIsReactionData(data);
 
   // The `social` exemption below does not extend to a reaction: it is drawn INTO the conversation's
   // own notification, and posting one over a conversation being read is noise - the bubble on screen
@@ -5842,6 +5849,37 @@ static void (^CanariFinishOnMain(void (^handler)(void), NSString *what))(void) {
   };
 }
 
+/// A remote REACTION arriving while ACTIVE (review of #3792, round 3). The page posts its own
+/// notification of a reaction to my message under the push's `apns-collapse-id`
+/// (`reactionCollapseId`), so the two are one request. Should iOS REPLACE the page's delivered request
+/// by this push on arrival, answering None would erase the only record of the reaction - so the answer
+/// is read from what is DELIVERED, not from a belief about iOS: the same identifier delivered -> List
+/// (the entry stays; worst case a double, never a loss), none -> None (the page refused it: the
+/// reaction is on screen, or its notification is off). The iPhone reading is owed
+/// (backlog.d/reading-owed-ios-reaction-push-replaces-the-page-notification.md).
+static void CanariPresentForegroundReaction(
+    UNUserNotificationCenter *center, NSString *identifier,
+    void (^completionHandler)(UNNotificationPresentationOptions options)) {
+  [center getDeliveredNotificationsWithCompletionHandler:^(NSArray<UNNotification *> *delivered) {
+    BOOL pagePosted = NO;
+    for (UNNotification *n in delivered) {
+      if ([n.request.identifier isEqualToString:identifier]) {
+        pagePosted = YES;
+        break;
+      }
+    }
+    // Completed back ON MAIN: this block runs on a queue of the center's choosing, and iOS asserts
+    // the main thread inside a delegate's handler (the 1.6.12-alpha.2 abort, `CanariFinishOnMain`).
+    dispatch_async(dispatch_get_main_queue(), ^{
+      NSLog(@"[CanariPush] reaction push while active: the page's twin %@ - %@",
+            pagePosted ? @"delivered" : @"absent",
+            pagePosted ? @"kept in the list" : @"not presented");
+      completionHandler(pagePosted ? UNNotificationPresentationOptionList
+                                   : UNNotificationPresentationOptionNone);
+    });
+  }];
+}
+
 @implementation CanariNotificationDelegate
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center
        willPresentNotification:(UNNotification *)notification
@@ -5889,6 +5927,11 @@ static void (^CanariFinishOnMain(void (^handler)(void), NSString *what))(void) {
   //   `call_ring` rang CallKit beside its own banner.
   if (canari_ios_is_in_foreground()) {
     CanariPushProcessRemoteNotificationUserInfo(request.content.userInfo);
+    // A reaction's push and the page's post of it share ONE identifier: never answer None blind.
+    if (CanariIsReactionData(CanariFcmDataFromUserInfo(request.content.userInfo))) {
+      CanariPresentForegroundReaction(center, request.identifier, completionHandler);
+      return;
+    }
     completionHandler(UNNotificationPresentationOptionNone);
   } else {
     completionHandler(UNNotificationPresentationOptionBanner | UNNotificationPresentationOptionSound |

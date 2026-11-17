@@ -155,6 +155,36 @@ describe('willPresent: only a remote push is an arrival (no re-post loop)', () =
     );
   });
 
+  it('NEVER A LOSS: a reaction push while active keeps a list entry when the page posted its twin', () => {
+    // The page files its post of a reaction under the push's `apns-collapse-id` (#3792). Should iOS
+    // REPLACE that delivered request by the arriving push, answering None would erase the record;
+    // so the answer is read from what is delivered, never from a guess: the same identifier
+    // delivered -> List (worst case a double), none -> None (the reaction is on screen).
+    const w = willPresent();
+    const at = w.indexOf('CanariPushProcessRemoteNotificationUserInfo(');
+    const branch = w.slice(at, w.indexOf('} else {', at));
+    expect(branch).toMatch(
+      /if \(CanariIsReactionData\(CanariFcmDataFromUserInfo\(request\.content\.userInfo\)\)\) \{\s*CanariPresentForegroundReaction\(center, request\.identifier, completionHandler\);\s*return;\s*\}/
+    );
+    const present = body('static void CanariPresentForegroundReaction(');
+    expect(present).toContain('[center getDeliveredNotificationsWithCompletionHandler:');
+    expect(present).toContain('[n.request.identifier isEqualToString:identifier]');
+    expect(present).toContain(
+      'completionHandler(pagePosted ? UNNotificationPresentationOptionList\n                                   : UNNotificationPresentationOptionNone);'
+    );
+    // The delivered list answers on a queue of the center's choosing: the handler runs ON MAIN only.
+    const handled = present.indexOf('completionHandler(pagePosted');
+    expect(
+      present.lastIndexOf('dispatch_async(dispatch_get_main_queue(), ^{', handled)
+    ).toBeGreaterThan(present.indexOf('getDeliveredNotificationsWithCompletionHandler:'));
+    expect(present.match(/\bcompletionHandler\(/g)).toHaveLength(1);
+    // ONE discriminator for a reaction, read by the arrival handler and by the presentation.
+    expect(push.split('static BOOL CanariIsReactionData(')).toHaveLength(2);
+    expect(body('static void CanariHandleFcmData(')).toContain(
+      'BOOL isReaction = CanariIsReactionData(data);'
+    );
+  });
+
   it('presents in front exactly the local posts that show while foreground (social, forms)', () => {
     const own = body('static UNNotificationPresentationOptions CanariOwnLocalPresentation(');
     expect(own).toContain('kCanariThreadSocial');
@@ -445,7 +475,7 @@ describe('a notification response is completed on the main thread (iPhone 12, 1.
       for (const use of m.matchAll(/\bcompletionHandler\b/g)) {
         const line = m.slice(m.lastIndexOf('\n', use.index) + 1, m.indexOf('\n', use.index));
         expect(line.trim(), line).toMatch(
-          /^(completionHandler\(|withCompletionHandler:completionHandler\]|void \(\^finish\)\(void\) = CanariFinishOnMain\(completionHandler,|\(void \(\^\)\(UNNotificationPresentationOptions options\)\)completionHandler \{|withCompletionHandler:\(void \(\^\)\(void\)\)completionHandler \{)/
+          /^(completionHandler\(|withCompletionHandler:completionHandler\]|void \(\^finish\)\(void\) = CanariFinishOnMain\(completionHandler,|\(void \(\^\)\(UNNotificationPresentationOptions options\)\)completionHandler \{|withCompletionHandler:\(void \(\^\)\(void\)\)completionHandler \{|CanariPresentForegroundReaction\(center, request\.identifier, completionHandler\);)/
         );
       }
     }

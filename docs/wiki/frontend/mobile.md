@@ -3315,12 +3315,21 @@ identity makes the two posts one:
   once dismissed, by the alerted ledger. The frame reaches it through `notifier_message_natif` with
   `reaction = true`.
 - **iOS**: the page posts through the plugin, whose request identifier is `"\(notification.id)"`;
-  the id is `stableNotifId(reaction:<conversation>:<reactor>:<at>)` (`reactionCollapseId`), and the
+  the id is `stableNotifId(reaction:<messageId>:<reactor>:<at>)` (`reactionCollapseId`), and the
   server sends the push with `apns-collapse-id` = the same decimal (`reactionCollapseId` in
-  `push-payload.ts`, kept on the content-free wake too - a hash naming nothing), so the system files
-  both under one request and replaces one by the other, as a post's local twin already does
-  (`CanariPostLocalNotification`). The two copies of the hash are held together by one vector asserted
-  in both test suites.
+  `push-payload.ts`, from the `messageId` the reactor posts to `notify-reaction`; none when it names
+  no message), so the system files both under one request and replaces one by the other, as a post's
+  local twin already does (`CanariPostLocalNotification`). The two copies of the hash are held
+  together by one vector asserted in both test suites. **The key is the reacted-to MESSAGE, never the
+  conversation** (round 3): the id rides the content-free wake as a header Apple reads, and a call
+  ring names the group and the caller in clear, so a hash over `<group>:<reactor>:<at>` could be
+  confirmed by trying a few thousand instants. No wake and no ring names the message
+  ([content-free-push](../protocols/content-free-push.md)).
+- **iOS, while ACTIVE**: `willPresent` never answers a reaction's push with `None` blind - should iOS
+  have replaced the page's delivered request by the push, that would erase the record. It reads the
+  delivered notifications (`CanariPresentForegroundReaction`, completed on the main queue): the same
+  identifier delivered -> `List`, none -> `None` (the page refused it: on screen, or off). Worst case
+  a double, never a loss.
 - A frame with no `at` (a reactor predating it, whose push carries none either) cannot be made one with
   its push: on a phone it is left to the push, as before #3792. `notify-reaction` forwards `at` only
   as a positive integer at most a day ahead of the server (`REACTION_AT_MAX_AHEAD_MS`).
@@ -3328,12 +3337,13 @@ identity makes the two posts one:
 **Desktop and the browser** post the plain one too, with the same per-reaction id/tag; they have no
 push, so the frame is their only trigger and a hidden tab or an idle window is told.
 
-**What only a phone can say (the reading, [backlog](../backlog.d/reading-owed-a-reaction-to-my-message-notifies-in-the-background.md)).**
-That iOS replaces a delivered LOCAL notification by a remote one with the same `apns-collapse-id`
-(and the reverse) is what a post's twin already relies on, and is proven by no test here. Two
-questions for the iPhone 12: a reaction under Control Center shows ONE entry (a second sound on the
-replacement is possible and acceptable), and a reaction while ACTIVE on another screen keeps its
-entry when the dropped push of the same identifier lands (`willPresent` answers None for it).
+**What only a phone can say** (the background reading,
+[backlog](../backlog.d/reading-owed-a-reaction-to-my-message-notifies-in-the-background.md); the iOS
+identity reading, [backlog](../backlog.d/reading-owed-ios-reaction-push-replaces-the-page-notification.md),
+owed on `1.7.0`). That iOS replaces a delivered LOCAL notification by a remote one with the same
+`apns-collapse-id` (and the reverse) is what a post's twin already relies on, and is proven by no
+test here: a reaction under Control Center shows ONE entry (a second sound on the replacement is
+acceptable), and a reaction while ACTIVE on another screen keeps an entry (the `List` answer).
 
 #### Background MLS decrypt ladder
 

@@ -678,12 +678,14 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
 }
 
 /**
- * The author of a salon row a reaction landed on: the row in memory (its sender proven by Graine),
- * else the author the frame STATES (`ReactionMsg.target_author_id`, the reactor's own claim - the one
- * its push to the author already rests on), else - for a frame that is news, and only then - the
- * salon's stored page (`storeSalonPage` in `useConversations`), the last page an earlier session drew.
- * `lookupFailed` says the store was asked and could not answer: only then is a null a real unknown
- * (`inboundReactionVerdict`, `unresolved`), and only then is it warned here.
+ * The author of a salon row a reaction landed on, in the order `InboundReaction.messageAuthorId`
+ * states and the MLS path follows (`setupMessageHandler`: the held row, else the stated author):
+ * SCREEN, STORE, CLAIM. The row in memory (its sender proven by Graine), else - for a frame that is
+ * news, and only then - the salon's stored page (`storeSalonPage` in `useConversations`, the last
+ * page an earlier session drew), else the author the frame STATES (`ReactionMsg.target_author_id`, the
+ * reactor's own claim - the one its push to the author already rests on). A row this device holds
+ * outranks a claim (review of #3792, round 3). `lookupFailed` says the store was asked and could not
+ * answer; it is warned here, and it decides only when no claim stands in (`unresolved`).
  */
 async function salonMessageAuthor(
   channelId: string,
@@ -694,23 +696,22 @@ async function salonMessageAuthor(
 ): Promise<{ id: string | null; lookupFailed: boolean }> {
   const shown = ctx.conversations.get(channelId)?.messages.find((m) => m.id === messageId);
   if (shown) return { id: shown.senderId, lookupFailed: false };
-  if (statedAuthorId) return { id: statedAuthorId, lookupFailed: false };
   // A frame that is no news, or a session with no store: nothing to ask, and nothing failed.
-  if (!isNews || !ctx.storage) return { id: null, lookupFailed: false };
+  if (!isNews || !ctx.storage) return { id: statedAuthorId, lookupFailed: false };
   try {
     const found = await ctx.storage.getMessagesByIds(channelId, [messageId], ctx.deviceKey());
     if (found.unreadable.has(messageId)) {
       console.warn(
-        `[REACTION] ${messageId.slice(0, 8)} is stored under a key this device cannot open - its author is unknown`
+        `[REACTION] ${messageId.slice(0, 8)} is stored under a key this device cannot open - its author is ${statedAuthorId ? 'the one the frame states' : 'unknown'}`
       );
-      return { id: null, lookupFailed: true };
+      return { id: statedAuthorId, lookupFailed: true };
     }
-    return { id: found.rows.get(messageId)?.senderId ?? null, lookupFailed: false };
+    return { id: found.rows.get(messageId)?.senderId ?? statedAuthorId, lookupFailed: false };
   } catch (e) {
     console.warn(
-      `[REACTION] the stored row of ${messageId.slice(0, 8)} could not be read - its author is unknown: ${String(e)}`
+      `[REACTION] the stored row of ${messageId.slice(0, 8)} could not be read - its author is ${statedAuthorId ? 'the one the frame states' : 'unknown'}: ${String(e)}`
     );
-    return { id: null, lookupFailed: true };
+    return { id: statedAuthorId, lookupFailed: true };
   }
 }
 

@@ -1308,7 +1308,8 @@ export class MessagingService {
      * The `apns-collapse-id` the FULL push of the same content would carry (`buildInternalApnsRequest`),
      * for a REACTION only: the identifier the device files it under, which a wake must keep - one
      * reaction's push and the page's own notification of it are ONE request only if both carry it
-     * (review of #3792). It is a hash naming nothing; an id that names content never goes here.
+     * (review of #3792). It is a hash over the message id, which nothing else sent to Apple names;
+     * an id that names content - or hashes only what Apple can learn elsewhere - never goes here.
      */
     collapseId?: string
   ): Message {
@@ -8614,9 +8615,10 @@ export class MessagingService {
               isInternalSilent(data),
               false,
               { priority: 'high' },
-              // A REACTION's collapse id is kept: a hash naming nothing (`reactionCollapseId`), and
-              // what makes its push and the page's notification one. A post's names the post
-              // (`post_activity_<id>`), which a content-free wake must never carry.
+              // A REACTION's collapse id is kept: a hash of the reacted-to message's id - which no
+              // wake and no ring carries, so it cannot be checked against a guess
+              // (`reactionCollapseId`) - and what makes its push and the page's notification one.
+              // A post's names the post (`post_activity_<id>`), which a wake must never carry.
               data.reaction === 'true'
                 ? buildInternalApnsRequest(title, body, data, pt.locale).collapseId
                 : undefined

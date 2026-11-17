@@ -920,6 +920,7 @@ export function useMessaging() {
       .then((actorName) =>
         send({
           conversationId: key,
+          messageId: reaction.messageId,
           actorId: reaction.reactorId,
           actorName,
           emoji: reaction.emoji,

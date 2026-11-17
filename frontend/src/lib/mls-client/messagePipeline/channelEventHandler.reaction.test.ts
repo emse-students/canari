@@ -8,8 +8,9 @@ import type { ChatMessage } from '$lib/types';
  * `onInboundReaction` is told what the frame changed and whose message it landed on. The author was
  * read from the in-memory window alone, so a reaction to MY older message in a salon not opened this
  * session read as "not mine" and was announced by nobody while the push was dropped in front. It is
- * read from the window, then from the author the frame STATES (`target_author_id`), then - for news
- * only - from the salon's stored page; and a store that cannot answer is said as such.
+ * read from the window, then - for news only - from the salon's stored page, then from the author the
+ * frame STATES (`target_author_id`): screen, store, claim, as on the MLS path; and a store that cannot
+ * answer is said as such.
  */
 
 vi.mock('$lib/stores/typingStore.svelte', () => ({ setTyping: vi.fn() }));
@@ -116,12 +117,50 @@ describe('channelEventHandler - a salon reaction reaches the reaction trigger', 
     expect(onInboundReaction.mock.calls[0][0]).toMatchObject({ changed: false });
   });
 
-  it('names the author the frame STATES, without a store read', async () => {
+  it('screen, store, THEN claim: the stored row outranks the author the frame states', async () => {
+    // The MLS path's order (`setupMessageHandler`: the held row, else `target_author_id`) and the
+    // `InboundReaction.messageAuthorId` contract: a claim is the reactor's word, a row is this
+    // device's own record (review of #3792, round 3).
+    decodeAppMessage.mockReturnValueOnce({ reaction: { ...REACTION, targetAuthorId: 'someone' } });
+    const { ctx, onInboundReaction, getMessagesByIds } = setup({
+      shown: false,
+      stored: { senderId: 'me' },
+    });
+    await handleChannelEvent(frame, ctx);
+    expect(getMessagesByIds).toHaveBeenCalledWith('channel_c1', ['srv-mine'], 'device-key');
+    expect(onInboundReaction.mock.calls[0][0]).toMatchObject({ messageAuthorId: 'me' });
+  });
+
+  it('names the author the frame STATES when the store holds no row', async () => {
     decodeAppMessage.mockReturnValueOnce({ reaction: { ...REACTION, targetAuthorId: 'me' } });
     const { ctx, onInboundReaction, getMessagesByIds } = setup({ shown: false });
     await handleChannelEvent(frame, ctx);
-    expect(onInboundReaction.mock.calls[0][0]).toMatchObject({ messageAuthorId: 'me' });
+    expect(getMessagesByIds).toHaveBeenCalledTimes(1);
+    expect(onInboundReaction.mock.calls[0][0]).toMatchObject({
+      messageAuthorId: 'me',
+      authorLookupFailed: false,
+    });
+  });
+
+  it('falls to the stated author when the store fails - and says the store failed', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    decodeAppMessage.mockReturnValueOnce({ reaction: { ...REACTION, targetAuthorId: 'me' } });
+    const { ctx, onInboundReaction } = setup({ shown: false, stored: 'throws' });
+    await handleChannelEvent(frame, ctx);
+    expect(onInboundReaction.mock.calls[0][0]).toMatchObject({
+      messageAuthorId: 'me',
+      authorLookupFailed: true,
+    });
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('a frame that is no news takes the stated author without a store read', async () => {
+    applyChannelReactionFrame.mockReturnValueOnce(false);
+    decodeAppMessage.mockReturnValueOnce({ reaction: { ...REACTION, targetAuthorId: 'me' } });
+    const { ctx, onInboundReaction, getMessagesByIds } = setup({ shown: false });
+    await handleChannelEvent(frame, ctx);
     expect(getMessagesByIds).not.toHaveBeenCalled();
+    expect(onInboundReaction.mock.calls[0][0]).toMatchObject({ messageAuthorId: 'me' });
   });
 
   it('THE DEFECT: a frame naming no author, in a salon not held in memory, reads its stored page', async () => {

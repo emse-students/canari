@@ -139,6 +139,11 @@ export async function postNativeMessageNotification(
 export type NativeReactionNotification = {
   /** The conversation - the notification is filed under `reaction:<conversationId>`. */
   conversationId: string;
+  /**
+   * The reacted-to message: with the actor and `at`, the identity of this ONE reaction
+   * (`reactionCollapseKey`), which the push names too - so the two are one notification.
+   */
+  messageId: string;
   /** Who reacted: whose face to draw, and whose nickname in this conversation to look up. */
   actorId: string;
   /** The actor's name as this device resolved it - the fallback behind their nickname. */

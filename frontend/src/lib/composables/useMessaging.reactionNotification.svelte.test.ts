@@ -106,6 +106,7 @@ describe('the frame trigger of a reaction to my message', () => {
     await vi.waitFor(() => expect(sendReactionNotification).toHaveBeenCalledTimes(1));
     expect(sendReactionNotification).toHaveBeenCalledWith({
       conversationId: CONVO,
+      messageId: 'msg-1',
       actorId: PEER,
       actorName: 'Peer',
       emoji: '❤️',

@@ -837,8 +837,15 @@ describe('the MLS frame answer carries its presentation', () => {
  */
 describe('reactionCollapseId - the shared vector with the page', () => {
   it("is the page's identifier for the same reaction", () => {
-    expect(reactionCollapseId('grp-1', 'Peer-User', 1_700_000_000_123)).toBe('1354250138');
-    expect(reactionCollapseId('channel_c1', 'peer', 1_700_000_000_123)).toBe('1973244109');
+    expect(reactionCollapseId('msg-1', 'Peer-User', 1_700_000_000_123)).toBe('1809935358');
+    expect(reactionCollapseId('srv-row-9', 'peer', 1_700_000_000_123)).toBe('2055444975');
+  });
+
+  it('hashes the reacted-to MESSAGE, never the conversation: a guess over what a ring names cannot confirm it', () => {
+    // A call ring carries the group and the caller in clear; the old key hashed exactly those plus
+    // an instant, so Apple could test candidates. The message id is in no wake and no ring.
+    const ofGroup = reactionCollapseId('grp-1', 'peer', 1_700_000_000_123);
+    expect(reactionCollapseId('msg-1', 'peer', 1_700_000_000_123)).not.toBe(ofGroup);
   });
 
   it('is a decimal the notification plugin can own, and fits an apns-collapse-id', () => {
@@ -846,13 +853,13 @@ describe('reactionCollapseId - the shared vector with the page', () => {
     expect(id).toMatch(/^[0-9]{1,10}$/);
   });
 
-  it('is what the full push and the wake carry', () => {
+  it('is what the full push carries', () => {
     const data = {
       type: 'social',
       reaction: 'true',
       groupId: 'grp-1',
-      collapseId: reactionCollapseId('grp-1', 'peer-user', 1_700_000_000_123),
+      collapseId: reactionCollapseId('msg-1', 'peer-user', 1_700_000_000_123),
     };
-    expect(buildInternalApnsRequest('t', 'b', data).collapseId).toBe('1354250138');
+    expect(buildInternalApnsRequest('t', 'b', data).collapseId).toBe('1809935358');
   });
 });

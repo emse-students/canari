@@ -190,14 +190,21 @@ describe('the push half', () => {
     // The plugin files the page's post under `"\(notification.id)"`; the server sends the push with
     // `apns-collapse-id` = the same decimal (chat-delivery-service `push-payload.spec.ts` asserts this
     // very vector), so the system replaces one by the other.
-    expect(reactionCollapseKey('grp-1', 'Peer-User', 1_700_000_000_123)).toBe(
-      'reaction:grp-1:peer-user:1700000000123'
+    expect(reactionCollapseKey('msg-1', 'Peer-User', 1_700_000_000_123)).toBe(
+      'reaction:msg-1:peer-user:1700000000123'
     );
-    expect(reactionCollapseId('grp-1', 'Peer-User', 1_700_000_000_123)).toBe('1354250138');
-    expect(reactionCollapseId('channel_c1', 'peer', 1_700_000_000_123)).toBe('1973244109');
+    expect(reactionCollapseId('msg-1', 'Peer-User', 1_700_000_000_123)).toBe('1809935358');
+    expect(reactionCollapseId('srv-row-9', 'peer', 1_700_000_000_123)).toBe('2055444975');
     expect(
-      String(stableNotifId(reactionCollapseKey('grp-1', 'peer-user', 1_700_000_000_123)))
-    ).toBe('1354250138');
+      String(stableNotifId(reactionCollapseKey('msg-1', 'peer-user', 1_700_000_000_123)))
+    ).toBe('1809935358');
+  });
+
+  it('iOS: the identifier hashes the reacted-to MESSAGE, never the conversation', () => {
+    // It rides the content-free wake as an APNs header; a call ring names the group and the caller
+    // in clear, so a hash over those and an instant could be confirmed by guessing (#3792 round 3).
+    expect(reactionCollapseKey('msg-1', 'peer', 1)).not.toContain('grp-1');
+    expect(reactionCollapseId('msg-1', 'peer', 1)).not.toBe(reactionCollapseId('grp-1', 'peer', 1));
   });
 
   it('Android: both triggers post the ONE composition, under the ONE key', () => {
