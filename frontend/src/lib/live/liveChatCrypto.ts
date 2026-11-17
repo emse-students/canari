@@ -18,7 +18,9 @@
  * confidentiality against whoever holds that database or its backups, nor against social-service.
  * What it gives is the binding above.
  *
- * Owed an adversarial crypto review before its pull request leaves draft, as the segment seal was.
+ * A v1 plaintext is at most {@link LIVE_CHAT_V1_MAX_CHARS} UTF-16 units: what opens past it is
+ * `out-of-format` and never drawn. Reviewed adversarially on 2026-11-17 (gate G7): the verdict and
+ * what the seal does not give are in docs/wiki/services/lives.md, "The adversarial review".
  * NEVER LOGS key material, plaintext or ciphertext - lengths only.
  */
 import { Log } from '$lib/utils/Log';
@@ -35,14 +37,28 @@ const KEY_HEX_RE = /^[0-9a-f]{64}$/i;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
+ * THE LONGEST v1 PLAINTEXT, in UTF-16 units - part of the FORMAT, as the IV size is. It equals
+ * social-service's `LIVE_CHAT_MESSAGE_MAX_CHARS` (C11), the composer's bound; the server stores up
+ * to 900 bytes of text because it cannot count characters it cannot read, so a line a modified
+ * client sealed past this bound opens - and is refused here, never drawn (review G7, 2026-11-17).
+ * Raising it is a v2: an older build would refuse the longer lines.
+ */
+export const LIVE_CHAT_V1_MAX_CHARS = 300;
+
+/** Why a message did not open; see {@link LiveChatOpenError}. */
+export type LiveChatOpenReason = 'malformed' | 'unauthentic' | 'not-text' | 'out-of-format';
+
+/**
  * A message that does not open. `malformed`: not base64, or too short to hold an IV and a tag.
  * `unauthentic`: GCM refused it - wrong key, live, author, clientId or version, or a changed byte.
- * `not-text`: it opened, and is not UTF-8. Typed at the throw: a viewer drops the line, never more.
+ * `not-text`: it opened, and is not UTF-8. `out-of-format`: it opened to text longer than
+ * {@link LIVE_CHAT_V1_MAX_CHARS} - no v1 composer writes that. Typed at the throw: a viewer drops
+ * the line, never more.
  */
 export class LiveChatOpenError extends Error {
-  readonly reason: 'malformed' | 'unauthentic' | 'not-text';
+  readonly reason: LiveChatOpenReason;
 
-  constructor(reason: 'malformed' | 'unauthentic' | 'not-text', sealedChars: number) {
+  constructor(reason: LiveChatOpenReason, sealedChars: number) {
     super(`live chat message (${sealedChars} chars) did not open: ${reason}`);
     this.name = 'LiveChatOpenError';
     this.reason = reason;
@@ -148,9 +164,15 @@ export async function openLiveChatMessage(
     });
     throw new LiveChatOpenError('unauthentic', sealedB64.length);
   }
+  let text: string;
   try {
-    return new TextDecoder('utf-8', { fatal: true }).decode(plain);
+    text = new TextDecoder('utf-8', { fatal: true }).decode(plain);
   } catch {
     throw new LiveChatOpenError('not-text', sealedB64.length);
   }
+  if (text.length > LIVE_CHAT_V1_MAX_CHARS) {
+    Log.d(TAG, { op: 'open', refused: 'out-of-format', plainChars: text.length });
+    throw new LiveChatOpenError('out-of-format', sealedB64.length);
+  }
+  return text;
 }
