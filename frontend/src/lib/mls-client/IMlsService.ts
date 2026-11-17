@@ -1,5 +1,6 @@
 import type { DeliveryRefusalReason } from './mlsDeliveryHttp';
 import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
+import type { HistorySealEngine } from '$lib/crypto/historySeal';
 import type { AuthorVerdict } from '$lib/crypto/messageAuthorship';
 import type { DatedKeyPackage } from './keyPackages';
 import type { SkippedDevice } from './skippedKeyPackage';
@@ -1750,6 +1751,11 @@ export interface IMlsService {
   graineRun(groupId: string): Promise<GraineRunReading>;
   /** Graine v2's Ed25519 operations, from this platform's engine (`mls-core`, never WebCrypto). */
   graineSignatureEngine(): GraineSignatureEngine;
+  /**
+   * The sealed history answer's HPKE operations (`mls-core/src/history_seal.rs`), from this
+   * platform's engine - docs/wiki/protocols/history-answer-addressing.md, "Sealing the answer".
+   */
+  historySealEngine(): HistorySealEngine;
   /**
    * Signs `message` with THIS device's MLS credential key - the key its leaf in every group
    * carries. What a Graine v2 endorsement is (channel-encryption section 21): a member checks it

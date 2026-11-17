@@ -58,6 +58,40 @@ describe('reportPushCoverage', () => {
     );
   });
 
+  it('the WARN tallies what the unregistered phones last stated - the branch, without log access', async () => {
+    const l = logger();
+    await reportPushCoverage(
+      db([
+        {
+          os: 'ios',
+          build: '1.7.0',
+          devices: 20,
+          withoutPush: 4,
+          noOsToken: 0,
+          outcomes: [
+            'in-progress:permission',
+            'unauthorized:other',
+            'unauthorized:other',
+            'unstated',
+          ],
+        },
+      ]),
+      l,
+      NOW
+    );
+    expect(l.warn).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'without=4/20 last: unauthorized:other=2 in-progress:permission=1 unstated=1 - '
+      )
+    );
+  });
+
+  it('asks the outcome of the unregistered phones only - the no-token ones are counted apart', () => {
+    expect(PUSH_COVERAGE_SQL).toContain(
+      `array_agg(u."outcome" ORDER BY u."outcome")\n         FILTER (WHERE u."noRow" AND NOT u."noOsToken")`
+    );
+  });
+
   it('zero is the steady state: one line, no accusation', async () => {
     const l = logger();
     await reportPushCoverage(
