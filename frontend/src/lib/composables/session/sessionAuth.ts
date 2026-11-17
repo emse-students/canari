@@ -2684,14 +2684,19 @@ export async function loginImpl(
     // The only place holding the store, the device key and the MLS client at once, so it is where
     // the reconciliation's probe sender is installed. Every solicitation says what this device HOLDS
     // before asking anything, which is what lets the usual answer be silence.
-    setHistoryProbeSender(async (groupId: string) => {
+    setHistoryProbeSender(async (groupId: string, { incomplete }) => {
       const mls = ctx.ensureMls();
-      return sendHistoryProbe(groupId, digestIdentity(ctx.getUserId(), mls.getDeviceId()), {
-        storage: ctx.getStorage(),
-        deviceKeyB64: ctx.getDeviceKey(),
-        mlsService: mls,
-        log: cb.log,
-      });
+      return sendHistoryProbe(
+        groupId,
+        digestIdentity(ctx.getUserId(), mls.getDeviceId()),
+        {
+          storage: ctx.getStorage(),
+          deviceKeyB64: ctx.getDeviceKey(),
+          mlsService: mls,
+          log: cb.log,
+        },
+        incomplete
+      );
     });
 
     // INSTALLING THE SENDER IS ITSELF AN EDGE, and this is where it is discharged. Frames drain
