@@ -2632,6 +2632,15 @@ the host and the resolver code; `link-preview` and `link-safety` turn it into a 
 with one WARN (`... unreachable (dns EAI_AGAIN)`), the image proxy into a `502` instead of the `400`
 of a refused URL, and the GIF relay types it rather than inferring it by elimination.
 
+**The oEmbed follow-up never fails silently either** (2026-11-17). `fetchOEmbedData` used to catch
+everything into `null`, so a page pointing at a private address, an endpoint that said nothing and a
+site answering HTML read the same: as nothing. It now returns an `OEmbedUnavailable` typed where the
+failure happens - `refused` (the guard refused the declared endpoint), `unreachable` (DNS, connect,
+abort, a body that died), `status` / `not-json` / `malformed` (it answered, unusably). The preview is
+served either way; `resolveLinkPreview` logs one line per resolution (the preview is then cached):
+WARN for `refused` and `unreachable`, debug for a third party's unusable answer, which nobody here
+can act on.
+
 **One budget, and every mechanism that can enforce it agrees.** `OUTBOUND_BUDGET_MS` (4 000 ms) arms
 the endpoint's `AbortController` for the whole operation - redirect chain and oEmbed follow-up - AND
 the dispatcher's `connect.timeout`, `headersTimeout` and `bodyTimeout` for each individual leg.

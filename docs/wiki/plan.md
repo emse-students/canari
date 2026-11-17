@@ -284,7 +284,6 @@ earliest version, as a checklist.
 - [P3 - Post-stable proposal for the user: a partial unique index on tier keys (2026-10-26)](backlog.d/p3-post-stable-proposal-for-the-user-a-partial-unique-index-on-tier-keys-2026.md)
 - [P3 - an admin who never joined a private salon is not told when it is created or deleted](backlog.d/p3-an-admin-who-never-joined-a-private-salon-is-not-told-when-it-is-created-or.md)
 - [P3 - `ChatArea.entryWindow` "never mounts more than the 20-row entry frame" fails under the full sweep and passes alone (2026-10-27)](backlog.d/p3-chatarea-entrywindow-never-mounts-more-than-the-20-row-entry-frame-fails.md)
-- [P3 - the $lib alias migration waits for a quiet frontend (2026-10-27)](backlog.d/p3-the-lib-alias-migration-waits-for-a-quiet-frontend-2026-10-27.md)
 - [P3 - Three loose ends of the per-conversation drafts (review of #2614, 2026-10-27)](backlog.d/p3-three-loose-ends-of-the-per-conversation-drafts-review-of-2614-2026-10-27.md)
 - [P3 - Two devices of one account joining a community at once: one exhausts its external-join attempts and loses a frame (LIST-RACE-1-W, 2026-10-27)](backlog.d/p3-two-devices-of-one-account-joining-a-community-at-once-one-exhausts-its.md)
 - [P3 - A rotation that fails every time loops through the PIN gate (2026-10-28)](backlog.d/p3-a-rotation-that-fails-every-time-loops-through-the-pin-gate-2026-10-28.md)

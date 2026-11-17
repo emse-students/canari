@@ -39,6 +39,7 @@ import {
   buildLinkPreviewPayload,
   extractOEmbedEndpoint,
   fetchOEmbedData,
+  OEmbedUnavailable,
   mergeOEmbedIntoPayload,
   ssrfSafeFetch,
   errorCause,
@@ -653,9 +654,16 @@ export class SecurityController {
     if (!oembedEndpoint) return payload;
 
     const oembed = await fetchOEmbedData(oembedEndpoint, signal);
-    if (oembed) {
-      this.logger.debug(`[LINK_PREVIEW] oEmbed enriched ${targetUrl.hostname}`);
+    if (oembed instanceof OEmbedUnavailable) {
+      // The preview is served either way. A page pointing us somewhere the guard refuses, or an
+      // endpoint that said nothing, is worth a WARN; a third party's unusable answer is a fact
+      // about its site nobody here can act on. Logged once per resolution - the preview is cached.
+      const line = `[LINK_PREVIEW] oEmbed of ${targetUrl.hostname} not used (${oembed.kind}): ${oembed.detail}`;
+      if (oembed.kind === 'refused' || oembed.kind === 'unreachable') this.logger.warn(line);
+      else this.logger.debug(line);
+      return payload;
     }
+    this.logger.debug(`[LINK_PREVIEW] oEmbed enriched ${targetUrl.hostname}`);
     return mergeOEmbedIntoPayload(payload, oembed, targetUrl, currentUrl);
   }
 

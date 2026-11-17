@@ -554,20 +554,53 @@ export interface OEmbedData {
 }
 
 /**
+ * Why an oEmbed endpoint gave nothing usable, CLASSIFIED WHERE IT HAPPENED:
+ * - `refused` - the SSRF guard refused the endpoint the page declared (a private address, a name
+ *   with no address, another scheme): the page pointed us somewhere we will not go;
+ * - `unreachable` - the endpoint said nothing (DNS, connect, abort, a body that died);
+ * - `status` / `not-json` / `malformed` - it ANSWERED, with something unusable: a fact about a
+ *   third party's site that nobody here can act on.
+ */
+export type OEmbedFailureKind = 'refused' | 'unreachable' | 'status' | 'not-json' | 'malformed';
+
+/** The typed "no enrichment" of {@link fetchOEmbedData}: its kind, and the evidence. */
+export class OEmbedUnavailable {
+  constructor(
+    readonly kind: OEmbedFailureKind,
+    readonly detail: string
+  ) {}
+}
+
+/**
  * Follows a discovered oEmbed endpoint and returns the fields we can use.
  *
  * Goes through the same SSRF guard as the page fetch: the endpoint is declared
  * by the page, so it is exactly as attacker-controlled as the URL that was
  * pasted. Never throws - a preview that already has Open Graph data must not be
- * lost because the optional enrichment failed.
+ * lost because the optional enrichment failed - but never swallows either: every
+ * failure comes back as an {@link OEmbedUnavailable} the caller logs, where it used to be a bare
+ * `null` that said nothing about which of five things went wrong.
  */
 export async function fetchOEmbedData(
   endpoint: string,
   signal?: AbortSignal
-): Promise<OEmbedData | null> {
+): Promise<OEmbedData | OEmbedUnavailable> {
+  let safeUrl: URL;
   try {
-    const safeUrl = await assertSafeExternalUrl(endpoint);
-    const response = await ssrfSafeFetch(safeUrl.toString(), {
+    safeUrl = await assertSafeExternalUrl(endpoint);
+  } catch (error) {
+    if (error instanceof UpstreamUnreachableError) {
+      return new OEmbedUnavailable('unreachable', error.message);
+    }
+    if (error instanceof BadRequestException)
+      return new OEmbedUnavailable('refused', error.message);
+    throw error;
+  }
+
+  let response: UndiciResponse;
+  let raw: string;
+  try {
+    response = await ssrfSafeFetch(safeUrl.toString(), {
       method: 'GET',
       redirect: 'manual',
       signal,
@@ -576,30 +609,42 @@ export async function fetchOEmbedData(
         accept: 'application/json',
       },
     });
-
-    if (!response.ok) return null;
-    if (!(response.headers.get('content-type') || '').toLowerCase().includes('json')) return null;
-
-    const raw = (await response.text()).slice(0, 100_000);
-    const data = JSON.parse(raw) as {
-      title?: unknown;
-      author_name?: unknown;
-      thumbnail_url?: unknown;
-      provider_name?: unknown;
-    };
-
-    const asString = (value: unknown): string | undefined =>
-      typeof value === 'string' && value.trim() ? value.trim() : undefined;
-
-    return {
-      title: asString(data.title),
-      authorName: asString(data.author_name),
-      thumbnailUrl: asString(data.thumbnail_url),
-      providerName: asString(data.provider_name),
-    };
-  } catch {
-    return null;
+    if (!response.ok) return new OEmbedUnavailable('status', `answered ${response.status}`);
+    const contentType = (response.headers.get('content-type') || '').toLowerCase();
+    if (!contentType.includes('json')) {
+      return new OEmbedUnavailable('not-json', `content-type ${contentType || 'none'}`);
+    }
+    raw = (await response.text()).slice(0, 100_000);
+  } catch (error) {
+    // Every throw of a fetch or of reading its body is the transport: the site said nothing.
+    return new OEmbedUnavailable('unreachable', String(errorCause(error) ?? error));
   }
+
+  let data: {
+    title?: unknown;
+    author_name?: unknown;
+    thumbnail_url?: unknown;
+    provider_name?: unknown;
+  };
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== 'object' || parsed === null) {
+      return new OEmbedUnavailable('malformed', 'not a JSON object');
+    }
+    data = parsed as typeof data;
+  } catch (error) {
+    return new OEmbedUnavailable('malformed', String(error).slice(0, 120));
+  }
+
+  const asString = (value: unknown): string | undefined =>
+    typeof value === 'string' && value.trim() ? value.trim() : undefined;
+
+  return {
+    title: asString(data.title),
+    authorName: asString(data.author_name),
+    thumbnailUrl: asString(data.thumbnail_url),
+    providerName: asString(data.provider_name),
+  };
 }
 
 /**
