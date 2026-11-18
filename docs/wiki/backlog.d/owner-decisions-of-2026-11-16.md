@@ -49,7 +49,7 @@ Recorded so no question answered here is asked again. Each line names where its 
   (principle 3 of [the charter](../../principes.md), *your attention is not for sale*); the history
   stays readable. Every grant raises the grantee's private `clearedMarks[salon]` to the grant instant,
   no migration, "Lu par" untouched ([chat](../frontend/modules/chat.md#a-salons-badge-starts-at-the-grant-owner-2026-11-16),
-  [the reading owed](p3-a-private-salon-granted-late-badges-its-whole-past.md)).
+  read `PASS` on dev 2026-11-18, [sitting S4](../device-verification.md#the-web-rig-readings-of-2026-11-18-s4-170-alpha11-the-false-accusers-cost-and-the-web-rows)).
 - **(13) The bench phones are a sandbox: uninstalling the app on the Mi 9T or the iPhone 12 is
   allowed.** The old "never uninstall" rule is withdrawn; `install -r` stays the default because it
   keeps the enrolment, and an uninstall is chosen knowing it costs the device

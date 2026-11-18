@@ -29,6 +29,16 @@ text; nothing is built for it
    online; C logs no `[HISTORY_BUNDLE] ... received` for A's answer and holds nothing before its
    arrival; A's new device logs its chunks `addressed to ..., sealed` and restores M1..Mn; nothing logs
    `REFUSED` ([what proves it](../protocols/history-answer-addressing.md#what-proves-the-seal)).
+   **Read 2026-11-18 on dev, `1.7.0-alpha.11`, sitting S4: `PASS` but for the last clause**
+   ([readings](../device-verification.md#the-web-rig-readings-of-2026-11-18-s4-170-alpha11-the-false-accusers-cost-and-the-web-rows)).
+   A group of the owner, `beta` and `delta`; M1..M3; `gamma` added; M4; then the owner's web seat W3
+   minted as a new device. Newcomer `gamma` held M4 only, before and after, and logged no bundle for
+   the new device's answer (its own ask was answered `sealed`, "every message selected ... was
+   withheld"); W3 restored M1..M4, and every answer it was sent was `addressed to ..., sealed`. Which
+   device answered W3 in THIS group was not captured. **The clause "nothing logs `REFUSED`" FAILED:** W3
+   logged five error-level `REFUSED` lines for join pushes in five OTHER groups, filed as
+   [p2-a-new-device-refuses-the-join-push-of-groups-it-was-admitted-to-unsolicited](p2-a-new-device-refuses-the-join-push-of-groups-it-was-admitted-to-unsolicited.md)
+   (`1.7.1`, not shown a regression). Not staged: the LINK joiner who waited before the Add.
 2. **The join push is not sealed** - it answers no ask, so no key of the newcomer's reaches the inviter.
    The residual was a server misrouting the push of a RETURNING member to a member admitted after
    that member's first arrival. **Owner, 2026-11-17: closed in `1.7.0`.** Built and merged (#3777, on dev since `1.7.0-alpha.9`), with the offline newcomer's fix, read `PASS` on both phones (entry deleted 2026-11-18, [every half read](../device-verification.md#the-phone-readings-of-2026-11-17-170-alpha9-both-phones-and-the-rig)).

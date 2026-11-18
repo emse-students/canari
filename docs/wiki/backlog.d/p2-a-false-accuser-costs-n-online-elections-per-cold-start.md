@@ -1,8 +1,11 @@
 ## P2 - a device that accuses frames falsely walks the whole online membership at every cold start (#3762)
 
-target: 1.7.0
+target: 1.8.0
 
 _2026-11-17, scope cut: KEPT in `1.7.0` - a regression of `1.7.0`: the walk it describes is #3762's, merged 2026-11-17, after `v1.6.12` ([decisions](owner-decisions-of-2026-11-17.md))._
+
+_2026-11-18, sitting S4: moved to `1.8.0` on the measurement below (the walk is #3762's, but the false
+accusation that would start it did not fire in 17 hard-killed cold starts); the lead confirms or puts it back._
 
 **What changed.** Since #3762, an ask raised by a frame this device cannot read carries
 `incomplete: true`. Every member that holds nothing the asker lacks answers
@@ -33,6 +36,35 @@ and on one after it. For each cold start, count the `[HISTORY_RECONCILE]` electi
 `history_state` and `history_cannot_repair` frames, and the decrypts summed over every seat. The
 result fills the table above with measured numbers, or shows the TAB-3b accusation does not reach
 this path.
+
+**Measured 2026-11-18 on dev, `1.7.0-alpha.11` (after #3762), sitting S4 ([readings](../device-verification.md#the-web-rig-readings-of-2026-11-18-s4-170-alpha11-the-false-accusers-cost-and-the-web-rows)): the false accusation did not reach this path, so the walk cost nothing.**
+The largest group the rig holds: a four-account group with **M = 38** active device memberships
+(`dm_device_group_memberships`), with W2, W3, W4 and W5 online beside the killed seat (and the Mi 9T's
+app open on `/chat`), so N_online is 5 to 6. W1 (the owner's web seat) had its whole browser killed
+(`killSeat(..., 'browser')`) the instant it SHOWED a frame of a four-message burst from W2 (the first
+frame on odd runs, the last on even ones), then was relaunched, unlocked and left 75 s with the group
+open. Five valid cold starts (a sixth killed before any frame showed is not counted):
+
+| per cold start | before #3762 | after #3762, measured (5 runs) |
+| --- | --- | --- |
+| loss accusations (`frame never read here and unreadable for good`) | - | 0, 0, 0, 0, 0 |
+| `LOST frame` lines | - | 0 each |
+| elections: server `[HISTORY_REQ] FORWARDED` / `NO_PEER_ONLINE` for the group | 1 by the code | 0 each |
+| `history_cannot_repair` answers / walk ends on the revived seat | - | 0 each |
+| the group's history stream reads by the revived seat (`[HISTORY] user=... group=...`) | - | 1 to 3, its own catch-up of the 5-6 new entries |
+
+Every revived W1 logged `[HISTORY_RECONCILE] no sweep - away 0 d, inside what the server keeps; every
+group already audited` and drew its stored page; no ask was raised. With KILL-3's twelve runs on
+`1.7.0-alpha.9` (also after #3762, "the revived seat accused no frame it had read (0)"), that is 17
+hard-killed cold starts on builds carrying #3762 without one false accusation. **"Before #3762" could
+not be measured on dev**: every build dev has served since `1.7.0-alpha.8` carries it, and the
+"before" column is the code's single election. **Verdict: not a `1.7.0` blocker** - the cost in the
+table above is real only when the TAB-3b accusation fires, which the bench no longer reproduces; the
+entry moves to `1.8.0` beside [its cause](p2-a-cold-start-re-accuses-frames-it-already-read-because-the-ratchet-advance.md),
+and answer 1 (one write for the advance and its mark) remains the one that removes both. **What would
+reopen it:** one `frame never read here and unreadable for good` on a revived seat (the KILL rows assert
+it), after which option 2 needs a durable walk record keyed by group, the accused fingerprints and the
+roster that answered, with its migration of the client store and an adversarial review.
 
 **Candidate architectural answers. A cap on the walk and a timer are NOT among them**, because either
 would also stop the walk of a device that really is incomplete.
