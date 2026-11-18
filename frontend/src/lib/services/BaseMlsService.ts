@@ -3577,7 +3577,8 @@ export abstract class BaseMlsService implements IMlsService {
           // NOT for a deadline (`RequestDeadlineError`, e.g. the token refresh's): `trackedFetch`
           // already counts that one towards `STALLS_BEFORE_UNREACHABLE`, and one expiry is a slow
           // moment, not a dead link. The page itself answering clears it (`pullPendingMessagesJson`).
-          if (e instanceof TransportFailureError) connectivity.notifyServerUnreachable();
+          if (e instanceof TransportFailureError)
+            connectivity.notifyServerUnreachable(`transport failure: ${e.name}`);
         } else {
           console.error(
             `[PENDING] Pending fetch failed after ${fetched} message(s) - ${where}:`,

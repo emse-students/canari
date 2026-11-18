@@ -252,11 +252,15 @@ class ConnectivityStore {
   /**
    * Records that a request never reached the server (DNS failure, no route, refused socket).
    * Call this only for transport failures - an HTTP status is an answer, not a disconnection.
+   *
+   * @param evidence WHAT proved it, printed on the verdict line so a log tells a black-holed link
+   *   (`2 request deadlines in a row`) from a refused socket (`transport failure: <error type>`) -
+   *   the distinction the stall counter exists for. The caller states it; this never guesses.
    */
-  notifyServerUnreachable(): void {
+  notifyServerUnreachable(evidence = 'transport failure'): void {
     this.ensureGlobalListeners();
     if (!this.serverReachable) return;
-    console.log('[CONNECTIVITY] server unreachable (transport failure)');
+    console.log(`[CONNECTIVITY] server unreachable (${evidence})`);
     this.serverReachable = false;
     this.unreachableSpell++;
     this.deadlinesWhileUnreachable = 0;
@@ -442,10 +446,16 @@ class ConnectivityStore {
             console.warn(
               `[CONNECTIVITY] ${error.message} (stall ${this.consecutiveStalls}/${STALLS_BEFORE_UNREACHABLE})`
             );
-            if (this.consecutiveStalls >= STALLS_BEFORE_UNREACHABLE) this.notifyServerUnreachable();
+            if (this.consecutiveStalls >= STALLS_BEFORE_UNREACHABLE) {
+              this.notifyServerUnreachable(
+                `${STALLS_BEFORE_UNREACHABLE} request deadlines in a row`
+              );
+            }
           }
         } else if (isTransportFailure(error)) {
-          this.notifyServerUnreachable();
+          this.notifyServerUnreachable(
+            `transport failure: ${error instanceof Error ? error.name : typeof error}`
+          );
         }
         this.recomputeSlow();
       },

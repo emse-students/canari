@@ -188,6 +188,26 @@ describe('the slow state is derived from observed answers, and never stacks on o
     expect(connectivity.isOffline).toBe(true);
   });
 
+  it('the verdict line states its evidence: two deadlines, or the type of the transport failure', () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const verdicts = () =>
+      log.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('server unreachable'));
+    const stall = () =>
+      connectivity.trackRequest().failed(new RequestDeadlineError('read', 20000, 'GET', '/a', 0));
+    stall();
+    stall();
+    expect(verdicts()).toEqual([
+      '[CONNECTIVITY] server unreachable (2 request deadlines in a row)',
+    ]);
+    connectivity.notifyServerReachable();
+    connectivity.trackRequest().failed(new TransportFailureError(new TypeError('Failed to fetch')));
+    expect(verdicts().at(-1)).toBe(
+      '[CONNECTIVITY] server unreachable (transport failure: TransportFailureError)'
+    );
+    vi.restoreAllMocks();
+  });
+
   it('a deadline that expired while other answers arrived is a slow link, never an unreachable one', async () => {
     vi.useFakeTimers();
     try {

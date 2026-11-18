@@ -2643,7 +2643,8 @@ export class MlsDeliveryApi {
       // the whole batch rather than one per chunk. NO ANSWER is told to the connectivity store, which
       // the caller reads to decide whether the link is known down; a deadline is not - one expiry
       // is a slow moment (`STALLS_BEFORE_UNREACHABLE` counts those where they are tracked).
-      if (e instanceof TransportFailureError) connectivity.notifyServerUnreachable();
+      if (e instanceof TransportFailureError)
+        connectivity.notifyServerUnreachable(`transport failure: ${e.name}`);
       if (isTransportFailure(e)) throw e;
       console.error(`[History] batch of ${chunk.length} group(s) could not be sent:`, e);
     }
