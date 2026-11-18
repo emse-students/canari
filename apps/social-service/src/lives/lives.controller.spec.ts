@@ -336,3 +336,71 @@ describe('the routes that answer a live key (adversarial review G7, 2026-11-17)'
     }
   );
 });
+
+describe('the staff read of a broadcaster standing (live moderation, 1.7.0)', () => {
+  const STAFF = '11111111-1111-4111-8111-111111111111';
+  const A = '22222222-2222-4222-8222-222222222222';
+  const B = '33333333-3333-4333-8333-333333333333';
+  const row = (userId: string) => ({ userId, displayName: userId, withdrawnAt: new Date() });
+
+  function build(opts: { moderator: boolean; moderated: string[] }) {
+    const standing = jest.fn(async (id: string) => row(id));
+    const listWithdrawn = jest.fn(async (scope: (ids: string[]) => Promise<Set<string>>) => {
+      const all = [row(A), row(B)];
+      const allowed = await scope(all.map((s) => s.userId));
+      return all.filter((s) => allowed.has(s.userId));
+    });
+    const moderatedUserIds = jest.fn(async () => new Set(opts.moderated));
+    const mayModerateUser = jest.fn(async (_c: string, t: string) => opts.moderated.includes(t));
+    const refuseModeration = jest.fn(async () => {
+      throw new ForbiddenException({ code: 'MODERATION_OUT_OF_SCOPE' });
+    });
+    const controller = new LivesController(
+      { broadcasterStanding: standing, listWithdrawn } as unknown as LivesService,
+      {
+        isContentModerator: jest.fn(async () => opts.moderator),
+        moderatedUserIds,
+        mayModerateUser,
+        refuseModeration,
+      } as unknown as AssociationsService,
+      {} as unknown as LiveChatService
+    );
+    return { controller, standing, listWithdrawn, moderatedUserIds, refuseModeration };
+  }
+
+  it('refuses a non-staff caller before reading anything (403), on both reads', async () => {
+    const { controller, standing, listWithdrawn } = build({ moderator: false, moderated: [A] });
+    expect(await statusOf(controller.broadcasterStanding(A, STAFF, undefined))).toBe(
+      HttpStatus.FORBIDDEN
+    );
+    expect(await statusOf(controller.withdrawn(STAFF, undefined))).toBe(HttpStatus.FORBIDDEN);
+    expect(standing).not.toHaveBeenCalled();
+    expect(listWithdrawn).not.toHaveBeenCalled();
+  });
+
+  it('answers the standing of a person in scope, and refuses one out of scope', async () => {
+    const { controller, standing, refuseModeration } = build({ moderator: true, moderated: [A] });
+    await expect(controller.broadcasterStanding(A, STAFF, undefined)).resolves.toMatchObject({
+      userId: A,
+    });
+    expect(await statusOf(controller.broadcasterStanding(B, STAFF, undefined))).toBe(
+      HttpStatus.FORBIDDEN
+    );
+    expect(refuseModeration).toHaveBeenCalledWith(STAFF, { kind: 'broadcaster', id: B });
+    expect(standing).toHaveBeenCalledTimes(1);
+  });
+
+  it('narrows the withdrawn list to the people the caller may act on; an admin sees all', async () => {
+    const scoped = build({ moderator: true, moderated: [A] });
+    expect((await scoped.controller.withdrawn(STAFF, undefined)).map((s) => s.userId)).toEqual([A]);
+    const admin = build({ moderator: true, moderated: [A, B] });
+    expect((await admin.controller.withdrawn(STAFF, 'true')).map((s) => s.userId)).toEqual([A, B]);
+    expect(admin.moderatedUserIds).toHaveBeenCalledWith(STAFF, [A, B], { isGlobalAdmin: true });
+  });
+
+  it.each(['withdrawn', 'broadcasterStanding'] as const)('%s answers no-store', (name) => {
+    const route = Object.getOwnPropertyDescriptor(LivesController.prototype, name);
+    const headers = Reflect.getMetadata('__headers__', route?.value as object) as unknown[];
+    expect(headers).toContainEqual({ name: 'Cache-Control', value: 'no-store' });
+  });
+});

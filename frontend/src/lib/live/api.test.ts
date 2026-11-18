@@ -34,6 +34,7 @@ import {
   fetchLiveLimits,
   fetchLiveRules,
   fetchLiveStanding,
+  fetchWithdrawnBroadcasters,
   fetchLiveManifest,
   fetchLiveReplay,
   fetchLivePoster,
@@ -246,6 +247,21 @@ describe('the routes', () => {
     );
     apiFetch.mockResolvedValueOnce(json(403, { code: 'LIVE_WITHDRAWAL_FORBIDDEN' }));
     await expect(liftBroadcasterWithdrawal('u9')).rejects.toMatchObject({
+      code: 'LIVE_WITHDRAWAL_FORBIDDEN',
+      kind: 'refused',
+    });
+  });
+
+  it('the withdrawn list is a staff read that needs no report', async () => {
+    const row = { userId: 'u9', displayName: 'Ana', cutsOnRecord: 3, withdrawnAt: 'x' };
+    apiFetch.mockResolvedValueOnce(json(200, [row]));
+    expect(await fetchWithdrawnBroadcasters()).toEqual([row]);
+    expect(apiFetch).toHaveBeenLastCalledWith(
+      'https://social.test/api/lives/broadcasters/withdrawn',
+      {}
+    );
+    apiFetch.mockResolvedValueOnce(json(403, { code: 'LIVE_WITHDRAWAL_FORBIDDEN' }));
+    await expect(fetchWithdrawnBroadcasters()).rejects.toMatchObject({
       code: 'LIVE_WITHDRAWAL_FORBIDDEN',
       kind: 'refused',
     });

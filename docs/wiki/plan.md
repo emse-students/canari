@@ -40,19 +40,17 @@ earliest version, as a checklist.
 
 - [P2 - A community joined from another device, or just joined, is not drawn until a cold start or a reload](backlog.d/p2-a-community-joined-elsewhere-is-not-drawn-until-a-cold-start.md)
 - [P2 - a device that accuses frames falsely walks the whole online membership at every cold start (#3762)](backlog.d/p2-a-false-accuser-costs-n-online-elections-per-cold-start.md)
-- [P2 - A withdrawn broadcaster can be given the right back only from a PENDING live report](backlog.d/p2-a-withdrawn-broadcaster-can-be-lifted-only-from-a-pending-live-report.md)
-- [P2 - staff have no view of a broadcaster's standing without a report, so a withdrawal is lifted only from a report row among the 50 newest](backlog.d/p2-no-staff-view-of-a-broadcaster-s-standing-without-a-report.md)
 - [P2 - the reply swipe along a thumb's arc does nothing on WebKit: the thread scrolls instead](backlog.d/p2-the-reply-swipe-along-a-thumb-s-arc-does-nothing-on-webkit.md)
 
 **P3 - hygiene**
 
 - [P3 - a 13 MB upload on the iPhone restarted at about half and ran at 40 to 65 KB/s](backlog.d/p3-a-13-mb-upload-on-the-iphone-restarted-at-half-and-ran-at-40-to-65-kb-s.md)
-- [P3 - a member whose right to broadcast is given back is not told](backlog.d/p3-a-lifted-withdrawal-is-not-told-to-the-member.md)
 - [P3 - the feed offset restored after a Back from an association lands about 226 px lower than it was left (Mi 9T, `1.7.0-alpha.2`)](backlog.d/p3-the-feed-offset-restored-after-a-back-from-an-association-lands-about-226-px.md)
 
 ### Readings owed
 
 - [ ] [the CanaReels composer, viewer and editor on real content](backlog.d/reading-owed-the-canareels-composer-viewer-and-editor-on-real-content.md)
+- [ ] [the withdrawn broadcasters list, its lift, and the "restored" notice](backlog.d/reading-owed-the-withdrawn-broadcasters-list-and-the-lift-notice.md)
 - [ ] [sharing into Canari on iOS](backlog.d/reading-owed-sharing-into-canari-on-ios.md)
 - [ ] [seeds mirrored before the writer label](backlog.d/reading-owed-seeds-mirrored-before-the-writer-label.md)
 - [ ] [a deploy's `502`/`503`/`504` is "not now", never a send failure](backlog.d/reading-owed-a-deploy-s-502-503-504-is-not-now-never-a-send-failure.md)

@@ -369,7 +369,8 @@ class NotificationService: UNNotificationServiceExtension {
       )
     // The strike ladder's three notices to a broadcaster (WP-L8b): fixed sentences, no actor and
     // no fragment.
-    case "social_live_cut", "social_live_suspended", "social_live_withdrawn":
+    case "social_live_cut", "social_live_suspended", "social_live_withdrawn",
+      "social_live_reinstated":
       let stem = String(key.dropFirst("social_".count))
       composed = (
         Self.localized("notif.social.\(stem).title", locale: locale),

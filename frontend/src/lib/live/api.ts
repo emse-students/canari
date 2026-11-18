@@ -31,6 +31,7 @@ import type {
   LiveLimits,
   LiveCutReason,
   LiveCutResult,
+  LiveBroadcasterStanding,
   LiveWithdrawalLift,
   LiveWithdrawalResult,
   LiveEndReason,
@@ -257,6 +258,21 @@ export async function fetchLiveRules(): Promise<LiveRulesStatus> {
 export async function fetchLiveStanding(): Promise<LiveOwnStanding> {
   console.debug('[LIVE] standing');
   return liveJson<LiveOwnStanding>(`${livesBase()}/standing`, 'Live standing');
+}
+
+/**
+ * `GET /api/lives/broadcasters/withdrawn` - STAFF: the accounts whose right to broadcast is
+ * withdrawn, newest first, narrowed server-side to the people the caller may act on. The lift's
+ * door, independent of any report. Refusal: `LIVE_WITHDRAWAL_FORBIDDEN` (403).
+ */
+export async function fetchWithdrawnBroadcasters(): Promise<LiveBroadcasterStanding[]> {
+  console.debug('[LIVE] withdrawn broadcasters');
+  const rows = await liveJson<LiveBroadcasterStanding[]>(
+    `${livesBase()}/broadcasters/withdrawn`,
+    'Live withdrawn broadcasters'
+  );
+  console.debug(`[LIVE] ${rows.length} withdrawn broadcaster(s)`);
+  return rows;
 }
 
 /**

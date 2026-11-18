@@ -363,7 +363,9 @@ indexes a comment id inside the jsonb, so it would scan every post once per comm
 **A mute and a live withdrawal stay ONE platform-wide row (owner, 2026-11-02: "Laisser tel quel").**
 A measure is about a person, not about a BDE: any BDE whose spaces hold that person may lift it or
 rewrite its reason, whichever BDE took it, and the platform admin always may. Deliberate, not an
-oversight - a second BDE seeing the same person is a second moderator of them.
+oversight - a second BDE seeing the same person is a second moderator of them. The withdrawn-broadcasters
+list (`GET /api/lives/broadcasters/withdrawn`) applies the same predicate per row (`moderatedUserIds`), so a
+BDE holder lists and lifts only the people of its own spaces; an institution holder lists none.
 
 **What an out-of-scope moderator can infer, accepted (owner, 2026-11-02).** On an anonymous post a BDE
 moderator outside its scope is served no pin and no unmask capability, so it can tell the post is not

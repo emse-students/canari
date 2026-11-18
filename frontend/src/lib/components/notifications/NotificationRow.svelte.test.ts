@@ -789,3 +789,22 @@ describe('NotificationRow for the right to broadcast suspended or withdrawn (WP-
     }
   );
 });
+
+describe('NotificationRow for the right to broadcast given back (1.7.0)', () => {
+  it('live_reinstated is told in the reader locale, with no reason, inert, with no avatar of nobody', () => {
+    const target = renderRow({
+      id: 'n11',
+      type: 'live_reinstated',
+      postId: 'x1',
+      actorId: '',
+      actorName: '',
+      text: '',
+      read: false,
+      createdAt: new Date().toISOString(),
+    });
+    expect(target.textContent).toContain(m.notif_live_reinstated_text());
+    expect(target.textContent).not.toContain(m.notif_unknown_type_text());
+    expect(target.querySelector('[data-notif-live-cut-avatar]')).not.toBeNull();
+    expect(target.querySelector('button')!.disabled).toBe(true);
+  });
+});

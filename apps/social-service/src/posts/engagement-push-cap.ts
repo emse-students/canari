@@ -140,6 +140,7 @@ export const PUSH_BUDGET: Readonly<
   live_cut: FREE,
   live_suspended: FREE,
   live_withdrawn: FREE,
+  live_reinstated: FREE,
   form_paid_over_capacity: FREE,
   lydia_payments_active: FREE,
   lydia_payments_paused: FREE,
