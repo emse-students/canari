@@ -228,6 +228,26 @@ describe('LydiaContractPanel bands', () => {
     expect(rows()).toEqual(['0', '100']);
   });
 
+  it('does not re-sort while focus moves from one band row to another', async () => {
+    route(withBands([band(10_000), band(0)]), COUNTER_UNSET);
+    await render();
+    const rows = document.querySelectorAll('[role="group"]');
+    rows[0].dispatchEvent(
+      new FocusEvent('focusout', { bubbles: true, relatedTarget: rows[1].querySelector('input') })
+    );
+    await settle();
+    expect(bandInputs()[0].value).toBe('100');
+  });
+
+  it('sorts before saving, so an error names the row as shown', async () => {
+    route(withBands([band(10_000), band(0)]), COUNTER_UNSET);
+    await render();
+    await submit();
+    const put = apiFetch.mock.calls.find(([, init]) => init?.method === 'PUT');
+    expect(JSON.parse(put![1].body).bands[0].fromCents).toBe(0);
+    expect(bandInputs()[0].value).toBe('0');
+  });
+
   it('says two bands at one threshold in words, never the field path', async () => {
     route(withBands([band(5_000), band(5_000)]), COUNTER_UNSET);
     await render();

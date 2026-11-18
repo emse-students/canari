@@ -76,6 +76,9 @@
 
   async function save() {
     if (!form) return;
+    // Sorted first, so the row numbers an error names are the ones on screen (Enter in a field
+    // submits without a blur).
+    sortBands();
     saving = true;
     saveError = '';
     saved = false;
@@ -305,18 +308,23 @@
         {/each}
       </fieldset>
 
-      <fieldset class="space-y-3">
+      <fieldset
+        class="space-y-3"
+        onfocusout={(e) => {
+          // Only once focus leaves the whole list: re-sorting while another row is focused would
+          // move its data under the cursor, and under a click on a row's remove button.
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) sortBands();
+        }}
+      >
         <legend class="text-text-main text-sm font-bold">{m.admin_lydia_bands_title()}</legend>
         <p class="text-text-muted text-xs">{m.admin_lydia_bands_hint()}</p>
-        {#each form.bands as band, i (i)}
+        {#each form.bands as band, i (band)}
           <div
             class="border-cn-border space-y-2 rounded-xl border p-3"
             role="group"
-            onfocusout={(e) => {
-              // Only once focus leaves the whole row: re-sorting under a focused field would move it.
-              if (!e.currentTarget.contains(e.relatedTarget as Node | null)) sortBands();
-            }}
+            aria-label={m.admin_lydia_where_band({ n: i + 1 })}
           >
+            <p class="text-text-main text-xs font-bold">{m.admin_lydia_where_band({ n: i + 1 })}</p>
             <div class="flex items-end gap-2">
               <Input
                 class="flex-1"
