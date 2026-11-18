@@ -5,11 +5,17 @@
 # finds an object only a held file would create.
 #
 # WHY IT EXISTS. On 2026-10-17 the user decided that stable 1.2.9 ships WITHOUT the terms-of-use
-# stage (45-consent.yaml, #1955), already merged and inside its pre-releases; the stable deploy runs
+# stage (45-consent.yaml, #1955), and the file was held here; the stable deploy runs
 # `apply-blueprints.sh apply`, a production write on the identity provider. A hold that only a
 # comment states is one the next edit undoes in silence, so the real script is run here against the
-# real tree, with a fake transport that records the program it would have sent. Lifting the hold is
-# `git revert` of the commit that wrote this file (docs/wiki/backlog.md).
+# real tree, with a fake transport that records the program it would have sent.
+#
+# SINCE 2026-11-18 THE TERMS HOLD IS A PROVIDER'S, NOT A FILE'S: 45-consent.yaml builds the flow on
+# every instance (a flow nobody names is inert) and 50-providers.yaml declares which providers name
+# it - dev and local, where the pre-release apps and the harness sign in, never production. That
+# declaration is asserted below, without Docker; test-blueprints.sh asserts it on a built instance.
+# Lifting the hold for production is adding `miconnect-canari` to BOUND here, in the blueprint and in
+# test-consent-flow.py, in one pull request (docs/wiki/infrastructure/authentik.md).
 #
 # Run by `make test-ci-scripts` and by CI. No Docker, no network.
 set -uo pipefail
@@ -47,11 +53,23 @@ for file in "$blueprints"/held/*.yaml; do
   if grep -q "held/$name is NOT applied" "$tmp/err"; then pass "the run NAMES held/$name"; else fail "the run is silent about held/$name"; fi
   if grep -q "BLUEPRINTS.append(('$name'," "$tmp/program"; then fail "held/$name was SENT to authentik"; else pass "held/$name is not sent"; fi
 done
-# THE HOLD THE USER DECIDED, named rather than derived: an empty held/ would pass every loop above.
-if [ -f "$blueprints/held/45-consent.yaml" ] && [ ! -e "$blueprints/45-consent.yaml" ]; then
-  pass "45-consent.yaml (the terms stage) is held"
+# THE HOLD THE USER DECIDED, named rather than derived: the providers whose `authorization_flow` is
+# the terms flow, read from the blueprint, must be exactly BOUND.
+BOUND="miconnect-canari-dev miconnect-canari-local"
+bound="$(awk '
+  /^[[:space:]]*-[[:space:]]*model:/ { name = "" }
+  /^[[:space:]]*name: "miconnect-/ && name == "" { v = $2; gsub(/"/, "", v); name = v }
+  /authorization_flow: !Find \[authentik_flows.flow, \[slug, "miconnect-authorization"\]\]/ { print name }
+' "$blueprints/50-providers.yaml" | sort | paste -sd' ' -)"
+if [ "$bound" = "$BOUND" ]; then
+  pass "the terms flow is named by exactly: $BOUND (production held)"
 else
-  fail "45-consent.yaml is not held - lifting the hold is a revert of its commit, together with this test"
+  fail "the terms flow is named by '$bound', not '$BOUND' - lifting the hold is a decision, change BOUND with it"
+fi
+if [ -f "$blueprints/45-consent.yaml" ] && grep -q "BLUEPRINTS.append(('45-consent.yaml'," "$tmp/program"; then
+  pass "45-consent.yaml builds the flow and is sent"
+else
+  fail "45-consent.yaml is not sent - 50-providers.yaml names a flow nothing builds"
 fi
 if grep -q "BLUEPRINTS.append(('50-providers.yaml'," "$tmp/program"; then pass "an active blueprint is still sent"; else fail "50-providers.yaml was not sent"; fi
 

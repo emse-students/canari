@@ -133,23 +133,17 @@ if ! run_ak_shell "$worker" <"$here/test-pkce.py" 2>&1 | tee >(cat >&2) | grep -
 fi
 echo "a challenged code is redeemed with its verifier only, and a verifier is never ignored"
 
-# THE TERMS OF USE ARE HELD (user, 2026-10-17: stable 1.2.9 ships without them; docs/wiki/backlog.md).
-# 45-consent.yaml waits in blueprints/held/, so the driven test (test-consent-flow.py) has no stage to
-# drive. What is asserted instead is the hold itself, on the instance just built: no provider
-# authorizes through `miconnect-authorization` - on the upgrade run the flow EXISTS (main's blueprints
-# made it), so this is what proves these blueprints switch every provider back. Lifting the hold is
-# `git revert` of the commit that wrote this, which brings the driven test back.
-echo "terms of use: HELD - asserting no provider authorizes through miconnect-authorization"
-if ! run_ak_shell "$worker" 2>&1 <<'PY' | tee >(cat >&2) | grep -x 'CONSENT-HELD-OK' >/dev/null; then
-from authentik.providers.oauth2.models import OAuth2Provider
-on_flow = sorted(OAuth2Provider.objects.filter(authorization_flow__slug="miconnect-authorization").values_list("name", flat=True))
-assert not on_flow, f"providers still on the held terms flow: {on_flow}"
-print("CONSENT-HELD-OK")
-PY
-  echo "::error::a provider still authorizes through the held terms flow - read the assertion above"
+# THE TERMS OF USE, DRIVEN - AND THE HOLD. 45-consent.yaml builds the flow on every instance; which
+# providers ask for it is declared in 50-providers.yaml (2026-11-18): dev and local, where the
+# pre-release apps and the harness sign in, while production stays held (user, 2026-10-17). The
+# driven test asserts that exact set, walks the page on a bound provider, and proves production's
+# provider signs in a person who never accepted without showing it (test-consent-flow.py).
+echo "terms of use: driving the stage, and asserting which providers ask for it"
+if ! run_ak_shell "$worker" <"$here/test-consent-flow.py" 2>&1 | tee >(cat >&2) | grep -x 'CONSENT-OK' >/dev/null; then
+  echo "::error::the terms-of-use stage did not behave, or a provider outside the declared set asks for it - read the assertion above"
   exit 1
 fi
-echo "the terms stage is held: every provider authorizes through the implicit-consent flow"
+echo "the terms stage asks on dev and local only, once per version, and production is held"
 
 # EVERY SAML SOURCE IS SIGNED AND GATED. A SAML source with no verification key pair verifies no
 # signature (authentik's ResponseProcessor.parse checks signatures only `if source.verification_kp`),
