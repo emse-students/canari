@@ -2149,7 +2149,7 @@ archive strips the app. `build-mls-wasm`'s cache key names the Xcode major on ma
 entry whose host half another image produced.
 
 **What else the move added.** `ios-libapp.sh` asserts after `cargo build` that every
-`_init_plugin_*` the Rust objects reference is an EXTERNAL `T` symbol of `libapp.a` (`nm -g`), so a
+`_init_plugin_*` the Rust objects reference is an EXTERNAL `T` symbol of `libapp.a` (rustup's `llvm-nm -g`: Xcode's `nm` cannot read rustc's bitcode), so a
 plugin swift-rs failed to re-export fails there, by name. Every `xcodebuild` build and archive names
 `-destination 'generic/platform=iOS'` (Xcode 27 otherwise warns "Using the first of multiple matching
 destinations"). `ios.yml` installs the provisioning profiles into both stores Xcode scans

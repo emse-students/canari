@@ -59,8 +59,19 @@ cp "$lib" "$dest/libapp.a"
 # swift-rs re-exports them with llvm-objcopy (above); a plugin it skipped would otherwise surface
 # twenty minutes later, without saying which mechanism failed. Every `_init_plugin_*` the Rust
 # objects reference (`U`) must be defined external (`T`) in the same archive.
-wanted="$(nm -g "$dest/libapp.a" | awk '$1 == "U" && $2 ~ /^_init_plugin_/ {print $2}' | sort -u)"
-defined="$(nm -g "$dest/libapp.a" | awk '$2 == "T" && $3 ~ /^_init_plugin_/ {print $3}' | sort -u)"
+#
+# RUSTUP'S `llvm-nm`, NOT XCODE'S `nm`: the archive carries rustc's LLVM bitcode, which Apple's
+# older LLVM cannot read ("Unknown attribute kind (105)", one error per member, and a non-zero
+# exit). The `llvm-tools` component installed above ships the reader of the same LLVM as rustc.
+host="$(rustc -vV | awk '/^host:/ {print $2}')"
+llvm_nm="$(rustc --print sysroot)/lib/rustlib/$host/bin/llvm-nm"
+if [ ! -x "$llvm_nm" ]; then
+  echo "::error::$llvm_nm is missing - the llvm-tools component did not install"
+  exit 1
+fi
+symbols="$("$llvm_nm" -g "$dest/libapp.a")"
+wanted="$(echo "$symbols" | awk '$1 == "U" && $2 ~ /^_init_plugin_/ {print $2}' | sort -u)"
+defined="$(echo "$symbols" | awk '$2 == "T" && $3 ~ /^_init_plugin_/ {print $3}' | sort -u)"
 if [ -z "$wanted" ]; then
   echo "::error::libapp.a references no _init_plugin_* symbol - this check would pass on nothing"
   exit 1
