@@ -15,9 +15,9 @@ import { sourceFiles } from '../../test/sourceTree';
  * defect is silent, so the order is pinned here:
  *
  * 1. the publisher withdraws UIKit's inset BEFORE it measures, and nothing else does;
- * 2. the withdrawal is idempotent and clamps the offset the switch strands (it fires no KVO);
- * 3. the number the page is told subtracts whatever the scroll view still insets, so publishing
- *    twice, before or after activation, writes the same value;
+ * 2. the withdrawal is idempotent and puts the offset UIKit set for the old inset on the new top,
+ *    which the old activation-time switch left stranded at -47 until a relaunch;
+ * 3. a scroll view inset left over after the switch is logged at ERROR, never silently absorbed;
  * 4. the page's variable is SET by native and written by no page code, so a repeated event cannot add.
  */
 const here = dirname(fileURLToPath(import.meta.url));
@@ -54,22 +54,24 @@ describe('iOS top inset: one owner (anti-regression)', () => {
     expect(iosMm.match(/contentInsetAdjustmentBehavior = UIScrollView/g)).toHaveLength(1);
   });
 
-  it('switches once and puts the stranded offset back', () => {
+  it('switches once and puts the offset UIKit set for the old inset on the new top', () => {
     const apply = body('CanariApplyEdgeToEdge');
     expect(apply).toMatch(
       /if \(scrollView\.contentInsetAdjustmentBehavior == UIScrollViewContentInsetAdjustmentNever\) \{\s*return;\s*\}/
     );
-    expect(apply.indexOf('CanariClampDocumentScroll(scrollView);')).toBeGreaterThan(
+    expect(apply.indexOf('scrollView.contentOffset = CGPointMake(')).toBeGreaterThan(
       apply.indexOf('= UIScrollViewContentInsetAdjustmentNever;')
     );
   });
 
-  it('tells the page only what UIKit has not given, so the same event twice gives the same top', () => {
+  it('publishes the top from the window and the frame, and accuses a scroll view inset left over', () => {
     const publish = body('CanariPublishSafeAreaInsets');
-    expect(publish).toContain('webView.scrollView.adjustedContentInset.top');
     expect(publish).toMatch(
-      /CGFloat top =\s*MAX\(0\.0, window\.safeAreaInsets\.top - MAX\(0\.0, CGRectGetMinY\(inWindow\)\) - scrollTop\);/
+      /CGFloat top = MAX\(0\.0, window\.safeAreaInsets\.top - MAX\(0\.0, CGRectGetMinY\(inWindow\)\)\);/
     );
+    expect(publish).toContain("ERROR the WebView's scroll view still insets its top");
+    // One native writer of the variable, and it SETS: the same event twice writes the same value.
+    expect(iosMm.split("setProperty('--safe-area-inset-top', ").length - 1).toBe(1);
     expect(publish).toContain(
       "document.documentElement.style.setProperty('--safe-area-inset-top', '%.0fpx');"
     );
