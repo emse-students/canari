@@ -189,6 +189,10 @@ describe('reelPickRefusal - a gallery pick in the CanaReels camera', () => {
       m.reels_capture_long_landscape({ seconds: 90 })
     );
     expect(reelPickRefusalText({ reason: 'not-vertical' })).toBe(m.reels_capture_not_vertical());
+    // In a conversation the chat rule refused it: a short landscape video IS a CanaReel now.
+    expect(reelPickRefusalText({ reason: 'not-vertical' }, 'chat')).toBe(
+      m.reel_sendto_not_vertical_for_chats()
+    );
     expect(reelPickRefusalText({ reason: 'frame-unread' })).toBe(
       m.reels_capture_frame_unread_for_chats()
     );

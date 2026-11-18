@@ -52,7 +52,7 @@
 --          END AS band,
 --          count(*) AS posts
 --     FROM posts p
---    WHERE p.kind = 'post' AND jsonb_typeof(p.images) = 'array' AND jsonb_array_length(p.images) = 1
+--    WHERE p.kind = 'post' AND jsonb_array_length(CASE WHEN jsonb_typeof(p.images) = 'array' THEN p.images END) = 1
 --      AND lower(p.images->0->>'mimeType') LIKE 'video/%' AND COALESCE(p.images->0->>'type', 'video') = 'video'
 --      AND COALESCE(jsonb_array_length(CASE WHEN jsonb_typeof(p.polls) = 'array' THEN p.polls END), 0) = 0
 --      AND COALESCE(jsonb_array_length(CASE WHEN jsonb_typeof(p.forms) = 'array' THEN p.forms END), 0) = 0
@@ -63,7 +63,7 @@
 -- and what it leaves as posts (several media with a video), for the open question:
 --
 --   SELECT count(*) FROM posts p
---    WHERE p.kind = 'post' AND jsonb_typeof(p.images) = 'array' AND jsonb_array_length(p.images) > 1
+--    WHERE p.kind = 'post' AND jsonb_array_length(CASE WHEN jsonb_typeof(p.images) = 'array' THEN p.images END) > 1
 --      AND EXISTS (SELECT 1 FROM jsonb_array_elements(p.images) m
 --                   WHERE m->>'type' = 'video' OR lower(m->>'mimeType') LIKE 'video/%');
 --
@@ -115,8 +115,7 @@ UPDATE posts p
    SET kind = 'reel',
        "expiresAt" = p."publishedAt" + interval '365 days'
  WHERE p.kind = 'post'
-   AND jsonb_typeof(p.images) = 'array'
-   AND jsonb_array_length(p.images) = 1
+   AND jsonb_array_length(CASE WHEN jsonb_typeof(p.images) = 'array' THEN p.images END) = 1
    AND lower(p.images->0->>'mimeType') LIKE 'video/%' AND COALESCE(p.images->0->>'type', 'video') = 'video'
    AND COALESCE(jsonb_array_length(CASE WHEN jsonb_typeof(p.polls) = 'array' THEN p.polls END), 0) = 0
    AND COALESCE(jsonb_array_length(CASE WHEN jsonb_typeof(p.forms) = 'array' THEN p.forms END), 0) = 0

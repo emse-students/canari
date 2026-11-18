@@ -156,8 +156,18 @@ export function reelPickRefusal(
     : null;
 }
 
-/** The toast a refused pick shows. */
-export function reelPickRefusalText(refusal: ReelPickRefusal): string {
+/**
+ * The toast a refused pick shows. In a CONVERSATION a landscape pick is refused by the chat rule, not
+ * by the CanaReel rule (a short landscape video IS a CanaReel since 2026-11-14), so it says that: the
+ * feed's sentence would send the member to publish it "as a post" (re-review of #3528).
+ */
+export function reelPickRefusalText(
+  refusal: ReelPickRefusal,
+  destination: 'feed' | 'chat' = 'feed'
+): string {
+  if (refusal.reason === 'not-vertical' && destination === 'chat') {
+    return m.reel_sendto_not_vertical_for_chats();
+  }
   switch (refusal.reason) {
     case 'too-long':
       return m.reels_capture_too_long({ seconds: Math.round(refusal.capMs / 1000) });

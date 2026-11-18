@@ -53,6 +53,12 @@ for whoever writes the approval line:
 looser `type = 'video' OR mimeType video/*`, so they are re-read with the file's own query before
 the approval line is written.
 
+**The charter, principle 2 ("L'essentiel ne se perd pas": an announcement is found when it is looked
+for).** The conversion takes ASSOCIATION posts too: a single-video announcement leaves the
+association's feed (it reads `kind = 'post'`), joins the CanaReels list, and is deleted a year after
+its publication. The owner's *"Oui, toutes"* covers it, but whoever writes the approval line confirms
+the association case explicitly, with the counts re-read split by `"associationId" IS NOT NULL`.
+
 **THE ORDER IS DECIDED BEFORE THE PULL REQUEST LEAVES DRAFT.** A held file on `main` with no approval
 line refuses EVERY release (gate 6, [cicd](../cicd.md#a-migration-the-owner-must-approve-is-held-2026-11-01)),
 and dev is held like production, so "a pass on dev first" cannot precede the approval: either the

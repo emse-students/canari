@@ -887,7 +887,7 @@
       console.warn(
         `[reel-capture] picked ${width ?? '?'}x${height ?? '?'}, ${durationMs ?? '?'} ms: refused (${refusal.reason}, ${destination})`
       );
-      showToast(reelPickRefusalText(refusal), 'error');
+      showToast(reelPickRefusalText(refusal, destination === 'chat' ? 'chat' : 'feed'), 'error');
       return;
     }
     send({
