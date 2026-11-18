@@ -830,7 +830,7 @@ Enumerated in `infrastructure/.env.example`, written by `serve-prod.yml`, and pi
 | Origin | Client |
 |---|---|
 | `https://canari.emse.fr` | the deployed site (`FRONTEND_URL`) |
-| `https://canari-emse.fr` | the legacy name, which still answers for apps already installed on a phone |
+| `https://canari-emse.fr` | the legacy name: a browser tab still open on it calls the API with this origin (documents redirect; `/api/` and assets are still served there) |
 | `https://dev.canari-emse.fr` | a proxied CNAME onto this **same** tunnel, not a second environment - a list built from `FRONTEND_URL` alone would refuse a hostname this stack serves |
 | `http://tauri.localhost`, `https://tauri.localhost` | the Tauri WebView on Android and Windows |
 | `tauri://localhost` | the Tauri WebView on iOS, macOS and Linux - WebKit keeps the custom scheme |
