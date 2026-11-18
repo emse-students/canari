@@ -624,6 +624,7 @@ describe('PostNotificationsService.createNotifications', () => {
       ['live_cut', 'social_live_cut', 'live-1'],
       ['live_suspended', 'social_live_suspended', 'live-1'],
       ['live_withdrawn', 'social_live_withdrawn', 'broadcaster'],
+      ['live_reinstated', 'social_live_reinstated', 'broadcaster'],
     ] as const)('%s writes its row and pushes %s', async (type, key, postId) => {
       await service().createNotification({
         recipientId: 'broadcaster',

@@ -307,7 +307,7 @@ the table above defines it.
 
 - (U1) `CS/users/users.controller.ts` behind `GlobalAdminGuard`, fields in `CS/users/profile-edit.service.ts`.
 - (U2) `PATCH /users/me` is the bio's only writer (`CS/users/dto/user.dto.ts`); `profile-edit.service.ts` does not cover it.
-- (U3) `mayModerateUser` (`bdeModeratesUserSql`); one row per person, any BDE of theirs may lift it (owner, 2026-11-02, "Laisser tel quel").
+- (U3) `mayModerateUser` (`bdeModeratesUserSql`); one row per person, any BDE of theirs may lift it (owner, 2026-11-02, "Laisser tel quel"). The withdrawn-broadcasters list and the one-account standing read (`LivesController`, 1.7.0) ask `isContentModerator` first and then this predicate (list: per row; account: `refuseModeration` out of scope), the withdrawal's own authority, server-side.
 - (U4) `CommunityNicknamesService.set` (`SS/channels/community-nicknames.service.ts`) and the rule it asks, `mayWriteCommunityNickname` (`SS/channels/community-nicknames.ts`), read no mute.
 - (U5) `reportInBdeScopeSql` has no `nickname` branch; only a CM clears one.
 

@@ -45,6 +45,7 @@ import {
   liveCutContent,
   liveSuspendedContent,
   liveWithdrawnContent,
+  liveReinstatedContent,
   bookingAddedContent,
   bookingCancelledContent,
   bookingReminderContent,
@@ -551,6 +552,8 @@ export class PostNotificationsService {
         return liveSuspendedContent();
       case 'live_withdrawn':
         return liveWithdrawnContent();
+      case 'live_reinstated':
+        return liveReinstatedContent();
       // The bookings' four (WP-N). `text` is the PLACE - or the organiser's word for a cancellation
       // (Q-R3), the place and the time for a reminder - and empty for a link-only space (Q-R5).
       case 'booking_cancelled':

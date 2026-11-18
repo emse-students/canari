@@ -108,6 +108,44 @@ export class LivesController {
     return this.lives.withdraw(caller, target, body ?? {});
   }
 
+  /**
+   * STAFF READ the accounts whose right to broadcast is withdrawn - newest first, narrowed to the
+   * people the caller may act on (the lift's scope), so the list never offers a lift that would be
+   * refused. The door is `assertStaff` (403 `LIVE_WITHDRAWAL_FORBIDDEN`), asked first.
+   */
+  @Get('broadcasters/withdrawn')
+  @Header('Cache-Control', 'no-store')
+  async withdrawn(
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') globalAdmin: string | undefined
+  ) {
+    const caller = await this.assertStaff(userId, globalAdmin, 'LIVE_WITHDRAWAL_FORBIDDEN');
+    const all = await this.lives.listWithdrawn();
+    const allowed = await this.associations.moderatedUserIds(
+      caller,
+      all.map((s) => s.userId),
+      { isGlobalAdmin: globalAdmin === 'true' }
+    );
+    return all.filter((s) => allowed.has(s.userId));
+  }
+
+  /**
+   * STAFF READ one account's standing without a report (cuts on record, suspension, withdrawal):
+   * the same door and scope as the withdrawal it precedes (403 `LIVE_WITHDRAWAL_FORBIDDEN`,
+   * `MODERATION_OUT_OF_SCOPE`); 404 `LIVE_BROADCASTER_NOT_FOUND` for an id that is no account.
+   */
+  @Get('broadcasters/:userId/standing')
+  @Header('Cache-Control', 'no-store')
+  async broadcasterStanding(
+    @Param('userId') target: string,
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') globalAdmin: string | undefined
+  ) {
+    const caller = await this.assertStaff(userId, globalAdmin, 'LIVE_WITHDRAWAL_FORBIDDEN');
+    await this.assertModeratesBroadcaster(caller, globalAdmin, target);
+    return this.lives.broadcasterStanding(target);
+  }
+
   /** STAFF LIFT a withdrawal: `{ userId, lifted }`, idempotent. Same predicate as the withdrawal. */
   @Delete('broadcasters/:userId/withdrawal')
   @HttpCode(200)

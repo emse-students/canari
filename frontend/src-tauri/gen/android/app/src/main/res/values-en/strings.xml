@@ -113,6 +113,8 @@
     <string name="notif_social_live_suspended_body">After another cut by moderators, you cannot start a live for now.</string>
     <string name="notif_social_live_withdrawn_title">Right to go live withdrawn</string>
     <string name="notif_social_live_withdrawn_body">Moderators have withdrawn your right to start a live.</string>
+    <string name="notif_social_live_reinstated_title">Right to go live restored</string>
+    <string name="notif_social_live_reinstated_body">Moderators have given back your right to start a live, once any running suspension ends.</string>
     <string name="notif_social_booking_cancelled_title">%1$s cancelled a booking</string>
     <string name="notif_social_booking_cancelled_body">It will not take place</string>
     <string name="notif_social_booking_withdrawn_title">%1$s left your booking</string>

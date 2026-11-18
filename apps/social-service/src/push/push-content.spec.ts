@@ -47,6 +47,7 @@ import {
   liveCutContent,
   liveSuspendedContent,
   liveWithdrawnContent,
+  liveReinstatedContent,
   previewOf,
   markdownToPreviewText,
   publicMediaIconId,
@@ -92,6 +93,7 @@ describe('push content', () => {
     ['liveCut', liveCutContent()],
     ['liveSuspended', liveSuspendedContent()],
     ['liveWithdrawn', liveWithdrawnContent()],
+    ['liveReinstated', liveReinstatedContent()],
   ];
 
   it.each(ALL)('%s carries a key, not only a sentence', (_name, content) => {
@@ -439,6 +441,7 @@ describe('the legacy sentence and the Android resource say the same thing', () =
     ['social_live_cut', liveCutContent()],
     ['social_live_suspended', liveSuspendedContent()],
     ['social_live_withdrawn', liveWithdrawnContent()],
+    ['social_live_reinstated', liveReinstatedContent()],
     ['social_booking_cancelled', bookingCancelledContent(ACTOR, '')],
     ['social_booking_withdrawn', bookingWithdrawnContent(ACTOR, '')],
     ['social_booking_added', bookingAddedContent(ACTOR, '')],

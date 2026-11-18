@@ -34,6 +34,8 @@ import {
   fetchLiveLimits,
   fetchLiveRules,
   fetchLiveStanding,
+  fetchWithdrawnBroadcasters,
+  fetchBroadcasterStanding,
   fetchLiveManifest,
   fetchLiveReplay,
   fetchLivePoster,
@@ -246,6 +248,31 @@ describe('the routes', () => {
     );
     apiFetch.mockResolvedValueOnce(json(403, { code: 'LIVE_WITHDRAWAL_FORBIDDEN' }));
     await expect(liftBroadcasterWithdrawal('u9')).rejects.toMatchObject({
+      code: 'LIVE_WITHDRAWAL_FORBIDDEN',
+      kind: 'refused',
+    });
+  });
+
+  it('the staff reads of a standing need no report: the withdrawn list and one account', async () => {
+    const row = { userId: 'u9', displayName: 'Ana', cutsOnRecord: 3, withdrawnAt: 'x' };
+    apiFetch.mockResolvedValueOnce(json(200, [row]));
+    expect(await fetchWithdrawnBroadcasters()).toEqual([row]);
+    expect(apiFetch).toHaveBeenLastCalledWith(
+      'https://social.test/api/lives/broadcasters/withdrawn',
+      {}
+    );
+    apiFetch.mockResolvedValueOnce(json(200, row));
+    expect(await fetchBroadcasterStanding('u 9')).toEqual(row);
+    expect(apiFetch).toHaveBeenLastCalledWith(
+      'https://social.test/api/lives/broadcasters/u%209/standing',
+      {}
+    );
+    apiFetch.mockResolvedValueOnce(json(404, { code: 'LIVE_BROADCASTER_NOT_FOUND' }));
+    await expect(fetchBroadcasterStanding('u9')).rejects.toMatchObject({
+      code: 'LIVE_BROADCASTER_NOT_FOUND',
+    });
+    apiFetch.mockResolvedValueOnce(json(403, { code: 'LIVE_WITHDRAWAL_FORBIDDEN' }));
+    await expect(fetchWithdrawnBroadcasters()).rejects.toMatchObject({
       code: 'LIVE_WITHDRAWAL_FORBIDDEN',
       kind: 'refused',
     });

@@ -46,6 +46,7 @@ export type PushContentKey =
   | 'social_live_cut'
   | 'social_live_suspended'
   | 'social_live_withdrawn'
+  | 'social_live_reinstated'
   | 'social_booking_cancelled'
   | 'social_booking_withdrawn'
   | 'social_booking_added'
@@ -997,6 +998,21 @@ export function liveWithdrawnContent(): PushContent {
     arg: '',
     legacyTitle: 'Droit de lancer un live retiré',
     legacyBody: 'La modération vous a retiré le droit de lancer un live.',
+  };
+}
+
+/**
+ * Staff gave the right to broadcast back (the lift of a withdrawal). See {@link liveCutContent}. A
+ * running suspension is NOT lifted with it, so the sentence promises nothing while one runs.
+ */
+export function liveReinstatedContent(): PushContent {
+  return {
+    key: 'social_live_reinstated',
+    actorName: '',
+    arg: '',
+    legacyTitle: 'Droit de lancer un live rétabli',
+    legacyBody:
+      'La modération vous a rendu le droit de lancer un live, une fois toute suspension en cours terminée.',
   };
 }
 

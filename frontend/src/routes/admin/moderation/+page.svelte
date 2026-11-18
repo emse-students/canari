@@ -17,12 +17,20 @@
     Trash2,
     Copy,
     ExternalLink,
+    Radio,
   } from '@lucide/svelte';
   import ModerationPostPreviewModal from '$lib/components/moderation/ModerationPostPreviewModal.svelte';
   import ModerationMuteDialog from '$lib/components/moderation/ModerationMuteDialog.svelte';
   import ModerationLiveBlock from '$lib/components/moderation/ModerationLiveBlock.svelte';
+  import ModerationWithdrawnList from '$lib/components/moderation/ModerationWithdrawnList.svelte';
   import ModerationChatLineBlock from '$lib/components/moderation/ModerationChatLineBlock.svelte';
-  import type { LiveCutResult, LiveWithdrawalLift, LiveWithdrawalResult } from '$lib/live/types';
+  import type {
+    LiveBroadcasterStanding,
+    LiveCutResult,
+    LiveWithdrawalLift,
+    LiveWithdrawalResult,
+  } from '$lib/live/types';
+  import { fetchWithdrawnBroadcasters } from '$lib/live/api';
   import { liveStateLabels } from '$lib/moderation/liveState';
   import { describeModerationRefusal } from '$lib/moderation/moderationRefusal';
   import { createLatestOnly } from '$lib/utils/latestOnly';
@@ -57,7 +65,7 @@
   import { m } from '$lib/paraglide/messages';
   import { copyId } from '$lib/utils/copyId';
 
-  const TABS = ['reports', 'hidden', 'muted'] as const;
+  const TABS = ['reports', 'hidden', 'muted', 'withdrawn'] as const;
   type Tab = (typeof TABS)[number];
 
   // `?tab=` keeps the segment across a reload; written as a shallow `goto`, see `tabQuery`.
@@ -66,6 +74,8 @@
   let mutedUsers = $state<MutedUser[]>([]);
   let hiddenPosts = $state<HiddenPost[]>([]);
   let loadingReports = $state(true);
+  let withdrawn = $state<LiveBroadcasterStanding[]>([]);
+  let loadingWithdrawn = $state(false);
   let loadingMuted = $state(false);
   let loadingHidden = $state(false);
   let error = $state('');
@@ -104,6 +114,7 @@
     // Arriving on `?tab=hidden|muted`: the other lists load on first view, so load the open one.
     if (tab === 'muted') void loadMuted();
     if (tab === 'hidden') void loadHidden();
+    if (tab === 'withdrawn') void loadWithdrawn();
   });
 
   /** Resolves a set of user IDs to display names asynchronously. */
@@ -178,6 +189,21 @@
     }
   }
 
+  /** The accounts whose right to broadcast is withdrawn: read with no report in between. */
+  async function loadWithdrawn() {
+    loadingWithdrawn = true;
+    error = '';
+    try {
+      withdrawn = await fetchWithdrawnBroadcasters();
+      Log.d('admin.moderation.loadWithdrawn', `${withdrawn.length} withdrawn`);
+    } catch (e) {
+      Log.d('admin.moderation.loadWithdrawn failed', e);
+      error = m.moderation_load_withdrawn_error();
+    } finally {
+      loadingWithdrawn = false;
+    }
+  }
+
   async function switchTab(t: Tab) {
     tab = t;
     error = '';
@@ -188,6 +214,8 @@
     });
     if (t === 'muted' && mutedUsers.length === 0) void loadMuted();
     if (t === 'hidden' && hiddenPosts.length === 0) void loadHidden();
+    // Read on every visit: a withdrawal is rare and the list is the lift's door - never a stale one.
+    if (t === 'withdrawn') void loadWithdrawn();
   }
 
   async function handleReview(reportId: string, action: 'reviewed' | 'dismissed') {
@@ -381,7 +409,10 @@
       'admin.moderation.handleLiveCut',
       `${result.liveId} ${result.newlyCut ? 'cut' : 'already cut'} (${result.priorCuts} prior)`
     );
-    showToast(result.newlyCut ? m.moderation_live_cut_done() : m.moderation_live_cut_already());
+    showToast(
+      result.newlyCut ? m.moderation_live_cut_done() : m.moderation_live_cut_already(),
+      'info'
+    );
     await loadReports();
   }
 
@@ -391,8 +422,11 @@
       'admin.moderation.handleLiveLifted',
       `${result.userId} ${result.lifted ? 'lifted' : 'was not withdrawn'}`
     );
-    showToast(result.lifted ? m.moderation_live_lift_done() : m.moderation_live_lift_already());
-    await loadReports();
+    showToast(
+      result.lifted ? m.moderation_live_lift_done() : m.moderation_live_lift_already(),
+      'info'
+    );
+    await Promise.all([loadReports(), loadWithdrawn()]);
   }
 
   /** A broadcaster's right was withdrawn from a report row: say what the server did, then re-read. */
@@ -404,7 +438,8 @@
     showToast(
       result.newlyWithdrawn
         ? m.moderation_live_withdraw_done()
-        : m.moderation_live_withdraw_already()
+        : m.moderation_live_withdraw_already(),
+      'info'
     );
     await loadReports();
   }
@@ -419,15 +454,18 @@
       onclick={() => {
         if (tab === 'reports') void loadReports();
         else if (tab === 'hidden') void loadHidden();
+        else if (tab === 'withdrawn') void loadWithdrawn();
         else void loadMuted();
       }}
-      disabled={loadingReports || loadingHidden || loadingMuted}
+      disabled={loadingReports || loadingHidden || loadingMuted || loadingWithdrawn}
       class="ui-icon-button border-cn-border text-text-muted hover:text-text-main rounded-xl border transition-colors disabled:opacity-40"
       aria-label={m.moderation_refresh()}
     >
       <RefreshCw
         size={18}
-        class={loadingReports || loadingHidden || loadingMuted ? 'animate-spin' : ''}
+        class={loadingReports || loadingHidden || loadingMuted || loadingWithdrawn
+          ? 'animate-spin'
+          : ''}
       />
     </button>
   {/snippet}
@@ -457,6 +495,13 @@
       icon: UserX,
       badge: mutedUsers.length,
       badgeClass: 'bg-gray-500 text-white',
+    },
+    {
+      key: 'withdrawn',
+      label: m.moderation_withdrawn_tab(),
+      icon: Radio,
+      badge: withdrawn.length,
+      badgeClass: 'bg-red-500 text-white',
     },
   ]}
   value={tab}
@@ -1000,6 +1045,17 @@
       {/each}
     </div>
   {/if}
+{/if}
+
+<!-- ── Withdrawn broadcasters tab (no report needed: the lift's door) ────────── -->
+{#if tab === 'withdrawn'}
+  <ModerationWithdrawnList
+    rows={withdrawn}
+    loading={loadingWithdrawn}
+    {formatDate}
+    reasonLabel={(code) => reasonLabel[code] ?? code}
+    onLifted={handleLiveLifted}
+  />
 {/if}
 
 <ModerationPostPreviewModal open={previewOpen} postId={previewPostId} onClose={closePostPreview} />

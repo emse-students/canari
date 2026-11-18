@@ -1047,12 +1047,19 @@ The answer goes to the page, which toasts "rétabli" or, on `lifted: false` (a r
 moderator first), "n'était plus retiré", and re-reads the queue; a refusal is a sentence under the
 row by `code` (a reach refusal such as `MODERATION_OUT_OF_SCOPE` through `describeModerationRefusal`,
 as the withdrawal and the cut do, then `LIVE_WITHDRAWAL_FORBIDDEN`, `LIVE_ACCOUNT_INVALID`, anything
-else a retry); the button is taken before the confirmation opens, so a double tap asks once. No
-notice reaches the member yet ([P3](../../backlog.d/p3-a-lifted-withdrawal-is-not-told-to-the-member.md)):
-the server writes none for a lift, and the pre-live screen reads the standing again at its next open. **Not built:** a standing view for a broadcaster with no reported live (there
-is no per-account staff read; the caller's own `GET /api/lives/standing` is not for staff), so a
-withdrawal is lifted from one of the broadcaster's report rows, which the queue lists, pending first,
-while they are among its 50 newest ([the entry that closes it](../../backlog.d/p2-no-staff-view-of-a-broadcaster-s-standing-without-a-report.md)). Tests: the standing, withdrawal and lift blocks of
+else a retry); the button is taken before the confirmation opens, so a double tap asks once. The lift
+control is ONE component, `LiftWithdrawalButton` (confirmation, call, typed refusal), drawn on the
+report row AND on the list below. **A standing without a report (1.7.0, built):** the withdrawal is a
+standing of the MEMBER, so it is read where it lives. The tab "Diffusion retirée" of `/admin/moderation`
+(`ModerationWithdrawnList`) lists `GET /api/lives/broadcasters/withdrawn` (`fetchWithdrawnBroadcasters`:
+name, date, reason, cuts on record, newest first, narrowed server-side to the people the caller may
+act on), each row with the lift; it is read on every visit, and a lift re-reads it and the queue.
+`fetchBroadcasterStanding` reads one account (`GET /api/lives/broadcasters/:userId/standing`, same door
+and scope as the withdrawal) for any screen that needs it. The page's success toasts (cut,
+withdrawal, lift) are `'info'`: `showToast` defaults to `'error'`, and the three were drawn red until
+1.7.0. The member is told of the lift by a `live_reinstated` notice
+([lives](../../services/lives.md#the-three-pushes-a-broadcaster-gets-wp-l8b)). Tests: the standing,
+withdrawal and lift blocks of
 `ModerationLiveBlock.svelte.test.ts`, the route in `live/api.test.ts`.
 
 **The viewer's report control (2026-10-19, built).** `LiveReportControl` sits in the viewer's TOP BAR
