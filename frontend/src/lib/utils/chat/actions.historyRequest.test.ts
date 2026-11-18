@@ -46,6 +46,9 @@ import {
 } from './historyDigestRendezvous';
 import { historyStateKey, invalidateAllHistoryStateKeys } from './historyStateKey';
 
+/** A well-formed `answerKey` (32 bytes, base64): every ask carries one since option B. */
+const ANSWER_KEY = 'a'.repeat(43) + '=';
+
 const GROUP = 'g1';
 const SELF_USER = 'u1';
 const SELF_DEVICE = 'dev-self';
@@ -215,6 +218,7 @@ describe('handleHistoryRequest - a probe that never arrives', () => {
     noteProbeReceived(GROUP, digestIdentity(REQUESTER_USER, 'some-other-device'), {
       kind: 'digest',
       requestId: 'ask-00000001',
+      answerKey: ANSWER_KEY,
       digest: { mode: 'ids', ids: ['a'] },
       since: 0,
     });
@@ -302,6 +306,7 @@ describe('handleHistoryRequest - with a digest', () => {
     noteProbeReceived(GROUP, REQUESTER, {
       kind: 'digest',
       requestId: 'ask-00000001',
+      answerKey: ANSWER_KEY,
       digest: await buildHistoryDigest(entries, idModeMax),
       since,
     });
@@ -324,7 +329,13 @@ describe('handleHistoryRequest - with a digest', () => {
       ['only-ours'],
       expect.anything(),
       // `since: 0` is the requester's own window, restated: this digest stated none.
-      { requestId: 'ask-00000001', to: REQUESTER, since: 0, withTombstones: true }
+      {
+        requestId: 'ask-00000001',
+        seal: expect.objectContaining({ answerKey: ANSWER_KEY }),
+        to: REQUESTER,
+        since: 0,
+        withTombstones: true,
+      }
     );
   });
 
@@ -337,6 +348,7 @@ describe('handleHistoryRequest - with a digest', () => {
 
     expect(sendHistoryBundleForIds).toHaveBeenCalledWith(GROUP, [], expect.anything(), {
       requestId: 'ask-00000001',
+      seal: expect.objectContaining({ answerKey: ANSWER_KEY }),
       to: REQUESTER,
       since: 0,
       withTombstones: true,
@@ -393,7 +405,13 @@ describe('handleHistoryRequest - with a digest', () => {
       GROUP,
       ['ours-a', 'ours-b'],
       expect.anything(),
-      { requestId: 'ask-00000001', to: REQUESTER, since: 0, withTombstones: true }
+      {
+        requestId: 'ask-00000001',
+        seal: expect.objectContaining({ answerKey: ANSWER_KEY }),
+        to: REQUESTER,
+        since: 0,
+        withTombstones: true,
+      }
     );
     // Their slice is theirs alone, so it is pulled - and the DEPTH travels with the prefix, or it
     // names a slice the answering device cannot compute.
@@ -423,6 +441,7 @@ describe('handleHistoryRequest - with a digest', () => {
 
       expect(sendHistoryBundleForIds).toHaveBeenCalledWith(GROUP, ['ours'], expect.anything(), {
         requestId: 'ask-00000001',
+        seal: expect.objectContaining({ answerKey: ANSWER_KEY }),
         to: REQUESTER,
         since: THEIR_SINCE,
         withTombstones: true,
@@ -491,6 +510,7 @@ describe('handleHistoryRequest - the solicitation outlives the wait', () => {
     noteProbeReceived(GROUP, REQUESTER, {
       kind: 'digest',
       requestId: 'ask-00000001',
+      answerKey: ANSWER_KEY,
       digest: await buildHistoryDigest([]),
       since: 0,
     });
@@ -521,6 +541,7 @@ describe('handleHistoryRequest - scrollback', () => {
     noteProbeReceived(GROUP, REQUESTER, {
       kind: 'range',
       requestId: 'ask-00000001',
+      answerKey: ANSWER_KEY,
       before: at('2026-01-05T00:00:00Z'),
       limit: 50,
       since: at('2020-01-01T00:00:00Z'),
@@ -529,6 +550,7 @@ describe('handleHistoryRequest - scrollback', () => {
 
     expect(sendHistoryRangeBundle).toHaveBeenCalledWith(GROUP, expect.anything(), {
       requestId: 'ask-00000001',
+      seal: expect.objectContaining({ answerKey: ANSWER_KEY }),
       to: REQUESTER,
       before: at('2026-01-05T00:00:00Z'),
       limit: 50,
@@ -568,6 +590,7 @@ describe('handleHistoryRequest - stating our coverage', () => {
     noteProbeReceived(GROUP, REQUESTER, {
       kind: 'digest',
       requestId: 'ask-00000001',
+      answerKey: ANSWER_KEY,
       digest: await buildHistoryDigest([]),
       since: BELOW_FLOOR,
     });
@@ -633,6 +656,7 @@ describe('handleHistoryRequest - stating our coverage', () => {
     noteProbeReceived(GROUP, REQUESTER, {
       kind: 'digest',
       requestId: 'ask-00000001',
+      answerKey: ANSWER_KEY,
       digest: await buildHistoryDigest([]),
       since: BELOW_FLOOR,
     });
@@ -652,6 +676,7 @@ describe('handleHistoryRequest - stating our coverage', () => {
     noteProbeReceived(GROUP, REQUESTER, {
       kind: 'range',
       requestId: 'ask-00000001',
+      answerKey: ANSWER_KEY,
       before: at('2026-08-01T00:00:00Z'),
       limit: 50,
       since: BELOW_FLOOR,
@@ -785,6 +810,7 @@ describe('handleHistoryRequest - an asker that holds frames it cannot read (HEAL
     noteProbeReceived(GROUP, REQUESTER, {
       kind: 'digest',
       requestId: 'ask-00000001',
+      answerKey: ANSWER_KEY,
       digest: await buildHistoryDigest(rows),
       since: 0,
       incomplete: true,
@@ -804,6 +830,7 @@ describe('handleHistoryRequest - an asker that holds frames it cannot read (HEAL
     noteProbeReceived(GROUP, REQUESTER, {
       kind: 'digest',
       requestId: 'ask-00000001',
+      answerKey: ANSWER_KEY,
       digest: await buildHistoryDigest([rows[0]]),
       since: 0,
       incomplete: true,

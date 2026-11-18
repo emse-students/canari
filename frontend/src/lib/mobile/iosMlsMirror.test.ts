@@ -56,11 +56,11 @@ describe('the iOS activation mirror of mls.bin', () => {
 describe('the iOS seed mirror', () => {
   const pushRs = read(resolve(TAURI, 'src/commands/push.rs'));
 
-  it('is written by the foreground in the App Group, after folding the app copy an older build left', () => {
+  it('is written by the foreground in the App Group, after deleting the app copy an older build left', () => {
     const appMirror = pushRs.slice(pushRs.indexOf('async fn with_app_mirror<'));
     const body = appMirror.slice(0, appMirror.indexOf('\n}\n'));
     expect(body).toContain('let home = seed_mirror_home(&data_dir, &key)?;');
-    // Background time held BEFORE any App Group lock is taken (the fold and the edit both take one):
+    // Background time held BEFORE any App Group lock is taken (the edit takes one):
     // an app suspended holding a shared-container lock is killed, 0xdead10cc.
     const held = body.indexOf('crate::app_group::BackgroundTime::begin(');
     expect(held).toBeGreaterThan(0);
@@ -69,7 +69,9 @@ describe('the iOS seed mirror', () => {
     const home = pushRs.slice(pushRs.indexOf('fn seed_mirror_home('));
     const homeBody = home.slice(0, home.indexOf('\n}\n'));
     expect(homeBody).toContain('crate::app_group::app_group_dir()');
-    expect(homeBody).toContain('fold_legacy_seed_mirror(data_dir, &group, key)');
+    // The former app copy is deleted unread since the floor reached 1.7.0 (legacy-compatibility).
+    expect(homeBody).toContain('remove_graine_mirror(data_dir)');
+    expect(pushRs).not.toContain('fn fold_legacy_seed_mirror(');
     expect(pushRs).not.toContain('fn sync_seed_mirror_copy(');
   });
 

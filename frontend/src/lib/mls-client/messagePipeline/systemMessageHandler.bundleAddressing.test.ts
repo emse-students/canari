@@ -1,5 +1,10 @@
-import { forgetUnsealedAnswerNotice, handleSystemEvent } from './systemMessageHandler';
-import { historySealAad, mintHistoryAnswerKey, sealHistoryContent } from '$lib/crypto/historySeal';
+import { handleSystemEvent } from './systemMessageHandler';
+import {
+  historySealAad,
+  mintHistoryAnswerKey,
+  sealHistoryContent,
+  type HistoryAnswerKey,
+} from '$lib/crypto/historySeal';
 import { fakeHistorySealEngine } from '$lib/mls-client/test/fixtures/fakeHistorySealEngine';
 import { digestIdentity } from '$lib/utils/chat/historyDigestRendezvous';
 import { WithheldUnsupportedError } from '$lib/mls-client/mlsDeliveryApi';
@@ -299,19 +304,50 @@ describe('history_bundle - an addressed answer is the answer to OUR ask or nothi
   const TO_ME = digestIdentity(ME, MY_DEVICE);
   const ASKED_AT = 1_700_000_000_000;
 
-  beforeEach(() => forgetHistoryAsks());
+  beforeEach(() => {
+    forgetHistoryAsks();
+    keys.clear();
+  });
+
+  /**
+   * The key of each ask this device made: every ask carries one since the floor reached option B
+   * (`1.7.0`), so every answer below is sealed to it, as an answerer at the floor sends it.
+   */
+  const keys = new Map<string, HistoryAnswerKey>();
+
+  /** Records our ask `requestId`, with the key it carried. */
+  async function ask(requestId: string, what: Parameters<typeof noteHistoryAsk>[2]): Promise<void> {
+    const key = await mintHistoryAnswerKey(sealEngine);
+    keys.set(requestId, key);
+    noteHistoryAsk(GROUP, requestId, what, key.secret);
+  }
+
+  /** `frame` as `peer` on `device` answers our ask: the routing in clear, the rest sealed to it. */
+  async function answer(
+    frame: Record<string, unknown> & { requestId: string },
+    device = 'responder-1'
+  ): Promise<Record<string, unknown>> {
+    const { to, requestId, last, ...content } = frame;
+    const sealed = await sealHistoryContent(
+      sealEngine,
+      keys.get(requestId)!.answerKey,
+      historySealAad(GROUP, requestId, String(to), digestIdentity('peer', device)),
+      content
+    );
+    return { to, requestId, ...(last !== undefined ? { last } : {}), sealed };
+  }
 
   function refusedLines(error: { mock: { calls: unknown[][] } }) {
     return error.mock.calls.filter(([l]) => String(l).includes('[HISTORY_ADDRESSED] REFUSED'));
   }
 
   it('ingests the answer to an open ask', async () => {
-    noteHistoryAsk(GROUP, 'req-00000001', { kind: 'digest', since: 0, askedAt: ASKED_AT }, null);
+    await ask('req-00000001', { kind: 'digest', since: 0, askedAt: ASKED_AT });
     const ctx = makeCtx(ADDRESSED);
 
     await handleSystemEvent(
       'history_bundle',
-      { messages: [BUNDLE_MSG], to: TO_ME, requestId: 'req-00000001', last: true },
+      await answer({ messages: [BUNDLE_MSG], to: TO_ME, requestId: 'req-00000001', last: true }),
       ctx as any
     );
 
@@ -319,7 +355,7 @@ describe('history_bundle - an addressed answer is the answer to OUR ask or nothi
   });
 
   it('refuses one that names no ask, one that names an ask we never made, and one for another device', async () => {
-    noteHistoryAsk(GROUP, 'req-00000001', { kind: 'digest', since: 0, askedAt: ASKED_AT }, null);
+    await ask('req-00000001', { kind: 'digest', since: 0, askedAt: ASKED_AT });
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const ctx = makeCtx(ADDRESSED);
 
@@ -345,10 +381,15 @@ describe('history_bundle - an addressed answer is the answer to OUR ask or nothi
   });
 
   it('the chunk marked `last` closes the ask - a later chunk naming it is refused', async () => {
-    noteHistoryAsk(GROUP, 'req-00000001', { kind: 'digest', since: 0, askedAt: ASKED_AT }, null);
+    await ask('req-00000001', { kind: 'digest', since: 0, askedAt: ASKED_AT });
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const ctx = makeCtx(ADDRESSED);
-    const frame = { messages: [BUNDLE_MSG], to: TO_ME, requestId: 'req-00000001', last: true };
+    const frame = await answer({
+      messages: [BUNDLE_MSG],
+      to: TO_ME,
+      requestId: 'req-00000001',
+      last: true,
+    });
 
     await handleSystemEvent('history_bundle', frame, ctx as any);
     await handleSystemEvent('history_bundle', frame, ctx as any);
@@ -364,7 +405,7 @@ describe('history_bundle - an addressed answer is the answer to OUR ask or nothi
    * error was noise that could lose content - an ask is closed per answering DEVICE.
    */
   it('a second responder to the same ask is ingested - the ask is closed per answering device', async () => {
-    noteHistoryAsk(GROUP, 'req-00000001', { kind: 'digest', since: 0, askedAt: ASKED_AT }, null);
+    await ask('req-00000001', { kind: 'digest', since: 0, askedAt: ASKED_AT });
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const frame = { messages: [BUNDLE_MSG], to: TO_ME, requestId: 'req-00000001', last: true };
     const first = makeCtx(ADDRESSED);
@@ -372,8 +413,8 @@ describe('history_bundle - an addressed answer is the answer to OUR ask or nothi
       deliveryMeta: { ...ADDRESSED.deliveryMeta, senderDeviceId: 'responder-2' },
     });
 
-    await handleSystemEvent('history_bundle', frame, first as any);
-    await handleSystemEvent('history_bundle', frame, second as any);
+    await handleSystemEvent('history_bundle', await answer(frame), first as any);
+    await handleSystemEvent('history_bundle', await answer(frame, 'responder-2'), second as any);
 
     expect(first.batchAddMessages).toHaveBeenCalledTimes(1);
     expect(second.batchAddMessages).toHaveBeenCalledTimes(1);
@@ -387,7 +428,7 @@ describe('history_bundle - an addressed answer is the answer to OUR ask or nothi
    * one, so an addressed answer that names none is refused rather than keyed on nothing.
    */
   it('refuses an addressed answer whose envelope names no sending device', async () => {
-    noteHistoryAsk(GROUP, 'req-00000001', { kind: 'digest', since: 0, askedAt: ASKED_AT }, null);
+    await ask('req-00000001', { kind: 'digest', since: 0, askedAt: ASKED_AT });
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const ctx = makeCtx({ deliveryMeta: { channel: 'live', addressed: true } });
 
@@ -403,24 +444,19 @@ describe('history_bundle - an addressed answer is the answer to OUR ask or nothi
   });
 
   it('drops, at error, what lies outside the range we asked for', async () => {
-    noteHistoryAsk(
-      GROUP,
-      'req-00000002',
-      {
-        kind: 'range',
-        since: 500,
-        before: 2000,
-        askedAt: ASKED_AT,
-      },
-      null
-    );
+    await ask('req-00000002', { kind: 'range', since: 500, before: 2000, askedAt: ASKED_AT });
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const ctx = makeCtx(ADDRESSED);
     const newer = { ...BUNDLE_MSG, id: 'newer', timestamp: 2000 };
 
     await handleSystemEvent(
       'history_bundle',
-      { messages: [BUNDLE_MSG, newer], to: TO_ME, requestId: 'req-00000002', last: true },
+      await answer({
+        messages: [BUNDLE_MSG, newer],
+        to: TO_ME,
+        requestId: 'req-00000002',
+        last: true,
+      }),
       ctx as any
     );
 
@@ -435,18 +471,18 @@ describe('history_bundle - an addressed answer is the answer to OUR ask or nothi
   });
 
   it('an answer to an ask only ADDS - it merges no read state', async () => {
-    noteHistoryAsk(GROUP, 'req-00000001', { kind: 'digest', since: 0, askedAt: ASKED_AT }, null);
+    await ask('req-00000001', { kind: 'digest', since: 0, askedAt: ASKED_AT });
     const ctx = makeCtx(ADDRESSED);
 
     await handleSystemEvent(
       'history_bundle',
-      {
+      await answer({
         messages: [],
         to: TO_ME,
         requestId: 'req-00000001',
         last: true,
         readWatermarks: { peer: 5000 },
-      },
+      }),
       ctx as any
     );
 
@@ -529,10 +565,7 @@ describe('history_bundle - an answer sealed to our ask', () => {
   const ASKED_AT = 1_700_000_000_000;
   const REQUEST = 'req-00000001';
 
-  beforeEach(() => {
-    forgetHistoryAsks();
-    forgetUnsealedAnswerNotice();
-  });
+  beforeEach(() => forgetHistoryAsks());
 
   /** Opens our ask with a key, and seals `content` the way an answerer bound to `aad` would. */
   async function sealedAnswer(
@@ -725,7 +758,12 @@ describe('history_bundle - an answer sealed to our ask', () => {
     error.mockRestore();
   });
 
-  it('[LEGACY] ingests an UNSEALED answer to a keyed ask, said once per session', async () => {
+  /**
+   * Every build at the floor (`1.7.0`) seals its answer to a keyed ask (option B), so one in clear is
+   * a defect or a forgery: refused at error, every time, and nothing of it ingested
+   * (docs/wiki/legacy-compatibility.md history - the `[LEGACY]` acceptance is gone).
+   */
+  it('refuses at error an UNSEALED answer to a keyed ask, every time', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     for (const id of [REQUEST, 'req-00000002']) {
       const key = await mintHistoryAnswerKey(sealEngine);
@@ -741,9 +779,9 @@ describe('history_bundle - an answer sealed to our ask', () => {
       );
     }
 
-    expect(ctx.batchAddMessages).toHaveBeenCalledTimes(2);
-    expect(lines(error, '[LEGACY]')).toHaveLength(1);
-    expect(lines(error, 'REFUSED')).toHaveLength(0);
+    expect(ctx.batchAddMessages).not.toHaveBeenCalled();
+    expect(lines(error, 'REFUSED an unsealed history_bundle')).toHaveLength(2);
+    expect(lines(error, '[LEGACY]')).toHaveLength(0);
     error.mockRestore();
   });
 });

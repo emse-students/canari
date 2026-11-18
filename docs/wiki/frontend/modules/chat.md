@@ -2554,11 +2554,10 @@ payload - still SILENT (neither unread nor a ring), and it ships in TWO releases
   the actor being the ROW's sender, never a payload field); anything else is a legacy sentence,
   wrapped by **`appMsgToChannelSystemEnvelope`** as before. Ids that name nobody draw nothing and say
   so once per decode. `channelNotice.readers.test.ts` runs both decode sites on an id frame.
-- **The writer (held).** `channelMemberAddedData` sends the sentence while
-  `CHANNEL_NOTICE_IDS_WRITER_ENABLED` is `false`: a build older than the reader (the floor is `1.6.6`)
-  draws `system.data` as text, so an id frame would reach its screen as raw `{"newUsers":[...]}`. The
-  flip is one line, once `minClientVersion` passes the first stable carrying the reader
-  ([legacy-compatibility](../../legacy-compatibility.md#removal-once-minclientversion-passes-170---a-salon-invitation-notice-sent-as-a-sentence-2026-11-16)).
+- **The writer.** `channelMemberAddedData` sends `{ "newUsers": [id] }`, always. It sent the
+  inviter's localized sentence until the floor reached the first stable carrying the reader (`1.7.0`):
+  a build older than the reader draws `system.data` as text, so an id frame would have reached its
+  screen as raw JSON ([legacy-compatibility](../../legacy-compatibility.md#entries-170-retires-the-floor-raise-of-both-estates-once-both-stores-serve-170)).
 
 Both shapes are attributed to `'system'` with `isSystem: true`, so the row renders centred and
 neutral. `ChatMessageGroups` centres on the ROW flag; the `system` envelope kind only gives the pill.

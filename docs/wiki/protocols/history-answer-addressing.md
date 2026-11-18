@@ -361,13 +361,13 @@ material. No new primitive and no new dependency.
 | Asker | Answerer | What happens |
 | --- | --- | --- |
 | seals (this build) | seals | sealed, opened |
-| seals | older | the answer arrives unsealed, still addressed (step A) - **accepted**, said ONCE per session at error with `[LEGACY]` so the population is counted ([legacy-compatibility](../legacy-compatibility.md#removal-once-minclientversion-passes-the-first-stable-that-seals---an-unsealed-history-answer-2026-11-17)) |
-| older | seals | the ask carries no key: answered unsealed, as before - the protocol that ask asked for |
+| seals | anything unsealed | **refused** at error (`REFUSED an unsealed history_bundle`), nothing of it ingested |
+| no key | seals | the ask is malformed and answered nothing, like an ask with no `requestId` (D211), said at error |
 
-Both [LEGACY] halves go once the floor passes the first stable carrying this: an unsealed answer to a
-keyed ask is then refused, and an ask with no key is malformed and answered nothing, like an ask with
-no `requestId` (D211) - planned in
-[backlog](../backlog.d/p3-a-history-answer-is-sealed-or-refused-once-the-floor-seals.md).
+Every build at the floor (`1.7.0`) seals, so the two `[LEGACY]` halves that accepted an older build
+- an unsealed answer to a keyed ask, and an ask with no key answered in clear - are gone
+([legacy-compatibility](../legacy-compatibility.md#entries-170-retires-the-floor-raise-of-both-estates-once-both-stores-serve-170)). The answerer seals or sends nothing: a server that would
+broadcast the answer is answered with nothing (`[HISTORY_SEAL]`).
 
 ### What is NOT sealed: the inviter's join push - so it carries no message (2026-11-17)
 
@@ -477,10 +477,10 @@ bound dropped both markers, and both then answered later newcomers with an empty
   most `REGISTER_ASKS_MAX` asks plus one per distinct declining device (an MLS-verified member) ever
   leave, whoever is online. The bound is checked before the next ask (`endSpentRegisterAsks`), so a
   decline that came back meanwhile is already counted out. Counted at the ask, because silence is an
-  answer: an older responder ignores `register`, and when its store matches ours it sends nothing, so no answer-side count would ever
-  move ([legacy](../legacy-compatibility.md)). A device of this account is treated like any other
-  device: on this build it answers or declines, and one on an older build is the legacy case the
-  bound exists for.
+  answer: no answer-side count moves when nothing comes back. A device of this account is treated
+  like any other device. Every build at the floor (`1.7.0`) answers or declines `register`, so
+  reaching the bound is a defect (or a server that cannot address), and its end is said at ERROR
+  ([legacy-compatibility](../legacy-compatibility.md#entries-170-retires-the-floor-raise-of-both-estates-once-both-stores-serve-170)).
 - **Every other device of the tree DECLINED.** The decliners are kept in the entry; once they cover
   every leaf of the group but this one (`getGroupMemberIdentities`), nobody holds a register to give.
 
@@ -490,10 +490,9 @@ back - so no ask repeats without one.
 **What is still lost, honestly.** A conversation in which NO device holds a register - every member
 admitted offline, the inviter's push lost to each, and the inviter gone or itself never having taken
 one - never gets the nicknames set before those admissions: nobody can give them, and the asking ends
-on the declines. A group whose only holders run a build that ignores `register` - or are offline
-at every election while other devices decline - is asked `REGISTER_ASKS_MAX` plus one per other
+on the declines. A group whose only holders are offline at every election while other devices decline is asked `REGISTER_ASKS_MAX` plus one per other
 device times, and then not again until a re-admission. A FIFO-evicted entry (more than 256 conversations owed at
-once) answers as a holder would. Each is said at warn where it ends.
+once) answers as a holder would. Each is said where it ends (the spent bound at error).
 
 **The register answer carries the nickname register and nothing else (decided 2026-11-17).** The
 ask's key rides the ask, so ANY member of the group can seal an answer to it, and the receiver does

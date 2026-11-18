@@ -20,153 +20,12 @@ It replaces every per-entry "the user's gesture, when the time comes": a removal
 the version the floor must pass, and this rule is what moves the floor there. The raise is a production
 setting, so it is done by the owner or with the owner's go, and written into the entry it unblocks.
 
-**The floor is `1.6.6` on both estates**: production by the owner's raise of 2026-11-08, dev by the lead on
-the owner's go of 2026-11-09, once Play and the App Store both served `1.6.6`. This line was merged with the pull request that removes
-the shims below, and that pull request was armed only after `GET /api/version` read
-`minClientVersion: "1.6.6"` on production AND on dev - so from its merge it states a read, not an
-intention. Before it, both estates read `1.6.2` (2026-11-04; read again unchanged on 2026-11-08
-before the raise). An older figure on this page is the floor at the date its entry names.
-
-### A tolerated degradation: an unbounded booking space on a build older than migration 153 (owner, 2026-11-09)
-
-- **What.** A booking space may have NO longest booking (`maxSteps` NULL, migration 153, #3196), and a
-  new one starts so. A build that predates it reads `maxSteps ?? 1` (`bookingUnitLimit`): a booker
-  can pick ONE step only on such a space; and its organiser editor treats an empty `maxSteps` as
-  required, so it cannot save that space's settings.
-- **Who.** Native apps at or above the floor `1.6.6` but older than the release carrying #3196 (they
-  embed their own frontend); the web app is always current.
-- **Why tolerated.** The wrong reading is a smaller choice, never a wrong booking: the server judges
-  every range (`rangeLengthRefusal`), and the organiser can still edit on the web or an updated app.
-  Gating the server on a client version would defeat the owner's rule that nothing limits unless the
-  organiser typed it.
-- **Removal.** Nothing to remove (no shim in the code): the degradation ends when `minClientVersion`
-  passes the first stable carrying #3196, and this entry is then deleted.
-
-### A tolerated degradation: a media caption edit read by a build older than the caption edit (owner, 2026-11-11)
-
-- **What.** A media message's edit replaces its caption only, in the unchanged `edit_message` frame
-  ([chat](frontend/modules/chat.md#a-media-messages-edit-is-a-caption-edit-2026-11-11)). An older
-  build applies a non-empty caption edit in a DM or group like this build, through
-  `applyEditToBody`'s media branch (`v0.18.18`). It keeps the OLD caption, unmarked, on any caption
-  edit in a salon (its `applyChannelEdit` refuses every non-text target). An emptied caption in a DM
-  or group gives **either result on one old build**: the live and replay paths drop `''` (truthiness
-  check, old caption kept), while a history bundle carrying the author's signed edit goes through
-  `vetRestoredEdit`, which takes any string and stores `caption: ''` (photo bare, marked).
-- **Who.** Native apps at or above the floor `1.6.6` but older than the release carrying the caption
-  edit; the web app is always current.
-- **Why tolerated.** It is a stale caption, never a lost or corrupted attachment: no build at the
-  floor writes an edit's text over a whole body. A new wire field would not have reached those builds
-  either.
-- **Removal.** Nothing to remove (no shim in the code): the degradation ends when `minClientVersion`
-  passes the first stable carrying the caption edit, and this entry is then deleted.
-
-### Removal once `minClientVersion` passes `1.7.0` - a salon invitation notice sent as a sentence (2026-11-16)
-
-**Site:** `CHANNEL_NOTICE_IDS_WRITER_ENABLED` and `channelMemberAddedData`
-(`frontend/src/lib/utils/chat/channelNotice.ts`).
-**What it humours:** a build older than the id reader (`channelSystemEnvelope`) draws a salon notice's
-`system.data` as text, so the id shape `{ "newUsers": [id] }`
-([chat](frontend/modules/chat.md#a-salons-membership-notice-carries-ids-2026-11-16)) would reach its
-screen as raw JSON. So the reader ships first and the inviter keeps sending the localized sentence
-every build draws. **The cost while it stands:** the notice keeps the inviter's language and the names
-as the inviter's device knew them. No wire field is added beside `data`: it would touch the signed
-frame for a cosmetic gain, and the floor reaches the reader anyway.
-**Removal condition:** `minClientVersion` at or above the first stable carrying the reader (`1.7.0`)
-on both estates. Then, in one pull request
-([planned](backlog.d/a-salon-invitation-notice-sends-ids-once-the-floor-reads-them.md)): set the switch
-to `true`, then delete it, the sentence branch of `channelMemberAddedData` and its test, and this
-entry. **What stays:** the legacy-sentence branch of `channelSystemEnvelope` - rows are never
-rewritten, so a salon archive holds sentence notices for ever.
-
-### Removal once `minClientVersion` passes the first stable that seals - an unsealed history answer (2026-11-17)
-
-**Site:** the `[LEGACY]` branch of the `history_bundle` receiver (`noteUnsealedAnswerOnce`,
-`systemMessageHandler.ts`), and the answerer's unsealed branch for an ask that carries no
-`answerKey` (`sendBundleChunks`, `groupActions.ts`).
-**What it humours:** a build older than option B
-([history-answer-addressing](protocols/history-answer-addressing.md#sealing-the-answer-to-the-asker---option-b-2026-11-17))
-answers a keyed ask in clear - still addressed to the asker alone - and asks without a key. Both are
-accepted, the first said once per session at error so its population is counted.
-**The cost while it stands:** an answer between two builds of which one predates sealing is protected
-by the server's routing alone, as it was under step A.
-**Removal condition:** `minClientVersion` at or above the first stable carrying option B, on both
-estates. Then, in one pull request
-([planned](backlog.d/p3-a-history-answer-is-sealed-or-refused-once-the-floor-seals.md)): an unsealed
-answer to a keyed ask is refused at error, an ask with no `answerKey` is malformed and answered
-nothing (as one with no `requestId` is, D211), `noteHistoryAsk`'s `null` secret goes, and so does
-this entry.
-
-### Removal once `minClientVersion` passes the first stable carrying it - the bound on register asks (2026-11-17)
-
-**Site:** `REGISTER_ASKS_MAX`, `noteRegisterAsked` and `endSpentRegisterAsks` (`registerOwed.ts`),
-called from `sendHistoryProbe` (`groupActions.ts`).
-**What it humours:** a responder older than the register ask
-([history-answer-addressing](protocols/history-answer-addressing.md#the-newcomer-asks-for-its-register-2026-11-17))
-ignores `register` and answers the digest alone - or, its store matching ours, sends nothing: no
-register and no decline. Such an ask stays counted, and after five unanswered asks the newcomer stops
-asking, said at warn. A responder on this build declines instead, and its FIRST decline gives its
-ask back (later ones from the same device count like silence), so at most five asks plus one per
-other device ever leave; the asking also ends when every other device of the tree has declined.
-**The cost while it stands:** a newcomer whose only register holders run an older build asks five
-times (a digest instead of the state key each time), keeps the nicknames it had, and declines -
-never answers empty - while it has taken none.
-**Removal condition:** `minClientVersion` at or above the first stable carrying the register ask, on
-both estates. Every responder then answers or declines `register`; the bound stays (a server that
-cannot address) but its line is raised from warn to error, since only a defect reaches it - in the
-same pull request as the sealed-answer refusal
-([planned](backlog.d/p3-a-history-answer-is-sealed-or-refused-once-the-floor-seals.md)) - and this
-entry goes.
-
-### Removal once `minClientVersion` passes the first stable carrying it - the iOS fold of the app's former seed mirror (2026-11-17)
-
-**Site:** `fold_legacy_seed_mirror` and its call in `seed_mirror_home` (`frontend/src-tauri/src/commands/push.rs`).
-**What it humours:** an iPhone install whose older build kept a seed mirror of its own in
-`app_data_dir` beside the App Group's, and copied it over the group's on every lifecycle event
-([channel-encryption section 27](protocols/channel-encryption.md#27-the-iphone-held-two-seed-mirrors-and-the-one-without-the-extensions-seeds-won---fixed-2026-11-17)).
-The first foreground mirror edit of a newer build folds that copy into the group's (a union) and
-deletes it, so it runs once per install and then finds nothing.
-**Removal condition:** `minClientVersion` at or above the first stable carrying the fold, on both
-estates. That does NOT prove every install folded: a store update skips versions, so an iPhone may go
-from a build without the fold straight to one without it. So the fold is REPLACED, not deleted: its
-call becomes an unconditional delete of `{app_data_dir}/graine_seeds.json` (the group's copy already
-holds what the last lifecycle copy put there), and the function and its four tests go. **The cost of
-keeping it meanwhile:** one `stat` per foreground mirror edit on iOS.
-
-### A tolerated breakage: an institution post from a build older than the reach (owner, 2026-11-10)
-
-- **What.** An institution's post must carry a reach (migration 162,
-  [profiles-and-access](profiles-and-access.md#an-institutions-reach-per-post-as-built-owner-2026-11-10)):
-  the server answers a create without one `400 institution_reach_required`. A build that predates the
-  reach sends none, so it **cannot publish as an institution at all**; a personal, association or
-  list post is untouched, and so is an EDIT (absent leaves the stored reach alone).
-- **Who.** Native apps older than the first release carrying the reach (they embed their own
-  frontend), for the officers of an institution only; the web app is always current.
-- **Why accepted knowingly.** The owner's decision is "no default": a server that filled one in for
-  an old client would publish a reach nobody chose, which is the thing decided against. The refusal
-  is typed (the old build, which does not know the code, shows its generic publish failure), and an
-  update or the web publishes.
-- **Where it lands on a current build.** A post queued by an old build and published after the
-  update meets the same refusal; the durable queue holds it as FINAL (`retryCannotCure`) and offers
-  Delete alone, never an endless Retry.
-- **Removal.** Nothing to remove (no shim in the code): the breakage ends when `minClientVersion`
-  passes the first stable carrying the reach, and this entry is then deleted.
-
-### A tolerated breakage: an institution event from a build older than the event reach (owner, 2026-11-13)
-
-The events twin of the entry above.
-
-- **What.** An institution's calendar event must carry a reach (migration 165,
-  [profiles-and-access](profiles-and-access.md#an-institutions-reach-per-calendar-event-as-built-owner-2026-11-13)):
-  the server answers a create without one `400 institution_reach_required`. A build that predates the
-  event reach sends none, so it **cannot file an event as an institution at all**; an association's
-  event is untouched, and so is an EDIT (absent leaves the stored reach alone).
-- **Who.** Native apps older than the first release carrying the event reach, for the people who
-  file an institution's events only; the web app is always current.
-- **Why accepted knowingly.** The posts' precedent: "no default" - a server that filled one in for
-  an old client would file an event to a reach nobody chose. The refusal is typed, and the old build
-  shows its generic deposit failure; an update or the web files it.
-- **Removal.** Nothing to remove (no shim in the code): the breakage ends when `minClientVersion`
-  passes the first stable carrying the event reach, and this entry is then deleted.
+**The floor is `1.7.0` on both estates.** This line is merged with the pull request that removes the
+shims `1.7.0` retires (the table below), and that pull request is armed only once `GET /api/version`
+reads `minClientVersion: "1.7.0"` on production AND on dev - the raise is the owner's, made once Play
+and the App Store both serve `1.7.0`. So from its merge this line states a read, not an intention.
+Before it, both estates read `1.6.6` (production by the owner's raise of 2026-11-08, dev on the
+owner's go of 2026-11-09). An older figure on this page is the floor at the date its entry names.
 
 ### A legacy shape at rest: a carte directory line with no roster (2026-11-14)
 
@@ -231,6 +90,29 @@ The events twin of the entry above.
   `LEGACY_DIRECTORY_LINE` (and its use in `ERASURE_CARTES_TOUCHED` and `CANDIDATE_CARTES_SQL`), and
   `cartesWithheld` with the WARN `internal.controller.ts` writes from it. The publish refusal stays:
   it is the rule, not a shim.
+
+### Entries `1.7.0` retires (the floor raise of both estates, once both stores serve `1.7.0`)
+
+"Carried by" is read as for `1.6.6` below (`git tag --contains` on the squash commit found by its
+`(#N)` subject, the first `vX.Y.Z` tag without a hyphen). **A removal REFUSES what an older build
+sends, so it deploys only to an estate whose floor already reads `1.7.0`.**
+
+| Entry | Carried by | Disposition at `1.7.0` |
+| --- | --- | --- |
+| A salon invitation notice sent as a localized sentence (`CHANNEL_NOTICE_IDS_WRITER_ENABLED`, `channelNotice.ts`) | #3676, `v1.7.0` | **REMOVED**: the inviter always sends `{ "newUsers": [id] }`, which every floor build draws in the reader's language ([chat](frontend/modules/chat.md#a-salons-membership-notice-carries-ids-2026-11-16)). **Stays:** the legacy-sentence branch of `channelSystemEnvelope` - rows are never rewritten, so a salon archive holds sentence notices for ever |
+| An unsealed history answer, and an ask with no `answerKey` (`noteUnsealedAnswerOnce`, the answerer's unsealed branch in `sendBundleChunks`) | #3775, `v1.7.0` | **REMOVED**: an unsealed answer to a keyed ask is refused at error and nothing of it ingested; a `history_digest`, `history_range` or `history_pull` with no well-formed `answerKey` is malformed and answered nothing (as one with no `requestId` is, D211); `noteHistoryAsk` requires the secret, and only the join push stays unkeyed ([history-answer-addressing](protocols/history-answer-addressing.md#sealing-the-answer-to-the-asker---option-b-2026-11-17)). The withheld-device broadcast guard of `sendBundleChunks` went with it: an answer that cannot be addressed is now never sent at all |
+| The bound on register asks said at warn (`REGISTER_ASKS_MAX`, `endSpentRegisterAsks`) | #3777, `v1.7.0` | **RAISED, not removed**: the bound stays (a server that cannot address), its end line is now at error - every floor responder answers or declines `register`, so only a defect reaches it |
+| The iOS fold of the app's former seed mirror (`fold_legacy_seed_mirror`, `push.rs`) | #3768, `v1.7.0` | **REPLACED**, as this entry prescribed: `seed_mirror_home` deletes `{app_data_dir}/graine_seeds.json` unread (`remove_graine_mirror`, under the mirror lock) - a store update skips versions, so the floor does not prove every install folded, and the App Group's copy already holds what the last lifecycle copy put there; the function and its tests are gone ([channel-encryption section 27](protocols/channel-encryption.md#27-the-iphone-held-two-seed-mirrors-and-the-one-without-the-extensions-seeds-won---fixed-2026-11-17)) |
+| An unbounded booking space read by a build older than migration 153 (nothing to remove) | #3196, `v1.6.9` | **CLOSED**: entry deleted |
+| A media caption edit read by a build older than the caption edit (nothing to remove) | #3368, `v1.6.11` | **CLOSED**: entry deleted |
+| An institution post from a build older than the reach (nothing to remove) | #3314, `v1.6.10` | **CLOSED**: entry deleted |
+| An institution event from a build older than the event reach (nothing to remove) | #3460, `v1.6.12` | **CLOSED**: entry deleted |
+| The single pricing slice of a fill page (D32) | D32 | **kept**: it has a server-version half and constrains a rollback; its own pull request |
+| `guestFields` alone, an export without identity words, an answer from a build without the declared questions, `GET /api/posts/my-scheduled` | the account fields, the declared questions, `scheduled-to-edit` | **kept**: each also waits on a week of `[LEGACY]` silence, which no floor read proves |
+
+**Met by an earlier floor and still standing - not judged in this pass:** the `1.6.6` and `1.6.2`
+tables' kept rows, and the entries waiting on a count, a held migration or a later release (the `sig`
+link, the categories route, KILL-2's ledger). Their removals are their own pull requests.
 
 ### Entries `1.6.6` retires or unblocks (the owner's raise of 2026-11-08)
 

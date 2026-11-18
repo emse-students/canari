@@ -1331,8 +1331,9 @@ copy since 2026-11-17, the App Group's**: the lifecycle copy of the app's file o
 seed the extension had stored
 ([channel-encryption section 27](../../protocols/channel-encryption.md#27-the-iphone-held-two-seed-mirrors-and-the-one-without-the-extensions-seeds-won---fixed-2026-11-17)),
 so the foreground writes the group's file itself and a wipe edits that one file. The copy an older
-build left in `app_data_dir` is folded in once (`fold_legacy_seed_mirror`), under both writers'
-locks, so it cannot bring back seeds a wipe removed. Pinned by the `graine_mirror_tests` in `push.rs`, `accountLocalWipe.test.ts` and
+build left in `app_data_dir` is deleted unread (`remove_graine_mirror`, under the mirror lock): it was
+folded in once until the floor reached `1.7.0`, and the App Group's copy already holds what the last
+lifecycle copy put there ([legacy-compatibility](../../legacy-compatibility.md#entries-170-retires-the-floor-raise-of-both-estates-once-both-stores-serve-170)). Pinned by the `graine_mirror_tests` in `push.rs`, `accountLocalWipe.test.ts` and
 `iosMlsMirror.test.ts`; owed one bench reading
 ([device-verification](../../device-verification.md#the-seed-mirror-labelled-by-account---owed-2026-11-07)).
 

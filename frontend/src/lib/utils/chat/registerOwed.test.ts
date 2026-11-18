@@ -77,17 +77,17 @@ describe('registerOwed - the state a newcomer still asks for', () => {
    * IT TERMINATES ON A COUNT OF ASKS, durably: a group whose members never answer `register` (an
    * older build, a server that cannot address) stops being asked after REGISTER_ASKS_MAX asks.
    */
-  it('ends after REGISTER_ASKS_MAX unanswered asks, said at warn - and the register is still not taken', () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  it('ends after REGISTER_ASKS_MAX unanswered asks, said at error - and the register is still not taken', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     noteRegisterOwed('ann', 'g1');
     for (let i = 1; i < REGISTER_ASKS_MAX; i++) noteRegisterAsked('ann', 'g1');
     expect(endSpentRegisterAsks('ann', 'g1')).toBe(false);
     noteRegisterAsked('ann', 'g1');
     expect(isRegisterOwed('ann', 'g1')).toBe(true);
-    expect(warn).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
     expect(endSpentRegisterAsks('ann', 'g1')).toBe(true);
     expect(isRegisterOwed('ann', 'g1')).toBe(false);
-    expect(warn.mock.calls.join(' ')).toContain(
+    expect(error.mock.calls.join(' ')).toContain(
       `asked for its register ${REGISTER_ASKS_MAX} time(s)`
     );
     // P2-b: the asking ended, the fact the responder reads did not.

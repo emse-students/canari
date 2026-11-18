@@ -1118,17 +1118,14 @@ async function sealedBundleFrame(
  * Which ask a bundle answers: the asker's `requestId`, or `join` for the inviter's push, which nobody
  * asked an id for - the receiver's own admission solicited it (`historyAddressing.ts`).
  */
-type BundleAnswer =
-  | {
-      requestId: string;
-      /**
-       * The public key the ask carried (base64), when it carried one: an ADDRESSED answer is then
-       * sealed to it. Absent from an asker that predates sealing.
-       */
-      seal?: AnswerSeal;
-      join?: never;
-    }
-  | { join: true; requestId?: never; seal?: never };
+type BundleAnswer = KeyedAnswer | { join: true; requestId?: never; seal?: never };
+
+/**
+ * An answer to an ASK: its `requestId`, and the seal its `answerKey` asks for. Every ask carries a
+ * key since option B (an ask without one is refused where it is parsed, `historyAskKey`), so every
+ * answer to one is sealed - there is no unsealed answer to build.
+ */
+type KeyedAnswer = { requestId: string; seal: AnswerSeal; join?: never };
 
 /**
  * What an answer to a REGISTER ask says, inside its sealed content: `true` hands over the register,
@@ -1444,8 +1441,8 @@ async function sendBundleChunks(
     chunkSize: number;
     to: string;
     state?: ConversationHistoryState;
-    /** The ask this answers - see {@link BundleAnswer}. */
-    answer: BundleAnswer;
+    /** The ask this answers, and the seal its key asks for - see {@link KeyedAnswer}. */
+    answer: KeyedAnswer;
   }
 ): Promise<BundleOutcome> {
   // HISTORY IS WITHHELD FROM AN UNVERIFIED DEVICE (`historyWithheld.ts`): whatever the answer path,
@@ -1482,62 +1479,43 @@ async function sendBundleChunks(
     }
     read = true;
     addressed = chosen.mode === 'addressed';
-    // A BROADCAST IS READ BY EVERY LEAF, a withheld device's included (`historyWithheld.ts`): while
-    // one is withheld here, an answer that cannot be addressed is not sent at all.
-    if (
-      !addressed &&
-      (await anyHistoryWithheldIn(groupId, () => mlsService.getGroupMemberIdentities(groupId)))
-    ) {
-      log(
-        `[HISTORY_BUNDLE] Not broadcasting history in ${groupId.slice(0, 8)}... - a device there is withheld, and a broadcast would reach it`
-      );
-      return sent === 0 ? { kind: 'refused' } : { kind: 'sent', count: sent };
-    }
     if (chosen.kept.length === 0) continue;
     const payload = chosen.kept.map(serializeForBundle);
     const last = i + chunkSize >= selection.length;
-    // SEALED WHEN ADDRESSED TO AN ASK THAT CARRIED A KEY (option B): the routing kept the frame from
-    // every other member; the seal keeps it from them even if the server hands it on. A broadcast
-    // (a server that predates addressed answers) stays as it was - its readers are everyone.
-    let bytes: Uint8Array;
-    if (answer.seal !== undefined && !addressed) {
-      // AN ASK THAT CARRIED A KEY IS ANSWERED SEALED OR NOT AT ALL (review of #3775). The key proves
-      // the asker seals, so a broadcast here could only mean the server said it does not address -
-      // and taking that word would let the server switch the seal off and hand the answer to the
-      // whole group. Nothing is sent in its place.
+    // SEALED TO THE ASK'S KEY (option B): the routing keeps the frame from every other member; the
+    // seal keeps it from them even if the server hands it on. Every ask carries a key since the
+    // floor reached option B (`1.7.0`), so there is no unsealed answer to build - and no broadcast
+    // that a withheld device (`historyWithheld.ts`) could read either.
+    if (!addressed) {
+      // AN ASK IS ANSWERED SEALED AND ADDRESSED, OR NOT AT ALL (review of #3775). The key proves the
+      // asker seals, so a broadcast here could only mean the server said it does not address - and
+      // taking that word would let the server switch the seal off and hand the answer to the whole
+      // group. Nothing is sent in its place.
       console.error(
         `[HISTORY_SEAL] ${to} asked with a key in ${groupId.slice(0, 8)}… but the server would broadcast the answer - answering nothing rather than unsealed to every member`
       );
       return sent === 0 ? { kind: 'refused' } : { kind: 'sent', count: sent };
     }
-    if (answer.seal !== undefined) {
-      try {
-        bytes = await sealedBundleFrame(groupId, payload, to, mlsService, {
-          state,
-          answer: { requestId: answer.requestId, seal: answer.seal },
-          last,
-        });
-      } catch (e) {
-        // A defect of this build (the key was checked where the ask was parsed): answering nothing
-        // is the only honest answer - an unsealed one is what the asker asked not to receive.
-        console.error(
-          `[HISTORY_SEAL] Could not seal chunk ${chunkNo}/${totalChunks} to ${to} in ${groupId.slice(0, 8)}… - ${String(e).slice(0, 160)}; stopping after ${sent} message(s)`
-        );
-        return sent === 0 ? { kind: 'refused' } : { kind: 'sent', count: sent };
-      }
-    } else {
-      bytes = bundleFrame(payload, to, { state, answer, last });
+    let bytes: Uint8Array;
+    try {
+      bytes = await sealedBundleFrame(groupId, payload, to, mlsService, {
+        state,
+        answer: { requestId: answer.requestId, seal: answer.seal },
+        last,
+      });
+    } catch (e) {
+      // A defect of this build (the key was checked where the ask was parsed): answering nothing
+      // is the only honest answer - an unsealed one is what the asker asked not to receive.
+      console.error(
+        `[HISTORY_SEAL] Could not seal chunk ${chunkNo}/${totalChunks} to ${to} in ${groupId.slice(0, 8)}… - ${String(e).slice(0, 160)}; stopping after ${sent} message(s)`
+      );
+      return sent === 0 ? { kind: 'refused' } : { kind: 'sent', count: sent };
     }
     try {
-      await mlsService.sendMessage(
-        groupId,
-        bytes,
-        undefined,
-        addressed ? addressedHistoryAnswer(to) : DELIVERY.transport
-      );
+      await mlsService.sendMessage(groupId, bytes, undefined, addressedHistoryAnswer(to));
       sent += payload.length;
       log(
-        `[HISTORY_BUNDLE] Chunk ${chunkNo}/${totalChunks} - ${payload.length} msg → ${groupId.slice(0, 8)}…${addressed ? ` (addressed to ${to}${answer.seal !== undefined ? ', sealed' : ''})` : ' (broadcast)'}`
+        `[HISTORY_BUNDLE] Chunk ${chunkNo}/${totalChunks} - ${payload.length} msg → ${groupId.slice(0, 8)}… (addressed to ${to}, sealed)`
       );
     } catch (e) {
       if (e instanceof AddressedUnsupportedError) {
@@ -2109,8 +2087,8 @@ export async function sendHistoryBundleForIds(
     since: number;
     /** The `requestId` of the ask this answers - echoed so the asker can accept it addressed. */
     requestId: string;
-    /** The ask carried an `answerKey`: the answer is sealed to it, or not sent. */
-    seal?: AnswerSeal;
+    /** The seal the ask's `answerKey` asks for: the answer is sealed to it, or not sent. */
+    seal: AnswerSeal;
     /**
      * Also send every TOMBSTONE this device holds in the window, whether the asker lacks the id or
      * not - the answer to a digest. The digest names ids only, while the state key that asked for
@@ -2298,8 +2276,8 @@ export async function sendHistoryRangeBundle(
     since?: number;
     /** The `requestId` of the range ask this answers. */
     requestId: string;
-    /** The range ask carried an `answerKey`: the answer is sealed to it, or not sent. */
-    seal?: AnswerSeal;
+    /** The seal the range ask's `answerKey` asks for: the answer is sealed to it, or not sent. */
+    seal: AnswerSeal;
   }
 ): Promise<void> {
   const { storage, mlsService, log } = deps;

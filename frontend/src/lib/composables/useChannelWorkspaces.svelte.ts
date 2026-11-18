@@ -2123,8 +2123,8 @@ export function useChannelWorkspaces() {
         }
       }
 
-      // Notify the channel's members. The data is the sentence until every supported build reads
-      // the id shape, then the ids (`channelMemberAddedData`, `channelNotice.ts`). SILENT: the row is
+      // Notify the channel's members. The data is the ids, every reader drawing them with live names
+      // (`channelMemberAddedData`, `channelNotice.ts`). SILENT: the row is
       // opaque to the server, so the sender says it is a notice - it must neither count as unread
       // for the salon's members nor ring their phones.
       const inviterId = currentUserId();
@@ -2132,7 +2132,7 @@ export function useChannelWorkspaces() {
       if (inviterId) {
         try {
           const systemBytes = encodeAppMessage(
-            mkSystem('memberAdded', await channelMemberAddedData(memberId, inviterId))
+            mkSystem('memberAdded', channelMemberAddedData(memberId))
           );
           await sendEncryptedChannelMessage(
             channelConversationId,

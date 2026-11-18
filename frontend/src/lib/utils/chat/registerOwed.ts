@@ -19,9 +19,9 @@
  *   handing over an empty register that would end the asker's entry on nothing;
  * - **"do I still ask?"** - `asking` ({@link isRegisterOwed}). It ends on a PROOF that asking is
  *   useless, never on a clock: {@link REGISTER_ASKS_MAX} asks that brought neither a register nor a
- *   decline (a member that ignores `register` - an older build - or a server that cannot address),
- *   or a decline from EVERY other device of the group (nobody holds a register to give). Stopping
- *   to ask never makes a device answer as if it held one.
+ *   decline (every build at the floor, `1.7.0`, answers or declines `register`, so only a defect or
+ *   a server that cannot address reaches it), or a decline from EVERY other device of the group
+ *   (nobody holds a register to give). Stopping to ask never makes a device answer as if it held one.
  *
  * **A DEVICE'S FIRST DECLINE IS NOT COUNTED.** Two newcomers - or one person's phone and laptop -
  * elected for each other's asks both decline; counting those would spend the bound on answers that
@@ -31,8 +31,8 @@
  * purpose - keep the count at zero for ever, and let the two answerers of one ask erase an earlier
  * silent ask. The asks are therefore bounded by {@link REGISTER_ASKS_MAX} plus the number of other
  * devices, whatever is online. Counted at the ask rather than at an answer because silence is an
- * answer: an older responder whose store matches ours sends nothing at all, so no answer-side count
- * would ever move.
+ * answer: a responder that never answers (a defect - every build at the `1.7.0` floor answers or
+ * declines `register` - or one the server cannot address) moves no answer-side count.
  *
  * Durable (`localStorage`, per account) because the question outlives the page: a reload between
  * the Welcome and the answer must still ask. Bounded ({@link REGISTER_OWED_LIMIT}) as a FIFO - state,
@@ -48,7 +48,8 @@ export const REGISTER_OWED_LIMIT = 256;
  * How many register asks that brought neither a register nor a decline a group may send. Each ask
  * leaves on a state edge (a connection, a fresh join, a member coming back), and a responder on this
  * build answers - or declines - the first one it is elected for; five unanswered is several
- * connections' worth of elections that found only members that ignore `register`.
+ * connections' worth of elections that brought no answer - a defect, since every build at the
+ * floor (`1.7.0`) answers or declines `register`, or a server that cannot address.
  */
 export const REGISTER_ASKS_MAX = 5;
 
@@ -129,9 +130,10 @@ export function noteRegisterAsked(account: string, groupId: string): void {
 
 /**
  * Ends the asking when {@link REGISTER_ASKS_MAX} asks went unanswered - called before an ask, so a
- * decline that came back meanwhile has already given its ask back. Said at warn: the members
- * elected that many times ignore `register`, or the server cannot address. The entry stays: the
- * register is still not taken.
+ * decline that came back meanwhile has already given its ask back. Said at ERROR: every build at the
+ * floor (`1.7.0`) answers or declines `register`, so only a defect - or a server that cannot address -
+ * reaches it (docs/wiki/legacy-compatibility.md history). The entry stays: the register is still
+ * not taken.
  *
  * @returns whether the asking is over (nothing is to be asked).
  */
@@ -141,8 +143,8 @@ export function endSpentRegisterAsks(account: string, groupId: string): boolean 
   if (!entry || entry.asked < REGISTER_ASKS_MAX) return false;
   entry.asking = false;
   if (!write(account, owed)) return true;
-  console.warn(
-    `[REGISTER] ${groupId.slice(0, 8)}... asked for its register ${entry.asked} time(s) with no answer - no longer asked (its members do not answer \`register\`, or cannot be addressed)`
+  console.error(
+    `[REGISTER] ${groupId.slice(0, 8)}... asked for its register ${entry.asked} time(s) with no answer - no longer asked (every member at the floor answers \`register\`, so this is a defect, or they cannot be addressed)`
   );
   return true;
 }
