@@ -110,6 +110,7 @@ earliest version, as a checklist.
 - [P3 - the share targets are republished twenty-three times during an account's first sync](backlog.d/p3-the-share-targets-are-republished-twenty-three-times-in-the-first-sync.md)
 - [P3 - READ ON THE NEXT 1.7.1 PRE-RELEASE: the Thème control fits a doubled font](backlog.d/p3-the-theme-control-runs-off-the-screen-at-a-doubled-font.md)
 - [P3 - what the production log read of the `1.7.0` stable day left unexplained or noisy (2026-11-18)](backlog.d/p3-what-the-1-7-0-stable-day-log-read-left-unexplained-or-noisy.md)
+- [P3 - Reading owed - the CanaReel overlay tap and the fixed playback bar, on both phones](backlog.d/reading-owed-reel-overlay-tap-and-playback-bar.md)
 
 ### Readings owed
 

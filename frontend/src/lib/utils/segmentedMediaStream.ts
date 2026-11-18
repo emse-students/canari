@@ -947,8 +947,8 @@ function openConsumer(
       return;
     }
     if ('why' in found) {
-      // A FALLBACK, SO IT ACCUSES: the player maps its line onto what can be sought
-      // (`scrubLength`) for the rest of this view, and this is the line that says why.
+      // A FALLBACK, SO IT ACCUSES: the player's line stays at an UNKNOWN length (no played part, no
+      // seek: `barLength`) for the rest of this view, and this is the line that says why.
       console.warn(
         `[media-seg] ${label} ${ref.mediaId}: no declared length, and none read from its tail - ${found.why}`
       );
