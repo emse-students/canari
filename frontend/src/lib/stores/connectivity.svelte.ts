@@ -19,7 +19,7 @@
  */
 
 import { RequestDeadlineError } from '$lib/utils/requestDeadline';
-import { isTransportFailure, transportFailureEvidence } from '$lib/utils/transportFailure';
+import { TransportFailureError, transportFailureEvidence } from '$lib/utils/transportFailure';
 import { isAppOnScreen, onAppScreenChange } from '$lib/utils/appForeground';
 import { createChangeLatch } from '$lib/utils/changeLatch';
 
@@ -250,8 +250,10 @@ class ConnectivityStore {
   }
 
   /**
-   * Records that a request never reached the server (DNS failure, no route, refused socket).
-   * Call this only for transport failures - an HTTP status is an answer, not a disconnection.
+   * Records the verdict "the server is unreachable" and starts the probe back. Callers are the transport
+   * failures (DNS failure, no route, refused socket), the two-deadline stall, and the session paths that
+   * end with no token ('login without a token', 'token still unavailable') - never an HTTP status, which
+   * is an answer, not a disconnection.
    *
    * @param evidence WHAT proved it, printed on the verdict line so a log tells a black-holed link
    *   (`2 request deadlines in a row`) from a refused socket (`transport failure: <error type>`) -
@@ -452,12 +454,8 @@ class ConnectivityStore {
               );
             }
           }
-        } else if (isTransportFailure(error)) {
-          this.notifyServerUnreachable(
-            error instanceof Error
-              ? transportFailureEvidence(error)
-              : 'transport failure: non-error'
-          );
+        } else if (error instanceof TransportFailureError) {
+          this.notifyServerUnreachable(transportFailureEvidence(error));
         }
         this.recomputeSlow();
       },
