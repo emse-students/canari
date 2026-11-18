@@ -1337,3 +1337,7 @@ swallowed are counted (`deadlinesWhileUnreachable`) and reported on the line tha
 `server reachable again (N more request deadline(s) expired while it was unreachable)`. Nothing is
 demoted and nothing is lost: the count is the same number the lines would have totalled. Tests:
 `connectivity.test.ts` ("once per spell", and the limit test now expects one line for five stalls).
+
+## A community joined while the socket was down is listed when it returns (2026-11-18)
+
+A `channel.member.joined` published while this device's socket was down is lost, and nothing replays it: the pending pull covers MLS messages only, the unread answer counts only salons with unread messages, and `retryFailedListing` lists only after a listing that gave up. Captured on `1.7.0-alpha.11` (log: `[WS] Connected`, `[UNREAD] live stream back`, `[PENDING] No pending MLS messages`, then no `[WORKSPACE-LOAD]`). The return from the gap is therefore the event that reconciles the membership: `ChatBackgroundService` calls `resyncAfterLiveStreamGap` on a real down -> up edge of `isWsConnected`, which lists once (owed if a listing is in flight, through `joinedCommunityReloadOwed`, the same owed flag a join uses). Bounded by the transition, not a clock: one listing per socket return. Tests: `useChannelWorkspaces.svelte.test.ts` (hydrateJoinedCommunity block), `reconnectListingWiring.test.ts`. Reading: [entry](../backlog.d/p2-a-community-joined-elsewhere-is-not-drawn-until-a-cold-start.md).

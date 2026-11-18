@@ -1529,6 +1529,9 @@
       lastLiveStreamUp = up;
       if (previous === null || previous === up || !globalSession.isLoggedIn) return;
       void globalConvs.noteLiveStreamTransition(up, convCtx());
+      // A gap loses every `channel.member.*` event by construction, so the RETURN re-lists the
+      // communities (a join made elsewhere meanwhile is otherwise drawn only after a cold start).
+      if (up) void globalChannels.resyncAfterLiveStreamGap(channelsCtx());
     });
   });
 

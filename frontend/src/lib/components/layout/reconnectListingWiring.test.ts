@@ -30,6 +30,15 @@ describe('ChatBackgroundService - the reconnect restarts a listing that gave up'
     expect(source).toMatch(/handleReconnect\('foreground'\)/);
   });
 
+  it('re-lists the communities when the live stream comes back, never on the first reading', () => {
+    expect(source).toContain(
+      'if (previous === null || previous === up || !globalSession.isLoggedIn) return;'
+    );
+    expect(source).toContain(
+      'if (up) void globalChannels.resyncAfterLiveStreamGap(channelsCtx());'
+    );
+  });
+
   it('unsubscribes on teardown', () => {
     expect(source).toMatch(/const stopReconnect = connectivity\.onReconnect\(/);
     expect(source).toMatch(/\n\s+stopReconnect\(\);/);
