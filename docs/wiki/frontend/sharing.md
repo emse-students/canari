@@ -129,7 +129,7 @@ preselection, never a destination by itself.
   `conversationSourcesSettled`, whose restore half (`conversationsRestored`) is reset at sign-out
   with the map (`invalidateRestores`), so the next account never publishes from a list still
   loading. The conversation map is read only when a publish is due, so a disabled or signed-out
-  state does not re-run on every message. Each publish writes ONE in-app log line saying how it differs from the one before (`[ShareTargets] publishing (...): added [id8], removed [id8], N relabelled, reordered|same order`, `describeShareTargetsChange`) - ids as prefixes, never a name - so a first sync that republishes many times reads as a flap or a walk forward ([entry](../backlog.d/reading-owed-the-share-targets-publish-during-a-first-sync.md)).
+  state does not re-run on every message. Each publish writes ONE in-app log line saying how it differs from the one before (`[ShareTargets] published (...): added [id8], removed [id8], N relabelled, reordered|same order; N of M present, N stale left`, `describeShareTargetsChange`, replacing the old "present" debug line) - ids as prefixes, never a name - so a first sync that republishes many times reads as a flap or a walk forward ([entry](../backlog.d/reading-owed-the-share-targets-publish-during-a-first-sync.md)).
 - **Native** (`tauri-plugin-gallery`, `ShareTargets.kt`, beside S3's commands): `publish_share_targets`
   adds by its own ids and removes the ids it published before and no longer names;
   `clear_share_targets` removes every id it ever recorded. The ids are recorded in the plugin's

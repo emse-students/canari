@@ -206,13 +206,13 @@ describe('saying how a publish differs from the one before', () => {
 
   it('a publish that follows another says, in the in-app log, how it differs', async () => {
     vi.stubGlobal('window', globalThis);
-    const debug = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
     invoke.mockResolvedValue(CLEAN);
     await publishShareTargets([t('a')], 'first');
     await publishShareTargets([t('a'), t('b')], 'second');
-    const said = debug.mock.calls.map((c) => c.join(' '));
-    expect(said.some((l) => l.includes('publishing (second): added [b], removed []'))).toBe(true);
-    debug.mockRestore();
+    const said = info.mock.calls.map((c) => c.join(' '));
+    expect(said.some((l) => l.includes('published (second): added [b], removed []'))).toBe(true);
+    info.mockRestore();
     vi.unstubAllGlobals();
   });
 });

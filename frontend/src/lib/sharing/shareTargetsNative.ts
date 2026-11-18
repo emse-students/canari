@@ -124,10 +124,7 @@ export function publishShareTargets(targets: ShareTarget[], reason: string): Pro
   const key = keyOf(targets);
   return enqueue(async () => {
     if (key === lastPublished) return;
-    Log.i(
-      'ShareTargets',
-      `publishing (${reason}): ${describeShareTargetsChange(lastTargets, targets)}`
-    );
+    const change = describeShareTargetsChange(lastTargets, targets);
     try {
       const answer = await invoke<{ present: number; leftover: number }>(
         galleryCommand('publishShareTargets'),
@@ -138,7 +135,8 @@ export function publishShareTargets(targets: ShareTarget[], reason: string): Pro
         // Stale suggestions the platform would not remove: what it holds is NOT this list, so
         // the next call is sent whatever it asks for.
         lastPublished = null;
-        lastTargets = null;
+        // What THIS call asked for is still the comparison point of the next line.
+        lastTargets = targets;
         console.warn(
           `[share-targets] published, but ${answer.leftover} stale suggestion(s) could not be removed (${reason})`
         );
@@ -146,10 +144,15 @@ export function publishShareTargets(targets: ShareTarget[], reason: string): Pro
         lastPublished = key;
         lastTargets = targets;
       }
-      Log.d('ShareTargets', `${answer.present} of ${targets.length} present (${reason})`);
+      // ONE line per publish, said after the answer: how it differs from the one before, and what the
+      // platform lists afterwards.
+      Log.i(
+        'ShareTargets',
+        `published (${reason}): ${change}; ${answer.present} of ${targets.length} present, ${answer.leftover} stale left`
+      );
     } catch (err) {
+      // `lastTargets` stays: the diff of the next attempt is still against the last set told.
       lastPublished = null;
-      lastTargets = null;
       console.error(`[share-targets] the suggestions were not published (${reason})`, err);
     }
   });
