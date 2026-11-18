@@ -36,6 +36,7 @@ earliest version, as a checklist.
 - [The owner's decisions of 2026-11-14](backlog.d/owner-decisions-of-2026-11-14.md)
 - [The owner's decisions of 2026-11-15 and 2026-11-16](backlog.d/owner-decisions-of-2026-11-16.md)
 - [The owner's decisions of 2026-11-17](backlog.d/owner-decisions-of-2026-11-17.md)
+- [The owner's decisions of 2026-11-18](backlog.d/owner-decisions-of-2026-11-18.md)
 
 **P2 - correctness**
 
@@ -58,7 +59,6 @@ earliest version, as a checklist.
 ### Readings owed
 
 - [ ] [the CanaReels composer, viewer and editor on real content](backlog.d/reading-owed-the-canareels-composer-viewer-and-editor-on-real-content.md)
-- [ ] [lives on both bench phones: watching, broadcasting, the chat panel and the floating reactions (G9, a release blocker)](backlog.d/reading-owed-lives-on-both-phones-watching-broadcasting-chat-and-reactions.md)
 - [ ] [sharing into Canari on iOS](backlog.d/reading-owed-sharing-into-canari-on-ios.md)
 - [ ] [seeds mirrored before the writer label](backlog.d/reading-owed-seeds-mirrored-before-the-writer-label.md)
 - [ ] [a deploy's `502`/`503`/`504` is "not now", never a send failure](backlog.d/reading-owed-a-deploy-s-502-503-504-is-not-now-never-a-send-failure.md)
@@ -80,7 +80,6 @@ earliest version, as a checklist.
 - [ ] [a form's respondent account fields, on a phone and on the web (owner, 2026-11-16)](backlog.d/reading-owed-form-respondent-account-fields.md)
 - [ ] [the live scenes bar (one icon row) on a desktop live at two window widths](backlog.d/reading-owed-the-live-scenes-bar-on-a-desktop-live.md)
 - [ ] [a menu ends above the iOS tab bar, and a group notification keeps its title (2026-11-16)](backlog.d/reading-owed-the-popover-and-notification-fixes-of-the-iphone-sitting.md)
-- [ ] [a new group invites everyone chosen while the creator's other device is online (2026-11-17)](backlog.d/p2-a-new-group-s-invitation-is-refused-by-the-creator-s-own-other-device.md)
 - [ ] [a native device with no push token row now says why, and registers again (production, after the `1.7.0` stable)](backlog.d/reading-owed-a-device-with-no-push-token-now-says-so.md)
 - [ ] [a reaction to my message notifies a backgrounded and a killed phone, on both platforms (2026-11-17)](backlog.d/reading-owed-a-reaction-to-my-message-notifies-in-the-background.md)
 - [ ] [the iPhone's one seed mirror keeps the extension's seeds through a foreground (2026-11-17)](backlog.d/reading-owed-ios-seed-mirror-one-copy.md)
@@ -199,6 +198,7 @@ earliest version, as a checklist.
 - [P2 - one tap from Canari signs the user into its MiConnect sites, and MiGallery's notifications go through Canari (owner, 2026-11-07: decided; Canari's half of the handoff built 2026-11-08, MiGallery's flag ON 2026-11-14, the others OFF)](backlog.d/sign-in-handoff-to-the-ecosystem-sites-and-migallery-notifications.md)
 - [P2 - iOS: a quick reply from a suspended app is not sent in the background time, it waits for the next open](backlog.d/p2-ios-quick-reply-from-a-suspended-app-waits-for-the-next-open.md)
 - [P2 - the web catch-up decrypt session marks frames seen before its state is installed in the live client](backlog.d/p2-web-catch-up-marks-frames-seen-before-its-state-is-live.md)
+- [P2 - iOS builds need the iOS 27 SDK before April 2027 (Apple's ITMS-90725 on build 100700011)](backlog.d/p2-ios-builds-need-the-ios-27-sdk-before-april-2027.md)
 
 **P3 - hygiene**
 

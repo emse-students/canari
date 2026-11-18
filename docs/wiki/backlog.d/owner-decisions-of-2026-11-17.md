@@ -138,4 +138,4 @@ the counts.
   - **a named group can NEVER be un-named** - a decision, not an open question;
   - group creation stays create-then-invite, and a partial invite names who is missing (the
     `alpha.10` reading found an invite that added nobody:
-    [entry](p2-a-new-group-s-invitation-is-refused-by-the-creator-s-own-other-device.md), `1.7.0`).
+    entry deleted 2026-11-18, read PASS on `1.7.0-alpha.11`).
