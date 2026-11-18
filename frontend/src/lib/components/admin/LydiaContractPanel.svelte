@@ -11,6 +11,8 @@
     LYDIA_PAYMENT_KINDS,
     LydiaContractFormInvalid,
     LydiaContractRefused,
+    lydiaRefusalMessage,
+    sortLydiaBandRows,
     emptyLydiaBand,
     fetchLydiaContract,
     fetchLydiaContractCounter,
@@ -83,7 +85,7 @@
       await loadCounter();
     } catch (e) {
       if (e instanceof LydiaContractFormInvalid || e instanceof LydiaContractRefused) {
-        saveError = m.admin_lydia_invalid({ field: e.field ?? '-' });
+        saveError = lydiaRefusalMessage(e.field, e.reason);
       } else {
         Log.w('admin.lydia', 'the contract could not be saved', e);
         saveError = m.admin_lydia_save_failed();
@@ -91,6 +93,11 @@
     } finally {
       saving = false;
     }
+  }
+
+  /** Keeps the band rows ascending once a threshold is left, whatever order they were typed in. */
+  function sortBands() {
+    if (form) form.bands = sortLydiaBandRows(form.bands);
   }
 
   onMount(() => {
@@ -300,8 +307,16 @@
 
       <fieldset class="space-y-3">
         <legend class="text-text-main text-sm font-bold">{m.admin_lydia_bands_title()}</legend>
+        <p class="text-text-muted text-xs">{m.admin_lydia_bands_hint()}</p>
         {#each form.bands as band, i (i)}
-          <div class="border-cn-border space-y-2 rounded-xl border p-3">
+          <div
+            class="border-cn-border space-y-2 rounded-xl border p-3"
+            role="group"
+            onfocusout={(e) => {
+              // Only once focus leaves the whole row: re-sorting under a focused field would move it.
+              if (!e.currentTarget.contains(e.relatedTarget as Node | null)) sortBands();
+            }}
+          >
             <div class="flex items-end gap-2">
               <Input
                 class="flex-1"

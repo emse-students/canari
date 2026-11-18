@@ -186,3 +186,108 @@ describe('LydiaContractPanel', () => {
     expect(statuses).toContain(m.admin_lydia_saved());
   });
 });
+
+describe('LydiaContractPanel bands', () => {
+  const withBands = (bands: unknown[]) => ({ ...EMPTY, bands });
+  const band = (fromCents: number) => ({ fromCents, fees: {} });
+
+  async function submit() {
+    document
+      .querySelector('form')!
+      .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    await settle();
+  }
+  const bandInputs = () =>
+    [...document.querySelectorAll<HTMLInputElement>('fieldset:last-of-type input')].filter(
+      (i) => i.getAttribute('inputmode') === 'decimal'
+    );
+
+  it('sends bands ascending whatever order they were entered in, with no error', async () => {
+    route(withBands([band(10_000), band(0)]), { ...COUNTER_UNSET, missing: ['target'] });
+    await render();
+    await submit();
+
+    const put = apiFetch.mock.calls.find(([, init]) => init?.method === 'PUT');
+    expect(JSON.parse(put![1].body).bands.map((b: { fromCents: number }) => b.fromCents)).toEqual([
+      0, 10_000,
+    ]);
+    expect(document.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it('re-sorts the rows when focus leaves a band row', async () => {
+    route(withBands([band(10_000), band(0)]), COUNTER_UNSET);
+    await render();
+    const rows = () =>
+      bandInputs()
+        .filter((_, i) => i % 7 === 0)
+        .map((i) => i.value);
+    expect(rows()).toEqual(['100', '0']);
+    const row = document.querySelector('[role="group"]')!;
+    row.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: document.body }));
+    await settle();
+    expect(rows()).toEqual(['0', '100']);
+  });
+
+  it('says two bands at one threshold in words, never the field path', async () => {
+    route(withBands([band(5_000), band(5_000)]), COUNTER_UNSET);
+    await render();
+    await submit();
+
+    const alert = document.querySelector('[role="alert"]')!.textContent;
+    expect(alert).toBe(m.admin_lydia_err_band_duplicate());
+    expect(alert).not.toContain('bands[');
+    expect(apiFetch.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(false);
+  });
+
+  it('turns a field core refuses into its own sentence, and logs an unknown one at error', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    route(EMPTY, COUNTER_UNSET);
+    await render();
+    const refuse = (body: unknown) =>
+      apiFetch.mockImplementationOnce(() =>
+        Promise.resolve(new Response(JSON.stringify(body), { status: 400 }))
+      );
+
+    refuse({ field: 'vatBps' });
+    await submit();
+    expect(document.querySelector('[role="alert"]')!.textContent).toBe(m.admin_lydia_err_vat());
+
+    refuse({ field: 'bands[1].fees.qr.percentBps' });
+    await submit();
+    expect(document.querySelector('[role="alert"]')!.textContent).toContain(
+      m.admin_lydia_kind_qr()
+    );
+
+    expect(error).not.toHaveBeenCalled();
+    refuse({ field: 'somethingNew' });
+    await submit();
+    expect(document.querySelector('[role="alert"]')!.textContent).toBe(m.admin_lydia_err_generic());
+    expect(error).toHaveBeenCalledOnce();
+  });
+
+  it('updates the status line from a fresh counter after a save', async () => {
+    let configured = false;
+    apiFetch.mockImplementation((url: string, init?: { method?: string; body?: string }) => {
+      if (init?.method === 'PUT') {
+        configured = true;
+        return Promise.resolve(new Response(init.body ?? '{}', { status: 200 }));
+      }
+      if (url.endsWith('/counter')) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ ...COUNTER_UNSET, missing: configured ? [] : ['bands'] }), {
+            status: 200,
+          })
+        );
+      }
+      return Promise.resolve(new Response(JSON.stringify(withBands([band(0)])), { status: 200 }));
+    });
+    await render();
+    expect(document.body.textContent).toContain(
+      m.admin_lydia_counter_not_configured({ fields: m.admin_lydia_field_bands() })
+    );
+    await submit();
+    expect(document.body.textContent).not.toContain(
+      m.admin_lydia_counter_not_configured({ fields: m.admin_lydia_field_bands() })
+    );
+  });
+});
