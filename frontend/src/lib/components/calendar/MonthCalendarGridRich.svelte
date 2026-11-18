@@ -115,11 +115,18 @@
   /**
    * Logos for the event: primary first, then co-owners (resolved src, or null → initials).
    * Index-aligned with `eventColors`, which is what lets one band list carry both.
+   *
+   * A neutral "Campus" event has no logo BY DESIGN, so it has no watermark at all: its colour is
+   * the whole drawing, as on the PDF/PNG export (#3455). Its one identity is the only owner it
+   * ever has (`eventOwners`), so the list is empty and the cell draws no circle - initials derived
+   * from "Campus" read as a broken avatar ("CA", owner, 2026-11-13 and 2026-11-18).
    */
   function eventLogos(
     ev: AssociationCalendarFeedEvent
   ): { associationId: string; src: string | null; name: string }[] {
-    return organiserCentred(eventOwners(ev)).map((owner) => ({
+    const owners = eventOwners(ev);
+    if (owners.some((owner) => owner.neutral)) return [];
+    return organiserCentred(owners).map((owner) => ({
       associationId: owner.associationId,
       src: associationLogoSrc(owner.logoUrl),
       name: owner.name,
@@ -349,7 +356,7 @@
                           >{getInitials(logos[0].name)}</span
                         >
                       {/if}
-                    {:else}
+                    {:else if logos.length > 1}
                       {@const bands = splitLogoBands(logos.length)}
                       <!-- ONE circle, one band per owner, cut from the same geometry the PDF export
                            uses (splitLogoBands) so the screen and the export agree. `aspect-ratio`
