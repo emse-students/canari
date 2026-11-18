@@ -599,6 +599,7 @@
         src={playUrl!}
         disableRemotePlayback={streamManaged}
         streamed={streamUrl !== null}
+        declaredDurationMs={durationMs}
         onVideo={attachStream}
         class="h-full w-full"
         positionKey={media.mediaId}
@@ -735,6 +736,7 @@
         src={playUrl!}
         disableRemotePlayback={streamManaged}
         streamed={streamUrl !== null}
+        declaredDurationMs={durationMs}
         onVideo={attachStream}
         onOpen={() => (onOpen ? onOpen() : (lightboxOpen = true))}
         openLabel={m.post_fullscreen_label()}
