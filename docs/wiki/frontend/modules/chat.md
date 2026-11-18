@@ -6495,7 +6495,7 @@ is held to the current answer. For a newcomer every chunk is withheld, so a stor
 one full decrypt and N/200 window reads to send a state-only frame. It is not reduced here (the
 per-chunk read is the correctness property); it no longer delays the member's gesture.
 
-**Why it does not breach step A** ([the decision](../../backlog.d/p1-a-new-member-of-a-group-conversation-receives-its-whole-past-decided-2026-10.md)).
+**Why it does not breach step A** ([the decision](../../protocols/history-reconciliation.md#a-new-member-receives-nothing-from-before-their-arrival-decided-by-the-user-2026-10-21)).
 Step A forbids a newcomer the MESSAGES sent before their arrival; the push is addressed to the new
 device and filtered on its owner's server windows, so for a newcomer it carries no message from
 before - a state-only frame, or only what was sent since the Add. A nickname is not a past message:

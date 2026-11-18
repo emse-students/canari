@@ -2,6 +2,8 @@
 
 target: 1.7.0
 
+_2026-11-18, sitting [S7](../device-verification.md#the-web-and-phone-readings-of-2026-11-18-s7-170-alpha12-the-last-sitting-before-the-stable): **read in production the day after both stores carry `1.7.0`; it does NOT block cutting the stable** (the lead's line of 2026-11-17). It stays a `1.7.0` reading only because a reading may name the earliest version alone._
+
 **What is built.** A device that ends a registration without a token reports it (`[PUSH_UNAVAILABLE]`);
 `register-device` answers whether the server holds the device's `push_token` row and the phone
 registers again on `false` (#3649); every `register-device` states the last outcome, QUALIFIED since
