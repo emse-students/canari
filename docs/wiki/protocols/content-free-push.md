@@ -127,7 +127,10 @@ something to fetch:
   **The instant left the hash on 2026-11-18** so a reactor's second reaction to one message REPLACES
   the first on the iPhone, as on Android: what Apple can now learn from it is only that two reaction
   wakes to one device concern the same (message, reactor) pair - the replacement itself, and nothing
-  it can tie to a person or a conversation. So
+  it can tie to a person or a conversation. The instant never bought much (Apple knows when a push is
+  sent, so `at` was a few thousand candidates): the whole argument rests on the message id appearing
+  in nothing Apple sees, and on it not being guessable - a client UUID for a private conversation,
+  the server row id for a salon (a generated `uuid`, `ChannelMessage`). So
   `sendPushToUser` keeps the header on the wake for `reaction=true` alone
   ([mobile](../frontend/mobile.md#the-frame-trigger-of-a-reaction-2026-11-17)); any new opaque id
   must pass the same test - nothing Apple sees elsewhere may confirm it. **One bounded exception**:

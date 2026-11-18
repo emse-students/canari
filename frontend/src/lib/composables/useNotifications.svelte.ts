@@ -573,8 +573,9 @@ export function useNotifications() {
   /**
    * THE PREAMBLE EVERY SYSTEM NOTIFICATION SHARES - a message's and a reaction's - so neither can
    * drift from the other's refusal or throttle. Whether one may be raised now under `convKey` (the
-   * conversation for a message, `reaction:<conversation>` for a reaction); when it may, the throttle
-   * window is taken.
+   * conversation for a message, `reaction:<message>:<reactor>:<at>` - ONE reaction - for a reaction);
+   * when it may, the throttle window is taken. A reaction's key is new per reaction, so the map gains
+   * one entry per reaction raised in the session - deliberately, the price of never swallowing one.
    */
   function mayRaise(convKey: string): boolean {
     if (typeof window === 'undefined') return false;
@@ -702,9 +703,9 @@ export function useNotifications() {
    * message and a reaction, so neither can drift from the other's permission, tap and sound rules.
    *
    * @param p.idKey what the notification's id (plugin) or tag (browser) is derived from: the
-   *   conversation for a message (a second message updates the first), the reaction itself for a
-   *   reaction (`reactionCollapseKey`, the push's own collapse id on iOS) - so the two kinds never
-   *   replace each other.
+   *   conversation for a message (a second message updates the first), the reactor and the message
+   *   for a reaction (`reactionCollapseKey`, the push's own collapse id on iOS: a reactor's second
+   *   reaction to one message replaces the first) - so the two kinds never replace each other.
    * @param p.conversationId where a tap leads.
    */
   async function postPlainNotification(p: {

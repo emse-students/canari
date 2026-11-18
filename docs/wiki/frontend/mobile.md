@@ -3331,10 +3331,17 @@ identity makes the two posts one:
   entries in Notification Center (iPhone 12, `1.7.0-alpha.11`, locked and killed), where Android
   replaces the line; now the newer reaction replaces the older, as Android's does. The page's post is
   still throttled per reaction (`<slot>:<at>`), so a quick second emoji replaces the first rather than
-  being swallowed by the 800 ms window. **Skew:** a `1.7.0` iPhone (page id with `<at>`) under a
-  server of `1.7.1` (push id without it) can show two entries for ONE reaction in the narrow windows
-  where both triggers draw (Control Center, a push landing just as the app comes back) - only `1.7.0`
-  has the page trigger, and it ends with the update.
+  being swallowed by the 800 ms window (`useNotifications.reactionSlot.svelte.test.ts`). The web tag
+  and the desktop id follow the same slot, so there too a reactor's second reaction replaces the first
+  (a same-tag replacement in a browser does not alert again: no `renotify`). **The slot holds the
+  LAST arrival, not the newest reaction:** a push of an older reaction delayed by APNs past the page's
+  post of a newer one fills the slot with the older emoji - still a reaction that stands (several emoji
+  per reactor may), stale rather than false; ordering pushes is not in APNs' gift. `willPresent`'s
+  `List` answer now covers both a twin and the reactor's older reaction (`CanariPresentForegroundPush`
+  says so). **Skew, both ways:** a `1.7.0` iPhone (page id with `<at>`) under a `1.7.1` server (push id
+  without it), or a `1.7.1` iPhone under a `1.7.0` server (dev between a tester build and the server
+  deploy), can show two entries for ONE reaction in the narrow windows where both triggers draw
+  (Control Center, a push landing just as the app comes back); both end once app and server match.
 - **iOS, while ACTIVE**: `willPresent` never answers a push with `None` blind - should iOS have
   replaced the page's delivered request by the push, that would erase the record. It reads the
   delivered notifications (`CanariPresentForegroundPush`, completed on the main queue) for EVERY
