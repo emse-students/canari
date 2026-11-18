@@ -136,8 +136,8 @@ describe('selectShareTargets', () => {
 describe('publishing on change', () => {
   it('publishes once for an unchanged list', async () => {
     const list = [group('a', 'A', 2), group('b', 'B', 1)];
-    syncShareTargets(input(list));
-    syncShareTargets(input(list));
+    syncShareTargets(input(list), 'test');
+    syncShareTargets(input(list), 'test');
     await settle();
     expect(calls(PUBLISH)).toHaveLength(1);
     expect(calls(PUBLISH)[0][1]).toEqual({
@@ -149,9 +149,9 @@ describe('publishing on change', () => {
   });
 
   it('publishes again on a rename and on a reorder', async () => {
-    syncShareTargets(input([group('a', 'A', 2), group('b', 'B', 1)]));
-    syncShareTargets(input([group('a', 'A renamed', 2), group('b', 'B', 1)]));
-    syncShareTargets(input([group('a', 'A renamed', 2), group('b', 'B', 3)]));
+    syncShareTargets(input([group('a', 'A', 2), group('b', 'B', 1)]), 'test');
+    syncShareTargets(input([group('a', 'A renamed', 2), group('b', 'B', 1)]), 'test');
+    syncShareTargets(input([group('a', 'A renamed', 2), group('b', 'B', 3)]), 'test');
     await settle();
     expect(calls(PUBLISH)).toHaveLength(3);
   });
@@ -159,17 +159,17 @@ describe('publishing on change', () => {
   it('publishes again after a failure, since the native state is then unknown', async () => {
     invoke.mockRejectedValueOnce(new Error('binder died'));
     const list = [group('a', 'A', 1)];
-    syncShareTargets(input(list));
-    syncShareTargets(input(list));
+    syncShareTargets(input(list), 'test');
+    syncShareTargets(input(list), 'test');
     await settle();
     expect(calls(PUBLISH)).toHaveLength(2);
   });
 
   it('publishes nothing, and reads no conversation, while signed out or before the list is read', async () => {
     const conversations = vi.fn(() => [group('a', 'A', 1)]);
-    syncShareTargets({ ...input([]), signedIn: false, conversations });
+    syncShareTargets({ ...input([]), signedIn: false, conversations }, 'test');
     // The next account's list still loading: its sources are not settled (reset at sign-out).
-    syncShareTargets({ ...input([]), conversationsReady: false, conversations });
+    syncShareTargets({ ...input([]), conversationsReady: false, conversations }, 'test');
     await settle();
     expect(invoke).not.toHaveBeenCalled();
     expect(conversations).not.toHaveBeenCalled();
@@ -178,8 +178,8 @@ describe('publishing on change', () => {
   it('sends the same list again when the native side left stale suggestions behind', async () => {
     invoke.mockImplementationOnce(async () => ({ present: 1, leftover: 2 }));
     const list = [group('a', 'A', 1)];
-    syncShareTargets(input(list));
-    syncShareTargets(input(list));
+    syncShareTargets(input(list), 'test');
+    syncShareTargets(input(list), 'test');
     await settle();
     expect(calls(PUBLISH)).toHaveLength(2);
   });
@@ -219,9 +219,9 @@ describe('saying how a publish differs from the one before', () => {
 
 describe('clearing', () => {
   it('clears when the setting is off, once', async () => {
-    syncShareTargets(input([group('a', 'A', 1)]));
-    syncShareTargets(input([group('a', 'A', 1)], { enabled: false }));
-    syncShareTargets(input([group('a', 'A', 1)], { enabled: false }));
+    syncShareTargets(input([group('a', 'A', 1)]), 'test');
+    syncShareTargets(input([group('a', 'A', 1)], { enabled: false }), 'test');
+    syncShareTargets(input([group('a', 'A', 1)], { enabled: false }), 'test');
     await settle();
     expect(calls(CLEAR)).toHaveLength(1);
     // The clear lands after the publish it follows.
@@ -230,16 +230,16 @@ describe('clearing', () => {
 
   it('clears at sign-out and lets the next account publish its own list', async () => {
     const list = [group('a', 'A', 1)];
-    syncShareTargets(input(list));
+    syncShareTargets(input(list), 'test');
     await clearShareTargets('signed out');
     // Even the SAME list is sent again: what the native side holds is now nothing.
-    syncShareTargets(input(list));
+    syncShareTargets(input(list), 'test');
     await settle();
     expect(invoke.mock.calls.map(([c]) => c)).toEqual([PUBLISH, CLEAR, PUBLISH]);
   });
 
   it('the sign-out reaches native even after an EMPTY publish, which already reads as "nothing"', async () => {
-    syncShareTargets(input([]));
+    syncShareTargets(input([]), 'test');
     await settle();
     expect(calls(PUBLISH)).toHaveLength(1);
     // The setting path would skip here; the sign-out never does - only the native record knows.
@@ -255,7 +255,7 @@ describe('clearing', () => {
     invoke.mockImplementation((cmd: string) =>
       cmd === PUBLISH ? publish.promise : Promise.resolve(0)
     );
-    syncShareTargets(input([group('a', 'A', 1)]));
+    syncShareTargets(input([group('a', 'A', 1)]), 'test');
     await settle();
     expect(invoke.mock.calls.map(([c]) => c)).toEqual([PUBLISH]);
 
@@ -289,9 +289,9 @@ describe('clearing', () => {
 describe('on iOS', () => {
   it('publishes and clears through the same two commands, and only when the list changed', async () => {
     platform = 'ios';
-    syncShareTargets(input([group('a', 'A', 1)]));
-    syncShareTargets(input([group('a', 'A', 1)]));
-    syncShareTargets(input([group('a', 'A', 1)], { enabled: false }));
+    syncShareTargets(input([group('a', 'A', 1)]), 'test');
+    syncShareTargets(input([group('a', 'A', 1)]), 'test');
+    syncShareTargets(input([group('a', 'A', 1)], { enabled: false }), 'test');
     await settle();
     expect(invoke.mock.calls.map(([c]) => c)).toEqual([PUBLISH, CLEAR]);
     // The id iOS donates as the conversationIdentifier is Android's shortcut id.
@@ -308,8 +308,8 @@ describe('on iOS', () => {
 describe('off the phone apps', () => {
   it('neither publishes nor clears', async () => {
     platform = null;
-    syncShareTargets(input([group('a', 'A', 1)]));
-    syncShareTargets(input([group('a', 'A', 1)], { enabled: false }));
+    syncShareTargets(input([group('a', 'A', 1)]), 'test');
+    syncShareTargets(input([group('a', 'A', 1)], { enabled: false }), 'test');
     await clearShareTargets('signed out');
     await eraseAccountShortcuts('signed out');
     await publishShareTargets([{ id: 'c:a', label: 'A', link: 'x' }], 'test');

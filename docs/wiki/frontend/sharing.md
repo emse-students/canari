@@ -122,14 +122,24 @@ preselection, never a destination by itself.
   `fr.emse.canari://chat/<id>` link like a notification. No icon: the avatar bitmap
   (`avatarBitmap.ts`) rasterises a node already on screen, and the initials disc lives in the app
   module the plugin cannot reach.
-- **When**: `IncomingShareHost` calls `syncShareTargets` whenever the list, the setting or the session
-  changes; the list is sent only when its ordered ids and names differ from what the native side
-  was last told (`shareTargetsNative.ts`) - idempotence from that state, no debounce and no clock.
-  A signed-out or still-loading session publishes nothing and erases nothing: the gate is
+- **When**: when the member LEAVES the app (`followShareTargets`, `sharing/shareTargetsFollow.svelte.ts`,
+  on `onAppScreenChange`), and when the member moves the switch (off clears at once, on publishes
+  at once) - never on a change of the conversation map. The list has one kind of reader, the
+  system share sheet and the launcher, and both are outside the app. Following the map (an
+  `$effect` in `IncomingShareHost` until 2026-11-18) made every provisional state of a first sync a
+  publish - 23 in one sync on the Mi 9T: rows a Welcome makes are seeded with the admission's time
+  and fall to their real place when their history lands from a peer, a DM's name is read from a
+  cache no effect tracks, a salon's community loads late - and the end of a first sync is not a
+  fact the client holds ([entry](../backlog.d/reading-owed-the-share-targets-publish-during-a-first-sync.md)).
+  The list is sent only when its ordered ids and names differ from what the native side was last
+  told (`shareTargetsNative.ts`) - idempotence from that state, no debounce and no clock. A
+  signed-out or still-loading session publishes nothing and erases nothing: the gate is
   `conversationSourcesSettled`, whose restore half (`conversationsRestored`) is reset at sign-out
-  with the map (`invalidateRestores`), so the next account never publishes from a list still
-  loading. The conversation map is read only when a publish is due, so a disabled or signed-out
-  state does not re-run on every message. Each publish writes ONE in-app log line saying how it differs from the one before (`[ShareTargets] published (...): added [id8], removed [id8], N relabelled, reordered|same order; N of M present, N stale left`, `describeShareTargetsChange`, replacing the old "present" debug line) - ids as prefixes, never a name - so a first sync that republishes many times reads as a flap or a walk forward ([entry](../backlog.d/reading-owed-the-share-targets-publish-during-a-first-sync.md)).
+  with the map (`invalidateRestores`), so a departure during the next account's restore sends
+  nothing and the following one sends its list. The conversation map is read only at a trigger.
+  Each publish writes ONE in-app log line saying how it differs from the one before
+  (`[ShareTargets] published (<reason>): added [id8], removed [id8], N relabelled, reordered|same order; N of M present, N stale left`,
+  `describeShareTargetsChange`) - ids as prefixes, never a name.
 - **Native** (`tauri-plugin-gallery`, `ShareTargets.kt`, beside S3's commands): `publish_share_targets`
   adds by its own ids and removes the ids it published before and no longer names;
   `clear_share_targets` removes every id it ever recorded. The ids are recorded in the plugin's
@@ -191,7 +201,8 @@ half, [below](#share-suggestions-ios---lot-s5).
 
 The iPhone twin of the Android suggestions above, with the same decisions: the same list (the
 picker's destinations, `lifecycle === 'active'`, named, `compareConversationRecency`, the top
-`MAX_SHARE_TARGETS` = 5), the same JS path (`syncShareTargets` -> `publishShareTargets` /
+`MAX_SHARE_TARGETS` = 5), the same JS path and the same triggers (`followShareTargets`: the
+member leaving the app, and the switch; `syncShareTargets` -> `publishShareTargets` /
 `clearShareTargets`, the "last told" state, the queue), the same setting (now shown on both phone
 apps), the same erase at sign-out, and the same rule that **the picked suggestion is only a hint
 and the picker still opens**. What differs is only what the platform holds.

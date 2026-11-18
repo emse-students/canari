@@ -1,38 +1,45 @@
-## Reading owed - the share targets published twenty-three times in an account's first sync: which id flaps
+## Reading owed - the share targets are sent once, when the member leaves the app, after an account's first sync
 
 target: 1.7.0
 
 **Seen** on `1.7.0-alpha.12`, Mi 9T, dev, after a sign-out and a sign-in of a second test account
 ([readings](../device-verification.md#the-phone-and-web-readings-of-2026-11-18-s6-170-alpha12-live-moderations-last-halves-the-reel-card-overlays-the-birthday-morning)):
-23 `publishShareTargets: 5 target(s)` in about 27 s, `1 removed` on most of them. `syncShareTargets`
-republishes whenever the ordered ids and labels of the top five change, so each call is a real change
-of the list, and `removed` counts ids the previous set held that the new one lacks (a label-only
-change removes none).
+23 `publishShareTargets: 5 target(s)` in about 27 s, `1 removed` on most of them.
 
-**Built:** each publish writes ONE in-app log line saying how it differs from the one before and what
-the platform lists afterwards (`describeShareTargetsChange`, `sharing/shareTargetsNative.ts`):
-`[ShareTargets] published (conversations changed): added [<id8>], removed [<id8>], N relabelled, reordered|same order; N of M present, N stale left`
-(id prefixes, never a name; [sharing](../frontend/sharing.md)). No behaviour changed yet.
+**The cause, read from the code.** `IncomingShareHost` ran `syncShareTargets` in an `$effect` that
+read the conversation map, so every change of the top five during the sync was a publish, behind a
+gate (`conversationSourcesSettled`) that closes at the end of the restore, the boot catch-up and the
+push-cache merge (`sessionAuth.ts`, the `beginConversationSource` span) - not at the end of a first
+sync, which goes on after it. Two of the three candidate mechanisms are real:
+- **A, a flap (real).** A row a Welcome makes is seeded with the admission's server time
+  (`admissionSeed`, `mls-client/messagePipeline/setupMessageHandler.ts`), near "now", and
+  `conversationRecency` (`utils/chat/conversations.ts`) reads that seed only while the row holds no
+  real message. A NEW DEVICE of a member is admitted to every group of the account after its login,
+  one Welcome at a time as peers answer, and each group's past reaches it later still, from a peer
+  (`reconcileGroup`, the history probe). So each joined row entered the top five and evicted the
+  fifth, then fell to its real place when its history landed and the evicted row came back.
+- **B, a walk forward (real).** `selectShareTargets` skips a DM whose peer name is not known, and
+  the name is read through `peekUserDisplayName` from a plain `Map` (`utils/users/displayName.ts`)
+  that no effect tracks: the DM entered at the next UNRELATED re-run, so the published list
+  depended on the timing of other changes.
+- **C, label-only publishes (real, minor).** A salon's community suffix appears once
+  `channelWorkspaces` loads; a group's name once its derivation runs.
 
-**Candidate mechanisms, read from the code by the review of that change, to be CONFIRMED by the reading:**
-- **A, a flap.** `conversationRecency` (`utils/chat/conversations.ts`) reads the newest message's time
-  once any message exists and the seed (`lastMessageAt`) only before. A row born of a Welcome is seeded
-  with the admission's server time (`admissionSeed`, `mls-client/messagePipeline/setupMessageHandler.ts`),
-  about "now" on a first sync, so it enters the top five, then falls back to its real last message when
-  its history lands, and the row it evicted returns. The same id in `removed` and later in `added`.
-  Fix at the seed/replay seam (a key that does not drop while the replay is owed), not in the share code.
-- **B, a walk forward.** `selectShareTargets` skips a DM whose name is not resolved
-  (`peekUserDisplayName`, a plain Map, no reactive re-run), so the sixth conversation takes the slot and
-  the DM appears at its rank at the next unrelated change. Never a returning id.
-- **C, label-only publishes.** An unnamed group's label is built from its members' names as they
-  resolve, a salon's community suffix appears once `channelWorkspaces` loads. `N relabelled`, nothing added or removed.
-- **Under all three:** the gate (`conversationSourcesSettled`: the local restore and the FCM injections)
-  opens before the server's first sync of an account new to the install, so every publish comes from a
-  list still being built. A publish from the sync's own end (a fact, never a timer) is the common fix
-  if the sync exposes one.
+None of them is wrong for the sidebar, which shows a sync in progress. What was wrong is publishing
+each step to a list nobody reads during the sync, and the end of that sync is not a fact the client
+holds (a new device's history comes from peers, whenever one is online). **The fix** sends the list
+at the one moment it can be read - the member leaving the app (`followShareTargets`,
+`sharing/shareTargetsFollow.svelte.ts`, on `onAppScreenChange`) - and when the member moves the
+switch; never on a change of the map. Pinned by `shareTargetsFollow.svelte.test.ts`, which replays a
+first sync on a live map (restored rows, the gate opening, eight Welcome rows seeded on top, their
+histories landing, a relabel): no publish while it runs, ONE when the member leaves, holding the
+final list, none on a second departure with nothing changed. Each publish keeps its one line
+`[ShareTargets] published (left the app): added [id8], removed [id8], N relabelled, reordered|same order; N of M present, N stale left`
+([sharing](../frontend/sharing.md)).
 
-**The reading that closes it:** on the Mi 9T, on the next pre-release, sign a second test account in and
-read the `[ShareTargets] published` lines of its first sync (`adb logcat` or the in-app log): the same
-id leaving and returning is A, only new ids B, only `relabelled` C. Then fix the cause the lines name,
-with the test the entry always asked for: one sync replaying N conversations publishes a number of
-times bounded by the changes of the final top five. Delete the entry with that fix.
+**The reading that closes it** (both phones, next pre-release): sign a second test account in, let
+the first sync run with the app in front, and read the logs - no `[ShareTargets] published` line
+while it runs; send the app home, and ONE `published (left the app)` line follows, then
+`dumpsys shortcut` lists five `c:<id>` targets of that account (the iPhone: the share sheet's row
+shows its conversations). Bring it back and send it home again with nothing new: no line. Delete the
+entry with that reading.
