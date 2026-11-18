@@ -64,8 +64,13 @@ What they cannot see is declared in `knip.json`:
 - `scripts/**` (run by hand or by the Makefile);
 - `ignoreUnresolved`: the generated `$lib/wasm`, `$lib/proto/canari` and `$lib/paraglide`, which are
   not in git;
-- `ignoreDependencies`: `emoji-picker-element-data` (read by `tools/emoji-data/sync.mjs`), `husky`
-  (installed by `scripts/install-husky.js`); `ignoreBinaries`: `wasm-pack`.
+- `ignoreDependencies`: `emoji-picker-element-data` (read by `tools/emoji-data/sync.mjs`);
+  `ignoreBinaries`: `wasm-pack`. **`husky` is deliberately NOT listed (2026-11-18):** this page said
+  it was, but `frontend/knip.json` never carried it. Measured with `bun x knip --dependencies`: knip
+  reports no unlisted or unused `husky`, because `frontend/package.json` does not depend on the
+  package at all - `scripts/install-husky.js` only points `core.hooksPath` at the tracked `.husky/`
+  and imports nothing from it. An ignore entry for a name nothing declares is exactly what knip's
+  configuration hints flag, so adding one would be a defect, not a fix.
 - `ignoreIssues` `tsconfig.json: unlisted` (2026-11-18): the file's one external name is
   `extends: "$app/tsconfig"`, SvelteKit's pseudo-package that `svelte-kit sync` writes into
   `node_modules/$app/`. knip 6.45 reads an `extends` specifier as a dependency and called `$app`

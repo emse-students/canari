@@ -7646,7 +7646,7 @@ export abstract class BaseMlsService implements IMlsService {
   async forgetDistributionGroup(scope: DistributionScope): Promise<string | null> {
     const groupId = this.distributionGroupFor(scope);
     if (!groupId) return null;
-    await this.forgetDistributionGroupById(groupId);
+    await this.forgetDistributionGroupById(groupId, 'distribution group left');
     return groupId;
   }
 
@@ -7661,15 +7661,19 @@ export abstract class BaseMlsService implements IMlsService {
    * still held and joins nothing. Named by the group, both halves go, whatever the registration
    * says.
    *
+   * `reason` is what the `[MLS] dropped local state` line prints, and THE CALLER STATES IT: this
+   * method serves a community leaving, a stale key group being re-joined and a 1:1 the server no
+   * longer lists, and a fixed sentence named a key group in the log of the last one, which has none.
+   *
    * @returns whether this device held anything under that id
    */
-  async forgetDistributionGroupById(groupId: string): Promise<boolean> {
+  async forgetDistributionGroupById(groupId: string, reason: string): Promise<boolean> {
     const held = holdsGroupState(this, groupId) || this.knownDistributionGroups.has(groupId);
     if (!held) return false;
     // The eviction belonged to the state being dropped; the next one, if any, is a new fact.
     this.evictionTold.delete(groupId);
     await dropGroupState(this, groupId, {
-      reason: 'distribution group left',
+      reason,
       checkpoint: 'awaited',
     });
     this.distributionScopeByGroup.delete(groupId);
