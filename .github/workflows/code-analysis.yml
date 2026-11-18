@@ -416,49 +416,12 @@ jobs:
             exit 1
           fi
 
-      # THE PREMISE BEHIND THE picomatch IGNORE (GHSA-fc5q-39xc-vjpf, 2026-11-17). A ReDoS through
-      # an attacker-chosen glob PATTERN, every picomatch <= 4.0.7, and no fixed release exists - so no
-      # upgrade or override can clear it. Measured per tree:
-      #
-      #   frontend   picomatch is outside what ships. Its shipped closure is `dependencies` plus
-      #              every devDependency not declared build-only (svelte, kit, protobufjs and parse5
-      #              are bundled); picomatch arrives only through vite, vitest, knip, svelte-check and
-      #              paraglide. The alpha.9 `frontend-build` artefact holds none of its code.
-      #   the three  `typeorm > tinyglobby > picomatch` IS shipped and loaded at boot, but TypeORM
-      #   TypeORM    globs only the STRING entries of `entities`/`migrations`/`subscribers`, and these
-      #   services   services pass classes - no pattern is ever compiled, and one would be ours.
-      #   media      picomatch is not in its production closure, so `--prod` already says nothing.
-      #
-      # THE NIGHTLY (`full`) IGNORES IT IN ALL FIVE TREES, ON A DIFFERENT PREMISE. There the build
-      # tools DO hold picomatch, and the nightly has reported it; a red that stays red until upstream
-      # ships is noise its reader learns to skip, and it would hide the next advisory. So the premise
-      # in `full` is that NO FIXED RELEASE EXISTS (GitHub's advisory record, `first_patched_version`):
-      # the day one does, the ignore is refused and the nightly goes red - when there is work to do.
-      #
-      # `picomatch-premise.mjs` (self-tested) asserts each of those on the installed tree and refuses
-      # the ignore the moment one stops being true. It runs only where the table grants the ignore.
-      - name: The premise behind the picomatch ignore
-        if: ${{ !cancelled() }}
-        env:
-          TREE: ${{ matrix.tree }}
-          CLOSURE: ${{ inputs.closure }}
-          # The full closure's premise reads GitHub's advisory record; the token only lifts the
-          # anonymous rate limit.
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -uo pipefail
-          source .github/scripts/lib/audit-trees.sh
-          if ! grep -qF -- '--ignore=GHSA-fc5q-39xc-vjpf' <<<"$(audit_ignores "$TREE" "$CLOSURE")"; then
-            echo "    $TREE does not ignore GHSA-fc5q-39xc-vjpf in the $CLOSURE closure; no premise to check."
-            exit 0
-          fi
-          bun .github/scripts/picomatch-premise.mjs "$TREE" "$CLOSURE"
-
-      # THE RETIREMENT, ASSERTED INSTEAD OF POLLED, for EVERY tree that suppresses something (the
-      # media-service premises, the picomatch premise). The audit run WITHOUT the ignores, in the
+      # THE RETIREMENT, ASSERTED INSTEAD OF POLLED, for EVERY tree that suppresses something (today
+      # the media-service premises). The audit run WITHOUT the ignores, in the
       # same closure, must still report every id the tree suppresses (read from `audit-trees.sh`, so
       # the list is never copied here); one that it does not report has retired itself - the
-      # dependency moved, or picomatch shipped a fix - and the ignore is dead weight to delete.
+      # dependency moved, a fix shipped, or the advisory was withdrawn - and the ignore is dead
+      # weight to delete.
       - name: Every ignored advisory is still reported
         if: ${{ !cancelled() }}
         env:
