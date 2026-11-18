@@ -175,9 +175,9 @@ panel and cold-starting the phone put it on `/login`, with `session dead -> logo
 
 The refresh cookie is FIRST-party on the web and THIRD-party in every native build, and nothing in
 the code says so - the asymmetry lives entirely in what the browser considers the document's origin.
-On `canari-emse.fr` the page and the API share a host, so `canari_refresh` is an ordinary same-site
+On `canari.emse.fr` the page and the API share a host, so `canari_refresh` is an ordinary same-site
 cookie. In a Tauri build the document is `tauri://localhost` (iOS, macOS, Linux) or
-`http://tauri.localhost` (Android, Windows) and the cookie belongs to `canari-emse.fr`: a
+`http://tauri.localhost` (Android, Windows) and the cookie belongs to `canari.emse.fr`: a
 cross-origin `Set-Cookie`, which is exactly the class every modern engine blocks by default.
 
 - **Android**: blocked by default and opted back in, in ONE line, with the reason written next to it -
@@ -222,7 +222,7 @@ did.
 
 So Android's opt-in works and survives a kill; WKWebView's refusal is total. There is no iOS flag to
 add, no entitlement, no `Info.plist` key - and the two ways to make the cookie first-party both cost
-more than they buy (serving the app from `https://canari-emse.fr` inside the WebView would end
+more than they buy (serving the app from `https://canari.emse.fr` inside the WebView would end
 offline launch, and Tauri has no https-origin mode on iOS anyway).
 
 **A replay line says WHICH replay it was (2026-10-06).** Three `Refresh token replay detected` events in
@@ -281,7 +281,7 @@ match - a second copy of the decision would be a way for logout to silently stop
 Two derived tests hold the wiring: `compose-wiring.test.sh` requires every NestJS service in a
 deployed compose file to declare `NODE_ENV`, with the service list read out of `apps/*/package.json`
 rather than written down, and `auth.controller.spec.ts` asserts the attributes are identical for
-`Origin: http://localhost` and `Origin: https://canari-emse.fr`.
+`Origin: http://localhost` and `Origin: https://canari.emse.fr`.
 
 ## The credential a client carries itself
 

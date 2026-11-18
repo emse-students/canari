@@ -65,7 +65,7 @@ describe('buildSiteJsonLd', () => {
 describe('entity nodes', () => {
   it('omits every property it was given nothing for', () => {
     const article = buildArticleJsonLd({
-      url: 'https://canari-emse.fr/posts/1',
+      url: 'https://canari.emse.fr/posts/1',
       headline: 'Titre',
       description: 'Description',
     });
@@ -78,7 +78,7 @@ describe('entity nodes', () => {
 
   it('dates a modification to the publication when nothing else is known', () => {
     const article = buildArticleJsonLd({
-      url: 'https://canari-emse.fr/posts/1',
+      url: 'https://canari.emse.fr/posts/1',
       headline: 'T',
       description: 'D',
       publishedAt: '2026-08-05T10:00:00.000Z',
@@ -89,7 +89,7 @@ describe('entity nodes', () => {
 
   it('attaches an association to the school rather than leaving it standalone', () => {
     const asso = buildAssociationJsonLd({
-      url: 'https://canari-emse.fr/associations/bde',
+      url: 'https://canari.emse.fr/associations/bde',
       name: 'BDE',
       description: 'Le bureau des eleves',
     }) as Record<string, any>;
@@ -112,7 +112,7 @@ describe('entity nodes', () => {
 describe('article authorship', () => {
   it('credits an association as an Organization, not a Person', () => {
     const asso = buildArticleJsonLd({
-      url: 'https://canari-emse.fr/posts/1',
+      url: 'https://canari.emse.fr/posts/1',
       headline: 'T',
       description: 'D',
       authorName: 'BDE',
@@ -121,7 +121,7 @@ describe('article authorship', () => {
     expect(asso.author['@type']).toBe('Organization');
 
     const student = buildArticleJsonLd({
-      url: 'https://canari-emse.fr/posts/1',
+      url: 'https://canari.emse.fr/posts/1',
       headline: 'T',
       description: 'D',
       authorName: 'Jean Dupont',
