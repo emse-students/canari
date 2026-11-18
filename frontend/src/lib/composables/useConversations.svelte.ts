@@ -48,6 +48,7 @@ import { salonKeysNow } from '$lib/utils/graine/salonReadGate';
 import { watchSalonRemovals } from '$lib/utils/chat/salonRemovals';
 import type { ChannelPollMeta } from '$lib/services/ChannelService';
 import { applyChannelReactionFrame } from '$lib/stores/reactionStore.svelte';
+import { takeOwedLiveDecision } from '$lib/utils/chat/owedLiveFrames';
 import {
   GROUP_NAME_SKIP_TEXT,
   GroupRenameRefusedError,
@@ -972,12 +973,23 @@ export function useConversations() {
           const msg = pageRows[i];
           const decoded = decodedRows[i];
           if (!decoded) continue;
+          // Taken for EVERY opened row, before anything may skip it: a live row parked for its seed
+          // is owed one decision, by the first reader that opens it (`owedLiveFrames.ts`).
+          const owedLive = takeOwedLiveDecision(rawId, String(msg.id), 'the history load');
           // Removed live since the request left: the server holds it no more, whatever the page says.
           if (removals.has(String(msg.id))) continue;
           // A reaction is a row of its own now (WP-40): it changes a bubble instead of being one.
           if (decoded.kind === 'reaction') {
             const r = decoded.reaction;
-            applyChannelReactionFrame(r.targetMessageId, r.senderId, r.emoji, r.at, r.removed);
+            const changed = applyChannelReactionFrame(
+              r.targetMessageId,
+              r.senderId,
+              r.emoji,
+              r.at,
+              r.removed
+            );
+            // A page raises nothing - except for the one row that arrived LIVE before its seed.
+            owedLive?.(r, changed);
             continue;
           }
           // An edit is a row of its own as well: collected and applied once the page is built, so
@@ -1257,12 +1269,22 @@ export function useConversations() {
       for (const [i, row] of rows.entries()) {
         const decoded = decodedRows[i];
         if (!decoded) continue;
+        // The same take as the history load's: whichever reader opens a parked live row first owes
+        // it its decision, and a search may be that reader (`owedLiveFrames.ts`).
+        const owedLive = takeOwedLiveDecision(rawId, String(row.id), 'a search');
         if (removals.has(String(row.id))) continue;
         if (decoded.kind === 'reaction') {
           // Searching the whole history is also the widest sweep of reaction frames there is, so it
           // merges them rather than dropping them - a search must not cost a message its hearts.
           const r = decoded.reaction;
-          applyChannelReactionFrame(r.targetMessageId, r.senderId, r.emoji, r.at, r.removed);
+          const changed = applyChannelReactionFrame(
+            r.targetMessageId,
+            r.senderId,
+            r.emoji,
+            r.at,
+            r.removed
+          );
+          owedLive?.(r, changed);
           continue;
         }
         if (decoded.kind === 'edit') {

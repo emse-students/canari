@@ -24,6 +24,7 @@ import { rawChannelId } from '$lib/utils/graine/runtime';
 import { noteMissingSeed } from '$lib/utils/graine/repair';
 import { SvelteDate } from 'svelte/reactivity';
 import { noteSalonSendAnswer } from './salonRepeatProof';
+import { channelReactionOf } from './messageReactions';
 
 const channelService = new ChannelService();
 
@@ -71,6 +72,12 @@ export interface DecodedChannelReaction {
   /** The sender's clock for this `(user, emoji)` pair. The larger one wins the merge. */
   at: number;
   removed: boolean;
+  /**
+   * The reacted-to message's author as the REACTOR stated it (`ReactionMsg.target_author_id`), or
+   * null when the frame names none. A claim, read only where nothing better answers (the
+   * live-decision path, `owedLiveFrames.ts`).
+   */
+  targetAuthorId: string | null;
 }
 
 /**
@@ -97,6 +104,8 @@ export interface DecodedChannelReaction {
  *   asks and lets the answerer decide.
  * @param tally A page being read: the row is counted into it instead of logged, and the page says
  *   it once. Absent for a live frame, which is one row and says so itself.
+ * @returns Whether the row is REPAIRABLE - a missing seed, asked for here - so a reader that will
+ *   open it once the seed lands is coming. Classified from the error's type, here and only here.
  */
 export function reportUnreadableChannelMessage(
   channelId: string,
@@ -105,7 +114,7 @@ export function reportUnreadableChannelMessage(
   sentAt: number | undefined,
   err: unknown,
   tally?: UnreadableRowTally
-): void {
+): boolean {
   const channel = rawChannelId(channelId);
   const cause =
     err instanceof GraineSessionUnavailableError
@@ -135,7 +144,9 @@ export function reportUnreadableChannelMessage(
   // three times and not fifty - and a live frame asking costs nothing when history already did.
   if (err instanceof GraineSessionUnavailableError) {
     noteMissingSeed(channel, err.sessionId, senderId, sentAt);
+    return true;
   }
+  return false;
 }
 
 /**
@@ -305,14 +316,7 @@ async function decodeOpenedRow(
       // decode and the store it feeds has exactly one writer per call site.
       return {
         kind: 'reaction',
-        reaction: {
-          targetMessageId: String(decoded.reaction.messageId ?? ''),
-          senderId: String(row.senderId || '').toLowerCase(),
-          emoji: String(decoded.reaction.emoji ?? ''),
-          // An undated frame reads as 0 and loses to anything dated - it cannot be trusted to win.
-          at: Number(decoded.reaction.at ?? 0),
-          removed: decoded.reaction.removed === true,
-        },
+        reaction: channelReactionOf(decoded.reaction, String(row.senderId || '')),
       };
     }
     if (decoded?.edit) {

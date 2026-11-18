@@ -3295,8 +3295,28 @@ its whole matrix asserted beside it:
 | term | refused when |
 | --- | --- |
 | the frame (`inboundReactionVerdict`) | my own reaction, or a reaction to somebody else's message (said nowhere: the ordinary frame); a removal, a replay or older state, or a frame that is not LIVE (said: it is a reaction to me). The author is the row held (window, then store), else the one the frame STATES (`ReactionMsg.target_author_id`, the reactor's own claim - the one `notify-reaction` already rests on). News whose author is still unknown is `unresolved` (WARNED each time) when the store FAILED to answer, `unattributed` (said ONCE per session) when the frame comes from a reactor predating `target_author_id` |
-| live (`isLiveDelivery`) | not `channel === 'live'`, or `aheadOfMailbox`, or an `addressed` history answer - a catch-up on resume may carry a reaction already announced and dismissed. A page of salon history raises nothing |
+| live (`isLiveDelivery`) | not `channel === 'live'`, or `aheadOfMailbox`, or an `addressed` history answer - a catch-up on resume may carry a reaction already announced and dismissed. A page of salon history raises nothing, except the ONE row that arrived live before its seed (below) |
 | the screen (`reactionTriggerRefusal`) | the conversation is on screen (`canSeeArrival`); on a phone, a frame with no `at` (it could not be made one with its push, so the push draws it); the `reactions` category is off; a private conversation's level is not `all` (a reaction is never a mention). **The app's foreground state is NOT a term** |
+
+**A live salon reaction that arrives BEFORE its seed is still decided live (2026-11-18).** The first
+frame of a reactor's new seed session (the distribution epoch moved: a member added or removed) often
+lands before the seed that opens it. The live open then fails as repairable, the seed lands in the
+same drain, and the repair re-reads the salon as history, which raises nothing - so neither trigger
+drew it (Mi 9T, `1.7.0-alpha.10`). The fact "this row arrived live" is now carried, never guessed:
+`channelEventHandler` parks the row's decision under its server id when `reportUnreadableChannelMessage`
+answers REPAIRABLE (a missing seed, classified from the error's type) and the row is `silent` (the
+only thing the server knows about a body, and a line is never silent), in
+[owedLiveFrames.ts](../../../frontend/src/lib/utils/chat/owedLiveFrames.ts). Whichever history reader
+opens THAT row first (`useConversations`' page load or search) takes the decision - only that id,
+only once - and hands it the reaction it read and what applying it changed; the decision raises it
+through the same `raiseLiveChannelReaction` as an opened live frame, `live: true`. Every other row of
+a page finds nothing parked, so history still raises nothing. Emptied at sign-out with the seed layer
+(`setGraineRuntime(null)`), and a handler still awaiting its open when the session ends does not park
+(a session generation captured before the await). **No age term, deliberately:** the decision fires
+when the row first opens, so a seed a peer answers hours later announces the reaction hours late -
+once, since the push was dropped in front; principle 2 (the essential is never lost) over a
+notification that reads as old. Tests: `channelEventHandler.reaction.test.ts`,
+`useConversations.owedLiveReaction.svelte.test.ts`.
 
 **A salon's level is not applied**, on either path: the server cannot read it for a reaction
 (`sendPushToUser` reads a level only for a group uuid), and one rule written in only one builder is
