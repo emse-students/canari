@@ -1,3 +1,0 @@
-### Fixed - the harness's purge-devices reads device rows again
-
-Harness: `purge-devices.mjs` identifies a device row through a `data-device-id` attribute the device panel now carries (no visible change), instead of a `title` the panel stopped rendering, which made every row read "no id"; a self-test reads both sides ([harness README](tools/cross-client-harness/README.md)).
