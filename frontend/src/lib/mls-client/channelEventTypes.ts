@@ -25,9 +25,11 @@
 
 /**
  * Families of server frame the channel-event handler owns, matched by prefix. `group.` carries a
- * group conversation's invitation-link asks (`group.join_ask`, `group.join_ask.settled`).
+ * group conversation's invitation-link asks (`group.join_ask`, `group.join_ask.settled`); `admin.`
+ * the admin queues' content-free `admin.queues.changed` (owner, 2026-11-18), on which the admin
+ * badges refetch their counts.
  */
-const CHANNEL_EVENT_PREFIXES = ['channel.', 'workspace.', 'group.'] as const;
+const CHANNEL_EVENT_PREFIXES = ['channel.', 'workspace.', 'group.', 'admin.'] as const;
 
 /**
  * Whether `type` is a frame `handleChannelEvent` is responsible for.

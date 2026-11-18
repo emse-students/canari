@@ -1,5 +1,6 @@
 import {
   ADDRESSED_HISTORY_CAPABILITY,
+  ADMIN_QUEUES_CAPABILITY,
   JOIN_ASK_CAPABILITY,
   gatewaySocketUrl,
 } from './frameDelivery';
@@ -14,7 +15,7 @@ import tauriMlsService from '$lib/services/TauriMlsService.ts?raw';
  * answers off for every device it runs on - so both openers build their URL through ONE function.
  */
 describe('the gateway socket URL', () => {
-  it('declares the addressed-history and join-ask capabilities, with or without a token', () => {
+  it('declares the addressed-history, join-ask and admin-queues capabilities, with or without a token', () => {
     for (const token of [undefined, 'tok']) {
       const { url } = gatewaySocketUrl('wss://example.test', 'device 1', token);
       const query = new URL(url).searchParams;
@@ -23,6 +24,7 @@ describe('the gateway socket URL', () => {
       expect(query.get('caps')?.split(',')).toEqual([
         ADDRESSED_HISTORY_CAPABILITY,
         JOIN_ASK_CAPABILITY,
+        ADMIN_QUEUES_CAPABILITY,
       ]);
       expect(query.get('token')).toBe(token ?? null);
     }

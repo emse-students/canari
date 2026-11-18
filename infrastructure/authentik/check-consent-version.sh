@@ -12,8 +12,8 @@ set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
-# HELD since 2026-10-17 (docs/wiki/backlog.md): the version is still checked where the file waits.
-blueprint="$here/blueprints/held/45-consent.yaml"
+# The flow is built everywhere since 2026-11-18; which providers ask for it is 50-providers.yaml.
+blueprint="$here/blueprints/45-consent.yaml"
 page="$root/frontend/src/routes/legal/miconnect/+page.svelte"
 test_file="$here/test-consent-flow.py"
 

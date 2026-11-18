@@ -8,6 +8,7 @@
   import { ensureMyAssociations, getReviewerAccess, type Association } from '$lib/associations/api';
   import { adminScopeLabels, ensureMayOpenAdmin } from '$lib/admin/access';
   import { postNotifStore } from '$lib/stores/postNotifStore.svelte';
+  import { adminQueueCounts, loadAdminQueueCounts } from '$lib/admin/adminQueueCounts.svelte';
   import { dashboardHubGroups } from '$lib/navigation/dashboardSections';
   import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
@@ -50,7 +51,11 @@
       // reader who is not a platform admin.
       ensureMyAssociations().then((list) => (memberships = list)),
       // The SAME predicate `/admin` admits on, so no console is offered that would refuse its reader.
-      ensureMayOpenAdmin().then((v) => (mayOpenAdmin = v)),
+      ensureMayOpenAdmin().then((v) => {
+        mayOpenAdmin = v;
+        // The Administration row's badge is asked afresh here, as the unread count above is.
+        if (v) void loadAdminQueueCounts();
+      }),
     ]).then((results) => {
       // A failed probe hides only what it gates (its state keeps its `false` / `[]` default).
       for (const [i, r] of results.entries()) {
@@ -74,6 +79,7 @@
         displayName: getSavedDisplayName(),
         unreadNotifications: postNotifStore.unread,
         mayOpenAdmin,
+        adminPending: adminQueueCounts.total,
         adminScope: adminScopeLabels(isGlobalAdmin()),
         isReviewer,
         memberships,

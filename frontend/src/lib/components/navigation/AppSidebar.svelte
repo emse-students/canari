@@ -8,6 +8,7 @@
   import { PLACE_ICONS } from '$lib/navigation/placeIcons';
   import { globalConvs, globalSession } from '$lib/stores/globalChatSingleton.svelte';
   import { postNotifStore } from '$lib/stores/postNotifStore.svelte';
+  import { adminQueueCounts } from '$lib/admin/adminQueueCounts.svelte';
   import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
   import { totalUnreadMessages } from '$lib/utils/unreadTotal';
   import { page } from '$app/state';
@@ -142,6 +143,7 @@
         if (place.id === 'chat') return totalUnread;
         if (place.id === 'communities') return totalUnreadCommunities;
         if (place.id === 'notifications' && globalSession.isLoggedIn) return postNotifStore.unread;
+        if (place.id === 'dashboard' && globalSession.isLoggedIn) return adminQueueCounts.total;
         return 0;
       })()}
 
