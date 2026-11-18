@@ -49,7 +49,7 @@ export type BarLengthSource = 'engine' | 'declared' | 'seekable' | 'unknown';
 /**
  * THE LENGTH THE SEEK LINE IS FIXED TO, FROM THE FIRST FRAME (owner, 2026-11-18: on a slow link the
  * line "went back" while segments loaded). It is the TOTAL duration of the video, in this order:
- * 1. the engine's `duration`, when it knows one (a file's own header, or what the stream's source was
+ * 1. the engine's `duration` (never below the declared length), when it knows one (a file's own header, or what the stream's source was
  *    given: the declared length, then the length read from the file's tail);
  * 2. the length its PUBLISHER declared (`declaredSeconds`: a CanaReel's `posts.duration_ms`, a
  *    conversation reel's `MediaRef.durationMs`);
@@ -66,7 +66,13 @@ export function barLength(input: {
   streamed: boolean;
 }): { seconds: number; source: BarLengthSource } {
   const { duration, declaredSeconds, seekable, streamed } = input;
-  if (Number.isFinite(duration) && duration > 0) return { seconds: duration, source: 'engine' };
+  if (Number.isFinite(duration) && duration > 0) {
+    // The LARGER of the engine's real duration and the declared one: a declaration slightly short of the
+    // media would otherwise be overtaken when the engine's duration grows at the last append, and the
+    // played fraction would drop at the very end.
+    const declared = declaredSeconds && Number.isFinite(declaredSeconds) ? declaredSeconds : 0;
+    return { seconds: Math.max(duration, declared), source: 'engine' };
+  }
   if (declaredSeconds && Number.isFinite(declaredSeconds) && declaredSeconds > 0) {
     return { seconds: declaredSeconds, source: 'declared' };
   }

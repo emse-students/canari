@@ -1755,12 +1755,19 @@ reader their place is lost when it is not.
   like), `[data-no-double-tap]`; a click with `detail` 0 (keyboard, screen reader); the click of a held
   press or of a drag (a press longer than `HOLD_TO_PAUSE_MS` or past the slop; the viewer also swallows
   the click ending a mouse drag before it gets there); a pinch.
+- **A tap the player acts on is not also a toggle**: a PAUSED reel (a refused autoplay, an interruption)
+  is restarted by that tap (`videoTapAction`), so `reelOverlayTap` asks `tapConsumed` (the video element's own
+  `paused`, read at the click) and leaves the overlay alone.
+- **A lost release cannot stick the gesture**: `pointercancel` and `lostpointercapture` end a press as
+  spoiled, and a new PRIMARY press replaces a stale one (a non-primary pointer is a pinch).
 - **Back**: the next tap, **and** every page change (the next reel or a new list shows the overlay again:
   a hidden overlay is a choice about THIS reel, never a mode).
 - **Accessibility**: hidden parts are `invisible` and `inert` - out of the tab order and the
   accessibility tree, taps falling through to the picture. While hidden, a button named "Afficher les
-  commandes" (`reels_overlay_show`) is the first stop of the tab order and of the screen reader; it is
-  `sr-only`, drawn only on keyboard focus, and brings the overlay back with the focus on the close button.
+  commandes" (`reels_overlay_show`) is the FIRST element of the viewer in the DOM (before the track, the player's slider and the arrows), so the
+  first stop of the tab order and of the screen reader; it is `sr-only`, drawn only on keyboard focus, and
+  brings the overlay back with the focus on the close button. A tap that hides the overlay while focus is in
+  one of its controls hands the focus to this button instead of letting it drop to the body.
   Escape and Back still close the viewer.
 - Tests: `reelOverlayTap.test.ts`, `ReelSlide.overlay.svelte.test.ts`, `ReelViewer.overlay.svelte.test.ts`,
   `videoTapAction.test.ts`.
@@ -1776,7 +1783,7 @@ visibly rewound. A conversation reel also lost its declared length on the way to
 
 | Order | Source | Where it comes from |
 | --- | --- | --- |
-| 1 | the engine's `duration` | the file's own header, or what the stream's source was given (the declared length, else the length read from the file's tail, `segmentedMediaStream`) |
+| 1 | the engine's `duration`, never below the declared length (a declaration slightly short of the media cannot shrink the line; the engine growing past it at the last append can only lengthen it) | the file's own header, or what the stream's source was given (the declared length, else the length read from the file's tail, `segmentedMediaStream`) |
 | 2 | **the publisher's declared length** | a CanaReel: `posts.duration_ms` (server record, required at publish: the prepared file's length, 1 to `maxDurationMs`; `post.durationMs`). A reel received in a conversation: `MediaRef.durationMs` (`MediaMsg.duration_ms`, written by the sender) - **it was dropped before the player until now** (`declaredLengthMs`, `reels/declaredLength.ts`, reads both) |
 | 3 | a whole local file's seekable end | `streamed` false: every byte is local, that end IS the total and cannot grow |
 | 4 | **unknown** | see below |

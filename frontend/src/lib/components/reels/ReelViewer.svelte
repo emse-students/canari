@@ -27,7 +27,7 @@
    * is the PAGE's: once its first visible media settled, a media swipe keeps it, so the next post's
    * download is never aborted and restarted by a swipe inside the strip.
    */
-  import { onDestroy, onMount, untrack } from 'svelte';
+  import { onDestroy, onMount, tick, untrack } from 'svelte';
   import { holdPlayback } from '$lib/actions/playWhileVisible';
   import { themeStore } from '$lib/stores/themeStore.svelte';
   import { ChevronDown, ChevronUp, X } from '@lucide/svelte';
@@ -708,15 +708,28 @@
   let closeButton = $state<HTMLButtonElement | null>(null);
 
   function toggleOverlay() {
+    // Focus inside the parts about to go inert (a rail button, the close button) would drop to the body
+    // of an aria-modal dialog: it is handed to the way back instead, once that button exists.
+    const focused = document.activeElement;
+    const focusWasInside =
+      !!focused &&
+      !!viewerEl?.contains(focused) &&
+      !!focused.closest('[data-reel-caption], [data-reel-rail], [data-reel-top-scrim]');
     overlayHidden = !overlayHidden;
     console.debug(`[reel-viewer] overlay ${overlayHidden ? 'hidden' : 'shown'} by a tap`);
+    if (overlayHidden && focusWasInside) {
+      void tick().then(() => {
+        console.debug('[reel-viewer] focus was in the hidden overlay - moved to the way back');
+        viewerEl?.querySelector<HTMLElement>('[data-reel-overlay-show]')?.focus();
+      });
+    }
   }
 
   /** The sr-only button: the way back for a reader who cannot tap the picture; focus lands on the close button. */
   function showOverlayFromButton() {
     overlayHidden = false;
     console.debug('[reel-viewer] overlay shown by the assistive button');
-    queueMicrotask(() => closeButton?.focus());
+    void tick().then(() => closeButton?.focus());
   }
 
   $effect(() => {
@@ -1048,6 +1061,21 @@
       aria-label={m.reels_viewer_label()}
       data-reel-viewer
     >
+      {#if overlayHidden}
+        <!-- THE WAY BACK FOR ASSISTIVE TECHNOLOGY AND THE KEYBOARD: while the overlay is hidden its controls
+             are neither focusable nor announced, and a screen reader's activation is no tap of the
+             picture. It is the FIRST element of the viewer (before the track, the player's slider and the arrows), so
+             it is the first stop of the tab order and the reader; it is drawn only while focused from
+             the keyboard. -->
+        <Button
+          variant="bare"
+          class="focus-visible:ring-accent-icon sr-only focus-visible:not-sr-only focus-visible:absolute focus-visible:top-2 focus-visible:left-2 focus-visible:z-50 focus-visible:rounded-full focus-visible:bg-black/70 focus-visible:px-4 focus-visible:py-2 focus-visible:text-sm focus-visible:font-semibold focus-visible:text-white focus-visible:ring-2"
+          onclick={showOverlayFromButton}
+          data-reel-overlay-show
+        >
+          {m.reels_overlay_show()}
+        </Button>
+      {/if}
       <!-- THE REEL SHRINKS INTO A CARD while the comments are open (transform only, the motion scale of
          design-reference "Motion"; the global reduced-motion rule makes it instant). The corner radius is
          set at once, not animated, and is drawn at the card's scale, so it reads about 12 px. -->
@@ -1102,20 +1130,6 @@
          close button and the phone's status bar, so white icons read on a bright reel too; the
          native icons themselves are held light (`holdNativeBar`). The X has no disc: a disc
          against a letterboxed frame's rounded corner read as overlapping it. Safe-area aware. -->
-      {#if overlayHidden}
-        <!-- THE WAY BACK FOR ASSISTIVE TECHNOLOGY AND THE KEYBOARD: while the overlay is hidden its controls
-             are neither focusable nor announced, and a screen reader's activation is no tap of the
-             picture. This button is the first thing the tab order and the reader find; it is drawn only
-             while focused from the keyboard. -->
-        <Button
-          variant="bare"
-          class="focus-visible:ring-accent-icon sr-only focus-visible:not-sr-only focus-visible:absolute focus-visible:top-2 focus-visible:left-2 focus-visible:z-50 focus-visible:rounded-full focus-visible:bg-black/70 focus-visible:px-4 focus-visible:py-2 focus-visible:text-sm focus-visible:font-semibold focus-visible:text-white focus-visible:ring-2"
-          onclick={showOverlayFromButton}
-          data-reel-overlay-show
-        >
-          {m.reels_overlay_show()}
-        </Button>
-      {/if}
       <div
         inert={overlayHidden}
         class="pointer-events-none absolute inset-x-0 top-0 grid grid-cols-[1fr_auto_1fr] items-start bg-linear-to-b from-black/50 to-transparent px-2 pt-[calc(var(--safe-area-inset-top,0px)+0.5rem)] pb-6 transition-[opacity,visibility] duration-150 motion-reduce:transition-none {overlayHidden

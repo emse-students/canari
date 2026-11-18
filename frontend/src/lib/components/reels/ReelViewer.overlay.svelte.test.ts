@@ -167,3 +167,21 @@ it('moving to the next reel shows the overlay again', async () => {
   expect(activeSlide().getAttribute('data-reel-overlay')).toBe('shown');
   expect(scrim().hasAttribute('inert')).toBe(false);
 });
+
+it('the way back is the FIRST element of the viewer, before the track and its focusable controls', async () => {
+  await render();
+  await tapPicture();
+  const button = showButton()!;
+  const frame = q('[data-reel-card]')!;
+  expect(button.compareDocumentPosition(frame) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
+
+it('a tap that hides the overlay while focus is on one of its controls hands the focus to the way back', async () => {
+  await render();
+  const close = q<HTMLButtonElement>(`[aria-label="${m.reels_viewer_close()}"]`)!;
+  close.focus();
+  expect(document.activeElement).toBe(close);
+  await tapPicture();
+  await settle();
+  expect(document.activeElement).toBe(showButton());
+});

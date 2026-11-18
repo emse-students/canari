@@ -48,7 +48,7 @@ const reel = {
   updatedAt: '2026-10-15T08:00:00.000Z',
 } as unknown as PostEntity;
 
-function mountSlide(props: { overlayHidden?: boolean; onLike?: () => boolean }) {
+function mountSlide(props: { overlayHidden?: boolean; onLike?: () => boolean; playing?: boolean }) {
   vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue();
   vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
   const onToggleOverlay = vi.fn();
@@ -62,12 +62,20 @@ function mountSlide(props: { overlayHidden?: boolean; onLike?: () => boolean }) 
       preload: false,
       post: reel,
       onToggleOverlay,
-      ...props,
+      overlayHidden: props.overlayHidden,
+      onLike: props.onLike,
     },
   });
   mounted.push(() => unmount(instance));
   flushSync();
-  return { target, onToggleOverlay, video: target.querySelector('video')! };
+  const video = target.querySelector('video')!;
+  if (props.playing !== false) {
+    // The reel is playing, as the viewer's player is once its first frame is in.
+    Object.defineProperty(video, 'paused', { configurable: true, get: () => false });
+    video.dispatchEvent(new Event('play'));
+    flushSync();
+  }
+  return { target, onToggleOverlay, video };
 }
 
 function click(el: Element, detail = 1) {
@@ -159,5 +167,12 @@ it('a tap on a control of the overlay (the rail, the caption toggle, the author)
 it('a keyboard or assistive activation (detail 0) on the picture flips nothing', () => {
   const { video, onToggleOverlay } = mountSlide({});
   click(video, 0);
+  expect(onToggleOverlay).not.toHaveBeenCalled();
+});
+
+it('a tap that STARTS a paused reel (a refused autoplay, an interruption) does not also hide the overlay', () => {
+  const { video, onToggleOverlay } = mountSlide({ playing: false });
+  expect(video.paused).toBe(true);
+  click(video);
   expect(onToggleOverlay).not.toHaveBeenCalled();
 });

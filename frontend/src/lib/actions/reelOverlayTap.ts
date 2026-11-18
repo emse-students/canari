@@ -31,6 +31,11 @@ import { Log } from '$lib/utils/Log';
 export interface ReelOverlayTapParams {
   /** A single tap on the surface: hide or show the overlay. */
   onToggle: () => void;
+  /**
+   * The player is about to ACT on this tap (it restarts a paused reel), so the overlay must not also
+   * toggle: asked at the click, from the element's own state, never remembered. Absent, nothing is.
+   */
+  tapConsumed?: () => boolean;
   /** Off, the surface is inert (a slide that is not on screen). Default on. */
   enabled?: boolean;
 }
@@ -59,7 +64,10 @@ export function reelOverlayTap(node: HTMLElement, initial: ReelOverlayTapParams)
   function onPointerDown(e: PointerEvent) {
     if (!enabled()) return;
     ended = null;
-    if (press) {
+    // A press still listed when a PRIMARY pointer goes down lost its release (the target left the DOM, a
+    // capture was taken away): it is replaced, never kept - a stale press would otherwise spoil every
+    // later gesture. A non-primary pointer is a second finger: a pinch.
+    if (press && !e.isPrimary) {
       press.spoiled = true;
       return;
     }
@@ -75,7 +83,11 @@ export function reelOverlayTap(node: HTMLElement, initial: ReelOverlayTapParams)
 
   function onPointerEnd(e: PointerEvent) {
     if (!press || e.pointerId !== press.id) return;
-    ended = { t: press.t, spoiled: press.spoiled || e.type === 'pointercancel' };
+    // A cancel or a lost capture with no release is no tap: spoiled, from the event's own type.
+    ended = {
+      t: press.t,
+      spoiled: press.spoiled || e.type === 'pointercancel' || e.type === 'lostpointercapture',
+    };
     press = null;
   }
 
@@ -92,6 +104,11 @@ export function reelOverlayTap(node: HTMLElement, initial: ReelOverlayTapParams)
       target.closest(`[${NO_DOUBLE_TAP}]`) ||
       tapBelongsToInnerControl(target, node)
     ) {
+      taps.cancel();
+      return;
+    }
+    if (params.tapConsumed?.()) {
+      Log.d('reelOverlayTap', 'the player acts on this tap - the overlay is left as it is');
       taps.cancel();
       return;
     }
@@ -112,6 +129,7 @@ export function reelOverlayTap(node: HTMLElement, initial: ReelOverlayTapParams)
   node.addEventListener('pointermove', onPointerMove, { capture: true, passive: true });
   node.addEventListener('pointerup', onPointerEnd, { capture: true });
   node.addEventListener('pointercancel', onPointerEnd, { capture: true });
+  node.addEventListener('lostpointercapture', onPointerEnd, { capture: true });
   node.addEventListener('click', onClick, { capture: true });
 
   return {
@@ -129,6 +147,7 @@ export function reelOverlayTap(node: HTMLElement, initial: ReelOverlayTapParams)
       node.removeEventListener('pointermove', onPointerMove, { capture: true });
       node.removeEventListener('pointerup', onPointerEnd, { capture: true });
       node.removeEventListener('pointercancel', onPointerEnd, { capture: true });
+      node.removeEventListener('lostpointercapture', onPointerEnd, { capture: true });
       node.removeEventListener('click', onClick, { capture: true });
     },
   };

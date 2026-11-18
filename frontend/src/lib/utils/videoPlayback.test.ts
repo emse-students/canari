@@ -92,6 +92,20 @@ describe('barLength - the line is fixed to the total from the first frame (owner
     });
   });
 
+  it('a declaration slightly SHORT of the media never makes the line shrink under the real duration', () => {
+    // Declared 20 s, the media really lasts 20.04 s: the engine's duration grows at the last append.
+    const lengths = [20, 20, 20.04, 20.04].map(
+      (duration) =>
+        barLength({ duration, declaredSeconds: 20, seekable: ranges([0, 20]), streamed: true })
+          .seconds
+    );
+    expect(lengths).toEqual([20, 20, 20.04, 20.04]);
+    // And an engine duration BELOW the declaration never shrinks the line under it.
+    expect(
+      barLength({ duration: 19.9, declaredSeconds: 20, seekable: ranges(), streamed: true }).seconds
+    ).toBe(20);
+  });
+
   it('THE PLAYED FRACTION NEVER DECREASES WHILE SEGMENTS ARRIVE', () => {
     // A declared 20 s reel: the playhead advances 0 -> 6 s while the loaded end grows 2 -> 20 s in steps,
     // and the engine's duration goes unknown -> 20 s mid-way (the tail read). Whatever the source, the

@@ -116,6 +116,39 @@ describe('reelOverlayTap', () => {
     expect(onToggle).toHaveBeenCalledTimes(1);
   });
 
+  it('a press that LOST its release (pointercancel, lostpointercapture) is no tap and leaves nothing stuck', () => {
+    const { onToggle, el } = surface();
+    const picture = el('picture');
+    for (const lost of ['pointercancel', 'lostpointercapture']) {
+      picture.dispatchEvent(pointer('pointerdown', { pointerId: 7 }));
+      picture.dispatchEvent(pointer(lost, { pointerId: 7 }));
+      picture.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+      expect(onToggle, lost).not.toHaveBeenCalled();
+    }
+    tap(picture);
+    expect(onToggle, 'the next real tap still counts').toHaveBeenCalledTimes(1);
+  });
+
+  it('a stale press whose release never came is replaced by the next PRIMARY press', () => {
+    const { onToggle, el } = surface();
+    const picture = el('picture');
+    picture.dispatchEvent(pointer('pointerdown', { pointerId: 3, isPrimary: true }));
+    // No pointerup, no cancel: the target left the DOM. A new touch has a new id.
+    picture.dispatchEvent(pointer('pointerdown', { pointerId: 4, isPrimary: true, clientX: 90 }));
+    picture.dispatchEvent(pointer('pointerup', { pointerId: 4, isPrimary: true, clientX: 90 }));
+    picture.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1, clientX: 90 }));
+    expect(onToggle).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not toggle when the player acts on the tap itself', () => {
+    const { action, onToggle, el } = surface();
+    const consumed = vi.fn(() => true);
+    action.update({ onToggle, tapConsumed: consumed });
+    tap(el('picture'));
+    expect(consumed).toHaveBeenCalled();
+    expect(onToggle).not.toHaveBeenCalled();
+  });
+
   it('a second finger spoils the press (a pinch)', () => {
     const { onToggle, el } = surface();
     const picture = el('picture');

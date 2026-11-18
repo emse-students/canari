@@ -172,6 +172,7 @@
   const readerReaction = $derived((rail && post.reactions?.[rail.readerId]) || null);
 
   let hearts = $state<DoubleTapHeart | undefined>();
+  let slideEl = $state<HTMLDivElement | undefined>();
 
   function likeOnDoubleTap(at: Point) {
     if (onLike?.()) hearts?.burst(at);
@@ -529,7 +530,13 @@
   class="relative h-full w-full overflow-hidden bg-black"
   data-reel-slide={post.id}
   use:doubleTapLike={{ onDoubleTap: likeOnDoubleTap, enabled: active && !!onLike }}
-  use:reelOverlayTap={{ onToggle: () => onToggleOverlay?.(), enabled: active && !!onToggleOverlay }}
+  use:reelOverlayTap={{
+    onToggle: () => onToggleOverlay?.(),
+    // A paused reel is restarted by the same tap (`videoTapAction`, `reel`): it does not also hide.
+    tapConsumed: () => !!slideEl?.querySelector('video')?.paused,
+    enabled: active && !!onToggleOverlay,
+  }}
+  bind:this={slideEl}
   data-reel-overlay={overlayHidden ? 'hidden' : 'shown'}
 >
   <DoubleTapHeart bind:this={hearts} />
