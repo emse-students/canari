@@ -90,7 +90,6 @@ earliest version, as a checklist.
 - [P3 - an unsigned restored message is only marked, and a history bundle has no byte cap per chunk](backlog.d/p2-signed-authorship-of-restored-history-built-2276-owed-rig-rows-and-a-version.md)
 - [P3 - a 13 MB upload on the iPhone restarted at about half and ran at 40 to 65 KB/s](backlog.d/p3-a-13-mb-upload-on-the-iphone-restarted-at-half-and-ran-at-40-to-65-kb-s.md)
 - [P3 - READ ON THE NEXT 1.7.1 PRE-RELEASE: the chips row of "Nouvelle discussion" holds its place](backlog.d/p3-a-chosen-person-s-chip-pushes-the-recent-list-under-the-finger.md)
-- [P3 - a live that ends normally makes every viewer log a warning (2026-11-17)](backlog.d/p3-a-live-that-ends-normally-warns-on-every-viewer.md)
 - [P3 - the dev estate logs one CSP `inline script` refusal on every page load](backlog.d/p3-dev-logs-a-csp-inline-script-error-on-every-page-load.md)
 - [P3 - a lives integration spec failed once: the association's live pushed to nobody](backlog.d/p3-flaky-lives-spec-member-live-after-association-live.md)
 - [P3 - on the iPhone in landscape, the close circle looks clipped at the right edge](backlog.d/p3-iphone-landscape-close-circle-clipped.md)
