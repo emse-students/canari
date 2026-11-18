@@ -43,6 +43,13 @@ rustup target add aarch64-apple-ios
 # so the component is installed into the toolchain cargo uses, not left to chance
 # (docs/wiki/cicd.md#the-ios-toolchain-is-pinned-xcode-27-since-180).
 rustup component add llvm-tools
+# THE HOST TOOLS ARE NOT STRIPPED ON XCODE 27 / macOS 27. A release profile strips debuginfo by
+# default, the build-override profile (proc macros, build scripts) included, and the stripped
+# `libsqlx_macros-*.dylib` was refused by macOS 27's dyld - "mis-aligned LINKEDIT string pool" -
+# on the first cold build on the `xcode-27` runner (a cache from `macos-15` had hidden it). Only
+# the HOST artefacts are concerned: the iOS static library is never stripped by cargo, and the
+# Xcode archive strips the app itself (docs/wiki/cicd.md#the-ios-toolchain-is-pinned-xcode-27-since-180).
+export CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_STRIP=false
 cargo build --lib --release --target aarch64-apple-ios --features "$features"
 
 lib="$(find target/aarch64-apple-ios/release -maxdepth 1 -name 'libmines_app_lib.a' | sed -n 1p)"

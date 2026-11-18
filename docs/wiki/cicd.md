@@ -2136,6 +2136,14 @@ failed at the link with `Undefined symbols: _init_plugin_customtabs`, `_init_plu
 `compile-ios-app` Rust cache key names the Xcode (`ios-app-xcode-27`): a tree built under Xcode 26
 carried its toolchain's link search paths into the first run.
 
+**macOS 27's dyld refuses a stripped proc-macro dylib.** The first COLD build on the runner (new
+cache key, nothing restored) failed in `sqlx`: `dlopen(.../libsqlx_macros-*.dylib): mis-aligned
+LINKEDIT string pool`. Cargo's release profile strips debuginfo by default, the `build-override`
+profile that builds proc macros and build scripts included, and the stripped host dylib no longer
+loads; the cache from `macos-15` had hidden it in the first run. `ios-libapp.sh` exports
+`CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_STRIP=false`: it touches only the host artefacts, never the
+iOS static library (cargo does not strip a `staticlib`) nor the app (the Xcode archive strips it).
+
 ### A green run is not proof that *your* file compiled
 
 The iOS `project.pbxproj` is hand-maintained (there is no xcodegen here), so a source file that is
