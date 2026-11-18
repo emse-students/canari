@@ -47,6 +47,7 @@
   import { m } from '$lib/paraglide/messages';
   import { resolveUserDisplayName } from '$lib/utils/users/displayName';
   import { membersByFamilyName, removeControlDisabled } from '$lib/utils/users/memberOrder.svelte';
+  import { userDisplayNames } from '$lib/utils/users/displayNames.svelte';
   import { Log } from '$lib/utils/Log';
   import { confirmMemberRemoval } from '$lib/utils/users/memberRemovalConfirm';
   import { copyText } from '$lib/utils/clipboard';
@@ -143,6 +144,8 @@
   let memberRemoving = $state<Record<string, boolean>>({});
   // The rows are READ by family name (user, 2026-10-05); the order is frozen per member once their
   // profile settles, so a name landing late never moves a row (see `membersByFamilyName`).
+  // THE NAMES THE REMOVE CONTROL ANNOUNCES: a screen reader heard "Retirer le membre" on every row.
+  const memberNames = userDisplayNames(() => communityMembers.map((mem) => mem.userId));
   const memberOrder = membersByFamilyName(() => communityMembers.map((mem) => mem.userId));
   const orderedMembers = $derived.by(() => {
     const byId = new Map(communityMembers.map((mem) => [mem.userId, mem]));
@@ -997,7 +1000,9 @@
                           )}
                           class="ui-icon-button text-red-err hover:bg-red-err/10 rounded-lg transition-all"
                           title={m.chat_community_remove_member_title()}
-                          aria-label={m.chat_community_remove_member_title()}
+                          aria-label={m.chat_community_remove_member_label({
+                            member: memberNames.get(member.userId) ?? member.userId,
+                          })}
                         >
                           {#if memberRemoving[member.userId]}
                             <Loader size={16} class="animate-spin" />
