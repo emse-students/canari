@@ -1,6 +1,7 @@
 import { apiFetch } from '$lib/utils/apiFetch';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { socialUrl } from '$lib/utils/apiUrl';
+import { loadAdminQueueCounts } from '$lib/admin/adminQueueCounts.svelte';
 import type { LiveStanding } from '$lib/live/types';
 
 /**
@@ -240,10 +241,13 @@ export async function reviewReport(
   reportId: string,
   action: 'reviewed' | 'dismissed'
 ): Promise<ContentReport> {
-  return request<ContentReport>(`/api/moderation/reports/${reportId}`, {
+  const report = await request<ContentReport>(`/api/moderation/reports/${reportId}`, {
     method: 'PATCH',
     body: JSON.stringify({ action }),
   });
+  // An item left its queue: this reader's badges are asked now, before the server's frame lands.
+  void loadAdminQueueCounts();
+  return report;
 }
 
 /** Mutes a user. Requires MODERATE flag or global admin. */
@@ -280,5 +284,11 @@ export async function getMyMuteStatus(): Promise<UserMuteStatus> {
 export async function deleteReportedComment(
   commentId: string
 ): Promise<{ postId: string; removedIds: string[]; tombstoneIds: string[] }> {
-  return request(`/api/moderation/comments/${commentId}/delete`, { method: 'POST' });
+  const removed = await request<{ postId: string; removedIds: string[]; tombstoneIds: string[] }>(
+    `/api/moderation/comments/${commentId}/delete`,
+    { method: 'POST' }
+  );
+  // Its reports are closed with it: the admin badges are asked again now.
+  void loadAdminQueueCounts();
+  return removed;
 }

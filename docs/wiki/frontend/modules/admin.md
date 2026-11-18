@@ -186,6 +186,42 @@ and body name nobody either, and the `wake` mode (`push_mode`) applies as to eve
 silences them (category `null`, never counted by the daily cap). Floor `1.7.1`
 (`ADMIN_QUEUE_NOTICE_MIN_CLIENT_VERSION`): no older build is served or pushed either type.
 
+**The badges** (`frontend/src/lib/admin/adminQueueCounts.svelte.ts`, ONE store): the server's counts,
+never a count the client makes. Each queue's row on the hub carries its own count (`adminHubGroups`'s
+`pending`); the dashboard's Administration row (`DashboardFacts.adminPending`) and the dashboard
+place of the bottom bar, the iOS tab bar and the sidebar (`placeBadge`) carry the SUM of the queues
+the reader can act on. The hub's old agenda count is gone: it counted every pending event of the
+reader's associations, including those they cannot validate. Asked:
+
+- **on the server's word, never on a timer** (lead, 2026-11-18): for the session's account, from the
+  root layout, while it holds one of the four tiers `/admin` admits on - read from the REACTIVE tier
+  stores, so a tier published late (a membership probe retried after a failure) starts following and
+  a member is asked nothing. The layout warms the membership probe once per account
+  (`ensureMyAssociations`, memoized and shared by every page that needs it) so a BDE moderator's
+  tiers are published without visiting a page. Asked at once, then through ONE entry,
+  `adminQueuesChanged`, on every `admin.queues.changed` frame (above; routed by
+  `isChannelEventFrame`'s `admin.` family to `handleChannelEvent`; the socket declares
+  `admin-queues-1` in `caps=`) and on every socket (re)open (`syncConnectionAfterWsOpen`: a frame
+  sent while the socket was down is never replayed - the gateway restarting, an idle socket killed).
+  On the web only the leader tab holds the socket (`tabLeader.ts`), so that entry passes the word
+  on over a `BroadcastChannel` (`canari-admin-queues`, content-free) and every other tab that
+  follows asks for its own counts. A frame heard while the app is HIDDEN asks nothing: the return
+  to the foreground (`visibilitychange`) asks anyway, as does the link coming back
+  (`connectivity.onReconnect`). Nothing is asked for a reader who follows no badge. A reload or
+  another device is right from the server's answer, since nothing is kept;
+- afresh when the hub or the dashboard opens;
+- right after an item leaves a queue through this client: `reviewReport`, `deleteReportedComment`,
+  `validateAssociationCalendarEvent`, `rejectAssociationCalendarEvent`, `refuseCorrection`, and
+  `saveProfile` answering a request.
+
+A call made while one is on the wire sends ONE more after it (the first may have left before the
+caller's change committed), never a second in parallel. An answer for an account that has ended
+(sign-out, switch) is dropped. No answer or a refusal keeps the counts drawn (a wrong zero would hide
+waiting items); a sign-out empties them. The bottom bar's dot is spoken per place (the dashboard's as
+"N en attente"). Pinned by `adminQueueCounts.svelte.test.ts`, `adminSections.test.ts`,
+`dashboardSections.test.ts`, `placeBadge.svelte.test.ts`, `channelEventTypes.test.ts` and
+`channelEventHandler.adminQueues.test.ts`.
+
 ## Read access (`/admin/read-access`)
 
 Two unrelated access lists, one tab each (`SegmentedControl`, `?tab=readers|reviewers`). A BDE

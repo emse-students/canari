@@ -99,6 +99,26 @@ describe('admin sections', () => {
   });
 });
 
+describe('the queue badges (owner, 2026-11-18)', () => {
+  const rows = (t: AdminTiers, pending: Record<string, number>) =>
+    adminHubGroups(t, pending).flatMap((g) => g.rows);
+
+  it("draws each queue's server count on its own row, spoken, and nothing at zero", () => {
+    const all = rows(GLOBAL, { agenda: 2, moderation: 0, 'profile-corrections': 1 });
+    const by = (key: string) => all.find((r) => r.key === key)!;
+    expect(by('agenda').badge).toBe(2);
+    expect(by('agenda').badgeLabel).toBeTruthy();
+    expect(by('profile-corrections').badge).toBe(1);
+    expect(by('moderation').badge).toBeUndefined();
+    expect(by('users').badge).toBeUndefined();
+  });
+
+  it('a count for a row the tier does not list draws nowhere', () => {
+    const moderator = rows({ ...NONE, isModerator: true }, { 'profile-corrections': 5 });
+    expect(moderator.some((r) => r.badge)).toBe(false);
+  });
+});
+
 describe('tab query', () => {
   const TABS = ['a', 'b', 'c'] as const;
   it('falls back on anything unknown', () => {

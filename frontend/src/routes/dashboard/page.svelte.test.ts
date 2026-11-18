@@ -25,6 +25,12 @@ const signOutByChoice = vi.hoisted(() => vi.fn());
 const loadNotifs = vi.hoisted(() => vi.fn());
 
 vi.mock('$lib/stores/auth', () => ({ signOutByChoice }));
+// The badges' store is pinned by its own test; here it answers nothing, so no request leaves.
+const loadAdminQueueCounts = vi.hoisted(() => vi.fn(async () => undefined));
+vi.mock('$lib/admin/adminQueueCounts.svelte', () => ({
+  adminQueueCounts: { counts: {}, total: 0 },
+  loadAdminQueueCounts,
+}));
 vi.mock('$lib/stores/user', () => ({
   currentUserId: () => 'u-1',
   getSavedDisplayName: () => 'Ada Lovelace',
