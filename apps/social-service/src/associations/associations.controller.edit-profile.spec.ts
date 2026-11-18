@@ -131,6 +131,16 @@ describe('AssociationsController - every PATCH field asks its own right', () => 
     expect(service.update).toHaveBeenCalledWith(ASSO, body);
   });
 
+  it('answers neutralEventColor only to the writer of it, never in a plain profile save', async () => {
+    const { controller } = harness(F.EDIT_PROFILE);
+    const plain = await controller.update(ASSO, 'member', undefined, { name: 'x' });
+    expect(plain).not.toHaveProperty('neutralEventColor');
+    const wrote = await controller.update(ASSO, 'member', undefined, {
+      neutralEventColor: '#112233',
+    });
+    expect(wrote).toMatchObject({ neutralEventColor: '#112233' });
+  });
+
   it('refuses that holder the archive, which is MANAGE_MEMBERS, and writes nothing', async () => {
     const { controller, service } = harness(F.EDIT_PROFILE);
     const body = await refusal(

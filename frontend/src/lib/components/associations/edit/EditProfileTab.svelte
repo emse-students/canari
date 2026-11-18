@@ -7,6 +7,7 @@
     deleteAssociationLogo,
     associationSecondLogoSrc,
     listAssociations,
+    getNeutralEventColour,
     type Association,
     type LogoSlot,
   } from '$lib/associations/api';
@@ -22,6 +23,7 @@
   import { associationPickerOptions } from '$lib/associations/selectGroups';
   import SquareImageCropper from '$lib/components/associations/SquareImageCropper.svelte';
   import Input from '$lib/components/ui/Input.svelte';
+  import Button from '$lib/components/ui/Button.svelte';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
   import ColorPicker from '$lib/components/ui/ColorPicker.svelte';
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
@@ -49,6 +51,24 @@
   let editBioMarkdown = $state(initial.bioMarkdown ?? '');
   /** Hex color for calendar display, or "" to use auto-generated color. */
   let editColor = $state(initial.color ?? '');
+  /** A BDE's colour for its neutral ("Campus") events, or "" for the derived default. */
+  let editNeutralColor = $state('');
+  /**
+   * The stored colour as its own read answered it (`getNeutralEventColour`, EDIT_PROFILE), or
+   * `undefined` until it has: the member read never carries it, so the picker is drawn, and the field
+   * sent, only once the stored value is known - and sent only when changed.
+   */
+  let storedNeutralColor = $state<string | null | undefined>(undefined);
+  /**
+   * The Campus colour may not be the association's own (review of #3539): `color` is in every member
+   * read and paints the BDE's own events, so equal colours would name the BDE behind every masked
+   * event. The server refuses it too (`CALENDAR_NEUTRAL_COLOUR_IS_THE_BDE_COLOUR`); the form knows
+   * it first and says so instead of sending a write it knows will fail.
+   */
+  const neutralClashes = $derived(
+    editNeutralColor.trim() !== '' &&
+      editNeutralColor.trim().toLowerCase() === editColor.trim().toLowerCase()
+  );
   /** Public contact e-mail, or "" when none. */
   let editContactEmail = $state(initial.contactEmail ?? '');
 
@@ -73,6 +93,17 @@
   ]);
 
   onMount(async () => {
+    if (initial.isBDE && untrack(() => canEdit)) {
+      try {
+        storedNeutralColor = await getNeutralEventColour(initial.id);
+        editNeutralColor = storedNeutralColor ?? '';
+      } catch (err) {
+        console.warn(
+          '[ASSO] the Campus events colour could not be read: its picker stays hidden',
+          err
+        );
+      }
+    }
     if (isList) {
       if (!untrack(() => canEditParent)) return;
       try {
@@ -119,12 +150,24 @@
     saving = true;
     settingsError = '';
     saveSuccess = false;
+    if (storedNeutralColor !== undefined && neutralClashes) {
+      console.warn('[ASSO] profile save stopped: the Campus colour equals the association colour');
+      settingsError = m.asso_edit_neutral_color_same();
+      saving = false;
+      return;
+    }
     try {
       const updated = await updateAssociation(asso.id, {
         name: editName.trim() || undefined,
         description: editDescription.trim(),
         bioMarkdown: editBioMarkdown.trim(),
         color: editColor.trim() || null,
+        // Only a BDE has the setting (the server refuses it elsewhere), sent only when it changed:
+        // an unchanged colour never fails a profile save on a BDE flag that went stale.
+        ...(storedNeutralColor !== undefined &&
+        (editNeutralColor.trim() || null) !== storedNeutralColor
+          ? { neutralEventColor: editNeutralColor.trim() || null }
+          : {}),
         contactEmail: editContactEmail.trim() || null,
         ...(isList
           ? {
@@ -140,6 +183,10 @@
       editDescription = updated.description ?? '';
       editBioMarkdown = updated.bioMarkdown ?? '';
       editColor = updated.color ?? '';
+      if (updated.neutralEventColor !== undefined) {
+        storedNeutralColor = updated.neutralEventColor;
+        editNeutralColor = storedNeutralColor ?? '';
+      }
       editContactEmail = updated.contactEmail ?? '';
       editPromo = updated.promo ?? '';
       editName2 = updated.name2 ?? '';
@@ -306,26 +353,35 @@
     <span class="text-text-main ml-1 block text-sm font-bold"
       >{m.asso_edit_calendar_color_label()}</span
     >
-    <div class="flex flex-wrap gap-1.5">
-      {#each PRESET_COLORS as c (c)}
-        <button
-          type="button"
-          onclick={() => (editColor = c)}
-          title={c}
-          class="h-7 w-7 shrink-0 rounded-full border-2 transition-all hover:scale-110 focus:outline-none
- {editColor === c
-            ? 'border-cn-dark ring-accent/70 scale-110 ring-2 ring-offset-1'
-            : 'border-transparent hover:border-white/60'}"
-          style="background:{c};"
-          aria-label={c}
-        ></button>
-      {/each}
-    </div>
+    {@render presetSwatches(editColor, (c) => (editColor = c))}
     <div class="ml-0.5 flex items-center gap-2">
       <span class="text-text-muted text-xs">{m.asso_edit_custom_color_label()}</span>
       <ColorPicker bind:value={editColor} label={m.asso_edit_color_picker_label()} />
     </div>
   </div>
+  {#if asso.isBDE && storedNeutralColor !== undefined}
+    <div class="flex flex-col gap-3" data-testid="neutral-event-color">
+      <span class="text-text-main ml-1 block text-sm font-bold"
+        >{m.asso_edit_neutral_color_label()}</span
+      >
+      <p class="text-text-muted ml-1 text-xs">{m.asso_edit_neutral_color_hint()}</p>
+      {@render presetSwatches(editNeutralColor, (c) => (editNeutralColor = c), editColor)}
+      {#if neutralClashes}
+        <p class="text-red-err ml-1 text-xs" role="note" data-neutral-color-same>
+          {m.asso_edit_neutral_color_same()}
+        </p>
+      {/if}
+      <div class="ml-0.5 flex items-center gap-2">
+        <span class="text-text-muted text-xs">{m.asso_edit_custom_color_label()}</span>
+        <ColorPicker bind:value={editNeutralColor} label={m.asso_edit_color_picker_label()} />
+        {#if editNeutralColor}
+          <Button variant="link" size="compact" onclick={() => (editNeutralColor = '')}>
+            {m.asso_edit_neutral_color_reset()}
+          </Button>
+        {/if}
+      </div>
+    </div>
+  {/if}
 
   <div class="border-cn-border/70 bg-cn-bg text-text-muted space-y-3 rounded-xl border p-3 text-xs">
     <p class="text-text-main font-semibold">{m.asso_edit_preview_label()}</p>
@@ -370,3 +426,25 @@
     </p>
   {/if}
 </div>
+
+<!-- The preset swatches, one row for the association's colour and one for a BDE's Campus events:
+     one markup, so the two pickers cannot drift. `excluded` disables the association's own colour in
+     the Campus row (the two must differ). -->
+{#snippet presetSwatches(current: string, choose: (c: string) => void, excluded = '')}
+  <div class="flex flex-wrap gap-1.5">
+    {#each PRESET_COLORS as c (c)}
+      <button
+        type="button"
+        onclick={() => choose(c)}
+        disabled={excluded.toLowerCase() === c.toLowerCase()}
+        title={c}
+        class="h-7 w-7 shrink-0 rounded-full border-2 transition-all hover:scale-110 focus:outline-none disabled:opacity-30
+ {current === c
+          ? 'border-cn-dark ring-accent/70 scale-110 ring-2 ring-offset-1'
+          : 'border-transparent hover:border-white/60'}"
+        style="background:{c};"
+        aria-label={c}
+      ></button>
+    {/each}
+  </div>
+{/snippet}

@@ -38,7 +38,7 @@
     <span class="ring-cn-surface rounded-full ring-2 {i > 0 ? '-ml-2' : ''}">
       {#if owner.neutral}
         <!-- "Campus" has no logo: a generic mark, never initials (owner, 2026-11-13). -->
-        <NeutralEventMark {size} />
+        <NeutralEventMark {size} color={owner.color} />
       {:else}
         <AssociationAvatar
           id={owner.associationId}
