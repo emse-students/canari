@@ -2583,7 +2583,7 @@ Neither mechanism above reaches a crate replaced through `[patch.crates-io]` by 
 of `scheduled.yml` (the Monday `0 4 * * 1` slot it shares with `cargo-unreachable`; by hand: dispatch
 job `vendored-upstream`) runs `.github/scripts/vendored-upstream-report.sh`, which compares, for each
 crate on its ALLOWLIST (`tauri-plugin-websocket`, `wry`, and since 2026-11-11
-`tauri-plugin-system-components` and `tauri-plugin-keystore` - every `[patch.crates-io]` entry), the
+`tauri-plugin-system-components` and `tauri-plugin-keystore`, and since 2026-11-18 `tauri-plugin-dialog` - every `[patch.crates-io]` entry), the
 fork's `[package]` version with crates.io:
 
 - **a fork of a STABLE release is compared with `max_stable_version` only.** Upstream's pre-releases
