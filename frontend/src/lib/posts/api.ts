@@ -1000,6 +1000,8 @@ export interface HiddenPost {
   markdown: string;
   createdAt: string;
   pendingReportCount: number;
+  /** The server's answer to "may THIS caller mute the writer": the mute control is drawn from it alone. */
+  canMuteAuthor?: boolean;
 }
 
 /** Returns all posts currently hidden by moderation. Global admin only. */
