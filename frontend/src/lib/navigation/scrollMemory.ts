@@ -160,6 +160,8 @@ export function restoreOnReturn(
   /** With an anchor, reached means THE ANCHOR IS DRAWN: a tall page may still lack its post. */
   const reached = () => (anchor ? resolveAnchor() !== undefined : tallEnough());
   let logged = false;
+  /** The scrollTop the restore itself last left: a scroll event elsewhere is FOREIGN (find-in-page, a focus, a screen reader). */
+  let written = -1;
   const apply = (why: string) => {
     const el = resolveAnchor();
     if (anchor && el) {
@@ -169,6 +171,7 @@ export function restoreOnReturn(
     } else {
       scroller.scrollTop = target;
     }
+    written = scroller.scrollTop;
     if (!logged) {
       logged = true;
       const where = anchor && el ? `anchor ${anchor.id} at ${anchor.offset}px` : `${target}px`;
@@ -197,6 +200,8 @@ export function restoreOnReturn(
   };
   const userScrolled = () => {
     if (!following) dropped('the reader scrolled');
+    else if (Math.abs(scroller.scrollTop - written) >= 1)
+      dropped('a foreign scroll moved the page');
   };
   const userInput = () => dropped('the reader touched the page');
   const documentKey = () => dropped('the reader pressed a key');
@@ -232,8 +237,13 @@ export function restoreOnReturn(
   let steady = 0;
   let lastHeight = 0;
   function frame() {
-    if (!isActiveRestore(stop) || placeholderShown(scroller) || reached()) {
+    if (!isActiveRestore(stop) || placeholderShown(scroller)) {
       looping = false;
+      return;
+    }
+    if (reached()) {
+      looping = false;
+      apply('content moved');
       return;
     }
     if (following) {
@@ -263,7 +273,8 @@ export function restoreOnReturn(
     requestAnimationFrame(frame);
   }
   function settle() {
-    if (placeholderShown(scroller)) return;
+    // A followed anchor is kept in place even under a skeleton: late content above it still moves it.
+    if (placeholderShown(scroller) && !following) return;
     steady = 0;
     if (reached()) {
       watch(anchorEl);

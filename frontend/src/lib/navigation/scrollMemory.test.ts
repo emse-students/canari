@@ -433,6 +433,26 @@ describe('the restore has no proof of alignment: an event ends it, never the pag
     expect(back.offsetOf(5)).toBe(0);
   });
 
+  it('a FOREIGN scroll while following (find-in-page, a focus, a screen reader) drops it, no yank back', () => {
+    const back = leaveAndReturn();
+    back.draw(20);
+    restoreOnReturn(1, back.el);
+    back.el.scrollTop = 4000; // nobody the restore wrote
+    back.el.dispatchEvent(new Event('scroll'));
+    expect(live.every((o) => !o.active)).toBe(true);
+    back.model.heights[0] = 700;
+    resizedAt(back.list);
+    expect(back.el.scrollTop).toBe(4000);
+  });
+
+  it('its own scroll event is not foreign', () => {
+    const back = leaveAndReturn();
+    back.draw(20);
+    restoreOnReturn(1, back.el);
+    back.el.dispatchEvent(new Event('scroll'));
+    expect(live.some((o) => o.active)).toBe(true);
+  });
+
   it('only the reader ends it: after a touch, a late change is not followed', () => {
     const back = leaveAndReturn();
     back.draw(20);
