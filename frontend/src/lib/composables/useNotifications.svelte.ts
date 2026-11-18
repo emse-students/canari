@@ -667,13 +667,16 @@ export function useNotifications() {
    * ONE REACTION, ONE NOTIFICATION, WHICHEVER TRIGGER LANDS SECOND. Android asks the native builder,
    * which stamps the line with the reaction's own instant exactly as the push does, so the second is
    * recognised (`alreadyPosted`, the alerted ledger). iOS, desktop and the browser post a plain one
-   * whose id is {@link reactionCollapseKey}'s - on iOS the push's `apns-collapse-id` is that same
+   * whose id is {@link reactionCollapseKey}'s, one per reactor and message - on iOS the push's
+   * `apns-collapse-id` is that same
    * decimal, so the system replaces one by the other. It never replaces the conversation's message
    * notification. Throttled per that reaction, so a burst of different reactions loses none.
    */
   async function sendReactionNotification(reaction: NativeReactionNotification) {
-    const reactionKey = reactionCollapseKey(reaction.messageId, reaction.actorId, reaction.at);
-    if (!mayRaise(reactionKey)) return;
+    const reactionKey = reactionCollapseKey(reaction.messageId, reaction.actorId);
+    // Throttled per REACTION (its instant included), never per slot: a reactor's quick second emoji
+    // is a new reaction, and it must replace the first rather than be swallowed by the window.
+    if (!mayRaise(`${reactionKey}:${reaction.at}`)) return;
     if (isAndroidTauriRuntime()) {
       const accepted = await postNativeReactionNotification(reaction);
       const shade = reactionNotificationKey(reaction.conversationId);

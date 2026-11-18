@@ -3317,7 +3317,7 @@ identity makes the two posts one:
   once dismissed, by the alerted ledger. The frame reaches it through `notifier_message_natif` with
   `reaction = true`.
 - **iOS**: the page posts through the plugin, whose request identifier is `"\(notification.id)"`;
-  the id is `stableNotifId(reaction:<messageId>:<reactor>:<at>)` (`reactionCollapseId`), and the
+  the id is `stableNotifId(reaction:<messageId>:<reactor>)` (`reactionCollapseId`), and the
   server sends the push with `apns-collapse-id` = the same decimal (`reactionCollapseId` in
   `push-payload.ts`, from the `messageId` the reactor posts to `notify-reaction`; none when it names
   no message), so the system files both under one request and replaces one by the other, as a post's
@@ -3326,7 +3326,15 @@ identity makes the two posts one:
   conversation** (round 3): the id rides the content-free wake as a header Apple reads, and a call
   ring names the group and the caller in clear, so a hash over `<group>:<reactor>:<at>` could be
   confirmed by trying a few thousand instants. No wake and no ring names the message
-  ([content-free-push](../protocols/content-free-push.md)).
+  ([content-free-push](../protocols/content-free-push.md)). **One slot per reactor and message, no
+  instant (2026-11-18):** with `<at>` in the key a reactor who changed one emoji for another left TWO
+  entries in Notification Center (iPhone 12, `1.7.0-alpha.11`, locked and killed), where Android
+  replaces the line; now the newer reaction replaces the older, as Android's does. The page's post is
+  still throttled per reaction (`<slot>:<at>`), so a quick second emoji replaces the first rather than
+  being swallowed by the 800 ms window. **Skew:** a `1.7.0` iPhone (page id with `<at>`) under a
+  server of `1.7.1` (push id without it) can show two entries for ONE reaction in the narrow windows
+  where both triggers draw (Control Center, a push landing just as the app comes back) - only `1.7.0`
+  has the page trigger, and it ends with the update.
 - **iOS, while ACTIVE**: `willPresent` never answers a push with `None` blind - should iOS have
   replaced the page's delivered request by the push, that would erase the record. It reads the
   delivered notifications (`CanariPresentForegroundPush`, completed on the main queue) for EVERY

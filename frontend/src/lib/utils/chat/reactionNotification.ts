@@ -28,7 +28,8 @@
  * itself: on Android both stamp the line with the reaction's own instant `at`, which the builder's
  * `alreadyPosted` and its alerted ledger recognise (under one lock, `showReactionNotification`); on
  * iOS both carry the identifier {@link reactionCollapseId} - the plugin's request id, the push's
- * `apns-collapse-id` - and the system replaces one by the other. A frame WITHOUT `at` (a reactor
+ * `apns-collapse-id`, one per reactor and message - and the system replaces one by the other, as it
+ * replaces that reactor's older reaction to the same message. A frame WITHOUT `at` (a reactor
  * predating it, whose push carries none either) cannot be told apart from its push, so on a phone it
  * is left to the push as before #3792; web and desktop have no push and raise it.
  *
@@ -200,24 +201,32 @@ export function reactionNotificationKey(conversationKey: string): string {
 }
 
 /**
- * The identity of ONE reaction - `reaction:<messageId>:<reactor>:<at>` - from which the plain
- * builders derive the notification's id ({@link reactionCollapseId}). The reactor is folded to lower
- * case as the server's `canonicalUserId` folds it (ids are ASCII), so both sides spell it alike.
+ * The notification slot of ONE REACTOR ON ONE MESSAGE - `reaction:<messageId>:<reactor>` - from which
+ * the plain builders derive the notification's id ({@link reactionCollapseId}). The reactor is folded
+ * to lower case as the server's `canonicalUserId` folds it (ids are ASCII), so both sides spell it
+ * alike.
+ *
+ * NO INSTANT IN IT (2026-11-18): with `at` in the key, a reactor who changed one emoji for another
+ * left TWO entries in the iPhone's Notification Center, where the Android shade replaces the line.
+ * The slot is what a notification REPLACES, and a reactor's newer reaction to the same message
+ * replaces their older one
+ * ([backlog](../../../../../docs/wiki/backlog.d/p3-a-second-reaction-to-the-same-message-stacks-on-the-iphone.md)).
+ * The page's post and the push of the same reaction still share it, so they are still one.
  *
  * THE REACTED-TO MESSAGE, NEVER THE CONVERSATION: the server sends this hash to Apple on the
- * content-free wake, and a hash over the conversation, the reactor and an instant could be checked
- * against what a call ring names in clear (review of #3792, round 3). No wake and no ring names the
- * message.
+ * content-free wake, and a hash over the conversation and the reactor could be checked against what a
+ * call ring names in clear (review of #3792, round 3). No wake and no ring names the message.
  */
-export function reactionCollapseKey(messageId: string, reactorId: string, at: number): string {
-  return `reaction:${messageId}:${reactorId.toLowerCase()}:${at}`;
+export function reactionCollapseKey(messageId: string, reactorId: string): string {
+  return `reaction:${messageId}:${reactorId.toLowerCase()}`;
 }
 
 /**
- * The iOS identifier of ONE reaction's notification, in decimal: the plugin's request id for the
- * page's post (`stableNotifId` of {@link reactionCollapseKey}) and the `apns-collapse-id` the server
- * sends with the push (chat-delivery-service `reactionCollapseId`, pinned to this by a shared vector).
+ * The iOS identifier of one reactor's notification on one message, in decimal: the plugin's request
+ * id for the page's post (`stableNotifId` of {@link reactionCollapseKey}) and the `apns-collapse-id`
+ * the server sends with the push (chat-delivery-service `reactionCollapseId`, pinned to this by a
+ * shared vector).
  */
-export function reactionCollapseId(messageId: string, reactorId: string, at: number): string {
-  return String(stableNotifId(reactionCollapseKey(messageId, reactorId, at)));
+export function reactionCollapseId(messageId: string, reactorId: string): string {
+  return String(stableNotifId(reactionCollapseKey(messageId, reactorId)));
 }
