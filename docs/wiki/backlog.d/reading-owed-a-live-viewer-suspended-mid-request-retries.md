@@ -1,6 +1,6 @@
 ## Reading owed - a live viewer sent to the background mid-request retries instead of stopping (iPhone)
 
-target: 1.7.0
+target: 1.7.1
 
 **Built:** the lives client read a manifest's body with `res.json()`, so a body lost after the head
 (iOS suspends the app mid-request, the stream dies with WebKit's bare `TypeError: Load failed`) was

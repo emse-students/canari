@@ -114,7 +114,8 @@
 
   /**
    * Logos for the event: primary first, then co-owners (resolved src, or null → initials).
-   * Index-aligned with `eventColors`, which is what lets one band list carry both.
+   * Index-aligned with `eventColors` for an association event; a neutral event has one colour and
+   * NO logo, and nothing reads the two lists with one index (the fill uses the colours alone).
    *
    * A neutral "Campus" event has no logo BY DESIGN, so it has no watermark at all: its colour is
    * the whole drawing, as on the PDF/PNG export (#3455). Its one identity is the only owner it
