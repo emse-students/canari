@@ -435,7 +435,7 @@ CID=<the Canari Dev client_id>
 for uri in "https://dev.canari-emse.fr/auth/callback" "fr.emse.canari://callback"; do
   enc=$(python -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=''))" "$uri")
   curl -s -o /dev/null -w "$uri -> %{http_code} %{redirect_url}\n" \
-    "https://auth.canari-emse.fr/application/o/authorize/?client_id=$CID&redirect_uri=$enc&response_type=code&scope=openid+profile&state=probe"
+    "https://miconnect.emse.fr/application/o/authorize/?client_id=$CID&redirect_uri=$enc&response_type=code&scope=openid+profile&state=probe"
 done
 ```
 

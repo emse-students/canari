@@ -2,6 +2,8 @@
 
 target: 1.7.0
 
+_2026-11-18, sitting [S7](../device-verification.md#the-web-and-phone-readings-of-2026-11-18-s7-170-alpha12-the-last-sitting-before-the-stable): **read on the stable's day, and it does NOT block cutting the `1.7.0` stable.** The hold is lifted by the lead with the stable once the two phone prompts are read against the `Canari Local` client; if they are not, the hold simply stays (the eight providers keep the implicit consent flow, as in production today) and the entry moves to the next stable._
+
 _2026-11-17, scope cut: KEPT in `1.7.0` - only the two bench phone readings are left before the hold is lifted ([decisions](owner-decisions-of-2026-11-17.md))._
 
 **Re-read 2026-11-11: still HELD, and nothing moved since 2026-10-18.** `45-consent.yaml` still waits

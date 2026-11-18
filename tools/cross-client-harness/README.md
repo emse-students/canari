@@ -1357,7 +1357,7 @@ The browser report attributes every console line to the ORIGIN that emitted it (
   2026-09-04 for exactly that reason). The estate is `infrastructure/local/docker-compose.yml`, built
   and served by nginx on `${CANARI_LOCAL_API_PORT:-8081}`; its database holds no production data (production data is never copied to a workstation).
   **Two things do NOT become local with it.** The identity provider is still
-  `auth.canari-emse.fr` by decision 8 of the workflow migration, so the accounts and their passwords
+  production's MiConnect (`miconnect.emse.fr`, formerly `auth.canari-emse.fr`) by decision 8 of the workflow migration, so the accounts and their passwords
   are production's - and the local Authentik client is a SEPARATE provider (`Canari Local`), which is
   where a local redirect URI has to be declared or the login dies on "Redirect URI Error". And the
   object store starts EMPTY, so a row whose question is about media uploads what it then reads.

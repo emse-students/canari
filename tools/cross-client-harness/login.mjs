@@ -197,7 +197,7 @@ console.log(`[login:${account}] start ${await here()}`);
 /**
  * WHICH LAUNCHER BUTTON, and why the campaign's default is not the main one.
  *
- * The main button federates to the school: canari -> auth.canari-emse.fr -> cas.emse.fr, and CAS
+ * The main button federates to the school: canari -> miconnect.emse.fr -> cas.emse.fr, and CAS
  * asks for the EMSE 2FA, which no tool here can answer. The campaign's two accounts are ordinary
  * Authentik users instead, and they sign in through the "Connexion externe (service-account)" link
  * the login page already carries - `PASSWORD_LOGIN_FLOW_SLUG` in `frontend/src/lib/stores/auth.ts`,
@@ -230,7 +230,7 @@ const LAUNCHER_BUTTON =
 //
 // TWO FACTS END IT, because there are two legitimate outcomes and the step cannot know which it will
 // get. The CAS form appears, or the browser leaves the launcher on its own because the IdP still holds
-// a session for this browser - the SSO cookies live on auth.canari-emse.fr and cas.emse.fr, and
+// a session for this browser - the SSO cookies live on miconnect.emse.fr and cas.emse.fr, and
 // wiping the app's origin does not touch them, which is why a device wiped to factory re-enrols with
 // no field to fill and why the HEAL rows cost no 2FA.
 const onTheLauncher = (url) => url.includes('/login');

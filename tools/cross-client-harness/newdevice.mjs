@@ -22,7 +22,7 @@
  * simulation of one - and it is the same wipe a person performs by opening a private window, which is
  * the shape the user asked for.
  *
- * **WHY THE ORIGIN AND NOT THE PROFILE.** The login hops canari-emse.fr -> auth.canari-emse.fr ->
+ * **WHY THE ORIGIN AND NOT THE PROFILE.** The login hops the app origin -> miconnect.emse.fr ->
  * cas.emse.fr, and CAS remembers a browser it has already challenged. Deleting the whole profile
  * throws that away too, so every row would pay the one step no tool here can answer - SETUP-4's 2FA -
  * and eleven rows would each need a human. Clearing ONE origin leaves the CAS and Authentik sessions

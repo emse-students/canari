@@ -85,7 +85,9 @@ jobs:
       packages: read
     environment:
       name: production
-      url: https://${{ env.DOMAIN }}
+      # The CANONICAL name, spelt here and not derived from `DOMAIN`: `DOMAIN` is still the legacy
+      # `canari-emse.fr` because it is also the Cloudflare zone and dev's suffix (render-env.sh).
+      url: https://canari.emse.fr
     steps:
       # THE COMMIT, NEVER THE BRANCH, AND THIS IS THE TREE PRODUCTION IS ACTUALLY SERVED FROM:
       # `docker-compose.prod.yml`, the nginx configuration and the migration SQL all come from here,

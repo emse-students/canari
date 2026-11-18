@@ -27,7 +27,7 @@ export function processAppLinks(urls: string[]): void {
       const u = new URL(url);
       console.log('[hooks] Parsed URL protocol:', u.protocol, 'host:', u.host);
 
-      // Public web link (App Link / universal link): https://canari-emse.fr/posts/…
+      // Public web link (App Link / universal link): https://canari.emse.fr/posts/…
       if (u.protocol === 'https:' || u.protocol === 'http:') {
         if (openClaimedAppLink(u.href)) continue;
       }

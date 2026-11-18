@@ -210,7 +210,7 @@ describe('AuthController sessions', () => {
 
     it('ignores the Origin header, which the caller writes', async () => {
       const fromLocalhost = await cookieOptionsFor('http://localhost:1420');
-      const fromProd = await cookieOptionsFor('https://canari-emse.fr');
+      const fromProd = await cookieOptionsFor('https://canari.emse.fr');
 
       expect(fromLocalhost['secure']).toBe(true);
       expect(fromLocalhost['sameSite']).toBe('none');
@@ -516,7 +516,7 @@ describe('AuthController sessions', () => {
     it('does NOT return the credential in the body to a web client, where HttpOnly is the point', async () => {
       sessions.rotate.mockResolvedValue(rotated);
       const req = makeReq({
-        origin: 'https://canari-emse.fr',
+        origin: 'https://canari.emse.fr',
         cookies: { canari_refresh: carried() },
       });
       const out = makeRes();
