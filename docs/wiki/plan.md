@@ -109,6 +109,7 @@ earliest version, as a checklist.
 - [P3 - salon texts held by a `502` are posted in the order their backoffs end, not the order they were written](backlog.d/p3-salon-texts-held-by-a-502-are-posted-out-of-order.md)
 - [P3 - READ ON THE NEXT 1.7.1 PRE-RELEASE: the Thème control fits a doubled font](backlog.d/p3-the-theme-control-runs-off-the-screen-at-a-doubled-font.md)
 - [P3 - what the production log read of the `1.7.0` stable day left unexplained or noisy (2026-11-18)](backlog.d/p3-what-the-1-7-0-stable-day-log-read-left-unexplained-or-noisy.md)
+- [P3 - Reading owed - the CanaReel overlay tap and the fixed playback bar, on both phones](backlog.d/reading-owed-reel-overlay-tap-and-playback-bar.md)
 
 ### Readings owed
 
