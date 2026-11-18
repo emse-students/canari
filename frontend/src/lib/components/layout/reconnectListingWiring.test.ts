@@ -31,11 +31,9 @@ describe('ChatBackgroundService - the reconnect restarts a listing that gave up'
   });
 
   it('re-lists the communities when the live stream comes back, never on the first reading', () => {
+    expect(source).toContain('liveStreamGapEdge.observe(up, loggedIn)');
     expect(source).toContain(
-      'if (previous === null || previous === up || !globalSession.isLoggedIn) return;'
-    );
-    expect(source).toContain(
-      'if (up) void globalChannels.resyncAfterLiveStreamGap(channelsCtx());'
+      'if (isReturn) void globalChannels.resyncAfterLiveStreamGap(channelsCtx());'
     );
   });
 

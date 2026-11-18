@@ -1790,10 +1790,12 @@ export function useChannelWorkspaces() {
    * the gap is the one that reconciles the membership. `retryFailedListing` cannot: it lists only
    * after a listing that gave up.
    *
-   * BOUNDED BY THE TRANSITION, not a clock: ChatBackgroundService calls this on a real down -> up edge
-   * of `isWsConnected` (never on the first reading, which a cold start lists for itself), so the cost
-   * is one listing per socket return - the cadence at which the open salon is already reloaded and
-   * the unread counts re-asked, itself paced by the socket's own reconnect back-off.
+   * BOUNDED BY THE TRANSITION, not a clock: ChatBackgroundService calls this only on the return from
+   * a gap (`liveStreamGapEdge.ts`: a first connect is not one), so a listing costs one return. The
+   * true bound: a flapping socket costs at most one listing per return, and a return landing while a
+   * listing runs owes at most ONE more (a flag, not a queue), so listings never overlap or stack. No
+   * membership version exists to compare: neither the reconnect handshake nor the unread answer
+   * carries a count or etag of the memberships.
    */
   async function resyncAfterLiveStreamGap(ctx: ChannelWorkspaceContext): Promise<void> {
     ctx.log('[WORKSPACE-LOAD] live stream back after a gap - re-listing the communities');
