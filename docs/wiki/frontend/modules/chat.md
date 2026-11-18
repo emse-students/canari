@@ -557,6 +557,7 @@ from members; the salon access list and the association roster are in server or 
   the profile name elsewhere, the id when no name is known (at warn). The name is the one already
   known (the row drew it), so a stalled link never keeps the dialog from opening; the network is
   asked only when nothing is known. A tap that lands on a moved row is read before it is confirmed.
+- **The community remove control is named too** (2026-11-18): its `aria-label` is `chat_community_remove_member_label` (`Retirer {member}`, the group panel's shape) from `userDisplayNames`, where every row read "Retirer le membre" to a screen reader.
 - **The rig asserts it**: `removeCommunityMember` (`tools/cross-client-harness/comm.mjs`) waits for the
   control to be live and refuses to confirm a dialog that does not name the member it was asked for.
 
@@ -6293,6 +6294,10 @@ EMPTY group whose members were added afterwards from its own panel. Now there is
 | nobody | "Démarrer la discussion", disabled | - |
 | one person | "Démarrer la discussion" | opens the 1:1 with them, or creates it (`startNewConversation`, unchanged) |
 | two or more | "Créer un groupe avec N personnes" | opens the NAME STEP, a second panel over the first |
+
+**The chips row has one height from the opening** (2026-11-18): a hint before any pick, a single line scrolling
+sideways after - the first chip used to push the recent list under the finger about to tap the second person
+(`new-chat-chips-slot`).
 
 **The name step.** The field is EMPTY, and its placeholder - greyed - is the label the group will
 carry if it stays empty: the chosen people's first names, composed by the same function every

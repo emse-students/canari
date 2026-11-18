@@ -121,10 +121,16 @@ something to fetch:
   decides them for a frame too), so WP-W5 applies one rule to both kinds of wake.
   **A post's `apns-collapse-id` cannot ride a wake** (2026-11-14): it is an HTTP header naming the
   post, and the NSE cannot change a delivered request's identifier. **A reaction's does** (#3792,
-  2026-11-17): `reactionCollapseId` is a hash of the reacted-to MESSAGE's id, the reactor and the
-  reaction's instant - an opaque decimal, and checkable against no guess, because no wake and no call
-  ring carries the message id (a hash over the conversation would not be: a ring names the group and
-  the caller in clear, and a few thousand candidate instants would confirm "A reacted in G"). So
+  2026-11-17): `reactionCollapseId` is a hash of the reacted-to MESSAGE's id and the reactor - an
+  opaque decimal, and checkable against no guess, because no wake and no call ring carries the message
+  id (a hash over the conversation would not be: a ring names the group and the caller in clear).
+  **The instant left the hash on 2026-11-18** so a reactor's second reaction to one message REPLACES
+  the first on the iPhone, as on Android: what Apple can now learn from it is only that two reaction
+  wakes to one device concern the same (message, reactor) pair - the replacement itself, and nothing
+  it can tie to a person or a conversation. The instant never bought much (Apple knows when a push is
+  sent, so `at` was a few thousand candidates): the whole argument rests on the message id appearing
+  in nothing Apple sees, and on it not being guessable - a client UUID for a private conversation,
+  the server row id for a salon (a generated `uuid`, `ChannelMessage`). So
   `sendPushToUser` keeps the header on the wake for `reaction=true` alone
   ([mobile](../frontend/mobile.md#the-frame-trigger-of-a-reaction-2026-11-17)); any new opaque id
   must pass the same test - nothing Apple sees elsewhere may confirm it. **One bounded exception**:
