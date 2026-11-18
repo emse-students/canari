@@ -1775,12 +1775,41 @@ export function useChannelWorkspaces() {
    */
   async function hydrateJoinedCommunity(ctx: ChannelWorkspaceContext): Promise<void> {
     ctx.log('[WORKSPACE-LOAD] community joined in-session - loading its salons');
+    await listOnceOwedIfBusy(ctx, 'joined community');
+  }
+
+  /**
+   * The live stream CAME BACK after a gap: the membership this device holds may be stale, so the
+   * communities are listed once (owed if a listing is in flight, whose answer predates the return).
+   *
+   * WHY THE RETURN ITSELF IS THE TRIGGER (Mi 9T / iPhone, 2026-11-18, `1.7.0-alpha.11`): a community
+   * joined from another device while this socket was down is announced by a `channel.member.joined`
+   * sent to a socket that was not there, and nothing replays it - the pending pull covers MLS messages
+   * only, and the unread answer counts a salon this device does not list without listing it. A gap is
+   * a window in which every `channel.member.*` event is lost BY CONSTRUCTION, so the event that ends
+   * the gap is the one that reconciles the membership. `retryFailedListing` cannot: it lists only
+   * after a listing that gave up.
+   *
+   * BOUNDED BY THE TRANSITION, not a clock: ChatBackgroundService calls this only on the return from
+   * a gap (`liveStreamGapEdge.ts`: a first connect is not one), so a listing costs one return. The
+   * true bound: a flapping socket costs at most one listing per return, and a return landing while a
+   * listing runs owes at most ONE more (a flag, not a queue), so listings never overlap or stack. No
+   * membership version exists to compare: neither the reconnect handshake nor the unread answer
+   * carries a count or etag of the memberships.
+   */
+  async function resyncAfterLiveStreamGap(ctx: ChannelWorkspaceContext): Promise<void> {
+    ctx.log('[WORKSPACE-LOAD] live stream back after a gap - re-listing the communities');
+    await listOnceOwedIfBusy(ctx, 'live stream gap');
+  }
+
+  /** One listing, owed again if one was in flight (its answer predates the event named by `why`). */
+  async function listOnceOwedIfBusy(ctx: ChannelWorkspaceContext, why: string): Promise<void> {
     const session = currentSalonSession();
     const ran = await loadChannelWorkspacesFromBackend(ctx);
     if (ran) return;
-    // A listing that outlived its session also answers false; the join it carried left with it.
+    // A listing that outlived its session also answers false; the event it carried left with it.
     if (!isCurrentSalonSession(session)) {
-      ctx.log("[WORKSPACE-LOAD] joined community's reload not owed: its session signed out");
+      ctx.log(`[WORKSPACE-LOAD] ${why}'s reload not owed: its session signed out`);
       return;
     }
     joinedCommunityReloadOwed = true;
@@ -2880,6 +2909,7 @@ export function useChannelWorkspaces() {
     ensureWorkspaceForChannelEvent,
     isCommunityUnknownToEvent,
     hydrateJoinedCommunity,
+    resyncAfterLiveStreamGap,
     /** Records the community of a channel the user was just added to in-session (no relaunch needed). */
     registerJoinedChannel,
     /** Enters a private salon an admin can see but has not joined, then re-reads the community. */

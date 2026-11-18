@@ -2,6 +2,7 @@
   import { forgetPostComposerMedia } from '$lib/posts/postComposerDraft';
   import { takeKeyGroupPushJoins } from '$lib/utils/graine/keyGroupPushJoins';
   import { noteServerTime } from '$lib/utils/chat/serverClock';
+  import { createLiveStreamGapEdge } from '$lib/utils/chat/liveStreamGapEdge';
   import type { InboundReaction } from '$lib/utils/chat/reactionNotification';
   import { drainNseOutcomes } from '$lib/mobile/nseOutcomes';
   import { drainNativePushLog } from '$lib/mobile/nativePushLog';
@@ -1522,13 +1523,19 @@
   // the gap itself - a pause, a drop, a reconnect - is what marks it stale. See
   // `noteLiveStreamTransition`. The first reading is a baseline, not a transition.
   let lastLiveStreamUp: boolean | null = null;
+  const liveStreamGapEdge = createLiveStreamGapEdge();
   $effect(() => {
     const up = globalSession.isWsConnected;
+    const loggedIn = globalSession.isLoggedIn;
     untrack(() => {
       const previous = lastLiveStreamUp;
       lastLiveStreamUp = up;
-      if (previous === null || previous === up || !globalSession.isLoggedIn) return;
+      // A gap loses every `channel.member.*` event by construction, so the RETURN from one re-lists
+      // the communities; the first connect of a session is not a return (`liveStreamGapEdge.ts`).
+      const isReturn = liveStreamGapEdge.observe(up, loggedIn);
+      if (previous === null || previous === up || !loggedIn) return;
       void globalConvs.noteLiveStreamTransition(up, convCtx());
+      if (isReturn) void globalChannels.resyncAfterLiveStreamGap(channelsCtx());
     });
   });
 
