@@ -1,6 +1,12 @@
-## P2 - A community joined from another device, or just joined, is not drawn until a cold start or a reload
+## Reading owed - a community joined from another device while the socket was down is drawn when the stream returns
 
 target: 1.7.0
+
+_2026-11-18: BUILT, so this is now a reading. The code is unchanged since `v1.6.12` on this path, so it is NOT a regression; the target stays `1.7.0` only because the fix ships with the next pre-release._
+
+**What is built.** `resyncAfterLiveStreamGap` (`useChannelWorkspaces.svelte.ts`), called by `ChatBackgroundService.svelte` on the RETURN from a gap (`utils/chat/liveStreamGapEdge.ts`: an up after a down once the session had an up; a first connect is not one). It lists the communities once, owed again if a listing is in flight, and logs `[WORKSPACE-LOAD] live stream back after a gap - re-listing the communities`. Why the return and not a membership version: a gap loses every `channel.member.*` event by construction, and the server's unread answer only counts salons with unread messages, so it cannot name a silent new community. The cost is one listing per socket return, the cadence at which the open salon is already reloaded and the unread counts re-asked ([mechanism](../frontend/offline-and-weak-network.md#a-community-joined-while-the-socket-was-down-is-listed-when-it-returns-2026-11-18)). Charter: principle 1 (the essential is never lost).
+
+**The reading that closes it**, on both phones (iPhone 12 and Mi 9T) on the next pre-release: put the phone in flight mode or suspend the app until its socket drops, join a community from the web seat, bring the phone back to the foreground. The community is drawn within a few seconds and the log carries the line above, followed by `GET /workspaces/user/me`.
 
 _2026-11-17, scope cut: KEPT in `1.7.0` - the paths it names changed since `v1.6.12`: `git log v1.6.12..origin/main` on `useChannelWorkspaces.svelte.ts` and `workspaceSnapshot.ts` lists #3676, #3682 and #3687 (2026-11-16), and `ChatBackgroundService.svelte` #3704 and #3725 ([decisions](owner-decisions-of-2026-11-17.md))._
 
