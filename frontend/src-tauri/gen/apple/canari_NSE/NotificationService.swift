@@ -369,8 +369,10 @@ class NotificationService: UNNotificationServiceExtension {
       )
     // The strike ladder's three notices to a broadcaster (WP-L8b): fixed sentences, no actor and
     // no fragment.
+    // The two notices of a new item in a global admin's queue (owner, 2026-11-18) take the same
+    // shape: fixed sentences, nothing variable (the content-free rule).
     case "social_live_cut", "social_live_suspended", "social_live_withdrawn",
-      "social_live_reinstated":
+      "social_live_reinstated", "social_admin_profile_correction", "social_admin_report":
       let stem = String(key.dropFirst("social_".count))
       composed = (
         Self.localized("notif.social.\(stem).title", locale: locale),

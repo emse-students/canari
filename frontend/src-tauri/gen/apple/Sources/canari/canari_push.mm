@@ -841,6 +841,9 @@ static void CanariComposeServerNotification(NSDictionary *data, NSString **title
     @"social_live_suspended" : @"live_suspended",
     @"social_live_withdrawn" : @"live_withdrawn",
     @"social_live_reinstated" : @"live_reinstated",
+    // A new item in a global admin's queue (owner, 2026-11-18): the content-free rule.
+    @"social_admin_profile_correction" : @"admin_profile_correction",
+    @"social_admin_report" : @"admin_report",
   };
   NSString *fixedStem = fixedSocial[key];
   if (fixedStem) {

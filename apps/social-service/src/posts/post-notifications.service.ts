@@ -27,6 +27,8 @@ import {
   eventDeletedContent,
   eventPendingContent,
   eventPendingCoorganiserContent,
+  adminProfileCorrectionContent,
+  adminReportContent,
   associationPostContent,
   followedPostContent,
   associationRepostContent,
@@ -592,6 +594,11 @@ export class PostNotificationsService {
         return eventPendingContent(actorName, text);
       case 'event_pending_coorganiser':
         return eventPendingCoorganiserContent(actorName, text);
+      // A new item in a global admin's queue (owner, 2026-11-18): fixed sentences, nothing else.
+      case 'admin_profile_correction':
+        return adminProfileCorrectionContent();
+      case 'admin_report':
+        return adminReportContent();
       default:
         return null;
     }

@@ -13,6 +13,7 @@ import { InternalLydiaKeyController } from './internal-lydia-key.controller';
 import { InternalLydiaEnrolmentController } from './internal-lydia-enrolment.controller';
 import { InternalLydiaCashiersController } from './internal-lydia-cashiers.controller';
 import { PostsModule } from '../posts/posts.module';
+import { AdminQueuesModule } from '../admin-queues/admin-queues.module';
 import { FormsModule } from '../forms/forms.module';
 import { AssociationsModule } from '../associations/associations.module';
 import { ChannelsModule } from '../channels/channels.module';
@@ -40,6 +41,8 @@ import { RetentionBootNotice } from './retention-boot-notice';
     ChannelsModule,
     UserTagModule,
     PostsModule,
+    // A profile correction filed (core-service) is announced to the global admins.
+    AdminQueuesModule,
     TypeOrmModule.forFeature([
       Post,
       ChannelMember,

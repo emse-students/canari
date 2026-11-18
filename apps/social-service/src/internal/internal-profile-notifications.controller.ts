@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { PostNotificationsService, SYSTEM_ACTOR_NAME } from '../posts/post-notifications.service';
 import { assertInternalSecret } from './internal-secret.util';
+import { AdminQueuesService } from '../admin-queues/admin-queues.service';
 
 /** The two answers an admin can give to a profile correction request (D10). */
 export const PROFILE_CORRECTION_OUTCOMES = ['applied', 'refused'] as const;
@@ -43,7 +44,31 @@ interface ProfileCorrectionBody {
 export class InternalProfileNotificationsController {
   private readonly logger = new Logger(InternalProfileNotificationsController.name);
 
-  constructor(private readonly notifications: PostNotificationsService) {}
+  constructor(
+    private readonly notifications: PostNotificationsService,
+    private readonly adminQueues: AdminQueuesService
+  ) {}
+
+  /**
+   * A profile correction was FILED (core-service, `ProfileCorrectionService.create`): every global
+   * admin but the requester gets the bell row and the push of `admin_profile_correction`, which
+   * clears for all of them once one answers (owner, 2026-11-18; `AdminQueuesService`). Answers how
+   * many were told; a failure is a 500 the caller logs at ERROR - the request itself is saved.
+   */
+  @Post('profile-correction-filed')
+  @HttpCode(200)
+  async profileCorrectionFiled(
+    @Headers('x-internal-secret') secret: string | undefined,
+    @Body() body: { requestId?: string; requesterId?: string }
+  ): Promise<{ told: number }> {
+    assertInternalSecret(secret);
+    if (!body?.requestId || !body.requesterId) {
+      this.logger.warn('[PROFILE_NOTIFY] filed notice refused: malformed body');
+      throw new BadRequestException('requestId and requesterId are required');
+    }
+    const told = await this.adminQueues.announceProfileCorrection(body.requestId, body.requesterId);
+    return { told };
+  }
 
   @Post('profile-correction')
   @HttpCode(200)

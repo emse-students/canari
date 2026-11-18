@@ -136,6 +136,8 @@ import { RefundsController } from './refunds/refunds.controller';
     LydiaPaymentsNotifier,
     LydiaCashierNotifier,
     LydiaCashiersService,
+    // The admin queues' notices write through it (`AdminQueuesModule`), with the same mapping.
+    PostNotificationsService,
   ],
 })
 export class AssociationsModule {}

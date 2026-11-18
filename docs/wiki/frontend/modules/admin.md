@@ -81,6 +81,61 @@ the flag could reach none of it, and the whole tier was reachable only by someon
 the URL. Whenever a permission is added to a server-side check, the matching screen is part of the
 same change.
 
+## Pending counts and the admin notices (owner, 2026-11-18)
+
+The owner: *"Quelqu'un a demande une correction de profil, mais je n'ai vu aucun
+indicateur/notification."* A request landed in `/admin/profile-corrections` and nothing said so.
+Decided: a count on every queue, and a notice to every global admin when an item arrives, cleared for
+all of them once one handles it. Principle 3 ("your attention is not for sale",
+[principes](../../../principes.md)) bounds both: a badge counts only work the reader can do, a notice
+names nobody and is sent once per item, and no queue that already tells its handlers is told twice.
+
+**The queues, enumerated from the code** (every `/admin` page that lists items waiting for an
+admin; the others - spaces, read access, cartography, platform, users, status, Cercle, storage,
+database, legacy cotisations - configure or inspect, nothing waits there):
+
+| Queue (`adminSections` key) | Pending means | Counted for | Scope primitive |
+| --- | --- | --- | --- |
+| `profile-corrections` | `profile_correction_requests.status = 'pending'` (an `applying` claim is in an admin's hands) | a global admin only | - |
+| `moderation` | `content_reports.status = 'pending'` (not reviewed, not dismissed) | a global admin (all) or a content moderator (`isContentModerator`) | `reportInBdeScopeSql` - what the queue page lists for that moderator |
+| `agenda` | `association_calendar_events.status = 'pending'` | a global admin (all) or an event validator (`isUserBdeAdmin`) | `holdsBdeAgendaRightOverSql` - each event's own `canValidate` |
+
+The predicates are one fragment each (`apps/social-service/src/admin-queues/admin-queue-sql.ts`),
+read by the counts, the bell gates and the announcement alike.
+
+**The counts: `GET /api/moderation/admin-queues`** (`AdminQueuesController`) answers
+`{ counts: { agenda?, moderation?, 'profile-corrections'? } }` from the queues' own rows in ONE
+statement, at every read - no counter is kept, so a count is right after a reload, on another device,
+and the moment another admin handles an item. Open to every signed-in caller; a queue the caller
+cannot act on is ABSENT (a member with no tier gets `{}`), never zero, so the route tells nobody the
+size of a queue they cannot open. `X-Global-Admin` is nginx's header, as on every admin route.
+Proved against PostgreSQL in `bde-moderation.integration.spec.ts` (a BDE moderator counts its own
+spaces' reports, a validator its governed events, a member nothing).
+
+**The notices** (`AdminQueuesService.announce*`): to every global admin (`users.admin`) but the
+person who filed the item, actor = the platform, no text, one bell row each and one push each.
+
+- `admin_profile_correction`: when core-service files a request (`ProfileCorrectionService.create` ->
+  `POST /internal/notifications/profile-correction-filed`). Opens `/admin/profile-corrections`.
+- `admin_report`: when a report is the OLDEST pending one about its subject
+  (`REPORT_IS_FIRST_PENDING_SQL`): five reports on one post are one notice, and of two filed at once
+  exactly one is oldest, whatever order they commit in. Opens `/admin/moderation`.
+- **The agenda is not announced here**: its validators are already told by `event_proposed` (and the
+  global admins when no BDE governs the event), so a second notice would say the same thing twice.
+
+**They clear for every admin at once, from state**: the bell gate (`BELL_ROW_GATE`,
+[posts](posts.md#the-bell-re-checks-what-a-row-points-at-audit-of-2026-11-14)) serves a row only
+while its reader is a global admin AND the item still waits; nothing deletes it, the 90-day sweep
+does. A notice that reached somebody who is not (or no longer) an admin is served to nobody.
+**Not recalled**: a push already on a lock screen stays there; tapped, it opens the queue, which no
+longer lists the item.
+
+**Content-free**: the push carries the key only (`social_admin_profile_correction`,
+`social_admin_report`), composed on the device from fixed sentences; the `full` mode's legacy title
+and body name nobody either, and the `wake` mode (`push_mode`) applies as to every push. No switch
+silences them (category `null`, never counted by the daily cap). Floor `1.7.1`
+(`ADMIN_QUEUE_NOTICE_MIN_CLIENT_VERSION`): no older build is served or pushed either type.
+
 ## Read access (`/admin/read-access`)
 
 Two unrelated access lists, one tab each (`SegmentedControl`, `?tab=readers|reviewers`). A BDE

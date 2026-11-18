@@ -21,6 +21,9 @@ describe('appRouteForDeepLink', () => {
     expect(route('fr.emse.canari://notifications')).toBe('/notifications');
     // WP-N: the bookings' notices - the Reservations page.
     expect(route('fr.emse.canari://bookings')).toBe('/bookings');
+    // A new item in a global admin's queue (2026-11-18): the queue itself.
+    expect(route('fr.emse.canari://admin-profile-corrections')).toBe('/admin/profile-corrections');
+    expect(route('fr.emse.canari://admin-moderation')).toBe('/admin/moderation');
     // The organiser alert: one form's responses, on the forms list.
     expect(route('fr.emse.canari://form-responses/f1')).toBe('/forms?responses=f1');
   });

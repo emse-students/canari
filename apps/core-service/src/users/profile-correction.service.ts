@@ -70,6 +70,7 @@ export class ProfileCorrectionService {
       this.logger.log(
         `[PROFILE_CORRECTION] filed ${saved.id.slice(0, 8)} by ${userId.slice(0, 8)}`
       );
+      await this.announceFiled(saved);
       return saved;
     } catch (err) {
       if (isUniqueViolation(err)) {
@@ -191,6 +192,27 @@ export class ProfileCorrectionService {
     if (!request) throw new ProfileCorrectionNotFoundError();
     if (request.status !== 'pending') throw new ProfileCorrectionNotPendingError();
     return request;
+  }
+
+  /**
+   * Tells every global admin that `request` waits (owner, 2026-11-18): social-service owns the
+   * notifications and writes one bell row and one push per admin, cleared for all once one answers.
+   * The request is already durable and the queue's badge counts it whatever happens here, so a
+   * failure is logged at `error` and never undoes the filing - but an admin not told is the defect
+   * this notice ends, so it must not go unseen.
+   */
+  private async announceFiled(request: ProfileCorrectionRequest): Promise<void> {
+    try {
+      await axios.post(
+        socialUrl('internal/notifications/profile-correction-filed'),
+        { requestId: request.id, requesterId: request.userId },
+        { headers: { 'X-Internal-Secret': this.internalSecret }, timeout: 5_000 }
+      );
+    } catch (err) {
+      this.logger.error(
+        `[PROFILE_CORRECTION] ${request.id.slice(0, 8)} was NOT announced to the admins: ${String(err)}`
+      );
+    }
   }
 
   /**

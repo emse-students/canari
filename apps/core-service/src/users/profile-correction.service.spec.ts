@@ -92,6 +92,30 @@ describe('ProfileCorrectionService', () => {
       });
     });
 
+    it('announces the filed request to the global admins through social-service', async () => {
+      const { service } = make();
+      await service.create('u-1', 'wrong campus');
+      expect(post).toHaveBeenCalledWith(
+        expect.stringContaining('internal/notifications/profile-correction-filed'),
+        { requestId: 'req-new', requesterId: 'u-1' },
+        expect.objectContaining({ headers: { 'X-Internal-Secret': 'internal' } })
+      );
+    });
+
+    it('an announcement that fails is logged at error and the request stays filed', async () => {
+      const { service } = make();
+      post.mockRejectedValue(new Error('social down'));
+      await expect(service.create('u-1', 'wrong campus')).resolves.toMatchObject({ id: 'req-new' });
+      expect(errorLog).toHaveBeenCalledWith(expect.stringContaining('NOT announced'));
+    });
+
+    it('a refused filing announces nothing', async () => {
+      const { service, requests } = make();
+      requests.save.mockRejectedValue(new Error('connection lost'));
+      await expect(service.create('u-1', 'x')).rejects.toThrow('connection lost');
+      expect(post).not.toHaveBeenCalled();
+    });
+
     it('any other database failure is rethrown and logged, never mistaken for PENDING', async () => {
       const { service, requests } = make();
       requests.save.mockRejectedValue(new Error('connection lost'));

@@ -149,6 +149,9 @@ export const PUSH_BUDGET: Readonly<
   delegation_revoked: FREE,
   delegation_receiver_not_ready: FREE,
   delegation_resumed: FREE,
+  // An item waiting in a global admin's queue (owner, 2026-11-18): workflow, never counted.
+  admin_profile_correction: FREE,
+  admin_report: FREE,
 };
 
 /**

@@ -75,7 +75,25 @@ export async function createBellTargetTables(q: (sql: string) => Promise<unknown
       ADD COLUMN IF NOT EXISTS "ownerId" varchar(255),
       ADD COLUMN IF NOT EXISTS "associationId" uuid,
       ADD COLUMN IF NOT EXISTS title varchar;
+    -- The two admin queue notices' gates (admin-queue-sql.ts); the estates' reports table was
+    -- created by TypeORM, these are the columns the gates read.
+    CREATE TABLE IF NOT EXISTS content_reports (id uuid PRIMARY KEY DEFAULT gen_random_uuid());
+    ALTER TABLE content_reports
+      ADD COLUMN IF NOT EXISTS "contentType" varchar(30) NOT NULL DEFAULT 'post',
+      ADD COLUMN IF NOT EXISTS "contentId" varchar NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS status varchar(20) NOT NULL DEFAULT 'pending',
+      ADD COLUMN IF NOT EXISTS "createdAt" timestamp NOT NULL DEFAULT now();
   `);
+  // core-service's queue, from the file every estate ran (its `profile_changes` line needs the table).
+  await q(
+    `CREATE TABLE IF NOT EXISTS profile_changes (id uuid PRIMARY KEY DEFAULT gen_random_uuid())`
+  );
+  await q(
+    readFileSync(
+      join(__dirname, '../../../core-service/src/migrations/010_profile_correction_requests.sql'),
+      'utf8'
+    )
+  );
   await q(
     readFileSync(join(__dirname, '..', 'migrations', '165_institution_event_reach.sql'), 'utf8')
   );

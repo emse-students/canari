@@ -21,6 +21,7 @@ import { AssociationsService } from '../associations/associations.service';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import { ModerationController } from '../moderation/moderation.controller';
 import { ModerationService } from '../moderation/moderation.service';
+import { AdminQueuesService } from '../admin-queues/admin-queues.service';
 import { commentRights, type CommentViewer, type StoredComment } from '../posts/comment-identity';
 import {
   BDE_MODERATED_POST_IDS_SQL,
@@ -570,6 +571,69 @@ maybe('BDE moderation scope against PostgreSQL', () => {
     }
   });
 
+  it("counts each caller's pending reports and events within the reach its queue applies (`AdminQueuesService`)", async () => {
+    // The queue's reports (above) stay; one of seMod's is dismissed, so it no longer waits.
+    await client.query(`UPDATE content_reports SET status = 'dismissed' WHERE id = $1`, [
+      '30000000-0000-4000-8000-000000000004',
+    ]);
+    await client.query(
+      `ALTER TABLE association_calendar_events ADD COLUMN IF NOT EXISTS status varchar(16) NOT NULL DEFAULT 'pending'`
+    );
+    await client.query(
+      `INSERT INTO association_calendar_events ("associationId", status) VALUES
+         ($1, 'pending'), ($1, 'validated'), ($2, 'pending'), ($3, 'pending')`,
+      [A.clubSe, A.clubGa, A.clubNone]
+    );
+    await client.query(
+      `CREATE TABLE IF NOT EXISTS profile_correction_requests (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+         "userId" varchar NOT NULL, status varchar(16) NOT NULL DEFAULT 'pending')`
+    );
+    await client.query(
+      `INSERT INTO profile_correction_requests ("userId", status) VALUES ('a', 'pending'), ('b', 'refused')`
+    );
+    const ds = new DataSource({
+      type: 'postgres',
+      url: URL,
+      entities: [ContentReport],
+      synchronize: false,
+      extra: { options: `-c search_path=${schema},public` },
+    });
+    await ds.initialize();
+    try {
+      // The doors are the service's (asserted elsewhere); the counts' REACH is the SQL's, proved here.
+      const tiers: Record<string, { moderates: boolean; validates: boolean }> = {
+        seMod: { moderates: true, validates: false },
+        gaMod: { moderates: true, validates: false },
+        seVal: { moderates: false, validates: true },
+        seStudent: { moderates: false, validates: false },
+      };
+      const queues = new AdminQueuesService(
+        ds.getRepository(ContentReport),
+        {
+          isContentModerator: async (u: string) => tiers[u]?.moderates ?? false,
+          isUserBdeAdmin: async (u: string) => tiers[u]?.validates ?? false,
+        } as never,
+        {} as never
+      );
+      // seMod's reach is 1, 4, 5, 7 (above); 4 was dismissed. No agenda, no corrections: not its queues.
+      expect(await queues.pendingCounts('seMod', false)).toEqual({ moderation: 3 });
+      expect(await queues.pendingCounts('gaMod', false)).toEqual({ moderation: 3 });
+      // seVal validates bdeSe's spaces: clubSe's pending event, not clubGa's nor the ungoverned one.
+      expect(await queues.pendingCounts('seVal', false)).toEqual({ agenda: 1 });
+      // A member with no tier is told nothing - not even that a queue is empty.
+      expect(await queues.pendingCounts('seStudent', false)).toEqual({});
+      // The platform admin: every pending item of all three.
+      expect(await queues.pendingCounts('anyone', true)).toEqual({
+        'profile-corrections': 1,
+        moderation: 8,
+        agenda: 3,
+      });
+    } finally {
+      await ds.destroy();
+      await client.query(`UPDATE content_reports SET status = 'pending'`);
+    }
+  });
+
   describe("the owner's rule of 2026-11-03: no BDE moderates content in another BDE's or an institution's name", () => {
     /** `AssociationsService` on the real SQL; `isContentModerator` (a query builder) is the door, stubbed open. */
     const service = () =>
@@ -818,7 +882,8 @@ maybe('BDE moderation scope against PostgreSQL', () => {
       try {
         const route = new ModerationController(
           new ModerationService(ds.getRepository(ContentReport), {} as never, http as never),
-          service()
+          service(),
+          { announceReport: jest.fn() } as never
         );
         const stored = async () =>
           (await client.query(`SELECT comments FROM posts WHERE id = $1`, [post])).rows[0]
@@ -926,7 +991,7 @@ maybe('BDE moderation scope against PostgreSQL', () => {
     });
 
     it("refuses the institution's moderator a mute of a governed space's student, typed", async () => {
-      const route = new ModerationController({} as never, service());
+      const route = new ModerationController({} as never, service(), {} as never);
       const refusal = await route
         .muteUser('pdisStudent', 'govMod', undefined, { reason: 'x' } as never)
         .catch((e: unknown) => e);
@@ -1091,7 +1156,8 @@ maybe('BDE moderation scope against PostgreSQL', () => {
               post: jest.fn(() => of({ data: { changed: 0 } })),
             } as never
           ),
-          service()
+          service(),
+          {} as never
         );
         expect(await posts('instMod')).not.toContain(post);
         const done = await route.deleteReportedComment('im-root', 'instMod', undefined);
