@@ -1,7 +1,0 @@
-### Changed - the iPhone 12 push sitting: six halves read, one deleted, five defects found
-
-Read on dev with `1.6.12-alpha.2`: the ciphertext travels once, the English push sentences, the republish and co-organiser pushes, and a comment reply, a mention and a backgrounded comment push opening at the comment. The group-name placeholder half is deleted (iOS joins at the next foreground, so the extension never writes one). The silent comment pushes were the daily cap; the defects are a mention or reply to a post's author counted as a comment, a mark-as-read crash off the main thread, a quick reply that waits for the next open, a tap on the open post, and an empty comment accepted ([plan](docs/wiki/plan.md#readings-owed)).
-
-The second pass reads the iPhone native ring (K6, K7, K8, K8b) and the checkpoint cost (~11-16 ms per commit, from the native log), and deletes the unknown-author half (it needs an identity-provider account). It files two P3 ring defects: a foreground ring flashes CallKit, and a late locked answer is lost.
-
-A third pass reads three bell halves on the iPhone and files a P3: the bell picker is stale after a re-follow.
