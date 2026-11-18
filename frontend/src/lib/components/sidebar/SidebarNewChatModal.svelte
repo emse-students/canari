@@ -170,7 +170,7 @@
       {#if chosen.length > 0}
         <ul
           bind:this={chipsRow}
-          class="flex min-w-0 flex-1 flex-nowrap items-center gap-2 overflow-x-auto"
+          class="no-scrollbar flex min-w-0 flex-1 flex-nowrap items-center gap-2 overflow-x-auto"
           aria-label={m.chat_modal_selected_people_label()}
           data-testid="new-chat-chips"
         >
