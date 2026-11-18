@@ -19,5 +19,5 @@ Closing readings, each `PASS` or a new entry:
 2. **The notice, on the Mi 9T and the iPhone 12** (a `1.7.0` build; a dev write goes to the harness's
    written-ids list): after the lift the broadcaster gets the push "Droit de lancer un live rétabli",
    its tap opens the notifications list, and the bell row reads "Votre droit de diffuser a été rétabli
-   (une éventuelle suspension en cours reste appliquée)" with no avatar of nobody; a second lift
+   ; une suspension en cours reste appliquée jusqu'à sa fin." with no avatar of nobody; a second lift
    writes nothing.

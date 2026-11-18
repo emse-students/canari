@@ -276,19 +276,6 @@ export async function fetchWithdrawnBroadcasters(): Promise<LiveBroadcasterStand
 }
 
 /**
- * `GET /api/lives/broadcasters/:userId/standing` - STAFF: one account's standing without a report.
- * Refusals, read by `code`: `LIVE_WITHDRAWAL_FORBIDDEN` (403), `MODERATION_OUT_OF_SCOPE` (403),
- * `LIVE_BROADCASTER_NOT_FOUND` (404).
- */
-export async function fetchBroadcasterStanding(userId: string): Promise<LiveBroadcasterStanding> {
-  console.debug(`[LIVE] standing of ${userId}`);
-  return liveJson<LiveBroadcasterStanding>(
-    `${livesBase()}/broadcasters/${encodeURIComponent(userId)}/standing`,
-    'Live broadcaster standing'
-  );
-}
-
-/**
  * `POST /api/lives` - starts a live (201, the live WITH its key).
  *
  * @param keyHex The live key the broadcaster's client generated: 64 lower-case hex characters, as

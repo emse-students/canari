@@ -345,7 +345,11 @@ describe('the staff read of a broadcaster standing (live moderation, 1.7.0)', ()
 
   function build(opts: { moderator: boolean; moderated: string[] }) {
     const standing = jest.fn(async (id: string) => row(id));
-    const listWithdrawn = jest.fn(async () => [row(A), row(B)]);
+    const listWithdrawn = jest.fn(async (scope: (ids: string[]) => Promise<Set<string>>) => {
+      const all = [row(A), row(B)];
+      const allowed = await scope(all.map((s) => s.userId));
+      return all.filter((s) => allowed.has(s.userId));
+    });
     const moderatedUserIds = jest.fn(async () => new Set(opts.moderated));
     const mayModerateUser = jest.fn(async (_c: string, t: string) => opts.moderated.includes(t));
     const refuseModeration = jest.fn(async () => {

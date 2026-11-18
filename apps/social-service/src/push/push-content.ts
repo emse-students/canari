@@ -1012,7 +1012,7 @@ export function liveReinstatedContent(): PushContent {
     arg: '',
     legacyTitle: 'Droit de lancer un live rétabli',
     legacyBody:
-      'La modération vous a rendu le droit de lancer un live, une fois toute suspension en cours terminée.',
+      "La modération vous a rendu le droit de lancer un live ; une suspension en cours reste appliquée jusqu'à sa fin.",
   };
 }
 

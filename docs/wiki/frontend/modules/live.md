@@ -1054,8 +1054,8 @@ standing of the MEMBER, so it is read where it lives. The tab "Diffusion retiré
 (`ModerationWithdrawnList`) lists `GET /api/lives/broadcasters/withdrawn` (`fetchWithdrawnBroadcasters`:
 name, date, reason, cuts on record, newest first, narrowed server-side to the people the caller may
 act on), each row with the lift; it is read on every visit, and a lift re-reads it and the queue.
-`fetchBroadcasterStanding` reads one account (`GET /api/lives/broadcasters/:userId/standing`, same door
-and scope as the withdrawal) for any screen that needs it. The page's success toasts (cut,
+`GET /api/lives/broadcasters/:userId/standing` (one account, same door and scope as the withdrawal) has no
+UI yet and no client function: add one with its first consumer. The page's success toasts (cut,
 withdrawal, lift) are `'info'`: `showToast` defaults to `'error'`, and the three were drawn red until
 1.7.0. The member is told of the lift by a `live_reinstated` notice
 ([lives](../../services/lives.md#the-three-pushes-a-broadcaster-gets-wp-l8b)). Tests: the standing,

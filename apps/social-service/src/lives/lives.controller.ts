@@ -120,13 +120,9 @@ export class LivesController {
     @Headers('x-global-admin') globalAdmin: string | undefined
   ) {
     const caller = await this.assertStaff(userId, globalAdmin, 'LIVE_WITHDRAWAL_FORBIDDEN');
-    const all = await this.lives.listWithdrawn();
-    const allowed = await this.associations.moderatedUserIds(
-      caller,
-      all.map((s) => s.userId),
-      { isGlobalAdmin: globalAdmin === 'true' }
+    return this.lives.listWithdrawn((ids) =>
+      this.associations.moderatedUserIds(caller, ids, { isGlobalAdmin: globalAdmin === 'true' })
     );
-    return all.filter((s) => allowed.has(s.userId));
   }
 
   /**

@@ -110,8 +110,10 @@ describe('the withdrawn broadcasters tab', () => {
   });
 
   it('lifts from the list, tells it as a success toast, and reads the list again', async () => {
+    // The page reads the list at mount (the badge), again on the tab, then after the lift.
     h.fetchWithdrawnBroadcasters.mockResolvedValueOnce([withdrawn('u1')]);
-    h.fetchWithdrawnBroadcasters.mockResolvedValueOnce([]);
+    h.fetchWithdrawnBroadcasters.mockResolvedValueOnce([withdrawn('u1')]);
+    h.fetchWithdrawnBroadcasters.mockResolvedValue([]);
     h.showConfirm.mockResolvedValue(true);
     h.liftBroadcasterWithdrawal.mockResolvedValue({ userId: 'u1', lifted: true });
     await openWithdrawnTab();

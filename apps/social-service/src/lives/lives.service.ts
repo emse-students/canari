@@ -2220,18 +2220,28 @@ export class LivesService implements OnModuleDestroy {
   }
 
   /**
-   * Every account whose right to broadcast is withdrawn, newest withdrawal first, capped at
-   * {@link WITHDRAWN_LIST_MAX}; the controller narrows it to the ones the caller may act on. The
-   * list reads `live_broadcast_withdrawals`, never a report: a withdrawal is a standing of the
-   * member and must stay reachable once every report naming them is handled.
+   * Every account whose right to broadcast is withdrawn, newest withdrawal first, narrowed by `scope`
+   * (the people the caller may act on) BEFORE the cap of {@link WITHDRAWN_LIST_MAX}, so a scoped
+   * moderator never misses a row because other people's withdrawals filled the page. Only ids are
+   * read unbounded (a withdrawal is rare). The list reads `live_broadcast_withdrawals`, never a
+   * report: a withdrawal is a standing of the member and must stay reachable once every report
+   * naming them is handled.
    */
-  async listWithdrawn(): Promise<BroadcasterStanding[]> {
-    const ids: { userId: string }[] = await this.db.query(
-      `SELECT "userId" FROM live_broadcast_withdrawals ORDER BY "withdrawnAt" DESC LIMIT $1`,
-      [WITHDRAWN_LIST_MAX]
+  async listWithdrawn(
+    scope: (userIds: string[]) => Promise<Set<string>>
+  ): Promise<BroadcasterStanding[]> {
+    const all: { userId: string }[] = await this.db.query(
+      `SELECT "userId" FROM live_broadcast_withdrawals ORDER BY "withdrawnAt" DESC, "userId"`
     );
-    this.logger.debug(`[LIVE_STRIKE] withdrawn list read: ${ids.length} row(s)`);
-    return this.broadcasterStandingRows(ids.map((r) => r.userId));
+    const allowed = await scope(all.map((r) => r.userId));
+    const kept = all
+      .map((r) => r.userId)
+      .filter((id) => allowed.has(id))
+      .slice(0, WITHDRAWN_LIST_MAX);
+    this.logger.debug(
+      `[LIVE_STRIKE] withdrawn list read: ${kept.length} of ${all.length} row(s) in scope`
+    );
+    return this.broadcasterStandingRows(kept);
   }
 
   private async broadcasterStandingRows(ids: string[]): Promise<BroadcasterStanding[]> {
@@ -2243,9 +2253,10 @@ export class LivesService implements OnModuleDestroy {
       reason: LiveCutReason | null;
     }[] = await this.db.query(
       `SELECT u.id, u."displayName", w.reason
-         FROM unnest($1::varchar[]) AS i(id)
+         FROM unnest($1::varchar[]) WITH ORDINALITY AS i(id, ord)
          JOIN users u ON u.id = i.id
-         LEFT JOIN live_broadcast_withdrawals w ON w."userId" = u.id`,
+         LEFT JOIN live_broadcast_withdrawals w ON w."userId" = u.id
+        ORDER BY i.ord`,
       [ids]
     );
     return rows.flatMap((r) => {

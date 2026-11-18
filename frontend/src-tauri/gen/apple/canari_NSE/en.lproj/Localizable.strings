@@ -74,7 +74,7 @@
 "notif.social.live_withdrawn.title" = "Right to go live withdrawn";
 "notif.social.live_withdrawn.body" = "Moderators have withdrawn your right to start a live.";
 "notif.social.live_reinstated.title" = "Right to go live restored";
-"notif.social.live_reinstated.body" = "Moderators have given back your right to start a live, once any running suspension ends.";
+"notif.social.live_reinstated.body" = "Moderators gave back your right to start a live; a running suspension still applies until it ends.";
 "notif.social.booking_cancelled.title" = "%@ cancelled a booking";
 "notif.social.booking_cancelled.body" = "It will not take place";
 "notif.social.booking_withdrawn.title" = "%@ left your booking";

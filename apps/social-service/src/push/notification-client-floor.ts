@@ -84,6 +84,8 @@ export const NOTIFICATION_TYPE_MIN_CLIENT = {
   live_suspended: '1.4.0',
   live_withdrawn: '1.4.0',
   // The lift of a withdrawal (1.7.0): the first build that draws it.
+  // The floor compares the core version only (`1.7.0-alpha.N` counts as 1.7.0): tester builds below
+  // alpha 9 pass it without drawing the type - accepted, testers only.
   live_reinstated: '1.7.0',
   follow_request: '1.5.1',
   follow_accepted: '1.5.1',

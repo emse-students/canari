@@ -33,6 +33,12 @@ vi.mock('$lib/moderation/api', async (orig) => ({
   ...moderationApi,
 }));
 
+// The page reads the withdrawn list at mount (the tab's badge); nothing here is about it.
+vi.mock('$lib/live/api', async (orig) => ({
+  ...(await orig<typeof import('$lib/live/api')>()),
+  fetchWithdrawnBroadcasters: vi.fn(async () => []),
+}));
+
 import Page from './+page.svelte';
 
 function report(canMuteReporter: boolean, canMuteReportedUser: boolean): ContentReport {

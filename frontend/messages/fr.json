@@ -6053,7 +6053,7 @@
   "notif_live_cut_text": "Votre live a été interrompu par la modération",
   "notif_live_suspended_text": "Vous ne pouvez plus diffuser pendant un temps",
   "notif_live_withdrawn_text": "Votre droit de diffuser a été retiré",
-  "notif_live_reinstated_text": "Votre droit de diffuser a été rétabli (une éventuelle suspension en cours reste appliquée)",
+  "notif_live_reinstated_text": "Votre droit de diffuser a été rétabli ; une suspension en cours reste appliquée jusqu'à sa fin.",
   "moderation_type_live": "Live",
   "moderation_type_live_chat": "Message de live",
   "moderation_chat_line_verified": "Texte vérifié par le serveur",

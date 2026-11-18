@@ -76,6 +76,10 @@
   let loadingReports = $state(true);
   let withdrawn = $state<LiveBroadcasterStanding[]>([]);
   let loadingWithdrawn = $state(false);
+  /** The withdrawn tab's own error: a failed read there must not clear the reports tab's. */
+  let withdrawnError = $state('');
+  /** Null until the first read answered: the tab badge says nothing rather than a false 0. */
+  let withdrawnLoaded = $state(false);
   let loadingMuted = $state(false);
   let loadingHidden = $state(false);
   let error = $state('');
@@ -111,10 +115,11 @@
       return;
     }
     void loadReports();
+    // The tab's badge is its count: read with the page, so it never claims 0 before the tab opens.
+    void loadWithdrawn();
     // Arriving on `?tab=hidden|muted`: the other lists load on first view, so load the open one.
     if (tab === 'muted') void loadMuted();
     if (tab === 'hidden') void loadHidden();
-    if (tab === 'withdrawn') void loadWithdrawn();
   });
 
   /** Resolves a set of user IDs to display names asynchronously. */
@@ -132,6 +137,7 @@
 
   /** Overlapping loads (refresh, the reload after a cut) keep only the latest answer. */
   const beginReportsLoad = createLatestOnly();
+  const beginWithdrawnLoad = createLatestOnly();
 
   async function loadReports() {
     const isCurrent = beginReportsLoad();
@@ -191,16 +197,23 @@
 
   /** The accounts whose right to broadcast is withdrawn: read with no report in between. */
   async function loadWithdrawn() {
+    const isCurrent = beginWithdrawnLoad();
     loadingWithdrawn = true;
-    error = '';
+    withdrawnError = '';
     try {
-      withdrawn = await fetchWithdrawnBroadcasters();
+      const fetched = await fetchWithdrawnBroadcasters();
+      if (!isCurrent()) {
+        Log.d('admin.moderation.loadWithdrawn', 'a newer load superseded this answer - ignored');
+        return;
+      }
+      withdrawn = fetched;
+      withdrawnLoaded = true;
       Log.d('admin.moderation.loadWithdrawn', `${withdrawn.length} withdrawn`);
     } catch (e) {
       Log.d('admin.moderation.loadWithdrawn failed', e);
-      error = m.moderation_load_withdrawn_error();
+      if (isCurrent()) withdrawnError = m.moderation_load_withdrawn_error();
     } finally {
-      loadingWithdrawn = false;
+      if (isCurrent()) loadingWithdrawn = false;
     }
   }
 
@@ -500,7 +513,7 @@
       key: 'withdrawn',
       label: m.moderation_withdrawn_tab(),
       icon: Radio,
-      badge: withdrawn.length,
+      badge: withdrawnLoaded ? withdrawn.length : 0,
       badgeClass: 'bg-red-500 text-white',
     },
   ]}
@@ -1049,6 +1062,11 @@
 
 <!-- ── Withdrawn broadcasters tab (no report needed: the lift's door) ────────── -->
 {#if tab === 'withdrawn'}
+  {#if withdrawnError}
+    <div class="bg-red-err/10 text-red-err border-red-err/30 mb-6 rounded-xl border p-4 text-sm">
+      {withdrawnError}
+    </div>
+  {/if}
   <ModerationWithdrawnList
     rows={withdrawn}
     loading={loadingWithdrawn}
