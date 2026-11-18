@@ -1,3 +1,4 @@
+import { loadAdminQueueCounts } from '$lib/admin/adminQueueCounts.svelte';
 import { apiFetch } from '$lib/utils/apiFetch';
 import { Log } from '$lib/utils/Log';
 import { getToken } from '$lib/stores/auth';
@@ -1014,10 +1015,13 @@ export async function validateAssociationCalendarEvent(
   associationId: string,
   eventId: string
 ): Promise<AssociationCalendarEvent> {
-  return request<AssociationCalendarEvent>(
+  const event = await request<AssociationCalendarEvent>(
     `/api/associations/${encodeURIComponent(associationId)}/events/${encodeURIComponent(eventId)}/validate`,
     { method: 'POST' }
   );
+  // An item left its queue: this reader's badges are asked now, before the server's frame lands.
+  void loadAdminQueueCounts();
+  return event;
 }
 
 /** Rejects a pending calendar event with an optional reason (BDE or global admin only). */
@@ -1026,10 +1030,13 @@ export async function rejectAssociationCalendarEvent(
   eventId: string,
   reason?: string
 ): Promise<AssociationCalendarEvent> {
-  return request<AssociationCalendarEvent>(
+  const event = await request<AssociationCalendarEvent>(
     `/api/associations/${encodeURIComponent(associationId)}/events/${encodeURIComponent(eventId)}/reject`,
     { method: 'POST', body: JSON.stringify({ reason: reason?.trim() || undefined }) }
   );
+  // An item left its queue: this reader's badges are asked now, before the server's frame lands.
+  void loadAdminQueueCounts();
+  return event;
 }
 
 /**
