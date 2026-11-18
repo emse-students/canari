@@ -451,7 +451,7 @@ describe('the session lifecycle', () => {
       getUserId: () => 'u1',
       log: () => {},
     });
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     connectivity.notifyServerReachable();
     await vi.waitFor(() => expect(mlsService.deleteGroupOnServer).toHaveBeenCalledWith(G1));
   });
@@ -483,7 +483,7 @@ describe('the session lifecycle', () => {
       log: () => {},
     });
     unregisterPendingGroupExitDrain();
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     connectivity.notifyServerReachable();
     expect(await flushPendingGroupExits()).toEqual([]);
     expect(mlsService.deleteGroupOnServer).not.toHaveBeenCalled();

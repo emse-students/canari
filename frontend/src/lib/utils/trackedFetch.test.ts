@@ -22,7 +22,7 @@ describe('trackedFetch counts as answered only a response proven to come from ou
 
   it.each(EDGE_PAGES)('%s neither clears offline nor fires a reconnect', async (_name, page) => {
     const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     const reconnect = vi.fn();
     const off = connectivity.onReconnect(reconnect);
     const res = await trackedFetch(vi.fn(async () => page()) as unknown as typeof fetch, '/x', {});
@@ -68,7 +68,7 @@ describe('trackedFetch counts as answered only a response proven to come from ou
       () => Response.json({ statusCode: 502, message: 'Bad Gateway' }, { status: 502 }),
     ]) {
       connectivity.reset();
-      connectivity.notifyServerUnreachable();
+      connectivity.notifyServerUnreachable('test');
       const reconnect = vi.fn();
       const off = connectivity.onReconnect(reconnect);
       await trackedFetch(vi.fn(async () => answer()) as unknown as typeof fetch, '/x', {});

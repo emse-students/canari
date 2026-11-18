@@ -1,6 +1,6 @@
 ## Reading owed - a native device with no push token row now says why, and registers again (production, after the `1.7.0` stable)
 
-target: 1.7.0
+target: 1.7.1
 
 _2026-11-18, sitting [S7](../device-verification.md#the-web-and-phone-readings-of-2026-11-18-s7-170-alpha12-the-last-sitting-before-the-stable): **read in production the day after both stores carry `1.7.0`; it does NOT block cutting the stable** (the lead's line of 2026-11-17). It stays a `1.7.0` reading only because a reading may name the earliest version alone._
 

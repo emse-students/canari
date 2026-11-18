@@ -1616,7 +1616,7 @@ export async function loginImpl(
         // all local, and `promoteOfflineSession` settles the session when the network returns.
         offlineSession = true;
         accessToken = '';
-        connectivity.notifyServerUnreachable();
+        connectivity.notifyServerUnreachable('login without a token');
         cb.log('[LOGIN] Offline unlock (no token) - local session, will promote on reconnect.');
       } else {
         // The PIN path genuinely cannot continue: the salt it needs lives on the server. Keep the
