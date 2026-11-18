@@ -9,68 +9,6 @@ metadata:
   labels:
     blueprints.goauthentik.io/instantiate: "false"
 entries:
-  # RENAMES (WPA-2, 2026-09-30). Each entry below runs only while the OLD name still exists, and
-  # gives the object its new name before the entry that describes it by that name. It finds the
-  # object by PK, because authentik merges an entry's identifiers back into its attributes: found
-  # by its old name, it would write that old name straight back. So an instance
-  # built under the old names is renamed in place, and a fresh one never sees these. They are dead
-  # once production has taken them, and are deleted then (docs/wiki/profiles-and-access.md, WPA).
-  - model: authentik_providers_oauth2.oauth2provider
-    conditions:
-      - !Find [authentik_providers_oauth2.oauth2provider, [name, "Archives MINO"]]
-    identifiers:
-      pk: !Find [authentik_providers_oauth2.oauth2provider, [name, "Archives MINO"]]
-    attrs:
-      name: "miconnect-archives"
-  - model: authentik_providers_oauth2.oauth2provider
-    conditions:
-      - !Find [authentik_providers_oauth2.oauth2provider, [name, "Canari"]]
-    identifiers:
-      pk: !Find [authentik_providers_oauth2.oauth2provider, [name, "Canari"]]
-    attrs:
-      name: "miconnect-canari"
-  - model: authentik_providers_oauth2.oauth2provider
-    conditions:
-      - !Find [authentik_providers_oauth2.oauth2provider, [name, "Canari Dev"]]
-    identifiers:
-      pk: !Find [authentik_providers_oauth2.oauth2provider, [name, "Canari Dev"]]
-    attrs:
-      name: "miconnect-canari-dev"
-  - model: authentik_providers_oauth2.oauth2provider
-    conditions:
-      - !Find [authentik_providers_oauth2.oauth2provider, [name, "Canari Local"]]
-    identifiers:
-      pk: !Find [authentik_providers_oauth2.oauth2provider, [name, "Canari Local"]]
-    attrs:
-      name: "miconnect-canari-local"
-  - model: authentik_providers_oauth2.oauth2provider
-    conditions:
-      - !Find [authentik_providers_oauth2.oauth2provider, [name, "Cercle"]]
-    identifiers:
-      pk: !Find [authentik_providers_oauth2.oauth2provider, [name, "Cercle"]]
-    attrs:
-      name: "miconnect-cercle"
-  - model: authentik_providers_oauth2.oauth2provider
-    conditions:
-      - !Find [authentik_providers_oauth2.oauth2provider, [name, "MiGallery"]]
-    identifiers:
-      pk: !Find [authentik_providers_oauth2.oauth2provider, [name, "MiGallery"]]
-    attrs:
-      name: "miconnect-migallery"
-  - model: authentik_providers_oauth2.oauth2provider
-    conditions:
-      - !Find [authentik_providers_oauth2.oauth2provider, [name, "MinoWiki"]]
-    identifiers:
-      pk: !Find [authentik_providers_oauth2.oauth2provider, [name, "MinoWiki"]]
-    attrs:
-      name: "miconnect-mino-wiki"
-  - model: authentik_providers_oauth2.oauth2provider
-    conditions:
-      - !Find [authentik_providers_oauth2.oauth2provider, [name, "Provider for Sky"]]
-    identifiers:
-      pk: !Find [authentik_providers_oauth2.oauth2provider, [name, "Provider for Sky"]]
-    attrs:
-      name: "miconnect-sky"
   - model: authentik_providers_oauth2.oauth2provider
     identifiers:
       name: "miconnect-archives"
@@ -126,45 +64,29 @@ entries:
       access_token_validity: "minutes=5"
       refresh_token_threshold: "hours=1"
       signing_key: !Find [authentik_crypto.certificatekeypair, [name, "authentik Self-signed Certificate"]]
+      # PRODUCTION: the web origin, the phone apps' scheme, and the old origin - nothing else
+      # (2026-11-18). `canari-emse.fr` answers a 301 to `canari.emse.fr`, but a browser that still
+      # runs the app it cached there starts its sign-in from that origin, and one did on 2026-11-13;
+      # it goes when the estate migration retires the origin
+      # (docs/wiki/infrastructure/estate-migration.md). Removed the same day: the `tauri.localhost`
+      # pair (an Android build from before the deep link, last seen 2026-04-25) and the loopback dev
+      # ports, which belong to `miconnect-canari-local` alone. Authorizes through the implicit-consent
+      # flow: the terms are HELD out of production (45-consent.yaml).
       redirect_uris:
+        - matching_mode: "strict"
+          url: "https://canari.emse.fr/auth/callback"
+          redirect_uri_type: "authorization"
         - matching_mode: "strict"
           url: "https://canari-emse.fr/auth/callback"
           redirect_uri_type: "authorization"
         - matching_mode: "strict"
-          url: "https://tauri.localhost/auth/callback"
-          redirect_uri_type: "authorization"
-        - matching_mode: "strict"
-          url: "http://tauri.localhost/auth/callback"
-          redirect_uri_type: "authorization"
-        - matching_mode: "strict"
-          url: "http://localhost:1420/auth/callback"
-          redirect_uri_type: "authorization"
-        - matching_mode: "strict"
-          url: "http://localhost:1421/auth/callback"
-          redirect_uri_type: "authorization"
-        - matching_mode: "strict"
           url: "fr.emse.canari://callback"
-          redirect_uri_type: "authorization"
-        - matching_mode: "strict"
-          url: "https://canari.emse.fr/auth/callback"
           redirect_uri_type: "authorization"
         - matching_mode: "strict"
           url: "https://canari.emse.fr/login"
           redirect_uri_type: "logout"
         - matching_mode: "strict"
           url: "https://canari-emse.fr/login"
-          redirect_uri_type: "logout"
-        - matching_mode: "strict"
-          url: "https://tauri.localhost/login"
-          redirect_uri_type: "logout"
-        - matching_mode: "strict"
-          url: "http://tauri.localhost/login"
-          redirect_uri_type: "logout"
-        - matching_mode: "strict"
-          url: "http://localhost:1420/login"
-          redirect_uri_type: "logout"
-        - matching_mode: "strict"
-          url: "http://localhost:1421/login"
           redirect_uri_type: "logout"
         - matching_mode: "strict"
           url: "fr.emse.canari://signed-out"
@@ -174,7 +96,7 @@ entries:
       name: "miconnect-canari-dev"
     attrs:
       authentication_flow: !Find [authentik_flows.flow, [slug, "miconnect-auth"]]
-      authorization_flow: !Find [authentik_flows.flow, [slug, "default-provider-authorization-implicit-consent"]]
+      authorization_flow: !Find [authentik_flows.flow, [slug, "miconnect-authorization"]]
       invalidation_flow: !Find [authentik_flows.flow, [slug, "miconnect-invalidation-signout"]]
       property_mappings:
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-promo"]]
@@ -190,40 +112,21 @@ entries:
         - "refresh_token"
       client_id: "6cNHJotTO9THNMewP4vCO3O6aRLsNTSqKRuQjv4o"
       access_token_validity: "minutes=5"
+      refresh_token_threshold: "hours=1"
       signing_key: !Find [authentik_crypto.certificatekeypair, [name, "authentik Self-signed Certificate"]]
+      # DEV and every PRE-RELEASE build (TestFlight, the Play tester tracks): the dev web origin and
+      # the phone apps' scheme (2026-11-18); a loopback origin is `miconnect-canari-local`'s. Asks
+      # for the terms (`miconnect-authorization`, 45-consent.yaml): a pre-release app signs in here,
+      # so this is where the terms are read on a phone before production asks anybody.
       redirect_uris:
         - matching_mode: "strict"
           url: "https://dev.canari-emse.fr/auth/callback"
-          redirect_uri_type: "authorization"
-        - matching_mode: "strict"
-          url: "https://tauri.localhost/auth/callback"
-          redirect_uri_type: "authorization"
-        - matching_mode: "strict"
-          url: "http://tauri.localhost/auth/callback"
-          redirect_uri_type: "authorization"
-        - matching_mode: "strict"
-          url: "http://localhost:1420/auth/callback"
-          redirect_uri_type: "authorization"
-        - matching_mode: "strict"
-          url: "http://localhost:1421/auth/callback"
           redirect_uri_type: "authorization"
         - matching_mode: "strict"
           url: "fr.emse.canari://callback"
           redirect_uri_type: "authorization"
         - matching_mode: "strict"
           url: "https://dev.canari-emse.fr/login"
-          redirect_uri_type: "logout"
-        - matching_mode: "strict"
-          url: "https://tauri.localhost/login"
-          redirect_uri_type: "logout"
-        - matching_mode: "strict"
-          url: "http://tauri.localhost/login"
-          redirect_uri_type: "logout"
-        - matching_mode: "strict"
-          url: "http://localhost:1420/login"
-          redirect_uri_type: "logout"
-        - matching_mode: "strict"
-          url: "http://localhost:1421/login"
           redirect_uri_type: "logout"
         - matching_mode: "strict"
           url: "fr.emse.canari://signed-out"
@@ -233,7 +136,7 @@ entries:
       name: "miconnect-canari-local"
     attrs:
       authentication_flow: !Find [authentik_flows.flow, [slug, "miconnect-auth"]]
-      authorization_flow: !Find [authentik_flows.flow, [slug, "default-provider-authorization-implicit-consent"]]
+      authorization_flow: !Find [authentik_flows.flow, [slug, "miconnect-authorization"]]
       invalidation_flow: !Find [authentik_flows.flow, [slug, "miconnect-invalidation-signout"]]
       property_mappings:
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-promo"]]
@@ -251,7 +154,14 @@ entries:
       access_token_validity: "minutes=5"
       refresh_token_threshold: "hours=1"
       signing_key: !Find [authentik_crypto.certificatekeypair, [name, "authentik Self-signed Certificate"]]
+      # THE LOCAL ESTATE on a workstation (2026-11-18): its nginx entry (8081, the harness's), the
+      # Vite dev server (1420, and 127.0.0.1:1420, Tauri's devUrl) and the harness APK's scheme. Port
+      # 1421 never carried a sign-in on this client (`strictPort` pins the dev server to 1420). Asks for the terms,
+      # like dev, so the harness drives them.
       redirect_uris:
+        - matching_mode: "strict"
+          url: "http://localhost:8081/auth/callback"
+          redirect_uri_type: "authorization"
         - matching_mode: "strict"
           url: "http://localhost:1420/auth/callback"
           redirect_uri_type: "authorization"
@@ -259,25 +169,16 @@ entries:
           url: "http://127.0.0.1:1420/auth/callback"
           redirect_uri_type: "authorization"
         - matching_mode: "strict"
-          url: "http://localhost:1421/auth/callback"
-          redirect_uri_type: "authorization"
-        - matching_mode: "strict"
-          url: "http://localhost:8081/auth/callback"
-          redirect_uri_type: "authorization"
-        - matching_mode: "strict"
           url: "fr.emse.canari://callback"
           redirect_uri_type: "authorization"
+        - matching_mode: "strict"
+          url: "http://localhost:8081/login"
+          redirect_uri_type: "logout"
         - matching_mode: "strict"
           url: "http://localhost:1420/login"
           redirect_uri_type: "logout"
         - matching_mode: "strict"
           url: "http://127.0.0.1:1420/login"
-          redirect_uri_type: "logout"
-        - matching_mode: "strict"
-          url: "http://localhost:1421/login"
-          redirect_uri_type: "logout"
-        - matching_mode: "strict"
-          url: "http://localhost:8081/login"
           redirect_uri_type: "logout"
         - matching_mode: "strict"
           url: "fr.emse.canari://signed-out"
@@ -375,13 +276,6 @@ entries:
           url: "https://mino.emse.fr/"
           redirect_uri_type: "logout"
       logout_uri: "https://mino.emse.fr/logout"
-  # DELETED (2026-09-30): the old Portail Etu's provider, last used 2026-07-01, its callback now a 404.
-  # The refonte has no sign-in. Found by client_id, which no rename touches. Delete this entry once
-  # production has taken it.
-  - model: authentik_providers_oauth2.oauth2provider
-    state: absent
-    identifiers:
-      client_id: "ETaOHNAWOAcrcF0YQMCOKaEnqUYCaQ7yMhb6U2hP"
   - model: authentik_providers_oauth2.oauth2provider
     identifiers:
       name: "miconnect-sky"
