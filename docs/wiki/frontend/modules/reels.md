@@ -431,12 +431,16 @@ of 2026-11-09, which a client keeps against an older server.
 Two points the review of #3528 (2026-11-14) made exact:
 
 - **A conversation keeps vertical AND within its cap.** "Envoyer à..." (`ReelSendSheet`) asks
-  `reelPickRefusal(..., 'chat')`, the function the camera's chat pick uses, on the take's frame
-  (`ReelClip.width`/`height`: the framed canvas of a filmed take, the displayed frame of a gallery
-  pick). So a 45 s landscape pick, a CanaReel for the feed, is offered no conversation, and the
-  sheet says why (`reel_sendto_not_vertical_for_chats`). A frame that could not be read is
-  refused the same way (re-review, 2026-11-14): the chat rule demands vertical, and an unread frame
-  is not proven vertical. The feed still lets it through, its publish deciding on the prepared file.
+  `reelPickRefusal(..., 'chat')`, the function the camera's chat pick uses, on a GALLERY pick's
+  displayed frame. So a 45 s landscape pick, a CanaReel for the feed, is offered no conversation,
+  and the sheet says why (`reel_sendto_not_vertical_for_chats`). A frame that could not be read is
+  refused too (re-review, 2026-11-14), in its own words (`reels_capture_frame_unread_for_chats`,
+  reason `frame-unread`, 2026-11-18): an unread frame is not proven vertical, but it is not proven
+  landscape either. The feed still lets it through, its publish deciding on the prepared file.
+  **A camera take is judged on its length alone, and a photo not at all** (review of 2026-11-18): the
+  chat camera's one-tap send (`handBack`) sends a take with no frame check, so the sheet judging a
+  sideways take would refuse what the other button sends; a photo reaches each chat as its own image
+  and has neither a length nor a read frame - judging it disabled every chat row.
 - **One decision on a length, grace included.** `reelDeclaredDurationMs` is read by the camera's
   publish (`publishReel`) and by the composer's queue (`reelDeclarationFor`). A take up to half a
   second past its cap (`VIDEO_DURATION_GRACE_SECONDS`, the recorder's overshoot) is a reel that

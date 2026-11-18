@@ -80,6 +80,8 @@ maybe('migration 176 against PostgreSQL', () => {
     replay: id(11),
     text: id(12),
     videoWithAttachedForm: id(13),
+    videoTypeNoMime: id(14),
+    imageTypeVideoMime: id(15),
   };
 
   const row = async (rowId: string) => {
@@ -152,6 +154,12 @@ maybe('migration 176 against PostgreSQL', () => {
     await post(ids.videoWithAttachedForm, { images: [VIDEO], attachedFormId: id(98) });
     await post(ids.scheduledVideo, { images: [VIDEO], publishedAt: '2099-01-01T00:00:00Z' });
     await post(ids.text, {});
+    // The create door asks both a `video` type and a `video/*` mimeType: a row with the type and no
+    // video mimeType, or a video mimeType under another type, is not a video it would take.
+    await post(ids.videoTypeNoMime, { images: [{ type: 'video', mediaId: 'n' }] });
+    await post(ids.imageTypeVideoMime, {
+      images: [{ type: 'image', mimeType: 'video/mp4', mediaId: 'v' }],
+    });
     await client.query(
       `INSERT INTO posts (id, kind, images, "durationMs", "expiresAt") VALUES ($1, 'reel', $2, 30000, '2027-01-01T00:00:00Z')`,
       [ids.reel, JSON.stringify([VIDEO])]
@@ -194,6 +202,8 @@ maybe('migration 176 against PostgreSQL', () => {
       ids.videoWithAttachedForm,
       ids.scheduledVideo,
       ids.text,
+      ids.videoTypeNoMime,
+      ids.imageTypeVideoMime,
     ]) {
       const r = await row(kept);
       expect([kept, r.kind, r.e]).toEqual([kept, 'post', null]);

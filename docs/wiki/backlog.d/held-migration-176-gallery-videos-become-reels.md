@@ -48,10 +48,22 @@ for whoever writes the approval line:
   worker already deleted is gone, and the blobs keep the `reel` class until the next boot's archive
   pass. Moot here: band 4 is 0, so nothing is deleted before 2027.
 
+**The video test was narrowed on 2026-11-18** (review of the 1.7.1 rework): a `video/*` mimeType AND a
+`type` that is `video` or absent, as the create door asks - the counts above were read with the
+looser `type = 'video' OR mimeType video/*`, so they are re-read with the file's own query before
+the approval line is written.
+
+**THE ORDER IS DECIDED BEFORE THE PULL REQUEST LEAVES DRAFT.** A held file on `main` with no approval
+line refuses EVERY release (gate 6, [cicd](../cicd.md#a-migration-the-owner-must-approve-is-held-2026-11-01)),
+and dev is held like production, so "a pass on dev first" cannot precede the approval: either the
+approval line merges with (or right after) this PR, or the code ships first and file 176 moves to a
+pull request of its own, merged when the approval is ready. Until then the PR stays draft.
+
 Owed, in order:
 
-1. The approval line in `infrastructure/migration-approvals.txt`, by the owner or by the lead under
-   the 2026-11-03 delegation - a destructive migration, so after the dev pass.
+1. The counts re-read with the file's own query (read-only), then the approval line in
+   `infrastructure/migration-approvals.txt`, by the owner or by the lead under the 2026-11-03
+   delegation - its order with the merge as above.
 2. After it ships: the next `[REEL_GC]` tick deletes nothing (band 4 is 0), and the CanaReels
    list gains the 40 production videos.
 3. The `refused` count of the first boot's `Reel backfill:` line, above - 0 closes the leak question;

@@ -124,23 +124,31 @@
   /**
    * Whether a conversation refuses this take, by the chat rule (vertical AND within `chatCapMs`) - the
    * function the camera's chat pick uses, so the sheet never offers a chat the pick would refuse. A
-   * length that is not known refuses nothing (the outbox still refuses a long one); a frame that is
-   * not known is refused, since the chat rule demands a vertical one.
+   * length that is not known refuses nothing (the outbox still refuses a long one).
+   *
+   * THE FRAME IS JUDGED ON A GALLERY PICK ONLY (review of #3528): a camera take was filmed in the
+   * reel frame, and the chat camera's one-tap send (`handBack`) sends it with no frame check, so the
+   * sheet judging it would refuse the same take the other button sends. A camera take is judged on
+   * its length alone (`rule` null: the cap). A PHOTO is never judged: it reaches each chat as its own
+   * image (D-photo), and it has no length and no read frame.
    */
   const chatRefusal = $derived(
-    reelPickRefusal(
-      {
-        durationMs: clip.durationMs ?? null,
-        width: clip.width ?? null,
-        height: clip.height ?? null,
-      },
-      rule,
-      chatCapMs,
-      'chat'
-    )
+    isPhoto
+      ? null
+      : reelPickRefusal(
+          {
+            durationMs: clip.durationMs ?? null,
+            width: clip.width ?? null,
+            height: clip.height ?? null,
+          },
+          clip.source === 'gallery' ? rule : null,
+          chatCapMs,
+          'chat'
+        )
   );
   const tooLong = $derived(chatRefusal?.reason === 'too-long');
   const notVertical = $derived(chatRefusal?.reason === 'not-vertical');
+  const frameUnread = $derived(chatRefusal?.reason === 'frame-unread');
   const chatsBlocked = $derived(silenced || chatRefusal !== null || blocksState !== 'read');
   const feedMuted = $derived(muted === true);
   /** The feed row waits for the mute answer; a tick made before it never survives (`feedSend`). */
@@ -481,6 +489,10 @@
   {:else if notVertical}
     <p class="text-text-muted text-2xs px-2 pt-2" role="note" data-reel-send-not-vertical>
       {m.reel_sendto_not_vertical_for_chats()}
+    </p>
+  {:else if frameUnread}
+    <p class="text-text-muted text-2xs px-2 pt-2" role="note" data-reel-send-frame-unread>
+      {m.reels_capture_frame_unread_for_chats()}
     </p>
   {/if}
 {/snippet}

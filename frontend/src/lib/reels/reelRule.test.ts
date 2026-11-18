@@ -166,9 +166,10 @@ describe('reelPickRefusal - a gallery pick in the CanaReels camera', () => {
     expect(reelPickRefusal(pick(1920, 1080, 30_000), orRule, 60_000, 'chat')).toEqual({
       reason: 'not-vertical',
     });
-    // A frame the engine could not read is not proven vertical: a conversation refuses it.
+    // A frame the engine could not read is not proven vertical: a conversation refuses it, and says
+    // so in its own words - it may well be vertical (review of #3528).
     expect(reelPickRefusal(pick(null, null, 30_000), orRule, 60_000, 'chat')).toEqual({
-      reason: 'not-vertical',
+      reason: 'frame-unread',
     });
     expect(reelPickRefusal(pick(1080, 1920, 30_000), orRule, 60_000, 'chat')).toBeNull();
     expect(reelPickRefusal(pick(1920, 1080, 120_000), null, 90_000, 'feed')).toEqual({
@@ -188,6 +189,9 @@ describe('reelPickRefusal - a gallery pick in the CanaReels camera', () => {
       m.reels_capture_long_landscape({ seconds: 90 })
     );
     expect(reelPickRefusalText({ reason: 'not-vertical' })).toBe(m.reels_capture_not_vertical());
+    expect(reelPickRefusalText({ reason: 'frame-unread' })).toBe(
+      m.reels_capture_frame_unread_for_chats()
+    );
   });
 });
 

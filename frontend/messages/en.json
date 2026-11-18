@@ -4986,6 +4986,7 @@
   "reel_sendto_sheet_unavailable": "Sending to conversations is not ready, try again in a moment.",
   "reel_sendto_too_long_for_chats": "This video is over {seconds} s: it can only be posted, not sent to a conversation.",
   "reel_sendto_not_vertical_for_chats": "This video is not vertical: it can be posted as a CanaReel, not sent to a conversation.",
+  "reels_capture_frame_unread_for_chats": "This video's frame could not be read: it cannot be sent to a conversation.",
   "reel_sendto_blocks_unread": "Your blocked list could not be read: sending to conversations is unavailable, you can still post.",
   "reel_sendto_failed": "The send could not be queued.",
   "reel_sendto_failed_in": "The video could not be sent to \"{name}\": open the conversation to see why.",

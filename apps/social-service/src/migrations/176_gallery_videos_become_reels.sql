@@ -8,7 +8,9 @@
 --
 -- WHAT IT CONVERTS, AND ONLY THAT (an allowlist in the WHERE - docs/wiki/open-questions.md):
 --   - `kind = 'post'`: never a reel already, never a live replay;
---   - EXACTLY ONE media, and it is a video (`type = 'video'` or a `video/*` mimeType): a post with
+--   - EXACTLY ONE media, and it is a video: a `video/*` mimeType (any case), and a `type` that is
+--     `video` or absent (an older media row carries the mimeType alone) - never a `type: 'video'`
+--     with another or no mimeType, which the create door refuses (review of #3528, 2026-11-18): a post with
 --     several media, or a photo beside its video, STAYS A POST (owner, 2026-11-14:
 --     "Rester des posts" - converting it would delete its photos with the video, and a reel carries
 --     one video);
@@ -51,7 +53,7 @@
 --          count(*) AS posts
 --     FROM posts p
 --    WHERE p.kind = 'post' AND jsonb_typeof(p.images) = 'array' AND jsonb_array_length(p.images) = 1
---      AND (p.images->0->>'type' = 'video' OR lower(p.images->0->>'mimeType') LIKE 'video/%')
+--      AND lower(p.images->0->>'mimeType') LIKE 'video/%' AND COALESCE(p.images->0->>'type', 'video') = 'video'
 --      AND COALESCE(jsonb_array_length(CASE WHEN jsonb_typeof(p.polls) = 'array' THEN p.polls END), 0) = 0
 --      AND COALESCE(jsonb_array_length(CASE WHEN jsonb_typeof(p.forms) = 'array' THEN p.forms END), 0) = 0
 --      AND p."attachedFormId" IS NULL AND p."linkedCalendarEventId" IS NULL
@@ -115,7 +117,7 @@ UPDATE posts p
  WHERE p.kind = 'post'
    AND jsonb_typeof(p.images) = 'array'
    AND jsonb_array_length(p.images) = 1
-   AND (p.images->0->>'type' = 'video' OR lower(p.images->0->>'mimeType') LIKE 'video/%')
+   AND lower(p.images->0->>'mimeType') LIKE 'video/%' AND COALESCE(p.images->0->>'type', 'video') = 'video'
    AND COALESCE(jsonb_array_length(CASE WHEN jsonb_typeof(p.polls) = 'array' THEN p.polls END), 0) = 0
    AND COALESCE(jsonb_array_length(CASE WHEN jsonb_typeof(p.forms) = 'array' THEN p.forms END), 0) = 0
    AND p."attachedFormId" IS NULL

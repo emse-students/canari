@@ -110,6 +110,7 @@ export type ReelPickRefusal =
   | { reason: 'too-long'; capMs: number }
   | { reason: 'vertical-too-long'; capMs: number }
   | { reason: 'not-vertical' }
+  | { reason: 'frame-unread' }
   | { reason: 'long-landscape'; shortMs: number };
 
 /**
@@ -138,9 +139,9 @@ export function reelPickRefusal(
     rule !== null && frameKnown && isReelFrame(width ?? undefined, height ?? undefined, rule);
   if (!rule || rule.maxVerticalDurationMs === undefined || destination === 'chat') {
     if (durationMs !== null && durationMs > capMs) return { reason: 'too-long', capMs };
-    if (rule && !vertical && (frameKnown || destination === 'chat')) {
-      return { reason: 'not-vertical' };
-    }
+    if (rule && frameKnown && !vertical) return { reason: 'not-vertical' };
+    // Its own reason, never "not vertical": the frame may well be vertical, the engine could not say.
+    if (rule && !frameKnown && destination === 'chat') return { reason: 'frame-unread' };
     return null;
   }
   if (durationMs === null) return null;
@@ -164,6 +165,8 @@ export function reelPickRefusalText(refusal: ReelPickRefusal): string {
       return m.reels_capture_too_long_minutes({ minutes: Math.round(refusal.capMs / 60_000) });
     case 'not-vertical':
       return m.reels_capture_not_vertical();
+    case 'frame-unread':
+      return m.reels_capture_frame_unread_for_chats();
     case 'long-landscape':
       return m.reels_capture_long_landscape({ seconds: Math.round(refusal.shortMs / 1000) });
   }
