@@ -1,4 +1,4 @@
-## P2 - The notifications list is not re-read when a push opens it while it is already mounted
+## Reading owed - a push that opens the notifications list while it is already open shows its new row
 
 target: 1.7.0
 
@@ -14,3 +14,15 @@ is not mounted on that page, so a navigation to the route it already shows reads
 whose target is `notifications` (the three live sanctions, the birthday notice) lands on a stale list
 in that state. The fix belongs where the list is read: the arrival of a push for the list (or the
 route being re-entered) must re-read it, not a timer.
+
+**Fixed 2026-11-18.** `frontend/src/routes/notifications/+page.svelte` reads the list through one function,
+`readList`, called by `onMount` and by `afterNavigate` when the navigation lands on the route it left
+(`isReentryOfSameRoute`, `frontend/src/lib/utils/notifications/reentry.ts`): a push tapped on the open list
+is a `goto` to the same route, which does not remount. A fresh mount also receives the `afterNavigate`
+callback, from another route, and is not a re-entry, so it never reads twice. The rows that arrive are added
+to the unread band, never replacing it. Event-driven, no timer.
+
+**The reading owed (`1.7.0` pre-release, each phone):** on `/notifications` with the app in the background, a
+push whose target is the list (a sanction or the birthday notice) is tapped: the new row is in the list at
+once, and the log shows `[notifications] read list (reentry)` and a `GET /api/posts/notifications`. Opening
+the page cold from the same push logs `read list (mount)` once.

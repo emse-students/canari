@@ -1,6 +1,8 @@
 ## P1 - Opening a community: F1-F7 BUILT, the 200 ms budget is what is left (user, 2026-10-14; state re-read 2026-10-22)
 
-target: 1.7.0
+target: 1.7.1
+
+_Moved 2026-11-18 under the 1.7.0 scope cut ([decisions](owner-decisions-of-2026-11-17.md)): the owner closed it for 1.7.0 once #3769 and its phone reading were in, and both are; what is left is the 200 ms budget, which moved to the [slow-link chantier](slow-link-local-first-chantier.md)._
 
 _2026-11-17, the owner: this entry CLOSES for `1.7.0` once #3769 (merged 2026-11-17) and its phone
 reading are in; the 200 ms budget itself moves to the

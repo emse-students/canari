@@ -3565,7 +3565,7 @@ in [backlog](../backlog.md).
 ### A Welcome arriving while this device's own external commit awaits the gate was thrown away - FIXED 2026-11-16
 
 Read on the iPhone 12, `1.7.0-alpha.5`, a private salon granted right after an in-session community
-join ([entry](../backlog.d/p2-a-private-salon-granted-after-an-in-session-join-is-unreadable-on-the-iphone.md)):
+join (entry (entry deleted 2026-11-18, every half read)):
 `[WELCOME] ... is a KEY-DISTRIBUTION group - installing it as a seed carrier`, `key group ... already
 held - redelivered Welcome ignored (idempotent)`, then `dropped local state for ... (the server refused
 the external commit)`, `externalJoin REFUSED ... reason epoch_mismatch, group at 3`, and the retry

@@ -60,7 +60,7 @@ a member of any age, and that push is filtered for its own reader like every oth
    - **every addressed member device declared, on its live socket, that it applies rule 5** (rule 6).
    Otherwise `400 { error: 'addressed_unsupported', devices }`. Key groups are unchanged.
    The refusal's log line names the cause PER DEVICE (2026-11-13): `offline` (no presence key - the
-   usual one, a newcomer's phone when its Welcome is delivered, [backlog](../backlog.d/p2-an-offline-newcomer-receives-no-join-push.md))
+   usual one, a newcomer's phone when its Welcome is delivered, backlog (entry deleted 2026-11-18, every half read))
    or `did-not-declare` (online, a live session without the capability). The Lua check returns `2` for
    the first and `0` for the second (`addressabilityOf`), so nothing reads Redis a second time to
    classify it; the behaviour is the same for both.
@@ -88,7 +88,7 @@ a member of any age, and that push is filtered for its own reader like every oth
    answered, gone since`). A device that CONNECTS in between - answered `offline` (or `undeclared`) when
    its Welcome was answered, online before its turn in the one-at-a-time queue - is skipped, and
    **nothing recovers it today**: the newcomer asking for the register on its own reconciliation is
-   DESIGNED BUT NOT BUILT ([backlog](../backlog.d/p2-an-offline-newcomer-receives-no-join-push.md),
+   DESIGNED BUT NOT BUILT (backlog (entry deleted 2026-11-18, every half read),
    target `1.10.0`), so until it ships such a device gets no register, exactly like a newcomer offline
    at the push. A server that predates the field answers without it (`null` on the client): the push
    is sent and the send decides, as before. A verdict the server could not read is said at error there
@@ -400,7 +400,7 @@ before; a new newcomer takes them (rule 5, the join ask) and asks for the rest a
 
 The push is addressed and transport-only: a newcomer whose device is not connected when its Welcome
 is delivered - the usual phone in a pocket - is pushed nothing, not even the state, and nothing
-retried ([backlog](../backlog.d/p2-an-offline-newcomer-receives-no-join-push.md)). So the newcomer
+retried (backlog (entry deleted 2026-11-18, every half read)). So the newcomer
 ASKS, on facts it holds durably:
 
 1. **Owed from the admission.** Processing a Welcome into a conversation group (not a key group)
@@ -571,7 +571,7 @@ redelivered Welcome of a group already held joins nothing and asks nothing.
   the state and no message, never reading the store, addressed or (an older server) broadcast; the
   entitlement cases it used to carry are asserted on the answer to an ask.
 - **Owed on a pre-release**: reading 2 of the nicknames row with the new member's device NOT
-  connected at "Ajouter" ([backlog](../backlog.d/p2-an-offline-newcomer-receives-no-join-push.md)).
+  connected at "Ajouter" (backlog (entry deleted 2026-11-18, every half read)).
   The `sessionAuth` callback that runs the fresh-join reconciliation is not drivable from a unit test
   (`buildConversationRow.onePolicy.test.ts` says why); its `installed` input is proven above, and
   that reading is the proof of the callback itself.

@@ -1,6 +1,8 @@
-## Reading owed - rotation on the video, live and camera screens on both phones
+## Rotation on the video, live and camera screens, owed on both phones (a reading deferred to 1.7.1)
 
-target: 1.7.0
+target: 1.7.1
+
+_Deferred 2026-11-18 under the owner's rule of 2026-11-18 ([owner-decisions-of-2026-11-18.md](owner-decisions-of-2026-11-18.md)): needs a hand rotating the phone, not a regression._
 
 The owner's decisions and the mechanism are in [screen-orientation](../frontend/screen-orientation.md):
 portrait everywhere; the full-screen video viewer, the live viewer, the live broadcaster and the
