@@ -45,7 +45,7 @@ use openmls_traits::OpenMlsProvider;
 use openmls_traits::crypto::OpenMlsCrypto;
 use openmls_traits::types::HashType;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::admission::AdmissionPolicy;
 use crate::member_sightings::{MemberSighting, MemberSightings, MembershipEvidence};
@@ -369,6 +369,8 @@ pub fn canonical_user_id(user_id: &str) -> String {
 /// ([`identity_names`]), the pins, the lookups, the leaf a replace removes. Two spellings the
 /// binding accepts as one device must be one device everywhere else too.
 pub fn canonical_identity(identity: &str) -> Option<String> {
+    #[cfg(test)]
+    tests::CANONICALISATIONS.with(|n| n.set(n.get() + 1));
     if !is_well_formed_identity(identity) {
         return None;
     }
@@ -414,8 +416,19 @@ pub fn identity_names(found: &str, expected: &str) -> bool {
 /// Whether two identities name the same USER (the user half, ignoring ASCII case, as
 /// [`identity_names`] compares it).
 pub(crate) fn same_user(a: &str, b: &str) -> bool {
-    let user = |s: &str| s.split_once(':').map_or(s, |(u, _)| u).to_string();
-    user(a).eq_ignore_ascii_case(&user(b))
+    user_half(a) == user_half(b)
+}
+
+/// The user half of an identity as [`same_user`] compares it: everything before the first ':' (the
+/// whole string when there is none), ASCII-lowercased. Two identities are the same user exactly
+/// when their halves are equal, so a set of them answers [`same_user`] against a whole tree at once.
+fn user_half(identity: &str) -> String {
+    #[cfg(test)]
+    tests::CANONICALISATIONS.with(|n| n.set(n.get() + 1));
+    identity
+        .split_once(':')
+        .map_or(identity, |(u, _)| u)
+        .to_ascii_lowercase()
 }
 
 /// `events` as the JSON array a binding without serde of its own hands to TypeScript (the WASM
@@ -657,7 +670,7 @@ impl DeviceTrust {
         before: &[LeafKey],
         after: &[LeafKey],
     ) -> bool {
-        let remaining: std::collections::HashSet<String> = after
+        let remaining: HashSet<String> = after
             .iter()
             .filter_map(|(_, id, _)| canonical_user_of(id))
             .collect();
@@ -675,10 +688,16 @@ impl DeviceTrust {
         }
         // EVERY DEVICE whose leaf went, its user staying or not: the record that tells a device
         // coming back by its own commit from one that was never here ([`DeviceEvent::first_in_group`]).
+        // Canonicalised once, for the reason `observe_merged_commit` gives: a scan of the tree after
+        // for each leaf before was quadratic. An identity that is not well formed is dropped either way.
+        let after_devices: HashSet<String> = after
+            .iter()
+            .filter_map(|(_, id, _)| canonical_identity(id))
+            .collect();
         let mut devices_gone: Vec<(String, String)> = before
             .iter()
-            .filter(|(_, id, _)| !after.iter().any(|(_, a, _)| same_identity(a, id)))
             .filter_map(|(_, id, _)| canonical_identity(id))
+            .filter(|id| !after_devices.contains(id))
             .filter_map(|id| {
                 id.split_once(':')
                     .map(|(u, d)| (u.to_string(), d.to_string()))
@@ -1081,17 +1100,32 @@ impl DeviceTrust {
         {
             wrote |= self.reaffirm(committer, key);
         }
+        // THE TREE BEFORE, NORMALISED ONCE, AND EVERY QUESTION BELOW ASKS THESE SETS. Each leaf after
+        // the commit used to be compared with each leaf before it through `same_identity` and
+        // `same_user`, which normalise - allocate - both sides on every call: quadratic in the tree,
+        // and on a 400-device key group 95% of what a merged commit cost. A shut phone's salon push
+        // replays every commit since the app last ran, so it paid that on each
+        // (`tests/push_catchup_at_scale.rs`, channel-encryption section 28). Same predicates: an
+        // identity that is not well formed matches no device, as `same_identity` answers, and a
+        // user half is compared as `same_user` compares it.
+        let mut before_devices: HashMap<String, Vec<&[u8]>> = HashMap::new();
+        for (_, id, k) in before {
+            if let Some(c) = canonical_identity(id) {
+                before_devices.entry(c).or_default().push(k.as_slice());
+            }
+        }
+        let before_users: HashSet<String> = before.iter().map(|(_, id, _)| user_half(id)).collect();
         for (_, identity, key) in after {
-            let existed = before
-                .iter()
-                .any(|(_, id, k)| same_identity(id, identity) && k == key);
+            let canonical = canonical_identity(identity);
+            let held_keys = canonical.as_ref().and_then(|c| before_devices.get(c));
+            let existed = held_keys.is_some_and(|keys| keys.contains(&key.as_slice()));
             if existed {
                 continue;
             }
+            let user_was_present = before_users.contains(&user_half(identity));
             // PER GROUP, NEVER FROM THE PIN: no leaf of this device in the tree the commit was built
             // on, and no departure of it recorded here. A pin is one store any group's tree writes.
-            let first_in_group = !before.iter().any(|(_, id, _)| same_identity(id, identity))
-                && !self.device_left_group(group_id, identity);
+            let first_in_group = held_keys.is_none() && !self.device_left_group(group_id, identity);
             // This device's own leaf entering its own group (an external join it made) is not a
             // device being added to anybody's conversation.
             if same_identity(identity, own.0) && key.as_slice() == own.1 {
@@ -1111,7 +1145,7 @@ impl DeviceTrust {
                 LeafTrust::Pinned
                     if !(first_in_group
                         && added_by.is_some_and(|c| same_identity(c, identity))
-                        && before.iter().any(|(_, id, _)| same_user(id, identity))) =>
+                        && user_was_present) =>
                 {
                     // A package under the pinned key reached somebody: the device still holds it.
                     wrote |= self.reaffirm(identity, key);
@@ -1148,7 +1182,7 @@ impl DeviceTrust {
                     added_by.unwrap_or("an unreadable sender"),
                 ),
             }
-            let member_already_present = before.iter().any(|(_, id, _)| same_user(id, identity));
+            let member_already_present = user_was_present;
             self.push_event(DeviceEvent {
                 group_id: group_id.to_string(),
                 epoch,
@@ -1176,6 +1210,77 @@ impl DeviceTrust {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    thread_local! {
+        /// How many identities [`canonical_identity`] canonicalised on this thread - the unit the
+        /// cost of a merged commit's observation is counted in, rather than a clock.
+        pub(super) static CANONICALISATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    /// A MERGED COMMIT IS OBSERVED IN TIME LINEAR IN THE TREE (2026-11-17). A shut phone's salon
+    /// push re-applies every commit of the key group since the app last ran
+    /// (`decrypt_push_message_with_commits_with_key`), and this observation ran on each of them,
+    /// comparing leaves after the commit with every leaf before it - normalising both sides of each
+    /// comparison. On a 400-device key group it was 95% of a commit's cost: ~74 ms of ~78 ms on one
+    /// workstation, the MLS work itself under 4 ms (`tests/push_catchup_at_scale.rs`). Counted in
+    /// normalisations (`canonical_identity` and the user half `same_user` compares), not
+    /// milliseconds, so the bound holds on any machine. The commit brings many leaves of every kind
+    /// the loop tells apart - a new device of a present user, a new user, a device pinned in another
+    /// group - so a scan of the tree per new leaf, on any of its branches, breaks the bound.
+    #[test]
+    fn a_merged_commit_is_observed_in_time_linear_in_the_tree() {
+        const LEAVES: usize = 400;
+        const EACH: usize = 40;
+        let mut t = DeviceTrust::default();
+        let own = ("me:phone", &[0u8; 32][..]);
+        let open = Some(AdmissionPolicy::Open);
+        let pinned: Vec<LeafKey> = (0..EACH as u32)
+            .map(|i| (i, format!("pinned{i}:d"), vec![9u8; 32]))
+            .collect();
+        t.observe_merged_commit("other", 3, &[], &pinned, None, own, open);
+        let before: Vec<LeafKey> = (0..LEAVES as u32)
+            .map(|i| (i, format!("user{i}:dev{i}"), vec![(i % 251) as u8; 32]))
+            .collect();
+        t.observe_merged_commit("kg", 10, &before, &before, None, own, open);
+        t.take_events();
+        let mut after = before.clone();
+        let mut next = LEAVES as u32;
+        for i in 0..EACH {
+            after.push((next, format!("user{i}:dev{i}-b"), vec![5u8; 32]));
+            after.push((next + 1, format!("fresh{i}:d"), vec![6u8; 32]));
+            after.push((next + 2, format!("pinned{i}:d"), vec![9u8; 32]));
+            next += 3;
+        }
+        CANONICALISATIONS.with(|n| n.set(0));
+        t.observe_merged_commit("kg", 11, &before, &after, Some("user0:dev0"), own, open);
+        let counted = CANONICALISATIONS.with(|n| n.get());
+        let leaves = before.len() + after.len();
+        assert!(
+            counted <= 20 * leaves,
+            "one merged commit normalised {counted} identities for {leaves} leaves before and after - \
+             quadratic, and a push replaying a key group's commits pays it on every one"
+        );
+        let events = t.take_events();
+        assert_eq!(
+            events.len(),
+            2 * EACH,
+            "every new device is an event; a device pinned elsewhere re-entering under its key is not"
+        );
+        assert!(
+            events
+                .iter()
+                .filter(|e| e.identity.starts_with("user"))
+                .all(|e| e.member_already_present),
+            "a new device of a present user says so"
+        );
+        assert!(
+            events
+                .iter()
+                .filter(|e| e.identity.starts_with("fresh"))
+                .all(|e| !e.member_already_present && e.first_in_group),
+            "a new user is not already present, and is first in the group"
+        );
+    }
 
     fn lk(index: u32, identity: &str, key: u8) -> LeafKey {
         (index, identity.to_string(), vec![key; 32])

@@ -1152,13 +1152,14 @@ before the column existed was minted under a roster nobody recorded, which is th
 exists for; the codec keeps absent absent rather than letting `Number(null)` turn it into a real
 epoch.
 
-**Three orderings in `reserveOutboundSlot`, each the answer to a failure that leaves no trace:**
+**Four rules in `reserveOutboundSlot`, each the answer to a failure that leaves no trace:**
 
 | Rule | What the other order costs |
 | --- | --- |
 | Serialised per (channel, sender) | Two racing sends read one `sentCount`, seal two messages under one AES-GCM key. No symptom at either end. |
 | Distribute the seed, THEN persist the session | Persisting first leaves a session in hand that nobody can read; it is reused, so every message under it is lost, permanently. Distributing first means a failure leaves the seed nowhere and the next attempt mints again. |
 | Burn the index before the send, and leave it burned on failure | A gap costs nothing - every message carries its index and the key is derived directly. Re-handing one out after a send that the server did receive costs the session. |
+| The count is written by compare-and-swap (2026-11-17) | The chain above serialises ONE document. Two tabs share the store, and only the leader writes it (`mayWrite`), but leadership is read at the write: between a lock steal and the rejection that tells it, the old leader still answers "I lead". Resumed with the count it read before the new leader sent, it wrote that count back, and both tabs then handed out indices already sealed (refused by the server as `CHANNEL_MESSAGE_KEY_REUSED`, so lost sends rather than a repeated nonce - every seal draws a fresh one). `saveGraineSession(..., sentCountWas)` reads and writes the row in ONE transaction (one `UPDATE ... WHERE sent_count = $n` on SQLite) and refuses with `StoreWriteRefusedError` when the count moved or the row is gone, logged `[GRAINE] session ... not written: its count moved` at `error` - two writers overlapped, which the lead guard exists to prevent. The seal answers it as the lead lost during the reservation (`main-tab-lead-lost`, nothing sealed, Retry safe). Pinned by `sessionManager.twoTabs.test.ts`, two module instances over one IndexedDB. |
 
 **The sender id is lower-cased at the one place a session is written and the one place it is looked
 up.** A row stored as `Alice` and searched for as `alice` is never found, so every send mints - a
@@ -3564,7 +3565,7 @@ in [backlog](../backlog.md).
 ### A Welcome arriving while this device's own external commit awaits the gate was thrown away - FIXED 2026-11-16
 
 Read on the iPhone 12, `1.7.0-alpha.5`, a private salon granted right after an in-session community
-join ([entry](../backlog.d/p2-a-private-salon-granted-after-an-in-session-join-is-unreadable-on-the-iphone.md)):
+join (entry (entry deleted 2026-11-18, every half read)):
 `[WELCOME] ... is a KEY-DISTRIBUTION group - installing it as a seed carrier`, `key group ... already
 held - redelivered Welcome ignored (idempotent)`, then `dropped local state for ... (the server refused
 the external commit)`, `externalJoin REFUSED ... reason epoch_mismatch, group at 3`, and the retry
@@ -4998,3 +4999,179 @@ Device readings: on the Mi 9T, a member whose phone never opened community X rec
 for X - a generic banner, `joinKeyGroupFromPush: settled joined`, the next push readable, and the
 app's next start logging `[KEY_GROUP_PUSH_JOIN] ... registered`; on the iPhone, the generic banner
 and the join at the next foreground.
+
+## 27. The iPhone held two seed mirrors, and the one without the extension's seeds won - FIXED 2026-11-17
+
+**The question the [`[PUSH_BLIND]`](#14-the-seed-was-pushed-to-a-shut-phone-and-the-push-service-threw-it-away-unread---fixed-2026-09-21-android)
+count left open.** Since `v1.6.5` every blind salon banner on production read
+`missing=seed refused=none` - the seed was not in the mirror, so no open ran - mostly on iOS
+(8 lines on 2026-11-14, 6 of them iOS; the one line of 2026-11-16, iOS). The line could not say WHY
+the seed was absent, when [section 19](#19-design-the-seed-travels-with-the-message---decided-by-the-user-2026-09-27)
+puts the seed's frame on every message.
+
+**Read on production, 2026-11-16, read-only.** One salon, one iPhone receiver, one sender session:
+
+| time (UTC) | what the server logs say |
+| --- | --- |
+| 13:06:39 | session `S` index 0 sealed; `[CHANNEL_PUSH] ... seedFrame=<n>ch`, the iPhone's push `inline=true` - no blind report |
+| 13:08:08 | `S` index 1, same - no blind report: the seed was held |
+| 13:08:15-19 | the iPhone comes to the FOREGROUND: `PUSH_REFRESH`, `PUSH_REGISTER`, `MSG_FETCH count=2`, `ACK deleted=2` |
+| 13:08:19.7 | `S` index 2 sealed, its frame attached; the push leaves at 13:08:20.06 |
+| 13:08:20.66 | `[PUSH_BLIND] platform=ios missing=seed held=false refused=none` |
+
+The key group had not moved since the day before (its last commit 21 hours earlier), so no epoch gap
+explains it. The seed was HELD at 13:08:08 and ABSENT at 13:08:20, and the only thing between the two
+is the app becoming active.
+
+**The cause, in the code.** iOS kept TWO copies of `graine_seeds.json`: the app's
+(`app_data_dir`), written by the foreground, and the App Group's, which the notification extension
+reads and writes - it is where `openSeedFrame` stores a seed it opened from a frame. Every
+`didBecomeActive` and `willResignActive` copied the app's file over the group's AS BYTES
+(`CanariMirrorPushStateToAppGroup` -> `sync_seed_mirror_copy`). So:
+
+- a seed the extension stored while the app was shut was ERASED the moment the app came to the
+  foreground - the 13:08:15 activation above;
+- the frame on the next push could not stand in for it: the foreground had just drained the key
+  group (`ACK deleted=2`) and applied that very frame, so the state the extension decrypts with no
+  longer opens it (an MLS application secret is deleted once used);
+- and a seed the foreground absorbed reached the extension only at the next lifecycle copy.
+
+A STATE that lasts until the next lifecycle copy, on the phone that matters most to an active
+salon: the one being opened. That fits the shape of the 2026-11-14 lines too - six in fifteen
+minutes in ONE salon, three accounts.
+
+**The fix deletes the overlap rather than reconciling it.** One file per install, as Android has
+always had: on iOS the foreground now writes the App Group's file (`seed_mirror_home`, `push.rs`), the
+extension writes the same file, and every writer already holds its `graine_seeds.lock`
+(section 19's lock, which orders processes). The lifecycle copy of the seeds is gone, and the
+app-alive push path in `canari_push.mm` (`CanariGraineSeedHeld`, `CanariHandleChannelMessage`) reads
+the App Group's file. The copy an older build left in `app_data_dir` is folded in ONCE, at the first
+foreground edit (`fold_legacy_seed_mirror`): a UNION under both writers' locks, never an overwrite -
+a session the group holds keeps its entry, with both writers' labels; a session it lacks is added; a
+copy no key opens, or that is not JSON, is deleted unfolded (`MirrorReadError::Unopenable` /
+`Unparsable`), while a copy that merely failed to READ (`MirrorReadError::Io`) is kept and the edit
+fails, so the next one folds it. An account's wipe edits the one file
+([auth](../frontend/modules/auth.md#the-seed-mirror-labels-each-entry-with-its-writers-2026-11-07)),
+and the factory wipe now deletes it under its lock (`storage::wipe_app_group`): with no lifecycle copy
+left to replace it, it would otherwise outlive the wipe. Retiring the fold is in
+[legacy-compatibility](../legacy-compatibility.md).
+
+**What the union cannot undo, stated.** A removal the older build made in its OWN copy only - a salon
+left, a session the retention sweep forgot, after the last lifecycle copy and before the upgrade -
+is not in the app's file, while the group's still holds the entry, so the union keeps it. Nothing
+in the two files tells that entry from a seed the extension stored meanwhile, and the forgets were
+never recorded, so they cannot be re-run. What it costs: sealed seeds of a salon this account once
+read, at most `GRAINE_MIRROR_SESSIONS_PER_CHANNEL` (20) per channel, in a file only Rust opens; no
+push of a salon left reaches the phone to use them. It ends with the per-channel bound when that
+channel is written again, an account's wipe, or the factory wipe - and nothing else, which is the
+window, said rather than guessed around.
+
+**Every foreground edit now takes a lock IN the App Group, so it holds background time.** An app
+suspended while it holds a lock on a shared-container file is killed (`0xdead10cc`) - the rule the
+Share Extension's capture already obeys under `performExpiringActivity`
+([sharing](../frontend/sharing.md)). An edit can start in the seconds after the app leaves the
+screen (a frame the page absorbs on its way out), so `with_app_mirror` holds a
+`beginBackgroundTaskWithName:` assertion (`app_group::BackgroundTime`) across the fold and the edit,
+and ends it when the edit returns; its expiry, never the expected path for a lock held milliseconds,
+is said at ERROR and the task ended as the API requires.
+
+**What is proved where, and what is not compiled here.** The home the foreground writes is chosen
+under `cfg(target_os = "ios")` (`seed_mirror_home`), and so is the background-time assertion: no
+host build or test compiles either. The ONLY proof that the foreground writes the App Group is the
+source scan in `iosMlsMirror.test.ts`; the iOS branch is first compiled by the release's iOS build,
+and first run on the iPhone reading below. The fold itself, the union, the refusals and the factory
+wipe's removal run in host tests.
+
+**What holds it.** `a_seed_the_extension_stored_survives_the_app_becoming_active` (`push.rs`, red
+against the byte copy), the fold's union, refusal and unreadable-copy cases, and
+`iosMlsMirror.test.ts`, which reads the Objective-C no CI compiles: the activation mirror names no
+seed file, and the app-alive path reads `CanariAppGroupPath()`.
+
+**Not established, and said:** the one Android line of 2026-11-14 (`held=true`). Android has one
+file, so this cause cannot reach it: [its own entry](../backlog.d/p2-android-blind-salon-banner-held-true.md).
+The bench run against a key group of production size, which this section does not cover, is
+[section 28](#28-a-salon-pushs-catch-up-against-a-key-group-of-production-size---measured-2026-11-17). What is owed for
+this fix is in [the reading](../backlog.d/reading-owed-ios-seed-mirror-one-copy.md).
+
+## 28. A salon push's catch-up against a key group of production size - MEASURED 2026-11-17
+
+**The question.** Section 27's bench reached the seed frame's commit catch-up only with a key group
+of a few devices, at epochs 6 to 9. A shut phone re-applies EVERY key-group commit since the app
+last ran, in memory, on EVERY salon push (`decrypt_push_message_with_commits_with_key`; nothing in
+the background persists a commit), under `MlsStateLock` on Android and inside the notification
+extension's time and memory on iOS. Does it still open the frame at production's size, and at what
+cost?
+
+**Production, read-only aggregates, 2026-11-17.** The largest key group stood at epoch 403 with 206
+active devices and took 3 commits in a day, 28 in a week, 148 in thirty days; the next one 107
+devices, 23 a week. Their commits averaged 6.2 KB in the log (base64), 7.3 KB at most: a phone shut
+for a month asks `POST mls/push/commits` for ~0.9 MB.
+
+**The bench** is `frontend/mls-core/tests/push_catchup_at_scale.rs`, on a workstation, no phone:
+every member enters by its own external commit as a key group is entered, 200 more join and leave
+(every other leaf, so the tree carries the blanks departures leave), the measured device is sealed
+at epoch E, K device joins land, a member seals a frame at E + K, and the push path's own sequence
+runs on the sealed bytes - `load_with_key`, K x `process_incoming_message`, the frame. A counting
+allocator gives the peak heap. Its churn is heavier than production's (~21 KB per commit against
+6.2 KB), so its wire column is pessimistic.
+
+```
+cargo test --release --test push_catchup_at_scale -- --ignored --nocapture
+```
+
+**The frame always opened. The cost did not hold, and one observer was 85-95% of it.** Every figure
+below is from ONE workstation (release build), shared with other work while it ran: the "after"
+column is the range of two runs, and a second reviewer's machine measured 1.4-2x slower. A phone is
+slower again, roughly 3-5x.
+
+| key group | behind | apply, before | apply, after | per commit, after | peak heap |
+| --- | --- | --- | --- | --- | --- |
+| 206 devices | 30 (a week) | 0.6 s | 0.10-0.19 s | 3.3-6.2 ms | 2.0 MiB |
+| 206 devices | 150 (a month) | 4.5 s | 0.57-0.89 s | 3.8-6.0 ms | 2.7 MiB |
+| 206 devices | 400 | 31.5 s | 2.4-3.5 s | 5.9-8.8 ms | 4.9 MiB |
+| 400 devices | 150 | 11.4 s | 0.87-2.8 s | 5.8-18.9 ms | 4.6 MiB |
+| 400 devices | 400 | 56.7 s | 2.8-4.0 s | 7.1-10.1 ms | 6.7 MiB |
+| 400 devices + 2535 KeyPackages | 400 | 87.7 s | 2.7-3.1 s | 6.9-7.9 ms | 12.2 MiB |
+
+Before, a phone a month behind in production's largest community spent an estimated 15-20 s per
+salon push replaying commits - every push again, on a lane that serialises them; an iPhone's
+extension has ~30 s in all. **The cause was not MLS**: instrumented, a commit's openmls work
+(`process_message` + `merge_staged_commit`) was under 4 ms on a 400-device tree, and the
+device-trust observer that runs on every merged commit (`DeviceTrust::observe_merged_commit`,
+`record_departures`) took ~74 ms. It compared each leaf after the commit with each leaf before it
+through `same_identity` - and each new leaf with each leaf before it through `same_user` - both of
+which normalise (allocate) the two identities on every call: quadratic in the tree, 325 612
+normalisations for one commit at 400 leaves on `main`.
+
+**The fix normalises the tree before the commit ONCE** - its devices with their keys, and the set of
+its user halves - and every question of the loop asks those sets: the same predicates (an identity
+that is not well formed matches no device, as `same_identity` answers; a user half compares as
+`same_user` compares it), linear in the tree. Pinned in a unit of work, not a clock:
+`a_merged_commit_is_observed_in_time_linear_in_the_tree` counts every normalisation (both
+`canonical_identity` and the user half), on a commit bringing 120 leaves of every kind the loop
+tells apart, under a bound of 20 per leaf; the shape with only the first scan removed still
+counted 134 524. The rule is in
+[durable-rules](../durable-rules.md#mls-state-and-keys---mls-protocol-auth).
+
+**Why a commit costs more the further behind the device is.** In the bench the key group GROWS by one
+device per commit behind (206 to 606), and every term rises with it in proportion: instrumented over
+400 commits, openmls's merge went from ~0.8 to ~2.4 ms, the observer from ~0.7 to ~2.0 ms, Graine's
+departure tracker from ~0.16 to ~0.42 ms - all linear in the tree, none in the distance. Two scans
+inside the observer are bounded rather than linear: `device_left_group` reads the recorded departures
+(at most `MAX_RECORDED_DEPARTURES`, 8192) once per NEW device, and `insert_pin` the pruned list (at
+most `MAX_REMEMBERED_PRUNED`, 8192) once per first sight - plain string comparisons, no allocation,
+and empty on the bench's device.
+
+**What it leaves, said.** (1) The replay is still paid on every push: a month behind production's
+largest key group could take 3-6 s on a phone. Persisting it from the background would make a
+second writer of `mls.bin`, which section 26's compare-and-swap install shows is possible but is a
+design of its own, decided on the phone readings below. (2) The fetch: ~0.9 MB for a month at
+production's commit size, under a 5 s read timeout - a slow link fails it and the banner is
+generic; that belongs to the slow-link chantier. (3) Heap: 12.2 MiB peak with 2535 KeyPackages in
+the state, the Rust heap only; a state the size of the 15.5 MB one a store phone carried is not
+measured here. The log line the phones are read by (`catchup: replay since epoch=... took ... ms`,
+added to the Android service and the iOS extension; it is written for a refused replay too) was
+read on both bench phones on `1.7.0-alpha.9`, 32 commits behind: 363 ms on the Mi 9T and 67 ms in
+the iPhone 12's extension (peak 3 MB), the banner showing the text on both
+([readings](../device-verification.md#the-phone-readings-of-2026-11-17-170-alpha9-both-phones-and-the-rig)).
+Neither figure is near the ~10 s that would make persisting the catch-up the next step.

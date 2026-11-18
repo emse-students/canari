@@ -139,7 +139,9 @@ Refusals are typed: the body's `code` is the discriminator, never the message.
 | `POST /api/lives/:id/removed-viewers` `{ viewerId }` | the broadcaster | `{ liveId, viewerId }`, idempotent; `400 LIVE_VIEWER_IS_SELF` |
 | `POST /api/lives/:id/cut` `{ reason, details? }` | a content moderator (`isContentModerator`) | `{ liveId, broadcasterId, reason, cutAt, endReason, newlyCut, priorCuts, strike, consequence, standing }`, idempotent ([the ladder](#the-strike-ladder-wp-l8b)). `403 LIVE_CUT_FORBIDDEN` (asked before the live is read), `400 LIVE_CUT_REASON_INVALID` (`spam`/`harassment`/`inappropriate`/`other`), `400 LIVE_CUT_DETAILS_INVALID` (over 500 characters), `404 LIVE_NOT_FOUND` ([moderation](#moderation-wp-l8-server-half)) |
 | `POST /api/lives/broadcasters/:userId/withdrawal` `{ reason, details? }` | a content moderator | `{ userId, reason, withdrawnAt, newlyWithdrawn, cutsOnRecord }`, idempotent. `403 LIVE_WITHDRAWAL_FORBIDDEN` (asked first), `400 LIVE_ACCOUNT_INVALID`, the cut's two `400`s, `409 LIVE_WITHDRAWAL_NOT_DUE` (with `cutsOnRecord`, `required: 3`) |
-| `DELETE /api/lives/broadcasters/:userId/withdrawal` | a content moderator | `{ userId, lifted }`, idempotent; `403 LIVE_WITHDRAWAL_FORBIDDEN`, `400 LIVE_ACCOUNT_INVALID` |
+| `DELETE /api/lives/broadcasters/:userId/withdrawal` | a content moderator | `{ userId, lifted }`, idempotent; `403 LIVE_WITHDRAWAL_FORBIDDEN`, `400 LIVE_ACCOUNT_INVALID`. A real lift (`lifted: true`) writes the member's `live_reinstated` notice and push ([below](#the-three-pushes-a-broadcaster-gets-wp-l8b)) |
+| `GET /api/lives/broadcasters/withdrawn` | a content moderator | the accounts whose right is withdrawn, newest first (at most 500 read), each `{ userId, displayName, cutsOnRecord, suspendedUntil, withdrawnAt, withdrawalDue, withdrawalReason }`, **narrowed to the people the caller may act on** (`moderatedUserIds`: all for a platform admin, the people of its own spaces for a BDE holder, none for an institution holder) so the list never offers a lift the server would refuse. Reads `live_broadcast_withdrawals`, never a report. `no-store`; `403 LIVE_WITHDRAWAL_FORBIDDEN` |
+| `GET /api/lives/broadcasters/:userId/standing` | a content moderator, in scope | the same row for ONE account, with no report in between; `403 LIVE_WITHDRAWAL_FORBIDDEN`, `403 MODERATION_OUT_OF_SCOPE` (the withdrawal's own door and scope), `404 LIVE_BROADCASTER_NOT_FOUND` (an id that is no account: never a clean standing). `no-store` |
 
 **Every `410` is `{ code: 'LIVE_ENDED', endedAt, endReason }`** (one constructor, `liveEnded`): `endReason` is `broadcaster`, `dropped`, `erased` or `cut` (`max_duration` is no longer written: no live has a longest duration, and the database check still allows it for rows of the past), and a screen branches on it, never on a message.
 
@@ -1126,7 +1128,8 @@ rolling 90 days). No automatic cut: every rung starts from a person's cut. Code:
 - **The notice** (`post_notifications`, `text` = the reason code, no actor) **and its push**: `live_cut`
   for strike 1 when the cut ended the live (as before); **`live_suspended`** for strike 2 and later
   (whether or not the live was still open: a suspension is news either way); **`live_withdrawn`** at a
-  withdrawal. A strike-1 cut of a live the broadcaster had already ended is not notified (unchanged).
+  withdrawal; **`live_reinstated`** (1.7.0, floor `1.7.0`) when a staff lift really removed the row
+  (`lifted: true`; a repeat writes nothing; no actor, no text, best effort and logged). A strike-1 cut of a live the broadcaster had already ended is not notified (unchanged).
   The bell rows for all three are built (`NotificationRow`, `notif_live_*_text`, the reason label).
 
 ### The three pushes a broadcaster gets (WP-L8b)
@@ -1139,6 +1142,7 @@ Built 2026-10-21. The three notices above are pushed through the one pipeline
 | `live_cut` | `social_live_cut` | "Votre live a été interrompu" / "La modération a coupé votre live. Ceci est un avertissement." ("Your live was stopped" / "Moderators cut your live. This is a warning.") |
 | `live_suspended` | `social_live_suspended` | "Lives suspendus" / "Après une nouvelle coupure par la modération, vous ne pouvez plus lancer de live pour le moment." ("Lives suspended" / "After another cut by moderators, you cannot start a live for now.") |
 | `live_withdrawn` | `social_live_withdrawn` | "Droit de lancer un live retiré" / "La modération vous a retiré le droit de lancer un live." ("Right to go live withdrawn" / "Moderators have withdrawn your right to start a live.") |
+| `live_reinstated` (1.7.0) | `social_live_reinstated` | "Droit de lancer un live rétabli" / "La modération vous a rendu le droit de lancer un live ; une suspension en cours reste appliquée jusqu'à sa fin." ("Right to go live restored" / "Moderators gave back your right to start a live; a running suspension still applies until it ends.") - a running suspension is NOT lifted with it, so the sentence promises nothing while one runs (charter, principle 6: a sanction lifted has the voice of the sanction) |
 
 - **Fixed sentences, composed on the device** (`notif_social_live_*` on Android, `notif.social.live_*`
   in the iOS app and NSE, fr + en): no actor (which moderator acted is not the broadcaster's to
@@ -1269,7 +1273,10 @@ report and prints ONE line:
 
 Pinned by `live-report-age.spec.ts` (the arithmetic across a weekend and the October DST night, the
 three levels, no id in the line) and `lives.integration.spec.ts` (the SQL: only pending live and
-live_chat reports, the cast).
+live_chat reports, the cast). **Read on dev 2026-11-17** (G4 of
+[live-production](../frontend/modules/live-production.md#2-the-gates-each-with-its-evidence)): dev's
+social-service printed `[LIVE_REPORT_AGE] pending=0` at :53 every hour since its start that day,
+fourteen lines, its `debug` entry line before each.
 
 ### The first-live rules (L11)
 
@@ -1320,13 +1327,15 @@ What is left:
   [the pre-live read](../frontend/modules/live.md#the-broadcaster-as-built)); in `/admin/moderation`, the standing on a live
   report, the withdraw button and the `live_chat` row with its integrity (`altered`, `key-rotated`
   and `unverifiable` shown with ONE weight, "not proven", [why](#a-reported-chat-line-wp-l8b)) are
-  built too (`ModerationLiveBlock`, `ModerationChatLineBlock`). Left: a control lifting a withdrawal.
+  built too (`ModerationLiveBlock`, `ModerationChatLineBlock`), and so is the control lifting a
+  withdrawal (2026-11-17, now also from the withdrawn list, with no report: 1.7.0, [the moderation client](../frontend/modules/live.md#the-moderation-client-wp-l8s-client-half-2026-10-19)).
+  Nothing is left in code; the readings were all taken by 2026-11-18 ([S6](../device-verification.md#the-phone-and-web-readings-of-2026-11-18-s6-170-alpha12-live-moderations-last-halves-the-reel-card-overlays-the-birthday-morning)).
 
 ## Decisions of 2026-10-20: moderation, reactions, the audience
 
 The user's answers to the open moderation questions. **The ladder, the 90 days, the reported line
-and the reactions are BUILT (2026-10-21, server)**, and so is [the 24 h alarm](#the-24-h-alarm-on-the-live-report-queue-wp-l8b-item-e); the viewer cap is not - WP-L8b in the
-[backlog](../backlog.d/p1-live-moderation-wp-l8-merged-the-client-s-standing-refusals-the-vie.md).
+and the reactions are BUILT (2026-10-21, server)**, and so is [the 24 h alarm](#the-24-h-alarm-on-the-live-report-queue-wp-l8b-item-e); the viewer cap is not - its staged lifting is
+[its own entry](../backlog.d/live-viewer-cap-lifted-in-measured-steps.md).
 
 | Question | Decision | What it changes in what exists |
 | --- | --- | --- |
@@ -1455,7 +1464,7 @@ below is reversible and names its reason.
 | C9 | **Who may post** | Exactly who may WATCH (`assertMayWatch`: the rule of a post, not blocked with the broadcaster, not removed, the live open), **and not muted** (`403 LIVE_MUTED`, the account-level mute of [moderation](../moderation-and-blocking.md), the same code as a muted start). The ended and removed checks are **repeated under the row lock**, so a removal or an end that commits first is never overtaken by a message. **No seat is needed**: a seat is bandwidth, and a message costs none of it | "A banned or removed viewer cannot post" (user): banned is the account mute, removed is the broadcaster's per-live list. |
 | C10 | **Blocks between viewers** | A viewer never receives the messages, or the reaction taps, of an account blocked either way (`blockedUserIdsFor`, filtered per poll) | As the feed hides a blocked author. |
 | C11 | **Content** | **Plain text only**, at most **300 characters** (UTF-16 units, the client's to enforce before sealing - the server sees ciphertext). The server bounds the SEALED size: 29 to 928 bytes (12 IV + at most 900 UTF-8 bytes + 16 tag). **No link is rendered** (a URL stays text), **no mention in v1** (REVERSED 2026-11-09: [mentions](#mentions-in-the-live-chat-owner-2026-11-09)), no media | The server cannot read a message, so length and shape are the client's; the byte bound is what the server CAN hold. A rendered link or a mention would need the server to resolve something it cannot read. |
-| C12 | **Encryption** | The message is sealed with the LIVE KEY (AES-256-GCM, fresh 12-byte IV): `iv + ciphertext + tag`, AAD `canari-live-chat-v1` `0x00` + the live id (16 raw bytes) + the `clientId` (16 raw bytes) + the author's account id (UTF-8). Built in `frontend/src/lib/live/liveChatCrypto.ts` (client PR), **owed the same adversarial crypto review as the segment seal** | The AAD binds a message to its live, its author and its idempotence key: a server (or a store) that served one author's ciphertext under another's name, or replayed it on another live, makes it FAIL to open, and the client drops it. Chat lines never reach the media store: they live only in social-service's database, beside the key that opens them, so **the seal gives NO confidentiality against anyone holding that database or its backups**, nor against social-service itself. What it gives is integrity of place and author. Reactions are NOT sealed: the server must add them up (C7), and a kind and a count say nothing a picture on the screen does not. |
+| C12 | **Encryption** | The message is sealed with the LIVE KEY (AES-256-GCM, fresh 12-byte IV): `iv + ciphertext + tag`, AAD `canari-live-chat-v1` `0x00` + the live id (16 raw bytes) + the `clientId` (16 raw bytes) + the author's account id (UTF-8). Built in `frontend/src/lib/live/liveChatCrypto.ts` (client PR), **reviewed adversarially 2026-11-17 (G7): sound, [below](#the-adversarial-review-of-the-chat-seal-g7-2026-11-17)** | The AAD binds a message to its live, its author and its idempotence key: a server (or a store) that served one author's ciphertext under another's name, or replayed it on another live, makes it FAIL to open, and the client drops it. Chat lines never reach the media store: they live only in social-service's database, beside the key that opens them, so **the seal gives NO confidentiality against anyone holding that database or its backups**, nor against social-service itself. What it gives is integrity of place and author. Reactions are NOT sealed: the server must add them up (C7), and a kind and a count say nothing a picture on the screen does not. |
 | C13 | **A late joiner** | The first poll without `messagesAfter` answers the **newest 50 messages the viewer can SEE** - hidden ones and blocked authors are left out IN THE SQL, BEFORE the limit, so hides never empty a joiner's backlog - and a message cursor that is the live's highest seq (read before the rows, so nothing between is skipped; a row read twice is deduped by the client on `author:clientId`); **no reaction backlog** (`reactionsAfter` absent: the cursor only) | A reaction is a moment; a joiner sees the stream from now. |
 | C14 | **Hiding a message** | `POST /api/lives/:id/messages/:messageId/hide`, by the **broadcaster or staff** (`isContentModerator`: a platform admin, or a BDE member holding `MODERATE` - the posts' one moderator predicate, as WP-L8's staff cut uses). It ERASES the ciphertext (`sealed = NULL`, `hiddenAt` set) and gives the row a NEW sequence number, so every viewer's next poll carries a tombstone `{ id, seq, hidden: true }` and removes the line it drew. Idempotent; `404 LIVE_MESSAGE_NOT_FOUND` for a message not on that live; a caller who is neither is `404 LIVE_NOT_FOUND` (no oracle, as every write). **A live STAFF CUT and then purged** answers the broadcaster and staff its `410 LIVE_ENDED` `endReason: 'cut'` from WP-L8's `live_cuts` record (`LivesService.cutOf`), as every live route does | D6. Erasing rather than flagging: nobody may read it again, so nothing keeps it. Re-sequencing is what makes the cursor carry a hide without a second channel. **Removing a viewer and reporting are WP-L8's** (its own pull request), not duplicated here. |
 | C15 | **The live ends** | Every chat route answers what the live's other routes answer: `410 LIVE_ENDED` WITH its `endedAt` and `endReason` (WP-L8's one `liveEnded`, so `cut` is told apart), and a write that reaches a live purged after a cut gets that `410 cut` too (`refuseIfCut`); the rows go with the live (C2) | One end, the row's (Q5). |
@@ -1478,6 +1487,27 @@ Unlike the segments, a chat line is never in the media store: it lives only in s
 database, next to the live key. The AAD binds a line to its live, its author and its `clientId`;
 there is **NO confidentiality against whoever holds that database or its backups**, nor against
 social-service.
+
+#### The adversarial review of the chat seal (G7, 2026-11-17)
+
+A fresh reviewer was given the code (`liveChatCrypto.ts`, `liveChat.ts`, the mention and report
+paths of both sides, `live-chat-seal.ts`, `live-report-signature.ts`, `live-key-at-rest.ts`) and the
+C12 row, not this page's reasoning. **Verdict: sound - every finding low or info.** No viewer, author,
+database or backup holder, or viewer of another live can forge, re-attribute, move or re-key a line.
+Confirmed against the code: the AAD reads one way (the author, the only variable field, comes last;
+ids are lower-cased on both sides); the chat, segment and poster seals are domain-separated; a swap
+fails GCM and the line is dropped; a reporter cannot frame anyone (the server opens the sealed line
+and requires the reported text to equal it, and the report's MACs bind the report id); no `{@html}`,
+every text in its own `<bdi dir="auto">`; no key, plaintext or ciphertext in a log.
+
+| # | Finding | Severity | Disposition |
+| --- | --- | --- | --- |
+| C-1 | **The client drew any length that opened**: the server stores up to 900 bytes of text (it cannot count characters it cannot read), three times the composer's 300, and a line was drawn `whitespace-pre-wrap` - a modified client could fill the overlay with one line of line breaks | low | **Fixed**: 300 UTF-16 units is part of the v1 FORMAT (`LIVE_CHAT_V1_MAX_CHARS`), and a longer plaintext is `LiveChatOpenError('out-of-format')`, dropped like any line that does not open, and the app never SENDS one: the session and the composer apply that bound from the start, before `GET /api/lives/limits` answers, and never a larger one it answers (review of #3783); a line is drawn as one run (`whitespace-normal`), so line breaks collapse (`liveChatCrypto.test.ts`, `LiveChatPanel.svelte.test.ts`) |
+| C-2 | **The declared mentions are not bound to the sealed text** (M2): an author may push up to 5 people not named in the line (the M4 rate holds: once per author per person per minute), and a token in the text that was not declared tints a viewer's line without a push | low | **Accepted, by design**: the server cannot read the line (C11), and M2 already calls the ids candidates. The push names the live, never the text |
+| C-3 | **The report route confirms a guessed plaintext**: `LIVE_CHAT_REPORT_MISMATCH` against `201`, with no bound on mismatches | low | **Accepted**: who may report holds the live key and may open the line anyway; the guess gains nothing a viewer lacks. Each mismatch is logged once (`logMismatchOnce`) |
+| C-4 | **Who wrote a line is the server's word**, and the kept proof of a reported line is an HMAC under a server secret | info | **Accepted, stated**: every key holder can seal under any author id; authorship is the authenticated `x-user-id` the server stores. Per-author signing keys would be a redesign |
+| C-5 | One key seals segments and chat, so any viewer can produce a segment or a line that opens | info | **Accepted**: only server-side write authorisation (the broadcaster's `PUT`, the stored `authorId`) separates them, as C-4 says |
+| C-6 | The broadcaster's client generates the key; a client that reused one across lives would let an earlier audience read a later live | info | **Accepted**: `generateMediaCek` draws 32 fresh bytes per live, and the live id in every AAD stops a line or a segment moving between lives |
 
 ### The contract
 
@@ -1533,8 +1563,35 @@ A message, a reaction burst and a hide take the live's row lock (`SELECT ... FOR
 like the ingest's two steps, the end and a removal; none of them calls another service inside the
 transaction. **The lock is now taken by every chat write**, so an ingest may wait behind a few of
 them: each is a few statements with no network in between, bounded by the rates of C6 (24 viewers at
-full rate are about 40 short transactions a second on one row, at the worst). Measured: nothing yet -
-the first dev reading with several viewers is owed (below).
+full rate are about 40 short transactions a second on one row, at the worst). **Measured on dev on
+2026-11-17 (G8), below: the contention is real only far past the C6 ceiling, and even there it never
+cost the ingest a segment.**
+
+#### The G8 reading (dev, 2026-11-17)
+
+A web broadcaster (the app's own, a fake-camera Chrome seat, 2 s segments) on air for 14 minutes; two
+web viewers of two other accounts, the live open in the app, each posting chat lines sealed in the
+v1 format and reaction bursts from the page (`tools/live-bench/chatload.js`, which also times the
+app's own segment `PUT`s); dev's PostgreSQL sampled every 200 ms for backends of `auth_db` WAITING on
+a lock while running a `lives` statement (`pg_stat_activity`, read-only). Every chat line opened on
+the other viewer (no line dropped). The workstation and the route are dev's.
+
+| Phase | Chat writes | Segment `PUT` (ms, p50 / p95 / p99 / max) | `LIVE_SEGMENT_TOO_FAST` | Chat `429` | Samples with a lock waiter |
+| --- | --- | --- | --- | --- | --- |
+| A - just past the ceiling, 5 min (12:31:05-12:36:11 UTC): each account a line every 1 s and a burst every 0.5 s, so 3 tries a second per account against the 1.6 C6 lets through (3 lines per 5 s, 2 bursts per 2 s) | ~6 a second (323 lines and 528 bursts stored) | 150 / 233 / 365 / 371 - **196 PUTs from the live's start (12:29:34), so the first 91 s carry no chat**; the 371 ms max was already there before the chat began (34 PUTs then: 166 / 365 / 371 / 371) | 0 | 286 `LIVE_MESSAGE_TOO_FAST`, 690 `LIVE_REACTION_TOO_FAST` | 3 of 1579, at most 1 waiter, at most 1 ms |
+| B - overdrive, 5 min (12:36:23-12:41:19): a line every 0.2 s and a burst every 0.15 s per account - lines 5 times A's rate, bursts 3.3 times, ~23 tries a second in all, about 7 times the 3.2 a second C6 lets the two accounts through | ~23 a second, 87 % refused (346 lines, 563 bursts stored) | 158 / 256 / 717 / 912 (148 PUTs, all `200`) | 0 | 2603 and 3370 | 27 of 1480: two pile-ups of about 2 s with up to 8 waiters, at most 399 ms sampled; otherwise none |
+| C - no chat, 2 min (12:41:34-12:43:45) | 0 | 141 / 209 / 239 / 239 (66 PUTs, all `200`) | 0 | - | 0 of 740 |
+
+**What it says.** At the rate C6 lets through, the chat costs the ingest nothing measurable. Past it,
+**a refused write still takes the row lock** - the window is COUNTED under the lock (C6) - so a client
+that ignores `retryAfterMs` at about 7 times what C6 lets through contends with the ingest for what
+it is refused; the worst ingest seen was 912 ms against a 2 s segment, with no segment refused or
+lost. The app's own client sends at most one burst per tick, and nobody types five lines a second,
+so that load is a modified client's. The lock samples are sliced by these timestamps; the segment
+counts of B and C are exactly their phases (the probe was reset at each start), A's are not (above). **Not read:** more than two chatting accounts at once (the rig had
+two free seats besides the broadcaster; phase B's 23 writes a second is about half the 24-viewer
+worst case above), and the cause of the two pile-ups (the sample shows waiters, not which statement
+held the row).
 
 The account erasure deletes the account's messages and bursts AFTER `lives_broadcaster` (the
 lives-then-rows order every chat write takes), so an erasure and a message on the account's own live
@@ -1604,8 +1661,9 @@ of those rows is the sweep's, not this file's. Applied twice by the integration 
 - **The live chat (WP-L6)** is proven on a real PostgreSQL (`lives.integration.spec.ts`: fifteen
   writers racing a poller - every seq once, gapless; a removal and an end committed past the watch
   check refused under the lock; a hide reaching a cursor as a tombstone; the purge taking every row;
-  the erasure) and nothing else: **not through nginx, not with a real client, not under an ingest
-  sharing the row lock** - the first reading is several dev viewers chatting during a live.
+  the erasure), and READ on dev through nginx with the app's own broadcaster and two web viewers
+  under an ingest sharing the row lock ([the G8 reading](#the-g8-reading-dev-2026-11-17)); not
+  read: more than two chatting accounts at once.
 - The 60 s window, the 4 MiB bound, the 30 s seat lease, the 2.5 Mb/s budget and its 1.5 margin, and the one-second
   segment floor were planning figures; WP-L1 read them on dev (above) and none needed to move.
 

@@ -1,0 +1,3 @@
+### Fixed - a reaction to my message now notifies while the app is open on another screen
+
+The reaction push is dropped whenever the app is in the foreground, so a reaction landing on the feed or in another conversation notified nobody, and the web and desktop never notified one. The live reaction frame is now a second trigger, raised only in the foreground with that conversation off screen - never where the push draws ([backlog](docs/wiki/backlog.d/p2-a-reaction-to-my-message-notifies-nobody-while-the-app-is-open.md), [mobile](docs/wiki/frontend/mobile.md#the-frame-trigger-of-a-reaction-2026-11-17)).

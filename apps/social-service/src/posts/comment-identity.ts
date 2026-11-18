@@ -41,12 +41,19 @@ export interface CommentViewer {
    */
   managedAssociationIds: ReadonlySet<string>;
   /**
-   * Associations whose PUBLISHED content the reader moderates as a BDE (lowercase ids,
-   * `AssociationsService.moderatedAssociationIds`): never an institution, never another BDE (owner,
-   * 2026-11-03). A comment in an association's name is that association's content, so moderating
-   * the post it sits under is not enough. Unread for a platform admin, who moderates everything.
+   * Associations whose PUBLISHED content the reader moderates (lowercase ids,
+   * `AssociationsService.moderatedAssociationIds`): as their BDE - never another BDE, never an
+   * institution (owner, 2026-11-03) - or as an institution's own moderator. A comment in an
+   * association's name is that association's content, so moderating the post it sits under is not
+   * enough. Unread for a platform admin, who moderates everything.
    */
   moderatedAssociationIds: ReadonlySet<string>;
+  /**
+   * Institutions in which the reader holds `MODERATE` (lowercase ids,
+   * `AssociationsService.moderatedInstitutionIds`): a comment in such a name is that institution's
+   * content WHEREVER it sits, so it is moderated without the post (owner, 2026-11-15, decision 4).
+   */
+  moderatedInstitutionIds: ReadonlySet<string>;
 }
 
 /** The facts about the post a comment sits under. */
@@ -97,14 +104,17 @@ function moderatesPublisher(c: StoredComment, v: CommentViewer): boolean {
 
 /**
  * May reader `v` moderate (delete) comment `c`? The in-memory twin of `bdeModeratesCommentSql`
- * (`spaces/bde-moderation.ts`), on the same publisher set: a platform admin always; a BDE moderator
- * when it moderates the post (`isModerator`) AND the comment's own publisher - never an institution's
- * or another BDE's (owner, 2026-11-03). Judged on the comment ITSELF: its replies do not shield it
- * (lead, 2026-11-04) - the delete tombstones it instead of taking a reply it may not
- * (`comment-removal.ts`). A tombstone is moderated like a person's comment: it names nobody.
+ * (`spaces/bde-moderation.ts`), on the same publisher sets: a platform admin always; a moderator of
+ * the post (`isModerator`) when it also moderates the comment's own publisher - a BDE never an
+ * institution's or another BDE's (owner, 2026-11-03); and an institution's own moderator a comment in
+ * that institution's name, wherever it sits (owner, 2026-11-15, decision 4). Judged on the comment
+ * ITSELF: its replies do not shield it (lead, 2026-11-04) - the delete tombstones it instead of taking
+ * a reply it may not (`comment-removal.ts`). A tombstone is moderated like a person's comment: it
+ * names nobody.
  */
 export function moderatesComment(c: StoredComment, v: CommentViewer): boolean {
   if (v.isGlobalAdmin) return true;
+  if (c.associationId && v.moderatedInstitutionIds.has(c.associationId.toLowerCase())) return true;
   return v.isModerator && moderatesPublisher(c, v);
 }
 
@@ -145,7 +155,7 @@ export function commentRights(
 /** Whether this reader may see the real account behind a masked comment. */
 function seesAccount(c: StoredComment, v: CommentViewer): boolean {
   // Reading who wrote an association's comment is moderating that association's content.
-  if (v.isGlobalAdmin || (v.isModerator && moderatesPublisher(c, v))) return true;
+  if (moderatesComment(c, v)) return true;
   // The association's comment is not its writer's own, so the writer is not special there.
   return c.anonymous === true && !c.associationId && !!v.viewerId && c.userId === v.viewerId;
 }
@@ -229,15 +239,17 @@ export class CommentIdentityService {
   ): Promise<CommentViewer> {
     const isGlobalAdmin = who.isGlobalAdmin === true;
     const assocIds = associationIdsOf(comments);
-    const [isModerator, managedAssociationIds] = await Promise.all([
+    const [isModerator, standings] = await Promise.all([
       // A platform admin moderates everywhere: nothing to ask of the post.
       who.isModerator !== undefined
         ? Promise.resolve(who.isModerator)
         : !isGlobalAdmin && who.viewerId && who.postId
           ? this.associations.mayModeratePost(who.viewerId, who.postId, { isGlobalAdmin })
           : Promise.resolve(isGlobalAdmin),
-      // No admin tier: the pencil is the author's alone (owner, 2026-11-02).
-      this.associations.mayActOnAny(who.viewerId, assocIds, AssociationPermissionFlag.POST_AS_ASSO),
+      // No admin tier: the pencil is the author's alone (owner, 2026-11-02). The same membership
+      // read names the institutions whose MODERATE the reader holds (decision 4), so an ordinary
+      // reader pays nothing more for them.
+      this.associations.commentStandings(who.viewerId, assocIds),
     ]);
     const moderatedAssociationIds = await this.moderatedPublishers(
       who.viewerId,
@@ -248,8 +260,9 @@ export class CommentIdentityService {
       viewerId: who.viewerId,
       isGlobalAdmin,
       isModerator,
-      managedAssociationIds,
+      managedAssociationIds: standings.postAs,
       moderatedAssociationIds,
+      moderatedInstitutionIds: standings.moderatedInstitutions,
     };
   }
 

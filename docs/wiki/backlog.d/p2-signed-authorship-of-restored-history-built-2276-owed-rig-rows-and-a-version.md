@@ -1,6 +1,8 @@
 ## P3 - an unsigned restored message is only marked, and a history bundle has no byte cap per chunk
 
-target: 1.7.0
+target: 1.7.1
+
+_2026-11-17: moved to 1.7.1 by the owner's 2026-11-17 scope cut ([decisions](owner-decisions-of-2026-11-17.md))._
 
 Restored history carries each message's author signature, and frames carry a signed epoch fingerprint ([history-reconciliation](../protocols/history-reconciliation.md#restored-history-carries-its-authors-signature-2026-10-22), [mls-protocol](../protocols/mls-protocol.md#fork-detection-a-signed-epoch-fingerprint-in-every-application-frame-2026-10-22)).
 

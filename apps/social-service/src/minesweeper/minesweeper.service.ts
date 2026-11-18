@@ -13,7 +13,9 @@ import { inReviewCohortSql, isInReviewCohort, sameSideOfReviewCohort } from '../
 import { SubmitMinesweeperDto } from './dto/submit-minesweeper.dto';
 import { MinesweeperBan } from './entities/minesweeper-ban.entity';
 import { MinesweeperChallenge } from './entities/minesweeper-challenge.entity';
+import { MinesweeperReplay } from './entities/minesweeper-replay.entity';
 import { MinesweeperScore } from './entities/minesweeper-score.entity';
+import { timingsFault, type TimedMove } from './minesweeper.timings';
 import {
   CHALLENGE as BOARD_CONFIG,
   LATEST_GENERATOR_VERSION,
@@ -105,7 +107,9 @@ export class MinesweeperService {
     @InjectRepository(MinesweeperScore)
     private readonly scores: Repository<MinesweeperScore>,
     @InjectRepository(MinesweeperBan)
-    private readonly bans: Repository<MinesweeperBan>
+    private readonly bans: Repository<MinesweeperBan>,
+    @InjectRepository(MinesweeperReplay)
+    private readonly replays: Repository<MinesweeperReplay>
   ) {}
 
   /** Whether a global admin has banned this user from the ranked game. */
@@ -220,6 +224,18 @@ export class MinesweeperService {
       throw new BadRequestException('Claimed duration exceeds server elapsed time');
     }
 
+    // The timestamps must describe ONE game of the length claimed. Checked before the replay: it is the
+    // cheaper test, and a log that fails it is no record of a game whatever the board says.
+    const fault = timingsFault(dto.moves, dto.claimedDurationMs);
+    if (fault !== null) {
+      challenge.status = 'rejected';
+      await this.challenges.save(challenge);
+      this.logger.warn(
+        `minesweeper reject ${fault} user=${userId} id=${challengeId} claimed=${dto.claimedDurationMs} last=${dto.moves[dto.moves.length - 1]?.t ?? 'none'}`
+      );
+      throw new BadRequestException(`Move timings do not match the game: ${fault}`);
+    }
+
     const moves: MinesweeperMove[] = dto.moves.map((m) => ({
       type: m.type,
       x: m.x,
@@ -292,6 +308,7 @@ export class MinesweeperService {
       verifiedAt: now,
     });
     await this.scores.save(score);
+    await this.keepReplay(score.id, dto.moves);
     this.logger.log(
       `minesweeper score ok user=${userId} id=${challengeId} scored=${durationMs} server=${serverDurationMs} claimed=${dto.claimedDurationMs} rtt=${dto.challengeRoundTripMs ?? 'n/a'} moves=${moves.length}`
     );
@@ -314,6 +331,24 @@ export class MinesweeperService {
       previousRank,
       ranksGained,
     };
+  }
+
+  /**
+   * Keeps the timed log of a verified win for a moderator's replay. The win is already recorded, so a
+   * failure here must not turn an honest solve into an error for the player: it is logged loudly (a
+   * score with no replay cannot be checked) and the submit goes on.
+   */
+  private async keepReplay(scoreId: string, moves: ReadonlyArray<TimedMove>): Promise<void> {
+    try {
+      await this.replays.save(
+        this.replays.create({
+          scoreId,
+          moves: moves.map((m) => ({ type: m.type, x: m.x, y: m.y, t: m.t })),
+        })
+      );
+    } catch (err) {
+      this.logger.error(`minesweeper replay not stored score=${scoreId}: ${String(err)}`);
+    }
   }
 
   /**
@@ -551,6 +586,38 @@ export class MinesweeperService {
       `minesweeper score removed id=${scoreId} user=${score.userId} ms=${score.durationMs} by=${adminId}`
     );
     return { removed: true, userId: score.userId, durationMs: score.durationMs };
+  }
+
+  /**
+   * Everything a moderator needs to watch a won game back: the board's seed, generator and size (the
+   * board is regenerated from them, never stored), the timed move log, and whose game it was. 404 for
+   * a score with no stored replay (one won before replays were kept). Reading is logged: a replay shows
+   * a member's game to a moderator.
+   */
+  async replay(scoreId: string, adminId: string) {
+    const score = await this.scores.findOne({ where: { id: scoreId } });
+    if (!score) throw new NotFoundException('Score not found');
+    const [replay, challenge] = await Promise.all([
+      this.replays.findOne({ where: { scoreId } }),
+      this.challenges.findOne({ where: { id: score.challengeId } }),
+    ]);
+    if (!replay || !challenge) throw new NotFoundException('No replay was kept for this score');
+    const users: Array<{ displayName: string | null }> = await this.scores.query(
+      `SELECT "displayName" FROM users WHERE id = $1`,
+      [score.userId]
+    );
+    this.logger.log(`minesweeper replay read score=${scoreId} user=${score.userId} by=${adminId}`);
+    return {
+      scoreId,
+      userId: score.userId,
+      displayName: users[0]?.displayName?.trim() || score.userId,
+      durationMs: score.durationMs,
+      verifiedAt: score.verifiedAt.toISOString(),
+      seed: challenge.seed,
+      generatorVersion: challenge.generatorVersion,
+      config: { width: challenge.width, height: challenge.height, mineCount: challenge.mineCount },
+      moves: replay.moves,
+    };
   }
 
   /**

@@ -1880,10 +1880,9 @@ post the comment sits under, for a plain, an anonymous and an association's comm
 answer `POST /moderation/comments/:id/delete` gives, so the bin and the route agree (2026-11-02).
 
 **Who may do what to whom, every role and content kind, is [moderation-authority](moderation-authority.md)**
-(the one copy since 2026-11-15). **A gap this section did not name**: a space's governor may be an
-INSTITUTION (WP-D1), and `bdeStandingInSpaceSql` reads no type, so that institution's `MODERATE`
-members pass the door and moderate the people of the space like a BDE. The owner refused it on
-2026-11-15 ([work package](backlog.d/p1-institution-moderators-moderate-their-own-content-not-students.md)).
+(the one copy since 2026-11-15). A space's governor may be an INSTITUTION (WP-D1): its `MODERATE`
+members moderate none of that space's people (`bdeModeratesUserSql` asks `governorIsAnAssociationSql`),
+and moderate their institution's OWN content instead (owner, 2026-11-15, decisions 3 and 4).
 
 **THE BDE'S `MODERATE` IS SCOPED** like MANAGE_ASSO, in `spaces/bde-moderation.ts`, on the one per-space
 standing every BDE power reads (`bdeStandingInSpaceSql`, `spaces/bde.ts`):
@@ -1902,7 +1901,8 @@ Kept within the scope: hide, unhide, delete, unmask, reading an anonymous author
 comment, cutting a live and hiding its chat lines, muting, reviewing a report. An association with no
 parent (since WP-D2; before it, one with no audience rule), a person with no space (staff) and **an
 institution** are governed by no BDE: their
-content is the platform admin's to moderate. The institution follows from the owner's rule that no BDE
+content is the platform admin's to moderate - and, for an institution, its own `MODERATE` members'
+(owner, 2026-11-15, decision 4; [moderation-authority](moderation-authority.md#the-roles)). The institution follows from the owner's rule that no BDE
 governs one (2026-11-02, 2026-11-03), even when its audience reaches a BDE's space - the management
 predicate carries that exclusion once, and moderation reads it (proved in
 `bde-moderation.integration.spec.ts`). **The platform admin stays global for every one of these.**

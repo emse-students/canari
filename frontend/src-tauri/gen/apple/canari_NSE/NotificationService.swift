@@ -369,7 +369,8 @@ class NotificationService: UNNotificationServiceExtension {
       )
     // The strike ladder's three notices to a broadcaster (WP-L8b): fixed sentences, no actor and
     // no fragment.
-    case "social_live_cut", "social_live_suspended", "social_live_withdrawn":
+    case "social_live_cut", "social_live_suspended", "social_live_withdrawn",
+      "social_live_reinstated":
       let stem = String(key.dropFirst("social_".count))
       composed = (
         Self.localized("notif.social.\(stem).title", locale: locale),
@@ -1562,6 +1563,9 @@ class NotificationService: UNNotificationServiceExtension {
       !cipher.isEmpty
     else { return nil }
 
+    // WHAT THE CATCH-UP COST, said on every one: nothing persists it, so every salon push of a shut
+    // phone pays it again, inside the extension's time and memory (channel-encryption section 28).
+    let startedAt = DispatchTime.now().uptimeNanoseconds
     let json = state.withUnsafeBytes { statePtr -> String? in
       cipher.withUnsafeBytes { cipherPtr -> String? in
         guard let raw = canari_native_decrypt_message_with_commits(
@@ -1573,6 +1577,8 @@ class NotificationService: UNNotificationServiceExtension {
         return String(cString: raw)
       }
     }
+    let elapsedMs = (DispatchTime.now().uptimeNanoseconds - startedAt) / 1_000_000
+    NseLog.log.info("[CanariNSE] catchup: replay since epoch=\(epoch, privacy: .public) took \(elapsedMs, privacy: .public) ms (state \(state.count, privacy: .public) B, commits \(commitsJson.count, privacy: .public) ch) answered=\(json != nil, privacy: .public) group=\(groupId.prefix(8), privacy: .public)")
     Self.announceOwnDevicesAdded(json, ctx: ctx, source: "catchup")
     return json
   }

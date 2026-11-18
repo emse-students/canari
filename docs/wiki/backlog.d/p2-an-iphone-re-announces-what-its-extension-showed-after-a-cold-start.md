@@ -1,6 +1,8 @@
 ## P2 - an iPhone re-announces what its extension showed after a cold start (2026-11-14; prior attempt: PR #2844, branch kept)
 
-target: 1.7.0
+target: 1.7.1
+
+_2026-11-17: moved to 1.7.1 by the owner's 2026-11-17 scope cut ([decisions](owner-decisions-of-2026-11-17.md))._
 
 **The defect (read from `main`, 2026-11-14).** The Notification Service Extension shows a push and
 acknowledges nothing, so its row is redelivered when the app next connects. After a cold start the

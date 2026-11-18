@@ -375,6 +375,7 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/scheduled.test.sh
 	@bash .github/scripts/tests/audit-dependencies.test.sh
 	@bash .github/scripts/tests/stream-json-premise.test.sh
+	@bun .github/scripts/tests/picomatch-premise.test.mjs
 	@bash .github/scripts/tests/ignored-advisories-still-reported.test.sh
 	@bash .github/scripts/tests/image-scan-targets.test.sh
 	@bun .github/scripts/tests/image-scan-allowlist.test.mjs
@@ -569,9 +570,9 @@ test-gateway:
 
 # Tests Service Historique
 # `node --run`, matching `.github/workflows/ci.yml` exactly. These suites are jest, and jest
-# under the bun runtime fails `src/controllers/admin-storage.controller.mls.spec.ts` - which
-# lives in THIS service, so `bun run` here meant `make test` and the pipeline executed the same
-# files on two different runtimes. `node --run` forwards everything after `--` (verified), so
+# under the bun runtime fails in all four services (measured 2026-11-17, the table in
+# docs/wiki/services/nestjs-framework.md), so `bun run` here meant `make test` and the pipeline
+# executed the same files on two different runtimes. `node --run` forwards everything after `--` (verified), so
 # `--coverage` still reaches jest. No npm: the runtime is the dependency, the package manager
 # is not.
 test-history:

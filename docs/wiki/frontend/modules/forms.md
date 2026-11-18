@@ -2125,6 +2125,97 @@ Found while scoping it, so it is not re-derived (Lydia is live in production sin
   neutral line without description - never a default. Saved cards stay Stripe-only via
   `supportsSavedCards` until the backend batch (see [payments](payments.md)).
 
+## Closing a form by hand, and the closing date (owner, 2026-11-16)
+
+*"Il faudrait un bouton pour clore le formulaire."* The form already had `closedAt` (`isFormOpen`,
+`assertFormOpen`, the refusal `FORM_CLOSED`, the fill page's "Ce formulaire est ferme", the link
+preview's "Ferme"); only the manager's way to write it was missing.
+
+- **Close / reopen**: `POST /forms/:id/close` and `POST /forms/:id/reopen`
+  (`FormsService.setClosed`), gated by `assertFormManager` - the owner of a personal form, a member
+  holding MANAGE_FORMS on the association, a global admin; the creator of an association's form who
+  does not hold the flag is refused (2026-11-14 rule). Both are idempotent: closing a form already
+  closed keeps its first end date, closing one whose end is still to come ends it now, reopening
+  clears the column whether the end is past or to come. Not a draft's action (the menu hides it).
+- **Not in the revision**: `closedAt` is excluded from the draft fingerprint
+  (`FORM_FINGERPRINT_SQL`), and the two routes write the column alone, so closing never shows
+  "Modifications non publiees".
+- **An edit no longer reopens a form** (found while building it): `update` used to store `null`
+  whenever the payload carried no `closedAt`, so publishing any edit reopened a closed form. Absent now
+  KEEPS the stored end and `null` clears it. The editor sends `closedAt` only when its field differs
+  from the published form's (`closedAtPayload`), so a revision never repeats a stored value and undoes
+  a close made since; a manager who types a date in the field AND closes from the list before
+  publishing still publishes the typed one (rare, visible in the field).
+- **The date field**: "Date de cloture" after "Date d'ouverture" in the advanced settings, the same
+  `DateTimeField` with `min` set to the opening. An end that is not after the opening
+  (`formWindowInvalid`) is said under the field and refused at "Publier"; the server refuses it too,
+  typed (`FORM_CLOSE_BEFORE_OPEN`, `form-window.ts`), on create and on edit, judged on the values the
+  save will store.
+- **The list**: a closed form (its end has passed; a future end is a scheduled close and shows
+  nothing) carries a "Ferme" badge and its menu offers "Rouvrir" instead of "Clore le formulaire".
+  Closing asks a confirmation, reopening does not.
+- **THE SERVER DECIDES WHETHER A FORM IS OPEN, NEVER THE DEVICE CLOCK** (read on the Mi 9T,
+  2026-11-17; owner directive "deterministe, pas de pansements"). `formWindowState`
+  (`form-window.ts`) is the ONE rule - `not-yet` before the opening, `closed` from the end instant on,
+  else `open` - and `isFormOpen` / `assertFormOpen` (the refusals `FORM_NOT_OPEN_YET` /
+  `FORM_CLOSED`) are built on it. `GET /forms`, `GET /forms/:id`, `GET /public/forms/:id` and the
+  close/reopen answer all carry its verdict as `windowState`. The client's `formWindowState` /
+  `isClosedForm` / `opensLater` (`formWindow.ts`) read that field, so the list badge, the public
+  page and the member page share one implementation and a phone whose clock is behind the server no
+  longer reads a just-closed form open (after the close answer, and after a refetch). The old
+  `<=` (client) against `<` (server) mismatch is gone: the end INSTANT is closed on both sides (`<=`),
+  so a close, which writes `closedAt = now`, answers `closed` from the very instant it stored - the
+  answer is computed from that same `now`, never from a second clock read.
+  - **Additive**: an older server sends no `windowState`; the client then falls back to comparing the
+    dates with its own clock and logs ONCE at warn that the server sent none (reaching it means the
+    server is older than the client: a signal, not a path). An older client ignores the field.
+  - **Every screen reads it**: the list, both fill pages and the link-preview card
+    (`formStateLabel`, "Ouvre le ...") call `formWindowState`; none compares `opensAt` / `closedAt`
+    with `Date.now()` any more (a phone behind the server drew an already-open form as "opens on
+    ..." and locked it). The two fill pages share `useFormWindow` (`useFormWindow.svelte.ts`).
+  - **The link-preview cache is acceptable as is**: the label it keeps is the server's verdict AT THE
+    READ (`windowState` of the fetched form), held for the session, like the rest of the card. It is a
+    snapshot of a past server answer, not a clock judgement that drifts - a form closed afterwards
+    shows its old card until the next session, and the page behind the card says the truth.
+    `FormCard` (a post's own form card) still takes its "opens on" from the post's `opensAt`; it
+    does not decide whether the form takes answers.
+  - **The member page** shows "Ce formulaire est ferme.", locks the questions and disables send; and
+    `handleSubmit` and `saveEdit` each refuse a closed form without a request.
+  - **While the page stays open**: a typed `FORM_CLOSED` / `FORM_NOT_OPEN_YET` refusal of a send or a
+    changed answer is the server's NEWER verdict (`windowRefusalState`): the page takes it
+    (`useFormWindow.adopt`) and redraws closed (or not-yet) at once, on the public page as on the member
+    page. A not-yet refusal on a form loaded with no `opensAt` draws "Ce formulaire n'est pas encore
+    ouvert." (no date) and disables send; a successful read of the form clears the adopted state. That covers a manager closing the
+    form, or a scheduled end coming, while a respondent has it open. **No timer switches the page at
+    the scheduled end**: the refusal path alone is judged sufficient - nothing is lost (the refused
+    answer is not stored) and a timer or a `closesInMs` countdown would be a second clock to keep
+    right for what the typed refusal already says.
+- **A form not open yet cannot be closed** (lead, 2026-11-16, during the owner's absence; reversible,
+  option (a) of the PR review). Closing writes `closedAt = now`, which would fall BEFORE a future
+  `opensAt`: every later edit was then refused `FORM_CLOSE_BEFORE_OPEN` over a date the manager
+  never typed. `setClosed` now refuses it, typed (`FORM_CLOSE_NOT_OPEN_YET`, `form-window.ts`,
+  "Ce formulaire n'est pas encore ouvert..."), and the list hides "Clore le formulaire" while the
+  opening is to come (`opensLater`); such a form takes no answer yet, so its opening is what to move
+  or clear. "Rouvrir" is unchanged. The other option, judging the window only on bounds an edit
+  writes, was not taken: it keeps a state the invariant calls impossible.
+- **A close is never written back by an edit that did not carry it**: absent, `closedAt` is left out
+  of `update`'s whole-entity save, so a close committing between an edit's read and its save stands.
+
+### A payment in progress when the form closes
+
+`assertFormOpen` has TWO call sites: `submit` (a new answer) and `editAnswer` (a respondent changing
+one). `myEditableAnswers` reads `isFormOpen` to offer nothing. Nothing else reads `closedAt`: the
+payer's return (`confirmPayment`), the provider's callbacks, `markPaid`, a cancellation and the expiry
+job settle a row through the row's own state. So when a form closes with a payment started:
+
+- the pending row keeps its seat for its 30 minutes and is paid normally (`markPaid` -> `paid`);
+- if it is never paid, the expiry job moves it to `expired` and the seat is released;
+- a late payment on an expired row is decided by capacity as before, closed or not;
+- no NEW answer is accepted (`FORM_CLOSED`), and an answer already stored cannot be edited.
+
+Tests: `forms.service.close.spec.ts` (who may, what is written, the edit keeping the end, the window)
+and `forms.service.seat-hold.spec.ts` ("a form closed while a payment is in progress").
+
 ## An archived association's form is closed by its link (2026-11-14)
 
 `respondentFormWhere` carries one more clause: the form's association, when it has one, is not

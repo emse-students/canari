@@ -19,6 +19,7 @@ import { suggestionsOnSql } from '../push/notification-category';
 import { CAMPUS_TREND_NOTIFICATION } from './engagement-push-cap';
 import type { PostNotificationsService } from './post-notifications.service';
 import { SYSTEM_ACTOR_ID } from './post-notifications.service';
+import { trendThreshold } from './trend-threshold';
 
 const logger = new Logger('CampusTrend');
 
@@ -38,18 +39,6 @@ export function namedAuthorUnblockedSql(post: string, reader: string): string {
 }
 
 /**
- * HOW MANY DISTINCT ACCOUNTS make a post take off (engagement WP-10, decision 5c): the smallest
- * integer at which the posts crossing over 90 days are at most one per three days per campus - R1
- * (docs/wiki/engagement.md, "R1 - the trend threshold"), read per day on production 2026-11-10
- * (Saint-Etienne: 28 posts in 90 days at 10, 37 at 8). A burst day can still carry several crossings
- * (up to 10 at this value); the per-reader daily rule (`trendDay`, migration 161) absorbs it, so no
- * reader hears of more than one. THIS IS THE ONE PLACE the number is written: one edit changes it,
- * and a change never announces a post already past it (the crossing rule below). Lead's decision of
- * 2026-11-10; 4 before it.
- */
-export const TREND_THRESHOLD = 10;
-
-/**
  * HOW MANY TRENDS ONE READER IS TOLD OF PER WEEK (owner, 2026-11-10: "on y est allés un peu fort"),
  * on top of one per day: a Monday-to-Sunday week on the Paris calendar, counted in the reader's
  * `campus_trend_weeks` row (migration 163) - durable state, no clock heuristic.
@@ -67,7 +56,7 @@ const PARIS_DAY_SQL = `(now() AT TIME ZONE 'Europe/Paris')::date`;
  * off". Two answers, kept apart since the review of #3312:
  *
  * - THE STAMP (`"trendAnnouncedAt"`) is written at the first evaluation that finds the engaged count
- *   AT OR ABOVE {@link TREND_THRESHOLD} - a level, whatever came before, a hidden post included. A
+ *   AT OR ABOVE the threshold ({@link trendThreshold}) - a level, whatever came before, a hidden post included. A
  *   stamped post is never evaluated again, so the stamp means "this post is past the threshold and
  *   will never be announced from now on".
  * - THE ANNOUNCEMENT (`crossed`) is made only when that stamp is a CROSSING OBSERVED: the count
@@ -95,9 +84,10 @@ const PARIS_DAY_SQL = `(now() AT TIME ZONE 'Europe/Paris')::date`;
  *
  * Answers one row per evaluated post: `crossed` says whether THIS evaluation announces it.
  */
-export const EVALUATE_TREND_SQL = `UPDATE posts SET
+export function evaluateTrendSql(threshold: number = trendThreshold()): string {
+  return `UPDATE posts SET
        "trendEngagedSeen" = ${engagedAccountsSql('posts')},
-       "trendAnnouncedAt" = CASE WHEN ${engagedAccountsSql('posts')} >= ${TREND_THRESHOLD}
+       "trendAnnouncedAt" = CASE WHEN ${engagedAccountsSql('posts')} >= ${threshold}
                              THEN now() END
  WHERE id = $1::uuid
    AND "trendAnnouncedAt" IS NULL
@@ -107,9 +97,10 @@ export const EVALUATE_TREND_SQL = `UPDATE posts SET
    AND "trendEngagedSeen" IS DISTINCT FROM ${engagedAccountsSql('posts')}
 RETURNING id, markdown, images,
           COALESCE(new."trendAnnouncedAt" IS NOT NULL
-                   AND old."trendEngagedSeen" < ${TREND_THRESHOLD}
+                   AND old."trendEngagedSeen" < ${threshold}
                    AND NOT COALESCE(new."hiddenByModeration", false), false) AS crossed,
           new."trendAnnouncedAt" IS NOT NULL AS stamped`;
+}
 
 /**
  * WHO MAY BE TOLD (the post of the `stamped` CTE, {@link campusTrendSql}): everyone who sees the post
@@ -226,7 +217,7 @@ export function campusTrendNamedSql(): string {
  * with no crossing seen), how many readers were eligible, and the readers told.
  */
 export function campusTrendSql(): string {
-  return `WITH evaluated AS (${EVALUATE_TREND_SQL}),
+  return `WITH evaluated AS (${evaluateTrendSql()}),
 stamped AS (SELECT id, markdown, images FROM evaluated WHERE crossed),
 candidates AS (${campusTrendCandidatesSql()}),
 week_claim AS (${campusTrendWeekClaimSql()}),

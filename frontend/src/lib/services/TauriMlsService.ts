@@ -1,5 +1,7 @@
 import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
 import { tauriGraineSignatureEngine } from '$lib/mls-client/tauriGraineSignatureEngine';
+import { tauriHistorySealEngine } from '$lib/mls-client/tauriHistorySealEngine';
+import type { HistorySealEngine } from '$lib/crypto/historySeal';
 import { getClientAppVersion } from '$lib/utils/appVersion';
 import { isChannelEventFrame, isHeartbeatFrame } from '$lib/mls-client/channelEventTypes';
 import { invoke } from '@tauri-apps/api/core';
@@ -1983,6 +1985,11 @@ export class TauriMlsService extends BaseMlsService {
   /** The Rust engine's Ed25519 commands: the one standalone implementation, `tauriGraineSignatureEngine`. */
   graineSignatureEngine(): GraineSignatureEngine {
     return tauriGraineSignatureEngine();
+  }
+
+  /** The Rust engine's HPKE commands for a sealed history answer (`tauriHistorySealEngine`). */
+  historySealEngine(): HistorySealEngine {
+    return tauriHistorySealEngine();
   }
 
   /**

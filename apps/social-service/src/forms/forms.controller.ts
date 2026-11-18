@@ -205,6 +205,33 @@ export class FormsController {
     return this.service.update(id, dto, xUserId, ga === 'true');
   }
 
+  /**
+   * "Clore le formulaire": ends the form now. Requires the same rights as an edit (owner of a
+   * personal form, MANAGE_FORMS on the association, global admin). Idempotent.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Post(':id/close')
+  @HttpCode(200)
+  closeForm(
+    @Param('id') id: string,
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    return this.service.setClosed(id, true, xUserId, ga === 'true');
+  }
+
+  /** "Rouvrir": clears the form's end, whether it is past or still to come. Idempotent. */
+  @UseGuards(NginxAuthGuard)
+  @Post(':id/reopen')
+  @HttpCode(200)
+  reopenForm(
+    @Param('id') id: string,
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    return this.service.setClosed(id, false, xUserId, ga === 'true');
+  }
+
   /** Deletes a form entirely. Requires owner, co-owner, global admin, or MANAGE_FORMS flag. */
   @UseGuards(NginxAuthGuard)
   @Delete(':id')

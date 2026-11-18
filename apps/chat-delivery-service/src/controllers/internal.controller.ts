@@ -1,3 +1,4 @@
+import { deleteUninvitedEntriesOfAccount } from '../utils/uninvited-entries';
 import {
   Controller,
   Get,
@@ -1165,6 +1166,8 @@ export class InternalController {
       manager.query(`DELETE FROM dm_join_ask_pushes WHERE "userId" = $1`, [userId]),
       // What the account sent, by id: the receipts that answer its resends (migration 048).
       manager.query(`DELETE FROM dm_sent_frame_receipt WHERE "senderId" = $1`, [userId]),
+      // The uninvited entries counted against it (migration 053), by the shortened id they hold.
+      deleteUninvitedEntriesOfAccount(manager, userId),
       // The key groups its revoked devices held: a binding for a person nothing will answer for.
       manager.delete(RevokedDeviceGroup, { userId }),
       // An invite link the account minted keeps working for the group; only the name goes.

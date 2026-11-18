@@ -476,10 +476,12 @@ export async function sendChannelReaction(
   emoji: string,
   at: number,
   removed: boolean,
-  rowId: string = crypto.randomUUID()
+  rowId: string = crypto.randomUUID(),
+  /** The reacted-to message's author as this device holds it (`mkReaction`), or undefined. */
+  targetAuthorId?: string
 ): Promise<void> {
   const protoBytes = encodeAppMessage({
-    ...mkReaction(targetMessageId, emoji, at, removed),
+    ...mkReaction(targetMessageId, emoji, at, removed, removed ? undefined : targetAuthorId),
     // Its OWN id, never the reacted-to message's: this is a row in the channel like any other, and
     // giving it the target's id would make two rows answer to one address.
     messageId: rowId,

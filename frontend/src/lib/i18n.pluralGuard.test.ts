@@ -41,6 +41,10 @@ const ALLOWED: Record<string, string> = {
   reel_sendto_delete_everywhere_hint: 'shown only when the take reaches two conversations or more',
   bookings_row_resources: 'shown only when a space has more than one resource',
   post_reach_chip_spaces: 'the chip names the one space, and counts only two or more',
+  chat_modal_create_group_with_button:
+    'the group button shows only once two people or more are chosen',
+  group_default_name_more:
+    'used only past three others, and counts all but two: never fewer than two',
 };
 
 const BARE = /\{count\}\s+[^\W\d_]{3,}/i;

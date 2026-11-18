@@ -766,8 +766,8 @@ The one-event link (`eventIcsAbsoluteUrl`) carries its own event signature (`ics
 `Post.linkedCalendarEventId` is the only column - there is no `linkedPostId` on
 `AssociationCalendarEvent`, unlike `linkedFormId`, which the event DOES carry (see above).
 `resolvePostCalendarEventLink` requires an `associationId` to set it, so a post carrying this field
-is always an association post, never a personal or anonymous one - `mustHideAnonymousAuthor` never
-has an opinion about it.
+is always an association post, never a personal or anonymous one - its writer is served like any
+association post's (`viewerSeesWriter`: to its moderators and its writer only).
 
 **The event's own card shows the post by asking, not by reading a column** - reported by a user
 2026-09-18 after the reverse direction rendered nothing. `PostsService.findPostLinkedToCalendarEvent`

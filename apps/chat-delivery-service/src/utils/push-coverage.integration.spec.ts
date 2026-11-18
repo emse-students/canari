@@ -105,7 +105,7 @@ maybe('push-coverage predicate against PostgreSQL', () => {
     await q(TABLES);
 
     // COUNTED, withoutPush: ran an hour ago, own live session, no row.
-    await phone('u1', 'tauri-u1', { outcome: 'unauthorized' });
+    await phone('u1', 'tauri-u1', { outcome: 'unauthorized:session-expired' });
     // COUNTED, withoutPush: an older build stating nothing.
     await phone('u2', 'tauri-u2', { os: 'ios' });
     // COUNTED, noOsToken: the OS gave it no token - known, counted apart.
@@ -136,8 +136,23 @@ maybe('push-coverage predicate against PostgreSQL', () => {
     const logger = { log: jest.fn(), warn: jest.fn() };
     const rows = await reportPushCoverage(ds, logger, NOW);
     expect(rows).toEqual([
-      { os: 'android', build: '1.7.0', devices: 3, withoutPush: 1, noOsToken: 1 },
-      { os: 'ios', build: '1.7.0', devices: 1, withoutPush: 1, noOsToken: 0 },
+      {
+        os: 'android',
+        build: '1.7.0',
+        devices: 3,
+        withoutPush: 1,
+        noOsToken: 1,
+        // The no-token phone and the one holding its row are not in it: only the unregistered.
+        outcomes: ['unauthorized:session-expired'],
+      },
+      {
+        os: 'ios',
+        build: '1.7.0',
+        devices: 1,
+        withoutPush: 1,
+        noOsToken: 0,
+        outcomes: ['unstated'],
+      },
     ]);
     expect(logger.warn).toHaveBeenCalledTimes(2);
     expect(await q(`SELECT count(*)::int AS n FROM push_token`)).toEqual([{ n: 1 }]);

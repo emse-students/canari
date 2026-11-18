@@ -20,6 +20,13 @@
    * like the tab's, offering to be kept as a post instead; see `destinationRules`. A chat takes
    * PHOTOS ONLY until the reel message exists (docs/wiki/frontend/modules/reels-in-chat.md): no
    * hold, no 90 s cap to read.
+   *
+   * THE TWO PATHS OF "ENVOYER A..." (owner, 2026-11-16, reels-in-chat section 22), both behind the
+   * chat reel writer switch. FILM FIRST (the tab): the review of a video offers "Publier" (the
+   * publish step, as "Suivant" did) and "Envoyer a..." (the sheet). CHOOSE FIRST (a conversation's
+   * camera, `chatTarget`): the camera says whom it films for, and the review offers "Ajouter des
+   * destinataires" (the same sheet, that conversation ticked) and the conversation's name, which
+   * sends there in one tap as the direct "Envoyer" did. Switch off, both are as before.
    */
   import { onDestroy, onMount } from 'svelte';
   import { afterNavigate, beforeNavigate } from '$app/navigation';
@@ -105,6 +112,11 @@
      * a video, handed back marked as a reel message. Absent, the chat camera takes photos only.
      */
     chatFilms?: boolean;
+    /**
+     * The conversation a `chat` camera that films was opened from (path 2): its id (ticked in the
+     * sheet) and its name (the camera's header and the review's send button).
+     */
+    chatTarget?: { id: string; name: string } | null;
   }
 
   let {
@@ -117,6 +129,7 @@
     onclose,
     composerStart = EMPTY_COMPOSER_REEL_STATE,
     onpublished,
+    chatTarget = null,
   }: Props = $props();
 
   /** The opener for each way of asking the microphone (`DestinationRules.microphone`). */
@@ -136,21 +149,33 @@
   /** The take's cap for THIS destination: the chat cap in a conversation (RC-3), the reel cap elsewhere. */
   const capMs = $derived(limits ? captureCapMs(limits, destination) : null);
   /**
-   * "Envoyer a..." (RC-12) replaces "Suivant" on the TAB's review of a VIDEO - and only while the chat
-   * writer is on AND the server served both its chat cap and its target count (never a guessed
-   * number). Off, the review is byte-identical to before. A photo keeps publishing (see section 15.1
-   * of reels-in-chat.md: its chat send is not built).
+   * "Envoyer a..." (RC-12) sits beside "Publier" on the TAB's review of a take (section 22) - only
+   * while the chat writer is on AND the server served both its chat cap and its target count (never
+   * a guessed number). Off, the review is byte-identical to before.
    */
   const sendTargetCap = $derived(limits ? chatReelTargetCap(limits) : null);
   const chatCapMs = $derived(limits ? servedChatCapMs(limits) : null);
-  const sendToOffered = $derived(
-    destination === 'feed' &&
-      chatReelAllowed(false) &&
-      sendTargetCap !== null &&
-      chatCapMs !== null &&
-      capture.kind === 'review' &&
-      capture.clip.blob.type.startsWith('video/')
+  /** The sheet can be offered at all: the writer is on and the server served both of its numbers. */
+  const sheetServed = $derived(
+    chatReelAllowed(false) && sendTargetCap !== null && chatCapMs !== null
   );
+  const reviewingVideo = $derived(
+    capture.kind === 'review' && capture.clip.blob.type.startsWith('video/')
+  );
+  /**
+   * PATH 1 (the tab): "Publier" and "Envoyer a..." on the review of a take - a video, or a PHOTO
+   * (D-photo, owner 2026-11-16: the same review, an ordinary image in the chosen chats).
+   */
+  const sendToOffered = $derived(
+    destination === 'feed' && sheetServed && capture.kind === 'review'
+  );
+  /**
+   * PATH 2 (a conversation's camera that films, `chatTarget`): the review of a video sends to that
+   * conversation in one tap, and offers the sheet beside it when the server served its numbers.
+   */
+  const chatPath = $derived(destination === 'chat' && chatFilms && chatTarget !== null);
+  /** The review holds two ways on, so the editor's Next comes back to it rather than choosing one. */
+  const twoWayReview = $derived(sendToOffered || (chatPath && reviewingVideo));
   /**
    * A HOLD MAY BECOME A VIDEO. A post camera whose microphone was refused keeps its photos
    * (`postCameraOpener`); a cap not read yet (offline) keeps them too - a photo needs neither.
@@ -203,6 +228,8 @@
   let chatTake = $state<{ id: string; host: ReelSendHost } | null>(null);
   /** The messaging layer read when the sheet was opened (`null`: no session, the sheet is not offered). */
   let sendHost = $state<ReelSendHost | null>(null);
+  /** The conversation ticked when the sheet opens: the camera's own (path 2), none on the tab. */
+  let sendPreticked = $state<string | null>(null);
 
   let recorder: ReelRecorder | null = null;
   /** The preview's crop being drawn for the take in progress (framedCapture.ts). */
@@ -467,6 +494,10 @@
       publishOpen = true;
       return;
     }
+    if (clip.blob.type.startsWith('image/')) {
+      await sendPhotoTo(clip, choice.targetKeys, plan === 'both');
+      return;
+    }
     sendingTake = true;
     try {
       const file = captureFileFrom(clip.blob);
@@ -503,10 +534,66 @@
         publishOpen = true;
       } else {
         // Chats only: the camera is free at once, every target shows its own bubble.
-        dismissTake();
+        endSentTake();
       }
     } catch (e) {
       console.error('[reel-capture] send-to failed before any send was queued', e);
+      showToast(m.reel_sendto_failed(), 'error');
+    } finally {
+      sendingTake = false;
+    }
+  }
+
+  /**
+   * A PHOTO through "Envoyer a..." (D-photo, owner 2026-11-16): each chosen conversation gets an
+   * ORDINARY image message (`host.sendImage`, the composer's own path), and with "Publier" ticked
+   * too the publish step opens afterwards for the post - its own upload, nothing waits on it (no
+   * take row: the outbox's take is a video's).
+   */
+  async function sendPhotoTo(clip: ReelClip, targetKeys: string[], alsoPublish: boolean) {
+    const host = sendHost;
+    if (!host) {
+      showToast(m.reel_sendto_sheet_unavailable(), 'warning');
+      return;
+    }
+    sendingTake = true;
+    try {
+      const handed = await host.sendImage(captureFileFrom(clip.blob), targetKeys);
+      if (handed === null) {
+        showToast(m.reel_sendto_failed(), 'error');
+        return;
+      }
+      queuedClip = clip;
+      // A PARTIAL SEND IS SAID, never counted as whole: the photo is already in the others, so the
+      // take still ends (a second press would send it to them twice).
+      if (handed < targetKeys.length) {
+        console.warn(
+          `[reel-capture] send-to: the photo was queued in ${handed} of ${targetKeys.length} conversation(s)`
+        );
+        showToast(
+          m.reel_sendto_photo_partial({
+            failed: targetKeys.length - handed,
+            total: targetKeys.length,
+          }),
+          'warning'
+        );
+      } else {
+        showToast(m.reel_sendto_sending({ count: handed }), 'info');
+      }
+      const stillHere =
+        !destroyed && capture.kind === 'review' && capture.clip === clip && sendOpen;
+      if (!stillHere) {
+        console.warn('[reel-capture] send-to: the photo was left during the send');
+        return;
+      }
+      sendOpen = false;
+      if (alsoPublish) publishOpen = true;
+      else endSentTake();
+    } catch (e) {
+      console.error(
+        '[reel-capture] send-to: the photo could not be handed to the conversations',
+        e
+      );
       showToast(m.reel_sendto_failed(), 'error');
     } finally {
       sendingTake = false;
@@ -518,23 +605,38 @@
    * the review as it is: the take is never sent into a void.
    */
   function openSendSheet() {
+    sendPreticked = destination === 'chat' ? (chatTarget?.id ?? null) : null;
     sendHost = reelSendHost();
     if (!sendHost) {
       console.warn('[reel-capture] send-to: no messaging layer is registered');
       showToast(m.reel_sendto_sheet_unavailable(), 'warning');
       return;
     }
+    console.debug(
+      `[reel-capture] send-to sheet opened (${destination}, ${sendPreticked ? 'its conversation ticked' : 'nothing ticked'})`
+    );
     sendOpen = true;
+  }
+
+  /**
+   * The take's sends are queued and it is over: the tab's camera is free again at once; a
+   * conversation's camera closes back onto the conversation, as its one-tap send does.
+   */
+  function endSentTake() {
+    if (destination === 'chat') leaveWithTake();
+    else dismissTake();
   }
 
   /** The publish step was left (Back): with sends already queued the take is over, else the review returns. */
   function closePublish() {
     publishOpen = false;
-    if (chatTake) {
+    // A take whose sends already went (a video's take row, or a photo's image messages) is over:
+    // a return to its review would offer to send it a second time.
+    if (chatTake || (capture.kind === 'review' && capture.clip === queuedClip)) {
       console.debug(
         '[reel-capture] the publish step was left: the queued sends go on, the take ends'
       );
-      dismissTake();
+      endSentTake();
     }
   }
 
@@ -866,6 +968,14 @@
   const fraction = $derived(capMs !== null ? shutterRingFraction(capture, elapsedMs, capMs) : 0);
 </script>
 
+{#snippet cameraTitle()}
+  <!-- PATH 2: whom this camera films for, under "Envoyer a" (Snapchat's header). -->
+  <p class="text-2xs font-semibold text-white/80 drop-shadow" data-camera-send-to>
+    {m.reel_camera_send_to()}
+  </p>
+  <p class="truncate text-sm font-bold text-white drop-shadow">{chatTarget?.name}</p>
+{/snippet}
+
 <!-- No Back swipe while the editor owns the strokes or a take is being filmed (`swipeBack`): a
      recording ends by its own shutter, never by an edge swipe that would drop it unasked. -->
 <div class="relative h-full w-full" data-swipe-back-off={editorOpen || recording ? '' : undefined}>
@@ -883,6 +993,7 @@
     {onclose}
     onvolumekey={onVolumeKey}
     microphoneAsked={rules.microphone === 'with-lens'}
+    title={chatPath ? cameraTitle : undefined}
   >
     {#snippet faultActions()}
       <!-- A REFUSED CAMERA KEEPS THE GALLERY: a pick needs no camera, and the input is always
@@ -967,23 +1078,13 @@
 
   {#if capture.kind === 'review'}
     {@const clip = capture.clip}
-    {#if handsBackTake(rules, clip.blob)}
-      <ReelReview
-        {clip}
-        ondiscard={() => void discardFromReview()}
-        onedit={() => (editorOpen = true)}
-        soundRemoval={rules.soundRemoval}
-        nextLabel={destination === 'chat' && clip.blob.type.startsWith('video/')
-          ? m.reel_chat_send()
-          : m.reels_review_add()}
-        onnext={() => handBack(clip.blob, clip.poster)}
-      />
-    {:else if sendOpen && sendHost && sendTargetCap !== null && chatCapMs !== null}
+    {#if sendOpen && sendHost && sendTargetCap !== null && chatCapMs !== null}
       <ReelSendSheet
         {clip}
         host={sendHost}
         cap={sendTargetCap}
         {chatCapMs}
+        preticked={sendPreticked}
         onclose={() => (sendOpen = false)}
         sending={sendingTake}
         onsend={(choice) => void sendTakeTo(choice)}
@@ -1003,8 +1104,37 @@
               onpublished: publishedFromComposer,
             }
           : undefined}
+        onpublishedHere={destination === 'chat' ? leaveWithTake : undefined}
+      />
+    {:else if chatPath && chatTarget && clip.blob.type.startsWith('video/')}
+      <!-- PATH 2: the conversation's name sends there in one tap (the direct "Envoyer" it was);
+           "Ajouter des destinataires" opens the sheet with it ticked. No publish button here. -->
+      <ReelReview
+        {clip}
+        ondiscard={() => void discardFromReview()}
+        onedit={() => (editorOpen = true)}
+        soundRemoval={rules.soundRemoval}
+        nextLabel={chatTarget.name}
+        nextAriaLabel={m.reel_review_send_to_name({ name: chatTarget.name })}
+        nextIcon="send"
+        onnext={() => handBack(clip.blob, clip.poster)}
+        secondaryLabel={sheetServed ? m.reel_review_add_recipients() : undefined}
+        onsecondary={sheetServed ? openSendSheet : undefined}
+      />
+    {:else if handsBackTake(rules, clip.blob)}
+      <ReelReview
+        {clip}
+        ondiscard={() => void discardFromReview()}
+        onedit={() => (editorOpen = true)}
+        soundRemoval={rules.soundRemoval}
+        nextLabel={destination === 'chat' && clip.blob.type.startsWith('video/')
+          ? m.reel_chat_send()
+          : m.reels_review_add()}
+        onnext={() => handBack(clip.blob, clip.poster)}
       />
     {:else}
+      <!-- PATH 1 when the sheet is offered: "Publier" (the publish step, what "Suivant" did) and
+           "Envoyer a..." (the sheet). Otherwise the one "Suivant", byte for byte. -->
       <ReelReview
         {clip}
         ondiscard={() => void discardFromReview()}
@@ -1017,6 +1147,8 @@
         }}
         nextLabel={sendToOffered ? m.reel_sendto_action() : undefined}
         onnext={() => (sendToOffered ? openSendSheet() : (publishOpen = true))}
+        secondaryLabel={sendToOffered ? m.reel_review_publish() : undefined}
+        onsecondary={sendToOffered ? () => (publishOpen = true) : undefined}
       />
     {/if}
   {/if}
@@ -1028,6 +1160,14 @@
       oncancel={() => (editorOpen = false)}
       onnext={(blob) => {
         if (capture.kind !== 'review') return;
+        if (twoWayReview) {
+          // TWO WAYS ON (section 22): the edited take goes back to the review, whose two buttons
+          // are the member's choice - the editor's Next never chooses for them.
+          if (blob) capture = { kind: 'review', clip: { ...capture.clip, blob } };
+          editorOpen = false;
+          console.debug('[reel-capture] edited: back to the review and its two ways on');
+          return;
+        }
         // The edited media replaces the take (null: untouched), and the publish step opens at once.
         if (handsBackTake(rules, blob ?? capture.clip.blob)) {
           // The poster is the take as filmed: the editor's drawings are not on the thumbnail.
@@ -1036,8 +1176,7 @@
         }
         if (blob) capture = { kind: 'review', clip: { ...capture.clip, blob } };
         editorOpen = false;
-        if (sendToOffered) openSendSheet();
-        else publishOpen = true;
+        publishOpen = true;
       }}
     />
   {/if}

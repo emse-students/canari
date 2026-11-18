@@ -83,6 +83,11 @@ export const ACCOUNT_KEY = {
    */
   joinPushesSent: (userId: string) => `mls_join_pushes_sent:v1:${userId}`,
   /**
+   * `chat/registerOwed.ts`: the conversations this device was admitted to whose state (the nickname
+   * register, pins, floor, read marks) it has not received yet - it asks for it until it has.
+   */
+  registerOwed: (userId: string) => `mls_register_owed:v1:${userId}`,
+  /**
    * `graine/admissionGate.ts`: what this device recorded by itself about who is admitted - per
    * community the roots and the admissions it verified. Other members' ids, written by this
    * account's device.
@@ -266,6 +271,7 @@ function exactKeys(userId: string): string[] {
     ACCOUNT_KEY.workspaceSnapshot(userId),
     ACCOUNT_KEY.historyHeldNothing(userId),
     ACCOUNT_KEY.joinPushesSent(userId),
+    ACCOUNT_KEY.registerOwed(userId),
     ACCOUNT_KEY.admissionLedger(userId),
     ACCOUNT_KEY.historyClosedSeen(userId),
     ACCOUNT_KEY.pagedHistoryAnswer(userId),

@@ -43,8 +43,16 @@ it('reveals the author of an anonymous post only when the server sent its id', (
       authorFirstName: 'Ada',
       authorLastName: 'L',
     } as never)
-  ).toEqual({ userId: 'u1', name: 'Ada L' });
-  // Nothing to reveal on a post that is not anonymous, nor on an association's.
+  ).toEqual({ userId: 'u1', name: 'Ada L', under: 'anonymous' });
+  // Nothing to reveal on a personal post signed by its author.
   expect(revealedPostAuthor({ authorId: 'u1', authorFirstName: 'Ada' } as never)).toBeNull();
-  expect(revealedPostAuthor({ association, anonymous: true, authorId: 'u1' } as never)).toBeNull();
+});
+
+it("reveals the writer of an association's post only when the server sent its id (decision 11)", () => {
+  expect(revealedPostAuthor({ association } as never)).toBeNull();
+  expect(revealedPostAuthor({ association, authorId: 'u1' } as never)).toEqual({
+    userId: 'u1',
+    name: expect.any(String),
+    under: 'association',
+  });
 });

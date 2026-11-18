@@ -103,6 +103,11 @@ export interface CreateFormPayload {
   maxSubmissions?: number;
   /** ISO 8601 - submissions blocked until this instant. */
   opensAt?: string;
+  /**
+   * ISO 8601 - submissions blocked after this instant, after `opensAt`. On an EDIT, absent keeps
+   * the stored end (the manager's close included) and `null` clears it.
+   */
+  closedAt?: string | null;
   requiresPayment?: boolean;
   /**
    * The association the form belongs to. A create names it or nothing; an edit leaves it when
@@ -211,6 +216,12 @@ export interface Form extends CreateFormPayload {
   imageUrl?: string | null;
   /** When a manager closed the form (`GET /forms/:id`); absent or null while it takes answers. */
   closedAt?: string | null;
+  /**
+   * Whether the form takes answers NOW, judged by the server (every read and the close answer
+   * carry it; absent only from a server that predates it, `formWindow.ts`). Never derive it from
+   * `opensAt` / `closedAt` against the device clock.
+   */
+  windowState?: 'open' | 'not-yet' | 'closed';
   /** Answers holding a place (`GET /forms/:id` only): the editor warns before removing an ordered row. */
   submissionCount?: number;
   /** `draft` until a manager publishes it; absent on a server before drafts, which is `published`. */
@@ -472,6 +483,21 @@ export async function uploadFormItemImage(
 export async function deleteForm(id: string): Promise<{ ok: boolean }> {
   const res = await apiFetch(`${socialUrl()}/api/forms/${id}`, { method: 'DELETE' });
   if (!res.ok) throw await refusal(res, 'Failed to delete form');
+  return res.json();
+}
+
+/**
+ * "Clore le formulaire" (`closed`) or "Rouvrir": sets or clears the form's end on the server, apart
+ * from the editor's unpublished revision. Returns the stored `closedAt` and the server's `windowState`.
+ */
+export async function setFormClosed(
+  id: string,
+  closed: boolean
+): Promise<{ id: string; closedAt: string | null; windowState?: Form['windowState'] }> {
+  const res = await apiFetch(`${socialUrl()}/api/forms/${id}/${closed ? 'close' : 'reopen'}`, {
+    method: 'POST',
+  });
+  if (!res.ok) throw await refusal(res, closed ? 'Failed to close form' : 'Failed to reopen form');
   return res.json();
 }
 
@@ -1010,6 +1036,7 @@ export type PublicForm = Pick<
   | 'paymentsPaused'
 > & {
   closedAt?: string | null;
+  windowState?: 'open' | 'not-yet' | 'closed';
   /** What the page asks a guest about who they are; [] asks nothing (`respondentFields.ts`). */
   guestFields: RespondentChoice[];
   formFull: boolean;

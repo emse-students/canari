@@ -2434,6 +2434,9 @@
           onConfirmEdit={editSession.confirm}
           {onFilesSelected}
           reelMessages={!isChannel}
+          cameraTarget={chatView
+            ? { id: chatView.conversation.id, name: chatView.displayName }
+            : null}
           {onSendVoiceNote}
           {pendingFiles}
           {onRemovePendingFile}

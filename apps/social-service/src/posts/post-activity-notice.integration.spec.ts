@@ -94,7 +94,9 @@ maybe('one live notification per post (owner, 2026-11-14) against PostgreSQL', (
       CREATE TABLE posts (id uuid PRIMARY KEY, "authorId" varchar(255) NOT NULL,
         "associationId" uuid, "studentsOnly" boolean NOT NULL DEFAULT false, "reachPublic" varchar(16), "reachSpaces" jsonb, anonymous boolean NOT NULL DEFAULT false,
         "hiddenByModeration" boolean NOT NULL DEFAULT false, "scheduledAt" timestamptz,
-        "publishedAt" timestamptz NOT NULL DEFAULT now());
+        "publishedAt" timestamptz NOT NULL DEFAULT now(),
+        -- The bell reads a comment's writer behind an empty actor (bellRowActorAccountSql).
+        comments jsonb NOT NULL DEFAULT '[]');
       CREATE TABLE association_members (id serial PRIMARY KEY, "associationId" uuid NOT NULL,
         "userId" varchar(255) NOT NULL, permissions int NOT NULL DEFAULT 0);
       CREATE TABLE user_blocks ("blockerId" varchar(255) NOT NULL, "blockedId" varchar(255) NOT NULL);

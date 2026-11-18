@@ -1065,7 +1065,7 @@
         {m.post_scheduled_strip_title({ count: scheduledPosts.length })}
       </p>
       {#each scheduledPosts as sp (sp.id)}
-        {guardedCard(sp, () => onScheduledDeleted(sp.id), onScheduledEdited)}
+        {@render guardedCard(sp, () => onScheduledDeleted(sp.id), onScheduledEdited)}
       {/each}
     </section>
   {/if}

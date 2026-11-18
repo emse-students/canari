@@ -76,8 +76,9 @@ export class LiveChatController {
 
   /**
    * Hides a message, by the live's broadcaster or STAFF - D6, C14. Staff is `mayModerateLive` (a
-   * platform admin, or a BDE member holding `MODERATE` whose governed spaces hold the live - scoped
-   * since 2026-11-02, like the posts' moderation controls). No watch check: the broadcaster is the
+   * platform admin, a BDE member holding `MODERATE` whose governed spaces hold the live - scoped
+   * since 2026-11-02, like the posts' moderation controls - or a `MODERATE` member of the institution
+   * whose live it is, owner 2026-11-15). No watch check: the broadcaster is the
    * live's own, and staff moderate what they may not watch.
    */
   @Post(':id/messages/:messageId/hide')

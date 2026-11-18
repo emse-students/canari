@@ -21,9 +21,18 @@
     firstLink: string | null;
     /** Jumbomoji: an emoji-only message (see MessageBubble's `isEmojiOnly`) renders larger. */
     jumbo?: boolean;
+    /** True inside the sender's own (accent-filled) bubble: a mention then takes the bubble's colour. */
+    onOwnBubble?: boolean;
   }
 
-  let { textSegments, searchTerm, isDeleted, firstLink, jumbo = false }: Props = $props();
+  let {
+    textSegments,
+    searchTerm,
+    isDeleted,
+    firstLink,
+    jumbo = false,
+    onOwnBubble = false,
+  }: Props = $props();
 
   // NOT folded here: `splitWithHighlight` folds both sides itself, because it also needs the
   // map back to the original text and a pre-folded needle would hide that from its signature.
@@ -60,7 +69,7 @@
               ><EmojiText text={part.text} /></mark
             >
           {:else}
-            <MessageInlineText text={part.text} />
+            <MessageInlineText text={part.text} {onOwnBubble} />
           {/if}
         {/each}
       {/if}

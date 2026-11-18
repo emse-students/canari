@@ -54,9 +54,20 @@ questions the first draft of this page left open, the same day.
    [moderation-and-blocking](moderation-and-blocking.md#the-moderation-read-of-a-post-its-comments-and-its-replay-owner-2026-11-15).
 3. **An institution's `MODERATE` member does NOT moderate students.** The door and the scope count
    only governors of type `association` (`governorIsAnAssociationSql`); a space with no BDE stays with
-   the platform admin. [WP](backlog.d/p1-institution-moderators-moderate-their-own-content-not-students.md).
+   the platform admin. Built 2026-11-17 (`bdeModeratesUserSql` asks `governorIsAnAssociationSql`); [the reading](device-verification.md#the-phone-and-web-readings-of-2026-11-18-s6-170-alpha12-live-moderations-last-halves-the-reel-card-overlays-the-birthday-morning).
 4. **An institution's own `MODERATE` members moderate that institution's own content** - its posts,
-   its lives, the comments under them - and the platform admin keeps recourse. Same WP.
+   its lives, the comments under them - and the platform admin keeps recourse. Built 2026-11-17
+   (`institutionModeratesOwnSql`, ORed into the publisher predicate `moderatesPublisherSql`; the door
+   `MODERATES_SOMEWHERE_SQL`). A comment in the institution's name is its content wherever it sits; a
+   club's comment under the institution's post stays the club's, as under a BDE's post (the lead's
+   reading, reversible, the rule of 2026-11-03 applied both ways). A refusal to a caller who moderates
+   only as an institution is its own code, `MODERATION_OUTSIDE_OWN_INSTITUTION`, never the BDE's
+   "outside your spaces". The reader's institution standing comes from the membership read the
+   comment pencil already makes (`AssociationsService.commentStandings`), so an ordinary reader pays
+   no query for it. **Measured on production before the deploy (2026-11-17, read-only aggregate):
+   0 institution memberships carry `MODERATE` (bit 128), of 4 institutions, and 0 spaces are
+   governed by an institution** - so nobody gains or loses a power on deploy; the platform admin
+   grants the first one.
 5. **The author of a post, or the `POST_AS_ASSO` holders for an association's post, may HIDE (never
    delete) another person's comment under it**: a tombstone like moderation's, never revealing an
    anonymous writer. [WP](backlog.d/p2-a-post-owner-hides-a-comment-under-it.md).
@@ -78,7 +89,35 @@ questions the first draft of this page left open, the same day.
     [WP, a held migration](backlog.d/p3-the-unread-mls-group-role-column-is-dropped.md).
 11. **The writer of an association's post is visible to its moderators** (the platform admin, the
     BDE in scope), as an association comment's already is; **the raw `authorId` of `/posts/hidden` is
-    closed.** [WP](backlog.d/p1-hidden-posts-list-serves-an-association-post-s-raw-writer.md).
+    closed.** Built 2026-11-17: one rule serves it everywhere, `/posts/hidden` included (P8); the
+    phone reading PASSED on `1.7.0-alpha.8` ([readings](device-verification.md#the-phone-readings-of-2026-11-17-170-alpha8-both-phones-one-sitting)).
+    **The lead's reading, reversible (2026-11-17): the writer is also served their own name**, drawn
+    small under the association's like an anonymous post's author sees theirs - it tells them
+    nothing they do not know, and one rule for both names is simpler than two. Reversing it is one
+    line of `viewerSeesWriter` (or of the client's `revealedPostAuthor`). The association's OTHER
+    holders are served no writer: nothing was decided for them.
+    **No notification names the writer either** (review of #3770): a mention in an association's
+    post names the association (`notifyPostMentions`, no member stored); an `association_post` or
+    `association_repost` bell row keeps the member who acted - the actor exclusion and the review
+    cohort read it - and the bell serves it blank; a post's mention STORED before the fix (the
+    officer as actor, no association) is served as one written now - the association as actor,
+    name and logo - when its post is an association's and its actor that post's author. Both are
+    ONE shaping at the read, `withholdPublishingMember`: no row is rewritten, and every stored row
+    is covered. A push shows the association's logo or no picture, never the member's face
+    (`pushIconOf`). **A row naming nobody keeps the review cohort's rule of the person behind it**
+    (review of #3770): the bell reads the cohort side of a row with an empty actor from the
+    comment's writer, else the post's author (`bellRowActorAccountSql`, in `bellRowVisibleSql`) -
+    the person its push was gated on - so a review account's anonymous or association-voiced
+    mention is not pushed and then hidden. It costs a primary-key read per such row, and nothing
+    while no cohort is configured.
+    **Known, and bounded:** (a) a feed page is cached 30 s per reader (`post-list-cache`), so a
+    moderator who loses the scope, or a writer whose post is edited away from them, can read the
+    writer on a cached page for at most 30 s after; (b) the campus trend (`campus-trend.ts`) and a
+    post's mentions (`mentionRecipientsOf`) skip a reader a block separates from the post's WRITER,
+    an association's post included - so a reader who blocked, or was blocked by, the officer who
+    wrote it may notice a trend or a mention that did not come. One bit, to the one person in that
+    block, who cannot tell it from a post that simply did not trend; the read itself exempts an
+    association's post from the author block, so the post stays visible.
 12. **A parent BDE super-admin's rewrite: "Non, l'acte visible suffit".** Making oneself a member
     with the right to edit is a visible act, and good conduct is trusted: no further wall than
     decision 8's split. Decision 8's WP carries no open point any more.
@@ -118,7 +157,7 @@ questions the first draft of this page left open, the same day.
 | --- | --- | --- |
 | Platform admin | **AP** | the JWT's `admin` claim, forwarded by nginx as `x-global-admin: true` (`SS/common/guards/global-admin.guard.ts`, `GlobalAdminGuard`); granted by another admin only |
 | BDE moderator | **BM** | `MODERATE` (bit 7) in an association of type `association` that governs a space (`isContentModerator`, `SS/associations/associations.service.ts`); every act then asks its SCOPE (`SS/spaces/bde-moderation.ts`): the content of the associations it is the parent of, and the people (and personal content) of every space it governs |
-| Institution moderator | **IM** | `MODERATE` in an institution. TARGET: moderates the institution's own content only (decision 4). TODAY: counted as a BM when the institution governs a space (`callerHasAnyBdeFlag` filters the type for `MANAGE_ASSO` only; `bdeStandingInSpaceSql` reads no type), and nothing over the institution's own content (`governingBdeJoinSql` excludes institutions) |
+| Institution moderator | **IM** | `MODERATE` in an institution, governing a space or not: passes the door (`MODERATES_SOMEWHERE_SQL`, `SS/spaces/bde-moderation.ts`) and moderates the institution's own content only (`institutionModeratesOwnSql`, decision 4) - never a person, even of a space the institution governs (`bdeModeratesUserSql` asks `governorIsAnAssociationSql`, decision 3) |
 | Holder ("the bureau") | **HO** | `POST_AS_ASSO` in the association, list or institution that published the thing: "the author" of every post and comment in its name (`isPublisherOf`, `SS/posts/posts.service.ts`) |
 | Author | **AU** | the writer of a personal post, or of the item itself (a comment, a chat line) |
 | Broadcaster | **BC** | a live's `broadcasterId` - a person, even for an association's live |
@@ -132,19 +171,19 @@ questions the first draft of this page left open, the same day.
 
 | Publisher | Local regulator (target) | Today, where it differs |
 | --- | --- | --- |
-| a person (personal, anonymous, "Entre etudiants", a CanaReel, a replay) | the BM of any space the author belongs to (`bdeModeratesUserSql`) | also the IM of an institution governing one of those spaces [IM] |
+| a person (personal, anonymous, "Entre etudiants", a CanaReel, a replay) | the BM of any space the author belongs to (`bdeModeratesUserSql`) | - |
 | an association or a list with a parent BDE | the parent BDE's BM (`bdeModeratesPublisherSql`, WP-D2) | - |
 | a BDE | its own `MODERATE` members (`governingBdeJoinSql`: a BDE governs itself) | - |
-| an institution | **its own IM**, AP as recourse | AP only (`MODERATION_RESERVED_TO_PLATFORM_ADMIN`) [IM] |
+| an institution | **its own IM**, AP as recourse | - |
 | an association with no parent, a person with no space | AP - a place with no regulator | - |
-| a student of a space whose governor is an institution, no BDE | AP - a place with no regulator | the institution's IM [IM] |
+| a student of a space whose governor is an institution, no BDE | AP - a place with no regulator | - |
 
 ---
 
 ## The grids
 
 Cell legend: **yes** / **no** / **-** (does not apply). **A cell is a GAP if and only if it carries a
-bracketed tag** (`[IM]`, `[WR]`, ...): its text gives the target and `today: ...`, and the tag names
+bracketed tag** (`[HIDE]`, ...): its text gives the target and `today: ...`, and the tag names
 the work package that closes it. A tag is upper-case
 letters or digits between square brackets that are not the text of a link (a link's text is followed
 by its target in parentheses, a tag never is); no other cell of a grid holds one. `in scope` means the scope of the role, as
@@ -154,14 +193,14 @@ the table above defines it.
 
 | Action | AP | BM | IM (own institution's post) | HO | AU (personal) | RD |
 | --- | --- | --- | --- | --- | --- | --- |
-| Moderation read: a hidden or out-of-audience post, its comments, its replay - logged | yes (P1) | yes in scope (P1) | **yes** (today: no) [IM] | no | no | no |
+| Moderation read: a hidden or out-of-audience post, its comments, its replay - logged | yes (P1) | yes in scope (P1) | yes (P1) | no | no | no |
 | Read one's own hidden post, CanaReel or replay, read-only (principle 1: it is theirs) - the lead's reading, reversible | no | no | no | **yes**, a post in its name (today: no, P1) [NOTICE] | **yes** (today: no, P1) [NOTICE] | no |
 | Participate (react, comment, vote, report) outside the audience | no (P2) | no | no | no | - | no |
-| Hide / unhide | yes | yes in scope (P3) | **yes** (today: no, AP only, P4) [IM] | no | no | no |
-| Delete | yes | yes in scope (P5) | **yes** (today: only if HO too) [IM] | yes | yes | no |
+| Hide / unhide | yes | yes in scope (P3) | yes (P4) | no | no | no |
+| Delete | yes | yes in scope (P5) | yes (P5) | yes | yes | no |
 | Unmask an anonymous post (one-way) | yes | yes in scope (P6) | - | - | no | no |
-| See the real author of an anonymous post | yes | yes in scope (P7) | - | - | yes, their own | no |
-| See the writer of an association's post | **yes** (today: no on the card, the raw id on `/posts/hidden`, P8) [WR] | **yes in scope** (today: the same) [WR] | **yes**, the lead's reading of 4 and 11 (today: no) [IM] | no | - | no |
+| See the real author of an anonymous post | yes (P7) | yes in scope (P7) | - | - | yes, their own (P7) | no |
+| See the writer of an association's post | yes (P8) | yes in scope (P8) | **yes**, its own institution's post, the lead's reading of 4 and 11 (P8) | no, the writer their own (P8) | - | no |
 | Edit the text | no (P9) | no (P9) | no | yes | yes | no |
 | Pin in a space (a promotion, not moderation) | yes | yes in its BDE's spaces, any publisher (P10) | no | no | no | no |
 | Auto-hide | - | - | - | - | - | 5 pending reports hide it (P11) |
@@ -169,13 +208,13 @@ the table above defines it.
 - (P1) `SS/posts/posts.service.ts` `moderatesPost` asks `AssociationsService.mayReadToModeratePost` and hands the answer to `readPostOpenVerdict` as `allowHidden`, logged `[MODERATION_READ]`; the hidden-posts list and a reported post's preview in the queue ask the same term (`bdeModerationReadsPostSql`). A BM does not read a post scheduled later unless it is published or an open report targets it (decision 2). Asserted in `SS/posts/post-openable.integration.spec.ts`.
 - (P2) No write passes `allowHidden`: outside its audience a moderator, the AP included, is refused a reaction, a comment, a vote and a report like any reader (`SS/posts/post-openable.ts`; same spec).
 - (P3) `assertModeratesPost` -> `mayModeratePost` (`SS/posts/posts.controller.ts`, hide/unhide/unmask routes).
-- (P4) `bdeModeratesPublisherSql` is false for an institution (`governingBdeJoinSql`: `child.type <> 'institution'`), so `refuseModeration` answers `MODERATION_RESERVED_TO_PLATFORM_ADMIN`.
+- (P4) `moderatesPublisherSql` (`SS/spaces/bde-moderation.ts`): its BDE half is false for an institution (`governingBdeJoinSql`: `child.type <> 'institution'`), its institution half (`institutionModeratesOwnSql`) true for that institution's own `MODERATE` members; a BM refused on it gets `MODERATION_RESERVED_TO_PLATFORM_ADMIN`. Asserted in `SS/spaces/bde-moderation.integration.spec.ts` ("an institution's moderators").
 - (P5) `assertMayManage` (`SS/posts/posts.service.ts`): AP, `isPublisherOf`, or `mayModeratePost`.
 - (P6) `PATCH /posts/:postId/unmask`, behind `assertModeratesPost`.
-- (P7) `mustHideAnonymousAuthor` (`SS/posts/posts.service.ts`).
-- (P8) `shapeListRow` and `toPublicPostFromEntity` delete `authorId` from every association post for every reader; `getHiddenPosts` selects the raw `p."authorId"` and the controller returns it unshaped.
+- (P7) `viewerSeesWriter` (`SS/posts/posts.service.ts`), the one writer rule - see P8.
+- (P8) `viewerSeesWriter` (`SS/posts/posts.service.ts`, decision 11): a post published under a name that is not its writer's - an association's or "Anonyme" - is served its `authorId` when the reader moderates it (`viewerModerates`: the AP, a BM whose spaces hold it, an IM on its own institution's post - `moderatedPostIds` reads `bdeModeratesContentSql`, whose institution half is asserted in `SS/spaces/bde-moderation.integration.spec.ts`) or wrote it, and to nobody else. `withholdWriterUnlessSeen` is the only place a served post loses its writer, and every read goes through it: the card (`toPublicPostFromEntity`), the feeds and the search (`shapeListRow`) and `/posts/hidden` (`getHiddenPosts`, which once returned the raw column). Asserted in `SS/posts/posts.service.can-manage.spec.ts` (by id and in `/posts/hidden`, seven readers, and the list's rows built through the shaping) and `SS/posts/post-openable.integration.spec.ts` (PostgreSQL, the real BDE scope). The client draws it as the anonymous reveal is drawn - the association big, the writer small under it with a pen (`revealedPostAuthor`, `RevealedAuthorLine`). The notifications follow it (decision 11): `notifyPostMentions`, `withholdPublishingMember`, `pushIconOf` (`SS/posts/post-notifications.service.ts`), asserted in `post-notifications.mention-gate.spec.ts`, `post-notifications.batch.spec.ts` and, for the bell's mention discriminator (`meta.mentionIn`), `SS/spaces/read-grants.integration.spec.ts`.
 - (P9) `assertMayEdit` -> 403 `POST_EDIT_PUBLISHER_ONLY` (owner, 2026-11-02, [D23 amended](profiles-and-access.md#d23-amended---moderate-is-scoped-and-only-the-author-edits-a-post-2026-11-02)).
-- (P10) `SS/posts/space-pins.ts`: `MODERATE` in the BDE OF THE SPACE (owner: pinning is not moderating).
+- (P10) `SS/posts/space-pins.ts` `bdePinsInSpaceSql`: `MODERATE` in the BDE OF THE SPACE (owner: pinning is not moderating), its governor of type `association` (`governorIsAnAssociationSql`, 2026-11-17): an institution governing a space with no BDE pins nothing there (decision 3), the platform admin does. Asserted in `SS/posts/space-pins.integration.spec.ts`.
 - (P11) `SS/moderation/moderation.service.ts`, `createReport` - posts only.
 
 ### Comments (plain, anonymous, in an association's name)
@@ -184,19 +223,19 @@ the table above defines it.
 
 | Action | AP | BM (post AND comment's publisher in scope) | IM (under its own post, or in its name) | Place owner | HO of the comment's association | AU of the comment | RD |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Moderation read under a hidden post | yes (C1) | yes in scope (C1) | **yes** (today: no) [IM] | no | no | no | no |
-| See the real writer (anonymous, association) | yes (C2) | yes in scope (C2) | **yes** (today: no) [IM] | no, never | no | yes, their own | no |
+| Moderation read under a hidden post | yes (C1) | yes in scope (C1) | yes (C1) | no | no | no | no |
+| See the real writer (anonymous, association) | yes (C2) | yes in scope (C2) | yes (C2) | no, never | no | yes, their own | no |
 | Hide another's comment, silently (decisions 5, 15) | (delete covers it) | (delete covers it) | (delete covers it) | **yes** (today: no, C3) [HIDE] | - | - | no |
 | Restore a comment the place owner hid, silently (decision 15) | **yes** (today: no hide exists) [HIDE] | **yes in scope** (today: the same) [HIDE] | **yes** (today: the same) [HIDE] | **yes** (today: the same) [HIDE] | - | no | no |
-| Delete (a tombstone where a protected reply stays) | yes (C4) | yes in scope (C4) | **yes** (today: no, AP only) [IM] | no - hide only | yes | yes, with its thread (C5) | no |
+| Delete (a tombstone where a protected reply stays) | yes (C4) | yes in scope (C4) | yes, a person's under its post and its own anywhere, never a club's (C4) | no - hide only | yes | yes, with its thread (C5) | no |
 | Edit the text | no (C6) | no (C6) | no | no | yes | yes | no |
-| Delete from the reports queue | yes | yes in scope (C7) | **yes** (today: no) [IM] | - | - | - | - |
+| Delete from the reports queue | yes | yes in scope (C7) | yes (C7) | - | - | - | - |
 | Auto-hide | - | - | - | - | - | - | **5 pending reports hide it**; a moderator restores it, the lead's reading (today: never, C8) [AUTOHIDE] |
 
 - (C1) `SS/posts/posts.service.ts` `listComments` asks the post's own moderation read (`moderatesPost`, decision 2); the thread is served read-only where the moderator may not participate.
 - (C2) `seesAccount` (`SS/posts/comment-identity.ts`); the post's author has no reveal right.
 - (C3) `commentRights` (`SS/posts/comment-identity.ts`) knows only the comment's author and its moderators; no column and no route hide a comment.
-- (C4) `commentRights.canDelete`, `bdeModeratesCommentSql`, `planCommentRemoval` (`SS/posts/comment-removal.ts`).
+- (C4) `commentRights.canDelete`, `bdeModeratesCommentSql`, `planCommentRemoval` (`SS/posts/comment-removal.ts`). The IM's comment in its institution's name, wherever it sits, is the second set of `bdeModeratesCommentSql` and `CommentViewer.moderatedInstitutionIds` in memory.
 - (C5) `PostInteractionsService.deleteComment` (`SS/posts/post-interactions.service.ts`).
 - (C6) 403 `COMMENT_EDIT_AUTHOR_ONLY` (`SS/spaces/bde-moderation.ts`).
 - (C7) `mayModerateComment` (`SS/associations/associations.service.ts`).
@@ -207,14 +246,14 @@ the table above defines it.
 | Action | AP | BM | IM (own institution's live) | HO (association / institution live, not broadcasting) | BC | RD |
 | --- | --- | --- | --- | --- | --- | --- |
 | Watch outside the audience | no (review cohort only, L1) | no | no | no | yes | no |
-| Moderation read of a replay | yes (L7) | yes in scope (L7) | **yes** (today: no) [IM] | no | no | no |
+| Moderation read of a replay | yes (L7) | yes in scope (L7) | yes (L7) | no | no | no |
 | Read one's own hidden replay, read-only (principle 1: it is theirs) - the lead's reading, reversible, as for a post | no | no | no | **yes**, a live in its name (today: no, L7) [NOTICE] | **yes** (today: no, L7) [NOTICE] | no |
 | End the live | via a cut | via a cut | via a cut | **yes** (today: no, L2) [LIVE] | yes | no |
-| Cut (ends it, records a strike) | yes | yes in scope (L3) | **yes** (today: no) [IM] | no | - | no |
-| Hide a chat line, live open | yes | yes in scope (L4) | **yes** (today: no) [IM] | **yes** (today: no, L4) [LIVE] | yes | no |
-| Hide a chat line after the live ended, while a report on it is open (decision 18) | **yes** (today: 410, L4) [LIVE] | **yes in scope** (today: 410) [LIVE] | **yes** (today: no) [IM] [LIVE] | **yes** (today: no, L4) [LIVE] | no, the lead's reading (decision 18 does not name a personal live's broadcaster), reversible | no |
+| Cut (ends it, records a strike) | yes | yes in scope (L3) | yes (L3) | no | - | no |
+| Hide a chat line, live open | yes | yes in scope (L4) | yes (L4) | **yes** (today: no, L4) [LIVE] | yes | no |
+| Hide a chat line after the live ended, while a report on it is open (decision 18) | **yes** (today: 410, L4) [LIVE] | **yes in scope** (today: 410) [LIVE] | **yes** (today: 410) [LIVE] | **yes** (today: no, L4) [LIVE] | no, the lead's reading (decision 18 does not name a personal live's broadcaster), reversible | no |
 | Remove a viewer | no | no | no | **yes** (today: no, L5) [LIVE] | yes | no |
-| Withdraw or restore the right to broadcast (a person) | yes | yes, a person of its spaces (L6) | **no** (today: yes for a governed space's students) [IM] | no | no | no |
+| Withdraw or restore the right to broadcast (a person) | yes | yes, a person of its spaces (L6) | no (L6) | no | no | no |
 | Hide / delete a replay | as a post | as a post | as a post | delete | delete | no |
 | Auto-hide a chat line | - | - | - | - | - | no: chat lines stay with the broadcaster and the bureau (decision 17) |
 
@@ -261,14 +300,14 @@ the table above defines it.
 | Edit name, campus, cursus, roles (identity provider fields) | yes (U1) | no | no | no | asks a correction | no |
 | Erase a bio (never rewrite it; the person is told, the act journaled) | **yes** (today: no, U2) [BIO] | **yes, a person of its spaces** (today: no, U2) [BIO] | no | no | writes their own | no |
 | Report a person | - | - | - | - | - | yes |
-| Mute / unmute (ONE platform-wide row) | yes | yes, a person of its spaces (U3) | **no** (today: yes, a governed space's students) [IM] | no | no | no |
+| Mute / unmute (ONE platform-wide row) | yes | yes, a person of its spaces (U3) | no (U3) | no | no | no |
 | Set another member's nickname | no | no | no | **yes, unless muted** (today: muted or not, U4) [NICK] | clear their own | no |
 | Handle a reported nickname | **recourse** (today: the only queue, with no tool, U5) [NICK] | no | no | **yes** (today: never sees it) [NICK] | - | a member reports |
 | Suspend an account | open question | - | - | - | - | - |
 
 - (U1) `CS/users/users.controller.ts` behind `GlobalAdminGuard`, fields in `CS/users/profile-edit.service.ts`.
 - (U2) `PATCH /users/me` is the bio's only writer (`CS/users/dto/user.dto.ts`); `profile-edit.service.ts` does not cover it.
-- (U3) `mayModerateUser` (`bdeModeratesUserSql`); one row per person, any BDE of theirs may lift it (owner, 2026-11-02, "Laisser tel quel").
+- (U3) `mayModerateUser` (`bdeModeratesUserSql`); one row per person, any BDE of theirs may lift it (owner, 2026-11-02, "Laisser tel quel"). The withdrawn-broadcasters list and the one-account standing read (`LivesController`, 1.7.0) ask `isContentModerator` first and then this predicate (list: per row; account: `refuseModeration` out of scope), the withdrawal's own authority, server-side.
 - (U4) `CommunityNicknamesService.set` (`SS/channels/community-nicknames.service.ts`) and the rule it asks, `mayWriteCommunityNickname` (`SS/channels/community-nicknames.ts`), read no mute.
 - (U5) `reportInBdeScopeSql` has no `nickname` branch; only a CM clears one.
 
@@ -308,10 +347,10 @@ ONE store, `content_reports`, ONE queue filtered by scope (`reportInBdeScopeSql`
 
 | Reported | Who may report | Queue (target) | Today, where it differs | The act |
 | --- | --- | --- | --- | --- |
-| `post` | who may open it | AP + the post's regulator (BM, or IM for its institution) | **IM: never** [IM] | hide, delete, unmask |
-| `comment` | who may read it | AP + the comment's regulator | **IM: never** [IM] | delete; the place owner's hide needs no report |
-| `user` | anyone signed in | AP + BM of the person's spaces | **also the IM of a governed space** [IM] | mute, erase the bio |
-| `live`, `live_chat` | who may watch it | AP + the live's regulator; a `live_chat` line also the bureau | **IM: never; the bureau: never** [IM] [LIVE] | cut, hide the line (also after the end, decision 18), mute |
+| `post` | who may open it | AP + the post's regulator (BM, or IM for its institution) | - | hide, delete, unmask |
+| `comment` | who may read it | AP + the comment's regulator | - | delete; the place owner's hide needs no report |
+| `user` | anyone signed in | AP + BM of the person's spaces | - | mute, erase the bio |
+| `live`, `live_chat` | who may watch it | AP + the live's regulator; a `live_chat` line also the bureau | **the bureau: never** [LIVE] | cut, hide the line (also after the end, decision 18), mute |
 | `nickname` | a member of the community | CM of that community, AP as recourse | **AP only** [NICK] | clear it |
 | content gone | - | AP | - | review only |
 
@@ -352,8 +391,6 @@ moderation read (`allowHidden` passes it, `SS/posts/post-openable.ts`). Unchange
 | Tag | Gap | Closed by | Target |
 | --- | --- | --- | --- |
 | `GRID` | nothing asserts this page | [the grid as table-driven specs](backlog.d/the-moderation-authority-grid-is-asserted-by-table-driven-specs.md) | `1.8.0` |
-| `IM` | an institution's MODERATE moderates students, and not its own content | [institution moderators](backlog.d/p1-institution-moderators-moderate-their-own-content-not-students.md) | `1.8.0` |
-| `WR` | an association post's writer: hidden from moderators on the card, raw on `/posts/hidden` | [the writer and the hidden list](backlog.d/p1-hidden-posts-list-serves-an-association-post-s-raw-writer.md) | `1.8.0` |
 | `HIDE` | a post's owner cannot act on a comment under it | [the place owner hides](backlog.d/p2-a-post-owner-hides-a-comment-under-it.md) | `1.9.0` |
 | `NICK` | a reported nickname reaches a queue with no tool; a muted moderator renames | [nicknames to the community](backlog.d/p2-a-reported-community-nickname-reaches-the-community-moderators.md) | `1.9.0` |
 | `LIVE` | an association's live belongs to its broadcaster alone; a chat line cannot be hidden after the end | [the live's moderators](backlog.d/p2-an-association-live-is-moderated-by-its-co-holders.md) | `1.9.0` |

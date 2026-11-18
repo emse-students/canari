@@ -249,10 +249,13 @@ export class CreateFormDto {
   @IsOptional()
   opensAt?: string;
 
-  /** ISO date string; when set, the form closes at this instant. */
+  /**
+   * ISO date string; when set, the form closes at this instant, and must be after `opensAt`
+   * (`FORM_CLOSE_BEFORE_OPEN`). On an EDIT, absent keeps the stored end and `null` clears it.
+   */
   @IsDateString()
   @IsOptional()
-  closedAt?: string;
+  closedAt?: string | null;
 
   @IsBoolean()
   @IsOptional()

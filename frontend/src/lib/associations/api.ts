@@ -186,6 +186,39 @@ export function holdsBdeFlag(
   return !!findBdeAssociationWithFlag(myAssociations, flag);
 }
 
+/**
+ * Does the user moderate SOMEWHERE - the client mirror of the server's door
+ * (`MODERATES_SOMEWHERE_SQL`, `apps/social-service/src/spaces/bde-moderation.ts`): `MODERATE` in a
+ * BDE of type `association`, or in an INSTITUTION, whose own moderators moderate its content (owner,
+ * 2026-11-15, decision 4) whether or not it governs a space. An institution governing a space is no
+ * BDE here (decision 3). What each act may reach is the server's answer on that act.
+ */
+export function holdsModerationDoor(myAssociations: Association[]): boolean {
+  return myAssociations.some(
+    (a) =>
+      hasPermissionFlag(a.permissions ?? 0, AssociationPermissionFlag.MODERATE) &&
+      (a.type === 'institution' || (a.type === 'association' && a.isBDE))
+  );
+}
+
+/**
+ * Does the members editor offer BDE-only flag `flag` on an entity of kind `kind` (`isBDE`: it
+ * governs a space)? Each flag where the server honours it: `VALIDATE_EVENTS` wherever a space is
+ * governed (an institution keeps its agenda right, owner 2026-11-03); `MANAGE_ASSO` in a BDE of type
+ * `association` only (reform 2.3); `MODERATE` there AND in any institution, whose own moderators
+ * moderate its content (owner, 2026-11-15, decision 4).
+ */
+export function offersBdeOnlyFlag(
+  kind: Association['type'],
+  isBDE: boolean,
+  flag: AssociationPermissionFlag
+): boolean {
+  const bde = isBDE && kind === 'association';
+  if (flag === AssociationPermissionFlag.VALIDATE_EVENTS) return isBDE;
+  if (flag === AssociationPermissionFlag.MODERATE) return bde || kind === 'institution';
+  return bde;
+}
+
 export interface AssociationMember {
   id: string;
   associationId: string;
@@ -1244,7 +1277,7 @@ export async function ensureMyAssociations(force = false): Promise<Association[]
     myAssociationsProbe = listMyAssociations()
       .then((assos) => {
         setAssociationSuperAdmin(holdsBdeFlag(assos, AssociationPermissionFlag.MANAGE_ASSO));
-        setContentModerator(holdsBdeFlag(assos, AssociationPermissionFlag.MODERATE));
+        setContentModerator(holdsModerationDoor(assos));
         setEventValidator(holdsBdeFlag(assos, AssociationPermissionFlag.VALIDATE_EVENTS));
         return assos;
       })
@@ -1276,14 +1309,14 @@ export async function ensureAssociationSuperAdmin(force = false): Promise<boolea
 }
 
 /**
- * Determines whether the current user may moderate content platform-wide (member of a BDE
- * association holding `MODERATE`) and publishes it so `isContentModerator()` reflects it.
+ * Determines whether the current user moderates somewhere (`holdsModerationDoor`: `MODERATE` in a
+ * BDE or in an institution) and publishes it so `isContentModerator()` reflects it.
  *
  * The client mirror of the server's `isContentModerator`: the moderation screen and the server's
  * guards must open to the same people, or the tier is reachable only by whoever knows the URL.
  */
 export async function ensureContentModerator(force = false): Promise<boolean> {
-  return holdsBdeFlag(await ensureMyAssociations(force), AssociationPermissionFlag.MODERATE);
+  return holdsModerationDoor(await ensureMyAssociations(force));
 }
 
 /** Determines whether the current user may validate pending calendar events. */

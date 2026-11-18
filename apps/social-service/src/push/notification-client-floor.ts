@@ -83,6 +83,10 @@ export const NOTIFICATION_TYPE_MIN_CLIENT = {
   form_paid_over_capacity: '1.4.0',
   live_suspended: '1.4.0',
   live_withdrawn: '1.4.0',
+  // The lift of a withdrawal (1.7.0): the first build that draws it.
+  // The floor compares the core version only (`1.7.0-alpha.N` counts as 1.7.0): tester builds below
+  // alpha 9 pass it without drawing the type - accepted, testers only.
+  live_reinstated: '1.7.0',
   follow_request: '1.5.1',
   follow_accepted: '1.5.1',
   booking_cancelled: '1.5.1',
@@ -149,6 +153,7 @@ export const PUSH_KEY_MIN_CLIENT: Readonly<Record<PushContentKey, string | null>
   social_live_cut: '1.4.0',
   social_live_suspended: '1.4.0',
   social_live_withdrawn: '1.4.0',
+  social_live_reinstated: '1.7.0',
   form_paid_over_capacity: '1.4.0',
   social_follow_request: '1.5.1',
   social_follow_accepted: '1.5.1',
