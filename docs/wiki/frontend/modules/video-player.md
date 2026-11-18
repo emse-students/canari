@@ -997,3 +997,11 @@ wait itself rather than group it.
 
 **Readings owed.** A reel and a feed video on a throttled link (about 250 KB/s) on both phones: one
 wait, then no stop.
+
+## A CanaReel's tap is the overlay's (owner, 2026-11-18)
+
+**Supersedes the `reel` rows above** (the tap plays or pauses, a muted tap turns the sound on): in the
+CanaReels viewer a single tap hides or shows the overlay and the player does nothing with it, except to
+start a video whose autoplay the engine refused. The pause is the press held; the sound is the rail's
+speaker. The `lightbox` and `conversation` rows are unchanged. The seek line is now fixed to the video's
+real total and draws the loaded ranges in grey: [reels](reels.md#a-tap-hides-the-overlay-and-the-playback-bar-is-fixed-to-the-real-total-owner-2026-11-18).

@@ -32,29 +32,6 @@ export interface BufferedRanges {
 }
 
 /**
- * How far the buffered range that holds the playhead reaches, as a fraction of the duration.
- *
- * THE RANGE UNDER THE PLAYHEAD, NOT THE LAST ONE: after a seek the engine holds two ranges, and
- * drawing the far one's end would show bytes ahead of the reader that playback cannot reach without
- * crossing a hole. With no range under the playhead, nothing ahead of it is buffered: the fraction
- * is the playhead's own.
- */
-export function bufferedFraction(
-  buffered: BufferedRanges,
-  currentTime: number,
-  duration: number
-): number {
-  if (!Number.isFinite(duration) || duration <= 0) return 0;
-  let reach = currentTime;
-  for (let i = 0; i < buffered.length; i++) {
-    if (buffered.start(i) <= currentTime + 0.01 && buffered.end(i) >= currentTime) {
-      reach = Math.max(reach, buffered.end(i));
-    }
-  }
-  return clampFraction(reach / duration);
-}
-
-/**
  * THE LENGTH A SEEK LINE MAPS ONTO: the engine's duration when it knows one, else the end of what it
  * can seek - an MSE stream whose length is not known yet (`segmentedMediaStream`: undeclared, and its
  * tail not read) seeks within what it has buffered, so its line shows progress against that and
@@ -65,6 +42,67 @@ export function scrubLength(duration: number, seekable: BufferedRanges): number 
   if (seekable.length === 0) return 0;
   const end = seekable.end(seekable.length - 1);
   return Number.isFinite(end) && end > 0 ? end : 0;
+}
+
+/** Where a seek line's length came from (`barLength`). */
+export type BarLengthSource = 'engine' | 'declared' | 'seekable' | 'unknown';
+
+/**
+ * THE LENGTH THE SEEK LINE IS FIXED TO, FROM THE FIRST FRAME (owner, 2026-11-18: on a slow link the
+ * line "went back" while segments loaded). It is the TOTAL duration of the video, in this order:
+ * 1. the engine's `duration`, when it knows one (a file's own header, or what the stream's source was
+ *    given: the declared length, then the length read from the file's tail);
+ * 2. the length its PUBLISHER declared (`declaredSeconds`: a CanaReel's `posts.duration_ms`, a
+ *    conversation reel's `MediaRef.durationMs`);
+ * 3. a whole local file's seekable end (`streamed` false): every byte is already here, so that end
+ *    IS the total and it cannot grow;
+ * 4. otherwise `unknown`, `seconds` 0 - the STREAM whose total nobody has told yet. NEVER the seekable
+ *    end of a stream: that is the loaded part, which grows with every segment and rewinds the line.
+ *    The caller draws no played part for `unknown` and says so (`data-video-length`).
+ */
+export function barLength(input: {
+  duration: number;
+  declaredSeconds?: number | null;
+  seekable: BufferedRanges;
+  streamed: boolean;
+}): { seconds: number; source: BarLengthSource } {
+  const { duration, declaredSeconds, seekable, streamed } = input;
+  if (Number.isFinite(duration) && duration > 0) return { seconds: duration, source: 'engine' };
+  if (declaredSeconds && Number.isFinite(declaredSeconds) && declaredSeconds > 0) {
+    return { seconds: declaredSeconds, source: 'declared' };
+  }
+  if (!streamed) {
+    const local = scrubLength(duration, seekable);
+    if (local > 0) return { seconds: local, source: 'seekable' };
+  }
+  return { seconds: 0, source: 'unknown' };
+}
+
+/** One loaded stretch of the video, as fractions of its length. */
+export interface LoadedSpan {
+  from: number;
+  to: number;
+}
+
+/**
+ * EVERY LOADED RANGE, as the grey part of the line (YouTube's): after a seek the engine holds
+ * several, and each is drawn where it lies, under the played part. Clamped to the length, and
+ * empty when the length is unknown - a fraction of nothing is not drawn.
+ */
+export function loadedSpans(buffered: BufferedRanges, length: number): LoadedSpan[] {
+  if (!Number.isFinite(length) || length <= 0) return [];
+  const spans: LoadedSpan[] = [];
+  for (let i = 0; i < buffered.length; i++) {
+    const from = clampFraction(buffered.start(i) / length);
+    const to = clampFraction(buffered.end(i) / length);
+    if (to > from) spans.push({ from, to });
+  }
+  return spans;
+}
+
+/** How much of the line is played: `currentTime` over the fixed `length`; 0 while the length is unknown. */
+export function playedFraction(currentTime: number, length: number): number {
+  return Number.isFinite(length) && length > 0 ? clampFraction(currentTime / length) : 0;
 }
 
 /** A fraction clamped to `[0, 1]`; `NaN` is `0`. */

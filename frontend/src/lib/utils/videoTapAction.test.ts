@@ -19,22 +19,39 @@ describe('videoTapAction - the owner decisions of 2026-11-10', () => {
     expect(videoTapAction({ ...base, paused: true })).toBe('toggle-sound-and-play');
   });
 
-  it('in full screen (reel, lightbox) a tap NEVER mutes: it plays or pauses', () => {
-    for (const variant of ['reel', 'lightbox'] as const) {
-      expect(videoTapAction({ ...base, variant })).toBe('toggle-play');
-      expect(videoTapAction({ ...base, variant, paused: true })).toBe('toggle-play');
-      expect(videoTapAction({ ...base, variant, canOpen: true })).toBe('toggle-play');
+  it('in the lightbox a tap NEVER mutes: it plays or pauses', () => {
+    const variant = 'lightbox';
+    expect(videoTapAction({ ...base, variant })).toBe('toggle-play');
+    expect(videoTapAction({ ...base, variant, paused: true })).toBe('toggle-play');
+    expect(videoTapAction({ ...base, variant, canOpen: true })).toBe('toggle-play');
+  });
+
+  it('in the lightbox a MUTED video tap turns the sound on', () => {
+    const variant = 'lightbox';
+    expect(videoTapAction({ ...base, variant, muted: true })).toBe('sound-on');
+    // Muted and paused: one tap for the sound and the picture, not two.
+    expect(videoTapAction({ ...base, variant, muted: true, paused: true })).toBe(
+      'toggle-sound-and-play'
+    );
+  });
+
+  it("a CanaReel tap is the overlay's, never the player's: it does not pause or mute (owner, 2026-11-18)", () => {
+    const variant = 'reel';
+    for (const paused of [false, true]) {
+      for (const muted of [false, true]) {
+        expect(videoTapAction({ ...base, variant, paused, muted })).toBe('none');
+      }
     }
   });
 
-  it('in full screen a MUTED video tap turns the sound on', () => {
-    for (const variant of ['reel', 'lightbox'] as const) {
-      expect(videoTapAction({ ...base, variant, muted: true })).toBe('sound-on');
-      // Muted and paused: one tap for the sound and the picture, not two.
-      expect(videoTapAction({ ...base, variant, muted: true, paused: true })).toBe(
-        'toggle-sound-and-play'
-      );
-    }
+  it('a CanaReel whose autoplay was refused is started by a tap, with its sound if it was muted', () => {
+    const variant = 'reel';
+    expect(videoTapAction({ ...base, variant, paused: true, autoplayRefused: true })).toBe(
+      'toggle-play'
+    );
+    expect(
+      videoTapAction({ ...base, variant, paused: true, muted: true, autoplayRefused: true })
+    ).toBe('toggle-sound-and-play');
   });
 
   it('a conversation viewer tap pauses and plays, and a muted one turns the sound on', () => {

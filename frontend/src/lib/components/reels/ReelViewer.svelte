@@ -48,6 +48,7 @@
   import { REEL_ORDERS, type ReelOrder } from '$lib/reels/reelOrder';
   import type { ReelOrderChoice } from '$lib/reels/reelStream.svelte';
   import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
+  import Button from '$lib/components/ui/Button.svelte';
   import {
     mergeReelPage,
     reelDragOffset,
@@ -697,6 +698,37 @@
   let viewerEl = $state<HTMLDivElement | null>(null);
 
   /**
+   * THE OVERLAY IS HIDDEN (owner, 2026-11-18, [reels](docs/wiki/frontend/modules/reels.md)): a single
+   * tap on the picture hides the caption, the author row, the rail, the top tabs and the close
+   * button, and the next tap brings them back (`reelOverlayTap`, on each slide). Only the player's
+   * thin line stays. It is SHOWN AGAIN on every page (a reel or a new list): a hidden overlay is
+   * the reader's choice about THIS reel, never a mode that outlives it.
+   */
+  let overlayHidden = $state(false);
+  let closeButton = $state<HTMLButtonElement | null>(null);
+
+  function toggleOverlay() {
+    overlayHidden = !overlayHidden;
+    console.debug(`[reel-viewer] overlay ${overlayHidden ? 'hidden' : 'shown'} by a tap`);
+  }
+
+  /** The sr-only button: the way back for a reader who cannot tap the picture; focus lands on the close button. */
+  function showOverlayFromButton() {
+    overlayHidden = false;
+    console.debug('[reel-viewer] overlay shown by the assistive button');
+    queueMicrotask(() => closeButton?.focus());
+  }
+
+  $effect(() => {
+    void list;
+    void list.index;
+    if (untrack(() => overlayHidden)) {
+      console.debug('[reel-viewer] a new page - the overlay is shown again');
+      overlayHidden = false;
+    }
+  });
+
+  /**
    * THE MOUSE WHEEL TURNS THE PAGE (user, 2026-10-19, desktop): one gesture, one page, through
    * `go` - the arrow buttons' path (`reels/reelWheel.ts`). Not while the comments sheet is open nor
    * over a child that scrolls (the list scrolls instead), never on ctrl+wheel (zoom) or a horizontal
@@ -1056,6 +1088,8 @@
                 mediaDragX={slot.i === list.index ? list.mediaDragX : 0}
                 mediaDragging={slot.i === list.index && list.mediaDragging}
                 onMediaStep={(step) => !list.settling && slot.i === list.index && go(step)}
+                {overlayHidden}
+                onToggleOverlay={toggleOverlay}
               />
             </div>
           {/each}
@@ -1066,12 +1100,30 @@
          close button and the phone's status bar, so white icons read on a bright reel too; the
          native icons themselves are held light (`holdNativeBar`). The X has no disc: a disc
          against a letterboxed frame's rounded corner read as overlapping it. Safe-area aware. -->
+      {#if overlayHidden}
+        <!-- THE WAY BACK FOR ASSISTIVE TECHNOLOGY AND THE KEYBOARD: while the overlay is hidden its controls
+             are neither focusable nor announced, and a screen reader's activation is no tap of the
+             picture. This button is the first thing the tab order and the reader find; it is drawn only
+             while focused from the keyboard. -->
+        <Button
+          variant="bare"
+          class="focus-visible:ring-accent-icon sr-only focus-visible:not-sr-only focus-visible:absolute focus-visible:top-2 focus-visible:left-2 focus-visible:z-50 focus-visible:rounded-full focus-visible:bg-black/70 focus-visible:px-4 focus-visible:py-2 focus-visible:text-sm focus-visible:font-semibold focus-visible:text-white focus-visible:ring-2"
+          onclick={showOverlayFromButton}
+          data-reel-overlay-show
+        >
+          {m.reels_overlay_show()}
+        </Button>
+      {/if}
       <div
-        class="pointer-events-none absolute inset-x-0 top-0 grid grid-cols-[1fr_auto_1fr] items-start bg-linear-to-b from-black/50 to-transparent px-2 pt-[calc(var(--safe-area-inset-top,0px)+0.5rem)] pb-6"
+        inert={overlayHidden}
+        class="pointer-events-none absolute inset-x-0 top-0 grid grid-cols-[1fr_auto_1fr] items-start bg-linear-to-b from-black/50 to-transparent px-2 pt-[calc(var(--safe-area-inset-top,0px)+0.5rem)] pb-6 transition-[opacity,visibility] duration-150 motion-reduce:transition-none {overlayHidden
+          ? 'invisible opacity-0'
+          : ''}"
         style={sideSafePadding('0.5rem')}
         data-reel-top-scrim
       >
         <button
+          bind:this={closeButton}
           type="button"
           class="ui-icon-button focus-visible:ring-accent-icon pointer-events-auto col-start-1 justify-self-start rounded-full outline-none focus-visible:ring-2"
           aria-label={m.reels_viewer_close()}

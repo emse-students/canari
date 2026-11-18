@@ -5089,6 +5089,7 @@
   "reels_publish_from_composer_notice": "A vertical video of {seconds} seconds or less is a CanaReel: deleted after {lifetime}.",
   "reels_viewer_label": "CanaReels",
   "reels_viewer_close": "Close CanaReels",
+  "reels_overlay_show": "Show the controls",
   "reels_viewer_prev": "Previous CanaReel",
   "reels_viewer_next": "Next CanaReel",
   "reels_carousel_prev": "Previous photo or video",
