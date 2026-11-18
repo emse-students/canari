@@ -597,6 +597,30 @@ describe('NotificationRow for the Lydia payments notices', () => {
   });
 });
 
+describe('NotificationRow for an item in a global admin queue (owner, 2026-11-18)', () => {
+  const adminRow = (type: string): PostNotification => ({
+    id: `n-${type}`,
+    type,
+    postId: 'item-1',
+    actorId: 'system',
+    actorName: 'Canari',
+    text: '',
+    read: false,
+    createdAt: new Date().toISOString(),
+  });
+
+  it.each([
+    ['admin_profile_correction', () => m.notif_admin_profile_correction_text()],
+    ['admin_report', () => m.notif_admin_report_text()],
+  ])('%s says what waits, in one sentence, names nobody, and opens', (type, text) => {
+    const target = renderRow(adminRow(type));
+    expect(target.textContent).toContain(text());
+    expect(target.textContent).not.toContain(m.notif_unknown_type_text());
+    expect(target.textContent).not.toContain(m.notif_comment_text());
+    expect(target.querySelector('button')!.disabled).toBe(false);
+  });
+});
+
 describe('NotificationRow with a type this build does not know', () => {
   const unknown: PostNotification = {
     id: 'n-unk',

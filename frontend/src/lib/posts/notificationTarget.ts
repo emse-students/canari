@@ -16,6 +16,14 @@ export const REPUBLICATION_REQUESTS_ROUTE = '/notifications/requests' satisfies 
 export const FOLLOW_REQUESTS_ROUTE = '/notifications/follow-requests' satisfies AppPath;
 
 /**
+ * The two global-admin queues a notice announces a new item in (owner, 2026-11-18) - where an
+ * `admin_profile_correction` / `admin_report` row and its push (`fr.emse.canari://admin-...`) land.
+ */
+export const ADMIN_PROFILE_CORRECTIONS_ROUTE = '/admin/profile-corrections' satisfies AppPath;
+/** See {@link ADMIN_PROFILE_CORRECTIONS_ROUTE}. */
+export const ADMIN_MODERATION_ROUTE = '/admin/moderation' satisfies AppPath;
+
+/**
  * The help page a new Lydia cashier is sent to (enrolment lot 3): what Lydia Pro is, what the role
  * allows, and what to do with Lydia's SMS. Also linked from the association's "Caissiers" section.
  */
@@ -161,6 +169,13 @@ export function notificationHref(
       return BOOKINGS_HREF;
     case 'event_open':
       return '/calendar';
+    // A new item in a global admin's queue (owner, 2026-11-18): `postId` is the REQUEST or the
+    // REPORT, which has no page of its own - the queue is where it is handled. The row is served only
+    // while the item waits, so a tap never lands on an item already handled by another admin.
+    case 'admin_profile_correction':
+      return ADMIN_PROFILE_CORRECTIONS_ROUTE;
+    case 'admin_report':
+      return ADMIN_MODERATION_ROUTE;
     // A type this build does not know has an id of unknown meaning. The old default sent it to
     // `/posts/<id>`, a dead link for anything that is not a post.
     default:
@@ -222,6 +237,8 @@ export const KNOWN_NOTIFICATION_TYPES: ReadonlySet<string> = new Set([
   'delegation_revoked',
   'delegation_receiver_not_ready',
   'delegation_resumed',
+  'admin_profile_correction',
+  'admin_report',
 ]);
 
 /** Whether this build knows how to render and route a notification of this type. */

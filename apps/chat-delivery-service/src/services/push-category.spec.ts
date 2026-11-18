@@ -126,6 +126,14 @@ describe('categoryOfDataPush', () => {
     }
   );
 
+  // A new item in a global admin's queue (owner, 2026-11-18): operational, no switch silences it.
+  it.each(['social_admin_profile_correction', 'social_admin_report'])(
+    'never files %s: an item waiting for the admins always goes out',
+    (contentKey) => {
+      expect(categoryOfDataPush({ type: 'social', contentKey })).toBeNull();
+    }
+  );
+
   it('never files an explicitly silent frame, whatever it is', () => {
     expect(categoryOfDataPush({ type: 'channel', silent: 'true' })).toBeNull();
   });

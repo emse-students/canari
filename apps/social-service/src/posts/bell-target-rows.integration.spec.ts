@@ -37,6 +37,7 @@ import {
 } from './post-notifications.it-schema';
 import { AssociationPermissionFlag as F } from '../associations/entities/association-member.entity';
 import { PG_SESSION_OPTIONS } from '../common/pg-session-options';
+import { REPORT_ALREADY_ANNOUNCED_SQL } from '../admin-queues/admin-queue-sql';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -64,6 +65,10 @@ maybe('bell rows bound to something other than a post (PostgreSQL)', () => {
   /** The types `reader`'s bell SERVES now, through the shipped read - unread ones are what it counts. */
   const served = async (reader: string): Promise<string[]> =>
     (await bell.getNotifications(reader, 50)).map((n) => n.type).sort();
+
+  /** The same read from a build that draws the admin queue notices (`1.7.1`). */
+  const servedTo171 = async (reader: string): Promise<string[]> =>
+    (await bell.getNotifications(reader, 50, '1.7.1')).map((n) => n.type).sort();
 
   /** One bell row, as the writers store it. */
   const row = (
@@ -509,6 +514,99 @@ maybe('bell rows bound to something other than a post (PostgreSQL)', () => {
     await row('f1', 'follow_accepted', 'not-a-uuid');
     await row('f1', 'repost_proposed', 'not-a-uuid');
     expect(await served('f1')).toEqual(['booking_removed', 'follow_accepted']);
+  });
+
+  it('an admin queue notice is served to a global admin while its item waits, and leaves EVERY admin bell once one handles it', async () => {
+    const request = id(40);
+    const report = id(41);
+    const second = id(42);
+    await q(`INSERT INTO users (id, admin) VALUES ('adm2', true) ON CONFLICT (id) DO NOTHING`);
+    await q(`UPDATE users SET admin = true WHERE id = 'adm2'`);
+    await q(
+      `INSERT INTO profile_correction_requests (id, "userId", message) VALUES ($1, 'f1', 'x')`,
+      [request]
+    );
+    // Two reports on ONE subject: the notice announced the first, the subject waits until both go.
+    await q(
+      `INSERT INTO content_reports (id, "contentType", "contentId") VALUES ($1, 'post', 'p-1'), ($2, 'post', 'p-1')`,
+      [report, second]
+    );
+    for (const u of ['adm', 'adm2', 'f1']) {
+      await row(u, 'admin_profile_correction', request);
+      await row(u, 'admin_report', report);
+    }
+    const both = ['admin_profile_correction', 'admin_report'];
+    expect(await servedTo171('adm')).toEqual(both);
+    expect(await servedTo171('adm2')).toEqual(both);
+    // A row that reached somebody who is not a global admin is served to nobody.
+    expect(await servedTo171('f1')).toEqual([]);
+    // A build before the floor is not served a type it cannot draw.
+    expect(await served('adm')).toEqual([]);
+
+    // One admin takes the correction (the claim), then applies it: gone from both bells at once.
+    await q(`UPDATE profile_correction_requests SET status = 'applying' WHERE id = $1`, [request]);
+    expect(await servedTo171('adm2')).toEqual(['admin_report']);
+    await q(`UPDATE profile_correction_requests SET status = 'applied' WHERE id = $1`, [request]);
+    expect(await servedTo171('adm')).toEqual(['admin_report']);
+    expect(await servedTo171('adm2')).toEqual(['admin_report']);
+
+    // The announced report is reviewed, another on the same subject still waits: the notice stays.
+    await q(`UPDATE content_reports SET status = 'reviewed' WHERE id = $1`, [report]);
+    expect(await servedTo171('adm')).toEqual(['admin_report']);
+    await q(`UPDATE content_reports SET status = 'dismissed' WHERE id = $1`, [second]);
+    expect(await servedTo171('adm')).toEqual([]);
+    expect(await servedTo171('adm2')).toEqual([]);
+
+    // An admin who loses the flag loses the notices too.
+    await q(`UPDATE content_reports SET status = 'pending' WHERE id = $1`, [second]);
+    expect(await servedTo171('adm2')).toEqual(['admin_report']);
+    await q(`UPDATE users SET admin = false WHERE id = 'adm2'`);
+    expect(await servedTo171('adm2')).toEqual([]);
+    await q(`DELETE FROM content_reports WHERE id IN ($1, $2)`, [report, second]);
+  });
+
+  it('a report is announced unless a notice about its subject is still owed, and a handled notice never comes back (`REPORT_ALREADY_ANNOUNCED_SQL`)', async () => {
+    const [before, x, y, z, elsewhere] = [id(50), id(51), id(52), id(53), id(54)];
+    const file = (report: string, minutesAgo: number, type = 'user') =>
+      q(
+        `INSERT INTO content_reports (id, "contentType", "contentId", "createdAt")
+         VALUES ($1, $2, 'u-9', now() - make_interval(mins => $3))`,
+        [report, type, minutesAgo]
+      );
+    const covered = async (reportId: string) =>
+      ((await q(REPORT_ALREADY_ANNOUNCED_SQL, [reportId])) as { covered: boolean }[])[0].covered;
+    const handle = (...reports: string[]) =>
+      q(`UPDATE content_reports SET status = 'dismissed' WHERE id = ANY($1::uuid[])`, [reports]);
+
+    // A report that waited before the notices existed (or whose announcement failed) has no row: the
+    // next report on its subject IS announced - "an older report waits" is not "it was announced".
+    await file(before, 40);
+    await file(x, 30);
+    expect(await covered(x)).toBe(false);
+    await row('adm', 'admin_report', x);
+    // Now a notice is owed: the next report is covered by it, one subject, one notice.
+    await file(y, 20);
+    expect(await covered(y)).toBe(true);
+    // Another content type with the same id is another subject.
+    await file(elsewhere, 20, 'comment');
+    expect(await covered(elsewhere)).toBe(false);
+
+    // The announced report is handled, the older unannounced one still waits: the notice stays.
+    await handle(x, y);
+    expect(await servedTo171('adm')).toEqual(['admin_report']);
+    await handle(before);
+    expect(await servedTo171('adm')).toEqual([]);
+
+    // Reported again after everything was handled: a NEW notice, and the old one does not come back.
+    await file(z, 1);
+    expect(await covered(z)).toBe(false);
+    await row('adm', 'admin_report', z);
+    expect(await servedTo171('adm')).toEqual(['admin_report']);
+    const shown = (await bell.getNotifications('adm', 50, '1.7.1')).map((n) => n.postId);
+    expect(shown).toEqual([z]);
+    await q(`DELETE FROM content_reports WHERE id = ANY($1::uuid[])`, [
+      [before, x, y, z, elsewhere],
+    ]);
   });
 
   it("keeps the bell's one statement walking the reader's index with no sort", async () => {

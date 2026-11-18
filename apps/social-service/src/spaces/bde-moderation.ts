@@ -363,16 +363,27 @@ export const BDE_MODERATES_LIVE_SQL = `SELECT ${bdeModeratesLiveSql('$1', asUuid
  * `posts`, `lives` and `live_cuts` are probed by primary key. A comment carries no post id, so its
  * branch is UNCORRELATED: the comment ids under the posts this moderator governs, computed ONCE per
  * query (a hashed subplan) and probed per report - never a scan of every post per report.
+ *
+ * That holds only while `moderator` is CONSTANT in the query. A caller asking it of many moderators
+ * at once (a correlated column) would re-run the set per moderator, so it passes `commentInScope`:
+ * its own test of the comment branch over posts it already resolved (`AdminQueueSignal`).
  */
-export function reportInBdeScopeSql(report: string, moderator: string): string {
+export function reportInBdeScopeSql(
+  report: string,
+  moderator: string,
+  commentInScope?: string
+): string {
   const postInScope = bdeModeratesContentSql(moderator, 'rp."associationId"', 'rp."authorId"');
   const contentUuid = asUuidOrNullSql(`${report}."contentId"`);
+  const comment =
+    commentInScope ??
+    `${report}."contentId" IN (SELECT rc->>'id'
+      FROM posts rp CROSS JOIN LATERAL jsonb_array_elements(COALESCE(rp.comments, '[]'::jsonb)) rc
+      WHERE ${bdeModeratesCommentSql(moderator, 'rp', 'rc')})`;
   return `(
     (${report}."contentType" = 'post' AND EXISTS (SELECT 1 FROM posts rp
       WHERE rp.id = ${contentUuid} AND ${postInScope}))
-    OR (${report}."contentType" = 'comment' AND ${report}."contentId" IN (SELECT rc->>'id'
-      FROM posts rp CROSS JOIN LATERAL jsonb_array_elements(COALESCE(rp.comments, '[]'::jsonb)) rc
-      WHERE ${bdeModeratesCommentSql(moderator, 'rp', 'rc')}))
+    OR (${report}."contentType" = 'comment' AND ${comment})
     OR (${report}."contentType" = 'user' AND ${bdeModeratesUserSql(moderator, `${report}."contentId"`)})
     OR (${report}."contentType" = 'live' AND ${bdeModeratesLiveSql(moderator, contentUuid)})
     OR (${report}."contentType" = 'live_chat' AND EXISTS (SELECT 1 FROM live_chat_reported_lines rk

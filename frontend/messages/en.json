@@ -6058,6 +6058,8 @@
   "notif_live_suspended_text": "You can no longer broadcast for a while",
   "notif_live_withdrawn_text": "Your right to broadcast was withdrawn",
   "notif_live_reinstated_text": "Your right to broadcast was restored; a running suspension still applies until it ends.",
+  "notif_admin_profile_correction_text": "Someone asks for a correction of their profile.",
+  "notif_admin_report_text": "Some content or a person was reported.",
   "moderation_type_live": "Live",
   "moderation_type_live_chat": "Live chat message",
   "moderation_chat_line_verified": "Text verified by the server",

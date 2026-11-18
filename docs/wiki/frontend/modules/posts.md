@@ -791,6 +791,8 @@ plan above, unchanged; asserted again by `bell-target-rows.integration.spec.ts`)
 | `booking_open` | the booking space | the space is listed, has no audience (L25), its association is not archived and is visible to the reader (`associationVisibleToViewerSql`, `listedSpaces`' predicate) - the VIEWER predicate, read grants counted, as `event_open`, and the follow is not re-asked either |
 | `form_paid_over_capacity` | the form | the reader owns the form or holds `MANAGE_FORMS` in its association |
 | `lydia_payments_*`, `delegation_*` | the association | the reader holds `MANAGE_PAYOUT_ACCOUNT`, resp. `MANAGE_PRODUCTS`, there |
+| `admin_profile_correction` | the correction request (core's `profile_correction_requests`) | the reader is a global admin (`users.admin`) AND the request is still `pending` - so it leaves EVERY admin's bell when one applies or refuses it ([admin](admin.md#pending-counts-and-the-admin-notices-owner-2026-11-18)) |
+| `admin_report` | the report that announced its subject | the reader is a global admin AND a report about the same subject (`contentType`, `contentId`) still waits that this notice answers for - not one filed after the subject's next notice (`reportNoticeOwedSql`) |
 | post-bound kinds | a post | the section above |
 | `birthday` | - | `birthdayRowShownSql` |
 | `form_reminder`, `booking_*` (the reader's own place), `profile_correction_*`, `follow_*`, `lydia_refund_issued`, `lydia_cashier_added`, `live_cut`/`_suspended`/`_withdrawn` | - | always: about the reader's own account, booking, payment or live (a fixed sentence for `form_reminder`); a follow request withdrawn deletes its row |

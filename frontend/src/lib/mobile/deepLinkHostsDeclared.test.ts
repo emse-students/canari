@@ -32,6 +32,9 @@ const SERVER_HOSTS = [
   'form-responses',
   // WP-N: a booking cancelled, left, made for the reader, or about to start - the Reservations page.
   'bookings',
+  // A new item in a global admin's queue (2026-11-18): the queue itself.
+  'admin-profile-corrections',
+  'admin-moderation',
 ];
 
 /** The checkout return. `stripe`, its name in builds below 1.2.4, is retired. */

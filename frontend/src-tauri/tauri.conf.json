@@ -157,6 +157,18 @@
         },
         {
           "scheme": [
+            "fr.emse.canari"
+          ],
+          "host": "admin-profile-corrections"
+        },
+        {
+          "scheme": [
+            "fr.emse.canari"
+          ],
+          "host": "admin-moderation"
+        },
+        {
+          "scheme": [
             "https"
           ],
           "host": "canari-emse.fr",

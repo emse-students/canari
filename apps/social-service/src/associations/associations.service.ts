@@ -1,3 +1,7 @@
+import {
+  AdminQueueSignal,
+  type AdminQueueChange,
+} from '../admin-queues/admin-queue-signal.service';
 import { OFFERED_BY_SPACE_KEY_SQL, type PublicSpaceKey } from '../spaces/public-space';
 import {
   BadRequestException,
@@ -6,6 +10,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Inject,
   PayloadTooLargeException,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -643,6 +648,21 @@ export function shownParentId(
 @Injectable()
 export class AssociationsService {
   private readonly logger = new Logger(AssociationsService.name);
+  /**
+   * The admin badges' signal (`AdminQueueSignal`), injected by PROPERTY so the specs that build this
+   * service by hand need no new argument. NOT optional: Nest refuses to boot without it (a global
+   * module provides it; `admin-queue-signal.wiring.spec` asserts the dependency is declared), so it
+   * is absent only in a spec built by hand.
+   */
+  @Inject(AdminQueueSignal) private readonly adminQueueSignal?: AdminQueueSignal;
+
+  /** An item entered or left an admin queue: whoever may act on it recounts. Never throws. */
+  private async tellAdminQueues(change: AdminQueueChange): Promise<void> {
+    // Absent only outside Nest (a spec that builds this service by hand): Nest refuses to boot
+    // without it, which `admin-queue-signal.wiring.spec` holds. No production path skips it.
+    await this.adminQueueSignal?.changed(change);
+  }
+
   constructor(
     @InjectRepository(Association)
     private readonly assoRepo: Repository<Association>,
@@ -4173,6 +4193,8 @@ ${rejectionReason}`
         `[EVENT_REOPENED] ${sanitizeLog(ev.id.slice(0, 8))} (${reason}): the status could not be re-read, not announced`,
         err instanceof Error ? err.stack : String(err)
       );
+      // Not announced, but the write that reopened it committed: the badges still recount.
+      await this.tellAdminQueues({ queue: 'agenda', associationId: ev.associationId });
       return;
     }
     if (current?.status !== AssociationCalendarEventStatus.Pending) {
@@ -4194,6 +4216,7 @@ ${rejectionReason}`
         `[EVENT_REOPENED] ${sanitizeLog(ev.id.slice(0, 8))} (${reason}): the parties could not be read, not announced`,
         err instanceof Error ? err.stack : String(err)
       );
+      await this.tellAdminQueues({ queue: 'agenda', associationId: ev.associationId });
       return;
     }
     // Validators FIRST, and the parties exclude them: somebody who is both a validator and a party
@@ -4341,6 +4364,9 @@ ${rejectionReason}`
         err instanceof Error ? err.stack : String(err)
       );
       return [];
+    } finally {
+      // THE ONE PLACE AN EVENT STARTS WAITING (a proposal, a reopening): the agenda badges recount.
+      await this.tellAdminQueues({ queue: 'agenda', associationId });
     }
   }
 
@@ -4937,6 +4963,7 @@ ${rejectionReason}`
     if (!outcome.changed) return this.serializeCalendarEvent(outcome.ev);
     const saved = outcome.ev;
     this.logger.debug(`Event validated: ${saved.id} by ${userId}`);
+    void this.tellAdminQueues({ queue: 'agenda', associationId: saved.associationId });
     // Notify asso admins that their event has been validated
     void this.notifyAssocAdminsOfEventAction(saved.associationId, userId, saved.title, 'validated');
     return this.serializeCalendarEvent(saved);
@@ -4965,6 +4992,7 @@ ${rejectionReason}`
     if (!outcome.changed) return this.serializeCalendarEvent(outcome.ev);
     const saved = outcome.ev;
     this.logger.debug(`Event rejected: ${saved.id} by ${userId}`);
+    void this.tellAdminQueues({ queue: 'agenda', associationId: saved.associationId });
     void this.notifyAssocAdminsOfEventAction(
       saved.associationId,
       userId,
@@ -4994,6 +5022,9 @@ ${rejectionReason}`
       const targetAssocId = ev.associationId;
       const title = ev.title;
       await this.calendarRepo.delete({ id: eventId });
+      // Told whatever the status READ above: the row was read unlocked, so a demotion committed
+      // since would make "it was not pending" a guess - and a deletion is rare.
+      void this.tellAdminQueues({ queue: 'agenda', associationId: targetAssocId });
       this.logger.debug(
         `Event deleted: ${sanitizeLog(eventId)} by ${sanitizeLog(callerOpts?.callerUserId)}`
       );
@@ -5016,6 +5047,8 @@ ${rejectionReason}`
         throw partnerOrganiserOnlyRefusal('delete');
       }
       await this.calendarRepo.delete({ id: eventId });
+      // Whatever the status read above, as for a cross-association deletion.
+      void this.tellAdminQueues({ queue: 'agenda', associationId: ev.associationId });
       this.logger.debug(
         `Event deleted: ${sanitizeLog(eventId)} by ${sanitizeLog(callerOpts?.callerUserId)}`
       );

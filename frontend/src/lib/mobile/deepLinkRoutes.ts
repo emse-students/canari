@@ -1,5 +1,7 @@
 import { MOBILE_APP_PROTOCOL } from './appSiteAssociation';
 import {
+  ADMIN_MODERATION_ROUTE,
+  ADMIN_PROFILE_CORRECTIONS_ROUTE,
   FOLLOW_REQUESTS_ROUTE,
   POST_COMMENT_PARAM,
   REPUBLICATION_REQUESTS_ROUTE,
@@ -16,7 +18,8 @@ import { BOOKINGS_HREF } from '$lib/bookings/routes';
  * The hosts are the ones the server writes into a social push (`socialDeepLink` in social-service)
  * and the ones Android and iOS build natively: `post/<id>`, `form/<id>`, `posts`, `calendar`,
  * `admin-agenda`, `live/<id>`, `republication-requests` (D38b), `follow-requests` (WP-F4),
- * `notifications` (WP-L8b), `bookings` (WP-N) and
+ * `notifications` (WP-L8b), `bookings` (WP-N), `admin-profile-corrections` and `admin-moderation`
+ * (the global admins' queue notices, 2026-11-18) and
  * `form-responses/<id>` (the organiser alert for a payment over capacity). `posts` is what a payload
  * naming nothing falls back to on the server, and it has no id; the two agenda hosts and
  * `republication-requests` mirror `notificationHref` (the in-app bell).
@@ -62,6 +65,11 @@ export function appRouteForDeepLink(u: URL): AppPath | null {
     // where the reader's bookings are listed.
     case 'bookings':
       return BOOKINGS_HREF;
+    // A new item in a global admin's queue (owner, 2026-11-18): the queue, where it is handled.
+    case 'admin-profile-corrections':
+      return ADMIN_PROFILE_CORRECTIONS_ROUTE;
+    case 'admin-moderation':
+      return ADMIN_MODERATION_ROUTE;
     default:
       return null;
   }

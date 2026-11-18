@@ -40,6 +40,7 @@ earliest version, as a checklist.
 - [A push raised while the app is dead titles an unnamed group by its members' first names (owner, 2026-11-17)](backlog.d/an-unnamed-group-s-push-names-its-members-by-first-name.md)
 - [The owner's decisions of 2026-11-17](backlog.d/owner-decisions-of-2026-11-17.md)
 - [The background Welcome's warm-process refusal: two native changes](backlog.d/p3-the-background-welcome-s-warm-process-refusal-its-rate-its-wasted-round-trip.md)
+- [The admin queue badges and notices, owed on both phones (a reading for 1.7.1; owner, 2026-11-18)](backlog.d/admin-queue-badges-and-notices-owed-on-both-phones.md)
 - [The owner's decisions of 2026-11-18](backlog.d/owner-decisions-of-2026-11-18.md)
 - [An institution chooses each post's spaces and public: the iPhone's change-and-save and the "Entre etudiants" chip in the viewer, owed on the phones (a reading deferred to 1.7.1)](backlog.d/reading-owed-an-institution-chooses-each-post-s-spaces-and-public.md)
 - [Birthdays on profiles (#3180, first stable `v1.6.9`): "gone the next day" and the settings lock, owed on the phones (a reading moved to 1.7.1)](backlog.d/reading-owed-birthdays-on-profiles-3180-first-stable-v1-6-9-birthdays.md)
