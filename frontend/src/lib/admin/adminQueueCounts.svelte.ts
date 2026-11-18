@@ -1,7 +1,7 @@
 import { apiFetch } from '$lib/utils/apiFetch';
 import { socialUrl } from '$lib/utils/apiUrl';
 import { isTransportFailure } from '$lib/utils/transportFailure';
-import { createPausableInterval } from '$lib/utils/backgroundPausableInterval';
+import { connectivity } from '$lib/stores/connectivity.svelte';
 import { onPeerNamesEnded } from '$lib/utils/users/peerNameDirectory';
 import { Log } from '$lib/utils/Log';
 import { currentUserId } from '$lib/stores/userState.svelte';
@@ -22,8 +22,11 @@ export type AdminQueueCounts = Partial<Record<AdminQueueKey, number>>;
 
 const KEYS: readonly AdminQueueKey[] = ['agenda', 'moderation', 'profile-corrections'];
 
-/** How often the counts are re-asked while the app is visible - the bell's own cadence. */
-export const ADMIN_QUEUE_COUNTS_POLL_MS = 60_000;
+/**
+ * The socket frame the server sends the accounts that may act on a queue when an item enters or
+ * leaves it (`AdminQueueSignal`). It carries nothing; the counts are asked afterwards.
+ */
+export const ADMIN_QUEUES_CHANGED_FRAME = 'admin.queues.changed';
 
 let counts = $state<AdminQueueCounts>({});
 /** The request on the wire, and the account it was sent for. */
@@ -127,12 +130,31 @@ export function loadAdminQueueCounts(): Promise<void> {
 }
 
 /**
- * Keeps the counts current while the reader may open `/admin`: at once, then every
- * {@link ADMIN_QUEUE_COUNTS_POLL_MS} while the app is visible, paused while hidden, as the bell's
- * unread count is. The CALLER decides when - the root layout runs it inside an effect over the tier
- * stores, so a tier published late (a membership probe retried after a failure) starts it, and an
- * account that loses every tier stops it. Returns the cleanup.
+ * Keeps the counts current while the reader may open `/admin` - TOLD, NEVER POLLED (lead,
+ * 2026-11-18): the counts are asked at once, then again on each `admin.queues.changed` frame the
+ * server sends when an item enters or leaves a queue this reader may act on (routed by
+ * `handleChannelEvent`, which calls {@link loadAdminQueueCounts}), and on what a frame cannot cover:
+ * the app coming back to the foreground and the link coming back (a frame sent while the socket was
+ * down is never replayed). No timer. The CALLER decides when - the root layout runs it inside an
+ * effect over the tier stores, so a tier published late starts it and an account that loses every
+ * tier stops it. Returns the cleanup.
  */
 export function followAdminQueueCounts(): () => void {
-  return createPausableInterval(() => void loadAdminQueueCounts(), ADMIN_QUEUE_COUNTS_POLL_MS);
+  void loadAdminQueueCounts();
+  const onVisibility = () => {
+    if (document.visibilityState !== 'visible') return;
+    Log.d('adminQueueCounts', 'back in the foreground: counts asked again');
+    void loadAdminQueueCounts();
+  };
+  if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisibility);
+  const stopReconnect = connectivity.onReconnect(() => {
+    Log.d('adminQueueCounts', 'link back: counts asked again');
+    void loadAdminQueueCounts();
+  });
+  return () => {
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', onVisibility);
+    }
+    stopReconnect();
+  };
 }

@@ -1019,7 +1019,7 @@ export async function validateAssociationCalendarEvent(
     `/api/associations/${encodeURIComponent(associationId)}/events/${encodeURIComponent(eventId)}/validate`,
     { method: 'POST' }
   );
-  // An item left its queue: the admin badges are asked again now, not at the next poll.
+  // An item left its queue: this reader's badges are asked now, before the server's frame lands.
   void loadAdminQueueCounts();
   return event;
 }
@@ -1034,7 +1034,7 @@ export async function rejectAssociationCalendarEvent(
     `/api/associations/${encodeURIComponent(associationId)}/events/${encodeURIComponent(eventId)}/reject`,
     { method: 'POST', body: JSON.stringify({ reason: reason?.trim() || undefined }) }
   );
-  // An item left its queue: the admin badges are asked again now, not at the next poll.
+  // An item left its queue: this reader's badges are asked now, before the server's frame lands.
   void loadAdminQueueCounts();
   return event;
 }

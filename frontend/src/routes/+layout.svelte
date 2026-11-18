@@ -303,7 +303,7 @@
   // ── The admin queues' pending counts (owner, 2026-11-18) ───────────────────────────
   // Followed while the session's account holds an admin tier - the same four `/admin` admits on
   // (`ensureMayOpenAdmin`), read from the REACTIVE tier stores, so a tier published late (a
-  // membership probe retried after a failure) starts the poll and a lost one stops it; a member is
+  // membership probe retried after a failure) starts following and a lost one stops it; a member is
   // asked nothing. The membership probe is warmed once per account so the BDE tiers get published.
   const adminCountsAccount = $derived(
     globalSession.isLoggedIn && globalSession.authToken ? globalSession.userId || null : null

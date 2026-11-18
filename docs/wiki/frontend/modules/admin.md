@@ -176,16 +176,16 @@ place of the bottom bar, the iOS tab bar and the sidebar (`placeBadge`) carry th
 the reader can act on. The hub's old agenda count is gone: it counted every pending event of the
 reader's associations, including those they cannot validate. Asked:
 
-- for the session's account, from the root layout, while it holds one of the four tiers `/admin`
-  admits on - read from the REACTIVE tier stores, so a tier published late (a membership probe
-  retried after a failure) starts the poll and a member is asked nothing. The layout warms the
-  membership probe once per account (`ensureMyAssociations`, memoized and shared by every page
-  that needs it) so a BDE moderator's tiers are published without visiting a page. At once, then
-  every 60 s while the app is visible, paused while hidden: the bell's own cadence
-  (`createPausableInterval`). The poll only refreshes what is drawn; a reload or another device is
-  right from the server's answer, since nothing is kept;
-- with the bell, when its load brings an admin notice it did not hold (`postNotifStore.load`): the
-  badge rises with the push, not a minute after it;
+- **on the server's word, never on a timer** (lead, 2026-11-18): for the session's account, from the
+  root layout, while it holds one of the four tiers `/admin` admits on - read from the REACTIVE tier
+  stores, so a tier published late (a membership probe retried after a failure) starts following and
+  a member is asked nothing. The layout warms the membership probe once per account
+  (`ensureMyAssociations`, memoized and shared by every page that needs it) so a BDE moderator's
+  tiers are published without visiting a page. Asked at once, then on every `admin.queues.changed`
+  frame (above; routed by `isChannelEventFrame`'s `admin.` family to `handleChannelEvent`), and on
+  what a frame cannot cover: the app coming back to the foreground (`visibilitychange`) and the link
+  coming back (`connectivity.onReconnect`), since a frame sent while the socket was down is not
+  replayed. A reload or another device is right from the server's answer, since nothing is kept;
 - afresh when the hub or the dashboard opens;
 - right after an item leaves a queue through this client: `reviewReport`, `deleteReportedComment`,
   `validateAssociationCalendarEvent`, `rejectAssociationCalendarEvent`, `refuseCorrection`, and
@@ -196,7 +196,8 @@ caller's change committed), never a second in parallel. An answer for an account
 (sign-out, switch) is dropped. No answer or a refusal keeps the counts drawn (a wrong zero would hide
 waiting items); a sign-out empties them. The bottom bar's dot is spoken per place (the dashboard's as
 "N en attente"). Pinned by `adminQueueCounts.svelte.test.ts`, `adminSections.test.ts`,
-`dashboardSections.test.ts`, `placeBadge.svelte.test.ts` and `postNotifStore.svelte.test.ts`.
+`dashboardSections.test.ts`, `placeBadge.svelte.test.ts`, `channelEventTypes.test.ts` and
+`channelEventHandler.adminQueues.test.ts`.
 
 ## Read access (`/admin/read-access`)
 

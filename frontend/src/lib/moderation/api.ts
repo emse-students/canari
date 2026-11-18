@@ -245,7 +245,7 @@ export async function reviewReport(
     method: 'PATCH',
     body: JSON.stringify({ action }),
   });
-  // An item left its queue: the admin badges are asked again now, not at the next poll.
+  // An item left its queue: this reader's badges are asked now, before the server's frame lands.
   void loadAdminQueueCounts();
   return report;
 }

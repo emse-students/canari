@@ -15,9 +15,14 @@ global admin of dev, a test account filing the items:
 1. A test account files a profile correction: the admin phone rings a push reading "Demande de
    correction de profil" (no name), its tap opens `/admin/profile-corrections`; the bell shows the
    row; the dashboard tab, the dashboard's Administration row and the queue's row show `1`.
-2. The other admin phone applies (or refuses) it: on the first phone the bell row is gone and both
-   badges are gone after a pull-to-refresh or a reload, with no action on that phone.
+2. The other admin phone applies (or refuses) it: on the first phone, left open on the dashboard, the
+   badges drop within a few seconds with no action on that phone (the `admin.queues.changed` frame,
+   no timer); the bell row is gone at its next load. Then background the first phone, file and
+   answer another correction from the second, and bring the first back: its badges are right on
+   return.
 3. A test account reports a post twice from two accounts: ONE push and ONE bell row; dismissing both
    reports clears them.
-4. A BDE moderator account (no global admin) sees the moderation badge for its own spaces' reports
+4. A test account reports a post in a BDE moderator's space while that moderator's phone is open:
+   its moderation badge rises without a reload; a report outside its spaces moves nothing on it.
+5. A BDE moderator account (no global admin) sees the moderation badge for its own spaces' reports
    only, no push, and no corrections badge.

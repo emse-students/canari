@@ -22,7 +22,7 @@
   let isEventValidatorUser = $state(false);
 
   onMount(() => {
-    // The hub is where an admin looks for what waits: asked afresh, not left to the next poll.
+    // The hub is where an admin looks for what waits: asked afresh on every open.
     void loadAdminQueueCounts();
     isGlobalAdminUser = isGlobalAdmin();
     isSuperAdminUser = isGlobalAdminUser || isAssociationSuperAdmin();

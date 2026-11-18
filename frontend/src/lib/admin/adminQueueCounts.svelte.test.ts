@@ -16,6 +16,15 @@ vi.mock('$lib/utils/apiUrl', () => ({ socialUrl: () => 'https://social.test' }))
 const account = vi.hoisted(() => ({ id: 'adm' as string | null }));
 vi.mock('$lib/stores/userState.svelte', () => ({ currentUserId: () => account.id }));
 const ended = vi.hoisted(() => ({ listeners: [] as (() => void)[] }));
+const link = vi.hoisted(() => ({ listeners: [] as (() => void)[] }));
+vi.mock('$lib/stores/connectivity.svelte', () => ({
+  connectivity: {
+    onReconnect: (l: () => void) => {
+      link.listeners.push(l);
+      return () => link.listeners.splice(link.listeners.indexOf(l), 1);
+    },
+  },
+}));
 vi.mock('$lib/utils/users/peerNameDirectory', () => ({
   onPeerNamesEnded: (l: () => void) => ended.listeners.push(l),
 }));
@@ -101,11 +110,23 @@ describe('adminQueueCounts', () => {
     expect(adminQueueCounts.total).toBe(2);
   });
 
-  it('a follow asks at once, and its cleanup stops it', async () => {
+  it('a follow asks at once, again on the foreground and on the link coming back - no timer', async () => {
     apiFetch.mockResolvedValue(answer(200, { counts: { agenda: 3 } }));
+    const before = link.listeners.length;
     const stop = followAdminQueueCounts();
+    expect(link.listeners).toHaveLength(before + 1);
     await vi.waitFor(() => expect(adminQueueCounts.total).toBe(3));
     expect(apiFetch).toHaveBeenCalledTimes(1);
+
+    document.dispatchEvent(new Event('visibilitychange'));
+    await vi.waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(2));
+    link.listeners[link.listeners.length - 1]();
+    await vi.waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(3));
+
     stop();
+    expect(link.listeners).toHaveLength(before);
+    document.dispatchEvent(new Event('visibilitychange'));
+    await Promise.resolve();
+    expect(apiFetch).toHaveBeenCalledTimes(3);
   });
 });

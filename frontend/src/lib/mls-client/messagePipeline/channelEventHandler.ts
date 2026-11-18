@@ -9,6 +9,10 @@ import { appMsgToEnvelope } from '$lib/utils/chat/messageUtils';
 import { channelSystemEnvelope } from '$lib/utils/chat/channelNotice';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { setTyping } from '$lib/stores/typingStore.svelte';
+import {
+  ADMIN_QUEUES_CHANGED_FRAME,
+  loadAdminQueueCounts,
+} from '$lib/admin/adminQueueCounts.svelte';
 import { applyPin } from '$lib/stores/pinStore.svelte';
 import { applyChannelEdit } from '$lib/utils/chat/channelEdit';
 import { applyChannelReactionFrame } from '$lib/stores/reactionStore.svelte';
@@ -134,6 +138,13 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
   }
 
   // A new person asks to join a group conversation, announced to every online admitted member.
+  // An admin queue this reader may act on changed (owner, 2026-11-18): the frame carries nothing,
+  // the badges ask the server for their counts.
+  if (event.type === ADMIN_QUEUES_CHANGED_FRAME) {
+    void loadAdminQueueCounts();
+    return;
+  }
+
   if (event.type === 'group.join_ask') {
     const data = event.data || {};
     const groupId = String(data.groupId || '');
