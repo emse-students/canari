@@ -2,7 +2,8 @@
   import { internalPath } from '$lib/utils/internalPath';
   import { resolve } from '$app/paths';
   import { onMount } from 'svelte';
-  import { goto } from '$app/navigation';
+  import { afterNavigate, goto } from '$app/navigation';
+  import { isReentryOfSameRoute } from '$lib/utils/notifications/reentry';
   import { BellOff, Repeat2, UserPlus } from '@lucide/svelte';
   import { postNotifStore } from '$lib/stores/postNotifStore.svelte';
   import NotificationRow from '$lib/components/notifications/NotificationRow.svelte';
@@ -89,29 +90,49 @@
       .catch((e: unknown) => Log.d('notifications', `follow request count failed: ${String(e)}`));
   });
 
+  /**
+   * Reads the list, then marks it read - SEQUENCED, AND THAT IS THE FIX RATHER THAN THE STYLE.
+   *
+   * These two were fired side by side without awaiting. `markAllRead` guards on
+   * `notifications.every((n) => n.read)`, and `[].every(...)` is TRUE - so on a cold load, where
+   * the store is empty until `load` resolves, the guard returned immediately and the receipt was
+   * never sent. Opening this page did not clear the badge. The bell hid it: by the time a
+   * dropdown opens the store is populated, so that path always worked.
+   *
+   * Shared by the mount and by a re-entry of the route (a push tapped while this page is already
+   * showing): both snapshot what was unread, so a row that arrives on a re-read is drawn as new.
+   */
+  async function readList(why: 'mount' | 'reentry') {
+    Log.d('notifications', `read list (${why})`);
+    // A list drawn from the device's copy (slow-link chantier, gap 2) already says what was
+    // unread: kept as the band, and the answer's own unread rows join it - never fewer, so a
+    // row the reader saw as new before the answer lands is not demoted by it.
+    const fromCopy = postNotifStore.notifications.filter((n) => !n.read).map((n) => n.id);
+    await postNotifStore.load(50);
+    openedAt = new Date();
+    unreadAtOpen = new Set([
+      ...unreadAtOpen,
+      ...fromCopy,
+      ...postNotifStore.notifications.filter((n) => !n.read).map((n) => n.id),
+    ]);
+    await postNotifStore.markAllRead();
+  }
+
   onMount(() => {
-    /*
-     * SEQUENCED, AND THAT IS THE FIX RATHER THAN THE STYLE.
-     *
-     * These two were fired side by side without awaiting. `markAllRead` guards on
-     * `notifications.every((n) => n.read)`, and `[].every(...)` is TRUE - so on a cold load, where
-     * the store is empty until `load` resolves, the guard returned immediately and the receipt was
-     * never sent. Opening this page did not clear the badge. The bell hid it: by the time a
-     * dropdown opens the store is populated, so that path always worked.
-     */
-    void (async () => {
-      // A list drawn from the device's copy (slow-link chantier, gap 2) already says what was
-      // unread: kept as the band, and the answer's own unread rows join it - never fewer, so a
-      // row the reader saw as new before the answer lands is not demoted by it.
-      const fromCopy = postNotifStore.notifications.filter((n) => !n.read).map((n) => n.id);
-      await postNotifStore.load(50);
-      openedAt = new Date();
-      unreadAtOpen = new Set([
-        ...fromCopy,
-        ...postNotifStore.notifications.filter((n) => !n.read).map((n) => n.id),
-      ]);
-      await postNotifStore.markAllRead();
-    })();
+    void readList('mount');
+  });
+
+  /*
+   * A PUSH THAT OPENS THIS LIST WHILE IT IS ALREADY MOUNTED re-reads it, driven by the navigation
+   * itself. `goto` to the route the page already shows does not remount it, so `onMount` alone left
+   * the sanction and birthday rows missing (Mi 9T, 2026-11-17). A fresh mount also receives this
+   * callback, from another route: `isReentryOfSameRoute` is false there, so it never reads twice.
+   */
+  afterNavigate((nav) => {
+    if (!isReentryOfSameRoute(nav)) return;
+    void readList('reentry').catch((e: unknown) =>
+      Log.w('notifications', `re-read on re-entry failed: ${String(e)}`)
+    );
   });
 
   const visible = $derived(

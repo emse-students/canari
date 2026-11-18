@@ -125,3 +125,23 @@ export function joiningRows(invited: string[], roster: string[], listed: string[
   if (listed.length > 0) roster.forEach(add);
   return out;
 }
+
+/**
+ * Whether a member row's remove control is dead: while that member's removal is already in flight,
+ * or while ANY profile lookup of the ordered list is pending - a member still to be listed will be
+ * inserted at their family-name place and move the rows below, so the control under a pointer may
+ * be another member's at the tap (1.7.0-alpha.9: a removal aimed at beta removed alpha, 4/4).
+ *
+ * It NARROWS that window and does not close it: rows also move when a newcomer settles later, or a
+ * member leaves or is removed elsewhere. The guarantee is the confirmation naming the member
+ * (`confirmMemberRemoval`).
+ *
+ * @param removing whether this row's removal is already in flight
+ * @param pendingLookups {@link membersByFamilyName}'s `pending`
+ */
+export function removeControlDisabled(
+  removing: boolean | undefined,
+  pendingLookups: number
+): boolean {
+  return !!removing || pendingLookups > 0;
+}

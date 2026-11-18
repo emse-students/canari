@@ -314,6 +314,10 @@ const notifScreens = (root) => ({
   check('O9: the identifier stage, in the sheet', ios.signInStage([bar, el('', 'TextField', row(200))], HOSTS) === 'identifier');
   check('O9: the password stage, in the sheet', ios.signInStage([bar, el('', 'SecureTextField', row(260))], HOSTS) === 'password');
 
+  const termsBox = el("J'ai lu les conditions d'utilisation de MiConnect, qui décrivent les données enregistrées à ma connexion, et je les accepte.", 'Switch', row(300));
+  check('O9: the terms page, in the sheet', ios.signInStage([bar, termsBox, el('Continuer', 'Button', row(400))], HOSTS) === 'terms');
+  check('O9: the terms label outside the sheet is not the terms stage', ios.signInStage([termsBox], HOSTS) === null);
+
   const creds = { username: 'canari-test-alpha', password: 's3cr3t-Pw' };
   const { s, restore } = device({
     start: 'consent',
@@ -335,6 +339,18 @@ const notifScreens = (root) => ({
   check('O9 sign-in: the PASSWORD never reached an argv', !s.calls.some((c) => c.includes(creds.password)) && s.stdin[1] === 's3cr3t-Pw');
   check('O9 sign-in: the two field taps are marked --over-keyboard, the consent tap is not', s.calls.filter((c) => c.endsWith('--over-keyboard')).length === 2 && s.calls.filter((c) => c.startsWith('tap ')).length === 3);
   check('O9 sign-in: the app\'s own search field, once back, was left alone', s.stdin.length === 2);
+  restore();
+}
+{
+  const HOSTS = ['auth.canari-emse.fr'];
+  const bar = el('auth.canari-emse.fr', 'StaticText', row(50));
+  const box = el("J'ai lu les conditions d'utilisation de MiConnect, et je les accepte.", 'Switch', row(300));
+  const { s, restore } = device({
+    start: 'terms',
+    screens: { terms: [bar, box, el('Continuer', 'Button', row(400), { go: 'app' })], app: [] },
+  });
+  const r = await ios.signInThroughSheet({ username: 'u', password: 'p' }, { hosts: HOSTS });
+  check('O9: the terms page is ticked then submitted, nothing typed', JSON.stringify(r.stages) === '["terms"]' && s.stdin.length === 0 && s.calls.filter((c) => c.startsWith('tap ')).length === 2, JSON.stringify(r));
   restore();
 }
 {

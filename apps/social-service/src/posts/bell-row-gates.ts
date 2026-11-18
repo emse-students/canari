@@ -205,6 +205,7 @@ export const BELL_ROW_GATE: Readonly<Record<NotificationType, BellRowGate>> = {
   live_cut: 'reader',
   live_suspended: 'reader',
   live_withdrawn: 'reader',
+  live_reinstated: 'reader',
 };
 
 /** The kinds whose row names something other than a post, re-asked by `targetBoundRowShownSql`. */

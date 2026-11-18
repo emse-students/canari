@@ -108,6 +108,11 @@ of its adversarial review.
      written, and the erasure also removes the id
      (`post_notifications_liked_by`, `meta - 'likedBy'`). The push is sent at once and carries the
      name of that moment (`actorName` plus `contentCount`); a delivered push cannot be recalled.
+     **A dropped naming is not logged (2026-11-17)**: the bell is polled every 60 s by each open client, and
+     a row whose naming went (the like taken back, the switch off) is dropped again at EVERY read, so a
+     line per drop (`[TREND] bell: N of N naming(s) no longer hold`, about 37 in 15 minutes on dev) said the
+     same stable, designed state again and again. The read is a pure function of durable state; nothing
+     was decided, so there is nothing to say. `campus-trend.integration.spec.ts` pins the silence.
    - The three trend keys stay; every native table chooses one of three sentences by the count
      ("Aimée par Léa", "... et 1 autre personne", "... et 9 autres", English "Liked by ..." at
      parity), and the bell row draws the same through Paraglide from the served `{name, others}`.
@@ -208,7 +213,7 @@ switches still silence it in one gesture. Principle 1 is untouched: the push car
      `event_proposed`, `event_validated`, `event_rejected`, `event_updated`, `event_deleted`,
      `event_pending`, `event_pending_coorganiser`, `profile_correction_applied`,
      `profile_correction_refused`, `repost_personal_requested`, `repost_personal_accepted`,
-     `repost_personal_refused`, `live_cut`, `live_suspended`, `live_withdrawn`,
+     `repost_personal_refused`, `live_cut`, `live_suspended`, `live_withdrawn`, `live_reinstated`,
      `form_paid_over_capacity`, `lydia_payments_active`, `lydia_payments_paused`,
      `lydia_refund_issued`, `lydia_cashier_added`, `delegation_revoked`,
      `delegation_receiver_not_ready`, `delegation_resumed`).
@@ -1373,6 +1378,16 @@ ROLLBACK;
 
 ### R1 - the trend threshold
 
+**The threshold is a setting since 2026-11-16 (owner).** `CAMPUS_TREND_THRESHOLD`, read by
+`posts/trend-threshold.ts`; the default is production's `10` (`TREND_THRESHOLD_DEFAULT`), so production sets
+nothing and is unchanged. It exists so dev can LOWER it: the bench logs in as four accounts, and the
+crossing reading could not be staged against a constant. A value that is set and is not a positive integer
+stops social-service at boot (no silent fallback), and the effective value is logged at boot as
+`[TREND_THRESHOLD] <n>`. It is an optional GitHub secret with a `DEV_` twin
+([MIGRATION](../../infrastructure/MIGRATION.md)); a change announces nothing already past it (the
+crossing rule above). Charter: principle 3, the bench changes the threshold, a member's attention is not
+spent to stage a test.
+
 Per campus (the author's `users.campus`; an association post counts on its publishing member's
 campus, an approximation stated here), for each candidate threshold `t`, how many posts of the last
 90 days reached `t` distinct engaged accounts. Reactions carry no timestamps, so the reaction half is
@@ -1481,8 +1496,9 @@ AVERAGE rule above (superseded 2026-11-10):
 | saint-etienne | 106 posts (1.18/day) | at most 1.00/day - the smallest `t` meeting the rate | 60 (0.67/day) | 21 (0.23/day) |
 | gardanne | 0 | 0 | 0 | 0 |
 
-Gardanne has no post crossing at any threshold from 3, so it constrains nothing. `TREND_THRESHOLD =
-4` was Saint-Etienne's value by that rule, until the per-day reading above set it to 10.
+Gardanne has no post crossing at any threshold from 3, so it constrains nothing. The threshold (then a
+constant `TREND_THRESHOLD`) =
+4 was Saint-Etienne's value by that rule, until the per-day reading above set it to 10.
 
 **When no threshold up to 60 gets a campus to 1 per day or below** (more than 90 posts in 90 days
 reached 60 engaged accounts), the reading does NOT pick 60: it is re-run with the upper end of

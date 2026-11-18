@@ -183,6 +183,8 @@ function session(model: RatchetModel, peer: Peer, disk: Disk) {
       disk.state = model.snapshot();
       disk.ledgers = { ...model.ledgers };
     }),
+    holdRowsForExport: BaseMlsService.prototype['holdRowsForExport'],
+    bulkIngestObservers: [],
     persistCheckpoint: vi.fn((options?: { endsDocumentOnRefusal?: boolean }): Promise<void> =>
       BaseMlsService.prototype.persistCheckpoint.call(svc as never, options)
     ),

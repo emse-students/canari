@@ -214,7 +214,7 @@ export function overlayOn(cx) {
     String.raw`(function () {
       var t = document.body.innerText;
       if (document.querySelector('#new-group-name')) return 'new-conversation';
-      if (/Nouvelle discussion Contact Groupe/.test(t.replace(/\s+/g, ' '))) return 'new-conversation';
+      if (document.querySelector('#new-chat-search')) return 'new-conversation';
       if (t.indexOf(${JSON.stringify(OVERLAY_MARKERS.addMember)}) !== -1) return 'add-member';
       if (t.indexOf(${JSON.stringify(OVERLAY_MARKERS.groupPanel)}) !== -1) return 'group-panel';
       // ANY OTHER SIDE PANEL STILL UP - a DM's "Infos de la discussion" names no group marker. On the
@@ -250,7 +250,11 @@ export async function closeOverlays(cx) {
     // `SidePanel`, whose class is `side-panel`, and `.conversation-side-panel` matched nothing again
     // until NOTIF-17b died here on 2026-09-27. The selftest guards strings, not class names.
     const closeSelector =
-      state === 'group-panel' || state === 'side-panel' ? SIDE_PANEL_CLOSE : state === 'add-member' ? MODAL_CLOSE : 'text=Fermer';
+      state === 'group-panel' || state === 'side-panel'
+        ? SIDE_PANEL_CLOSE
+        : state === 'add-member' || state === 'new-conversation'
+          ? MODAL_CLOSE
+          : 'text=Fermer';
     await realClick(cx, closeSelector).catch((e) => {
       lastClickError = `${state}: ${e.message}`;
       console.log(`[closeOverlays] pass ${i} click on ${state} failed - ${e.message}`);
@@ -260,6 +264,52 @@ export async function closeOverlays(cx) {
   throw new Error(
     `could not close the overlay, still on ${await overlayOn(cx)}` +
       (lastClickError ? ` (last click failed: ${lastClickError})` : ' (every click was dispatched)')
+  );
+}
+
+/**
+ * Waits until a control addressed by its `data-testid` is ENABLED - a click on a disabled control is
+ * discarded in silence, so the button's own `disabled` is the post-condition, never a sleep. The
+ * test ids (`new-chat-proceed`, `new-group-submit`) are the panel's stable handles: its labels change
+ * with the number of people chosen ("Démarrer la discussion" / "Créer un groupe avec N personnes").
+ */
+async function untilEnabled(cx, testId) {
+  await until(
+    cx,
+    `(function () {
+       var b = document.querySelector('[data-testid="${testId}"]');
+       return !!b && !b.disabled;
+     })()`,
+    8000
+  );
+}
+
+/**
+ * Chooses ONE person in the open "Nouvelle discussion" panel by typing their display name into the
+ * search and taking the single matching suggestion by KEYBOARD (the dropdown is portalled and moves
+ * with the viewport; `aria-activedescendant` is the size-independent path). Shared by `createDM` and
+ * `createGroup`, the one panel they both go through.
+ */
+async function chooseInNewDiscussion(cx, contact, label) {
+  await realClick(cx, '#new-chat-search');
+  await cx.send('Input.insertText', { text: contact });
+  // THE OPTION IS AN `li[role="option"]` and answers `mousedown`, not `click` (`UserAutocomplete`).
+  const OPTIONS = `[].slice.call(document.querySelectorAll('[role="option"]')).map(function (o) { return (o.innerText || '').trim(); })`;
+  await until(cx, `(${OPTIONS}).length > 0`, 15000);
+  const options = JSON.parse(await evaluate(cx, `JSON.stringify(${OPTIONS})`));
+  const matching = options.filter((t) => t.includes(contact));
+  if (matching.length !== 1)
+    throw new Error(
+      `${label}: ${matching.length} of ${options.length} suggestions match ${contact}, so none can be chosen: ${options.join(' | ')}`
+    );
+  const index = options.findIndex((t) => t.includes(contact));
+  for (let i = 0; i <= index; i++) await pressKey(cx, 'ArrowDown');
+  await pressKey(cx, 'Enter');
+  // The person is a chip once chosen: the next search starts from a field that took the pick.
+  await until(
+    cx,
+    `(document.querySelector('[data-testid="new-chat-chips"]') || { innerText: '' }).innerText.indexOf(${JSON.stringify(contact)}) !== -1`,
+    8000
   );
 }
 
@@ -288,7 +338,7 @@ export async function closeOverlays(cx) {
  * @param name the group's name - unique per run, so the sidebar wait cannot match a previous one
  * @param label who is asking, for the error message
  */
-export async function createGroup(cx, name, { label = 'createGroup' } = {}) {
+export async function createGroup(cx, name, { label = 'createGroup', members = [] } = {}) {
   try {
     // A modal left open by an earlier step HIDES the trigger, and presents as "no stable element" for
     // a control that is plainly in the DOM. Always start from a clear screen.
@@ -296,27 +346,25 @@ export async function createGroup(cx, name, { label = 'createGroup' } = {}) {
     if ((await evaluate(cx, 'location.pathname')) !== '/chat') await goto(cx, '/chat');
 
     await realClick(cx, '[aria-label="Nouvelle discussion"]');
-    // THE MODAL, not the group input: the modal opens on the "Contact" tab and the group input does
-    // not exist yet. This is the ordering READ-10 had inverted.
-    await until(cx, `/Nouvelle discussion/.test(document.body.innerText)`, 10000);
-    await realClick(cx, 'text=Groupe');
+    // THE PANEL, not a field: "Nouvelle discussion" is ONE panel since 2026-11-17 - people are chosen
+    // first (search field `#new-chat-search`), then several open the name step. An empty group no
+    // longer exists to be named, so the people chosen are the caller's to say.
+    await until(cx, `!!document.querySelector('#new-chat-search')`, 10000);
+    if (members.length < 2)
+      throw new Error(
+        `a group is created from at least two people chosen in the panel; got ${members.length} (pass { members: [display names] })`
+      );
+    for (const who of members) await chooseInNewDiscussion(cx, who, label);
+    await untilEnabled(cx, 'new-chat-proceed');
+    await realClick(cx, '[data-testid="new-chat-proceed"]');
     await until(cx, `!!document.querySelector('#new-group-name')`, 10000);
 
     await realClick(cx, '#new-group-name');
     await cx.send('Input.insertText', { text: name });
 
-    // POST-CONDITION BEFORE THE CLICK, not a sleep: the submit is disabled until the name lands.
-    await until(
-      cx,
-      `(function () {
-         var b = [].slice.call(document.querySelectorAll('button')).filter(function (x) {
-           return /Créer la discussion de groupe/.test(x.innerText || '');
-         })[0];
-         return !!b && !b.disabled;
-       })()`,
-      8000
-    );
-    await realClick(cx, 'text=Créer la discussion de groupe');
+    // POST-CONDITION BEFORE THE CLICK, not a sleep: the submit is disabled while a creation runs.
+    await untilEnabled(cx, 'new-group-submit');
+    await realClick(cx, '[data-testid="new-group-submit"]');
 
     await until(cx, `document.body.innerText.indexOf(${JSON.stringify(name)}) !== -1`, 25000);
     // OWNED FROM THE MOMENT IT EXISTS (R5): every group a runner mints is recorded here, once, so a
@@ -346,10 +394,10 @@ export async function createGroup(cx, name, { label = 'createGroup' } = {}) {
  * people, so a blind create is a modal that cannot be submitted; the sidebar is asked first and the
  * whole gesture is skipped when the row is there. Run it twice and the second run is one read.
  *
- * THE SUBMIT IS GATED ON A SELECTION, NOT ON TEXT. `#new-contact-id` is a SEARCH box: typing the
+ * THE SUBMIT IS GATED ON A SELECTION, NOT ON TEXT. `#new-chat-search` is a SEARCH box: typing the
  * exact display name leaves "Démarrer la discussion" disabled, because the modal wants a chosen
  * contact rather than a matching string - and a click on a disabled control is discarded in silence,
- * which is the same trap `createGroup` records for the group name. So the suggestion is clicked, and
+ * which is the same trap `createGroup` records for the group name. So the suggestion is chosen, and
  * the button's own `disabled` is the post-condition waited on before it is pressed.
  *
  * THE SUGGESTION IS PICKED BY NAME AND NOT BY POSITION, for the reason `names.mjs` exists: a search
@@ -367,51 +415,11 @@ export async function createDM(cx, contact, { label = 'createDM' } = {}) {
   if ((await evaluate(cx, listed)) === true) return 'already listed';
 
   await realClick(cx, '[aria-label="Nouvelle discussion"]');
-  await until(cx, `/Nouvelle discussion/.test(document.body.innerText)`, 10000);
-  // The modal OPENS on the Contact tab, so this click changes nothing today - it is here so the tab
-  // is a state this function asserted rather than one it inherited, the same reason `createGroup`
-  // clicks "Groupe" before looking for the group input.
-  await realClick(cx, 'text=Contact');
-  await until(cx, `!!document.querySelector('#new-contact-id')`, 10000);
+  await until(cx, `!!document.querySelector('#new-chat-search')`, 10000);
+  await chooseInNewDiscussion(cx, contact, label);
 
-  await realClick(cx, '#new-contact-id');
-  await cx.send('Input.insertText', { text: contact });
-
-  // THE OPTION IS AN `li[role="option"]`, NOT A BUTTON, and it answers `mousedown` rather than
-  // `click` - `UserAutocomplete` says why in its own markup: the option IS the li, because wrapping
-  // a button in it would break the listbox relation, and `handleBlur` fires before a click would.
-  // Looking for a button therefore found nothing and timed out on a dropdown plainly open, which is
-  // the failure this comment exists to stop repeating. `role="option"` is the stable handle the
-  // component was written to offer.
-  const OPTIONS = `[].slice.call(document.querySelectorAll('[role="option"]')).map(function (o) { return (o.innerText || '').trim(); })`;
-  await until(cx, `(${OPTIONS}).length > 0`, 15000);
-  const options = JSON.parse(await evaluate(cx, `JSON.stringify(${OPTIONS})`));
-  const matching = options.filter((t) => t.includes(contact));
-  if (matching.length !== 1)
-    throw new Error(
-      `${label}: ${matching.length} of ${options.length} suggestions match ${contact}, so none can be chosen: ${options.join(' | ')}`
-    );
-
-  // SELECTED BY KEYBOARD, and that is deliberate rather than convenient. The dropdown is PORTALLED
-  // and positioned by an effect, so where it lands depends on the viewport - a click into it is the
-  // one gesture in this file whose target moves with the screen, and the rig drives phones of
-  // several sizes. The combobox pattern the component implements offers the size-independent path
-  // itself: `aria-activedescendant` moves with ArrowDown, Enter takes the highlighted option.
-  const index = options.findIndex((t) => t.includes(contact));
-  for (let i = 0; i <= index; i++) await pressKey(cx, 'ArrowDown');
-  await pressKey(cx, 'Enter');
-
-  await until(
-    cx,
-    `(function () {
-       var b = [].slice.call(document.querySelectorAll('button')).filter(function (x) {
-         return /Démarrer la discussion/.test(x.innerText || '');
-       })[0];
-       return !!b && !b.disabled;
-     })()`,
-    8000
-  );
-  await realClick(cx, 'text=Démarrer la discussion');
+  await untilEnabled(cx, 'new-chat-proceed');
+  await realClick(cx, '[data-testid="new-chat-proceed"]');
 
   // The SIDEBAR row is what "the DM exists" implies - not the composer, for the reason `createGroup`
   // records: with several conversations listed the sidebar re-sorts and the selection is lost.

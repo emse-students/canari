@@ -74,7 +74,8 @@
 
   /**
    * THE STRIKE LADDER'S THREE NOTICES TO A BROADCASTER: a live a moderator cut (`live_cut`), the
-   * right to broadcast suspended (`live_suspended`, WP-L8b) or withdrawn (`live_withdrawn`). The
+   * right to broadcast suspended (`live_suspended`, WP-L8b), withdrawn (`live_withdrawn`) or given
+   * back (`live_reinstated`, 1.7.0). The
    * server writes each with NO actor (`actorId` and `actorName` are `''`: which moderator acted is
    * not the broadcaster's to read) and `text` = the reason CODE, so the whole sentence is built
    * here, in the reader's locale, and the avatar is a neutral disc. None has a destination (a cut
@@ -85,6 +86,7 @@
     live_cut: m.notif_live_cut_text,
     live_suspended: m.notif_live_suspended_text,
     live_withdrawn: m.notif_live_withdrawn_text,
+    live_reinstated: m.notif_live_reinstated_text,
   };
   const liveModerationText = $derived(
     Object.hasOwn(LIVE_MODERATION_TEXT, notif.type) ? LIVE_MODERATION_TEXT[notif.type]() : null
@@ -261,6 +263,8 @@
   /** The actor is an association, whose logo stands in for a person's avatar. */
   const actorIsAssociation = $derived(
     (notif.type === 'association_post' ||
+      // A mention in an association's post names the association, never its writer (decision 11).
+      notif.type === 'mention' ||
       isRepostNotif ||
       isCoorganiseNotif ||
       notif.type === 'repost_personal_requested' ||

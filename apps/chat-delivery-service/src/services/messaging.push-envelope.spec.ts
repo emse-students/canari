@@ -145,6 +145,24 @@ describe('MessagingService - the envelope wake', () => {
     expect(sent().apns!.payload).toMatchObject({ type: 'wake', envelopeId: E1, silent: 'false' });
   });
 
+  it("keeps a REACTION's collapse id on the iOS wake - and never a post's, which names the post", async () => {
+    pushTokenRepo.find.mockResolvedValue([token('t1', 'iphone', 'ios', 2)]);
+    await service.sendPushToUser('u1', 'Peer', 'b', {
+      type: 'social',
+      reaction: 'true',
+      groupId: 'grp-1',
+      collapseId: '1354250138',
+    });
+    expect(sent(0).apns!.headers['apns-collapse-id']).toBe('1354250138');
+    await service.sendPushToUser('u1', 'BDE', 'b', {
+      type: 'social',
+      postId: 'p-1',
+      collapseId: 'post_activity_p-1',
+    });
+    expect(sent(1).apns!.headers['apns-collapse-id']).toBeUndefined();
+    expect(JSON.stringify(sent(1).apns)).not.toContain('p-1');
+  });
+
   it('keeps a salon read a silent background wake', async () => {
     pushTokenRepo.find.mockResolvedValue([token('t1', 'iphone', 'ios', 2)]);
     await service.sendPushToUser('u1', 'secret-salon', '', {

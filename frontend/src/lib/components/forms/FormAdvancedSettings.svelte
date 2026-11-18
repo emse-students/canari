@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { formWindowInvalid } from '$lib/forms/formWindow';
   import type { MembershipTier } from '$lib/associations/api';
   import type { AudienceCondition } from '$lib/forms/api';
   import type { FormationOption } from '$lib/pricing/criteriaOptions';
@@ -58,8 +59,11 @@
      * "everyone else" tier.
      */
     isPublic: boolean;
-    /** What a public form asks a guest (`guestIdentity.ts`): last name, first name, e-mail. */
-    guestFields: string[];
+    /**
+     * Which of the respondent's fields travel with each answer (`respondentFields.ts`): joined from
+     * a member's account, asked of a guest or of an anonymous form's respondents.
+     */
+    identityChoices: string[];
     /**
      * The form's options as the shared rule reads them (`editorOptionState`): what shuts the
      * anonymous, public and audience switches, whichever was switched on first.
@@ -67,6 +71,8 @@
     optionState: FormOptionState;
     /** Opening date, as a `datetime-local` string. Empty when the form is open at once. */
     opensAt: string;
+    /** Closing date, as a `datetime-local` string. Empty when the form never closes by itself. */
+    closedAt: string;
     /** Who may answer at all; null means anybody. */
     submitCondition: AudienceCondition | null;
     /** The form's cotisation settings, mutated in place. */
@@ -93,9 +99,10 @@
     anonymous = $bindable(),
     anonymousFixed,
     isPublic = $bindable(),
-    guestFields = $bindable(),
+    identityChoices = $bindable(),
     optionState,
     opensAt = $bindable(),
+    closedAt = $bindable(),
     submitCondition = $bindable(),
     settings = $bindable(),
     tiers,
@@ -106,6 +113,9 @@
     fileRetentionDays = $bindable(),
   }: Props = $props();
 
+  /** An end that is not after the opening: said under the field, and the save refuses it too. */
+  const windowInvalid = $derived(formWindowInvalid(opensAt, closedAt));
+
   /** Settings that are actually doing something, so the folded header can say how many. */
   const activeCount = $derived(
     (maxSubmissions != null && maxSubmissions > 0 ? 1 : 0) +
@@ -113,8 +123,9 @@
       (allowAnswerEdit ? 1 : 0) +
       (anonymous ? 1 : 0) +
       (isPublic ? 1 : 0) +
-      (isPublic && guestFields.length > 0 ? 1 : 0) +
+      (identityChoices.length > 0 ? 1 : 0) +
       (opensAt ? 1 : 0) +
+      (closedAt ? 1 : 0) +
       (settings.grantsCotisation ? 1 : 0) +
       // A file question puts a deletion delay to work, which is a setting doing something.
       (hasFileQuestion ? 1 : 0)
@@ -208,7 +219,7 @@
     />
 
     <GuestIdentitySettings
-      bind:guestFields
+      bind:choices={identityChoices}
       {isPublic}
       {anonymous}
       charges={optionState.takesPayment}
@@ -239,6 +250,31 @@
         density="default"
       />
       <p class={CONTROL_HINT_CLASS}>{m.form_opens_at_hint()}</p>
+    </div>
+
+    <div>
+      <label for="form-closed-at" class={CONTROL_LABEL_CLASS}>{m.form_closed_at_label()}</label>
+      <DateTimeField
+        id="form-closed-at"
+        value={closedAt}
+        onValueChange={(v) => (closedAt = v)}
+        label={m.form_closed_at_label()}
+        min={opensAt}
+        invalid={windowInvalid}
+        clearable
+        density="default"
+      />
+      {#if windowInvalid}
+        <p
+          class="text-red-err mt-1 ml-1 text-xs font-medium"
+          role="alert"
+          data-testid="form-window-error"
+        >
+          {m.form_closed_at_before_open()}
+        </p>
+      {:else}
+        <p class={CONTROL_HINT_CLASS}>{m.form_closed_at_hint()}</p>
+      {/if}
     </div>
   </div>
 

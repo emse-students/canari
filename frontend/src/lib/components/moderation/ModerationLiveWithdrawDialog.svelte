@@ -6,6 +6,7 @@
   import { reportReasons, type ReportReason } from '$lib/moderation/reasons';
   import { LIVE_CUT_DETAILS_MAX } from '$lib/live/constants';
   import { isTransportFailure } from '$lib/utils/transportFailure';
+  import { describeModerationRefusal } from '$lib/moderation/moderationRefusal';
 
   interface Props {
     /** Whether the dialog is visible. */
@@ -47,6 +48,9 @@
 
   /** The sentence for a refusal, decided on the typed code, never on a message. */
   function errorText(e: unknown): string {
+    // A refusal of the moderator's REACH (an institution's or a BDE's live, another BDE's spaces).
+    const reach = describeModerationRefusal(e);
+    if (reach) return reach;
     if (e instanceof LiveRefusalError) {
       if (e.code === 'LIVE_WITHDRAWAL_FORBIDDEN') return m.moderation_live_withdraw_forbidden();
       if (e.code === 'LIVE_WITHDRAWAL_NOT_DUE') return m.moderation_live_withdraw_not_due();

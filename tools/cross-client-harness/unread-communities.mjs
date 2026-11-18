@@ -16,7 +16,7 @@
  * `wire` empty means nothing was marked read, whatever the screen says.
  *
  *   bun unread-communities.mjs setup [--n 10]   create the communities, invite the reader, post
- *   bun unread-communities.mjs run <scenario>   one of: arrive, walk, gatewaydown, open [--community X --salon Y --then-reload], mobile, join [--name N]
+ *   bun unread-communities.mjs run <scenario>   one of: arrive, walk, gatewaydown, open [--community X --salon Y --then-reload], mobile, join [--name N], grantlate [--community X]
  *   bun unread-communities.mjs snapshot [--sweep]  one reading, nothing moved
  *   bun unread-communities.mjs post --label L    the owner posts 2 messages into every salon
  *
@@ -28,8 +28,8 @@ import { execFileSync } from 'node:child_process';
 import { requireScript } from './scriptpath.mjs';
 import { subjectFor } from './accounts.mjs';
 import { awaitAppSettled, clearOverlays, client, ensureChat, evaluate, openChannel, reachCommunities, send, until } from './chat.mjs';
-import { acceptInviteLink, createChannel, createCommunity, enterCommunities, inviteLink, listCommunities, openCommunity } from './comm.mjs';
-import { PORTS } from './names.mjs';
+import { acceptInviteLink, createChannel, createCommunity, enterCommunities, grantChannelAccess, inviteLink, listCommunities, openChannelAccess, openCommunity } from './comm.mjs';
+import { PEER_NAME, PORTS } from './names.mjs';
 import { psql } from './estate.mjs';
 import { realClick, reloadAndWait } from './cdp.mjs';
 
@@ -422,6 +422,62 @@ scenarios.join = async () => {
     if (!row || !row.badge) throw new Error(`JOIN FAIL: no unread badge on ${s} for a message posted after the join`);
   }
   console.log(`JOIN PASS ${name} (since ${t0})`);
+};
+
+/**
+ * A PRIVATE SALON GRANTED LATE BADGES ONLY WHAT ARRIVES AFTER THE GRANT (owner, 2026-11-16,
+ * principle 3 - `docs/wiki/frontend/modules/chat.md`, "A salon's badge starts at the grant").
+ *
+ * The owner makes a fresh private salon in a community the reader is already in (`setup`), posts ten
+ * messages the reader cannot see, grants the reader through the access panel, and posts one more.
+ * The reader then RESTARTS, so the badge it draws is the server's count and no live tally: it must
+ * read `1`, not `11`. The server's side is read too - the reader's private floor
+ * (`channel_members."clearedMarks"`) on that salon and the rows after it - and the read mark, the
+ * "Lu par" receipt, must not have moved. Creates one salon per run, like `join`.
+ */
+scenarios.grantlate = async () => {
+  const community = flag('community', communityName(1));
+  const salon = `prive-late-${Date.now() % 100000}`;
+  const PAST = 10;
+  const w1 = await client(PORTS.W1);
+  const w2 = await client(PORTS.W2);
+  await enterCommunities(w1);
+  await openCommunity(w1, community);
+  await createChannel(w1, salon, { visibility: 'private' });
+  await openChannel(w1, community, salon);
+  for (let k = 1; k <= PAST; k++) await send(w1, `GL-past-${salon}-${k}`);
+  await openChannelAccess(w1);
+  await grantChannelAccess(w1, PEER_NAME);
+  await clearOverlays(w1);
+  await openChannel(w1, community, salon);
+  await send(w1, `GL-after-${salon}`);
+
+  await restartReader(w2);
+  await reachCommunities(w2);
+  await openCommunity(w2, community);
+  await until(w2, `!!document.querySelector('[data-channel-row=${JSON.stringify(salon)}]')`, 30000);
+  await awaitAppSettled(w2).catch(() => null);
+  const row = (await readUi(w2)).rows.find((r) => r.name === salon);
+
+  const sub = subjectFor('peer');
+  const [db = ''] = psql(
+    `select coalesce(cm."clearedMarks"->>(c.id::text), ''), coalesce(cm."readMarks"->>(c.id::text), ''), (select count(*) from channel_messages m where m."channelId"=c.id and floor(extract(epoch from m."createdAt")*1000) > coalesce((cm."clearedMarks"->>(c.id::text))::bigint, 0)), (select count(*) from channel_messages m where m."channelId"=c.id) from channels c join channel_workspaces w on w.id=c."workspaceId" join channel_members cm on cm."workspaceId"=w.id and cm."userId"='${sub}' where w.name='${community}' and c.name='${salon}'`
+  )
+    .split('\n')
+    .filter(Boolean);
+  const [floor, readMark, afterFloor, total] = db.split('|');
+  console.log(`GL ${community}/${salon}: badge=${JSON.stringify(row?.badge ?? null)} floor=${floor || '-'} read-mark=${readMark || '-'} rows-after-floor=${afterFloor} rows=${total}`);
+  const verdicts = [
+    [row?.badge === '1', `the reader's badge after a restart is ${JSON.stringify(row?.badge ?? null)}, wanted "1"`],
+    [!!floor, 'no private floor was written for the reader at the grant'],
+    [afterFloor === '1', `${afterFloor} rows lie after the reader's floor, wanted 1`],
+    [!readMark, `the reader's read mark moved (${readMark}): the grant is not a read`],
+  ];
+  const failed = verdicts.filter(([ok]) => !ok).map(([, why]) => why);
+  if (failed.length > 0) throw new Error(`GRANTLATE FAIL: ${failed.join('; ')}`);
+  console.log(`GRANTLATE PASS ${community}/${salon}`);
+  w1.close?.();
+  w2.close?.();
 };
 
 const [cmd, name] = args;

@@ -134,8 +134,20 @@ function oneWasmAsset() {
   };
 }
 
+/**
+ * Where `$lib` resolves: `src/lib`, posix-spelled, matched exactly as `$lib` or `$lib/...` - the
+ * same string-form Vite alias SvelteKit generated from the deprecated `kit.alias` (its
+ * `get_config_aliases`), so no import resolves anywhere new. TypeScript reads the same mapping from
+ * `paths` in tsconfig.json.
+ */
+const LIB_ALIAS = {
+  find: '$lib',
+  replacement: path.resolve(__dirname, 'src/lib').split(path.sep).join('/'),
+};
+
 // https://vite.dev/config/
 export default defineConfig(async () => ({
+  resolve: { alias: [LIB_ALIAS] },
   define: {
     'import.meta.env.VITE_APP_VERSION': JSON.stringify(appVersion),
   },

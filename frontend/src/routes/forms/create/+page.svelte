@@ -3,6 +3,7 @@
   import { kindHasSection } from '$lib/associations/editSections';
   import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
   import { formCodeMessage, formItemsProblem } from '$lib/forms/answerBounds';
+  import { formWindowInvalid } from '$lib/forms/formWindow';
   import { describeApiRefusal, refusalCode, refusalStatus } from '$lib/utils/apiRefusal';
   import { safeInternalPath } from '$lib/utils/internalPath';
   import { gotoAppPath } from '$lib/navigation/gotoAppPath';
@@ -91,7 +92,7 @@
   } from '$lib/forms/formOptionConflict';
   import { Log } from '$lib/utils/Log';
   import { CircleAlert, FileText } from '@lucide/svelte';
-  import { askedGuestFields } from '$lib/forms/guestIdentity';
+  import { respondentSettingsPayload } from '$lib/forms/respondentFields';
   import { m } from '$lib/paraglide/messages';
 
   // General
@@ -99,6 +100,7 @@
   let description = $state('');
   let maxSubmissions = $state<number | undefined>(undefined);
   let opensAt = $state('');
+  let closedAt = $state('');
   let allowMultipleSubmissions = $state(false);
   /** Whether a respondent may change their own answer while the form is open (migration 166). */
   let allowAnswerEdit = $state(false);
@@ -107,7 +109,11 @@
   let anonymous = $state(false);
   let isPublic = $state(false);
   /** What a public form asks a guest (`guestIdentity.ts`); none by default. */
-  let guestFields = $state<string[]>([]);
+  /**
+   * "Qui a repondu": one set of ticks, saved as the two lists (`respondentFields.ts`). A new form
+   * joins the two names, as every named form did before it was a choice.
+   */
+  let identityChoices = $state<string[]>(['lastName', 'firstName']);
 
   // Payment
   let basePrice = $state(0);
@@ -412,8 +418,9 @@
       anonymous,
       isPublic,
       // Asked of a guest only on a public form that keeps names; otherwise nothing is asked.
-      guestFields: isPublic && !anonymous ? askedGuestFields(guestFields) : [],
+      ...respondentSettingsPayload(identityChoices, { isPublic, anonymous }),
       ...(opensAt ? { opensAt: new Date(opensAt).toISOString() } : {}),
+      ...(closedAt ? { closedAt: new Date(closedAt).toISOString() } : {}),
       requiresPayment,
       // NEVER conditioned on `requiresPayment` - a free form belongs to the association it was
       // created for exactly as a paid one does (the comment on `associations` above already said
@@ -451,6 +458,10 @@
     }
     if (requiresPayment && !associationId) {
       error = m.form_error_association_required();
+      return;
+    }
+    if (formWindowInvalid(opensAt, closedAt)) {
+      error = m.form_closed_at_before_open();
       return;
     }
     const itemsProblem = formItemsProblem(items);
@@ -660,9 +671,10 @@
       bind:anonymous
       anonymousFixed={false}
       bind:isPublic
-      bind:guestFields
+      bind:identityChoices
       {optionState}
       bind:opensAt
+      bind:closedAt
       bind:submitCondition
       bind:settings={cotisation}
       {tiers}

@@ -18,9 +18,14 @@ import { callHoldsAppSound } from '$lib/utils/callSoundGate';
 import { scoreSound } from '$lib/utils/soundPalette';
 import { isAndroidTauriRuntime } from '$lib/utils/appVersion';
 import {
+  composePlainNotificationText,
   postNativeMessageNotification,
+  postNativeReactionNotification,
   type NativeMessageNotification,
+  type NativeReactionNotification,
 } from '$lib/utils/nativeNotification';
+import { reactionCollapseKey, reactionNotificationKey } from '$lib/utils/chat/reactionNotification';
+import { stableNotifId } from '$lib/utils/stableNotifId';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { appendLog } from '$lib/utils/sessionLog';
 import { systemNotificationsBlockedAnnounceOnce } from '$lib/utils/systemNotificationsBlocked';
@@ -93,15 +98,12 @@ export const CHANNEL_CALLS = 'canari_calls_v2';
  * WebSocket landed on `canari_messages`, the same mention pushed landed on `canari_mentions`.
  */
 export const CHANNEL_MENTIONS = 'canari_mentions_v2';
-
-/** Returns a stable positive integer ID derived from a conversation ID string, used to replace existing Tauri notifications for the same conversation. */
-function stableNotifId(conversationId: string): number {
-  let hash = 0;
-  for (let i = 0; i < conversationId.length; i++) {
-    hash = (Math.imul(31, hash) + conversationId.charCodeAt(i)) | 0;
-  }
-  return Math.abs(hash) || 1;
-}
+/**
+ * The channel a REACTION to one of this account's messages is filed on (`canari_reactions_v2`,
+ * IMPORTANCE_DEFAULT: a sound and a shade entry, no heads-up). Named by the plain path below for
+ * completeness only: on Android a reaction is posted by the native builder, never by the plugin.
+ */
+export const CHANNEL_REACTIONS = 'canari_reactions_v2';
 
 export function useNotifications() {
   let lastNotificationAt = $state(0);
@@ -568,6 +570,42 @@ export function useNotifications() {
   }
 
   /** Shows an OS-level notification (via Tauri plugin or Web Notification API). Rate-limited per conversation to 800 ms to absorb bursts while allowing different conversations to notify independently. Uses a stable ID/tag per conversation so successive messages replace rather than stack. */
+  /**
+   * THE PREAMBLE EVERY SYSTEM NOTIFICATION SHARES - a message's and a reaction's - so neither can
+   * drift from the other's refusal or throttle. Whether one may be raised now under `convKey` (the
+   * conversation for a message, `reaction:<conversation>` for a reaction); when it may, the throttle
+   * window is taken.
+   */
+  function mayRaise(convKey: string): boolean {
+    if (typeof window === 'undefined') return false;
+    // A TERMINAL REFUSAL IS KNOWN BEFORE ANY OF THIS, AND ASKING IT PER MESSAGE COSTS THREE LINES A
+    // MESSAGE FOR THE LIFE OF THE SESSION. Measured on HEAL-REVOKE-9 (2026-09-07): 12 inbound
+    // messages produced 33 `[NOTIF]` lines - "while the window is open ... asking", "permission is
+    // \"denied\"; asking", and the throttle firing for notifications that could never be raised.
+    //
+    // The line that claimed to be asking was also FALSE: `requestSystemNotificationPermission` has
+    // no `denied` branch, because a browser will not re-prompt once denied - only the user can
+    // change it in site settings. So the work was a guaranteed no-op narrated as an action.
+    //
+    // Checked BEFORE the throttle on purpose: throttling a notification that cannot be raised
+    // burns the per-conversation window and prints a line about a decision that was never live.
+    // Guarded on `isTauriRuntime` because on native the plugin's permission is the authority and
+    // the web value says nothing - the Tauri branch of `postPlainNotification` is left as it was.
+    if (systemNotificationsBlockedAnnounceOnce()) return false;
+
+    const now = Date.now();
+    const lastAt = lastNotifAtByConv.get(convKey) ?? 0;
+    if (now - lastAt < 800) {
+      // EVERY SWALLOWED BRANCH LOGS. Three returns here were silent, so "the user was not notified"
+      // and "the code never got there" were the same observation from outside - which is what made
+      // TAB-1's zero unattributable for a day.
+      console.log(`[NOTIF] Throttled for ${convKey} - ${now - lastAt} ms since the last (800 ms).`);
+      return false;
+    }
+    lastNotifAtByConv.set(convKey, now);
+    return true;
+  }
+
   async function sendSystemNotification(
     title: string,
     body: string,
@@ -583,34 +621,8 @@ export function useNotifications() {
      */
     native?: NativeMessageNotification
   ) {
-    if (typeof window === 'undefined') return;
     const convKey = conversationId ?? '__default__';
-
-    // A TERMINAL REFUSAL IS KNOWN BEFORE ANY OF THIS, AND ASKING IT PER MESSAGE COSTS THREE LINES A
-    // MESSAGE FOR THE LIFE OF THE SESSION. Measured on HEAL-REVOKE-9 (2026-09-07): 12 inbound
-    // messages produced 33 `[NOTIF]` lines - "while the window is open ... asking", "permission is
-    // \"denied\"; asking", and the throttle firing for notifications that could never be raised.
-    //
-    // The line that claimed to be asking was also FALSE: `requestSystemNotificationPermission` has
-    // no `denied` branch, because a browser will not re-prompt once denied - only the user can
-    // change it in site settings. So the work was a guaranteed no-op narrated as an action.
-    //
-    // Checked BEFORE the throttle on purpose: throttling a notification that cannot be raised
-    // burns the per-conversation window and prints a line about a decision that was never live.
-    // Guarded on `isTauriRuntime` because on native the plugin's permission is the authority and
-    // the web value says nothing - the Tauri branch below is left exactly as it was.
-    if (systemNotificationsBlockedAnnounceOnce()) return;
-
-    const now = Date.now();
-    const lastAt = lastNotifAtByConv.get(convKey) ?? 0;
-    if (now - lastAt < 800) {
-      // EVERY SWALLOWED BRANCH LOGS. Three returns here were silent, so "the user was not notified"
-      // and "the code never got there" were the same observation from outside - which is what made
-      // TAB-1's zero unattributable for a day.
-      console.log(`[NOTIF] Throttled for ${convKey} - ${now - lastAt} ms since the last (800 ms).`);
-      return;
-    }
-    lastNotifAtByConv.set(convKey, now);
+    if (!mayRaise(convKey)) return;
     // ONE BUILDER ON ANDROID, AND IT IS THE RICH ONE. Checked before the plugin rather than
     // inside it: the plugin path below is the WEB implementation, kept because web and desktop
     // have nothing else, and running it here as well is what posted two notifications for one
@@ -634,18 +646,87 @@ export function useNotifications() {
       return;
     }
 
+    // ONE COMPOSITION FOR EVERY NON-ANDROID BUILDER: a group is titled by its name, never by the
+    // sender alone (see `composePlainNotificationText`).
+    const shown = composePlainNotificationText(title, body, native);
+    await postPlainNotification({
+      convKey,
+      title: shown.title,
+      body: shown.body,
+      channelId: mentionsMe ? CHANNEL_MENTIONS : CHANNEL_MESSAGES,
+      idKey: conversationId,
+      conversationId,
+    });
+  }
+
+  /**
+   * Raises the notification of a REACTION to one of this account's messages - the frame trigger
+   * decided by `useMessaging.notifyInboundReaction` (`reactionNotification.ts`): the conversation is
+   * off screen, and the push of the same reaction may draw it too.
+   *
+   * ONE REACTION, ONE NOTIFICATION, WHICHEVER TRIGGER LANDS SECOND. Android asks the native builder,
+   * which stamps the line with the reaction's own instant exactly as the push does, so the second is
+   * recognised (`alreadyPosted`, the alerted ledger). iOS, desktop and the browser post a plain one
+   * whose id is {@link reactionCollapseKey}'s - on iOS the push's `apns-collapse-id` is that same
+   * decimal, so the system replaces one by the other. It never replaces the conversation's message
+   * notification. Throttled per that reaction, so a burst of different reactions loses none.
+   */
+  async function sendReactionNotification(reaction: NativeReactionNotification) {
+    const reactionKey = reactionCollapseKey(reaction.messageId, reaction.actorId, reaction.at);
+    if (!mayRaise(reactionKey)) return;
+    if (isAndroidTauriRuntime()) {
+      const accepted = await postNativeReactionNotification(reaction);
+      const shade = reactionNotificationKey(reaction.conversationId);
+      console.log(
+        accepted
+          ? `[NOTIF] Raised for ${shade} by the native builder on ${CHANNEL_REACTIONS}.`
+          : `[NOTIF] Not raised for ${shade} - the native builder refused it; nothing else posts on Android.`
+      );
+      return;
+    }
+    await postPlainNotification({
+      convKey: reactionKey,
+      title: reaction.actorName,
+      body: m.notif_reaction_message_body({ emoji: reaction.emoji }),
+      channelId: CHANNEL_REACTIONS,
+      idKey: reactionKey,
+      conversationId: reaction.conversationId,
+    });
+  }
+
+  /**
+   * THE PLAIN BUILDERS - the plugin (iOS, desktop) and the browser's Notification API - shared by a
+   * message and a reaction, so neither can drift from the other's permission, tap and sound rules.
+   *
+   * @param p.idKey what the notification's id (plugin) or tag (browser) is derived from: the
+   *   conversation for a message (a second message updates the first), the reaction itself for a
+   *   reaction (`reactionCollapseKey`, the push's own collapse id on iOS) - so the two kinds never
+   *   replace each other.
+   * @param p.conversationId where a tap leads.
+   */
+  async function postPlainNotification(p: {
+    convKey: string;
+    title: string;
+    body: string;
+    channelId: string;
+    idKey?: string;
+    conversationId?: string;
+  }) {
+    const { convKey, title, body, channelId, idKey, conversationId } = p;
     if (isTauriRuntime()) {
       try {
         if (await isPermissionGranted()) {
           await sendNotification({
             title,
-            ...androidNotificationOptions(body, mentionsMe ? CHANNEL_MENTIONS : CHANNEL_MESSAGES),
-            ...(conversationId ? { id: stableNotifId(conversationId) } : {}),
+            ...androidNotificationOptions(body, channelId),
+            ...(idKey ? { id: stableNotifId(idKey) } : {}),
           });
           // THE CHOICE IS LOGGED BECAUSE IT IS INVISIBLE OTHERWISE. A channel does not appear on
           // the notification; it decides which of the reader's own switches apply to it, and the
           // only place it can be read back is `dumpsys notification`, with the phone in hand.
-          if (mentionsMe) console.log(`[NOTIF] Filed on ${CHANNEL_MENTIONS} - it names this user.`);
+          if (channelId === CHANNEL_MENTIONS) {
+            console.log(`[NOTIF] Filed on ${CHANNEL_MENTIONS} - it names this user.`);
+          }
           // TAPPING THIS NOTIFICATION CANNOT REACH THE CONVERSATION, AND THE PLUGIN IS WHY -
           // measured on a Mi 9T on 2026-09-07 with a real message, which opened the app and landed
           // on nothing.
@@ -673,8 +754,8 @@ export function useNotifications() {
           // activity with no way to pass a link. So ONE builder posts every message notification
           // natively and this call site asks it: `notifier_message_natif`, and
           // `nativeNotification.ts` for the pair of notifications that removed.
-          if (conversationId) {
-            notifTargetsById.set(stableNotifId(conversationId), conversationId);
+          if (idKey && conversationId) {
+            notifTargetsById.set(stableNotifId(idKey), conversationId);
             armNotificationTapListener();
           }
         }
@@ -718,7 +799,7 @@ export function useNotifications() {
         if (silent) console.log(`[NOTIF] ${convKey} raised silent - a call holds the app's sound.`);
         const n = new Notification(title, {
           body,
-          tag: `canari-${conversationId ?? 'message'}`,
+          tag: `canari-${idKey ?? 'message'}`,
           silent,
         });
         n.onclick = () => {
@@ -749,6 +830,7 @@ export function useNotifications() {
     playReadTone,
     requestSystemNotificationPermission,
     sendSystemNotification,
+    sendReactionNotification,
     startIncomingCallRingtone,
     stopIncomingCallRingtone,
     startBlinkingTitle,

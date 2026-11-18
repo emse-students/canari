@@ -38,13 +38,16 @@ const PUSH_PLATFORMS = ['android', 'ios'] as const;
  * a KNOWN state - no Play services, an APNs failure - accused once per process by
  * `[PUSH_UNAVAILABLE]` and not curable by registering again, so it is counted and never accused here.
  * `$1` window start, `$2` grace cutoff, `$3` ban cutoff, `$4` now (the session liveness instant).
+ * `outcomes`: the last outcome each `withoutPush` device stated (`unstated` for a build before the
+ * field), so the WARN carries the evidence separating the branches and a reading needs no log access.
  * `auth_sessions."deviceId"` has no index; a daily report does not add one.
  */
 export const PUSH_COVERAGE_SQL = `
 WITH launched AS (
   SELECT k."userId", k."deviceId", k."deviceOs" AS "os",
          COALESCE(k."deviceAppVersion", 'unstated') AS "build",
-         (k."pushOutcome" IS NOT DISTINCT FROM 'no-token') AS "noOsToken"
+         (k."pushOutcome" IS NOT DISTINCT FROM 'no-token') AS "noOsToken",
+         COALESCE(k."pushOutcome", 'unstated') AS "outcome"
     FROM key_package k
    WHERE k."deviceOs" IN (${PUSH_PLATFORMS.map((p) => `'${p}'`).join(', ')})
      AND k."createdAt" > $1
@@ -62,7 +65,9 @@ WITH launched AS (
 )
 SELECT u."os", u."build", count(*)::int AS "devices",
        count(*) FILTER (WHERE u."noRow" AND NOT u."noOsToken")::int AS "withoutPush",
-       count(*) FILTER (WHERE u."noRow" AND u."noOsToken")::int AS "noOsToken"
+       count(*) FILTER (WHERE u."noRow" AND u."noOsToken")::int AS "noOsToken",
+       array_agg(u."outcome" ORDER BY u."outcome")
+         FILTER (WHERE u."noRow" AND NOT u."noOsToken") AS "outcomes"
   FROM unheld u
  GROUP BY u."os", u."build"
  ORDER BY u."os", u."build"`;
@@ -74,6 +79,18 @@ export interface PushCoverageRow {
   devices: number;
   withoutPush: number;
   noOsToken: number;
+  /** The last stated outcome of each `withoutPush` device; null when there is none. */
+  outcomes?: string[] | null;
+}
+
+/** `a=2 b=1` - how many of `outcomes` stated each term, most first, then by name. */
+function tallyOutcomes(outcomes: readonly string[] | null | undefined): string {
+  const counts = new Map<string, number>();
+  for (const o of outcomes ?? []) counts.set(o, (counts.get(o) ?? 0) + 1);
+  return [...counts]
+    .sort(([a, n], [b, m]) => m - n || a.localeCompare(b))
+    .map(([o, n]) => `${o}=${n}`)
+    .join(' ');
 }
 
 /** The parameters of {@link PUSH_COVERAGE_SQL}, in order. */
@@ -110,9 +127,10 @@ export async function reportPushCoverage(
   for (const r of rows) {
     if (r.withoutPush === 0) continue;
     logger.warn(
-      `[PUSH_COVERAGE] os=${r.os} build=${r.build} without=${r.withoutPush}/${r.devices} - ` +
+      `[PUSH_COVERAGE] os=${r.os} build=${r.build} without=${r.withoutPush}/${r.devices} ` +
+        `last: ${tallyOutcomes(r.outcomes) || 'unread'} - ` +
         `these devices ran and the server holds no push registration for them: every notification ` +
-        `to them is lost (their own register-device lines say why: [PUSH_MISSING])`
+        `to them is lost (last = what each stated on its last register-device, [PUSH_MISSING])`
     );
   }
   return rows;
@@ -139,6 +157,27 @@ const PUSH_OUTCOMES: ReadonlySet<string> = new Set([
   'unreadable',
 ]);
 
+/**
+ * The terms an outcome may QUALIFY, and the qualifiers each accepts - an allowlist too. The client
+ * names which `unauthorized` branch ended its ladder, and the await a running (`in-progress`) or
+ * dead (`started`) registration was parked on: the 2026-11-17 reading found the tokenless `1.6.12`
+ * phones had sent no registration and no report, and the bare terms could not say which branch or
+ * which await to fix (the client's `UnauthorizedCause` and `RegistrationStage`).
+ */
+const REGISTRATION_STAGES = ['permission', 'os-token', 'session-token', 'sending'];
+const OUTCOME_QUALIFIERS: Readonly<Record<string, ReadonlySet<string>>> = {
+  unauthorized: new Set([
+    'renewed-refused',
+    'session-expired',
+    'device-revoked',
+    'signing-out',
+    'identity-split',
+    'other',
+  ]),
+  'in-progress': new Set(REGISTRATION_STAGES),
+  started: new Set(REGISTRATION_STAGES),
+};
+
 /** The outcomes with no row that are expected, and what each means - see {@link pushPresenceLine}. */
 const EXPECTED_WITHOUT_ROW: Readonly<Record<string, string>> = {
   none: 'first registration of this sign-in, owed now',
@@ -149,7 +188,20 @@ const EXPECTED_WITHOUT_ROW: Readonly<Record<string, string>> = {
 /** The stated outcome, normalised by {@link PUSH_OUTCOMES}. */
 export function parsePushOutcome(raw: unknown): string {
   if (raw === undefined || raw === null || raw === '') return 'unstated';
-  return typeof raw === 'string' && PUSH_OUTCOMES.has(raw) ? raw : 'invalid';
+  if (typeof raw !== 'string') return 'invalid';
+  if (PUSH_OUTCOMES.has(raw)) return raw;
+  const [term, qualifier, ...rest] = raw.split(':');
+  return rest.length === 0 &&
+    qualifier !== undefined &&
+    Object.prototype.hasOwnProperty.call(OUTCOME_QUALIFIERS, term) &&
+    OUTCOME_QUALIFIERS[term].has(qualifier)
+    ? raw
+    : 'invalid';
+}
+
+/** The unqualified term of a parsed outcome: `in-progress:permission` is an `in-progress`. */
+function outcomeTerm(outcome: string): string {
+  return outcome.split(':')[0];
 }
 
 /**
@@ -181,7 +233,7 @@ export function pushPresenceLine(args: {
   const line =
     `[PUSH_MISSING] user=${args.userId} device=${args.deviceId} os=${args.deviceOs} ` +
     `build=${args.build ?? 'unstated'} last=${args.outcome}`;
-  const expected = EXPECTED_WITHOUT_ROW[args.outcome];
+  const expected = EXPECTED_WITHOUT_ROW[outcomeTerm(args.outcome)];
   if (expected) return { level: 'log', line: `${line} - ${expected}` };
   return {
     level: 'warn',

@@ -1518,6 +1518,15 @@ jobs:
   # job slow (three attempts with backoff) without making it red. The nightly `scheduled.yml` keeps
   # `registry_outage_is_failure: true`, so a tree npm never answered for is still reported there.
   # The container image scan (`image-scan`, 2026-10-23) is in the same half on the same terms.
+  #
+  # AND SINCE 2026-11-17 IT ASKS ABOUT WHAT WE SHIP, NOT ABOUT EVERY TOOL (owner: "Ce qu'on
+  # livre"). A picomatch ReDoS with no fixed release reached all five trees through vite, jest and
+  # @nestjs/cli and froze every pull request, though no shipped code compiles an attacker's glob.
+  # So this job audits the PRODUCTION closure (`closure: production`: the services `--prod`, the
+  # frontend in full because its devDependencies svelte, kit and protobufjs are bundled), and the
+  # nightly `scheduled.yml` keeps the full audit, where a tool's advisory is still a failure.
+  # #1229's hole stays closed for shipped code; a stable is refused on the same table
+  # (`release-preflight.sh`, gate 7). docs/wiki/cicd.md carries the measurement.
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
   dependency-audit:
     name: Dependency audit
@@ -1532,6 +1541,7 @@ jobs:
     uses: ./.github/workflows/code-analysis.yml
     with:
       scope: dependencies
+      closure: production
 
   # =================================================================================================
   # MLS CROSS-VERSION COMPATIBILITY - THE DIRECTION A FIXTURE CANNOT SEE

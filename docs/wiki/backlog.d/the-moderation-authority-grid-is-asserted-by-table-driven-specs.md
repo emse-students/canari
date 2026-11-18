@@ -19,7 +19,7 @@ on the REAL predicates (never a mock of `mayModeratePost`):
 
 **This entry lands the spec with TODAY's answers wherever today already meets the target**, and
 writes every GAP as an `it.todo` naming its tag. A gap is defined on the page, countably: **every grid
-cell carrying a bracketed tag** (`[IM]`, `[WR]`, `[HIDE]`, `[NICK]`, `[LIVE]`, `[AGENDA]`,
+cell carrying a bracketed tag** (`[HIDE]`, `[NICK]`, `[LIVE]`, `[AGENDA]`,
 `[MUTE]`, `[JOURNAL]`, `[NOTICE]`, `[BIO]`, `[AUTOHIDE]`, `[MLS]`; the page defines what a tag is),
 one `it.todo` per tag of the cell. So a gap is visible in the test report, never a silent pass.
 Each work package turns its rows into real assertions in the pull

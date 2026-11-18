@@ -110,6 +110,13 @@ export class MinesweeperController {
     return this.minesweeperService.removeScore(scoreId, adminId);
   }
 
+  /** The timed move log and board of one verified win, for a moderator to watch back. */
+  @Get('scores/:scoreId/replay')
+  @UseGuards(GlobalAdminGuard)
+  replay(@Headers('x-user-id') adminId: string, @Param('scoreId') scoreId: string) {
+    return this.minesweeperService.replay(scoreId, adminId);
+  }
+
   /** Everyone banned from the ranked game. */
   @Get('bans')
   @UseGuards(GlobalAdminGuard)

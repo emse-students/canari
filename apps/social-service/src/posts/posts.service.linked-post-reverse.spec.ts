@@ -81,8 +81,8 @@ describe('PostsService.findPostLinkedToCalendarEvent', () => {
       markdown: 'Le bureau organise...',
       association: { id: 'asso-1', name: 'BDE', slug: 'bde' },
     });
-    // A personal post's authorId would be masked by mustHideAnonymousAuthor; an association
-    // post's is stripped unconditionally by the same branch of shapeListRow either way.
+    // An association post's writer is served only to its moderators and its writer
+    // (`viewerSeesWriter`, decision 11); this reader is neither.
     expect(result).not.toHaveProperty('authorId');
   });
 

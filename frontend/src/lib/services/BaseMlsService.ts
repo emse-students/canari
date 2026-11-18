@@ -1,4 +1,5 @@
 import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
+import type { HistorySealEngine } from '$lib/crypto/historySeal';
 import { DeliveryRefusal } from '$lib/mls-client/mlsDeliveryHttp';
 import { reportMlsSessionLost } from '$lib/mls-client/mlsSessionLoss';
 import { cachedCommitInstants, type ServerInstant } from '$lib/mls-client/serverInstant';
@@ -84,6 +85,7 @@ import { adoptLegacyLedgers } from '$lib/mls-client/stateLedgerMigration';
 import { sealedFrameEpoch } from '$lib/mls-client/sealedFrameEpoch';
 import { fingerprintKeyPackage, type DatedKeyPackage } from '$lib/mls-client/keyPackages';
 import { noteOwnLeafRefreshed, refreshLeafIfDue } from '$lib/mls-client/leafRefresh';
+import { noteGroupTreeChanged } from '$lib/utils/chat/groupTreeMembers';
 import { UnpublishedBranchError } from '$lib/mls-client/publishedBranch';
 import {
   MlsStateUnreadableNowError,
@@ -181,6 +183,7 @@ import {
 import {
   checkpointWroteNothing,
   fromBase64,
+  MlsCheckpointNotWrittenError,
   MlsStateWriteRefusedError,
   sameBytes,
   toBase64,
@@ -552,7 +555,10 @@ export abstract class BaseMlsService implements IMlsService {
     | ((requesterUserId: string, requesterDeviceId: string, groupId: string) => void)
     | null = null;
 
-  protected welcomeProcessedCallback: ((groupId?: string) => void) | null = null;
+  protected welcomeProcessedCallback: ((groupId?: string, installed?: boolean) => void) | null =
+    null;
+  /** The groups whose Welcome the handler INSTALLED, read once by the announcement (see below). */
+  private readonly welcomesInstalled = new Set<string>();
   /** @see onWelcomeDelivered */
   private welcomeDeliveredListener: ((delivered: DeliveredWelcome) => void) | null = null;
 
@@ -1762,7 +1768,11 @@ export abstract class BaseMlsService implements IMlsService {
     this.historyRequestCallback = callback;
   }
 
-  onWelcomeProcessed(callback: (groupId?: string) => void): void {
+  noteWelcomeInstalled(groupId: string): void {
+    this.welcomesInstalled.add(groupId);
+  }
+
+  onWelcomeProcessed(callback: (groupId?: string, installed?: boolean) => void): void {
     this.welcomeProcessedCallback = callback;
   }
 
@@ -3157,6 +3167,9 @@ export abstract class BaseMlsService implements IMlsService {
 
           if (msg.isWelcome && groupId) {
             this.messageScheduler.releaseWelcomeBuffer(groupId, 'Welcome complete');
+            // Read ONCE, whatever follows: a mark left behind would make the next redelivery of
+            // this group's Welcome look like a fresh join.
+            const installed = this.welcomesInstalled.delete(groupId);
             // A KEY GROUP'S WELCOME IS NOT A CONVERSATION'S, and the listener below is the
             // conversation layer: it writes a sidebar row for any group it does not hold one for,
             // then restores, reconciles and loads history for it. A key group is in the set this
@@ -3170,7 +3183,7 @@ export abstract class BaseMlsService implements IMlsService {
                 `[QUEUE] Welcome for key group ${groupId.slice(0, 8)}... - not announced to the conversation layer`
               );
             } else {
-              this.welcomeProcessedCallback?.(groupId);
+              this.welcomeProcessedCallback?.(groupId, installed);
               // A re-admission's Welcome is what makes a `pending` conversation active again: a
               // lost invitation that waited for it can be re-planned now.
               this.replanOwedInvitationsIn(groupId, 'Welcome processed');
@@ -3203,6 +3216,10 @@ export abstract class BaseMlsService implements IMlsService {
             // is still unknown, so the handler records it against that group and the Welcome that
             // eventually lands re-fetches it - the seam that exists for exactly this.
             if (groupId) this.messageScheduler.releaseWelcomeBuffer(groupId, 'Welcome failed');
+            // And the install mark is read here too - ONCE, whatever happened: a handler that threw
+            // after installing announces nothing, and its mark left behind would make the next
+            // redelivery look like a fresh join. The register owed is durable and asks anyway.
+            if (groupId) this.welcomesInstalled.delete(groupId);
           } else {
             const exFlags = {
               isWelcome: msg.isWelcome,
@@ -4917,7 +4934,10 @@ export abstract class BaseMlsService implements IMlsService {
    * another device holds the lock; `unanswered` is a transport error or a non-2xx answer, which says
    * nothing about anyone else.
    */
-  async acquireAddLockAnswer(groupId: string): Promise<'taken' | 'held' | 'unanswered'> {
+  async acquireAddLockAnswer(
+    groupId: string,
+    oweIfHeld?: () => Promise<CommitInvitation | null>
+  ): Promise<'taken' | 'held' | 'owed' | 'unanswered'> {
     const short = groupId.slice(0, 8);
     if (!this.addLocksHeld.has(groupId)) {
       const owed = claimAddLockMarker(this.userId, groupId);
@@ -4936,8 +4956,47 @@ export abstract class BaseMlsService implements IMlsService {
       markAddLock(this.userId, groupId, answer.token);
       return 'taken';
     }
+    // RECORDED BEFORE THE WAKE IS ARMED: the wake is armed only for a group that owes a re-plan.
+    const owed =
+      answer.answered && oweIfHeld ? await this.oweInvitationOnHeldLock(groupId, oweIfHeld) : false;
     this.wakeAtAddLockExpiry(groupId, answer.retryAfterMs);
+    if (owed) return 'owed';
     return answer.answered ? 'held' : 'unanswered';
+  }
+
+  /**
+   * Records a member's first invitation that another device's add lock refused, as owed at this
+   * group's current epoch (see {@link IMlsService.acquireAddLockAnswer}). An entry already owed at
+   * that epoch is merged into by the record itself (`recordOwedInvitation`), never overwritten.
+   *
+   * @returns whether it is recorded; `false` tells the caller the refusal is the member's to retry.
+   */
+  private async oweInvitationOnHeldLock(
+    groupId: string,
+    oweIfHeld: () => Promise<CommitInvitation | null>
+  ): Promise<boolean> {
+    const short = groupId.slice(0, 8);
+    const invitation = await oweIfHeld();
+    if (!invitation) return false;
+    const baseEpoch = this.getEpoch(groupId);
+    try {
+      recordOwedInvitation(this.userId, {
+        groupId,
+        baseEpoch,
+        invitation,
+        cause: 'race',
+      });
+    } catch (e) {
+      if (!(e instanceof OwedInvitationNotRecordedError)) throw e;
+      console.warn(
+        `[INVITE_OWED] ${short}... an invitation of ${invitation.users.length} person(s) met another device's add lock and could NOT be recorded (${e.reason}) - refused, the member is told`
+      );
+      return false;
+    }
+    console.log(
+      `[INVITE_OWED] ${short}... an invitation of ${invitation.users.length} person(s) met another device's add lock - recorded at epoch ${baseEpoch}, re-planned when that lock ends`
+    );
+    return true;
   }
 
   /**
@@ -5005,7 +5064,7 @@ export abstract class BaseMlsService implements IMlsService {
     this.addLockExpiryWakes.clear();
   }
 
-  async createRemoteGroup(name: string, isGroup = true): Promise<string> {
+  async createRemoteGroup(name: string | null, isGroup = true): Promise<string> {
     return this.delivery.createRemoteGroup(name, isGroup);
   }
 
@@ -5348,38 +5407,104 @@ export abstract class BaseMlsService implements IMlsService {
     }
     // Before the state opened there is no ledger to stage: the state being written is the one the
     // load is building (a fresh start, a rotation), and the opening reads what it carries.
-    const ledgers = stateLedgersHydrated(this.userId)
-      ? this.stageCheckpointLedgers(await this.emittedForCheckpoint())
+    // Read first: a send landing after the read costs one burnt generation too many, never too few.
+    const emitted = stateLedgersHydrated(this.userId)
+      ? await this.emittedForCheckpoint()
       : undefined;
-    // What this write holds of the inbound frames, read BEFORE it exports: a frame applied while it
-    // seals is not in it ({@link durableApplied}).
-    const appliedAtExport = this.inboundApplied;
-    // NOTHING IS AWAITED BETWEEN THE STAGING ABOVE AND THE CALL BELOW: on the web the platform
-    // applies the ledgers and exports in this same turn, so every mark staged describes an advance
-    // the export holds.
+    // ROWS BEFORE RATCHET: the rows held in memory for frames already applied are stored before the
+    // export claims those frames' ratchet advance, and none is held again until the export is taken.
+    const releaseRows = await this.holdRowsForExport();
     try {
-      await this.writeCheckpoint(
-        this.currentDeviceKeyB64,
-        {
-          isEnded: () => this.stateWritesEnded === true,
-          holdsNoLead: refusesCommitsHere,
-          endOnRefusal: options?.endsDocumentOnRefusal
-            ? () => {
-                this.stateWritesEnded = true;
-              }
-            : undefined,
-        },
-        ledgers
-      );
-      // Only a write that LANDED holds what it exported: the ledgers in it, and the frames counted
-      // into `appliedAtExport`.
-      if (appliedAtExport > this.durableApplied) this.durableApplied = appliedAtExport;
-    } catch (e) {
-      // The next checkpoint carries them. A client that already took them re-applies the same value,
-      // a no-op; one that never got them (a native call refused before it ran) takes them then.
-      if (ledgers) restageStateLedgers(this.userId, ledgers);
-      throw e;
+      const ledgers = emitted ? this.stageCheckpointLedgers(emitted) : undefined;
+      // What this write holds of the inbound frames, read BEFORE it exports: a frame applied while it
+      // seals is not in it ({@link durableApplied}).
+      const appliedAtExport = this.inboundApplied;
+      // NOTHING IS AWAITED BETWEEN THE STAGING ABOVE AND THE CALL BELOW: on the web the platform
+      // applies the ledgers and exports in this same turn, so every mark staged describes an advance
+      // the export holds.
+      try {
+        await this.writeCheckpoint(
+          this.currentDeviceKeyB64,
+          {
+            isEnded: () => this.stateWritesEnded === true,
+            holdsNoLead: refusesCommitsHere,
+            endOnRefusal: options?.endsDocumentOnRefusal
+              ? () => {
+                  this.stateWritesEnded = true;
+                }
+              : undefined,
+          },
+          ledgers
+        );
+        // Only a write that LANDED holds what it exported: the ledgers in it, and the frames counted
+        // into `appliedAtExport`.
+        if (appliedAtExport > this.durableApplied) this.durableApplied = appliedAtExport;
+      } catch (e) {
+        // The next checkpoint carries them. A client that already took them re-applies the same
+        // value, a no-op; one that never got them (a native call refused before it ran) takes them then.
+        if (ledgers) restageStateLedgers(this.userId, ledgers);
+        throw e;
+      }
+    } finally {
+      // Released once the write settled, not at the capture: on native the export runs in the
+      // command, so the hold has to outlast the call.
+      releaseRows();
     }
+  }
+
+  /**
+   * ROWS BEFORE RATCHET (P1, review of #3321): asks every observer that holds rows of applied frames
+   * in memory to store them, and returns the release of every hold taken.
+   *
+   * THE ORDER, NOT A WAIT FOR A WINDOW: a live drain buffers its rows until its window closes, and a
+   * checkpoint started meanwhile - by a send, an earlier window, the persister's coalescing, and the
+   * window's own close, whose persister observer runs BEFORE the UI one - exported the ratchet
+   * advance and the seen marks of frames whose rows existed only in memory. A kill there lost them
+   * for good: the generation is spent on disk and the frame is marked seen. Each hold ends on one
+   * store of what is held (the observer stops buffering while it is taken), so this terminates
+   * without a clock; nothing here waits on a handler, so a handler awaiting a checkpoint cannot
+   * deadlock it.
+   *
+   * A HOLD THAT FAILS REFUSES THE CHECKPOINT ({@link MlsCheckpointNotWrittenError} at `rows`), once
+   * per trigger: the next checkpoint's hold retries the rows. Refused, the state on disk stays
+   * behind those frames, and a reload repairs it from what still holds them - a frame the server
+   * still lists (a commit or a Welcome, held by {@link DrainAckHold}, or one not yet acknowledged) is
+   * decrypted again; an APPLICATION frame a leader tab already acknowledged at the drain's end is
+   * gone from the server, and comes back through the history archive, whose replay reads it because
+   * no landed checkpoint marked it seen.
+   *
+   * AND A HUNG ROW WRITE HOLDS EVERY CHECKPOINT: an IndexedDB write that never settles leaves the
+   * hold pending, so this checkpoint never exports and the persister's in-flight one never clears.
+   * No timeout, deliberately - exporting past a row write that has not answered is the loss this
+   * order exists to prevent; the hung store is the defect, and every write after it hangs too. A
+   * store that keeps REFUSING the rows does the same - every checkpoint, commits and joins included,
+   * is refused until a write lands or the page reloads - and the observer names it once per page.
+   */
+  private async holdRowsForExport(): Promise<() => void> {
+    const releases: Array<() => void> = [];
+    const releaseAll = () => {
+      for (const release of releases) {
+        try {
+          release();
+        } catch (e) {
+          console.error('[MLS] a row hold could not be released after the checkpoint:', e);
+        }
+      }
+    };
+    for (const observer of this.bulkIngestObservers) {
+      if (!observer.holdRowsForCheckpoint) continue;
+      try {
+        releases.push(await observer.holdRowsForCheckpoint());
+      } catch (e) {
+        releaseAll();
+        console.error(
+          '[MLS] checkpoint not written: the rows of frames already applied could not be stored first - the state stays behind them; the next checkpoint retries the rows, and a reload reads them again from the server or the history archive:',
+          e
+        );
+        throw new MlsCheckpointNotWrittenError('rows', e);
+      }
+    }
+    return releaseAll;
   }
 
   /**
@@ -6752,6 +6877,8 @@ export abstract class BaseMlsService implements IMlsService {
     // periodic one is not owed again for an interval. Dated HERE, the one merge both the transaction
     // and a settlement go through.
     await this.noteOwnLeafReplaced(submission.groupId, submission.baseEpoch + 1);
+    // An Add or a Remove of our own moves who the tree holds: an unnamed group's label re-reads it.
+    noteGroupTreeChanged(submission.groupId, 'a commit of this device');
     return recipients;
   }
 
@@ -9169,6 +9296,7 @@ export abstract class BaseMlsService implements IMlsService {
   abstract leafHoldingKeyOf(groupId: string, keyPackage: Uint8Array): Promise<string | null>;
   abstract graineRun(groupId: string): Promise<GraineRunReading>;
   abstract graineSignatureEngine(): GraineSignatureEngine;
+  abstract historySealEngine(): HistorySealEngine;
   abstract signWithDeviceCredential(message: Uint8Array): Promise<Uint8Array>;
   abstract takeForkFindings(): Promise<ForkFinding[]>;
   abstract forgetGroup(groupId: string, minEpoch?: number): void;

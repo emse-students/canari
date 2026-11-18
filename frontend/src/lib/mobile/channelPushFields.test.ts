@@ -307,8 +307,11 @@ describe('channel push payload contract (social-service writer vs the three nati
     expect(kotlinSource).toContain('senderKey = salonLine?.personKey,');
     expect(kotlinSource).not.toContain('ofSocketFrame');
     // The proof comes from the WebView's own open, through the Rust command, unchanged.
-    expect(rustCommand).toMatch(/covers: i32,\s*author_proven: bool,\s*is_group: Option<bool>,/);
-    expect(rustCommand).toContain('ZJJIZLjava/lang/Boolean;)Z');
+    expect(rustCommand).toMatch(
+      /covers: i32,\s*author_proven: bool,\s*is_group: Option<bool>,\s*reaction: bool,/
+    );
+    // The trailing `Z` is the reaction flag (2026-11-17), the last parameter on both sides.
+    expect(rustCommand).toContain('ZJJIZLjava/lang/Boolean;Z)Z');
     expect(channelHandler).toContain('authorProven = opening.authorProven;');
     expect(channelSeal).toContain("authorProven: prepared.kind === 'v2',");
     // THE NAME IS ON DISK BEFORE THE NATIVE BUILDER READS IT (review of #2888, LOW-1): the socket

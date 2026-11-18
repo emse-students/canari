@@ -45,6 +45,17 @@ describe('moderation refusal codes', () => {
     );
   });
 
+  it("words an institution moderator's refusal as its own, never as a BDE's (owner, 2026-11-15)", () => {
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const refusal = new ApiRefusalError(
+      403,
+      MODERATION_REFUSAL_CODES.MODERATION_OUTSIDE_OWN_INSTITUTION,
+      'x'
+    );
+    expect(describeModerationRefusal(refusal)).toBe(m.moderation_refusal_outside_own_institution());
+    expect(describeModerationRefusal(refusal)).not.toBe(m.moderation_refusal_out_of_scope());
+  });
+
   it('reads the reports queue refusals too: `moderation/api` throws a refusal `refusalCode` reads', async () => {
     // The queue's acts (delete a reported comment, review, mute) go through `moderation/api`, whose
     // `ModerationApiError` stood apart from `ApiRefusalError` and was worded as a bare failure.

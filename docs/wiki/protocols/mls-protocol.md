@@ -706,6 +706,10 @@ took the group to 5, W1's return logged `refused - cleared`, healed, and W5 neve
   with the session (sign-out) and with the client (`destroy`). The holder's
   release sends no frame, and its Add commit lands BEFORE its release (the holder still persists,
   registers and sends Welcomes, 5-8 s), so the commit-applied wake alone would find the lock still up.
+- **A member's FIRST invitation refused by another device's add lock is owed the same way**
+  (`add-lock-owed`, 2026-11-17): recorded at the group's current epoch by `acquireAddLockAnswer`'s
+  `oweIfHeld` before the refusal arms its wake, and drained by the same events
+  ([chat](../frontend/modules/chat.md#nothing-takes-the-add-lock-it-does-not-commit-under-2026-11-17)).
 - **The re-planner exists only on a RESTORED map** (`makeLostInvitationReplanner`, registered by
   `useConversations` after a restore that succeeded, removed at sign-out). It answers what happens to
   the entry (`ReplanVerdict`): a `pending` conversation, a row not there yet while the group is held,
@@ -1543,8 +1547,13 @@ build wrote deafens nothing) and its announcement are deleted. Pinned by
 **What the fix-forward owes before the rule refuses anything again** ([backlog](../backlog.d/p1-the-admission-rule-fix-forward.md)):
 
 1. **Read the `[UNINVITED_ENTRY]` count on production first**, by `kind`, so the legitimate paths are
-   measured before anything else is built.
-2. **The emission side.** A user holding no leaf ASKS a member and waits for that member's Add,
+   measured before anything else is built. The count is durable since migration 053
+   ([the count is a table](#the-count-is-a-table-uninvited_entries-migration-053-2026-11-17)).
+2. **The emission side**, and BEFORE it the member side (found 2026-11-17): a user with no leaf
+   whose seat is not an invitation-link ask is asked about to nobody (`askAMemberToAdmit` returns
+   "nobody is asked"), so an asker on any of the paths below would wait for ever until members raise
+   such a seat as an ask and that build is the client floor ([backlog](../backlog.d/p1-the-admission-rule-fix-forward.md)).
+   A user holding no leaf ASKS a member and waits for that member's Add,
    never entering alone, and never in a 1:1. This is NOT the further-device door: since D1 a further
    device asks first but lets itself in when no member device can answer, because its user's leaf
    already vouches for it in every member's tree. A user with no leaf has nothing in the tree to vouch
@@ -1662,6 +1671,59 @@ The server takes the report from a member of the group only (403
 `not-a-member` otherwise), accepts `kind` from that list alone, and writes one line per
 (group, entrant, epoch, kind), so N members reporting one entry make one line per kind they reached,
 not N.
+
+#### The count is a table (`uninvited_entries`, migration 053, 2026-11-17)
+
+**Why.** The deduplication above lived in a `Set` in one replica's memory and the line in one
+container's log, so a deploy reset both: every reading of production covered the hours since the
+last deploy (4 h on 2026-11-01, 24 h on 2026-11-13, about 38 h on 2026-11-17), and the deploy-log
+archive that holds earlier windows is readable only by the deploy account. Item 1 of the fix-forward
+(below) cannot be closed on a count that never accumulates. Of the two fixes the backlog entry left
+open - an additive table, or one public line a day from a `scheduled.yml` job - the table was taken
+(2026-11-17, reversible, recorded here): it also makes the deduplication survive a deploy and hold
+across replicas, its history is not bounded by the Actions log retention, and it publishes nothing.
+
+**The mechanism.** `POST mls/uninvited-entry` claims the entry with ONE statement,
+`INSERT INTO uninvited_entries ... ON CONFLICT DO NOTHING RETURNING` on the primary key
+`(groupId, entrantUserDevice, epoch, kind)` (`claimUninvitedEntry`, `utils/uninvited-entries.ts`):
+the call that wrote the row prints the WARN line, every later report of the same entry under the
+same kind - any replica, any deploy - finds it and prints the DEBUG `repeat`. Two members reporting
+at the same instant serialise on the key, so it is one line, never two and never none.
+
+**Every value fits its column before the INSERT.** `epoch` and `watchedFrom` are a safe integer's
+digits or a fixed word (`unstated`, `none`, `invalid`; `uninvitedEntryEpochField`) - never the
+generic log sanitizer's 128-character string, which would overflow `VARCHAR(32)` and let any member
+turn every report into a failed write (review of #3774). A digit STRING is `invalid`: the client
+sends a JSON number.
+
+**A row that cannot be written is lost to the count, and said so on the server only.** Only a
+database failure reaches that branch. It is printed at ERROR as `[UNINVITED_ENTRY] NOT COUNTED` with
+all the line's evidence, and answered `{ recorded: false }` with a 2xx, NOT a 503. No client re-reports:
+`reportUninvitedEntry` sends an entry once per app session and never retries, so the count of THAT
+reporter's entry is lost whatever the status - another member's report of the same entry still
+counts it if theirs is written. A 503 would add only a warning in the reporter's console for a fault
+that is the server's and already accused at ERROR here (CLAUDE.md, noise is never acceptable).
+
+**What a row holds, and for how long.** Exactly what the line prints, sanitized the same way: the
+conversation, the entrant as `userId:deviceId` with the user id cut to eight characters (never a
+full user id), the epoch, the kind, and the first reporter's `watched_from`. **Pseudonymous, not
+anonymous**: the device id re-identifies the person while their key package exists. `firstSeenAt` is
+aged out, never compared. Rows are deleted past the retention window (90 days, the log line's own
+ceiling, on the DATABASE's clock: `pruneUninvitedEntries`, daily AND in the boot sweep, since a daily
+interval never fires in a service redeployed more often than daily), with the conversation
+(`GROUP_OWNED_TABLES`), and with the account at its erasure (`ACCOUNT_ERASURE_COVERAGE`, matched by
+the shortened user id; an account sharing those eight characters loses its rows of the count too).
+Register: C13 ([register-of-processing](../compliance/register-of-processing.md)).
+
+**Reading it** - read-only, any time, the whole window in one statement:
+
+```sql
+SELECT kind, "watchedFrom" = 'none' AS no_record, count(*)
+FROM uninvited_entries GROUP BY 1, 2 ORDER BY 1, 2;
+```
+
+The count starts at the deploy that carries migration 053; earlier windows stay in the readings the
+backlog entry records.
 
 **The rule holds for every client allowed to connect since the `1.6.6` floor** (#2358 is in every
 stable since `v1.5.0`, migration 038 with it): its compatibility entry closed on 2026-11-11, with

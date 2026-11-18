@@ -3,7 +3,7 @@
  * THE SHARED-POST BUBBLE, state by state: loading, image, video, reel, text-only, unavailable - and
  * the rule that only a card that came near the viewport asks the server anything.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 
 const getPost = vi.fn();
@@ -84,6 +84,16 @@ function tap(target: HTMLElement) {
 }
 
 const base = { id: P1, markdown: 'La **soirée** de rentrée', authorFirstName: 'Ada', media: [] };
+
+/**
+ * The card and the reel viewer load their picture and viewer lazily, and each lazy module here is a
+ * mocked stub whose factory compiles a .svelte file on FIRST import. Cold under load that cost more
+ * than the 1 s of `vi.waitFor`, so the test saw no viewer. Warm both once, outside any waiter.
+ */
+beforeAll(async () => {
+  await import('$lib/components/posts/PostMedia.svelte');
+  await import('$lib/components/reels/ReelViewer.svelte');
+}, 60_000);
 
 beforeEach(() => {
   near = true;

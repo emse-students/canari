@@ -12,6 +12,11 @@ const url = vi.hoisted(() => ({ value: new URL('https://canari.test/forms') }));
 const api = vi.hoisted(() => ({
   getSubmissions: vi.fn(async () => []),
   deleteForm: vi.fn(async () => ({ ok: true })),
+  setFormClosed: vi.fn(async (id: string, closed: boolean) => ({
+    id,
+    closedAt: closed ? '2026-11-16T10:00:00.000Z' : null,
+    windowState: closed ? 'closed' : 'open',
+  })),
   deleteSubmission: vi.fn(),
   listPendingCashSubmissions: vi.fn(async (): Promise<unknown[]> => []),
   validateCashSubmission: vi.fn(async () => ({ ok: true })),
@@ -39,6 +44,8 @@ import FormsManagerList from './FormsManagerList.svelte';
 import { m } from '$lib/paraglide/messages';
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
 import type { Form } from '$lib/forms/api';
+import { ApiRefusalError } from '$lib/utils/apiRefusalError';
+import { dismissToast, toastStore } from '$lib/stores/toast.svelte';
 
 // Never undone: a Svelte outro (the menu closing) creates its animation from a timer that fires
 // after the last test, so an undo would leave it unadopted and its cancellation unhandled.
@@ -450,5 +457,98 @@ describe('FormsManagerList - cash awaiting validation', () => {
   it('says there is nothing to validate on a form that takes cash and has none waiting', async () => {
     const target = await render([cashForm()], { scoped: true });
     await vi.waitFor(() => expect(target.textContent).toContain(m.asso_forms_no_pending_cash()));
+  });
+});
+
+describe('FormsManagerList - closing a form (owner, 2026-11-16)', () => {
+  it('shows the badge at once on the server verdict, whatever this device clock says', async () => {
+    api.setFormClosed.mockResolvedValueOnce({
+      id: 'f1',
+      closedAt: new Date(Date.now() + 5000).toISOString(),
+      windowState: 'closed',
+    });
+    const target = await render([form({})]);
+    await openMenu(target, 'f1');
+    entry('close')!.click();
+    await vi.waitFor(() =>
+      expect(target.querySelector('#form-f1 [data-testid="form-closed-badge"]')).not.toBeNull()
+    );
+  });
+
+  it('closes after a confirmation, and the row gets its "Ferme" badge and a "Rouvrir" entry', async () => {
+    const target = await render([form({})]);
+    expect(target.querySelector('[data-testid="form-closed-badge"]')).toBeNull();
+    await openMenu(target, 'f1');
+    expect(entry('reopen')).toBeNull();
+    entry('close')!.click();
+    await vi.waitFor(() => expect(api.setFormClosed).toHaveBeenCalledWith('f1', true));
+    expect(confirm.showConfirm).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() =>
+      expect(
+        target.querySelector('#form-f1 [data-testid="form-closed-badge"]')!.textContent
+      ).toContain(m.form_list_closed_badge())
+    );
+    await menuClosed();
+    await openMenu(target, 'f1');
+    expect(entry('close')).toBeNull();
+    expect(entry('reopen')).not.toBeNull();
+  });
+
+  it('closes nothing when the confirmation is declined', async () => {
+    confirm.showConfirm.mockResolvedValueOnce(false);
+    const target = await render([form({})]);
+    await openMenu(target, 'f1');
+    entry('close')!.click();
+    await vi.waitFor(() => expect(confirm.showConfirm).toHaveBeenCalledTimes(1));
+    expect(api.setFormClosed).not.toHaveBeenCalled();
+    expect(target.querySelector('[data-testid="form-closed-badge"]')).toBeNull();
+  });
+
+  it('reopens a closed form with no confirmation, and the badge goes', async () => {
+    const target = await render([form({ closedAt: '2026-01-01T00:00:00.000Z' })]);
+    expect(target.querySelector('[data-testid="form-closed-badge"]')).not.toBeNull();
+    await openMenu(target, 'f1');
+    entry('reopen')!.click();
+    await vi.waitFor(() => expect(api.setFormClosed).toHaveBeenCalledWith('f1', false));
+    expect(confirm.showConfirm).not.toHaveBeenCalled();
+    await vi.waitFor(() =>
+      expect(target.querySelector('[data-testid="form-closed-badge"]')).toBeNull()
+    );
+  });
+
+  it('does not call a scheduled end, still to come, closed', async () => {
+    const target = await render([form({ closedAt: '2099-01-01T00:00:00.000Z' })]);
+    expect(target.querySelector('[data-testid="form-closed-badge"]')).toBeNull();
+    await openMenu(target, 'f1');
+    expect(entry('close')).not.toBeNull();
+  });
+
+  it('offers nothing to close on a form whose opening is still to come', async () => {
+    const target = await render([form({ opensAt: '2099-01-01T00:00:00.000Z' })]);
+    await openMenu(target, 'f1');
+    expect(entry('close')).toBeNull();
+    expect(entry('reopen')).toBeNull();
+  });
+
+  it('says the server refusal of a close, typed', async () => {
+    api.setFormClosed.mockRejectedValueOnce(
+      new ApiRefusalError(400, 'FORM_CLOSE_NOT_OPEN_YET', 'not open yet')
+    );
+    const target = await render([form({})]);
+    await openMenu(target, 'f1');
+    entry('close')!.click();
+    await vi.waitFor(() => expect(api.setFormClosed).toHaveBeenCalledWith('f1', true));
+    await vi.waitFor(() =>
+      expect(toastStore.toasts.map((t) => t.message)).toContain(m.form_refusal_close_not_open_yet())
+    );
+    expect(target.querySelector('[data-testid="form-closed-badge"]')).toBeNull();
+    toastStore.toasts.forEach((t) => dismissToast(t.id));
+  });
+
+  it('offers a draft nothing to close', async () => {
+    const target = await render([form({ status: 'draft' })]);
+    await openMenu(target, 'f1');
+    expect(entry('close')).toBeNull();
+    expect(entry('reopen')).toBeNull();
   });
 });
