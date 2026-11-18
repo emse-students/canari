@@ -54,7 +54,7 @@ questions the first draft of this page left open, the same day.
    [moderation-and-blocking](moderation-and-blocking.md#the-moderation-read-of-a-post-its-comments-and-its-replay-owner-2026-11-15).
 3. **An institution's `MODERATE` member does NOT moderate students.** The door and the scope count
    only governors of type `association` (`governorIsAnAssociationSql`); a space with no BDE stays with
-   the platform admin. Built 2026-11-17 (`bdeModeratesUserSql` asks `governorIsAnAssociationSql`); [the reading](backlog.d/reading-owed-an-institution-moderator-moderates-its-own-content.md).
+   the platform admin. Built 2026-11-17 (`bdeModeratesUserSql` asks `governorIsAnAssociationSql`); [the reading](device-verification.md#the-phone-and-web-readings-of-2026-11-18-s6-170-alpha12-live-moderations-last-halves-the-reel-card-overlays-the-birthday-morning).
 4. **An institution's own `MODERATE` members moderate that institution's own content** - its posts,
    its lives, the comments under them - and the platform admin keeps recourse. Built 2026-11-17
    (`institutionModeratesOwnSql`, ORed into the publisher predicate `moderatesPublisherSql`; the door

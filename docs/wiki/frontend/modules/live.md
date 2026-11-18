@@ -1399,8 +1399,8 @@ neither row wraps. On air the column sits at the bottom right, and the chat box 
 column share ONE flex row (the chat \`flex-1 min-w-0\`, the column \`shrink-0\`), so the chat takes
 whatever the bar leaves and the two cannot meet at any window width - no width is written down; the camera-off and sound notices stay in the same column. Charter: principle
 7 (simplicity). Tested in \`LiveBroadcaster.svelte.test.ts\` (aria-labels and tooltips, no text, one
-row); the reading at 1280 and ~640 px on a desktop live is owed
-([backlog](../../backlog.d/reading-owed-the-live-scenes-bar-on-a-desktop-live.md)).
+row); read at 1280 and ~640 px on a desktop live on `1.7.0-alpha.11` and `alpha.12`
+([readings](../../device-verification.md#the-phone-and-web-readings-of-2026-11-18-s6-170-alpha12-live-moderations-last-halves-the-reel-card-overlays-the-birthday-morning)).
 
 **The control that draws them (owner, 2026-11-16, after a reading of the on-air bar: labelled pills
 wrapped onto a second line and rode over the comment field).** ONE icon-only row, a rounded-full
@@ -1414,8 +1414,8 @@ neither row wraps. On air the column sits at the bottom right, and the chat box 
 column share ONE flex row (the chat \`flex-1 min-w-0\`, the column \`shrink-0\`), so the chat takes
 whatever the bar leaves and the two cannot meet at any window width - no width is written down; the camera-off and sound notices stay in the same column. Charter: principle
 7 (simplicity). Tested in \`LiveBroadcaster.svelte.test.ts\` (aria-labels and tooltips, no text, one
-row); the reading at 1280 and ~640 px on a desktop live is owed
-([backlog](../../backlog.d/reading-owed-the-live-scenes-bar-on-a-desktop-live.md)).
+row); read at 1280 and ~640 px on a desktop live on `1.7.0-alpha.11` and `alpha.12`
+([readings](../../device-verification.md#the-phone-and-web-readings-of-2026-11-18-s6-170-alpha12-live-moderations-last-halves-the-reel-card-overlays-the-birthday-morning)).
 
 **The scene state machine** (`planSceneChange`): the scene shown -> nothing; a scene showing the
 screen while none is held -> ASK for one (the picker, from that click), switch only once granted, a
