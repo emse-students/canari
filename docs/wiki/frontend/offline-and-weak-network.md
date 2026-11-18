@@ -485,7 +485,7 @@ the socket and the replay have all finished) and it should be its own package wi
   (a caller's own abort is not one). `isTransportFailure` recognises it by type. It is never a status,
   so it can never reach a 401/403 branch and **never logs anyone out**. Two expiries in a row with
   nothing answered between flip the store to unreachable (`STALLS_BEFORE_UNREACHABLE`); one answer
-  resets the count.
+  resets the count. The verdict line STATES ITS EVIDENCE (`notifyServerUnreachable(evidence)`): `server unreachable (2 request deadlines in a row)` for a black-holed link, `(transport failure: <class of the raw rejection>)` for a refused socket, so a phone log tells them apart.
 - **Retry cannot multiply load**: a stalled GET is retried once, after 250-1000 ms of jitter, and not
   at all once the store is offline; a write of unknown fate is never replayed by `apiFetch` (the
   outbox owns that, with the same inner `messageId` so receivers dedupe).
