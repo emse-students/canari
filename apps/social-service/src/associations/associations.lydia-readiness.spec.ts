@@ -26,6 +26,7 @@ import {
   LYDIA_PAYMENTS_PAUSED_TYPE,
   LydiaPaymentsNotifier,
 } from './lydia-payments-notifier.service';
+import { LYDIA_CASHIERS_LIVE, LYDIA_CASHIER_IN_FLIGHT } from './lydia-cashier-claim';
 import { ProductsService } from './products.service';
 import {
   LYDIA_CASHIER_CLAIM_LOST,
@@ -134,7 +135,7 @@ function makeReadiness(
   const service = Object.assign(Object.create(AssociationsService.prototype) as object, {
     assoRepo,
     logger: new Logger('AssociationsService'),
-    redis: { deleteByPattern: jest.fn(async () => 0) },
+    redis: { incr: jest.fn(async () => 1), deleteByPattern: jest.fn(async () => 0) },
     lydiaNotifier: notifier,
     listFlagHolders,
   }) as unknown as AssociationsService;
@@ -159,7 +160,7 @@ function captureLogs() {
 afterEach(() => jest.restoreAllMocks());
 
 describe('AssociationsService.setLydiaReadiness - one writer, the UPDATE decides the transition', () => {
-  it('marks ready ONCE: a transition is a WARN and a notice, a replay a debug line and no notice', async () => {
+  it('marks ready ONCE: a transition is an INFO line and a notice, a replay a debug line and no notice', async () => {
     const logs = captureLogs();
     const row: Holder = { id: HOLDER, ready: false, cause: null };
     const { service, notifier, update } = makeReadiness(row);
@@ -180,11 +181,14 @@ describe('AssociationsService.setLydiaReadiness - one writer, the UPDATE decides
       'manager-1',
       'manager-2',
     ]);
-    expect(logs.warn.join('|')).toContain(
-      `${LYDIA_READINESS_LOG_TAG} holder ${HOLDER} marked READY`
+    expect(logs.log.join('|')).toContain(
+      `${LYDIA_READINESS_LOG_TAG} holder ${HOLDER} marked READY by webhook-validated (webhook); ` +
+        'before: no earlier marking on record; managers told next'
     );
+    // The designed transition is not an anomaly: nothing at WARN or ERROR.
+    expect(logs.warn).toHaveLength(0);
+    expect(logs.error).toHaveLength(0);
 
-    logs.warn.length = 0;
     for (let i = 0; i < 4; i++) {
       const again = await service.setLydiaReadiness(VENDOR, true, 'webhook-validated', {
         path: 'webhook',
@@ -197,6 +201,26 @@ describe('AssociationsService.setLydiaReadiness - one writer, the UPDATE decides
     expect(logs.warn).toHaveLength(0);
     expect(logs.error).toHaveLength(0);
     expect(logs.debug.join('|')).toContain('replay');
+  });
+
+  it('a webhook marking with the managers notices switched off is INFO, and says the switch, not a fault', async () => {
+    const logs = captureLogs();
+    const off = { enabled: () => false, tell: jest.fn(async () => 0) };
+    const row: Holder = { id: HOLDER, ready: false, cause: null };
+    const { service } = makeReadiness(row, off);
+    const outcome = await service.setLydiaReadiness(VENDOR, true, 'webhook-validated', {
+      path: 'webhook',
+    });
+    expect(outcome).toMatchObject({ kind: 'transitioned' });
+    expect(logs.warn).toHaveLength(0);
+    expect(logs.error).toHaveLength(0);
+    const info = logs.log.join('|');
+    expect(info).toContain(`holder ${HOLDER} marked READY by webhook-validated (webhook)`);
+    expect(info).toContain('before: no earlier marking on record');
+    expect(info).toContain(
+      'managers not notified (notices off by switch, LYDIA_PAYMENTS_NOTIFICATIONS_ENABLED)'
+    );
+    expect(info).not.toContain('nothing recorded at no date');
   });
 
   it('a revert withholds ONLY on-sale products of the holder and its APPROVED delegates, at ERROR', async () => {
@@ -218,7 +242,7 @@ describe('AssociationsService.setLydiaReadiness - one writer, the UPDATE decides
     expect(error).toContain(
       `holder ${HOLDER} reverted: request/do answered error 5 (shop checkout-1)`
     );
-    expect(error).toContain('marked ready by webhook-validated');
+    expect(error).toContain('before: was marked by webhook-validated at');
     expect(error).toContain('3 on-sale product(s) withheld');
     expect(error).toContain('1 global admin(s) told');
     expect(notifier.tell).toHaveBeenCalledWith(expect.anything(), 'paused', expect.anything());
@@ -351,7 +375,11 @@ describe('AssociationsService.setLydiaReadiness - one writer, the UPDATE decides
     // No Lydia notice for the holder's payout managers...
     const types = notifications.createNotifications.mock.calls.map(([n]) => n.type);
     expect(types.filter((t: string) => t.startsWith('lydia_'))).toEqual([]);
-    expect(logs.warn.join('|')).toContain('LYDIA_PAYMENTS_NOTIFICATIONS_ENABLED is off');
+    // Said once, at INFO: the switch is a designed state, not an anomaly.
+    expect(logs.log.join('|')).toContain(
+      'notices off by switch, LYDIA_PAYMENTS_NOTIFICATIONS_ENABLED'
+    );
+    expect(logs.warn).toEqual([]);
     // ...but the delegate collects again, products or none: its OWN notice is not behind the
     // switch (owner review of #2967).
     expect(types).toEqual(['delegation_resumed']);
@@ -1097,7 +1125,7 @@ describe('AssociationsService - the payer`s refusal and the unlink', () => {
   function makeBare(extra: Record<string, unknown>) {
     return Object.assign(Object.create(AssociationsService.prototype) as object, {
       logger: new Logger('AssociationsService'),
-      redis: { deleteByPattern: jest.fn(async () => 0) },
+      redis: { incr: jest.fn(async () => 1), deleteByPattern: jest.fn(async () => 0) },
       ...extra,
     }) as unknown as AssociationsService;
   }
@@ -1147,6 +1175,42 @@ describe('AssociationsService - the payer`s refusal and the unlink', () => {
     expect(closing?.[0]).toContain('"removedAt" = now(), "phoneSealed" = NULL, "phoneEnd" = NULL');
     expect(closing?.[1]).toEqual([HOLDER]);
   });
+
+  it.each([
+    ['a Tresorier or Vendeur still live', false, true, LYDIA_CASHIERS_LIVE],
+    ['a cashier step in flight', true, false, LYDIA_CASHIER_IN_FLIGHT],
+  ])(
+    'the unlink is refused, typed, nothing written, while %s',
+    async (_what, claimed, owed, code) => {
+      captureLogs();
+      const query = jest.fn(async (_sql: string, _params: unknown[]) => []);
+      const manager = {
+        findOne: jest.fn(async () => ({ id: HOLDER })),
+        update: jest.fn(async () => ({ affected: 0 })),
+        find: jest.fn(async () => []),
+        query: jest.fn(async (sql: string) =>
+          sql.includes('AS claimed FROM associations')
+            ? [{ claimed }]
+            : sql.includes('FROM lydia_cashiers')
+              ? [{ vendorToken: 'vendor-1', owed }]
+              : [[], 0]
+        ),
+      };
+      const service = makeBare({
+        assoRepo: {
+          update: jest.fn(async () => ({})),
+          query,
+          manager: { transaction: async (fn: (m: typeof manager) => unknown) => fn(manager) },
+        },
+      });
+      await expect(service.clearLydiaAccount(HOLDER)).rejects.toMatchObject({
+        status: 409,
+        response: { code },
+      });
+      expect(manager.update).not.toHaveBeenCalled();
+      expect(query).not.toHaveBeenCalled();
+    }
+  );
 });
 
 describe('the Responsable codes social-service answers follow the shared contract', () => {

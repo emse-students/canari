@@ -203,6 +203,15 @@
               { date: formatDate(cashier.addedAt), name: cashier.addedByName }
             )}
           </p>
+          {#if row.departed === 'responsable'}
+            <p class="text-red-err text-xs" role="status">
+              {m.asso_lydia_cashier_responsable_departed()}
+            </p>
+          {:else if row.departed === 'cashier'}
+            <p class="text-amber-warn-text text-xs" role="status">
+              {m.asso_lydia_cashier_departed()}
+            </p>
+          {/if}
           {#if cashier.state === 'unconfirmed'}
             <p class="text-amber-warn-text text-xs" role="status">
               {m.asso_lydia_cashier_state_unconfirmed()}

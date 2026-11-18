@@ -92,6 +92,12 @@ describe('a failed unlink says why when the server typed it', () => {
     expect(
       lydiaDisconnectErrorText(new SocialApiError('x', 'LYDIA_BUSINESS_HOLDS_PAYMENTS', 409))
     ).toBe(m.asso_lydia_disconnect_holds_payments_error());
+    expect(lydiaDisconnectErrorText(new SocialApiError('x', 'LYDIA_CASHIERS_LIVE', 409))).toBe(
+      m.asso_lydia_disconnect_cashiers_live_error()
+    );
+    expect(lydiaDisconnectErrorText(new SocialApiError('x', 'LYDIA_CASHIER_IN_FLIGHT', 409))).toBe(
+      m.asso_lydia_cashier_err_in_flight()
+    );
     for (const err of [new SocialApiError('x', null, 400), new Error('prose'), undefined]) {
       expect(lydiaDisconnectErrorText(err)).toBe(m.asso_lydia_disconnect_error());
     }

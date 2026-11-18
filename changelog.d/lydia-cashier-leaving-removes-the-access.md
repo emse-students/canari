@@ -1,0 +1,3 @@
+### Fixed - a Lydia cashier who leaves the association loses their Lydia access
+
+When a member leaves or is removed, their Tresorier or Vendeur numbers are removed at Lydia through the verified removal path, retried when a manager opens the payments card or another cashier step ends; a Responsable who leaves keeps the Business's number and the card says a new one is needed. Deleting an association, or unlinking its Lydia Business, is refused while that Business still lists cashiers to remove or a cashier step is in flight ([payments](docs/wiki/frontend/modules/payments.md#the-cashiers-enrolment-lot-3)).

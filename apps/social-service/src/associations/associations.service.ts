@@ -78,8 +78,13 @@ import {
 } from './cotisation-namespace';
 import type { AssociationPayoutAccount } from './association.projection';
 import { listLydiaCashiers } from './lydia-cashiers-list';
+import type {
+  LydiaCashierDeparturePort,
+  LydiaCashierDepartureTrigger,
+} from './lydia-cashier-departures.port';
 import {
   LYDIA_CASHIER_PHONE_IN_USE,
+  assertNoCashierOwed,
   claimLost,
   claimTokenOf,
   clearClaim,
@@ -516,8 +521,8 @@ function lydiaBusinessChanged(): ConflictException {
 /** HKDF purpose of a cashier phone's encryption key (migration 118); bump the suffix to rotate. */
 export const LYDIA_CASHIER_PHONE_PURPOSE = 'lydia-cashier-phone/v1';
 
-/** What a cashier phone must look like when stored: E.164, as core-service validated it. */
-const E164_RE = /^\+[1-9]\d{7,14}$/;
+/** What a cashier phone must look like when stored: E.164, no French trunk `0`, as core-service validated it. */
+const E164_RE = /^\+(?!330)[1-9]\d{7,14}$/;
 
 /** Where a readiness change came from, for its log line. */
 export interface LydiaReadinessRef {
@@ -699,6 +704,52 @@ export class AssociationsService {
     if (this.coOrganisers) throw new Error('co-organisers registered twice');
     this.coOrganisers = port;
     this.logger.log('[COORG] co-organisation registered');
+  }
+
+  /** The Lydia cashiers' departure debt, registered at boot by `LydiaCashiersService` - see its port. */
+  private cashierDepartures: LydiaCashierDeparturePort | null = null;
+
+  /** Called once, by `LydiaCashiersService`. A second registration is a wiring defect. */
+  registerCashierDepartures(port: LydiaCashierDeparturePort): void {
+    if (this.cashierDepartures) throw new Error('Lydia cashier departures registered twice');
+    this.cashierDepartures = port;
+    this.logger.log('[LYDIA-CASHIER] departure removals registered');
+  }
+
+  /**
+   * Asks the Lydia cashiers to settle association `associationId`'s departure debt, WITHOUT waiting:
+   * the membership write it follows has committed and is never held by a call to Lydia. The port
+   * never rejects; an unregistered one is a wiring defect, said at ERROR - the debt stays in the rows
+   * and the next payments-card read retries it.
+   */
+  private settleCashierDepartures(
+    associationId: string,
+    trigger: LydiaCashierDepartureTrigger,
+    departedUserId?: string
+  ): void {
+    const port = this.cashierDepartures;
+    if (!port) {
+      this.logger.error(
+        `[LYDIA-CASHIER] association ${sanitizeLog(associationId)}: departure removals are not ` +
+          `registered (LydiaCashiersService missing) - the debt stays owed (${trigger})`
+      );
+      return;
+    }
+    void port.settleDepartures(associationId, trigger, departedUserId).catch((err: unknown) => {
+      this.logger.error(
+        `[LYDIA-CASHIER] association ${sanitizeLog(associationId)}: departure removals threw ` +
+          `(${trigger}) - the debt stays owed`,
+        err instanceof Error ? err.stack : String(err)
+      );
+    });
+  }
+
+  /**
+   * A step holding the association's cashier claim released it (the Responsable's): a departure
+   * that met it busy is owed now. Never waits, never throws.
+   */
+  afterCashierClaimReleased(associationId: string): void {
+    this.settleCashierDepartures(associationId, 'claim-released');
   }
 
   private coOrganiserPort(): CoOrganiserPort {
@@ -1537,19 +1588,13 @@ export class AssociationsService {
       await manager.query(`SELECT 1 FROM associations WHERE id = $1 FOR UPDATE`, [id]);
       this.logger.debug(`[ASSO] DELETE ${id}: association locked`);
       await this.assertMayReleaseDependents(manager, id, isGlobalAdmin);
-      // Its Lydia cashier rows go with it (ON DELETE CASCADE). A LIVE one is a cashier Lydia still
-      // lists on that Business, which nothing in Canari tracks afterwards: said at ERROR, never the
-      // phone.
-      const liveCashiers: Array<{ vendorToken: string }> = await manager.query(
-        `SELECT "vendorToken" FROM lydia_cashiers WHERE "associationId" = $1 AND "removedAt" IS NULL`,
-        [id]
-      );
-      for (const cashier of liveCashiers) {
-        this.logger.error(
-          `[AUDIT] [LYDIA] association ${sanitizeLog(id)} deleted with a LIVE cashier row: ` +
-            `Business ${sanitizeLog(cashier.vendorToken)} - Lydia still lists that cashier`
-        );
-      }
+      // Its Lydia cashier rows go with it (ON DELETE CASCADE), and with them every membership: a
+      // Tresorier, a Vendeur or a Responsable's other number still live would keep its rights at
+      // Lydia with nothing left to remove them, and a cashier step in flight would record on a row
+      // the delete took - so the delete is refused, typed, until neither holds (review of the 1.7.1
+      // flip). Read under the association's lock, with the same rows the cascade would take.
+      const liveCashiers = await this.refuseOnCashierDebt(manager, id, 'DELETE');
+      this.sayCashiersKeptAtLydia(id, 'deleted', liveCashiers);
       await manager.delete(AssociationCalendarEvent, { associationId: id });
       await retireForms(manager, { associationId: id });
       await manager.delete(AssociationMember, { associationId: id });
@@ -2162,6 +2207,10 @@ export class AssociationsService {
     }
     // The reverse of `addMember`'s sweep: the posts the membership opened (D21) must leave the feed.
     await this.invalidatePostListCaches();
+    // A cashier of the association's Lydia Business who is no longer a member owes the removal of
+    // their numbers (review of the 1.7.1 flip): asked now, never holding this answer; the debt is
+    // the rows themselves, so a failure here is retried by the next payments-card read.
+    this.settleCashierDepartures(associationId, 'departure', targetUserId);
     return { ok: true };
   }
 
@@ -5656,6 +5705,8 @@ ${rejectionReason}`
     const cashiers = business
       ? await listLydiaCashiers((sql, params) => this.assoRepo.query(sql, params), id, business)
       : [];
+    // The card draws a departure's debt; opening it retries the removal (idempotent, never awaited).
+    if (cashiers.some((c) => c.departureUntried)) this.settleCashierDepartures(id, 'payout-read');
     return {
       lydiaAccountId: business,
       lydiaDashboardUrl: historicalCollects ? row.standbyUrl : row.activeUrl,
@@ -5958,21 +6009,31 @@ ${rejectionReason}`
       );
       return { kind: 'replay', ...previous };
     }
-    const before = `${holder.cause ?? 'nothing recorded'} at ${previousAt ? previousAt.toISOString() : 'no date'}`;
-    const switchedOff = this.lydiaNotifier.enabled()
-      ? ''
-      : ' - managers NOT notified, LYDIA_PAYMENTS_NOTIFICATIONS_ENABLED is off';
+    // The state before this transition, said plainly: a holder never marked has no cause on record.
+    const before = holder.cause
+      ? `was marked by ${holder.cause} at ${previousAt ? previousAt.toISOString() : 'an unrecorded date'}`
+      : 'no earlier marking on record';
+    // The managers' notice is OFF by design until its floor version (legacy-compatibility.md): a
+    // stated fact on the line, never a reason to raise its level.
+    // Written BEFORE the notice is attempted, so it says what is next, never that it was sent; a
+    // bridge switch tells the managers only at the first request Lydia issues (below).
+    const notices = !this.lydiaNotifier.enabled()
+      ? 'managers not notified (notices off by switch, LYDIA_PAYMENTS_NOTIFICATIONS_ENABLED)'
+      : switched
+        ? 'managers told at the first request Lydia issues on it'
+        : 'managers told next';
     if (ready) {
-      this.logger.warn(
+      // The designed path (the webhook or an admin validation): INFO. An anomaly on this path is
+      // logged where it is decided - the held refusal and the bridge switch above, at WARN.
+      this.logger.log(
         `${LYDIA_READINESS_LOG_TAG} holder ${sanitizeLog(holder.id)} marked READY by ${cause} ` +
-          `(${where}); before: ${before}${switchedOff}`
+          `(${where}); before: ${before}; ${notices}`
       );
     } else {
       this.logger.error(
         `${LYDIA_READINESS_LOG_TAG} holder ${sanitizeLog(holder.id)} reverted: request/do answered ` +
-          `error ${cause === 'request-blocked' ? '2701' : '5'} (${where}); it had been marked ready ` +
-          `by ${before}; ${withheld} on-sale product(s) withheld; ${admins} global admin(s) told` +
-          switchedOff
+          `error ${cause === 'request-blocked' ? '2701' : '5'} (${where}); before: ${before}; ` +
+          `${withheld} on-sale product(s) withheld; ${admins} global admin(s) told; ${notices}`
       );
     }
     await this.invalidatePostListCaches();
@@ -6972,6 +7033,10 @@ ${rejectionReason}`
     const { delegates, withheld, byId, wasReady } = await this.assoRepo.manager.transaction(
       async (manager) => {
         const holder = await this.lockAssociation(manager, id);
+        // The cashier rows of THAT Business are closed below: refused while one still owes a
+        // removal at Lydia, or a cashier step is in flight (review of the 1.7.1 flip).
+        const kept = await this.refuseOnCashierDebt(manager, id, 'unlink');
+        this.sayCashiersKeptAtLydia(id, 'unlinked', kept);
         await manager.update(Association, id, {
           lydiaAccountId: null,
           lydiaOnboardingComplete: false,
@@ -7058,6 +7123,14 @@ ${rejectionReason}`
             message: 'This Lydia Business took payments that may still be confirmed or refunded',
           });
         }
+        // Its cashier rows are closed below: refused while one still owes a removal at Lydia.
+        const kept = await this.refuseOnCashierDebt(
+          manager,
+          id,
+          'unlink',
+          bridge.enrolledVendorToken
+        );
+        this.sayCashiersKeptAtLydia(id, 'unlinked', kept);
         await manager.query(
           `UPDATE lydia_account_bridges
               SET "enrolledVendorToken" = NULL, "standbyKeyCiphertext" = NULL,
@@ -7094,6 +7167,47 @@ ${rejectionReason}`
         `keeps collecting`
     );
     return true;
+  }
+
+  /**
+   * `assertNoCashierOwed` for the association's delete or unlink, the refusal said at INFO - an
+   * answer the global admin acts on (remove the cashiers, or clear a stuck claim), not a failure.
+   */
+  private async refuseOnCashierDebt(
+    manager: EntityManager,
+    id: string,
+    act: 'DELETE' | 'unlink',
+    vendorToken: string | null = null
+  ): Promise<Array<{ vendorToken: string }>> {
+    try {
+      return await assertNoCashierOwed(manager, id, vendorToken);
+    } catch (err: unknown) {
+      if (err instanceof ConflictException) {
+        const code = (err.getResponse() as { code?: unknown }).code;
+        this.logger.log(
+          `[ASSO] ${act} ${sanitizeLog(id)} refused: ${String(code)} - the Lydia cashiers first`
+        );
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * The Responsable's current number alone remained when association `id` was `act`: a cashier Lydia
+   * still lists on that Business, which nothing in Canari tracks afterwards - said at ERROR, never
+   * the phone.
+   */
+  private sayCashiersKeptAtLydia(
+    id: string,
+    act: 'deleted' | 'unlinked',
+    live: Array<{ vendorToken: string }>
+  ): void {
+    for (const cashier of live) {
+      this.logger.error(
+        `[AUDIT] [LYDIA] association ${sanitizeLog(id)} ${act} with a LIVE cashier row: ` +
+          `Business ${sanitizeLog(cashier.vendorToken)} - Lydia still lists that cashier`
+      );
+    }
   }
 
   /** Whether a Business key is stored - the ONLY thing the panel ever learns about it. */

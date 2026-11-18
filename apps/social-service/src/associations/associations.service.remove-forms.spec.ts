@@ -5,6 +5,8 @@ import { AssociationMember } from './entities/association-member.entity';
 import { of } from 'rxjs';
 import { retireForms } from '../forms/retire-forms';
 import { DEPENDENCY_DELETE_ADMIN_ONLY } from '../spaces/dependency-rules';
+import { Logger } from '@nestjs/common';
+import { LYDIA_CASHIERS_LIVE, LYDIA_CASHIER_IN_FLIGHT } from './lydia-cashier-claim';
 
 jest.mock('../forms/retire-forms', () => ({
   retireForms: jest.fn(() => Promise.resolve({ archived: 1, deleted: 0 })),
@@ -27,7 +29,9 @@ const NONE: Dependents = { governs: 0, children: [], spaces: [], labelled: [] };
 function makeService(
   posters: { id: string }[] = [],
   stillCited: string[] = [],
-  dependents: Dependents = NONE
+  dependents: Dependents = NONE,
+  cashiers: Array<{ vendorToken: string; owed: boolean }> = [],
+  claimed = false
 ) {
   const rows = (ids: string[]) => [ids.map((id) => ({ id })), ids.length];
   // The release re-reads, per poster and under its lock, whether a surviving space cites it.
@@ -42,11 +46,15 @@ function makeService(
             ? rows(dependents.spaces)
             : sql.startsWith('UPDATE associations SET "displayParentAssociationId"')
               ? rows(dependents.labelled)
-              : sql.includes('AS governs')
-                ? [{ governs: dependents.governs, children: dependents.children.length }]
-                : sql.includes('LIMIT 1') && stillCited.includes(params[0] as string)
-                  ? [1]
-                  : []
+              : sql.includes('FROM lydia_cashiers')
+                ? cashiers
+                : sql.includes('AS claimed FROM associations')
+                  ? [{ claimed }]
+                  : sql.includes('AS governs')
+                    ? [{ governs: dependents.governs, children: dependents.children.length }]
+                    : sql.includes('LIMIT 1') && stillCited.includes(params[0] as string)
+                      ? [1]
+                      : []
       )
     ),
   };
@@ -120,6 +128,37 @@ describe('AssociationsService.remove - the forms go with the association', () =>
     expect(manager.query.mock.invocationCallOrder[lock]).toBeLessThan(
       manager.delete.mock.invocationCallOrder[0]
     );
+  });
+});
+
+describe('AssociationsService.remove - a Lydia Business with cashiers to remove refuses the delete', () => {
+  it('a live Tresorier, Vendeur or Responsable other number: the typed 409, nothing deleted', async () => {
+    const { service, manager } = makeService([], [], NONE, [
+      { vendorToken: 'vendor-1', owed: false },
+      { vendorToken: 'vendor-1', owed: true },
+    ]);
+    await expect(service.remove('asso-1', 'admin-1', true)).rejects.toMatchObject({
+      status: 409,
+      response: { code: LYDIA_CASHIERS_LIVE },
+    });
+    expect(manager.delete).not.toHaveBeenCalled();
+  });
+
+  it('a cashier step in flight: the typed 409, nothing deleted - its record would land on a row the delete took', async () => {
+    const { service, manager } = makeService([], [], NONE, [], true);
+    await expect(service.remove('asso-1', 'admin-1', true)).rejects.toMatchObject({
+      status: 409,
+      response: { code: LYDIA_CASHIER_IN_FLIGHT },
+    });
+    expect(manager.delete).not.toHaveBeenCalled();
+  });
+
+  it('the Responsable current number alone: the delete goes on, the kept cashier said at ERROR', async () => {
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const { service } = makeService([], [], NONE, [{ vendorToken: 'vendor-1', owed: false }]);
+    await expect(service.remove('asso-1', 'admin-1', true)).resolves.toEqual({ ok: true });
+    expect(String(error.mock.calls)).toContain('deleted with a LIVE cashier row');
+    error.mockRestore();
   });
 });
 
