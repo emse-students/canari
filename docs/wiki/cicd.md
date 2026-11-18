@@ -2104,6 +2104,69 @@ It is a **need of `CI passed`**, so a Swift error fails the merge gate.
   stay in `ios.yml`. `swift-syntax.sh` (parse only) still runs in `test-ci-scripts`.
 - Shape pinned by `.github/scripts/tests/ios-compile-job.test.mjs`.
 
+### The iOS toolchain is pinned: Xcode 27 since 1.7.1
+
+Both Apple jobs - `build-ios` in `ios.yml` (the release archive) and `compile-ios-app` in `ci.yml`
+(the pull-request compile) - run on GitHub's **`xcode-27`** label and select Xcode with
+`maxim-lobanov/setup-xcode` and `xcode-version: '^27.0'`, which takes the newest 27.x on the image
+and **fails the run when there is none**. The pin is REQUIRED, never merely allowed, for two reasons:
+
+- **The store.** App Store Connect accepted builds `100700011` and `100700012` (built on `macos-15`
+  with the iOS 26.2 SDK) with warning ITMS-90725: from April 2027 it accepts only uploads built with
+  the iOS 27 SDK, Xcode 27 or later.
+- **Liquid Glass.** The native tab bar compiles its glass branch under `#if compiler(>=6.2)`; a
+  toolchain older than Xcode 26 builds the classic bar with no error.
+
+The image, read in `actions/runner-images` on 2026-11-18: the README lists "Xcode 27" (arm64,
+labels `xcode-27` or `xcode-27-xlarge`, still badged *preview*, runner-images issue 14404); its
+software list `images/macos/xcode-27-arm64-Readme.md` gives macOS 27.0.1, image `20261104.0337.1`,
+Xcode 27.0, 27.1 (default) and 27.2, iOS SDKs 27.0-27.2, and no preinstalled Rust (both jobs install
+it with `dtolnay/rust-toolchain`). The standard label, not `-xlarge`: the larger runner is billed.
+`ios-compile-job.test.mjs` asserts the two jobs name the SAME runner and the SAME pin, so a pull
+request never compiles on another toolchain than the one the release archives with. The move and
+what closes it: [the backlog entry](backlog.d/p2-ios-builds-need-the-ios-27-sdk-before-april-2027.md).
+
+**Xcode 27 makes a Swift `@_cdecl` export a LOCAL symbol.** The first compile on the new runner
+failed at the link with `Undefined symbols: _init_plugin_customtabs`, `_init_plugin_gallery`,
+`_init_plugin_keystore`, `_init_plugin_system_components` - the entry point of every Swift plugin.
+`swift-rs` 1.0.9 promotes those symbols back to global with `llvm-objcopy` from rustup's
+`llvm-tools` component (Apple ships none), and when the tool is missing it only prints a
+`cargo:warning` and lets the link fail. `ios-libapp.sh`, the one script both jobs run, now
+`rustup component add llvm-tools` into the pinned toolchain beside the iOS target. The
+`compile-ios-app` Rust cache key names the Xcode (`ios-app-xcode-27`): a tree built under Xcode 26
+carried its toolchain's link search paths into the first run.
+
+**macOS 27's dyld refuses a stripped proc-macro dylib.** The first COLD build on the runner (new
+cache key, nothing restored) failed in `sqlx`: `dlopen(.../libsqlx_macros-*.dylib): mis-aligned
+LINKEDIT string pool`. Cargo's release profile strips debuginfo by default, the `build-override`
+profile that builds proc macros and build scripts included, and the stripped host dylib no longer
+loads; the cache from `macos-15` had hidden it in the first run. The fix is in the PROFILE, so no
+host build escapes it: `[profile.release.build-override] strip = false` in
+`frontend/src-tauri/Cargo.toml` and `frontend/mls-wasm/Cargo.toml` (the MLS WASM build runs on the
+same runner). Nothing that ships changes: cargo never strips a `staticlib` or a wasm, and the Xcode
+archive strips the app. `build-mls-wasm` names the Xcode major on macOS in BOTH of its caches:
+the built-artefact key (`mls-wasm-macOS-xcode27-...`) and the `cache-key` of the Rust target cache
+that `setup-rust-toolchain` restores on a miss - the first version keyed only the former, and run
+44278923984 restored `frontend/mls-wasm/target` from another key on a "full match". A new Xcode major
+therefore finds neither entry and rebuilds both from source; no host dylib crosses an image.
+
+**What else the move added.** `ios-libapp.sh` asserts after `cargo build` that every
+`_init_plugin_*` the Rust objects reference is an EXTERNAL `T` symbol of `libapp.a` (rustup's `llvm-nm -g`: Xcode's `nm` cannot read rustc's bitcode), so a
+plugin swift-rs failed to re-export fails there, by name. Every `xcodebuild` build and archive names
+`-destination 'generic/platform=iOS'` (Xcode 27 otherwise warns "Using the first of multiple matching
+destinations"). `ios.yml` installs the provisioning profiles into both stores Xcode scans
+(`~/Library/MobileDevice/Provisioning Profiles` and `~/Library/Developer/Xcode/UserData/Provisioning
+Profiles`) and writes `xcodebuild -version`, the iOS SDK, the runner image and the `altool` it will
+upload with (`xcrun --find altool`, version printed; the step FAILS naming it when absent, so the
+first pre-release on a new Xcode proves the upload tool before the upload needs it) to the run summary.
+
+**The `xcode-27` label is a preview, and its queue time is not bounded.** `build-ios` carries
+`timeout-minutes: 90` (a clean signed run measured about 20 minutes), so a hung job cannot hold
+`release.yml`'s `release` concurrency group - and with it the next cut - for GitHub's default 360
+minutes. The timeout counts from the job's start, not from its wait for a runner. The proof that a
+runner is available before a STABLE is the iOS leg of that version's pre-release going green: a
+stable is cut only after it.
+
 ### A green run is not proof that *your* file compiled
 
 The iOS `project.pbxproj` is hand-maintained (there is no xcodegen here), so a source file that is
