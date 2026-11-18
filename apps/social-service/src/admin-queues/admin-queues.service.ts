@@ -11,6 +11,7 @@ import {
 } from '../posts/post-notifications.service';
 import { reportInBdeScopeSql } from '../spaces/bde-moderation';
 import { holdsBdeAgendaRightOverSql } from '../spaces/bde';
+import { AdminQueueSignal, type AdminQueueChange } from './admin-queue-signal.service';
 import { ADMIN_MODERATION_TARGET, ADMIN_PROFILE_CORRECTIONS_TARGET } from '../push/push-target';
 import {
   LOCK_REPORT_SUBJECT_SQL,
@@ -72,8 +73,18 @@ export class AdminQueuesService {
   constructor(
     @InjectRepository(ContentReport) private readonly reports: Repository<ContentReport>,
     private readonly associations: AssociationsService,
-    private readonly notifications: PostNotificationsService
+    private readonly notifications: PostNotificationsService,
+    private readonly signal: AdminQueueSignal
   ) {}
+
+  /**
+   * An item entered or left a queue: the accounts that may act on it refetch their counts
+   * (`AdminQueueSignal`). For the routes that hold this service; a service that moves an item
+   * itself injects the signal. Never throws.
+   */
+  async queueChanged(change: AdminQueueChange): Promise<void> {
+    await this.signal.changed(change);
+  }
 
   /**
    * The caller's pending counts, ONE statement over the queues their tiers open: a global admin all
@@ -126,7 +137,11 @@ export class AdminQueuesService {
    * admin but the person who asked is told. Throws on a failed write: the internal caller logs it.
    */
   async announceProfileCorrection(requestId: string, requesterId: string): Promise<number> {
-    return this.announce('profile-corrections', requestId, requesterId);
+    try {
+      return await this.announce('profile-corrections', requestId, requesterId);
+    } finally {
+      await this.signal.changed({ queue: 'profile-corrections' });
+    }
   }
 
   /**
@@ -158,6 +173,8 @@ export class AdminQueuesService {
         `[ADMIN_QUEUES] report ${report.id.slice(0, 8)} was NOT announced to the admins: ${String(err)}`
       );
     }
+    // Announced or not, the moderation queue grew: whoever may act on it recounts.
+    await this.signal.changed({ queue: 'moderation', reportIds: [report.id] });
   }
 
   /**

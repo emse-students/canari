@@ -136,7 +136,10 @@ export class ModerationController {
     if (!(await this.assocService.mayModerateReport(userId, reportId, { isGlobalAdmin }))) {
       await this.assocService.refuseModeration(userId, { kind: 'report', id: reportId });
     }
-    return this.service.reviewReport(reportId, userId, dto.action);
+    const report = await this.service.reviewReport(reportId, userId, dto.action);
+    // It left the queue: whoever may act on it recounts (never throws: logged).
+    await this.adminQueues.queueChanged({ queue: 'moderation', reportIds: [reportId] });
+    return report;
   }
 
   // ── Mute / unmute ─────────────────────────────────────────────────────────

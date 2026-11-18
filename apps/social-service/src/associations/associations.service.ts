@@ -1,3 +1,7 @@
+import {
+  AdminQueueSignal,
+  type AdminQueueChange,
+} from '../admin-queues/admin-queue-signal.service';
 import { OFFERED_BY_SPACE_KEY_SQL, type PublicSpaceKey } from '../spaces/public-space';
 import {
   BadRequestException,
@@ -6,6 +10,8 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
+  Inject,
   PayloadTooLargeException,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -643,6 +649,24 @@ export function shownParentId(
 @Injectable()
 export class AssociationsService {
   private readonly logger = new Logger(AssociationsService.name);
+  /**
+   * The admin badges' signal (`AdminQueueSignal`), injected by PROPERTY so the specs that build this
+   * service by hand need no new argument. Always wired in the app (a global module); its absence is
+   * said at ERROR, never passed over.
+   */
+  @Optional() @Inject(AdminQueueSignal) private readonly adminQueueSignal?: AdminQueueSignal;
+
+  /** An item entered or left an admin queue: whoever may act on it recounts. Never throws. */
+  private async tellAdminQueues(change: AdminQueueChange): Promise<void> {
+    if (!this.adminQueueSignal) {
+      this.logger.error(
+        `[ADMIN_QUEUES] signal not wired: the ${change.queue} badges were NOT told`
+      );
+      return;
+    }
+    await this.adminQueueSignal.changed(change);
+  }
+
   constructor(
     @InjectRepository(Association)
     private readonly assoRepo: Repository<Association>,
@@ -4341,6 +4365,9 @@ ${rejectionReason}`
         err instanceof Error ? err.stack : String(err)
       );
       return [];
+    } finally {
+      // THE ONE PLACE AN EVENT STARTS WAITING (a proposal, a reopening): the agenda badges recount.
+      await this.tellAdminQueues({ queue: 'agenda', associationId });
     }
   }
 
@@ -4937,6 +4964,7 @@ ${rejectionReason}`
     if (!outcome.changed) return this.serializeCalendarEvent(outcome.ev);
     const saved = outcome.ev;
     this.logger.debug(`Event validated: ${saved.id} by ${userId}`);
+    void this.tellAdminQueues({ queue: 'agenda', associationId: saved.associationId });
     // Notify asso admins that their event has been validated
     void this.notifyAssocAdminsOfEventAction(saved.associationId, userId, saved.title, 'validated');
     return this.serializeCalendarEvent(saved);
@@ -4965,6 +4993,7 @@ ${rejectionReason}`
     if (!outcome.changed) return this.serializeCalendarEvent(outcome.ev);
     const saved = outcome.ev;
     this.logger.debug(`Event rejected: ${saved.id} by ${userId}`);
+    void this.tellAdminQueues({ queue: 'agenda', associationId: saved.associationId });
     void this.notifyAssocAdminsOfEventAction(
       saved.associationId,
       userId,
@@ -4994,6 +5023,9 @@ ${rejectionReason}`
       const targetAssocId = ev.associationId;
       const title = ev.title;
       await this.calendarRepo.delete({ id: eventId });
+      if (ev.status === AssociationCalendarEventStatus.Pending) {
+        void this.tellAdminQueues({ queue: 'agenda', associationId: targetAssocId });
+      }
       this.logger.debug(
         `Event deleted: ${sanitizeLog(eventId)} by ${sanitizeLog(callerOpts?.callerUserId)}`
       );
@@ -5016,6 +5048,9 @@ ${rejectionReason}`
         throw partnerOrganiserOnlyRefusal('delete');
       }
       await this.calendarRepo.delete({ id: eventId });
+      if (ev.status === AssociationCalendarEventStatus.Pending) {
+        void this.tellAdminQueues({ queue: 'agenda', associationId: ev.associationId });
+      }
       this.logger.debug(
         `Event deleted: ${sanitizeLog(eventId)} by ${sanitizeLog(callerOpts?.callerUserId)}`
       );
