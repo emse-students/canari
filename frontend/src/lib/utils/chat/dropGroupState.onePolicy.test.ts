@@ -40,10 +40,10 @@ function holdingStub(overrides: Record<string, unknown> = {}): IMlsService {
       held.delete(id);
     }),
     // The distribution form is the one path that reaches the drop through the service itself.
-    forgetDistributionGroupById: vi.fn(async (id: string) => {
+    forgetDistributionGroupById: vi.fn(async (id: string, reason: string) => {
       if (!held.has(id)) return false;
       await dropGroupState(stub, id, {
-        reason: 'test: distribution group left',
+        reason,
         checkpoint: 'awaited',
       });
       return true;

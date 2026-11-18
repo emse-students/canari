@@ -326,7 +326,10 @@ describe('ensureCommunityDistributionGroup - a held group the server routes noth
     // it already holds, so re-joining without forgetting first would be a no-op.
     // BY GROUP ID: the scope registration is the layer that may be wrong, and resolving through it
     // would forget nothing and leave the join to early-return on the tree it left standing.
-    expect(mls.forgetDistributionGroupById).toHaveBeenCalledWith('g-1');
+    expect(mls.forgetDistributionGroupById).toHaveBeenCalledWith(
+      'g-1',
+      expect.stringMatching(/key group/)
+    );
     expect(mls.ensureDistributionGroup).toHaveBeenCalledWith(workspaceScope('ws-1'), {
       groupId: 'g-1',
       groupInfo: 'c29j',
@@ -358,7 +361,10 @@ describe('ensureCommunityDistributionGroup - a held group the server routes noth
     });
 
     expect(await run(mls, channels)).toBe(true);
-    expect(mls.forgetDistributionGroupById).toHaveBeenCalledWith('g-1');
+    expect(mls.forgetDistributionGroupById).toHaveBeenCalledWith(
+      'g-1',
+      expect.stringMatching(/key group/)
+    );
   });
 
   it('leaves an UNPUBLISHED group alone, because its empty roster is not an eviction', async () => {
@@ -425,7 +431,10 @@ describe('ensureCommunityDistributionGroup - a held group the server routes noth
     });
 
     expect(await run(mls, heldButUnrouted())).toBe(true);
-    expect(mls.forgetDistributionGroupById).toHaveBeenCalledWith('g-1');
+    expect(mls.forgetDistributionGroupById).toHaveBeenCalledWith(
+      'g-1',
+      expect.stringMatching(/key group/)
+    );
     expect(mls.ensureDistributionGroup).toHaveBeenCalled();
   });
 
@@ -573,7 +582,10 @@ describe('ensureCommunityDistributionGroup - a tree that moved is written to dis
 
     // ONE checkpoint, and it carries the session's device key: the forget is on disk before the
     // caller is told the join failed, so the next load finds no group held and asks again.
-    expect(mls.forgetDistributionGroupById).toHaveBeenCalledWith('g-1');
+    expect(mls.forgetDistributionGroupById).toHaveBeenCalledWith(
+      'g-1',
+      expect.stringMatching(/key group/)
+    );
     expect(mls.persistCheckpoint).toHaveBeenCalledTimes(1);
     expect(mls.persistCheckpoint).toHaveBeenCalledWith();
   });
@@ -1023,7 +1035,10 @@ describe('a held key group and the epoch the server names', () => {
       await rejoinBehindDistributionGroup(mls as never, channels as never, 'g-1', 'test', () => {})
     ).toBe(true);
 
-    expect(mls.forgetDistributionGroupById).toHaveBeenCalledWith('g-1');
+    expect(mls.forgetDistributionGroupById).toHaveBeenCalledWith(
+      'g-1',
+      expect.stringContaining('key group behind its server')
+    );
     expect(mls.ensureDistributionGroup).toHaveBeenCalledTimes(1);
     expect(mls.forgetDistributionGroupById.mock.invocationCallOrder[0]).toBeLessThan(
       mls.ensureDistributionGroup.mock.invocationCallOrder[0]
@@ -1092,7 +1107,10 @@ describe('a held key group whose own leaf is gone', () => {
 
     expect(await run(mls, seated(), (m) => lines.push(m))).toBe(true);
 
-    expect(mls.forgetDistributionGroupById).toHaveBeenCalledWith('g-1');
+    expect(mls.forgetDistributionGroupById).toHaveBeenCalledWith(
+      'g-1',
+      expect.stringMatching(/key group/)
+    );
     expect(mls.ensureDistributionGroup).toHaveBeenCalledTimes(1);
     expect(mls.verifyDistributionEpoch).not.toHaveBeenCalled();
     expect(lines.some((l) => l.includes('its own leaf was removed from it'))).toBe(true);
@@ -1109,7 +1127,10 @@ describe('a held key group whose own leaf is gone', () => {
     });
 
     expect(await run(mls, seated())).toBe(false);
-    expect(mls.forgetDistributionGroupById).toHaveBeenCalledWith('g-1');
+    expect(mls.forgetDistributionGroupById).toHaveBeenCalledWith(
+      'g-1',
+      expect.stringMatching(/key group/)
+    );
     expect(mls.ensureDistributionGroup).toHaveBeenCalledTimes(1);
     expect(mls.getDeviceMemberships).not.toHaveBeenCalled();
   });
@@ -1137,6 +1158,9 @@ describe('a held key group whose own leaf is gone', () => {
     listener('g-1', 'evicted');
 
     await vi.waitFor(() => expect(mls.ensureDistributionGroup).toHaveBeenCalledTimes(1));
-    expect(mls.forgetDistributionGroupById).toHaveBeenCalledWith('g-1');
+    expect(mls.forgetDistributionGroupById).toHaveBeenCalledWith(
+      'g-1',
+      expect.stringContaining('key group behind its server')
+    );
   });
 });

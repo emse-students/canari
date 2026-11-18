@@ -99,7 +99,7 @@ the counts.
   (`currentColor`, no tint); incoming bubbles keep the accent.
 - **Noise filed** (P3, `1.7.1`, none of them a regression shown since `1.6.12`):
   [a CSP refusal on every dev page load](p3-dev-logs-a-csp-inline-script-error-on-every-page-load.md),
-  [a dropped 1:1 logged as a key group](p3-a-dropped-1-1-is-logged-as-a-distribution-group-left.md),
+  a dropped 1:1 logged as a key group (fixed in `1.7.1`, entry deleted),
   and [the iPhone's landscape close circle clipped](p3-iphone-landscape-close-circle-clipped.md).
 - **Seat counting for capped forms stays at submit, under the form's lock, for now.** A hold taken
   when the form is opened is refused (every browser that opens it blocks a seat, and a script can hold

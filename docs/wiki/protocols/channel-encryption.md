@@ -5175,3 +5175,5 @@ read on both bench phones on `1.7.0-alpha.9`, 32 commits behind: 363 ms on the M
 the iPhone 12's extension (peak 3 MB), the banner showing the text on both
 ([readings](../device-verification.md#the-phone-readings-of-2026-11-17-170-alpha9-both-phones-and-the-rig)).
 Neither figure is near the ~10 s that would make persisting the catch-up the next step.
+
+**`dropGroupState`'s reason is the caller's (2026-11-18).** `forgetDistributionGroupById(groupId, reason)` takes the reason the `[MLS] dropped local state` line prints: `absent from server` for a 1:1 or group the server no longer lists, its own sentence for each key-group re-join, `distribution group left` only for a community leaving.
