@@ -250,7 +250,13 @@
   {/if}
 
   {#snippet footer()}
-    <Button class="w-full" type="button" onclick={proceed} disabled={chosen.length === 0 || busy}>
+    <Button
+      class="w-full"
+      type="button"
+      onclick={proceed}
+      disabled={chosen.length === 0 || busy}
+      data-testid="new-chat-proceed"
+    >
       {busy && !naming
         ? m.chat_modal_creation_in_progress_label()
         : chosen.length >= 2
@@ -293,7 +299,13 @@
     </p>
   {/if}
   {#snippet footer()}
-    <Button class="w-full" type="submit" form="new-group-form" disabled={busy}>
+    <Button
+      class="w-full"
+      type="submit"
+      form="new-group-form"
+      disabled={busy}
+      data-testid="new-group-submit"
+    >
       {busy ? m.chat_modal_creation_in_progress_label() : m.chat_modal_create_group_button()}
     </Button>
   {/snippet}
