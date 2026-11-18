@@ -137,8 +137,9 @@ export class ModerationController {
       await this.assocService.refuseModeration(userId, { kind: 'report', id: reportId });
     }
     const report = await this.service.reviewReport(reportId, userId, dto.action);
-    // It left the queue: whoever may act on it recounts (never throws: logged).
-    await this.adminQueues.queueChanged({ queue: 'moderation', reportIds: [reportId] });
+    // It left the queue: whoever may act on it recounts. Not awaited - the actor's answer does not
+    // wait on who else is told, and the actor refetches by itself (`queueChanged` never throws).
+    void this.adminQueues.queueChanged({ queue: 'moderation', reportIds: [reportId] });
     return report;
   }
 

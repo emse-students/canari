@@ -1,5 +1,9 @@
 import { Logger } from '@nestjs/common';
-import { ADMIN_QUEUES_CHANGED_EVENT, AdminQueueSignal } from './admin-queue-signal.service';
+import {
+  ADMIN_QUEUES_CAPABILITY,
+  ADMIN_QUEUES_CHANGED_EVENT,
+  AdminQueueSignal,
+} from './admin-queue-signal.service';
 
 /**
  * The admin badges' signal (lead, 2026-11-18): one content-free frame to the accounts the queue's
@@ -28,7 +32,13 @@ describe('AdminQueueSignal', () => {
     const { signal, query, publishChannelEvent } = make([{ uid: 'a' }, { uid: 'b' }, { uid: 'a' }]);
     await signal.changed({ queue: 'agenda', associationId: 'asso' });
     expect(query.mock.calls[0][1]).toEqual(['asso']);
-    expect(publishChannelEvent).toHaveBeenCalledWith(ADMIN_QUEUES_CHANGED_EVENT, {}, ['a', 'b']);
+    // Only to the sessions whose code routes it: an older build never meets it.
+    expect(publishChannelEvent).toHaveBeenCalledWith(
+      ADMIN_QUEUES_CHANGED_EVENT,
+      {},
+      ['a', 'b'],
+      ADMIN_QUEUES_CAPABILITY
+    );
   });
 
   it('asks nothing for no report, and sends nothing to nobody', async () => {
