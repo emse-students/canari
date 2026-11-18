@@ -41,6 +41,7 @@ earliest version, as a checklist.
 
 - [ ] [the iPhone's one seed mirror keeps the extension's seeds through a foreground (2026-11-17)](backlog.d/reading-owed-ios-seed-mirror-one-copy.md)
 - [ ] [a native device with no push token row now says why, and registers again (production, after the `1.7.0` stable)](backlog.d/reading-owed-a-device-with-no-push-token-now-says-so.md)
+- [ ] [the share targets published twenty-three times in an account's first sync: which id flaps](backlog.d/reading-owed-the-share-targets-publish-during-a-first-sync.md)
 
 ## 1.7.1
 
@@ -122,7 +123,6 @@ earliest version, as a checklist.
 - [P3 - deleting one's account logs a false error: the push deregistration "refused" with a 401](backlog.d/p3-an-account-deletion-logs-its-push-deregistration-as-refused.md)
 - [P3 - an error toast over a dialog lets the text under it show through](backlog.d/p3-an-error-toast-over-a-dialog-lets-the-text-under-it-show-through.md)
 - [P3 - salon texts held by a `502` are posted in the order their backoffs end, not the order they were written](backlog.d/p3-salon-texts-held-by-a-502-are-posted-out-of-order.md)
-- [P3 - the share targets are republished twenty-three times during an account's first sync](backlog.d/p3-the-share-targets-are-republished-twenty-three-times-in-the-first-sync.md)
 - [P3 - the Thème control runs off the screen at a doubled font](backlog.d/p3-the-theme-control-runs-off-the-screen-at-a-doubled-font.md)
 
 ## 1.8.0

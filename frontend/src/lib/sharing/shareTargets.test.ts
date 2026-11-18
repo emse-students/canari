@@ -20,6 +20,7 @@ vi.mock('$lib/utils/appVersion', () => ({
 const { selectShareTargets, syncShareTargets, MAX_SHARE_TARGETS } = await import('./shareTargets');
 const {
   clearShareTargets,
+  describeShareTargetsChange,
   conversationIdFromShareTarget,
   eraseAccountShortcuts,
   publishShareTargets,
@@ -181,6 +182,38 @@ describe('publishing on change', () => {
     syncShareTargets(input(list));
     await settle();
     expect(calls(PUBLISH)).toHaveLength(2);
+  });
+});
+
+describe('saying how a publish differs from the one before', () => {
+  const t = (id: string, label = id) => ({ id: `c:${id}`, label, link: `l/${id}` });
+
+  it('names the ids that entered and left, never a label, and the survivors\x27 order', () => {
+    const a = [t('aaaaaaaa1111', 'Secret name'), t('bbbbbbbb2222')];
+    const b = [t('bbbbbbbb2222'), t('cccccccc3333')];
+    const line = describeShareTargetsChange(a, b);
+    expect(line).toBe('added [cccccccc], removed [aaaaaaaa], 0 relabelled, same order');
+    expect(line).not.toContain('Secret');
+  });
+
+  it('tells a relabel and a reorder apart from a change of ids', () => {
+    const a = [t('a'), t('b')];
+    expect(describeShareTargetsChange(a, [t('b'), t('a', 'A renamed')])).toBe(
+      'added [], removed [], 1 relabelled, reordered'
+    );
+    expect(describeShareTargetsChange(null, a)).toContain('unknown state');
+  });
+
+  it('a publish that follows another says, in the in-app log, how it differs', async () => {
+    vi.stubGlobal('window', globalThis);
+    const debug = vi.spyOn(console, 'info').mockImplementation(() => {});
+    invoke.mockResolvedValue(CLEAN);
+    await publishShareTargets([t('a')], 'first');
+    await publishShareTargets([t('a'), t('b')], 'second');
+    const said = debug.mock.calls.map((c) => c.join(' '));
+    expect(said.some((l) => l.includes('publishing (second): added [b], removed []'))).toBe(true);
+    debug.mockRestore();
+    vi.unstubAllGlobals();
   });
 });
 
