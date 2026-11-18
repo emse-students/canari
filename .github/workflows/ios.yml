@@ -103,7 +103,7 @@ on:
 jobs:
   build-ios:
     name: Build iOS IPA
-    runs-on: macos-15 # carries Xcode 26.x, which the step below REQUIRES
+    runs-on: xcode-27 # GitHub's Xcode 27 image (arm64, macOS 27), which the step below REQUIRES
     permissions:
       contents: write
     # THE CHANNEL'S ESTATE IS AN ENVIRONMENT (2026-11-13): an alpha reads `BASE_URL` and `AUTHENTIK_*`
@@ -150,16 +150,19 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "Building Canari v${INPUT_VERSION} (prerelease=${INPUT_PRERELEASE})"
 
-      # XCODE 26, REQUIRED AND NOT MERELY ALLOWED (2026-09-29). Liquid Glass exists only in an app
-      # built against the iOS 26 SDK: the native tab bar (tauri-plugin-system-components) compiles
-      # its glass branch under `#if compiler(>=6.2)`, and an older toolchain builds the classic bar
-      # WITHOUT an error - so a runner image that dropped Xcode 26 would ship an app with no glass
-      # and nothing would say so. This used to read `>=16.2.0` and got Xcode 26.3 only because the
-      # image happened to carry it. `^26.0` takes the newest 26.x and FAILS the run if there is none.
-      - name: Select Xcode 26
+      # XCODE 27, REQUIRED AND NOT MERELY ALLOWED, for two reasons
+      # (docs/wiki/cicd.md#the-ios-toolchain-is-pinned-xcode-27-since-180).
+      # THE STORE: App Store Connect warned ITMS-90725 on builds 100700011 and 100700012 (built with
+      # the iOS 26.2 SDK): from April 2027 it accepts only uploads built with the iOS 27 SDK, Xcode 27
+      # or later. THE GLASS (2026-09-29): Liquid Glass exists only in an app built against the iOS 26
+      # SDK or later - the native tab bar (tauri-plugin-system-components) compiles its glass branch
+      # under `#if compiler(>=6.2)`, and an older toolchain builds the classic bar WITHOUT an error.
+      # Either way a runner image that dropped the pinned Xcode would ship something wrong and nothing
+      # would say so. `^27.0` takes the newest 27.x on the image and FAILS the run if there is none.
+      - name: Select Xcode 27
         uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
         with:
-          xcode-version: '^26.0'
+          xcode-version: '^27.0'
 
       # THE HAND-MAINTAINED PROJECT IS READ BY XCODE FIRST, IN SECONDS, not at the archive twenty
       # minutes in: a pbxproj with an unclosed object once got past every check on Windows. `plutil`
@@ -665,7 +668,7 @@ jobs:
           bash ../.github/scripts/ios-extensions.sh "$STORE_APP"
 
           # THE ICON IS AN ICON COMPOSER DOCUMENT (gen/apple/AppIcon.icon), written without the Mac app
-          # that normally authors it, and nothing but Xcode 26 can say whether it means what it was
+          # that normally authors it, and nothing but Xcode can say whether it means what it was
           # meant to. `actool` compiles it into Assets.car: list what came out, and FAIL if the icon
           # is not there at all - a build that ships the default blank icon is green otherwise.
           CAR="$(find "$ARCHIVE_PATH/Products/Applications" -name Assets.car | sed -n 1p)"

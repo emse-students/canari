@@ -1045,7 +1045,7 @@ jobs:
     name: Compile iOS app
     needs: [changes]
     if: ${{ needs.changes.outputs.run-ios-app == 'true' }}
-    runs-on: macos-15 # carries Xcode 26.x, which `ios.yml` REQUIRES for the same reason
+    runs-on: xcode-27 # the runner `ios.yml` builds the release on; the pin below is REQUIRED there
     timeout-minutes: 60
     permissions:
       contents: read
@@ -1054,10 +1054,12 @@ jobs:
         with:
           ref: ${{ github.sha }}
 
-      - name: Select Xcode 26
+      # THE SAME PIN AS `ios.yml`, for the same two reasons (the iOS 27 SDK App Store Connect requires
+      # from April 2027, ITMS-90725; the Liquid Glass branch): a pull request compiles what ships.
+      - name: Select Xcode 27
         uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
         with:
-          xcode-version: '^26.0'
+          xcode-version: '^27.0'
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0

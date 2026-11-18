@@ -2104,6 +2104,28 @@ It is a **need of `CI passed`**, so a Swift error fails the merge gate.
   stay in `ios.yml`. `swift-syntax.sh` (parse only) still runs in `test-ci-scripts`.
 - Shape pinned by `.github/scripts/tests/ios-compile-job.test.mjs`.
 
+### The iOS toolchain is pinned: Xcode 27 since 1.8.0
+
+Both Apple jobs - `build-ios` in `ios.yml` (the release archive) and `compile-ios-app` in `ci.yml`
+(the pull-request compile) - run on GitHub's **`xcode-27`** label and select Xcode with
+`maxim-lobanov/setup-xcode` and `xcode-version: '^27.0'`, which takes the newest 27.x on the image
+and **fails the run when there is none**. The pin is REQUIRED, never merely allowed, for two reasons:
+
+- **The store.** App Store Connect accepted builds `100700011` and `100700012` (built on `macos-15`
+  with the iOS 26.2 SDK) with warning ITMS-90725: from April 2027 it accepts only uploads built with
+  the iOS 27 SDK, Xcode 27 or later.
+- **Liquid Glass.** The native tab bar compiles its glass branch under `#if compiler(>=6.2)`; a
+  toolchain older than Xcode 26 builds the classic bar with no error.
+
+The image, read in `actions/runner-images` on 2026-11-18: the README lists "Xcode 27" (arm64,
+labels `xcode-27` or `xcode-27-xlarge`, still badged *preview*, runner-images issue 14404); its
+software list `images/macos/xcode-27-arm64-Readme.md` gives macOS 27.0.1, image `20261104.0337.1`,
+Xcode 27.0, 27.1 (default) and 27.2, iOS SDKs 27.0-27.2, and no preinstalled Rust (both jobs install
+it with `dtolnay/rust-toolchain`). The standard label, not `-xlarge`: the larger runner is billed.
+`ios-compile-job.test.mjs` asserts the two jobs name the SAME runner and the SAME pin, so a pull
+request never compiles on another toolchain than the one the release archives with. The move and
+what closes it: [the backlog entry](backlog.d/p2-ios-builds-need-the-ios-27-sdk-before-april-2027.md).
+
 ### A green run is not proof that *your* file compiled
 
 The iOS `project.pbxproj` is hand-maintained (there is no xcodegen here), so a source file that is

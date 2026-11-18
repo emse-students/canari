@@ -21,7 +21,7 @@
 # THE BUILD IS NOT THE ASSERTION. `ios-extensions.sh` then checks the built .app embeds exactly its
 # two extensions: an extension target dropped from the scheme still builds green.
 #
-# Needs: macOS with Xcode 26, bun, rustup, and `bun install` + the MLS wasm + `proto:gen` done.
+# Needs: macOS with Xcode 27 (the pin in `ios.yml` and `ci.yml`), bun, rustup, and `bun install` + the MLS wasm + `proto:gen` done.
 # Usage: bash .github/scripts/ios-app-compile.sh
 set -euo pipefail
 

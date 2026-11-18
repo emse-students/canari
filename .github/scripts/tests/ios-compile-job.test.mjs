@@ -48,7 +48,20 @@ const code = job
   .join('\n');
 
 console.log('the job is a gate, behind the right switch, with nothing a pull request lacks:');
-check(/runs-on: macos-/.test(code), 'runs on macOS', 'does not run on a macOS runner');
+// THE SAME TOOLCHAIN AS THE RELEASE: a pull request that compiles on another Xcode than `ios.yml`
+// archives with proves nothing about the build that ships (the iOS 27 SDK pin, ITMS-90725).
+const runner = (y) => (y.match(/^\s+runs-on: (\S+)/m) || [])[1];
+const xcodePin = (y) => (y.match(/xcode-version: '([^']+)'/) || [])[1];
+check(
+  runner(code) !== undefined && runner(code) === runner(iosYml),
+  `runs on ${runner(code)}, the runner ios.yml archives on`,
+  `runs on ${runner(code)} while ios.yml archives on ${runner(iosYml)}`,
+);
+check(
+  xcodePin(code) !== undefined && xcodePin(code) === xcodePin(iosYml),
+  `pins Xcode ${xcodePin(code)}, as ios.yml does`,
+  `pins Xcode ${xcodePin(code)} while ios.yml pins ${xcodePin(iosYml)}`,
+);
 check(
   /if: \$\{\{ needs\.changes\.outputs\.run-ios-app == 'true' \}\}/.test(code),
   'gated on `run-ios-app`',

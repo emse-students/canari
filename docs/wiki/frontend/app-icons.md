@@ -100,7 +100,7 @@ changed in one script fails a test.
 
 - The iOS 26 icon is `gen/apple/AppIcon.icon` (clear / dark / tinted with the Liquid Glass treatment), written by
   `gen-ios-icon.mjs` WITHOUT the Mac application: the format is a folder (`icon.json` + artwork) and its
-  schema is not published, so it is checked by `ios.yml`'s compile check, which builds it with Xcode 26 and
+  schema is not published, so it is checked by `ios.yml`'s compile check, which builds it with the pinned Xcode (27 since 1.8.0) and
   dumps the compiled appearances. **Not yet compiled on a runner.** Liquid Composer was tried and exports
   baked PNG previews, not a `.icon` - unusable as an App Store icon (transparent corners, relief drawn twice).
 - A distinct icon for **dev / pre-release builds** (tint or banner), so testers can tell them apart.
