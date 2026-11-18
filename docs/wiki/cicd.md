@@ -2104,7 +2104,7 @@ It is a **need of `CI passed`**, so a Swift error fails the merge gate.
   stay in `ios.yml`. `swift-syntax.sh` (parse only) still runs in `test-ci-scripts`.
 - Shape pinned by `.github/scripts/tests/ios-compile-job.test.mjs`.
 
-### The iOS toolchain is pinned: Xcode 27 since 1.8.0
+### The iOS toolchain is pinned: Xcode 27 since 1.7.1
 
 Both Apple jobs - `build-ios` in `ios.yml` (the release archive) and `compile-ios-app` in `ci.yml`
 (the pull-request compile) - run on GitHub's **`xcode-27`** label and select Xcode with

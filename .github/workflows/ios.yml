@@ -151,7 +151,7 @@ jobs:
           echo "Building Canari v${INPUT_VERSION} (prerelease=${INPUT_PRERELEASE})"
 
       # XCODE 27, REQUIRED AND NOT MERELY ALLOWED, for two reasons
-      # (docs/wiki/cicd.md#the-ios-toolchain-is-pinned-xcode-27-since-180).
+      # (docs/wiki/cicd.md#the-ios-toolchain-is-pinned-xcode-27-since-171).
       # THE STORE: App Store Connect warned ITMS-90725 on builds 100700011 and 100700012 (built with
       # the iOS 26.2 SDK): from April 2027 it accepts only uploads built with the iOS 27 SDK, Xcode 27
       # or later. THE GLASS (2026-09-29): Liquid Glass exists only in an app built against the iOS 26

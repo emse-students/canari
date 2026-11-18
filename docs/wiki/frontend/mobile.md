@@ -1626,7 +1626,7 @@ before. Everything else - web, Android, an iPad at `md` width - keeps `BottomNav
 | The bar | `components/navigation/NativeTabBar.svelte`, mounted by `routes/+layout.svelte` |
 | The places, the glyphs and the dot | `MOBILE_NAV_PLACES` (`navigation/places.ts`), `PLACE_ICONS` (`navigation/placeIcons.ts`) and `placeBadge` (`navigation/placeBadge.svelte.ts`), all shared with `BottomNav` |
 | The glyphs as bitmaps, and the yellow | `mobile/nativeTabIcons.ts` |
-| The Xcode | `ios.yml` and `ci.yml` require `^27.0` on the `xcode-27` runner (the iOS 27 SDK App Store Connect requires from April 2027, ITMS-90725); a toolchain older than 26 builds the classic bar WITHOUT an error ([cicd](../cicd.md#the-ios-toolchain-is-pinned-xcode-27-since-180)) |
+| The Xcode | `ios.yml` and `ci.yml` require `^27.0` on the `xcode-27` runner (the iOS 27 SDK App Store Connect requires from April 2027, ITMS-90725); a toolchain older than 26 builds the classic bar WITHOUT an error ([cicd](../cicd.md#the-ios-toolchain-is-pinned-xcode-27-since-171)) |
 
 **The same bar, drawn natively.** The four places, the unread dot (an EMPTY `badgeValue`, UIKit's
 dot, never a count), and the same visibility: not on the login page (not mounted there, so it

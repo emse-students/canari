@@ -41,7 +41,7 @@ rustup target add aarch64-apple-ios
 # first compile on the `xcode-27` runner). swift-rs promotes them back to global with rustup's
 # `llvm-objcopy` (Apple ships none) and, when the tool is missing, only WARNS and links nothing -
 # so the component is installed into the toolchain cargo uses, not left to chance
-# (docs/wiki/cicd.md#the-ios-toolchain-is-pinned-xcode-27-since-180).
+# (docs/wiki/cicd.md#the-ios-toolchain-is-pinned-xcode-27-since-171).
 rustup component add llvm-tools
 cargo build --lib --release --target aarch64-apple-ios --features "$features"
 

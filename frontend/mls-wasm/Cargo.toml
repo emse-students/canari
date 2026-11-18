@@ -22,6 +22,6 @@ log = "0.4.29"
 # cache. Declared here, in the profile every build of this crate reads, and not as one script's
 # environment: no host build of it escapes. What ships is untouched - cargo never strips a
 # staticlib or a wasm, and the Xcode archive strips the app
-# (docs/wiki/cicd.md#the-ios-toolchain-is-pinned-xcode-27-since-180).
+# (docs/wiki/cicd.md#the-ios-toolchain-is-pinned-xcode-27-since-171).
 [profile.release.build-override]
 strip = false

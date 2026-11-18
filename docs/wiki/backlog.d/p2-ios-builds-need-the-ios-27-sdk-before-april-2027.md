@@ -1,6 +1,6 @@
 ## P2 - iOS builds need the iOS 27 SDK before April 2027 (Apple's ITMS-90725 on build 100700011)
 
-target: 1.8.0
+target: 1.7.1
 
 **What Apple said.** The upload of build `100700011` (`1.7.0-alpha.11`) was accepted with the
 warning ITMS-90725: it was built with the iOS 26.2 SDK, and from April 2027 App Store Connect
@@ -22,11 +22,11 @@ yet the generally available state a later GitHub post announced for 2026-10-15. 
 image version `20261104.0337.1`, Xcode 27.0, 27.1 (the default) and 27.2, and the iOS SDKs 27.0,
 27.1 and 27.2. The same README announces that the default OpenSSL moves from 3 to 4 on that image.
 
-**What is built (pull request `ci/ios-27-sdk`, HELD until the `1.7.0` stable).** Both jobs run on
+**What is built (pull request `ci/ios-27-sdk`, #3813).** Both jobs run on
 `runs-on: xcode-27` and REQUIRE `xcode-version: '^27.0'` (the setup action still pinned by SHA),
 the comments rewritten with both reasons (ITMS-90725, Liquid Glass); `ios-compile-job.test.mjs`
 now asserts the pull-request compile names the SAME runner and the SAME pin as `ios.yml`
-([cicd](../cicd.md#the-ios-toolchain-is-pinned-xcode-27-since-180)). The pull request's own
+([cicd](../cicd.md#the-ios-toolchain-is-pinned-xcode-27-since-171)). The pull request's own
 `compile-ios-app` run is the compile proof on the iOS 27 SDK.
 
 **The native code, read for the iOS 27 SDK on 2026-11-18.** Deployment target `16.0` everywhere in
@@ -37,13 +37,24 @@ scene lifecycle Apple announced as mandatory after iOS 26 (tao's `TaoSceneDelega
 `applicationIconBadgeNumber` in `canari_push.mm`, sits in the unreachable pre-16 branch of an
 `@available(iOS 16.0, *)` and does not warn at a 16.0 target. No target treats warnings as errors.
 
-**Closes with:** the `1.8.0` pre-release's App Store Connect upload carrying no ITMS-90725, and a
-TestFlight build read on the iPhone 12: the glass tab bar, the notification service extension (a
-push decrypted with the app killed), CallKit (a ring and an answer), the share extension - and, because llvm-objcopy now rewrites
-every Swift plugin's object (cicd.md, the Xcode 27 `@_cdecl` break), each plugin exercised once: the
-keystore (an unlock by PIN and by the device key), the gallery (save a photo, share suggestions) and
-customtabs (a sign-in that opens and returns).
+**Closes with:** on the first `1.7.1` pre-release, read on the iPhone 12 from TestFlight - the install
+itself, then the surfaces the new SDK may change (the glass tab bar; the notification service
+extension, a push decrypted with the app killed; CallKit, a ring and an answer; the share extension,
+a photo shared into a conversation), then one concrete action per Swift plugin, because llvm-objcopy
+now rewrites every plugin's object (cicd.md, the Xcode 27 `@_cdecl` break):
 
-**Why not `1.7.1`:** a new SDK can change UI defaults (bar appearance, safe areas, sheet behaviour),
-so it ships in a version with room for a full phone pass, not in a fix release. Charter: principle 8
+- **biometric** - the app unlocked by Face ID;
+- **customtabs** - a sign-in that opens the identity provider in the in-app browser and returns;
+- **dialog** - the native file picker shown to attach a file, and the save sheet for a downloaded file;
+- **gallery** - a received photo saved to the Photos library;
+- **keystore** - the MLS key unlocked by PIN, and by the device key on a relaunch;
+- **notification** - a notification received with the app in the background, and its tap opening the conversation;
+- **opener** - an ecosystem site (the Portail, MiGallery) opened externally in Safari;
+- **system_components** - the native tab bar switching places, and its unread dot shown.
+
+Then that pre-release's App Store Connect upload carrying no ITMS-90725.
+
+**Why `1.7.1` and not `1.8.0`** (lead decision, 2026-11-18, reversible): the signed path (keychain,
+archive, export) is proven on `xcode-27` by the dispatched `ios.yml` run 44278923984, so the move
+needs no version of its own - its readings ride the first `1.7.1` pre-release. Charter: principle 8
 (durability).
