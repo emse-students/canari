@@ -144,7 +144,7 @@ export function endSpentRegisterAsks(account: string, groupId: string): boolean 
   entry.asking = false;
   if (!write(account, owed)) return true;
   console.error(
-    `[REGISTER] ${groupId.slice(0, 8)}... asked for its register ${entry.asked} time(s) with no answer - no longer asked (every member at the floor answers \`register\`, so this is a defect, or they cannot be addressed)`
+    `[REGISTER] ${groupId.slice(0, 8)}... asked for its register ${entry.asked} time(s) with no answer - no longer asked (every member at the floor answers or declines \`register\` when it can: a defect, or this device is unvouched and so answered by nobody, or it cannot be addressed)`
   );
   return true;
 }

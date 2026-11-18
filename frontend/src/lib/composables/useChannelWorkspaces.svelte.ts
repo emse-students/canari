@@ -2127,25 +2127,21 @@ export function useChannelWorkspaces() {
       // (`channelMemberAddedData`, `channelNotice.ts`). SILENT: the row is
       // opaque to the server, so the sender says it is a notice - it must neither count as unread
       // for the salon's members nor ring their phones.
-      const inviterId = currentUserId();
-
-      if (inviterId) {
-        try {
-          const systemBytes = encodeAppMessage(
-            mkSystem('memberAdded', channelMemberAddedData(memberId))
-          );
-          await sendEncryptedChannelMessage(
-            channelConversationId,
-            systemBytes,
-            undefined,
-            undefined,
-            undefined,
-            { silent: true }
-          );
-        } catch (err) {
-          console.warn('[Channel Invite] Failed to send system message to channel:', err);
-          // Do not block the invitation if the system message fails
-        }
+      try {
+        const systemBytes = encodeAppMessage(
+          mkSystem('memberAdded', channelMemberAddedData(memberId))
+        );
+        await sendEncryptedChannelMessage(
+          channelConversationId,
+          systemBytes,
+          undefined,
+          undefined,
+          undefined,
+          { silent: true }
+        );
+      } catch (err) {
+        console.warn('[Channel Invite] Failed to send system message to channel:', err);
+        // Do not block the invitation if the system message fails
       }
 
       ctx.log(`Member invited to channel (${roleName}): ${memberId}`);

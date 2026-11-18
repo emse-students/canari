@@ -681,9 +681,12 @@ function historyAskKey(
 ): string | null {
   const answerKey = parseHistoryAnswerKey(data?.answerKey);
   if (answerKey !== undefined) return answerKey;
-  log(
+  // At error: every build at the floor (`1.7.0`) mints a key for each ask, so a keyless one is a
+  // defect or a forgery, never an older client (docs/wiki/legacy-compatibility.md).
+  console.error(
     `[${tag}] No answer key from ${senderNorm} for ${convoKey.slice(0, 8)}… - every build since option B mints one, so the ask is malformed - ignored`
   );
+  log(`[${tag}] ask without a well-formed answer key ignored`);
   return null;
 }
 

@@ -766,8 +766,12 @@ pub(crate) fn remove_graine_mirror(dir: &std::path::Path) -> Result<bool, String
 /// The app's FORMER copy (`{app_data_dir}/graine_seeds.json`, which a build before `1.7.0` kept and
 /// copied over the group's at every lifecycle event) is DELETED on the way, unread: a build at the
 /// floor (`1.7.0`) folded it into the group's at its first foreground edit, and an install that went
-/// straight from an older build to this one lost nothing the group's copy lacks - that build's last
-/// lifecycle copy put the app's seeds there (docs/wiki/legacy-compatibility.md history).
+/// straight from an older build to this one finds the app's seeds in the group's copy as of that
+/// build's last lifecycle copy. ACCEPTED LOSS, said: a seed the older foreground stored after that
+/// copy (a background task, a crash in the foreground) is in the deleted file only, so that salon
+/// session's pushes show the generic banner until it rotates - the app itself still opens it
+/// (docs/wiki/legacy-compatibility.md history). `native_cache::migrate_legacy_files` deletes it at
+/// the first start too.
 #[cfg(mobile)]
 fn seed_mirror_home(
     data_dir: &std::path::Path,
@@ -859,8 +863,9 @@ pub(crate) fn reseal_graine_mirror(
     with_graine_mirror_inner(data_dir, key, true, |_| Ok(((), false))).map(|(_, wrote)| wrote)
 }
 
-/// Why [`read_graine_mirror`] could not answer - a TYPE, so a caller can tell a file that will never
-/// open (the key never rotates) from one it merely could not read this time (2026-11-17 review).
+/// Why [`read_graine_mirror`] could not answer - a TYPE, so the cause reaches the caller's error line
+/// and a file that will never open (the key never rotates) reads apart from one merely not read this
+/// time (2026-11-17 review).
 #[cfg(any(mobile, test, feature = "bench-observables"))]
 #[derive(Debug)]
 pub(crate) enum MirrorReadError {
@@ -3954,11 +3959,13 @@ mod graine_mirror_tests {
     /// iPhone was shut opened from its frame in the extension, the next push read it from the
     /// mirror, and the push 12 s later - the app had just come to the foreground - found no seed.
     /// The extension writes the App Group copy, and the app becoming active copied its OWN file over
-    /// it, which had never seen that seed. Red against that copy (`sync_seed_mirror_copy`); the
-    /// foreground now deletes the app's former copy unread (`seed_mirror_home`, since the floor
-    /// reached `1.7.0`), so both writers' seeds stay in the group's.
+    /// it, which had never seen that seed (`sync_seed_mirror_copy`, gone). What remains of the app's
+    /// copy since the floor reached `1.7.0` is a DELETE (`remove_graine_mirror`, called by
+    /// `seed_mirror_home` and `migrate_legacy_files` on iOS): this pins that it takes the app's file
+    /// alone and leaves every seed of the group's, the extension's included. The iOS call sites are
+    /// pinned by `iosMlsMirror.test.ts`.
     #[test]
-    fn a_seed_the_extension_stored_survives_the_app_becoming_active() {
+    fn deleting_the_apps_former_mirror_leaves_the_groups_seeds_whole() {
         let app = mirror_dir("ext-app");
         let group = mirror_dir("ext-group");
         merge_as(&app, "chan", "s-old", "c2VlZA==", 1, Some("acct-a")).unwrap();

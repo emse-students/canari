@@ -332,9 +332,9 @@ pub(crate) fn seal_legacy_seed_mirror(
     Ok(sealed)
 }
 
-/// Seals or removes every plaintext file an older build left, once per process: the seed mirror in
-/// `data_dir` and - on iOS - its App Group copy the notification extension reads, then
-/// `channel_keys.json`. Each step is idempotent on its own (the file's marker, or its absence, is the
+/// Seals or removes every plaintext file an older build left, once per process: the seed mirror
+/// (in `data_dir` on Android; on iOS the App Group's, the one mirror, while the app's former copy in
+/// `data_dir` is deleted unread), then `channel_keys.json`. Each step is idempotent on its own (the file's marker, or its absence, is the
 /// durable record), so the per-process flag only saves the reads; it is set after the pass, and a
 /// step that failed is logged and retried by the next process.
 #[cfg(mobile)]
@@ -353,13 +353,34 @@ pub(crate) fn migrate_legacy_files(data_dir: &std::path::Path, key: &CacheKey) {
     #[cfg(not(target_os = "ios"))]
     let group: Option<std::path::PathBuf> = None;
     let mut failed = false;
-    for dir in std::iter::once(data_dir.to_path_buf()).chain(group) {
+    // ON iOS THE APP'S OWN COPY IS NO MIRROR ANY MORE: since the `1.7.0` floor the App Group's is the
+    // one mirror, and the copy a build before it kept in `data_dir` is deleted unread rather than
+    // sealed (docs/wiki/legacy-compatibility.md) - nothing reads it, so sealing it would only keep
+    // its seeds at rest until the next foreground mirror edit deleted them.
+    #[cfg(target_os = "ios")]
+    match crate::commands::push::remove_graine_mirror(data_dir) {
+        Ok(true) => log::info!(
+            "[NATIVE_CACHE] the app's former seed mirror deleted - the App Group's is the one mirror"
+        ),
+        Ok(false) => {}
+        Err(e) => {
+            log::error!("[NATIVE_CACHE] the app's former seed mirror not deleted: {e}");
+            failed = true;
+        }
+    }
+    #[cfg(target_os = "ios")]
+    let mirrors = group.into_iter();
+    #[cfg(not(target_os = "ios"))]
+    let mirrors = std::iter::once(data_dir.to_path_buf()).chain(group);
+    for dir in mirrors {
         if let Err(e) = seal_legacy_seed_mirror(&dir, key) {
             log::error!("[NATIVE_CACHE] a plaintext seed mirror was not sealed: {e}");
             failed = true;
         }
         remove_legacy_channel_keys(&dir);
     }
+    #[cfg(target_os = "ios")]
+    remove_legacy_channel_keys(data_dir);
     if !failed {
         DONE.store(true, Ordering::Release);
     }

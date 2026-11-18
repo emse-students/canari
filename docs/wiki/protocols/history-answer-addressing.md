@@ -287,7 +287,8 @@ trust in the server.
    ask is NOTHING, logged at error (`[HISTORY_SEAL] ... answering nothing rather than unsealed to
    every member`). The key proves the asker seals, so it reached a build that addresses; taking the
    server's word that it cannot would let the server switch the seal off and hand the content to
-   every member. Only an ask with no key (an older asker) may still get the broadcast.
+   every member. Since the `1.7.0` floor no ask comes without a key: one that does is malformed and
+   answered nothing at all.
 4. **The receiver opens it with the ask's secret BEFORE rule 5 takes an answerer slot**
    (`systemMessageHandler.ts`, `answerSecretOf` then `takeAddressedAsk`): bytes that do not open
    consume no slot, so a member relaying garbage cannot crowd the honest answer out of the two an ask
@@ -447,13 +448,14 @@ ASKS, on facts it holds durably:
    `register: true` - or, from a device that never took its own register, `register: 'none'`, a typed
    DECLINE: it holds none to restate, and an empty register would end the asker's entry on nothing.
    Never broadcast (a server that does not address gets no register), withheld from an unvouched
-   device, nothing sent when the engine cannot seal. A register ask with no key is a defect of its
-   sender: no state is sent, said at error, and the diff still goes.
+   device, nothing sent when the engine cannot seal. A register ask with no key is malformed like any
+   keyless ask since the `1.7.0` floor: it is dropped whole, said at error - neither state nor diff.
 5. **Taken only from what opened under the ask.** The receiver takes the nicknames - under
    `mergeBundleNicknames`' limits (unverified, current members only) - from an answer only when its
    ask said `register` AND the SEALED content says `register: true`. The flag is never in the clear
    routing: one a relaying server could set would turn an ordinary answer into one the reader takes
-   state from. An unsealed frame saying `register` is taken as an ordinary answer and said at error.
+   state from. An unsealed answer to a keyed ask is refused whole at error; an unsealed frame saying `register` on
+   the join push is taken as an ordinary push and said at error.
    A message riding a register answer or a decline is dropped (at error).
 6. **Ended by the first state TAKEN** - a register answer, or the inviter's join push - and only when
    every merge had its input (`stateTaken` in `systemMessageHandler.ts`): a push finding no
@@ -479,7 +481,8 @@ bound dropped both markers, and both then answered later newcomers with an empty
   decline that came back meanwhile is already counted out. Counted at the ask, because silence is an
   answer: no answer-side count moves when nothing comes back. A device of this account is treated
   like any other device. Every build at the floor (`1.7.0`) answers or declines `register`, so
-  reaching the bound is a defect (or a server that cannot address), and its end is said at ERROR
+  reaching the bound means a defect, an unvouched asker (answered by nobody), or a server that
+  cannot address - each worth a reader, so its end is said at ERROR, naming them
   ([legacy-compatibility](../legacy-compatibility.md#entries-170-retires-the-floor-raise-of-both-estates-once-both-stores-serve-170)).
 - **Every other device of the tree DECLINED.** The decliners are kept in the entry; once they cover
   every leaf of the group but this one (`getGroupMemberIdentities`), nobody holds a register to give.

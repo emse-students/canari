@@ -73,6 +73,13 @@ describe('the iOS seed mirror', () => {
     expect(homeBody).toContain('remove_graine_mirror(data_dir)');
     expect(pushRs).not.toContain('fn fold_legacy_seed_mirror(');
     expect(pushRs).not.toContain('fn sync_seed_mirror_copy(');
+    // ...and at the first start too, rather than resealed: on iOS nothing reads that copy.
+    const cacheRs = read(resolve(TAURI, 'src/native_cache.rs'));
+    const migrate = cacheRs.slice(cacheRs.indexOf('fn migrate_legacy_files('));
+    const migrateBody = migrate.slice(0, migrate.indexOf('\n}\n'));
+    expect(migrateBody).toMatch(
+      /#\[cfg\(target_os = "ios"\)\]\s*match crate::commands::push::remove_graine_mirror\(data_dir\)/
+    );
   });
 
   it('is read by the app-alive push path in the App Group', () => {

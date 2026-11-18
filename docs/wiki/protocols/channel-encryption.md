@@ -5049,8 +5049,11 @@ the App Group's file. The copy an older build left in `app_data_dir` was folded 
 foreground edit, as a union under both writers' locks, until the floor reached `1.7.0`. **Since that
 floor it is deleted unread** (`remove_graine_mirror` in `seed_mirror_home`, under the mirror lock): a
 store update skips versions, so the floor does not prove every install folded, but the App Group's
-copy already holds what the last lifecycle copy put there, and a failed delete is said at error and
-tried again at the next edit. An account's wipe edits the one file
+copy holds what the last lifecycle copy put there, and a failed delete is said at error and
+tried again at the next edit; `migrate_legacy_files` deletes it at the first start too. **Accepted
+loss:** a seed the older foreground stored after that last copy (a background task, a crash) was in
+the deleted file only, so that session's pushes show the generic banner until it rotates - the app
+itself still opens it. An account's wipe edits the one file
 ([auth](../frontend/modules/auth.md#the-seed-mirror-labels-each-entry-with-its-writers-2026-11-07)),
 and the factory wipe now deletes it under its lock (`storage::wipe_app_group`): with no lifecycle copy
 left to replace it, it would otherwise outlive the wipe. Retiring the fold is in
@@ -5082,8 +5085,8 @@ source scan in `iosMlsMirror.test.ts`; the iOS branch is first compiled by the r
 and first run on the iPhone reading below. The old copy's delete and the factory
 wipe's removal run in host tests.
 
-**What holds it.** `a_seed_the_extension_stored_survives_the_app_becoming_active` (`push.rs`, red
-against the byte copy, now also deleting the old copy), and
+**What holds it.** `deleting_the_apps_former_mirror_leaves_the_groups_seeds_whole` (`push.rs`, born red against the
+byte copy as `a_seed_the_extension_stored_survives_the_app_becoming_active`), and
 `iosMlsMirror.test.ts`, which reads the Objective-C no CI compiles: the activation mirror names no
 seed file, and the app-alive path reads `CanariAppGroupPath()`.
 

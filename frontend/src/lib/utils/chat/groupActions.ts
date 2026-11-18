@@ -1421,10 +1421,12 @@ export type HistoryStoreDeps = HistorySendDeps & {
  *
  * **AND WHERE IT IS ADDRESSED** (step A, docs/wiki/protocols/history-answer-addressing.md): when the
  * server routes addressed answers, every chunk goes to `to` alone (`recipientDevices`) and is filtered
- * on that reader's windows. Every answer names its ask - a `requestId`, or `join` on the push - by
- * TYPE ({@link BundleAnswer}): an ask with no id is refused where it is parsed (`historyAskId`), so
- * no answer to one is ever built (D211). A device the server cannot address (a session of
- * it predates the capability) is sent nothing: an addressed answer is never turned into a broadcast.
+ * on that reader's windows. Every answer here names its ask's `requestId` and the seal its key asks
+ * for, by TYPE ({@link KeyedAnswer}; the join push, which answers no ask, never comes through
+ * here): an ask with no id or no key is refused where it is parsed (`historyAskId`,
+ * `historyAskKey`), so no answer to one is ever built (D211). A server that would broadcast, or a
+ * device it cannot address (a session of it predates the capability), is sent nothing: an answer
+ * is sealed and addressed, or not sent.
  *
  * @returns the {@link BundleOutcome} - whether anything could be sent, and how much was.
  */

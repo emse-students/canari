@@ -179,10 +179,19 @@ describe('a history ask is read only with its request id (D211)', () => {
   });
 });
 
-const keylessLine = (ctx: ReturnType<typeof makeCtx>, tag: string) =>
-  ctx.log.mock.calls.map((c) => String(c[0])).filter((l) => l.startsWith(`[${tag}] No answer key`));
+/** The keyless-ask lines said at ERROR under `tag` (every floor build keys its asks: a defect). */
+const keylessLine = (_ctx: ReturnType<typeof makeCtx>, tag: string) =>
+  errorSpy.mock.calls
+    .map((c) => String(c[0]))
+    .filter((l) => l.startsWith(`[${tag}] No answer key`));
+let errorSpy: { mock: { calls: unknown[][] }; mockRestore: () => void };
 
 describe('a history ask is read only with its answer key (option B, the 1.7.0 floor)', () => {
+  beforeEach(() => {
+    errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+  afterEach(() => errorSpy.mockRestore());
+
   const keyless = <T extends { answerKey: string }>(ask: T) => {
     const { answerKey: _dropped, ...rest } = ask;
     return { ...rest, requestId: ASK };
