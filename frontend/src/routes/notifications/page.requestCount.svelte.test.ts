@@ -30,7 +30,7 @@ vi.mock('$lib/stores/postNotifStore.svelte', () => ({
     markAllRead: vi.fn(() => Promise.resolve()),
   },
 }));
-vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
+vi.mock('$app/navigation', () => ({ goto: vi.fn(), afterNavigate: vi.fn() }));
 
 import Page from './+page.svelte';
 

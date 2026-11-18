@@ -6481,7 +6481,7 @@ marker until an answer clears it. So the register rides the existing digest ask 
 and its elected answer, sealed to the ask, under the same four limits below
 (`registerOwed.ts`, built 2026-11-17 in a draft pull request:
 [the mechanism](../../protocols/history-answer-addressing.md#the-newcomer-asks-for-its-register-2026-11-17),
-[its entry](../../backlog.d/p2-an-offline-newcomer-receives-no-join-push.md)).
+its entry (entry deleted 2026-11-18, every half read)).
 
 Before #3185 only the pending invitation and the welcome_request answer pushed, each by an explicit
 call: a newcomer added by "Ajouter", or whose Welcome came from the drain, saw no nickname at all

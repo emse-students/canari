@@ -558,7 +558,7 @@ padding IS that floor, resolved on it in the same rule group as on the footer an
 banner and the composer stand on one length and cannot drift. Nothing on `main` had changed it since
 `1.6.12`. Pinned by `composerBand.test.ts` (*"the banners docked in the composer place"*): the floor
 resolved on the class, its padding, and the three branches wearing it with no self-padded banner left.
-Owed on a phone: [the reading](../backlog.d/reading-owed-a-banner-in-the-composer-place-clears-the-navigation-bar.md).
+Read PASS on both phones and on a desktop browser ([readings](../device-verification.md#the-phone-readings-of-2026-11-18-m1-and-i1-170-alpha11), 2026-11-18).
 
 ## Owed on a phone (nothing here is measured after the change - it needs a build)
 

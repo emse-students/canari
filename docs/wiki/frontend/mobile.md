@@ -1203,6 +1203,8 @@ destination column is what the app opens, the coverage column is what a test or 
 | `event_validated/rejected/updated/deleted/pending` | FCM + APNs | same | `/calendar` | same | routes |
 | `profile_correction_applied/refused` | none (`skipPush`) | `requestId` | in-app row only, `/profile` | `notificationTarget.test` | no push by design |
 | `live_cut`, `live_suspended`, `live_withdrawn` (WP-L8b, 2026-10-21) | FCM + APNs | `target: 'notifications'` (wins over `postId`, the live's or the member's id) | `/notifications`, where the inert row says it | `push-target.spec`, `deepLinkRoutes.test`, `deepLinkHostsDeclared.test` | never run on a phone; never muted by a category ([lives](../services/lives.md#the-three-pushes-a-broadcaster-gets-wp-l8b)) |
+
+A push whose target is `notifications`, tapped while `/notifications` is ALREADY the open page, is a `goto` to the same route: the page does not remount, so its `onMount` read never runs. The page re-reads on `afterNavigate` when the navigation lands on the route it left (`isReentryOfSameRoute`), once, and a fresh mount from another route is not a re-entry (fixed 2026-11-18; [entry](../backlog.d/p2-the-notifications-list-is-not-reread-when-a-push-opens-it.md)).
 | Incoming call | FCM silent frame | `groupId`, `callId` | `/chat`, accept recorded | NOTIF rows | HELD: `CALLS_ENABLED = false` |
 | Browser (web) notification | `new Notification` from a WebSocket frame, **no service worker, no web push** | `conversationId` | `chatDeepLinkRoute` | `useNotifications.webClick.test` | **was `/chat` for a salon, fixed on the branch**; a closed tab gets nothing |
 
@@ -3339,7 +3341,7 @@ identity makes the two posts one:
 push, so the frame is their only trigger and a hidden tab or an idle window is told.
 
 **What only a phone can say** (the background reading,
-[backlog](../backlog.d/reading-owed-a-reaction-to-my-message-notifies-in-the-background.md); the iOS
+[readings](../device-verification.md#the-phone-readings-of-2026-11-18-m1-and-i1-170-alpha11); the iOS
 identity reading, read PASS on `1.7.0-alpha.10` ([readings](../device-verification.md#the-phone-readings-of-2026-11-17-170-alpha10-both-phones-and-the-rig)). That iOS replaces a delivered LOCAL notification by a remote one with the same
 `apns-collapse-id` (and the reverse) is what a post's twin already relies on, and is proven by no
 test here: a reaction under Control Center shows ONE entry (a second sound on the replacement is

@@ -6,6 +6,7 @@
   import { retryFailedMyAssociationsProbe } from '$lib/associations/api';
   import { afterNavigate, beforeNavigate, goto, onNavigate, preloadData } from '$app/navigation';
   import { onArrivedAtEntry, onLeavingEntry } from '$lib/navigation/navigationMemory';
+  import { cancelRestore } from '$lib/navigation/scrollMemory';
   import { preloadRouteCodeOnce } from '$lib/navigation/routeCodePreload';
   import { onMount, tick } from 'svelte';
   import { markRouterReady } from '$lib/navigation/routerReady';
@@ -235,6 +236,7 @@
     });
 
     return () => {
+      cancelRestore(); // a restore left running would keep its document key listener
       disposePressedClickGuard();
       stopOwedDmMarkDrain();
       stopDeletedAccountGuards();

@@ -2,7 +2,7 @@
 
 target: 1.7.1
 
-**2026-11-17 evening: the first step shipped in `1.7.0` (#3786, on dev from `1.7.0-alpha.10`); the windows left below are `1.7.1`, per the [scope cut](owner-decisions-of-2026-11-17.md#the-170-scope-cut-afternoon---it-supersedes-the-mornings-line-below). Its device reading stays [its own entry](reading-owed-rows-before-ratchet.md).**
+**2026-11-17 evening: the first step shipped in `1.7.0` (#3786, on dev from `1.7.0-alpha.10`); the windows left below are `1.7.1`, per the [scope cut](owner-decisions-of-2026-11-17.md#the-170-scope-cut-afternoon---it-supersedes-the-mornings-line-below). Its device reading was [read PASS on the web and the Mi 9T on 2026-11-18](../device-verification.md#the-phone-readings-of-2026-11-18-m1-and-i1-170-alpha11).**
 
 **Built (2026-11-17, #3786):** a checkpoint stores the rows the live drain's UI buffer holds BEFORE
 it exports their ratchet advance, and nothing re-enters the buffer until its write settled
@@ -10,7 +10,7 @@ it exports their ratchet advance, and nothing re-enters the buffer until its wri
 failed refuses the checkpoint until a later hold stores it
 ([chat](../frontend/modules/chat.md#rows-before-ratchet-a-checkpoint-stores-the-buffered-rows-first-2026-11-17)).
 That closes the window this entry was raised for - the whole length of a drain's window, seconds on
-a catch-up. The device reading is [its own entry](reading-owed-rows-before-ratchet.md).
+a catch-up. The device reading is [in the readings of 2026-11-18](../device-verification.md#the-phone-readings-of-2026-11-18-m1-and-i1-170-alpha11).
 
 **Accepted, stated:** a hung IndexedDB row write holds every checkpoint (the hold never resolves, the
 persister's in-flight checkpoint never clears), and a store that keeps refusing the rows refuses
