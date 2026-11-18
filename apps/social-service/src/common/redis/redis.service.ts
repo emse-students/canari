@@ -241,17 +241,23 @@ export class RedisService implements OnModuleDestroy {
     return online;
   }
 
-  /** Wraps publish for channel events: emits to `chat:channel_events` with the target userIds so the gateway delivers only to matching WebSocket connections. */
+  /**
+   * Wraps publish for channel events: emits to `chat:channel_events` with the target userIds so the
+   * gateway delivers only to matching WebSocket connections - and, given `requiresCapability`, only
+   * to the sessions that declared it (`caps=`), so a frame never reaches a build that cannot route it.
+   */
   async publishChannelEvent(
     eventType: string,
     data: Record<string, unknown>,
-    userIds: string[]
+    userIds: string[],
+    requiresCapability?: string
   ): Promise<void> {
     const event = {
       type: eventType,
       data,
       userIds,
       timestamp: new Date().toISOString(),
+      ...(requiresCapability ? { requiresCapability } : {}),
     };
     await this.publish('chat:channel_events', event);
   }

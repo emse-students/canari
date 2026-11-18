@@ -148,8 +148,15 @@ filters as always, so the frame names no queue, item or person. The recipients a
 queue's own scope primitive: every global admin, plus - for a report - each staff member
 (`association_members.permissions <> 0`) for whom `reportInBdeScopeSql` holds, and - for an agenda
 item - each one for whom `holdsBdeAgendaRightOverSql` holds over the event's association; the
-corrections ping the global admins alone. Sent AFTER the write committed, never throws, a failure said
-at ERROR. The paths that send it:
+corrections ping the global admins alone. A reported COMMENT is resolved to its post once per signal
+and each candidate tested against that one row: the queue's own comment branch is a set computed per
+moderator - a hash probe when the moderator is a parameter, a scan of every post per candidate when
+it is a column, as here. The integration spec checks, report by report, that the recipients are
+EXACTLY the global admins plus the staff `BDE_MODERATES_REPORT_SQL` admits. Like every social-service
+statement it runs with JIT off (`PG_SESSION_OPTIONS`): with JIT on it compiles for ~2 s whatever it
+reads (measured 2026-11-18). Sent AFTER the write committed, never awaited by the HTTP answer of the
+person who acted (they refetch by themselves), never throws, a failure said at ERROR. The paths that
+send it:
 
 | Queue | Enters | Leaves |
 | --- | --- | --- |
@@ -157,11 +164,21 @@ at ERROR. The paths that send it:
 | `profile-corrections` | core files a request (`/internal/notifications/profile-correction-filed`) | core answers it (`/internal/notifications/profile-correction`, applied or refused) |
 | `agenda` | an event starts waiting - a proposal or a reopening (`notifyEventValidatorsOfProposal`, the one choke point) | validated, rejected, or deleted while pending (`AssociationsService`) |
 
-Not sent, and caught by the next refetch (app return, hub or dashboard open): an `applying` claim and
-its release (core does not tell social), and an account erasure deleting reports about the erased
-account (their scope cannot be read once they are gone). **Older clients (< 1.7.1)** do not route an
-`admin.` frame and log `reached no handler` at WARN for each one: it reaches only admins and
-moderators, and stops when their build updates.
+Not sent, and caught by the next refetch (app return, socket reopen, hub or dashboard open): an
+`applying` claim and its release (core does not tell social; net zero), an account erasure deleting
+reports about the erased account or a requester's pending correction, a report whose CONTENT is
+deleted (it leaves every scoped moderator's count, and its scope can no longer be read to name them),
+and a change of who governs what (an audience edit, a permission bit granted or revoked).
+
+**Only builds that route it receive it** (`requiresCapability: 'admin-queues-1'`): the client
+declares `admin-queues-1` in `caps=` on its socket, and the chat gateway delivers a
+`chat:channel_events` frame naming a capability only to the sessions that declared it
+(`ADMIN_QUEUES_CAPABILITY`, `apps/chat-gateway/src/addressing.rs`, edge-only - no hash in the shared
+store, since no publisher checks a device first). A build older than 1.7.1 never meets the frame,
+so it never logs `reached no handler` for it. An older gateway ignores the field and delivers to
+every session, which is what it did before; a gateway that does not know a capability named to it
+delivers to none and says so at ERROR, so the gateway ships with or before the social-service that
+names it - both are in the same release.
 
 **Content-free**: the push carries the key only (`social_admin_profile_correction`,
 `social_admin_report`), composed on the device from fixed sentences; the `full` mode's legacy title

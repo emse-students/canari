@@ -10,7 +10,6 @@ import {
   Logger,
   NotFoundException,
   type OnModuleDestroy,
-  Optional,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
@@ -422,20 +421,17 @@ export class LivesService implements OnModuleDestroy {
 
   /**
    * The admin badges' signal (`AdminQueueSignal`), injected by PROPERTY so the specs that build this
-   * service by hand need no new argument. Always wired in the app (a global module); its absence is
-   * said at ERROR, never passed over.
+   * service by hand need no new argument. NOT optional: Nest refuses to boot without it (a global
+   * module provides it; `admin-queue-signal.wiring.spec` asserts the dependency is declared), so it
+   * is absent only in a spec built by hand.
    */
-  @Optional() @Inject(AdminQueueSignal) private readonly adminQueueSignal?: AdminQueueSignal;
+  @Inject(AdminQueueSignal) private readonly adminQueueSignal?: AdminQueueSignal;
 
   /** An item entered or left an admin queue: whoever may act on it recounts. Never throws. */
   private async tellAdminQueues(change: AdminQueueChange): Promise<void> {
-    if (!this.adminQueueSignal) {
-      this.logger.error(
-        `[ADMIN_QUEUES] signal not wired: the ${change.queue} badges were NOT told`
-      );
-      return;
-    }
-    await this.adminQueueSignal.changed(change);
+    // Absent only outside Nest (a spec that builds this service by hand): Nest refuses to boot
+    // without it, which `admin-queue-signal.wiring.spec` holds. No production path skips it.
+    await this.adminQueueSignal?.changed(change);
   }
 
   constructor(
@@ -1908,7 +1904,7 @@ export class LivesService implements OnModuleDestroy {
       await this.notifyCut(result);
     }
     if (closedReportIds.length > 0) {
-      await this.tellAdminQueues({ queue: 'moderation', reportIds: closedReportIds });
+      void this.tellAdminQueues({ queue: 'moderation', reportIds: closedReportIds });
     }
     if (replayEnded) await this.replayFeedsChanged(liveId, 'a cut ended its replay');
     await this.purgeBestEffort(liveId, 'after a cut');

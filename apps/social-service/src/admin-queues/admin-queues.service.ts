@@ -173,8 +173,9 @@ export class AdminQueuesService {
         `[ADMIN_QUEUES] report ${report.id.slice(0, 8)} was NOT announced to the admins: ${String(err)}`
       );
     }
-    // Announced or not, the moderation queue grew: whoever may act on it recounts.
-    await this.signal.changed({ queue: 'moderation', reportIds: [report.id] });
+    // Announced or not, the moderation queue grew: whoever may act on it recounts. Not awaited: the
+    // reporter's answer does not wait on who else is told (`changed` never throws; it logs).
+    void this.signal.changed({ queue: 'moderation', reportIds: [report.id] });
   }
 
   /**

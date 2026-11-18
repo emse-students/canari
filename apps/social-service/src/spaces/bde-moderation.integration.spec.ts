@@ -23,6 +23,7 @@ import { ModerationController } from '../moderation/moderation.controller';
 import { ModerationService } from '../moderation/moderation.service';
 import { AdminQueueSignal } from '../admin-queues/admin-queue-signal.service';
 import { AdminQueuesService } from '../admin-queues/admin-queues.service';
+import { PG_SESSION_OPTIONS } from '../common/pg-session-options';
 import { commentRights, type CommentViewer, type StoredComment } from '../posts/comment-identity';
 import {
   BDE_MODERATED_POST_IDS_SQL,
@@ -648,13 +649,15 @@ maybe('BDE moderation scope against PostgreSQL', () => {
       url: URL,
       entities: [ContentReport],
       synchronize: false,
-      extra: { options: `-c search_path=${schema},public` },
+      // The service's own session settings, as `AppModule` opens its pool: with JIT on, this
+      // one statement compiles for ~2 s whatever it reads (measured 2026-11-18).
+      extra: { options: `${PG_SESSION_OPTIONS} -c search_path=${schema},public` },
     });
     await ds.initialize();
-    const sent: { type: string; data: unknown; userIds: string[] }[] = [];
+    const sent: { type: string; data: unknown; userIds: string[]; cap?: string }[] = [];
     const signal = new AdminQueueSignal(ds, {
-      publishChannelEvent: async (type: string, data: unknown, userIds: string[]) => {
-        sent.push({ type, data, userIds: [...userIds].sort() });
+      publishChannelEvent: async (type: string, data: unknown, userIds: string[], cap?: string) => {
+        sent.push({ type, data, userIds: [...userIds].sort(), cap });
       },
     } as never);
     const told = async (change: Parameters<AdminQueueSignal['changed']>[0]) => {
@@ -663,27 +666,45 @@ maybe('BDE moderation scope against PostgreSQL', () => {
       expect(sent).toHaveLength(1);
       expect(sent[0].type).toBe('admin.queues.changed');
       expect(sent[0].data).toEqual({});
+      expect(sent[0].cap).toBe('admin-queues-1');
       return sent[0].userIds;
     };
     try {
-      // seMod's report (1): the platform admin and seMod - never gaMod, a validator or a student.
-      const one = await told({
-        queue: 'moderation',
-        reportIds: ['30000000-0000-4000-8000-000000000001'],
-      });
-      expect(one).toEqual(expect.arrayContaining(['platform', 'seMod']));
-      for (const other of ['gaMod', 'seVal', 'seStudent']) expect(one).not.toContain(other);
-      // gaMod's report (2): gaMod, not seMod.
-      const two = await told({
-        queue: 'moderation',
-        reportIds: ['30000000-0000-4000-8000-000000000002'],
-      });
-      expect(two).toEqual(expect.arrayContaining(['platform', 'gaMod']));
-      expect(two).not.toContain('seMod');
+      // EXACTLY the accounts the queue's own scope admits, report by report - every content type,
+      // the comments (3, 4) included, whose branch the signal tests over posts it resolved first
+      // rather than the queue's per-moderator set: the two forms must name the same people.
+      const staff = (
+        await client.query(
+          `SELECT DISTINCT "userId" AS uid FROM association_members WHERE permissions <> 0`
+        )
+      ).rows.map((r) => r.uid as string);
+      for (let n = 1; n <= 9; n++) {
+        const reportId = `30000000-0000-4000-8000-00000000000${n}`;
+        const admitted: string[] = [];
+        for (const uid of staff) {
+          // Through `ds` (JIT off, as the service runs): the raw client would compile each one.
+          const r: { moderates: boolean }[] = await ds.query(BDE_MODERATES_REPORT_SQL, [
+            uid,
+            reportId,
+          ]);
+          if (r[0].moderates) admitted.push(uid);
+        }
+        expect({ n, told: await told({ queue: 'moderation', reportIds: [reportId] }) }).toEqual({
+          n,
+          told: ['platform', ...admitted].sort(),
+        });
+      }
+      // The two named in the queue above, so the loop is not vacuous.
+      expect(
+        await told({ queue: 'moderation', reportIds: [`30000000-0000-4000-8000-000000000001`] })
+      ).toEqual(expect.arrayContaining(['platform', 'seMod']));
+      expect(
+        await told({ queue: 'moderation', reportIds: ['30000000-0000-4000-8000-000000000003'] })
+      ).toEqual(expect.arrayContaining(['gaMod']));
       // clubSe's agenda: its BDE's validator, never a moderator of the other BDE or a student.
       const agenda = await told({ queue: 'agenda', associationId: A.clubSe });
       expect(agenda).toEqual(expect.arrayContaining(['platform', 'seVal']));
-      for (const other of ['gaMod', 'seStudent']) expect(agenda).not.toContain(other);
+      for (const other of ['gaMod', 'seMod', 'seStudent']) expect(agenda).not.toContain(other);
       // The corrections are the platform admins' alone.
       expect(await told({ queue: 'profile-corrections' })).toEqual(['platform']);
     } finally {
