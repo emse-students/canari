@@ -37,14 +37,14 @@ describe('resolveUserDisplayName when the server gives no answer', () => {
     expect(displayNameLookupStats().failed).toBe(0);
 
     // The server answers again: the backoff recorded for the dead link is void.
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     connectivity.notifyServerReachable();
     fetchUserProfile.mockResolvedValue({ firstName: 'Ada', lastName: 'Lovelace' });
     expect(await resolveUserDisplayName('user-a')).toBe('Ada Lovelace');
 
     // A new spell is said again.
     fetchUserProfile.mockRejectedValue(new TransportFailureError('Failed to fetch'));
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     connectivity.notifyServerReachable();
     expect(await resolveUserDisplayName('user-d')).toBeNull();
     expect(noAnswer()).toHaveLength(2);

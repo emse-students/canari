@@ -36,7 +36,7 @@ describe('MlsDeliveryApi.pullPendingMessagesJson', () => {
   it('clears a known-down link the moment the gateway answers a page, whatever its status', async () => {
     connectivity.reset();
     connectivity.isOnline = true;
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     expect(connectivity.isOffline).toBe(true);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const fetchFn = vi.fn().mockResolvedValueOnce(
@@ -73,7 +73,7 @@ describe('MlsDeliveryApi.pullPendingMessagesJson', () => {
     // Known down: stays down.
     connectivity.reset();
     connectivity.isOnline = true;
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     await api(vi.fn().mockResolvedValueOnce(edge())).pullPendingMessagesJson();
     expect(connectivity.isOffline).toBe(true);
 

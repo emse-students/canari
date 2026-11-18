@@ -890,7 +890,8 @@ MASKED, yet knows it is the BDE's by the queue it came in.
 
 | Surface | What it shows for a neutral event |
 | --- | --- |
-| month grid, day panel, schedule list (`eventOwners`, `eventAccentColor`) | one identity "Campus", key `campus`, no logo, drawn with `NeutralEventMark` (a generic calendar icon in a muted disc, never the orange initials an avatar falls back to, owner 2026-11-13), one accent derived from that key - the same for a steward, who receives the owner but is shown what readers see |
+| month grid cell (`MonthCalendarGridRich`) | the "Campus" colour only: no logo watermark and no initials, as on the export (the cell kept its watermark after #3455 and wore a translucent "CA" until 1.7.1, owner 2026-11-18; `MonthCalendarGridRich.neutral.svelte.test.ts`) |
+| day panel, schedule list (`eventOwners`, `eventAccentColor`) | one identity "Campus", key `campus`, no logo, drawn with `NeutralEventMark` (a generic calendar icon in a muted disc, never the orange initials an avatar falls back to, owner 2026-11-13), one accent derived from that key - the same for a steward, who receives the owner but is shown what readers see |
 | detail modal | a "Campus" chip (the same `NeutralEventMark`) that links nowhere; the share / add-to-calendar source URL is `/calendar` |
 | `.ics` (subscription and one event) | `SUMMARY: <title> - Campus`, `URL: <site>/calendar` |
 | PDF / PNG export (`calendarExport.ts`) | the "Campus" colour band only: no logo watermark, no initials, no mark, no missing-logo warning |

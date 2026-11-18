@@ -59,7 +59,7 @@ import {
 } from './api';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { refusalCode } from '$lib/utils/apiRefusal';
-import { TransportFailureError } from '$lib/utils/transportFailure';
+import { TransportFailureError, isTransportFailure } from '$lib/utils/transportFailure';
 
 const LIVE = '0b6f3a2e-9c1d-4e5f-8a7b-1c2d3e4f5a6b';
 const KEY = 'ab'.repeat(32);
@@ -469,6 +469,19 @@ describe('refusals, typed at the throw', () => {
     const failure = new TransportFailureError(new TypeError('Failed to fetch'));
     apiFetch.mockRejectedValue(failure);
     await expect(fetchLiveManifest(LIVE)).rejects.toBe(failure);
+  });
+
+  it('a body lost after the head (an app suspended mid-request) is a transport failure, not a bare TypeError', async () => {
+    const lost = new Response(
+      new ReadableStream({ pull: (c) => c.error(new TypeError('Load failed')) }),
+      {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }
+    );
+    apiFetch.mockResolvedValueOnce(lost);
+    const error = await fetchLiveManifest(LIVE).catch((e: unknown) => e);
+    expect(isTransportFailure(error)).toBe(true);
   });
 });
 

@@ -102,7 +102,7 @@ async function runPromotion(
     }
     // Still no usable network. Stay offline and wait for the next reconnect signal.
     cb.log(`[PROMOTE] Token still unavailable, staying offline: ${String(err)}`);
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('token still unavailable');
     return;
   }
 

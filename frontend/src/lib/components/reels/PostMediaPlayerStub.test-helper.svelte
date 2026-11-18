@@ -6,4 +6,4 @@
   import VideoPlayer from '$lib/components/shared/VideoPlayer.svelte';
 </script>
 
-<VideoPlayer src="blob:reel" class="h-full w-full" />
+<VideoPlayer src="blob:reel" variant="reel" class="h-full w-full" />

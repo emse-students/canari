@@ -102,7 +102,7 @@ afterEach(() => {
 
 describe('a salon edit', () => {
   it('is shown at once, owed while offline, and sent on the reconnect under one row id', async () => {
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     sendChannelEdit.mockResolvedValue(undefined);
     const ctx = makeContext();
 
@@ -123,7 +123,7 @@ describe('a salon edit', () => {
   });
 
   it('a second edit made offline owes ITSELF, and only it goes', async () => {
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     sendChannelEdit.mockResolvedValue(undefined);
     const ctx = makeContext();
     const api = useChannelWorkspaces();
@@ -169,7 +169,7 @@ describe('a salon edit', () => {
 
 describe('a salon reaction', () => {
   it('keeps its pill offline and goes once on the reconnect, with its own row id and clock', async () => {
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     sendChannelReaction.mockResolvedValue(undefined);
     const ctx = makeContext();
 
@@ -190,7 +190,7 @@ describe('a salon reaction', () => {
 
   it('a POST that meets the link going down is owed, and its repeat is the SAME row', async () => {
     sendChannelReaction.mockImplementationOnce(() => {
-      connectivity.notifyServerUnreachable();
+      connectivity.notifyServerUnreachable('test');
       return Promise.reject(new TransportFailureError(new TypeError('Failed to fetch')));
     });
     const ctx = makeContext();
@@ -229,7 +229,7 @@ describe('a salon reaction', () => {
   });
 
   it('placed then taken back offline owes the removal alone', async () => {
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     sendChannelReaction.mockResolvedValue(undefined);
     const ctx = makeContext();
     const api = useChannelWorkspaces();

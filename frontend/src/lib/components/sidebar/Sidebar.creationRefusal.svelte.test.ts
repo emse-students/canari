@@ -144,6 +144,28 @@ async function settle(): Promise<void> {
 }
 
 describe('one "Nouvelle discussion" panel', () => {
+  it('keeps the chips row in its place when the first person is chosen, so the list never moves', () => {
+    mountSidebar({ ok: true, key: 'g-alice' });
+    openPanel();
+    const slot = () => document.querySelector<HTMLElement>('[data-testid="new-chat-chips-slot"]')!;
+    const before = slot().className;
+    const hint = slot().textContent?.trim();
+    expect(hint).toBe(m.chat_modal_choose_people_hint());
+    expect(before).toContain('h-10');
+
+    click('Alice Martin');
+
+    // The same box, the same fixed height: only its content changed.
+    expect(slot().className).toBe(before);
+    expect(slot().querySelector('[data-testid="new-chat-chips"]')?.textContent).toContain(
+      'Alice Martin'
+    );
+    expect(slot().textContent).not.toContain(m.chat_modal_choose_people_hint());
+    // A line that scrolls, never one that wraps into a second row.
+    expect(slot().querySelector('ul')!.className).toContain('flex-nowrap');
+    expect(slot().querySelector('ul')!.className).toContain('overflow-x-auto');
+  });
+
   it('opens the conversation with the ONE person chosen', async () => {
     const { onAddContact, onCreateGroup } = mountSidebar({ ok: true, key: 'g-alice' });
     choose('Alice Martin');

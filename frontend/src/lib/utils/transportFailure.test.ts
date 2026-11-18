@@ -3,6 +3,7 @@ import {
   conformNativeFetch,
   conformPluginFetch,
   isTransportFailure,
+  transportFailureEvidence,
   TransportFailureError,
 } from '$lib/utils/transportFailure';
 import { RequestDeadlineError } from '$lib/utils/requestDeadline';
@@ -144,5 +145,18 @@ describe('conformNativeFetch - the browser fetch rejection is typed at the throw
     await expect(conformNativeFetch(vi.fn().mockResolvedValue(res))('https://x')).resolves.toBe(
       res
     );
+  });
+});
+
+describe('transportFailureEvidence - what the unreachable verdict line prints', () => {
+  it('names the class of the RAW rejection, never its message', () => {
+    expect(
+      transportFailureEvidence(
+        new TransportFailureError(new TypeError('GET https://x.test/secret'))
+      )
+    ).toBe('transport failure: TypeError');
+    expect(
+      transportFailureEvidence(new TransportFailureError('error sending request for url'))
+    ).toBe('transport failure: string');
   });
 });

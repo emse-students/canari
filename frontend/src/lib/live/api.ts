@@ -15,6 +15,7 @@
  */
 
 import { apiFetch, type ApiFetchOptions } from '$lib/utils/apiFetch';
+import { readApiJson } from '$lib/utils/apiJson';
 import { mediaUrl, socialUrl } from '$lib/utils/apiUrl';
 import { CLIENT_VERSION_HEADER, withClientVersionHeader } from '$lib/utils/appVersion';
 import { ApiRefusalError, refusalFromResponse } from '$lib/utils/apiRefusalError';
@@ -229,7 +230,9 @@ async function liveJson<T>(
 ): Promise<T> {
   const res = await apiFetch(url, withClientVersion(init));
   if (!res.ok) throw await liveRefusal(res, what, false, expected);
-  return (await res.json()) as T;
+  // The body is read through the one reader that types a LOST body (the head came, the stream died: an
+  // app suspended mid-request) as a transport failure, never as the engine's bare TypeError.
+  return (await readApiJson(res, what, init.signal)) as T;
 }
 
 /** `GET /api/lives/limits` - the server's numbers; a client keeps no copy of them. */

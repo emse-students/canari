@@ -48,7 +48,7 @@ had no owner at all, so the post composer's "Publier" sat 26 pt into the home in
 screen. **The obvious fix is wrong, and was measured wrong:** `contentInsetAdjustmentBehavior =
 .never` made the viewport the whole screen (844) and left `env()` at 0, so the page then drew UNDER
 the status bar ("Retour" over the clock). Do not try it again.
-`CanariPublishBottomInset` in
+`CanariPublishSafeAreaInsets` (then named `CanariPublishBottomInset`) in
 [`canari_ios.mm`](../../../frontend/src-tauri/gen/apple/Sources/canari/canari_ios.mm) instead tells
 the page the one number it lacks: the window's bottom safe area minus the part the WebView no longer
 reaches, written to `--safe-area-inset-bottom` (the variable `app.html` names as the single place
@@ -72,6 +72,23 @@ posts the theme to a `canariTheme` script message handler and native sets
 sets the window's own background to the app's ground (`#f0f2f5` / `#000`, `app.html`'s literals),
 because that is what shows in the band above a keyboard and in its rounded top corners (black, until then).
 **OWED: one reading of the result on the iPhone** - every gate here is blind to it.
+
+**THE TWO HALVES HAVE ONE OWNER SINCE 2026-11-18 - the status bar was counted twice.** On the bench
+iPhone 12 (1.7.0-alpha.12) the header sat 47 pt too low, under a white band, until the app was
+relaunched. The syslog of a cold start shows why: the safe-area hook (`CanariSafeAreaDidChange`, #3231,
+first shipped in 1.6.9) published `top 47 pt` at the first layout, and `didBecomeActive` - the only
+caller of `CanariApplyEdgeToEdge` - came 230 ms later. In between, the page padded 47 pt and UIKit
+still inset the scroll view by 47 pt. A launch that does not become active at once (under a system
+alert, in the background) shows that state. What made it LAST until a relaunch is the offset: UIKit
+had set the scroll view's offset to -47 for its inset, the activation-time switch did not move it, and
+the clamp that would (`CanariClampDocumentScroll`, on a `contentOffset` or `contentSize` KVO) was
+installed after the switch and never fired again on a document that does not scroll. Now
+`CanariPublishSafeAreaInsets` calls `CanariApplyEdgeToEdge(webView)` before it measures, and nothing
+else calls it. That call is idempotent and puts the offset on the new top itself, logging both values.
+A scroll view inset left over after it is logged at ERROR. The variable has one native writer and is
+SET, so the same event published twice, before or after activation, writes the same number. Pinned by
+`iosTopInsetOwner.test.ts`.
+**The phone reading is owed** ([backlog](../backlog.d/p2-ios-top-inset-counted-twice-reading.md)).
 
 #### The system theme on iOS is read at start only
 
