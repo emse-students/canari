@@ -810,6 +810,11 @@ collection of name and first name, as one required tick, for new AND existing ac
 > page, tick, redirect, and a second authorization skipping the page. **Revert:** set that provider's
 > `authorization_flow` back to `default-provider-authorization-implicit-consent` (`ak shell`), or wait for the
 > next stable's `apply-blueprints.sh`, which resets it. The phone readings are still owed before the hold lifts.
+>
+> **ENDED 2026-11-18 at 09:08 UTC** by the `1.7.0` stable's `apply-blueprints.sh apply`, as planned: all nine
+> providers read `default-provider-authorization-implicit-consent` afterwards. The phone readings were not
+> taken (sitting S8). **A pre-release build authorizes through `Canari Dev`**, so a phone reading in the app
+> needs `miconnect-canari-dev` bound, not `Canari Local` ([backlog](../backlog.d/p1-the-miconnect-terms-stage-reaches-production-with-the-next-stable-three.md)).
 
 - **Where:** `blueprints/45-consent.yaml` (HELD: `blueprints/held/`), flow `miconnect-authorization`, which the eight OAuth2
   providers now name instead of `default-provider-authorization-implicit-consent`. The enrolment flow
