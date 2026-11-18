@@ -122,7 +122,7 @@ describe('MessageBubble - the upload label of an entry the outbox has not starte
   });
   it('known offline it says waiting for a connection', async () => {
     const { connectivity } = await import('$lib/stores/connectivity.svelte');
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     expect(connectivity.isOffline).toBe(true);
     queued.mockResolvedValue(true);
     await render({ isOwn: true, status: 'pending' });
