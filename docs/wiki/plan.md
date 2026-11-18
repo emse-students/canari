@@ -94,6 +94,7 @@ earliest version, as a checklist.
 - [P2 - A post's pictures and videos: the layout from one to many, designed (owner, 2026-11-15)](backlog.d/p2-a-post-s-media-layout-one-to-many-pictures-and-videos.md)
 - [P2 - a group call answered into an empty room, and a ring that outlives an outcome-less end](backlog.d/group-call-empty-room-answer-and-outcome-less-ring.md)
 - [P2 - a group call holds one device per user: prove the second device replaces the first](backlog.d/group-calls-one-device-per-user.md)
+- [P2 - a device that accuses frames falsely walks the whole online membership at every cold start (#3762)](backlog.d/p2-a-false-accuser-costs-n-online-elections-per-cold-start.md)
 - [P2 - a late write of an incoming seed can raise a floor a repair lowered since](backlog.d/p2-a-late-incoming-seed-write-can-raise-a-floor-a-repair-lowered.md)
 - [P2 - A reaction to my message notifies nobody while the app is open, on any screen (2026-11-17)](backlog.d/p2-a-reaction-to-my-message-notifies-nobody-while-the-app-is-open.md)
 - [P2 - a repair ask is absorbed by another device's exchange, and the walk never reaches the holder (reading of 2026-11-17; built as "the repair walks to the member that holds the messages")](backlog.d/p2-a-repair-ask-is-absorbed-by-another-device-s-exchange.md)
@@ -185,7 +186,6 @@ earliest version, as a checklist.
 - [P2 - one tap from Canari signs the user into its MiConnect sites, and MiGallery's notifications go through Canari (owner, 2026-11-07: decided; Canari's half of the handoff built 2026-11-08, MiGallery's flag ON 2026-11-14, the others OFF)](backlog.d/sign-in-handoff-to-the-ecosystem-sites-and-migallery-notifications.md)
 - [P2 - iOS: a quick reply from a suspended app is not sent in the background time, it waits for the next open](backlog.d/p2-ios-quick-reply-from-a-suspended-app-waits-for-the-next-open.md)
 - [P2 - the web catch-up decrypt session marks frames seen before its state is installed in the live client](backlog.d/p2-web-catch-up-marks-frames-seen-before-its-state-is-live.md)
-- [P2 - a device that accuses frames falsely walks the whole online membership at every cold start (#3762)](backlog.d/p2-a-false-accuser-costs-n-online-elections-per-cold-start.md)
 - [P2 - iOS builds need the iOS 27 SDK before April 2027 (Apple's ITMS-90725 on build 100700011)](backlog.d/p2-ios-builds-need-the-ios-27-sdk-before-april-2027.md)
 
 **P3 - hygiene**
