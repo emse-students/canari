@@ -44,14 +44,16 @@ describe('AdminQueuesService', () => {
     const notifications = {
       createNotifications: jest.fn(async (d: { recipientIds: string[] }) => d.recipientIds.length),
     };
+    const signal = { changed: jest.fn(async () => undefined) };
     const service = new AdminQueuesService(
       {
         manager: { query, transaction: async (fn: (tx: unknown) => unknown) => fn({ query }) },
       } as never,
       associations as never,
-      notifications as never
+      notifications as never,
+      signal as never
     );
-    return { service, query, associations, notifications };
+    return { service, query, associations, notifications, signal };
   }
 
   describe('pendingCounts', () => {
@@ -171,6 +173,23 @@ describe('AdminQueuesService', () => {
       expect(await service.announceProfileCorrection('req-1', 'p')).toBe(2);
       expect(error).toHaveBeenCalledWith(expect.stringContaining('PUSH failed'));
       expect(error).not.toHaveBeenCalledWith(expect.stringContaining('NOT announced'));
+    });
+  });
+
+  describe('the badges are told, never polled', () => {
+    it('a filed report, announced or not, pings the moderation queue with its id', async () => {
+      for (const covered of [false, true]) {
+        const { service, signal } = make({ admins: ['a1'], covered });
+        await service.announceReport({ id: 'rep-1', reporterId: 'r' });
+        expect(signal.changed).toHaveBeenCalledWith({ queue: 'moderation', reportIds: ['rep-1'] });
+      }
+    });
+
+    it('a filed correction pings the corrections queue, even when telling the admins failed', async () => {
+      const { service, signal, notifications } = make({ admins: ['a1'] });
+      notifications.createNotifications.mockRejectedValue(new Error('db down'));
+      await expect(service.announceProfileCorrection('req-1', 'p')).rejects.toThrow('db down');
+      expect(signal.changed).toHaveBeenCalledWith({ queue: 'profile-corrections' });
     });
   });
 });

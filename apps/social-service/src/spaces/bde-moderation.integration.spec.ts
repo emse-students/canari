@@ -21,6 +21,7 @@ import { AssociationsService } from '../associations/associations.service';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import { ModerationController } from '../moderation/moderation.controller';
 import { ModerationService } from '../moderation/moderation.service';
+import { AdminQueueSignal } from '../admin-queues/admin-queue-signal.service';
 import { AdminQueuesService } from '../admin-queues/admin-queues.service';
 import { commentRights, type CommentViewer, type StoredComment } from '../posts/comment-identity';
 import {
@@ -613,6 +614,7 @@ maybe('BDE moderation scope against PostgreSQL', () => {
           isContentModerator: async (u: string) => tiers[u]?.moderates ?? false,
           isUserBdeAdmin: async (u: string) => tiers[u]?.validates ?? false,
         } as never,
+        {} as never,
         {} as never
       );
       // seMod's reach is 1, 4, 5, 7 (above); 4 was dismissed. No agenda, no corrections: not its queues.
@@ -631,6 +633,62 @@ maybe('BDE moderation scope against PostgreSQL', () => {
     } finally {
       await ds.destroy();
       await client.query(`UPDATE content_reports SET status = 'pending'`);
+    }
+  });
+
+  it('pings only the accounts that may act on a change, with nothing in the frame (`AdminQueueSignal`)', async () => {
+    await client.query(
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS admin boolean NOT NULL DEFAULT false`
+    );
+    await client.query(
+      `INSERT INTO users (id, admin) VALUES ('platform', true) ON CONFLICT (id) DO UPDATE SET admin = true`
+    );
+    const ds = new DataSource({
+      type: 'postgres',
+      url: URL,
+      entities: [ContentReport],
+      synchronize: false,
+      extra: { options: `-c search_path=${schema},public` },
+    });
+    await ds.initialize();
+    const sent: { type: string; data: unknown; userIds: string[] }[] = [];
+    const signal = new AdminQueueSignal(ds, {
+      publishChannelEvent: async (type: string, data: unknown, userIds: string[]) => {
+        sent.push({ type, data, userIds: [...userIds].sort() });
+      },
+    } as never);
+    const told = async (change: Parameters<AdminQueueSignal['changed']>[0]) => {
+      sent.length = 0;
+      await signal.changed(change);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].type).toBe('admin.queues.changed');
+      expect(sent[0].data).toEqual({});
+      return sent[0].userIds;
+    };
+    try {
+      // seMod's report (1): the platform admin and seMod - never gaMod, a validator or a student.
+      const one = await told({
+        queue: 'moderation',
+        reportIds: ['30000000-0000-4000-8000-000000000001'],
+      });
+      expect(one).toEqual(expect.arrayContaining(['platform', 'seMod']));
+      for (const other of ['gaMod', 'seVal', 'seStudent']) expect(one).not.toContain(other);
+      // gaMod's report (2): gaMod, not seMod.
+      const two = await told({
+        queue: 'moderation',
+        reportIds: ['30000000-0000-4000-8000-000000000002'],
+      });
+      expect(two).toEqual(expect.arrayContaining(['platform', 'gaMod']));
+      expect(two).not.toContain('seMod');
+      // clubSe's agenda: its BDE's validator, never a moderator of the other BDE or a student.
+      const agenda = await told({ queue: 'agenda', associationId: A.clubSe });
+      expect(agenda).toEqual(expect.arrayContaining(['platform', 'seVal']));
+      for (const other of ['gaMod', 'seStudent']) expect(agenda).not.toContain(other);
+      // The corrections are the platform admins' alone.
+      expect(await told({ queue: 'profile-corrections' })).toEqual(['platform']);
+    } finally {
+      await ds.destroy();
+      await client.query(`UPDATE users SET admin = false WHERE id = 'platform'`);
     }
   });
 

@@ -7,9 +7,10 @@ describe('InternalProfileNotificationsController', () => {
   const env = { ...process.env };
   const createNotification = jest.fn().mockResolvedValue(undefined);
   const announceProfileCorrection = jest.fn().mockResolvedValue(2);
+  const queueChanged = jest.fn().mockResolvedValue(undefined);
   const controller = new InternalProfileNotificationsController(
     { createNotification } as unknown as PostNotificationsService,
-    { announceProfileCorrection } as unknown as AdminQueuesService
+    { announceProfileCorrection, queueChanged } as unknown as AdminQueuesService
   );
 
   beforeEach(() => {
@@ -36,6 +37,8 @@ describe('InternalProfileNotificationsController', () => {
       text: '',
       skipPush: true,
     });
+    // The request left the queue: the global admins' badges recount.
+    expect(queueChanged).toHaveBeenCalledWith({ queue: 'profile-corrections' });
   });
 
   it('carries a refusal note, bounded', async () => {

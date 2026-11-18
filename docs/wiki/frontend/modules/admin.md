@@ -139,6 +139,30 @@ the old one never comes back. Rows written and only the push failed is logged as
 **Not recalled**: a push already on a lock screen stays there; tapped, it opens the queue, which no
 longer lists the item.
 
+**The badges are told, never polled** (lead, 2026-11-18; `AdminQueueSignal`,
+`apps/social-service/src/admin-queues/admin-queue-signal.service.ts`): when an item enters or leaves
+a queue, the accounts that may act on it get ONE frame, `admin.queues.changed`, with an EMPTY `data`,
+over the socket the app already holds (`RedisService.publishChannelEvent` -> `chat:channel_events` ->
+the chat gateway's fan-out by user id). The client refetches the counts on it, and the count endpoint
+filters as always, so the frame names no queue, item or person. The recipients are read with the
+queue's own scope primitive: every global admin, plus - for a report - each staff member
+(`association_members.permissions <> 0`) for whom `reportInBdeScopeSql` holds, and - for an agenda
+item - each one for whom `holdsBdeAgendaRightOverSql` holds over the event's association; the
+corrections ping the global admins alone. Sent AFTER the write committed, never throws, a failure said
+at ERROR. The paths that send it:
+
+| Queue | Enters | Leaves |
+| --- | --- | --- |
+| `moderation` | a report filed (`ModerationController.createReport`, through `announceReport`) | a review or dismissal (`PATCH /moderation/reports/:id`); a live cut closing the live's reports (`LivesService`, `RETURNING id`) |
+| `profile-corrections` | core files a request (`/internal/notifications/profile-correction-filed`) | core answers it (`/internal/notifications/profile-correction`, applied or refused) |
+| `agenda` | an event starts waiting - a proposal or a reopening (`notifyEventValidatorsOfProposal`, the one choke point) | validated, rejected, or deleted while pending (`AssociationsService`) |
+
+Not sent, and caught by the next refetch (app return, hub or dashboard open): an `applying` claim and
+its release (core does not tell social), and an account erasure deleting reports about the erased
+account (their scope cannot be read once they are gone). **Older clients (< 1.7.1)** do not route an
+`admin.` frame and log `reached no handler` at WARN for each one: it reaches only admins and
+moderators, and stops when their build updates.
+
 **Content-free**: the push carries the key only (`social_admin_profile_correction`,
 `social_admin_report`), composed on the device from fixed sentences; the `full` mode's legacy title
 and body name nobody either, and the `wake` mode (`push_mode`) applies as to every push. No switch

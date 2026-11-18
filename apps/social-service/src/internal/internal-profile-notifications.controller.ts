@@ -88,6 +88,8 @@ export class InternalProfileNotificationsController {
       );
       throw new BadRequestException('recipientId, requestId and a known outcome are required');
     }
+    // The request left the admins' queue: every global admin recounts (never throws: logged).
+    await this.adminQueues.queueChanged({ queue: 'profile-corrections' });
     await this.notifications.createNotification({
       recipientId: body.recipientId,
       type: `profile_correction_${body.outcome}`,

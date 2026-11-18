@@ -10,9 +10,14 @@ import {
   Logger,
   NotFoundException,
   type OnModuleDestroy,
+  Optional,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
+import {
+  AdminQueueSignal,
+  type AdminQueueChange,
+} from '../admin-queues/admin-queue-signal.service';
 import { readRetentionDays } from '../common/retention-settings';
 import { createHash, randomUUID } from 'crypto';
 import type { DataSource, EntityManager } from 'typeorm';
@@ -414,6 +419,24 @@ export class LivesService implements OnModuleDestroy {
    * `LIVE_REPLAY_TOTAL_MAX_GB` stops the service at boot instead of meaning "no cap".
    */
   private readonly replayCapBytes = liveReplayTotalMaxBytes();
+
+  /**
+   * The admin badges' signal (`AdminQueueSignal`), injected by PROPERTY so the specs that build this
+   * service by hand need no new argument. Always wired in the app (a global module); its absence is
+   * said at ERROR, never passed over.
+   */
+  @Optional() @Inject(AdminQueueSignal) private readonly adminQueueSignal?: AdminQueueSignal;
+
+  /** An item entered or left an admin queue: whoever may act on it recounts. Never throws. */
+  private async tellAdminQueues(change: AdminQueueChange): Promise<void> {
+    if (!this.adminQueueSignal) {
+      this.logger.error(
+        `[ADMIN_QUEUES] signal not wired: the ${change.queue} badges were NOT told`
+      );
+      return;
+    }
+    await this.adminQueueSignal.changed(change);
+  }
 
   constructor(
     @InjectDataSource() private readonly db: DataSource,
@@ -1766,6 +1789,8 @@ export class LivesService implements OnModuleDestroy {
     const { reason, details } = parseModerationNote(input);
 
     let replayEnded = false;
+    /** The live's pending reports this cut closed, so their moderators recount. */
+    let closedReportIds: string[] = [];
     const result = await this.db.transaction(async (tx): Promise<LiveCutResult> => {
       replayEnded = false;
       // THE STANDING LOCK FIRST, the row lock second - the order a start takes them too, so the two
@@ -1852,11 +1877,12 @@ export class LivesService implements OnModuleDestroy {
         : (await this.cutOf(tx, liveId))!;
       if (newlyCut) {
         // The report's own trail, as a moderator closing it by hand would leave it.
-        await tx.query(
+        const [closed] = (await tx.query(
           `UPDATE content_reports SET status = 'reviewed', "reviewedBy" = $2, "reviewedAt" = now()
-            WHERE "contentType" = 'live' AND "contentId" = $1 AND status = 'pending'`,
+            WHERE "contentType" = 'live' AND "contentId" = $1 AND status = 'pending' RETURNING id`,
           [liveId, reviewerId]
-        );
+        )) as [{ id: string }[], number];
+        closedReportIds = closed.map((r) => r.id);
       }
       return {
         liveId,
@@ -1880,6 +1906,9 @@ export class LivesService implements OnModuleDestroy {
           (result.standing.withdrawalDue ? ' withdrawalDue' : '')
       );
       await this.notifyCut(result);
+    }
+    if (closedReportIds.length > 0) {
+      await this.tellAdminQueues({ queue: 'moderation', reportIds: closedReportIds });
     }
     if (replayEnded) await this.replayFeedsChanged(liveId, 'a cut ended its replay');
     await this.purgeBestEffort(liveId, 'after a cut');

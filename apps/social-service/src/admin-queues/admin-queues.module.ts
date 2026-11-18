@@ -12,6 +12,7 @@ import { AdminQueuesController } from './admin-queues.controller';
  */
 @Module({
   imports: [TypeOrmModule.forFeature([ContentReport]), AssociationsModule],
+  // `AdminQueueSignal` comes from the global `AdminQueueSignalModule` (app.module).
   providers: [AdminQueuesService],
   controllers: [AdminQueuesController],
   exports: [AdminQueuesService],
