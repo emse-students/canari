@@ -1064,10 +1064,10 @@
       ],
       "selectors": ["takenPlural", "leftPlural"],
       "match": {
-        "takenPlural=one leftPlural=one": "{taken} added, {leftOut} left out: a post holds at most {max} attachments.",
-        "takenPlural=one leftPlural=other": "{taken} added, {leftOut} left out: a post holds at most {max} attachments.",
-        "takenPlural=other leftPlural=one": "{taken} added, {leftOut} left out: a post holds at most {max} attachments.",
-        "takenPlural=other leftPlural=other": "{taken} added, {leftOut} left out: a post holds at most {max} attachments."
+        "takenPlural=one, leftPlural=one": "{taken} added, {leftOut} left out: a post holds at most {max} attachments.",
+        "takenPlural=one, leftPlural=other": "{taken} added, {leftOut} left out: a post holds at most {max} attachments.",
+        "takenPlural=other, leftPlural=one": "{taken} added, {leftOut} left out: a post holds at most {max} attachments.",
+        "takenPlural=other, leftPlural=other": "{taken} added, {leftOut} left out: a post holds at most {max} attachments."
       }
     }
   ],
@@ -3530,10 +3530,10 @@
       ],
       "selectors": ["conversationsPlural", "messagesPlural"],
       "match": {
-        "conversationsPlural=one,messagesPlural=one": "Backup restored: {conversations} conversation, {messages} message.",
-        "conversationsPlural=one,messagesPlural=other": "Backup restored: {conversations} conversation, {messages} messages.",
-        "conversationsPlural=other,messagesPlural=one": "Backup restored: {conversations} conversations, {messages} message.",
-        "conversationsPlural=other,messagesPlural=other": "Backup restored: {conversations} conversations, {messages} messages."
+        "conversationsPlural=one, messagesPlural=one": "Backup restored: {conversations} conversation, {messages} message.",
+        "conversationsPlural=one, messagesPlural=other": "Backup restored: {conversations} conversation, {messages} messages.",
+        "conversationsPlural=other, messagesPlural=one": "Backup restored: {conversations} conversations, {messages} message.",
+        "conversationsPlural=other, messagesPlural=other": "Backup restored: {conversations} conversations, {messages} messages."
       }
     }
   ],
@@ -3547,10 +3547,10 @@
       ],
       "selectors": ["conversationsPlural", "messagesPlural"],
       "match": {
-        "conversationsPlural=one,messagesPlural=one": "Backup restored on a different device: {conversations} conversation, {messages} message. The conversations stay read-only until the original device invites you back into them.",
-        "conversationsPlural=one,messagesPlural=other": "Backup restored on a different device: {conversations} conversation, {messages} messages. The conversations stay read-only until the original device invites you back into them.",
-        "conversationsPlural=other,messagesPlural=one": "Backup restored on a different device: {conversations} conversations, {messages} message. The conversations stay read-only until the original device invites you back into them.",
-        "conversationsPlural=other,messagesPlural=other": "Backup restored on a different device: {conversations} conversations, {messages} messages. The conversations stay read-only until the original device invites you back into them."
+        "conversationsPlural=one, messagesPlural=one": "Backup restored on a different device: {conversations} conversation, {messages} message. The conversations stay read-only until the original device invites you back into them.",
+        "conversationsPlural=one, messagesPlural=other": "Backup restored on a different device: {conversations} conversation, {messages} messages. The conversations stay read-only until the original device invites you back into them.",
+        "conversationsPlural=other, messagesPlural=one": "Backup restored on a different device: {conversations} conversations, {messages} message. The conversations stay read-only until the original device invites you back into them.",
+        "conversationsPlural=other, messagesPlural=other": "Backup restored on a different device: {conversations} conversations, {messages} messages. The conversations stay read-only until the original device invites you back into them."
       }
     }
   ],
@@ -4987,10 +4987,10 @@
       ],
       "selectors": ["donePlural", "skippedPlural"],
       "match": {
-        "donePlural=one skippedPlural=one": "Deleted in {done} conversation; {skipped} is no longer on this device and keeps it.",
-        "donePlural=one skippedPlural=other": "Deleted in {done} conversation; {skipped} are no longer on this device and keep it.",
-        "donePlural=other skippedPlural=one": "Deleted in {done} conversations; {skipped} is no longer on this device and keeps it.",
-        "donePlural=other skippedPlural=other": "Deleted in {done} conversations; {skipped} are no longer on this device and keep it."
+        "donePlural=one, skippedPlural=one": "Deleted in {done} conversation; {skipped} is no longer on this device and keeps it.",
+        "donePlural=one, skippedPlural=other": "Deleted in {done} conversation; {skipped} are no longer on this device and keep it.",
+        "donePlural=other, skippedPlural=one": "Deleted in {done} conversations; {skipped} is no longer on this device and keeps it.",
+        "donePlural=other, skippedPlural=other": "Deleted in {done} conversations; {skipped} are no longer on this device and keep it."
       }
     }
   ],

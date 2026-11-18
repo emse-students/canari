@@ -1096,10 +1096,10 @@
       ],
       "selectors": ["takenPlural", "leftPlural"],
       "match": {
-        "takenPlural=one leftPlural=one": "{taken} ajoutée, {leftOut} laissée de côté : une publication contient au maximum {max} pièces jointes.",
-        "takenPlural=one leftPlural=other": "{taken} ajoutée, {leftOut} laissées de côté : une publication contient au maximum {max} pièces jointes.",
-        "takenPlural=other leftPlural=one": "{taken} ajoutées, {leftOut} laissée de côté : une publication contient au maximum {max} pièces jointes.",
-        "takenPlural=other leftPlural=other": "{taken} ajoutées, {leftOut} laissées de côté : une publication contient au maximum {max} pièces jointes."
+        "takenPlural=one, leftPlural=one": "{taken} ajoutée, {leftOut} laissée de côté : une publication contient au maximum {max} pièces jointes.",
+        "takenPlural=one, leftPlural=other": "{taken} ajoutée, {leftOut} laissées de côté : une publication contient au maximum {max} pièces jointes.",
+        "takenPlural=other, leftPlural=one": "{taken} ajoutées, {leftOut} laissée de côté : une publication contient au maximum {max} pièces jointes.",
+        "takenPlural=other, leftPlural=other": "{taken} ajoutées, {leftOut} laissées de côté : une publication contient au maximum {max} pièces jointes."
       }
     }
   ],
@@ -3562,10 +3562,10 @@
       ],
       "selectors": ["conversationsPlural", "messagesPlural"],
       "match": {
-        "conversationsPlural=one,messagesPlural=one": "Sauvegarde restaurée : {conversations} conversation, {messages} message.",
-        "conversationsPlural=one,messagesPlural=other": "Sauvegarde restaurée : {conversations} conversation, {messages} messages.",
-        "conversationsPlural=other,messagesPlural=one": "Sauvegarde restaurée : {conversations} conversations, {messages} message.",
-        "conversationsPlural=other,messagesPlural=other": "Sauvegarde restaurée : {conversations} conversations, {messages} messages."
+        "conversationsPlural=one, messagesPlural=one": "Sauvegarde restaurée : {conversations} conversation, {messages} message.",
+        "conversationsPlural=one, messagesPlural=other": "Sauvegarde restaurée : {conversations} conversation, {messages} messages.",
+        "conversationsPlural=other, messagesPlural=one": "Sauvegarde restaurée : {conversations} conversations, {messages} message.",
+        "conversationsPlural=other, messagesPlural=other": "Sauvegarde restaurée : {conversations} conversations, {messages} messages."
       }
     }
   ],
@@ -3579,10 +3579,10 @@
       ],
       "selectors": ["conversationsPlural", "messagesPlural"],
       "match": {
-        "conversationsPlural=one,messagesPlural=one": "Sauvegarde restaurée sur un autre appareil : {conversations} conversation, {messages} message. Les conversations restent en lecture seule jusqu'à ce que l'appareil d'origine vous y réinvite.",
-        "conversationsPlural=one,messagesPlural=other": "Sauvegarde restaurée sur un autre appareil : {conversations} conversation, {messages} messages. Les conversations restent en lecture seule jusqu'à ce que l'appareil d'origine vous y réinvite.",
-        "conversationsPlural=other,messagesPlural=one": "Sauvegarde restaurée sur un autre appareil : {conversations} conversations, {messages} message. Les conversations restent en lecture seule jusqu'à ce que l'appareil d'origine vous y réinvite.",
-        "conversationsPlural=other,messagesPlural=other": "Sauvegarde restaurée sur un autre appareil : {conversations} conversations, {messages} messages. Les conversations restent en lecture seule jusqu'à ce que l'appareil d'origine vous y réinvite."
+        "conversationsPlural=one, messagesPlural=one": "Sauvegarde restaurée sur un autre appareil : {conversations} conversation, {messages} message. Les conversations restent en lecture seule jusqu'à ce que l'appareil d'origine vous y réinvite.",
+        "conversationsPlural=one, messagesPlural=other": "Sauvegarde restaurée sur un autre appareil : {conversations} conversation, {messages} messages. Les conversations restent en lecture seule jusqu'à ce que l'appareil d'origine vous y réinvite.",
+        "conversationsPlural=other, messagesPlural=one": "Sauvegarde restaurée sur un autre appareil : {conversations} conversations, {messages} message. Les conversations restent en lecture seule jusqu'à ce que l'appareil d'origine vous y réinvite.",
+        "conversationsPlural=other, messagesPlural=other": "Sauvegarde restaurée sur un autre appareil : {conversations} conversations, {messages} messages. Les conversations restent en lecture seule jusqu'à ce que l'appareil d'origine vous y réinvite."
       }
     }
   ],
@@ -4987,10 +4987,10 @@
       ],
       "selectors": ["donePlural", "skippedPlural"],
       "match": {
-        "donePlural=one skippedPlural=one": "Supprimée dans {done} conversation ; {skipped} n'est plus sur cet appareil et la garde.",
-        "donePlural=one skippedPlural=other": "Supprimée dans {done} conversation ; {skipped} ne sont plus sur cet appareil et la gardent.",
-        "donePlural=other skippedPlural=one": "Supprimée dans {done} conversations ; {skipped} n'est plus sur cet appareil et la garde.",
-        "donePlural=other skippedPlural=other": "Supprimée dans {done} conversations ; {skipped} ne sont plus sur cet appareil et la gardent."
+        "donePlural=one, skippedPlural=one": "Supprimée dans {done} conversation ; {skipped} n'est plus sur cet appareil et la garde.",
+        "donePlural=one, skippedPlural=other": "Supprimée dans {done} conversation ; {skipped} ne sont plus sur cet appareil et la gardent.",
+        "donePlural=other, skippedPlural=one": "Supprimée dans {done} conversations ; {skipped} n'est plus sur cet appareil et la garde.",
+        "donePlural=other, skippedPlural=other": "Supprimée dans {done} conversations ; {skipped} ne sont plus sur cet appareil et la gardent."
       }
     }
   ],
