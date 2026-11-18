@@ -187,7 +187,7 @@
                 class="border-cn-border text-text-main inline-flex max-w-full items-center gap-1.5 rounded-full border bg-(--cn-surface) py-0.5 pr-2.5 pl-0.5 text-xs font-semibold"
                 data-event-neutral
               >
-                <NeutralEventMark size="sm" />
+                <NeutralEventMark size="sm" color={link.color} />
                 <span class="truncate">{link.name}</span>
               </span>
             {:else}

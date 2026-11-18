@@ -51,6 +51,15 @@ describe('MonthCalendarGridRich - neutral event colour', () => {
     expect(render('#336699')).toContain('#336699');
   });
 
+  it('draws no logo or initials watermark with a chosen colour either (#3823)', () => {
+    render('#336699');
+    expect(document.body.querySelectorAll('img')).toHaveLength(0);
+    const initials = [...document.body.querySelectorAll('span')]
+      .map((s) => s.textContent?.trim() ?? '')
+      .filter((t) => /^[A-Z]{1,2}$/.test(t));
+    expect(initials).toEqual([]);
+  });
+
   it('keeps the derived accent when none is chosen', () => {
     const derived = associationAccentHex({
       id: NEUTRAL_EVENT_OWNER_KEY,

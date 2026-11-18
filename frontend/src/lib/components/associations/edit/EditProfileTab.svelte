@@ -22,6 +22,7 @@
   import { associationPickerOptions } from '$lib/associations/selectGroups';
   import SquareImageCropper from '$lib/components/associations/SquareImageCropper.svelte';
   import Input from '$lib/components/ui/Input.svelte';
+  import Button from '$lib/components/ui/Button.svelte';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
   import ColorPicker from '$lib/components/ui/ColorPicker.svelte';
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
@@ -311,21 +312,7 @@
     <span class="text-text-main ml-1 block text-sm font-bold"
       >{m.asso_edit_calendar_color_label()}</span
     >
-    <div class="flex flex-wrap gap-1.5">
-      {#each PRESET_COLORS as c (c)}
-        <button
-          type="button"
-          onclick={() => (editColor = c)}
-          title={c}
-          class="h-7 w-7 shrink-0 rounded-full border-2 transition-all hover:scale-110 focus:outline-none
- {editColor === c
-            ? 'border-cn-dark ring-accent/70 scale-110 ring-2 ring-offset-1'
-            : 'border-transparent hover:border-white/60'}"
-          style="background:{c};"
-          aria-label={c}
-        ></button>
-      {/each}
-    </div>
+    {@render presetSwatches(editColor, (c) => (editColor = c))}
     <div class="ml-0.5 flex items-center gap-2">
       <span class="text-text-muted text-xs">{m.asso_edit_custom_color_label()}</span>
       <ColorPicker bind:value={editColor} label={m.asso_edit_color_picker_label()} />
@@ -337,32 +324,14 @@
         >{m.asso_edit_neutral_color_label()}</span
       >
       <p class="text-text-muted ml-1 text-xs">{m.asso_edit_neutral_color_hint()}</p>
-      <div class="flex flex-wrap gap-1.5">
-        {#each PRESET_COLORS as c (c)}
-          <button
-            type="button"
-            onclick={() => (editNeutralColor = c)}
-            title={c}
-            class="h-7 w-7 shrink-0 rounded-full border-2 transition-all hover:scale-110 focus:outline-none
- {editNeutralColor === c
-              ? 'border-cn-dark ring-accent/70 scale-110 ring-2 ring-offset-1'
-              : 'border-transparent hover:border-white/60'}"
-            style="background:{c};"
-            aria-label={c}
-          ></button>
-        {/each}
-      </div>
+      {@render presetSwatches(editNeutralColor, (c) => (editNeutralColor = c))}
       <div class="ml-0.5 flex items-center gap-2">
         <span class="text-text-muted text-xs">{m.asso_edit_custom_color_label()}</span>
         <ColorPicker bind:value={editNeutralColor} label={m.asso_edit_color_picker_label()} />
         {#if editNeutralColor}
-          <button
-            type="button"
-            onclick={() => (editNeutralColor = '')}
-            class="text-text-muted hover:text-text-main text-xs underline"
-          >
+          <Button variant="link" size="compact" onclick={() => (editNeutralColor = '')}>
             {m.asso_edit_neutral_color_reset()}
-          </button>
+          </Button>
         {/if}
       </div>
     </div>
@@ -411,3 +380,23 @@
     </p>
   {/if}
 </div>
+
+<!-- The preset swatches, one row for the association's colour and one for a BDE's Campus events:
+     one markup, so the two pickers cannot drift. -->
+{#snippet presetSwatches(current: string, choose: (c: string) => void)}
+  <div class="flex flex-wrap gap-1.5">
+    {#each PRESET_COLORS as c (c)}
+      <button
+        type="button"
+        onclick={() => choose(c)}
+        title={c}
+        class="h-7 w-7 shrink-0 rounded-full border-2 transition-all hover:scale-110 focus:outline-none
+ {current === c
+          ? 'border-cn-dark ring-accent/70 scale-110 ring-2 ring-offset-1'
+          : 'border-transparent hover:border-white/60'}"
+        style="background:{c};"
+        aria-label={c}
+      ></button>
+    {/each}
+  </div>
+{/snippet}
