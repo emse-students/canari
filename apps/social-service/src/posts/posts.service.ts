@@ -2578,9 +2578,18 @@ export class PostsService {
             rows.map((r) => r.id)
           ),
     };
+    // Which writer this caller may MUTE - asked of the unredacted column, answered as a bare fact:
+    // the "delete and mute" control is drawn from it alone, never offered to be refused (a BDE mutes
+    // the people of its own spaces only, an institution's `MODERATE` holder none).
+    const mutable = await this.associationsService.moderatedUserIds(
+      scope.userId,
+      rows.map((r) => (typeof r.authorId === 'string' ? r.authorId : '')),
+      { isGlobalAdmin: scope.isGlobalAdmin }
+    );
     const served = rows.map((row) => {
       const out: HiddenPostRow = { ...row };
       this.withholdWriterUnlessSeen(out, row, viewer);
+      out.canMuteAuthor = typeof row.authorId === 'string' && mutable.has(row.authorId);
       return out;
     });
     this.logger.debug(

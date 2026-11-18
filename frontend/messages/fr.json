@@ -1410,7 +1410,7 @@
   "moderation_supprimer_post": "Supprimer le post",
   "moderation_supprimer_commentaire": "Supprimer le commentaire",
   "moderation_no_hidden": "Aucun post masqué actuellement.",
-  "moderation_hidden_desc": "Ces posts ont été masqués automatiquement après avoir atteint 5 signalements. Ils ne sont plus visibles dans les fils d'actualité. Restaurez-les si le signalement est infondé, ou supprimez-les s'il est justifié.",
+  "moderation_hidden_desc": "Ces posts ont été masqués, automatiquement après 5 signalements ou à la main par un modérateur. Ils ne sont plus visibles dans les fils d'actualité. Restaurez-les si le signalement est infondé, ou supprimez-les s'il est justifié.",
   "moderation_restaurer": "Restaurer",
   "moderation_supprimer_muter": "Supprimer + muter",
   "moderation_no_muted": "Aucun utilisateur muté actuellement.",

@@ -1378,7 +1378,7 @@
   "moderation_supprimer_post": "Delete post",
   "moderation_supprimer_commentaire": "Delete comment",
   "moderation_no_hidden": "No hidden posts currently.",
-  "moderation_hidden_desc": "These posts were hidden automatically after reaching 5 reports. They are no longer visible in feeds. Restore them if the report is unfounded, or delete them if justified.",
+  "moderation_hidden_desc": "These posts were hidden, automatically after 5 reports or by hand by a moderator. They are no longer visible in feeds. Restore them if the report is unfounded, or delete them if justified.",
   "moderation_restaurer": "Restore",
   "moderation_supprimer_muter": "Delete + mute",
   "moderation_no_muted": "No muted users currently.",
