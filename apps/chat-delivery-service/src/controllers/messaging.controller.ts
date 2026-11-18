@@ -706,7 +706,7 @@ export class MessagingController {
       ? {
           at: String(at),
           ...(messageId
-            ? { collapseId: reactionCollapseId(messageId, canonicalUserId(callerId), at) }
+            ? { collapseId: reactionCollapseId(messageId, canonicalUserId(callerId)) }
             : {}),
         }
       : {};

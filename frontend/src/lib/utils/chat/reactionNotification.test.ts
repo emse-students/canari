@@ -190,21 +190,27 @@ describe('the push half', () => {
     // The plugin files the page's post under `"\(notification.id)"`; the server sends the push with
     // `apns-collapse-id` = the same decimal (chat-delivery-service `push-payload.spec.ts` asserts this
     // very vector), so the system replaces one by the other.
-    expect(reactionCollapseKey('msg-1', 'Peer-User', 1_700_000_000_123)).toBe(
-      'reaction:msg-1:peer-user:1700000000123'
-    );
-    expect(reactionCollapseId('msg-1', 'Peer-User', 1_700_000_000_123)).toBe('1809935358');
-    expect(reactionCollapseId('srv-row-9', 'peer', 1_700_000_000_123)).toBe('2055444975');
-    expect(
-      String(stableNotifId(reactionCollapseKey('msg-1', 'peer-user', 1_700_000_000_123)))
-    ).toBe('1809935358');
+    expect(reactionCollapseKey('msg-1', 'Peer-User')).toBe('reaction:msg-1:peer-user');
+    expect(reactionCollapseId('msg-1', 'Peer-User')).toBe('97988016');
+    expect(reactionCollapseId('srv-row-9', 'peer')).toBe('71866787');
+    expect(String(stableNotifId(reactionCollapseKey('msg-1', 'peer-user')))).toBe('97988016');
+  });
+
+  it("iOS: a reactor's second reaction to the same message REPLACES the first, as Android's line does", () => {
+    // The slot carries no instant: two reactions by one reactor to one message are one entry in
+    // Notification Center (iPhone 12, 1.7.0-alpha.11, 2026-11-18: two entries before).
+    expect(reactionCollapseKey('msg-1', 'peer')).toBe('reaction:msg-1:peer');
+    expect(reactionCollapseId('msg-1', 'peer')).toBe(reactionCollapseId('msg-1', 'PEER'));
+    // ...while another reactor, or another message, keeps its own entry.
+    expect(reactionCollapseId('msg-1', 'peer')).not.toBe(reactionCollapseId('msg-1', 'other'));
+    expect(reactionCollapseId('msg-1', 'peer')).not.toBe(reactionCollapseId('msg-2', 'peer'));
   });
 
   it('iOS: the identifier hashes the reacted-to MESSAGE, never the conversation', () => {
     // It rides the content-free wake as an APNs header; a call ring names the group and the caller
     // in clear, so a hash over those and an instant could be confirmed by guessing (#3792 round 3).
-    expect(reactionCollapseKey('msg-1', 'peer', 1)).not.toContain('grp-1');
-    expect(reactionCollapseId('msg-1', 'peer', 1)).not.toBe(reactionCollapseId('grp-1', 'peer', 1));
+    expect(reactionCollapseKey('msg-1', 'peer')).not.toContain('grp-1');
+    expect(reactionCollapseId('msg-1', 'peer')).not.toBe(reactionCollapseId('grp-1', 'peer'));
   });
 
   it('Android: both triggers post the ONE composition, under the ONE key', () => {

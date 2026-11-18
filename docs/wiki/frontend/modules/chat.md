@@ -557,6 +557,7 @@ from members; the salon access list and the association roster are in server or 
   the profile name elsewhere, the id when no name is known (at warn). The name is the one already
   known (the row drew it), so a stalled link never keeps the dialog from opening; the network is
   asked only when nothing is known. A tap that lands on a moved row is read before it is confirmed.
+- **The community remove control is named too** (2026-11-18): its `aria-label` is `chat_community_remove_member_label` (`Retirer {member}`, the group panel's shape) from `userDisplayNames`, where every row read "Retirer le membre" to a screen reader.
 - **The rig asserts it**: `removeCommunityMember` (`tools/cross-client-harness/comm.mjs`) waits for the
   control to be live and refuses to confirm a dialog that does not name the member it was asked for.
 
@@ -598,6 +599,13 @@ up for fifteen seconds, anchored to an input that was `display: none`.
   and compares the CANONICAL path, so neither `..` nor a symlink reaches outside. `nativeAttachPicker.ts`
   names the `File` as the picker did and types it from its extension (the picker gives no MIME type);
   a photo arrives as the library holds it, usually HEIC, which `compressImage` decodes on WebKit.
+  **One directory per pick (2026-11-18):** upstream `tauri-plugin-dialog` 2.8.3 copied every PHPicker item to
+  `<caches>/<file name>` after deleting whatever held that name, from several threads at once, so a pick of 11
+  gave 3 files and 8 "No such file". The crate is vendored (`src-tauri/patches/tauri-plugin-dialog`, the
+  `CANARI PATCH` hunks in `ios/Sources/FilePickerController.swift`): `canari-pick-<uuid>/<name>` per item, a
+  serial queue for the shared state, the order kept, and the items already copied handed over when another fails; `take_picked_file` removes the emptied directory
+  (`remove_emptied_pick_dir`), and `pickNatively` warns with how many files were not taken. The Swift is
+  verified by compiling only - owed on the iPhone: a pick of 11.
 
 **THE MENU, THE PANEL AND THE KEYBOARD ARE ONE STATE** (`utils/chat/composerSurface.ts`,
 `composerSurface.test.ts` walks every event in every state): `idle`, `menu`, `gif`, and `handoff`.
@@ -6285,6 +6293,10 @@ EMPTY group whose members were added afterwards from its own panel. Now there is
 | nobody | "Démarrer la discussion", disabled | - |
 | one person | "Démarrer la discussion" | opens the 1:1 with them, or creates it (`startNewConversation`, unchanged) |
 | two or more | "Créer un groupe avec N personnes" | opens the NAME STEP, a second panel over the first |
+
+**The chips row has one height from the opening** (2026-11-18): a hint before any pick, a single line scrolling
+sideways after - the first chip used to push the recent list under the finger about to tap the second person
+(`new-chat-chips-slot`).
 
 **The name step.** The field is EMPTY, and its placeholder - greyed - is the label the group will
 carry if it stays empty: the chosen people's first names, composed by the same function every

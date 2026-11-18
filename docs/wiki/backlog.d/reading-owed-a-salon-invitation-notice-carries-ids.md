@@ -1,6 +1,6 @@
 ## Reading owed - a salon invitation's notice carries ids, drawn in the reader's language (2026-11-16)
 
-target: 1.7.0
+target: 1.7.1
 
 **What is built:** the inviter sends `{ "newUsers": [id] }` always; the localized sentence it sent
 while a build older than the reader (`channelSystemEnvelope`, `1.7.0`) could still be admitted is

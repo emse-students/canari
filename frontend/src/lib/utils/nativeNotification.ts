@@ -140,8 +140,9 @@ export type NativeReactionNotification = {
   /** The conversation - the notification is filed under `reaction:<conversationId>`. */
   conversationId: string;
   /**
-   * The reacted-to message: with the actor and `at`, the identity of this ONE reaction
-   * (`reactionCollapseKey`), which the push names too - so the two are one notification.
+   * The reacted-to message: with the actor, the notification slot of this reaction
+   * (`reactionCollapseKey`), which the push names too - so the two are one notification, and the
+   * actor's next reaction to the same message replaces it.
    */
   messageId: string;
   /** Who reacted: whose face to draw, and whose nickname in this conversation to look up. */
