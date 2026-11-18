@@ -7,7 +7,7 @@ import {
   reportUnreadableChannelMessage,
   type DecodedChannelReaction,
 } from '$lib/utils/chat/channelCrypto';
-import { oweLiveDecision } from '$lib/utils/chat/owedLiveFrames';
+import { oweLiveDecision, owedLiveGeneration } from '$lib/utils/chat/owedLiveFrames';
 import { channelReactionOf } from '$lib/utils/chat/messageReactions';
 import { decodeAppMessage } from '$lib/proto/codec';
 import { appMsgToEnvelope } from '$lib/utils/chat/messageUtils';
@@ -469,6 +469,9 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
       const channelServerMs = parseServerTimestampMs(data.createdAt);
       // Set when the frame could not be OPENED - as opposed to opened and found to be no bubble.
       let unopened = false;
+      // Captured before the open's await: a session ending meanwhile must not receive this frame's
+      // parked decision (`owedLiveFrames.ts`).
+      const parkGeneration = owedLiveGeneration();
       try {
         if (data.ciphertext) {
           // Opened here rather than left to the history reload: a live bubble that only appeared
@@ -575,13 +578,18 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
         // reader that opens it (`owedLiveFrames.ts`). Only a SILENT row can be a reaction (the
         // server knows nothing else about a body it cannot read), so a line never parks.
         if (repairable && data.silent === true && onInboundReaction) {
-          oweLiveDecision(String(data.channelId), messageId, (reaction, changed) => {
-            void raiseLiveChannelReaction(channelId, reaction, changed, ctx).catch((err) =>
-              console.error(
-                `[NOTIF] the owed live decision of ${messageId.slice(0, 8)} failed: ${String(err)}`
-              )
-            );
-          });
+          oweLiveDecision(
+            String(data.channelId),
+            messageId,
+            parkGeneration,
+            (reaction, changed) => {
+              void raiseLiveChannelReaction(channelId, reaction, changed, ctx).catch((err) =>
+                console.error(
+                  `[NOTIF] the owed live decision of ${messageId.slice(0, 8)} failed: ${String(err)}`
+                )
+              );
+            }
+          );
         }
       }
 

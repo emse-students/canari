@@ -3311,7 +3311,11 @@ opens THAT row first (`useConversations`' page load or search) takes the decisio
 only once - and hands it the reaction it read and what applying it changed; the decision raises it
 through the same `raiseLiveChannelReaction` as an opened live frame, `live: true`. Every other row of
 a page finds nothing parked, so history still raises nothing. Emptied at sign-out with the seed layer
-(`setGraineRuntime(null)`). Tests: `channelEventHandler.reaction.test.ts`,
+(`setGraineRuntime(null)`), and a handler still awaiting its open when the session ends does not park
+(a session generation captured before the await). **No age term, deliberately:** the decision fires
+when the row first opens, so a seed a peer answers hours later announces the reaction hours late -
+once, since the push was dropped in front; principle 2 (the essential is never lost) over a
+notification that reads as old. Tests: `channelEventHandler.reaction.test.ts`,
 `useConversations.owedLiveReaction.svelte.test.ts`.
 
 **A salon's level is not applied**, on either path: the server cannot read it for a reaction

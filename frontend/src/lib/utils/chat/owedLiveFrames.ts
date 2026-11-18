@@ -31,16 +31,38 @@ export type OwedLiveDecision = (reaction: DecodedChannelReaction, changed: boole
 /** `<raw channel id>#<row id>` -> the decision owed. */
 const owed = new Map<string, OwedLiveDecision>();
 
+/**
+ * Which session the parked decisions belong to, moved by every {@link resetOwedLiveDecisions}. A live
+ * handler still awaiting its open when the session ends would otherwise park AFTER the reset, with
+ * the old session's context, for the next account's reader to call.
+ */
+let generation = 0;
+
+/** The session generation a live handler captures BEFORE it awaits anything (see `generation`). */
+export function owedLiveGeneration(): number {
+  return generation;
+}
+
 function keyOf(rawChannelId: string, rowId: string): string {
   return `${rawChannelId}#${rowId}`;
 }
 
-/** Parks the decision of a live row that could not be opened for a missing seed. */
+/**
+ * Parks the decision of a live row that could not be opened for a missing seed - unless the session
+ * it was taken for (`takenIn`, from {@link owedLiveGeneration}) has ended meanwhile.
+ */
 export function oweLiveDecision(
   rawChannelId: string,
   rowId: string,
+  takenIn: number,
   decide: OwedLiveDecision
 ): void {
+  if (takenIn !== generation) {
+    console.debug(
+      `[CHANNEL] live row ${rowId.slice(0, 8)} of ${rawChannelId.slice(0, 8)} not parked - the session it arrived in has ended`
+    );
+    return;
+  }
   owed.set(keyOf(rawChannelId, rowId), decide);
   console.debug(
     `[CHANNEL] live row ${rowId.slice(0, 8)} of ${rawChannelId.slice(0, 8)} parked until its seed opens it - its reaction, if it is one, is still owed a live decision`
@@ -52,11 +74,20 @@ export function oweLiveDecision(
  * that did not arrive live before its seed. Called for each opened row, whatever it carries, so a
  * parked line or edit is forgotten too.
  */
-export function takeOwedLiveDecision(rawChannelId: string, rowId: string): OwedLiveDecision | null {
+export function takeOwedLiveDecision(
+  rawChannelId: string,
+  rowId: string,
+  reader: string
+): OwedLiveDecision | null {
   const key = keyOf(rawChannelId, rowId);
   const decide = owed.get(key);
   if (!decide) return null;
   owed.delete(key);
+  // The end of the trail the park began: a reaction goes on to the `[NOTIF]` lines, anything else
+  // (an edit, a removed row) ends here, and the two must not read like the loss this fixes.
+  console.debug(
+    `[CHANNEL] live row ${rowId.slice(0, 8)} of ${rawChannelId.slice(0, 8)} opened by ${reader} - its owed live decision is taken (decided only if it is a reaction still held)`
+  );
   return decide;
 }
 
@@ -68,4 +99,5 @@ export function resetOwedLiveDecisions(): void {
     );
   }
   owed.clear();
+  generation += 1;
 }

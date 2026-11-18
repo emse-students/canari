@@ -44,7 +44,7 @@ vi.mock('$lib/mls-client/tabMessageSync', () => ({ publishTabMessageUpdate: vi.f
 vi.mock('$lib/utils/chat/messaging', () => ({ forgetDeliveredSalonSend: vi.fn() }));
 
 const { handleChannelEvent } = await import('./channelEventHandler');
-const { takeOwedLiveDecision, resetOwedLiveDecisions } =
+const { takeOwedLiveDecision, resetOwedLiveDecisions, oweLiveDecision, owedLiveGeneration } =
   await import('$lib/utils/chat/owedLiveFrames');
 
 const mine: ChatMessage = {
@@ -259,7 +259,7 @@ describe('channelEventHandler - a live reaction opened only after its seed', () 
     await handleChannelEvent(unopenable, ctx);
     expect(onInboundReaction).not.toHaveBeenCalled();
 
-    const decide = takeOwedLiveDecision('c1', 'srv-r');
+    const decide = takeOwedLiveDecision('c1', 'srv-r', 'test');
     expect(decide).not.toBeNull();
     decide!(
       {
@@ -284,7 +284,7 @@ describe('channelEventHandler - a live reaction opened only after its seed', () 
       })
     );
     // Only once: the decision is taken, never shared by a second reader.
-    expect(takeOwedLiveDecision('c1', 'srv-r')).toBeNull();
+    expect(takeOwedLiveDecision('c1', 'srv-r', 'test')).toBeNull();
   });
 
   it.each([
@@ -294,6 +294,35 @@ describe('channelEventHandler - a live reaction opened only after its seed', () 
     reportUnreadableChannelMessage.mockReturnValueOnce(repairable);
     const { ctx } = setup({ shown: true });
     await handleChannelEvent({ ...frame, data: { ...frame.data, silent } }, ctx);
-    expect(takeOwedLiveDecision('c1', 'srv-r')).toBeNull();
+    expect(takeOwedLiveDecision('c1', 'srv-r', 'test')).toBeNull();
+  });
+
+  it('parks nothing for a handler whose session ENDED while it awaited the open', async () => {
+    reportUnreadableChannelMessage.mockReturnValueOnce(true);
+    let release!: () => void;
+    openChannelMessageProving.mockReset();
+    openChannelMessageProving.mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          release = () => reject(new Error('no seed'));
+        })
+    );
+    const { ctx } = setup({ shown: true });
+    const handled = handleChannelEvent(unopenable, ctx);
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+    // The sign-out empties the seed layer (`setGraineRuntime(null)` -> this reset) mid-open.
+    resetOwedLiveDecisions();
+    release();
+    await handled;
+    expect(takeOwedLiveDecision('c1', 'srv-r', 'test')).toBeNull();
+  });
+
+  it('a reset forgets every parked decision, and a stale generation parks nothing', () => {
+    const before = owedLiveGeneration();
+    oweLiveDecision('c1', 'srv-x', before, vi.fn());
+    resetOwedLiveDecisions();
+    expect(takeOwedLiveDecision('c1', 'srv-x', 'test')).toBeNull();
+    oweLiveDecision('c1', 'srv-y', before, vi.fn());
+    expect(takeOwedLiveDecision('c1', 'srv-y', 'test')).toBeNull();
   });
 });

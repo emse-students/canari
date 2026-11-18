@@ -12,10 +12,11 @@ import type { Conversation } from '$lib/types';
 
 const listMessages = vi.hoisted(() => vi.fn());
 const listReadMarks = vi.hoisted(() => vi.fn());
+const fetchAllChannelMessages = vi.hoisted(() => vi.fn());
 const applyChannelReactionFrame = vi.hoisted(() => vi.fn(() => true));
 
 vi.mock('$lib/services/ChannelService', () => ({
-  channelService: { listMessages, listReadMarks },
+  channelService: { listMessages, listReadMarks, fetchAllChannelMessages },
 }));
 
 vi.mock('$lib/stores/reactionStore.svelte', async (importOriginal) => ({
@@ -57,7 +58,7 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
 }));
 
 const { useConversations } = await import('./useConversations.svelte');
-const { oweLiveDecision, takeOwedLiveDecision, resetOwedLiveDecisions } =
+const { oweLiveDecision, owedLiveGeneration, takeOwedLiveDecision, resetOwedLiveDecisions } =
   await import('$lib/utils/chat/owedLiveFrames');
 
 const RAW = '7d2f0aa0-0000-4000-8000-000000000003';
@@ -86,6 +87,8 @@ function holdSalon(convs: ReturnType<typeof useConversations>) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Set here, never restored at a test's end: a failed assertion must not leak a `false` onward.
+  applyChannelReactionFrame.mockReturnValue(true);
   resetOwedLiveDecisions();
   localStorage.clear();
   listMessages.mockResolvedValue([{ id: 'srv-r1' }, { id: 'srv-r2' }]);
@@ -95,7 +98,7 @@ beforeEach(() => {
 describe('a history load and the live decisions it owes', () => {
   it('hands the parked row its reaction, once, with what applying it changed', async () => {
     const decide = vi.fn();
-    oweLiveDecision(RAW, 'srv-r1', decide);
+    oweLiveDecision(RAW, 'srv-r1', owedLiveGeneration(), decide);
     const convs = useConversations();
     holdSalon(convs);
 
@@ -106,7 +109,7 @@ describe('a history load and the live decisions it owes', () => {
       expect.objectContaining({ targetMessageId: 'srv-mine', senderId: 'peer' }),
       true
     );
-    expect(takeOwedLiveDecision(RAW, 'srv-r1')).toBeNull();
+    expect(takeOwedLiveDecision(RAW, 'srv-r1', 'test')).toBeNull();
 
     // A second load of the same page is history again: nothing is owed any more.
     convs.invalidateChannelHistoryCache(SALON);
@@ -117,19 +120,32 @@ describe('a history load and the live decisions it owes', () => {
   it('carries a replay as a replay - the trigger refuses what changed nothing', async () => {
     applyChannelReactionFrame.mockReturnValue(false);
     const decide = vi.fn();
-    oweLiveDecision(RAW, 'srv-r1', decide);
+    oweLiveDecision(RAW, 'srv-r1', owedLiveGeneration(), decide);
     const convs = useConversations();
     holdSalon(convs);
 
     await convs.loadHistoryForConversation(SALON, SALON, makeCtx());
 
     expect(decide).toHaveBeenCalledWith(expect.anything(), false);
-    applyChannelReactionFrame.mockReturnValue(true);
+  });
+
+  it('a SEARCH that opens the parked row first is the reader that owes its decision', async () => {
+    fetchAllChannelMessages.mockResolvedValue({ rows: [{ id: 'srv-r1' }], capped: false });
+    const decide = vi.fn();
+    oweLiveDecision(RAW, 'srv-r1', owedLiveGeneration(), decide);
+    const convs = useConversations();
+    holdSalon(convs);
+
+    await convs.searchChannelHistory(SALON, 'hello', makeCtx());
+
+    expect(decide).toHaveBeenCalledTimes(1);
+    expect(decide).toHaveBeenCalledWith(expect.objectContaining({ senderId: 'peer' }), true);
+    expect(takeOwedLiveDecision(RAW, 'srv-r1', 'test')).toBeNull();
   });
 
   it('owes nothing for a row parked in ANOTHER salon of the same id space', async () => {
     const decide = vi.fn();
-    oweLiveDecision('another-salon', 'srv-r1', decide);
+    oweLiveDecision('another-salon', 'srv-r1', owedLiveGeneration(), decide);
     const convs = useConversations();
     holdSalon(convs);
 

@@ -975,7 +975,7 @@ export function useConversations() {
           if (!decoded) continue;
           // Taken for EVERY opened row, before anything may skip it: a live row parked for its seed
           // is owed one decision, by the first reader that opens it (`owedLiveFrames.ts`).
-          const owedLive = takeOwedLiveDecision(rawId, String(msg.id));
+          const owedLive = takeOwedLiveDecision(rawId, String(msg.id), 'the history load');
           // Removed live since the request left: the server holds it no more, whatever the page says.
           if (removals.has(String(msg.id))) continue;
           // A reaction is a row of its own now (WP-40): it changes a bubble instead of being one.
@@ -1271,7 +1271,7 @@ export function useConversations() {
         if (!decoded) continue;
         // The same take as the history load's: whichever reader opens a parked live row first owes
         // it its decision, and a search may be that reader (`owedLiveFrames.ts`).
-        const owedLive = takeOwedLiveDecision(rawId, String(row.id));
+        const owedLive = takeOwedLiveDecision(rawId, String(row.id), 'a search');
         if (removals.has(String(row.id))) continue;
         if (decoded.kind === 'reaction') {
           // Searching the whole history is also the widest sweep of reaction frames there is, so it
