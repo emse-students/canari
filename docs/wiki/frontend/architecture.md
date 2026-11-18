@@ -765,10 +765,11 @@ check in the same file, which is also what catches a fourteenth builder.
 - User-visible strings must always go through Paraglide — never inline string literals, in either
   language. English ones are the easier mistake to miss: they look like the rest of the codebase.
 - **A MESSAGE WITH TWO SELECTORS KEYS ITS MATCH WITH `", "`** (`"aPlural=one, bPlural=other"`). The
-  message-format plugin splits a key on comma-plus-space; a bare space or comma reads as ONE selector
-  whose value is `"one bPlural=other"`, no branch matches and the compiled function returns its own
-  NAME - four messages (`post_attachments_partial`, `profile_backup_import_ok`, `..._other_device`,
-  `reel_sendto_delete_everywhere_skipped`) showed their key in a toast until 1.7.1. A caller's test
+  message-format plugin splits a key on comma-plus-space; a bare space reads as ONE selector whose
+  value is `"one bPlural=other"`, no branch matches and the compiled function returns its own NAME -
+  two messages (`post_attachments_partial`, `reel_sendto_delete_everywhere_skipped`) showed their key
+  in a toast until 1.7.1. A comma without a space happens to compile (the two
+  `profile_backup_import_ok*` used it) but is written in the canonical form too. A caller's test
   comparing `m.x(..)` with `m.x(..)` passes on a key; `i18n/multiSelectorMessages.test.ts` pins the key
   syntax in both locale files and renders every plural pair of the four.
 - **Nothing types a string as user-visible**, so the compiler cannot enforce the rule above.
