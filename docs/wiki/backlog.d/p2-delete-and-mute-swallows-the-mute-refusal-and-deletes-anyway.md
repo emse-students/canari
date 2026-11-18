@@ -18,8 +18,10 @@ Seen on the same tab: its explanation reads "Ces posts ont été masqués automa
 atteint 5 signalements" above a post a moderator hid by hand, and the row names the author person,
 not the institution it was published as (also seen in S4).
 
-**The fix:** offer the control only where the server says the caller may mute that author (the queue
-already carries `canMuteReportedUser` per row; the hidden list needs the same fact), classify the
+**The fix:** offer the control only where the server says the caller may mute that author - the rule
+the queue has followed since 2026-11-02 ("the mute buttons are drawn from the server's answer alone",
+`canMuteReporter` / `canMuteReportedUser`, `page.muteGating.svelte.test.ts`), which the hidden list
+escaped, classify the
 mute's refusal by its code with `describeModerationRefusal`, and stop before the delete when the mute
 is refused. A component test: the button absent when the fact is false, and a refused mute neither
 deletes nor stays silent.

@@ -354,5 +354,6 @@ long as its score.
 timestamps, a failed store not failing the win, the replay read (and its 404s, and the trace of who
 read it); client specs for the board after n moves forwards and backwards without regenerating, the
 clock to move count, the viewer's states, the modal stamping a won game (moves from 0, non-decreasing,
-claimed = last `t`) and the Games page button. **NOT verified:** migration 175 on a real PostgreSQL
-(none available locally), and the viewer on a phone and as a real admin ([reading owed](../../backlog.d/reading-owed-minesweeper-replay-as-a-global-admin.md)).
+claimed = last `t`) and the Games page button. **Read on dev 2026-11-18 (`1.7.0-alpha.12`):** migration 175
+applied (the replay row stored with the score), and the viewer as a real global admin at phone width
+([readings](../../device-verification.md#the-phone-and-web-readings-of-2026-11-18-s6-170-alpha12-live-moderations-last-halves-the-reel-card-overlays-the-birthday-morning)).
