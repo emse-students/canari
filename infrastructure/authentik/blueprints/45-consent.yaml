@@ -6,10 +6,17 @@
 # (instantiate: false) - see infrastructure/authentik/README.md. Every reference is a !Find on a
 # NATURAL key (slug, name, managed id), never a primary key, so the same file builds any instance.
 #
-# WHY THE AUTHORIZATION FLOW, and not the enrolment flow: every provider (Canari, Sky, MiGallery,
-# Portail-etu, Le Cercle, the archives...) authorizes through ONE flow, so a stage there is the only
-# place that covers the CAS and the Alumni source alike, the accounts that already exist (enrolment
-# runs once, at the first sign-in) and every future version of the text. The answer is stored on the
+# WHY THE AUTHORIZATION FLOW, and not the enrolment flow: a provider (Canari, Sky, MiGallery, Le
+# Cercle, the archives...) that names this flow asks for the terms whichever source signed the person
+# in - the CAS and the Alumni source alike - for the accounts that already exist (enrolment runs once,
+# at the first sign-in) and for every future version of the text.
+#
+# WHICH PROVIDERS NAME IT IS DECLARED IN 50-providers.yaml, one `authorization_flow` per provider, and
+# nowhere else (2026-11-18). This file only BUILDS the flow; a flow no provider names is inert. Until
+# the hold of 2026-10-17 is lifted, only the two non-production Canari providers (dev, local) name it,
+# so the terms are read on dev and the harness before production asks anybody
+# (docs/wiki/infrastructure/authentik.md#the-terms-of-use-are-a-stage-of-the-authorization-flow-2026-10-16).
+# The answer is stored on the
 # account: `cgu_version` (which text) and `cgu_accepted_at` (when). THE VERSION IS WRITTEN IN TWO
 # PLACES BELOW, the policy and the hidden prompt - change both, or the stage re-asks forever.
 # check-consent-version.sh (run by test-blueprints.sh in CI) fails while they, the page's `updated`
