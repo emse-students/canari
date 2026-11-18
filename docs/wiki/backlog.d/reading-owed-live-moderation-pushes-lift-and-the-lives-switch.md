@@ -9,7 +9,8 @@ lifting a withdrawal in `/admin/moderation`
 ([live](../frontend/modules/live.md#the-moderation-client-wp-l8s-client-half-2026-10-19)). The gate
 list is [live-production](../frontend/modules/live-production.md#2-the-gates-each-with-its-evidence);
 the viewer cap is [its own entry](live-viewer-cap-lifted-in-measured-steps.md). Lives stay a release
-blocker until G9 closes (G7 and G8 closed 2026-11-17): [the phone-reading entry](reading-owed-lives-on-both-phones-watching-broadcasting-chat-and-reactions.md). Read 2026-11-17 and
+blocker until G9 closes (G7 and G8 closed 2026-11-17); G9's watching, broadcasting and chat half closed
+on 2026-11-18 ([decisions](owner-decisions-of-2026-11-18.md)), and THIS entry is what is left of it. Read 2026-11-17 and
 no longer owed: dev's `[LIVE_REPORT_AGE]` line (`pending=0` hourly, G4), and dev's `lives_mode` row
 open (`on`, published by `/api/version` as `lives.mode`).
 
