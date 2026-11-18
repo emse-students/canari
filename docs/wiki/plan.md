@@ -66,6 +66,7 @@ earliest version, as a checklist.
 
 **P2 - correctness**
 
+- [P2 - the iPhone reading of the top inset's one owner](backlog.d/p2-ios-top-inset-counted-twice-reading.md)
 - [P2 - the slow-link chantier: no screen waits for the network to draw (owner, 2026-11-10; starts right after 1.6.10)](backlog.d/slow-link-local-first-chantier.md)
 - [P2 - the app is slow everywhere on a weak link (owner, 2026-11-10): five serial chains cut, the rest designed](backlog.d/weak-network-audit-2-what-is-left.md)
 - [P2 - the audience audit of 2026-11-14: what the campus x formation model leaves open](backlog.d/audience-audit-2026-11-14.md)

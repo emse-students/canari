@@ -73,6 +73,20 @@ sets the window's own background to the app's ground (`#f0f2f5` / `#000`, `app.h
 because that is what shows in the band above a keyboard and in its rounded top corners (black, until then).
 **OWED: one reading of the result on the iPhone** - every gate here is blind to it.
 
+**THE TWO HALVES HAVE ONE OWNER SINCE 2026-11-18 - the status bar was counted twice.** On the bench
+iPhone 12 (1.7.0-alpha.12) the header sat 47 pt too low, under a white band, until the app was
+relaunched. The syslog of a cold start shows why: the safe-area hook (`CanariSafeAreaDidChange`, #3231,
+first shipped in 1.6.9) published `top 47 pt` at the first layout, and `didBecomeActive` - the only
+caller of `CanariApplyEdgeToEdge` - came 230 ms later. In between, the page padded 47 pt and UIKit
+still inset the scroll view by 47 pt. A launch that does not become active at once (under a system
+alert, in the background) kept that state on screen. The switch also fires no `contentOffset` KVO, so
+the offset UIKit had set (-47) stayed stranded after it. Now `CanariPublishSafeAreaInsets` calls
+`CanariApplyEdgeToEdge(webView)` before it measures, and nothing else calls it. That call is
+idempotent and clamps the stranded offset. The top the page is told subtracts
+`scrollView.adjustedContentInset.top` (logged at ERROR if it is not 0), so the same event published
+twice, before or after activation, writes the same number. Pinned by `iosTopInsetOwner.test.ts`.
+**The phone reading is owed** ([backlog](../backlog.d/p2-ios-top-inset-counted-twice-reading.md)).
+
 #### The system theme on iOS is read at start only
 
 **The window override makes `prefers-color-scheme` the page's own echo (2026-10-19).** WKWebView's

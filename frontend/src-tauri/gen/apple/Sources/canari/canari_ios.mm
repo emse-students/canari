@@ -574,12 +574,25 @@ static void CanariApplyWebViewTransparency(void) {
 /// bottom one (WebKit reports `env(safe-area-inset-*)` as 0 here, so nothing else can tell the page).
 /// Measured on its own this was a defect - the page drew under the clock with no inset to avoid it -
 /// which is why the two halves ship together and the top consumers read the variable, not env().
-static void CanariApplyEdgeToEdge(void) {
-  WKWebView *webView = CanariFindWebView();
-  if (webView == nil) {
+///
+/// THE TWO HALVES HAVE ONE CALLER, `CanariPublishSafeAreaInsets`, which runs this before it measures
+/// (bench iPhone 12, 1.7.0-alpha.12, 2026-11-18: a white band of 47 pt above the header). The
+/// safe-area hook publishes at LAUNCH, before `didBecomeActive` - syslog: `top 47 pt` published at
+/// 09.133, activation at 09.364 - and this used to run at activation only. Between the two the page
+/// padded 47 pt while UIKit still inset the scroll view by 47 pt: the status bar counted twice. A
+/// launch that does not become active at once (under a system alert, in the background) kept that
+/// state on screen. Idempotent: a WebView already edge to edge is left alone. The switch itself fires
+/// no `contentOffset` KVO, so an offset UIKit set for the old inset (-47) is clamped here, or it
+/// stays stranded above the content until something else scrolls.
+static void CanariApplyEdgeToEdge(WKWebView *webView) {
+  UIScrollView *scrollView = webView.scrollView;
+  if (scrollView.contentInsetAdjustmentBehavior == UIScrollViewContentInsetAdjustmentNever) {
     return;
   }
-  webView.scrollView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
+  scrollView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
+  NSLog(@"[CanariIOS] WebView made edge to edge (UIKit's scroll view inset withdrawn, now top %.0f pt)",
+        scrollView.adjustedContentInset.top);
+  CanariClampDocumentScroll(scrollView);
 }
 
 /// Makes the system chrome follow the APP's theme, not the phone's. The status bar is
@@ -1322,12 +1335,19 @@ static void CanariRegisterCallPageHandlers(NSString *where) {
 
 static void CanariPublishSafeAreaInsets(void) {
   static CGFloat published = -1;
+  static CGFloat publishedTop = -1;
   static CGFloat publishedLeft = -1;
   static CGFloat publishedRight = -1;
   static CanariLoadObserver *loadObserver = nil;
   WKWebView *webView = CanariFindWebView();
+  if (webView == nil) {
+    return;
+  }
+  // THE ONE OWNER OF THE TOP: UIKit is told to give the page nothing before the page is told what
+  // it owes, so the two can never both count the status bar.
+  CanariApplyEdgeToEdge(webView);
   UIWindow *window = webView.window;
-  if (webView == nil || window == nil) {
+  if (window == nil) {
     return;
   }
   if (loadObserver == nil) {
@@ -1338,9 +1358,18 @@ static void CanariPublishSafeAreaInsets(void) {
   CGFloat unreached = MAX(0.0, CGRectGetHeight(window.bounds) - CGRectGetMaxY(inWindow));
   CGFloat inset = MAX(0.0, window.safeAreaInsets.bottom - unreached);
   // The top mirrors the bottom: the window's top safe area minus the part the WebView's frame
-  // starts below. With the page edge to edge (CanariApplyEdgeToEdge) the frame starts at the screen's
-  // top, so that is the status bar's whole height.
-  CGFloat top = MAX(0.0, window.safeAreaInsets.top - MAX(0.0, CGRectGetMinY(inWindow)));
+  // starts below, minus what UIKit's scroll view already insets. With the page edge to edge
+  // (CanariApplyEdgeToEdge, just above) the frame starts at the screen's top and the scroll view
+  // insets nothing, so that is the status bar's whole height. The subtraction makes the number true
+  // in any state: what the page is told is what nothing else has given it.
+  CGFloat scrollTop = MAX(0.0, webView.scrollView.adjustedContentInset.top);
+  if (scrollTop > 0.5) {
+    NSLog(@"[CanariIOS] ERROR the WebView's scroll view still insets its top by %.0f pt after the edge-to-edge switch - "
+          @"the page is told only the rest",
+          scrollTop);  // log-safe: a length in points
+  }
+  CGFloat top =
+      MAX(0.0, window.safeAreaInsets.top - MAX(0.0, CGRectGetMinY(inWindow)) - scrollTop);
   // The SIDES, for the video and camera screens that turn (screen-orientation.md): in landscape the
   // notch is on the left or the right, and 0 in portrait. Same rule - the part the frame reaches.
   CGFloat left = MAX(0.0, window.safeAreaInsets.left - MAX(0.0, CGRectGetMinX(inWindow)));
@@ -1361,8 +1390,9 @@ static void CanariPublishSafeAreaInsets(void) {
                 CanariApplyTheme(result);
               }
             }];
-  if (inset != published || left != publishedLeft || right != publishedRight) {
+  if (inset != published || top != publishedTop || left != publishedLeft || right != publishedRight) {
     published = inset;
+    publishedTop = top;
     publishedLeft = left;
     publishedRight = right;
     NSLog(@"[CanariIOS] safe area published to the page: bottom %.0f pt, top %.0f pt, left %.0f pt, right %.0f pt",
@@ -1744,7 +1774,6 @@ static void CanariOnDidBecomeActive(__unused NSNotification *note) {
   CanariSetAppGroupForegroundFlag(YES);
   canari_ios_on_resume();
   CanariApplyWebViewTransparency();
-  CanariApplyEdgeToEdge();
   CanariObserveDocumentScrollRange();
   CanariObserveTheme();
   CanariObserveOrientation();
