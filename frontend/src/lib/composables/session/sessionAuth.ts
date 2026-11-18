@@ -87,6 +87,7 @@ import {
   SessionExpiredError,
   SignOutInProgressError,
   isRefreshCredentialProvenDead,
+  isAccountErasedOnServer,
   revokedDeviceOfEndedSession,
   signOutGeneration,
 } from '$lib/stores/auth';
@@ -3759,6 +3760,15 @@ function deregisterPushOfLiveSession(ctx: SessionContext, cb: ChatSessionCallbac
     // would only earn a refusal. The device's own deletion still runs from `clearAuth`.
     cb.log(
       '[LOGOUT] Server push deregistration skipped - the session is already dead; the device deletes its token.'
+    );
+    return Promise.resolve();
+  }
+  if (isAccountErasedOnServer()) {
+    // THE ACCOUNT IS ALREADY ERASED: the push-token row goes with the erasure job queued by the 204, and the bearer
+    // names an account that no longer exists - the call could only earn a 401, which `stopPushService`
+    // reports as a failure to deregister. Known from the deletion's own answer, so not asked.
+    cb.log(
+      '[LOGOUT] Server push deregistration skipped - the account is erased, and its device rows with it.'
     );
     return Promise.resolve();
   }

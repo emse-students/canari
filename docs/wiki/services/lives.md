@@ -987,7 +987,7 @@ are still its to fetch. On `1.5.1-alpha.7` the end's purge deleted segments 5 an
 manifest that named them and their download - `404` on both viewers, then the manifest's `404`. The
 order is now a FACT, not a delay: the viewer's player gives its seat back on the end's `410`
 (`livePlayer.ts`), and the next sweep purges; a viewer that never does lets its seat lapse within
-`LIVE_SEAT_LEASE_MS` (30 s).
+`LIVE_SEAT_LEASE_MS` (30 s). That `410` is the ordinary close of every viewing, so the viewer writes it as one `log` line (`logViewerStop`, by the typed stop kind), and `warn` is kept for the stops that mean something went wrong.
 
 **Whether to drain is read from durable facts by `purgeEnded` itself, never from `endReason`** (a
 cut of a live already ended keeps its earlier reason, and the erasure writes

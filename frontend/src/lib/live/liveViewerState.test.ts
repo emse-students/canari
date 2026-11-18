@@ -2,9 +2,14 @@
  * THE ONE DECISION FROM A FAILURE TO A SCREEN. `full` and the two retries are never confused, a
  * `not-found` means the end only once the viewer has played, and a transport failure is a retry.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { LiveRefusalError } from './api';
-import { isTerminalLiveState, liveFailureOutcome, liveRetryDelayMs } from './liveViewerState';
+import {
+  isTerminalLiveState,
+  liveFailureOutcome,
+  liveRetryDelayMs,
+  logViewerStop,
+} from './liveViewerState';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 import type { LiveRefusalKind } from './types';
 
@@ -79,6 +84,20 @@ describe('liveFailureOutcome', () => {
     expect(liveFailureOutcome(new Error('parser'), true)).toEqual({
       stop: { kind: 'unavailable', reason: 'refused' },
     });
+  });
+});
+
+describe('logViewerStop', () => {
+  it('an end is one log line, every other kind of stop stays a warning', () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    logViewerStop('ended', 'an end');
+    expect(log).toHaveBeenCalledWith('an end');
+    expect(warn).not.toHaveBeenCalled();
+    for (const kind of ['full', 'unavailable'] as const) logViewerStop(kind, `a ${kind}`);
+    expect(warn.mock.calls.map((c) => c[0])).toEqual(['a full', 'a unavailable']);
+    log.mockRestore();
+    warn.mockRestore();
   });
 });
 

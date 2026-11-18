@@ -1465,9 +1465,9 @@ export interface IMlsService {
    * through the other: {@link forgetDistributionGroup} resolves the group through the scope
    * registration, so it can only forget what that registration already names - and the state worth
    * forgetting is precisely one where the two have drifted apart. The server names the group; this
-   * takes that name.
+   * takes that name. `reason` is printed by the drop's log line and is the CALLER's to state.
    */
-  forgetDistributionGroupById(groupId: string): Promise<boolean>;
+  forgetDistributionGroupById(groupId: string, reason: string): Promise<boolean>;
   /** The distribution group registered for `scope`, or null when none is. */
   distributionGroupFor(scope: DistributionScope): string | null;
   /** Every scope this device currently holds a distribution group for. */

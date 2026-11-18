@@ -4,6 +4,7 @@ import type { IStorage, StoredGraineSession } from '$lib/db/types';
 import type { GraineHistoryVisibility } from '$lib/crypto/graineConstants';
 import { resetChannelReadSignals } from '$lib/utils/chat/channelReadSignal';
 import { forgetSalonSendGates, resetSalonSendGate } from './salonSendGate';
+import { resetOwedLiveDecisions } from '$lib/utils/chat/owedLiveFrames';
 import {
   channelScope,
   workspaceScope,
@@ -90,6 +91,8 @@ export function setGraineRuntime(next: GraineRuntime | null): void {
     // The sends still waiting for a salon of the account that is leaving are refused, out loud,
     // and the gate waits for the next account's own first listing.
     resetSalonSendGate();
+    // The live decisions parked for rows still unopened close over the leaving session's context.
+    resetOwedLiveDecisions();
   }
 }
 
