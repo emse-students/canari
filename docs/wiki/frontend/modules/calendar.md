@@ -899,7 +899,10 @@ ugly yellow on the month grid. Each BDE now chooses it ("Réglage du BDE"):
   edits the association's colour and logo, so a non-holder is refused by the existing per-field
   check. The service refuses it on a non-BDE (`CALENDAR_NEUTRAL_COLOUR_NOT_A_BDE`, 403), accepts
   `#rrggbb` only (the association colour's `@Matches`), clears on `""`/`null`, logs `[ASSO]` on a
-  change. The field is in the association projection so the settings form reads it back.
+  change. The field is NOT in the association projection (`toAssociationView`): a member read that
+  carried it would let anyone match a masked event's colour to the BDE (review of #3539). The
+  settings form reads it from `GET /associations/:id/neutral-event-colour` (EDIT_PROFILE), gets it
+  back in `PATCH :id`'s answer only when it wrote it, and sends it only when it changed.
 - **Carried** on each neutral row as `neutralEventColor` (`neutralColourOfRow`: the owner's value on a
   neutral row, `null` on every other row so an association event never discloses it). It SURVIVES
   `maskNeutralEvent`, deliberately: it is the one thing a reader needs to paint the event.
@@ -916,17 +919,19 @@ reader of a neutral event. On a campus with TWO BDEs that chose different colour
 colour is a fingerprint of which BDE filed an event. This sits beside the limits above (the audience
 already tells a reader the BDE's spaces; one BDE per campus is unmasked by the `.ics`) and adds
 nothing on a campus with one BDE. The `.ics` carries no colour. Readers learn the colour, never the
-BDE's id, name, slug or logo.
+BDE's id, name, slug or logo, and no member read lists the colours against the associations (only
+the EDIT_PROFILE holders of the BDE read its own). Not an owner answer: the lead's reversible call,
+recorded in [the decisions of 2026-11-14](../../backlog.d/owner-decisions-of-2026-11-14.md#the-colour-of-neutral-campus-events-3539).
 
 ### Every surface that names an organiser, checked
 
 | Surface | What it shows for a neutral event |
 | --- | --- |
-| month grid cell (`MonthCalendarGridRich`) | the "Campus" colour only: no logo watermark and no initials, as on the export (the cell kept its watermark after #3455 and wore a translucent "CA" until 1.7.1, owner 2026-11-18; `MonthCalendarGridRich.neutral.svelte.test.ts`) |
+| month grid cell (`MonthCalendarGridRich`) | the BDE's chosen colour (else the derived "Campus" accent) only: no logo watermark and no initials, as on the export (the cell kept its watermark after #3455 and wore a translucent "CA" until 1.7.1, owner 2026-11-18; `MonthCalendarGridRich.neutral.svelte.test.ts`) |
 | day panel, schedule list (`eventOwners`, `eventAccentColor`) | one identity "Campus", key `campus`, no logo, drawn with `NeutralEventMark` (a generic calendar icon in a muted disc, never the orange initials an avatar falls back to, owner 2026-11-13; the disc wears the BDE's chosen colour when there is one), the accent the BDE chose or else one derived from that key - the same for a steward, who receives the owner but is shown what readers see |
-| detail modal | a "Campus" chip (the same `NeutralEventMark`) that links nowhere; the share / add-to-calendar source URL is `/calendar` |
+| detail modal | a "Campus" chip (the same `NeutralEventMark`, tinted with the BDE's chosen colour when there is one) that links nowhere; the share / add-to-calendar source URL is `/calendar` |
 | `.ics` (subscription and one event) | `SUMMARY: <title> - Campus`, `URL: <site>/calendar` |
-| PDF / PNG export (`calendarExport.ts`) | the "Campus" colour band only: no logo watermark, no initials, no mark, no missing-logo warning |
+| PDF / PNG export (`calendarExport.ts`) | the colour band only (the BDE's chosen colour, else the derived "Campus" accent): no logo watermark, no initials, no mark, no missing-logo warning |
 | pending queue (`/admin/agenda`) | "Campus" and, for a steward, "Déposé par <BDE>"; a masked row offers no association link and no delete |
 | post composer's event picker | neutral events are not offered (`listLinkableValidatedCalendarEvents`) |
 | notifications and pushes | unchanged and safe: every event notice (`event_proposed`, `event_validated` / `updated` / `deleted` / `rejected`, the reopen notices) goes to the BDE's own proposers or to its validators - stewards - and carries the TITLE only |

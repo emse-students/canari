@@ -276,7 +276,11 @@ export interface Association {
   isAdmin?: boolean;
   /** Hex color for calendar display (e.g. "#e83e8c"). Null → frontend uses generateAvatarColor fallback. */
   color?: string | null;
-  /** A BDE's chosen colour for its neutral ("Campus") agenda events, or null (derived accent). */
+  /**
+   * A BDE's chosen colour for its neutral ("Campus") agenda events, or null (derived accent). NEVER in
+   * a member read (it would name the BDE a masked event hides): only `PATCH :id`'s answer to its
+   * writer carries it, and {@link getNeutralEventColour} reads it.
+   */
   neutralEventColor?: string | null;
   /** Discriminates a regular association from a promo list. */
   type: 'association' | 'list' | 'institution';
@@ -2964,6 +2968,18 @@ export interface LydiaResponsable {
    * same-number resend confirms it. Absent reads as confirmed.
    */
   confirmed?: boolean;
+}
+
+/**
+ * Reads a BDE's colour for its neutral ("Campus") events (EDIT_PROFILE, 403 otherwise; `null` is the
+ * derived default). Its own read because the member reads never carry it: a masked neutral event
+ * carries the colour, so a colour every member could list would name the BDE (review of #3539).
+ */
+export async function getNeutralEventColour(associationId: string): Promise<string | null> {
+  const body = await request<{ neutralEventColor: string | null }>(
+    `/api/associations/${encodeURIComponent(associationId)}/neutral-event-colour`
+  );
+  return body.neutralEventColor ?? null;
 }
 
 /**

@@ -19,6 +19,10 @@ import type { LydiaReadinessCause } from './lydia-readiness';
  * onboarding and the disconnect already ask (`canManagePayoutAccount`). The vault key has its own
  * read too (`:id/vault-key`, MANAGE_DOCUMENTS), and the notes theirs (`:id/notes`).
  *
+ * A BDE's `neutralEventColor` is NOT here either (review of #3539): a masked neutral event carries
+ * its colour, so a colour every member could list against the associations would name the BDE the
+ * mask hides. It has its own read, `:id/neutral-event-colour`, for the EDIT_PROFILE holders who set it.
+ *
  * The seam is the CONTROLLER, not the service: `findById` is also used internally by writers
  * (`update`, `resolvePaymentTarget`), which need the whole row.
  */
@@ -38,7 +42,6 @@ const ASSOCIATION_FIELDS = [
   'isBDE',
   'documentQuotaBytes',
   'color',
-  'neutralEventColor',
   'type',
   'promo',
   'parentAssociationId',

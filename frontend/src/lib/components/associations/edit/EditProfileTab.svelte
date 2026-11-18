@@ -7,6 +7,7 @@
     deleteAssociationLogo,
     associationSecondLogoSrc,
     listAssociations,
+    getNeutralEventColour,
     type Association,
     type LogoSlot,
   } from '$lib/associations/api';
@@ -51,7 +52,13 @@
   /** Hex color for calendar display, or "" to use auto-generated color. */
   let editColor = $state(initial.color ?? '');
   /** A BDE's colour for its neutral ("Campus") events, or "" for the derived default. */
-  let editNeutralColor = $state(initial.neutralEventColor ?? '');
+  let editNeutralColor = $state('');
+  /**
+   * The stored colour as its own read answered it (`getNeutralEventColour`, EDIT_PROFILE), or
+   * `undefined` until it has: the member read never carries it, so the picker is drawn, and the field
+   * sent, only once the stored value is known - and sent only when changed.
+   */
+  let storedNeutralColor = $state<string | null | undefined>(undefined);
   /** Public contact e-mail, or "" when none. */
   let editContactEmail = $state(initial.contactEmail ?? '');
 
@@ -76,6 +83,17 @@
   ]);
 
   onMount(async () => {
+    if (initial.isBDE && untrack(() => canEdit)) {
+      try {
+        storedNeutralColor = await getNeutralEventColour(initial.id);
+        editNeutralColor = storedNeutralColor ?? '';
+      } catch (err) {
+        console.warn(
+          '[ASSO] the Campus events colour could not be read: its picker stays hidden',
+          err
+        );
+      }
+    }
     if (isList) {
       if (!untrack(() => canEditParent)) return;
       try {
@@ -128,8 +146,12 @@
         description: editDescription.trim(),
         bioMarkdown: editBioMarkdown.trim(),
         color: editColor.trim() || null,
-        // Only a BDE has the setting (the server refuses it on any other association).
-        ...(asso.isBDE ? { neutralEventColor: editNeutralColor.trim() || null } : {}),
+        // Only a BDE has the setting (the server refuses it elsewhere), sent only when it changed:
+        // an unchanged colour never fails a profile save on a BDE flag that went stale.
+        ...(storedNeutralColor !== undefined &&
+        (editNeutralColor.trim() || null) !== storedNeutralColor
+          ? { neutralEventColor: editNeutralColor.trim() || null }
+          : {}),
         contactEmail: editContactEmail.trim() || null,
         ...(isList
           ? {
@@ -145,7 +167,10 @@
       editDescription = updated.description ?? '';
       editBioMarkdown = updated.bioMarkdown ?? '';
       editColor = updated.color ?? '';
-      editNeutralColor = updated.neutralEventColor ?? '';
+      if (updated.neutralEventColor !== undefined) {
+        storedNeutralColor = updated.neutralEventColor;
+        editNeutralColor = storedNeutralColor ?? '';
+      }
       editContactEmail = updated.contactEmail ?? '';
       editPromo = updated.promo ?? '';
       editName2 = updated.name2 ?? '';
@@ -318,7 +343,7 @@
       <ColorPicker bind:value={editColor} label={m.asso_edit_color_picker_label()} />
     </div>
   </div>
-  {#if asso.isBDE}
+  {#if asso.isBDE && storedNeutralColor !== undefined}
     <div class="flex flex-col gap-3" data-testid="neutral-event-color">
       <span class="text-text-main ml-1 block text-sm font-bold"
         >{m.asso_edit_neutral_color_label()}</span

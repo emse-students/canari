@@ -1104,13 +1104,33 @@ export class AssociationsController {
     }
 
     const updated = await this.service.update(id, patch);
+    // The caller who wrote `neutralEventColor` proved EDIT_PROFILE above, so the answer may carry it
+    // back - the member view never does (`toAssociationView`, review of #3539).
+    const wroteNeutralColour = 'neutralEventColor' in patch;
     // A cotisation stored enabled on an entity that may not collect NOW (an institution, a list
     // whose delegation was revoked) stays as it is: its product is not (re)provisioned, so the save
     // above is never followed by a refusal.
     if (touchesCotisation && updated.cotisationEnabled && mayCollect(updated)) {
       await this.productsService.provisionCotisationProduct(updated);
     }
-    return toAssociationView(updated);
+    return wroteNeutralColour
+      ? { ...toAssociationView(updated), neutralEventColor: updated.neutralEventColor ?? null }
+      : toAssociationView(updated);
+  }
+
+  /**
+   * A BDE's colour for its neutral ("Campus") events, for the EDIT_PROFILE holders who choose it
+   * (owner, 2026-11-14). Its own read, never in the member view: a masked neutral event carries the
+   * colour, and a colour every member could match against the associations would name the BDE the
+   * mask hides (review of #3539). `null` is the derived default, and every non-BDE.
+   */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.EDIT_PROFILE)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Get(':id/neutral-event-colour')
+  async neutralEventColour(@Param('id') id: string) {
+    const row = await this.service.findById(id);
+    this.logger.debug(`[ASSO] neutral event colour read on ${sanitizeLog(id)}`);
+    return { neutralEventColor: row.neutralEventColor ?? null };
   }
 
   /**

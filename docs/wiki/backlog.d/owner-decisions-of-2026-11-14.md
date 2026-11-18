@@ -170,6 +170,17 @@ répéter"*). Each line names where its detail lives.
 - **Cross-signing of a user's devices is step 8 of the privacy chantier** (above), which closes the
   impersonation of a past member.
 
+### The colour of neutral "Campus" events (#3539)
+
+- **Each BDE chooses the colour of its neutral events** (recorded from the body of #3539, where the
+  decision was written on the day): the fixed `campus`-derived yellow goes; the holders of
+  `EDIT_PROFILE` (who already edit the association's colour and logo) set it; no choice keeps the
+  derived accent ([calendar](../frontend/modules/calendar.md#the-colour-of-neutral-events-is-the-bdes-choice-owner-2026-11-14)).
+- **The masking cost is the lead's reversible call, not an owner answer:** the colour rides every
+  neutral row, so on a campus with two BDEs that chose different colours it hints which one filed an
+  event; the review of #3539 removed the stronger leak (the colour is in no member read, so nobody can
+  look it up against the associations). Reverting is dropping the field from the rows.
+
 ### Answers of the afternoon (relayed by the lead, same day)
 
 - **A reading of code not yet shipped is not owed:** *"supprime simplement du backlog, on rajoutera

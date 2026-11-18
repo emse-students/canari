@@ -16,6 +16,7 @@ const api = vi.hoisted(() => ({
   updateAssociation: vi.fn(),
   listAssociations: vi.fn(),
   listAssociationCategories: vi.fn(),
+  getNeutralEventColour: vi.fn(),
 }));
 vi.mock('$lib/associations/api', async (original) => ({
   ...(await original<typeof import('$lib/associations/api')>()),
@@ -112,5 +113,47 @@ describe('the list parent picker', () => {
     const payload = await save(target);
     expect(payload).toMatchObject({ parentAssociationId: OTHER_BDE });
     vi.unstubAllGlobals();
+  });
+});
+
+describe("a BDE's Campus events colour (review of #3539)", () => {
+  const bde = {
+    id: '00000000-0000-4000-8000-0000000000b1',
+    slug: 'bde',
+    name: 'BDE',
+    type: 'association',
+    isBDE: true,
+  } as unknown as Association;
+
+  function renderBde(stored: string | null) {
+    api.updateAssociation.mockResolvedValue(bde);
+    api.getNeutralEventColour.mockResolvedValue(stored);
+    const target = document.body.appendChild(document.createElement('div'));
+    const instance = mount(EditProfileTab, {
+      target,
+      props: { asso: bde, canEdit: true, onUpdated: vi.fn() },
+    });
+    mounted.push(() => unmount(instance));
+    flushSync();
+    return target;
+  }
+
+  it('is read from its own route and drawn once known, and an unchanged one is not sent', async () => {
+    const target = renderBde('#112233');
+    await vi.waitFor(() =>
+      expect(target.querySelector('[data-testid="neutral-event-color"]')).not.toBeNull()
+    );
+    expect(api.getNeutralEventColour).toHaveBeenCalledWith(bde.id);
+    const payload = await save(target);
+    expect(payload).not.toHaveProperty('neutralEventColor');
+  });
+
+  it('is never read, drawn or sent on an association that is not a BDE', async () => {
+    const target = render(false);
+    await tick();
+    expect(api.getNeutralEventColour).not.toHaveBeenCalled();
+    expect(target.querySelector('[data-testid="neutral-event-color"]')).toBeNull();
+    const payload = await save(target);
+    expect(payload).not.toHaveProperty('neutralEventColor');
   });
 });

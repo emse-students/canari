@@ -3,6 +3,9 @@ import { AssociationsService } from './associations.service';
 import { AssociationPermissionFlag } from './entities/association-member.entity';
 import { AssociationCalendarEventPresentation } from './entities/association-calendar-event.entity';
 import { rightsAskedBy } from './association-update-rights';
+import { toAssociationView } from './association.projection';
+import { AssociationsController } from './associations.controller';
+import { PERM_FLAG_KEY } from './guards/global-admin-or-association-role.guard';
 import {
   CALENDAR_NEUTRAL_ERROR_CODES,
   neutralColourOfRow,
@@ -117,5 +120,25 @@ describe('the colour on the payload', () => {
     expect(masked.neutralEventColor).toBe('#112233');
     expect(masked.associationId).toBe('');
     expect(masked.associationColor).toBeNull();
+  });
+});
+
+describe('who reads the colour (review of #3539)', () => {
+  it('is never in the member view: a masked event carries it, so the list would name the BDE', () => {
+    const view = toAssociationView({
+      id: BDE,
+      name: 'BDE',
+      color: '#abcdef',
+      neutralEventColor: '#112233',
+    });
+    expect(view).not.toHaveProperty('neutralEventColor');
+    expect(view).toMatchObject({ id: BDE, color: '#abcdef' });
+  });
+
+  it('has its own read, asking EDIT_PROFILE at the guard', () => {
+    const proto = AssociationsController.prototype as unknown as Record<string, object>;
+    expect(Reflect.getMetadata(PERM_FLAG_KEY, proto.neutralEventColour)).toBe(
+      AssociationPermissionFlag.EDIT_PROFILE
+    );
   });
 });
