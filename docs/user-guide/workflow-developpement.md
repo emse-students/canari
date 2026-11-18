@@ -344,7 +344,7 @@ est chaque moitie est sur [`docs/wiki/frontend/mobile.md`](../wiki/frontend/mobi
 ## 5. Les deux estates
 
 ```bash
-curl -s https://canari-emse.fr/api/version      # prod : build = null
+curl -s https://canari.emse.fr/api/version      # prod : build = null
 curl -s https://dev.canari-emse.fr/api/version  # dev  : build = dev.<sha7>
 ```
 
@@ -407,7 +407,7 @@ C'est un element ouvert du backlog, et il attend une decision puis un clic.
 En attendant, la verification qui tranche :
 
 ```bash
-curl -s https://canari-emse.fr/api/version   # doit repondre 200 - ca lit la base de donnees
+curl -s https://canari.emse.fr/api/version   # doit repondre 200 - ca lit la base de donnees
 gh run list --limit 5                        # le pipeline est-il vert et silencieux
 ```
 

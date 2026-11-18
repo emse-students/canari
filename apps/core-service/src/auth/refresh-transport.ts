@@ -3,7 +3,7 @@
  *
  * The refresh credential is an HttpOnly cookie everywhere it can be, and that is not everywhere.
  * A native shell's document is its own origin (`tauri://localhost` on iOS/macOS/Linux,
- * `http://tauri.localhost` on Android/Windows) while the credential belongs to `canari-emse.fr`, so
+ * `http://tauri.localhost` on Android/Windows) while the credential belongs to `canari.emse.fr`, so
  * the cookie is THIRD-PARTY by construction. Android blocks that class by default and exposes one
  * opt-in the app calls (`CookieManager.setAcceptThirdPartyCookies`, `MainActivity.kt`), which is why
  * Android sessions survive a restart. WKWebView blocks it through ITP and publishes NO equivalent

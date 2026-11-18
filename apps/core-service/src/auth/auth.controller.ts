@@ -803,7 +803,7 @@ export class AuthController {
       // evidence that does. A person who really is signed out sends no cookie - and so does a
       // WebView whose jar refused to STORE the `Set-Cookie`, because a native shell's refresh
       // cookie is third-party by construction: the document is `tauri://localhost`, the cookie is
-      // `canari-emse.fr`. Android blocks that by default and needs one explicit opt-in
+      // `canari.emse.fr`. Android blocks that by default and needs one explicit opt-in
       // (`setAcceptThirdPartyCookies`, `MainActivity.kt`); WKWebView blocks it too and exposes NO
       // equivalent API, so iOS is the platform where this branch is expected to lie about why.
       // The cookie LIST is the discriminator: a client that holds a session still presents its

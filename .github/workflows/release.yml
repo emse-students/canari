@@ -7,7 +7,7 @@
 #      onto `main` by itself. A merge deploys NOTHING.
 #   2. PUBLISH A PRE-RELEASE `vX.Y.Z-alpha.N`.  Deploys `dev.canari-emse.fr` and feeds the store
 #      tester programmes - if the tests are green.
-#   3. PUBLISH A STABLE `vX.Y.Z`.  Deploys `canari-emse.fr` and both store production channels - if
+#   3. PUBLISH A STABLE `vX.Y.Z`.  Deploys `canari.emse.fr` and both store production channels - if
 #      the tests are green, AND only from a commit the dev estate has already served.
 #
 # THIS FILE IS PACKAGE 2 OF 2, AND IT CARRIES BOTH OF THOSE TWO PATHS. `ci.yml` is the
@@ -18,7 +18,7 @@
 # paths are told apart by the EVENT TYPE, not by a branch and not by a guess:
 #
 #   prereleased -> dev.canari-emse.fr + Play `internal` + TestFlight
-#   released    -> canari-emse.fr     + Play `production` + App Store REVIEW
+#   released    -> canari.emse.fr     + Play `production` + App Store REVIEW
 #
 # and everything before that fork - the seven gates and the version bump - is shared, because it
 # must be identical for both.
