@@ -14,7 +14,7 @@ import { Log } from '$lib/utils/Log';
  * CAPTURE PHASE, as `doubleTapLike` reads it, before the player stops it - and the rest of this file
  * is what is NOT a tap of this gesture, so no control toggles the overlay by accident:
  * - a link, a button, a form field, a slider - anything `tapBelongsToInnerControl` names - the
- *   player's bar (`[data-video-controls]`) and any `[data-no-double-tap]` region;
+ *   player's bar and seek line (`[data-video-controls]`, a slider that selector does not name) and any `[data-no-double-tap]` region;
  * - a click with no pointer behind it (`detail` 0: Enter or Space on a control, a screen reader's
  *   activation) - the sr-only "show the controls" button is the accessible way back, and it is a button;
  * - the click a HELD press makes (a mouse does; the hold's pause is `videoGestures`'): a press that

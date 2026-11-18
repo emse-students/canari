@@ -721,7 +721,9 @@
 
   $effect(() => {
     void list;
-    void list.index;
+    // Keyed on the POST on show, not only the index: a reel removed under the reader (expired, gone) lets
+    // the next one slide into the same index, and the overlay the reader hid is not that reel's.
+    void list.reels[list.index]?.id;
     if (untrack(() => overlayHidden)) {
       console.debug('[reel-viewer] a new page - the overlay is shown again');
       overlayHidden = false;

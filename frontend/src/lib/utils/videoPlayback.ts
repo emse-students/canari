@@ -32,10 +32,9 @@ export interface BufferedRanges {
 }
 
 /**
- * THE LENGTH A SEEK LINE MAPS ONTO: the engine's duration when it knows one, else the end of what it
- * can seek - an MSE stream whose length is not known yet (`segmentedMediaStream`: undeclared, and its
- * tail not read) seeks within what it has buffered, so its line shows progress against that and
- * never vanishes. `0` when neither is known (nothing to draw, nothing to seek).
+ * A WHOLE LOCAL FILE's length: the engine's duration, else the end of what it can seek (every byte is
+ * here, so that end is the total). Used by {@link barLength} for `streamed` false ONLY - a stream's
+ * seekable end is what has loaded, which grows. `0` when neither is known.
  */
 export function scrubLength(duration: number, seekable: BufferedRanges): number {
   if (Number.isFinite(duration) && duration > 0) return duration;

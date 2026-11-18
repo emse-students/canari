@@ -68,7 +68,10 @@ export function videoTapAction({
     case 'chat':
       return canOpen ? 'open-viewer' : 'toggle-play';
     case 'reel':
-      if (!autoplayRefused) return 'none';
+      // A video that is PLAYING is left alone. One that is PAUSED without a hold (a refused autoplay, an
+      // interruption: a call, audio focus, a headset) has no other way back, so the tap restarts it -
+      // it never pauses, which is what the rule forbids.
+      if (!paused && !autoplayRefused) return 'none';
       return muted ? 'toggle-sound-and-play' : 'toggle-play';
     case 'conversation':
     case 'lightbox':

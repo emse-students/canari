@@ -332,10 +332,10 @@ It hands the length to `MediaSource.duration` **inside the append chain**: the s
   [its own entry](../../backlog.d/p2-a-seek-ahead-in-a-stream-fetches-every-segment-before-it.md).
 - **A stream that cannot learn its length** says why, once, at WARN (a fallback is a signal): `[media-seg] <label> <id>: no
   declared length, and none read from its tail - <why>` (`no mfro at the end of the file`, `no moov in
-  the head`, its last segments did not arrive, ...). Its line still draws: `videoPlayback.scrubLength`
-  maps it onto the end of the element's `seekable` range - what is buffered - so it moves and seeks
-  within what is there instead of vanishing. The bar's BUFFERED part is drawn only against a real
-  length: mapped onto what is buffered it would always read full.
+  the head`, its last segments did not arrive, ...). Its line stays at an UNKNOWN length
+  (no played part, no seek) - **superseded 2026-11-18**: mapping it onto the buffered end made the line
+  rewind ([reels](reels.md#the-playback-bar-never-goes-back-defect-same-day)). The loaded part is drawn
+  only against a real length.
 - **The player's line** `the engine knows no duration` is gone for streams (at their metadata they
   hold only their head; the stream speaks for them). A FILE that declares none still says so:
   `[VideoPlayer] <variant>: the file declares no duration`.

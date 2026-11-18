@@ -37,11 +37,14 @@ describe('videoTapAction - the owner decisions of 2026-11-10', () => {
 
   it("a CanaReel tap is the overlay's, never the player's: it does not pause or mute (owner, 2026-11-18)", () => {
     const variant = 'reel';
-    for (const paused of [false, true]) {
-      for (const muted of [false, true]) {
-        expect(videoTapAction({ ...base, variant, paused, muted })).toBe('none');
-      }
+    for (const muted of [false, true]) {
+      expect(videoTapAction({ ...base, variant, paused: false, muted })).toBe('none');
     }
+  });
+
+  it('a CanaReel paused by something other than a hold (an interruption) is restarted by a tap, never paused', () => {
+    expect(videoTapAction({ ...base, variant: 'reel', paused: true })).toBe('toggle-play');
+    expect(videoTapAction({ ...base, variant: 'reel', paused: false })).toBe('none');
   });
 
   it('a CanaReel whose autoplay was refused is started by a tap, with its sound if it was muted', () => {

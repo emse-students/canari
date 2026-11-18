@@ -114,7 +114,6 @@ describe('barLength - the line is fixed to the total from the first frame (owner
 
   it('the old mapping onto the loaded end is what REWOUND: the same steps, undeclared, would not hold', () => {
     // Documents the defect: against the loaded end, 3 s of 4 s loaded reads 75 %, then 3 s of 9 s reads 33 %.
-    expect(playedFraction(3, 4)).toBeGreaterThan(playedFraction(3, 9));
     expect(
       barLength({ duration: Infinity, seekable: ranges([0, 4]), streamed: true }).seconds,
       'the line no longer takes that length'

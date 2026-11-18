@@ -860,9 +860,9 @@
         }
         if (verdict.cause === 'refused' && !muted && scope !== 'silent') {
           // A full-screen viewer opens WITH sound where the app may; the engine refused it, so it
-          // plays muted rather than sit paused (owner, 2026-11-10) - and a tap turns the sound on.
+          // plays muted rather than sit paused (owner, 2026-11-10) - the rail's speaker turns the sound on.
           console.warn(
-            `[VideoPlayer] autoplay with sound refused (${name}) - playing muted, a tap turns the sound on`,
+            `[VideoPlayer] autoplay with sound refused (${name}) - playing muted, the speaker turns the sound on`,
             err
           );
           if (scope === 'app') videoSound.muteForRefusedStart();
