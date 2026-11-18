@@ -239,7 +239,7 @@
       <div
         role="radiogroup"
         aria-label={m.profile_pref_theme_aria()}
-        class="flex shrink-0 items-center gap-1 rounded-xl bg-black/5 p-1 dark:bg-white/10"
+        class="flex w-full shrink-0 items-center gap-1 rounded-xl bg-black/5 p-1 sm:w-auto dark:bg-white/10"
       >
         {#each [{ value: 'system', label: m.profile_system(), Icon: Monitor }, { value: 'light', label: m.profile_light(), Icon: Sun }, { value: 'dark', label: m.profile_dark(), Icon: Moon }] as opt (opt.value)}
           {@const Icon = opt.Icon}
@@ -250,13 +250,13 @@
             aria-label={opt.label}
             title={opt.label}
             onclick={() => themeStore.setPreference(opt.value as 'system' | 'light' | 'dark')}
-            class="focus-visible:ring-accent-icon flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors outline-none focus-visible:ring-2
+            class="focus-visible:ring-accent-icon flex min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-lg px-1.5 py-1.5 text-center text-xs font-semibold transition-colors outline-none focus-visible:ring-2 sm:flex-none sm:flex-row sm:gap-1.5 sm:px-2.5
  {themeStore.preference === opt.value
               ? 'bg-accent text-on-accent shadow'
               : 'text-text-muted hover:text-text-main'}"
           >
             <Icon size={15} strokeWidth={2.5} />
-            <span>{opt.label}</span>
+            <span class="min-w-0 break-words">{opt.label}</span>
           </button>
         {/each}
       </div>

@@ -102,8 +102,7 @@ earliest version, as a checklist.
 - [P3 - `frontend/` holds three Cargo lockfiles that one `mls-core` bump must all move: one workspace](backlog.d/p2-a-cargo-bump-in-mls-core-leaves-two-committed-lockfiles-dependabot-will.md)
 - [P3 - an unsigned restored message is only marked, and a history bundle has no byte cap per chunk](backlog.d/p2-signed-authorship-of-restored-history-built-2276-owed-rig-rows-and-a-version.md)
 - [P3 - a 13 MB upload on the iPhone restarted at about half and ran at 40 to 65 KB/s](backlog.d/p3-a-13-mb-upload-on-the-iphone-restarted-at-half-and-ran-at-40-to-65-kb-s.md)
-- [P3 - a chosen person's chip pushes the recent list under the finger in "Nouvelle discussion" (2026-11-17)](backlog.d/p3-a-chosen-person-s-chip-pushes-the-recent-list-under-the-finger.md)
-- [P3 - a community member's remove control does not name them for a screen reader (2026-11-17)](backlog.d/p3-a-community-member-s-remove-control-does-not-name-them.md)
+- [P3 - READ ON THE NEXT 1.7.1 PRE-RELEASE: the chips row of "Nouvelle discussion" holds its place](backlog.d/p3-a-chosen-person-s-chip-pushes-the-recent-list-under-the-finger.md)
 - [P3 - a live that ends normally makes every viewer log a warning (2026-11-17)](backlog.d/p3-a-live-that-ends-normally-warns-on-every-viewer.md)
 - [P3 - the dev estate logs one CSP `inline script` refusal on every page load](backlog.d/p3-dev-logs-a-csp-inline-script-error-on-every-page-load.md)
 - [P3 - a lives integration spec failed once: the association's live pushed to nobody](backlog.d/p3-flaky-lives-spec-member-live-after-association-live.md)
@@ -118,10 +117,10 @@ earliest version, as a checklist.
 - [P3 - a sent file's bubble that failed to load during an outage stays failed after the link returns](backlog.d/p3-a-sent-file-s-bubble-that-failed-to-load-stays-failed-after-the-link-returns.md)
 - [P3 - a link that stalls is declared unreachable with the words "transport failure"](backlog.d/p3-a-stalled-link-is-logged-as-a-transport-failure.md)
 - [P3 - deleting one's account logs a false error: the push deregistration "refused" with a 401](backlog.d/p3-an-account-deletion-logs-its-push-deregistration-as-refused.md)
-- [P3 - an error toast over a dialog lets the text under it show through](backlog.d/p3-an-error-toast-over-a-dialog-lets-the-text-under-it-show-through.md)
+- [P3 - READ ON THE NEXT 1.7.1 PRE-RELEASE: the error toast over a dialog is opaque](backlog.d/p3-an-error-toast-over-a-dialog-lets-the-text-under-it-show-through.md)
 - [P3 - salon texts held by a `502` are posted in the order their backoffs end, not the order they were written](backlog.d/p3-salon-texts-held-by-a-502-are-posted-out-of-order.md)
 - [P3 - the share targets are republished twenty-three times during an account's first sync](backlog.d/p3-the-share-targets-are-republished-twenty-three-times-in-the-first-sync.md)
-- [P3 - the Thème control runs off the screen at a doubled font](backlog.d/p3-the-theme-control-runs-off-the-screen-at-a-doubled-font.md)
+- [P3 - READ ON THE NEXT 1.7.1 PRE-RELEASE: the Thème control fits a doubled font](backlog.d/p3-the-theme-control-runs-off-the-screen-at-a-doubled-font.md)
 - [P3 - what the production log read of the `1.7.0` stable day left unexplained or noisy (2026-11-18)](backlog.d/p3-what-the-1-7-0-stable-day-log-read-left-unexplained-or-noisy.md)
 
 ## 1.8.0

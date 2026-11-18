@@ -72,6 +72,12 @@
 
   const chosenIds = $derived(chosen.map((p) => p.id));
 
+  /** The chips' single scrolling line: kept scrolled to its end, so the person just chosen is seen. */
+  let chipsRow = $state<HTMLElement | null>(null);
+  $effect(() => {
+    if (chosen.length > 0 && chipsRow) chipsRow.scrollLeft = chipsRow.scrollWidth;
+  });
+
   /*
    * EVERY OPENING STARTS FROM NOTHING. The selection lives here, not in the sidebar, because it is
    * the panel's own state: a refusal keeps it (the panel stays open), and closing ends it.
@@ -154,32 +160,43 @@
   bodyClass="flex min-h-0 flex-col overflow-hidden"
 >
   <div class="flex min-h-0 flex-1 flex-col">
-    {#if chosen.length > 0}
-      <ul
-        class="mb-3 flex shrink-0 flex-wrap gap-2"
-        aria-label={m.chat_modal_selected_people_label()}
-        data-testid="new-chat-chips"
-      >
-        {#each chosen as person (person.id)}
-          <li
-            class="bg-accent/15 text-text-main flex items-center gap-1 rounded-full py-1 pr-1 pl-3 text-sm font-medium"
-          >
-            <EmojiText text={person.name} />
-            <Button
-              variant="ghost"
-              size="compact"
-              icon
-              onclick={() => toggle(person.id, person.name)}
-              disabled={busy}
-              class="rounded-full"
-              aria-label={m.chat_modal_remove_person_label({ name: person.name })}
+    <!--
+      THE CHIPS' ROW HAS ONE HEIGHT FROM THE OPENING, chosen or not (iPhone 12, 2026-11-17): it used
+      to appear with the first pick and push the list down under the finger that was about to tap the
+      second person - a different one was chosen. A single line that scrolls sideways when it fills,
+      so a chip arriving never moves a row below it; before any pick the same height holds a hint.
+    -->
+    <div class="mb-3 flex h-10 shrink-0 items-center" data-testid="new-chat-chips-slot">
+      {#if chosen.length > 0}
+        <ul
+          bind:this={chipsRow}
+          class="no-scrollbar flex min-w-0 flex-1 flex-nowrap items-center gap-2 overflow-x-auto"
+          aria-label={m.chat_modal_selected_people_label()}
+          data-testid="new-chat-chips"
+        >
+          {#each chosen as person (person.id)}
+            <li
+              class="bg-accent/15 text-text-main flex shrink-0 items-center gap-1 rounded-full py-1 pr-1 pl-3 text-sm font-medium whitespace-nowrap"
             >
-              <X size={14} aria-hidden="true" />
-            </Button>
-          </li>
-        {/each}
-      </ul>
-    {/if}
+              <EmojiText text={person.name} />
+              <Button
+                variant="ghost"
+                size="compact"
+                icon
+                onclick={() => toggle(person.id, person.name)}
+                disabled={busy}
+                class="rounded-full"
+                aria-label={m.chat_modal_remove_person_label({ name: person.name })}
+              >
+                <X size={14} aria-hidden="true" />
+              </Button>
+            </li>
+          {/each}
+        </ul>
+      {:else}
+        <p class="text-text-muted text-sm font-medium">{m.chat_modal_choose_people_hint()}</p>
+      {/if}
+    </div>
 
     <label for="new-chat-search" class="sr-only">{m.chat_modal_search_user_placeholder()}</label>
     <!--
