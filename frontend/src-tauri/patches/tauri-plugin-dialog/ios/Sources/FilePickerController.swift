@@ -190,7 +190,6 @@ extension FilePickerController: PHPickerViewControllerDelegate {
 			self.plugin.onFilePickerEvent(.cancelled)
 			return
 		}
-		var temporaryUrls: [URL] = []
 		var errorMessage: String?
 		let dispatchGroup = DispatchGroup()
 		// CANARI PATCH: `loadFileRepresentation` completions run on several threads at once, and
@@ -254,12 +253,15 @@ extension FilePickerController: PHPickerViewControllerDelegate {
 			}
 		}
 		dispatchGroup.notify(queue: .main) {
-			temporaryUrls = stateQueue.sync { slots.compactMap { $0 } }
-			if let errorMessage = stateQueue.sync(execute: { errorMessage }) {
+			let urls = stateQueue.sync { slots.compactMap { $0 } }
+			// CANARI PATCH: one item that failed used to turn the WHOLE pick into an error, losing the
+			// items already copied (and leaving their copies on disk). The items that were copied are
+			// handed over; an error is sent only when nothing was, and the page counts what is missing.
+			if urls.isEmpty, let errorMessage = stateQueue.sync(execute: { errorMessage }) {
 				self.plugin.onFilePickerEvent(.error(errorMessage))
 				return
 			}
-			self.plugin.onFilePickerEvent(.selected(temporaryUrls))
+			self.plugin.onFilePickerEvent(.selected(urls))
 		}
 	}
 }

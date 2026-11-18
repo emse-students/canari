@@ -94,7 +94,6 @@ export async function pickNatively(
   // THE ESSENTIAL IS NEVER LOST SILENTLY (principle 2): 8 of 11 picks vanished and the screen only
   // showed a count. Whatever could not be read is said, with how many.
   if (unread > 0) {
-    console.error(`[NativeAttachPicker] ${unread} of ${paths.length} picked files were not taken`);
     showToast(m.composer_native_pick_unread({ count: unread, total: paths.length }), 'warning');
   }
   return files;

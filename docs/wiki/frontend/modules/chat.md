@@ -602,7 +602,7 @@ up for fifteen seconds, anchored to an input that was `display: none`.
   `<caches>/<file name>` after deleting whatever held that name, from several threads at once, so a pick of 11
   gave 3 files and 8 "No such file". The crate is vendored (`src-tauri/patches/tauri-plugin-dialog`, the
   `CANARI PATCH` hunks in `ios/Sources/FilePickerController.swift`): `canari-pick-<uuid>/<name>` per item, a
-  serial queue for the shared state, the order kept; `take_picked_file` removes the emptied directory
+  serial queue for the shared state, the order kept, and the items already copied handed over when another fails; `take_picked_file` removes the emptied directory
   (`remove_emptied_pick_dir`), and `pickNatively` warns with how many files were not taken. The Swift is
   verified by compiling only - owed on the iPhone: a pick of 11.
 

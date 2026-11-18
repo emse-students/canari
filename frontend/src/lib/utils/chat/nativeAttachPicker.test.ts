@@ -60,7 +60,7 @@ describe('pickNatively - a pick that cannot be read is said', () => {
   it('keeps the readable files and warns once with the count of the others', async () => {
     const { toastStore, dismissToast } = await import('$lib/stores/toast.svelte');
     const { m } = await import('$lib/paraglide/messages');
-    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
     dialogOpen.mockResolvedValue([
       'file:///Library/Caches/canari-pick-a/a.heic',
       'file:///Library/Caches/canari-pick-b/b.heic',
@@ -79,6 +79,7 @@ describe('pickNatively - a pick that cannot be read is said', () => {
       m.composer_native_pick_unread({ count: 2, total: 3 }),
     ]);
     for (const t of toastStore.toasts) dismissToast(t.id);
+    quiet.mockRestore();
   });
 
   it('says nothing when every file was read', async () => {
