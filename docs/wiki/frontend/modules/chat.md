@@ -447,8 +447,8 @@ opening ([device-verification](../../device-verification.md#the-mi-9t-readings-o
   arrival this device could not count": the badge from the server, a request in flight never joined,
   a burst of three counted by two requests) - all four fail without the fix, and the two last fail
   each on its own mutation (joining allowed, the owed loop removed).
-- **Owed:** [the reading](../../backlog.d/reading-owed-a-salon-message-arriving-before-its-seed-raises-its-badge.md)
-  on both phones.
+- **Read on both phones:** the Mi on `1.7.0-alpha.6`, the iPhone's invite-then-burst branch 4 of 4 on
+  `1.7.0-alpha.12` ([readings](../../device-verification.md#the-phone-and-web-readings-of-2026-11-18-s6-170-alpha12-live-moderations-last-halves-the-reel-card-overlays-the-birthday-morning)).
 
 ### A salon's badge starts at the grant (owner, 2026-11-16)
 

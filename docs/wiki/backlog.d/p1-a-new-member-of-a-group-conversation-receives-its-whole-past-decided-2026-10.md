@@ -39,6 +39,12 @@ text; nothing is built for it
    logged five error-level `REFUSED` lines for join pushes in five OTHER groups, filed as
    [p2-a-new-device-refuses-the-join-push-of-groups-it-was-admitted-to-unsolicited](p2-a-new-device-refuses-the-join-push-of-groups-it-was-admitted-to-unsolicited.md)
    (`1.7.1`, not shown a regression). Not staged: the LINK joiner who waited before the Add.
+   **2026-11-18, sitting S6 (`1.7.0-alpha.12`): the link joiner NOT staged, the rig cannot mint the
+   group on this bundle.** `newgroup.mjs --with` on a web seat chose both people (their chips landed) and
+   then timed out waiting for `[data-testid="new-chat-proceed"]`: the panel's test ids came with #3810,
+   merged after `alpha.12` was cut (its `SidebarNewChatModal.svelte` carries `new-chat-chips` only).
+   **Left: the link joiner, on the first pre-release carrying #3810** (`newgroup.mjs --with A,B`, then
+   the joiner by link, the Add, and the new device's ask).
 2. **The join push is not sealed** - it answers no ask, so no key of the newcomer's reaches the inviter.
    The residual was a server misrouting the push of a RETURNING member to a member admitted after
    that member's first arrival. **Owner, 2026-11-17: closed in `1.7.0`.** Built and merged (#3777, on dev since `1.7.0-alpha.9`), with the offline newcomer's fix, read `PASS` on both phones (entry deleted 2026-11-18, [every half read](../device-verification.md#the-phone-readings-of-2026-11-17-170-alpha9-both-phones-and-the-rig)).
