@@ -16,10 +16,6 @@ earliest version, as a checklist.
 
 ## 1.7.0
 
-**P1 - security, or a user-facing path that is broken**
-
-- [P1 - media-service holds the retention durations after the deploy that adds the relay (the boot notice carries them)](backlog.d/p1-media-retention-held-after-the-deploy-that-adds-the-relay.md)
-
 **Chantiers, decisions and questions (no severity)**
 
 - [Decided - the owner's answers of 2026-11-01, what `1.5.5` carries and what is left to build](backlog.d/owner-decisions-of-2026-11-01-for-1-5-5.md)
@@ -94,13 +90,15 @@ earliest version, as a checklist.
 - [P2 - a freshly minted device logs an error-level `REFUSED` for the join push of groups whose join it never solicited](backlog.d/p2-a-new-device-refuses-the-join-push-of-groups-it-was-admitted-to-unsolicited.md)
 - [P2 - a salon reaction that opens its sender's new seed session is never notified while the app is open (2026-11-18)](backlog.d/p2-a-salon-reaction-that-opens-its-sender-s-new-seed-session-is-never-notified-in-the-foreground.md)
 - [P2 - the Android background answer to a `welcome_request` retries the add lock on a clock (2026-11-18)](backlog.d/p2-the-android-background-welcome-answer-retries-the-add-lock-on-a-clock.md)
-- [P2 - the iPhone's photo picker loses most of a multiple pick, and says nothing](backlog.d/p2-the-iphone-photo-picker-loses-most-of-a-multiple-pick-silently.md)
+- [P2 - READ ON THE NEXT 1.7.1 PRE-RELEASE: the iPhone's photo picker kept every item of a multiple pick](backlog.d/p2-the-iphone-photo-picker-loses-most-of-a-multiple-pick-silently.md)
 
 **P3 - hygiene**
 
 - [P3 - a 1:1 dropped because the server no longer lists it is logged "distribution group left"](backlog.d/p3-a-dropped-1-1-is-logged-as-a-distribution-group-left.md)
 - [P3 - Two call-resume edges the second review of #2148 found, recorded and not built (2026-10-20)](backlog.d/p3-two-call-resume-edges-the-second-review-of-2148-found-recorded-and-not-built.md)
 - [P3 - Connectivity stays "reachable" through a captive portal, so the send waits for the ladder (review of #2428, 2026-10-25)](backlog.d/p3-connectivity-stays-reachable-through-a-captive-portal-so-the-send-waits-for.md)
+- [P3 - an object moved onto the idle window after upload carries no stamp, so the idle-file setting never governs it](backlog.d/p3-an-object-moved-onto-the-idle-window-carries-no-idle-stamp.md)
+- [P3 - a native app asks for a refresh carrying no credential at all, and nothing says why its store is empty](backlog.d/p3-a-native-app-asks-a-refresh-with-no-credential-to-carry.md)
 - [P3 - `frontend/` holds three Cargo lockfiles that one `mls-core` bump must all move: one workspace](backlog.d/p2-a-cargo-bump-in-mls-core-leaves-two-committed-lockfiles-dependabot-will.md)
 - [P3 - an unsigned restored message is only marked, and a history bundle has no byte cap per chunk](backlog.d/p2-signed-authorship-of-restored-history-built-2276-owed-rig-rows-and-a-version.md)
 - [P3 - a 13 MB upload on the iPhone restarted at about half and ran at 40 to 65 KB/s](backlog.d/p3-a-13-mb-upload-on-the-iphone-restarted-at-half-and-ran-at-40-to-65-kb-s.md)
@@ -124,6 +122,7 @@ earliest version, as a checklist.
 - [P3 - salon texts held by a `502` are posted in the order their backoffs end, not the order they were written](backlog.d/p3-salon-texts-held-by-a-502-are-posted-out-of-order.md)
 - [P3 - the share targets are republished twenty-three times during an account's first sync](backlog.d/p3-the-share-targets-are-republished-twenty-three-times-in-the-first-sync.md)
 - [P3 - the Thème control runs off the screen at a doubled font](backlog.d/p3-the-theme-control-runs-off-the-screen-at-a-doubled-font.md)
+- [P3 - what the production log read of the `1.7.0` stable day left unexplained or noisy (2026-11-18)](backlog.d/p3-what-the-1-7-0-stable-day-log-read-left-unexplained-or-noisy.md)
 - [P3 - Reading owed - the CanaReel overlay tap and the fixed playback bar, on both phones](backlog.d/reading-owed-reel-overlay-tap-and-playback-bar.md)
 
 ## 1.8.0

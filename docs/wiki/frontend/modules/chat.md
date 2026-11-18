@@ -598,6 +598,13 @@ up for fifteen seconds, anchored to an input that was `display: none`.
   and compares the CANONICAL path, so neither `..` nor a symlink reaches outside. `nativeAttachPicker.ts`
   names the `File` as the picker did and types it from its extension (the picker gives no MIME type);
   a photo arrives as the library holds it, usually HEIC, which `compressImage` decodes on WebKit.
+  **One directory per pick (2026-11-18):** upstream `tauri-plugin-dialog` 2.8.3 copied every PHPicker item to
+  `<caches>/<file name>` after deleting whatever held that name, from several threads at once, so a pick of 11
+  gave 3 files and 8 "No such file". The crate is vendored (`src-tauri/patches/tauri-plugin-dialog`, the
+  `CANARI PATCH` hunks in `ios/Sources/FilePickerController.swift`): `canari-pick-<uuid>/<name>` per item, a
+  serial queue for the shared state, the order kept, and the items already copied handed over when another fails; `take_picked_file` removes the emptied directory
+  (`remove_emptied_pick_dir`), and `pickNatively` warns with how many files were not taken. The Swift is
+  verified by compiling only - owed on the iPhone: a pick of 11.
 
 **THE MENU, THE PANEL AND THE KEYBOARD ARE ONE STATE** (`utils/chat/composerSurface.ts`,
 `composerSurface.test.ts` walks every event in every state): `idle`, `menu`, `gif`, and `handoff`.

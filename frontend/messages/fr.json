@@ -333,6 +333,16 @@
   "chat_drag_files_badge": "Déposez vos fichiers ici",
   "composer_drop_web_image_refused": "Ce site ne laisse pas d'autres sites lire son image. Enregistrez l'image, puis joignez le fichier.",
   "post_drop_overlay": "Déposez pour joindre à votre publication",
+  "composer_native_pick_unread": [
+    {
+      "declarations": ["input count", "input total", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} fichier sur {total} n'a pas pu être lu et n'a pas été ajouté.",
+        "countPlural=other": "{count} fichiers sur {total} n'ont pas pu être lus et n'ont pas été ajoutés."
+      }
+    }
+  ],
   "composer_drop_file_unreadable": "Le gestionnaire de fichiers n'a pas transmis ce fichier au navigateur. Utilisez le bouton de pièce jointe.",
   "chat_enlarge_preview_label": "Agrandir l'aperçu",
   "chat_remove_file_label": "Retirer le fichier",
