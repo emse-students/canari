@@ -1,11 +1,13 @@
 ## P2 - a device that accuses frames falsely walks the whole online membership at every cold start (#3762)
 
-target: 1.8.0
+target: 1.7.1
 
 _2026-11-17, scope cut: KEPT in `1.7.0` - a regression of `1.7.0`: the walk it describes is #3762's, merged 2026-11-17, after `v1.6.12` ([decisions](owner-decisions-of-2026-11-17.md))._
 
 _2026-11-18, sitting S4: moved to `1.8.0` on the measurement below (the walk is #3762's, but the false
 accusation that would start it did not fire in 17 hard-killed cold starts); the lead confirms or puts it back._
+
+_2026-11-18 (lead, under the 1.7.0 scope cut's criteria): measured 0 false accusations in 17 cold starts (KILL-3 and the S4 sitting), so not a proven regression - a P2 that is not a regression goes to 1.7.1 ([decisions](owner-decisions-of-2026-11-17.md))._
 
 **What changed.** Since #3762, an ask raised by a frame this device cannot read carries
 `incomplete: true`. Every member that holds nothing the asker lacks answers

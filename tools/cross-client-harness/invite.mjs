@@ -39,8 +39,8 @@ const probeOnly = process.argv.includes('--probe');
 /**
  * THE OVERLAY STATE MACHINE IS `groupnav.mjs`'s, and this file used to carry its own copy.
  *
- * The copy drifted: it never grew the `Nouvelle discussion Contact Groupe` branch that `overlayOn`
- * added for a dialog with no `#new-group-name` - which that copy would have read as no overlay at
+ * The copy drifted: it never grew the new-conversation branch that `overlayOn`
+ * added for a panel with no `#new-group-name` - which that copy would have read as no overlay at
  * all - and it clicked a close control the app stopped shipping in #455. One implementation, so a
  * repair reaches every caller. The stacking order this file discovered is documented on
  * `overlayOn` itself.

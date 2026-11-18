@@ -250,7 +250,11 @@ export async function closeOverlays(cx) {
     // `SidePanel`, whose class is `side-panel`, and `.conversation-side-panel` matched nothing again
     // until NOTIF-17b died here on 2026-09-27. The selftest guards strings, not class names.
     const closeSelector =
-      state === 'group-panel' || state === 'side-panel' ? SIDE_PANEL_CLOSE : state === 'add-member' ? MODAL_CLOSE : 'text=Fermer';
+      state === 'group-panel' || state === 'side-panel'
+        ? SIDE_PANEL_CLOSE
+        : state === 'add-member' || state === 'new-conversation'
+          ? MODAL_CLOSE
+          : 'text=Fermer';
     await realClick(cx, closeSelector).catch((e) => {
       lastClickError = `${state}: ${e.message}`;
       console.log(`[closeOverlays] pass ${i} click on ${state} failed - ${e.message}`);
@@ -260,6 +264,23 @@ export async function closeOverlays(cx) {
   throw new Error(
     `could not close the overlay, still on ${await overlayOn(cx)}` +
       (lastClickError ? ` (last click failed: ${lastClickError})` : ' (every click was dispatched)')
+  );
+}
+
+/**
+ * Waits until a control addressed by its `data-testid` is ENABLED - a click on a disabled control is
+ * discarded in silence, so the button's own `disabled` is the post-condition, never a sleep. The
+ * test ids (`new-chat-proceed`, `new-group-submit`) are the panel's stable handles: its labels change
+ * with the number of people chosen ("Démarrer la discussion" / "Créer un groupe avec N personnes").
+ */
+async function untilEnabled(cx, testId) {
+  await until(
+    cx,
+    `(function () {
+       var b = document.querySelector('[data-testid="${testId}"]');
+       return !!b && !b.disabled;
+     })()`,
+    8000
   );
 }
 
@@ -334,24 +355,16 @@ export async function createGroup(cx, name, { label = 'createGroup', members = [
         `a group is created from at least two people chosen in the panel; got ${members.length} (pass { members: [display names] })`
       );
     for (const who of members) await chooseInNewDiscussion(cx, who, label);
-    await realClick(cx, `text=Créer un groupe avec ${members.length} personnes`);
+    await untilEnabled(cx, 'new-chat-proceed');
+    await realClick(cx, '[data-testid="new-chat-proceed"]');
     await until(cx, `!!document.querySelector('#new-group-name')`, 10000);
 
     await realClick(cx, '#new-group-name');
     await cx.send('Input.insertText', { text: name });
 
     // POST-CONDITION BEFORE THE CLICK, not a sleep: the submit is disabled while a creation runs.
-    await until(
-      cx,
-      `(function () {
-         var b = [].slice.call(document.querySelectorAll('button')).filter(function (x) {
-           return /Créer la discussion de groupe/.test(x.innerText || '');
-         })[0];
-         return !!b && !b.disabled;
-       })()`,
-      8000
-    );
-    await realClick(cx, 'text=Créer la discussion de groupe');
+    await untilEnabled(cx, 'new-group-submit');
+    await realClick(cx, '[data-testid="new-group-submit"]');
 
     await until(cx, `document.body.innerText.indexOf(${JSON.stringify(name)}) !== -1`, 25000);
     // OWNED FROM THE MOMENT IT EXISTS (R5): every group a runner mints is recorded here, once, so a
@@ -381,10 +394,10 @@ export async function createGroup(cx, name, { label = 'createGroup', members = [
  * people, so a blind create is a modal that cannot be submitted; the sidebar is asked first and the
  * whole gesture is skipped when the row is there. Run it twice and the second run is one read.
  *
- * THE SUBMIT IS GATED ON A SELECTION, NOT ON TEXT. `#new-contact-id` is a SEARCH box: typing the
+ * THE SUBMIT IS GATED ON A SELECTION, NOT ON TEXT. `#new-chat-search` is a SEARCH box: typing the
  * exact display name leaves "Démarrer la discussion" disabled, because the modal wants a chosen
  * contact rather than a matching string - and a click on a disabled control is discarded in silence,
- * which is the same trap `createGroup` records for the group name. So the suggestion is clicked, and
+ * which is the same trap `createGroup` records for the group name. So the suggestion is chosen, and
  * the button's own `disabled` is the post-condition waited on before it is pressed.
  *
  * THE SUGGESTION IS PICKED BY NAME AND NOT BY POSITION, for the reason `names.mjs` exists: a search
@@ -405,17 +418,8 @@ export async function createDM(cx, contact, { label = 'createDM' } = {}) {
   await until(cx, `!!document.querySelector('#new-chat-search')`, 10000);
   await chooseInNewDiscussion(cx, contact, label);
 
-  await until(
-    cx,
-    `(function () {
-       var b = [].slice.call(document.querySelectorAll('button')).filter(function (x) {
-         return /Démarrer la discussion/.test(x.innerText || '');
-       })[0];
-       return !!b && !b.disabled;
-     })()`,
-    8000
-  );
-  await realClick(cx, 'text=Démarrer la discussion');
+  await untilEnabled(cx, 'new-chat-proceed');
+  await realClick(cx, '[data-testid="new-chat-proceed"]');
 
   // The SIDEBAR row is what "the DM exists" implies - not the composer, for the reason `createGroup`
   // records: with several conversations listed the sidebar re-sorts and the selection is lost.
