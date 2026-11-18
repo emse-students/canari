@@ -93,7 +93,6 @@ earliest version, as a checklist.
 - [P2 - a live viewer suspended mid-request stops as "Live indisponible" on a transport failure](backlog.d/p2-a-live-viewer-suspended-mid-request-stops-as-unavailable-on-a-transport-failure.md)
 - [P2 - a freshly minted device logs an error-level `REFUSED` for the join push of groups whose join it never solicited](backlog.d/p2-a-new-device-refuses-the-join-push-of-groups-it-was-admitted-to-unsolicited.md)
 - [P2 - a salon reaction that opens its sender's new seed session is never notified while the app is open (2026-11-18)](backlog.d/p2-a-salon-reaction-that-opens-its-sender-s-new-seed-session-is-never-notified-in-the-foreground.md)
-- [P2 - "Supprimer + muter" swallows the mute's refusal and deletes the post anyway](backlog.d/p2-delete-and-mute-swallows-the-mute-refusal-and-deletes-anyway.md)
 - [P2 - the Android background answer to a `welcome_request` retries the add lock on a clock (2026-11-18)](backlog.d/p2-the-android-background-welcome-answer-retries-the-add-lock-on-a-clock.md)
 - [P2 - the iPhone's photo picker loses most of a multiple pick, and says nothing](backlog.d/p2-the-iphone-photo-picker-loses-most-of-a-multiple-pick-silently.md)
 

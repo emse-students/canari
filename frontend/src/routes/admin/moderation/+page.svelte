@@ -363,6 +363,25 @@
     }
   }
 
+  /**
+   * "Delete and mute": the mute comes FIRST and a refusal STOPS the run - the post is deleted only
+   * once its writer is muted, so the moderator is never told both happened when one did not. A
+   * refusal is named by its CODE (`describeModerationRefusal`); muting an already-muted writer is
+   * not a refusal (the server upserts), so there is nothing to tolerate here.
+   */
+  async function handleDeleteAndMute(postId: string, authorId: string) {
+    processingId = postId;
+    try {
+      await muteUser(authorId);
+    } catch (e) {
+      Log.w('admin.moderation.handleDeleteAndMute: mute refused, post kept', e);
+      error = describeModerationRefusal(e) ?? m.moderation_mute_error();
+      processingId = null;
+      return;
+    }
+    await handleDeleteHidden(postId);
+  }
+
   async function handleDeleteHidden(postId: string) {
     processingId = postId;
     try {
@@ -963,19 +982,11 @@
             >
               {m.moderation_restaurer()}
             </Button>
-            {#if post.authorId}
+            {#if post.authorId && post.canMuteAuthor === true}
               <Button
                 variant="danger-outline"
                 size="compact"
-                onclick={async () => {
-                  processingId = post.id;
-                  try {
-                    await muteUser(post.authorId!);
-                  } catch {
-                    /* already muted is fine */
-                  }
-                  await handleDeleteHidden(post.id);
-                }}
+                onclick={() => handleDeleteAndMute(post.id, post.authorId!)}
                 disabled={processingId === post.id}
                 title={m.moderation_delete_mute_hint()}
               >
