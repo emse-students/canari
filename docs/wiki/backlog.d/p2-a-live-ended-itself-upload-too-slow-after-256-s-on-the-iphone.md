@@ -1,6 +1,8 @@
 ## P2 - a live ended itself (`upload-too-slow`) after 256 s on the iPhone, cause unproven
 
-target: 1.7.0
+target: 1.7.1
+
+_Moved 2026-11-18 under the 1.7.0 scope cut ([decisions](owner-decisions-of-2026-11-17.md)): not a regression, and not reproduced on `1.7.0-alpha.5`, `alpha.9` or `alpha.10`._
 
 _2026-11-17, scope cut: KEPT in `1.7.0` - the broadcaster that ends on `upload-too-slow` changed since `v1.6.12`: `git log v1.6.12..origin/main` on `frontend/src/lib/live/liveBroadcast.svelte.ts` lists #3508 (desktop scenes), #3521 and #3604, and `LiveBroadcaster.svelte` #3690 and #3701 ([decisions](owner-decisions-of-2026-11-17.md))._
 
