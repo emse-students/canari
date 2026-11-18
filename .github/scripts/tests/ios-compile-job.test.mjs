@@ -66,10 +66,39 @@ check(
 // search paths and its host dylibs, and a restore from `macos-15` hid the first Xcode 27 failure.
 const pinMajor = (xcodePin(code) || '').replace(/^\D*/, '').split('.')[0];
 const rustCacheKey = (code.match(/Swatinem\/rust-cache@[\s\S]*?\n\s+key: (\S+)/) || [])[1];
+// A BOUNDARY, so `xcode-270` cannot pass for 27.
 check(
-  pinMajor !== '' && rustCacheKey !== undefined && rustCacheKey.includes(`xcode-${pinMajor}`),
+  pinMajor !== '' &&
+    rustCacheKey !== undefined &&
+    new RegExp(`(^|[^0-9a-z])xcode-${pinMajor}(?![0-9])`).test(rustCacheKey),
   `the rust-cache key ${rustCacheKey} names Xcode ${pinMajor}`,
   `the rust-cache key ${rustCacheKey} does not name the pinned Xcode major (${pinMajor})`,
+);
+
+// THE MLS WASM BUILD RUNS ON THE SAME RUNNER, AND BOTH OF ITS CACHES NAME THE XCODE MAJOR: the
+// built-artefact key, and the Rust target cache `setup-rust-toolchain` restores on a miss (run
+// 44278923984 restored `frontend/mls-wasm/target` under a key that named no Xcode). The tag is
+// DERIVED from `xcodebuild -version`, never typed, so it follows the pin.
+const wasmAction = readFileSync(resolve(repoRoot, '.github/actions/build-mls-wasm/action.yml'), 'utf8');
+const wasmCode = wasmAction
+  .split('\n')
+  .filter((l) => !/^\s*#/.test(l))
+  .join('\n');
+check(
+  /id: host[\s\S]*?xcodebuild -version/.test(wasmCode),
+  'build-mls-wasm derives its host tag from xcodebuild -version',
+  'build-mls-wasm does not derive its host tag from the selected Xcode',
+);
+check(
+  /key: mls-wasm-[^\n]*\$\{\{ steps\.host\.outputs\.tag \}\}/.test(wasmCode),
+  'the WASM artefact cache key carries the host tag',
+  'the WASM artefact cache key names no Xcode - another image restores it',
+);
+const setupRust = (wasmCode.match(/uses: actions-rust-lang\/setup-rust-toolchain@[\s\S]*?(?=\n    - |\n*$)/) || [''])[0];
+check(
+  /\n\s+cache: false\b/.test(setupRust) || /\n\s+cache-key: \$\{\{ steps\.host\.outputs\.xcode \}\}/.test(setupRust),
+  'the Rust target cache of the WASM build carries the host tag',
+  'the Rust target cache of the WASM build names no Xcode - its host dylibs cross images',
 );
 check(
   /if: \$\{\{ needs\.changes\.outputs\.run-ios-app == 'true' \}\}/.test(code),

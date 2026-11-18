@@ -2144,9 +2144,11 @@ loads; the cache from `macos-15` had hidden it in the first run. The fix is in t
 host build escapes it: `[profile.release.build-override] strip = false` in
 `frontend/src-tauri/Cargo.toml` and `frontend/mls-wasm/Cargo.toml` (the MLS WASM build runs on the
 same runner). Nothing that ships changes: cargo never strips a `staticlib` or a wasm, and the Xcode
-archive strips the app. `build-mls-wasm`'s cache key names the Xcode major on macOS
-(`mls-wasm-macOS-xcode27-...`), so a new Xcode builds the WASM cold once instead of restoring an
-entry whose host half another image produced.
+archive strips the app. `build-mls-wasm` names the Xcode major on macOS in BOTH of its caches:
+the built-artefact key (`mls-wasm-macOS-xcode27-...`) and the `cache-key` of the Rust target cache
+that `setup-rust-toolchain` restores on a miss - the first version keyed only the former, and run
+44278923984 restored `frontend/mls-wasm/target` from another key on a "full match". A new Xcode major
+therefore finds neither entry and rebuilds both from source; no host dylib crosses an image.
 
 **What else the move added.** `ios-libapp.sh` asserts after `cargo build` that every
 `_init_plugin_*` the Rust objects reference is an EXTERNAL `T` symbol of `libapp.a` (rustup's `llvm-nm -g`: Xcode's `nm` cannot read rustc's bitcode), so a
@@ -2154,7 +2156,16 @@ plugin swift-rs failed to re-export fails there, by name. Every `xcodebuild` bui
 `-destination 'generic/platform=iOS'` (Xcode 27 otherwise warns "Using the first of multiple matching
 destinations"). `ios.yml` installs the provisioning profiles into both stores Xcode scans
 (`~/Library/MobileDevice/Provisioning Profiles` and `~/Library/Developer/Xcode/UserData/Provisioning
-Profiles`) and writes `xcodebuild -version`, the iOS SDK and the runner image to the run summary.
+Profiles`) and writes `xcodebuild -version`, the iOS SDK, the runner image and the `altool` it will
+upload with (`xcrun --find altool`, version printed; the step FAILS naming it when absent, so the
+first pre-release on a new Xcode proves the upload tool before the upload needs it) to the run summary.
+
+**The `xcode-27` label is a preview, and its queue time is not bounded.** `build-ios` carries
+`timeout-minutes: 90` (a clean signed run measured about 20 minutes), so a hung job cannot hold
+`release.yml`'s `release` concurrency group - and with it the next cut - for GitHub's default 360
+minutes. The timeout counts from the job's start, not from its wait for a runner. The proof that a
+runner is available before a STABLE is the iOS leg of that version's pre-release going green: a
+stable is cut only after it.
 
 ### A green run is not proof that *your* file compiled
 

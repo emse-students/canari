@@ -104,6 +104,10 @@ jobs:
   build-ios:
     name: Build iOS IPA
     runs-on: xcode-27 # GitHub's Xcode 27 image (arm64, macOS 27), which the step below REQUIRES
+    # A HUNG JOB MUST NOT HOLD THE NEXT CUT: release.yml's `release` concurrency group waits on this
+    # job, and GitHub's default is 360 minutes. A signed run takes about 20; 90 is the ceiling
+    # (docs/wiki/cicd.md#the-ios-toolchain-is-pinned-xcode-27-since-171).
+    timeout-minutes: 90
     permissions:
       contents: write
     # THE CHANNEL'S ESTATE IS AN ENVIRONMENT (2026-11-13): an alpha reads `BASE_URL` and `AUTHENTIK_*`
@@ -176,6 +180,11 @@ jobs:
             xcodebuild -version
             echo "SDK: $(xcrun --sdk iphoneos --show-sdk-version)"
             echo "Runner image: ${ImageOS:-not set} ${ImageVersion:-not set}"
+            # THE UPLOAD TOOL, proven here and not first met at the upload step: `xcrun --find`
+            # exits non-zero and names the tool when this Xcode does not carry it.
+            altool="$(xcrun --find altool)"
+            altool_version="$("$altool" --version 2>&1)"
+            echo "altool: $altool (${altool_version%%$'\n'*})"
             echo '```'
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
