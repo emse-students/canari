@@ -825,7 +825,10 @@ collection of name and first name, as one required tick, for new AND existing ac
 > to `BOUND` in both tests, in one pull request, after the conditions in
 > [backlog](../backlog.d/p1-the-miconnect-terms-stage-reaches-production-with-the-next-stable-three.md).
 > A dev account that ticks the box has accepted the same text production will show, so it is not
-> asked again there. The page `/legal/miconnect` is published on both estates.
+> asked again there. **The automated dev sign-ins answer it too**: `serve-dev.yml`'s smoke account
+> ticks it once per version ([cicd](../cicd.md#the-smoke-sign-in-wp-smoke-login-decided-2026-10-18)),
+> the cross-client rig's accounts tick it in `tools/cross-client-harness/idpform.mjs`, and
+> `test-pkce.py` gives its probe user the current version. The page `/legal/miconnect` is published on both estates.
 
 - **Where:** `blueprints/45-consent.yaml`, flow `miconnect-authorization`, named by the providers
   `50-providers.yaml` binds to it (above) instead of `default-provider-authorization-implicit-consent`. The enrolment flow
