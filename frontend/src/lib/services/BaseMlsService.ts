@@ -197,7 +197,11 @@ import {
   REFUSED_ROTATION_RELOADS_KEY,
   forgetRefusedRotationReloads,
 } from '$lib/mls-client/refusedRotationReloads';
-import { isTransportFailure, TransportFailureError } from '$lib/utils/transportFailure';
+import {
+  isTransportFailure,
+  TransportFailureError,
+  transportFailureEvidence,
+} from '$lib/utils/transportFailure';
 import type {
   DistributionFrameHandler,
   DistributionGroupInfoTransport,
@@ -3578,7 +3582,7 @@ export abstract class BaseMlsService implements IMlsService {
           // already counts that one towards `STALLS_BEFORE_UNREACHABLE`, and one expiry is a slow
           // moment, not a dead link. The page itself answering clears it (`pullPendingMessagesJson`).
           if (e instanceof TransportFailureError)
-            connectivity.notifyServerUnreachable(`transport failure: ${e.name}`);
+            connectivity.notifyServerUnreachable(transportFailureEvidence(e));
         } else {
           console.error(
             `[PENDING] Pending fetch failed after ${fetched} message(s) - ${where}:`,

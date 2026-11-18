@@ -23,7 +23,11 @@ import type {
 import { toBase64, fromBase64 } from '$lib/utils/hex';
 import { trackedFetch } from '$lib/utils/trackedFetch';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
-import { isTransportFailure, TransportFailureError } from '$lib/utils/transportFailure';
+import {
+  isTransportFailure,
+  TransportFailureError,
+  transportFailureEvidence,
+} from '$lib/utils/transportFailure';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { ApiRefusalError, responseOrigin, type ResponseOrigin } from '$lib/utils/apiRefusal';
 import { noteServerTime } from '$lib/utils/chat/serverClock';
@@ -2644,7 +2648,7 @@ export class MlsDeliveryApi {
       // the caller reads to decide whether the link is known down; a deadline is not - one expiry
       // is a slow moment (`STALLS_BEFORE_UNREACHABLE` counts those where they are tracked).
       if (e instanceof TransportFailureError)
-        connectivity.notifyServerUnreachable(`transport failure: ${e.name}`);
+        connectivity.notifyServerUnreachable(transportFailureEvidence(e));
       if (isTransportFailure(e)) throw e;
       console.error(`[History] batch of ${chunk.length} group(s) could not be sent:`, e);
     }

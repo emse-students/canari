@@ -33,7 +33,7 @@ afterEach(() => {
 describe('the owed salon writes', () => {
   it('runs nothing until the reconnect, then each write once', async () => {
     const write = vi.fn().mockResolvedValue(undefined);
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     oweSalonWrite('pin:m1', write);
     expect(write).not.toHaveBeenCalled();
 
@@ -41,7 +41,7 @@ describe('the owed salon writes', () => {
     await vi.waitFor(() => expect(write).toHaveBeenCalledTimes(1));
 
     // A second reconnect finds nothing left to send.
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     connectivity.notifyServerReachable();
     await Promise.resolve();
     expect(write).toHaveBeenCalledTimes(1);
@@ -51,7 +51,7 @@ describe('the owed salon writes', () => {
   it('a later write under the same key replaces the owed one', async () => {
     const first = vi.fn().mockResolvedValue(undefined);
     const later = vi.fn().mockResolvedValue(undefined);
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     oweSalonWrite('vote:p1', first);
     oweSalonWrite('vote:p1', later);
 
@@ -64,7 +64,7 @@ describe('the owed salon writes', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const broken = vi.fn().mockRejectedValue(new Error('bug'));
     const fine = vi.fn().mockResolvedValue(undefined);
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     oweSalonWrite('a', broken);
     oweSalonWrite('b', fine);
 
@@ -85,7 +85,7 @@ describe('deliverSalonWrite', () => {
   };
 
   it('does not even try while offline, and settles once delivered on the reconnect', async () => {
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     const attempt = vi.fn().mockResolvedValue(undefined);
     const outcomes: SalonWriteOutcome['kind'][] = [];
     await deliverSalonWrite('k', attempt, (o) => outcomes.push(o.kind));
@@ -100,7 +100,7 @@ describe('deliverSalonWrite', () => {
   it('owes a write whose failure took the link down, and fails one that left it up', async () => {
     expect(
       await run(() => {
-        connectivity.notifyServerUnreachable();
+        connectivity.notifyServerUnreachable('test');
         return Promise.reject(new TransportFailureError(new TypeError('Failed to fetch')));
       })
     ).toEqual(['owed']);

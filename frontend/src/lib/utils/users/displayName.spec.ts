@@ -564,7 +564,7 @@ describe('formatProfileDisplayName (indirect)', () => {
     );
     await mod.resolveUserDisplayName('usr_deleted_2');
 
-    connectivityModule.connectivity.notifyServerUnreachable();
+    connectivityModule.connectivity.notifyServerUnreachable('test');
     connectivityModule.connectivity.notifyServerReachable();
     await flushMacrotask();
 

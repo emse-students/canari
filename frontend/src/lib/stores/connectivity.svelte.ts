@@ -19,7 +19,7 @@
  */
 
 import { RequestDeadlineError } from '$lib/utils/requestDeadline';
-import { isTransportFailure } from '$lib/utils/transportFailure';
+import { isTransportFailure, transportFailureEvidence } from '$lib/utils/transportFailure';
 import { isAppOnScreen, onAppScreenChange } from '$lib/utils/appForeground';
 import { createChangeLatch } from '$lib/utils/changeLatch';
 
@@ -257,7 +257,7 @@ class ConnectivityStore {
    *   (`2 request deadlines in a row`) from a refused socket (`transport failure: <error type>`) -
    *   the distinction the stall counter exists for. The caller states it; this never guesses.
    */
-  notifyServerUnreachable(evidence = 'transport failure'): void {
+  notifyServerUnreachable(evidence: string): void {
     this.ensureGlobalListeners();
     if (!this.serverReachable) return;
     console.log(`[CONNECTIVITY] server unreachable (${evidence})`);
@@ -454,7 +454,9 @@ class ConnectivityStore {
           }
         } else if (isTransportFailure(error)) {
           this.notifyServerUnreachable(
-            `transport failure: ${error instanceof Error ? error.name : typeof error}`
+            error instanceof Error
+              ? transportFailureEvidence(error)
+              : 'transport failure: non-error'
           );
         }
         this.recomputeSlow();
