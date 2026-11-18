@@ -13,6 +13,7 @@ import {
   LYDIA_CASHIER_ROLE_FIXED,
   LYDIA_NO_BUSINESS,
   LydiaCashiersService,
+  LYDIA_CASHIERS_LIVE,
 } from './lydia-cashiers.service';
 import {
   LYDIA_CASHIER_ADDED_TYPE,
@@ -57,6 +58,7 @@ describe('the lot 3 codes social-service answers follow the shared contract', ()
       cashierClaimLost: LYDIA_CASHIER_CLAIM_LOST,
       cashierNumberChanged: LYDIA_CASHIER_NUMBER_CHANGED,
       cashierConfirmedRequired: LYDIA_CASHIER_CONFIRMED_REQUIRED,
+      cashiersLiveOnDelete: LYDIA_CASHIERS_LIVE,
     }).toEqual(
       Object.fromEntries(
         Object.entries(CONTRACT.social).filter(([key]) => key.startsWith('cashier'))
@@ -135,7 +137,14 @@ describe('LydiaCashiersService - the checks, with a mocked database', () => {
    */
   function make(
     rows: Row[],
-    opts: { member?: boolean; core?: unknown; asso?: Partial<Asso>; notifier?: unknown } = {}
+    opts: {
+      member?: boolean;
+      core?: unknown;
+      asso?: Partial<Asso>;
+      notifier?: unknown;
+      /** The users who are no longer members of the association (the departure debt). */
+      departed?: string[];
+    } = {}
   ) {
     const asso: Asso = { vendorToken: 'vendor-1', claimed: false, token: null, ...opts.asso };
     const live = () => rows.filter((r) => !r.removedAt);
@@ -160,6 +169,11 @@ describe('LydiaCashiersService - the checks, with a mocked database', () => {
         asso.claimed = false;
         asso.token = null;
         return [{ id: ASSO }];
+      }
+      if (sql.includes('AS "hasPrevious"')) {
+        return live()
+          .filter((r) => (opts.departed ?? []).includes(r.userId))
+          .map((r) => ({ id: r.id, role: r.role, hasPrevious: r.previousPhoneSealed !== null }));
       }
       if (sql.includes('INSERT INTO lydia_cashiers')) {
         rows.push({
@@ -506,6 +520,121 @@ describe('LydiaCashiersService - the checks, with a mocked database', () => {
       response: { code: LYDIA_CASHIER_CLAIM_LOST },
     });
     expect(writes(query)).toHaveLength(0);
+  });
+
+  describe('settleDepartures - a membership that ended owes its Lydia rights', () => {
+    const levels = () => ({
+      log: jest.spyOn(Logger.prototype, 'log'),
+      warn: jest.spyOn(Logger.prototype, 'warn'),
+      error: jest.spyOn(Logger.prototype, 'error'),
+    });
+    const corePosts = (httpService: { post: jest.Mock }) =>
+      httpService.post.mock.calls.map(([, body]) => body as Record<string, string>);
+
+    it('a departed Vendeur: the verified removal, reason departure, the row closed, the claim released', async () => {
+      const spy = levels();
+      const rows = [responsable(), vendeur()];
+      const { service, httpService, asso } = make(rows, {
+        core: { verified: true, held: 0 },
+        departed: ['u2'],
+      });
+      await service.settleDepartures(ASSO, 'departure');
+      expect(corePosts(httpService)).toEqual([
+        expect.objectContaining({
+          associationId: ASSO,
+          contextPhone: HOLDER_PHONE,
+          cashierPhone: PHONE,
+          reason: 'departure',
+        }),
+      ]);
+      expect(rows[1].removedAt).toBeInstanceOf(Date);
+      expect(rows[0].removedAt).toBeUndefined();
+      expect(asso).toMatchObject({ claimed: false, token: null });
+      expect(spy.error).not.toHaveBeenCalled();
+      expect(String(spy.log.mock.calls)).toContain('confirmed by Lydia (0 rights)');
+    });
+
+    it('Lydia still shows rights: the row stays live, FLAGGED, at ERROR - and a second trigger asks again', async () => {
+      const spy = levels();
+      const rows = [responsable(), vendeur()];
+      const { service, httpService, asso } = make(rows, {
+        core: { verified: false, held: 1 },
+        departed: ['u2'],
+      });
+      await service.settleDepartures(ASSO, 'departure');
+      expect(rows[1].removedAt).toBeUndefined();
+      expect(rows[1].revokeUnconfirmedAt).toBeInstanceOf(Date);
+      expect(asso.claimed).toBe(false);
+      expect(String(spy.error.mock.calls)).toContain('NOT confirmed by Lydia');
+      await service.settleDepartures(ASSO, 'payout-read');
+      expect(httpService.post).toHaveBeenCalledTimes(2);
+    });
+
+    it('core does not answer: the outcome is unknown, so it is recorded NOT confirmed, never as removed', async () => {
+      const rows = [responsable(), vendeur()];
+      const { service } = make(rows, { core: new Error('socket hang up'), departed: ['u2'] });
+      await service.settleDepartures(ASSO, 'departure');
+      expect(rows[1].removedAt).toBeUndefined();
+      expect(rows[1].revokeUnconfirmedAt).toBeInstanceOf(Date);
+    });
+
+    it('core refuses (an HTTP answer): nothing changed at Lydia, nothing written, the claim released, still owed', async () => {
+      const spy = levels();
+      const refusal = Object.assign(new Error('409'), { response: { status: 409, data: {} } });
+      const rows = [responsable(), vendeur()];
+      const { service, query, asso } = make(rows, { core: refusal, departed: ['u2'] });
+      await service.settleDepartures(ASSO, 'departure');
+      expect(writes(query)).toEqual([]);
+      expect(rows[1].revokeUnconfirmedAt).toBeUndefined();
+      expect(asso).toMatchObject({ claimed: false, token: null });
+      expect(String(spy.error.mock.calls)).toContain('core refused the removal');
+    });
+
+    it('another cashier operation holds the claim: nothing asked, nothing written, said at INFO, its claim untouched', async () => {
+      const spy = levels();
+      const rows = [responsable(), vendeur()];
+      const { service, httpService, query, asso } = make(rows, {
+        core: { verified: true, held: 0 },
+        departed: ['u2'],
+        asso: { claimed: true, token: STRANGER },
+      });
+      await service.settleDepartures(ASSO, 'payout-read');
+      expect(httpService.post).not.toHaveBeenCalled();
+      expect(writes(query)).toEqual([]);
+      expect(asso).toMatchObject({ claimed: true, token: STRANGER });
+      expect(spy.error).not.toHaveBeenCalled();
+      expect(String(spy.log.mock.calls)).toContain('in flight - still owed');
+    });
+
+    it('a departed Responsable: the other number removed, the current one KEPT, and the departure says so at ERROR', async () => {
+      const spy = levels();
+      const rows = [responsable({ previousPhoneSealed: seal(OLD) })];
+      const current = rows[0].phoneSealed;
+      const { service, httpService } = make(rows, {
+        core: { verified: true, held: 0 },
+        departed: ['u1'],
+      });
+      await service.settleDepartures(ASSO, 'departure');
+      expect(corePosts(httpService).map((b) => b.cashierPhone)).toEqual([OLD]);
+      expect(rows[0]).toMatchObject({ previousPhoneSealed: null });
+      expect(rows[0].removedAt).toBeUndefined();
+      expect(rows[0].phoneSealed).toBe(current);
+      expect(String(spy.error.mock.calls)).toContain('the Business needs a new Responsable');
+    });
+
+    it('a departed Responsable with nothing else owed: no call to Lydia, and a card read does not accuse again', async () => {
+      const spy = levels();
+      const { service, httpService } = make([responsable()], { departed: ['u1'] });
+      await service.settleDepartures(ASSO, 'payout-read');
+      expect(httpService.post).not.toHaveBeenCalled();
+      expect(spy.error).not.toHaveBeenCalled();
+    });
+
+    it('nobody departed: nothing asked', async () => {
+      const { service, httpService } = make([responsable(), vendeur()], { departed: [] });
+      await service.settleDepartures(ASSO, 'departure');
+      expect(httpService.post).not.toHaveBeenCalled();
+    });
   });
 
   it('erasure: the cashier numbers are asked removed under a claim, released after, a confirmed one reported cleared', async () => {

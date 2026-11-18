@@ -118,6 +118,31 @@ describe('lydiaCashiersView', () => {
     }
   });
 
+  it('a cashier who left: told on the row, never offered a role; a Responsable who left: a new one is needed', () => {
+    const view = lydiaCashiersView(
+      account({
+        cashiers: [
+          { ...responsable, departed: true },
+          cashier({ departed: true }),
+          cashier({ id: 'c2', userId: 'u2', departed: false }),
+        ],
+      }),
+      true
+    );
+    expect(view.rows.map((row) => [row.cashier.id, row.departed, row.canChangeRole])).toEqual([
+      ['r1', 'responsable', false],
+      ['c1', 'cashier', false],
+      ['c2', null, true],
+    ]);
+    // The departed cashier may still be removed by hand; the Responsable's current number never.
+    expect(view.rows.map((row) => row.canRevokeCurrent)).toEqual([false, true, true]);
+  });
+
+  it('a server older than 1.7.1 (no departed field) reads as a member', () => {
+    const [row] = lydiaCashiersView(account({ cashiers: [cashier({})] }), true).rows;
+    expect(row.departed).toBeNull();
+  });
+
   it('lists the Responsable first, then the others by the date they were added', () => {
     const late = cashier({ id: 'late', addedAt: '2026-10-31T12:00:00.000Z' });
     const early = cashier({ id: 'early', addedAt: '2026-10-31T09:00:00.000Z' });

@@ -31,7 +31,31 @@ export interface LydiaCashierView {
   /** ISO instant of the add (or of the last re-add). */
   addedAt: string;
   addedByName: string;
+  /**
+   * The person holds no membership of the association any more (they left or were removed): the
+   * row's numbers are owed a removal at Lydia ({@link owesDepartureRemoval}). A Responsable keeps
+   * their current number - the Business needs one - and the managers are told a new one is needed.
+   */
+  departed: boolean;
 }
+
+/**
+ * Whether row `cashier` owes a removal at Lydia because its person is no longer a member: every
+ * number of a Tresorier or Vendeur, and a Responsable's OTHER number - never the Responsable's
+ * current one. The ONE predicate the payments card's retry and the departure itself read.
+ */
+export function owesDepartureRemoval(
+  cashier: Pick<LydiaCashierView, 'departed' | 'role' | 'previousPhoneEnd'>
+): boolean {
+  return cashier.departed && (cashier.role !== 'responsable' || cashier.previousPhoneEnd !== null);
+}
+
+/**
+ * The SQL predicate "this cashier row's person is no longer a member of its association", for a
+ * `lydia_cashiers` alias `c`: the one definition of a departure the list and the debt read.
+ */
+export const CASHIER_DEPARTED_SQL = `NOT EXISTS (SELECT 1 FROM association_members m
+                    WHERE m."associationId" = c."associationId" AND m."userId" = c."userId")`;
 
 /** The query a cashier read runs on: a repository's or a transaction manager's. */
 export type LydiaCashierQuery = (sql: string, params: unknown[]) => Promise<unknown>;
@@ -49,6 +73,7 @@ export async function listLydiaCashiers(
     `SELECT c.id, c."userId", c.role, c."phoneEnd", c."previousPhoneEnd", c."addedAt",
             (c."confirmedAt" IS NOT NULL) AS confirmed,
             (c."revokeUnconfirmedAt" IS NOT NULL) AS "revokeUnconfirmed",
+            ${CASHIER_DEPARTED_SQL} AS departed,
             u."displayName", u."firstName", u."lastName",
             a."displayName" AS "byDisplayName", a."firstName" AS "byFirstName",
             a."lastName" AS "byLastName"
@@ -79,5 +104,6 @@ export async function listLydiaCashiers(
         firstName: row.byFirstName,
         lastName: row.byLastName,
       }) || '',
+    departed: row.departed === true,
   }));
 }

@@ -1027,13 +1027,37 @@ itself: the re-read decides. An add reads the same way: `adding a vendeur (phone
 then `vendeur confirmed with exactly 1 right(s)`, then social's `[AUDIT] Lydia cashier added ...`; with
 the cashier notice switched off (below), the notifier says so at DEBUG and nothing at WARN or ERROR.
 
-**What the gate does not cover yet** (review of the flip, owed in 1.7.1:
-[entry](../../backlog.d/p2-a-lydia-cashier-who-leaves-keeps-the-rights-and-an-add-overwrites-a-number-lydia-knows.md)):
-a member who leaves keeps the row and Lydia's rights until a manager removes it (a role change now
-re-checks membership); the member check binds the person, not the number typed, while the cashier
-notice is off; an add does not read the number first, so a number Lydia lists outside Canari has its
-rights replaced. A French number typed with its trunk 0 (`+330...`) is refused by every server check
-and rewritten by the client, so one line has one spelling for the number-in-use check.
+**A membership that ends owes its Lydia rights** (review of the flip, built with it in 1.7.1). The debt
+is DURABLE STATE, not a job: a live `lydia_cashiers` row whose person holds no `association_members`
+row of that association (`CASHIER_DEPARTED_SQL`, `lydia-cashiers-list.ts`) owes the removal of its
+numbers - every number of a Tresorier or Vendeur, a Responsable's OTHER number, never the
+Responsable's current one (`owesDepartureRemoval`). Re-joining ends the debt by the same predicate.
+`LydiaCashiersService.settleDepartures` pays it through the SAME verified path as "Retirer"
+(`claimRevoke`, core's internal `revoke` route with `reason: departure`, the `getpermission` re-read,
+`recordRevoke`): 0 rights closes the row; anything else flags it NOT confirmed at ERROR, and the card
+shows it. Two triggers read the debt, neither awaited and neither able to fail the write it follows
+(`LydiaCashierDeparturePort`, registered at boot - `LydiaCashiersService` depends on
+`AssociationsService`, so the port breaks the cycle): `removeMember` once its delete committed
+(leaving goes through it), and every payments-card read that finds a row owing one. Each number takes
+its own claim without waiting: another cashier operation in flight leaves it owed (INFO). core's typed
+refusal changed nothing at Lydia and leaves it owed (ERROR, the claim released); NO answer is recorded
+NOT confirmed, since Lydia may have removed it. **A Responsable who leaves** keeps their current number
+(the Business needs a manager; changing the Responsable to another person is not offered): the
+departure says so at ERROR, and the card reads "a new Responsable is needed, contact a platform
+administrator". The other paths that end a membership: **an account erasure** removes the numbers
+first (`revokeBeforeErasure`, unchanged); **deleting the association** is refused with the typed 409
+`LYDIA_CASHIERS_LIVE` while a Tresorier, a Vendeur or a Responsable's other number is live (the
+cascade would take the rows and leave the rights), lifted by removing them first. A role change
+re-checks membership (`LYDIA_CASHIER_NOT_A_MEMBER`).
+
+**What the gate does not cover yet** (owed in 1.7.1:
+[entry](../../backlog.d/p2-a-lydia-cashier-add-binds-the-person-not-the-number-and-overwrites-a-number-lydia-knows.md)): the member check
+binds the person, not the number typed, while the cashier notice is off; an add does not read the
+number first, so a number Lydia lists outside Canari has its rights replaced - blocked on telling a
+never-added number from an unreadable answer (measured on dev 2026-11-18: `getpermission` answers
+`status: error`, `code: 1`, "Parametre manquant" for a never-added number, and no known number was
+available as a control). A French number typed with its trunk 0 (`+330...`) is refused by every
+server check and rewritten by the client, so one line has one spelling for the number-in-use check.
 
 **Removing** (`.../:cashierId/revoke`, body `{ number: 'current' | 'previous' }`): social-service checks
 and claims (`lydia-cashier-revoke-claim`) and hands core what the call needs, opened server-side only.

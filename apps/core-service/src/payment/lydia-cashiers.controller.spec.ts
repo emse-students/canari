@@ -295,4 +295,27 @@ describe('InternalLydiaCashiersController - the erasure removal is internal only
     ).rejects.toBeInstanceOf(HttpException);
     expect(removeLydiaCashier).not.toHaveBeenCalled();
   });
+
+  it('a departure takes the same verified removal; an unknown reason is refused before it', async () => {
+    process.env.INTERNAL_SECRET = 'it-secret';
+    const removeLydiaCashier = jest.fn().mockResolvedValue({ verified: true, held: 0 });
+    const controller = new InternalLydiaCashiersController({
+      removeLydiaCashier,
+    } as unknown as PaymentService);
+    const body = {
+      associationId: ASSO,
+      vendorToken: 'vendor-1',
+      contextPhone: CONTEXT_PHONE,
+      cashierPhone: PHONE,
+    };
+    await expect(
+      controller.revokeForErasure('it-secret', { ...body, reason: 'departure' })
+    ).resolves.toEqual({ verified: true, held: 0 });
+    expect(removeLydiaCashier).toHaveBeenCalledWith(ASSO, 'vendor-1', CONTEXT_PHONE, PHONE);
+    removeLydiaCashier.mockClear();
+    await expect(
+      controller.revokeForErasure('it-secret', { ...body, reason: 'other' })
+    ).rejects.toBeInstanceOf(HttpException);
+    expect(removeLydiaCashier).not.toHaveBeenCalled();
+  });
 });

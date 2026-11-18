@@ -2943,6 +2943,12 @@ export interface LydiaCashier {
   /** ISO instant the cashier was added. */
   addedAt: string;
   addedByName: string;
+  /**
+   * The person is no longer a member of the association: their numbers are being removed at Lydia
+   * (a Responsable keeps their current one, and a new Responsable is needed). Absent from a server
+   * older than 1.7.1, read as false.
+   */
+  departed?: boolean;
 }
 
 /** The cause of the last readiness change of a Lydia Business. */

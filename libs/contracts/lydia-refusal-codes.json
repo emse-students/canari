@@ -1,5 +1,5 @@
 {
-  "description": "The typed codes of Lydia enrolment lots 2 and 3 (docs/wiki/frontend/modules/payments.md), shared as data so core-service, social-service and the frontend cannot disagree on a name: each side's contract spec asserts its own constants against this file. `core` codes are answered by core-service; `social` codes by social-service; `notificationTypes` are the bell row types social-service writes. `switches` are the gates both sides must agree on (lot 3: adding a cashier ships OFF until one production removal has been observed).",
+  "description": "The typed codes of Lydia enrolment lots 2 and 3 (docs/wiki/frontend/modules/payments.md), shared as data so core-service, social-service and the frontend cannot disagree on a name: each side's contract spec asserts its own constants against this file. `core` codes are answered by core-service; `social` codes by social-service; `notificationTypes` are the bell row types social-service writes. `switches` are the gates both sides must agree on (lot 3: adding a cashier, ON since 1.7.1).",
   "core": {
     "businessNotValidated": "LYDIA_BUSINESS_NOT_VALIDATED",
     "businessBlocked": "LYDIA_BUSINESS_BLOCKED",
@@ -40,7 +40,8 @@
     "cashierRoleFixed": "LYDIA_CASHIER_ROLE_FIXED",
     "cashierClaimLost": "LYDIA_CASHIER_CLAIM_LOST",
     "cashierNumberChanged": "LYDIA_CASHIER_NUMBER_CHANGED",
-    "cashierConfirmedRequired": "LYDIA_CASHIER_CONFIRMED_REQUIRED"
+    "cashierConfirmedRequired": "LYDIA_CASHIER_CONFIRMED_REQUIRED",
+    "cashiersLiveOnDelete": "LYDIA_CASHIERS_LIVE"
   },
   "notificationTypes": {
     "active": "lydia_payments_active",

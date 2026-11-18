@@ -19,6 +19,13 @@ import { bridgeJoinSql, managedVendorTokenSql } from './lydia-account-bridge';
  */
 export const LYDIA_CASHIER_CLAIM_LOST = 'LYDIA_CASHIER_CLAIM_LOST';
 /**
+ * The `code` (409) of deleting an association whose Lydia Business still lists a Tresorier, a Vendeur
+ * or a Responsable's other number: the delete would cascade the rows away and leave the rights at
+ * Lydia with nothing in Canari to remove them. Lifted by removing those cashiers first ("Retirer").
+ */
+export const LYDIA_CASHIERS_LIVE = 'LYDIA_CASHIERS_LIVE';
+
+/**
  * The `code` (409) of a removal whose number is no longer the one sealed on the row it names: what
  * was removed at Lydia is not recorded against another number.
  */

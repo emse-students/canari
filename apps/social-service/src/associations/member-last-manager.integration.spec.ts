@@ -105,6 +105,9 @@ maybe('the last member manager against PostgreSQL', () => {
       unused,
       { enabled: () => false, tell: async () => 0 } as never // lydiaNotifier
     );
+    // The Lydia cashiers' departure debt (registered at boot by `LydiaCashiersService`): not this
+    // spec's subject, so a removal asks nothing of it.
+    service.registerCashierDepartures({ settleDepartures: () => Promise.resolve() });
     // Nobody here is a BDE super-admin: the passation is between ordinary members.
     jest.spyOn(service, 'isAssociationSuperAdminOf').mockResolvedValue(false);
     jest

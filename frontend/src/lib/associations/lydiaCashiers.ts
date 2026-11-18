@@ -50,6 +50,12 @@ interface LydiaCashierRowView {
   canRevokeCurrent: boolean;
   /** "Retirer" for the older number a Responsable number change left behind. */
   canRevokePrevious: boolean;
+  /**
+   * The person left the association: `cashier`, their access is being removed at Lydia (the
+   * row's own state says whether Lydia confirmed it); `responsable`, they keep the Business's
+   * current number and a new Responsable is needed. Null for a member.
+   */
+  departed: 'cashier' | 'responsable' | null;
 }
 
 /** Everything the "Caissiers" section draws, from ONE payout-account read. */
@@ -81,9 +87,16 @@ export function lydiaCashiersView(
     .sort((a, b) => rank(a.role) - rank(b.role) || a.addedAt.localeCompare(b.addedAt))
     .map((cashier) => ({
       cashier,
-      canChangeRole: addEnabled && cashier.role !== 'responsable',
+      // A person who left is never given a role (social-service refuses it, `NOT_A_MEMBER`).
+      canChangeRole: addEnabled && cashier.role !== 'responsable' && cashier.departed !== true,
       canRevokeCurrent: cashier.role !== 'responsable',
       canRevokePrevious: cashier.previousPhoneEnd != null,
+      departed:
+        cashier.departed === true
+          ? cashier.role === 'responsable'
+            ? ('responsable' as const)
+            : ('cashier' as const)
+          : null,
     }));
   return { visible, canAdd: addEnabled, rows };
 }

@@ -31,4 +31,6 @@ export const LYDIA_CASHIER_SOCIAL_REFUSAL = {
   NUMBER_CHANGED: 'LYDIA_CASHIER_NUMBER_CHANGED',
   /** A malformed record (no explicit confirmation): never shown as such, the generic sentence. */
   CONFIRMED_REQUIRED: 'LYDIA_CASHIER_CONFIRMED_REQUIRED',
+  /** Deleting the association is refused while its Lydia Business still lists cashiers to remove. */
+  LIVE_ON_DELETE: 'LYDIA_CASHIERS_LIVE',
 } as const;

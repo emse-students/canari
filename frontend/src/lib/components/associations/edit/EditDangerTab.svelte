@@ -5,6 +5,8 @@
   import { m } from '$lib/paraglide/messages';
   import { wordingFor, type AssociationKind } from '$lib/associations/kindWording';
   import { dependencyRefusalMessage } from '$lib/associations/dependencies';
+  import { SocialApiError } from '$lib/associations/api';
+  import { LYDIA_CASHIER_SOCIAL_REFUSAL } from '$lib/associations/lydiaCashierCodes';
   import { Log } from '$lib/utils/Log';
 
   interface Props {
@@ -71,7 +73,12 @@
     } catch (err) {
       Log.d('asso.danger.delete failed', err);
       // A BDE with dependents is the platform admin's to delete (`DEPENDENCY_DELETE_ADMIN_ONLY`).
-      error = dependencyRefusalMessage(err) ?? m.common_delete_error();
+      // A Lydia Business that still lists cashiers to remove (`LYDIA_CASHIERS_LIVE`): remove them first.
+      error =
+        dependencyRefusalMessage(err) ??
+        (err instanceof SocialApiError && err.code === LYDIA_CASHIER_SOCIAL_REFUSAL.LIVE_ON_DELETE
+          ? m.asso_lydia_cashiers_live_on_delete()
+          : m.common_delete_error());
     }
   }
 </script>

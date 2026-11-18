@@ -74,12 +74,12 @@ earliest version, as a checklist.
 - [P2 - the organiser alert for a payment over capacity: its precondition is met, the flip is owed](backlog.d/reading-owed-the-organiser-alert-for-a-payment-over-capacity.md)
 - [P2 - the retention durations a sweep applies are not yet admin settings](backlog.d/retention-durations-not-yet-settings.md)
 - [P2 - a live ended itself (`upload-too-slow`) after 256 s on the iPhone, cause unproven](backlog.d/p2-a-live-ended-itself-upload-too-slow-after-256-s-on-the-iphone.md)
+- [P2 - a Lydia cashier add binds the person and not the number, and overwrites a number Lydia already knows](backlog.d/p2-a-lydia-cashier-add-binds-the-person-not-the-number-and-overwrites-a-number-lydia-knows.md)
 - [P2 - a freshly minted device logs an error-level `REFUSED` for the join push of groups whose join it never solicited](backlog.d/p2-a-new-device-refuses-the-join-push-of-groups-it-was-admitted-to-unsolicited.md)
 - [P2 - a salon reaction that opens its sender's new seed session is never notified while the app is open (2026-11-18)](backlog.d/p2-a-salon-reaction-that-opens-its-sender-s-new-seed-session-is-never-notified-in-the-foreground.md)
 - [P2 - iOS builds need the iOS 27 SDK before April 2027 (Apple's ITMS-90725 on build 100700011)](backlog.d/p2-ios-builds-need-the-ios-27-sdk-before-april-2027.md)
 - [P2 - the Android background answer to a `welcome_request` retries the add lock on a clock (2026-11-18)](backlog.d/p2-the-android-background-welcome-answer-retries-the-add-lock-on-a-clock.md)
 - [P2 - the reply swipe along a thumb's arc does nothing on WebKit: the thread scrolls instead](backlog.d/p2-the-reply-swipe-along-a-thumb-s-arc-does-nothing-on-webkit.md)
-- [P2 - a Lydia cashier who leaves the association keeps Lydia's rights, and an add overwrites a number Lydia already knows](backlog.d/p2-a-lydia-cashier-who-leaves-keeps-the-rights-and-an-add-overwrites-a-number-lydia-knows.md)
 - [P2 - READ ON THE NEXT 1.7.1 PRE-RELEASE: the iPhone's photo picker kept every item of a multiple pick](backlog.d/p2-the-iphone-photo-picker-loses-most-of-a-multiple-pick-silently.md)
 
 **P3 - hygiene**
