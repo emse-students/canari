@@ -1215,7 +1215,20 @@ against fakes and died on it with `flow executor answered HTTP 302`:
 
 The fake in `.github/scripts/tests/smoke-login.test.mjs` copies that shape, the CAS-only denial
 included. A different component named in a failure is the flow asking for a stage the account cannot
-answer.
+answer; the message names it, and says "second factor" only for an `ak-stage-authenticator-*`.
+
+**The smoke account accepts MiConnect's terms, as a person does (2026-11-18).** Since #3839 the dev
+provider names the terms flow (`miconnect-authorization`,
+[authentik](infrastructure/authentik.md#the-terms-of-use-are-a-stage-of-the-authorization-flow-2026-10-16))
+as its authorization flow, so an account whose `cgu_version` is not the current text gets one
+`ak-stage-prompt` after the sign-in flow. The `v1.7.1-alpha.1` deploy died on it ("a stage this account
+cannot answer: ak-stage-prompt"). The script now recognises THAT prompt and no other - an
+`ak-stage-prompt` whose only field asking for an answer is the `cgu_accept` checkbox, beside the
+hidden `attributes.cgu_version` - posts every field the browser posts (static text excluded) with the
+box ticked, and logs one line naming
+the version. That happens once per version of the text; the next deploy skips the page. Any other
+prompt fails at `flow` naming its fields. The test reads the two field names out of `45-consent.yaml`,
+so a renamed field fails the test rather than the next deploy.
 
 ### The store arms (`ios.yml`, `android.yml`)
 
