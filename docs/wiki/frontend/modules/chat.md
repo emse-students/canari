@@ -6485,8 +6485,8 @@ its entry (entry deleted 2026-11-18, every half read)).
 
 Before #3185 only the pending invitation and the welcome_request answer pushed, each by an explicit
 call: a newcomer added by "Ajouter", or whose Welcome came from the drain, saw no nickname at all
-(reading 2 of `1.6.9-alpha.1`, fixed by #3185; its re-reading is a row of the
-[readings owed](../../plan.md#readings-owed)).
+(reading 2 of `1.6.9-alpha.1`, fixed by #3185; re-read on the phones and the web seats, and every
+item of the reading closed on 2026-11-18, [S6](../../device-verification.md#the-phone-and-web-readings-of-2026-11-18-s6-170-alpha12-live-moderations-last-halves-the-reel-card-overlays-the-birthday-morning)).
 
 **What a push costs.** `sendFullHistoryBundle` decrypts the inviter's whole store for the group and,
 in `sendBundleChunks`, re-reads the reader's windows for EVERY 200-message chunk - deliberately: a
@@ -6544,7 +6544,9 @@ In neither case does the screen say "saved".
 
 **Old clients.** An unknown system event is ACKed silently, so an older build ignores the frame. The
 community change rides `workspace.updated`, whose absent fields every build reads as "unchanged"; a new
-event type would have been logged as an error by every older one.
+event type would have been logged as an error by every older one. Read on the Mi 9T on 2026-11-18 with `v1.6.7-alpha.1`: a group and a community nickname set
+by a web seat gave only `[MLS] System event 'nickname' ...`, no warning or error, and the community member under
+its profile name ([S6](../../device-verification.md#the-phone-and-web-readings-of-2026-11-18-s6-170-alpha12-live-moderations-last-halves-the-reel-card-overlays-the-birthday-morning)).
 
 **The name is resolved in ONE place.** `getUserDisplayNameSync` / `getUserFirstNameSync`
 (`displayName.ts`) and `userDisplayName` / `userDisplayNames` (`displayNames.svelte.ts`) take an

@@ -577,6 +577,17 @@ Android leaves - from there, steps 3 to 6 above are the same code.
 
 ## Owed
 
+**Where it stands (2026-11-18, the reading entry closed):** on the Mi 9T, every bullet of the
+first two below was read between 2026-11-15 and 2026-11-18. The last were the sign-out
+(`ShareTargets: clear: 5 target(s) removed`, `ConversationShortcuts: clear: 13 ... removed`, 0
+shortcuts left) and a second account publishing only its own five targets
+([S6](../device-verification.md#the-phone-and-web-readings-of-2026-11-18-s6-170-alpha12-live-moderations-last-halves-the-reel-card-overlays-the-birthday-morning)).
+On the iPhone 12, S4 was read from Photos, Safari, Notes and Files, cold behind the PIN, and as a
+share then a sign-out. S5's suggestion row and its pick were read ten of ten on `1.7.0-alpha.5`, and
+so was a finger tap on the banner. Never read, and not part of the closed entry: the launcher's
+long-press menu after a second account, the lock screen, Spotlight and the Siri widget, and a kill
+right after a sign-out. Those bullets below stay as the description of what is unproven.
+
 **Read on the Mi 9T on 2026-10-28** ([readings](../device-readings-2026-10.md#2026-10-28---sharing-on-the-mi-9t-151-rig-builds)):
 a text warm and cold behind the PIN, one and several pictures, a refused stream, an undrained share
 kept across a kill, S3 and S6, and the S5 suggestions appearing in the sheet. Left on the Mi 9T:
