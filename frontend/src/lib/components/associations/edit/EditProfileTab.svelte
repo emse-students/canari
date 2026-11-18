@@ -59,6 +59,16 @@
    * sent, only once the stored value is known - and sent only when changed.
    */
   let storedNeutralColor = $state<string | null | undefined>(undefined);
+  /**
+   * The Campus colour may not be the association's own (review of #3539): `color` is in every member
+   * read and paints the BDE's own events, so equal colours would name the BDE behind every masked
+   * event. The server refuses it too (`CALENDAR_NEUTRAL_COLOUR_IS_THE_BDE_COLOUR`); the form knows
+   * it first and says so instead of sending a write it knows will fail.
+   */
+  const neutralClashes = $derived(
+    editNeutralColor.trim() !== '' &&
+      editNeutralColor.trim().toLowerCase() === editColor.trim().toLowerCase()
+  );
   /** Public contact e-mail, or "" when none. */
   let editContactEmail = $state(initial.contactEmail ?? '');
 
@@ -140,6 +150,12 @@
     saving = true;
     settingsError = '';
     saveSuccess = false;
+    if (storedNeutralColor !== undefined && neutralClashes) {
+      console.warn('[ASSO] profile save stopped: the Campus colour equals the association colour');
+      settingsError = m.asso_edit_neutral_color_same();
+      saving = false;
+      return;
+    }
     try {
       const updated = await updateAssociation(asso.id, {
         name: editName.trim() || undefined,
@@ -349,7 +365,12 @@
         >{m.asso_edit_neutral_color_label()}</span
       >
       <p class="text-text-muted ml-1 text-xs">{m.asso_edit_neutral_color_hint()}</p>
-      {@render presetSwatches(editNeutralColor, (c) => (editNeutralColor = c))}
+      {@render presetSwatches(editNeutralColor, (c) => (editNeutralColor = c), editColor)}
+      {#if neutralClashes}
+        <p class="text-red-err ml-1 text-xs" role="note" data-neutral-color-same>
+          {m.asso_edit_neutral_color_same()}
+        </p>
+      {/if}
       <div class="ml-0.5 flex items-center gap-2">
         <span class="text-text-muted text-xs">{m.asso_edit_custom_color_label()}</span>
         <ColorPicker bind:value={editNeutralColor} label={m.asso_edit_color_picker_label()} />
@@ -407,15 +428,17 @@
 </div>
 
 <!-- The preset swatches, one row for the association's colour and one for a BDE's Campus events:
-     one markup, so the two pickers cannot drift. -->
-{#snippet presetSwatches(current: string, choose: (c: string) => void)}
+     one markup, so the two pickers cannot drift. `excluded` disables the association's own colour in
+     the Campus row (the two must differ). -->
+{#snippet presetSwatches(current: string, choose: (c: string) => void, excluded = '')}
   <div class="flex flex-wrap gap-1.5">
     {#each PRESET_COLORS as c (c)}
       <button
         type="button"
         onclick={() => choose(c)}
+        disabled={excluded.toLowerCase() === c.toLowerCase()}
         title={c}
-        class="h-7 w-7 shrink-0 rounded-full border-2 transition-all hover:scale-110 focus:outline-none
+        class="h-7 w-7 shrink-0 rounded-full border-2 transition-all hover:scale-110 focus:outline-none disabled:opacity-30
  {current === c
           ? 'border-cn-dark ring-accent/70 scale-110 ring-2 ring-offset-1'
           : 'border-transparent hover:border-white/60'}"

@@ -1,4 +1,4 @@
-import { ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { AssociationsService } from './associations.service';
 import { AssociationPermissionFlag } from './entities/association-member.entity';
 import { AssociationCalendarEventPresentation } from './entities/association-calendar-event.entity';
@@ -24,7 +24,10 @@ import {
 const BDE = '00000000-0000-4000-8000-0000000000b1';
 const CLUB = '00000000-0000-4000-8000-0000000000c1';
 
-function makeService(isBDE: boolean) {
+function makeService(
+  isBDE: boolean,
+  stored: { color?: string | null; neutralEventColor?: string | null } = {}
+) {
   const update = jest.fn(async () => undefined);
   const service = new AssociationsService(
     { update } as never, // assoRepo
@@ -43,7 +46,7 @@ function makeService(isBDE: boolean) {
     undefined as never // lydiaNotifier
   );
   Object.assign(service, {
-    findById: jest.fn(async (id: string) => ({ id, isBDE, slug: 'x' })),
+    findById: jest.fn(async (id: string) => ({ id, isBDE, slug: 'x', ...stored })),
     invalidatePostListCaches: jest.fn(async () => undefined),
   });
   return { service, update };
@@ -91,6 +94,41 @@ describe('writing neutralEventColor', () => {
       response: { code: CALENDAR_NEUTRAL_ERROR_CODES.COLOUR_NOT_A_BDE },
     });
     expect(update).not.toHaveBeenCalled();
+  });
+
+  it('lets an association that stopped being a BDE CLEAR the colour its past events wear', async () => {
+    const { service, update } = makeService(false, { neutralEventColor: '#112233' });
+    await service.update(CLUB, { neutralEventColor: null });
+    expect(update).toHaveBeenCalledWith(CLUB, expect.objectContaining({ neutralEventColor: null }));
+  });
+
+  // The association colour is in every member read: equal colours would name the BDE behind every
+  // masked event (review of #3539).
+  it('refuses a neutral colour equal to the association colour, any case, typed', async () => {
+    const { service, update } = makeService(true, { color: '#6B92D1' });
+    const refused = service.update(BDE, { neutralEventColor: '#6b92d1' });
+    await expect(refused).rejects.toBeInstanceOf(BadRequestException);
+    await expect(refused).rejects.toMatchObject({
+      response: { code: CALENDAR_NEUTRAL_ERROR_CODES.COLOUR_IS_THE_BDE_COLOUR },
+    });
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('refuses an association colour equal to the stored neutral colour', async () => {
+    const { service, update } = makeService(true, { neutralEventColor: '#112233' });
+    await expect(service.update(BDE, { color: '#112233' })).rejects.toMatchObject({
+      response: { code: CALENDAR_NEUTRAL_ERROR_CODES.COLOUR_IS_THE_BDE_COLOUR },
+    });
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('accepts both changed together when they differ', async () => {
+    const { service, update } = makeService(true, {
+      color: '#6B92D1',
+      neutralEventColor: '#112233',
+    });
+    await service.update(BDE, { color: '#112233', neutralEventColor: '#445566' });
+    expect(update).toHaveBeenCalled();
   });
 });
 

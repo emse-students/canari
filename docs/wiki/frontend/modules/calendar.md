@@ -897,7 +897,12 @@ ugly yellow on the month grid. Each BDE now chooses it ("Réglage du BDE"):
 - **Written** through `PATCH /associations/:id` as the field `neutralEventColor`, placed in the ONE
   table `UPDATE_FIELD_RIGHTS` (server and client mirror) under `EDIT_PROFILE` - the right that already
   edits the association's colour and logo, so a non-holder is refused by the existing per-field
-  check. The service refuses it on a non-BDE (`CALENDAR_NEUTRAL_COLOUR_NOT_A_BDE`, 403), accepts
+  check. The service refuses a VALUE on a non-BDE (`CALENDAR_NEUTRAL_COLOUR_NOT_A_BDE`, 403; a clear
+  is let through, so an association that stopped being a BDE can drop the colour its past events
+  wear), refuses a colour equal to the association's own `color`, either field changing
+  (`CALENDAR_NEUTRAL_COLOUR_IS_THE_BDE_COLOUR`, 400 - `color` is in every member read and paints
+  the BDE's own events, so equal colours would name it; the form disables that swatch and says so
+  before sending), accepts
   `#rrggbb` only (the association colour's `@Matches`), clears on `""`/`null`, logs `[ASSO]` on a
   change. The field is NOT in the association projection (`toAssociationView`): a member read that
   carried it would let anyone match a masked event's colour to the BDE (review of #3539). The
@@ -920,7 +925,9 @@ colour is a fingerprint of which BDE filed an event. This sits beside the limits
 already tells a reader the BDE's spaces; one BDE per campus is unmasked by the `.ics`) and adds
 nothing on a campus with one BDE. The `.ics` carries no colour. Readers learn the colour, never the
 BDE's id, name, slug or logo, and no member read lists the colours against the associations (only
-the EDIT_PROFILE holders of the BDE read its own). Not an owner answer: the lead's reversible call,
+the EDIT_PROFILE holders of the BDE read its own; a BDE member who is no steward still learns it
+from its BDE's masked rows in the pending queue, as that queue already tells them whose rows they
+are). Not an owner answer: the lead's reversible call,
 recorded in [the decisions of 2026-11-14](../../backlog.d/owner-decisions-of-2026-11-14.md#the-colour-of-neutral-campus-events-3539).
 
 ### Every surface that names an organiser, checked

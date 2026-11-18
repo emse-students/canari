@@ -32,6 +32,11 @@ export const CALENDAR_NEUTRAL_ERROR_CODES = {
   NOT_A_BDE: 'CALENDAR_NEUTRAL_NOT_A_BDE',
   /** The colour of neutral events is a BDE's setting; any other association is refused it. */
   COLOUR_NOT_A_BDE: 'CALENDAR_NEUTRAL_COLOUR_NOT_A_BDE',
+  /**
+   * The colour of neutral events may not be the BDE's own association colour: its own events would
+   * wear the same fill, and `color` is in every member read, so the mask would name it.
+   */
+  COLOUR_IS_THE_BDE_COLOUR: 'CALENDAR_NEUTRAL_COLOUR_IS_THE_BDE_COLOUR',
   /** A neutral event has no co-organiser. */
   NO_PARTNERS: 'CALENDAR_NEUTRAL_NO_PARTNERS',
   /** A neutral event links no registration form. */

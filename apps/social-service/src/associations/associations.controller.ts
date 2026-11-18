@@ -1106,7 +1106,8 @@ export class AssociationsController {
     const updated = await this.service.update(id, patch);
     // The caller who wrote `neutralEventColor` proved EDIT_PROFILE above, so the answer may carry it
     // back - the member view never does (`toAssociationView`, review of #3539).
-    const wroteNeutralColour = 'neutralEventColor' in patch;
+    // Read like `rightsAskedBy` reads it: a key carrying `undefined` asked no right, so it earns nothing.
+    const wroteNeutralColour = patch.neutralEventColor !== undefined;
     // A cotisation stored enabled on an entity that may not collect NOW (an institution, a list
     // whose delegation was revoked) stays as it is: its product is not (re)provisioned, so the save
     // above is never followed by a refusal.

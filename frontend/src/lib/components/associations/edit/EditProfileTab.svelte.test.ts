@@ -148,6 +148,49 @@ describe("a BDE's Campus events colour (review of #3539)", () => {
     expect(payload).not.toHaveProperty('neutralEventColor');
   });
 
+  async function campusRow(target: HTMLElement): Promise<HTMLElement> {
+    await vi.waitFor(() =>
+      expect(target.querySelector('[data-testid="neutral-event-color"]')).not.toBeNull()
+    );
+    return target.querySelector<HTMLElement>('[data-testid="neutral-event-color"]')!;
+  }
+
+  it('sends a changed colour', async () => {
+    const target = renderBde('#112233');
+    const row = await campusRow(target);
+    row.querySelector<HTMLButtonElement>('button[aria-label="#5BA8A0"]')!.click();
+    flushSync();
+    const payload = await save(target);
+    expect(payload).toMatchObject({ neutralEventColor: '#5BA8A0' });
+  });
+
+  it('sends null on Reset (the derived default)', async () => {
+    const target = renderBde('#112233');
+    const row = await campusRow(target);
+    [...row.querySelectorAll('button')]
+      .find((b) => b.textContent?.trim() === m.asso_edit_neutral_color_reset())!
+      .click();
+    flushSync();
+    const payload = await save(target);
+    expect(payload).toMatchObject({ neutralEventColor: null });
+  });
+
+  it("never offers, nor sends, the association's own colour (review of #3539)", async () => {
+    api.updateAssociation.mockResolvedValue(bde);
+    api.getNeutralEventColour.mockResolvedValue(null);
+    const target = document.body.appendChild(document.createElement('div'));
+    const instance = mount(EditProfileTab, {
+      target,
+      props: { asso: { ...bde, color: '#6B92D1' }, canEdit: true, onUpdated: vi.fn() },
+    });
+    mounted.push(() => unmount(instance));
+    flushSync();
+    const row = await campusRow(target);
+    expect(row.querySelector<HTMLButtonElement>('button[aria-label="#6B92D1"]')!.disabled).toBe(
+      true
+    );
+  });
+
   it('is never read, drawn or sent on an association that is not a BDE', async () => {
     const target = render(false);
     await tick();

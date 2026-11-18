@@ -1367,9 +1367,11 @@ export class AssociationsService {
     }
     if (dto.neutralEventColor !== undefined) {
       // The colour of neutral events is a BDE's setting (owner, 2026-11-14): another association
-      // owns no neutral event, so a value stored there would be dead and misleading. Clearing is
-      // refused too - nothing to clear - so the refusal is one rule, typed at the throw.
-      if (!asso.isBDE) {
+      // owns no neutral event, so a VALUE stored there would be dead and misleading - refused, typed
+      // at the throw. A CLEAR is let through, so an association that stopped being a BDE (the
+      // designation moved) can still drop the colour its past neutral events wear.
+      const colour = dto.neutralEventColor?.trim() ?? '';
+      if (!asso.isBDE && colour !== '') {
         this.logger.warn(
           `[ASSO] association=${id.slice(0, 8)} refused neutralEventColor: not a BDE`
         );
@@ -1378,11 +1380,25 @@ export class AssociationsService {
           message: 'Only a BDE chooses the colour of neutral events',
         });
       }
-      const colour = dto.neutralEventColor?.trim() ?? '';
       patch.neutralEventColor = colour === '' ? null : colour;
       this.logger.log(
         `[ASSO] association=${id.slice(0, 8)} neutralEventColor=${patch.neutralEventColor ?? 'default'}`
       );
+    }
+    // THE MASK HOLDS ONLY IF THE TWO COLOURS DIFFER (review of #3539): `color` is in every member
+    // read and paints the BDE's own events, so a neutral colour equal to it names the BDE behind
+    // every masked event. Judged on the colours AFTER this write, so either field's change is caught.
+    const nextColour = patch.color !== undefined ? patch.color : asso.color;
+    const nextNeutral =
+      patch.neutralEventColor !== undefined ? patch.neutralEventColor : asso.neutralEventColor;
+    if (nextColour && nextNeutral && nextColour.toLowerCase() === nextNeutral.toLowerCase()) {
+      this.logger.warn(
+        `[ASSO] association=${id.slice(0, 8)} refused: the neutral events colour would equal the association colour`
+      );
+      throw new BadRequestException({
+        code: CALENDAR_NEUTRAL_ERROR_CODES.COLOUR_IS_THE_BDE_COLOUR,
+        message: 'The colour of neutral events must differ from the association colour',
+      });
     }
     if (
       dto.contactEmail !== undefined &&
