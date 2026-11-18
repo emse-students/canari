@@ -26,7 +26,8 @@ together.
 | --- | --- | --- |
 | `wikipedia` | host, curl | the upstream that stalled first |
 | `gallery` | host, curl | the upstream that stalled three minutes later |
-| `self` | host, curl | `canari-emse.fr/api/version` - the path out through the tunnel and back |
+| `self` | host, curl | `canari.emse.fr/api/version` - the canonical name, straight back to this host |
+| `self_legacy` | host, curl | `canari-emse.fr/api/version` - the legacy name, through the old relay and the Cloudflare tunnel |
 | `control` | host, curl | `1.1.1.1` - whether there was any egress at all |
 | `wikipedia_container` | inside `chat-delivery-service`, Node `fetch` | the Docker resolver and the bridge, which the host path does not use |
 

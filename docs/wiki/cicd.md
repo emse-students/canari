@@ -1351,7 +1351,7 @@ run. So the paths are told apart by the EVENT TYPE:
 | event         | estate               | Play         | App Store                |
 | ------------- | -------------------- | ------------ | ------------------------ |
 | `prereleased` | `dev.canari-emse.fr` | `internal`   | TestFlight               |
-| `released`    | `canari-emse.fr`     | `production` | submitted for **review** |
+| `released`    | `canari.emse.fr`     | `production` | submitted for **review** |
 
 **AND THAT CLOSED A DEFECT NOTHING COULD SEE.** `published`, the old trigger, fires for BOTH kinds,
 so the "Set as a pre-release" checkbox was invisible and the version string was the only statement
@@ -2000,7 +2000,7 @@ gh release create vX.Y.Z --target <latest alpha's commit> --generate-notes
        |    '- dev.canari-emse.fr - never held behind a store queue an alpha does not use
        |
        '- serve-prod.yml  STABLE ONLY, needs [build, android, ios]
-            '- canari-emse.fr - and only once BOTH stores accepted this version
+            '- canari.emse.fr - and only once BOTH stores accepted this version
 ```
 
 A pre-release stops at TestFlight and the Play `internal` track, which is what a tester programme

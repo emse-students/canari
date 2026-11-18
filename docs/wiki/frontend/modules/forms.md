@@ -2012,7 +2012,7 @@ falls back to a system face without saying so. The file lands as `canari-qr-<slu
 
 ### It encodes the ordinary URL, so the deep link is the app's, not the code's
 
-There is no scheme of our own in the payload: it is the same `https://canari-emse.fr/forms/<id>` the
+There is no scheme of our own in the payload: it is the same `https://canari.emse.fr/forms/<id>` the
 copy button hands out, which the Android manifest claims with an `autoVerify` intent-filter
 (`pathPrefix="/forms/"`) backed by `/.well-known/assetlinks.json`. A scan that lands in a browser
 rather than in the app therefore says something about App Link verification on that device, never

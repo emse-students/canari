@@ -695,9 +695,9 @@ through to default navigation *inside* the WebView. Nothing renders such an href
 from user content goes through `messageDisplay.ts`, which emits `https://` only - but that is a
 property of the renderers, not of that function, which is exactly why the guarantee lives in Rust.
 
-## What the app claims over `canari-emse.fr`
+## What the app claims over `canari.emse.fr` (and the legacy `canari-emse.fr`)
 
-Tapping an `https://canari-emse.fr/…` link on a phone with the app installed opens the **app**, not
+Tapping an `https://canari.emse.fr/…` link (or one on the legacy `canari-emse.fr`, which `MOBILE_APP_LINK_HOSTS` still claims) on a phone with the app installed opens the **app**, not
 the browser, for every path the app claims. The claim is one decision carried in three files that no
 compiler compares:
 
@@ -727,7 +727,7 @@ verification state on a device, and Google's Digital Asset Links API answers for
 
 ```
 https://digitalassetlinks.googleapis.com/v1/statements:list
-  ?source.web.site=https://canari-emse.fr&relation=delegate_permission/common.handle_all_urls
+  ?source.web.site=https://canari.emse.fr&relation=delegate_permission/common.handle_all_urls
 ```
 
 Both association files are prerendered by SvelteKit (`routes/.well-known/`) and served by nginx from
@@ -4568,7 +4568,7 @@ two of the three are edited by a machine outside it, and one of those is edited 
 
 | | what settles it |
 | --- | --- |
-| production web | `curl -s https://canari-emse.fr/api/version` |
+| production web | `curl -s https://canari.emse.fr/api/version` |
 | dev web | `curl -s https://dev.canari-emse.fr/api/version` |
 | Google Play | `bun tools/play-vitals/vitals.mjs` - the `production` track line |
 | App Store | the `App Store / Build iOS IPA` job of that release's `release.yml` run, plus App Store Connect for whether Apple has since APPROVED what was submitted |
