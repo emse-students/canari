@@ -51,6 +51,10 @@
   "switches": {
     "cashierAddEnabled": true
   },
+  "timeouts": {
+    "description": "How long social-service waits for core-service's verified removal of ONE cashier number (an erasure's or a departure's) before it records the outcome NOT confirmed and releases the cashier claim. core bounds each of the removal's three Lydia calls so their sum stays under it (LYDIA_REMOVAL_STEP_TIMEOUT_MS), asserted by each side's spec.",
+    "cashierRemovalWaitMs": 30000
+  },
   "refund": {
     "description": "Lydia refunds (lot 4, docs/wiki/frontend/modules/payments.md \"Refunds\"). `core` codes are answered by core-service's internal refund route, `social` codes by social-service's refund routes; the frontend words each one. `notificationTypes` is the payer's bell row.",
     "core": {

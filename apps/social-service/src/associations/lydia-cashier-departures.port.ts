@@ -17,11 +17,18 @@ export interface LydiaCashierDeparturePort {
    * outcome is logged and recorded on the row (confirmed: closed; not confirmed: flagged), and
    * whatever could not be attempted stays owed for the next trigger.
    *
-   * `departure`: a membership just ended (`removeMember`, which leaving goes through).
+   * `departure`: a membership just ended (`removeMember`, which leaving goes through) -
+   * `departedUserId` names who left, so a Responsable kept is accused once, for them alone.
    * `payout-read`: a payout manager opened the payments card, which draws the debt.
+   * `claim-released`: a cashier step released the association's claim, which a departure may have
+   * met busy.
    */
-  settleDepartures(associationId: string, trigger: LydiaCashierDepartureTrigger): Promise<void>;
+  settleDepartures(
+    associationId: string,
+    trigger: LydiaCashierDepartureTrigger,
+    departedUserId?: string
+  ): Promise<void>;
 }
 
-/** What asked for a departure's removal - logged, and decides whether a kept Responsable is told again. */
-export type LydiaCashierDepartureTrigger = 'departure' | 'payout-read';
+/** What asked for a departure's removal: logged with every line of the run. */
+export type LydiaCashierDepartureTrigger = 'departure' | 'payout-read' | 'claim-released';

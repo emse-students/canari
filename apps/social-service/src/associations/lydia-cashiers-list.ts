@@ -33,22 +33,27 @@ export interface LydiaCashierView {
   addedByName: string;
   /**
    * The person holds no membership of the association any more (they left or were removed): the
-   * row's numbers are owed a removal at Lydia ({@link owesDepartureRemoval}). A Responsable keeps
-   * their current number - the Business needs one - and the managers are told a new one is needed.
+   * row's numbers are owed a removal at Lydia. A Responsable keeps their current number - the
+   * Business needs one - and the managers are told a new one is needed.
    */
   departed: boolean;
+  /**
+   * The row is departed AND one of its owed numbers was never attempted (`CURRENT_UNTRIED_SQL`,
+   * `PREVIOUS_UNTRIED_SQL`): what makes a card read ask for the departure's removal. A number already
+   * recorded NOT confirmed is not asked again by a read - its flag is on the card, and "Retirer" or a
+   * new departure asks.
+   */
+  departureUntried: boolean;
 }
 
 /**
- * Whether row `cashier` owes a removal at Lydia because its person is no longer a member: every
- * number of a Tresorier or Vendeur, and a Responsable's OTHER number - never the Responsable's
- * current one. The ONE predicate the payments card's retry and the departure itself read.
+ * SQL, for a `lydia_cashiers` alias `c`: the row's CURRENT number is owed at a departure (a
+ * Tresorier's or a Vendeur's - never the Responsable's) and was never recorded NOT confirmed.
  */
-export function owesDepartureRemoval(
-  cashier: Pick<LydiaCashierView, 'departed' | 'role' | 'previousPhoneEnd'>
-): boolean {
-  return cashier.departed && (cashier.role !== 'responsable' || cashier.previousPhoneEnd !== null);
-}
+export const CURRENT_UNTRIED_SQL = `(c.role <> 'responsable' AND c."revokeUnconfirmedAt" IS NULL)`;
+
+/** SQL, alias `c`: the row holds an OTHER number never recorded NOT confirmed. */
+export const PREVIOUS_UNTRIED_SQL = `(c."previousPhoneSealed" IS NOT NULL AND c."previousRevokeUnconfirmedAt" IS NULL)`;
 
 /**
  * The SQL predicate "this cashier row's person is no longer a member of its association", for a
@@ -74,6 +79,8 @@ export async function listLydiaCashiers(
             (c."confirmedAt" IS NOT NULL) AS confirmed,
             (c."revokeUnconfirmedAt" IS NOT NULL) AS "revokeUnconfirmed",
             ${CASHIER_DEPARTED_SQL} AS departed,
+            (${CASHIER_DEPARTED_SQL} AND (${CURRENT_UNTRIED_SQL} OR ${PREVIOUS_UNTRIED_SQL}))
+              AS "departureUntried",
             u."displayName", u."firstName", u."lastName",
             a."displayName" AS "byDisplayName", a."firstName" AS "byFirstName",
             a."lastName" AS "byLastName"
@@ -105,5 +112,6 @@ export async function listLydiaCashiers(
         lastName: row.byLastName,
       }) || '',
     departed: row.departed === true,
+    departureUntried: row.departureUntried === true,
   }));
 }

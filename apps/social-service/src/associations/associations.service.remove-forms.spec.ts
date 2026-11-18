@@ -6,7 +6,7 @@ import { of } from 'rxjs';
 import { retireForms } from '../forms/retire-forms';
 import { DEPENDENCY_DELETE_ADMIN_ONLY } from '../spaces/dependency-rules';
 import { Logger } from '@nestjs/common';
-import { LYDIA_CASHIERS_LIVE } from './lydia-cashier-claim';
+import { LYDIA_CASHIERS_LIVE, LYDIA_CASHIER_IN_FLIGHT } from './lydia-cashier-claim';
 
 jest.mock('../forms/retire-forms', () => ({
   retireForms: jest.fn(() => Promise.resolve({ archived: 1, deleted: 0 })),
@@ -30,7 +30,8 @@ function makeService(
   posters: { id: string }[] = [],
   stillCited: string[] = [],
   dependents: Dependents = NONE,
-  cashiers: Array<{ vendorToken: string; owed: boolean }> = []
+  cashiers: Array<{ vendorToken: string; owed: boolean }> = [],
+  claimed = false
 ) {
   const rows = (ids: string[]) => [ids.map((id) => ({ id })), ids.length];
   // The release re-reads, per poster and under its lock, whether a surviving space cites it.
@@ -47,11 +48,13 @@ function makeService(
               ? rows(dependents.labelled)
               : sql.includes('FROM lydia_cashiers')
                 ? cashiers
-                : sql.includes('AS governs')
-                  ? [{ governs: dependents.governs, children: dependents.children.length }]
-                  : sql.includes('LIMIT 1') && stillCited.includes(params[0] as string)
-                    ? [1]
-                    : []
+                : sql.includes('AS claimed FROM associations')
+                  ? [{ claimed }]
+                  : sql.includes('AS governs')
+                    ? [{ governs: dependents.governs, children: dependents.children.length }]
+                    : sql.includes('LIMIT 1') && stillCited.includes(params[0] as string)
+                      ? [1]
+                      : []
       )
     ),
   };
@@ -137,6 +140,15 @@ describe('AssociationsService.remove - a Lydia Business with cashiers to remove 
     await expect(service.remove('asso-1', 'admin-1', true)).rejects.toMatchObject({
       status: 409,
       response: { code: LYDIA_CASHIERS_LIVE },
+    });
+    expect(manager.delete).not.toHaveBeenCalled();
+  });
+
+  it('a cashier step in flight: the typed 409, nothing deleted - its record would land on a row the delete took', async () => {
+    const { service, manager } = makeService([], [], NONE, [], true);
+    await expect(service.remove('asso-1', 'admin-1', true)).rejects.toMatchObject({
+      status: 409,
+      response: { code: LYDIA_CASHIER_IN_FLIGHT },
     });
     expect(manager.delete).not.toHaveBeenCalled();
   });

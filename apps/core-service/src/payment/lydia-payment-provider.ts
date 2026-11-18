@@ -74,6 +74,18 @@ export const LYDIA_ONBOARDING_STEP_TIMEOUT_MS = {
   link: 10_000,
 } as const;
 
+/**
+ * THE REMOVAL ANSWERS BEFORE ITS CALLER GIVES UP. A removal is three Lydia calls in a row - the
+ * preconditions read, `business/removecashier`, the `getpermission` re-read - made while
+ * social-service holds the association's cashier claim. social-service waits for core at most
+ * `timeouts.cashierRemovalWaitMs` of `libs/contracts/lydia-refusal-codes.json` (an erasure's or a
+ * departure's removal) and then records the outcome NOT confirmed and RELEASES the claim: a core
+ * still talking to Lydia after that would act outside any claim, alongside the next cashier step.
+ * So each of the three calls gets this bound, and their SUM stays under that wait (asserted by a
+ * spec against the contract): core always answers first.
+ */
+export const LYDIA_REMOVAL_STEP_TIMEOUT_MS = 8_000;
+
 /** nginx's `proxy_read_timeout` on `/api/payments` (its 60 s default; Dockerfile.frontend sets none). */
 export const PAYMENTS_PROXY_READ_TIMEOUT_MS = 60_000;
 
@@ -818,9 +830,15 @@ export class LydiaPaymentProvider implements PaymentProvider {
   async assertRemovalPreconditions(
     associationId: string,
     vendorToken: string,
-    contextPhone: string
+    contextPhone: string,
+    timeoutMs: number = LYDIA_CALL_TIMEOUT_MS
   ): Promise<void> {
-    const reading = await this.readCashierReading(associationId, vendorToken, contextPhone);
+    const reading = await this.readCashierReading(
+      associationId,
+      vendorToken,
+      contextPhone,
+      timeoutMs
+    );
     const lacking = cashierRightsDifference(reading, 'responsable');
     if (lacking.length === 0) {
       this.logger.debug(`[LYDIA-CASHIER] association ${associationId}: removal preconditions met`);
@@ -854,17 +872,20 @@ export class LydiaPaymentProvider implements PaymentProvider {
   ): Promise<LydiaCashierRemoval> {
     this.cashierKeyOrThrow(associationId, contextPhone);
     this.cashierKeyOrThrow(associationId, cashierPhone);
-    await this.assertRemovalPreconditions(associationId, vendorToken, contextPhone);
+    // Each call bounded so the three answer within social's wait (`LYDIA_REMOVAL_STEP_TIMEOUT_MS`).
+    const step = LYDIA_REMOVAL_STEP_TIMEOUT_MS;
+    await this.assertRemovalPreconditions(associationId, vendorToken, contextPhone, step);
     const tag =
       `[LYDIA-CASHIER] association ${associationId}: removal of phone ending ` +
       `${cashierPhone.slice(-2)}`;
     this.logger.log(`${tag} asked`);
     try {
-      await this.cashierCall(associationId, 'business/removecashier', {
-        vendor_token: vendorToken,
-        phone: contextPhone,
-        cashier_phone: cashierPhone,
-      });
+      await this.cashierCall(
+        associationId,
+        'business/removecashier',
+        { vendor_token: vendorToken, phone: contextPhone, cashier_phone: cashierPhone },
+        step
+      );
     } catch (err: unknown) {
       this.logger.warn(
         `${tag}: Lydia did not accept the call (${typedCode(err)}) - the re-read decides`
@@ -872,7 +893,7 @@ export class LydiaPaymentProvider implements PaymentProvider {
     }
     let reading: LydiaCashierReading;
     try {
-      reading = await this.readCashierReading(associationId, vendorToken, cashierPhone);
+      reading = await this.readCashierReading(associationId, vendorToken, cashierPhone, step);
     } catch (err: unknown) {
       this.logger.error(`${tag}: the re-read failed (${typedCode(err)}) - NOT confirmed`);
       return { verified: false, held: null };
@@ -897,13 +918,16 @@ export class LydiaPaymentProvider implements PaymentProvider {
   async readCashierReading(
     associationId: string,
     vendorToken: string,
-    phone: string
+    phone: string,
+    timeoutMs: number = LYDIA_CALL_TIMEOUT_MS
   ): Promise<LydiaCashierReading> {
     this.cashierKeyOrThrow(associationId, phone);
-    const answer = await this.cashierCall(associationId, 'business/getpermission', {
-      vendor_token: vendorToken,
-      cashier_phone: phone,
-    });
+    const answer = await this.cashierCall(
+      associationId,
+      'business/getpermission',
+      { vendor_token: vendorToken, cashier_phone: phone },
+      timeoutMs
+    );
     let reading: LydiaCashierReading;
     try {
       reading = parseCashierReading(answer);
@@ -956,10 +980,11 @@ export class LydiaPaymentProvider implements PaymentProvider {
   private async cashierCall(
     associationId: string,
     path: 'business/addcashier' | 'business/getpermission' | 'business/removecashier',
-    fields: Record<string, string>
+    fields: Record<string, string>,
+    timeoutMs: number = LYDIA_CALL_TIMEOUT_MS
   ): Promise<Record<string, unknown>> {
     try {
-      return await this.postForm<Record<string, unknown>>(`/api/${path}`, fields);
+      return await this.postForm<Record<string, unknown>>(`/api/${path}`, fields, [], timeoutMs);
     } catch (err: unknown) {
       if (err instanceof HttpException && !(err instanceof BadRequestException)) throw err;
       const providerCode =

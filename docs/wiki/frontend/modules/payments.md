@@ -1028,27 +1028,39 @@ then `vendeur confirmed with exactly 1 right(s)`, then social's `[AUDIT] Lydia c
 the cashier notice switched off (below), the notifier says so at DEBUG and nothing at WARN or ERROR.
 
 **A membership that ends owes its Lydia rights** (review of the flip, built with it in 1.7.1). The debt
-is DURABLE STATE, not a job: a live `lydia_cashiers` row whose person holds no `association_members`
-row of that association (`CASHIER_DEPARTED_SQL`, `lydia-cashiers-list.ts`) owes the removal of its
-numbers - every number of a Tresorier or Vendeur, a Responsable's OTHER number, never the
-Responsable's current one (`owesDepartureRemoval`). Re-joining ends the debt by the same predicate.
-`LydiaCashiersService.settleDepartures` pays it through the SAME verified path as "Retirer"
-(`claimRevoke`, core's internal `revoke` route with `reason: departure`, the `getpermission` re-read,
-`recordRevoke`): 0 rights closes the row; anything else flags it NOT confirmed at ERROR, and the card
-shows it. Two triggers read the debt, neither awaited and neither able to fail the write it follows
-(`LydiaCashierDeparturePort`, registered at boot - `LydiaCashiersService` depends on
+is DURABLE STATE, not a job: a live `lydia_cashiers` row of the managed Business whose person holds no
+`association_members` row of that association (`CASHIER_DEPARTED_SQL`, `lydia-cashiers-list.ts`) owes
+the removal of its numbers - every number of a Tresorier or Vendeur, a Responsable's OTHER number,
+never the Responsable's current one (`owesDepartureRemoval`). Re-joining ends the debt by the same
+predicate. `LydiaCashiersService.settleDepartures` pays it through the SAME verified path as "Retirer"
+(the claim and `revokeTarget`'s checks, core's internal `revoke` route with `reason: departure`, the
+`getpermission` re-read, `recordRevoke`): 0 rights closes the row; anything else - rights still read,
+core's typed refusal, no answer - is recorded NOT confirmed (flagged, ERROR), so the card shows it;
+a flagged number is asked again only by a new departure or by "Retirer", never by a card read or a
+release (`CURRENT_UNTRIED_SQL`, `PREVIOUS_UNTRIED_SQL`), so opening the card never calls Lydia for it. Each number takes its own claim WITHOUT waiting and re-reads, under the
+association's lock, that the row is live and its person still not a member (a member back, or a row
+closed meanwhile, is no longer owed). The run re-reads the debt until nothing it has not attempted is
+left, so it terminates. Three triggers read the debt, none awaited and none able to fail the write it
+follows (`LydiaCashierDeparturePort`, registered at boot - `LydiaCashiersService` depends on
 `AssociationsService`, so the port breaks the cycle): `removeMember` once its delete committed
-(leaving goes through it), and every payments-card read that finds a row owing one. Each number takes
-its own claim without waiting: another cashier operation in flight leaves it owed (INFO). core's typed
-refusal changed nothing at Lydia and leaves it owed (ERROR, the claim released); NO answer is recorded
-NOT confirmed, since Lydia may have removed it. **A Responsable who leaves** keeps their current number
-(the Business needs a manager; changing the Responsable to another person is not offered): the
-departure says so at ERROR, and the card reads "a new Responsable is needed, contact a platform
-administrator". The other paths that end a membership: **an account erasure** removes the numbers
-first (`revokeBeforeErasure`, unchanged); **deleting the association** is refused with the typed 409
-`LYDIA_CASHIERS_LIVE` while a Tresorier, a Vendeur or a Responsable's other number is live (the
-cascade would take the rows and leave the rights), lifted by removing them first. A role change
-re-checks membership (`LYDIA_CASHIER_NOT_A_MEMBER`).
+(leaving goes through it); every payments-card read that finds a row owing one; and every release of
+the cashier claim (`claim-released`: a step's record or release, the Responsable's - except a
+Responsable record answering `removeOther`, whose removal of the replaced number claims next and asks
+on its own release), so a departure
+that met the claim busy (INFO) is paid when the holder lets go. **A Responsable who leaves** keeps
+their current number (the Business needs a manager; changing the Responsable to another person is not
+offered): the departure says so at ERROR, once, for the person who left, and the card reads "a new
+Responsable is needed, contact a platform administrator". core bounds each of the removal's three
+Lydia calls (`LYDIA_REMOVAL_STEP_TIMEOUT_MS`) so their sum answers within social-service's wait
+(`timeouts.cashierRemovalWaitMs` in `libs/contracts/lydia-refusal-codes.json`, asserted on both
+sides): a core still talking to Lydia after social released the claim would act outside it. The other
+paths that end a membership or close the rows: **an account erasure** removes the numbers first
+(`revokeBeforeErasure`, unchanged - see the entry below for what it does not surface); **deleting the
+association** and **unlinking its Business** (a global admin's) are refused, typed, while a Tresorier, a
+Vendeur or a Responsable's other number is live (`LYDIA_CASHIERS_LIVE`: the rows would go and the
+rights stay) or a cashier step holds the claim (`LYDIA_CASHIER_IN_FLIGHT`: its record would land on a
+row the act took) - `assertNoCashierOwed`, under the association's lock; core passes both through to
+the admin's screen. A role change re-checks membership (`LYDIA_CASHIER_NOT_A_MEMBER`).
 
 **What the gate does not cover yet** (owed in 1.7.1:
 [entry](../../backlog.d/p2-a-lydia-cashier-add-binds-the-person-not-the-number-and-overwrites-a-number-lydia-knows.md)): the member check

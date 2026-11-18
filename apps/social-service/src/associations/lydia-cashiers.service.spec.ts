@@ -14,6 +14,7 @@ import {
   LYDIA_NO_BUSINESS,
   LydiaCashiersService,
   LYDIA_CASHIERS_LIVE,
+  ERASURE_REVOKE_TIMEOUT_MS,
 } from './lydia-cashiers.service';
 import {
   LYDIA_CASHIER_ADDED_TYPE,
@@ -37,6 +38,7 @@ const CONTRACT = JSON.parse(
   core: Record<string, string>;
   social: Record<string, string>;
   notificationTypes: Record<string, string>;
+  timeouts: { cashierRemovalWaitMs: number };
 };
 
 const ASSO = '00000000-0000-4000-8000-0000000000c1';
@@ -66,6 +68,10 @@ describe('the lot 3 codes social-service answers follow the shared contract', ()
     );
     expect(LYDIA_NO_BUSINESS).toBe(CONTRACT.core.noBusiness);
     expect(LYDIA_CASHIER_ADDED_TYPE).toBe(CONTRACT.notificationTypes.cashierAdded);
+  });
+
+  it('waits for core exactly as long as core bounds a removal under (its three calls answer first)', () => {
+    expect(ERASURE_REVOKE_TIMEOUT_MS).toBe(CONTRACT.timeouts.cashierRemovalWaitMs);
   });
 });
 
@@ -173,7 +179,17 @@ describe('LydiaCashiersService - the checks, with a mocked database', () => {
       if (sql.includes('AS "hasPrevious"')) {
         return live()
           .filter((r) => (opts.departed ?? []).includes(r.userId))
-          .map((r) => ({ id: r.id, role: r.role, hasPrevious: r.previousPhoneSealed !== null }));
+          .map((r) => ({
+            id: r.id,
+            userId: r.userId,
+            role: r.role,
+            hasPrevious: r.previousPhoneSealed !== null,
+            currentUntried: r.role !== 'responsable' && !r.revokeUnconfirmedAt,
+            previousUntried: r.previousPhoneSealed !== null && !r.previousRevokeUnconfirmedAt,
+          }));
+      }
+      if (sql.includes('SELECT 1 FROM association_members WHERE')) {
+        return (opts.departed ?? []).includes(params[1] as string) ? [] : [{ '?column?': 1 }];
       }
       if (sql.includes('INSERT INTO lydia_cashiers')) {
         rows.push({
@@ -554,7 +570,7 @@ describe('LydiaCashiersService - the checks, with a mocked database', () => {
       expect(String(spy.log.mock.calls)).toContain('confirmed by Lydia (0 rights)');
     });
 
-    it('Lydia still shows rights: the row stays live, FLAGGED, at ERROR - and a second trigger asks again', async () => {
+    it('Lydia still shows rights: the row stays live, FLAGGED, at ERROR - a card read does not ask again, a new departure does', async () => {
       const spy = levels();
       const rows = [responsable(), vendeur()];
       const { service, httpService, asso } = make(rows, {
@@ -566,7 +582,11 @@ describe('LydiaCashiersService - the checks, with a mocked database', () => {
       expect(rows[1].revokeUnconfirmedAt).toBeInstanceOf(Date);
       expect(asso.claimed).toBe(false);
       expect(String(spy.error.mock.calls)).toContain('NOT confirmed by Lydia');
+      // Flagged on the card: a read or a release never calls Lydia, nor holds the claim, for it.
       await service.settleDepartures(ASSO, 'payout-read');
+      await service.settleDepartures(ASSO, 'claim-released');
+      expect(httpService.post).toHaveBeenCalledTimes(1);
+      await service.settleDepartures(ASSO, 'departure');
       expect(httpService.post).toHaveBeenCalledTimes(2);
     });
 
@@ -578,16 +598,76 @@ describe('LydiaCashiersService - the checks, with a mocked database', () => {
       expect(rows[1].revokeUnconfirmedAt).toBeInstanceOf(Date);
     });
 
-    it('core refuses (an HTTP answer): nothing changed at Lydia, nothing written, the claim released, still owed', async () => {
+    it('core refuses (an HTTP answer): recorded NOT confirmed so the card shows it, the claim released, still owed', async () => {
       const spy = levels();
       const refusal = Object.assign(new Error('409'), { response: { status: 409, data: {} } });
       const rows = [responsable(), vendeur()];
-      const { service, query, asso } = make(rows, { core: refusal, departed: ['u2'] });
+      const { service, httpService, asso } = make(rows, { core: refusal, departed: ['u2'] });
       await service.settleDepartures(ASSO, 'departure');
-      expect(writes(query)).toEqual([]);
+      expect(rows[1].removedAt).toBeUndefined();
+      expect(rows[1].revokeUnconfirmedAt).toBeInstanceOf(Date);
+      expect(asso).toMatchObject({ claimed: false, token: null });
+      expect(String(spy.warn.mock.calls)).toContain('core refused the removal (HTTP 409)');
+      // One accusation at ERROR (the record's), never a second one for the same refusal.
+      expect(spy.error).toHaveBeenCalledTimes(1);
+      // Asked once per run: the run does not loop on a number it already attempted.
+      expect(httpService.post).toHaveBeenCalledTimes(1);
+    });
+
+    it('the person joined again before the claim: no longer owed, nothing asked, nothing written', async () => {
+      const rows = [responsable(), vendeur()];
+      const departed = ['u2'];
+      const { service, httpService, query, asso } = make(rows, {
+        core: { verified: true, held: 0 },
+        departed,
+      });
+      // The debt is read while u2 is gone; they join again before the claim re-reads membership.
+      const fake = query.getMockImplementation()!;
+      query.mockImplementation(async (sql: string, params?: unknown[]) => {
+        const answer = await fake(sql, params);
+        if (sql.includes('AS "hasPrevious"')) departed.length = 0;
+        return answer;
+      });
+      await service.settleDepartures(ASSO, 'departure');
+      expect(httpService.post).not.toHaveBeenCalled();
+      expect(rows[1].removedAt).toBeUndefined();
       expect(rows[1].revokeUnconfirmedAt).toBeUndefined();
       expect(asso).toMatchObject({ claimed: false, token: null });
-      expect(String(spy.error.mock.calls)).toContain('core refused the removal');
+    });
+
+    it('the other number was removed by another run before the claim: no longer owed, nothing asked, nothing accused', async () => {
+      const spy = levels();
+      const rows = [responsable({ previousPhoneSealed: seal(OLD) })];
+      const { service, httpService, query } = make(rows, {
+        core: { verified: true, held: 0 },
+        departed: ['u1'],
+      });
+      const fake = query.getMockImplementation()!;
+      query.mockImplementation(async (sql: string, params?: unknown[]) => {
+        const answer = await fake(sql, params);
+        if (sql.includes('AS "hasPrevious"')) rows[0].previousPhoneSealed = null;
+        return answer;
+      });
+      await service.settleDepartures(ASSO, 'payout-read');
+      expect(httpService.post).not.toHaveBeenCalled();
+      expect(spy.error).not.toHaveBeenCalled();
+      expect(spy.warn).not.toHaveBeenCalled();
+    });
+
+    it('the row was closed before the claim: no longer owed, nothing asked', async () => {
+      const rows = [responsable(), vendeur()];
+      const { service, httpService, query } = make(rows, {
+        core: { verified: true, held: 0 },
+        departed: ['u2'],
+      });
+      const fake = query.getMockImplementation()!;
+      query.mockImplementation(async (sql: string, params?: unknown[]) => {
+        const answer = await fake(sql, params);
+        if (sql.includes('AS "hasPrevious"')) rows[1].removedAt = new Date();
+        return answer;
+      });
+      await service.settleDepartures(ASSO, 'departure');
+      expect(httpService.post).not.toHaveBeenCalled();
     });
 
     it('another cashier operation holds the claim: nothing asked, nothing written, said at INFO, its claim untouched', async () => {
@@ -614,7 +694,7 @@ describe('LydiaCashiersService - the checks, with a mocked database', () => {
         core: { verified: true, held: 0 },
         departed: ['u1'],
       });
-      await service.settleDepartures(ASSO, 'departure');
+      await service.settleDepartures(ASSO, 'departure', 'u1');
       expect(corePosts(httpService).map((b) => b.cashierPhone)).toEqual([OLD]);
       expect(rows[0]).toMatchObject({ previousPhoneSealed: null });
       expect(rows[0].removedAt).toBeUndefined();

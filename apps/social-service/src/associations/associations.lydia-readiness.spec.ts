@@ -26,6 +26,7 @@ import {
   LYDIA_PAYMENTS_PAUSED_TYPE,
   LydiaPaymentsNotifier,
 } from './lydia-payments-notifier.service';
+import { LYDIA_CASHIERS_LIVE, LYDIA_CASHIER_IN_FLIGHT } from './lydia-cashier-claim';
 import { ProductsService } from './products.service';
 import {
   LYDIA_CASHIER_CLAIM_LOST,
@@ -1174,6 +1175,42 @@ describe('AssociationsService - the payer`s refusal and the unlink', () => {
     expect(closing?.[0]).toContain('"removedAt" = now(), "phoneSealed" = NULL, "phoneEnd" = NULL');
     expect(closing?.[1]).toEqual([HOLDER]);
   });
+
+  it.each([
+    ['a Tresorier or Vendeur still live', false, true, LYDIA_CASHIERS_LIVE],
+    ['a cashier step in flight', true, false, LYDIA_CASHIER_IN_FLIGHT],
+  ])(
+    'the unlink is refused, typed, nothing written, while %s',
+    async (_what, claimed, owed, code) => {
+      captureLogs();
+      const query = jest.fn(async (_sql: string, _params: unknown[]) => []);
+      const manager = {
+        findOne: jest.fn(async () => ({ id: HOLDER })),
+        update: jest.fn(async () => ({ affected: 0 })),
+        find: jest.fn(async () => []),
+        query: jest.fn(async (sql: string) =>
+          sql.includes('AS claimed FROM associations')
+            ? [{ claimed }]
+            : sql.includes('FROM lydia_cashiers')
+              ? [{ vendorToken: 'vendor-1', owed }]
+              : [[], 0]
+        ),
+      };
+      const service = makeBare({
+        assoRepo: {
+          update: jest.fn(async () => ({})),
+          query,
+          manager: { transaction: async (fn: (m: typeof manager) => unknown) => fn(manager) },
+        },
+      });
+      await expect(service.clearLydiaAccount(HOLDER)).rejects.toMatchObject({
+        status: 409,
+        response: { code },
+      });
+      expect(manager.update).not.toHaveBeenCalled();
+      expect(query).not.toHaveBeenCalled();
+    }
+  );
 });
 
 describe('the Responsable codes social-service answers follow the shared contract', () => {

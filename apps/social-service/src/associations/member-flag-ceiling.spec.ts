@@ -751,10 +751,16 @@ describe('removeMember - a membership that ended asks the Lydia cashiers to sett
   it('a member who leaves, or is removed: the departure is asked once the delete committed', async () => {
     const { service, departures } = makeService(rows());
     await service.leaveAssociation(ASSO, 'plain');
-    expect(departures.settleDepartures).toHaveBeenCalledWith(ASSO, 'departure');
+    expect(departures.settleDepartures).toHaveBeenCalledWith(ASSO, 'departure', 'plain');
     departures.settleDepartures.mockClear();
     await service.removeMember(ASSO, 'sec', { granter: PLATFORM });
-    expect(departures.settleDepartures).toHaveBeenCalledWith(ASSO, 'departure');
+    expect(departures.settleDepartures).toHaveBeenCalledWith(ASSO, 'departure', 'sec');
+  });
+
+  it('a released cashier claim asks again (claim-released): a departure that met it busy is owed now', () => {
+    const { service, departures } = makeService(rows());
+    service.afterCashierClaimReleased(ASSO);
+    expect(departures.settleDepartures).toHaveBeenCalledWith(ASSO, 'claim-released', undefined);
   });
 
   it('a refused removal asks nothing: the membership still stands', async () => {

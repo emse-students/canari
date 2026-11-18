@@ -1,22 +1,4 @@
-import { listLydiaCashiers, owesDepartureRemoval } from './lydia-cashiers-list';
-
-describe('owesDepartureRemoval - the one predicate of a departure debt', () => {
-  it('a departed Tresorier or Vendeur owes every number; a member owes nothing', () => {
-    for (const role of ['tresorier', 'vendeur'] as const) {
-      expect(owesDepartureRemoval({ departed: true, role, previousPhoneEnd: null })).toBe(true);
-      expect(owesDepartureRemoval({ departed: false, role, previousPhoneEnd: null })).toBe(false);
-    }
-  });
-
-  it('a departed Responsable owes only their OTHER number, never their current one', () => {
-    expect(
-      owesDepartureRemoval({ departed: true, role: 'responsable', previousPhoneEnd: null })
-    ).toBe(false);
-    expect(
-      owesDepartureRemoval({ departed: true, role: 'responsable', previousPhoneEnd: '99' })
-    ).toBe(true);
-  });
-});
+import { listLydiaCashiers } from './lydia-cashiers-list';
 
 describe('listLydiaCashiers - the card reads a departure from the membership table', () => {
   it('asks whether each row is still a member, and answers it as `departed`', async () => {
@@ -31,12 +13,19 @@ describe('listLydiaCashiers - the card reads a departure from the membership tab
         confirmed: true,
         revokeUnconfirmed: false,
         departed: true,
+        departureUntried: true,
       },
     ]);
     const [row] = await listLydiaCashiers(query, 'asso', 'vendor');
     expect(String(query.mock.calls[0][0])).toContain(
       'NOT EXISTS (SELECT 1 FROM association_members'
     );
-    expect(row).toMatchObject({ id: 'c1', departed: true, state: 'confirmed' });
+    expect(String(query.mock.calls[0][0])).toContain('"previousRevokeUnconfirmedAt" IS NULL');
+    expect(row).toMatchObject({
+      id: 'c1',
+      departed: true,
+      departureUntried: true,
+      state: 'confirmed',
+    });
   });
 });

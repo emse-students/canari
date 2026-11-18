@@ -98,6 +98,19 @@ export const LYDIA_BUSINESS_HOLDS_PAYMENTS = 'LYDIA_BUSINESS_HOLDS_PAYMENTS';
 /** social-service's `code` (409) of a cashier operation while another one is in flight (lot 3). */
 export const LYDIA_CASHIER_IN_FLIGHT = 'LYDIA_CASHIER_IN_FLIGHT';
 
+/**
+ * social-service's `code` (409) refusing an unlink while the Business still lists a Tresorier, a
+ * Vendeur or a Responsable's other number: the rows would close with the rights left at Lydia.
+ */
+export const LYDIA_CASHIERS_LIVE = 'LYDIA_CASHIERS_LIVE';
+
+/** The typed 409s social-service answers an unlink with, passed through to the admin's screen. */
+const UNLINK_REFUSALS: ReadonlySet<string> = new Set([
+  LYDIA_BUSINESS_HOLDS_PAYMENTS,
+  LYDIA_CASHIERS_LIVE,
+  LYDIA_CASHIER_IN_FLIGHT,
+]);
+
 /** The `code` (409) of a Responsable asked for an association with no Business linked. */
 export const LYDIA_NO_BUSINESS = 'LYDIA_NO_BUSINESS';
 /** The `code` (400) of a Responsable who is not a member of the association. */
@@ -803,12 +816,14 @@ export class PaymentController {
     } catch (err: unknown) {
       const error = err as Error & { response?: { status?: number; data?: unknown } };
       const data = error.response?.data as { code?: unknown } | undefined;
-      if (error.response?.status === 409 && data?.code === LYDIA_BUSINESS_HOLDS_PAYMENTS) {
-        // An ANSWER, typed: the Business took payments whose key must stay. Said, not a failure.
-        this.logger.warn(
-          `Lydia Business of ${associationId} not unlinked: it took payments still to be ` +
-            `confirmed or refunded (${LYDIA_BUSINESS_HOLDS_PAYMENTS})`
-        );
+      if (
+        error.response?.status === 409 &&
+        typeof data?.code === 'string' &&
+        UNLINK_REFUSALS.has(data.code)
+      ) {
+        // An ANSWER, typed: payments whose key must stay, cashiers still to remove at Lydia, or a
+        // cashier step in flight. Said, not a failure.
+        this.logger.warn(`Lydia Business of ${associationId} not unlinked: ${data.code}`);
         throw new HttpException(data as Record<string, unknown>, 409);
       }
       this.logger.error('Failed to disconnect Lydia account', describeHttpError(error));

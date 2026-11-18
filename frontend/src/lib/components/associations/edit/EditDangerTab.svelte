@@ -78,7 +78,9 @@
         dependencyRefusalMessage(err) ??
         (err instanceof SocialApiError && err.code === LYDIA_CASHIER_SOCIAL_REFUSAL.LIVE_ON_DELETE
           ? m.asso_lydia_cashiers_live_on_delete()
-          : m.common_delete_error());
+          : err instanceof SocialApiError && err.code === LYDIA_CASHIER_SOCIAL_REFUSAL.IN_FLIGHT
+            ? m.asso_lydia_cashier_err_in_flight()
+            : m.common_delete_error());
     }
   }
 </script>

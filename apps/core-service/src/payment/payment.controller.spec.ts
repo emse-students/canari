@@ -30,6 +30,7 @@ import {
   LYDIA_RESPONSABLE_PHONE_LOCKED,
   LYDIA_RESPONSABLE_NUMBER_CHANGE_FORBIDDEN,
   LYDIA_CASHIER_IN_FLIGHT,
+  LYDIA_CASHIERS_LIVE,
   PAYOUT_ACCOUNT_UNREADABLE,
   PaymentController,
   SESSION_ID_RE,
@@ -444,6 +445,16 @@ describe('PaymentController - every money route is guarded', () => {
       status: 409,
       response: { code: LYDIA_BUSINESS_HOLDS_PAYMENTS },
     });
+    // The cashier refusals of the unlink (review of the 1.7.1 flip) pass through the same way.
+    for (const code of [LYDIA_CASHIERS_LIVE, LYDIA_CASHIER_IN_FLIGHT]) {
+      mockedAxios.post.mockRejectedValueOnce(
+        Object.assign(new Error('409'), { response: { status: 409, data: { code } } })
+      );
+      await expect(controller.disconnectLydiaAccount(asso)).rejects.toMatchObject({
+        status: 409,
+        response: { code },
+      });
+    }
     mockedAxios.post.mockRejectedValueOnce(
       Object.assign(new Error('500'), { response: { status: 500, data: {} } })
     );
@@ -1186,6 +1197,7 @@ describe('the Lydia codes core-service answers follow the shared contract (lot 2
       responsableNumberChangeForbidden: LYDIA_RESPONSABLE_NUMBER_CHANGE_FORBIDDEN,
     }).toEqual(contract.core);
     expect(LYDIA_CASHIER_IN_FLIGHT).toBe(contract.social.cashierInFlight);
+    expect(LYDIA_CASHIERS_LIVE).toBe(contract.social.cashiersLiveOnDelete);
     expect(provider.LYDIA_CASHIER_ADD_ENABLED).toBe(
       (contract as unknown as { switches: { cashierAddEnabled: boolean } }).switches
         .cashierAddEnabled
@@ -1197,6 +1209,19 @@ describe('the Lydia codes core-service answers follow the shared contract (lot 2
     expect(LYDIA_RESPONSABLE_ALREADY_SET).toBe(contract.social.responsableAlreadySet);
     expect(LYDIA_RESPONSABLE_PHONE_LOCKED).toBe(contract.social.responsablePhoneLocked);
     expect(LYDIA_BUSINESS_CHANGED).toBe(contract.social.businessChanged);
+  });
+
+  it("a removal's three Lydia calls answer within social-service's wait, with a margin", () => {
+    const wait = (
+      JSON.parse(
+        readFileSync(
+          join(__dirname, '..', '..', '..', '..', 'libs', 'contracts', 'lydia-refusal-codes.json'),
+          'utf8'
+        )
+      ) as { timeouts: { cashierRemovalWaitMs: number } }
+    ).timeouts.cashierRemovalWaitMs;
+    // Three bounded calls plus core's own work and the hop back: at least two seconds to spare.
+    expect(3 * provider.LYDIA_REMOVAL_STEP_TIMEOUT_MS).toBeLessThanOrEqual(wait - 2_000);
   });
 });
 

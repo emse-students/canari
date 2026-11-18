@@ -22,6 +22,8 @@ import type {
 } from './lydia-cashier-departures.port';
 import {
   CASHIER_DEPARTED_SQL,
+  CURRENT_UNTRIED_SQL,
+  PREVIOUS_UNTRIED_SQL,
   listLydiaCashiers,
   type LydiaCashierNumber,
   type LydiaCashierRole,
@@ -29,6 +31,7 @@ import {
 } from './lydia-cashiers-list';
 import {
   LYDIA_CASHIERS_LIVE,
+  LYDIA_CASHIER_IN_FLIGHT,
   LYDIA_CASHIER_NUMBER_CHANGED,
   LYDIA_CASHIER_PHONE_IN_USE,
   claimLost,
@@ -39,12 +42,11 @@ import {
   numberHeldBy,
   writeClaim,
 } from './lydia-cashier-claim';
+import { bridgeJoinSql, managedVendorTokenSql } from './lydia-account-bridge';
 import { coreUrl } from '../internal/service-urls';
 import { internalCoreRequestConfig } from '../internal/core-request';
 import { describeHttpError } from '../common/http-error-log';
 
-/** The `code` (409) of a cashier operation while another one on the association is in flight. */
-export const LYDIA_CASHIER_IN_FLIGHT = 'LYDIA_CASHIER_IN_FLIGHT';
 /** The `code` (400) of a cashier who is not a member of the association. */
 export const LYDIA_CASHIER_NOT_A_MEMBER = 'LYDIA_CASHIER_NOT_A_MEMBER';
 /** The `code` (409) of adding a member who already is a live cashier of the association. */
@@ -59,7 +61,12 @@ export const LYDIA_CASHIER_NOT_FOUND = 'LYDIA_CASHIER_NOT_FOUND';
 export const LYDIA_CASHIER_ROLE_FIXED = 'LYDIA_CASHIER_ROLE_FIXED';
 /** core-service's `code` (409) of an association with no Business linked, reused for the cashier steps. */
 export const LYDIA_NO_BUSINESS = 'LYDIA_NO_BUSINESS';
-export { LYDIA_CASHIER_NUMBER_CHANGED, LYDIA_CASHIER_PHONE_IN_USE, LYDIA_CASHIERS_LIVE };
+export {
+  LYDIA_CASHIER_IN_FLIGHT,
+  LYDIA_CASHIER_NUMBER_CHANGED,
+  LYDIA_CASHIER_PHONE_IN_USE,
+  LYDIA_CASHIERS_LIVE,
+};
 
 /** What a cashier phone must look like: E.164, no French trunk `0`, as core-service validated it. */
 const E164_RE = /^\+(?!330)[1-9]\d{7,14}$/;
@@ -70,17 +77,25 @@ const DEPARTURE_ACTOR = 'departure';
 /** One live cashier row whose person is no longer a member, and the numbers it owes Lydia. */
 interface DepartedRow {
   id: string;
+  userId: string;
   role: LydiaCashierRole;
   hasPrevious: boolean;
+  /** The current number is owed and was never recorded NOT confirmed (`CURRENT_UNTRIED_SQL`). */
+  currentUntried: boolean;
+  /** The other number was never recorded NOT confirmed (`PREVIOUS_UNTRIED_SQL`). */
+  previousUntried: boolean;
 }
 
 /** What core-service answered to one removal asked for a departure. */
 type CoreRemoval =
   | { kind: 'answered'; verified: boolean; held: number | null }
   /** core answered a typed refusal: by `removeCashier`'s contract, nothing changed at Lydia. */
-  | { kind: 'refused' }
+  | { kind: 'refused'; status: number; detail: unknown }
   /** No answer: whether Lydia removed the number is unknown. */
-  | { kind: 'unanswered' };
+  | { kind: 'unanswered'; detail: unknown };
+
+/** A departure's number that its claim found no longer owed (row closed, or the person is back). */
+class DepartureNotOwed extends Error {}
 
 /** How long one erasure removal may take at core-service before it is given up (best effort). */
 export const ERASURE_REVOKE_TIMEOUT_MS = 30_000;
@@ -150,54 +165,87 @@ export class LydiaCashiersService implements OnModuleInit, LydiaCashierDeparture
 
   /**
    * A MEMBERSHIP THAT ENDED OWES ITS LYDIA RIGHTS (review of the 1.7.1 flip): every live row of
-   * association `id` whose person is no longer a member (`CASHIER_DEPARTED_SQL`) has its numbers
-   * removed through the SAME verified path a manager's "Retirer" takes - the claim and its checks
-   * (`claimRevoke`), core's removal and `getpermission` re-read (0 rights = removed), the locked record
-   * (`recordRevoke`: closed, or flagged NOT confirmed at ERROR). A Tresorier or Vendeur owes every
-   * number; a Responsable only their other number - their current one stays, the Business needs a
-   * manager - and that is said at ERROR on the departure itself (the card says a new Responsable is
-   * needed). Each number takes its own claim WITHOUT waiting: another cashier operation in flight
-   * leaves the debt for the next trigger. A typed refusal from core changed nothing at Lydia and
-   * leaves it owed too; NO answer is recorded as not confirmed, since Lydia may have removed it. The
-   * debt is the rows themselves, so repeating this is safe. Never throws.
+   * association `id`'s managed Business whose person is no longer a member (`CASHIER_DEPARTED_SQL`)
+   * has its numbers removed through the SAME verified path a manager's "Retirer" takes - the claim
+   * and its checks (`revokeTarget`), core's removal and `getpermission` re-read (0 rights = removed),
+   * the locked record (`recordRevoke`: closed, or flagged NOT confirmed at ERROR, which the card
+   * shows). A Tresorier or Vendeur owes every number; a Responsable only their other number - their
+   * current one stays, the Business needs a manager - said at ERROR for `departedUserId` alone.
+   *
+   * Each number takes its own claim WITHOUT waiting and re-reads, under the association's lock,
+   * that the row is live and its person still not a member: a row closed or a member back meanwhile
+   * is no longer owed (debug). A busy claim leaves the number owed: the holder's own run re-reads the
+   * debt before it ends, and a manager's step triggers it on release (`claim-released`). The run
+   * re-reads the debt until nothing it has not attempted is left - it terminates because the set of
+   * attempted numbers only grows. core's typed refusal changed nothing at Lydia; no answer leaves the
+   * outcome unknown: both are recorded NOT confirmed, since the rights may still be there. Never throws.
    */
-  async settleDepartures(id: string, trigger: LydiaCashierDepartureTrigger): Promise<void> {
+  async settleDepartures(
+    id: string,
+    trigger: LydiaCashierDepartureTrigger,
+    departedUserId?: string
+  ): Promise<void> {
     const where = `association ${sanitizeLog(id)}`;
-    let rows: DepartedRow[];
-    try {
-      rows = (await this.assoRepo.query(
-        `SELECT c.id, c.role, (c."previousPhoneSealed" IS NOT NULL) AS "hasPrevious"
-           FROM lydia_cashiers c
-          WHERE c."associationId" = $1 AND c."removedAt" IS NULL AND ${CASHIER_DEPARTED_SQL}
-          ORDER BY c."addedAt"`,
-        [id]
-      )) as DepartedRow[];
-    } catch (err: unknown) {
-      this.logger.error(
-        `[LYDIA-CASHIER] departure on ${where}: the cashier rows could not be read (${trigger}) - ` +
-          `the debt stays owed`,
-        describeHttpError(err as Error)
-      );
-      return;
-    }
-    if (rows.length === 0) {
-      this.logger.debug(`[LYDIA-CASHIER] departure on ${where}: nothing owed (${trigger})`);
-      return;
-    }
-    for (const row of rows) {
-      if (row.role === 'responsable' && trigger === 'departure') {
+    const attempted = new Set<string>();
+    let first = true;
+    for (;;) {
+      let rows: DepartedRow[];
+      try {
+        rows = (await this.assoRepo.query(
+          `SELECT c.id, c."userId", c.role, (c."previousPhoneSealed" IS NOT NULL) AS "hasPrevious",
+                  ${CURRENT_UNTRIED_SQL} AS "currentUntried",
+                  ${PREVIOUS_UNTRIED_SQL} AS "previousUntried"
+             FROM lydia_cashiers c
+             JOIN associations a ON a.id = c."associationId"
+             ${bridgeJoinSql('a', 'b')}
+            WHERE c."associationId" = $1 AND c."removedAt" IS NULL
+              AND c."vendorToken" = ${managedVendorTokenSql('a', 'b')}
+              AND ${CASHIER_DEPARTED_SQL}
+            ORDER BY c."addedAt"`,
+          [id]
+        )) as DepartedRow[];
+      } catch (err: unknown) {
         this.logger.error(
-          `[LYDIA-CASHIER] departure on ${where}: the Responsable (row ` +
-            `${sanitizeLog(row.id).slice(0, 8)}) is no longer a member - their current number keeps ` +
-            `every right at Lydia, the Business needs a new Responsable (a platform administrator)`
+          `[LYDIA-CASHIER] departure on ${where}: the cashier rows could not be read (${trigger}) - ` +
+            `the debt stays owed`,
+          describeHttpError(err as Error)
         );
+        return;
       }
-      // The other number first: closing the row (its current number) clears it with the row.
-      const numbers: LydiaCashierNumber[] = [
-        ...(row.hasPrevious ? (['previous'] as const) : []),
-        ...(row.role !== 'responsable' ? (['current'] as const) : []),
-      ];
-      for (const number of numbers) {
+      if (first) {
+        first = false;
+        const kept = rows.find((r) => r.role === 'responsable' && r.userId === departedUserId);
+        if (kept) {
+          this.logger.error(
+            `[LYDIA-CASHIER] departure on ${where}: the Responsable (row ` +
+              `${sanitizeLog(kept.id).slice(0, 8)}) is no longer a member - their current number ` +
+              `keeps every right at Lydia, the Business needs a new Responsable (a platform administrator)`
+          );
+        }
+      }
+      // The other number first: closing the row (its current number) clears it with the row. A
+      // number already recorded NOT confirmed is asked again only by a new departure: a card read
+      // or a release would otherwise call Lydia, and hold the claim, on every open (its flag is on
+      // the card, and "Retirer" asks again).
+      const retry = trigger === 'departure';
+      const pending = rows
+        .flatMap((row) => [
+          ...(row.hasPrevious && (retry || row.previousUntried)
+            ? [{ row, number: 'previous' as const }]
+            : []),
+          ...(row.role !== 'responsable' && (retry || row.currentUntried)
+            ? [{ row, number: 'current' as const }]
+            : []),
+        ])
+        .filter(({ row, number }) => !attempted.has(`${row.id}:${number}`));
+      if (pending.length === 0) {
+        if (attempted.size === 0) {
+          this.logger.debug(`[LYDIA-CASHIER] departure on ${where}: nothing owed (${trigger})`);
+        }
+        return;
+      }
+      for (const { row, number } of pending) {
+        attempted.add(`${row.id}:${number}`);
         await this.settleOneDeparture(id, row.id, number, trigger);
       }
     }
@@ -215,11 +263,36 @@ export class LydiaCashiersService implements OnModuleInit, LydiaCashierDeparture
       `${sanitizeLog(cashierId).slice(0, 8)} (${number} number, ${trigger})`;
     let target: LydiaCashierRevokeTarget;
     try {
-      target = await this.claimRevoke(id, { cashierId, number });
+      target = await this.claimWithin(
+        id,
+        `departure removal (${number})`,
+        async (_vendor, rows, manager) => {
+          const row = rows.find((r) => r.id === cashierId);
+          if (!row) throw new DepartureNotOwed('the row is no longer live');
+          // Another run removed that number meanwhile (its record cleared it): nothing to ask.
+          if (number === 'previous' && !row.previousPhoneSealed) {
+            throw new DepartureNotOwed('the other number is already removed');
+          }
+          if (number === 'current' && row.role === 'responsable') {
+            throw new DepartureNotOwed('the current number of a Responsable is kept');
+          }
+          const member = (await manager.query(
+            `SELECT 1 FROM association_members WHERE "associationId" = $1 AND "userId" = $2`,
+            [id, row.userId]
+          )) as unknown[];
+          if (member.length > 0) throw new DepartureNotOwed('the person is a member again');
+          return this.revokeTarget(id, { cashierId, number }, rows);
+        },
+        { busyIsExpected: true }
+      );
     } catch (err: unknown) {
+      if (err instanceof DepartureNotOwed) {
+        this.logger.debug(`${what}: no longer owed - ${err.message}`);
+        return;
+      }
       const code = (err as { response?: { code?: unknown } })?.response?.code;
       if (code === LYDIA_CASHIER_IN_FLIGHT) {
-        // Another cashier operation holds the claim: the debt is the row, the next trigger reads it.
+        // The holder's run re-reads the debt, or its release triggers it: still owed, by design.
         this.logger.log(`${what}: another cashier operation is in flight - still owed`);
       } else {
         this.logger.error(
@@ -231,10 +304,16 @@ export class LydiaCashiersService implements OnModuleInit, LydiaCashierDeparture
       return;
     }
     const removal = await this.removeThroughCore(id, target, 'departure');
-    if (removal.kind === 'refused') {
-      this.logger.error(`${what}: core refused the removal, nothing changed at Lydia - still owed`);
-      await this.releaseQuietly(id, target.claimToken, what);
-      return;
+    if (removal.kind !== 'answered') {
+      // The rights may still be there: recorded NOT confirmed below, so the card shows it.
+      this.logger.warn(
+        `${what}: ${
+          removal.kind === 'refused'
+            ? `core refused the removal (HTTP ${removal.status}) - nothing changed at Lydia`
+            : 'core did not answer - the outcome at Lydia is unknown'
+        }`,
+        removal.detail
+      );
     }
     const verified = removal.kind === 'answered' && removal.verified;
     try {
@@ -258,8 +337,9 @@ export class LydiaCashiersService implements OnModuleInit, LydiaCashierDeparture
   /**
    * Asks core-service's internal route for ONE verified removal (preconditions, Lydia's removal, the
    * `getpermission` re-read). An HTTP answer that is not 2xx is core's typed refusal, given before
-   * anything changed at Lydia (`removeCashier` never throws once it asked); no answer at all leaves
-   * the outcome unknown. Classified on the presence of an HTTP response, never on a message.
+   * anything changed at Lydia (`removeCashier` catches every failure once it asked); no answer at all
+   * leaves the outcome unknown. Classified on the presence of an HTTP response, never on a message.
+   * Logs nothing: the caller says what it does with each outcome.
    */
   private async removeThroughCore(
     associationId: string,
@@ -287,12 +367,10 @@ export class LydiaCashiersService implements OnModuleInit, LydiaCashierDeparture
       };
     } catch (err: unknown) {
       const status = (err as { response?: { status?: unknown } })?.response?.status;
-      this.logger.error(
-        `[LYDIA-CASHIER] ${reason} removal on association ${sanitizeLog(associationId)}: core ` +
-          (typeof status === 'number' ? `refused it (HTTP ${status})` : 'did not answer'),
-        describeHttpError(err as Error)
-      );
-      return typeof status === 'number' ? { kind: 'refused' } : { kind: 'unanswered' };
+      const detail = describeHttpError(err as Error);
+      return typeof status === 'number'
+        ? { kind: 'refused', status, detail }
+        : { kind: 'unanswered', detail };
     }
   }
 
@@ -356,7 +434,8 @@ export class LydiaCashiersService implements OnModuleInit, LydiaCashierDeparture
   private async claimWithin<T extends object>(
     id: string,
     what: string,
-    check: (vendorToken: string, rows: LiveRow[]) => T
+    check: (vendorToken: string, rows: LiveRow[], manager: EntityManager) => T | Promise<T>,
+    opts: { busyIsExpected?: boolean } = {}
   ): Promise<T & { vendorToken: string; claimToken: string }> {
     return this.assoRepo.manager.transaction(async (manager: EntityManager) => {
       const asso = await lockAssociation(manager, id);
@@ -368,11 +447,13 @@ export class LydiaCashiersService implements OnModuleInit, LydiaCashierDeparture
         throw conflict(LYDIA_NO_BUSINESS, 'No Lydia Business is linked to this association');
       }
       const rows = (await manager.query(LIVE_ROWS_SQL, [id, asso.vendorToken])) as LiveRow[];
-      const result = check(asso.vendorToken, rows);
+      const result = await check(asso.vendorToken, rows, manager);
       if (asso.claimed) {
-        this.logger.warn(
-          `[LYDIA-CASHIER] ${what} refused on ${sanitizeLog(id)}: another cashier operation is in flight`
-        );
+        // A departure's removal meets a busy claim by design (the holder's release triggers it
+        // again): said at debug there, at WARN for a manager's step.
+        const line = `[LYDIA-CASHIER] ${what} refused on ${sanitizeLog(id)}: another cashier operation is in flight`;
+        if (opts.busyIsExpected) this.logger.debug(line);
+        else this.logger.warn(line);
         throw conflict(LYDIA_CASHIER_IN_FLIGHT, 'Another cashier operation is in flight');
       }
       const claimToken = await writeClaim(manager, id);
@@ -706,40 +787,53 @@ export class LydiaCashiersService implements OnModuleInit, LydiaCashierDeparture
     input: { cashierId: string; number: LydiaCashierNumber }
   ): Promise<LydiaCashierRevokeTarget> {
     this.logger.debug(`[LYDIA-CASHIER] revoke claim asked on ${sanitizeLog(id)} (${input.number})`);
-    return this.claimWithin(id, `revoke (${input.number})`, (_vendor, rows) => {
-      const row = rows.find((r) => r.id === input.cashierId);
-      if (!row || (input.number === 'previous' && !row.previousPhoneSealed)) {
-        this.logger.warn(`[LYDIA-CASHIER] revoke refused on ${sanitizeLog(id)}: no such number`);
-        throw new NotFoundException({ code: LYDIA_CASHIER_NOT_FOUND, message: 'No such cashier' });
-      }
-      if (input.number === 'current' && row.role === 'responsable') {
-        this.logger.warn(
-          `[LYDIA-CASHIER] revoke refused on ${sanitizeLog(id)}: the Responsable's current number`
-        );
-        throw conflict(
-          LYDIA_CASHIER_RESPONSABLE_NUMBER,
-          "The Responsable's current number is not removed"
-        );
-      }
-      const responsable = this.confirmedResponsableOrThrow(id, rows);
-      const cashierPhone = this.open(
-        id,
-        input.number === 'previous' ? row.previousPhoneSealed : row.phoneSealed,
-        'the number to remove'
+    return this.claimWithin(id, `revoke (${input.number})`, (_vendor, rows) =>
+      this.revokeTarget(id, input, rows)
+    );
+  }
+
+  /**
+   * The checks of a removal, on the rows `claimWithin` locked: the number exists on a live row, is
+   * not the Responsable's current one (by role and by value), and a confirmed Responsable gives the
+   * context number. Answers the two numbers opened. Shared by a manager's "Retirer" and a departure.
+   */
+  private revokeTarget(
+    id: string,
+    input: { cashierId: string; number: LydiaCashierNumber },
+    rows: LiveRow[]
+  ): { cashierPhone: string; contextPhone: string } {
+    const row = rows.find((r) => r.id === input.cashierId);
+    if (!row || (input.number === 'previous' && !row.previousPhoneSealed)) {
+      this.logger.warn(`[LYDIA-CASHIER] revoke refused on ${sanitizeLog(id)}: no such number`);
+      throw new NotFoundException({ code: LYDIA_CASHIER_NOT_FOUND, message: 'No such cashier' });
+    }
+    if (input.number === 'current' && row.role === 'responsable') {
+      this.logger.warn(
+        `[LYDIA-CASHIER] revoke refused on ${sanitizeLog(id)}: the Responsable's current number`
       );
-      if (!cashierPhone) throw new ServiceUnavailableException('The number cannot be read');
-      if (cashierPhone === responsable.phone) {
-        this.logger.error(
-          `[LYDIA-CASHIER] revoke refused on ${sanitizeLog(id)}: the number to remove is the ` +
-            `Responsable's current number`
-        );
-        throw conflict(
-          LYDIA_CASHIER_RESPONSABLE_NUMBER,
-          "The Responsable's current number is not removed"
-        );
-      }
-      return { cashierPhone, contextPhone: responsable.phone };
-    });
+      throw conflict(
+        LYDIA_CASHIER_RESPONSABLE_NUMBER,
+        "The Responsable's current number is not removed"
+      );
+    }
+    const responsable = this.confirmedResponsableOrThrow(id, rows);
+    const cashierPhone = this.open(
+      id,
+      input.number === 'previous' ? row.previousPhoneSealed : row.phoneSealed,
+      'the number to remove'
+    );
+    if (!cashierPhone) throw new ServiceUnavailableException('The number cannot be read');
+    if (cashierPhone === responsable.phone) {
+      this.logger.error(
+        `[LYDIA-CASHIER] revoke refused on ${sanitizeLog(id)}: the number to remove is the ` +
+          `Responsable's current number`
+      );
+      throw conflict(
+        LYDIA_CASHIER_RESPONSABLE_NUMBER,
+        "The Responsable's current number is not removed"
+      );
+    }
+    return { cashierPhone, contextPhone: responsable.phone };
   }
 
   /**

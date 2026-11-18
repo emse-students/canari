@@ -30,6 +30,41 @@ who leaves kept the row and Lydia's rights - is BUILT with the flip
    `LYDIA_BUSINESS_CHANGED`, a lost race on the one-live-row index) leaves rights at Lydia with no row
    and no "Retirer"; logged at ERROR. Recovery: re-add the same member and number (the add replaces,
    the record then exists), then remove.
+4. **An account erasure deletes the row even when Lydia did not confirm the removal.**
+   `revokeBeforeErasure` asks core for each number and logs an unconfirmed one at ERROR, but the
+   erasure then deletes the person's rows, so the card cannot show the flag and no trigger asks again.
+   Keeping the row needs a decision the code cannot take: the unique index
+   `lydia_cashiers_one_live_member` forbids a placeholder `userId`, so the row would need a nullable
+   `userId` (a migration) and the erasure would keep a sealed phone of an erased person until the
+   removal is confirmed - a retention question for the register. Found by the second review of the
+   flip (2026-11-18).
+5. **No report names a departure debt nobody opens.** The debt is paid on a departure, on a card read
+   and on a claim release; an association whose managers never open the payments card after a failed
+   removal keeps a flagged row only its ERROR line names. A report (a daily count of flagged and
+   departed rows per association, on the platform admins' existing report) would close it.
+6. **The delete and unlink refusal has no way out when Lydia can never confirm.** A Business closed
+   or blocked at Lydia, a revoked key, a seal that no longer opens, or an erased Responsable (no
+   Responsable left: every removal is `LYDIA_CASHIER_NO_RESPONSABLE`) keeps the owed rows live and
+   flagged, so `LYDIA_CASHIERS_LIVE` refuses both forever. Recommended (third review, 2026-11-18): a
+   global admin proceeds past it when every owed number is already flagged NOT confirmed - the
+   durable proof the verified path was tried - with one `[AUDIT]` ERROR per number left at Lydia.
+7. **A departed Responsable has no in-app successor.** The card says "a new Responsable is needed,
+   contact a platform administrator", but a platform administrator cannot set another person as
+   Responsable on the same Business (`LYDIA_RESPONSABLE_ALREADY_SET`). Either an admin "replace the
+   Responsable" step (add the new holder, then remove the old number through the verified path), or
+   refusing a Responsable's own departure while their number is live. A design question, parked in
+   [open-questions](../open-questions.md).
+8. **The claim fence is a clock.** social waits 30 s for core's removal and then records it NOT
+   confirmed and releases the claim; core bounds its three Lydia calls to 24 s, but an axios timeout is
+   per socket idle, not a total deadline. A late `removecashier` landing after a re-add of the same
+   number would leave Lydia at 0 rights with the row confirmed - access lost, never gained. The fix is
+   a fence at core (the claim token re-checked with social before `removecashier`), or keeping the
+   claim on an unanswered removal as an unknown add does.
+
+The second review (2026-11-18) also asked, and 1.7.1 does: a departure re-checks membership under its
+claim, a busy claim is paid at its release, a refused or unanswered removal is flagged on the card,
+core's removal answers within social's wait, and the delete and the unlink are refused while a number
+is owed or a cashier step is in flight ([payments](../frontend/modules/payments.md#the-cashiers-enrolment-lot-3)).
 
 Also done in 1.7.1 from the same review: a French number keeping its trunk 0 (`+330...`) is refused by
 every server check and rewritten by the client, so one line has one spelling for the one-number-one-row
