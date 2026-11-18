@@ -1,6 +1,6 @@
 ## The owner's decisions of 2026-11-18
 
-target: 1.7.0
+target: 1.7.1
 
 Recorded so no question answered here is asked again. Taken by the owner in person, about 01:20 on
 2026-11-18. Each line names where its detail lives.
@@ -49,3 +49,19 @@ Taken by the owner in person, about 09:10 and later that morning, relayed to the
     CI and a pass on dev before a stable, and a major touching authentication is read on both phones.
 11. **Stable cadence:** a stable ships as soon as a version is ready (its readings pass on both phones),
     and an urgent fix may ship alone.
+
+### The afternoon, after the stable
+
+Taken by the owner in person, once `1.7.0` was out.
+
+12. **CanaReel viewer, the overlay (`1.7.1`).** A single tap hides or shows the overlay - caption,
+    author, action column, top tabs, close button. The thin playback bar stays. The overlay comes back
+    only on the next tap or on the next reel. **Pausing is a long press only.** The playback bar is
+    sized to the TRUE duration from the first frame, with YouTube-style grey buffered ranges under it.
+13. **Admin queues (`1.7.1`).** A live count badge on the Administration entry and on each queue's
+    navigation item; a bell notification AND a push to every GLOBAL admin when an item arrives,
+    cleared for all as soon as one admin handles it. Every admin queue runs through ONE mechanism,
+    not one per queue.
+14. **The `1.7.0` floor is raised by the owner** (`minClientVersion`) as soon as BOTH stores serve
+    `1.7.0`, so the legacy shims can then be removed
+    ([legacy-compatibility](../legacy-compatibility.md)).

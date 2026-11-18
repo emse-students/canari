@@ -1725,3 +1725,83 @@ black inside a column rather than the blurred backdrop, and that is a design dec
 
 Every vertical video of 90 s or less that is posted is a CanaReel, and a CanaReel lives 1 year.
 Live replays follow the same shape ([live replays](../../backlog.d/live-replays-kept-three-days-as-canareels.md)).
+
+## A tap hides the overlay, and the playback bar is fixed to the real total (owner, 2026-11-18)
+
+Two decisions of one owner request, both for 1.7.1. Charter ([principes](../../../principes.md)):
+principle 7 (simple, light, pleasant) - the picture can be watched bare, with one gesture to get the
+tools back - and principle 2 (the essential is never lost) for the second: a bar that rewinds tells the
+reader their place is lost when it is not.
+
+### A single tap hides or shows the overlay; it no longer pauses
+
+- **What a tap hides**: the caption block (author row, text, carousel dots), the right action rail, and
+  the viewer's top bar (the "Pour toi" / "Recents" tabs, the close button, the rotate button). **Only the
+  thin playback line stays.** The carousel arrows and the pointer-only up/down steps (desktop) stay: they
+  are navigation, and a mouse user has no other way to step.
+- **The one pause is a press held** on the picture (`videoGestures`, unchanged). There is no pause control
+  and no pause on a tap. `videoTapAction`'s `reel` row is `none`: the player answers a tap only when the
+  engine REFUSED the autoplay (the play disc is up): the tap then plays, with the sound if it was muted.
+  A playing reel's tap no longer turns a muted sound on (it did, 2026-11-10): the rail's speaker is the
+  sound, because a tap that hides the controls and changes the sound at once is the "any click mutes"
+  defect again.
+- **Who owns the tap**: `actions/reelOverlayTap.ts` on each slide's ROOT, read in the capture phase like
+  `doubleTapLike`, so it covers every page (video, photo, carousel strip, replay) and the player holds no
+  second copy. The viewer owns the flag (`overlayHidden`), because the top bar is the viewer's.
+  Where likes exist (`data-double-tap-likes`) the toggle waits the double-tap window, so **a like never
+  flashes the overlay** and a pair of taps toggles nothing.
+- **Never a toggle**: a button, a link, a slider, `[data-video-controls]` (the seek line - which is also
+  now never part of a double tap: `doubleTapLike` treats it as a control, a double tap on it used to
+  like), `[data-no-double-tap]`; a click with `detail` 0 (keyboard, screen reader); the click of a held
+  press or of a drag (a press longer than `HOLD_TO_PAUSE_MS` or past the slop; the viewer also swallows
+  the click ending a mouse drag before it gets there); a pinch.
+- **A tap the player acts on is not also a toggle**: a PAUSED reel (a refused autoplay, an interruption)
+  is restarted by that tap (`videoTapAction`), so `reelOverlayTap` asks `tapConsumed` (the video element's own
+  `paused`, read at the click) and leaves the overlay alone.
+- **A lost release cannot stick the gesture**: `pointercancel` and `lostpointercapture` end a press as
+  spoiled, and a new PRIMARY press replaces a stale one (a non-primary pointer is a pinch).
+- **Back**: the next tap, **and** every page change (the next reel or a new list shows the overlay again:
+  a hidden overlay is a choice about THIS reel, never a mode).
+- **Accessibility**: hidden parts are `invisible` and `inert` - out of the tab order and the
+  accessibility tree, taps falling through to the picture. While hidden, a button named "Afficher les
+  commandes" (`reels_overlay_show`) is the FIRST element of the viewer in the DOM (before the track, the player's slider and the arrows), so the
+  first stop of the tab order and of the screen reader; it is `sr-only`, drawn only on keyboard focus, and
+  brings the overlay back with the focus on the close button. A tap that hides the overlay while focus is in
+  one of its controls hands the focus to this button instead of letting it drop to the body.
+  Escape and Back still close the viewer.
+- Tests: `reelOverlayTap.test.ts`, `ReelSlide.overlay.svelte.test.ts`, `ReelViewer.overlay.svelte.test.ts`,
+  `videoTapAction.test.ts`.
+
+### The playback bar never goes back (defect, same day)
+
+**Cause.** The line mapped its played fraction onto `scrubLength`: the engine's duration when known, else
+the end of what the engine could SEEK - for a stream, what had LOADED. Until the length was learned that
+total grew with every segment, so `currentTime / total` fell as segments arrived: on a slow link the bar
+visibly rewound. A conversation reel also lost its declared length on the way to the player.
+
+**Fix.** The line is fixed to the video's TOTAL from the first frame (`barLength`, `utils/videoPlayback.ts`):
+
+| Order | Source | Where it comes from |
+| --- | --- | --- |
+| 1 | the engine's `duration`, never below the declared length (a declaration slightly short of the media cannot shrink the line; the engine growing past it at the last append can only lengthen it) | the file's own header, or what the stream's source was given (the declared length, else the length read from the file's tail, `segmentedMediaStream`) |
+| 2 | **the publisher's declared length** | a CanaReel: `posts.duration_ms` (server record, required at publish: the prepared file's length, 1 to `maxDurationMs`; `post.durationMs`). A reel received in a conversation: `MediaRef.durationMs` (`MediaMsg.duration_ms`, written by the sender) - **it was dropped before the player until now** (`declaredLengthMs`, `reels/declaredLength.ts`, reads both) |
+| 3 | a whole local file's seekable end | `streamed` false: every byte is local, that end IS the total and cannot grow |
+| 4 | **unknown** | see below |
+
+**The case where the true duration is unknown, said exactly**: a post of ONE video that is not a CanaReel
+(`durationMs` is null on a post) and a CAROUSEL's video - nothing declares their length - AND whose file
+header carries none either, until a stream reads it from its tail (after the head and `aheadSeconds` are
+buffered, `segmentedMediaStream`). Until then the line draws **no played part and no loaded part**, cannot
+be dragged (`data-video-length="unknown"`, `aria-valuemax` 0), and the player logs the state once
+(`the seek line's length is unknown`). It is NOT mapped onto the loaded end: that is the defect. When the
+tail read gives a length the line takes it and stays; if it never can, the existing
+`[media-seg] ... no declared length, and none read from its tail` warning says why. **Supersedes the
+2026-11-11 rule** ("a stream with no length maps its line onto what it can seek"), which was the cause.
+
+**Buffering as YouTube draws it**: every loaded range (`loadedSpans`) is a grey stretch on the SAME track,
+under the played part (`VideoScrubber`, both the line and the bar). Nothing is drawn while the total is
+unknown (a fraction of nothing). `bufferedFraction` (the reach under the playhead) is deleted.
+
+Tests: `videoPlayback.test.ts` (the order, the unknown case, **the played fraction never decreases while
+segments arrive**), `VideoPlayer.svelte.test.ts` (declared length from the first frame, the unknown case,
+the grey stretches), `player.svelte.test.ts`, `declaredLength.test.ts`.

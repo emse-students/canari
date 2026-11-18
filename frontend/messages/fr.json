@@ -5101,6 +5101,7 @@
   "reels_publish_from_composer_notice": "Une vidéo verticale de {seconds} secondes au plus est un CanaReel : supprimé au bout de {lifetime}.",
   "reels_viewer_label": "CanaReels",
   "reels_viewer_close": "Fermer les CanaReels",
+  "reels_overlay_show": "Afficher les commandes",
   "reels_viewer_prev": "CanaReel précédent",
   "reels_viewer_next": "CanaReel suivant",
   "reels_carousel_prev": "Photo ou vidéo précédente",

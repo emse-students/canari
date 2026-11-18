@@ -130,7 +130,7 @@ describe('the scrubber', () => {
     const target = render(VideoScrubber, {
       currentTime: 10,
       duration: 100,
-      buffered: 0.5,
+      loaded: [{ from: 0, to: 0.5 }],
       variant,
       onSeek,
       onScrubbingChange,
@@ -169,11 +169,40 @@ describe('the scrubber', () => {
     expect(onParent).not.toHaveBeenCalled();
   });
 
-  it('spends the yellow on the played part only, and draws buffered in the bar', () => {
+  it('spends the yellow on the played part only', () => {
     const line = scrubber('line').target;
     expect(line.querySelector('[data-video-played]')!.className).toContain('bg-accent');
-    const bar = scrubber('bar').target;
-    expect(bar.querySelectorAll('[data-video-line] > div').length, 'buffered + played').toBe(2);
+  });
+
+  it('draws what is loaded in grey on the SAME track as the played part, in both sizes (owner, 2026-11-18)', () => {
+    for (const variant of ['line', 'bar'] as const) {
+      const track = scrubber(variant).target.querySelector('[data-video-line]')!;
+      const loaded = track.querySelector('[data-video-loaded]')!;
+      expect(loaded.parentElement, variant).toBe(track);
+      expect(loaded.className).not.toContain('bg-accent');
+      expect(loaded.getAttribute('style')).toBe('left: 0%; width: 50%;');
+      expect(track.querySelector('[data-video-played]')!.parentElement).toBe(track);
+      // Under the played part: drawn first.
+      expect(loaded.compareDocumentPosition(track.querySelector('[data-video-played]')!)).toBe(
+        Node.DOCUMENT_POSITION_FOLLOWING
+      );
+    }
+  });
+
+  it('an unknown total draws no played part and says so', () => {
+    const target = render(VideoScrubber, {
+      currentTime: 10,
+      duration: 0,
+      loaded: [],
+      variant: 'line' as const,
+      onSeek: vi.fn(),
+    });
+    expect(target.querySelector('[data-video-progress]')!.getAttribute('data-video-length')).toBe(
+      'unknown'
+    );
+    expect(target.querySelector('[data-video-played]')!.getAttribute('style')).toContain(
+      'width: 0%'
+    );
   });
 });
 

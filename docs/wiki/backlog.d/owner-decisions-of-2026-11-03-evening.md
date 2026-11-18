@@ -1,6 +1,6 @@
 ## Decided - the owner's answers of 2026-11-03 (evening)
 
-target: 1.7.0
+target: 1.7.1
 
 Decisions, not open questions; this entry is deleted when the last one is carried out.
 

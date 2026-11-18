@@ -13,7 +13,7 @@ describe('the reachability probe', () => {
     globalThis.fetch = vi.fn(async () =>
       Response.json({ statusCode: 502, message: 'Bad Gateway' }, { status: 502 })
     ) as unknown as typeof fetch;
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     expect(await probeReachability()).toBe(true);
     expect(connectivity.isOffline).toBe(false);
   });
@@ -30,7 +30,7 @@ describe('the reachability probe', () => {
       globalThis.fetch = vi.fn(
         async () => new Response(body, { status, headers: { 'content-type': 'text/html' } })
       ) as unknown as typeof fetch;
-      connectivity.notifyServerUnreachable();
+      connectivity.notifyServerUnreachable('test');
       expect(await probeReachability()).toBe(false);
       expect(connectivity.isOffline).toBe(true);
       expect(warn.mock.calls.some((c) => String(c[0]).includes('NotFromApiError'))).toBe(true);

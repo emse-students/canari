@@ -1773,7 +1773,7 @@ nor sized to a 44 px target. ONE component now carries every video the app shows
   real clip: a chat video stopped at 2.6 s, the viewer opened at the same place and played on.
 - **`VideoPlayer`'s bar**: play/pause, elapsed/duration, a seek bar (`role="slider"`, pointer
   capture so a finger leaving it keeps scrubbing) whose lighter fill is the range buffered under the
-  playhead (`bufferedFraction`), the app's ONE sound answer (`followVideoSound`), and full screen only
+  playhead (`loadedSpans`, every loaded range since 2026-11-18), the app's ONE sound answer (`followVideoSound`), and full screen only
   where `document.fullscreenEnabled` - a capability, not a fallback. Every target is `ui-icon-button`.
 - **The bar fades** after `CONTROLS_FADE_MS` (2.5 s) of playback without a touch, and a paused
   video keeps it. **It comes back on ANY MOUSE MOVEMENT over the player, and a tap ANYWHERE on the
