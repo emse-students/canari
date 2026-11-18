@@ -359,7 +359,7 @@ A link to `/posts/<id>` in a conversation or a channel draws `SharedPostCard` (c
 picture decrypted by `PostMedia` (client-side CEK, no new crypto), a video as its ThumbHash with the
 decorative glass play glyph (`VideoGlassGlyph`, no button), a reel as the 9:16 card with a
 "CanaReel" chip and a tap that opens the reels viewer, the caption on four lines.
-- **The caption is the feed's own rendering** (owner, 2026-11-16: it was flat text, line breaks and `#` lost). The preview kept `markdownToPlainText(post.markdown)`; it now keeps the bounded markdown SOURCE (`sharedPostCaptionSource`, 600 chars, a torn `@[uuid]` dropped) and the card draws it through `PostMarkdown`, the component of the feed and the reel viewer (hashtags, mentions, links, emphasis, line breaks, no raw HTML). A picture written in the caption (`![](https://...)`) is reduced to its alt text by `sharedPostCaptionSource`: the card is drawn in every chat showing the post, a remote image would be a tracking fetch per reader (principle 3). It is `inert` and `pointer-events-none`: the whole card is the one link, so a tap on a hashtag opens the post, not the hashtag feed (a nested link would be a second control). The card reads the live post, not a stored excerpt, so no old message needs a migration. Reading owed: [the readings](../backlog.d/shared-post-card-rich-caption-reading-owed.md).
+- **The caption is the feed's own rendering** (owner, 2026-11-16: it was flat text, line breaks and `#` lost). The preview kept `markdownToPlainText(post.markdown)`; it now keeps the bounded markdown SOURCE (`sharedPostCaptionSource`, 600 chars, a torn `@[uuid]` dropped) and the card draws it through `PostMarkdown`, the component of the feed and the reel viewer (hashtags, mentions, links, emphasis, line breaks, no raw HTML). A picture written in the caption (`![](https://...)`) is reduced to its alt text by `sharedPostCaptionSource`: the card is drawn in every chat showing the post, a remote image would be a tracking fetch per reader (principle 3). It is `inert` and `pointer-events-none`: the whole card is the one link, so a tap on a hashtag opens the post, not the hashtag feed (a nested link would be a second control). The card reads the live post, not a stored excerpt, so no old message needs a migration. Read on both phones for a post (S3) and a CanaReel ([S6](../device-verification.md#the-phone-and-web-readings-of-2026-11-18-s6-170-alpha12-live-moderations-last-halves-the-reel-card-overlays-the-birthday-morning)), 2026-11-18.
 - **Wire format unchanged**: the message is still the bare link, so an older app draws its generic card.
 - **Recipient's rights**: `sharedPostPreview.ts` reads `GET /api/posts/:id` under the reader's
   session. 403/404/410 is a verdict (cached per viewer for the session, drawn "Publication
@@ -576,6 +576,17 @@ Android leaves - from there, steps 3 to 6 above are the same code.
   the member sends by hand, in a conversation they chose, so the residual is low.
 
 ## Owed
+
+**Where it stands (2026-11-18, the reading entry closed):** on the Mi 9T, every bullet of the
+first two below was read between 2026-11-15 and 2026-11-18. The last were the sign-out
+(`ShareTargets: clear: 5 target(s) removed`, `ConversationShortcuts: clear: 13 ... removed`, 0
+shortcuts left) and a second account publishing only its own five targets
+([S6](../device-verification.md#the-phone-and-web-readings-of-2026-11-18-s6-170-alpha12-live-moderations-last-halves-the-reel-card-overlays-the-birthday-morning)).
+On the iPhone 12, S4 was read from Photos, Safari, Notes and Files, cold behind the PIN, and as a
+share then a sign-out. S5's suggestion row and its pick were read ten of ten on `1.7.0-alpha.5`, and
+so was a finger tap on the banner. Never read, and not part of the closed entry: the launcher's
+long-press menu after a second account, the lock screen, Spotlight and the Siri widget, and a kill
+right after a sign-out. Those bullets below stay as the description of what is unproven.
 
 **Read on the Mi 9T on 2026-10-28** ([readings](../device-readings-2026-10.md#2026-10-28---sharing-on-the-mi-9t-151-rig-builds)):
 a text warm and cold behind the PIN, one and several pictures, a refused stream, an undrained share
