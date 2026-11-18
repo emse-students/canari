@@ -7,6 +7,7 @@ import { SessionExpiredError, SignOutInProgressError } from '$lib/stores/auth';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import { getIsTabLeader } from './tabLeader';
+import { adminQueuesChanged } from '$lib/admin/adminQueueCounts.svelte';
 import { isGroupInCreation } from '$lib/utils/chat/groupsInCreation';
 import { showToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
@@ -309,6 +310,8 @@ export async function syncConnectionAfterWsOpen(
   const { mlsService, userId, deviceKeyB64, processDeviceInvitationsLocally, log } = deps;
 
   if (!getIsTabLeader()) return undefined;
+  // A frame sent while the socket was down is never replayed: the admin badges ask again.
+  adminQueuesChanged('socket-open');
   const verdicts: AbsentGroupVerdicts = new Map();
 
   // 1. Publish KeyPackages

@@ -48,6 +48,10 @@ describe('isChannelEventFrame', () => {
   });
 
   /** Frames owned by other branches of the socket handler must NOT be swallowed by this one. */
+  it("routes the admin queues' signal social-service publishes (`AdminQueueSignal`)", () => {
+    expect(isChannelEventFrame('admin.queues.changed')).toBe(true);
+  });
+
   it('leaves the socket layer its own frames', () => {
     for (const type of [
       'typing',

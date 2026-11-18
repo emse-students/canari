@@ -1,6 +1,7 @@
 import { apiFetch } from '$lib/utils/apiFetch';
 import { coreUrl } from '$lib/utils/apiUrl';
 import { Log } from '$lib/utils/Log';
+import { loadAdminQueueCounts } from '$lib/admin/adminQueueCounts.svelte';
 import { getSavedUserId, noteReaderSpaces } from '$lib/stores/user';
 import { m } from '$lib/paraglide/messages';
 import type { Campus, CursusEntry, Post } from './miconnectProfile';
@@ -123,6 +124,8 @@ export async function saveProfile(
     body: JSON.stringify(requestId ? { ...input, requestId } : input),
   });
   const saved = await json<{ changed: boolean }>(res);
+  // The answer to a correction request closed it: the admin badges are asked again now.
+  if (requestId) void loadAdminQueueCounts();
   // An admin correcting THEIR OWN profile changes their own spaces: what is held about them as a
   // reader is forgotten when the campus or cursus written differs (`noteReaderSpaces`).
   if (userId === getSavedUserId()) noteReaderSpaces(input);
@@ -157,4 +160,6 @@ export async function refuseCorrection(requestId: string, note: string): Promise
     { method: 'POST', body: JSON.stringify({ note }) }
   );
   await json(res);
+  // An item left its queue: the admin badges are asked again now, not at the next poll.
+  void loadAdminQueueCounts();
 }
