@@ -69,3 +69,38 @@ describe('SqliteStorage - the conversation columns v16 and v17 added', () => {
     expect(row?.startedAt).toBe(STARTED_AT);
   });
 });
+
+describe('SqliteStorage - the dated group name v21 added (`name_at`, groupName.ts)', () => {
+  afterEach(() => {
+    vi.doUnmock('@tauri-apps/plugin-sql');
+  });
+
+  const NAME_AT = 1_790_000_200_000;
+
+  it('a save and a merge keep the date beside the name, and a row with none reads none', async () => {
+    const storage = await initialisedSqlite();
+    await storage.saveConversation({ ...conversation('g3'), name: 'Les ROOTz', nameAt: NAME_AT });
+    await storage.mergeConversation({ ...conversation('g4'), nameAt: NAME_AT });
+    await storage.saveConversation(conversation('g5'));
+
+    expect(await storage.getConversation('g3')).toMatchObject({
+      name: 'Les ROOTz',
+      nameAt: NAME_AT,
+    });
+    expect((await storage.getConversation('g4'))?.nameAt).toBe(NAME_AT);
+    expect((await storage.getConversation('g5'))?.nameAt).toBeUndefined();
+    await storage.saveConversation({
+      ...conversation('g6'),
+      nameAt: NAME_AT,
+      nameSync: {
+        serverCopy: { name: 'A', from: 'Old' },
+        pending: { name: 'B', messageId: 'm1', sentAt: NAME_AT, over: { name: 'A', at: NAME_AT } },
+      },
+    });
+    expect((await storage.getConversation('g6'))?.nameSync).toEqual({
+      serverCopy: { name: 'A', from: 'Old' },
+      pending: { name: 'B', messageId: 'm1', sentAt: NAME_AT, over: { name: 'A', at: NAME_AT } },
+    });
+    expect((await storage.getConversation('g5'))?.nameSync).toBeUndefined();
+  });
+});

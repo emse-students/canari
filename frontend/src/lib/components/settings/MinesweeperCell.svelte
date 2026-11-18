@@ -9,9 +9,11 @@
     index: number;
     /** The cell whose first dig is being prepared: shown pressed until the board exists. */
     pending: boolean;
+    /** Ringed: the cell the last action of a replay landed on. */
+    marked?: boolean;
   }
 
-  let { cell, index, pending }: Props = $props();
+  let { cell, index, pending, marked = false }: Props = $props();
 
   /**
    * Revealed-number colours: a deep shade on the light board, a bright one on the black board (the
@@ -51,7 +53,9 @@
 <button
   type="button"
   data-cell={index}
-  class="box-border flex h-[length:var(--ms-cell)] w-[length:var(--ms-cell)] shrink-0 touch-manipulation items-center justify-center rounded-md font-mono text-xs font-bold select-none sm:text-sm {tone} {numberColor}"
+  class="box-border flex h-[length:var(--ms-cell)] w-[length:var(--ms-cell)] shrink-0 touch-manipulation items-center justify-center rounded-md font-mono text-xs font-bold select-none sm:text-sm {tone} {numberColor} {marked
+    ? 'ring-accent ring-2 ring-inset'
+    : ''}"
 >
   {#if cell.state === 'flagged'}
     <Flag size={14} class="dark:text-accent-icon text-accent-text" />

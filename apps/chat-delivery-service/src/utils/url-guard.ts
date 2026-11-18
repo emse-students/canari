@@ -131,13 +131,54 @@ export async function assertSafeExternalUrl(rawUrl: string): Promise<URL> {
     throw new BadRequestException('Private network URLs are not allowed');
   }
 
-  const resolved = await lookup(hostname, { all: true });
+  const resolved = await resolveOrClassify(hostname);
   if (resolved.length === 0) {
     throw new BadRequestException('Host cannot be resolved');
   }
   assertPublicAddresses(resolved);
 
   return parsed;
+}
+
+/**
+ * The resolver codes that are an ANSWER about the name: it does not exist (NXDOMAIN) or holds no
+ * address. Only these may become the caller's `400`; a name that does not exist today will not
+ * exist on the next render either.
+ */
+const NAME_HAS_NO_ADDRESS: ReadonlySet<string> = new Set(['ENOTFOUND', 'ENODATA']);
+
+/**
+ * Resolves `hostname`, CLASSIFYING A FAILURE AT THE THROW so no caller reads the resolver's prose.
+ *
+ * `ENOTFOUND`/`ENODATA` are an answer about the URL ({@link NAME_HAS_NO_ADDRESS}): a `400`. Anything
+ * else - `EAI_AGAIN` above all, the resolver saying "try again" - is the resolver saying NOTHING,
+ * the same class as a connect timeout: {@link UpstreamUnreachableError}. It used to escape raw, so
+ * Nest's `ExceptionsHandler` printed a stack at ERROR and answered `500` for a passing resolver
+ * hiccup that was neither the request's fault nor a bug.
+ */
+async function resolveOrClassify(hostname: string): Promise<LookupAddress[]> {
+  try {
+    return await lookup(hostname, { all: true });
+  } catch (error) {
+    const code = resolverCode(error);
+    // Not the resolver's answer (no `getaddrinfo` code): a bug of ours, never dressed as an outage.
+    if (code === null) throw error;
+    if (NAME_HAS_NO_ADDRESS.has(code)) {
+      throw new BadRequestException('Host cannot be resolved');
+    }
+    throw new UpstreamUnreachableError(hostname, error, code);
+  }
+}
+
+/**
+ * The resolver's code when `error` IS the resolver's failure - a string `code` on an error whose
+ * `syscall` is `getaddrinfo`, as both node and bun throw it - and `null` for anything else, which
+ * only a bug can produce here and which must surface as one.
+ */
+function resolverCode(error: unknown): string | null {
+  if (typeof error !== 'object' || error === null) return null;
+  const { code, syscall } = error as { code?: unknown; syscall?: unknown };
+  return typeof code === 'string' && syscall === 'getaddrinfo' ? code : null;
 }
 
 /**
@@ -234,9 +275,13 @@ export class UpstreamUnreachableError extends Error {
    */
   constructor(
     readonly host: string,
-    readonly reason: unknown
+    readonly reason: unknown,
+    /** The resolver's code when the failure was the DNS lookup itself (`EAI_AGAIN`), else absent. */
+    readonly dnsCode?: string
   ) {
-    super(`${host} unreachable: ${String(errorCause(reason) ?? reason)}`);
+    super(
+      `${host} unreachable${dnsCode ? ` (dns ${dnsCode})` : ''}: ${String(errorCause(reason) ?? reason)}`
+    );
     this.name = 'UpstreamUnreachableError';
   }
 }
@@ -519,20 +564,55 @@ export interface OEmbedData {
 }
 
 /**
+ * Why an oEmbed endpoint gave nothing usable, CLASSIFIED WHERE IT HAPPENED:
+ * - `refused` - the SSRF guard refused the endpoint the page declared (a private address, a name
+ *   with no address, another scheme): the page pointed us somewhere we will not go;
+ * - `unreachable` - the endpoint said nothing (DNS, connect, abort, a body that died);
+ * - `status` / `not-json` / `malformed` - it ANSWERED, with something unusable: a fact about a
+ *   third party's site that nobody here can act on.
+ */
+export type OEmbedFailureKind = 'refused' | 'unreachable' | 'status' | 'not-json' | 'malformed';
+
+/** The typed "no enrichment" of {@link fetchOEmbedData}: its kind, and the evidence. */
+export class OEmbedUnavailable {
+  constructor(
+    readonly kind: OEmbedFailureKind,
+    readonly detail: string
+  ) {}
+}
+
+/**
  * Follows a discovered oEmbed endpoint and returns the fields we can use.
  *
  * Goes through the same SSRF guard as the page fetch: the endpoint is declared
  * by the page, so it is exactly as attacker-controlled as the URL that was
- * pasted. Never throws - a preview that already has Open Graph data must not be
- * lost because the optional enrichment failed.
+ * pasted. Never throws for the endpoint's sake - a preview that already has Open Graph data must
+ * not be lost because the optional enrichment failed; only a bug of ours propagates - and never
+ * swallows either: every
+ * failure comes back as an {@link OEmbedUnavailable} the caller logs, where it used to be a bare
+ * `null` that said nothing about which of five things went wrong.
  */
 export async function fetchOEmbedData(
   endpoint: string,
   signal?: AbortSignal
-): Promise<OEmbedData | null> {
+): Promise<OEmbedData | OEmbedUnavailable> {
+  let safeUrl: URL;
   try {
-    const safeUrl = await assertSafeExternalUrl(endpoint);
-    const response = await ssrfSafeFetch(safeUrl.toString(), {
+    safeUrl = await assertSafeExternalUrl(endpoint);
+  } catch (error) {
+    if (error instanceof UpstreamUnreachableError) {
+      return new OEmbedUnavailable('unreachable', error.message);
+    }
+    if (error instanceof BadRequestException)
+      return new OEmbedUnavailable('refused', error.message);
+    // Reachable: the guard rethrows what is not the resolver's answer (`resolverCode`) - a bug.
+    throw error;
+  }
+
+  let response: UndiciResponse;
+  let raw: string;
+  try {
+    response = await ssrfSafeFetch(safeUrl.toString(), {
       method: 'GET',
       redirect: 'manual',
       signal,
@@ -541,30 +621,42 @@ export async function fetchOEmbedData(
         accept: 'application/json',
       },
     });
-
-    if (!response.ok) return null;
-    if (!(response.headers.get('content-type') || '').toLowerCase().includes('json')) return null;
-
-    const raw = (await response.text()).slice(0, 100_000);
-    const data = JSON.parse(raw) as {
-      title?: unknown;
-      author_name?: unknown;
-      thumbnail_url?: unknown;
-      provider_name?: unknown;
-    };
-
-    const asString = (value: unknown): string | undefined =>
-      typeof value === 'string' && value.trim() ? value.trim() : undefined;
-
-    return {
-      title: asString(data.title),
-      authorName: asString(data.author_name),
-      thumbnailUrl: asString(data.thumbnail_url),
-      providerName: asString(data.provider_name),
-    };
-  } catch {
-    return null;
+    if (!response.ok) return new OEmbedUnavailable('status', `answered ${response.status}`);
+    const contentType = (response.headers.get('content-type') || '').toLowerCase();
+    if (!contentType.includes('json')) {
+      return new OEmbedUnavailable('not-json', `content-type ${contentType || 'none'}`);
+    }
+    raw = (await response.text()).slice(0, 100_000);
+  } catch (error) {
+    // Every throw of a fetch or of reading its body is the transport: the site said nothing.
+    return new OEmbedUnavailable('unreachable', String(errorCause(error) ?? error));
   }
+
+  let data: {
+    title?: unknown;
+    author_name?: unknown;
+    thumbnail_url?: unknown;
+    provider_name?: unknown;
+  };
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== 'object' || parsed === null) {
+      return new OEmbedUnavailable('malformed', 'not a JSON object');
+    }
+    data = parsed as typeof data;
+  } catch (error) {
+    return new OEmbedUnavailable('malformed', String(error).slice(0, 120));
+  }
+
+  const asString = (value: unknown): string | undefined =>
+    typeof value === 'string' && value.trim() ? value.trim() : undefined;
+
+  return {
+    title: asString(data.title),
+    authorName: asString(data.author_name),
+    thumbnailUrl: asString(data.thumbnail_url),
+    providerName: asString(data.provider_name),
+  };
 }
 
 /**

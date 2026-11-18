@@ -46,7 +46,7 @@ const req = (headers: Record<string, string> = {}, cookies: Record<string, strin
   ({ headers, cookies, get: () => undefined }) as unknown as Request;
 
 const bearer = (sub: string, admin: boolean) => ({
-  authorization: `Bearer ${jwt.sign({ sub, admin }, JWT_SECRET, { expiresIn: '1h' })}`,
+  authorization: `Bearer ${jwt.sign({ sub, admin, sid: 'sid-1' }, JWT_SECRET, { expiresIn: '1h' })}`,
 });
 
 function build(opts: { enabled?: boolean; dbAdmin?: boolean } = {}) {
@@ -59,7 +59,7 @@ function build(opts: { enabled?: boolean; dbAdmin?: boolean } = {}) {
   const controller = new AuthController(
     users as never,
     { getConfig: jest.fn(), isAccessBlockedByMaintenance: jest.fn() } as never,
-    {} as never,
+    { isLive: jest.fn().mockResolvedValue(true) } as never, // every token names a live session
     adminer,
     {
       erasureState: jest.fn().mockResolvedValue('none'),

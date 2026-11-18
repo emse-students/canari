@@ -33,7 +33,11 @@
   import { MediaService } from '$lib/media';
   import { getToken } from '$lib/stores/auth';
   import { userDisplayNames } from '$lib/utils/users/displayNames.svelte';
-  import { joiningRows, membersByFamilyName } from '$lib/utils/users/memberOrder.svelte';
+  import {
+    joiningRows,
+    membersByFamilyName,
+    removeControlDisabled,
+  } from '$lib/utils/users/memberOrder.svelte';
   import NotificationLevelControl from './NotificationLevelControl.svelte';
   import NicknamesPanel from './NicknamesPanel.svelte';
   import CallPermissionControl from './CallPermissionControl.svelte';
@@ -562,14 +566,22 @@
                           which used to address members through the label - the same one-attribute
                           pattern `data-conversation-tile` and `data-channel-row` already use.
                         -->
+                  <!--
+                          NOT LIVE WHILE A LOOKUP IS PENDING (`removeControlDisabled`): a member
+                          whose lookup is in flight will be inserted and move the rows below it.
+                          This only NARROWS the window - rows still move when a newcomer settles
+                          later, or a member leaves or is removed elsewhere. The GUARANTEE is the
+                          confirmation, which names the member this row carries.
+                        -->
                   <button
                     data-remove-member={member}
+                    disabled={removeControlDisabled(false, memberOrder.pending)}
                     onclick={() => onRemoveMember?.(member)}
                     aria-label={m.chat_group_remove_member_label({
                       member: memberNames.get(member) ?? member,
                     })}
                     title={m.chat_group_remove_member_title()}
-                    class="ui-icon-button text-text-muted rounded-xl bg-black/5 transition-all outline-none hover:bg-red-500/10 hover:text-red-500 focus-visible:ring-2 focus-visible:ring-red-500 active:scale-95 dark:bg-white/5"
+                    class="ui-icon-button text-text-muted rounded-xl bg-black/5 transition-all outline-none hover:bg-red-500/10 hover:text-red-500 focus-visible:ring-2 focus-visible:ring-red-500 active:scale-95 disabled:opacity-40 dark:bg-white/5"
                   >
                     <UserMinus size={16} />
                   </button>

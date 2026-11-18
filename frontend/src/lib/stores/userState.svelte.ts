@@ -78,8 +78,9 @@ export function setEventValidator(value: boolean): void {
 let _isContentModerator = $state<boolean>(false);
 
 /**
- * Returns `true` when the current user may moderate content platform-wide: a member of a BDE
- * association holding `MODERATE`. Mirrors the server's `isContentModerator`.
+ * Returns `true` when the current user moderates somewhere: `MODERATE` in a BDE, or in an
+ * institution, which moderates its own content (`holdsModerationDoor`). Mirrors the server's
+ * `isContentModerator`; what each act reaches is the server's answer on that act.
  *
  * Populated lazily by `ensureContentModerator()`, for the same reason as the super-admin flag
  * above: it depends on social-service data that login does not know.

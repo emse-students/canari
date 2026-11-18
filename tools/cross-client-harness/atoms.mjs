@@ -117,7 +117,7 @@
  *   `bun venue.mjs`                              the shared community and its channel, idempotent,
  *                                                 answered from the tables rather than the screen.
  *   `createDM(cx, name)`            `groupnav.mjs`  a DM with someone, created if absent.
- *   `createGroup(cx, name)`         `groupnav.mjs`  a group conversation.
+ *   `createGroup(cx, name, {members})` `groupnav.mjs`  a group conversation, from two or more people chosen.
  *   `bun invite.mjs --port <p> --group <name>`     adds a member - the campaign's only cheap,
  *                                                   deterministic epoch generator.
  *   `deleteGroup` `dismissLocally`  `groupnav.mjs`  the two ways a conversation ends.

@@ -1,9 +1,7 @@
 <script lang="ts">
-  import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
-  import { Search, Forward, Hash, Send } from '@lucide/svelte';
-  import Avatar from '$lib/components/shared/Avatar.svelte';
-  import GroupAvatar from '$lib/components/shared/GroupAvatar.svelte';
+  import ConversationPickList from '$lib/components/shared/ConversationPickList.svelte';
+  import { Forward, Send } from '@lucide/svelte';
   import {
     missingPeerNameIds,
     shareCandidates,
@@ -112,65 +110,23 @@
   title={variant === 'share' ? m.share_modal_title() : m.chat_forward_modal_title()}
   {onClose}
 >
-  <div class="flex flex-col gap-3">
-    <div class="relative">
-      <Search size={16} class="text-text-muted absolute top-1/2 left-3 -translate-y-1/2" />
-      <input
-        type="text"
-        bind:value={query}
-        placeholder={m.chat_search_discussion_placeholder()}
-        aria-label={m.chat_search_discussion_label()}
-        class="border-cn-border text-text-main focus:border-accent-icon w-full rounded-xl border bg-(--cn-surface) py-2.5 pr-3 pl-9 text-sm outline-none"
-      />
-    </div>
-
-    <div class="-mx-1 flex max-h-[50vh] flex-col gap-0.5 overflow-y-auto px-1">
-      {#if candidates.length === 0}
-        <p class="text-text-muted py-8 text-center text-sm">{m.chat_no_discussion_found()}</p>
+  <!-- One untitled section: the forward picker is one list (the shared rows, `ConversationPickList`). -->
+  <ConversationPickList
+    bind:query
+    searchPlaceholder={m.chat_search_discussion_placeholder()}
+    searchLabel={m.chat_search_discussion_label()}
+    sections={[{ id: 'all', title: null, rows: candidates }]}
+    emptyText={m.chat_no_discussion_found()}
+    onpick={pick}
+    rowAttrs={(cand) => ({ 'aria-current': isPreselected(cand) ? 'true' : undefined })}
+    rowClass={(cand) => (isPreselected(cand) ? 'ring-accent-icon bg-accent/10 ring-2' : '')}
+  >
+    {#snippet trailing()}
+      {#if variant === 'share'}
+        <Send size={16} class="text-text-muted shrink-0" />
       {:else}
-        {#each candidates as cand (cand.key)}
-          <button
-            type="button"
-            onclick={() => pick(cand)}
-            aria-current={isPreselected(cand) ? 'true' : undefined}
-            class="flex items-center gap-3 rounded-xl px-2 py-2 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/5
- {isPreselected(cand) ? 'ring-accent-icon bg-accent/10 ring-2' : ''}"
-          >
-            {#if cand.conversation.conversationType === 'direct'}
-              <Avatar
-                userId={cand.conversation.directPeerId ?? cand.conversation.contactName}
-                size="md"
-                fallbackLabel={cand.label}
-              />
-            {:else if cand.conversation.conversationType === 'channel'}
-              <div class="text-text-muted flex h-8 w-8 shrink-0 items-center justify-center">
-                <Hash size={18} strokeWidth={2.5} />
-              </div>
-            {:else}
-              <GroupAvatar
-                id={cand.conversation.id}
-                imageMediaId={cand.conversation.imageMediaId}
-                name={cand.label}
-                size="md"
-              />
-            {/if}
-            <span class="flex min-w-0 flex-1 flex-col">
-              <span class="text-text-main truncate text-sm font-semibold">{cand.label}</span>
-              {#if cand.community}
-                <span class="text-text-muted flex items-center gap-1 truncate text-xs">
-                  <Hash size={11} class="shrink-0" />
-                  <EmojiText text={cand.community} />
-                </span>
-              {/if}
-            </span>
-            {#if variant === 'share'}
-              <Send size={16} class="text-text-muted shrink-0" />
-            {:else}
-              <Forward size={16} class="text-text-muted shrink-0" />
-            {/if}
-          </button>
-        {/each}
+        <Forward size={16} class="text-text-muted shrink-0" />
       {/if}
-    </div>
-  </div>
+    {/snippet}
+  </ConversationPickList>
 </Modal>

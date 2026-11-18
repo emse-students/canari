@@ -21,12 +21,14 @@ import { RouteParams } from '../common/route-params';
 
 /**
  * Moderation endpoints: content reporting (all authenticated users)
- * and admin actions (BDE MODERATE flag or global admin).
+ * and admin actions (MODERATE in a BDE or an institution, or global admin).
  *
  * SCOPED SINCE 2026-11-02 (owner): a global admin acts everywhere; a BDE `MODERATE` holder opens
  * these routes (`assertModerator`, the door) but reads and acts only within the spaces its BDE
  * governs (`spaces/bde-moderation.ts`) - the queue and the muted list are narrowed, and an act on a
- * target outside that scope is a 403 `MODERATION_OUT_OF_SCOPE`.
+ * target outside that scope is a 403 `MODERATION_OUT_OF_SCOPE`. An institution's `MODERATE` member
+ * (owner, 2026-11-15) opens them too, and reads and acts only on that institution's own content -
+ * never a person, so its muted list is empty - else a 403 `MODERATION_OUTSIDE_OWN_INSTITUTION`.
  */
 @RouteParams({ reportId: 'uuid', userId: 'opaque', commentId: 'opaque' })
 @Controller('moderation')
@@ -36,14 +38,14 @@ export class ModerationController {
     private readonly assocService: AssociationsService
   ) {}
 
-  /** Guard helper - throws 403 unless caller is a global admin or holds the MODERATE flag in a BDE. */
+  /** Guard helper - throws 403 unless caller is a global admin or holds MODERATE in a BDE or an institution. */
   private async assertModerator(userId: string, isGlobalAdmin: boolean): Promise<void> {
     // One predicate, shared with the post controls that give the same people the same reach.
     const canModerate = await this.assocService.isContentModerator(userId, { isGlobalAdmin });
     if (!canModerate) {
       throw new ForbiddenException({
         code: MODERATOR_REQUIRED,
-        message: 'BDE MODERATE permission or global admin required',
+        message: 'MODERATE in a BDE or an institution, or global admin, required',
       });
     }
   }
@@ -205,16 +207,22 @@ export class ModerationController {
     // Each descendant the delete meets is judged by the same rule: a reply in a name this moderator
     // does not moderate stays, under a tombstone of what it answered (lead, 2026-11-04).
     const comments = await this.service.commentsOfPost(postId);
+    const publishers = comments.map((c) => c.associationId ?? '').filter(Boolean);
+    // `isModerator` stands for the post: the door above asked the comment, and an institution's
+    // moderator passes it for a comment in its name under a post it does not moderate - the
+    // descendants are then judged by the publisher sets alone, as `bdeModeratesCommentSql` judges.
+    const [moderatedAssociationIds, moderatedInstitutionIds, isModerator] = await Promise.all([
+      this.assocService.moderatedAssociationIds(userId, publishers, { isGlobalAdmin }),
+      this.assocService.moderatedInstitutionIds(userId, publishers, { isGlobalAdmin }),
+      this.assocService.mayModeratePost(userId, postId, { isGlobalAdmin }),
+    ]);
     const viewer: CommentViewer = {
       viewerId: userId,
       isGlobalAdmin,
-      isModerator: true,
+      isModerator,
       managedAssociationIds: new Set(),
-      moderatedAssociationIds: await this.assocService.moderatedAssociationIds(
-        userId,
-        comments.map((c) => c.associationId ?? '').filter(Boolean),
-        { isGlobalAdmin }
-      ),
+      moderatedAssociationIds,
+      moderatedInstitutionIds,
     };
     return this.service.deleteCommentById(commentId, (c) => mayRemoveAsModerator(c, viewer));
   }

@@ -253,6 +253,12 @@ describe('NativeTabBar', () => {
     expect(document.documentElement.style.getPropertyValue('--bottom-nav-reserve')).toBe('83px');
   });
 
+  it('publishes the band as state too, so a floating panel ends above the bar (iPhone 12, 2026-11-16)', async () => {
+    const { currentNativeTabBarInset } = await import('$lib/navigation/nativeTabBarState.svelte');
+    await mountBar({ visible: true });
+    expect(currentNativeTabBarInset()).toBe(83);
+  });
+
   it('hides with the layout rule, and shows again', async () => {
     const state = await mountBar({ visible: false });
     expect(callsOf(HIDE)).toHaveLength(1);

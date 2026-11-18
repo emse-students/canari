@@ -571,6 +571,16 @@ static NSString *const kAppGroupId = @"group.fr.emse.canari";
 static NSString *const kGraineSeedsFileName = @"graine_seeds.json";
 static NSString *const kAppGroupPushSecretFileName = @"push_secret.txt";
 
+// The App Group container's path, or nil without the entitlement. The Graine seed mirror lives HERE
+// and nowhere else since 2026-11-17: the foreground writes it (Rust's `seed_mirror_home`) and the
+// notification extension writes it, one file under one lock, so neither erases the other's seeds
+// (channel-encryption section 27). The app-alive push path reads it from here too.
+static NSString *_Nullable CanariAppGroupPath(void) {
+  return [[NSFileManager defaultManager]
+             containerURLForSecurityApplicationGroupIdentifier:kAppGroupId]
+      .path;
+}
+
 void CanariMirrorPushStateToAppGroup(void) {
   NSURL *container = [[NSFileManager defaultManager]
       containerURLForSecurityApplicationGroupIdentifier:kAppGroupId];
@@ -582,9 +592,11 @@ void CanariMirrorPushStateToAppGroup(void) {
   if (src == nil) {
     return;
   }
-  // The Notification Service Extension reads these three inputs to decrypt a push in its
-  // own process. Write atomically (temp + rename) so the cross-process reader never sees a
-  // torn file, and keep the same at-rest protection class as the source.
+  // The Notification Service Extension reads these inputs to decrypt a push in its own process. The
+  // Graine seed mirror is not among them since 2026-11-17: it lives in the App Group already, and the
+  // byte copy made here erased every seed the extension had stored (channel-encryption section 27).
+  // Write atomically (temp + rename) so the cross-process reader never sees a torn file, and keep
+  // the same at-rest protection class as the source.
   //
   // mls.bin IS RUST'S TO COPY, UNDER THE STATE FILES' LOCK (re-review of #2919, one state per
   // account): an account switch moves the slot and refreshes this copy inside that lock, so a copy
@@ -603,13 +615,6 @@ void CanariMirrorPushStateToAppGroup(void) {
   int contextMirrored = canari_ios_mirror_push_context_to_app_group(src.UTF8String);
   if (contextMirrored != CANARI_MLS_MIRROR_OK) {
     NSLog(@"[CanariPush] mirror %@ failed: code %d", kPushContextFileName, contextMirrored);
-  }
-  // graine_seeds.json IS RUST'S TO COPY TOO, UNDER THE GROUP COPY'S WRITERS' LOCK
-  // (`graine_seeds.lock`): copied here without it, a copy read before an account's wipe could land
-  // after the wipe edited the group's copy, and the extension would hold the wiped seeds again.
-  int seedsMirrored = canari_ios_mirror_graine_seeds_to_app_group(src.UTF8String);
-  if (seedsMirrored != CANARI_MLS_MIRROR_OK) {
-    NSLog(@"[CanariPush] mirror %@ failed: code %d", kGraineSeedsFileName, seedsMirrored);
   }
   NSDataWritingOptions opts =
       NSDataWritingAtomic | NSDataWritingFileProtectionCompleteUntilFirstUserAuthentication;
@@ -835,6 +840,7 @@ static void CanariComposeServerNotification(NSDictionary *data, NSString **title
     @"social_live_cut" : @"live_cut",
     @"social_live_suspended" : @"live_suspended",
     @"social_live_withdrawn" : @"live_withdrawn",
+    @"social_live_reinstated" : @"live_reinstated",
   };
   NSString *fixedStem = fixedSocial[key];
   if (fixedStem) {
@@ -4574,8 +4580,8 @@ static NSString *CanariBuildChannelFallbackText(NSString *channelName) {
   return [NSString stringWithFormat:CanariLocalized(@"notif.channel.message"), channelName];
 }
 
-// Whether graine_seeds.json (written by the foreground, sealed under the install's native cache
-// key) holds a Graine session - asked of Rust, which alone opens the file, so the seed never
+// Whether graine_seeds.json (in the App Group, written by the foreground and the extension, sealed
+// under the install's native cache key) holds a Graine session - asked of Rust, which alone opens the file, so the seed never
 // enters Objective-C.
 //
 // The mirror is BOUNDED to the newest sessions per channel, so a miss on an old session is
@@ -4585,8 +4591,9 @@ static BOOL CanariGraineSeedHeld(NSString *channelId, NSString *sessionId) {
   if (sessionId.length == 0) {
     return NO;
   }
-  NSString *dir = CanariTauriDataDir();
+  NSString *dir = CanariAppGroupPath();
   if (dir == nil) {
+    NSLog(@"[CanariPush] graineSeedHeld: ERROR the App Group is unavailable channel=%@", channelId);
     return NO;
   }
   int32_t held = canari_native_graine_seed_held(dir.UTF8String,
@@ -4596,6 +4603,17 @@ static BOOL CanariGraineSeedHeld(NSString *channelId, NSString *sessionId) {
     NSLog(@"[CanariPush] graineSeedHeld: ERROR the seed mirror is unreadable channel=%@", channelId);
   }
   return held == 1;
+}
+
+/// Whether a push's data is a REACTION: it rides on `social` without being one (see the Android
+/// service and notify-reaction in chat-delivery-service). The wire type stays `social` so clients
+/// predating it render it instead of dropping it into the MLS ladder; the discriminator is a separate
+/// field. ONE reading, wherever a reaction's data is told apart (`CanariHandleFcmData`).
+static BOOL CanariIsReactionData(NSDictionary *_Nullable data) {
+  return [data[@"type"] isKindOfClass:[NSString class]] &&
+         [(NSString *)data[@"type"] isEqualToString:@"social"] &&
+         [data[@"reaction"] isKindOfClass:[NSString class]] &&
+         [(NSString *)data[@"reaction"] isEqualToString:@"true"];
 }
 
 // Decrypts a community-channel push sealed under a Graine session (AES-256-GCM, not MLS) and shows
@@ -4650,7 +4668,7 @@ static void CanariHandleChannelMessage(NSDictionary *data) {
       // `seedHeld` above only says whether the mirror holds it.
       NSString *signature =
           [data[@"signature"] isKindOfClass:[NSString class]] ? data[@"signature"] : @"";
-      NSString *dir = CanariTauriDataDir();
+      NSString *dir = CanariAppGroupPath();
       // The app language Rust words its own sentences in; "" when none was mirrored.
       NSString *locale = CanariLoadPushContext().locale ?: @"";
       char *jsonPtr =
@@ -4802,12 +4820,8 @@ static void CanariHandleFcmData(NSDictionary *data) {
     return;
   }
 
-  // A REACTION RIDES ON `social` WITHOUT BEING ONE - see the Android service and notify-reaction in
-  // chat-delivery-service. The wire type stays `social` so clients predating this change render it
-  // instead of dropping it into the MLS ladder; the discriminator is a separate field.
-  BOOL isReaction = [msgType isEqualToString:@"social"] &&
-                    [data[@"reaction"] isKindOfClass:[NSString class]] &&
-                    [(NSString *)data[@"reaction"] isEqualToString:@"true"];
+  // A REACTION RIDES ON `social` WITHOUT BEING ONE (`CanariIsReactionData`).
+  BOOL isReaction = CanariIsReactionData(data);
 
   // The `social` exemption below does not extend to a reaction: it is drawn INTO the conversation's
   // own notification, and posting one over a conversation being read is noise - the bubble on screen
@@ -5836,6 +5850,39 @@ static void (^CanariFinishOnMain(void (^handler)(void), NSString *what))(void) {
   };
 }
 
+/// A remote push arriving while ACTIVE (review of #3792, rounds 3 and 4). The page posts its own
+/// notification of a reaction to my message under the push's `apns-collapse-id`
+/// (`reactionCollapseId`), so the two are one request. Should iOS REPLACE the page's delivered request
+/// by this push on arrival, answering None would erase the only record of the reaction - so the answer
+/// is read from what is DELIVERED, not from a belief about iOS: the same identifier delivered -> List
+/// (the entry stays; worst case a double, never a loss), none -> None (nothing of ours carries it, or
+/// the page refused it: the reaction is on screen, or its notification is off). EVERY active push
+/// comes here, keyed by its IDENTIFIER and never by its data: a content-free wake whose fetch failed
+/// or answered `gone` keeps `type=wake` in its userInfo yet still carries the reaction's collapse id.
+/// Read on the iPhone 12 on 1.7.0-alpha.10 (docs/wiki/device-verification.md, the alpha.10 sitting).
+static void CanariPresentForegroundPush(
+    UNUserNotificationCenter *center, NSString *identifier,
+    void (^completionHandler)(UNNotificationPresentationOptions options)) {
+  [center getDeliveredNotificationsWithCompletionHandler:^(NSArray<UNNotification *> *delivered) {
+    BOOL pagePosted = NO;
+    for (UNNotification *n in delivered) {
+      if ([n.request.identifier isEqualToString:identifier]) {
+        pagePosted = YES;
+        break;
+      }
+    }
+    // Completed back ON MAIN: this block runs on a queue of the center's choosing, and iOS asserts
+    // the main thread inside a delegate's handler (the 1.6.12-alpha.2 abort, `CanariFinishOnMain`).
+    dispatch_async(dispatch_get_main_queue(), ^{
+      NSLog(@"[CanariPush] push while active: a delivered twin %@ - %@",
+            pagePosted ? @"delivered" : @"absent",
+            pagePosted ? @"kept in the list" : @"not presented");
+      completionHandler(pagePosted ? UNNotificationPresentationOptionList
+                                   : UNNotificationPresentationOptionNone);
+    });
+  }];
+}
+
 @implementation CanariNotificationDelegate
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center
        willPresentNotification:(UNNotification *)notification
@@ -5883,7 +5930,8 @@ static void (^CanariFinishOnMain(void (^handler)(void), NSString *what))(void) {
   //   `call_ring` rang CallKit beside its own banner.
   if (canari_ios_is_in_foreground()) {
     CanariPushProcessRemoteNotificationUserInfo(request.content.userInfo);
-    completionHandler(UNNotificationPresentationOptionNone);
+    // A push may share ONE identifier with a page post (a reaction): never answer None blind.
+    CanariPresentForegroundPush(center, request.identifier, completionHandler);
   } else {
     completionHandler(UNNotificationPresentationOptionBanner | UNNotificationPresentationOptionSound |
                       UNNotificationPresentationOptionList);

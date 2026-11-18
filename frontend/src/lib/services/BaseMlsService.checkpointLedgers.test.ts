@@ -61,6 +61,9 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     sendRatchetsNotDurable: BaseMlsService.prototype['sendRatchetsNotDurable'],
     stageCheckpointLedgers: BaseMlsService.prototype['stageCheckpointLedgers'],
     emittedForCheckpoint: BaseMlsService.prototype['emittedForCheckpoint'],
+    // No bulk-ingest observer holds rows here (`BaseMlsService.rowsBeforeRatchet.test.ts` owns the hold).
+    holdRowsForExport: BaseMlsService.prototype['holdRowsForExport'],
+    bulkIngestObservers: [],
     ...overrides,
   };
 }

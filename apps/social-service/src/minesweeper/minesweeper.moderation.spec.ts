@@ -17,6 +17,7 @@ import type { Repository } from 'typeorm';
 import { MinesweeperService } from './minesweeper.service';
 import type { MinesweeperBan } from './entities/minesweeper-ban.entity';
 import type { MinesweeperChallenge } from './entities/minesweeper-challenge.entity';
+import type { MinesweeperReplay } from './entities/minesweeper-replay.entity';
 import type { MinesweeperScore } from './entities/minesweeper-score.entity';
 
 function build() {
@@ -58,7 +59,8 @@ function build() {
   const service = new MinesweeperService(
     challenges as unknown as Repository<MinesweeperChallenge>,
     scores as unknown as Repository<MinesweeperScore>,
-    bans as unknown as Repository<MinesweeperBan>
+    bans as unknown as Repository<MinesweeperBan>,
+    {} as unknown as Repository<MinesweeperReplay>
   );
   return { service, banRows, scoreRows, queries, challenges };
 }

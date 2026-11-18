@@ -1,12 +1,18 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { canari } from '$lib/proto/canari.js';
+
+// A replayed notice resolves its actor's name: offline here, so the replay never reaches the network.
+vi.mock('$lib/utils/users/displayName', () => ({
+  resolveDisplayNames: vi.fn(async () => (id: string) => id),
+}));
 import type { ChatMessage, Conversation, MessageReaction, ReadWatermarks } from '$lib/types';
 import type { StoredMessagePatch } from '$lib/db/types';
 import { applyReplaySystemEvent, type PendingHistoryMessage } from './historySystemEvents';
+import { pendingRenameVerdict } from './groupName';
 import { keySource, newTestAuthor, signedBy } from '$lib/crypto/messageAuthorship.testKit';
 import type { RecordedAuthorship } from '$lib/crypto/messageAuthorship';
 import { mkSystem } from '$lib/proto/codec';
-import { mkTextEnvelope, serializeEnvelope } from '$lib/envelope';
+import { mkNoticeEnvelope, mkTextEnvelope, serializeEnvelope } from '$lib/envelope';
 import {
   recordedIntegrityFindings,
   resetIntegrityFindings,
@@ -44,14 +50,41 @@ function held(extra: Partial<ChatMessage> = {}): ChatMessage {
 }
 
 /** Replays one bundle relayed by `relayer`, returning every sink the replay may have written. */
-async function replayBundle(
+function replayBundle(
   keys: ReturnType<typeof keySource>,
   relayer: string,
   messages: Record<string, unknown>[],
   rows: ChatMessage[] = [],
-  pending: PendingHistoryMessage[] = []
+  pending: PendingHistoryMessage[] = [],
+  base: Partial<Conversation> = {}
 ) {
-  let convo = { id: CONVO, name: 't', messages: rows, lifecycle: 'active' } as Conversation;
+  return replayFrame(
+    keys,
+    relayer,
+    { system: { event: 'history_bundle', data: JSON.stringify({ messages }) } },
+    rows,
+    pending,
+    base
+  );
+}
+
+/** Replays one archived frame sent by `sender`, returning every sink the replay may have written. */
+async function replayFrame(
+  keys: ReturnType<typeof keySource>,
+  sender: string,
+  frame: canari.AppMessage.$Properties,
+  rows: ChatMessage[] = [],
+  pending: PendingHistoryMessage[] = [],
+  base: Partial<Conversation> = {},
+  archivedAt = '2026-10-23T10:00:00.000Z'
+) {
+  let convo = {
+    id: CONVO,
+    name: 't',
+    messages: rows,
+    lifecycle: 'active',
+    ...base,
+  } as Conversation;
   const sinks = {
     pushed: [] as Record<string, unknown>[],
     pendingById: new Map(pending.map((p) => [String(p.messageId), p])),
@@ -65,10 +98,8 @@ async function replayBundle(
   };
   vi.spyOn(console, 'error').mockImplementation(() => {});
   await applyReplaySystemEvent({
-    parsed: canari.AppMessage.fromObject({
-      system: { event: 'history_bundle', data: JSON.stringify({ messages }) },
-    }),
-    msg: { id: '1-0', sender_id: relayer, content: '', timestamp: '2026-10-23T10:00:00.000Z' },
+    parsed: canari.AppMessage.fromObject(frame),
+    msg: { id: '1-0', sender_id: sender, content: '', timestamp: archivedAt },
     contactName: CONVO,
     userId: 'me',
     conversationId: GROUP,
@@ -517,5 +548,101 @@ describe('a history_bundle replayed from the archive', () => {
         restoredUnverified: false,
       })
     );
+  });
+});
+
+/**
+ * THE HEAL ON THE REPLAY PATH (#3785 round 6): an archived bundle relaying a copy of one of this
+ * device's own rename frames, whose fate it never learnt, proves the frame landed - the same rule the
+ * live handler applies (`ownRenameSettledByRelay`), the members' name at the members' time.
+ */
+describe("a replayed bundle relaying this device's own rename", () => {
+  const ARCHIVED = Date.parse('2026-10-23T10:00:00.000Z');
+  const FRAME = {
+    name: 'A',
+    messageId: 'own-rename-1',
+    sentAt: ARCHIVED - 60_000,
+    over: { name: 'Groupe', at: ARCHIVED - 3_600_000 },
+  };
+  const notice = serializeEnvelope(
+    mkNoticeEnvelope('me renamed the group to A', { event: 'groupRenamed', actor: 'me', name: 'A' })
+  );
+  const relayed = (id: string, serverTimestamp: number) => ({
+    id,
+    senderId: 'system',
+    content: notice,
+    timestamp: FRAME.sentAt,
+    serverTimestamp,
+  });
+  const base = (slot: 'pending' | 'unconfirmed') => ({
+    name: 'Groupe',
+    nameAt: FRAME.over.at,
+    nameSync: { [slot]: FRAME },
+  });
+
+  it.each(['pending', 'unconfirmed'] as const)(
+    'a %s frame settles at the relayed server time, and its server copy is owed',
+    async (slot) => {
+      const { keys } = await cast();
+      const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+      const { convo } = await replayBundle(
+        keys,
+        'mallory',
+        [relayed(FRAME.messageId, FRAME.sentAt + 1_000)],
+        [],
+        [],
+        base(slot)
+      );
+      expect(convo()).toMatchObject({ name: 'A', nameAt: FRAME.sentAt + 1_000 });
+      expect(convo().nameSync).toEqual({ serverCopy: { name: 'A', from: 'Groupe' } });
+      expect(info).toHaveBeenCalledWith(expect.stringContaining('landed'));
+      info.mockRestore();
+    }
+  );
+
+  it('a relayed row under another id settles nothing', async () => {
+    const { keys } = await cast();
+    const { convo } = await replayBundle(
+      keys,
+      'mallory',
+      [relayed('someone-else', FRAME.sentAt + 1_000)],
+      [],
+      [],
+      base('unconfirmed')
+    );
+    expect(convo()).toMatchObject({ name: 'Groupe', nameAt: FRAME.over.at });
+    expect(convo().nameSync).toEqual({ unconfirmed: FRAME });
+  });
+});
+
+/**
+ * ROUND 7, F1: the archive replaying the frame that SET the undated name a pending rename was made
+ * over dates that rename's base in the same write - every path dating a row goes through one rule
+ * (`withDatedGroupName`) - so the sweep still re-sends the rename the person was told is on its way.
+ */
+describe('a replayed rename that set the base of a pending rename', () => {
+  const T0 = Date.parse('2026-10-23T10:00:00.000Z');
+  const PENDING = {
+    name: 'X',
+    messageId: 'own-rename-1',
+    sentAt: T0 + 60_000,
+    over: { name: 'Old' },
+    // The server had stated a time after T0 to this account when the rename was minted.
+    serverSeenAt: T0 + 30_000,
+  };
+
+  it('dates the base, and the sweep verdict stays resend', async () => {
+    const { keys } = await cast();
+    const { convo } = await replayFrame(
+      keys,
+      'alice',
+      { sentAt: T0 - 1_000, ...mkSystem('groupRenamed', JSON.stringify({ newName: 'Old' })) },
+      [],
+      [],
+      { name: 'Old', nameSync: { pending: PENDING } }
+    );
+    expect(convo()).toMatchObject({ name: 'Old', nameAt: T0 });
+    expect(convo().nameSync?.pending?.over).toEqual({ name: 'Old', at: T0 });
+    expect(pendingRenameVerdict(convo(), convo().nameSync!.pending!)).toBe('resend');
   });
 });

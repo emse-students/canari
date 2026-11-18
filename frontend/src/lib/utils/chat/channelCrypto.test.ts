@@ -173,6 +173,17 @@ describe('sendChannelReaction (WP-40)', () => {
     expect(body.messageId).toBe(frame?.messageId);
     expect(fromBase64(body.ciphertext).length).toBeGreaterThan(0);
   });
+
+  it("states the reacted-to message's author on a placement - and never on a removal", async () => {
+    // The author's devices tell a reaction is to THEM from this, without holding the message
+    // (`target_author_id`, review of #3792): a salon row is kept only in the last page drawn.
+    await sendChannelReaction(CHANNEL, 'target-1', 'THUMB', 1, false, 'row-1', 'author-1');
+    await sendChannelReaction(CHANNEL, 'target-1', 'THUMB', 2, true, 'row-2', 'author-1');
+    const placed = decodeAppMessage(sealChannelMessage.mock.calls[0][1]);
+    const removed = decodeAppMessage(sealChannelMessage.mock.calls[1][1]);
+    expect(placed?.reaction?.targetAuthorId).toBe('author-1');
+    expect(removed?.reaction?.targetAuthorId ?? '').toBe('');
+  });
 });
 
 describe('sendChannelEdit', () => {

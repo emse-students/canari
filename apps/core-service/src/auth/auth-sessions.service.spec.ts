@@ -760,6 +760,34 @@ describe('AuthSessionsService', () => {
     });
   });
 
+  describe('boundDevice', () => {
+    /*
+     * The owner's device delete refuses to ban the device its caller's session is bound to. The read
+     * is scoped to the caller's user IN THE QUERY: a session id of another account answers null, so
+     * one user can never learn, or be refused by, another's binding.
+     */
+    it("answers the caller's own session binding, and null for another user's session", async () => {
+      const { service } = makeService();
+      const mine = await service.create('user-1');
+      await service.bindDevice('user-1', mine.sessionId, 'web-mine');
+      const theirs = await service.create('user-2');
+      await service.bindDevice('user-2', theirs.sessionId, 'web-theirs');
+
+      await expect(service.boundDevice('user-1', mine.sessionId)).resolves.toBe('web-mine');
+      await expect(service.boundDevice('user-1', theirs.sessionId)).resolves.toBeNull();
+      await expect(service.boundDevice('user-2', mine.sessionId)).resolves.toBeNull();
+    });
+
+    it('answers null for a session bound to no device, or one that no longer exists', async () => {
+      const { service } = makeService();
+      const unbound = await service.create('user-1');
+      await expect(service.boundDevice('user-1', unbound.sessionId)).resolves.toBeNull();
+      await expect(
+        service.boundDevice('user-1', '0a0a0a0a-0000-4000-8000-0000000000ff')
+      ).resolves.toBeNull();
+    });
+  });
+
   describe('bindDevice', () => {
     it('records the device on the caller own session, and reports it in the list', async () => {
       const { service, repo } = makeService();

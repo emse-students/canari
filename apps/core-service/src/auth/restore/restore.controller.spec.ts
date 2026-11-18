@@ -44,7 +44,7 @@ function makeRes() {
   return { res: res as unknown as Response, cookies };
 }
 
-const access = (sub: string) => jwt.sign({ sub }, JWT_SECRET, { expiresIn: '1h' });
+const access = (sub: string) => jwt.sign({ sub, sid: 'sid-1' }, JWT_SECRET, { expiresIn: '1h' });
 const refresh = (sub: string, sid: string) =>
   jwt.sign({ sub, type: 'refresh', sid, jti: 'jti-1' }, JWT_SECRET, { expiresIn: '7d' });
 
@@ -62,7 +62,7 @@ describe('AuthController restore routes', () => {
   };
   let errorLog: jest.SpyInstance;
   let warnLog: jest.SpyInstance;
-  let sessions: { create: jest.Mock; revoke: jest.Mock };
+  let sessions: { create: jest.Mock; revoke: jest.Mock; isLive: jest.Mock };
   let erasure: { erasureState: jest.Mock; confirmAfterSignIn: jest.Mock };
   let platform: { getConfig: jest.Mock; isAccessBlockedByMaintenance: jest.Mock };
   let controller: AuthController;
@@ -118,6 +118,8 @@ describe('AuthController restore routes', () => {
       revoke: jest.fn().mockImplementation(async () => {
         order.push('revoke-old');
       }),
+      // Every access token names a session (`sid`), and the ones these cases present are live.
+      isLive: jest.fn().mockResolvedValue(true),
     };
     erasure = {
       erasureState: jest.fn().mockResolvedValue('none'),

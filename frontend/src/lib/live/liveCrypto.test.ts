@@ -7,7 +7,13 @@
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { createCipheriv } from 'node:crypto';
-import { LiveSegmentOpenError, openLiveSegment, sealLiveSegment } from './liveCrypto';
+import {
+  LiveSegmentOpenError,
+  importLiveKey,
+  openLiveSegment,
+  sealLiveSegment,
+  uuidBytes,
+} from './liveCrypto';
 
 const KEY = '00112233445566778899aabbccddeeff'.repeat(2);
 const OTHER_KEY = 'ff'.repeat(32);
@@ -182,5 +188,17 @@ describe('sealLiveSegment / openLiveSegment', () => {
       await expect(sealLiveSegment(k, id, i, PLAIN)).rejects.toBeInstanceOf(RangeError);
       await expect(openLiveSegment(k, id, i, sealed)).rejects.toBeInstanceOf(RangeError);
     }
+  });
+
+  it('guards its exported helpers itself: a short key never imports as AES-128 (review G7)', async () => {
+    // WebCrypto ignores `length: 256` on a raw import, so 32 hex would silently be AES-128.
+    for (const k of ['ab'.repeat(16), 'ab'.repeat(31), 'zz'.repeat(32), '']) {
+      expect(() => importLiveKey(k, 'encrypt')).toThrow(RangeError);
+    }
+    await expect(importLiveKey(KEY, 'decrypt')).resolves.toBeDefined();
+    for (const id of ['not-a-uuid', LIVE.replaceAll('-', ''), `${LIVE}0`, '']) {
+      expect(() => uuidBytes(id)).toThrow(RangeError);
+    }
+    expect(uuidBytes(LIVE.toUpperCase())).toEqual(uuidBytes(LIVE));
   });
 });

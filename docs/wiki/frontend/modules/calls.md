@@ -386,7 +386,7 @@ neither form is in this repository - and decide together with B5's wording, so t
 | Call metadata in clear on the server (room binding, presence, ring fan-out; logs per C13) | Usage Data > Product Interaction, linked to the user, App Functionality - only if the current label does not already cover messaging metadata | App activity > Other actions, collected, App functionality - same proviso |
 | The peer and Cloudflare see each device's public IP, on every ANSWERED call (an unanswered call sends it to neither) | Apple counts an IP as an identifier only for tracking or as derived location; neither applies, so probably no new row | no new data type if no location is derived from it; Cloudflare is a service provider (the form's sharing exemption) |
 | The `[CALL_REPORT]` lines in the in-app log | not collected: the log leaves the device only when the member exports it | same |
-| The ring push carries caller and conversation names (C7, C21) | already covered by the messaging rows, if they name push content | same |
+| The ring push carries ids only - conversation, call and caller ids, `hasVideo`, and on VoIP `ringUntil` - never a name (decision 6; C7, C21) | already covered by the messaging rows, if they name push content | same |
 
 **What remains after these drafts**: the owner's answers to the table, the demo pair, the video
 (recorded during the Tier B runs, never staged), and the listing texts

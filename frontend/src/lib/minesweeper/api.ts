@@ -1,12 +1,8 @@
 import { apiFetch } from '$lib/utils/apiFetch';
 import { socialUrl } from '$lib/utils/apiUrl';
 import { refusalFromResponse } from '$lib/utils/apiRefusalError';
-import {
-  LATEST_GENERATOR_VERSION,
-  type GeneratorVersion,
-  type MinesweeperConfig,
-  type MinesweeperMove,
-} from './game';
+import { LATEST_GENERATOR_VERSION, type GeneratorVersion, type MinesweeperConfig } from './game';
+import type { ReplaySource, TimedMove } from './replay';
 
 export interface MinesweeperChallengeResponse {
   challengeId: string;
@@ -153,10 +149,13 @@ export async function startMinesweeperChallenge(): Promise<MinesweeperChallengeR
   return challenge;
 }
 
-/** Submits a move log for server-side replay verification. */
+/**
+ * Submits a timed move log for server-side replay verification. The last move's `t` is the game
+ * length (`claimedDurationMs`): the server refuses a log that does not end where the game did.
+ */
 export async function submitMinesweeperChallenge(
   challengeId: string,
-  moves: MinesweeperMove[],
+  moves: TimedMove[],
   claimedDurationMs: number,
   challengeRoundTripMs?: number
 ): Promise<MinesweeperSubmitResponse> {
@@ -270,6 +269,23 @@ export async function unbanMinesweeperUser(userId: string): Promise<void> {
     method: 'DELETE',
   });
   if (!res.ok) throw await refusalFromResponse(res, 'Failed to lift the ban');
+}
+
+/** One won game as a moderator replays it: whose it was, the board's recipe and the timed moves. */
+export interface MinesweeperReplayData extends ReplaySource {
+  scoreId: string;
+  userId: string;
+  displayName: string;
+  /** The server-scored time of the win. */
+  durationMs: number;
+  verifiedAt: string;
+}
+
+/** The timed move log of one verified win (a global admin's replay; 404 when none was kept). */
+export async function fetchMinesweeperReplay(scoreId: string): Promise<MinesweeperReplayData> {
+  const res = await apiFetch(`${minesweeperBase()}/scores/${encodeURIComponent(scoreId)}/replay`);
+  if (!res.ok) throw await refusalFromResponse(res, 'Failed to load the replay');
+  return res.json();
 }
 
 /** Everyone currently banned from the ranked game. */

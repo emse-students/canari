@@ -1,0 +1,3 @@
+### Fixed - a new group's invitation is no longer refused by the creator's own other device
+
+The pending-invitation sweep took a group's add lock before reading its rows, so the creator's other device, vouching for its siblings after the creation's Welcome, refused the creator's invitation and the group was created holding its creator alone; it now takes the lock only for an Add, a first invitation that still meets another device's lock is owed and finishes when that lock ends, and one that adds nobody names everyone it invited ([chat](docs/wiki/frontend/modules/chat.md#nothing-takes-the-add-lock-it-does-not-commit-under-2026-11-17)).

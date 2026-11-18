@@ -1,4 +1,5 @@
 import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
+import type { HistorySealEngine } from '$lib/crypto/historySeal';
 import type { SkippedKeyPackage } from '$lib/mls-client/skippedKeyPackage';
 import type { OwedWelcome, PendingSubmissionRead } from '$lib/mls-client/commitSubmission';
 import type {
@@ -31,6 +32,7 @@ import {
   loadAndInitWasm,
   migrateLegacyMlsStateBlob,
   wasmGraineSignatureEngine,
+  wasmHistorySealEngine,
   detectRuntimeDeviceOs,
   SavedStateUnopenedError,
   recoveryOfStateLoadFailure,
@@ -1766,6 +1768,11 @@ export class WebMlsService extends BaseMlsService {
   /** The WASM crate's Ed25519 free functions (`wasmGraineSignatureEngine`). */
   graineSignatureEngine(): GraineSignatureEngine {
     return wasmGraineSignatureEngine();
+  }
+
+  /** The WASM crate's HPKE free functions (`wasmHistorySealEngine`). */
+  historySealEngine(): HistorySealEngine {
+    return wasmHistorySealEngine();
   }
 
   /** WASM client wrapper - this device's credential key signs `message` (a v2 endorsement). */

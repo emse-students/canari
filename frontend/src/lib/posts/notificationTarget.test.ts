@@ -99,10 +99,10 @@ describe('notificationHref', () => {
 
   it('gives every known type a destination, bar the two resolved by slug', () => {
     // Compared with a hand-written count so a type removed from the set cannot pass silently.
-    expect(KNOWN_NOTIFICATION_TYPES.size).toBe(48);
+    expect(KNOWN_NOTIFICATION_TYPES.size).toBe(49);
     // The live moderation notices go nowhere: a cut live is deleted when it ends, and a suspension
     // or a withdrawal has no page.
-    const liveModeration = ['live_cut', 'live_suspended', 'live_withdrawn'];
+    const liveModeration = ['live_cut', 'live_suspended', 'live_withdrawn', 'live_reinstated'];
     for (const type of KNOWN_NOTIFICATION_TYPES) {
       const noHref =
         type === 'repost_proposed' ||
@@ -157,7 +157,7 @@ describe('notificationHref', () => {
     expect(notificationHref({ type: 'birthday', postId: 'ann-1' })).toBe('/profile/ann-1');
   });
 
-  it.each(['live_cut', 'live_suspended', 'live_withdrawn'])(
+  it.each(['live_cut', 'live_suspended', 'live_withdrawn', 'live_reinstated'])(
     'knows %s and gives it no link, so the row is told and inert rather than a dead /posts/<id>',
     (type) => {
       expect(isKnownNotificationType(type)).toBe(true);

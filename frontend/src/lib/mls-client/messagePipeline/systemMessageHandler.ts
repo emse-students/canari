@@ -12,6 +12,7 @@ import {
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import {
   memberLeftContent,
+  ownRenameSettledByRelay,
   receivedNoticeTime,
   visibleNoticeContent,
 } from '$lib/utils/chat/visibleNotices';
@@ -29,7 +30,13 @@ import { answerHistoryDigest, pullFromOverheardDigest } from '$lib/utils/chat/hi
 import { parseHistoryDigest, selectEntryIdsForPrefixes } from '$lib/utils/chat/historyManifest';
 import { mergeHistoryFloor, parseHistorySince } from '$lib/utils/chat/historyWindow';
 import { parseHistoryStateKey } from '$lib/utils/chat/historyStateKey';
-import { answerAfterMailboxDrained, noteCoverageShortfall } from '$lib/utils/chat/historyReconcile';
+import {
+  answerAfterMailboxDrained,
+  holdsUnrepairedProof,
+  noteCannotRepair,
+  noteCoverageShortfall,
+  noteRepairLanded,
+} from '$lib/utils/chat/historyReconcile';
 import { owedPullTicket } from '$lib/utils/chat/historyOverheardPull';
 import { dropOwnExcludedMessages } from '$lib/utils/chat/historyEntitlement';
 import {
@@ -45,9 +52,16 @@ import type { RecordedAuthorship } from '$lib/crypto/messageAuthorship';
 import { noteIntegrityFinding } from '$lib/mls-client/integrityFindings';
 import {
   boundAddressedMessages,
+  answerSecretOf,
   parseHistoryRequestId,
   takeAddressedAsk,
 } from '$lib/utils/chat/historyAddressing';
+import {
+  historySealAad,
+  openHistoryContent,
+  parseHistoryAnswerKey,
+  HistorySealError,
+} from '$lib/crypto/historySeal';
 import {
   historyGroupStartFor,
   historyRangeStartFor,
@@ -68,6 +82,7 @@ import {
 import { boundedByVerifiedSentAt, withVettedBundleServerTimes } from '$lib/utils/chat/messageTime';
 import { applyPin, mergePinEntries } from '$lib/stores/pinStore.svelte';
 import { mergeBundleNicknames } from '$lib/utils/users/conversationNicknames.svelte';
+import { clearRegisterOwed, noteRegisterDeclined } from '$lib/utils/chat/registerOwed';
 import { applyNicknameFrame, nicknameMembersOf } from '$lib/utils/chat/nicknameFrame';
 import { m } from '$lib/paraglide/messages';
 import type { MessageHandlerDeps } from './deps';
@@ -82,6 +97,14 @@ import { mergeStoredMessage } from '$lib/db/messagePayload';
 import { isPushPreview } from '$lib/utils/chat/messageMerge';
 import { applyReactionFrame } from './reactionFrame';
 import { publishReadState } from '$lib/mls-client/tabMessageSync';
+import {
+  applyRenameFrame,
+  boundedRestatedGroupName,
+  GROUP_NAME_REFUSAL_TEXT,
+  GROUP_NAME_SKIP_TEXT,
+  reportRenameRefusal,
+  withRestatedGroupName,
+} from '$lib/utils/chat/groupName';
 
 /**
  * Context passed to handleSystemEvent - extends MessageHandlerDeps with
@@ -622,6 +645,27 @@ function probeSender(
   return from;
 }
 
+/** Whether this session has already said that an answerer answered a keyed ask in clear. */
+let unsealedAnswerSaid = false;
+
+/**
+ * [LEGACY] Says ONCE per session, at error, that an answerer predating sealing answered our keyed
+ * ask in clear (docs/wiki/legacy-compatibility.md). Once, because the population is what matters,
+ * and every later one of a session would say the same thing.
+ */
+function noteUnsealedAnswerOnce(convoKey: string, senderNorm: string): void {
+  if (unsealedAnswerSaid) return;
+  unsealedAnswerSaid = true;
+  console.error(
+    `[HISTORY_ADDRESSED] [LEGACY] ${senderNorm.slice(0, 8)} answered a keyed ask in ${convoKey.slice(0, 8)}… unsealed - an answerer older than sealed answers; accepted until the floor passes it (said once per session)`
+  );
+}
+
+/** Lets the next unsealed answer be said again - a sign-out, and the tests. */
+export function forgetUnsealedAnswerNotice(): void {
+  unsealedAnswerSaid = false;
+}
+
 /**
  * The `requestId` of a history ask (`history_digest`, `history_pull`, `history_range`), or `null`
  * when it carries none usable - and then the ask is MALFORMED, never an older client: every build
@@ -733,7 +777,14 @@ export async function handleSystemEvent(
       log(`[HISTORY_STATE] No window stated by ${senderNorm} for ${convoKey.slice(0, 8)}…`);
       return true;
     }
-    noteProbeReceived(convoKey, from, { kind: 'state', key, since });
+    // `incomplete` is read as a strict `true`: anything else is an ordinary probe, which is what
+    // every older build sends.
+    noteProbeReceived(convoKey, from, {
+      kind: 'state',
+      key,
+      since,
+      ...(data?.incomplete === true ? { incomplete: true } : {}),
+    });
     log(
       `[HISTORY_STATE] From ${senderNorm} for ${convoKey.slice(0, 8)}… - ${key}, from ${since > 0 ? new Date(since).toISOString() : 'the beginning'}`
     );
@@ -754,13 +805,20 @@ export async function handleSystemEvent(
     // OUR MAILBOX FIRST: a digest computed while this device is still applying its own queue
     // describes a store it is in the middle of completing, so the asker diffs against a snapshot
     // that was already wrong when it was taken.
+    // The digest carries the same proof the state key did, read again NOW: a repair that landed in
+    // between discharged it, and this second leg must not claim a gap that is closed.
     answerAfterMailboxDrained(mlsService, convoKey, () =>
-      sendHistoryDigest(convoKey, me, {
-        storage,
-        deviceKeyB64: deviceKey(),
-        mlsService,
-        log,
-      }).catch((e) =>
+      sendHistoryDigest(
+        convoKey,
+        me,
+        {
+          storage,
+          deviceKeyB64: deviceKey(),
+          mlsService,
+          log,
+        },
+        holdsUnrepairedProof(convoKey)
+      ).catch((e) =>
         log(`[HISTORY_DIGEST] Could not answer ${senderNorm}: ${String(e).slice(0, 120)}`)
       )
     );
@@ -787,11 +845,17 @@ export async function handleSystemEvent(
     }
     const requestId = historyAskId(data, senderNorm, convoKey, log, 'HISTORY_DIGEST');
     if (requestId === null) return true;
+    const answerKey = parseHistoryAnswerKey(data?.answerKey);
+    const incomplete = data?.incomplete === true;
+    const register = data?.register === true;
     const takenByAWaiter = noteProbeReceived(convoKey, from, {
       kind: 'digest',
       digest,
       since,
       requestId,
+      ...(answerKey !== undefined ? { answerKey } : {}),
+      ...(incomplete ? { incomplete: true } : {}),
+      ...(register ? { register: true as const } : {}),
     });
     const size =
       digest.mode === 'ids'
@@ -828,6 +892,9 @@ export async function handleSystemEvent(
           digest,
           since,
           requestId,
+          answerKey,
+          incomplete,
+          register,
           deps: { storage, deviceKeyB64: deviceKey(), mlsService, log },
         }).catch((e) =>
           log(
@@ -883,12 +950,14 @@ export async function handleSystemEvent(
     }
     const requestId = historyAskId(data, senderNorm, convoKey, log, 'HISTORY_RANGE');
     if (requestId === null) return true;
+    const answerKey = parseHistoryAnswerKey(data?.answerKey);
     noteProbeReceived(convoKey, from, {
       kind: 'range',
       before: Math.floor(before),
       limit: Math.min(Math.floor(limit), HISTORY_RANGE_MAX),
       since,
       requestId,
+      ...(answerKey !== undefined ? { answerKey } : {}),
     });
     log(
       `[HISTORY_RANGE] ${senderNorm} wants up to ${limit} message(s) before ${new Date(before).toISOString()} in ${convoKey.slice(0, 8)}…`
@@ -928,6 +997,22 @@ export async function handleSystemEvent(
     ).catch((e) =>
       log(
         `[HISTORY_COVERAGE] Chase failed for ${convoKey.slice(0, 8)}…: ${String(e).slice(0, 120)}`
+      )
+    );
+    return true;
+  }
+
+  // A member we asked while holding frames we cannot read compared its store against ours and holds
+  // nothing we lack - so it cannot be the one that repairs them. THE WALK ADVANCES ON THIS ANSWER:
+  // it is excluded and another member elected (HEAL-repair, the coin flip of 2026-09-08).
+  if (event === 'history_cannot_repair') {
+    const me = digestIdentity(userId, mlsService.getDeviceId());
+    if (String(data?.to ?? '').toLowerCase() !== me.toLowerCase()) return true;
+    const from = probeSender(data, senderNorm, log, 'HISTORY_RECONCILE');
+    if (!from) return true;
+    void noteCannotRepair(mlsService, convoKey, from, log).catch((e) =>
+      log(
+        `[HISTORY_RECONCILE] Walk past ${from} failed for ${convoKey.slice(0, 8)}…: ${String(e).slice(0, 120)}`
       )
     );
     return true;
@@ -973,6 +1058,7 @@ export async function handleSystemEvent(
     }
     const requestId = historyAskId(data, senderNorm, convoKey, log, 'HISTORY_PULL');
     if (requestId === null) return true;
+    const answerKey = parseHistoryAnswerKey(data?.answerKey);
 
     // EVERYTHING THAT READS THE STORE WAITS FOR OUR MAILBOX - the selection as much as the send. A
     // prefix slice resolved mid-drain names the messages we hold SO FAR, so the bundle is short of
@@ -1007,6 +1093,7 @@ export async function handleSystemEvent(
         to: puller,
         since,
         requestId,
+        ...(answerKey !== undefined ? { seal: { answerKey, answerer: me } } : {}),
       }).catch((e) => log(`[HISTORY_PULL] Answer failed: ${String(e).slice(0, 120)}`));
     });
     return true;
@@ -1079,11 +1166,29 @@ export async function handleSystemEvent(
   }
 
   if (event === 'groupRenamed' && data.newName) {
-    conversations.set(convoKey, { ...convo, name: data.newName });
-    if (storage) await saveConversation(convoKey);
+    // DATED BY THE SERVER'S ACCEPTANCE OF THE FRAME, and applied only when it is the newest statement
+    // this device holds (`groupName.ts`): a rename read after a later one - a drain, a replay page -
+    // no longer puts the older name back. The notice is history and is drawn either way.
+    // The server time is BOUNDED by the frame's signed sentAt, so a hostile server cannot lock a name
+    // in by stamping it far in the future.
+    const outcome = applyRenameFrame(convo, data.newName, deliveryMeta?.queuedCreatedAt, sentAt);
+    if ('row' in outcome) {
+      conversations.set(convoKey, outcome.row);
+      if (storage) await saveConversation(convoKey);
+      log(`📝 Group renamed by ${senderNorm}`);
+    } else if ('refused' in outcome) {
+      reportRenameRefusal(convo.id, outcome.refused, `rename by ${senderNorm.slice(0, 8)}`);
+    } else if (outcome.skipped === 'not-a-group') {
+      console.warn(
+        `[GROUP_NAME] rename by ${senderNorm.slice(0, 8)} in ${convoKey.slice(0, 8)}… NOT applied: ${GROUP_NAME_SKIP_TEXT[outcome.skipped]}`
+      );
+    } else {
+      log(
+        `[GROUP_NAME] rename by ${senderNorm.slice(0, 8)} in ${convoKey.slice(0, 8)}… kept the name held (${convo.nameAt ?? 'undated'}): ${GROUP_NAME_SKIP_TEXT[outcome.skipped]}`
+      );
+    }
     const text = await visibleNoticeContent('groupRenamed', data, senderNorm);
     if (text) await writeNotice(text, messageId);
-    log(`📝 Group renamed by ${senderNorm}`);
     return true;
   }
 
@@ -1322,9 +1427,15 @@ export async function handleSystemEvent(
     };
     let incoming: BundleMsg[] = Array.isArray(data?.messages) ? data.messages : [];
     let addOnly = false;
-    // The inviter's join push to THIS device, accepted below: the one bundle a nickname register is
-    // taken from (see the nickname merge).
+    // The inviter's join push to THIS device, accepted below: one of the two bundles a nickname
+    // register is taken from (see the nickname merge).
     let joinPush = false;
+    // The answer to OUR register ask (`registerOwed.ts`): the other one - the state this device was
+    // owed since its admission, asked for because the push may never have reached it.
+    let registerAnswer = false;
+    // Where the conversation STATE an answer restates is read from: the frame itself, or - for a
+    // sealed answer - what opened under our ask, never the clear routing beside it.
+    let bundleState: any = data;
     if (deliveryMeta?.addressed === true) {
       const requestId = parseHistoryRequestId(data?.requestId);
       const claimsJoin = data?.join === true && requestId === undefined;
@@ -1332,7 +1443,45 @@ export async function handleSystemEvent(
       // credential, which it can only do when the envelope names one - so an answer naming none has
       // no device to close the ask for, and is refused.
       const answeringDevice = deliveryMeta.senderDeviceId;
-      const ask =
+      // SEALED TO OUR ASK (option B, `$lib/crypto/historySeal`): an ask that carried a key is
+      // answered with its content sealed to it, and only the secret kept beside the ask opens it.
+      // OPENED BEFORE THE ASK IS TAKEN (review of #3775): bytes that do not open take no answerer
+      // slot, so a member relaying garbage cannot crowd out the honest answer.
+      const sealed = typeof data?.sealed === 'string' ? (data.sealed as string) : undefined;
+      if (
+        sealed !== undefined &&
+        addressee.toLowerCase() === me &&
+        answeringDevice &&
+        requestId !== undefined
+      ) {
+        const secret = answerSecretOf(convoKey, requestId);
+        if (secret) {
+          try {
+            const content = await openHistoryContent(
+              mlsService.historySealEngine(),
+              secret,
+              historySealAad(convoKey, requestId, me, digestIdentity(senderNorm, answeringDevice)),
+              sealed
+            );
+            incoming = Array.isArray(content.messages) ? (content.messages as BundleMsg[]) : [];
+            bundleState = content;
+          } catch (e) {
+            const code = e instanceof HistorySealError ? e.code : 'contract';
+            // At error, never ingested, and the two causes said apart: OUR engine failing is a
+            // defect of this build; bytes that do not open under our ask were sealed to another key
+            // or another context (a member relaying another's answer), or are no answer at all.
+            console.error(
+              code === 'contract'
+                ? `[HISTORY_SEAL] OUR engine failed to open a sealed history_bundle in ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)} - not ingested: ${String(e).slice(0, 160)}`
+                : `[HISTORY_ADDRESSED] REFUSED a sealed history_bundle in ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)} - it does not open under our ask (${code})`
+            );
+            return true;
+          } finally {
+            secret.fill(0);
+          }
+        }
+      }
+      const taken =
         addressee.toLowerCase() === me && answeringDevice && (requestId !== undefined || claimsJoin)
           ? takeAddressedAsk(
               convoKey,
@@ -1341,7 +1490,8 @@ export async function handleSystemEvent(
               data?.last === true
             )
           : null;
-      if (ask === null || (ask.kind === 'join') !== claimsJoin) {
+      const ask = taken?.ask ?? null;
+      if (taken === null || ask === null || (ask.kind === 'join') !== claimsJoin) {
         // At error: an honest peer answers only an ask that carried an id, and closes it once, so
         // this is a forged frame, a defect, or an ask this page no longer holds (a reload between
         // ask and answer, or more than MAX_OPEN_ASKS_PER_GROUP open at once) - each worth a
@@ -1353,6 +1503,19 @@ export async function handleSystemEvent(
         );
         return true;
       }
+      if (sealed !== undefined && !taken.keyed) {
+        // Nothing honest seals an answer to an ask that carried no key - the join push today.
+        console.error(
+          `[HISTORY_ADDRESSED] REFUSED a sealed history_bundle in ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)} - it answers a ${ask.kind} ask that carried no key`
+        );
+        return true;
+      } else if (sealed === undefined && taken.keyed) {
+        // [LEGACY] An answerer that predates sealing answers our keyed ask in clear - still routed
+        // to us alone (step A). Accepted until the floor passes the first stable that seals
+        // (docs/wiki/legacy-compatibility.md, "an unsealed answer to a keyed ask"), said once per
+        // session at error so the population that still does it is counted, never assumed.
+        noteUnsealedAnswerOnce(convoKey, senderNorm);
+      }
       const bounded = boundAddressedMessages(ask, incoming);
       if (bounded.outOfBound > 0) {
         console.error(
@@ -1360,8 +1523,74 @@ export async function handleSystemEvent(
         );
       }
       incoming = bounded.kept;
-      addOnly = ask.kind !== 'join';
       joinPush = ask.kind === 'join';
+      // A REGISTER ANSWER is solicited by the register ask this device made, and says it answers one
+      // INSIDE what opened under that ask: only then may an answer to an ask hand over the
+      // conversation's state, as the push does. A register ask always carries a key, so an answer
+      // that opened nothing (`bundleState` is still the clear frame) is never one.
+      registerAnswer =
+        ask.kind === 'digest' &&
+        ask.register === true &&
+        bundleState !== data &&
+        bundleState?.register === true;
+      if (!registerAnswer && sealed === undefined && data?.register === true) {
+        // Nothing honest says `register` in clear: the flag rides the sealed content only.
+        console.error(
+          `[HISTORY_ADDRESSED] an unsealed history_bundle from ${senderNorm.slice(0, 8)} in ${convoKey.slice(0, 8)}… claims to answer a register ask - taken as an ordinary answer, its state ignored`
+        );
+      }
+      // A REGISTER ANSWER STAYS ADD-ONLY: it hands over the nickname register and nothing else. Any
+      // member can answer a register ask (its key rides the ask), and a floor or read marks taken
+      // from one would let that member hide history from this device for good; the nickname merge
+      // bounds what it can do (history-answer-addressing.md, "The newcomer asks for its register").
+      addOnly = !joinPush;
+      // It carries the STATE and nothing else: a message riding it would be one an answer to an ask
+      // could then change rather than only add, so none is taken from it (the responder sends none).
+      if (registerAnswer && incoming.length > 0) {
+        console.error(
+          `[HISTORY_ADDRESSED] a register answer from ${senderNorm.slice(0, 8)} in ${convoKey.slice(0, 8)}… carried ${incoming.length} message(s) - dropped, it carries the state only`
+        );
+        incoming = [];
+      }
+      // A DECLINE (`register: 'none'`, sealed under our register ask): the elected device never took
+      // a register either. It carries nothing to take; it gives the ask back and rules that device
+      // out (`noteRegisterDeclined`), against the group's OTHER devices as the TREE lists them.
+      if (
+        ask.kind === 'digest' &&
+        ask.register === true &&
+        bundleState !== data &&
+        bundleState?.register === 'none'
+      ) {
+        if (incoming.length > 0) {
+          console.error(
+            `[HISTORY_ADDRESSED] a register decline from ${senderNorm.slice(0, 8)} in ${convoKey.slice(0, 8)}… carried ${incoming.length} message(s) - dropped, it carries nothing`
+          );
+        }
+        let others: string[] = [];
+        try {
+          others = (await mlsService.getGroupMemberIdentities(convoKey))
+            .map((leaf) => leaf.toLowerCase())
+            .filter((leaf) => leaf !== me);
+        } catch (e) {
+          // The decline still gives its ask back; only "every device declined" cannot be decided.
+          console.warn(
+            `[REGISTER] ${convoKey.slice(0, 8)}… roster unreadable - the decline from ${senderNorm.slice(0, 8)} rules nobody else out: ${String(e).slice(0, 120)}`
+          );
+        }
+        noteRegisterDeclined(
+          userId,
+          convoKey,
+          digestIdentity(senderNorm, answeringDevice ?? '').toLowerCase(),
+          others
+        );
+        return true;
+      }
+    } else if (typeof data?.sealed === 'string') {
+      // A BROADCAST is never sealed by an honest answerer - only an addressed answer is.
+      console.error(
+        `[HISTORY_ADDRESSED] REFUSED a sealed history_bundle in ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)} - it was not addressed`
+      );
+      return true;
     } else if (addressee && addressee.toLowerCase() !== me) {
       log(
         `[HISTORY_BUNDLE] ${convoKey.slice(0, 8)}… - broadcast answer for ${addressee.slice(0, 8)}…, ingesting it anyway`
@@ -1399,15 +1628,18 @@ export async function handleSystemEvent(
       //    ordinary answer. Both merges are `max`, so a value restated by every chunk is free.
       //    Not from an addressed answer to an ask (`addOnly`): it may only add messages.
       const beforeMerge = addOnly ? undefined : conversations.get(convoKey);
+      // Whether every merge of the state this bundle restates HAD its input - what ends the
+      // register this device is owed (below). A merge that could not run took nothing.
+      let stateTaken = !joinPush || beforeMerge !== undefined;
       if (beforeMerge) {
         const mergedWatermarks = mergeReadWatermarks(
           beforeMerge.readWatermarks,
-          parseReadWatermarks(data.readWatermarks)
+          parseReadWatermarks(bundleState.readWatermarks)
         );
         // The server-clock marks travel beside the stamped ones; an older sender has none.
         // Bounded like a read_watermark frame: none above the server's time for this bundle.
         const bundleServerMarks = boundedServerMarks(
-          parseReadWatermarks(data.serverReadWatermarks),
+          parseReadWatermarks(bundleState.serverReadWatermarks),
           deliveryMeta?.queuedCreatedAt
         );
         if (bundleServerMarks.dropped > 0) {
@@ -1419,7 +1651,7 @@ export async function handleSystemEvent(
           beforeMerge.serverReadWatermarks,
           bundleServerMarks.kept ?? undefined
         );
-        const mergedFloor = mergeHistoryFloor(beforeMerge.historyFloor, data.floor);
+        const mergedFloor = mergeHistoryFloor(beforeMerge.historyFloor, bundleState.floor);
         if (mergedWatermarks || mergedServerWatermarks || mergedFloor !== null) {
           const merged = {
             ...beforeMerge,
@@ -1439,6 +1671,7 @@ export async function handleSystemEvent(
             }
           }
           await saveConversation?.(convoKey).catch((e: unknown) => {
+            stateTaken = false;
             log(
               `[HISTORY_BUNDLE] conversation state of ${convoKey.slice(0, 8)}… not persisted: ${String(e)}`
             );
@@ -1449,7 +1682,7 @@ export async function handleSystemEvent(
       // The pin register rides beside them, merged entry by entry on the same `at` the frames
       // carry. Reported only when something actually moved - a bundle restating what we already
       // hold is the common case and says nothing.
-      const pinsMerged = addOnly ? 0 : mergePinEntries(convoKey, data.pins);
+      const pinsMerged = addOnly ? 0 : mergePinEntries(convoKey, bundleState.pins);
       if (pinsMerged > 0) {
         log(
           `[HISTORY_BUNDLE] ${pinsMerged} pin state(s) converged for ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)}`
@@ -1460,17 +1693,74 @@ export async function handleSystemEvent(
       // carries them even when every message is withheld). Its entries are the relayer's word about
       // what others did, so they are taken UNVERIFIED, only about current members of the tree, dated
       // within the bundle's server time - and a broadcast or a replayed bundle carries none at all.
-      if (joinPush && Array.isArray(data?.nicknames) && data.nicknames.length > 0) {
-        const members = await nicknameMembersOf(mlsService, convoKey, 'join push');
+      // And the group's dated name - from the inviter's JOIN PUSH only, like the nicknames: it is
+      // how a member admitted after the last rename learns the name from the members rather than
+      // from the server's list (`groupName.ts`). Bounded by the push's own server time, and taken
+      // only onto a row no frame has dated yet.
+      if (joinPush && bundleState?.groupName !== undefined) {
+        const restated = boundedRestatedGroupName(
+          bundleState.groupName,
+          deliveryMeta?.queuedCreatedAt
+        );
+        if ('refused' in restated) {
+          console.error(
+            `[GROUP_NAME] REFUSED the name ${senderNorm.slice(0, 8)}'s join push restates for ${convoKey.slice(0, 8)}…: ${GROUP_NAME_REFUSAL_TEXT[restated.refused]}`
+          );
+        } else {
+          const held = conversations.get(convoKey);
+          // Taken only onto a row no frame has dated: a relay never beats a frame read here.
+          const named = held ? withRestatedGroupName(held, restated.kept) : null;
+          if (named && 'row' in named) {
+            conversations.set(convoKey, named.row);
+            await saveConversation?.(convoKey).catch((e: unknown) => {
+              log(
+                `[GROUP_NAME] name of ${convoKey.slice(0, 8)}… taken from the join push but not persisted: ${String(e)}`
+              );
+            });
+            log(
+              `[GROUP_NAME] name of ${convoKey.slice(0, 8)}… dated ${restated.kept.at} taken from ${senderNorm.slice(0, 8)}'s join push`
+            );
+          } else if (named) {
+            log(
+              `[GROUP_NAME] name ${senderNorm.slice(0, 8)}'s join push restates for ${convoKey.slice(0, 8)}… not taken: ${GROUP_NAME_SKIP_TEXT[named.skipped]}`
+            );
+          }
+        }
+      }
+      if (
+        (joinPush || registerAnswer) &&
+        Array.isArray(bundleState?.nicknames) &&
+        bundleState.nicknames.length > 0
+      ) {
+        const members = await nicknameMembersOf(
+          mlsService,
+          convoKey,
+          joinPush ? 'join push' : 'register answer'
+        );
+        if (members === null) stateTaken = false;
         const nicknamesMerged = members
-          ? mergeBundleNicknames(convoKey, data.nicknames, {
+          ? mergeBundleNicknames(convoKey, bundleState.nicknames, {
               members,
               serverAt: deliveryMeta?.queuedCreatedAt,
             })
           : 0;
         if (nicknamesMerged > 0) {
           log(
-            `[HISTORY_BUNDLE] ${nicknamesMerged} nickname(s) taken (unverified) for ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)}'s join push`
+            `[HISTORY_BUNDLE] ${nicknamesMerged} nickname(s) taken (unverified) for ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)}'s ${joinPush ? 'join push' : 'register answer'}`
+          );
+        }
+      }
+      // THE STATE WAS TAKEN: the register this device was owed since its admission is no longer
+      // asked - but only when every merge had its input. One that could not run (no row, a save
+      // refused, no roster to check the nicknames against) took nothing, and ending the ask then
+      // would leave this device without the state for good.
+      if (joinPush || registerAnswer) {
+        const how = joinPush ? 'join push' : 'register answer';
+        if (stateTaken) {
+          clearRegisterOwed(userId, convoKey, how);
+        } else {
+          console.warn(
+            `[REGISTER] ${convoKey.slice(0, 8)}… - the ${how} from ${senderNorm.slice(0, 8)} could not be taken whole - the register is still owed, and asked again`
           );
         }
       }
@@ -1610,6 +1900,10 @@ export async function handleSystemEvent(
           log(
             `[HISTORY_BUNDLE] ${toAdd.length} messages received for ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)}`
           );
+          // THE REPAIR LANDED - the one thing that discharges a proof of incompleteness. Our store
+          // changed, so every member that said it holds nothing we lack compared against a store
+          // this device no longer has (`historyReconcile.ts`, `unrepaired`).
+          noteRepairLanded(convoKey, senderNorm.slice(0, 8), log);
           if (batchAddMessages) {
             // A RESTORE, AND THE WHOLE POINT OF THE DISTINCTION. A member answered this device's
             // ask with its own archive; every message in it has been delivered before, which is why
@@ -1619,6 +1913,36 @@ export async function handleSystemEvent(
             for (const item of toAdd) {
               await addMessageToChat(item.senderId, item.content, convoKey, item);
             }
+          }
+        }
+
+        // A ROW ADDED UNDER THE ID OF ONE OF THIS DEVICE'S OWN RENAME FRAMES whose fate it never
+        // learnt is the proof that frame landed, and its server time is the one every member dated
+        // the name by (`ownRenameFromRelay`, `groupName.ts`) - the heal of a rename this device
+        // stopped re-sending. Re-read after the adds, which rewrote the row.
+        if (toAdd.length > 0) {
+          const held = conversations.get(convoKey);
+          const healed = held
+            ? ownRenameSettledByRelay(
+                held,
+                toAdd.map((item) => ({
+                  id: item.messageId,
+                  content: item.content,
+                  ...(typeof item.serverTimestamp === 'number'
+                    ? { serverTimestamp: item.serverTimestamp }
+                    : {}),
+                })),
+                senderNorm,
+                log
+              )
+            : null;
+          if (healed) {
+            conversations.set(convoKey, healed);
+            await saveConversation?.(convoKey).catch((e: unknown) => {
+              log(
+                `[GROUP_NAME] name of ${convoKey.slice(0, 8)}… settled by a relayed copy but not persisted: ${String(e)}`
+              );
+            });
           }
         }
 
