@@ -249,15 +249,15 @@ flags() {
   fi
 }
 MINIO='--ignore=GHSA-vcc3-ghjq-m6fr --ignore=GHSA-qr28-fpjm-wq7f --ignore=GHSA-528h-pc64-c93x --ignore=GHSA-hqr4-qq8f-hg3x --ignore=GHSA-mjw6-4jj6-33hc'
-flags frontend production '--ignore=GHSA-fc5q-39xc-vjpf'
-flags frontend full '--ignore=GHSA-fc5q-39xc-vjpf'
-flags apps/core-service production '--prod --audit-level=moderate --ignore=GHSA-fc5q-39xc-vjpf'
-flags apps/core-service full '--audit-level=moderate --ignore=GHSA-fc5q-39xc-vjpf'
-flags apps/social-service production '--prod --audit-level=moderate --ignore=GHSA-fc5q-39xc-vjpf'
-flags apps/chat-delivery-service production '--prod --audit-level=moderate --ignore=GHSA-fc5q-39xc-vjpf'
-flags apps/chat-delivery-service full '--audit-level=moderate --ignore=GHSA-fc5q-39xc-vjpf'
+flags frontend production ''
+flags frontend full ''
+flags apps/core-service production '--prod --audit-level=moderate'
+flags apps/core-service full '--audit-level=moderate'
+flags apps/social-service production '--prod --audit-level=moderate'
+flags apps/chat-delivery-service production '--prod --audit-level=moderate'
+flags apps/chat-delivery-service full '--audit-level=moderate'
 flags apps/media-service production "--prod --audit-level=moderate $MINIO"
-flags apps/media-service full "--audit-level=moderate $MINIO --ignore=GHSA-fc5q-39xc-vjpf"
+flags apps/media-service full "--audit-level=moderate $MINIO"
 flags libs/handoff production '--prod --audit-level=moderate'
 flags libs/handoff full '--audit-level=moderate'
 

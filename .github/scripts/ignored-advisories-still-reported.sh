@@ -29,7 +29,7 @@ for id in "$@"; do
 done
 
 if [ -n "$stale" ]; then
-  echo "::error::the audit no longer reports:$stale - the dependency moved, so the suppression is dead. Delete that --ignore (or audit.toml entry), its premise assertion if it has one, and its backlog entry."
+  echo "::error::the audit no longer reports:$stale - the dependency moved, a fix shipped or the advisory was withdrawn, so the suppression is dead. Delete that --ignore (or audit.toml entry), its premise assertion if it has one, and its backlog entry."
   exit 1
 fi
 echo "    every ignored advisory is still reported; the ignores are still needed."
