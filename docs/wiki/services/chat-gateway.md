@@ -829,13 +829,14 @@ Enumerated in `infrastructure/.env.example`, written by `serve-prod.yml`, and pi
 
 | Origin | Client |
 |---|---|
-| `https://canari-emse.fr` | the deployed site (`FRONTEND_URL`) |
+| `https://canari.emse.fr` | the deployed site (`FRONTEND_URL`) |
+| `https://canari-emse.fr` | the legacy name: a browser tab still open on it calls the API with this origin (documents redirect; `/api/` and assets are still served there) |
 | `https://dev.canari-emse.fr` | a proxied CNAME onto this **same** tunnel, not a second environment - a list built from `FRONTEND_URL` alone would refuse a hostname this stack serves |
 | `http://tauri.localhost`, `https://tauri.localhost` | the Tauri WebView on Android and Windows |
 | `tauri://localhost` | the Tauri WebView on iOS, macOS and Linux - WebKit keeps the custom scheme |
 
 The Tauri app calls this gateway **cross-origin** (its page is served from `tauri://localhost`, the
-API from `https://canari-emse.fr`), so dropping a spelling costs that platform `/api/presence` with
+API from `https://canari.emse.fr`), so dropping a spelling costs that platform `/api/presence` with
 no server-side error to show for it. Keep it in step with `TAURI_WEBVIEW_ORIGINS` in
 `apps/*/src/cors-origins.ts`.
 
@@ -856,8 +857,8 @@ matches nothing - only an empty list stops the boot, which the tests pin. What p
 reading the header back off the deployed gateway:
 
 ```
-OPTIONS https://canari-emse.fr/api/presence  Origin: <each entry>  -> echoes that origin
-OPTIONS https://canari-emse.fr/api/presence  Origin: https://evil.example  -> no ACAO header
+OPTIONS https://canari.emse.fr/api/presence  Origin: <each entry>  -> echoes that origin
+OPTIONS https://canari.emse.fr/api/presence  Origin: https://evil.example  -> no ACAO header
 ```
 
 The layer also sends `Vary: origin`, which a shared cache needs before it can hold more than one

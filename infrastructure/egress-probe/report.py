@@ -28,7 +28,7 @@ from datetime import datetime, timedelta
 # way there - and waiting for a failure to call something slow means measuring only the tail.
 SLOW_SECONDS = 2.0
 
-HOST_TARGETS = ["wikipedia", "gallery", "self", "control"]
+HOST_TARGETS = ["wikipedia", "gallery", "self", "self_legacy", "control"]
 
 
 def is_slow(probe):

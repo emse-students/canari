@@ -903,7 +903,7 @@ GRP-ADDR-1** ([cross-client-testing](../cross-client-testing.md)).
 **What neither closes.** An older client keeps pushing and answering by broadcast until
 `minClientVersion` is a release carrying A, and that floor moves only once both stores serve the
 reader. The server cannot refuse such a frame, because it cannot read it. What a newcomer has already
-received cannot be taken back. Tracked in [backlog](../backlog.d/p1-a-new-member-of-a-group-conversation-receives-its-whole-past-decided-2026-10.md).
+received cannot be taken back. The floor that ends it is tracked in [p3-a-history-answer-is-sealed-or-refused-once-the-floor-seals](../backlog.d/p3-a-history-answer-is-sealed-or-refused-once-the-floor-seals.md); the rig row GRP-ADDR-1 was read whole on 2026-11-18 ([readings](../device-verification.md#the-web-and-phone-readings-of-2026-11-18-s7-170-alpha12-the-last-sitting-before-the-stable)).
 
 **Every road to a newcomer, read on 2026-10-31** (with #2791, which adds a member's new device by
 itself and asks only about a new person):
