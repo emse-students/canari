@@ -1,6 +1,8 @@
-## Reading owed - birthdays on profiles (#3180, first stable `v1.6.9`; birthdays)
+## Birthdays on profiles (#3180, first stable `v1.6.9`): "gone the next day" and the settings lock, owed on the phones (a reading moved to 1.7.1)
 
-target: 1.7.0
+target: 1.7.1
+
+_Moved 2026-11-18 - owner, 2026-11-18: read after the `1.7.0` stable ([owner-decisions-of-2026-11-18.md](owner-decisions-of-2026-11-18.md#the-morning)). The feature is `v1.6.9`'s; `git log v1.6.12..origin/main` on `apps/social-service/src/birthdays` and `frontend/src/lib/birthdays` changed a route-parameter declaration (#3564) and removed an unused constant, nothing of the ring or the day's computation. The staged check below can still be read on 2026-11-19, and its undo is owed either way._
 
 **What is built:** birthdays on profiles (#3180, first stable `v1.6.9`; [birthdays](../birthdays.md))
 
