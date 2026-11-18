@@ -3764,7 +3764,7 @@ function deregisterPushOfLiveSession(ctx: SessionContext, cb: ChatSessionCallbac
     return Promise.resolve();
   }
   if (isAccountErasedOnServer()) {
-    // THE ACCOUNT IS ALREADY ERASED: the server deleted its push-token rows with it, and the bearer
+    // THE ACCOUNT IS ALREADY ERASED: the push-token row goes with the erasure job queued by the 204, and the bearer
     // names an account that no longer exists - the call could only earn a 401, which `stopPushService`
     // reports as a failure to deregister. Known from the deletion's own answer, so not asked.
     cb.log(

@@ -66,7 +66,7 @@ What they cannot see is declared in `knip.json`:
   not in git;
 - `ignoreDependencies`: `emoji-picker-element-data` (read by `tools/emoji-data/sync.mjs`);
   `ignoreBinaries`: `wasm-pack`. **`husky` is deliberately NOT listed (2026-11-18):** this page said
-  it was, but `frontend/knip.json` never carried it. Measured with `bun x knip --dependencies`: knip
+  it was; #3623 removed the entry together with the unused `husky` devDependency and the page was not updated. Measured with `bun x knip --dependencies`: knip
   reports no unlisted or unused `husky`, because `frontend/package.json` does not depend on the
   package at all - `scripts/install-husky.js` only points `core.hooksPath` at the tracked `.husky/`
   and imports nothing from it. An ignore entry for a name nothing declares is exactly what knip's

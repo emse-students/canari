@@ -43,9 +43,9 @@ describe('every sign-out ends the live session on the device', () => {
     expect(handler).toContain('_loginInProgress = false;');
   });
 
-  it('a deleted account skips the push deregistration its erasure already did, and says so', () => {
+  it('a deleted account skips the push deregistration the erasure job owns, and says so', () => {
     // The 401 it used to earn was logged at error level as "the server still lists device ...":
-    // false, the erasure deletes the push-token rows (S7, 2026-11-18). The danger zone latches the
+    // false, the account was gone and the erasure job owns the row (S7, 2026-11-18). The danger zone latches the
     // fact from the deletion's 204; the live-session deregistration reads it.
     const from = sessionAuth.indexOf('function deregisterPushOfLiveSession(');
     expect(from).toBeGreaterThan(-1);
