@@ -53,7 +53,8 @@ export class InternalProfileNotificationsController {
    * A profile correction was FILED (core-service, `ProfileCorrectionService.create`): every global
    * admin but the requester gets the bell row and the push of `admin_profile_correction`, which
    * clears for all of them once one answers (owner, 2026-11-18; `AdminQueuesService`). Answers how
-   * many were told; a failure is a 500 the caller logs at ERROR - the request itself is saved.
+   * many admins have the bell row (a failed PUSH alone is logged here and still answers them); a
+   * failure to write the rows is a 500 the caller logs at ERROR - the request itself is saved.
    */
   @Post('profile-correction-filed')
   @HttpCode(200)

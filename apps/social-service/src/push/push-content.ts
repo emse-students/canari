@@ -1023,7 +1023,7 @@ export function liveReinstatedContent(): PushContent {
 /**
  * A NEW ITEM IN A GLOBAL ADMIN'S QUEUE (owner, 2026-11-18): a profile correction was asked for, or a
  * subject was reported for the first time while nothing else was pending on it. Told to every
- * global admin (`announceToGlobalAdmins`), and the bell row clears for all of them as soon as one
+ * global admin (`AdminQueuesService.announce`), and the bell row clears for all of them as soon as one
  * handles the item (`BELL_ROW_GATE`).
  *
  * FIXED SENTENCES, NO ACTOR, NO FRAGMENT, NO ICON - THE CONTENT-FREE RULE. Who asked, what they

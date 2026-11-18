@@ -210,7 +210,7 @@ export class ProfileCorrectionService {
       );
     } catch (err) {
       this.logger.error(
-        `[PROFILE_CORRECTION] ${request.id.slice(0, 8)} was NOT announced to the admins: ${String(err)}`
+        `[PROFILE_CORRECTION] ${request.id.slice(0, 8)}: its announcement to the admins was NOT confirmed (social refused, failed or outran the timeout; its [ADMIN_QUEUES] line says which): ${String(err)}`
       );
     }
   }

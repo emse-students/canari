@@ -1,8 +1,9 @@
 import { Logger } from '@nestjs/common';
 import { AdminQueuesService } from './admin-queues.service';
 import { AdminQueuesController } from './admin-queues.controller';
-import { REPORT_IS_FIRST_PENDING_SQL } from './admin-queue-sql';
+import { LOCK_REPORT_SUBJECT_SQL, REPORT_ALREADY_ANNOUNCED_SQL } from './admin-queue-sql';
 import { socialDeepLink } from '../push/push-target';
+import { NotificationPushFailedError } from '../posts/post-notifications.service';
 
 /**
  * The unit half of the admin queues (owner, 2026-11-18): which queues a caller is counted for, and
@@ -25,11 +26,12 @@ describe('AdminQueuesService', () => {
     moderates?: boolean;
     validates?: boolean;
     admins?: string[];
-    first?: boolean;
+    covered?: boolean;
     row?: Record<string, number>;
   }) {
     const query = jest.fn(async (sql: string, params: unknown[]) => {
-      if (sql === REPORT_IS_FIRST_PENDING_SQL) return [{ first: opts.first ?? true }];
+      if (sql === LOCK_REPORT_SUBJECT_SQL) return [{}];
+      if (sql === REPORT_ALREADY_ANNOUNCED_SQL) return [{ covered: opts.covered ?? false }];
       if (sql.includes('FROM users WHERE admin = true')) {
         return (opts.admins ?? []).filter((id) => id !== params[0]).map((id) => ({ id }));
       }
@@ -43,7 +45,9 @@ describe('AdminQueuesService', () => {
       createNotifications: jest.fn(async (d: { recipientIds: string[] }) => d.recipientIds.length),
     };
     const service = new AdminQueuesService(
-      { manager: { query } } as never,
+      {
+        manager: { query, transaction: async (fn: (tx: unknown) => unknown) => fn({ query }) },
+      } as never,
       associations as never,
       notifications as never
     );
@@ -128,8 +132,8 @@ describe('AdminQueuesService', () => {
       expect(notifications.createNotifications).not.toHaveBeenCalled();
     });
 
-    it("announces a report only as its subject's first pending one, opening the moderation queue", async () => {
-      const first = make({ admins: ['a1'], first: true });
+    it("announces a report unless its subject's notice is still owed, under the subject's lock, opening the moderation queue", async () => {
+      const first = make({ admins: ['a1'], covered: false });
       await first.service.announceReport({ id: 'rep-1', reporterId: 'r' });
       expect(first.notifications.createNotifications).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -141,7 +145,11 @@ describe('AdminQueuesService', () => {
       expect(socialDeepLink({ target: 'admin-moderation' })).toBe(
         'fr.emse.canari://admin-moderation'
       );
-      const again = make({ admins: ['a1'], first: false });
+      const sqls = first.query.mock.calls.map((c) => c[0]);
+      expect(sqls.indexOf(LOCK_REPORT_SUBJECT_SQL)).toBeLessThan(
+        sqls.indexOf(REPORT_ALREADY_ANNOUNCED_SQL)
+      );
+      const again = make({ admins: ['a1'], covered: true });
       await again.service.announceReport({ id: 'rep-2', reporterId: 'r' });
       expect(again.notifications.createNotifications).not.toHaveBeenCalled();
     });
@@ -153,6 +161,16 @@ describe('AdminQueuesService', () => {
         service.announceReport({ id: 'rep-1', reporterId: 'r' })
       ).resolves.toBeUndefined();
       expect(error).toHaveBeenCalledWith(expect.stringContaining('NOT announced'));
+    });
+
+    it('rows written and only the push failed is said as exactly that, never as "NOT announced"', async () => {
+      const { service, notifications } = make({ admins: ['a1', 'a2'] });
+      notifications.createNotifications.mockRejectedValue(
+        new NotificationPushFailedError(['a1', 'a2'], new Error('fcm down'))
+      );
+      expect(await service.announceProfileCorrection('req-1', 'p')).toBe(2);
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('PUSH failed'));
+      expect(error).not.toHaveBeenCalledWith(expect.stringContaining('NOT announced'));
     });
   });
 });

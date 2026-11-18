@@ -4,6 +4,7 @@ import type { Repository } from 'typeorm';
 import { ContentReport } from '../moderation/entities/content-report.entity';
 import { AssociationsService } from '../associations/associations.service';
 import {
+  NotificationPushFailedError,
   PostNotificationsService,
   SYSTEM_ACTOR_ID,
   SYSTEM_ACTOR_NAME,
@@ -12,7 +13,8 @@ import { reportInBdeScopeSql } from '../spaces/bde-moderation';
 import { holdsBdeAgendaRightOverSql } from '../spaces/bde';
 import { ADMIN_MODERATION_TARGET, ADMIN_PROFILE_CORRECTIONS_TARGET } from '../push/push-target';
 import {
-  REPORT_IS_FIRST_PENDING_SQL,
+  LOCK_REPORT_SUBJECT_SQL,
+  REPORT_ALREADY_ANNOUNCED_SQL,
   calendarEventPendingSql,
   profileCorrectionPendingSql,
   reportPendingSql,
@@ -128,25 +130,29 @@ export class AdminQueuesService {
   }
 
   /**
-   * A report was filed: every global admin but its reporter is told - ONLY when it is the oldest
-   * pending report about its subject (`REPORT_IS_FIRST_PENDING_SQL`), so five reports on one post
-   * are one notice, and a subject already waiting is not announced again. Never throws: the report
-   * is saved and answered whatever this does; a failure is logged at ERROR, because an admin who is
-   * not told is the very defect this notice exists to end.
+   * A report was filed: every global admin but its reporter is told - UNLESS a notice about its
+   * subject is still on their bells (`REPORT_ALREADY_ANNOUNCED_SQL`), so five reports on one post are
+   * one notice, while a subject that waited before the notices existed, or whose announcement
+   * failed, is announced by its next report. The read and the write run under the subject's advisory
+   * lock, so two reports filed at once write one notice. Never throws: the report is saved and
+   * answered whatever this does; a failure is logged at ERROR, because an admin who is not told is
+   * the very defect this notice exists to end.
    */
   async announceReport(report: Pick<ContentReport, 'id' | 'reporterId'>): Promise<void> {
     try {
-      const rows: { first: boolean }[] = await this.reports.manager.query(
-        REPORT_IS_FIRST_PENDING_SQL,
-        [report.id]
-      );
-      if (rows[0]?.first !== true) {
-        this.logger.log(
-          `[ADMIN_QUEUES] report ${report.id.slice(0, 8)}: its subject already waits, no new notice`
-        );
-        return;
-      }
-      await this.announce('moderation', report.id, report.reporterId);
+      await this.reports.manager.transaction(async (tx) => {
+        await tx.query(LOCK_REPORT_SUBJECT_SQL, [report.id]);
+        const rows: { covered: boolean }[] = await tx.query(REPORT_ALREADY_ANNOUNCED_SQL, [
+          report.id,
+        ]);
+        if (rows[0]?.covered === true) {
+          this.logger.log(
+            `[ADMIN_QUEUES] report ${report.id.slice(0, 8)}: its subject's notice is still owed, no new one`
+          );
+          return;
+        }
+        await this.announce('moderation', report.id, report.reporterId);
+      });
     } catch (err) {
       this.logger.error(
         `[ADMIN_QUEUES] report ${report.id.slice(0, 8)} was NOT announced to the admins: ${String(err)}`
@@ -158,8 +164,9 @@ export class AdminQueuesService {
    * The notice of a new item in `queue`, to every global admin (`users.admin`) but `excludeId` - the
    * person who filed it, never told of their own request. The PLATFORM is the actor and the row
    * carries no text: who asked and what they wrote are the queue's to show (the content-free push,
-   * `adminProfileCorrectionContent`). Answers how many admins were told; none is said at WARN, since
-   * an item nobody is told about waits unseen.
+   * `adminProfileCorrectionContent`). Answers how many admins have the bell row; none is said at
+   * WARN, since an item nobody is told about waits unseen. Rows written and only the push failed is
+   * caught by its TYPE and said at ERROR as exactly that - the admins are told, on their bells.
    */
   private async announce(
     queue: AnnouncedQueue,
@@ -175,15 +182,24 @@ export class AdminQueuesService {
       this.logger.warn(`[ADMIN_QUEUES] ${type} ${itemId.slice(0, 8)}: no global admin to tell`);
       return 0;
     }
-    const told = await this.notifications.createNotifications({
-      recipientIds: admins.map((a) => a.id),
-      type,
-      postId: itemId,
-      actorId: SYSTEM_ACTOR_ID,
-      actorName: SYSTEM_ACTOR_NAME,
-      text: '',
-      pushData: { target },
-    });
+    let told: number;
+    try {
+      told = await this.notifications.createNotifications({
+        recipientIds: admins.map((a) => a.id),
+        type,
+        postId: itemId,
+        actorId: SYSTEM_ACTOR_ID,
+        actorName: SYSTEM_ACTOR_NAME,
+        text: '',
+        pushData: { target },
+      });
+    } catch (err) {
+      if (!(err instanceof NotificationPushFailedError)) throw err;
+      this.logger.error(
+        `[ADMIN_QUEUES] ${type} ${itemId.slice(0, 8)}: bell rows written for ${err.recipientIds.length} admin(s), their PUSH failed: ${String(err.cause)}`
+      );
+      return err.recipientIds.length;
+    }
     this.logger.log(
       `[ADMIN_QUEUES] ${type} ${itemId.slice(0, 8)} told to ${told} of ${admins.length} admin(s)`
     );

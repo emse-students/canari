@@ -5,7 +5,7 @@ import type { NotificationType } from '../push/notification-client-floor';
 import {
   isGlobalAdminSql,
   profileCorrectionPendingSql,
-  reportSubjectPendingSql,
+  reportNoticeOwedSql,
 } from '../admin-queues/admin-queue-sql';
 
 /** The shape of a uuid, which a varchar column must have before it is cast to one. */
@@ -218,7 +218,7 @@ export const BELL_ROW_GATE: Readonly<Record<NotificationType, BellRowGate>> = {
     AND EXISTS (SELECT 1 FROM profile_correction_requests bell_pcr
       WHERE bell_pcr.id = ${target} AND ${profileCorrectionPendingSql('bell_pcr')}))`,
   admin_report: ({ reader, target }) =>
-    `(${isGlobalAdminSql(reader)} AND ${reportSubjectPendingSql(target)})`,
+    `(${isGlobalAdminSql(reader)} AND ${reportNoticeOwedSql(target)})`,
 };
 
 /** The kinds whose row names something other than a post, re-asked by `targetBoundRowShownSql`. */

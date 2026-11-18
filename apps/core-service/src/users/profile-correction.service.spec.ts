@@ -106,7 +106,7 @@ describe('ProfileCorrectionService', () => {
       const { service } = make();
       post.mockRejectedValue(new Error('social down'));
       await expect(service.create('u-1', 'wrong campus')).resolves.toMatchObject({ id: 'req-new' });
-      expect(errorLog).toHaveBeenCalledWith(expect.stringContaining('NOT announced'));
+      expect(errorLog).toHaveBeenCalledWith(expect.stringContaining('NOT confirmed'));
     });
 
     it('a refused filing announces nothing', async () => {

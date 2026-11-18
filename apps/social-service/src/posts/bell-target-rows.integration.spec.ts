@@ -37,7 +37,7 @@ import {
 } from './post-notifications.it-schema';
 import { AssociationPermissionFlag as F } from '../associations/entities/association-member.entity';
 import { PG_SESSION_OPTIONS } from '../common/pg-session-options';
-import { REPORT_IS_FIRST_PENDING_SQL } from '../admin-queues/admin-queue-sql';
+import { REPORT_ALREADY_ANNOUNCED_SQL } from '../admin-queues/admin-queue-sql';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -565,24 +565,48 @@ maybe('bell rows bound to something other than a post (PostgreSQL)', () => {
     await q(`DELETE FROM content_reports WHERE id IN ($1, $2)`, [report, second]);
   });
 
-  it('a report announces its subject only while no older report on it waits (`REPORT_IS_FIRST_PENDING_SQL`)', async () => {
-    const [older, newer, elsewhere] = [id(50), id(51), id(52)];
-    await q(
-      `INSERT INTO content_reports (id, "contentType", "contentId", "createdAt") VALUES
-         ($1, 'user', 'u-9', now() - interval '1 minute'), ($2, 'user', 'u-9', now()),
-         ($3, 'comment', 'u-9', now())`,
-      [older, newer, elsewhere]
-    );
-    const first = async (reportId: string) =>
-      ((await q(REPORT_IS_FIRST_PENDING_SQL, [reportId])) as { first: boolean }[])[0].first;
-    expect(await first(older)).toBe(true);
-    expect(await first(newer)).toBe(false);
+  it('a report is announced unless a notice about its subject is still owed, and a handled notice never comes back (`REPORT_ALREADY_ANNOUNCED_SQL`)', async () => {
+    const [before, x, y, z, elsewhere] = [id(50), id(51), id(52), id(53), id(54)];
+    const file = (report: string, minutesAgo: number, type = 'user') =>
+      q(
+        `INSERT INTO content_reports (id, "contentType", "contentId", "createdAt")
+         VALUES ($1, $2, 'u-9', now() - make_interval(mins => $3))`,
+        [report, type, minutesAgo]
+      );
+    const covered = async (reportId: string) =>
+      ((await q(REPORT_ALREADY_ANNOUNCED_SQL, [reportId])) as { covered: boolean }[])[0].covered;
+    const handle = (...reports: string[]) =>
+      q(`UPDATE content_reports SET status = 'dismissed' WHERE id = ANY($1::uuid[])`, [reports]);
+
+    // A report that waited before the notices existed (or whose announcement failed) has no row: the
+    // next report on its subject IS announced - "an older report waits" is not "it was announced".
+    await file(before, 40);
+    await file(x, 30);
+    expect(await covered(x)).toBe(false);
+    await row('adm', 'admin_report', x);
+    // Now a notice is owed: the next report is covered by it, one subject, one notice.
+    await file(y, 20);
+    expect(await covered(y)).toBe(true);
     // Another content type with the same id is another subject.
-    expect(await first(elsewhere)).toBe(true);
-    // Once the older one is handled, nothing older waits.
-    await q(`UPDATE content_reports SET status = 'reviewed' WHERE id = $1`, [older]);
-    expect(await first(newer)).toBe(true);
-    await q(`DELETE FROM content_reports WHERE id IN ($1, $2, $3)`, [older, newer, elsewhere]);
+    await file(elsewhere, 20, 'comment');
+    expect(await covered(elsewhere)).toBe(false);
+
+    // The announced report is handled, the older unannounced one still waits: the notice stays.
+    await handle(x, y);
+    expect(await servedTo171('adm')).toEqual(['admin_report']);
+    await handle(before);
+    expect(await servedTo171('adm')).toEqual([]);
+
+    // Reported again after everything was handled: a NEW notice, and the old one does not come back.
+    await file(z, 1);
+    expect(await covered(z)).toBe(false);
+    await row('adm', 'admin_report', z);
+    expect(await servedTo171('adm')).toEqual(['admin_report']);
+    const shown = (await bell.getNotifications('adm', 50, '1.7.1')).map((n) => n.postId);
+    expect(shown).toEqual([z]);
+    await q(`DELETE FROM content_reports WHERE id = ANY($1::uuid[])`, [
+      [before, x, y, z, elsewhere],
+    ]);
   });
 
   it("keeps the bell's one statement walking the reader's index with no sort", async () => {

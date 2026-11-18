@@ -85,7 +85,7 @@ export class ModerationController {
       liveId: dto.liveId,
       message: dto.message,
     });
-    // The global admins are told of a subject's first pending report (never throws: logged).
+    // The global admins are told of a report no notice of its subject covers yet (never throws: logged).
     await this.adminQueues.announceReport(report);
     return receiptOf(report);
   }

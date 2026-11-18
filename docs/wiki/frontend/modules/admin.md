@@ -117,16 +117,25 @@ person who filed the item, actor = the platform, no text, one bell row each and 
 
 - `admin_profile_correction`: when core-service files a request (`ProfileCorrectionService.create` ->
   `POST /internal/notifications/profile-correction-filed`). Opens `/admin/profile-corrections`.
-- `admin_report`: when a report is the OLDEST pending one about its subject
-  (`REPORT_IS_FIRST_PENDING_SQL`): five reports on one post are one notice, and of two filed at once
-  exactly one is oldest, whatever order they commit in. Opens `/admin/moderation`.
+- `admin_report`: when a report is filed and NO notice about its subject is still owed
+  (`REPORT_ALREADY_ANNOUNCED_SQL`): five reports on one post are one notice. Decided from what was
+  WRITTEN - an `admin_report` row naming another report of the subject - never from "an older report
+  waits": a subject that already waited when this shipped, or whose announcement failed, is
+  announced by its next report (review of 2026-11-18). The read and the write run under the subject's
+  transaction-scoped advisory lock (`LOCK_REPORT_SUBJECT_SQL`), so two reports filed at once write
+  one notice. Opens `/admin/moderation`.
 - **The agenda is not announced here**: its validators are already told by `event_proposed` (and the
   global admins when no BDE governs the event), so a second notice would say the same thing twice.
 
 **They clear for every admin at once, from state**: the bell gate (`BELL_ROW_GATE`,
 [posts](posts.md#the-bell-re-checks-what-a-row-points-at-audit-of-2026-11-14)) serves a row only
 while its reader is a global admin AND the item still waits; nothing deletes it, the 90-day sweep
-does. A notice that reached somebody who is not (or no longer) an admin is served to nobody.
+does. A notice that reached somebody who is not (or no longer) an admin is served to nobody. A
+report notice is owed while a report of its subject waits that is the announced one, older, or newer
+but filed before the subject's NEXT notice (`reportNoticeOwedSql`): each notice answers for its own
+stretch of reports, so a subject reported again after everything was handled gets a new notice and
+the old one never comes back. Rows written and only the push failed is logged as exactly that
+(`NotificationPushFailedError`, caught by type) - never as "not announced".
 **Not recalled**: a push already on a lock screen stays there; tapped, it opens the queue, which no
 longer lists the item.
 

@@ -4,7 +4,7 @@
  * Three readers share them, so the badge, the bell and the queue page cannot disagree about whether
  * an item still waits: the counts (`AdminQueuesService.pendingCounts`), the bell gates of the two
  * admin notices (`BELL_ROW_GATE` in `posts/bell-row-gates.ts`) and the announcement that writes those
- * notices (`announceToGlobalAdmins`). Each queue page lists exactly what its predicate admits
+ * notices (`AdminQueuesService.announce`). Each queue page lists exactly what its predicate admits
  * (`ProfileCorrectionService.listPending`, `ModerationService.listAllReports`,
  * `AssociationsService.listPendingCalendarEvents`). docs/wiki/frontend/modules/admin.md, "Pending
  * counts".
@@ -38,29 +38,56 @@ export function calendarEventPendingSql(e: string): string {
   return `${e}.status = 'pending'`;
 }
 
-/**
- * Report `report` (a SQL expression naming a report id, a uuid) is about a SUBJECT on which a report
- * is still pending - itself or another one about the same content. What the bell row announcing
- * the subject is shown under: the subject leaves the admins' attention when its LAST pending report
- * is handled, and a second report on a subject already announced writes no second notice
- * (`ModerationService.announceIfFirstPending`).
- */
-export function reportSubjectPendingSql(report: string): string {
-  return `EXISTS (SELECT 1 FROM content_reports aq_rep
-      JOIN content_reports aq_open ON aq_open."contentType" = aq_rep."contentType"
-        AND aq_open."contentId" = aq_rep."contentId"
-      WHERE aq_rep.id = ${report} AND ${reportPendingSql('aq_open')})`;
+/** Report row `r` names the same SUBJECT as report row `s`: one content type, one content id. */
+function sameSubjectSql(r: string, s: string): string {
+  return `${r}."contentType" = ${s}."contentType" AND ${r}."contentId" = ${s}."contentId"`;
+}
+
+/** Report row `r` was ANNOUNCED: an `admin_report` bell row names it (`AdminQueuesService`). */
+function reportAnnouncedSql(r: string): string {
+  return `EXISTS (SELECT 1 FROM post_notifications aq_n
+      WHERE aq_n.type = 'admin_report' AND aq_n."postId" = ${r}.id::text)`;
 }
 
 /**
- * Report `$1` (uuid) is the OLDEST pending report about its subject - the one that announces the
- * subject. Of two reports filed at once on a quiet subject exactly one is the oldest, whatever the
- * order their transactions commit in, so the subject is announced once and never zero times; a
- * subject that already had a pending report is not announced again. Answers `first`.
+ * The notice that announced report `report` (a SQL expression naming a report id, a uuid) is still
+ * owed to the admins: a report about the same subject waits - the announced one itself, an older one
+ * nothing had announced, or a newer one filed before the subject's NEXT announcement. A report filed
+ * after a later announcement belongs to that one, so an old notice whose own reports were all handled
+ * never comes back when its subject is reported again: each notice answers for its own stretch of
+ * reports, read from the reports and the notices themselves. `except` (a uuid expression) is left out
+ * of the waiting reports - the report being filed, asking whether a notice already covers it.
  */
-export const REPORT_IS_FIRST_PENDING_SQL = `SELECT NOT EXISTS (SELECT 1 FROM content_reports me
-    JOIN content_reports older ON older."contentType" = me."contentType"
-      AND older."contentId" = me."contentId" AND older.id <> me.id
-      AND ${reportPendingSql('older')}
-      AND (older."createdAt", older.id) < (me."createdAt", me.id)
-    WHERE me.id = $1) AS first`;
+export function reportNoticeOwedSql(report: string, except = 'NULL::uuid'): string {
+  return `EXISTS (SELECT 1 FROM content_reports aq_rep
+      JOIN content_reports aq_open ON ${sameSubjectSql('aq_open', 'aq_rep')}
+      WHERE aq_rep.id = ${report} AND ${reportPendingSql('aq_open')}
+        AND aq_open.id IS DISTINCT FROM ${except}
+        AND NOT EXISTS (SELECT 1 FROM content_reports aq_next
+          WHERE ${sameSubjectSql('aq_next', 'aq_rep')}
+            AND (aq_next."createdAt", aq_next.id) > (aq_rep."createdAt", aq_rep.id)
+            AND (aq_next."createdAt", aq_next.id) <= (aq_open."createdAt", aq_open.id)
+            AND ${reportAnnouncedSql('aq_next')}))`;
+}
+
+/**
+ * Report `$1` (uuid) is already COVERED by a notice still on the admins' bells: another report about
+ * its subject was announced and that notice is still owed for a report other than `$1`
+ * ({@link reportNoticeOwedSql}). Asked from what was written, never from the age of other reports, so
+ * a subject that waited before the notices existed, or whose announcement failed, is announced by its
+ * next report. Run under the subject's advisory lock (`AdminQueuesService.announceReport`), so two
+ * reports filed at once write one notice. Answers `covered`.
+ */
+export const REPORT_ALREADY_ANNOUNCED_SQL = `SELECT EXISTS (SELECT 1 FROM content_reports me
+    JOIN content_reports ann ON ${sameSubjectSql('ann', 'me')} AND ann.id <> me.id
+    WHERE me.id = $1::uuid AND ${reportAnnouncedSql('ann')}
+      AND ${reportNoticeOwedSql('ann.id', '$1::uuid')}) AS covered`;
+
+/**
+ * The transaction-scoped advisory lock of report `$1`'s subject: announcing a report reads whether
+ * its subject is covered and then writes the notice, and two reports on one subject filed at once
+ * take this lock in turn, so the second reads the first one's notice. A no-op for an unknown id.
+ */
+export const LOCK_REPORT_SUBJECT_SQL = `SELECT pg_advisory_xact_lock(
+    hashtext('admin_report:' || "contentType" || ':' || "contentId"))
+  FROM content_reports WHERE id = $1::uuid`;
