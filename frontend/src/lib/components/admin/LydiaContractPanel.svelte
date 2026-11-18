@@ -11,6 +11,8 @@
     LYDIA_PAYMENT_KINDS,
     LydiaContractFormInvalid,
     LydiaContractRefused,
+    lydiaRefusalMessage,
+    sortLydiaBandRows,
     emptyLydiaBand,
     fetchLydiaContract,
     fetchLydiaContractCounter,
@@ -74,6 +76,9 @@
 
   async function save() {
     if (!form) return;
+    // Sorted first, so the row numbers an error names are the ones on screen (Enter in a field
+    // submits without a blur).
+    sortBands();
     saving = true;
     saveError = '';
     saved = false;
@@ -83,7 +88,7 @@
       await loadCounter();
     } catch (e) {
       if (e instanceof LydiaContractFormInvalid || e instanceof LydiaContractRefused) {
-        saveError = m.admin_lydia_invalid({ field: e.field ?? '-' });
+        saveError = lydiaRefusalMessage(e.field, e.reason);
       } else {
         Log.w('admin.lydia', 'the contract could not be saved', e);
         saveError = m.admin_lydia_save_failed();
@@ -91,6 +96,11 @@
     } finally {
       saving = false;
     }
+  }
+
+  /** Keeps the band rows ascending once a threshold is left, whatever order they were typed in. */
+  function sortBands() {
+    if (form) form.bands = sortLydiaBandRows(form.bands);
   }
 
   onMount(() => {
@@ -298,10 +308,23 @@
         {/each}
       </fieldset>
 
-      <fieldset class="space-y-3">
+      <fieldset
+        class="space-y-3"
+        onfocusout={(e) => {
+          // Only once focus leaves the whole list: re-sorting while another row is focused would
+          // move its data under the cursor, and under a click on a row's remove button.
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) sortBands();
+        }}
+      >
         <legend class="text-text-main text-sm font-bold">{m.admin_lydia_bands_title()}</legend>
-        {#each form.bands as band, i (i)}
-          <div class="border-cn-border space-y-2 rounded-xl border p-3">
+        <p class="text-text-muted text-xs">{m.admin_lydia_bands_hint()}</p>
+        {#each form.bands as band, i (band)}
+          <div
+            class="border-cn-border space-y-2 rounded-xl border p-3"
+            role="group"
+            aria-label={m.admin_lydia_where_band({ n: i + 1 })}
+          >
+            <p class="text-text-main text-xs font-bold">{m.admin_lydia_where_band({ n: i + 1 })}</p>
             <div class="flex items-end gap-2">
               <Input
                 class="flex-1"

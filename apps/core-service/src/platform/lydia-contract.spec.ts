@@ -136,3 +136,18 @@ describe('parisDate', () => {
     expect(parisDate(new Date('2031-03-04T23:30:00Z'))).toBe('2031-03-05');
   });
 });
+
+describe('band order refusal', () => {
+  it('carries the typed BAND_ORDER code, and a bad number does not', () => {
+    const refusal = (raw: unknown) => {
+      try {
+        parseLydiaContractTerms(raw);
+      } catch (err) {
+        return err as LydiaContractInvalid;
+      }
+      throw new Error('expected a refusal');
+    };
+    expect(refusal({ bands: [{ fromCents: 20 }, { fromCents: 10 }] }).code).toBe('BAND_ORDER');
+    expect(refusal({ bands: [{ fromCents: -1 }] }).code).toBeNull();
+  });
+});
