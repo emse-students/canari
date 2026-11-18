@@ -177,7 +177,9 @@ enum TokenRejection {
 /// the check core-service makes on its own routes - a refresh token never opens a socket.
 fn decode_access_claims(token: &str, secret: &[u8]) -> Result<Claims, TokenRejection> {
     let validation = Validation::new(Algorithm::HS256);
-    let claims = decode::<Claims>(token, &DecodingKey::from_secret(secret), &validation)
+    // jsonwebtoken 12 refuses an empty HMAC key here; `ws_handler` answers 500 before that.
+    let key = DecodingKey::from_secret(secret).map_err(TokenRejection::Invalid)?;
+    let claims = decode::<Claims>(token, &key, &validation)
         .map_err(TokenRejection::Invalid)?
         .claims;
     match claims.kind.as_deref() {
@@ -2169,7 +2171,17 @@ fn authorize_join(
         );
         return None;
     };
-    let key = DecodingKey::from_secret(state.call_room_secret.as_bytes());
+    // `require_room_secret` refused an empty secret at startup, the only key jsonwebtoken rejects.
+    let key = match DecodingKey::from_secret(state.call_room_secret.as_bytes()) {
+        Ok(key) => key,
+        Err(e) => {
+            error!(
+                "[auth] Peer {} room key unusable: {} - CALL_ROOM_SECRET was checked at startup",
+                peer_id, e
+            );
+            return None;
+        }
+    };
     let validation = Validation::new(Algorithm::HS256);
     match decode::<RoomClaims>(token, &key, &validation) {
         Ok(data) if data.claims.room_id != room_id => {
@@ -2403,11 +2415,9 @@ fn mint_resume_token(
         // A resume token only ever names a p2p seat; its mode was the room's from its first Join.
         mode: None,
     };
-    match encode(
-        &Header::new(Algorithm::HS256),
-        &claims,
-        &EncodingKey::from_secret(state.call_room_secret.as_bytes()),
-    ) {
+    match EncodingKey::from_secret(state.call_room_secret.as_bytes())
+        .and_then(|key| encode(&Header::new(Algorithm::HS256), &claims, &key))
+    {
         Ok(token) => Some(token),
         Err(e) => {
             error!(
@@ -3669,9 +3679,18 @@ mod tests {
         encode(
             &Header::new(alg),
             &claims,
-            &EncodingKey::from_secret(secret),
+            &EncodingKey::from_secret(secret).unwrap(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn an_empty_secret_accepts_nothing() {
+        let signed = user_token(None, b"test-secret", Algorithm::HS256);
+        assert!(matches!(
+            decode_access_claims(&signed, b""),
+            Err(TokenRejection::Invalid(_))
+        ));
     }
 
     #[test]
