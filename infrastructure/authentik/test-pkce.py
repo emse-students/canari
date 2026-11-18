@@ -34,6 +34,7 @@ from django.test import Client
 from authentik.core.models import User
 from authentik.providers.oauth2.models import OAuth2Provider
 from authentik.root.middleware import SessionMiddleware
+from authentik.stages.prompt.models import Prompt
 
 PROVIDER = "miconnect-canari-local"
 REDIRECT = "http://localhost:1420/auth/callback"
@@ -42,6 +43,11 @@ USERNAME = "pkce-probe"
 provider = OAuth2Provider.objects.get(name=PROVIDER)
 flow_slug = provider.authorization_flow.slug
 user, _ = User.objects.get_or_create(username=USERNAME, defaults={"name": "PKCE probe"})
+# The local client asks for the terms (50-providers.yaml, 2026-11-18): the probe has accepted the
+# CURRENT text, read from the hidden prompt that writes it, so this test is about PKCE and never stops
+# on the terms page - and never repeats the version literal check-consent-version.sh keeps in step.
+user.attributes["cgu_version"] = Prompt.objects.get(name="miconnect-consent-prompt-version").initial_value
+user.save()
 
 
 def b64url(raw):
