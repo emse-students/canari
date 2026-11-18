@@ -17,6 +17,7 @@ import {
   banMinesweeperUser,
   fetchMinesweeperBans,
   fetchMinesweeperLeaderboard,
+  fetchMinesweeperReplay,
   fetchMinesweeperStats,
   MinesweeperBannedError,
   MinesweeperUpdateRequiredError,
@@ -51,6 +52,18 @@ describe('minesweeper moderation client', () => {
       method: 'POST',
       body: JSON.stringify({ userId: 'mallory' }),
     });
+  });
+
+  it('reads a replay with GET on the score, encoded, and returns the body as sent', async () => {
+    const body = { scoreId: 'a/b', moves: [{ type: 'reveal', x: 1, y: 2, t: 0 }] };
+    apiFetch.mockResolvedValue(ok(body));
+    await expect(fetchMinesweeperReplay('a/b')).resolves.toEqual(body);
+    expect(apiFetch).toHaveBeenCalledWith('/api/minesweeper/scores/a%2Fb/replay');
+  });
+
+  it('makes a refused replay an error, never an empty game', async () => {
+    apiFetch.mockResolvedValue(refused(404));
+    await expect(fetchMinesweeperReplay('s1')).rejects.toMatchObject({ status: 404 });
   });
 
   it('encodes an id that is not path-safe instead of splicing it in', async () => {

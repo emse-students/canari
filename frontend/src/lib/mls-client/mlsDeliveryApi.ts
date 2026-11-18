@@ -26,6 +26,7 @@ import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { isTransportFailure, TransportFailureError } from '$lib/utils/transportFailure';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { ApiRefusalError, responseOrigin, type ResponseOrigin } from '$lib/utils/apiRefusal';
+import { noteServerTime } from '$lib/utils/chat/serverClock';
 import {
   assertAnsweredByApi,
   isAwaitingAdmissionBody,
@@ -1044,6 +1045,16 @@ async function deliveryRefusedRenewed(
 ): Promise<DeliveryRefusedRenewedTokenError> {
   const code = answer instanceof Response ? (await refusalFromResponse(answer, where)).code : null;
   return new DeliveryRefusedRenewedTokenError(where, code);
+}
+
+/**
+ * The server's clock when it answered (ms), from the HTTP `Date` header, or `undefined` when the
+ * header is absent or unreadable (a cross-origin read the service did not expose it to). To the
+ * second, which is all a bound counted in hours needs.
+ */
+export function serverDateOf(res: Pick<Response, 'headers'>): number | undefined {
+  const at = Date.parse(res.headers.get('date') ?? '');
+  return Number.isFinite(at) && at > 0 ? at : undefined;
 }
 
 export type MlsDeliveryApiOptions = {
@@ -2230,14 +2241,17 @@ export class MlsDeliveryApi {
     }
   }
 
-  /** Creates a new group row on the delivery service and returns the assigned `groupId`. */
-  async createRemoteGroup(name: string, isGroup: boolean): Promise<string> {
+  /**
+   * Creates a new group row on the delivery service and returns the assigned `groupId`. A `null`
+   * name (an unnamed group) sends no `name` at all, and the row's column stays NULL.
+   */
+  async createRemoteGroup(name: string | null, isGroup: boolean): Promise<string> {
     try {
       const res = await this.f(`${this.historyUrl}/api/mls/groups`, {
         method: 'POST',
         headers: await this.auth({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
-          name,
+          ...(name !== null ? { name } : {}),
           createdBy: this.userId,
           isGroup,
           creatorDeviceId: this.deviceId,
@@ -3026,12 +3040,19 @@ export class MlsDeliveryApi {
    * public readers ({@link getGroupMeta}, {@link getGroupServerStatus}) parse it differently but ask
    * the same question, and each used to send its own request (14 calls for 7 groups, HAR 2026-10-05).
    */
-  private readGroupRow(
-    groupId: string
-  ): Promise<{ ok: boolean; status: number; text: string; fromApi: boolean }> {
+  private readGroupRow(groupId: string): Promise<{
+    ok: boolean;
+    status: number;
+    text: string;
+    fromApi: boolean;
+    serverNow: number | undefined;
+  }> {
     return this.joinInFlight(`group:${groupId}`, async () => {
+      // `no-store`: the answer's `Date` is the server's clock NOW (`GroupMeta.serverNow`), which a
+      // stored answer would not be.
       const res = await this.f(`${this.historyUrl}/api/mls/groups/${encodeURIComponent(groupId)}`, {
         headers: await this.auth(),
+        cache: 'no-store',
       });
       return {
         ok: res.ok,
@@ -3039,6 +3060,7 @@ export class MlsDeliveryApi {
         text: res.ok ? await res.text() : '',
         // WHO ANSWERED, read from the head (`responseOrigin`): a portal's page is not a group row.
         fromApi: responseOrigin(res) === 'gateway',
+        serverNow: serverDateOf(res),
       };
     });
   }
@@ -3054,6 +3076,11 @@ export class MlsDeliveryApi {
       if (!res.ok) {
         throw await refusalFromResponse(res, 'getUserGroups failed');
       }
+      // THE LIST'S `Date` IS A SERVER TIME AFTER EVERY NAME IT RETURNS was stated: a row named from
+      // it shows a name whose frame was stamped no later than this answer. Noted (serverClock.ts),
+      // it is what a rename made over such an undated name dates its base by (`PendingRename
+      // .serverSeenAt`) - only from the API's own answer, never a portal's.
+      if (responseOrigin(res) === 'gateway') noteServerTime(userId, serverDateOf(res));
       return (await res.json()) as UserGroupRow[];
     });
   }
@@ -3073,7 +3100,7 @@ export class MlsDeliveryApi {
    *    conversation locally (banner + manual deletion).
    */
   async getGroupServerStatus(groupId: string): Promise<'absent' | 'error' | GroupMeta> {
-    let res: { ok: boolean; status: number; text: string; fromApi: boolean };
+    let res: Awaited<ReturnType<MlsDeliveryApi['readGroupRow']>>;
     try {
       res = await this.readGroupRow(groupId);
     } catch {
@@ -3141,6 +3168,8 @@ export class MlsDeliveryApi {
           ? (g as { isGroup: boolean }).isGroup
           : undefined,
       deletedAt: (g as { deletedAt?: string | null }).deletedAt ?? null,
+      // The server's clock, from its own answer (`fromApi` is established above).
+      ...(res.serverNow !== undefined ? { serverNow: res.serverNow } : {}),
       // CARRIED, and they were not. `GroupMeta` has documented these as "the discriminator a
       // destructive sweep needs" since WP-22, `decideAbsentLocalGroupFate` reads them, and this
       // mapper dropped them on the floor - so the only thing that ever kept a distribution group
@@ -3241,6 +3270,8 @@ export class MlsDeliveryApi {
             ? (g as { isGroup: boolean }).isGroup
             : undefined,
         deletedAt: (g as { deletedAt?: string | null }).deletedAt ?? null,
+        // The server's clock only from the server's own answer: a portal's `Date` is the portal's.
+        ...(res.fromApi && res.serverNow !== undefined ? { serverNow: res.serverNow } : {}),
         // THE WELCOME HANDLER READS THESE since channel-encryption section 20 made an admitter
         // Welcome a newcomer into a key group: without them it cannot tell a seed carrier from a
         // conversation and builds a sidebar row for it. Same mapping as `getGroupServerStatus`.
@@ -3415,6 +3446,20 @@ export class MlsDeliveryApi {
         { method: 'DELETE', headers: await this.auth() }
       );
       if (!res.ok) {
+        // The server refuses, as a typed answer, to ban the device the calling session is bound to
+        // (`OWN_DEVICE`): classified here, at the throw, so the panel never reads it as a retry.
+        if (res.status === 409) {
+          const body = (await res.json().catch(() => null)) as { code?: unknown } | null;
+          if (body?.code === 'OWN_DEVICE') {
+            console.warn(`[deleteDevice] refused: ${deviceId} is this session's own device`);
+            return {
+              status: 'own_device',
+              groupsCleaned: 0,
+              keyPackagesDeleted: 0,
+              oneTimeKeyPackagesDeleted: 0,
+            };
+          }
+        }
         console.error(`deleteDevice failed: ${res.status}`);
         return {
           status: 'error',

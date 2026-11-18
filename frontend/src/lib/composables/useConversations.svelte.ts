@@ -30,9 +30,11 @@ import {
   chat_group_remove_member_confirm,
   chat_system_removed_from_group,
   chat_unopenable_start_again_failed,
-  common_remove_label,
+  group_rename_failed,
+  group_rename_failed_clock,
+  group_rename_pending,
 } from '$lib/paraglide/messages';
-import { showConfirm } from '$lib/stores/confirm.svelte';
+import { confirmMemberRemoval } from '$lib/utils/users/memberRemovalConfirm';
 import { showToast } from '$lib/stores/toast.svelte';
 import { withMlsBulkIngest } from '$lib/mls-client/mlsBulkIngest';
 import { publishConversationRead } from '$lib/mls-client/tabMessageSync';
@@ -46,6 +48,12 @@ import { salonKeysNow } from '$lib/utils/graine/salonReadGate';
 import { watchSalonRemovals } from '$lib/utils/chat/salonRemovals';
 import type { ChannelPollMeta } from '$lib/services/ChannelService';
 import { applyChannelReactionFrame } from '$lib/stores/reactionStore.svelte';
+import {
+  GROUP_NAME_SKIP_TEXT,
+  GroupRenameRefusedError,
+  ownRenameOutcome,
+  pendingRenameOutcome,
+} from '$lib/utils/chat/groupName';
 import {
   fetchGroupRoster,
   fetchUniqueGroupMembers,
@@ -267,8 +275,6 @@ export function useConversations() {
   let sendError = $state('');
 
   // ── Input state ───────────────────────────────────────────────────────────
-  let newContactInput = $state('');
-  let newGroupInput = $state('');
   let newChannelInput = $state('');
   let chatContainer = $state<HTMLElement | undefined>(undefined);
 
@@ -2588,7 +2594,52 @@ export function useConversations() {
   /** Invites one or more users (by ID) to the currently selected group, then refreshes the member list. No-op for DMs or channels. */
   async function inviteMembersToCurrentGroup(memberIds: string[], ctx: ConversationContext) {
     if (!selectedContact) return;
-    const convo = conversations.get(selectedContact);
+    await inviteMembersToGroupAt(selectedContact, memberIds, ctx);
+  }
+
+  /**
+   * Creates a group of `memberIds` from the "Nouvelle discussion" panel - named `nameRaw`, or
+   * UNNAMED when it is blank (owner, 2026-11-17: the members' first names are then drawn on every
+   * device, and nothing is stored) - and invites them into it.
+   *
+   * Two commits, in the order every creation already takes: the creation adds this account's own
+   * devices, then the invitation adds the people chosen. The invitation's outcome is told by
+   * `inviteMembersToGroupAt` like any other (`reportBulkAdditionOutcome`), so a person it could not
+   * reach is named, and the group the creator now holds can be completed from its panel. Addressed
+   * by the KEY the creation answered, never by whatever happens to be selected by then.
+   */
+  async function createGroupWithMembers(
+    nameRaw: string,
+    memberIds: string[],
+    ctx: ConversationContext
+  ): Promise<ConversationOutcome> {
+    const outcome = await createNewGroup(nameRaw, ctx);
+    if (!outcome.ok || outcome.key === null) return outcome;
+    ctx.log(
+      `[GROUP] created ${nameRaw.trim() ? 'a named' : 'an unnamed'} group; inviting the ${memberIds.length} person(s) chosen`
+    );
+    try {
+      await inviteMembersToGroupAt(outcome.key, memberIds, ctx);
+    } catch (e) {
+      // THE GROUP EXISTS: an invitation that threw must not leave the panel open over it (a retry
+      // would create a second group) nor an unhandled rejection with no line. The panel closes on
+      // the group, which can be completed from its own member list; the cause is the line.
+      ctx.log(`[GROUP] the invitation into the new group threw: ${String(e).slice(0, 240)}`);
+      console.error(
+        `[GROUP] the group was created but inviting the chosen people threw - it can be completed from its member list`,
+        e
+      );
+    }
+    return outcome;
+  }
+
+  /** Invites one or more users (by ID) to the group stored at `key`, then refreshes the member list. No-op for DMs or channels. */
+  async function inviteMembersToGroupAt(
+    key: string,
+    memberIds: string[],
+    ctx: ConversationContext
+  ) {
+    const convo = conversations.get(key);
     if (!convo) return;
     if ((convo.conversationType ?? 'group') !== 'group') return; // DMs and channels cannot be invaded
     const normalized = [
@@ -2611,7 +2662,7 @@ export function useConversations() {
           reportDelegationRefusal(answer.reason);
           return;
         }
-        void reportBulkAdditionOutcome(answer.value).catch((e: unknown) =>
+        void reportBulkAdditionOutcome(answer.value, normalized).catch((e: unknown) =>
           console.warn(
             `[GROUP] the outcome of an invitation could not be told: ${String(e).slice(0, 120)}`
           )
@@ -2633,7 +2684,7 @@ export function useConversations() {
       });
       // NEVER A SILENT REFUSAL, NOR A SILENT PARTIAL ADD: the member is the only one who can retry an
       // invitation, for everybody or for the people it left out.
-      void reportBulkAdditionOutcome(outcome).catch((e: unknown) =>
+      void reportBulkAdditionOutcome(outcome, normalized).catch((e: unknown) =>
         console.warn(
           `[GROUP] the outcome of an invitation could not be told: ${String(e).slice(0, 120)}`
         )
@@ -2786,7 +2837,13 @@ export function useConversations() {
     if (!convo) return;
     if ((convo.conversationType ?? 'group') !== 'group') return; // only named groups can be renamed
     try {
-      await renameGroupAndBroadcast({
+      // What the row held when the rename was made over it - what the rename's unfinished business
+      // is compared with later (`groupName.ts`, `RenameBase`).
+      const over = {
+        name: convo.name,
+        ...(convo.nameAt !== undefined ? { at: convo.nameAt } : {}),
+      };
+      const result = await renameGroupAndBroadcast({
         mlsService: ctx.ensureMls(),
         groupId: convo.id,
         newName: name,
@@ -2794,14 +2851,51 @@ export function useConversations() {
         deviceKeyB64: ctx.deviceKeyB64,
         ownNotice: { contactName: key, addMessageToChat: ctx.addMessageToChat },
       });
-      // RE-READ AFTER THE AWAIT, AND PATCH THE NAME ONLY. The send wrote our own notice into this
-      // conversation meanwhile (`sendVisibleNotice`); writing back the snapshot taken before the
-      // await erased it from this device's screen - the one device that had never drawn it.
-      patchConversation(key, { name });
-      await saveConversation(key, ctx);
+      // RE-READ AFTER THE AWAIT. The send wrote our own notice into this conversation meanwhile
+      // (`sendVisibleNotice`), and a peer's rename may have landed too: writing back the snapshot
+      // taken before the await erased the first, and writing the name blindly overwrote the second.
+      const current = conversations.get(key);
+      if (current) {
+        const outcome =
+          'unanswered' in result
+            ? pendingRenameOutcome(current, { name, ...result.unanswered, over })
+            : ownRenameOutcome(
+                current,
+                name,
+                result.delivered.nameAt,
+                result.delivered.serverCopyOwed,
+                over
+              );
+        if ('row' in outcome) {
+          conversations.set(key, outcome.row);
+          await saveConversation(key, ctx);
+        } else {
+          ctx.log(
+            `[GROUP_NAME] own rename of ${key.slice(0, 8)}… not written over the row: ${GROUP_NAME_SKIP_TEXT[outcome.skipped]}`
+          );
+        }
+      }
+      if ('unanswered' in result) {
+        // NO ANSWER IS NOT A FAILURE: the members may already hold the name. The person who typed
+        // it is told it is on its way, and the next connection re-sends the same frame.
+        showToast(group_rename_pending(), 'info');
+        ctx.log(
+          `[GROUP_NAME] rename of ${key.slice(0, 8)}… pending - re-sent at the next connection`
+        );
+        return;
+      }
       ctx.log(`Group ${key} renamed`);
     } catch (e) {
-      ctx.log(`Erreur renommage: ${String(e)}`);
+      // The server refused the frame, or no member will take it, so nothing was renamed anywhere
+      // (`renameGroupAndBroadcast`): the person who typed the name is told, the panel having closed
+      // already - and told to check the clock when that is what refused it (classified at the throw).
+      ctx.log(`[GROUP_NAME] rename of ${key.slice(0, 8)}… failed: ${String(e).slice(0, 120)}`);
+      showToast(
+        e instanceof GroupRenameRefusedError && e.refusal === 'server-time-out-of-bound'
+          ? group_rename_failed_clock()
+          : group_rename_failed(),
+        'error'
+      );
     }
   }
 
@@ -2921,8 +3015,7 @@ export function useConversations() {
         showToast(chat_unopenable_start_again_failed(), 'error');
         return;
       }
-      // `createNewGroup` selected the new group, so the invitation goes to it.
-      if (people.length > 0) await inviteMembersToCurrentGroup(people, ctx);
+      if (people.length > 0) await inviteMembersToGroupAt(outcome.key, people, ctx);
     } catch (e) {
       ctx.log(`[NO_HOLDER] start again failed: ${String(e)}`);
       showToast(chat_unopenable_start_again_failed(), 'error');
@@ -2990,11 +3083,17 @@ export function useConversations() {
     if (!key) return;
     const convo = conversations.get(key);
     if (!convo) return;
-    const confirmed = await showConfirm(chat_group_remove_member_confirm(), {
-      danger: true,
-      confirmLabel: common_remove_label(),
-    });
-    if (!confirmed) return;
+    // The question NAMES the member, as their row draws them (the group's nickname): `memberId` is
+    // the identity the tapped row carried, and the person confirms whom, not "this member".
+    const confirmed = await confirmMemberRemoval(
+      memberId,
+      chat_group_remove_member_confirm,
+      convo.id
+    );
+    if (!confirmed) {
+      ctx.log(`[REMOVE_MEMBER] ${memberId.slice(0, 8)} removal declined at its confirmation`);
+      return;
+    }
     // THE ROSTER IS REREAD WHENEVER THE SERVER RECORDED THE REMOVAL - on success, and when only its
     // commit is owed (`MemberRemovalNotCommittedError`): the person is out either way. Outside the
     // `try`, so a failed reread is never reported as a failed removal.
@@ -3147,20 +3246,6 @@ export function useConversations() {
     set sendError(v: string) {
       sendError = v;
     },
-    /** Controlled value of the "new direct conversation" input field. */
-    get newContactInput() {
-      return newContactInput;
-    },
-    set newContactInput(v: string) {
-      newContactInput = v;
-    },
-    /** Controlled value of the "new group" input field. */
-    get newGroupInput() {
-      return newGroupInput;
-    },
-    set newGroupInput(v: string) {
-      newGroupInput = v;
-    },
     /** Controlled value of the "new channel" input field. */
     get newChannelInput() {
       return newChannelInput;
@@ -3221,6 +3306,7 @@ export function useConversations() {
     createNewGroup,
     /** Invites one or more users to the currently selected group. */
     inviteMembersToCurrentGroup,
+    createGroupWithMembers,
     approveJoinRequest,
     declineJoinRequest,
     /** Opens or creates a direct 1-to-1 conversation with the given user. */

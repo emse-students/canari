@@ -1841,6 +1841,42 @@ describe('useChannelWorkspaces - hydrateJoinedCommunity', () => {
     );
     expect(listUserWorkspaces).toHaveBeenCalledTimes(2);
   });
+
+  it('draws a community joined elsewhere while the socket was down, when the stream returns', async () => {
+    const api = useChannelWorkspaces();
+    const ctx = makeContext();
+    expect(api.channelWorkspaces).toHaveLength(0);
+
+    await api.resyncAfterLiveStreamGap(ctx);
+
+    expect(api.channelWorkspaces.find((w) => w.id === 'unr-11')?.channels).toHaveLength(3);
+    expect(listUserWorkspaces).toHaveBeenCalledTimes(1);
+    expect(ctx.log).toHaveBeenCalledWith(expect.stringContaining('live stream back after a gap'));
+  });
+
+  it('owes the return one more listing when one was already in flight', async () => {
+    let releaseFirst: (value: WorkspaceDto[]) => void = () => {};
+    listUserWorkspaces.mockReset();
+    listUserWorkspaces.mockImplementationOnce(
+      () => new Promise<WorkspaceDto[]>((resolve) => (releaseFirst = resolve))
+    );
+    listUserWorkspaces.mockResolvedValue([makeWorkspaceDto('ws-new', 'UNR-11', 'unr-11')]);
+    const api = useChannelWorkspaces();
+    const ctx = makeContext();
+
+    resetSalonSendGate();
+    const startup = api.loadChannelWorkspacesFromBackend(ctx);
+    await tick();
+    await api.resyncAfterLiveStreamGap(ctx);
+    expect(listUserWorkspaces).toHaveBeenCalledTimes(1);
+
+    releaseFirst([]);
+    await startup;
+    await vi.waitFor(() =>
+      expect(api.channelWorkspaces.find((w) => w.id === 'unr-11')?.channels).toHaveLength(3)
+    );
+    expect(listUserWorkspaces).toHaveBeenCalledTimes(2);
+  });
 });
 
 /**

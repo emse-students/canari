@@ -1,6 +1,8 @@
 ## P2 - the group panel lists 22 roster seats that hold no device (18 are departed people, 4 are a join that never completed; counted on production 2026-11-14)
 
-target: 1.7.0
+target: 1.7.1
+
+_2026-11-17: moved to 1.7.1 by the owner's 2026-11-17 scope cut ([decisions](owner-decisions-of-2026-11-17.md))._
 
 **What is built:** the pre-038 link seats the group panel would list as members (found 2026-10-25; the group panel reads `user-members` and drops only `awaitingAdmission` seats)
 
@@ -26,3 +28,23 @@ a join that never completed. Dev has 0 of 14. The repair, if any (drop the 18
 roster seats, or leave them), is the owner's decision; nothing was written.
 
 **Triage 2026-11-14 - the reading is DONE, the finding is the entry.** The count the reading asked for read 22, not 0, and the split above shows the repair the old text named (a backfill of devices) is wrong for both populations. What is left is a decision and a fix, not a measurement: (1) the 18 seats of people with no device anywhere are departed seats the group panel (`user-members`, which drops only `awaitingAdmission`) still lists as members - drop them from the panel's list, or reap the seats, owner's call on which (nothing was written); (2) the 4 pending rows from 2026-10-14 are a join that never completed - find why before touching them. Read-only first step: the same split on every estate, then the panel's own filter.
+
+**The owner's decision and what was done (2026-11-15 to 2026-11-17).** The owner (asked twice; the
+first answer had not been written here): *delete the departed seats in production - "au pire ils
+seront reinvites"*; a departed seat in a 1:1 takes its conversation with it; the 4 pending rows are
+explained before anything touches them. Carried out:
+
+- **2026-11-15:** 7 departed seats deleted.
+- **2026-11-17:** of the 18, only 8 departed seats were left - the 7 above, and 2 people had come back
+  (a device again). 6 of them were 1:1 conversations and 1 an empty named group: all 7 tombstoned
+  through the product's own tombstone path (the MLS-safe path a deletion by a member takes), rehearsed
+  on dev first, the rows backed up and the ids held in an allowlist, one transaction. The last one, a
+  1:1 whose other seat is a pending further device, was tombstoned the same day by the owner's own
+  session. **Departed seats left: 0.** The backups and the ids are in the private operations folder,
+  never here.
+
+**What is left: the panel, not the data.** 6 seats remain that hold no device without being
+departed people (a user with a device elsewhere, or a pending join). The proposal, open: the group
+panel shows such a member muted with "aucun appareil actif" (a `hasDevice` flag on the
+`user-members` answer), and nothing reaps a seat automatically - a person with no device in a
+conversation may still come back to it. The 4 pending rows of 2026-10-14 are still to be explained.

@@ -15,7 +15,8 @@ vi.mock('$lib/stores/user', () => ({
   fetchUserProfile: (id: string) => fetchUserProfile(id),
 }));
 
-const { membersByFamilyName, joiningRows } = await import('./memberOrder.svelte');
+const { membersByFamilyName, joiningRows, removeControlDisabled } =
+  await import('./memberOrder.svelte');
 
 /** A profile promise the test resolves or rejects when it chooses. */
 function deferred() {
@@ -185,5 +186,25 @@ describe('a member added while the panel is open', () => {
 
   it('lists an id once, whatever its case', () => {
     expect(joiningRows(['bob'], ['Bob'], ['abel'])).toEqual(['bob']);
+  });
+});
+
+/**
+ * The remove control of BOTH name-ordered panels (`ChatGroupPanel`, `SidebarCommunityAdminPanel`):
+ * dead while a member is still to be inserted above or below it, or while its own removal runs.
+ */
+describe('removeControlDisabled', () => {
+  it('is dead while any lookup is pending, whatever this row is doing', () => {
+    expect(removeControlDisabled(false, 1)).toBe(true);
+    expect(removeControlDisabled(undefined, 3)).toBe(true);
+  });
+
+  it("is dead while this row's own removal is in flight", () => {
+    expect(removeControlDisabled(true, 0)).toBe(true);
+  });
+
+  it('is live once the order is final and nothing is being removed', () => {
+    expect(removeControlDisabled(false, 0)).toBe(false);
+    expect(removeControlDisabled(undefined, 0)).toBe(false);
   });
 });

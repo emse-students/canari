@@ -27,6 +27,11 @@ import {
   WithheldUnsupportedError,
 } from '$lib/mls-client/mlsDeliveryApi';
 import type { FrameDelivery } from '$lib/mls-client/frameDelivery';
+import { historySealAad, mintHistoryAnswerKey, openHistoryContent } from '$lib/crypto/historySeal';
+import { digestIdentity } from './historyDigestRendezvous';
+
+/** This device as the seal binds an answerer: its user and its device (`digestIdentity`). */
+const ANSWERER = digestIdentity('alice-answering', 'alice-answering-device');
 
 /**
  * A REMOVE HOLDS AGAINST A LATER RE-ADD (user, 2026-10-14).
@@ -141,7 +146,9 @@ describe('a Remove holds against a later re-add - every history sender withholds
   beforeEach(() => localStorage.clear());
   afterEach(() => localStorage.clear());
 
-  it('the FULL bundle to the re-added member carries what preceded and followed, never the window', async () => {
+  it('the JOIN PUSH to the re-added member carries no message at all - the window cannot leak through it', async () => {
+    // The push answers no ask, so it cannot be sealed: since 2026-11-17 it carries the state only,
+    // and the re-added member's own (sealed) reconciliation brings what preceded and followed.
     const mlsService = stubWithBobsWindow();
 
     await sendFullHistoryBundle(GROUP, {
@@ -152,7 +159,10 @@ describe('a Remove holds against a later re-add - every history sender withholds
       to: BOB_NEW_DEVICE,
     });
 
-    expect(sentIds(mlsService)).toEqual(EXPECTED_KEPT);
+    expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
+    expect(sentIds(mlsService)).toEqual([]);
+    expect(deliveries(mlsService)[0].recipients).toEqual([BOB_NEW_DEVICE]);
+    expect(sentPayloads(mlsService)[0]).toMatchObject({ join: true, last: true });
   });
 
   it('the DIFF answer withholds the window even when Bob names the ids explicitly', async () => {
@@ -202,6 +212,122 @@ describe('a Remove holds against a later re-add - every history sender withholds
     expect(error).toHaveBeenCalledWith(
       expect.stringContaining('predates addressed history answers')
     );
+    error.mockRestore();
+  });
+
+  /**
+   * Option B (history-answer-addressing.md, "Sealing the answer to the asker"): an ask that carried
+   * a key is answered with its CONTENT sealed to it - the routing stays in clear, and the content
+   * opens only with the asker's secret, bound to this answerer (its user and device).
+   */
+  it('an addressed answer to a keyed ask is SEALED to it, and opens to what the reader may read', async () => {
+    const mlsService = stubWithBobsWindow();
+    const engine = mlsService.historySealEngine();
+    const key = await mintHistoryAnswerKey(engine);
+
+    await sendHistoryBundleForIds(
+      GROUP,
+      STORE.map((m) => m.id),
+      { storage: storageWith(STORE), deviceKeyB64: 'k', mlsService, log: vi.fn() },
+      {
+        to: BOB_NEW_DEVICE,
+        since: 0,
+        requestId: ASK,
+        seal: { answerKey: key.answerKey, answerer: ANSWERER },
+      }
+    );
+
+    const [frame] = sentPayloads(mlsService) as Array<Record<string, unknown>>;
+    expect(frame).toMatchObject({ to: BOB_NEW_DEVICE, requestId: ASK, last: true });
+    expect(frame.messages).toBeUndefined();
+    expect(typeof frame.sealed).toBe('string');
+    expect(deliveries(mlsService)).toEqual([
+      { silent: true, durable: false, recipients: [BOB_NEW_DEVICE] },
+    ]);
+    const content = await openHistoryContent(
+      engine,
+      key.secret,
+      historySealAad(GROUP, ASK, BOB_NEW_DEVICE, ANSWERER),
+      frame.sealed as string
+    );
+    expect((content.messages as Array<{ id: string }>).map((m) => m.id)).toEqual(EXPECTED_KEPT);
+  });
+
+  /**
+   * The server cannot switch the seal off (review of #3775): a keyed ask proves its asker seals, so
+   * a server saying it does not address is not taken at its word - the answer is NOTHING, never the
+   * content broadcast in clear to every member.
+   */
+  it('a keyed ask the server would have answered by BROADCAST is answered nothing, at error', async () => {
+    const mlsService = stubWithBobsWindow();
+    vi.mocked(mlsService.getAddressedAnswersSupported).mockResolvedValue(false);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const key = await mintHistoryAnswerKey(mlsService.historySealEngine());
+
+    await sendHistoryBundleForIds(
+      GROUP,
+      STORE.map((m) => m.id),
+      { storage: storageWith(STORE), deviceKeyB64: 'k', mlsService, log: vi.fn() },
+      {
+        to: ALICE,
+        since: 0,
+        requestId: ASK,
+        seal: { answerKey: key.answerKey, answerer: ANSWERER },
+      }
+    );
+
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(error.mock.calls.join(' ')).toContain('answering nothing rather than unsealed');
+    error.mockRestore();
+  });
+
+  it('a keyed RANGE ask the server would have answered by broadcast is answered nothing too', async () => {
+    const mlsService = stubWithBobsWindow();
+    vi.mocked(mlsService.getAddressedAnswersSupported).mockResolvedValue(false);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const key = await mintHistoryAnswerKey(mlsService.historySealEngine());
+
+    await sendHistoryRangeBundle(
+      GROUP,
+      { storage: storageWith(STORE), deviceKeyB64: 'k', mlsService, log: vi.fn() },
+      {
+        to: ALICE,
+        before: T_BACK + 10,
+        limit: 50,
+        requestId: ASK,
+        seal: { answerKey: key.answerKey, answerer: ANSWERER },
+      }
+    );
+
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(error.mock.calls.join(' ')).toContain('answering nothing rather than unsealed');
+    error.mockRestore();
+  });
+
+  it('an engine that cannot seal answers NOTHING - never the content in clear', async () => {
+    const mlsService = stubWithBobsWindow();
+    const key = await mintHistoryAnswerKey(mlsService.historySealEngine());
+    vi.mocked(mlsService.historySealEngine).mockReturnValue({
+      newAnswerKeyPair: vi.fn(),
+      seal: vi.fn().mockRejectedValue('malformed-public-key'),
+      open: vi.fn(),
+    });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await sendHistoryBundleForIds(
+      GROUP,
+      STORE.map((m) => m.id),
+      { storage: storageWith(STORE), deviceKeyB64: 'k', mlsService, log: vi.fn() },
+      {
+        to: ALICE,
+        since: 0,
+        requestId: ASK,
+        seal: { answerKey: key.answerKey, answerer: ANSWERER },
+      }
+    );
+
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(error.mock.calls.join(' ')).toContain('Could not seal chunk 1/1');
     error.mockRestore();
   });
 
@@ -300,7 +426,7 @@ describe('a Remove holds against a later re-add - every history sender withholds
     expect(mlsService.sendMessage).not.toHaveBeenCalled();
   });
 
-  it('a FULL bundle whose every message is withheld still sends the state frame', async () => {
+  it('the join push says it carries the state only, and where the messages come from', async () => {
     const mlsService = stubWithBobsWindow();
     const log = vi.fn();
 
@@ -314,21 +440,23 @@ describe('a Remove holds against a later re-add - every history sender withholds
 
     expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
     expect(sentIds(mlsService)).toEqual([]);
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('every message withheld'));
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining("the messages come by the newcomer's own sealed reconciliation")
+    );
   });
 
   it('a group where nobody was ever out answers EXACTLY as before - a new member and a new device of a continuous member included', async () => {
     const mlsService = createMlsServiceStub(); // no window for anyone
+    const all = [...STORE, UNDATED, UNDATABLE];
 
-    await sendFullHistoryBundle(GROUP, {
-      storage: storageWith([...STORE, UNDATED, UNDATABLE]),
-      deviceKeyB64: 'k',
-      mlsService,
-      log: vi.fn(),
-      to: BOB_NEW_DEVICE,
-    });
+    await sendHistoryBundleForIds(
+      GROUP,
+      all.map((m) => m.id),
+      { storage: storageWith(all), deviceKeyB64: 'k', mlsService, log: vi.fn() },
+      { to: BOB_NEW_DEVICE, since: 0, requestId: ASK }
+    );
 
-    expect(sentIds(mlsService)).toEqual([...STORE, UNDATED, UNDATABLE].map((m) => m.id));
+    expect(sentIds(mlsService)).toEqual(all.map((m) => m.id));
   });
 });
 
@@ -361,7 +489,7 @@ describe('every answer withholds the span before ITS READER arrived', () => {
   beforeEach(() => localStorage.clear());
   afterEach(() => localStorage.clear());
 
-  it('a newcomer is pushed only what was sent from their arrival on', async () => {
+  it('a newcomer is pushed the state alone, addressed to it - no message, from before its arrival or after', async () => {
     const mlsService = lateJoinerGroup();
 
     await sendFullHistoryBundle(GROUP, {
@@ -372,8 +500,7 @@ describe('every answer withholds the span before ITS READER arrived', () => {
       to: CAROL_DEVICE,
     });
 
-    // T_CAROL falls between DURING and AT_READD: the span ends exclusive, so `at-readd` goes.
-    expect(sentIds(mlsService)).toEqual(['at-readd', 'after']);
+    expect(sentIds(mlsService)).toEqual([]);
     expect(deliveries(mlsService)[0].recipients).toEqual([CAROL_DEVICE]);
     expect(sentPayloads(mlsService)[0]).toMatchObject({ join: true, last: true });
   });
@@ -381,13 +508,12 @@ describe('every answer withholds the span before ITS READER arrived', () => {
   it("a founding member's NEW device restores everything, ADDRESSED - the newcomer never receives it", async () => {
     const mlsService = lateJoinerGroup();
 
-    await sendFullHistoryBundle(GROUP, {
-      storage: storageWith(STORE),
-      deviceKeyB64: 'k',
-      mlsService,
-      log: vi.fn(),
-      to: ALICE_NEW_DEVICE,
-    });
+    await sendHistoryBundleForIds(
+      GROUP,
+      STORE.map((m) => m.id),
+      { storage: storageWith(STORE), deviceKeyB64: 'k', mlsService, log: vi.fn() },
+      { to: ALICE_NEW_DEVICE, since: 0, requestId: ASK }
+    );
 
     expect(sentIds(mlsService)).toEqual(STORE.map((m) => m.id));
     expect(deliveries(mlsService).every((d) => d.recipients?.[0] === ALICE_NEW_DEVICE)).toBe(true);
@@ -412,13 +538,12 @@ describe('every answer withholds the span before ITS READER arrived', () => {
     // name arrived before us, so our own span covers theirs.
     const mlsService = lateJoinerGroup();
 
-    await sendFullHistoryBundle(GROUP, {
-      storage: storageWith(STORE),
-      deviceKeyB64: 'k',
-      mlsService,
-      log: vi.fn(),
-      to: 'user-x:device-x',
-    });
+    await sendHistoryBundleForIds(
+      GROUP,
+      STORE.map((m) => m.id),
+      { storage: storageWith(STORE), deviceKeyB64: 'k', mlsService, log: vi.fn() },
+      { to: 'user-x:device-x', since: 0, requestId: ASK }
+    );
 
     expect(sentIds(mlsService)).toEqual(['at-readd', 'after']);
   });
@@ -440,7 +565,7 @@ describe('every answer withholds the span before ITS READER arrived', () => {
     expect(log).toHaveBeenCalledWith(expect.stringContaining('counts neither'));
   });
 
-  it('a server that predates addressed answers AND `withheld` keeps the push as it was - the union - and accuses once per session', async () => {
+  it('a server that predates addressed answers AND `withheld` gets a broadcast push with no message, and is accused once per session', async () => {
     const mlsService = lateJoinerGroup();
     vi.mocked(mlsService.getAddressedAnswersSupported).mockResolvedValue(false);
     vi.mocked(mlsService.getGroupExclusions).mockResolvedValue(
@@ -460,14 +585,9 @@ describe('every answer withholds the span before ITS READER arrived', () => {
     await push(ALICE_NEW_DEVICE);
     await push(CAROL_DEVICE);
 
-    // Exactly what the union alone keeps, for a new device and for a newcomer alike, broadcast.
-    expect(sentIds(mlsService)).toEqual([...EXPECTED_KEPT, ...EXPECTED_KEPT]);
+    // The state alone, for a new device and for a newcomer alike, broadcast: no message rides it.
+    expect(sentIds(mlsService)).toEqual([]);
     expect(deliveries(mlsService).every((d) => d.recipients === undefined)).toBe(true);
-    const accusations = error.mock.calls.filter(([l]) =>
-      String(l).includes('predates the withheld')
-    );
-    // Two pushes, one line: the first accusation in this module's session.
-    expect(accusations).toHaveLength(1);
     // The addressing accusation was already made by the first legacy answer of this module's
     // session (above), so these two pushes add none.
     expect(
@@ -504,16 +624,12 @@ describe('a long answer reads the windows again for every chunk', () => {
       .mockResolvedValueOnce(new Map([[BOB, []]]))
       .mockResolvedValue(new Map([[BOB, [{ from: T_OUT, until: T_BACK }]]]));
 
-    await sendFullHistoryBundle(
+    const held = [BEFORE, AT_REMOVAL, DURING, AFTER];
+    await sendHistoryBundleForIds(
       GROUP,
-      {
-        storage: storageWith([BEFORE, AT_REMOVAL, DURING, AFTER]),
-        deviceKeyB64: 'k',
-        mlsService,
-        log: vi.fn(),
-        to: BOB_NEW_DEVICE,
-      },
-      2
+      held.map((m) => m.id),
+      { storage: storageWith(held), deviceKeyB64: 'k', mlsService, log: vi.fn() },
+      { to: BOB_NEW_DEVICE, since: 0, requestId: ASK, chunkSize: 2 }
     );
 
     // Read once per chunk - a single read at the start would have sent `during` in chunk two.

@@ -16,6 +16,7 @@
   import { isAtBottom, onLinesAdded } from '$lib/live/chatScroll';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import type { LiveChatLine, LiveChatSendFailure } from '$lib/live/liveChat';
+  import { LIVE_CHAT_V1_MAX_CHARS } from '$lib/live/liveChatCrypto';
   import { m } from '$lib/paraglide/messages';
   import MentionComposerInput from '$lib/components/shared/MentionComposerInput.svelte';
   import LiveChatLineText from './LiveChatLineText.svelte';
@@ -26,7 +27,7 @@
     lines: readonly LiveChatLine[];
     /** Whether the composer is shown: the key is held and the account known. */
     canWrite: boolean;
-    /** The server's longest message, or null before the limits arrived. */
+    /** The server's longest message, or null before the limits arrived (the v1 bound applies). */
     maxChars: number | null;
     /** The broadcaster or staff: every line gets a hide button. */
     canModerate?: boolean;
@@ -87,6 +88,9 @@
   let openKey = $state<string | null>(null);
 
   /** `@` suggests, first, the people the chat has shown (owner, 2026-11-09). */
+  // The composer's bound: the v1 format's until the limits arrive, so a line typed before them can
+  // never be one no viewer would draw (review of #3783).
+  const composerMax = $derived(maxChars ?? LIVE_CHAT_V1_MAX_CHARS);
   const mentionRoster = $derived(liveMentionRoster(lines, hostId));
   const audienceFilter = $derived(audienceOf ? liveAudienceFilter(audienceOf) : undefined);
 
@@ -130,7 +134,7 @@
       case 'empty':
         return m.live_chat_failed_empty();
       case 'too-long':
-        return m.live_chat_failed_too_long({ max: maxChars ?? 0 });
+        return m.live_chat_failed_too_long({ max: composerMax });
       case 'too-fast':
         return m.live_chat_failed_too_fast();
       case 'network':
@@ -247,8 +251,10 @@
               {#if hostId !== null && line.authorId === hostId.toLowerCase()}
                 <span class="live-chat-host" data-live-chat-host>{m.live_chat_host()}</span>
               {/if}
-              <bdi class="whitespace-pre-wrap" dir="auto"><LiveChatLineText text={line.text} /></bdi
-              >
+              <!-- ONE run: a live chat line is one line (the composer is single-line), so line
+                   breaks a modified client sealed collapse instead of stacking over the video
+                   (review G7, 2026-11-17). -->
+              <bdi class="whitespace-normal" dir="auto"><LiveChatLineText text={line.text} /></bdi>
               {#if line.status === 'pending'}
                 <span class="sr-only">{m.live_chat_pending()}</span>
               {/if}
@@ -373,7 +379,7 @@
         <MentionComposerInput
           bind:value={draft}
           singleLine
-          maxlength={maxChars ?? undefined}
+          maxlength={composerMax}
           placeholder={m.live_chat_placeholder()}
           {mentionRoster}
           mentionAudienceFilter={audienceFilter}

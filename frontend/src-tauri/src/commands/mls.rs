@@ -2135,6 +2135,100 @@ pub(crate) async fn graine_verify_signatures(packed_b64: String) -> Result<Vec<S
     })?
 }
 
+/// A fresh X25519 pair for ONE history ask (`mls_core::history_seal`), both halves base64.
+///
+/// Stateless, like the Graine session pair: the asking page keeps the secret beside its open ask,
+/// in memory, and nothing native holds it after the call.
+#[derive(serde::Serialize)]
+pub(crate) struct HistoryAnswerKeyPairDto {
+    secret: String,
+    public: String,
+}
+
+#[tauri::command]
+pub(crate) fn history_answer_keypair() -> Result<HistoryAnswerKeyPairDto, String> {
+    use base64::Engine;
+    log::debug!("[HISTORY_SEAL] history_answer_keypair");
+    let pair =
+        mls_core::history_seal::history_answer_keypair().map_err(|e| e.code().to_string())?;
+    let b64 = base64::engine::general_purpose::STANDARD;
+    Ok(HistoryAnswerKeyPairDto {
+        secret: b64.encode(pair.secret.as_slice()),
+        public: b64.encode(&pair.public),
+    })
+}
+
+/// Decodes one base64 argument of the history seal commands, naming the field on a contract break.
+fn history_seal_arg(field: &str, b64: &str) -> Result<Vec<u8>, String> {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD
+        .decode(b64)
+        .map_err(|e| {
+            log::error!(
+                "[HISTORY_SEAL] an argument of {} chars is not base64 - nothing sealed or opened",
+                b64.len()
+            );
+            format!("{field} is not base64: {e}")
+        })
+}
+
+/// Seals a history answer's content to the asker's key, bound to `aad`, every value base64 (a chunk
+/// is up to 200 messages: one string crosses the bridge, never a number per byte). The error is the
+/// engine's CODE (`HistorySealError::code`), which the frontend classifies on.
+///
+/// `async` + `spawn_blocking`: a chunk can be a few hundred kilobytes, which a synchronous command
+/// would seal on the main thread.
+#[tauri::command]
+pub(crate) async fn seal_history_answer(
+    public_key_b64: String,
+    aad_b64: String,
+    plaintext_b64: String,
+) -> Result<String, String> {
+    use base64::Engine;
+    let public = history_seal_arg("public key", &public_key_b64)?;
+    let aad = history_seal_arg("aad", &aad_b64)?;
+    let plaintext = history_seal_arg("plaintext", &plaintext_b64)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        mls_core::history_seal::seal_history_answer(&public, &aad, &plaintext)
+            .map(|sealed| base64::engine::general_purpose::STANDARD.encode(sealed))
+            .map_err(|e| e.code().to_string())
+    })
+    .await
+    .map_err(|e| {
+        log::error!("[HISTORY_SEAL] seal task failed: {e}");
+        e.to_string()
+    })?
+}
+
+/// Opens a sealed history answer with the ask's secret; base64 in and out like
+/// [`seal_history_answer`]. The error is the engine's CODE.
+#[tauri::command]
+pub(crate) async fn open_history_answer(
+    secret_b64: String,
+    aad_b64: String,
+    sealed_b64: String,
+) -> Result<String, String> {
+    use base64::Engine;
+    // WRAPPED BEFORE ANYTHING CAN FAIL: an argument below that is not base64 returns early, and the
+    // secret's string is then zeroized on drop rather than freed with the bytes still in it.
+    let mut secret_b64 = mls_core::history_seal::Zeroizing::new(secret_b64);
+    let aad = history_seal_arg("aad", &aad_b64)?;
+    let sealed = history_seal_arg("sealed", &sealed_b64)?;
+    // The secret is handed to mls-core still base64, its buffer MOVED out (no copy): it decodes and
+    // zeroizes both the string and the bytes (`open_history_answer_with_b64_secret`).
+    let secret_b64 = std::mem::take(&mut *secret_b64);
+    tauri::async_runtime::spawn_blocking(move || {
+        mls_core::history_seal::open_history_answer_with_b64_secret(secret_b64, &aad, &sealed)
+            .map(|plain| base64::engine::general_purpose::STANDARD.encode(plain))
+            .map_err(|e| e.code().to_string())
+    })
+    .await
+    .map_err(|e| {
+        log::error!("[HISTORY_SEAL] open task failed: {e}");
+        e.to_string()
+    })?
+}
+
 /// Signs a v2 session ENDORSEMENT with this device's MLS credential key.
 #[tauri::command]
 pub(crate) fn graine_sign_with_device_credential(

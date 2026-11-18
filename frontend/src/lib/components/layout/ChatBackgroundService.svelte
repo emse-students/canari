@@ -2,6 +2,8 @@
   import { forgetPostComposerMedia } from '$lib/posts/postComposerDraft';
   import { takeKeyGroupPushJoins } from '$lib/utils/graine/keyGroupPushJoins';
   import { noteServerTime } from '$lib/utils/chat/serverClock';
+  import { createLiveStreamGapEdge } from '$lib/utils/chat/liveStreamGapEdge';
+  import type { InboundReaction } from '$lib/utils/chat/reactionNotification';
   import { drainNseOutcomes } from '$lib/mobile/nseOutcomes';
   import { drainNativePushLog } from '$lib/mobile/nativePushLog';
   import { resolve } from '$app/paths';
@@ -26,7 +28,7 @@
   import { isBiometricPromptDue } from '$lib/services/biometricCadence';
   import {
     loadDeviceKey,
-    isDeviceKeyPersistenceEnabled,
+    pinGateStaySignedInDefault,
     setDeviceKeyPersistence,
   } from '$lib/utils/deviceKeyVault';
   import type { SessionExpiredOutcome } from '$lib/composables/session/sessionTypes';
@@ -107,9 +109,10 @@
     type WorkspacePurgeContext,
   } from '$lib/composables/useChannelWorkspaces.svelte';
   import type { MessagingContext } from '$lib/composables/useMessaging.svelte';
-  import { registerReelSendHost } from '$lib/reels/reelSendBridge';
+  import { readGroupMembersOnceReady, registerReelSendHost } from '$lib/reels/reelSendBridge';
+  import { whenMlsReady } from '$lib/composables/session/mlsReadiness';
   import { adoptOutboxPublishedUpload, endOutboxPublishWait } from '$lib/utils/chat/outbox';
-  import { MlsSessionVacantError, type BulkIngestPhase } from '$lib/mls-client';
+  import { MlsSessionVacantError } from '$lib/mls-client';
   import type { IStorage, StoredMessage } from '$lib/db';
   import { deliveryUrl } from '$lib/utils/apiUrl';
   import { firstPinSetupFromDevice } from '$lib/utils/pinFirstSetup';
@@ -479,11 +482,13 @@
   let pinStep = $state('');
   let biometricConfigured = $state(false);
   // "Stay signed in" opt-in (browser only): persists the PIN vault across browser restarts.
-  // Offered on the PIN modal; initialised from the stored preference so it reflects a prior choice.
+  // Offered on the PIN modal; initialised from the stored preference so it reflects a prior choice,
+  // and, on an install that never made one, TICKED in the app and UNTICKED on the web (owner,
+  // 2026-11-16, decisions 14 and 24; docs/wiki/sessions.md).
   // Disabled once biometrics are configured, because the saved PIN would never be used (the
   // biometric flow takes over at the next launch).
   let showStaySignedIn = $derived(!biometricConfigured);
-  let pinStaySignedIn = $state(isDeviceKeyPersistenceEnabled());
+  let pinStaySignedIn = $state(pinGateStaySignedInDefault());
 
   // Post-login biometric enrolment offer sheet (Tauri only)
   let showBiometricEnrollSheet = $state(false);
@@ -1013,6 +1018,7 @@
       playReceiveTone: globalNotifs.playReceiveTone,
       playReadTone: globalNotifs.playReadTone,
       sendSystemNotification: globalNotifs.sendSystemNotification,
+      sendReactionNotification: globalNotifs.sendReactionNotification,
       signalChannelRead: (channelId: string) => void channelService.markChannelRead(channelId),
       onChannelWriteRefused: globalChannels.handleChannelWriteRefused,
     };
@@ -1127,10 +1133,7 @@
         globalMessaging.addMessageToChat(sid, content, contactName, msgCtx(), options),
       drainOrphanMessages: (convoKey: string) =>
         globalMessaging.drainOrphanMessages(convoKey, msgCtx()),
-      beginBulkMessageIngest: (phase: BulkIngestPhase) =>
-        globalMessaging.beginBulkMessageIngest(phase),
-      endBulkMessageIngest: (phase: BulkIngestPhase) =>
-        globalMessaging.endBulkMessageIngest(msgCtx(), phase),
+      messageIngestObserver: globalMessaging.bulkIngestObserver(msgCtx),
       batchAddMessages: (
         msgs: Parameters<typeof globalMessaging.batchAddMessages>[0],
         contactName: string,
@@ -1450,6 +1453,8 @@
         if (e.conversationKey !== globalConvs.selectedContact) return;
         globalNotifs.playReadTone();
       },
+      onInboundReaction: (reaction: InboundReaction) =>
+        globalMessaging.notifyInboundReaction(reaction, msgCtx()),
       onSendError: (msg: string) => {
         globalConvs.sendError = msg;
       },
@@ -1518,13 +1523,19 @@
   // the gap itself - a pause, a drop, a reconnect - is what marks it stale. See
   // `noteLiveStreamTransition`. The first reading is a baseline, not a transition.
   let lastLiveStreamUp: boolean | null = null;
+  const liveStreamGapEdge = createLiveStreamGapEdge();
   $effect(() => {
     const up = globalSession.isWsConnected;
+    const loggedIn = globalSession.isLoggedIn;
     untrack(() => {
       const previous = lastLiveStreamUp;
       lastLiveStreamUp = up;
-      if (previous === null || previous === up || !globalSession.isLoggedIn) return;
+      // A gap loses every `channel.member.*` event by construction, so the RETURN from one re-lists
+      // the communities; the first connect of a session is not a return (`liveStreamGapEdge.ts`).
+      const isReturn = liveStreamGapEdge.observe(up, loggedIn);
+      if (previous === null || previous === up || !loggedIn) return;
       void globalConvs.noteLiveStreamTransition(up, convCtx());
+      if (isReturn) void globalChannels.resyncAfterLiveStreamGap(channelsCtx());
     });
   });
 
@@ -1576,8 +1587,17 @@
         globalSession.isLoggedIn
           ? globalMessaging.sendChatReelTakeTo(file, keys, msgCtx(), opts)
           : Promise.resolve(null),
+      sendImage: (file, keys) =>
+        globalSession.isLoggedIn
+          ? globalMessaging.sendImageTo(file, keys, msgCtx())
+          : Promise.resolve(null),
       adopt: adoptOutboxPublishedUpload,
       endWait: endOutboxPublishWait,
+      groupMembers: (ids) =>
+        readGroupMembersOnceReady(ids, {
+          whenReady: whenMlsReady,
+          readTree: (id) => globalSession.ensureMls().getGroupMemberIdentities(id),
+        }),
     });
 
     return () => {

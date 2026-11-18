@@ -1,5 +1,6 @@
 import type { IMlsService } from './IMlsService';
 import { DELIVERY } from './frameDelivery';
+import { isTransportFailure } from '$lib/utils/transportFailure';
 import { FollowerTabSendError } from './commitSubmission';
 import { promotedSinceLoad, refusesCommitsHere } from './stateAuthority';
 import { openSealedBytes, sealBytes } from '$lib/encryption';
@@ -48,8 +49,24 @@ export type FrameNotSentReason =
   | 'reload-owed'
   | HandoverUnsent;
 
-/** A frame this tab could not send itself was not sent for it either, for a typed reason. */
+/**
+ * The handover answers after which the frame's FATE IS UNKNOWN - never "not sent":
+ * - `leader-gone`: the leader died holding the request, and may have posted it before it died
+ *   (`tabCommitDelegation.ts`: never run again, for that very reason);
+ * - `failed`: the leader's executor threw instead of answering - its own transport failure among
+ *   others - so whether its post reached the server is exactly what the throw did not say.
+ * Every other reason is a proof that nothing was posted (refused before the run, a key that did not
+ * open, a lead lost before the post).
+ */
+const FRAME_FATE_UNKNOWN: ReadonlySet<FrameNotSentReason> = new Set(['leader-gone', 'failed']);
+
+/**
+ * A frame this tab could not send itself was not sent for it either, for a typed reason - or was
+ * handed to a leader that may have sent it ({@link fateUnknown}).
+ */
 export class FrameNotHandedError extends Error {
+  /** True when the frame may be on the server all the same - see {@link FRAME_FATE_UNKNOWN}. */
+  readonly fateUnknown: boolean;
   constructor(
     readonly groupId: string,
     readonly reason: FrameNotSentReason
@@ -58,7 +75,17 @@ export class FrameNotHandedError extends Error {
       `the MLS frame of ${groupId.slice(0, 8)}... handed to the leader tab was not sent (${reason})`
     );
     this.name = 'FrameNotHandedError';
+    this.fateUnknown = FRAME_FATE_UNKNOWN.has(reason);
   }
+}
+
+/**
+ * Whether a failed frame send left the frame's fate UNKNOWN - the one predicate a caller that must
+ * not read "no answer" as "not sent" asks, decided by type at the throw: no answer from the server
+ * ({@link isTransportFailure}), or a handover to a leader that may have posted it.
+ */
+export function isFrameFateUnknown(error: unknown): boolean {
+  return isTransportFailure(error) || (error instanceof FrameNotHandedError && error.fateUnknown);
 }
 
 /**

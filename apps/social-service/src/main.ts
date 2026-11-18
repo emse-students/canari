@@ -1,6 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import { Logger } from '@nestjs/common';
 import { assertReviewCohortConfigured } from './review-cohort';
+import { assertTrendThresholdConfigured } from './posts/trend-threshold';
 import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
 import * as bodyParser from 'body-parser';
@@ -14,6 +15,9 @@ async function bootstrap() {
   new Logger('ReviewCohort').log(
     `[REVIEW_COHORT] ${assertReviewCohortConfigured()} review account(s)`
   );
+  // A bad CAMPUS_TREND_THRESHOLD stops the boot HERE too (posts/trend-threshold.ts): a typo never
+  // silently means the default. The effective value is logged, so what a reading ran under is known.
+  new Logger('CampusTrend').log(`[TREND_THRESHOLD] ${assertTrendThresholdConfigured()}`);
   const app = await NestFactory.create(AppModule);
   app.setGlobalPrefix('api');
 

@@ -3,7 +3,7 @@
   import { gotoAppPath } from '$lib/navigation/gotoAppPath';
   import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
-  import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
+  import { describeApiRefusal, refusalCode, refusalStatus } from '$lib/utils/apiRefusal';
   import { page } from '$app/state';
   import { onMount, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
@@ -53,6 +53,14 @@
   import ProductGridQuestion from '$lib/components/forms/ProductGridQuestion.svelte';
   import ProductGridOrderBar from '$lib/components/forms/ProductGridOrderBar.svelte';
   import PaymentMethodChoice from '$lib/components/forms/PaymentMethodChoice.svelte';
+  import DeclaredIdentityFields from '$lib/components/forms/DeclaredIdentityFields.svelte';
+  import RespondentNotice from '$lib/components/forms/RespondentNotice.svelte';
+  import {
+    askedDeclaredFields,
+    declaredPayload,
+    emptyDeclaredValues,
+    firstDeclaredProblem,
+  } from '$lib/forms/respondentFields';
   import {
     allRequiredAnswered as allRequiredAnsweredOf,
     editedAnswers,
@@ -69,6 +77,7 @@
     visibleItems as visibleItemsOf,
     type MissingAnswer,
   } from '$lib/forms/fillAnswers';
+  import { useFormWindow } from '$lib/forms/useFormWindow.svelte';
   import { gridRequiredSwitchOn } from '$lib/forms/gridRequiredGate';
   import {
     ArrowLeft,
@@ -112,8 +121,12 @@
   }
 
   let form = $state<Form | null>(null);
+  /** The window of the form: the server's verdict of the load, or of the last typed refusal. */
+  const win = useFormWindow(() => form, 'FormView');
   const opensLaterIso = $derived(form?.opensAt ? formOpensAtIso(form.opensAt) : null);
-  const isNotOpenYet = $derived(!!opensLaterIso);
+  const isNotOpenYet = $derived(win.notYet);
+  /** The end has passed (the manager's close or a date that came): the rule of the public page and the list. */
+  const isClosed = $derived(win.closed);
   const reminder = useFormReminder(() => formId ?? '');
   let selections = $state<Record<string, any>>({});
   let submitted = $state(false);
@@ -158,6 +171,14 @@
    * as the refusal rather than its sentence, so the card stops saying it the moment it is answered.
    */
   let missingAnswer = $state<MissingAnswer | null>(null);
+  /**
+   * What an ANONYMOUS form asks each respondent to declare (owner, 2026-11-16): its answers are
+   * joined to no account, so the promo and formation, status and campus it wants are typed here.
+   * A named form asks nothing: the server reads them from the account (`RespondentNotice`).
+   */
+  const askedDeclared = $derived(form?.anonymous ? askedDeclaredFields(form.guestFields) : []);
+  let declared = $state(emptyDeclaredValues());
+  let declaredChecked = $state(false);
   /** Questions a profile criterion hides from this submitter, whatever they answer. */
   let hiddenItemIds = $state<string[]>([]);
   /** False when a `submitCondition` excludes them from the form entirely. */
@@ -313,6 +334,7 @@
    */
   function resetFormState(): void {
     form = null;
+    win.clear();
     selections = {};
     submitted = false;
     paymentPending = false;
@@ -360,6 +382,7 @@
       const f = await getForm(id);
       if (stale()) return;
       form = f;
+      win.clear();
       selections = initialSelections(f.items);
       // A draft, or a link asking for the revision ("Voir le formulaire"): what the managers are
       // building is drawn when THIS reader may read it. The flag alone never shuts a published
@@ -654,6 +677,11 @@
     if (!form || !editing) return;
     const answer = editing;
     error = '';
+    if (isClosed) {
+      Log.d('FormView', 'answer change refused: the form is closed');
+      error = m.form_refusal_closed();
+      return;
+    }
     submitting = true;
     try {
       const sent = editedAnswers(visibleItems, selections, answer.lockedItemIds);
@@ -664,6 +692,7 @@
       void loadEditableAnswers(form.id);
     } catch (e: unknown) {
       Log.d('FormView', `answer change refused status=${refusalStatus(e) ?? 'transport'}`);
+      win.adopt(e);
       error = formSubmitRefusalMessage(e, m.form_guest_submit_failed());
     } finally {
       submitting = false;
@@ -705,8 +734,15 @@
       error = m.form_file_wait_upload();
       return;
     }
-    if (isNotOpenYet && form.opensAt) {
-      error = m.form_view_error_not_open({ date: formatFormOpensAt(form.opensAt) });
+    if (isNotOpenYet) {
+      error = form.opensAt
+        ? m.form_view_error_not_open({ date: formatFormOpensAt(form.opensAt) })
+        : m.form_view_not_open_yet();
+      return;
+    }
+    if (isClosed) {
+      Log.d('FormView', 'submit refused: the form is closed');
+      error = m.form_refusal_closed();
       return;
     }
     if (!userId.trim()) {
@@ -732,6 +768,17 @@
         ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
       return;
     }
+    // What an anonymous form asks to be declared, said on its own fields, brought into view.
+    const declaredMissing = firstDeclaredProblem(askedDeclared, declared);
+    if (declaredMissing) {
+      declaredChecked = true;
+      error = '';
+      Log.d('FormView', `submit held: declared ${declaredMissing} missing or invalid`);
+      document
+        .getElementById('declared-identity')
+        ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      return;
+    }
     if (editing) {
       // A change neither prices nor pays: the payment steps below are not reached.
       await saveEdit();
@@ -754,6 +801,7 @@
         email: '',
         ...(payerEmail ? { payerEmail } : {}),
         answers: visibleAnswers(visibleItems, selections),
+        ...declaredPayload(askedDeclared, declared),
         ...formCheckoutCallbacks(),
         ...(total > 0 && form.allowCashPayment ? { paymentMethod: paymentMethodChoice } : {}),
       });
@@ -785,6 +833,7 @@
       }
     } catch (e: unknown) {
       Log.d('FormView', `submit refused status=${refusalStatus(e) ?? 'transport'}`);
+      win.adopt(e);
       // Worded from the refusal's CODE, never from the server's English (D6).
       error = formSubmitRefusalMessage(e, m.form_guest_submit_failed());
     } finally {
@@ -877,6 +926,7 @@
     disabled={preview ||
       submitting ||
       isNotOpenYet ||
+      isClosed ||
       (!editing &&
         (submitted || formFull || !maySubmit || priceUnavailable || onlinePaymentPaused))}
     loading={submitting}
@@ -1022,12 +1072,29 @@
       </a>
     {/if}
 
+    <!-- ── Closed (the manager's close or a date that came) ── -->
+    {#if isClosed}
+      <p
+        class="text-text-muted mb-4 text-center text-sm font-medium"
+        data-testid="form-closed-notice"
+      >
+        {m.form_view_closed()}
+      </p>
+    {/if}
+
     <!-- ── Not open yet ── -->
-    {#if isNotOpenYet && form.opensAt}
+    {#if isNotOpenYet && !form.opensAt}
+      <p
+        class="border-accent/40 bg-accent/20 text-accent-text mb-4 rounded-2xl border px-4 py-4 text-sm font-semibold"
+        data-testid="form-not-open-notice"
+      >
+        {m.form_view_not_open_yet()}
+      </p>
+    {:else if isNotOpenYet && form.opensAt}
       <div
         class="border-accent/40 bg-accent/20 mb-4 flex items-center justify-between gap-4 rounded-2xl border px-4 py-4"
       >
-        <p class="text-accent-text text-sm font-semibold">
+        <p class="text-accent-text text-sm font-semibold" data-testid="form-not-open-notice">
           {m.form_view_opens_at({ date: formatFormOpensAt(form.opensAt) })}
         </p>
         {#if reminder.loaded}
@@ -1146,7 +1213,10 @@
             {item}
             grid={item.productGrid}
             bind:value={selections[item.id]}
-            disabled={(submitted && !editing) || isNotOpenYet || editLocked.has(item.id)}
+            disabled={(submitted && !editing) ||
+              isNotOpenYet ||
+              isClosed ||
+              editLocked.has(item.id)}
             prices={price.productGridPrices[item.id]}
             currency={form.currency}
             error={questionError(item)}
@@ -1156,7 +1226,10 @@
             {item}
             index={qi}
             bind:value={selections[item.id]}
-            disabled={(submitted && !editing) || isNotOpenYet || editLocked.has(item.id)}
+            disabled={(submitted && !editing) ||
+              isNotOpenYet ||
+              isClosed ||
+              editLocked.has(item.id)}
             formId={form.id}
             currency={form.currency}
             fileRetentionDays={form.fileRetentionDays}
@@ -1185,6 +1258,19 @@
         <p class="font-semibold">{m.form_view_payments_paused_title()}</p>
         <p>{m.form_view_payments_paused_note()}</p>
       </div>
+    {/if}
+
+    <!-- ── Who answered: declared on an anonymous form, joined from the account (and said) on a
+         named one ── -->
+    {#if !submitted && !editing}
+      <DeclaredIdentityFields
+        asked={askedDeclared}
+        bind:values={declared}
+        showErrors={declaredChecked}
+        anonymous
+        disabled={submitting || preview}
+      />
+      <RespondentNotice respondentFields={form.respondentFields} />
     {/if}
 
     <!-- ── Payment method (cash vs online) ── -->

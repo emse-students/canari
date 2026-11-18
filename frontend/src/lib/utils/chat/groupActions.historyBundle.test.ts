@@ -68,23 +68,16 @@ describe('sendFullHistoryBundle', () => {
     expect(data.to).toBe(REQUESTER);
   });
 
-  it('stays silent when the local read fails - a failed read proves nothing', async () => {
+  /**
+   * THE PUSH CARRIES THE STATE AND NO MESSAGE (2026-11-17, history-answer-addressing.md, "What is
+   * not sealed"): it answers no ask, so it cannot be sealed, and the newcomer's own reconciliation -
+   * whose answers are - brings the messages. The store is not even read.
+   */
+  it('pushes the state and NO message, whatever the store holds - it never reads the messages', async () => {
     const mlsService = createMlsServiceStub();
+    const storage = storageWith([storedMessage('m1'), storedMessage('m2')]);
     await sendFullHistoryBundle(GROUP, {
-      storage: storageWith(new Error('sqlite locked')),
-      deviceKeyB64: 'k',
-      mlsService,
-      log: vi.fn(),
-      to: REQUESTER,
-    });
-
-    expect(mlsService.sendMessage).not.toHaveBeenCalled();
-  });
-
-  it('sends the real history when there is some', async () => {
-    const mlsService = createMlsServiceStub();
-    await sendFullHistoryBundle(GROUP, {
-      storage: storageWith([storedMessage('m1'), storedMessage('m2')]),
+      storage,
       deviceKeyB64: 'k',
       mlsService,
       log: vi.fn(),
@@ -94,8 +87,9 @@ describe('sendFullHistoryBundle', () => {
     expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
     const { event, data } = sentBundle(mlsService);
     expect(event).toBe('history_bundle');
-    expect(data.messages).toHaveLength(2);
+    expect(data.messages).toEqual([]);
     expect(data.to).toBe(REQUESTER);
+    expect(storage.getMessages).not.toHaveBeenCalled();
   });
 
   it('carries the edit time with the edit flag, and every reaction including the withdrawn ones', async () => {
@@ -114,13 +108,12 @@ describe('sendFullHistoryBundle', () => {
       ],
     } as StoredMessage;
 
-    await sendFullHistoryBundle(GROUP, {
-      storage: storageWith([edited]),
-      deviceKeyB64: 'k',
-      mlsService,
-      log: vi.fn(),
-      to: REQUESTER,
-    });
+    await sendHistoryBundleForIds(
+      GROUP,
+      ['m1'],
+      { storage: storageWith([edited]), deviceKeyB64: 'k', mlsService, log: vi.fn() },
+      { to: REQUESTER, since: 0, requestId: 'req-0001' }
+    );
 
     const { data } = sentBundle(mlsService);
     expect(data.messages[0]).toMatchObject({
@@ -139,13 +132,17 @@ describe('sendFullHistoryBundle', () => {
     const mlsService = createMlsServiceStub();
     const unverified = { ...storedMessage('m1'), restoredUnverified: true } as StoredMessage;
 
-    await sendFullHistoryBundle(GROUP, {
-      storage: storageWith([unverified, storedMessage('m2')]),
-      deviceKeyB64: 'k',
-      mlsService,
-      log: vi.fn(),
-      to: REQUESTER,
-    });
+    await sendHistoryBundleForIds(
+      GROUP,
+      ['m1', 'm2'],
+      {
+        storage: storageWith([unverified, storedMessage('m2')]),
+        deviceKeyB64: 'k',
+        mlsService,
+        log: vi.fn(),
+      },
+      { to: REQUESTER, since: 0, requestId: 'req-0001' }
+    );
 
     const { data } = sentBundle(mlsService);
     const rows = data.messages as Array<Record<string, unknown>>;

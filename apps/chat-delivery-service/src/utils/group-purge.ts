@@ -14,6 +14,7 @@ import { SeatEviction } from '../entities/seat-eviction.entity';
 import { JoinAskPush } from '../entities/join-ask-push.entity';
 import { RevokedDeviceGroup } from '../entities/revoked-device-group.entity';
 import { SentFrameReceipt } from '../entities/sent-frame-receipt.entity';
+import { UninvitedEntry } from '../entities/uninvited-entry.entity';
 import { takeSeatLock } from './seat-eviction';
 
 /** How many Redis keys one `DEL` carries, so a large reap never spreads one huge argument list. */
@@ -44,6 +45,7 @@ export type GroupOwnedRowCounts = {
   joinAskPushes: number;
   revokedDeviceGroups: number;
   sentFrameReceipts: number;
+  uninvitedEntries: number;
   dismissals: number;
 };
 
@@ -87,6 +89,7 @@ const GROUP_OWNED_TABLES: readonly {
   { count: 'joinAskPushes', entity: JoinAskPush },
   { count: 'revokedDeviceGroups', entity: RevokedDeviceGroup },
   { count: 'sentFrameReceipts', entity: SentFrameReceipt },
+  { count: 'uninvitedEntries', entity: UninvitedEntry },
 ];
 
 /** A {@link GroupOwnedRowCounts} where nothing was removed - the answer to an empty id list. */
@@ -104,6 +107,7 @@ function noRowsRemoved(): GroupOwnedRowCounts {
     joinAskPushes: 0,
     revokedDeviceGroups: 0,
     sentFrameReceipts: 0,
+    uninvitedEntries: 0,
     dismissals: 0,
   };
 }
@@ -111,7 +115,7 @@ function noRowsRemoved(): GroupOwnedRowCounts {
 /**
  * Deletes every database row the given groups own, from {@link GROUP_OWNED_TABLES}.
  *
- * {@link GROUP_OWNED_TABLES} plus `dm_user_dismissed_groups` is an ALLOWLIST: thirteen tables named
+ * {@link GROUP_OWNED_TABLES} plus `dm_user_dismissed_groups` is an ALLOWLIST: fourteen tables named
  * one by one, checkable against `src/entities/` (every entity carrying a `groupId` is here). It
  * exists because the two places that end a group each carried their own shorter list, and both
  * were wrong in the same direction - measured on prod 2026-08-18, 21 of 69 `mls_group_info` rows,

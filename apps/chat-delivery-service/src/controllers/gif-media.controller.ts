@@ -133,8 +133,10 @@ export class GifMediaController {
       if (error instanceof BadRequestException) {
         return this.refuse(res, new GifMediaRefusedError('blocked-address', error.message));
       }
-      // The DNS lookup itself failed: KLIPY's host said nothing, which is not the request's fault.
-      return this.unreachable(res, new UpstreamUnreachableError('static.klipy.com', error));
+      // The DNS lookup itself failed (typed at the throw by the guard): KLIPY's host said nothing,
+      // which is not the request's fault. Anything else is a bug of ours, left to surface as one.
+      if (error instanceof UpstreamUnreachableError) return this.unreachable(res, error);
+      throw error;
     }
 
     const cacheKey = target.href;

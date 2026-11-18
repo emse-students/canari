@@ -137,6 +137,7 @@
   async function publishInsets() {
     const { bottom } = await getTabBarInsets();
     insetPx = bottom;
+    nativeTabBar.inset = bottom;
     document.documentElement.style.setProperty('--bottom-nav-reserve', `${bottom}px`);
     Log.d('NativeTabBar', `bottom inset ${bottom}px`);
   }
@@ -210,6 +211,7 @@
       // (iPhone 12, 2026-11-08: six WARN lines at the auth callback, and a Swift NOTICE with them).
       // Every effect already waits for `native`; it now waits for THIS mount's configuration.
       nativeTabBar.status = 'pending';
+      nativeTabBar.inset = 0;
       void removeTabBar().catch(logFailure('remove'));
     }
     document.documentElement.style.removeProperty('--bottom-nav-reserve');

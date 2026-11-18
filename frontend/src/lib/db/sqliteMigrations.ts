@@ -16,7 +16,7 @@
  */
 
 /** Current schema version. A freshly created database is stamped with this and skips all migrations. */
-export const SCHEMA_VERSION = 20;
+export const SCHEMA_VERSION = 21;
 
 /** Columns the v1 -> v2 purge inspects, when they exist. Historical: `salt` is gone since 2c3ec6fe. */
 const BLOB_LEGACY_COLUMNS = ['iv', 'salt', 'cipher_text'] as const;
@@ -197,6 +197,33 @@ export function conversationLocalReadSeedStatement(columns: readonly string[]): 
   return columns.includes('local_read_seed')
     ? null
     : 'ALTER TABLE conversations ADD COLUMN local_read_seed INTEGER';
+}
+
+/**
+ * The v20 -> v21 step: the conversation row gains `name_at`, the server time of the MLS statement
+ * that set its name (`ConversationMeta.nameAt`, `groupName.ts`). NULL on arrival, which reads as
+ * "never stated": the server's group list keeps correcting such a name until a frame dates it.
+ * Returns `null` when the column is there, so the step is a no-op twice.
+ *
+ * @param columns Column names of the `conversations` table, from `PRAGMA table_info(conversations)`.
+ */
+export function conversationNameAtStatement(columns: readonly string[]): string | null {
+  return columns.includes('name_at')
+    ? null
+    : 'ALTER TABLE conversations ADD COLUMN name_at INTEGER';
+}
+
+/**
+ * The v20 -> v21 step, second column: `name_sync` (`ConversationMeta.nameSync`, JSON), what this
+ * device still owes about a rename it made - a server copy, a frame whose send ended unanswered. NULL
+ * on arrival: nothing owed. Returns `null` when the column is there.
+ *
+ * @param columns Column names of the `conversations` table, from `PRAGMA table_info(conversations)`.
+ */
+export function conversationNameSyncStatement(columns: readonly string[]): string | null {
+  return columns.includes('name_sync')
+    ? null
+    : 'ALTER TABLE conversations ADD COLUMN name_sync TEXT';
 }
 
 /**

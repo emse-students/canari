@@ -24,8 +24,7 @@ export { cancelRestore };
  * reader left). So the entry also records an ANCHOR: the first element of the box that is on screen
  * and wears `data-scroll-anchor="<id>"` (a feed card wears its post id), with its distance from the
  * box's top. The restore waits for that element, scrolls so that IT sits at that distance again, and
- * keeps aligning it while the content above changes, until the page is quiet or the reader touches
- * it. The box has a FIXED height and never resizes, so what is observed is its content: a
+ * keeps aligning it while the content above changes, until the reader touches the page. The box has a FIXED height and never resizes, so what is observed is its content: a
  * ResizeObserver on the box's first child, on the list holding the anchor and on the anchor itself,
  * a MutationObserver on the subtree, and the `load` events of images and media (a poster settling
  * touches no DOM). Another programmatic scroll (a tap on the tab, a change of feed tab) ends the
@@ -38,8 +37,8 @@ export { cancelRestore };
  * the box is tall enough; an anchor: it is drawn) AND no placeholder is shown (a list skeleton
  * declares itself with `data-loading-skeleton`), and it ENDS at the first of, all events and none a
  * clock and never by the page going quiet (a live dot mutates for ever): an offset applied; an anchor
- * confirmed in place on two consecutive frames (a drifted frame re-aligns it and restarts the count; an
- * anchor that leaves the page after it was aligned just ends it); a target that is missing while the
+ * that leaves the page after it was aligned (otherwise it is followed with NO proof of alignment:
+ * content arriving later is late by construction); a target that is missing while the
  * scrollable height is unchanged on two consecutive frames (settled: the offset applies, clamped by
  * the browser when the page came back shorter, logged as a fallback); ANY scroll event while it waits (it never scrolls the box before it applies, so
  * such an event is the reader's); a wheel, touch, pointer or key event at any time (the reader, once
@@ -161,6 +160,8 @@ export function restoreOnReturn(
   /** With an anchor, reached means THE ANCHOR IS DRAWN: a tall page may still lack its post. */
   const reached = () => (anchor ? resolveAnchor() !== undefined : tallEnough());
   let logged = false;
+  /** The scrollTop the restore itself last left: a scroll event elsewhere is FOREIGN (find-in-page, a focus, a screen reader). */
+  let written = -1;
   const apply = (why: string) => {
     const el = resolveAnchor();
     if (anchor && el) {
@@ -170,6 +171,7 @@ export function restoreOnReturn(
     } else {
       scroller.scrollTop = target;
     }
+    written = scroller.scrollTop;
     if (!logged) {
       logged = true;
       const where = anchor && el ? `anchor ${anchor.id} at ${anchor.offset}px` : `${target}px`;
@@ -198,6 +200,8 @@ export function restoreOnReturn(
   };
   const userScrolled = () => {
     if (!following) dropped('the reader scrolled');
+    else if (Math.abs(scroller.scrollTop - written) >= 1)
+      dropped('a foreign scroll moved the page');
   };
   const userInput = () => dropped('the reader touched the page');
   const documentKey = () => dropped('the reader pressed a key');
@@ -213,48 +217,36 @@ export function restoreOnReturn(
     if (isActiveRestore(stop)) setActiveRestore(null);
   }
   /**
-   * AFTER A CHANGE the target is aligned (an anchor) or the restore ends (an offset), and ONE frame
-   * loop runs, ending by a PROOF and never by a clock or by the page going quiet - a feed with a
-   * live dot or a counter mutates for ever:
-   * - the anchor is reached: it ends on the second consecutive frame where the anchor sits within a
-   *   pixel of its place (confirmed twice); a frame where it had drifted re-aligns it and starts the
-   *   count again; an anchor that disappears after it was aligned just ends the restore (no jump:
-   *   the page has moved on, and the raw offset would be wrong);
-   * - it is not reached: it ends on the second consecutive frame where the page's scrollable height
-   *   is unchanged (settled: loaded but shorter, or the post never came). That is a FALLBACK to the
-   *   raw offset, logged as one naming the anchor.
-   * A skeleton on screen pauses the loop; the next change restarts it.
+   * THE ANCHOR IS FOLLOWED UNTIL THE READER TAKES THE PAGE, NOT UNTIL IT LOOKS ALIGNED
+   * (`1.7.0-alpha.5`, Mi 9T: the earlier proof - the anchor within a pixel on two consecutive
+   * frames - was met, the restore ended, and 8 to 13 px then arrived ABOVE the anchor: a link
+   * preview or a poster fetched when the cards above came near the viewport, whose answer lands
+   * whenever it lands). Whatever arrives after ANY proof is late by construction, so the restore
+   * has no proof: once the anchor is aligned, every resize or mutation callback re-aligns it
+   * synchronously (a ResizeObserver callback runs after layout and before paint, so the move is
+   * never painted), and only an EVENT ends it - the reader's input, the next navigation, another
+   * programmatic scroll, or the anchor leaving the page.
+   *
+   * ONE frame loop remains, for a target NOT reached yet: it ends on the second consecutive frame
+   * where the scrollable height is unchanged (settled: loaded but shorter, or the post never came),
+   * a FALLBACK to the raw offset logged as one naming the anchor. Once reached, the callbacks above
+   * take over; an anchor that disappears after it was aligned just ends the restore (no jump: the
+   * page has moved on). A skeleton on screen pauses the loop; the next change restarts it.
    */
   let looping = false;
-  let confirmed = 0;
   let steady = 0;
   let lastHeight = 0;
   function frame() {
-    if (!isActiveRestore(stop)) {
-      looping = false;
-      return;
-    }
-    if (placeholderShown(scroller)) {
+    if (!isActiveRestore(stop) || placeholderShown(scroller)) {
       looping = false;
       return;
     }
     if (reached()) {
-      const el = resolveAnchor();
-      if (anchor && el) {
-        const drift =
-          el.getBoundingClientRect().top - scroller.getBoundingClientRect().top - anchor.offset;
-        if (Math.abs(drift) < 1) confirmed += 1;
-        else {
-          confirmed = 0;
-          apply('content moved');
-        }
-        if (confirmed >= 2) {
-          looping = false;
-          stop();
-          return;
-        }
-      }
-    } else if (following) {
+      looping = false;
+      apply('content moved');
+      return;
+    }
+    if (following) {
       looping = false;
       Log.d(
         'scrollMemory',
@@ -262,27 +254,27 @@ export function restoreOnReturn(
       );
       stop();
       return;
-    } else {
-      const height = scroller.scrollHeight;
-      steady = height === lastHeight ? steady + 1 : 0;
-      lastHeight = height;
-      if (steady >= 2) {
-        looping = false;
-        stop();
-        if (anchor) {
-          Log.w(
-            'scrollMemory',
-            `entry ${key}: anchor ${anchor.id} never appeared (post gone, re-ranked or beyond the loaded page), the raw offset ${target}px is used`
-          );
-        }
-        apply('page settled shorter');
-        return;
+    }
+    const height = scroller.scrollHeight;
+    steady = height === lastHeight ? steady + 1 : 0;
+    lastHeight = height;
+    if (steady >= 2) {
+      looping = false;
+      stop();
+      if (anchor) {
+        Log.w(
+          'scrollMemory',
+          `entry ${key}: anchor ${anchor.id} never appeared (post gone, re-ranked or beyond the loaded page), the raw offset ${target}px is used`
+        );
       }
+      apply('page settled shorter');
+      return;
     }
     requestAnimationFrame(frame);
   }
   function settle() {
-    if (placeholderShown(scroller)) return;
+    // A followed anchor is kept in place even under a skeleton: late content above it still moves it.
+    if (placeholderShown(scroller) && !following) return;
     steady = 0;
     if (reached()) {
       watch(anchorEl);
@@ -292,8 +284,8 @@ export function restoreOnReturn(
         stop();
         return;
       }
-      if (!following) confirmed = 0;
       following = true;
+      return;
     }
     if (!looping) {
       looping = true;
@@ -312,7 +304,7 @@ export function restoreOnReturn(
   setActiveRestore(stop);
   const goal = anchor ? `anchor ${anchor.id}` : `${target}px`;
   Log.d('scrollMemory', `entry ${key}: waiting to reach ${goal}`);
-  // An anchor already drawn is aligned now, and followed until the page is quiet.
+  // An anchor already drawn is aligned now, and followed until the reader takes the page.
   if (anchor && reached() && !placeholderShown(scroller)) settle();
   return true;
 }

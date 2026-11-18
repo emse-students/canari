@@ -222,7 +222,8 @@
         chatMaxChars = session.messageMaxChars;
       },
       (e: unknown) => {
-        // The composer still works; a message past the bound is the server's 400, said on its line.
+        // The composer still works, bounded by the v1 format's own length (the session's and the
+        // panel's default): the server counts sealed BYTES, not characters, so it is no backstop.
         console.warn(`[LIVE_CHAT] the live limits could not be read (${String(e)})`);
       }
     );

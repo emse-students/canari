@@ -14,12 +14,15 @@ vi.mock('$lib/utils/users/displayName', async (importOriginal) => ({
 
 import { createMlsServiceStub } from '$lib/mls-client/test/fixtures/mlsServiceStub';
 import { decodeAppMessage } from '$lib/proto/codec';
+import { DeliveryUnreachableError, GroupDeletedError } from '$lib/mls-client/mlsDeliveryApi';
+import { FrameNotHandedError } from '$lib/mls-client/frameFromAnyTab';
 import type { StoredMessage } from '$lib/db';
 import type { Conversation } from '$lib/types';
 import {
   leaveGroupAndBroadcast,
   removeMemberAndBroadcast,
   renameGroupAndBroadcast,
+  resendPendingRename,
   setGroupImageAndBroadcast,
 } from './groupActions';
 import { inviteMembersToGroup } from './groupCreation';
@@ -27,6 +30,7 @@ import { buildHistoryDigest, diffHistoryDigest, isEmptyHistoryDiff } from './his
 import { historyStateKey } from './historyStateKey';
 import { sendVisibleNotice, type NoticeWriter } from './visibleNotices';
 import { appMessageSentAtMs } from './messageUtils';
+import { noteServerTime, resetServerClockForTests } from './serverClock';
 import { handleSystemEvent } from '$lib/mls-client/messagePipeline/systemMessageHandler';
 import { applyReplaySystemEvent } from './historySystemEvents';
 
@@ -187,9 +191,20 @@ describe('after Alice adds Bob', () => {
 
 const own = () => ({ contactName: GROUP, addMessageToChat: vi.fn<NoticeWriter>(async () => {}) });
 
+/**
+ * A server that accepts each send 40 ms after this device's clock - the frame's `sentAt` is minted
+ * at the send, and a rename's own check bounds the server time by it (`readRenameFrame`).
+ */
+function answeringNow(mlsService: ReturnType<typeof createMlsServiceStub>, skewMs = 40) {
+  vi.mocked(mlsService.sendMessage).mockImplementation(
+    async () => ({ sealed: new Uint8Array(), receivedAt: Date.now() + skewMs }) as never
+  );
+  return mlsService;
+}
+
 describe('the other notices the acting device used to miss', () => {
   it('a rename', async () => {
-    const mlsService = createMlsServiceStub();
+    const mlsService = answeringNow(createMlsServiceStub());
     const ownNotice = own();
     await renameGroupAndBroadcast({
       mlsService,
@@ -251,9 +266,33 @@ describe('the other notices the acting device used to miss', () => {
   it('writes nothing when the frame was not accepted - a row only this device holds diverges too', async () => {
     const mlsService = createMlsServiceStub();
     vi.mocked(mlsService.sendMessage).mockRejectedValue(new Error('offline'));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const ownNotice = own();
+    // A rename whose frame did not leave reached no member holding a dated name (groupName.ts), so
+    // it is a FAILED rename, thrown to the caller - never one only the server saw.
+    await expect(
+      renameGroupAndBroadcast({
+        mlsService,
+        groupId: GROUP,
+        newName: 'Nouveau nom',
+        userId: ALICE,
+        deviceKeyB64: 'k',
+        ownNotice,
+      })
+    ).rejects.toThrow('offline');
+    expect(ownNotice.addMessageToChat).not.toHaveBeenCalled();
+    // THE FRAME GOES FIRST: a frame that did not leave renamed nothing on the server either, so
+    // undated devices and older builds never take a name the dated devices were never told.
+    expect(mlsService.renameGroup).not.toHaveBeenCalled();
+  });
+
+  // #3785 P2-b: A LOST ANSWER IS AN UNKNOWN OUTCOME, NEVER A REFUSAL - the server may hold the frame.
+  it('a send with no answer is unanswered, not thrown: the minted frame is handed back to keep', async () => {
+    const mlsService = createMlsServiceStub();
+    vi.mocked(mlsService.sendMessage).mockRejectedValue(new DeliveryUnreachableError('offline'));
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const ownNotice = own();
-    await renameGroupAndBroadcast({
+    const out = await renameGroupAndBroadcast({
       mlsService,
       groupId: GROUP,
       newName: 'Nouveau nom',
@@ -261,7 +300,192 @@ describe('the other notices the acting device used to miss', () => {
       deviceKeyB64: 'k',
       ownNotice,
     });
+    const frame = decodeAppMessage(vi.mocked(mlsService.sendMessage).mock.calls[0][1])!;
+    expect(out).toEqual({
+      unanswered: { messageId: frame.messageId, sentAt: Number(frame.sentAt) },
+    });
     expect(ownNotice.addMessageToChat).not.toHaveBeenCalled();
+    expect(mlsService.renameGroup).not.toHaveBeenCalled();
+  });
+
+  // #3785 round 8, item 2: what dates the rename's undated base is a SERVER time, compared with the
+  // server's stamp of a statement - so the frame carries the newest one the server had stated when
+  // it was minted, never this device's clock.
+  it('an unanswered frame carries the server time this account had seen when it was minted', async () => {
+    const mlsService = createMlsServiceStub();
+    vi.mocked(mlsService.sendMessage).mockRejectedValue(new DeliveryUnreachableError('offline'));
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    resetServerClockForTests();
+    noteServerTime(ALICE, 1_790_000_000_000);
+    const out = await renameGroupAndBroadcast({
+      mlsService,
+      groupId: GROUP,
+      newName: 'Nouveau nom',
+      userId: ALICE,
+      deviceKeyB64: 'k',
+      ownNotice: own(),
+    });
+    expect(out).toMatchObject({ unanswered: { serverSeenAt: 1_790_000_000_000 } });
+  });
+
+  // #3785 re-review 2, P2-1: A FOLLOWER TAB'S RENAME IS HANDED TO THE LEADER, and two of the
+  // handover's answers leave the frame's fate unknown - the leader died holding it, or failed
+  // without saying whether it posted. Neither is "not renamed".
+  for (const reason of ['failed', 'leader-gone'] as const) {
+    it(`a handover answered '${reason}' is unanswered, never a refusal`, async () => {
+      const mlsService = createMlsServiceStub();
+      vi.mocked(mlsService.sendMessage).mockRejectedValue(new FrameNotHandedError(GROUP, reason));
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const out = await renameGroupAndBroadcast({
+        mlsService,
+        groupId: GROUP,
+        newName: 'Nouveau nom',
+        userId: ALICE,
+        deviceKeyB64: 'k',
+        ownNotice: own(),
+      });
+      expect(out).toMatchObject({ unanswered: { messageId: expect.any(String) } });
+      expect(mlsService.renameGroup).not.toHaveBeenCalled();
+    });
+  }
+
+  it('a handover refused BEFORE it ran is a proof nothing was posted: thrown, a failed rename', async () => {
+    const mlsService = createMlsServiceStub();
+    vi.mocked(mlsService.sendMessage).mockRejectedValue(
+      new FrameNotHandedError(GROUP, 'leader-unavailable')
+    );
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await expect(
+      renameGroupAndBroadcast({
+        mlsService,
+        groupId: GROUP,
+        newName: 'Nouveau nom',
+        userId: ALICE,
+        deviceKeyB64: 'k',
+        ownNotice: own(),
+      })
+    ).rejects.toBeInstanceOf(FrameNotHandedError);
+  });
+
+  describe('a re-send of a pending rename answers by TYPE', () => {
+    const resend = (mlsService: ReturnType<typeof createMlsServiceStub>) =>
+      resendPendingRename({
+        mlsService,
+        groupId: GROUP,
+        pending: {
+          name: 'Nouveau nom',
+          messageId: 'minted-2',
+          sentAt: Date.now(),
+          over: { name: 'Avant' },
+        },
+        userId: ALICE,
+        deviceKeyB64: 'k',
+        ownNotice: own(),
+      });
+
+    it('no answer, or a handover whose fate is unknown: kept', async () => {
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const mlsService = createMlsServiceStub();
+      vi.mocked(mlsService.sendMessage).mockRejectedValue(new DeliveryUnreachableError('offline'));
+      expect(await resend(mlsService)).toEqual({ kept: 'unanswered' });
+      vi.mocked(mlsService.sendMessage).mockRejectedValue(
+        new FrameNotHandedError(GROUP, 'leader-gone')
+      );
+      expect(await resend(mlsService)).toEqual({ kept: 'unanswered' });
+    });
+
+    it('a throw that is no verdict on the frame (a 503, a handover refused before it ran): kept, not sent', async () => {
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const mlsService = createMlsServiceStub();
+      vi.mocked(mlsService.sendMessage).mockRejectedValue(new Error('503'));
+      expect(await resend(mlsService)).toEqual({ kept: 'not-sent' });
+      vi.mocked(mlsService.sendMessage).mockRejectedValue(
+        new FrameNotHandedError(GROUP, 'leader-unavailable')
+      );
+      expect(await resend(mlsService)).toEqual({ kept: 'not-sent' });
+    });
+
+    it('a typed server refusal that ends it: refused', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const mlsService = createMlsServiceStub();
+      vi.mocked(mlsService.sendMessage).mockRejectedValue(new GroupDeletedError(GROUP));
+      expect(await resend(mlsService)).toEqual({ refused: 'group-deleted' });
+    });
+  });
+
+  it('the re-send of a pending rename is the SAME frame: its id and its signed sentAt', async () => {
+    const mlsService = answeringNow(createMlsServiceStub());
+    const sentAt = Date.now() - 1_000;
+    const ownNotice = own();
+    const sent = await resendPendingRename({
+      mlsService,
+      groupId: GROUP,
+      pending: { name: 'Nouveau nom', messageId: 'minted-1', sentAt, over: { name: 'Avant' } },
+      userId: ALICE,
+      deviceKeyB64: 'k',
+      ownNotice,
+    });
+    const { frame, options } = frameAndOwnRow(mlsService, ownNotice.addMessageToChat);
+    expect(frame.messageId).toBe('minted-1');
+    expect(Number(frame.sentAt)).toBe(sentAt);
+    expect(options).toMatchObject({ messageId: 'minted-1' });
+    expect(sent).toMatchObject({ sent: { sentAt } });
+  });
+
+  it('sends the frame BEFORE it writes the server copy', async () => {
+    const mlsService = answeringNow(createMlsServiceStub());
+    const out = await renameGroupAndBroadcast({
+      mlsService,
+      groupId: GROUP,
+      newName: 'Nouveau nom',
+      userId: ALICE,
+      deviceKeyB64: 'k',
+      ownNotice: own(),
+    });
+    const frameAt = vi.mocked(mlsService.sendMessage).mock.invocationCallOrder[0];
+    const patchAt = vi.mocked(mlsService.renameGroup).mock.invocationCallOrder[0];
+    expect(frameAt).toBeLessThan(patchAt);
+    expect(out).toEqual({ delivered: { nameAt: expect.any(Number), serverCopyOwed: false } });
+  });
+
+  it("a rename the members received stands when the server's copy then fails - not thrown, the copy owed", async () => {
+    const mlsService = answeringNow(createMlsServiceStub());
+    vi.mocked(mlsService.renameGroup).mockRejectedValue(new Error('503'));
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const out = await renameGroupAndBroadcast({
+      mlsService,
+      groupId: GROUP,
+      newName: 'Nouveau nom',
+      userId: ALICE,
+      deviceKeyB64: 'k',
+      ownNotice: own(),
+    });
+    expect(out).toEqual({ delivered: { nameAt: expect.any(Number), serverCopyOwed: true } });
+    expect(sentFrames(mlsService)[0]?.system?.event).toBe('groupRenamed');
+    expect(error.mock.calls.map((c) => String(c[0])).join(' ')).toContain(
+      "the server's copy was not written - owed"
+    );
+    error.mockRestore();
+  });
+
+  it("a clock off by more than a day: the receivers refuse the frame, so the sender and the server's copy take nothing", async () => {
+    const mlsService = answeringNow(createMlsServiceStub(), 2 * 24 * 60 * 60 * 1000);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await expect(
+      renameGroupAndBroadcast({
+        mlsService,
+        groupId: GROUP,
+        newName: 'Nouveau nom',
+        userId: ALICE,
+        deviceKeyB64: 'k',
+        ownNotice: own(),
+      })
+    ).rejects.toMatchObject({
+      name: 'GroupRenameRefusedError',
+      refusal: 'server-time-out-of-bound',
+    });
+    expect(mlsService.renameGroup).not.toHaveBeenCalled();
   });
 
   it('a departure still sends its frame and writes no row: no device of the leaver draws it', async () => {
@@ -297,7 +521,7 @@ describe('the other notices the acting device used to miss', () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     await expect(
       sendVisibleNotice(createMlsServiceStub(), GROUP, 'groupRenamed', { newName: 'x' }, writer)
-    ).resolves.toBeUndefined();
+    ).resolves.toMatchObject({ sentAt: expect.any(Number) });
     expect(error).toHaveBeenCalledTimes(1);
     error.mockRestore();
   });

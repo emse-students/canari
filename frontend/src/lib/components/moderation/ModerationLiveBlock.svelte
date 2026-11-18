@@ -4,8 +4,9 @@
   import { copyId } from '$lib/utils/copyId';
   import type { ReportedLive } from '$lib/moderation/api';
   import { liveStateLabels } from '$lib/moderation/liveState';
-  import type { LiveCutResult, LiveWithdrawalResult } from '$lib/live/types';
+  import type { LiveCutResult, LiveWithdrawalLift, LiveWithdrawalResult } from '$lib/live/types';
   import { LIVE_STRIKE_WINDOW_DAYS, LIVE_WITHDRAWAL_FROM_CUTS } from '$lib/live/constants';
+  import LiftWithdrawalButton from './LiftWithdrawalButton.svelte';
   import ModerationLiveCutDialog from './ModerationLiveCutDialog.svelte';
   import ModerationLiveWithdrawDialog from './ModerationLiveWithdrawDialog.svelte';
 
@@ -24,6 +25,8 @@
     onWithdrawn: (result: LiveWithdrawalResult) => void;
     /** Told the standing drawn here is stale (a withdrawal was refused as not due): re-read the queue. */
     onStale: () => void;
+    /** Told after a lift (`lifted: false` is a repeat) so the queue is read again. */
+    onLifted: (result: LiveWithdrawalLift) => void;
     /**
      * The caller moderates the broadcaster as a person (a BDE: one of its own spaces, 2026-11-02),
      * the server's `canMuteReportedUser`. Required: only true draws the withdrawal, so a caller that
@@ -40,6 +43,7 @@
     onCut,
     onWithdrawn,
     onStale,
+    onLifted,
     mayActOnBroadcaster,
   }: Props = $props();
 
@@ -57,6 +61,11 @@
     Boolean(standing?.withdrawalDue && live.broadcasterId && mayActOnBroadcaster)
   );
   let withdrawOpen = $state(false);
+
+  /** A withdrawn right can be given back by the same people who may withdraw it. */
+  const liftable = $derived(
+    Boolean(standing?.withdrawnAt && live.broadcasterId && mayActOnBroadcaster)
+  );
 
   function handleWithdrawn(result: LiveWithdrawalResult) {
     console.log(
@@ -167,6 +176,9 @@
         <Ban size={13} />
         {m.moderation_live_withdraw_button()}
       </button>
+    {/if}
+    {#if liftable && live.broadcasterId}
+      <LiftWithdrawalButton userId={live.broadcasterId} name={broadcasterName} {onLifted} />
     {/if}
     {#if cuttable}
       <button

@@ -48,7 +48,11 @@ const addWho = arg('add', null);
 // What stays HERE is what this script is FOR: reporting the surface that adds a member to a group,
 // which HEAL-W1 needs and no other caller wants.
 const { createGroup } = await import('./groupnav.mjs');
-await createGroup(cx, name, { label: 'newgroup' });
+await createGroup(cx, name, {
+  label: 'newgroup',
+  // `--with Alice,Bob`: the panel creates a group from at least two people chosen.
+  members: (arg('with', '') ?? '').split(',').map((x) => x.trim()).filter(Boolean),
+});
 console.log(`[newgroup] created "${name}" (present in the list)`);
 
 // The member surfaces live on the group PANE, which may not be open (see above), so this is a

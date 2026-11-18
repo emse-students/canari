@@ -77,6 +77,13 @@
     canari: m.settings_emoji_style_canari,
   };
 
+  /**
+   * The shape of a row pairing text with a CONTROL wider than a switch: the control sits under the text
+   * on a narrow width and beside it from `sm`, so the text is never squeezed into a one-word column
+   * at a doubled root font (Mi 9T, 2026-11-17). Switch rows keep the plain beside-it shape.
+   */
+  const CONTROL_ROW = 'flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4';
+
   // The vibration toggle is only meaningful on touch-capable hardware; detect it here so the
   // section needs no props and stays drop-in.
   let isTouchDevice = $state(false);
@@ -212,7 +219,7 @@
       </div>
     {/if}
 
-    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+    <div class={CONTROL_ROW}>
       <div class="flex items-center gap-3.5">
         <div class="text-text-muted rounded-xl bg-black/5 p-2.5 dark:bg-black/40">
           {#if themeStore.preference === 'light'}
@@ -255,10 +262,7 @@
       </div>
     </div>
 
-    <div
-      class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4"
-      data-emoji-style-setting
-    >
+    <div class={CONTROL_ROW} data-emoji-style-setting>
       <div class="flex items-center gap-3.5">
         <div class="text-text-muted rounded-xl bg-black/5 p-2.5 dark:bg-black/40">
           <Smile size={20} strokeWidth={2.5} />
@@ -296,10 +300,7 @@
       />
     </div>
 
-    <div
-      class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4"
-      data-video-autoplay-setting
-    >
+    <div class={CONTROL_ROW} data-video-autoplay-setting>
       <div class="flex items-center gap-3.5">
         <div class="text-text-muted rounded-xl bg-black/5 p-2.5 dark:bg-black/40">
           <Play size={20} strokeWidth={2.5} />
@@ -325,7 +326,7 @@
       />
     </div>
 
-    <div class="flex items-center justify-between gap-4">
+    <div class={CONTROL_ROW}>
       <div class="flex items-center gap-3.5">
         <div class="text-text-muted rounded-xl bg-black/5 p-2.5 dark:bg-black/40">
           <Languages size={20} strokeWidth={2.5} />
@@ -339,7 +340,7 @@
       <div
         role="radiogroup"
         aria-label={m.settings_language_label()}
-        class="flex shrink-0 items-center gap-1 rounded-xl bg-black/5 p-1 dark:bg-white/10"
+        class="flex w-full shrink-0 items-center gap-1 rounded-xl bg-black/5 p-1 sm:w-auto dark:bg-white/10"
       >
         {#each locales as locale (locale)}
           <button
@@ -349,7 +350,7 @@
             aria-label={LOCALE_LABELS[locale]}
             title={LOCALE_LABELS[locale]}
             onclick={() => void changeLocale(locale)}
-            class="focus-visible:ring-accent-icon rounded-lg px-3 py-1.5 text-xs font-semibold uppercase transition-colors outline-none focus-visible:ring-2
+            class="focus-visible:ring-accent-icon flex-1 rounded-lg px-3 py-1.5 text-xs font-semibold uppercase transition-colors outline-none focus-visible:ring-2 sm:flex-none
  {getLocale() === locale
               ? 'bg-accent text-on-accent shadow'
               : 'text-text-muted hover:text-text-main'}"
@@ -360,7 +361,7 @@
       </div>
     </div>
 
-    <div class="flex items-center justify-between gap-4">
+    <div class={CONTROL_ROW}>
       <div class="flex items-center gap-3.5">
         <div class="text-text-muted rounded-xl bg-black/5 p-2.5 dark:bg-black/40">
           <Compass size={20} strokeWidth={2.5} />
@@ -375,7 +376,7 @@
         type="button"
         onclick={replayWelcomeTour}
         data-guide-replay="welcome-tour"
-        class="border-cn-border text-text-main hover:bg-text-main/10 focus-visible:ring-accent-icon shrink-0 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors outline-none focus-visible:ring-2"
+        class="border-cn-border text-text-main hover:bg-text-main/10 focus-visible:ring-accent-icon w-full shrink-0 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors outline-none focus-visible:ring-2 sm:w-auto"
       >
         {m.guide_replay_button()}
       </button>

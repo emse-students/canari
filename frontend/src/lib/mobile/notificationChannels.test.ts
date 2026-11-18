@@ -6,6 +6,7 @@ import {
   CHANNEL_CALLS,
   CHANNEL_MENTIONS,
   CHANNEL_MESSAGES,
+  CHANNEL_REACTIONS,
   NOTIFICATION_ICON,
 } from '$lib/composables/useNotifications.svelte';
 
@@ -220,6 +221,7 @@ describe('the palette-A notification channels (2026-10-09)', () => {
     expect(ktId('CHANNEL_REACTIONS')).toBe('canari_reactions_v2');
     expect(CHANNEL_MESSAGES).toBe('canari_messages_v2');
     expect(CHANNEL_MENTIONS).toBe('canari_mentions_v2');
+    expect(CHANNEL_REACTIONS).toBe('canari_reactions_v2');
   });
 
   it('the old ids are deleted at startup, and never equal a current id', () => {

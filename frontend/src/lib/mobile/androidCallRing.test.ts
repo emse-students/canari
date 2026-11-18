@@ -83,6 +83,13 @@ describe('the Android ring reaches its one sequencer', () => {
     expect(fcm).toMatch(
       /msgType == "call_ring_end"\) \{[\s\S]*?cancelIncomingCallNotification\(this, /
     );
+    // Content-free push WP-W6: the ring-end push carries no `groupId` since 2026-11-17, so the
+    // branch finds the ring by `callId` alone.
+    const ringEnd = fcm.slice(fcm.indexOf('if (msgType == "call_ring_end") {'));
+    const branch = ringEnd.slice(0, ringEnd.indexOf('return'));
+    expect(branch).toContain('call_ring_end');
+    expect(branch).toContain('cancelIncomingCallNotification(this, data["callId"] ?: "")');
+    expect(branch).not.toContain('groupId');
     expect(body(bridge, 'ringStop')).toContain('cancelIncomingCallNotification(context, callId, ');
   });
 

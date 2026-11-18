@@ -1,11 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Ban, Gamepad2, Trash2, Undo2 } from '@lucide/svelte';
+  import { Ban, Gamepad2, Play, Trash2, Undo2 } from '@lucide/svelte';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import Select from '$lib/components/ui/Select.svelte';
   import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
+  import MinesweeperReplay from '$lib/components/games/MinesweeperReplay.svelte';
   import MinesweeperStats from '$lib/components/games/MinesweeperStats.svelte';
   import MinesweeperModal from '$lib/components/settings/MinesweeperModal.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
@@ -64,6 +65,8 @@
   let bans = $state<MinesweeperBan[]>([]);
   /** An admin action failed - said on the tab, never swallowed. */
   let moderationFailed = $state(false);
+  /** The score whose replay is open (a global admin's "see this game"); null when none is. */
+  let replayScoreId = $state<string | null>(null);
   const promoOptions = $derived<PickerOption[]>(
     promos.map((p) => ({
       value: String(p.promo),
@@ -300,6 +303,16 @@
                     icon
                     size="compact"
                     variant="ghost"
+                    aria-label={m.minesweeper_admin_replay()}
+                    title={m.minesweeper_admin_replay()}
+                    onclick={() => (replayScoreId = entry.scoreId)}
+                  >
+                    <Play size={14} strokeWidth={2.25} />
+                  </Button>
+                  <Button
+                    icon
+                    size="compact"
+                    variant="ghost"
                     aria-label={m.minesweeper_admin_remove_score()}
                     title={m.minesweeper_admin_remove_score()}
                     onclick={() => void removeScore(entry)}
@@ -371,6 +384,10 @@
     </section>
   </div>
 </PageContainer>
+
+{#if replayScoreId}
+  <MinesweeperReplay scoreId={replayScoreId} onClose={() => (replayScoreId = null)} />
+{/if}
 
 {#if playing}
   <MinesweeperModal

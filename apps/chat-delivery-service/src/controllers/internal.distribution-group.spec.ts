@@ -21,6 +21,7 @@ import { SeatEviction } from '../entities/seat-eviction.entity';
 import { JoinAskPush } from '../entities/join-ask-push.entity';
 import { RevokedDeviceGroup } from '../entities/revoked-device-group.entity';
 import { SentFrameReceipt } from '../entities/sent-frame-receipt.entity';
+import { UninvitedEntry } from '../entities/uninvited-entry.entity';
 import { MlsCommitLog } from '../entities/mls-commit-log.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
@@ -694,6 +695,7 @@ describe('InternalController - the community distribution group', () => {
         JoinAskPush,
         RevokedDeviceGroup,
         SentFrameReceipt,
+        UninvitedEntry,
       ]);
       expect(purged).not.toContain(UserDismissedGroup);
       // In one unit of work with the tombstone: two statements outside a transaction leave a window

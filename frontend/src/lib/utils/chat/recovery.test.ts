@@ -803,7 +803,7 @@ describe('requestReAdd', () => {
     // No exclusion: this is an ordinary trigger, and only a coverage chase has a reason to skip a
     // member it has already heard from.
     expect(deps.mlsService.sendHistoryRequest).toHaveBeenCalledWith('g1', { exclude: [] });
-    expect(probeSender).toHaveBeenCalledWith('g1');
+    expect(probeSender).toHaveBeenCalledWith('g1', { incomplete: false });
     // Not-ready marker cleared on success.
     expect(localStorage.getItem('mls_not_ready_since:user-a:g1')).toBeNull();
   });

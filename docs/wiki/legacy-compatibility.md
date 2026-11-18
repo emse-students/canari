@@ -78,6 +78,60 @@ to `true`, then delete it, the sentence branch of `channelMemberAddedData` and i
 entry. **What stays:** the legacy-sentence branch of `channelSystemEnvelope` - rows are never
 rewritten, so a salon archive holds sentence notices for ever.
 
+### Removal once `minClientVersion` passes the first stable that seals - an unsealed history answer (2026-11-17)
+
+**Site:** the `[LEGACY]` branch of the `history_bundle` receiver (`noteUnsealedAnswerOnce`,
+`systemMessageHandler.ts`), and the answerer's unsealed branch for an ask that carries no
+`answerKey` (`sendBundleChunks`, `groupActions.ts`).
+**What it humours:** a build older than option B
+([history-answer-addressing](protocols/history-answer-addressing.md#sealing-the-answer-to-the-asker---option-b-2026-11-17))
+answers a keyed ask in clear - still addressed to the asker alone - and asks without a key. Both are
+accepted, the first said once per session at error so its population is counted.
+**The cost while it stands:** an answer between two builds of which one predates sealing is protected
+by the server's routing alone, as it was under step A.
+**Removal condition:** `minClientVersion` at or above the first stable carrying option B, on both
+estates. Then, in one pull request
+([planned](backlog.d/p3-a-history-answer-is-sealed-or-refused-once-the-floor-seals.md)): an unsealed
+answer to a keyed ask is refused at error, an ask with no `answerKey` is malformed and answered
+nothing (as one with no `requestId` is, D211), `noteHistoryAsk`'s `null` secret goes, and so does
+this entry.
+
+### Removal once `minClientVersion` passes the first stable carrying it - the bound on register asks (2026-11-17)
+
+**Site:** `REGISTER_ASKS_MAX`, `noteRegisterAsked` and `endSpentRegisterAsks` (`registerOwed.ts`),
+called from `sendHistoryProbe` (`groupActions.ts`).
+**What it humours:** a responder older than the register ask
+([history-answer-addressing](protocols/history-answer-addressing.md#the-newcomer-asks-for-its-register-2026-11-17))
+ignores `register` and answers the digest alone - or, its store matching ours, sends nothing: no
+register and no decline. Such an ask stays counted, and after five unanswered asks the newcomer stops
+asking, said at warn. A responder on this build declines instead, and its FIRST decline gives its
+ask back (later ones from the same device count like silence), so at most five asks plus one per
+other device ever leave; the asking also ends when every other device of the tree has declined.
+**The cost while it stands:** a newcomer whose only register holders run an older build asks five
+times (a digest instead of the state key each time), keeps the nicknames it had, and declines -
+never answers empty - while it has taken none.
+**Removal condition:** `minClientVersion` at or above the first stable carrying the register ask, on
+both estates. Every responder then answers or declines `register`; the bound stays (a server that
+cannot address) but its line is raised from warn to error, since only a defect reaches it - in the
+same pull request as the sealed-answer refusal
+([planned](backlog.d/p3-a-history-answer-is-sealed-or-refused-once-the-floor-seals.md)) - and this
+entry goes.
+
+### Removal once `minClientVersion` passes the first stable carrying it - the iOS fold of the app's former seed mirror (2026-11-17)
+
+**Site:** `fold_legacy_seed_mirror` and its call in `seed_mirror_home` (`frontend/src-tauri/src/commands/push.rs`).
+**What it humours:** an iPhone install whose older build kept a seed mirror of its own in
+`app_data_dir` beside the App Group's, and copied it over the group's on every lifecycle event
+([channel-encryption section 27](protocols/channel-encryption.md#27-the-iphone-held-two-seed-mirrors-and-the-one-without-the-extensions-seeds-won---fixed-2026-11-17)).
+The first foreground mirror edit of a newer build folds that copy into the group's (a union) and
+deletes it, so it runs once per install and then finds nothing.
+**Removal condition:** `minClientVersion` at or above the first stable carrying the fold, on both
+estates. That does NOT prove every install folded: a store update skips versions, so an iPhone may go
+from a build without the fold straight to one without it. So the fold is REPLACED, not deleted: its
+call becomes an unconditional delete of `{app_data_dir}/graine_seeds.json` (the group's copy already
+holds what the last lifecycle copy put there), and the function and its four tests go. **The cost of
+keeping it meanwhile:** one `stat` per foreground mirror edit on iOS.
+
 ### A tolerated breakage: an institution post from a build older than the reach (owner, 2026-11-10)
 
 - **What.** An institution's post must carry a reach (migration 162,
@@ -313,7 +367,7 @@ REST: those rows need a count, then a migration.
 | Form `dependsOn`/`dependsValue` (`forms/visibility.ts`; no entry here) | no stored form uses the pair | not a version question | `forms.items` | reader branch | owed: count |
 | State blob v1 header WRITER (`frame_v1`, CORRUPT-1/2) | floor >= the reader (`v0.18.18`) | YES | it CHANGES device data at rest | 1 line + `serverProse.test.ts` | FLIPPED in its own MLS PR (PK1, 2026-10-17, unshipped until a tag carries it); the LEGACY reader stays for blobs not yet rewritten ([backlog](backlog.md)) |
 | `MLS_STATE_SEAL_V2_WRITER_ENABLED` | `minClientVersion` AND the web rollback floor >= the tag carrying the HARDENED v2 reader (#2074) - a v2 reader alone (`v1.2.7`) is not enough: `v1.2.7` and `v1.4.0` misread a refused v2 blob, the second as `STATE_ALTERED` | NO (floor `1.2.7`; the hardened reader is in no tag yet) | it CHANGES device data at rest | 1 line in its own PR, then the encrypt worker | NOT done: #2074 ships the reader with the writer OFF ([mls-protocol](protocols/mls-protocol.md#v2---the-browser-seals-with-webcrypto-every-platform-reads-it-2026-10-12)) |
-| `CHAT_REEL_WRITER_ENABLED` (`reels/chatReelWriter.ts`, [reels-in-chat](frontend/modules/reels-in-chat.md#7-the-work-packages-in-order) item 6) | `minClientVersion` on the estate the writer writes to >= `v1.2.2`, the first stable carrying the reader (#1659, RC-1: a reel message is drawn as a tile, never as a downloadable chat video); a push says "CanaReel" from `v1.3.1` (#2112, RC-7), below it "video" - a softer line, not a misread. RC-6's "CanaReel supprime" (#2911) is NOT part of the floor: an older reader draws the player's expired state on the same `410` | YES on both estates, read 2026-11-02 from `GET /api/version`: production `1.5.1`, dev `1.2.7` (the push half too on production; on dev a `1.2.7`-`1.3.0` device would announce a reel as "video") | none | the floor is a precondition, nothing to remove | MET - the switch waits only for its other items (section 7) and the bench readings; how it turns on for dev only is the switch's own PR |
+| `CHAT_REEL_WRITER_ENABLED` (`reels/chatReelWriter.ts`, [reels-in-chat](frontend/modules/reels-in-chat.md#7-the-work-packages-in-order) item 6) | `minClientVersion` on the estate the writer writes to >= `v1.2.2`, the first stable carrying the reader (#1659, RC-1: a reel message is drawn as a tile, never as a downloadable chat video); a push says "CanaReel" from `v1.3.1` (#2112, RC-7), below it "video" - a softer line, not a misread. RC-6's "CanaReel supprime" (#2911) is NOT part of the floor: an older reader draws the player's expired state on the same `410` | YES on both estates, read 2026-11-02 from `GET /api/version`: production `1.5.1`, dev `1.2.7` (the push half too on production; on dev a `1.2.7`-`1.3.0` device would announce a reel as "video") | none | the floor is a precondition, nothing to remove | MET - re-read 2026-11-16 from `GET /api/version`: both estates serve `minClientVersion` `1.6.6`, above the reader, the push line and the `410` tombstone (#2911, `v1.6.3`), so every admitted client draws a chat reel as a tile and a purged one as "CanaReel supprime"; **the switch is a constant `true` since the `1.7.0` production flip** ([21.1](frontend/modules/reels-in-chat.md#211-the-switch-and-the-flip-pr)) |
 | The `1.2.1` key-group epoch floor (backlog owed line) | floor >= `1.2.1` | YES | - | - | closed (floor `1.5.1` on production, read 2026-10-31) |
 | Group removal hold (#1878) | floor >= the release carrying it | YES on production since 2026-10-29 (floor `1.2.9`) | - | - | floor met |
 | `GET mls/groups/:id` and `GET mls/group-info/:id` answer `{ found: false }` / `{ groupInfo: null }` instead of a bare `null` (an empty untyped 200), #2428 | the server deploys | not a version question: a deploy-order WINDOW | none | - | A stable ships both stores BEFORE production deploys, so for days new native clients talk to the old server. There, an empty untyped 200 reads as `error`, so a group deleted for everyone is not auto-purged on those clients until the server ships. That costs cleanup, not data. Once the server deploys, OLD clients change too: `fetchGroupInfo` returns `null` instead of throwing on an unpublished base (benign), and their `GroupInfo fetch failed` warn goes quiet ([chat](frontend/modules/chat.md#a-2xx-a-captive-portal-answered-is-no-answer-2026-10-25)) |
@@ -498,6 +552,59 @@ as its one slice, logged `[FORMS] the server serves no cursusSlices`.
 estate older than it is served. Then delete the two fields from both answers and their types, the
 `cursusSlicesOf` branch, its test and this entry.
 
+### Removal once `minClientVersion` passes the release carrying the account fields - a form editor that sends `guestFields` alone (2026-11-16)
+
+**Site:** `legacyGuestFieldsMerge` (`apps/social-service/src/forms/guest-identity.ts`), called by
+`FormsService.update` when an edit carries `guestFields` and no `respondentFields`, logged
+`[LEGACY] edit of ... sends guestFields without respondentFields`.
+**What it humours:** an editor older than [the respondent's account fields](frontend/modules/forms.md#the-respondents-account-fields-owner-2026-11-16)
+knows the guest's name and e-mail only, and sends them as the whole `guestFields` list on every save
+(`[]` on a form that is not public). Taken as sent, it would erase the declared asks (promo and
+formation, status, campus) the new editor ticked. Its names and e-mail are taken, the stored declared
+asks kept; `respondentFields` is absent from its body, so it keeps the stored value as any absent field.
+**The cost while it stands:** one branch on the edit path.
+**Removal condition:** `minClientVersion` on both estates passes the first stable carrying the account
+fields, and the `[LEGACY]` line is absent from production for a week. Then delete the helper, its
+branch, its test and this entry.
+
+### Removal once `minClientVersion` passes the release carrying the account fields - an export asked without identity words (2026-11-16)
+
+**Site:** `LEGACY_IDENTITY_EXPORT_LABELS` (`apps/social-service/src/forms/export-labels.ts`), used by
+`FormsService.exportSubmissions` when the form writes a promo, status or campus column and the
+request's labels carry no `identity`, logged `[LEGACY] export of ... without identity words`.
+**What it humours:** a store build older than the account fields sends the export words it knows,
+and none for those columns. Refusing it would leave an organiser on an old app with no export at all
+(lead, 2026-11-16: an old client's ordinary request is never refused); the columns are written in
+French, the words that build's own French catalogue holds (`form_respondent_*`).
+**The cost while it stands:** one constant and one branch; an English-speaking organiser on an old
+build reads those four headers in French.
+**Removal condition:** `minClientVersion` on both estates passes the first stable carrying the account
+fields, and the `[LEGACY]` line is absent from production for a week. Then make `identity` required
+in `parseExportLabels`, delete the constant, its branch, its test and this entry.
+
+### Removal once `minClientVersion` passes `1.7.0` - an answer from a build that cannot draw the declared questions (2026-11-16)
+
+**Site:** `predatesDeclaredFields` and the `olderClient` branch of `declaredIdentityFor`
+(`apps/social-service/src/forms/respondent-identity.ts`), fed by `X-Canari-Client-Version` on both
+submit routes (`forms.controller.ts`, `public-forms.controller.ts`), logged `[LEGACY] answer to
+form=... from a build older than 1.7.0`.
+**What it humours:** a store build older than `RESPONDENT_FIELDS_MIN_CLIENT_VERSION` (`1.7.0`) cannot
+draw "Promo et formation", "Statut" or "Campus" on an ANONYMOUS form (or a guest page it embeds), and
+names no build on a submit. Its answer carrying NONE of them is taken, stored
+`{ source: 'declared', notDeclared: [...] }`, and the organiser reads "Non déclaré" in those columns of
+the responses list and the export - never a blank that looks like an answer, never a refusal. A
+build that names `1.7.0` or later is judged in full (`FORM_GUEST_IDENTITY_MISSING`), and so is any
+declared field an older build does send. The version is a FACT the client states, not inferred from
+what is missing: a current build that forgot a field is refused, not marked.
+**The cost while it stands:** one branch on the submit path; such answers stay marked for good (the
+data's meaning, not a shim - the cell keeps reading "not declared" after the removal).
+**Removal condition:** `minClientVersion` on both estates passes `1.7.0` and the `[LEGACY]` line is
+absent from production for a week. Then delete the `olderClient` branch, `predatesDeclaredFields`, the
+header plumbing of the two submit routes, their tests and this entry; keep `notDeclared` on the read
+side.
+The answers given before migration 174 carry no snapshot and read the account's name live, as every
+answer always did: that is the data's meaning, not a client shim, and has no removal date.
+
 ### Removal once both estates log `drained=0` - live segments an older release left in Garage (2026-11-09)
 
 **Site:** `LiveSegmentsService.drainObjectStore`, run by `onApplicationBootstrap`
@@ -580,19 +687,17 @@ that id (never the caller's own, which is the one the install is using). Permane
 date.
 **Condition:** every estate serves migration 040 (one deploy of each). The date is when to check.
 
-### Removal at deploy + one access-token lifetime - an access token that names no session
+### A tolerated breakage: a client older than `1.5.0` retiring its abandoned id (2026-11-17)
 
-**Site:** the `legacy` branch of `AuthController.sessionOfToken` in
-`apps/core-service/src/auth/auth.controller.ts`.
-**What it humours:** an access token minted before its issuer wrote `sid`. The issuer always writes it
-now, so such a token is pre-deploy by construction and dies by its own `exp` within
-`ACCESS_TOKEN_TTL_SECONDS` (1 h) of the deploy; it is accepted without a session read, `X-Session-Id`
-empty, logged once per process at `log`. Refusing it would answer every client signed in at the
-deploy anonymous for up to that hour. The dev estate cannot rehearse it (its tokens already carry
-`sid`).
-**Condition:** production has run the release carrying the check for longer than one access-token
-lifetime. Then delete the branch, so a token naming no session is answered anonymous like an ended
-one ([sessions](sessions.md#an-access-token-is-only-as-alive-as-its-session-2026-10-25)).
+**Site:** the own-device refusal of `DevicesController.deleteDevice` (chat-delivery,
+[auth](frontend/modules/auth.md#a-removed-row-whose-device-the-server-no-longer-lists)).
+**What breaks:** a client older than `1.5.0` (the `?reason=retired` parameter, #2450) retires the id
+its own rotation abandoned with a plain delete, read as an owner's; while its session is still bound to
+that id (until its next unlock rebinds it) the server now answers `409 OWN_DEVICE`, and the id is
+retired at a later round instead. Nothing is lost: the abandoned id holds no state the install uses.
+**Measured 2026-11-17 on production:** the KeyPackages published in the last 7 days name only
+`1.6.0` and later (the web is always current), so the population is ZERO.
+**Condition:** none - no shim was added.
 
 ### No date yet - a frontend image older than the target lists, drained by DNS (2026-11-01)
 
@@ -1236,18 +1341,18 @@ to close what PKCE alone does not.
 
 ### No date yet - the exclusions route answered without `withheld`, by a server older than 2026-10-22
 
-**Sites:** `entitledHistorySelection` (the inviter's push) and `dropOwnExcludedMessages` (the
-receiver), both in `frontend/src/lib/utils/chat/historyEntitlement.ts`, on `WithheldUnsupportedError`
-(thrown by `MlsDeliveryApi.getGroupWithheld`) and on nothing else.
+**Site:** `dropOwnExcludedMessages` (the receiver), in
+`frontend/src/lib/utils/chat/historyEntitlement.ts`, on `WithheldUnsupportedError` (thrown by
+`MlsDeliveryApi.getGroupWithheld`) and on nothing else. The push's site (`entitledHistorySelection`,
+with its once-per-session accusation) was DELETED on 2026-11-17: the push carries no message since,
+so it reads no withheld set
+([history-answer-addressing](protocols/history-answer-addressing.md#what-is-not-sealed-the-inviters-join-push---so-it-carries-no-message-2026-11-17)).
 **Shim (2026-10-22):** a server that predates the field answers the exclusions route without
-`withheld`, which is an ordinary state while a store build runs ahead of production. Both sites then
-do exactly what they did before the field existed. The push filters on the union of gaps, so a
-continuous member's new device and a 1:1 keep their restore. The receiver filters on its own gaps.
-**What it costs:** in that window a genuine newcomer to a group conversation is still pushed what
-preceded their arrival - the leak the field exists to close, unchanged from before it. That is why
-the push's branch is a FALLBACK and accuses: one `console.error` per session. The receiver's line is
-per bundle. Every other failure of the read still sends and ingests nothing.
-**Removal condition:** every estate's chat-delivery answers `withheld`; then both branches go and the
+`withheld`, which is an ordinary state while a store build runs ahead of production. The receiver
+then filters on its own gaps, as it did before the field existed.
+**What it costs:** nothing on the sending side any more. The receiver's line is per bundle. Every
+other failure of the read still ingests nothing.
+**Removal condition:** every estate's chat-delivery answers `withheld`; then the branch goes and the
 error is an ordinary refusal. A server version, not a client floor.
 
 ### No date yet - the exclusions route answered without `addressedAnswers`, by a server older than step A
@@ -1257,7 +1362,7 @@ error is an ordinary refusal. A server version, not a client floor.
 ([history-answer-addressing](protocols/history-answer-addressing.md), rule 2).
 **Shim (2026-10-22):** a server that predates step A refuses an addressed conversation frame, so
 every history answer - the push, the diff, the scrollback - is sent as the broadcast it was before,
-filtered on the union of gaps (plus the invitee's span on a push).
+filtered on the union of gaps (the push carries no message since 2026-11-17).
 **What it costs:** against such a server the answer is a broadcast, filtered on the union of gaps
 and, on the receiving side, on that receiver's own windows. It is a FALLBACK and accuses: one
 `console.error` per session.

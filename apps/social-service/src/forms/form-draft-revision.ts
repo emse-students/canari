@@ -57,7 +57,7 @@ export const RECENT_SAVE_IDS = 32;
  * its cover image (uploaded on its own route, never part of a revision). `to_jsonb` of a row prints
  * its keys in one canonical order, and a column added later is covered without touching this.
  */
-const FORM_FINGERPRINT_SQL = `md5((to_jsonb(f) - ARRAY['id', 'ownerId', 'clientCreateId', 'createdAt', 'updatedAt', 'deletedAt', 'closedAt', 'status', 'imageUrl', 'imageMediaId'])::text)`;
+export const FORM_FINGERPRINT_SQL = `md5((to_jsonb(f) - ARRAY['id', 'ownerId', 'clientCreateId', 'createdAt', 'updatedAt', 'deletedAt', 'closedAt', 'status', 'imageUrl', 'imageMediaId'])::text)`;
 
 type Querier = Pick<EntityManager, 'query'>;
 

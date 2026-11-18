@@ -546,6 +546,20 @@ while the overlay still lifts the shell by its height, so a field under it staye
 elsewhere the engine resizes for the keyboard and `isOpen` stays the answer. `isOpen` keeps its own
 jobs (the bars, the remembered height).
 
+## 7. A banner in the composer's place stands on its floor (2026-11-16)
+
+A user report on `1.6.12`, Android with 3-button navigation: in a deleted DM, the navigation bar drew
+over the red "Supprimer localement" button. The three branches of `ChatArea.svelte` that REPLACE the
+composer - a deleted conversation (`lifecycle: 'removed'`), one unopenable on this device, a salon
+this person may not write in - were each docked at `bottom: 0` with their own flat `py-3`, so none
+reserved the bottom safe area that the composer's footer reserves through `--chat-composer-floor`
+(`max(0.75rem, safe area)`). They are now ONE class, `.chat-docked-banner` (`app.css`), whose bottom
+padding IS that floor, resolved on it in the same rule group as on the footer and the thread, so the
+banner and the composer stand on one length and cannot drift. Nothing on `main` had changed it since
+`1.6.12`. Pinned by `composerBand.test.ts` (*"the banners docked in the composer place"*): the floor
+resolved on the class, its padding, and the three branches wearing it with no self-padded banner left.
+Read PASS on both phones and on a desktop browser ([readings](../device-verification.md#the-phone-readings-of-2026-11-18-m1-and-i1-170-alpha11), 2026-11-18).
+
 ## Owed on a phone (nothing here is measured after the change - it needs a build)
 
 On the Mi 9T, a pre-release, the same three recordings (`adb screenrecord`, the frame script):
