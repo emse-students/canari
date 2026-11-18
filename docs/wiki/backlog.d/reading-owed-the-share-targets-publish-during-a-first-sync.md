@@ -1,6 +1,6 @@
 ## Reading owed - the share targets are sent once, when the member leaves the app, after an account's first sync
 
-target: 1.7.0
+target: 1.7.1
 
 **Seen** on `1.7.0-alpha.12`, Mi 9T, dev, after a sign-out and a sign-in of a second test account
 ([readings](../device-verification.md#the-phone-and-web-readings-of-2026-11-18-s6-170-alpha12-live-moderations-last-halves-the-reel-card-overlays-the-birthday-morning)):
