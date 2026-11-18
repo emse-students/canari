@@ -38,9 +38,10 @@
   import { videoSound } from '$lib/stores/videoSound.svelte';
   import {
     CONTROLS_FADE_MS,
-    bufferedFraction,
+    barLength,
+    loadedSpans,
+    type LoadedSpan,
     formatVideoTime,
-    scrubLength,
     videoKeyAction,
   } from '$lib/utils/videoPlayback';
   import {
@@ -172,6 +173,13 @@
     /** `src` is a segmented stream's MSE URL, which must reach the element exactly as minted. */
     streamed?: boolean;
     /**
+     * The video's TOTAL length as its publisher declared it, in ms (a CanaReel's `post.durationMs`, a
+     * conversation reel's `MediaRef.durationMs`). The seek line is fixed to it from the first frame
+     * while the engine does not know a length yet (`barLength`), so it never maps onto what has
+     * loaded so far and never rewinds as segments arrive (owner, 2026-11-18).
+     */
+    declaredDurationMs?: number | null;
+    /**
      * Opens the full-screen viewer: an inline video's tap (`feed`, `chat`; the expand chip is gone,
      * owner 2026-11-15) and Enter / `f`. Where it is, the viewer resumes (`videoResume`). Without
      * it, the chat's tap plays or pauses.
@@ -240,6 +248,7 @@
     posterFit = 'contain',
     onPlaybackBlocked,
     streamed = false,
+    declaredDurationMs = null,
     onOpen,
     openLabel,
     onActions,
@@ -403,9 +412,12 @@
   let muted = $state(true);
   let currentTime = $state(0);
   let duration = $state(Number.NaN);
-  /** What the seek line maps onto (`scrubLength`): the duration, else what can be sought so far. */
+  /** What the seek line is fixed to (`barLength`): the video's total, 0 while nobody knows it. */
   let length = $state(0);
-  let buffered = $state(0);
+  /** Where `length` came from; `unknown` draws no played part (`data-video-length`). */
+  let lengthSource = $state<'engine' | 'declared' | 'seekable' | 'unknown'>('unknown');
+  /** Every loaded range, as fractions of `length`: the grey part of the line. */
+  let loaded = $state<LoadedSpan[]>([]);
   /** The first frame is in the element: the poster gives way to it. */
   let frameReady = $state(false);
   /** The engine refused the bytes (codec, container): said, rather than a black box. */
@@ -524,6 +536,13 @@
     muted = video.muted;
   }
 
+  // THE LINE IS FIXED TO THE DECLARED LENGTH FROM THE FIRST FRAME: read once the element is bound, not
+  // at its first media event, which a slow link delays by seconds.
+  $effect(() => {
+    void declaredDurationMs;
+    if (video) untrack(sync);
+  });
+
   function showControls() {
     controlsVisible = true;
     poke += 1;
@@ -535,15 +554,30 @@
     muted = video.muted;
     currentTime = video.currentTime;
     duration = video.duration;
-    length = seekLength(video);
-    // Against the REAL length only: mapped onto what is buffered, the buffered bar would always read
-    // full. No length yet, no buffered bar.
-    buffered = bufferedFraction(video.buffered, video.currentTime, video.duration);
+    const fixed = seekLength(video);
+    length = fixed.seconds;
+    if (fixed.source !== lengthSource) {
+      // A STREAM'S LENGTH IS LEARNED ONCE, so a change of source is the line worth one entry. The
+      // unknown case is a state, said when it is entered: the line draws no played part until it ends.
+      Log.d(
+        'VideoPlayer',
+        `${variant}: the seek line's length is ${fixed.source} (${fixed.seconds} s)`
+      );
+      lengthSource = fixed.source;
+    }
+    // Against the TOTAL only: mapped onto what is buffered, the loaded part would always read full.
+    // No length yet, nothing is drawn.
+    loaded = loadedSpans(video.buffered ?? { length: 0, start: () => 0, end: () => 0 }, length);
   }
 
-  /** {@link scrubLength} of the element - `seekable` absent (a test double) reads as nothing sought. */
-  function seekLength(el: HTMLVideoElement): number {
-    return scrubLength(el.duration, el.seekable ?? { length: 0, start: () => 0, end: () => 0 });
+  /** {@link barLength} of the element - `seekable` absent (a test double) reads as nothing sought. */
+  function seekLength(el: HTMLVideoElement) {
+    return barLength({
+      duration: el.duration,
+      declaredSeconds: declaredDurationMs ? declaredDurationMs / 1000 : null,
+      seekable: el.seekable ?? { length: 0, start: () => 0, end: () => 0 },
+      streamed,
+    });
   }
 
   function togglePlay() {
@@ -589,6 +623,7 @@
       canOpen: !!onOpen,
       paused: video.paused,
       muted: video.muted,
+      autoplayRefused,
     });
     Log.d('VideoPlayer', `${variant}: tap -> ${action}`);
     switch (action) {
@@ -607,6 +642,8 @@
         break;
       case 'sound-on':
         turnSoundOn();
+        break;
+      case 'none':
         break;
     }
   }
@@ -668,7 +705,7 @@
    */
   function seekTo(seconds: number) {
     if (!video) return;
-    const end = seekLength(video);
+    const end = seekLength(video).seconds;
     if (end <= 0) return;
     const floor = streamed ? streamSeekFloor(streamProgressOf(src), video.buffered) : 0;
     if (seconds < floor) {
@@ -823,9 +860,9 @@
         }
         if (verdict.cause === 'refused' && !muted && scope !== 'silent') {
           // A full-screen viewer opens WITH sound where the app may; the engine refused it, so it
-          // plays muted rather than sit paused (owner, 2026-11-10) - and a tap turns the sound on.
+          // plays muted rather than sit paused (owner, 2026-11-10) - the rail's speaker turns the sound on.
           console.warn(
-            `[VideoPlayer] autoplay with sound refused (${name}) - playing muted, a tap turns the sound on`,
+            `[VideoPlayer] autoplay with sound refused (${name}) - playing muted, the speaker turns the sound on`,
             err
           );
           if (scope === 'app') videoSound.muteForRefusedStart();
@@ -1105,6 +1142,7 @@
             variant="line"
             {currentTime}
             duration={length}
+            {loaded}
             onSeek={seekTo}
             {onScrubbingChange}
           />
@@ -1133,6 +1171,7 @@
           variant="line"
           {currentTime}
           duration={length}
+          {loaded}
           onSeek={seekTo}
           {onScrubbingChange}
         />
@@ -1150,6 +1189,7 @@
           variant="line"
           {currentTime}
           duration={length}
+          {loaded}
           onSeek={seekTo}
           {onScrubbingChange}
         />
@@ -1192,7 +1232,7 @@
             class="mx-2 min-w-0 flex-1"
             {currentTime}
             duration={length}
-            {buffered}
+            {loaded}
             onSeek={seekTo}
             {onScrubbingChange}
           />
