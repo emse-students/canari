@@ -1,6 +1,6 @@
 ## P2 - the reply swipe along a thumb's arc does nothing on WebKit: the thread scrolls instead
 
-target: 1.7.0
+target: 1.7.1
 
 _2026-11-18, sitting [S7](../device-verification.md#the-web-and-phone-readings-of-2026-11-18-s7-170-alpha12-the-last-sitting-before-the-stable): **closes WITH the `1.7.0` stable and does NOT block cutting it** - the fix (#3605) was read on the iPhone on `1.7.0-alpha.1`; this file is deleted the day the stable ships._
 
