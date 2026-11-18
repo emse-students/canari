@@ -3,7 +3,8 @@
   import { resolve } from '$app/paths';
   import '../app.css';
   import { pageScrollPaddingClass } from '$lib/components/layout/pageScrollPadding';
-  import { retryFailedMyAssociationsProbe } from '$lib/associations/api';
+  import { ensureMyAssociations, retryFailedMyAssociationsProbe } from '$lib/associations/api';
+  import { followAdminQueueCounts } from '$lib/admin/adminQueueCounts.svelte';
   import { afterNavigate, beforeNavigate, goto, onNavigate, preloadData } from '$app/navigation';
   import { onArrivedAtEntry, onLeavingEntry } from '$lib/navigation/navigationMemory';
   import { cancelRestore } from '$lib/navigation/scrollMemory';
@@ -56,7 +57,13 @@
   import PlatformGateOverlay from '$lib/components/shared/PlatformGateOverlay.svelte';
   import IdentitySplitOverlay from '$lib/components/shared/IdentitySplitOverlay.svelte';
   import MaintenanceAdminBanner from '$lib/components/shared/MaintenanceAdminBanner.svelte';
-  import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
+  import {
+    currentUserId,
+    isAssociationSuperAdmin,
+    isContentModerator,
+    isEventValidator,
+    isGlobalAdmin,
+  } from '$lib/stores/user';
   import { feedStoreAccess } from '$lib/posts/feedStore';
   import { unlockUnattendedFor } from '$lib/stores/unlockPath.svelte';
   import { bindPeerNames } from '$lib/utils/users/peerNameStore';
@@ -291,6 +298,26 @@
     askCallChannelDndIfOwed(window, (message, action, onClose) =>
       showToast(message, 'warning', DND_REGRANT_TOAST_MS, action, onClose)
     );
+  });
+
+  // ── The admin queues' pending counts (owner, 2026-11-18) ───────────────────────────
+  // Followed while the session's account holds an admin tier - the same four `/admin` admits on
+  // (`ensureMayOpenAdmin`), read from the REACTIVE tier stores, so a tier published late (a
+  // membership probe retried after a failure) starts the poll and a lost one stops it; a member is
+  // asked nothing. The membership probe is warmed once per account so the BDE tiers get published.
+  const adminCountsAccount = $derived(
+    globalSession.isLoggedIn && globalSession.authToken ? globalSession.userId || null : null
+  );
+  const followsAdminCounts = $derived(
+    !!adminCountsAccount &&
+      (isGlobalAdmin() || isAssociationSuperAdmin() || isContentModerator() || isEventValidator())
+  );
+  $effect(() => {
+    if (adminCountsAccount) void ensureMyAssociations();
+  });
+  $effect(() => {
+    if (!followsAdminCounts) return;
+    return followAdminQueueCounts();
   });
 
   // ── Push notification init ───────────────────────────────────────────────────

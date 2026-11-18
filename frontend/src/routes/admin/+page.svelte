@@ -7,32 +7,23 @@
     isEventValidator,
   } from '$lib/stores/user';
   import {
-    listPendingCalendarEvents,
     ensureAssociationSuperAdmin,
     ensureContentModerator,
     ensureEventValidator,
   } from '$lib/associations/api';
   import SectionHub from '$lib/components/navigation/SectionHub.svelte';
   import { adminHubGroups, type AdminTiers } from '$lib/admin/adminSections';
+  import { adminQueueCounts, loadAdminQueueCounts } from '$lib/admin/adminQueueCounts.svelte';
   import { m } from '$lib/paraglide/messages';
 
   let isGlobalAdminUser = $state(false);
   let isSuperAdminUser = $state(false);
   let isModeratorUser = $state(false);
   let isEventValidatorUser = $state(false);
-  let pendingCount = $state<number | null>(null);
 
-  async function loadPendingCount() {
-    if (!isEventValidatorUser) return;
-    try {
-      const pending = await listPendingCalendarEvents();
-      pendingCount = pending.events.length;
-    } catch {
-      pendingCount = null;
-    }
-  }
-
-  onMount(async () => {
+  onMount(() => {
+    // The hub is where an admin looks for what waits: asked afresh, not left to the next poll.
+    void loadAdminQueueCounts();
     isGlobalAdminUser = isGlobalAdmin();
     isSuperAdminUser = isGlobalAdminUser || isAssociationSuperAdmin();
     isModeratorUser = isGlobalAdminUser || isContentModerator();
@@ -47,10 +38,8 @@
         isSuperAdminUser = superAdmin;
         isModeratorUser = moderator;
         isEventValidatorUser = eventValidator;
-        void loadPendingCount();
       });
     }
-    await loadPendingCount();
   });
 
   const tiers = $derived<AdminTiers>({
@@ -60,16 +49,10 @@
     isEventValidator: isEventValidatorUser,
   });
 
-  // The rows are the registry's, filtered by tier - the layout's guard reads the SAME table. The
-  // pending count is the one live number a row carries, in place of the old card badge.
-  const groups = $derived(
-    adminHubGroups(
-      tiers,
-      pendingCount !== null && pendingCount > 0
-        ? { agenda: m.admin_hub_pending_count({ count: pendingCount }) }
-        : {}
-    )
-  );
+  // The rows are the registry's, filtered by tier - the layout's guard reads the SAME table. Each
+  // queue row carries the server's pending count for THIS reader (`adminQueueCounts`): the agenda
+  // counts only the events they may validate, which the old client-side count did not.
+  const groups = $derived(adminHubGroups(tiers, adminQueueCounts.counts));
 </script>
 
 <div class="space-y-6">

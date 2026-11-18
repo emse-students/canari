@@ -23,6 +23,12 @@ import {
 import type { FeedStoreAccess } from '$lib/posts/feedStore';
 import { getSavedUserId } from '$lib/stores/user';
 import { onPeerNamesEnded } from '$lib/utils/users/peerNameDirectory';
+import { loadAdminQueueCounts } from '$lib/admin/adminQueueCounts.svelte';
+
+/** An admin queue notice (`admin_*`, owner 2026-11-18); a row of another kind, or none, is not. */
+function isAdminNoticeType(type: unknown): boolean {
+  return typeof type === 'string' && type.startsWith('admin_');
+}
 
 /** The newest notifications kept on the device: the bell page asks for 50, the dropdown for 30. */
 export const MAX_STORED_NOTIFICATIONS = 50;
@@ -134,6 +140,12 @@ export const postNotifStore = {
       if (getSavedUserId() !== owner) {
         console.log('[postNotifStore] an answer for an account that has left - dropped');
         return;
+      }
+      // A new admin notice (owner, 2026-11-18) means a queue grew: its badges are asked now, with
+      // the bell, rather than at their own next poll. Only a global admin is ever served one.
+      const held = notifications.map((n) => n.id);
+      if (answer.some((n) => isAdminNoticeType(n.type) && !held.includes(n.id))) {
+        void loadAdminQueueCounts();
       }
       notifications = answer;
       unanswered = false;

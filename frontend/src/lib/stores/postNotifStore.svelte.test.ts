@@ -21,6 +21,9 @@ vi.mock('$lib/posts/api', () => ({
   markPostNotificationsReadForPost: vi.fn(),
 }));
 
+const adminCounts = vi.hoisted(() => ({ loadAdminQueueCounts: vi.fn() }));
+vi.mock('$lib/admin/adminQueueCounts.svelte', () => adminCounts);
+
 const load = vi.mocked(getPostNotifications);
 
 describe('postNotifStore.load', () => {
@@ -45,6 +48,20 @@ describe('postNotifStore.load', () => {
     load.mockRejectedValue(new TransportFailureError(new TypeError('Failed to fetch')));
     await postNotifStore.load();
     expect(log).toHaveBeenCalledTimes(2);
+  });
+
+  it('a NEW admin notice asks the admin badges again, an admin notice already held does not', async () => {
+    const row = (id: string, type: string) => ({ id, type, read: false }) as PostNotification;
+    adminCounts.loadAdminQueueCounts.mockClear();
+    load.mockResolvedValueOnce([row('n1', 'comment')]);
+    await postNotifStore.load();
+    expect(adminCounts.loadAdminQueueCounts).not.toHaveBeenCalled();
+    load.mockResolvedValueOnce([row('a1', 'admin_report'), row('n1', 'comment')]);
+    await postNotifStore.load();
+    expect(adminCounts.loadAdminQueueCounts).toHaveBeenCalledTimes(1);
+    load.mockResolvedValueOnce([row('a1', 'admin_report'), row('n1', 'comment')]);
+    await postNotifStore.load();
+    expect(adminCounts.loadAdminQueueCounts).toHaveBeenCalledTimes(1);
   });
 
   it('counts the new-device alerts of this device in the unread badge', async () => {
