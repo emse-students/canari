@@ -2,6 +2,8 @@
 
 target: 1.7.0
 
+_2026-11-18, sitting [S7](../device-verification.md#the-web-and-phone-readings-of-2026-11-18-s7-170-alpha12-the-last-sitting-before-the-stable): **what is left is read in production a day after the stable (the `[PUSH_BLIND]` count by platform); it does NOT block cutting the stable.** The iPhone half was read on `alpha.8`; the fold line has no instrument on a store build (below)._
+
 **What is built:** the P1 "blind salon banners, the failing branch is unnamed" is answered and fixed.
 Production (2026-11-16, read-only) showed a salon session's seed HELD by an iPhone's notification
 extension at 13:08:08 and ABSENT at 13:08:20, the app having come to the foreground in between:

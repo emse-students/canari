@@ -25,3 +25,27 @@ Recorded so no question answered here is asked again. Taken by the owner in pers
    ONE transaction. Never an account deletion, never a host security setting.
 
 The release-authority bullet of `CLAUDE.md` carries 1, 2 and 4 in one sentence pointing here.
+
+### The morning
+
+Taken by the owner in person, about 09:10 and later that morning, relayed to the sitting S7
+([readings](../device-verification.md#the-web-and-phone-readings-of-2026-11-18-s7-170-alpha12-the-last-sitting-before-the-stable)).
+
+5. **Test accounts: the lead creates and manages as many MiConnect LOCAL test accounts as it needs**,
+   on the condition that none is ever signed in on production (*"Le tout est de ne pas les connecter
+   sur prod"*). Their credentials live with the other test accounts outside the repository; no
+   account name enters the repository. First use: the throwaway account of the seed mirror's step 5,
+   created, read, deleted from Settings and removed from the identity provider in S7.
+6. **Birthdays' "gone the next day" and campus trends (from 2026-11-23) are read AFTER the `1.7.0`
+   stable**: both move to `1.7.1`
+   ([birthdays](reading-owed-birthdays-on-profiles-3180-first-stable-v1-6-9-birthdays.md),
+   [campus trends](reading-owed-campus-trends-and-the-daily-cap-wp-8-wp-10-and-the-quieter-batch.md)).
+7. **The `1.7.0` stable is cut as soon as this last sitting is green.**
+8. **After `1.7.0`: the `1.7.1` defects first, then group calls.** `1.7.1` keeps its WHOLE list, even if
+   it takes several weeks.
+9. **An App Store review refusal is ALWAYS the owner's**: the lead prepares the answer and the fix, the
+   owner sends them.
+10. **Dependabot:** a minor bump merges on a green CI; a major bump needs an adversarial review, a green
+    CI and a pass on dev before a stable, and a major touching authentication is read on both phones.
+11. **Stable cadence:** a stable ships as soon as a version is ready (its readings pass on both phones),
+    and an urgent fix may ship alone.

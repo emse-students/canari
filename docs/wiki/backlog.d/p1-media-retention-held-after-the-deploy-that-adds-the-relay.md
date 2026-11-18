@@ -2,6 +2,8 @@
 
 target: 1.7.0
 
+_2026-11-18, sitting [S7](../device-verification.md#the-web-and-phone-readings-of-2026-11-18-s7-170-alpha12-the-last-sitting-before-the-stable): **read at the production `1.7.0` deploy, so it does NOT block cutting the stable** - the fix is merged and on dev, and the ordering it guards exists only at that deploy. The two log lines and the file sent right after it are read the hour the stable deploys; a failure there is a `1.7.1` P1 fixed forward (or a rollback to `v1.6.12`), never a reason to hold the cut._
+
 _2026-11-17, scope cut: KEPT in `1.7.0` - a regression of `1.7.0`: the relay it holds the durations for is new, and production's deploy of that stable is exactly the ordering ([decisions](owner-decisions-of-2026-11-17.md))._
 
 Found on dev at the `1.7.0-alpha.1` rolling deploy (2026-11-15) and raised from P3 to P1: it blocks the
