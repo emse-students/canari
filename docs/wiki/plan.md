@@ -60,13 +60,10 @@ earliest version, as a checklist.
 - [ ] ["Modifier les pseudos" for a group and a community](backlog.d/reading-owed-modifier-les-pseudos-for-a-group-and-a-community.md)
 - [ ] [an institution chooses each post's spaces and public](backlog.d/reading-owed-an-institution-chooses-each-post-s-spaces-and-public.md)
 - [ ] [campus trends and the daily cap, WP-8, WP-10 and the quieter batch](backlog.d/reading-owed-campus-trends-and-the-daily-cap-wp-8-wp-10-and-the-quieter-batch.md)
-- [ ] [CanaReels "Voir plus" clears the seek line: the just-overflowing caption and a phone with no bottom inset](backlog.d/reading-owed-canareels-voir-plus-clears-the-seek-line.md)
 - [ ] [overlays stacked by open order, not by rung](backlog.d/reading-owed-overlays-stacked-by-open-order-not-by-rung.md)
-- [ ] [the Emojis preference row and its neighbours at 390 pt, on a phone](backlog.d/p3-the-emojis-preference-row-squeezes-its-description-on-a-phone.md)
 - [ ] [an institution's moderator moderates its own content, and no student](backlog.d/reading-owed-an-institution-moderator-moderates-its-own-content.md)
 - [ ] [a private salon granted late badges only what is posted after the grant](backlog.d/p3-a-private-salon-granted-late-badges-its-whole-past.md)
 - [ ] [one "server already unreachable" line per spell, read on a phone log after a real outage](backlog.d/p3-server-already-unreachable-is-logged-per-request.md)
-- [ ] [a banner in the composer's place clears the Android navigation bar (2026-11-16)](backlog.d/reading-owed-a-banner-in-the-composer-place-clears-the-navigation-bar.md)
 - [ ] [a salon message arriving before its seed raises its badge (granted salon, in-session join)](backlog.d/reading-owed-a-salon-message-arriving-before-its-seed-raises-its-badge.md)
 - [ ] [closing a form from the list, the respondent sees "ferme", the form reopens](backlog.d/reading-owed-closing-a-form-by-hand.md)
 - [ ] [a form's respondent account fields, on a phone and on the web (owner, 2026-11-16)](backlog.d/reading-owed-form-respondent-account-fields.md)
@@ -74,11 +71,9 @@ earliest version, as a checklist.
 - [ ] [a menu ends above the iOS tab bar, and a group notification keeps its title (2026-11-16)](backlog.d/reading-owed-the-popover-and-notification-fixes-of-the-iphone-sitting.md)
 - [ ] [a push that opens the notifications list while it is already open shows its new row](backlog.d/p2-the-notifications-list-is-not-reread-when-a-push-opens-it.md)
 - [ ] [a native device with no push token row now says why, and registers again (production, after the `1.7.0` stable)](backlog.d/reading-owed-a-device-with-no-push-token-now-says-so.md)
-- [ ] [a reaction to my message notifies a backgrounded and a killed phone, on both platforms (2026-11-17)](backlog.d/reading-owed-a-reaction-to-my-message-notifies-in-the-background.md)
 - [ ] [the iPhone's one seed mirror keeps the extension's seeds through a foreground (2026-11-17)](backlog.d/reading-owed-ios-seed-mirror-one-copy.md)
 - [ ] [live moderation: the three broadcaster pushes, the withdrawal lift and the lives switch](backlog.d/reading-owed-live-moderation-pushes-lift-and-the-lives-switch.md)
 - [ ] [Minesweeper replay as a global admin](backlog.d/reading-owed-minesweeper-replay-as-a-global-admin.md)
-- [ ] [a message received inside a drain survives a kill right after a checkpoint (2026-11-17)](backlog.d/reading-owed-rows-before-ratchet.md)
 
 ## 1.7.1
 
@@ -145,6 +140,9 @@ earliest version, as a checklist.
 - [P3 - an accepted but unannounced Add: audit the adder paths, then one rig row](backlog.d/p3-verify-an-add-accepted-but-unannounced-lets-the-joiner-rejoin-over-its-own.md)
 - [P3 - EXIT-FORTIFY: closing the app on the Mi 9T logs `FORTIFY: pthread_mutex_lock called on a destroyed mutex` from the render thread](backlog.d/reading-owed-exit-fortify-closing-the-app-on-the-mi-9t-logged-fortify-pthread.md)
 - [P3 - A device's revocation reset logs a `\[seenHelps\]` read failure at error level](backlog.d/p3-a-device-revocation-reset-logs-seenhelps-at-error-level.md)
+- [P3 - a second reaction to the same message stacks on the iPhone, where Android replaces it](backlog.d/p3-a-second-reaction-to-the-same-message-stacks-on-the-iphone.md)
+- [P3 - a sent file's bubble that failed to load during an outage stays failed after the link returns](backlog.d/p3-a-sent-file-s-bubble-that-failed-to-load-stays-failed-after-the-link-returns.md)
+- [P3 - the Thème control runs off the screen at a doubled font](backlog.d/p3-the-theme-control-runs-off-the-screen-at-a-doubled-font.md)
 
 ## 1.8.0
 
