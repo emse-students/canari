@@ -1,4 +1,8 @@
-import { currentKeyboardInsetBottom } from '$lib/stores/keyboardViewport.svelte';
+import {
+  currentKeyboardInsetBottom,
+  placeOnKeyboardMove,
+} from '$lib/stores/keyboardViewport.svelte';
+import { currentNativeTabBarInset } from '$lib/navigation/nativeTabBarState.svelte';
 import { Log } from '$lib/utils/Log';
 
 export type FixedPopoverSide = 'top' | 'bottom';
@@ -70,14 +74,18 @@ export const POPOVER_MARGIN = 8;
  * @param keyboardInset the band at the bottom of the layout viewport the on-screen keyboard covers
  *   (`currentKeyboardInsetBottom`). The panel is laid out in what is left above it: the layout
  *   viewport catches up with the keyboard late on Android, and never in a phone browser.
+ * @param barInset the band the iOS native tab bar covers (`currentNativeTabBarInset`): a UIKit view
+ *   above the WebView, so a panel ending inside it loses its last rows. Taken with the keyboard's
+ *   band, whichever is larger, since the keyboard replaces the bar on screen and the two never stack.
  */
 export function computeFixedPopoverPosition(
   anchor: HTMLElement,
   panel: HTMLElement,
   options: FixedPopoverLayoutOptions = {},
-  keyboardInset = 0
+  keyboardInset = 0,
+  barInset = 0
 ): FixedPopoverPosition {
-  const viewportHeight = window.innerHeight - keyboardInset;
+  const viewportHeight = window.innerHeight - Math.max(keyboardInset, barInset);
   const offset = options.offset ?? 8;
   const margin = options.margin ?? POPOVER_MARGIN;
   const estimatedHeight = options.estimatedHeight ?? 360;
@@ -201,7 +209,8 @@ export function bindFixedPopover(panel: HTMLElement, options: FixedPopoverOption
       anchor,
       panel,
       options,
-      keyboardInset
+      keyboardInset,
+      currentNativeTabBarInset()
     );
     if (keyboardInset !== lastKeyboardInset) {
       Log.d('popover', `keyboard band ${lastKeyboardInset} -> ${keyboardInset}px: top ${top}px`);
@@ -222,14 +231,19 @@ export function bindFixedPopover(panel: HTMLElement, options: FixedPopoverOption
   ro.observe(panel);
   window.addEventListener('resize', apply);
   window.addEventListener('scroll', apply, true);
-  // THE KEYBOARD ARRIVES HERE FIRST: the visual viewport shrinks as the keyboard rises, while the
-  // layout viewport (`window` `resize`) follows only when the native layer pads the WebView - about
-  // a second later on the Mi 9T, several on the owner's phone, never in a phone browser. Listening to
-  // `window` alone left the reaction picker under the keyboard for that whole gap (2026-11-10).
+  // A PHONE BROWSER'S KEYBOARD ARRIVES HERE: it shrinks only the visual viewport, never the layout
+  // viewport, so `window` `resize` never fires for it.
   window.visualViewport?.addEventListener('resize', apply);
+  // THE ANDROID APP'S KEYBOARD ARRIVES ONLY HERE (review of #3556, F4): it covers the WebView
+  // without resizing it, so neither viewport fires anything and the emoji search, the mention list
+  // and every floating surface stayed under the keys. The keyboard store places the panel once the
+  // keyboard's layout is in, before that frame is painted, and in the Android ride the panel RIDES
+  // from where it was drawn (N2) instead of jumping there on the next animation frame.
+  const offKeyboard = placeOnKeyboardMove(panel, apply);
 
   return () => {
     ro.disconnect();
+    offKeyboard();
     window.removeEventListener('resize', apply);
     window.removeEventListener('scroll', apply, true);
     window.visualViewport?.removeEventListener('resize', apply);

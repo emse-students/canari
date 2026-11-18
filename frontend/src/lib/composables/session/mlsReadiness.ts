@@ -14,7 +14,7 @@
  */
 
 /** Thrown to whoever was waiting for MLS when the session they waited for ended instead. */
-export class MlsSessionEndedError extends Error {
+class MlsSessionEndedError extends Error {
   constructor(reason: string) {
     super(`[MLS-READY] the session ended before MLS was ready: ${reason}`);
     this.name = 'MlsSessionEndedError';

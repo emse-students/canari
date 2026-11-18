@@ -48,13 +48,165 @@ The CD then hard-resets this checkout to **the released commit** on each deploym
 
 ## 3. GitHub Secrets
 
-The CD generates all `.env` files from the repo secrets. On a new repo/fork,
-recreate them (Settings → Secrets and variables → Actions). Secrets required
-for **server deployment**:
+The CD generates all `.env` files from the GitHub secrets. On a new repo/fork, recreate them
+(Settings -> Secrets and variables -> Actions), **each at the level the table below gives it**.
+
+### Where each secret lives (2026-11-13)
+
+GitHub holds at most 100 secrets per repository, and as many per environment; Canari reached the
+repository cap on 2026-11-13. A secret lives at one of three levels, chosen by WHO reads it - the
+reasons, and the order in which a secret moves, are in
+[cicd](../docs/wiki/cicd.md#where-a-secret-lives-and-why):
+
+- **`repo`**: read by a job that declares no environment (signing, store keys, the GitHub App, the
+  preflight's `LYDIA_ENV`). The exception, not the default.
+- **`production`** or **`development`**: read only by that estate's deploy job. **A new secret read
+  only by a deploy job is born in its environment, never at repository level.** Dev's deploy reads
+  the `DEV_`-prefixed name inside `development` (`render-env.sh`'s indirection, kept on purpose).
+- **`production, development`**: the same name in BOTH environments, each estate its own value -
+  the build-time names of the three build jobs, which declare the environment of their estate. These
+  must NEVER exist at repository level: an environment lacking one would fall back to that copy, and
+  `release.yml`'s preflight refuses the release while one does.
+
+`set` it with `gh secret set NAME --env production` (or `--env development`). The table is read by
+`.github/scripts/tests/secret-levels.test.mjs`: a workflow reading a secret absent from it, or an
+environment secret read by a job that does not declare that environment, fails `make test-ci-scripts`.
+
+<!-- secret-levels:start -->
+| Secret | Level | Read by |
+|---|---|---|
+| `AGENDA_SIGNING_KEY` | production | serve-prod :: deploy-to-server |
+| `ANDROID_APP_LINK_SHA256` | production, development | build :: build-frontend, serve-prod :: deploy-to-server |
+| `ANDROID_KEY_ALIAS` | repo | android :: build-android |
+| `ANDROID_KEY_PASSWORD` | repo | android :: build-android |
+| `ANDROID_KEYSTORE_BASE64` | repo | android :: build-android |
+| `ANDROID_STORE_PASSWORD` | repo | android :: build-android |
+| `APNS_VOIP_KEY_ID` | production | serve-prod :: deploy-to-server |
+| `APNS_VOIP_KEY_P8` | production | serve-prod :: deploy-to-server |
+| `APNS_VOIP_TEAM_ID` | production | serve-prod :: deploy-to-server |
+| `APP_STORE_CONNECT_API_KEY_P8` | repo | ios :: build-ios, scheduled :: stores |
+| `APP_STORE_CONNECT_EXPORT_COMPLIANCE_CODE` | repo | ios :: build-ios |
+| `APP_STORE_CONNECT_ISSUER_ID` | repo | ios :: build-ios, scheduled :: stores |
+| `APP_STORE_CONNECT_KEY_ID` | repo | ios :: build-ios, scheduled :: stores |
+| `APPLE_CERTIFICATE_BASE64` | repo | ios :: build-ios |
+| `APPLE_CERTIFICATE_PASSWORD` | repo | ios :: build-ios |
+| `APPLE_PROVISIONING_PROFILE` | repo | ios :: build-ios |
+| `APPLE_PROVISIONING_PROFILE_NSE` | repo | ios :: build-ios |
+| `APPLE_PROVISIONING_PROFILE_SHARE` | repo | ios :: build-ios |
+| `APPLE_SIGNING_IDENTITY` | repo | ios :: build-ios |
+| `APPLE_TEAM_ID` | repo | ios :: build-ios, build :: build-frontend |
+| `AUTHENTIK_CLIENT_ID` | production, development | build :: build-frontend, android :: build-android, ios :: build-ios, serve-prod :: deploy-to-server |
+| `AUTHENTIK_CLIENT_SECRET` | production | serve-prod :: deploy-to-server |
+| `AUTHENTIK_URL` | production, development | build :: build-frontend, android :: build-android, ios :: build-ios, serve-prod :: deploy-to-server |
+| `AUTOMERGE_APP_CLIENT_ID` | repo | arm-auto-merge :: arm, release :: bump/land/notes, scheduled :: cargo-lock-refresh/arming-bypass |
+| `AUTOMERGE_APP_PRIVATE_KEY` | repo | arm-auto-merge :: arm, release :: bump/land/notes, scheduled :: cargo-lock-refresh/arming-bypass |
+| `AVATAR_TOKEN_SECRET` | production | serve-prod :: deploy-to-server |
+| `BASE_URL` | production, development | build :: build-frontend, android :: build-android, ios :: build-ios, serve-prod :: deploy-to-server |
+| `CALL_ROOM_SECRET` | production | serve-prod :: deploy-to-server |
+| `CERCLE_API_KEY` | production | serve-prod :: deploy-to-server |
+| `CHANNELS_ENCRYPTION_SECRET` | production | serve-prod :: deploy-to-server |
+| `CLOUDFLARE_ACCOUNT_ID` | production | serve-prod :: deploy-to-server |
+| `CLOUDFLARE_CACHE_PURGE_TOKEN` | repo | serve-prod :: deploy-to-server - its level belongs to `production`, and it moves there at its next rotation: GitHub never returns a value and no other copy exists |
+| `CLOUDFLARE_CALLS_API_TOKEN` | production | serve-prod :: deploy-to-server |
+| `CLOUDFLARE_SFU_APP_ID` | production | serve-prod :: deploy-to-server |
+| `CLOUDFLARE_SFU_APP_SECRET` | production | serve-prod :: deploy-to-server |
+| `CLOUDFLARE_TURN_ANALYTICS_TOKEN` | production | serve-prod :: deploy-to-server |
+| `CLOUDFLARE_TURN_KEY_ID` | production | serve-prod :: deploy-to-server |
+| `CLOUDFLARE_TURN_MONTHLY_BUDGET_GB` | production | serve-prod :: deploy-to-server |
+| `DEPENDABOT_ALERTS_TOKEN` | repo | scheduled :: alerts |
+| `DEV_AGENDA_SIGNING_KEY` | development | serve-dev :: deploy-dev |
+| `DEV_ANDROID_APP_LINK_SHA256` | development | serve-dev :: deploy-dev |
+| `DEV_APNS_VOIP_KEY_ID` | development | serve-dev :: deploy-dev |
+| `DEV_APNS_VOIP_KEY_P8` | development | serve-dev :: deploy-dev |
+| `DEV_APNS_VOIP_TEAM_ID` | development | serve-dev :: deploy-dev |
+| `DEV_AUTHENTIK_CLIENT_ID` | development | serve-dev :: deploy-dev |
+| `DEV_AUTHENTIK_CLIENT_SECRET` | development | serve-dev :: deploy-dev |
+| `DEV_AUTHENTIK_URL` | development | serve-dev :: deploy-dev |
+| `DEV_AVATAR_OVERRIDE_EXTRA` | development | serve-dev :: deploy-dev |
+| `DEV_AVATAR_TOKEN_SECRET` | development | serve-dev :: deploy-dev |
+| `DEV_BASE_URL` | development | serve-dev :: deploy-dev |
+| `DEV_CALL_ROOM_SECRET` | development | serve-dev :: deploy-dev |
+| `DEV_CHANNELS_ENCRYPTION_SECRET` | development | serve-dev :: deploy-dev |
+| `DEV_CLOUDFLARE_ACCOUNT_ID` | development | serve-dev :: deploy-dev |
+| `DEV_CLOUDFLARE_CALLS_API_TOKEN` | development | serve-dev :: deploy-dev |
+| `DEV_CLOUDFLARE_SFU_APP_ID` | development | serve-dev :: deploy-dev, scheduled :: sfu-probe |
+| `DEV_CLOUDFLARE_SFU_APP_SECRET` | development | serve-dev :: deploy-dev, scheduled :: sfu-probe |
+| `DEV_CLOUDFLARE_TURN_ANALYTICS_TOKEN` | development | serve-dev :: deploy-dev |
+| `DEV_CLOUDFLARE_TURN_KEY_ID` | development | serve-dev :: deploy-dev |
+| `DEV_CLOUDFLARE_TURN_MONTHLY_BUDGET_GB` | development | serve-dev :: deploy-dev |
+| `DEV_EXTERNAL_API_KEY` | development | serve-dev :: deploy-dev |
+| `DEV_FIREBASE_SERVICE_ACCOUNT_JSON` | development | serve-dev :: deploy-dev |
+| `DEV_GARAGE_ACCESS_KEY_ID` | development | serve-dev :: deploy-dev |
+| `DEV_GARAGE_ADMIN_TOKEN` | development | serve-dev :: deploy-dev |
+| `DEV_GARAGE_RPC_SECRET` | development | serve-dev :: deploy-dev |
+| `DEV_GARAGE_SECRET_ACCESS_KEY` | development | serve-dev :: deploy-dev |
+| `DEV_GOOGLE_SAFE_BROWSING_API_KEY` | development | serve-dev :: deploy-dev |
+| `DEV_HANDOFF_SIGNING_KEY` | development | serve-dev :: deploy-dev |
+| `DEV_INTERNAL_SECRET` | development | serve-dev :: deploy-dev |
+| `DEV_INTERNAL_SHARED_SECRET` | development | serve-dev :: deploy-dev |
+| `DEV_JWT_SECRET` | development | serve-dev :: deploy-dev |
+| `DEV_KLIPY_API_KEY` | development | serve-dev :: deploy-dev |
+| `DEV_CAMPUS_TREND_THRESHOLD` | development | serve-dev :: deploy-dev |
+| `DEV_LIVE_KEY_ENCRYPTION_SECRET` | development | serve-dev :: deploy-dev |
+| `DEV_LIVE_REPLAY_TOTAL_MAX_GB` | development | serve-dev :: deploy-dev |
+| `DEV_LIVE_REPORT_SIGNING_KEY` | development | serve-dev :: deploy-dev |
+| `DEV_LYDIA_KEY_ENCRYPTION_SECRET` | development | serve-dev :: deploy-dev |
+| `DEV_LYDIA_PROVIDER_PRIVATE_TOKEN` | development | serve-dev :: deploy-dev |
+| `DEV_LYDIA_PROVIDER_TOKEN` | development | serve-dev :: deploy-dev |
+| `DEV_MIGALLERY_API_KEY` | development | serve-dev :: deploy-dev |
+| `DEV_POSTGRES_PASSWORD` | development | serve-dev :: deploy-dev |
+| `DEV_POSTGRES_USER` | development | serve-dev :: deploy-dev |
+| `DEV_SERVICE_ACCOUNT_USER_ID` | development | serve-dev :: deploy-dev |
+| `DEV_SKY_API_KEY` | development | serve-dev :: deploy-dev |
+| `DEV_SMOKE_PASSWORD` | development | serve-dev :: deploy-dev |
+| `DEV_SMOKE_USERNAME` | development | serve-dev :: deploy-dev |
+| `EXTERNAL_API_KEY` | production | serve-prod :: deploy-to-server |
+| `FIREBASE_SERVICE_ACCOUNT_JSON` | production | serve-prod :: deploy-to-server |
+| `GARAGE_ACCESS_KEY_ID` | production | serve-prod :: deploy-to-server |
+| `GARAGE_ADMIN_TOKEN` | production | serve-prod :: deploy-to-server |
+| `GARAGE_RPC_SECRET` | production | serve-prod :: deploy-to-server |
+| `GARAGE_SECRET_ACCESS_KEY` | production | serve-prod :: deploy-to-server |
+| `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` | repo | android :: build-android, scheduled :: stores |
+| `GOOGLE_SAFE_BROWSING_API_KEY` | production | serve-prod :: deploy-to-server |
+| `GOOGLE_SERVICE_INFO_PLIST` | repo | ios :: build-ios |
+| `GOOGLE_SERVICES_JSON` | repo | android :: build-android |
+| `HANDOFF_SIGNING_KEY` | production | serve-prod :: deploy-to-server |
+| `INTERNAL_SECRET` | production | serve-prod :: deploy-to-server |
+| `INTERNAL_SHARED_SECRET` | production | serve-prod :: deploy-to-server |
+| `JWT_SECRET` | production | serve-prod :: deploy-to-server |
+| `CAMPUS_TREND_THRESHOLD` | production | serve-prod :: deploy-to-server |
+| `KLIPY_API_KEY` | production | serve-prod :: deploy-to-server |
+| `LIVE_KEY_ENCRYPTION_SECRET` | production | serve-prod :: deploy-to-server |
+| `LIVE_REPLAY_TOTAL_MAX_GB` | production | serve-prod :: deploy-to-server |
+| `LIVE_REPORT_SIGNING_KEY` | production | serve-prod :: deploy-to-server |
+| `LYDIA_ENV` | repo | release :: preflight (no environment: a stable is refused before the stores take it), serve-prod :: deploy-to-server |
+| `LYDIA_KEY_ENCRYPTION_SECRET` | production | serve-prod :: deploy-to-server |
+| `LYDIA_PROVIDER_PRIVATE_TOKEN` | production | serve-prod :: deploy-to-server |
+| `LYDIA_PROVIDER_TOKEN` | production | serve-prod :: deploy-to-server |
+| `MICONNECT_AUTHENTIK_SECRET_KEY` | repo | none - a backup of a value the identity host holds, supplied there by hand |
+| `MICONNECT_EDITOR_TOKEN` | production | serve-prod :: deploy-to-server |
+| `MICONNECT_PG_PASS` | repo | none - a backup of a value the identity host holds, supplied there by hand |
+| `MICONNECT_READER_TOKEN` | production | serve-prod :: deploy-to-server |
+| `MIGALLERY_API_KEY` | production | serve-prod :: deploy-to-server |
+| `POSTGRES_PASSWORD` | production | serve-prod :: deploy-to-server |
+| `POSTGRES_USER` | production | serve-prod :: deploy-to-server |
+| `SERVICE_ACCOUNT_USER_ID` | production | serve-prod :: deploy-to-server |
+| `SKY_API_KEY` | production | serve-prod :: deploy-to-server |
+<!-- secret-levels:end -->
+
+**The Cloudflare SFU pair** (`CLOUDFLARE_SFU_APP_ID`, `CLOUDFLARE_SFU_APP_SECRET`, the group-call
+media server's app id and secret) is wired: production's deploy reads the bare pair in `production`;
+dev reads `DEV_CLOUDFLARE_SFU_APP_ID` / `DEV_CLOUDFLARE_SFU_APP_SECRET` in `development` (its deploy
+through `render-env.sh`'s `DEV_` indirection, the `sfu-probe` job of `scheduled.yml` mapped onto the
+bare names the probe reads). The bare pair also created in `development` on 2026-11-13 is read by
+nothing and goes; the name unification of [cicd](../docs/wiki/cicd.md#where-a-secret-lives-and-why)
+would later fold the `DEV_` pair back into the bare names.
+
+What each secret is for, by area (server deployment):
 
 | Category | Secrets |
 |---|---|
-| Core | `JWT_SECRET`, `INTERNAL_SECRET`, `INTERNAL_SHARED_SECRET`, `CHANNELS_ENCRYPTION_SECRET`, `CALL_ROOM_SECRET`, `AGENDA_SIGNING_KEY` (social-service; signs the calendar subscription URLs AND, since 2026-11-02, each validated event's single-event `.ics` link, served with every agenda read - so without it EVERY agenda read answers 503; 32+ characters, `openssl rand -hex 32`, REQUIRED with no default in both estates, dev's is the GitHub secret `DEV_AGENDA_SIGNING_KEY`; the local compose carries a local-only default, which the render refuses on both estates, and `env-from-prod.sh` regenerates one; **rotating it ends every saved subscription URL and single-event link**, which is the revocation - [profiles-and-access D40](../docs/wiki/profiles-and-access.md#d40---the-anonymous-agenda-per-selection-as-built-2026-10-05)), `LIVE_REPORT_SIGNING_KEY` (social-service; signs a reported live chat line kept for staff, 32+ characters, `openssl rand -hex 32`, REQUIRED with no default in both estates, dev's is the GitHub secret `DEV_LIVE_REPORT_SIGNING_KEY`; unset, every chat-line report answers 503; rotating it makes the lines already kept read `key-rotated`, so rotate it when no chat-line report is pending - [lives](../docs/wiki/services/lives.md)), `LIVE_KEY_ENCRYPTION_SECRET` (social-service; seals each live's key at rest, migration 110, so a database copy alone opens no live chat or segment; 32+ characters, `openssl rand -hex 32`, REQUIRED with no default in both estates, each estate its OWN value, dev's is the GitHub secret `DEV_LIVE_KEY_ENCRYPTION_SECRET`; the render refuses a deploy without it or under 32 characters, so create both secrets BEFORE the deploy that carries migration 110; unset at runtime, every live start answers 503; rotated in place, every open live answers 503 until it ends, so rotate with no live on air - [lives](../docs/wiki/services/lives.md#the-live-key-at-rest)), `AVATAR_TOKEN_SECRET` (core-service; signs the viewer-bound avatar token every avatar URL carries as `?t=`, 32+ characters, `openssl rand -hex 32`, REQUIRED with no default in both estates, each estate its OWN value, dev's is the GitHub secret `DEV_AVATAR_TOKEN_SECRET`; the render refuses a deploy without it or under 32 characters, so create both secrets BEFORE the first release carrying signed avatar URLs; rotating it is harmless - every client is handed a new token at its next refresh, within the hour - [sessions](../docs/wiki/sessions.md#the-avatar-token)) |
+| Core | `JWT_SECRET`, `INTERNAL_SECRET`, `INTERNAL_SHARED_SECRET`, `CHANNELS_ENCRYPTION_SECRET`, `CALL_ROOM_SECRET`, `AGENDA_SIGNING_KEY` (social-service; signs the calendar subscription URLs AND, since 2026-11-02, each validated event's single-event `.ics` link, served with every agenda read - so without it EVERY agenda read answers 503; 32+ characters, `openssl rand -hex 32`, REQUIRED with no default in both estates, dev's is the GitHub secret `DEV_AGENDA_SIGNING_KEY`; the local compose carries a local-only default, which the render refuses on both estates, and `env-from-prod.sh` regenerates one; **rotating it ends every saved subscription URL and single-event link at once**; since 2026-11-14 a reader also revokes their OWN subscription links alone (`DELETE /api/associations/calendar/subscriptions`, the subscribe modal's button), so a rotation is only for a leaked key - [profiles-and-access D40 re-decided](../docs/wiki/profiles-and-access.md#d40-re-decided-2026-11-14---the-link-is-its-holders)), `LIVE_REPORT_SIGNING_KEY` (social-service; signs a reported live chat line kept for staff, 32+ characters, `openssl rand -hex 32`, REQUIRED with no default in both estates, dev's is the GitHub secret `DEV_LIVE_REPORT_SIGNING_KEY`; unset, every chat-line report answers 503; rotating it makes the lines already kept read `key-rotated`, so rotate it when no chat-line report is pending - [lives](../docs/wiki/services/lives.md)), `LIVE_KEY_ENCRYPTION_SECRET` (social-service; seals each live's key at rest, migration 110, so a database copy alone opens no live chat or segment; 32+ characters, `openssl rand -hex 32`, REQUIRED with no default in both estates, each estate its OWN value, dev's is the GitHub secret `DEV_LIVE_KEY_ENCRYPTION_SECRET`; the render refuses a deploy without it or under 32 characters, so create both secrets BEFORE the deploy that carries migration 110; unset at runtime, every live start answers 503; rotated in place, every open live answers 503 until it ends, so rotate with no live on air - [lives](../docs/wiki/services/lives.md#the-live-key-at-rest)), `AVATAR_TOKEN_SECRET` (core-service; signs the viewer-bound avatar token every avatar URL carries as `?t=`, 32+ characters, `openssl rand -hex 32`, REQUIRED with no default in both estates, each estate its OWN value, dev's is the GitHub secret `DEV_AVATAR_TOKEN_SECRET`; the render refuses a deploy without it or under 32 characters, so create both secrets BEFORE the first release carrying signed avatar URLs; rotating it is harmless - every client is handed a new token at its next refresh, within the hour - [sessions](../docs/wiki/sessions.md#the-avatar-token)) |
 | Database | `POSTGRES_USER`, `POSTGRES_PASSWORD` |
 | Admin routes (not a secret) | `ADMINER_ENABLED=true` on core-service, production's compose only, opens the gated `/adminer/` route and needs `INTERNAL_SHARED_SECRET` of 32+ characters - [databases](../docs/wiki/infrastructure/databases.md#the-adminer-route---the-database-in-a-browser-for-global-admins-2026-10-02) |
 | Media storage (Garage, formerly MinIO) | `GARAGE_RPC_SECRET`, `GARAGE_ADMIN_TOKEN`, `GARAGE_ACCESS_KEY_ID` (>= 8 chars), `GARAGE_SECRET_ACCESS_KEY` (>= 16 chars) - Garage's own minimums, which is why this is a dedicated key rather than reusing `MINIO_ROOT_USER`/`PASSWORD` |
@@ -66,7 +218,7 @@ for **server deployment**:
 | Handoff reader (F3-bound, 2026-11-11) | `MICONNECT_READER_TOKEN` - the API token of the READ-ONLY authentik service account `miconnect-canari-handoff-reader` (`blueprints/55-handoff-reader.yaml`: view users, view the three handoff applications, view policy bindings, view the tenant settings - nothing that writes), read by core-service at every handoff mint to ask whether MiConnect would let the person into the site. **The SAME value in two places**: the GitHub secret `MICONNECT_READER_TOKEN` (production ONLY) and `MICONNECT_READER_TOKEN` in the MiConnect stack's `<miconnect-dir>/.env`, which the blueprint reads (`!Env`) and `compose.yml` declares with `:?`. **Dev holds NONE, by decision** (lead, 2026-11-11): the key reads every MiConnect user, and dev mints nothing (no `DEV_HANDOFF_SIGNING_KEY`, and no site trusts dev's issuer), so it would be a read-all-users credential on a test estate for no use. Dev's mint refuses `miconnect_not_configured`, and its boot says so once (`[HANDOFF_ACCESS] MICONNECT_READER_TOKEN is unset`) - expected there, not a defect. **Order: the stack's `.env` and a worker recreation FIRST, then the merge** - the applier refuses an unset `!Env`, so a release carrying the blueprint without it fails at `Apply MiConnect's blueprints` (and dev's dry run with it). Manifest `warn` (production) / `skip` (dev, never written): unset, every mint is refused `HANDOFF_MICONNECT_UNAVAILABLE` and the site opens plainly - [sessions](../docs/wiki/sessions.md#the-sign-in-handoff-to-the-miconnect-sites-2026-11-08) |
 | Sign-in handoff to the MiConnect sites (2026-11-08) | `HANDOFF_SIGNING_KEY` (GitHub secret, production, **PROVISIONED 2026-11-08** by the lead with the owner's approval, PKCS#8 verified; `DEV_HANDOFF_SIGNING_KEY` on dev, left unset until a site test instance trusts dev's issuer), read by core-service only: an ES256 P-256 private key, PKCS#8 DER in base64 on one line (`openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 | openssl pkcs8 -topk8 -nocrypt -outform DER | base64 -w0\| base64 -w0`). Its public half is served at `GET /api/auth/handoff/jwks`, which each site reads. Manifest disposition `warn` (production) / `silent` (dev): unset, no handoff is minted and every site opens plainly. A rotation is a hard cut that refuses at most the tokens of the last 60 s. **Not to be confused** with the read-only MiConnect service account of WP-H0 (F3-bound), whose token is the separate secret `MICONNECT_READER_TOKEN` (row above) - [sessions](../docs/wiki/sessions.md#the-sign-in-handoff-to-the-miconnect-sites-2026-11-08) |
 | Push / calls / avatars | `FIREBASE_SERVICE_ACCOUNT_JSON`, `CLOUDFLARE_CALLS_API_TOKEN`, `CLOUDFLARE_TURN_KEY_ID`, `MIGALLERY_API_KEY`. Dev's calls (lot 1, 2026-10-17) read `DEV_CLOUDFLARE_CALLS_API_TOKEN` + `DEV_CLOUDFLARE_TURN_KEY_ID` into chat-delivery-service only - both GitHub secrets EXIST since 2026-10-17. On a rebuilt estate, recreate them (a dev-only TURN KEY, so dev's relay is told apart from production's in Cloudflare's per-key analytics - but the two keys are on ONE Cloudflare account, the same `CLOUDFLARE_ACCOUNT_ID` on both estates, so dev's relay spends the same free allowance, and the account-wide budget meter counts it against production's budget too); unset, `/api/calls/ice-servers` answers 503 and no dev call connects ([calls](../docs/wiki/frontend/modules/calls.md#lot-1-2026-10-17---11-audio-peer-to-peer-dev-builds-only)). **The TURN budget's meter** (B7, 2026-10-21): `CLOUDFLARE_ACCOUNT_ID` (the account's 32-hex id) and `CLOUDFLARE_TURN_ANALYTICS_TOKEN` (an API token with Account Analytics read, nothing else), and their `DEV_` twins, all four GitHub secrets, into chat-delivery-service only; unset, `ice-servers` answers STUN only with `TURN_METER_UNAVAILABLE` and an error line - no TURN credential without a budget behind it, and no call refused that needs no relay ([calls](../docs/wiki/frontend/modules/calls.md#the-servers-kill-switch-and-the-metered-turn-budget-b12-b7-2026-10-21)). **The budget** `CLOUDFLARE_TURN_MONTHLY_BUDGET_GB` (+ `DEV_` twin) is an OPTIONAL secret: unset means 950 GB, `0` means calls stay open but are STUN only |
-| Group calls - Cloudflare Realtime SFU (WP-GC3, optional) | `CLOUDFLARE_SFU_APP_ID`, `CLOUDFLARE_SFU_APP_SECRET` - the Realtime SFU app's id and secret, **GitHub ENVIRONMENT secrets, never repository ones** (the repository is at GitHub's 100-secret cap). `production` holds the bare pair, read by `serve-prod.yml :: deploy-to-server`. `development` holds the dev app's pair as `DEV_CLOUDFLARE_SFU_APP_ID` / `DEV_CLOUDFLARE_SFU_APP_SECRET` ONLY (the name `serve-dev.yml :: deploy-dev` reads through `render-env.sh`'s `DEV_` indirection), and the `sfu-probe` job of `scheduled.yml` (`environment: development`, the Q4 probe, [calls-revival-plan](../docs/wiki/frontend/modules/calls-revival-plan.md#14-probes-of-2026-10-16-clients)) maps it onto the bare names the probe reads; the bare pair created in `development` on 2026-11-13 is read by nothing and goes. **With #3493's secret-levels table:** its two `CLOUDFLARE_SFU_APP_*` rows read level `production`, and the `DEV_` pair takes rows of its own, level `development`, read by `scheduled :: sfu-probe` - whichever of the two pull requests lands second makes that edit (the name unification of [cicd](../docs/wiki/cicd.md) would later fold the `DEV_` pair back into the bare names). Rendered into chat-delivery-service only, which will proxy the sessions/tracks API; OPTIONAL (`silent` in `env-manifest.tsv`): unset, the Cloudflare SFU leg is unavailable and nothing fails at boot. A local stack gets them EMPTY (`env-from-prod.sh` BLANK) |
+| Group calls - Cloudflare Realtime SFU (WP-GC3, optional) | `CLOUDFLARE_SFU_APP_ID`, `CLOUDFLARE_SFU_APP_SECRET` - the Realtime SFU app's id and secret, **GitHub ENVIRONMENT secrets, never repository ones** (the repository is at GitHub's 100-secret cap). `production` holds the bare pair, read by `serve-prod.yml :: deploy-to-server`. `development` holds the dev app's pair as `DEV_CLOUDFLARE_SFU_APP_ID` / `DEV_CLOUDFLARE_SFU_APP_SECRET` ONLY (the name `serve-dev.yml :: deploy-dev` reads through `render-env.sh`'s `DEV_` indirection), and the `sfu-probe` job of `scheduled.yml` (`environment: development`, the Q4 probe, [calls-revival-plan](../docs/wiki/frontend/modules/calls-revival-plan.md#14-probes-of-2026-10-16-clients)) maps it onto the bare names the probe reads; the bare pair created in `development` on 2026-11-13 is read by nothing and goes. The secret-levels table above gives the bare pair level `production` and the `DEV_` pair level `development` (the name unification of [cicd](../docs/wiki/cicd.md) would later fold the `DEV_` pair back into the bare names). Rendered into chat-delivery-service only, which will proxy the sessions/tracks API; OPTIONAL (`silent` in `env-manifest.tsv`): unset, the Cloudflare SFU leg is unavailable and nothing fails at boot. A local stack gets them EMPTY (`env-from-prod.sh` BLANK) |
 | Dev avatars (dev only, not a credential) | `DEV_AVATAR_OVERRIDE_EXTRA`: the bench accounts' `<user-id>=<file>.png,...` list for core-service's explicit dev avatars; written as `AVATAR_OVERRIDE_EXTRA`, `skip` on production, optional on dev (a deploy warning when unset, no extra account) ([dev-environment](../docs/wiki/infrastructure/dev-environment.md#explicit-dev-avatars-the-only-face-dev-has-2026-11-09)) |
 | iOS calls (CallKit, optional) | `APNS_VOIP_KEY_P8` (APNs .p8 key, raw PEM or base64), `APNS_VOIP_KEY_ID`, `APNS_VOIP_TEAM_ID` (`4CLNB8SR6L`) — direct VoIP push to APNs to ring CallKit when the app is killed; without these, iOS falls back to an FCM banner. Dev reads `DEV_APNS_VOIP_KEY_P8`, `DEV_APNS_VOIP_KEY_ID`, `DEV_APNS_VOIP_TEAM_ID` and forwards them to chat-delivery-service in `docker-compose.dev.yml` (unset, a locked iPhone on dev is never rung). `APNS_VOIP_SANDBOX` and `APNS_VOIP_TOPIC` are set on NEITHER estate: TestFlight builds are production-signed, so both use the production APNs gateway |
 | iOS provisioning profiles (`ios.yml`, signed builds) | One base64 App Store distribution profile per signed bundle, each REQUIRED by the "Validate iOS release secrets" step: `APPLE_PROVISIONING_PROFILE` (the app `fr.emse.canari`, profile `Canari`), `APPLE_PROVISIONING_PROFILE_NSE` (`fr.emse.canari.notifications`, `CanariNotifications`), `APPLE_PROVISIONING_PROFILE_SHARE` (the Share Extension `fr.emse.canari.share`, `CanariShare`, App Groups only - [sharing](../docs/wiki/frontend/sharing.md)) |
@@ -234,14 +386,16 @@ Test: `sudo -u canari ssh <backup-user>@<offsite-host> 'echo ok'`.
 the first bootstrap of a production box wants a stable one. The run will:
 
 1. generate `infrastructure/.env` from secrets (regenerated from the template);
-2. write the proxies' replica lists, `infrastructure/edge/targets/{frontend,edge}.conf` (each
+2. write the proxies' replica lists, `infrastructure/edge/targets/{frontend,edge,mesh}.conf` (each
    service by its DNS name), BEFORE any container starts - then deploy the Canari stack through
    `infrastructure/deploy/deploy-environment.sh`, one service at a time
-   ([cicd](../docs/wiki/cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to)). The frontend and
-   the edge include their list unconditionally, so on a fresh checkout **a hand-run
+   ([cicd](../docs/wiki/cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to)). The frontend, the
+   edge and the `mesh` (the nginx every service calls another one through,
+   [cicd](../docs/wiki/cicd.md#service-to-service-calls-go-through-the-mesh)) include their list
+   unconditionally, so on a fresh checkout **a hand-run
    `docker compose -f infrastructure/docker-compose.prod.yml up -d` before the first deploy leaves
-   both unable to start** (`open() ".../targets/frontend.conf" failed`): let the release run it, and
-   if the directory is ever lost, the next deploy writes the lists again;
+   all three unable to start** (`open() ".../targets/frontend.conf" failed`): let the release run it,
+   and if the directory is ever lost, the next deploy writes the lists again;
 3. apply MiConnect's configuration (`infrastructure/authentik/blueprints/`) to the running MiConnect -
    the `miconnect` stack itself is deployed BY HAND, its `.env` included (see [authentik/](authentik/));
 4. apply SQL migrations (see below) and verify service health.
@@ -387,7 +541,7 @@ only copy. What a bootstrap owes:
 | Data | a FICTIONAL seed, never production's rows (owner, 2026-10-16): `infrastructure/dev/reset-dev-to-seed.sh`, run by `scheduled.yml`'s `dev-reset` job on demand. Supports `--dry-run`, which changes nothing and reports what it would do. It refuses to write anywhere but the `canari-dev` compose project, and that refusal is a re-read Docker label rather than a flag. A virgin dev database first needs the owner's SCHEMA-ONLY restore ([dev-environment](../docs/wiki/infrastructure/dev-environment.md#a-virgin-dev-database-the-schema-only-restore-owner-run)) |
 | Deployed from | `/home/canari/canari-dev`, a SEPARATE clone - two estates sharing one working tree would race, a `git reset --hard` for one rewriting the compose file the other is deployed from. `deploy-dev` creates it if absent, so there is nothing to do by hand |
 | Images | the two frontends are dev's own (`frontend:dev`, `frontend-ssr:dev`), because SvelteKit bakes `import.meta.env.*` in at build time; **every backend image is shared with production**, which is deliberate - it means a behavioural difference between the estates can never be blamed on a different build |
-| Feature switches | `PROFILE_PHOTO_PROMPT_SPACES` (core-service) is a LITERAL `ICM:saint-etienne` on both estates, TEMPORARY (owner, 2026-11-10): the `FORMATION:campus` spaces offered the profile-photo prompt - empty means nobody, a value that does not parse means nobody and an error at boot; no secret, changed by a commit to its `env-manifest.tsv` row ([guided-help](../docs/wiki/frontend/guided-help.md#the-profile-photo-prompt-owner-2026-11-07)). `COMMUNITY_OWNED_MAX` (social-service) is a LITERAL `20` on both estates: the communities one account may hold as their creator - no secret, changed by a commit to its `env-manifest.tsv` row; a value that is not a positive integer stops social-service at boot ([social-service](../docs/wiki/services/social-service.md)). `LIVE_ENABLED` (the live routes of social-service and media-service) is a LITERAL `true` on both estates since the production flip of 2026-10-30 - nothing to set, and no secret; lives are closed at runtime by `platform_config.lives_mode` at `/admin/platform` ([lives](../docs/wiki/services/lives.md)). `LIVE_REPLAY_TOTAL_MAX_GB` (social-service, + `DEV_` twin) is an OPTIONAL GitHub secret: unset means 20 GB, the total the live replays may hold before the sweep ends the oldest one early and logs `[LIVE_REPLAY_CAP]`; a value that is not a positive number stops social-service at boot. Replays themselves are off until `platform_config.live_replays_mode` is moved at `/admin/platform` ([live-replays](../docs/wiki/live-replays.md)). `LYDIA_RECONCILE_ENABLED` (social-service's Lydia reconciliation sweep) is COMPUTED by `render-env.sh`: `true` on dev, `false` on production until the amount format Lydia signs in a `request/state` answer is measured - nothing to set; production is turned on by changing `compute_lydia_reconcile_enabled` in a commit ([lydia-api](../docs/wiki/lydia-api.md#7-reconciliation---the-sweep-lydias-documentation-asks-for)). `QUEUED_PAYLOAD_SHARED_WRITES` (chat-delivery's key-group shared-payload writer) is a LITERAL `false` on both estates, turned `true` by a commit in a release after the one shipping its readers - nothing to set ([chat-delivery](../docs/wiki/services/chat-delivery.md#a-key-group-frame-is-stored-once-migration-034-2026-10-22)) |
+| Feature switches | `PROFILE_PHOTO_PROMPT_SPACES` (core-service) is a LITERAL `ICM:saint-etienne` on both estates, TEMPORARY (owner, 2026-11-10): the `FORMATION:campus` spaces offered the profile-photo prompt - empty means nobody, a value that does not parse means nobody and an error at boot; no secret, changed by a commit to its `env-manifest.tsv` row ([guided-help](../docs/wiki/frontend/guided-help.md#the-profile-photo-prompt-owner-2026-11-07)). `COMMUNITY_OWNED_MAX` (social-service) is a LITERAL `20` on both estates: the communities one account may hold as their creator - no secret, changed by a commit to its `env-manifest.tsv` row; a value that is not a positive integer stops social-service at boot ([social-service](../docs/wiki/services/social-service.md)). `LIVE_ENABLED` (the live routes of social-service and media-service) is a LITERAL `true` on both estates since the production flip of 2026-10-30 - nothing to set, and no secret; lives are closed at runtime by `platform_config.lives_mode` at `/admin/platform` ([lives](../docs/wiki/services/lives.md)). `CAMPUS_TREND_THRESHOLD` (social-service, + `DEV_` twin) is an OPTIONAL GitHub secret: unset means 10, production's value (the distinct accounts that make a post a campus trend); dev sets it lower so the bench's four accounts can stage a crossing; a value that is not a positive integer stops social-service at boot, and the effective value is logged as `[TREND_THRESHOLD]` ([engagement](../docs/wiki/engagement.md#r1---the-trend-threshold)). `LIVE_REPLAY_TOTAL_MAX_GB` (social-service, + `DEV_` twin) is an OPTIONAL GitHub secret: unset means 20 GB, the total the live replays may hold before the sweep ends the oldest one early and logs `[LIVE_REPLAY_CAP]`; a value that is not a positive number stops social-service at boot. Replays themselves are off until `platform_config.live_replays_mode` is moved at `/admin/platform` ([live-replays](../docs/wiki/live-replays.md)). `LYDIA_RECONCILE_ENABLED` (social-service's Lydia reconciliation sweep) is COMPUTED by `render-env.sh`: `true` on dev, `false` on production until the amount format Lydia signs in a `request/state` answer is measured - nothing to set; production is turned on by changing `compute_lydia_reconcile_enabled` in a commit ([lydia-api](../docs/wiki/lydia-api.md#7-reconciliation---the-sweep-lydias-documentation-asks-for)). `QUEUED_PAYLOAD_SHARED_WRITES` (chat-delivery's key-group shared-payload writer) is a LITERAL `false` on both estates, turned `true` by a commit in a release after the one shipping its readers - nothing to set ([chat-delivery](../docs/wiki/services/chat-delivery.md#a-key-group-frame-is-stored-once-migration-034-2026-10-22)) |
 | Deploy order | dev deploys BEFORE production, and a failed dev deploy stops production's. Setting `DEV_ENVIRONMENT_ENABLED` to anything but `true` is the escape hatch |
 | Turning it on | (1) the ingress rule above, (2) the `DEV_*` secrets - see [section 3](#3-github-secrets), (3) set `DEV_ENVIRONMENT_ENABLED` to `true` in `Settings -> Secrets and variables -> Actions -> Variables` |
 | Owed by a human, but NOT blocking | a dev Firebase project (push), a dev Android keystore and its backup location, and a Cloudflare Access service token for the test harness |

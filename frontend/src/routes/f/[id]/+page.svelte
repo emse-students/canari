@@ -26,8 +26,14 @@
     type MissingAnswer,
     type Selections,
   } from '$lib/forms/fillAnswers';
+  import { useFormWindow } from '$lib/forms/useFormWindow.svelte';
   import { gridRequiredSwitchOn } from '$lib/forms/gridRequiredGate';
-  import { fillPriceState, optionModifierOf } from '$lib/forms/fillPricing';
+  import {
+    cursusSlicesOf,
+    fillPriceState,
+    NO_PRICING_SLICE,
+    optionModifierOf,
+  } from '$lib/forms/fillPricing';
   import { appliedTierLabels, isProductGrid } from '$lib/forms/productGridFill';
   import { formSubmitRefusalMessage } from '$lib/forms/answerBounds';
   import { formatFormOpensAt } from '$lib/posts/postComposerDraft';
@@ -39,6 +45,13 @@
   import PaymentMethodChoice from '$lib/components/forms/PaymentMethodChoice.svelte';
   import PayerEmailPrompt from '$lib/components/payments/PayerEmailPrompt.svelte';
   import GuestIdentityFields from '$lib/components/forms/GuestIdentityFields.svelte';
+  import DeclaredIdentityFields from '$lib/components/forms/DeclaredIdentityFields.svelte';
+  import {
+    askedDeclaredFields,
+    declaredPayload,
+    emptyDeclaredValues,
+    firstDeclaredProblem,
+  } from '$lib/forms/respondentFields';
   import {
     askedGuestFields,
     emptyGuestIdentity,
@@ -90,28 +103,36 @@
   let guestIdentity = $state(emptyGuestIdentity());
   /** Whether a send was held on them: their fields then say what is missing. */
   let guestIdentityChecked = $state(false);
+  /** The promo and formation, status, campus the form asks a guest to declare ("A propos de vous"). */
+  let declared = $state(emptyDeclaredValues());
+  let declaredChecked = $state(false);
 
   /** What the form asks a guest about who they are; nothing by default (owner, 2026-11-06). */
   const askedFields = $derived(askedGuestFields(form?.guestFields));
-  const isNotOpenYet = $derived(!!form?.opensAt && new Date(form.opensAt) > new Date());
-  const isClosed = $derived(!!form?.closedAt && new Date(form.closedAt) < new Date());
+  /** What the form asks a guest to declare (owner, 2026-11-16): a guest has no account to read. */
+  const askedDeclared = $derived(askedDeclaredFields(form?.guestFields));
+  /** The window: the server's verdict of the load, or of the last typed refusal (`useFormWindow`). */
+  const win = useFormWindow(() => form, 'PublicForm');
+  const isNotOpenYet = $derived(win.notYet);
+  const isClosed = $derived(win.closed);
   // No profile half: the server refuses a public form whose questions depend on who answers.
   const visibleItems = $derived(form ? visibleItemsOf(form.items, selections) : []);
+  /** The slices the server sent: a guest has no cursus, so one (its "everyone else" row). */
+  const slices = $derived(form ? cursusSlicesOf(form) : NO_PRICING_SLICE);
   /** What the answers cost so far, from the slice the server sent (a guest's is the whole grid). */
   const price = $derived(
     fillPriceState({
       basePrice: form?.basePrice ?? 0,
-      pricing: form?.pricing ?? null,
+      slices,
       items: form?.items ?? [],
       visibleItems,
       selections,
-      productGridPrices: form?.productGridPrices,
     })
   );
   /** Whether a priced grid is shown: the footer then totals the order and sticks. */
   const hasProductGrid = $derived(visibleItems.some(isProductGrid));
   /** A guest's category on the priced grids - "everyone else" wherever the grid has categories. */
-  const tierLabels = $derived(appliedTierLabels(visibleItems, form?.productGridPrices));
+  const tierLabels = $derived(appliedTierLabels(visibleItems, price.productGridPrices));
   /** Signing in may lower the price: the sign-in page, then this form's member page. */
   const loginHref = $derived(
     `${resolve('/login')}?returnTo=${encodeURIComponent(`/forms/${formId}`)}`
@@ -138,6 +159,7 @@
     }
     try {
       form = await getPublicForm(formId);
+      win.clear();
       selections = initialSelections(form.items);
       Log.d('PublicForm', `loaded form=${formId} items=${form.items.length}`);
     } catch (e) {
@@ -182,6 +204,17 @@
         ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
       return;
     }
+    // The promo and formation, status and campus the creator asked, said on their own fields.
+    const declaredMissing = firstDeclaredProblem(askedDeclared, declared);
+    if (declaredMissing) {
+      declaredChecked = true;
+      error = '';
+      Log.d('PublicForm', `submit held: declared ${declaredMissing} missing or invalid`);
+      document
+        .getElementById('declared-identity')
+        ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      return;
+    }
     // Lydia's request goes to an address. When the form asked the guest's e-mail, that one is it
     // (typed once, kept with the answer); otherwise the guest types one here, forwarded once and
     // never stored (PP2).
@@ -197,6 +230,7 @@
         answers: visibleAnswers(visibleItems, selections),
         website: honeypot,
         ...guestIdentityPayload(askedFields, guestIdentity),
+        ...declaredPayload(askedDeclared, declared),
         ...(payerEmail ? { payerEmail } : {}),
         ...(total > 0 && form.allowCashPayment ? { paymentMethod: paymentMethodChoice } : {}),
       });
@@ -212,6 +246,7 @@
       submitted = true;
     } catch (e) {
       Log.d('PublicForm', `submit refused form=${form.id}: ${e}`);
+      win.adopt(e);
       // Worded in the reader's language from the refusal's code (a form's, then a payment's); the
       // server's sentence is English and for the log - the guest reads ours.
       error = formSubmitRefusalMessage(e, m.form_guest_submit_failed());
@@ -253,6 +288,8 @@
     // A shared device at an event: the next answer may be somebody else's.
     guestIdentity = emptyGuestIdentity();
     guestIdentityChecked = false;
+    declared = emptyDeclaredValues();
+    declaredChecked = false;
     error = '';
     window.scrollTo({ top: 0 });
   }
@@ -328,11 +365,14 @@
         </Button>
       </div>
     {:else}
-      {#if isNotOpenYet && form.opensAt}
+      {#if isNotOpenYet}
         <p
           class="border-accent/40 bg-accent/20 text-accent-text mb-4 rounded-2xl border px-4 py-4 text-sm font-semibold"
+          data-testid="form-not-open-notice"
         >
-          {m.form_view_opens_at({ date: formatFormOpensAt(form.opensAt) })}
+          {form.opensAt
+            ? m.form_view_opens_at({ date: formatFormOpensAt(form.opensAt) })
+            : m.form_view_not_open_yet()}
         </p>
       {:else if isClosed}
         <p class="text-text-muted mb-4 text-center text-sm font-medium">{m.form_view_closed()}</p>
@@ -351,7 +391,7 @@
               grid={item.productGrid}
               bind:value={selections[item.id]}
               disabled={isNotOpenYet || isClosed || form.formFull || submitting}
-              prices={form.productGridPrices?.[item.id]}
+              prices={price.productGridPrices[item.id]}
               currency={form.currency}
               error={questionError(item)}
             />
@@ -391,6 +431,13 @@
         bind:values={guestIdentity}
         showErrors={guestIdentityChecked}
         emailPaysLydia={paysOnline}
+        disabled={isNotOpenYet || isClosed || form.formFull || submitting}
+      />
+      <DeclaredIdentityFields
+        asked={askedDeclared}
+        bind:values={declared}
+        showErrors={declaredChecked}
+        anonymous={form.anonymous ?? false}
         disabled={isNotOpenYet || isClosed || form.formFull || submitting}
       />
 

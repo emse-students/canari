@@ -74,7 +74,7 @@ describe('hasStoredSession - the recovery refresh of a wiped identity', () => {
 
   it('is NOT sent once this process has signed out', async () => {
     fetchMock.mockResolvedValue(new Response('', { status: 200 }));
-    await clearAuth();
+    await clearAuth('chosen');
     const sent = fetchMock.mock.calls.length; // the logout itself
     expect(await hasStoredSession()).toBe(false);
     expect(fetchMock.mock.calls.length).toBe(sent);

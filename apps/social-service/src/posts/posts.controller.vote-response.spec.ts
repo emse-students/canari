@@ -86,6 +86,8 @@ describe('PostsController.votePoll', () => {
     const query = jest.fn((sql: string, params?: unknown[]) => {
       // The audience SQL is proven in `reader-spaces.integration.spec.ts`; here it is a switch.
       if (sql.includes('AS visible')) return Promise.resolve([{ visible }]);
+      // The author's door, asked of the post's writer alone (`entity-author-door.integration.spec.ts`).
+      if (sql.includes('AS holds')) return Promise.resolve([{ holds: true }]);
       if (sql.includes('FROM user_blocks')) {
         const viewer = (params ?? [])[0] as string;
         return Promise.resolve((blockedPairs[viewer] ?? []).map((otherId) => ({ otherId })));
@@ -107,6 +109,10 @@ describe('PostsController.votePoll', () => {
       // The publishers a BDE moderator moderates (owner, 2026-11-03): this one governs them all.
       moderatedAssociationIds: jest.fn((id: string, ids: string[]) =>
         Promise.resolve(new Set(id === MODERATOR ? ids : []))
+      ),
+      // ... as a BDE: no institution's MODERATE is held here.
+      commentStandings: jest.fn(() =>
+        Promise.resolve({ postAs: new Set<string>(), moderatedInstitutions: new Set<string>() })
       ),
     };
     const postRepo = {

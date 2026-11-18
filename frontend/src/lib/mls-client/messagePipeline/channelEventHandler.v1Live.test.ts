@@ -36,6 +36,7 @@ function ctx() {
     addMessageToChat,
     context: {
       conversations: new Map([[`channel_${CHANNEL}`, { messages: [] }]]),
+      userId: 'alice',
       addMessageToChat,
       log: vi.fn(),
       onOutOfSync: vi.fn(),

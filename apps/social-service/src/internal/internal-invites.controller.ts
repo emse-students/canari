@@ -1,6 +1,7 @@
 import { Controller, Get, Headers, Logger, Param } from '@nestjs/common';
 import { assertInternalSecret } from './internal-secret.util';
 import { ChannelService } from '../channels/channel.service';
+import { RouteParams } from '../common/route-params';
 
 /**
  * Session-free community invite preview, called by the web SSR process when it renders the
@@ -15,6 +16,7 @@ import { ChannelService } from '../channels/channel.service';
  * NOT reachable through nginx - `/api/internal` has no location - and gated on INTERNAL_SECRET
  * anyway, which fails closed when unset.
  */
+@RouteParams({ token: 'opaque' })
 @Controller('internal')
 export class InternalInvitesController {
   private readonly logger = new Logger(InternalInvitesController.name);

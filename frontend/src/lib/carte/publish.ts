@@ -25,7 +25,7 @@
  */
 
 import type { CarteStyle } from './theme';
-import { directoryLine } from './generator';
+import { directoryLine, orderByFamilyName } from './generator';
 import type { PosterBubble, PosterModel } from './generator';
 import { getInitials } from '$lib/utils/avatar';
 import {
@@ -172,12 +172,30 @@ export interface PublishedCarteUnit {
   cards: PublishedCarteCard[];
 }
 
+/** One member of a directory roster: what the server checks and an erasure finds by id. */
+interface PublishedCarteDirectoryMember {
+  userId: string;
+  name: string;
+  /** The member's role as held, generic or not; the line drops a generic one. */
+  role: string;
+}
+
 /** One association's line in the directory: the color dot + name are joined, the roster is frozen. */
 export interface PublishedCarteDirectoryAsso {
   /** Join key for the displayed name and color dot. */
   assoId: string;
-  /** The roster as the poster prints it: "Name (Role) - Name - ...", alphabetical. */
+  /**
+   * The roster as the poster prints it: "Name (Role) - Name - ...", by family name. The server
+   * re-derives it from {@link members} and stores that; it is still sent for a server that predates
+   * rosters.
+   */
   line: string;
+  /**
+   * The roster behind {@link line}, in print order. The server keeps only current members of the
+   * association (a stale editor cannot put a departed or erased person back), derives the line from
+   * it, and never serves it - it carries account ids.
+   */
+  members: PublishedCarteDirectoryMember[];
 }
 
 /** A category section of the directory. */
@@ -395,6 +413,11 @@ export function buildPublishedCarte(params: {
               assos: zone.bubbles.map((asso) => ({
                 assoId: asso.assoId,
                 line: directoryLine(asso),
+                members: orderByFamilyName(asso.members).map((mem) => ({
+                  userId: mem.userId,
+                  name: mem.name,
+                  role: mem.role,
+                })),
               })),
             })),
         }

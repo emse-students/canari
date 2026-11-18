@@ -1,3 +1,4 @@
+import { nameSyncField, parseNameSync } from '$lib/utils/chat/groupName';
 import { encryptData, decryptData, PayloadUnreadableError } from '../encryption';
 import { appendLog } from '$lib/utils/sessionLog';
 import { normalizeConversationLifecycle } from '$lib/utils/chat/groupLifecycle';
@@ -32,7 +33,7 @@ import type {
   PendingMutationReseal,
   PendingMutationWrite,
 } from './types';
-import { FeedPageUnreadableError } from './types';
+import { FeedPageUnreadableError, StoreWriteRefusedError } from './types';
 import {
   joinPendingMutation,
   pendingMessageTag,
@@ -829,8 +830,14 @@ export class IndexedDbStorage implements IStorage {
    * whatever was written, including a value an older build got wrong.
    */
   private rowToMeta(r: ConversationMeta & { isReady?: boolean }): ConversationMeta {
+    const { nameAt, nameSync, ...rest } = r;
+    const positive = (v: unknown): v is number =>
+      typeof v === 'number' && Number.isFinite(v) && v > 0;
     return {
-      ...r,
+      ...rest,
+      // A positive server time or nothing: "never stated" is absence, never a 0 or a NaN.
+      ...(positive(nameAt) ? { nameAt } : {}),
+      ...nameSyncField(parseNameSync(nameSync)),
       lifecycle: normalizeConversationLifecycle(r.lifecycle, r.isReady),
       readWatermarks: parseReadWatermarks(r.readWatermarks),
       serverReadWatermarks: parseReadWatermarks(r.serverReadWatermarks),
@@ -2326,15 +2333,49 @@ export class IndexedDbStorage implements IStorage {
     return out.sort(byNewestSession);
   }
 
-  async saveGraineSession(session: StoredGraineSession, deviceKeyB64: string): Promise<void> {
+  async saveGraineSession(
+    session: StoredGraineSession,
+    deviceKeyB64: string,
+    onlyWhile?: () => boolean,
+    sentCountWas?: number
+  ): Promise<void> {
     const db = this.ensureDb();
     const encrypted = await encryptData(encodeGraineSensitive(session), deviceKeyB64);
     const row = { ...graineClearColumns(session), ...encrypted };
+    // Read in the task that creates the transaction: a transaction created later (another tab's
+    // read) is ordered after this one, so the condition held for everything that reads this write.
+    if (onlyWhile && !onlyWhile()) {
+      throw new StoreWriteRefusedError(`the Graine session ${session.sessionId}`);
+    }
     return new Promise((resolve, reject) => {
       const tx = db.transaction('graine', 'readwrite');
-      tx.objectStore('graine').put(row);
+      const store = tx.objectStore('graine');
+      let refused: StoreWriteRefusedError | null = null;
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(refused ?? tx.error);
+      if (sentCountWas === undefined) {
+        store.put(row);
+        return;
+      }
+      // THE COMPARE-AND-SWAP, read and written in ONE readwrite transaction: every other
+      // document's transaction on this store is ordered entirely before or after it.
+      const current = store.get(session.sessionId);
+      current.onsuccess = () => {
+        const stored = (current.result as { sentCount?: number } | undefined)?.sentCount;
+        if (stored === sentCountWas) {
+          store.put(row);
+          return;
+        }
+        // AT A LEVEL THAT ACCUSES: another writer moved this session's count between this
+        // reservation's read and its write - two documents both reserved on it, so the leadership
+        // guard let an overlap through. Refused, so no index is handed out a second time.
+        console.error(
+          `[GRAINE] session ${session.sessionId} not written: its count moved from ${sentCountWas} to ${stored ?? 'none'} since it was read - another writer reserved on it`
+        );
+        refused = new StoreWriteRefusedError(`the Graine session ${session.sessionId}`);
+        tx.abort();
+      };
     });
   }
 

@@ -69,10 +69,16 @@
      * a drop or a paste brings, since those never pass through a chip.
      */
     attachmentCount?: number;
+    /** The editor of a reel: its caption is the only editable thing, so no attachment chip is drawn. */
+    captionOnly?: boolean;
     pollActive: boolean;
     onTogglePoll: () => void;
     formActive: boolean;
-    onToggleForm: () => void;
+    /**
+     * Toggles the form section. Absent, no "Formulaire" chip is drawn: an anonymous post carries no
+     * form (`attachableForms`).
+     */
+    onToggleForm?: () => void;
     /** `datetime-local` value, `''` for "publish now". */
     scheduledAt?: string;
     /** Short status next to the formatting toggle (e.g. the draft was just saved). */
@@ -99,6 +105,7 @@
     onFiles,
     onFormat,
     attachmentCount = 0,
+    captionOnly = false,
     pollActive,
     onTogglePoll,
     formActive,
@@ -117,7 +124,8 @@
   const full = $derived(attachmentsFull(attachmentCount));
   /** The line beside the formatting toggle: the attachment counter, then the status, one message. */
   const statusLine = $derived.by(() => {
-    if (attachmentCount === 0) return status;
+    // A caption-only form (a reel's edit) has no attachment to count: its video is not one the author edits.
+    if (captionOnly || attachmentCount === 0) return status;
     const counter = m.post_attachments_counter({
       count: attachmentCount,
       max: POST_ATTACHMENTS_MAX,
@@ -210,135 +218,139 @@
     attachments leave; the chip row's last height is also remembered (bound while it is drawn) and
     held as the slot's floor, for the few points two wrappings can differ by.
   -->
-  <div
-    class="flex min-h-9 items-stretch"
-    style:min-height={formatting && chipRowHeight > 0 ? `${chipRowHeight}px` : undefined}
-  >
-    {#if formatting}
-      <MarkdownComposerToolbar
-        chipClass="{chipClass} {idleChip}"
-        {onFormat}
-        class="w-full content-start"
-      />
-    {:else}
-      <div
-        data-chip-row
-        bind:clientHeight={chipRowHeight}
-        class="flex w-full flex-wrap items-center gap-2"
-      >
-        {#if nativeLibrary}
+  {#if !captionOnly || formatting}
+    <div
+      class="flex min-h-9 items-stretch"
+      style:min-height={formatting && chipRowHeight > 0 ? `${chipRowHeight}px` : undefined}
+    >
+      {#if formatting}
+        <MarkdownComposerToolbar
+          chipClass="{chipClass} {idleChip}"
+          {onFormat}
+          class="w-full content-start"
+        />
+      {:else}
+        <div
+          data-chip-row
+          bind:clientHeight={chipRowHeight}
+          class="flex w-full flex-wrap items-center gap-2"
+        >
+          {#if nativeLibrary}
+            <button
+              type="button"
+              class="{chipClass} {idleChip} {full ? fullChip : ''}"
+              data-post-library
+              disabled={full}
+              onclick={pickLibraryNatively}
+            >
+              <Images size={16} strokeWidth={2.25} class="text-emerald-600 dark:text-emerald-400" />
+              {m.post_composer_photo_video()}
+            </button>
+          {:else}
+            <label class="{chipClass} {idleChip} {full ? fullChip : ''}">
+              <Images size={16} strokeWidth={2.25} class="text-emerald-600 dark:text-emerald-400" />
+              {m.post_composer_photo_video()}
+              <input
+                type="file"
+                accept="image/*,video/*"
+                multiple
+                disabled={full}
+                class="sr-only"
+                onchange={(e) => takeFiles(e, 'gallery')}
+              />
+            </label>
+          {/if}
           <button
             type="button"
-            class="{chipClass} {idleChip} {full ? fullChip : ''}"
-            data-post-library
+            class="{chipClass} {idleChip} pointer-fine:hidden {full ? fullChip : ''}"
+            data-post-camera
             disabled={full}
-            onclick={pickLibraryNatively}
+            onclick={() => {
+              Log.d('POST_COMPOSER', 'in-app camera opened');
+              cameraOpen = true;
+            }}
           >
-            <Images size={16} strokeWidth={2.25} class="text-emerald-600 dark:text-emerald-400" />
-            {m.post_composer_photo_video()}
+            <Camera size={16} strokeWidth={2.25} class="text-sky-600 dark:text-sky-400" />
+            {m.post_composer_camera()}
           </button>
-        {:else}
+          {#if onLive}
+            <button
+              type="button"
+              class="{chipClass} {idleChip}"
+              data-post-live
+              onclick={() => {
+                Log.d('POST_COMPOSER', 'live screen opened');
+                onLive();
+              }}
+            >
+              <Radio size={16} strokeWidth={2.25} class="text-red-600 dark:text-red-400" />
+              {m.live_composer_chip()}
+            </button>
+          {/if}
+          <button
+            type="button"
+            class="{chipClass} {pollActive ? activeChip : idleChip}"
+            aria-pressed={pollActive}
+            onclick={onTogglePoll}
+          >
+            <ChartColumn size={16} strokeWidth={2.25} class="text-accent-text" />
+            {m.post_poll_section_title()}
+          </button>
+          {#if onToggleForm}
+            <button
+              type="button"
+              class="{chipClass} {formActive ? activeChip : idleChip}"
+              aria-pressed={formActive}
+              onclick={onToggleForm}
+            >
+              <ClipboardList
+                size={16}
+                strokeWidth={2.25}
+                class="text-violet-600 dark:text-violet-400"
+              />
+              {m.post_form_fallback_title()}
+            </button>
+          {/if}
           <label class="{chipClass} {idleChip} {full ? fullChip : ''}">
-            <Images size={16} strokeWidth={2.25} class="text-emerald-600 dark:text-emerald-400" />
-            {m.post_composer_photo_video()}
+            <Paperclip size={16} strokeWidth={2.25} class="text-text-muted" />
+            {m.post_composer_file()}
             <input
               type="file"
-              accept="image/*,video/*"
+              accept={DOCUMENT_ACCEPT}
               multiple
               disabled={full}
               class="sr-only"
-              onchange={(e) => takeFiles(e, 'gallery')}
+              onchange={(e) => takeFiles(e, 'documents')}
             />
           </label>
-        {/if}
-        <button
-          type="button"
-          class="{chipClass} {idleChip} pointer-fine:hidden {full ? fullChip : ''}"
-          data-post-camera
-          disabled={full}
-          onclick={() => {
-            Log.d('POST_COMPOSER', 'in-app camera opened');
-            cameraOpen = true;
-          }}
-        >
-          <Camera size={16} strokeWidth={2.25} class="text-sky-600 dark:text-sky-400" />
-          {m.post_composer_camera()}
-        </button>
-        {#if onLive}
-          <button
-            type="button"
-            class="{chipClass} {idleChip}"
-            data-post-live
-            onclick={() => {
-              Log.d('POST_COMPOSER', 'live screen opened');
-              onLive();
-            }}
-          >
-            <Radio size={16} strokeWidth={2.25} class="text-red-600 dark:text-red-400" />
-            {m.live_composer_chip()}
-          </button>
-        {/if}
-        <button
-          type="button"
-          class="{chipClass} {pollActive ? activeChip : idleChip}"
-          aria-pressed={pollActive}
-          onclick={onTogglePoll}
-        >
-          <ChartColumn size={16} strokeWidth={2.25} class="text-accent-text" />
-          {m.post_poll_section_title()}
-        </button>
-        <button
-          type="button"
-          class="{chipClass} {formActive ? activeChip : idleChip}"
-          aria-pressed={formActive}
-          onclick={onToggleForm}
-        >
-          <ClipboardList
-            size={16}
-            strokeWidth={2.25}
-            class="text-violet-600 dark:text-violet-400"
-          />
-          {m.post_form_fallback_title()}
-        </button>
-        <label class="{chipClass} {idleChip} {full ? fullChip : ''}">
-          <Paperclip size={16} strokeWidth={2.25} class="text-text-muted" />
-          {m.post_composer_file()}
-          <input
-            type="file"
-            accept={DOCUMENT_ACCEPT}
-            multiple
-            disabled={full}
-            class="sr-only"
-            onchange={(e) => takeFiles(e, 'documents')}
-          />
-        </label>
-        <!-- The app's own date field, drawn AS the chip: the native input that used to cover it
+          <!-- The app's own date field, drawn AS the chip: the native input that used to cover it
              opened Android's date dialog and then a separate clock dialog. -->
-        <DateTimeField
-          value={scheduledAt}
-          onValueChange={(v) => (scheduledAt = v)}
-          label={m.post_create_schedule_publication_label()}
-          min={toDatetimeLocalValue(new Date(Date.now() + 60000).toISOString())}
-          triggerClass="{chipClass} {scheduledAt ? activeChip : idleChip}"
-        >
-          {#snippet trigger()}
-            <Clock size={16} strokeWidth={2.25} class="text-text-muted" />
-            {scheduledLabel}
-          {/snippet}
-        </DateTimeField>
-        {#if scheduledAt}
-          <button
-            type="button"
-            class="ui-icon-button text-text-muted shrink-0 rounded-full hover:text-red-500"
-            aria-label={m.post_create_cancel_schedule_label()}
-            onclick={() => (scheduledAt = '')}
+          <DateTimeField
+            value={scheduledAt}
+            onValueChange={(v) => (scheduledAt = v)}
+            label={m.post_create_schedule_publication_label()}
+            min={toDatetimeLocalValue(new Date(Date.now() + 60000).toISOString())}
+            triggerClass="{chipClass} {scheduledAt ? activeChip : idleChip}"
           >
-            <X size={16} strokeWidth={2.5} />
-          </button>
-        {/if}
-      </div>
-    {/if}
-  </div>
+            {#snippet trigger()}
+              <Clock size={16} strokeWidth={2.25} class="text-text-muted" />
+              {scheduledLabel}
+            {/snippet}
+          </DateTimeField>
+          {#if scheduledAt}
+            <button
+              type="button"
+              class="ui-icon-button text-text-muted shrink-0 rounded-full hover:text-red-500"
+              aria-label={m.post_create_cancel_schedule_label()}
+              onclick={() => (scheduledAt = '')}
+            >
+              <X size={16} strokeWidth={2.5} />
+            </button>
+          {/if}
+        </div>
+      {/if}
+    </div>
+  {/if}
 
   <div class="flex items-center gap-2">
     <button
@@ -358,7 +370,8 @@
       class="text-2xs min-w-0 flex-1 truncate font-semibold {full
         ? 'text-accent-text'
         : 'text-text-muted'}"
-      data-attachment-counter={attachmentCount > 0 ? '' : undefined}>{statusLine}</span
+      data-attachment-counter={!captionOnly && attachmentCount > 0 ? '' : undefined}
+      >{statusLine}</span
     >
     {@render action()}
   </div>

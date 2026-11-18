@@ -80,14 +80,14 @@ describe('VideoPlayGlyph', () => {
 describe('the glass of a glyph in the stylesheet', () => {
   const css = readFileSync(resolve(process.cwd(), 'src/app.css'), 'utf8');
 
-  it('uses the video glass variables, so every fallback that flattens the chip flattens it', () => {
+  it('uses the fake-glass variables, so the near-solid fallbacks reach it', () => {
     const rule = /\.glass-video-shape \{([^}]*)\}/.exec(css)![1];
-    expect(rule).toContain('var(--glass-video-bg)');
-    expect(rule).toContain('var(--glass-video-blur)');
-    // The three fallbacks set these variables on the root: reduced transparency, more contrast and a
-    // missing backdrop-filter.
-    const flatSets = css.match(/--glass-video-bg: var\(--glass-video-flat-bg\);/g) ?? [];
-    expect(flatSets.length).toBeGreaterThanOrEqual(4);
+    expect(rule).toContain('var(--glass-video-fill)');
+    expect(rule).toContain('var(--glass-video-sheen)');
+    expect(rule, 'no blur in the base recipe').not.toContain('backdrop-filter');
+    // Reduced transparency and more contrast set the solid fill on the root.
+    const solid = css.match(/--glass-video-fill: var\(--glass-video-fill-solid\);/g) ?? [];
+    expect(solid.length).toBeGreaterThanOrEqual(2);
   });
 
   it('draws no border and no box shadow: a clipped element cannot carry them', () => {

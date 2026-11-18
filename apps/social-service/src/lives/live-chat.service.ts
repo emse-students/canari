@@ -322,15 +322,45 @@ export class LiveChatService {
       this.logger.debug(`[LIVE_CHAT] message ${rows[0].id} on ${liveId} is seq ${seq}`);
       return toMessageView(rows[0]);
     });
-    if (addressed.length > 0) await this.notifyMentions(authorId, liveId, addressed);
+    // THE SEND'S ANSWER NEVER DEPENDS ON WHO WAS REACHED: the fan-out is started here and NOT
+    // awaited, so a line that addressed somebody answers after exactly the work of one that
+    // addressed nobody. The line is committed; the job logs its own outcome.
+    this.startMentionFanout(authorId, liveId, addressed);
     return view;
   }
 
+  /** The mention fan-outs started and not settled yet (`mentionFanoutsSettled`). */
+  private readonly mentionFanouts = new Set<Promise<void>>();
+
+  /** Starts the fan-out of one line's mentions, detached from the request that posted the line. */
+  private startMentionFanout(authorId: string, liveId: string, addressed: string[]): void {
+    if (addressed.length === 0) return;
+    const job = this.notifyMentions(authorId, liveId, addressed).finally(() =>
+      this.mentionFanouts.delete(job)
+    );
+    this.mentionFanouts.add(job);
+  }
+
   /**
-   * Which of the candidate accounts the composer may SUGGEST for an `@` in this live's chat: the
-   * live's audience with no block either way with the author (`liveMentionRecipientsSql('suggest')`),
-   * so a suggestion is never someone who cannot see the live. It asks nothing about third parties (a
-   * removal, a block with the broadcaster): its answer is an oracle for ids the caller picks.
+   * Resolves once every mention fan-out started so far has settled - an event, never a duration.
+   * For the module's shutdown (a replica going down finishes the notices it owes) and for a test
+   * that reads what a line told.
+   */
+  async mentionFanoutsSettled(): Promise<void> {
+    await Promise.all(this.mentionFanouts);
+  }
+
+  /** A replica going down tells the people its last lines mentioned before it leaves. */
+  async onModuleDestroy(): Promise<void> {
+    await this.mentionFanoutsSettled();
+  }
+
+  /**
+   * Which of the candidate accounts the composer may SUGGEST for an `@` in this live's chat: what a
+   * chatter can already see (`liveMentionRecipientsSql('suggest')`) - the part of the audience read
+   * from profile facts and the authors of the lines a joiner is served - with no block either way
+   * with the author. Its answer goes back for ids the caller picks, so it asks nothing about third
+   * parties (a removal, a block with the broadcaster) and nothing about who follows whom.
    * Read-only; the caller has already let the author chat.
    */
   async mentionAudience(authorId: string, liveId: string, raw: unknown): Promise<string[]> {
@@ -351,7 +381,8 @@ export class LiveChatService {
    * Tells the people a chat line mentions - ONE push each, after the line committed (the trade the
    * announcer documents: a crash between the two loses a notice, where the other order could repeat
    * one). No bell row: a live is deleted when it ends (L3), so a row naming it would be a dead link
-   * for ever. Never throws - the line is posted; a failure is logged and the line stands.
+   * for ever. Never throws - the line is posted; a failure is logged and the line stands. Runs
+   * DETACHED from the request (`startMentionFanout`): nothing the author is answered waits for it.
    */
   private async notifyMentions(authorId: string, liveId: string, recipientIds: string[]) {
     try {

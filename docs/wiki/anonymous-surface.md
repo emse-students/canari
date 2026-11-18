@@ -55,9 +55,9 @@ roster's.
 | `GET /api/forms/:id/calendar-link` | **closed** | an agenda entry; the showcase has no agenda |
 | `GET /api/public/posts` (the 500 newest association posts) | **closed (owner 2026-11-02)** - the route is gone | a feed, not a link preview; its one consumer, the sitemap, lists no post any more |
 | `GET /api/public/associations`, `.../slug/:slug` | kept | the showcase's own source: exactly its entity fields. `?space=<formation>:<campus>` (owner, 2026-11-08) keeps only the entities whose audience reaches that space - for associations the carte's set plus that space's archived ones, which the portail lists in its archived section (`spaces/public-space.ts`) - and 404s another space's page; **lists and institutions are filtered the same way since 2026-11-14** (owner: "Filtrer comme les assos"). Without it the complete list, unchanged: Canari's own sitemap and SEO read it - and so did the portail's directory until its `v1.0.9`, which only named its space for the carte (measured 2026-11-14: 50 associations served where `ICM:saint-etienne` offers 47) |
-| `GET /api/public/associations/slug/:slug` (its `members`), `GET /api/public/associations/:id/members` | kept | the showcase's roster: name, role, promo, board flag, and the photo as `avatarUrl` |
+| `GET /api/public/associations/slug/:slug` (its `members`), `GET /api/public/associations/:id/members` | kept | the showcase's roster: name, role, promo, board flag, and the photo as `avatarUrl`. **No account id and no joining date**: `userId` and `createdAt` were served until the showcase read `avatarUrl`, and are gone |
 | `GET /api/public/members/:memberId/avatar` | kept (new) | the roster's photo, reached through the roster row rather than the account: exactly as public as the roster line that lists it, gone when the member leaves. Bodyless on every miss, and unthrottled: the showcase hands `avatarUrl` to the visitor's browser, which asks for every face a carte or a roster draws (a hundred and more), so the default bucket (20 a minute per address, per replica) would turn one carte render into initials. A request costs a uuid check, a primary-key read and one internal hop; core's avatar cache, keyed by account, bounds what reaches the photo provider; the comparable public routes (core's avatar route, `/api/media/public/:id`) are unthrottled too |
-| `GET /api/public/carte?space=<formation>:<campus>` | kept | the showcase's carte for the space it names ([carte](carte-vie-asso.md#rules)); each card carries `avatarUrl` like a roster member. Without `space` a legacy shim, served only while exactly one map is live ([legacy-compatibility](legacy-compatibility.md)) |
+| `GET /api/public/carte?space=<formation>:<campus>` | kept | the showcase's carte for the space it names ([carte](carte-vie-asso.md#rules)); each card carries `avatarUrl` like a roster member, and no `userId`. Without `space` a legacy shim, served only while exactly one map is live ([legacy-compatibility](legacy-compatibility.md)) |
 | `GET /api/public/posts/:id/preview`, `/preview-image` | **kept - owner decision** | the link preview of one shared association post |
 | `GET /api/public/forms/:id`, `POST .../submit`, `POST .../receipts/confirm` | kept - capability | a form its association chose to make public, answered by a guest on its shared link; the reply is an allowlist naming no owner and no association ([forms](frontend/modules/forms.md#a-public-form-is-answered-without-an-account-2026-09-30)) |
 | `GET /api/public/cotisant-status` | kept - not anonymous | Le Cercle's server-to-server check, refused without its API key |
@@ -91,8 +91,11 @@ public form's `/f/` page (`isSignedOutPath`), so it was never a consumer of the 
 
 ## Consumers checked
 
-- **portail-etu**: reads `/api/public/associations*` and `/api/public/carte`; every field it reads
-  is still served, and `avatarUrl` is added beside them.
+- **portail-etu**: reads `/api/public/associations*` and `/api/public/carte`. It draws every photo
+  from `avatarUrl` and keys its lists on the roster row's `id` and on a card's position, so the
+  account id it once read (`userId`) is no longer served. **Order of the two releases:** the
+  showcase that reads `avatarUrl` ships FIRST; a showcase older than it, given no `userId`, draws
+  initials in place of every photo.
 - **The signed-in app and the native apps**: every closed route is called with the session.
 - **The sitemap, the head injector**: changed above.
 - **Le Cercle, Sky**: API-key routes, unchanged.

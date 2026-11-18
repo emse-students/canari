@@ -580,7 +580,10 @@ describe.each([1, 3])(
       const hung = hangPart(w, 2, () => first.kill());
       await enqueueTake(first, N);
       await waitForEvent(hung.hit);
-      expect(w.server.partsReceived()).toBe(2);
+      // Two parts are in flight (`RESUMABLE_PARTS_IN_FLIGHT`): whether the last part, beside the hung
+      // one, reached the server before the kill is a race of the two lanes - so what is asserted is
+      // that the hung part is missing, and below that across both lives no part arrived twice.
+      expect([...w.server.sessions.values()][0].received.has(2)).toBe(false);
       w.server.fault = () => undefined;
 
       const second = life(w);
@@ -842,7 +845,9 @@ describe.each([1, 3])(
       const second = life(w);
       await cancelAll(second, N);
       await waitForEvent(() => expect(w.server.sessions.get(session)!.closed).toBe(true));
-      expect(w.server.partsReceived()).toBe(2);
+      // The hung part never landed; the one in flight beside it may have (two lanes, a race).
+      expect(w.server.sessions.get(session)!.received.has(2)).toBe(false);
+      expect(w.server.partsReceived()).toBeLessThan(PARTS);
       expect(w.sql.rows.size).toBe(0);
       await waitForEvent(async () => expect(await w.blobs.list()).toEqual([]));
     });
@@ -1204,7 +1209,13 @@ describe('one take, several conversations (RC-13)', () => {
       fileName: 'take2.webm',
       targets: [{ messageId: OTHER_SEND, groupId: 'g1', conversationKey: 'g1' }],
     });
+    // THE FIXTURE'S EXPIRY, as `takeRows` sets it: left to derive from `sentAt: 200` it is long past,
+    // and the flush fails this send for good as expired - deleting the row the reads below name.
+    other.take.media!.expiresAtMs = EXPIRES;
+    for (const send of other.sends) send.entry.media!.expiresAtMs = EXPIRES;
     await l.outbox.enqueueTake(other.take, other.sends);
+    // Both takes parked in their encoder: nothing writes a row any more, so the reads see durable state.
+    await waitForEvent(() => expect(w.prepares).toHaveLength(2));
     const mine = await l.outbox.reelTakeReachOf(SEND_IDS[0]);
     expect(mine?.takeId).toBe(ID);
     expect(mine?.queued.map((s) => s.id)).toEqual(SEND_IDS.slice(0, 2));
@@ -1311,28 +1322,54 @@ describe('one take, several conversations (RC-13)', () => {
     expect(sends(second)).toBe(0);
   });
 
-  it("A CANCEL DURING THE PREPARATION'S WRITE: the write lands first (the take's lock), the withdrawal after it - no row comes back", async () => {
+  it("A CANCEL DURING THE PREPARATION'S WRITE: the write lands first (the take's lock), the withdrawal after it - no row comes back, the file it uploaded is released", async () => {
     const w = world();
     let l!: ReturnType<typeof life>;
     const execute = w.sql.db.execute;
-    let cancel: Promise<void> | null = null;
+    // THE HOLD IS THE TEST'S: the hook (production code calls it) only signals that the write is
+    // pending and waits on a promise the test releases - it asserts nothing, so nothing can throw
+    // into the outbox, which would swallow it as a failed attempt.
+    let holding!: () => void;
+    const writePending = new Promise<void>((resolve) => (holding = resolve));
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let seen = false;
     w.sql.db.execute = async (q: string, p?: any[]) => {
-      if (!cancel && q.includes('UPDATE outbox SET conversation_id') && p?.[0] === ID) {
-        // Every send withdrawn while this write is held: the last one's settle then waits for the
-        // take's lock, which the preparation's write holds.
-        cancel = cancelAll(l, 3);
-        await waitForEvent(() => expect(SEND_IDS.some((id) => w.sql.rows.has(id))).toBe(false));
+      if (!seen && q.includes('UPDATE outbox SET conversation_id') && p?.[0] === ID) {
+        seen = true;
+        holding();
+        await gate;
       }
       return execute(q, p);
     };
     l = life(w);
     await enqueueTake(l, 3);
-    await waitForEvent(() => expect(cancel).not.toBeNull());
-    await cancel;
+    await writePending;
+    // EVERY SEND WITHDRAWN AT ONCE while the write is held: each row goes at once (that needs no
+    // lock), each settle then queues on the take's lock the write holds. Awaited one by one, the
+    // last send could reach the wire between two settles - a cancel that answers "too late" is a
+    // different case. The test lets the write land only once every send row is gone.
+    const cancels = Promise.all(SEND_IDS.map((id) => l.outbox.cancelPending(id)));
+    await waitForEvent(() => expect(SEND_IDS.some((id) => w.sql.rows.has(id))).toBe(false));
+    release();
+    expect(await cancels).toEqual([true, true, true]);
     await waitForEvent(() => expect(w.sql.rows.size).toBe(0));
     await waitForEvent(async () => expect(await w.blobs.list()).toEqual([]));
-    expect(w.server.stored.size).toBe(0);
     expect(sends(l)).toBe(0);
+    // THE WRITE LANDED (the take went on to open its upload session) and the withdrawals came after
+    // it: the transfer was aborted before the server stored anything, so there is NO file to give
+    // back - no chat release, nothing stored - and the SESSION it opened was released (a DELETE).
+    // (A file that does complete after a cancel is the case above: released through the chat hold.)
+    expect(w.server.stored.size).toBe(0);
+    expect(w.events).toEqual([]);
+    // The session's release is fire-and-forget in the outbox (`releaseSessionOf`), and no promise
+    // reaches the caller: the server's state is the event to read. EVERY SESSION OPENED IS GIVEN
+    // BACK - and whether one was opened at all is a race of the abort with the session's `init`
+    // (an abort that lands first opens none, and then no DELETE is owed): asserting "a DELETE was
+    // sent" failed two runs in five on main (2026-11-16), at that line.
+    await waitForEvent(() =>
+      expect([...w.server.sessions.values()].every((s) => s.closed)).toBe(true)
+    );
   });
 
   it('a withdrawal WHILE THE DRIVE READS THE TAKE never starts its transfer (checked right before the claim)', async () => {

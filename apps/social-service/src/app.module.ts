@@ -15,6 +15,7 @@ import { ModerationModule } from './moderation/moderation.module';
 import { InternalModule } from './internal/internal.module';
 import { PublicModule } from './public/public.module';
 import { RedisModule } from './common/redis';
+import { AdminQueueSignalModule } from './admin-queues/admin-queue-signal.service';
 import { createDataSource } from './common/synchronize-prerequisites';
 import { PG_SESSION_OPTIONS } from './common/pg-session-options';
 import { MinesweeperModule } from './minesweeper/minesweeper.module';
@@ -24,6 +25,7 @@ import { LivesModule } from './lives/lives.module';
 import { BirthdaysModule } from './birthdays/birthdays.module';
 import { HealthController } from './health.controller';
 import { typeormSynchronize } from './typeorm-synchronize';
+import { ROUTE_PARAMS_GUARD } from './common/route-params';
 
 /** Root NestJS module - wires up TypeORM, config, Redis, and all social feature modules. */
 @Module({
@@ -33,6 +35,7 @@ import { typeormSynchronize } from './typeorm-synchronize';
     // Guards the public Cercle cotisant-status check (`PublicController`) against API-key brute-forcing.
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 20 }]),
     RedisModule,
+    AdminQueueSignalModule,
     TypeOrmModule.forRootAsync({
       useFactory: () => ({
         type: 'postgres',
@@ -81,5 +84,7 @@ import { typeormSynchronize } from './typeorm-synchronize';
     BirthdaysModule,
   ],
   controllers: [HealthController],
+  // The one global guard: it validates declared path parameters before any other guard runs.
+  providers: [ROUTE_PARAMS_GUARD],
 })
 export class AppModule {}

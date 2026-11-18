@@ -1,9 +1,19 @@
 /// <reference types="jest" />
 
-import { ForbiddenException, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Logger,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { MessagingService } from './messaging.service';
+import {
+  ADDRESSABLE_PUBLISH_LUA,
+  ADDRESSED_HISTORY_CAPABILITY,
+  PRESENCE_SESSIONS,
+} from './addressing';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { GroupMember } from '../entities/group-member.entity';
 import { Group } from '../entities/group.entity';
@@ -166,6 +176,8 @@ describe('MessagingService - sendWelcome does not touch membership status or the
   const redis = {
     // The target is online, so the Welcome takes the realtime publish branch and no FCM is needed.
     exists: jest.fn().mockResolvedValue(1),
+    // The addressability script (`addressabilityOf`): 1 = every session declared the capability.
+    eval: jest.fn().mockResolvedValue(1),
     publish: jest.fn().mockResolvedValue(1),
     sadd: jest.fn().mockResolvedValue(1),
     srem: jest.fn().mockResolvedValue(1),
@@ -212,6 +224,7 @@ describe('MessagingService - sendWelcome does not touch membership status or the
     txEvictionRow = null;
     txKeyPackage = true;
     queuedCopy = null;
+    redis.eval.mockResolvedValue(1);
     keyPackageRepo.findOne.mockResolvedValue({ id: 'kp-1', userId: 'u2', deviceId: 'd2' });
     deviceGroupRepo.createQueryBuilder.mockReturnValue(insertBuilder);
     deviceGroupRepo.findOne.mockResolvedValue(null);
@@ -243,7 +256,75 @@ describe('MessagingService - sendWelcome does not touch membership status or the
   });
 
   it('queues the Welcome and reports it', async () => {
-    await expect(service.sendWelcome(undefined, body)).resolves.toEqual({ status: 'queued' });
+    await expect(service.sendWelcome(undefined, body)).resolves.toMatchObject({ status: 'queued' });
+  });
+
+  describe('answers whether the device can be addressed a history answer (the join push reads it)', () => {
+    it('answers `addressable`, read by the check-only script: nothing is published by the read', async () => {
+      await expect(service.sendWelcome(undefined, body)).resolves.toEqual({
+        status: 'queued',
+        addressability: 'addressable',
+      });
+      expect(redis.eval).toHaveBeenCalledWith(
+        ADDRESSABLE_PUBLISH_LUA,
+        2,
+        'user:online:u2:d2',
+        'addressing:sessions:u2:d2',
+        '',
+        '',
+        ADDRESSED_HISTORY_CAPABILITY,
+        PRESENCE_SESSIONS
+      );
+      // The Welcome's own publish, and only it.
+      expect(redis.publish).toHaveBeenCalledTimes(1);
+    });
+
+    it('answers `offline` for a device with no presence key - the stale device of the 2026-11-15 run', async () => {
+      redis.eval.mockResolvedValue(2);
+      await expect(service.sendWelcome(undefined, body)).resolves.toEqual({
+        status: 'queued',
+        addressability: 'offline',
+      });
+    });
+
+    it('answers `undeclared` for an online device with a session that did not declare', async () => {
+      redis.eval.mockResolvedValue(0);
+      await expect(service.sendWelcome(undefined, body)).resolves.toEqual({
+        status: 'queued',
+        addressability: 'undeclared',
+      });
+    });
+
+    it('answers it on the re-send of a Welcome already queued too', async () => {
+      queuedCopy = {
+        id: 'q-first',
+        recipientId: 'u2',
+        deviceId: 'd2',
+        groupId: 'g1',
+        isWelcome: true,
+        proto: body.welcomePayload,
+        createdAt: new Date(),
+      };
+      redis.eval.mockResolvedValue(2);
+      await expect(service.sendWelcome(undefined, body)).resolves.toEqual({
+        status: 'queued',
+        addressability: 'offline',
+      });
+    });
+
+    it('leaves the field out when the read fails, says so at error, and still stores the Welcome', async () => {
+      redis.eval.mockRejectedValueOnce(new Error('redis down'));
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      try {
+        await expect(service.sendWelcome(undefined, body)).resolves.toEqual({ status: 'queued' });
+        expect(error).toHaveBeenCalledWith(
+          expect.stringContaining('could not be read - answered without it')
+        );
+        expect(redis.publish).toHaveBeenCalledTimes(1);
+      } finally {
+        error.mockRestore();
+      }
+    });
   });
 
   it('leaves an existing row alone: an active row is not demoted, a kicked one not cleared', async () => {
@@ -314,7 +395,7 @@ describe('MessagingService - sendWelcome does not touch membership status or the
   it('stores a Welcome to an ADMITTED seat without touching its admission', async () => {
     txSeat.mockResolvedValue({ id: 'm-u2', awaitingAdmission: false });
 
-    await expect(service.sendWelcome('u1', body)).resolves.toEqual({ status: 'queued' });
+    await expect(service.sendWelcome('u1', body)).resolves.toMatchObject({ status: 'queued' });
     expect(txLift).not.toHaveBeenCalled();
     expect(txAsks).not.toHaveBeenCalled();
   });
@@ -418,7 +499,7 @@ describe('MessagingService - sendWelcome does not touch membership status or the
       createdAt: new Date(),
     };
 
-    await expect(service.sendWelcome(undefined, body)).resolves.toEqual({ status: 'queued' });
+    await expect(service.sendWelcome(undefined, body)).resolves.toMatchObject({ status: 'queued' });
 
     expect(txReads).toContain('welcome-lock');
     expect(txReads).not.toContain('save');
@@ -472,7 +553,7 @@ describe('MessagingService - sendWelcome does not touch membership status or the
       deviceGroupRepo.findOne.mockResolvedValue({ status: 'active' });
       social(true);
 
-      await expect(service.sendWelcome('u1', body)).resolves.toEqual({ status: 'queued' });
+      await expect(service.sendWelcome('u1', body)).resolves.toMatchObject({ status: 'queued' });
       expect(deviceGroupRepo.findOne).toHaveBeenCalledWith({
         where: { groupId: 'g1', userId: 'u1', status: 'active' },
       });
@@ -486,6 +567,15 @@ describe('MessagingService - sendWelcome does not touch membership status or the
       });
     });
 
+    it("does not read a key group's addressability: no join push follows a community admission", async () => {
+      groupRepo.findOne.mockResolvedValue({ id: 'g1', distributionWorkspaceId: 'ws-1' });
+      deviceGroupRepo.findOne.mockResolvedValue({ status: 'active' });
+      social(true);
+
+      await expect(service.sendWelcome('u1', body)).resolves.toEqual({ status: 'queued' });
+      expect(redis.eval).not.toHaveBeenCalled();
+    });
+
     /**
      * A KEY GROUP'S SEAT IS SOCIAL-SERVICE'S ANSWER, TAKEN AGAINST A CLAIM. The claim is read
      * before the question; the store re-reads it under the seat lock the eviction takes, so an
@@ -496,7 +586,7 @@ describe('MessagingService - sendWelcome does not touch membership status or the
       deviceGroupRepo.findOne.mockResolvedValue({ status: 'active' });
       social(true);
 
-      await expect(service.sendWelcome('u1', body)).resolves.toEqual({ status: 'queued' });
+      await expect(service.sendWelcome('u1', body)).resolves.toMatchObject({ status: 'queued' });
       expect(txReads).toEqual([
         'seat-lock-shared',
         'group',
@@ -578,7 +668,7 @@ describe('MessagingService - sendWelcome does not touch membership status or the
     });
 
     it('still asks dm_group_members for an ordinary conversation - an ADMITTED seat only', async () => {
-      await expect(service.sendWelcome('u1', body)).resolves.toEqual({ status: 'queued' });
+      await expect(service.sendWelcome('u1', body)).resolves.toMatchObject({ status: 'queued' });
       // A seat still awaiting a member decides nothing: its holder Welcoming a device of their own
       // would lift their own ask - so the seat's flag is read, and only `admitted` passes.
       expect(groupMemberRepo.findOne).toHaveBeenCalledWith({

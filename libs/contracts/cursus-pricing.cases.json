@@ -1,0 +1,1129 @@
+{
+  "_doc": "D32: ONE table of cases pinning the fill page (fillPricing.ts) and the server (form-quote.ts) to the same rule - each cursus priced whole, an unavailable total loses, a tie goes to the first cursus, an option closed only when every slice closes it. Read from disk by both sides (docs/wiki/libs.md). `slices` is what the server serves for the person (asserted by apps/social-service/src/forms/form-quote.spec.ts), `expected` what both sides compute from it (frontend/src/lib/forms/fillPricing.test.ts). cursusIndex counts SLICES, which are the person's cursus in order, duplicates folded.",
+  "cases": [
+    {
+      "name": "a combination closed for the first cursus is open, at its price, through the second (review, scenario 1)",
+      "form": {
+        "basePrice": 0,
+        "priceMatrix": {
+          "dimensions": [
+            {
+              "id": "form",
+              "kind": "formation",
+              "buckets": [
+                {
+                  "id": "icm",
+                  "label": "ICM",
+                  "values": [
+                    "ICM"
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "formule",
+              "kind": "answer",
+              "questionId": "q_formule",
+              "buckets": [
+                {
+                  "id": "repas",
+                  "label": "Repas",
+                  "values": [
+                    "opt_repas"
+                  ]
+                },
+                {
+                  "id": "sans",
+                  "label": "Sans",
+                  "values": [
+                    "opt_sans"
+                  ]
+                }
+              ]
+            }
+          ],
+          "cells": {
+            "icm|repas": 500,
+            "icm|sans": null,
+            "icm|_others": null,
+            "_others|repas": 1500,
+            "_others|sans": 1000,
+            "_others|_others": null
+          }
+        },
+        "items": [
+          {
+            "id": "q_formule",
+            "label": "Formule",
+            "type": "single_choice",
+            "required": true,
+            "options": [
+              {
+                "id": "opt_repas",
+                "label": "Repas",
+                "priceModifier": 0
+              },
+              {
+                "id": "opt_sans",
+                "label": "Sans",
+                "priceModifier": 0
+              }
+            ]
+          }
+        ]
+      },
+      "cursus": [
+        {
+          "formation": "ICM",
+          "promo": 2021
+        },
+        {
+          "formation": "ISMIN",
+          "promo": 2024
+        }
+      ],
+      "answers": {
+        "q_formule": "opt_sans"
+      },
+      "expected": {
+        "cents": 1000,
+        "cursusIndex": 1,
+        "closedOptionIds": []
+      },
+      "slices": [
+        {
+          "pricing": {
+            "baseCents": null,
+            "appliedLabels": [
+              "ICM"
+            ],
+            "answerDimensions": [
+              {
+                "id": "formule",
+                "questionId": "q_formule",
+                "buckets": [
+                  {
+                    "id": "repas",
+                    "label": "Repas",
+                    "values": [
+                      "opt_repas"
+                    ]
+                  },
+                  {
+                    "id": "sans",
+                    "label": "Sans",
+                    "values": [
+                      "opt_sans"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "cells": {
+              "repas": 500,
+              "sans": null,
+              "_others": null
+            },
+            "ignoredModifierQuestionIds": [
+              "q_formule"
+            ]
+          },
+          "productGridPrices": {}
+        },
+        {
+          "pricing": {
+            "baseCents": null,
+            "appliedLabels": [],
+            "answerDimensions": [
+              {
+                "id": "formule",
+                "questionId": "q_formule",
+                "buckets": [
+                  {
+                    "id": "repas",
+                    "label": "Repas",
+                    "values": [
+                      "opt_repas"
+                    ]
+                  },
+                  {
+                    "id": "sans",
+                    "label": "Sans",
+                    "values": [
+                      "opt_sans"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "cells": {
+              "repas": 1500,
+              "sans": 1000,
+              "_others": null
+            },
+            "ignoredModifierQuestionIds": [
+              "q_formule"
+            ]
+          },
+          "productGridPrices": {}
+        }
+      ]
+    },
+    {
+      "name": "the same form: where the first cursus is cheaper, it wins",
+      "form": {
+        "basePrice": 0,
+        "priceMatrix": {
+          "dimensions": [
+            {
+              "id": "form",
+              "kind": "formation",
+              "buckets": [
+                {
+                  "id": "icm",
+                  "label": "ICM",
+                  "values": [
+                    "ICM"
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "formule",
+              "kind": "answer",
+              "questionId": "q_formule",
+              "buckets": [
+                {
+                  "id": "repas",
+                  "label": "Repas",
+                  "values": [
+                    "opt_repas"
+                  ]
+                },
+                {
+                  "id": "sans",
+                  "label": "Sans",
+                  "values": [
+                    "opt_sans"
+                  ]
+                }
+              ]
+            }
+          ],
+          "cells": {
+            "icm|repas": 500,
+            "icm|sans": null,
+            "icm|_others": null,
+            "_others|repas": 1500,
+            "_others|sans": 1000,
+            "_others|_others": null
+          }
+        },
+        "items": [
+          {
+            "id": "q_formule",
+            "label": "Formule",
+            "type": "single_choice",
+            "required": true,
+            "options": [
+              {
+                "id": "opt_repas",
+                "label": "Repas",
+                "priceModifier": 0
+              },
+              {
+                "id": "opt_sans",
+                "label": "Sans",
+                "priceModifier": 0
+              }
+            ]
+          }
+        ]
+      },
+      "cursus": [
+        {
+          "formation": "ICM",
+          "promo": 2021
+        },
+        {
+          "formation": "ISMIN",
+          "promo": 2024
+        }
+      ],
+      "answers": {
+        "q_formule": "opt_repas"
+      },
+      "expected": {
+        "cents": 500,
+        "cursusIndex": 0,
+        "closedOptionIds": []
+      },
+      "slices": [
+        {
+          "pricing": {
+            "baseCents": null,
+            "appliedLabels": [
+              "ICM"
+            ],
+            "answerDimensions": [
+              {
+                "id": "formule",
+                "questionId": "q_formule",
+                "buckets": [
+                  {
+                    "id": "repas",
+                    "label": "Repas",
+                    "values": [
+                      "opt_repas"
+                    ]
+                  },
+                  {
+                    "id": "sans",
+                    "label": "Sans",
+                    "values": [
+                      "opt_sans"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "cells": {
+              "repas": 500,
+              "sans": null,
+              "_others": null
+            },
+            "ignoredModifierQuestionIds": [
+              "q_formule"
+            ]
+          },
+          "productGridPrices": {}
+        },
+        {
+          "pricing": {
+            "baseCents": null,
+            "appliedLabels": [],
+            "answerDimensions": [
+              {
+                "id": "formule",
+                "questionId": "q_formule",
+                "buckets": [
+                  {
+                    "id": "repas",
+                    "label": "Repas",
+                    "values": [
+                      "opt_repas"
+                    ]
+                  },
+                  {
+                    "id": "sans",
+                    "label": "Sans",
+                    "values": [
+                      "opt_sans"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "cells": {
+              "repas": 1500,
+              "sans": 1000,
+              "_others": null
+            },
+            "ignoredModifierQuestionIds": [
+              "q_formule"
+            ]
+          },
+          "productGridPrices": {}
+        }
+      ]
+    },
+    {
+      "name": "the page never overstates: the second cursus is cheaper on this answer (review, scenario 2)",
+      "form": {
+        "basePrice": 0,
+        "priceMatrix": {
+          "dimensions": [
+            {
+              "id": "form",
+              "kind": "formation",
+              "buckets": [
+                {
+                  "id": "icm",
+                  "label": "ICM",
+                  "values": [
+                    "ICM"
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "formule",
+              "kind": "answer",
+              "questionId": "q_formule",
+              "buckets": [
+                {
+                  "id": "repas",
+                  "label": "Repas",
+                  "values": [
+                    "opt_repas"
+                  ]
+                },
+                {
+                  "id": "sans",
+                  "label": "Sans",
+                  "values": [
+                    "opt_sans"
+                  ]
+                }
+              ]
+            }
+          ],
+          "cells": {
+            "icm|repas": 5000,
+            "icm|sans": 500,
+            "icm|_others": null,
+            "_others|repas": 2000,
+            "_others|sans": 1000,
+            "_others|_others": null
+          }
+        },
+        "items": [
+          {
+            "id": "q_formule",
+            "label": "Formule",
+            "type": "single_choice",
+            "required": true,
+            "options": [
+              {
+                "id": "opt_repas",
+                "label": "Repas",
+                "priceModifier": 0
+              },
+              {
+                "id": "opt_sans",
+                "label": "Sans",
+                "priceModifier": 0
+              }
+            ]
+          }
+        ]
+      },
+      "cursus": [
+        {
+          "formation": "ICM",
+          "promo": 2021
+        },
+        {
+          "formation": "ISMIN",
+          "promo": 2024
+        }
+      ],
+      "answers": {
+        "q_formule": "opt_repas"
+      },
+      "expected": {
+        "cents": 2000,
+        "cursusIndex": 1,
+        "closedOptionIds": []
+      },
+      "slices": [
+        {
+          "pricing": {
+            "baseCents": null,
+            "appliedLabels": [
+              "ICM"
+            ],
+            "answerDimensions": [
+              {
+                "id": "formule",
+                "questionId": "q_formule",
+                "buckets": [
+                  {
+                    "id": "repas",
+                    "label": "Repas",
+                    "values": [
+                      "opt_repas"
+                    ]
+                  },
+                  {
+                    "id": "sans",
+                    "label": "Sans",
+                    "values": [
+                      "opt_sans"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "cells": {
+              "repas": 5000,
+              "sans": 500,
+              "_others": null
+            },
+            "ignoredModifierQuestionIds": [
+              "q_formule"
+            ]
+          },
+          "productGridPrices": {}
+        },
+        {
+          "pricing": {
+            "baseCents": null,
+            "appliedLabels": [],
+            "answerDimensions": [
+              {
+                "id": "formule",
+                "questionId": "q_formule",
+                "buckets": [
+                  {
+                    "id": "repas",
+                    "label": "Repas",
+                    "values": [
+                      "opt_repas"
+                    ]
+                  },
+                  {
+                    "id": "sans",
+                    "label": "Sans",
+                    "values": [
+                      "opt_sans"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "cells": {
+              "repas": 2000,
+              "sans": 1000,
+              "_others": null
+            },
+            "ignoredModifierQuestionIds": [
+              "q_formule"
+            ]
+          },
+          "productGridPrices": {}
+        }
+      ]
+    },
+    {
+      "name": "a tie goes to the first cursus",
+      "form": {
+        "basePrice": 0,
+        "priceMatrix": {
+          "dimensions": [
+            {
+              "id": "form",
+              "kind": "formation",
+              "buckets": [
+                {
+                  "id": "icm",
+                  "label": "ICM",
+                  "values": [
+                    "ICM"
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "formule",
+              "kind": "answer",
+              "questionId": "q_formule",
+              "buckets": [
+                {
+                  "id": "repas",
+                  "label": "Repas",
+                  "values": [
+                    "opt_repas"
+                  ]
+                },
+                {
+                  "id": "sans",
+                  "label": "Sans",
+                  "values": [
+                    "opt_sans"
+                  ]
+                }
+              ]
+            }
+          ],
+          "cells": {
+            "icm|repas": 1000,
+            "icm|sans": 1000,
+            "icm|_others": null,
+            "_others|repas": 1000,
+            "_others|sans": 1000,
+            "_others|_others": null
+          }
+        },
+        "items": [
+          {
+            "id": "q_formule",
+            "label": "Formule",
+            "type": "single_choice",
+            "required": true,
+            "options": [
+              {
+                "id": "opt_repas",
+                "label": "Repas",
+                "priceModifier": 0
+              },
+              {
+                "id": "opt_sans",
+                "label": "Sans",
+                "priceModifier": 0
+              }
+            ]
+          }
+        ]
+      },
+      "cursus": [
+        {
+          "formation": "ICM",
+          "promo": 2021
+        },
+        {
+          "formation": "ISMIN",
+          "promo": 2024
+        }
+      ],
+      "answers": {
+        "q_formule": "opt_repas"
+      },
+      "expected": {
+        "cents": 1000,
+        "cursusIndex": 0,
+        "closedOptionIds": []
+      },
+      "slices": [
+        {
+          "pricing": {
+            "baseCents": null,
+            "appliedLabels": [
+              "ICM"
+            ],
+            "answerDimensions": [
+              {
+                "id": "formule",
+                "questionId": "q_formule",
+                "buckets": [
+                  {
+                    "id": "repas",
+                    "label": "Repas",
+                    "values": [
+                      "opt_repas"
+                    ]
+                  },
+                  {
+                    "id": "sans",
+                    "label": "Sans",
+                    "values": [
+                      "opt_sans"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "cells": {
+              "repas": 1000,
+              "sans": 1000,
+              "_others": null
+            },
+            "ignoredModifierQuestionIds": [
+              "q_formule"
+            ]
+          },
+          "productGridPrices": {}
+        },
+        {
+          "pricing": {
+            "baseCents": null,
+            "appliedLabels": [],
+            "answerDimensions": [
+              {
+                "id": "formule",
+                "questionId": "q_formule",
+                "buckets": [
+                  {
+                    "id": "repas",
+                    "label": "Repas",
+                    "values": [
+                      "opt_repas"
+                    ]
+                  },
+                  {
+                    "id": "sans",
+                    "label": "Sans",
+                    "values": [
+                      "opt_sans"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "cells": {
+              "repas": 1000,
+              "sans": 1000,
+              "_others": null
+            },
+            "ignoredModifierQuestionIds": [
+              "q_formule"
+            ]
+          },
+          "productGridPrices": {}
+        }
+      ]
+    },
+    {
+      "name": "an option closed through EVERY cursus is closed, and its total unavailable",
+      "form": {
+        "basePrice": 0,
+        "priceMatrix": {
+          "dimensions": [
+            {
+              "id": "form",
+              "kind": "formation",
+              "buckets": [
+                {
+                  "id": "icm",
+                  "label": "ICM",
+                  "values": [
+                    "ICM"
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "formule",
+              "kind": "answer",
+              "questionId": "q_formule",
+              "buckets": [
+                {
+                  "id": "repas",
+                  "label": "Repas",
+                  "values": [
+                    "opt_repas"
+                  ]
+                },
+                {
+                  "id": "sans",
+                  "label": "Sans",
+                  "values": [
+                    "opt_sans"
+                  ]
+                }
+              ]
+            }
+          ],
+          "cells": {
+            "icm|repas": 500,
+            "icm|sans": null,
+            "icm|_others": null,
+            "_others|repas": 1500,
+            "_others|sans": null,
+            "_others|_others": null
+          }
+        },
+        "items": [
+          {
+            "id": "q_formule",
+            "label": "Formule",
+            "type": "single_choice",
+            "required": true,
+            "options": [
+              {
+                "id": "opt_repas",
+                "label": "Repas",
+                "priceModifier": 0
+              },
+              {
+                "id": "opt_sans",
+                "label": "Sans",
+                "priceModifier": 0
+              }
+            ]
+          }
+        ]
+      },
+      "cursus": [
+        {
+          "formation": "ICM",
+          "promo": 2021
+        },
+        {
+          "formation": "ISMIN",
+          "promo": 2024
+        }
+      ],
+      "answers": {
+        "q_formule": "opt_sans"
+      },
+      "expected": {
+        "cents": null,
+        "cursusIndex": 0,
+        "closedOptionIds": [
+          "opt_sans"
+        ]
+      },
+      "slices": [
+        {
+          "pricing": {
+            "baseCents": null,
+            "appliedLabels": [
+              "ICM"
+            ],
+            "answerDimensions": [
+              {
+                "id": "formule",
+                "questionId": "q_formule",
+                "buckets": [
+                  {
+                    "id": "repas",
+                    "label": "Repas",
+                    "values": [
+                      "opt_repas"
+                    ]
+                  },
+                  {
+                    "id": "sans",
+                    "label": "Sans",
+                    "values": [
+                      "opt_sans"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "cells": {
+              "repas": 500,
+              "sans": null,
+              "_others": null
+            },
+            "ignoredModifierQuestionIds": [
+              "q_formule"
+            ]
+          },
+          "productGridPrices": {}
+        },
+        {
+          "pricing": {
+            "baseCents": null,
+            "appliedLabels": [],
+            "answerDimensions": [
+              {
+                "id": "formule",
+                "questionId": "q_formule",
+                "buckets": [
+                  {
+                    "id": "repas",
+                    "label": "Repas",
+                    "values": [
+                      "opt_repas"
+                    ]
+                  },
+                  {
+                    "id": "sans",
+                    "label": "Sans",
+                    "values": [
+                      "opt_sans"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "cells": {
+              "repas": 1500,
+              "sans": null,
+              "_others": null
+            },
+            "ignoredModifierQuestionIds": [
+              "q_formule"
+            ]
+          },
+          "productGridPrices": {}
+        }
+      ]
+    },
+    {
+      "name": "the WHOLE form is compared: a dearer base cell with cheaper grid lines wins",
+      "form": {
+        "basePrice": 0,
+        "priceMatrix": {
+          "dimensions": [
+            {
+              "id": "form",
+              "kind": "formation",
+              "buckets": [
+                {
+                  "id": "icm",
+                  "label": "ICM",
+                  "values": [
+                    "ICM"
+                  ]
+                }
+              ]
+            }
+          ],
+          "cells": {
+            "icm": 1000,
+            "_others": 2000
+          }
+        },
+        "items": [
+          {
+            "id": "q-grid",
+            "label": "Sweat capuche",
+            "type": "product_grid",
+            "required": false,
+            "productGrid": {
+              "rows": [
+                {
+                  "id": "vert",
+                  "label": "Vert"
+                },
+                {
+                  "id": "noir",
+                  "label": "Noir"
+                }
+              ],
+              "columns": [
+                {
+                  "id": "xs",
+                  "label": "XS"
+                },
+                {
+                  "id": "m",
+                  "label": "M"
+                }
+              ],
+              "maxPerCell": 3,
+              "closedCells": [
+                "noir:xs"
+              ],
+              "pricing": {
+                "mode": "single",
+                "tiers": {
+                  "id": "p",
+                  "kind": "promo",
+                  "buckets": [
+                    {
+                      "id": "p26",
+                      "label": "1A",
+                      "values": [
+                        2026
+                      ]
+                    }
+                  ]
+                },
+                "prices": {
+                  "p26": {
+                    "*": 500
+                  },
+                  "_others": {
+                    "*": 1600
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "cursus": [
+        {
+          "formation": "ICM",
+          "promo": 2024
+        },
+        {
+          "formation": "ISMIN",
+          "promo": 2026
+        }
+      ],
+      "answers": {
+        "q-grid": {
+          "vert:m": 2
+        }
+      },
+      "expected": {
+        "cents": 3000,
+        "cursusIndex": 1,
+        "closedOptionIds": []
+      },
+      "slices": [
+        {
+          "pricing": {
+            "baseCents": 1000,
+            "appliedLabels": [
+              "ICM"
+            ],
+            "answerDimensions": [],
+            "cells": {
+              "": 1000
+            },
+            "ignoredModifierQuestionIds": []
+          },
+          "productGridPrices": {
+            "q-grid": {
+              "tierId": "_others",
+              "tierLabel": null,
+              "prices": {
+                "*": 1600
+              }
+            }
+          }
+        },
+        {
+          "pricing": {
+            "baseCents": 2000,
+            "appliedLabels": [],
+            "answerDimensions": [],
+            "cells": {
+              "": 2000
+            },
+            "ignoredModifierQuestionIds": []
+          },
+          "productGridPrices": {
+            "q-grid": {
+              "tierId": "p26",
+              "tierLabel": "1A",
+              "prices": {
+                "*": 500
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "two cursus landing on the same row and tiers are ONE slice",
+      "form": {
+        "basePrice": 0,
+        "priceMatrix": {
+          "dimensions": [
+            {
+              "id": "form",
+              "kind": "formation",
+              "buckets": [
+                {
+                  "id": "icm",
+                  "label": "ICM",
+                  "values": [
+                    "ICM"
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "formule",
+              "kind": "answer",
+              "questionId": "q_formule",
+              "buckets": [
+                {
+                  "id": "repas",
+                  "label": "Repas",
+                  "values": [
+                    "opt_repas"
+                  ]
+                },
+                {
+                  "id": "sans",
+                  "label": "Sans",
+                  "values": [
+                    "opt_sans"
+                  ]
+                }
+              ]
+            }
+          ],
+          "cells": {
+            "icm|repas": 500,
+            "icm|sans": null,
+            "icm|_others": null,
+            "_others|repas": 1500,
+            "_others|sans": 1000,
+            "_others|_others": null
+          }
+        },
+        "items": [
+          {
+            "id": "q_formule",
+            "label": "Formule",
+            "type": "single_choice",
+            "required": true,
+            "options": [
+              {
+                "id": "opt_repas",
+                "label": "Repas",
+                "priceModifier": 0
+              },
+              {
+                "id": "opt_sans",
+                "label": "Sans",
+                "priceModifier": 0
+              }
+            ]
+          }
+        ]
+      },
+      "cursus": [
+        {
+          "formation": "ICM",
+          "promo": 2021
+        },
+        {
+          "formation": "ICM",
+          "promo": 2024
+        }
+      ],
+      "answers": {
+        "q_formule": "opt_repas"
+      },
+      "expected": {
+        "cents": 500,
+        "cursusIndex": 0,
+        "closedOptionIds": [
+          "opt_sans"
+        ]
+      },
+      "slices": [
+        {
+          "pricing": {
+            "baseCents": null,
+            "appliedLabels": [
+              "ICM"
+            ],
+            "answerDimensions": [
+              {
+                "id": "formule",
+                "questionId": "q_formule",
+                "buckets": [
+                  {
+                    "id": "repas",
+                    "label": "Repas",
+                    "values": [
+                      "opt_repas"
+                    ]
+                  },
+                  {
+                    "id": "sans",
+                    "label": "Sans",
+                    "values": [
+                      "opt_sans"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "cells": {
+              "repas": 500,
+              "sans": null,
+              "_others": null
+            },
+            "ignoredModifierQuestionIds": [
+              "q_formule"
+            ]
+          },
+          "productGridPrices": {}
+        }
+      ]
+    }
+  ]
+}

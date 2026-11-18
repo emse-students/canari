@@ -5,6 +5,8 @@
   import { pageScrollPaddingClass } from '$lib/components/layout/pageScrollPadding';
   import { retryFailedMyAssociationsProbe } from '$lib/associations/api';
   import { afterNavigate, beforeNavigate, goto, onNavigate, preloadData } from '$app/navigation';
+  import { onArrivedAtEntry, onLeavingEntry } from '$lib/navigation/navigationMemory';
+  import { cancelRestore } from '$lib/navigation/scrollMemory';
   import { preloadRouteCodeOnce } from '$lib/navigation/routeCodePreload';
   import { onMount, tick } from 'svelte';
   import { markRouterReady } from '$lib/navigation/routerReady';
@@ -71,6 +73,8 @@
   import { getKeyboardViewport, initKeyboardViewport } from '$lib/stores/keyboardViewport.svelte';
   import {
     classifySwipeRelease,
+    bindSwipeNavTouchListeners,
+    standDownForDndDrag,
     createSwipeNavGestureState,
     isSwipeNavActive,
     isSwipeNavArmed,
@@ -151,8 +155,9 @@
   const isKeyboardOpen = $derived(keyboardViewport.isOpen);
 
   beforeNavigate(({ from, to, shallow, type }) => {
-    // A SHALLOW navigation (SvelteKit 3 runs the lifecycle hooks for them too) is a tab or query
-    // change on the same page: not a page the hook is about.
+    // The entry being left keeps its offset for a Back to it (`lib/navigation/navigationMemory.ts`,
+    // which ignores a shallow navigation of any type itself).
+    onLeavingEntry({ type, shallow, from, to }, pageScrollWrap?.scrollTop ?? 0, pageScrollWrap);
     if (shallow && type === 'goto') return;
     // A membership probe that failed is owed one retry on the next navigation (never a timer).
     void retryFailedMyAssociationsProbe();
@@ -231,6 +236,7 @@
     });
 
     return () => {
+      cancelRestore(); // a restore left running would keep its document key listener
       disposePressedClickGuard();
       stopOwedDmMarkDrain();
       stopDeletedAccountGuards();
@@ -505,6 +511,17 @@
       return;
     }
 
+    const standing = standDownForDndDrag(swipeGesture);
+    if (standing !== swipeGesture) {
+      // A reorder picked the finger up: release whatever the swipe had already claimed.
+      swipeGesture = standing;
+      if (pageScrollWrap.classList.contains('swipe-nav-dragging')) {
+        pageScrollWrap.classList.remove('swipe-nav-dragging');
+        snapSwipeBack();
+      }
+      return;
+    }
+
     const updated = updateSwipeNavGesture(swipeGesture, e.touches[0].clientX, e.touches[0].clientY);
     swipeGesture = updated;
 
@@ -696,9 +713,11 @@
    * `swipeEnterClass` was written - which `onNavigate` does BEFORE the route changes, so the class
    * landed on the page being left and had to be re-added when the path caught up.
    */
-  afterNavigate(({ shallow, type }) => {
-    // A SHALLOW navigation (SvelteKit 3 runs the lifecycle hooks for them too) is a tab or query
-    // change on the same page: not a page the hook is about.
+  afterNavigate((nav) => {
+    const { shallow, type } = nav;
+    // The entry remembers where it came from (Back arrow) and where it was left (offset); the hook
+    // ignores a shallow navigation of any type itself.
+    onArrivedAtEntry(nav, pageScrollWrap);
     if (shallow && type === 'goto') return;
     if (!swipeEnterClass || !pageScrollWrap) return;
     const cls = swipeEnterClass;
@@ -725,14 +744,12 @@
     const node = appShell;
     if (!node || !swipeNavArmed) return;
 
-    node.addEventListener('touchstart', handleTouchStart, { passive: true });
-    node.addEventListener('touchmove', handleTouchMove, { passive: false });
+    const unbindTouch = bindSwipeNavTouchListeners(node, handleTouchStart, handleTouchMove);
     const stopSelectionWatch = onTextSelectionActive(abandonSwipeForSelection);
 
     return () => {
       stopSelectionWatch();
-      node.removeEventListener('touchstart', handleTouchStart);
-      node.removeEventListener('touchmove', handleTouchMove);
+      unbindTouch();
       releaseGestureEnd?.();
       releaseGestureEnd = null;
       // DISARMING MID-GESTURE NEVER SEES ITS `touchend`, so the state that handler would have

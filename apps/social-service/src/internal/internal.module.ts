@@ -13,6 +13,7 @@ import { InternalLydiaKeyController } from './internal-lydia-key.controller';
 import { InternalLydiaEnrolmentController } from './internal-lydia-enrolment.controller';
 import { InternalLydiaCashiersController } from './internal-lydia-cashiers.controller';
 import { PostsModule } from '../posts/posts.module';
+import { AdminQueuesModule } from '../admin-queues/admin-queues.module';
 import { FormsModule } from '../forms/forms.module';
 import { AssociationsModule } from '../associations/associations.module';
 import { ChannelsModule } from '../channels/channels.module';
@@ -29,6 +30,8 @@ import { UserTag } from '../users/entities/user-tag.entity';
 import { PurchaseRecord } from '../users/entities/purchase-record.entity';
 import { UserModeration } from '../moderation/entities/user-moderation.entity';
 import { ContentReport } from '../moderation/entities/content-report.entity';
+import { InternalRetentionController } from './internal-retention.controller';
+import { RetentionBootNotice } from './retention-boot-notice';
 
 /** Exposes internal endpoints for account deletion and form payment callbacks. */
 @Module({
@@ -38,6 +41,8 @@ import { ContentReport } from '../moderation/entities/content-report.entity';
     ChannelsModule,
     UserTagModule,
     PostsModule,
+    // A profile correction filed (core-service) is announced to the global admins.
+    AdminQueuesModule,
     TypeOrmModule.forFeature([
       Post,
       ChannelMember,
@@ -66,6 +71,8 @@ import { ContentReport } from '../moderation/entities/content-report.entity';
     InternalLydiaEnrolmentController,
     InternalLydiaCashiersController,
     InternalPaymentsController,
+    InternalRetentionController,
   ],
+  providers: [RetentionBootNotice],
 })
 export class InternalModule {}

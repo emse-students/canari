@@ -262,14 +262,16 @@ it('unfolded on a letterboxed reel, the text never outgrows the frame, and outsi
   q<HTMLButtonElement>('[data-reel-caption-toggle]')!.click();
   flushSync();
   const block = q<HTMLElement>('[data-reel-caption]')!;
-  expect(block.closest('[data-reel-frame]')).not.toBeNull();
+  // A landscape video in a portrait screen: the caption and the rail are drawn against the SCREEN
+  // (the slide), not squeezed onto the thin strip of the frame (owner, 2026-11-14).
+  expect(block.closest('[data-reel-frame]')).toBeNull();
+  expect(block.parentElement!.hasAttribute('data-reel-slide')).toBe(true);
   for (const c of ['flex', 'flex-col', 'max-h-full', 'z-20']) expect(block.classList).toContain(c);
   expect(block.firstElementChild!.classList).toContain('shrink-0');
-  // A frame that does not reach the screen bottom (here: unmeasured) owes no safe-area inset; when
-  // it does is `frameReachesBottom`'s, tested on its own (`reelFrame.test.ts`).
-  expect(block.getAttribute('data-reel-caption-inset')).toBe('none');
-  // No inset, and the room the seek line's touch zone owes the "Voir plus" toggle above it.
-  expect(block.style.paddingBottom).not.toContain('safe-area');
+  // At the screen bottom, so the safe-area inset is owed, plus the room the seek line's touch zone
+  // owes the "Voir plus" toggle above it.
+  expect(block.getAttribute('data-reel-caption-inset')).toBe('safe-area');
+  expect(block.style.paddingBottom).toContain('safe-area');
   expect(block.style.paddingBottom).toContain(`${clearanceAboveSeekLineRem(1)}rem`);
   expect(q('[data-reel-caption-open]')!.classList).toContain('min-h-0');
   expect(q('[data-reel-caption-toggle]')!.classList).toContain('shrink-0');

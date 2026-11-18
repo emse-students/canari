@@ -15,9 +15,11 @@
  *
  * Usage: bun .github/scripts/tests/husky-hookspath.test.mjs   (no arguments, no network)
  */
-import { resolve, dirname } from 'node:path';
+import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { execFileSync } from 'node:child_process';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const { HOOKS_PATH, hooksPathProblem } = await import(
@@ -44,9 +46,28 @@ const BS = String.fromCharCode(92);
 hooksPathProblem(HOOKS_PATH) === null
   ? ok(`the declared value ${HOOKS_PATH} is accepted`)
   : no(`the declared value ${HOOKS_PATH} is rejected: ${hooksPathProblem(HOOKS_PATH)}`);
-HOOKS_PATH === '.husky/_'
-  ? ok('the declared value is relative and names the directory husky generates')
-  : no(`HOOKS_PATH is ${HOOKS_PATH}, which is not the path husky generates`);
+HOOKS_PATH === '.husky'
+  ? ok('the declared value is relative and names the TRACKED hooks directory')
+  : no(
+      `HOOKS_PATH is ${HOOKS_PATH}, not the tracked .husky - a generated directory is absent ` +
+        `from a fresh worktree, and git then runs no hook in silence`
+    );
+
+// A FRESH WORKTREE MUST HAVE ITS HOOKS (2026-11-15, PR #3611 was committed with none): every hook
+// git calls is a tracked file, executable in the index, so it exists - and runs on Linux - in a
+// checkout that never ran an install.
+const indexModes = execFileSync('git', ['ls-files', '-s', '--', HOOKS_PATH], {
+  cwd: repoRoot,
+  encoding: 'utf8',
+});
+for (const hook of ['pre-commit', 'pre-push']) {
+  // `git ls-files -s` prints `<mode> <sha> <stage>\t<path>`.
+  const line = indexModes.split(/\r?\n/).find((l) => l.endsWith(`\t${HOOKS_PATH}/${hook}`));
+  if (!line) no(`${HOOKS_PATH}/${hook} is not tracked, so a fresh checkout runs no ${hook} hook`);
+  else if (!line.startsWith('100755 '))
+    no(`${HOOKS_PATH}/${hook} is tracked without the executable bit: git on Linux would skip it`);
+  else ok(`${HOOKS_PATH}/${hook} is tracked and executable`);
+}
 
 // The four SHAPES actually observed in `.git/config` on this project - a checkout, a sibling
 // worktree, a nested agent worktree, on two drive letters - plus the POSIX and UNC spellings the
@@ -79,6 +100,43 @@ installer.includes(hooksPathTemplate)
 installer.includes('hooksPathProblem(hooksPath)')
   ? ok('install-husky.js asserts the value it read back')
   : no('install-husky.js no longer asserts the value it read back');
+
+// A CHECK THAT INSTALLS LEAVES THE SHARED VALUE ALONE (2026-11-16): the push tier's `bun install`
+// sets CANARI_KEEP_HOOKS_PATH=1, and the installer then writes nothing. Run for real in a scratch
+// repository, both ways, so the flag is proved to stop the write and its absence to allow it.
+const scratch = mkdtempSync(join(tmpdir(), 'canari-hookspath-'));
+// No GIT_* from a calling hook: GIT_DIR would point every command below at the REAL repository.
+const scratchEnv = Object.fromEntries(
+  Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_'))
+);
+try {
+  const git = (...args) =>
+    execFileSync('git', args, { cwd: scratch, env: scratchEnv, encoding: 'utf8' }).trim();
+  git('init', '-q');
+  git('config', 'core.hooksPath', 'kept-by-a-human');
+  const install = (env) =>
+    execFileSync(process.execPath, [resolve(repoRoot, 'frontend/scripts/install-husky.js')], {
+      cwd: scratch,
+      env: { ...scratchEnv, CI: '', ...env },
+      encoding: 'utf8',
+    });
+  install({ CANARI_KEEP_HOOKS_PATH: '1' });
+  git('config', 'core.hooksPath') === 'kept-by-a-human'
+    ? ok('with CANARI_KEEP_HOOKS_PATH=1 the installer leaves core.hooksPath as it was')
+    : no(`with CANARI_KEEP_HOOKS_PATH=1 the installer wrote ${git('config', 'core.hooksPath')}`);
+  install({ CANARI_KEEP_HOOKS_PATH: '' });
+  git('config', 'core.hooksPath') === HOOKS_PATH
+    ? ok(`without it the installer writes ${HOOKS_PATH}`)
+    : no(`without the flag the installer left ${git('config', 'core.hooksPath')}`);
+} finally {
+  rmSync(scratch, { recursive: true, force: true });
+}
+const localCi = readFileSync(resolve(repoRoot, '.github/scripts/local-ci.sh'), 'utf8');
+localCi.includes('CANARI_KEEP_HOOKS_PATH=1 bash .github/scripts/checks.sh frontend-prepare')
+  ? ok("the push tier's install sets CANARI_KEEP_HOOKS_PATH=1")
+  : no(
+      "the push tier's install no longer sets CANARI_KEEP_HOOKS_PATH=1 - it rewrites the shared config"
+    );
 
 console.log(`\n${pass + fail} assertions, ${fail} failed`);
 process.exit(fail ? 1 : 0);

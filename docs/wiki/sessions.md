@@ -152,15 +152,17 @@ Two rules come out of it, and they generalise past Android:
   unauthenticated, which turns "you are logged out" into "there is nothing here" - the app rendered
   its ordinary shell, empty, with no login screen. Only a TRANSPORT failure now earns the anonymous
   attempt.
-- **A verdict reached before anything is listening must be REPLAYED, not dropped.** The reaction is
-  owned by the app shell, which registers it on mount - and on a cold start the first refresh 401s
-  before that, so the fallback redirect was the entire reaction. A redirect is not the reaction: it
-  skips `dismissAuthPrompts()` and `clearAuth()`, so Android landed on `/login` with the encryption
-  PIN modal still open OVER the sign-in button, and the user could not get back in at all (measured
-  2026-08-06, on the build that had just fixed the two faults above). `setSessionExpiredHandler`
-  therefore fires a handler that arrives after the verdict. The general form: a one-shot announcement
-  and a late subscriber are a race, and the fallback that "covers" it is only equivalent if it does
-  everything the real handler does - which it never does, or it would BE the handler.
+- **A verdict reached before anything is listening is QUEUED WITH ITS TARGET, never answered by a
+  redirect of its own.** The reaction is owned by the app shell, which registers it on mount - and on
+  a cold start the first refresh 401s before that. `notifySessionExpired` latches the verdict and
+  keeps the page in flight (`SessionExpiredTarget`); `setSessionExpiredHandler` hands both to a
+  handler that arrives after it. There is no fallback redirect: it skipped `dismissAuthPrompts()` and
+  `clearAuth()`, so Android landed on `/login` with the encryption PIN modal still open OVER the
+  sign-in button (measured 2026-08-06), and it dropped the page a tapped push was going to (Mi 9T,
+  2026-11-15, see [two ways that target was still lost](#two-ways-that-target-was-still-lost-mi-9t-2026-11-15-2-of-4-taps-signed-in-to-the-wrong-page)). The general form: a
+  one-shot announcement and a late subscriber are a race, and a fallback that "covers" it is only
+  equivalent if it does everything the real handler does - which it never does, or it would BE the
+  handler. So the announcement is queued, and the shell's handler reacts.
 
 Both halves were verified on an Android device on 2026-08-06, against production. Persistence: two
 rounds of rotate -> `am force-stop` -> wait past 60 s -> relaunch, and in both the row's
@@ -173,9 +175,9 @@ panel and cold-starting the phone put it on `/login`, with `session dead -> logo
 
 The refresh cookie is FIRST-party on the web and THIRD-party in every native build, and nothing in
 the code says so - the asymmetry lives entirely in what the browser considers the document's origin.
-On `canari-emse.fr` the page and the API share a host, so `canari_refresh` is an ordinary same-site
+On `canari.emse.fr` the page and the API share a host, so `canari_refresh` is an ordinary same-site
 cookie. In a Tauri build the document is `tauri://localhost` (iOS, macOS, Linux) or
-`http://tauri.localhost` (Android, Windows) and the cookie belongs to `canari-emse.fr`: a
+`http://tauri.localhost` (Android, Windows) and the cookie belongs to `canari.emse.fr`: a
 cross-origin `Set-Cookie`, which is exactly the class every modern engine blocks by default.
 
 - **Android**: blocked by default and opted back in, in ONE line, with the reason written next to it -
@@ -220,7 +222,7 @@ did.
 
 So Android's opt-in works and survives a kill; WKWebView's refusal is total. There is no iOS flag to
 add, no entitlement, no `Info.plist` key - and the two ways to make the cookie first-party both cost
-more than they buy (serving the app from `https://canari-emse.fr` inside the WebView would end
+more than they buy (serving the app from `https://canari.emse.fr` inside the WebView would end
 offline launch, and Tauri has no https-origin mode on iOS anyway).
 
 **A replay line says WHICH replay it was (2026-10-06).** Three `Refresh token replay detected` events in
@@ -279,7 +281,7 @@ match - a second copy of the decision would be a way for logout to silently stop
 Two derived tests hold the wiring: `compose-wiring.test.sh` requires every NestJS service in a
 deployed compose file to declare `NODE_ENV`, with the service list read out of `apps/*/package.json`
 rather than written down, and `auth.controller.spec.ts` asserts the attributes are identical for
-`Origin: http://localhost` and `Origin: https://canari-emse.fr`.
+`Origin: http://localhost` and `Origin: https://canari.emse.fr`.
 
 ## The credential a client carries itself
 
@@ -389,14 +391,10 @@ out.
   beside the platform config the verifier already reads. Every ending of a session DELETES its row,
   so absence is the ended state; `expiresAt` is compared too because an idle-expired row may not have
   been swept yet. No cache and no clock: the deletion is what flips it.
-- **A token naming no session is ACCEPTED, by construction - and the branch has a removal date.**
-  The one issuer (`signAccessToken`) always writes `sid`, so a sid-less token was minted by a release
-  older than this check, before its deploy, and dies by its own `exp` within one
-  `ACCESS_TOKEN_TTL_SECONDS` of it. Refusing it would answer every client signed in at the deploy
-  anonymous for up to that hour. No session is read for it, `X-Session-Id` stays empty, and the
-  acceptance is logged ONCE per process at `log`, not per request. The branch is deleted one token
-  lifetime after the deploy ([legacy-compatibility](legacy-compatibility.md)). The dev estate cannot
-  rehearse it: its tokens already carry `sid`.
+- **A token naming no session is REFUSED, like an ended one (since 2026-11-17).** The one issuer
+  (`signAccessToken`) has written `sid` since 2026-10-25 and a token lives one
+  `ACCESS_TOKEN_TTL_SECONDS`, so no legitimate token lacks it; the hour's acceptance kept for that
+  deploy is gone. Answered anonymous with no session read, logged at `warn`.
 - **An ended session is said once.** The refusal is logged at `warn` the first time per session per
   process (a bounded set of 4096 ids), then at `debug`: a client sends several requests before its
   refresh is refused, and the refusal is one fact.
@@ -431,6 +429,15 @@ answer (`removeDeviceRow`), and a login that survives stays listed as its own ro
 retry. A retirement (`reason=retired`) ends none - the id
 was the caller's own install's. Not covered, stated: a session bound to NO device, or to a different
 id - the panel's own session revocation (`DELETE /api/auth/sessions/:id`) ends those.
+
+**And an owner's revocation never bans the caller's own device** (2026-11-17). Before anything is
+purged, chat-delivery asks core-service which device the CALLING session of that user is bound to
+(`GET /api/internal/sessions/users/:userId/sessions/:sessionId/device`, internal secret,
+`AuthSessionsService.boundDevice(userId, sid)`) and refuses with a typed `409 OWN_DEVICE` when it is
+the id asked; an unreadable binding answers 503 (`SessionBindingUnknownError`) and a request naming
+no session a typed `400 SESSION_UNNAMED` - never a 401/403, and nothing destroyed in either. A
+retirement is exempt, for the reason above
+([auth](frontend/modules/auth.md#a-removed-row-whose-device-the-server-no-longer-lists)).
 
 ## A refresh refused because the device was revoked says so (2026-10-25)
 
@@ -505,6 +512,11 @@ rotated device id, another account, a transport failure, a plain expiry),
 
 **Order of a sign-out (2026-11-08).** The server's push deregistration is started by `endSessionImpl` while the credential is valid and AWAITED by `clearAuth` (through the sign-out handler's promise, bounded by the write deadline) before the revocation `POST /api/auth/logout`; then the teardown and the wipe. Run beside the revocation it came back `HTTP 401` (Mi 9T, `1.6.7-alpha.3`). A transport failure is a `[Push]` warning naming what stayed registered and never blocks the sign-out.
 
+**An account deletion skips that deregistration (2026-11-18).** `DELETE /api/users/me` answers 204 once core's own transaction is done; chat-delivery's rows, push tokens included (`PushToken.userId` is `delete` in the erasure coverage), go later by the erasure job queued with it ([account-erasure](account-erasure.md)). Either way the bearer names an account that no longer exists, so the sign-out's call could only earn a 401, which `stopPushService` reported at error level as "the server still lists device ... as a push destination" - false, the job owns that row. The fact travels from where it is known: the danger zone latches `noteAccountErasedOnServer()` on the 204, and `deregisterPushOfLiveSession` reads `isAccountErasedOnServer()` and logs `[LOGOUT] Server push deregistration skipped` (the latch clears with the credential verdicts when a new credential arrives). The cause label stays a label, never a branch.
+
+**A reader that loses its session to a revocation stands down (2026-11-18).** `SeenHelps.#load` classifies by TYPE: `SessionExpiredError` (its subclass for a revoked device included) and `SignOutInProgressError` end the read at info level; the end has its own announcement and reaction (the logout or the full reset). Any other failure still logs `[seenHelps] reading the seen set failed` at error level.
+
+
 **After any sign-out, the device stops being a push destination for the account that left - on
 both sides, and neither depends on the other.**
 
@@ -520,9 +532,10 @@ durable by construction:
 - **The registration names its session.** An access token carries `sid`, the session it was minted
   for (`signAccessToken`); `/api/auth/verify` answers it as `X-Session-Id`, nginx forwards it on every
   authenticated location (and empties a client's own), and `POST /mls/push/register` stores it in
-  `push_token."sessionId"` (chat-delivery migration 037) on every registration, null included. A row
-  written before the column, or with an access token minted before the claim, holds NULL; there is
-  no backfill.
+  `push_token."sessionId"` (chat-delivery migration 037) on every registration. A registration naming
+  no session is refused, typed `400 SESSION_UNNAMED` (never a 401/403), since verify answers a token
+  without the claim as anonymous (2026-11-17). A row written before the column, or before that
+  refusal, holds NULL; there is no backfill, and `ifBoundTo=none` still reaches it.
 - **The ending is part of the session's deletion.** The same transaction that deletes the session
   writes one `session_push_endings` row (core-service migration 016) for EVERY deliberately ended
   session, with the device it named or NULL (`DELETE ... RETURNING` for `revokeOthers`). A failure
@@ -603,6 +616,115 @@ handler now reads `navigating.to?.url` (else the current location) through `logi
 (`utils/internalPath.ts`, tested) BEFORE `clearAuth` awaits, so the same `returnTo` the layout's own
 redirect would have built survives; the root and the sign-in pages stay bare. Source guard:
 `sessionExpiredRelease.test.ts`. The hardware reading is [check H](device-verification.md#h-deep-link-from-an-os-notification-tap---re-opened-on-android), step 4.
+
+### Two ways that target was still lost (Mi 9T, 2026-11-15: 2 of 4 taps signed in to the wrong page)
+
+- **The verdict before its handler (a race).** On a cold start the first refresh 401s before the shell
+  registers `setSessionExpiredHandler`. `notifySessionExpired` used to `goto('/login')` bare as a
+  fallback, and the late handler replayed from a location that was already `/login`, so `returnTo`
+  was gone. Now the verdict is QUEUED with the page in flight, captured AT the verdict
+  (`SessionExpiredTarget` in `stores/auth.ts`), and the app shell's handler (`handleSessionExpired`, the
+  only reaction that also clears auth and the PIN modal) is handed it on registration (`navigating.to`, else the verdict's target, else the
+  location). The fallback is deleted: a fallback is a signal, never a path. The two other bare
+  `/login` jumps of the session composables (no `onSessionExpired` wired, a socket reconnect that met
+  a dead session) go through `gotoLoginAfterExpiry` (`navigation/gotoLoginAfterExpiry.ts`, tested) and carry the
+  target too; both it and the handler build the path with `loginAfterSessionExpiry`. Tests:
+  `auth.test.ts` ("a verdict that arrives before its handler").
+- **A login page already mounted.** A second redirect to `/login?returnTo=<new>` reuses the mounted
+  `LoginPage`, which read `returnTo` once in `onMount` and signed in to the PREVIOUS page. It is now
+  `$derived` from `page.url`, so the sign-in carries the url of the moment (still through
+  `safeInternalPath`, the same-origin gate below). Test: `LoginPage.returnToFollowsUrl.svelte.test.ts`.
+
+## A sign-out names who decided it (2026-11-15)
+
+**Every `clearAuth` names its cause** (`SignOutCause`, `frontend/src/lib/stores/signOutCause.ts`: `chosen`,
+`pin-gate`, `platform-gate`, `identity-split`, `account-deleted`, `session-expired`, `device-revoked`,
+`account-deleted-in-another-tab`), printed on the `[A] clear (<cause>)` line and handed to the native
+`end_push_registration`, whose first line is `[PushEnd] sign-out decided by: <cause>` - mapped in Rust onto the same closed list (`sign_out_cause_label`), anything else printing `unknown`, so the native log carries nothing a caller wrote. A label for the
+log, never read to decide anything; a closed union so the compiler makes every exit name itself.
+
+**Why the NATIVE line has to carry it.** A store build forwards no WebView console to logcat, so on a
+phone the only sign-out lines a reader has without an inspector are the native ones (`[PushEnd]`,
+`endForSignOut`, `[MLS] ending the native MLS session (sign-out...)`) - and they are the SAME for a
+button somebody tapped and for a session the server ended. On the Mi 9T (`1.7.0-alpha.1`, dev,
+2026-11-15) a reading filed "a page reload, then a tap on a bottom tab, signed the account out" (2 of
+2) as a P2 and suspected a refresh rotated twice across the reload. Re-run with the console and the
+network captured over CDP: the reload re-armed the PIN gate (the vault path off: `[PIN] No device key
+in vault for this account - auto-login impossible`, by design - a new document holds no key), and the
+gate's own "Se deconnecter" button is drawn at CSS 158-279 x 875-905, inside the "Discussions" tab's
+218-327 x 873-921 underneath. The tap a minute later landed on it: `[AUTH] Sign-out from the PIN
+gate`, the client's own `POST /api/auth/logout` answered 200, then MiConnect's end-session in the
+in-app browser - which a dead session never opens (`leaveSignedOut` is for a sign-out somebody chose).
+Every refresh across the reload answered 200; no request answered 401 or 403. The session rules held;
+what was missing was a log that said so.
+
+**The rig's lesson:** a phone tap goes through `cdp.mjs click`, which waits in `stablePoint` while its
+target is covered and FAILS naming it as covered if it stays so - a bare `adb shell input tap` at a
+tab's coordinates taps whatever is drawn there, and after a reload that is the PIN gate.
+
+## "Stay signed in" on the PIN gate: ticked by default in the app, unticked on the web (owner, 2026-11-16)
+
+**The decision.** The PIN gate's "Rester connecté sur cet appareil" box (`PinModal.svelte`,
+`data-stay-signed-in`) opens, on an install that never recorded a choice, TICKED in the iOS,
+Android and desktop app and UNTICKED in a browser tab (decision 24, answering a principle-1 review
+note: a browser may be a shared computer, where a forgotten sign-out leaves the refresh cookie alive
+and the PIN as the last barrier). The platform is `isTauriRuntime()`, the discriminator the rest of
+the client already uses. Otherwise it shows the recorded choice - ticked or unticked. Ticked, the PIN submit keeps the device-key
+vault in `localStorage` so a restart opens without the PIN; unticked, the vault is session-scoped and
+every cold start asks for the PIN.
+
+**Where it lives.** `pinGateStaySignedInDefault()` (`frontend/src/lib/utils/deviceKeyVault.ts`) is
+what the box shows when the gate opens (`ChatBackgroundService.svelte`). It is NOT the mode:
+`isDeviceKeyPersistenceEnabled()` still answers false until a choice is recorded, so nothing is
+persisted because a box was drawn. Only a PIN submit records the choice (`setDeviceKeyPersistence`),
+and it records it even when the mode does not change: before this, an unticked first submit wrote
+nothing (the mode was already session-scoped), and the next gate in the app would have read that
+absence as its ticked default. The Settings toggle (`SettingsSecuritySection.svelte`) shows the mode, so on an
+install that has not passed the gate yet it reads off.
+
+Tests: `deviceKeyVault.test.ts`, `pinGateStaySignedInDefault`.
+
+## A sign-out keeps "Rester connecte sur cet appareil", by design (2026-11-16)
+
+**What a reading sees, and why it is not a defect.** With the box ticked (the app's default since the owner's
+decision of 2026-11-16, [above](#stay-signed-in-on-the-pin-gate-ticked-by-default-in-the-app-unticked-on-the-web-owner-2026-11-16)), a member who signs OUT and signs back IN as the SAME account gets no PIN gate,
+then or at the next cold start: `[PIN] Device key restored from PinVault - auto-login` on a vault
+device, `[PIN] Stay signed in on a hardware-held key - keystore unlock, no prompt` on a phone whose key
+is hardware-held. Read on the iPhone 12 (`1.7.0-alpha.5`, TestFlight) and earlier on the Mi 9T; the web
+behaves the same (the slot lives in `localStorage`). This is the contract
+([auth](frontend/modules/auth.md#one-sign-out-sent-two-logouts-and-the-vault-logged-the-user-back-in-during-it---fixed-2026-10-17):
+"a deliberate sign-out keeps the vault slot... Only a NEW sign-in of the same account reopens it without
+the PIN"), and the reasons are these:
+
+- **The box is a property of the DEVICE, not of the session.** Its label says so ("sur cet appareil",
+  "A reserver a un appareil personnel"): the member declared this device trusted to open their local
+  state without the PIN. A sign-out ends the SESSION - server revocation, credentials, identity, push
+  registration ([above](#a-session-that-ends-takes-its-devices-push-registration-with-it-2026-10-22)) -
+  and keeps what the PIN protects ("deconnecter seulement, garder l'etat", the user's words for the
+  PIN gate's exit, `handlePinSignOut`). Unticking the box, in Settings or at the PIN gate, is how a
+  member withdraws that trust; it drops every slot (`setDeviceKeyPersistence`).
+- **A signed-out device opens nothing by itself.** `clearAuth` drops the saved identity before its first
+  `await`, so no unlock trigger fires and a cold start lands on `/login`
+  ([durable-rules](durable-rules.md)). The slot is reached only after a NEW sign-in, which the server
+  checks, and only by the account it names: the slot is bound to its account as AEAD additional data,
+  and the hardware path reads that account's own at-rest marker and keystore alias
+  ([the vault names its account](frontend/modules/auth.md#the-vault-names-its-account---fixed-2026-10-14)).
+  An identity-provider sign-in is a stronger proof of the person than the local PIN it replaces.
+- **On a hardware-held phone there is no key to drop.** The keystore entry IS the at-rest key that
+  seals `mls.bin`, the messages and the caches, and the push reads it on a locked phone
+  ([auth](frontend/modules/auth.md#where-the-key-lives)); deleting it at a sign-out would lose the local
+  history, which a sign-out keeps on purpose. Only the device-wide flag could go, and it would take every
+  other account's "Rester connecte" on the install with it.
+
+**The boundary, stated so nobody rediscovers it.** The re-sign-in is a proof only while the
+identity provider asks for one. A sign-out ends the MiConnect session too
+([auth](frontend/modules/auth.md#signing-out-ends-the-miconnect-session-2026-10-14)); when that end is
+logged as NOT done (`MiConnect session NOT ended (<reason>)`: offline, no id_token, an iOS sheet
+cancelled), the next "Se connecter" may come back without a password, and the ticked box then opens the
+local state with no factor beyond the device - which is exactly the trust the box declares. A member who
+lends or leaves a device unticks the box. Making a sign-out also end "Rester connecte" would be a
+product change (one more PIN entry after every sign-out, and on a hardware-held phone a flag shared by
+every account), not a repair; it is the owner's to ask for.
 
 ## A return target is held to the page's origin (2026-10-28)
 
@@ -717,8 +839,8 @@ which also holds **the contract a site implements**. This section is what Canari
 - **The mint.** `POST /api/auth/handoff { aud, dest }` -> `{ url, expiresInSeconds }` on
   core-service (`auth/handoff/handoff.service.ts`, the route in `auth.controller.ts`). It needs a
   LIVE access token (`requireAccessToken`, [the session's liveness](#an-access-token-is-only-as-alive-as-its-session-2026-10-25)
-  included), so an ended Canari session mints nothing, and a sid-less (legacy) token, which names no
-  session at all, is refused too; the subject is the token's, never the body's. Throttled per account (20 a minute). One audit line per mint,
+  included), so an ended Canari session mints nothing, and neither does a sid-less token, which names no
+  session at all; the subject is the token's, never the body's. Throttled per account (20 a minute). One audit line per mint,
   `[HANDOFF] minted aud=<site> user=<sub> jti=<jti> dest=<path>`, and **the token itself is never
   logged**.
 - **The token.** A compact JWS, `ES256`, header `typ: canari-handoff+jwt` and `kid` (RFC 7638),
@@ -755,7 +877,7 @@ which also holds **the contract a site implements**. This section is what Canari
   equals the file. The client names a site by id; **core-service composes the URL**
   (`<origin>/auth/handoff#<token>`), so the route is no open redirect. `dest` must equal one path
   of the site's allowlist exactly (`{uuid}` one lowercase UUID segment; no query, no fragment, no
-  normalisation). A site is minted for only while its `handoff` flag is true, and **every flag ships
+  normalisation). A site is minted for only while its `handoff` flag is true; **MiGallery's is true since 2026-11-14, every other flag ships
   false**. A flag goes on only when core-service runs MiConnect's access check at mint (F3-bound,
   above - without it a handoff bypasses MiConnect's decisions), the site's provider `sub_mode` was read as `hashed_user_id`, and the site's
   redemption is live with handoff sessions MARKED and stepped up through a MiConnect sign-in before

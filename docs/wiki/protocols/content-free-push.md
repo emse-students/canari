@@ -1,8 +1,8 @@
 # Content-free push - the whole design (2026-11-04)
 
 **Step 1 built (switch OFF); WP-W3, the server half of step 2 (the envelope), built 2026-11-07
-behind the same switch and inert until a client declares version 2 (WP-W4); everything else is
-design.** Owner, 2026-11-04: start with the design. Goal: what
+behind the same switch and inert until a client declares version 2 (WP-W4); WP-W6 (`call_ring_end`
+without `groupId`) built 2026-11-17, unswitched; everything else is design.** Owner, 2026-11-04: start with the design. Goal: what
 Google (FCM) and Apple (APNs) receive is a wake-up and nothing they can read beyond it; the device
 fetches the rest from our server over our own TLS, decrypts it locally and builds the notification
 itself. The backlog entry is
@@ -36,7 +36,7 @@ so either reading leaks nothing more.
 | **Join ask** (a person asks to join a group conversation) | `pushJoinAsk` (`utils/join-ask-announce.ts`, from `invitations.controller.ts`) -> `sendPushToUser` | `type=social`, `contentKey` (the join-ask key), `actorName` (the asker's name), `contentArg` (the group's name), `deepLink` (`chat/<groupId>`), `groupId`, `senderId` (the asker); title = the asker's name, body = the French legacy sentence naming the asker and the group | no |
 | **Welcome request pending** (wake the other members so one of them admits a device) | `sendFcmWelcomeRequestPending` (`messaging.service.ts`, its own direct `getMessaging().send`) - `notifyWelcomeRequest` itself is a WebSocket signal | `type=welcome_request_pending`, `groupId`, `requesterUserId`, `requesterDeviceId`; Android high priority, iOS a background push (`content-available`), to every token of every other member | no |
 | **Call ring** | `CallsService` (`calls.service.ts`): Android and VoIP-less iPhones through FCM (`ringViaFcm`), iPhones with a VoIP token through APNs VoIP direct (`apns-voip.service.ts`, `call-ring-payload.ts`) | ids only since decision 6: `type=call_ring`, `groupId`, `callId`, `callerId`, `hasVideo`, and on VoIP `ringUntil`; the FCM iOS alert is generic (`Canari` / `Appel entrant`) | no - and see section 6 |
-| **Ring end** | `CallsService.endRing` | `type=call_ring_end`, `groupId`, `callId`, `reason` (`cancelled`, `answered` or `ended`); silent / background, to EVERY token of EVERY admitted member | no |
+| **Ring end** | `CallsService.endRing` | `type=call_ring_end`, `callId`, `reason` (`cancelled`, `answered` or `ended`) - **no `groupId` since WP-W6 (2026-11-17)**; silent / background, to EVERY token of EVERY admitted member | no - and see section 6 |
 
 **On iOS the legacy sentences are what the lock screen shows when the extension does not run**: for a
 social push, a reaction and a join ask, `title` / `body` are the visible `aps.alert`
@@ -106,9 +106,10 @@ something to fetch:
   (`dispatchPush` on Android, the extension's `didReceive` switch on iOS) - **no second handler**,
   the rule step 1 already follows. One implementation for 40+ push kinds and every future one.
 - **The iOS presentation is NOT in the data map today, so the answer must carry it.**
-  `buildInternalApnsRequest` decides three things OUTSIDE the map, in the `aps` block: the
-  `thread-id` (`channel_<id>`, the conversation of a reaction, `post_reaction_<id>`, `canari_forms`,
-  `canari_social`), the `sound` (`internalApnsSound`: mention / message / reaction / default) and,
+  `buildInternalApnsRequest` decides these OUTSIDE the map, in the `aps` block: the
+  `thread-id` (`channel_<id>`, the conversation of a reaction, a post's `post_activity_<id>`,
+  `canari_forms`, `canari_social`), the `apns-collapse-id` of a post's activity (2026-11-14), the
+  `sound` (`internalApnsSound`: mention / message / reaction / default) and,
   for a silent push, the background type. A wake's alert carries none of them (they would name the
   conversation), and the extension today keeps the server's `thread-id` and sound for every kind it
   does not rewrite - so a fetched map without them would file every social and reaction banner under
@@ -118,6 +119,31 @@ something to fetch:
   them to the content it delivers. The `apns-push-type`/priority need no carriage: the wake already
   chose them from `silent`. The step-1 MLS answer gets the same three fields (`buildApnsRequest`
   decides them for a frame too), so WP-W5 applies one rule to both kinds of wake.
+  **A post's `apns-collapse-id` cannot ride a wake** (2026-11-14): it is an HTTP header naming the
+  post, and the NSE cannot change a delivered request's identifier. **A reaction's does** (#3792,
+  2026-11-17): `reactionCollapseId` is a hash of the reacted-to MESSAGE's id and the reactor - an
+  opaque decimal, and checkable against no guess, because no wake and no call ring carries the message
+  id (a hash over the conversation would not be: a ring names the group and the caller in clear).
+  **The instant left the hash on 2026-11-18** so a reactor's second reaction to one message REPLACES
+  the first on the iPhone, as on Android: what Apple can now learn from it is only that two reaction
+  wakes to one device concern the same (message, reactor) pair - the replacement itself, and nothing
+  it can tie to a person or a conversation. The instant never bought much (Apple knows when a push is
+  sent, so `at` was a few thousand candidates): the whole argument rests on the message id appearing
+  in nothing Apple sees, and on it not being guessable - a client UUID for a private conversation,
+  the server row id for a salon (a generated `uuid`, `ChannelMessage`). So
+  `sendPushToUser` keeps the header on the wake for `reaction=true` alone
+  ([mobile](../frontend/mobile.md#the-frame-trigger-of-a-reaction-2026-11-17)); any new opaque id
+  must pass the same test - nothing Apple sees elsewhere may confirm it. **One bounded exception**:
+  a message whose frame named no `messageId` (a client predating it; every current sender stamps one)
+  is filed under its queue row id (`setupMessageHandler`, `deliveryMeta.queuedMessageId`), and that id
+  rides the MLS wake of the message itself - so for a reaction to such a legacy message, Apple holds
+  the message id and could confirm "this reactor, at this instant, reacted to that message" by trying
+  candidate reactors and instants; bounded because only messages from those old clients take that
+  id, and what is confirmed is a reaction to a message whose existence and recipients Apple already
+  saw, never its content. A content-free post activity loses
+  replace-in-place on iOS unless WP-W5 finds a carrier for it (an opaque per-recipient id, or the
+  extension removing the post's earlier delivered notification by thread) - owed by WP-W5, not by
+  the collapse ([one per post](../engagement.md#the-owners-decision-of-2026-11-14---what-concerns-you-directly-is-never-dropped-one-live-notification-per-post)).
 - (B) a fetch route per kind, in the service that owns the data (a salon message by id from
   social-service, a bell row by id, ...). Rejected as the recommendation: N routes, N auth checks, and
   the native side learns N answer shapes; a new push kind would need a new route before it could go
@@ -370,6 +396,15 @@ ships (WP-W6): `call_ring_end` drops `groupId`** and carries `type`, `callId`, `
 ended by its `callId`, which is all both platforms need to find it. So what Google and Apple keep
 learning about calls is the `call_ring` row of section 1, and the register says so.
 
+**Built 2026-11-17, with no switch and no version gate**, because none is needed: every receiver
+ever shipped already finds the ring by `callId` alone - Android `cancelIncomingCallNotification`
+and iOS `CanariEndCallKitCall` since the branch was written (WP-XP-5), and the iOS `canariCallId`
+alert sweep since it was added - and reads `groupId` on this push only in a log line. So an old build loses nothing, and the change
+needs no legacy row. Pinned by `calls.service.spec.ts` (the `data` map and the APNs custom keys
+are exactly `type`, `callId`, `reason`) and by the native source read as text
+(`androidCallRing.test.ts`, `callsCompiled.test.ts`: the ring-end branch names no `groupId`).
+Read PASS on the Mi 9T and the iPhone 12 on `1.7.0-alpha.10` ([readings](../device-verification.md#the-phone-readings-of-2026-11-17-170-alpha10-both-phones-and-the-rig)).
+
 ## 7. Several accounts on one device
 
 - **One account owns an install's pushes at a time.** `push_context.json` names it; a signed-out device
@@ -536,7 +571,7 @@ both platforms and deletes the full builders, `push_mode` and the legacy-sentenc
 | WP-W3c | The held migration that DROPS `push_token.wakeCapable` | no reader of `wakeCapable` left in any shipped server; the approval line merged by the owner or the lead under the delegation, before the release carrying it |
 | WP-W4 | Android: envelope wakes (`envelopeId` -> fetch -> `dispatchPush`), the notification tag = `envelopeId` so a repeat answer redraws and never adds, the account bound at arrival and checked at dispatch, `PUSH_WAKE_DECLARED.android = 2` | `:app:compileArmDebugKotlin`; JVM tests (`WakeAnswerTest` for `push`, a repeated answer for one `envelopeId` drawing one notification, `WakeOrderTest` for an envelope ticket between a Welcome and its salon, a switch between arrival and dispatch); vitest `pushWakeCompiled.test.ts` extended; then on the Mi 9T: a salon text, a comment, a chat reaction, each with content; the blind-banner `not-inlined` reason reads zero on wake |
 | WP-W5 | iOS: envelope wakes in the extension and in `canari_push.mm`, applying the answer's `presentation` (thread, sound, interruption level), the notification identifier = `envelopeId`, the account check, the first-unlock cause evidence, `PUSH_WAKE_DECLARED.ios = 2` | the compile-only iOS job ([p2](../cicd.md#a-pull-request-compiles-the-ios-app-unsigned-compile-ios-app-2026-11-04)) green; iPhone 12: reading 2 of the backlog entry for DMs, then salons and social, `[NSE_OUTCOME] kind=wake outcome=decrypted`, `peakMB` read for the largest salon; two reactions to one post and two salon messages stack under ONE thread each with their own sounds (the grouping a full push gives today) |
-| WP-W6 | Calls: `call_ring_end` drops `groupId` (N2: the ring itself is unchanged) | jest: the ring-end payload's keys are exactly `type`, `callId`, `reason`; the Android and iOS ring-end handlers find the ring by `callId` alone (a test that would fail if either still read `groupId`); one ring hung up by the caller, read on both phones locked |
+| WP-W6 | **BUILT 2026-11-17** (section 6): `call_ring_end` drops `groupId` (N2: the ring itself is unchanged) | jest: the ring-end payload's keys are exactly `type`, `callId`, `reason`; the Android and iOS ring-end handlers find the ring by `callId` alone (a test that would fail if either still read `groupId`); one ring hung up by the caller, read on both phones locked |
 | WP-W7 | Retire the `full` path (N3): raise `minClientVersion` to the first stable declaring version 2 on both platforms; the register and the privacy policy say "a wake-up and an opaque id" for every push but a ring | the two readings of section 8.1 under their thresholds, written into the `legacy-compatibility.md` row; then the full builders, `push_mode` and the legacy-sentence shim deleted in one pull request |
 
 ## 11. Open questions

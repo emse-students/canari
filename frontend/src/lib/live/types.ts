@@ -225,6 +225,14 @@ export interface LiveStanding {
   withdrawalDue: boolean;
 }
 
+/**
+ * `GET /api/lives/standing` - the caller's OWN place on the ladder, read by the pre-live screen so
+ * a suspended or withdrawn member is told before Start rather than by a refused start.
+ * `suspendedUntil` is non-null only while a suspension RUNS, as the server judged it when it
+ * answered: the client compares it to no clock. `withdrawalDue` is staff's to read, not the member's.
+ */
+export type LiveOwnStanding = Omit<LiveStanding, 'withdrawalDue'>;
+
 /** `POST /api/lives/broadcasters/:userId/withdrawal` (200, idempotent). */
 export interface LiveWithdrawalResult {
   userId: string;
@@ -233,6 +241,24 @@ export interface LiveWithdrawalResult {
   /** False when the right had already been withdrawn: the answer is the first withdrawal's. */
   newlyWithdrawn: boolean;
   cutsOnRecord: number;
+}
+
+/**
+ * `GET /api/lives/broadcasters/:userId/standing` and the rows of `GET /api/lives/broadcasters/withdrawn`
+ * - one account's standing as STAFF read it, with no report in between. `withdrawalReason` is the
+ * reason code of the withdrawal, null while the right is not withdrawn.
+ */
+export interface LiveBroadcasterStanding extends LiveStanding {
+  userId: string;
+  displayName: string;
+  withdrawalReason: LiveCutReason | null;
+}
+
+/** `DELETE /api/lives/broadcasters/:userId/withdrawal`: whether a withdrawal row was there to lift. */
+export interface LiveWithdrawalLift {
+  userId: string;
+  /** False when nothing was withdrawn (a repeat, or another moderator lifted it first). */
+  lifted: boolean;
 }
 
 /** `POST /api/lives/:id/removed-viewers`. */

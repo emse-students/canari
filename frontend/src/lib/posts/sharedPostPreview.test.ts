@@ -16,6 +16,8 @@ import {
   fetchSharedPostPreview,
   sharedPostAspect,
   sharedPostReady,
+  sharedPostCaptionSource,
+  SHARED_POST_CAPTION_MAX,
   SHARED_REEL_ASPECT,
 } from './sharedPostPreview';
 
@@ -35,12 +37,24 @@ beforeEach(() => {
 });
 
 describe('sharedPostReady', () => {
-  it('takes the first picture and a plain caption', () => {
+  it('takes the first picture and the caption as markdown source', () => {
     const r = sharedPostReady(post({ media: [image] }) as never);
     expect(r.mediaKind).toBe('image');
-    expect(r.caption).toBe('Hello world');
+    expect(r.caption).toBe('Hello **world**');
     expect(r.authorName).toBe('Ada');
     expect(r.isReel).toBe(false);
+  });
+
+  it('keeps the hashtags and line breaks of the source, and bounds it without tearing a mention', () => {
+    const src = 'Entrainement\n#strava #utmb';
+    expect(sharedPostReady(post({ markdown: src }) as never).caption).toBe(src);
+    const long = `${'a'.repeat(SHARED_POST_CAPTION_MAX - 3)}@[abcd-ef]`;
+    const cut = sharedPostCaptionSource(long);
+    expect(cut).toBe('a'.repeat(SHARED_POST_CAPTION_MAX - 3));
+    expect(sharedPostCaptionSource(null)).toBe('');
+    expect(sharedPostCaptionSource('a ![px](https://t.example/p.png) b ![q][r]')).toBe('a px b q');
+    const pair = `${'a'.repeat(SHARED_POST_CAPTION_MAX - 1)}\u{1F600}`;
+    expect(sharedPostCaptionSource(pair)).toBe('a'.repeat(SHARED_POST_CAPTION_MAX - 1));
   });
 
   it('is text-only when the first media is a file', () => {

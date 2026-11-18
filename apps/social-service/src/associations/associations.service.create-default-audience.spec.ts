@@ -145,9 +145,11 @@ describe('AssociationsService.create - the governing parent and its default audi
       byId?: Record<string, { id: string; type: string }>;
       governing?: Record<string, { formation: string; campus: string }[]>;
       mine?: string[];
+      /** The creator's profile campus; Saint-Etienne by default. */
+      campus?: string | null;
     } = {}
   ) {
-    const made = makeService('saint-etienne');
+    const made = makeService(opts.campus === undefined ? 'saint-etienne' : opts.campus);
     const { manager } = made as unknown as {
       manager: Record<string, jest.Mock> & { query: jest.Mock };
     };
@@ -206,6 +208,65 @@ describe('AssociationsService.create - the governing parent and its default audi
       { associationId: 'new-asso', formation: 'PDIS', campus: 'saint-etienne' },
       { associationId: 'new-asso', formation: 'Autre', campus: 'saint-etienne' },
     ]);
+  });
+
+  describe('a parent governing spaces of two campuses: the child gets ONE campus (decision 3)', () => {
+    const GA = (formation: string) => ({ formation, campus: 'gardanne' });
+    const ALL = ['ICM', 'ISMIN', 'FSSS', 'PDIS', 'Autre'];
+    const rulesWritten = (manager: { insert: jest.Mock }) =>
+      (manager.insert.mock.calls as unknown[][]).find((c) => c[0] === AssociationAudience)?.[1];
+
+    it("writes the parent's spaces of the CREATOR's campus, read from the profile only then", async () => {
+      const split = { bde: [SE('ICM'), SE('ISMIN'), GA('ICM')] };
+      const inGardanne = withDependencies({ governing: split, mine: ['bde'], campus: 'gardanne' });
+      await inGardanne.service.create(dto, 'star-1', false);
+      expect(inGardanne.manager.query).toHaveBeenCalledWith(READER_PROFILE_SQL, ['star-1']);
+      expect(rulesWritten(inGardanne.manager)).toEqual([
+        { associationId: 'new-asso', formation: 'ICM', campus: 'gardanne' },
+      ]);
+
+      const inSaintEtienne = withDependencies({ governing: split, mine: ['bde'] });
+      await inSaintEtienne.service.create(dto, 'star-1', false);
+      expect(rulesWritten(inSaintEtienne.manager)).toEqual([
+        { associationId: 'new-asso', formation: 'ICM', campus: 'saint-etienne' },
+        { associationId: 'new-asso', formation: 'ISMIN', campus: 'saint-etienne' },
+      ]);
+
+      // A parent on one campus decides alone: the creator's profile is not read.
+      const one = withDependencies({ governing, mine: ['bde'], campus: 'gardanne' });
+      await one.service.create(dto, 'star-1', false);
+      expect(one.manager.query).not.toHaveBeenCalledWith(READER_PROFILE_SQL, expect.anything());
+    });
+
+    it('never writes everyone: a parent governing EVERY space gives the whole of the creator campus', async () => {
+      const every = { bde: [...ALL.map(SE), ...ALL.map(GA)] };
+      for (const type of ['association', 'list']) {
+        const { service, manager } = withDependencies({ governing: every, mine: ['bde'] });
+        await service.create({ ...(dto as object), type } as never, 'star-1', false);
+        expect(rulesWritten(manager)).toEqual([
+          { associationId: 'new-asso', formation: null, campus: 'saint-etienne' },
+        ]);
+      }
+    });
+
+    it('REFUSES, typed, a creator whose profile names neither campus - thrown inside the transaction, no rule written', async () => {
+      const split = { bde: [SE('ICM'), GA('ICM')] };
+      for (const campus of [null, '', 'lyon']) {
+        const { service, manager, assoRepo } = withDependencies({
+          governing: split,
+          mine: ['bde'],
+          campus,
+        });
+        expect(await codeOf(service.create(dto, 'star-1', false))).toBe(
+          'AUDIENCE_DEFAULT_CAMPUS_UNDECIDED'
+        );
+        // The row was saved by the transaction's own manager, so the throw takes it back
+        // (proven against PostgreSQL in `admin-create.integration.spec.ts`).
+        expect(assoRepo.manager.transaction).toHaveBeenCalledTimes(1);
+        expect(manager.save).toHaveBeenCalledTimes(1);
+        expect(rulesWritten(manager)).toBeUndefined();
+      }
+    });
   });
 
   it('gives a default audience its PARENT may edit rule by rule, and nothing of the other BDE (WP-D2)', async () => {

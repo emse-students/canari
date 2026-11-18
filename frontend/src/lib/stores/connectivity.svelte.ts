@@ -19,8 +19,9 @@
  */
 
 import { RequestDeadlineError } from '$lib/utils/requestDeadline';
-import { isTransportFailure } from '$lib/utils/transportFailure';
+import { TransportFailureError, transportFailureEvidence } from '$lib/utils/transportFailure';
 import { isAppOnScreen, onAppScreenChange } from '$lib/utils/appForeground';
+import { createChangeLatch } from '$lib/utils/changeLatch';
 
 /** Callback invoked when connectivity is regained (offline -> online). */
 export type ReconnectListener = () => void;
@@ -134,9 +135,26 @@ class ConnectivityStore {
   latencyMs = 0;
   private recent: number[] = [];
   private lastAnswerAt = 0;
+  /**
+   * THE LINK EPOCH: counts every offline transition. An answer is evidence about the link only in
+   * the epoch it arrived in - one from before a Wi-Fi cut says nothing about the link after it, and
+   * no wall-clock freshness window is needed (a 6-10 s narrow link is slow, not unreachable).
+   */
+  private linkEpoch = 0;
+  /** The {@link linkEpoch} in force when `lastAnswerAt` was written. */
+  private lastAnswerEpoch = 0;
   private latencySlow = false;
   private inFlightSlow = false;
   private consecutiveStalls = 0;
+  /**
+   * THE UNREACHABLE SPELL: counts every entry into "unreachable". It is the value the
+   * "already unreachable" latch is keyed on, so that line is said ONCE per spell, not once per
+   * deadline that expires inside it (a burst of stalled requests printed a burst of identical lines).
+   */
+  private unreachableSpell = 0;
+  /** Deadlines that expired AFTER the first one of the current spell was said; reported when it ends. */
+  private deadlinesWhileUnreachable = 0;
+  private readonly spellLatch = createChangeLatch();
   private nextRequestId = 0;
   private readonly inFlight = new Map<number, ReturnType<typeof setTimeout>>();
 
@@ -183,6 +201,7 @@ class ConnectivityStore {
     window.addEventListener('offline', () => {
       console.log('[CONNECTIVITY] browser reports offline');
       this.isOnline = false;
+      this.linkEpoch++;
     });
     // The probing a pause stopped resumes with the app, from its first attempt: what was learned
     // before the pause says nothing about the link now.
@@ -215,7 +234,13 @@ class ConnectivityStore {
   notifyServerReachable(): void {
     this.ensureGlobalListeners();
     if (this.serverReachable && this.isOnline) return;
-    console.log('[CONNECTIVITY] server reachable again');
+    const extra = this.deadlinesWhileUnreachable;
+    console.log(
+      extra > 0
+        ? `[CONNECTIVITY] server reachable again (${extra} more request deadline(s) expired while it was unreachable)`
+        : '[CONNECTIVITY] server reachable again'
+    );
+    this.deadlinesWhileUnreachable = 0;
     const wasOffline = this.isOffline;
     // A new count starts with the server back, whichever answer brought it back.
     this.consecutiveStalls = 0;
@@ -225,14 +250,22 @@ class ConnectivityStore {
   }
 
   /**
-   * Records that a request never reached the server (DNS failure, no route, refused socket).
-   * Call this only for transport failures - an HTTP status is an answer, not a disconnection.
+   * Records the verdict "the server is unreachable" and starts the probe back. Callers are the transport
+   * failures (DNS failure, no route, refused socket), the two-deadline stall, and the session paths that
+   * end with no token ('login without a token', 'token still unavailable') - never an HTTP status, which
+   * is an answer, not a disconnection.
+   *
+   * @param evidence WHAT proved it, printed on the verdict line so a log tells a black-holed link
+   *   (`2 request deadlines in a row`) from a refused socket (`transport failure: <error type>`) -
+   *   the distinction the stall counter exists for. The caller states it; this never guesses.
    */
-  notifyServerUnreachable(): void {
+  notifyServerUnreachable(evidence: string): void {
     this.ensureGlobalListeners();
     if (!this.serverReachable) return;
-    console.log('[CONNECTIVITY] server unreachable (transport failure)');
+    console.log(`[CONNECTIVITY] server unreachable (${evidence})`);
     this.serverReachable = false;
+    this.unreachableSpell++;
+    this.deadlinesWhileUnreachable = 0;
     this.recomputeSlow();
     // The browser still believes it has a link, so no `online` event will ever announce its return:
     // something has to ask. Only when the browser does not already say it is offline - then the
@@ -301,6 +334,25 @@ class ConnectivityStore {
   }
 
   /**
+   * Whether the link demonstrably delivered an answer WHILE a request that left at `startedAt`
+   * waited: one that came after it left AND in the current link epoch ({@link linkEpoch}). An
+   * answer from before a Wi-Fi cut is not evidence about the link as it is now - read on the Mi 9T
+   * (2026-11-14), a read that left before the cut was labelled "answers arrived meanwhile - slow, not
+   * unreachable" when its deadline expired seconds after the radio went down. The epoch, not a clock,
+   * draws that line: a narrow link answering every 6-10 s stays slow. ONE predicate, used by the
+   * in-flight timer and by the deadline verdict.
+   */
+  private answeredSince(startedAt: number): boolean {
+    return this.lastAnswerAt > startedAt && this.lastAnswerEpoch === this.linkEpoch;
+  }
+
+  /** Records that the link delivered an answer now, in the current epoch. */
+  private noteAnswer(): void {
+    this.lastAnswerAt = Date.now();
+    this.lastAnswerEpoch = this.linkEpoch;
+  }
+
+  /**
    * Starts counting a request that left the device. Every REST call goes through here (via
    * `trackedFetch`), so the store sees the whole population rather than the calls that happen to
    * be interesting. Settle the returned handle exactly once.
@@ -330,7 +382,7 @@ class ConnectivityStore {
           }
           // Something else was answered since this one left: the link works, this route is just slow
           // server-side. Looked at again a threshold later, so a link that then goes quiet is caught.
-          if (this.lastAnswerAt > startedAt) {
+          if (this.answeredSince(startedAt)) {
             arm();
             return;
           }
@@ -353,7 +405,7 @@ class ConnectivityStore {
         if (!this.inFlight.has(id)) return;
         settle();
         this.consecutiveStalls = 0;
-        this.lastAnswerAt = Date.now();
+        this.noteAnswer();
         this.notifyServerReachable();
         if (measured) this.observeLatency(Date.now() - startedAt);
         this.recomputeSlow();
@@ -362,14 +414,14 @@ class ConnectivityStore {
         if (!this.inFlight.has(id)) return;
         settle();
         this.consecutiveStalls = 0;
-        this.lastAnswerAt = Date.now();
+        this.noteAnswer();
         console.debug(`[CONNECTIVITY] ${what} - not proven to be the API, reachability unchanged`);
         this.recomputeSlow();
       },
       failed: (error) => {
         if (!this.inFlight.has(id)) return;
         settle();
-        if (error instanceof RequestDeadlineError && this.lastAnswerAt > startedAt) {
+        if (error instanceof RequestDeadlineError && this.answeredSince(startedAt)) {
           // SLOW IS NOT GONE. Something else was answered while this request waited, so the link
           // delivers: this one is queued behind other transfers on a narrow link, or its route is
           // slow server-side. Counting it is how a 250 kbps link was declared "Hors connexion" while
@@ -383,16 +435,27 @@ class ConnectivityStore {
           // The count leads to ONE verdict, and once that verdict holds a stall is not a step
           // towards it: counting on read "3/2", "4/2" (2026-10-31). Said as what it is.
           if (!this.serverReachable) {
-            console.warn(`[CONNECTIVITY] ${error.message} (server already unreachable)`);
+            // ONE LINE PER SPELL: the verdict is a single transition, so the first deadline after it
+            // says what the evidence was and the rest are counted, then reported on the line that
+            // closes the spell ("server reachable again"). A latch on durable state, never a timer.
+            if (this.spellLatch.changed('already-unreachable', String(this.unreachableSpell))) {
+              console.warn(`[CONNECTIVITY] ${error.message} (server already unreachable)`);
+            } else {
+              this.deadlinesWhileUnreachable++;
+            }
           } else {
             this.consecutiveStalls++;
             console.warn(
               `[CONNECTIVITY] ${error.message} (stall ${this.consecutiveStalls}/${STALLS_BEFORE_UNREACHABLE})`
             );
-            if (this.consecutiveStalls >= STALLS_BEFORE_UNREACHABLE) this.notifyServerUnreachable();
+            if (this.consecutiveStalls >= STALLS_BEFORE_UNREACHABLE) {
+              this.notifyServerUnreachable(
+                `${STALLS_BEFORE_UNREACHABLE} request deadlines in a row`
+              );
+            }
           }
-        } else if (isTransportFailure(error)) {
-          this.notifyServerUnreachable();
+        } else if (error instanceof TransportFailureError) {
+          this.notifyServerUnreachable(transportFailureEvidence(error));
         }
         this.recomputeSlow();
       },
@@ -457,9 +520,14 @@ class ConnectivityStore {
     this.latencyMs = 0;
     this.recent = [];
     this.lastAnswerAt = 0;
+    this.linkEpoch = 0;
+    this.lastAnswerEpoch = 0;
     this.latencySlow = false;
     this.inFlightSlow = false;
     this.consecutiveStalls = 0;
+    this.unreachableSpell = 0;
+    this.deadlinesWhileUnreachable = 0;
+    this.spellLatch.reset();
   }
 }
 

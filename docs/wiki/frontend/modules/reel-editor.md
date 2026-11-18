@@ -14,10 +14,20 @@ the review, the editor and the publish step. **Nothing below ran on a device yet
 | The editor cannot move or resize anything | `ReelEditor` placed a text at 0.5/0.5, once, with `pointer-events-none`; there was no selection, no gesture, no delete | Yes, text and emoji (below) |
 | (found while reading) what you see is not what is published | The overlay coordinates were normalized to a LETTERBOXED `object-contain` box, the export normalizes to the media's own pixels; the size used `cqh` with no container | Yes: the frame takes the media's own aspect ratio and every size is a share of the SHORT side, in one module read by both |
 
-**Export of a decorated video, today (not changed in this PR).** `renderVideo` plays the clip at 1x
-into a canvas and records `canvas.captureStream()` with `MediaRecorder`, then `prepareVideoForUpload`
-re-encodes it AGAIN at publish. Two lossy encodes, real-time duration, and the audio comes from
-`captureStream`. It works but it is the weakest link; WP-E4 below replaces it.
+**Export of a decorated video (since the iOS fix, 2026-11-15).** `renderVideo` in `reelEditor.ts`
+decodes the take with WebCodecs through mediabunny, paints each frame plus the overlays on a canvas
+in `video.process`, and re-encodes to H.264 MP4 at the publish size at most (720p short side, `editedFrameSize`) (the source audio COPIED, or the render REFUSED: a dropped track is never a quieter video), faster than real time.
+`prepareVideoForUpload` still re-encodes it ONCE MORE at publish (two lossy encodes; WP-E4 below
+removes the second). **Why:** the old path played the clip into a canvas and recorded
+`canvas.captureStream()` through `MediaRecorder`, and WebKit has no `HTMLMediaElement.captureStream`
+(the `video.captureStream` guard at the old `reelEditor.ts:179` threw "video editing is unavailable
+on this device", shown as `reels_editor_error`), so on the iPhone 12 EVERY video with an overlay was
+refused. The new path needs only what publishing already needs (WebCodecs H.264 decode and encode,
+measured on both bench phones in [video-preparation](../video-preparation.md)), so no capability fact
+had to be added to the composer: an engine that cannot do this could not publish the edited video
+before this change either. A refusal is
+a typed `ReelExportError` (`unreadable` / `unsupported` / `encode`), logged with its fault. Charter:
+principle 8 (simplicity: one engine-neutral path, the MediaRecorder one deleted). **Read 2026-11-16** (iPhone 12, `1.7.0-alpha.4`, [device-verification](../../device-verification.md#the-iphone-12-readings-of-2026-11-16-third-sitting-170-alpha4)): an edited video take (text, sticker, stroke) exports and publishes, and the viewer plays it with the overlays. **Owed:** the iPhone reading of an edited photo take.
 
 ## What exists now (after this PR)
 
@@ -29,7 +39,7 @@ re-encodes it AGAIN at publish. Two lossy encodes, real-time duration, and the a
   pinch and twist), unit-tested. `lib/reels/reelOverlays.ts` - the overlay DATA model and the size
   formulas. `lib/reels/reelEditor.ts` - the export, which paints the same data into the media.
 - Exports an edited PHOTO exactly (canvas at the image's pixels). A decorated VIDEO goes through the
-  real-time path above.
+  WebCodecs path above.
 
 ## What an Instagram-style editor needs, and what the first slice chose
 

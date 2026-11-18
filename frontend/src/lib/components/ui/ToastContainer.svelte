@@ -13,7 +13,7 @@
        (the bottom nav is hidden there), so a toast above it covered the very bubble just acted
        on. Below the conversation header when one is open (`--chat-chrome-bottom`, published by ChatArea), else below the safe area. Desktop keeps its corner. -->
   <div
-    class="pointer-events-none fixed top-[calc(var(--chat-chrome-bottom,var(--safe-area-inset-top,0px))+0.75rem)] right-4 left-4 z-(--z-toast) flex flex-col gap-2 md:top-auto md:right-6 md:bottom-6 md:left-auto md:w-96"
+    class="pointer-events-none fixed top-[calc(var(--chat-chrome-bottom,var(--safe-area-inset-top,0px))+0.75rem)] right-4 left-4 z-(--z-toast) flex flex-col gap-2 md:top-auto md:right-6 md:bottom-[calc(1.5rem+var(--keyboard-occlusion-bottom,0px))] md:left-auto md:w-96"
     aria-live="assertive"
     aria-atomic="false"
   >
@@ -24,9 +24,9 @@
         out:fade={{ duration: 150 }}
         class="pointer-events-auto flex items-start gap-3 rounded-2xl border px-4 py-3 shadow-lg {toast.type ===
         'error'
-          ? 'text-red-err border-red-500/20 bg-red-500/10 dark:text-red-400'
+          ? 'text-red-err bg-banner-danger-soft border-red-500/20 dark:text-red-400'
           : toast.type === 'warning'
-            ? 'border-amber-warn/25 bg-amber-warn/10 text-amber-warn-text'
+            ? 'border-amber-warn/25 bg-banner-warn text-amber-warn-text'
             : 'border-cn-border text-text-main bg-cn-surface '}"
       >
         <span class="mt-0.5 shrink-0">

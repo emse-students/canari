@@ -118,6 +118,80 @@ export function legacyColumns(cursus: CursusEntry[]): {
   return { promo: cursus[0]?.promo ?? null, formation: cursus[0]?.formation ?? null };
 }
 
+/** One cursus as a price, a question or an audience reads it: promo and formation of ONE entry. */
+export interface CursusView {
+  promo: number | null;
+  formation: string | null;
+}
+
+/**
+ * The stable tag of the line saying a person's legacy `promo`/`formation` columns name a pair that
+ * no cursus entry carries (the WP3 backfill not applied to them, no sign-in since). Its RATE is what
+ * says when the columns can go (`legacy-compatibility.md`).
+ */
+export const PROFILE_CURSUS_BEHIND = '[PROFILE_CURSUS_BEHIND]';
+
+/**
+ * EVERY cursus a person is priced, shown questions and admitted through (D32), built in ONE place
+ * for social-service (`internal/users/:id/public-profile`):
+ *
+ * - every WELL-FORMED entry of `users.cursus` (formation a non-empty string, promo an integer), in
+ *   order. A `cursus` that is not a list counts as none (ERROR: the column is `jsonb NOT NULL` of a
+ *   list, so this is a write that broke it); a malformed entry is dropped (WARN);
+ * - PLUS the legacy pair (`users.promo`, `users.formation`) when either is set and that exact pair is
+ *   not among the entries. D32 ONLY EVER ADDS: the legacy pair is exactly what every price read
+ *   before it, so nobody is priced higher or closed out more than before - a person the WP3
+ *   backfill has not reached keeps their price. Logged WARN under `PROFILE_CURSUS_BEHIND`. This
+ *   shim goes with the columns (WP6; `legacy-compatibility.md`).
+ *
+ * Empty for a person with neither (staff, a post only): social-service reads that as one view with
+ * nothing in it.
+ */
+export function cursusViewsOf(user: {
+  id: string;
+  cursus?: unknown;
+  promo?: number | null;
+  formation?: string | null;
+}): CursusView[] {
+  const views: CursusView[] = [];
+  if (Array.isArray(user.cursus)) {
+    for (const entry of user.cursus as unknown[]) {
+      const e = entry as Partial<CursusEntry> | null;
+      if (
+        e &&
+        typeof e === 'object' &&
+        typeof e.formation === 'string' &&
+        e.formation &&
+        Number.isInteger(e.promo)
+      ) {
+        views.push({ promo: e.promo as number, formation: e.formation });
+      } else {
+        logger.warn(
+          `cursus views: malformed cursus entry dropped user=${user.id.slice(0, 8)} ` +
+            JSON.stringify(entry)
+        );
+      }
+    }
+  } else {
+    logger.error(
+      `cursus views: cursus is not a list (${user.cursus === null ? 'null' : typeof user.cursus}) ` +
+        `user=${user.id.slice(0, 8)} - read as none`
+    );
+  }
+  const promo = user.promo ?? null;
+  const formation = user.formation ?? null;
+  const legacyAmong = views.some((v) => v.promo === promo && v.formation === formation);
+  if ((promo !== null || formation !== null) && !legacyAmong) {
+    logger.warn(
+      `${PROFILE_CURSUS_BEHIND} user=${user.id.slice(0, 8)} legacy promo=${promo ?? 'null'} ` +
+        `formation=${formation ?? 'null'} is in no cursus entry (${views.length} entr` +
+        `${views.length === 1 ? 'y' : 'ies'}) - added as a view`
+    );
+    views.push({ promo, formation });
+  }
+  return views;
+}
+
 /** The formations a cursus may name (D4): `Autre` is the one bucket for masters, doctorates, the rest. */
 export const FORMATIONS = ['ICM', 'ISMIN', 'FSSS', 'PDIS', 'Autre'] as const;
 

@@ -89,7 +89,7 @@ shows `verifiedAt` through `formatRelative` (`utils/time.ts`), the exact date in
 | Setting | Default | Reads |
 | --- | --- | --- |
 | Double-tap zoom | on | the double-tap branch of `handleGridClick` |
-| Long-press delay | 350 ms, 200-600 in steps of 50 | the long-press timer AND the ring's duration |
+| Long-press delay | 350 ms, 150-600 in steps of 50 (the floor was 200 until 2026-11-13) | the long-press timer AND the ring's duration |
 | Vibrations | on | `buzz()` in front of every `haptic()` call |
 | Animation speed | normal; `off` when the system asks for reduced motion and nothing is stored | zoom transition, overlay fade/scale, win glow (CSS `--ms-anim`) |
 
@@ -180,9 +180,10 @@ and the migration has not been applied to a real database. **Owed:** one look at
 The server issues a seed (`randomBytes(16)`) when the first dig happens; mines are placed only
 then, keeping the clicked cell's 3x3 mine-free. So one seed has one board PER FIRST CLICK - 576
 candidates, of which a sample seed yielded 407 distinct layouts. A question about "the board of
-seed X" needs the first click too.
+seed X" needs the first click too, **and the generator**: since 2026-11-13 the same pair makes a
+different board under generator 1 and generator 2 ([below](#generator-v2-owner-2026-11-13)).
 
-Generation follows Simon Tatham's `mines.c`: place mines, run the solver, and while it is stuck
+**Generator 1** follows Simon Tatham's `mines.c`: place mines, run the solver, and while it is stuck
 move mines in or out of a frontier set (`tathamPerturb`), restarting from scratch when that
 stalls. If every restart fails, `placeMines` accepts a random layout that may need a guess.
 
@@ -198,7 +199,7 @@ flags do not add up to 150 (flags are manual since auto-flagging was disabled) s
 there. Forbidding count-based deductions during generation would reject such boards - a product
 decision, not taken.
 
-## Generation must not change, only get cheaper
+## Generation must not change, only get cheaper (per version)
 
 The server replays a ranked game on the board regenerated from `(seed, first click)`, and a
 challenge stays open for two hours. Any change to what the generator produces - a solver
@@ -206,6 +207,8 @@ deduction, the neighbor ORDER (it fixes constraint order, which feeds the RNG), 
 - rejects every challenge open at deploy time. The two copies are held identical by
 `declared-duplicates.test.mjs`; the boards themselves by the fingerprint test in `game.test.ts`,
 recorded before the 2026-09-24 speed-up.
+**This holds per generator version, and a version is frozen**: generator 1 and generator 2 each have
+their own fingerprint test, and a better generator is generator 3, never an edit of either.
 
 ## What the first dig costs (2026-09-24)
 
@@ -233,3 +236,124 @@ seed when the modal opens would, but the server clock starts at issue, so it nee
 in advance; its numbers, and so the flood extent, depend on mines that perturbation keeps moving
 until the end. The screen shows the clicked cell pressed instead, painted before the synchronous
 generation starts.
+
+## Generator v2 (owner, 2026-11-13)
+
+*"l'algorithme de l'application a tendance a produire des grilles beaucoup plus interessantes en terme de
+raisonnement requis pour les finir, j'aimerais me rapprocher de ca"* (owner), *"en gardant les contraintes de
+random graine, avec l'aller-retour serveur"*. A board from generator 1 is as easy as its solver lets it be:
+perturbation stops at the FIRST layout the solver clears. Measured on 300 boards, the reasoning score below
+had a median of 11, a 90th percentile of 18 and a best of 27; the owner judged the two best "just enough".
+
+**How it works** (`placeMinesV2` in `game.ts`). Start from a generator-1 layout the v2 solver clears, then
+climb: swap ONE mine with ONE empty cell (never in the clicked 3x3), keep the swap when the board is still
+clearable without guessing and its score did not fall, until the score reaches 60 or 300 swaps are spent.
+The swaps are drawn from the board's RNG, so `(seed, first click, version)` still gives one board and the
+server regenerates it. Two other ways of climbing were measured and dropped: swapping a mine with a nearby
+cell gained nothing, and several swaps per evaluation was slower (and at five, reached 60 on 35 of 40 boards).
+
+**The score.** The solver always takes the cheapest tier that makes progress and counts the deductions of
+each tier above the chords: *subset* (one number's hidden cells inside another's - the 1-2 and 1-2-1
+patterns), *local* (every assignment of one frontier component of up to 16 cells agrees), *global* (the
+mines left overall, combined across ALL components and the unconstrained cells). Score = subset + 2 x local +
+4 x global. The weights and the 16 are not derived from anything: they are what the scores the owner played
+were measured with, so they ARE what "60" means.
+
+**What the owner read** (a phone, 2026-11-13): 26 "interesting"; from 60 up "much more interesting"; 85 "not
+too hard either". Hence a target of 60 and no ceiling. The play page, the boards and the ratings were a
+throwaway rig outside the repository; nothing in it is needed to read this.
+
+**Order independence, which the old solver lacked.** generator 1's solver uses the mine total only when the
+whole frontier is ONE component, so what it clears depends on the order it takes steps in: the same
+board was cleared by one order and left stuck by another on 11 boards in 100. The cause was found by
+measuring it: not the count rule but the 16-cell enumeration cap - a frontier that grew into one 20-23-cell
+component was never enumerated. v2 enumerates up to 40 cells, combines the components' counts with the mines
+left (`globalTier`), and counts search nodes (200 000 per component, never a clock, so every machine stops at
+the same place and the server reproduces the client). At a cap of 40 both orders cleared 100 boards of 100.
+A whole generation has its own node budget (3 million: 72 000 at the median, 697 000 at the 99.9th percentile and
+1.79 million at most over 600 boards), because no per-component cap bounds 300 swaps x several components each,
+and the server runs this inside a `submit`; spent, enumerations are refused and the climb stops with the best
+board it has. The enumerations are cached by the component's own constraints (dropped whole past 1000 entries).
+
+**Measured** (the real generator, 600 boards, varied first clicks): 599 reach the target within the 300-swap
+budget, none fall back, the swaps needed are 117 at the median, 178 at the 90th percentile and 231 at the
+99th. The one that stops short is still clearable without guessing. First dig, workstation: median 102 ms,
+90th percentile 161 ms, 99th 222 ms (generator 1: 14 / 46 / 51 ms). On a phone the climb (the part that
+dominates) took a median of 267 ms and a 90th percentile of 390 ms in a back-to-back comparison against
+the first implementation, which took 465 and 649; absolute phone numbers move with the device's heat (the same
+code read 362-470 ms across runs), so only comparisons inside one run mean anything. Two optimisations, both
+proven to leave every deduction unchanged (240 solves compared field by field): the chord tier re-reads only the
+numbers next to a changed cell, and a component's enumeration is cached by its own constraints - valid across
+swaps because it depends on nothing else. Tier 2 indexed by cell and swapping with nearby cells gained nothing.
+
+**Versioning, and who may be ranked (owner, 2026-11-13: *"le classe devrait etre reserve aux clients avec la
+derniere version du generateur"*).** The challenge carries `"generatorVersion"` (migration 170, `DEFAULT 1`, so
+every challenge issued before it replays as generator 1). `POST /minesweeper/challenges` takes
+`maxGeneratorVersion`, and **ranked is open only to a client that can make the server's latest generator**: a
+time is comparable with another only on a board of the same difficulty, and letting an older build into the
+same ranking would give it faster times for less reasoning. Any other client - including every build before
+this one, which sends nothing - is refused `426` with `code: generator_update_required` and the latest
+version, BEFORE its open challenge is expired. The screen reads the typed `MinesweeperUpdateRequiredError`,
+says so (`minesweeper_update_required`) and plays an unranked game; it never reads a message. A challenge
+already issued with generator 1 is still replayed with generator 1, for its two hours, and a stored version
+the server does not know refuses the submit and says so (`unknown_generator`) rather than judging an honest
+solve on another board - WITHOUT storing a rejection, so a server rolled back past a generator can retry it once rolled
+forward. The engine throws on a version it does not know, and the client refuses one newer than it can make. The
+replay hands back `generation`, and the service logs a warning when generator 2 fell back to an unproven layout. A casual (unranked) game uses the latest generator: nothing is submitted, so nothing
+needs replaying ([legacy-compatibility](../../legacy-compatibility.md#a-tolerated-degradation-ranked-minesweeper-for-a-build-older-than-generator-2-owner-2026-11-13)).
+
+**The ranking is reset (owner, 2026-11-14)**: the stored times were set on generator-1 boards, so they are dropped when the release carrying generator 2 reaches production - the owner's gesture ([the table](../../backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks)).
+
+**What is open.** Generation is still synchronous on the main thread (the screen paints the pressed cell first);
+a worker would keep the interface alive for the ~0.3 s a phone spends, and is not built. The one board in 600 that
+stops short is unexplained beyond "the budget ended". The boards were rated on ONE phone, and the first
+Challenge-sized game of a player who has only met generator 1 is the real reading
+(written as a reading once generator 2 ships in a stable; [the worker](../../backlog.d/p3-minesweeper-generation-off-the-main-thread.md)).
+
+## The replay: timed moves, and a moderator who can watch a win (owner, 2026-11-17)
+
+*"register the timings of each action (place flags, mine) during each game, and send them to the server
+(they should match the game length), and add a button to replay a game for the moderators, so they can
+see if a game is legit"* (owner). The server's replay proved a log CLEARS the board; it said nothing of
+HOW - a solver driving the real board, a pace no hand holds - and kept nothing to look at.
+
+**Timestamps.** Every dig and flag the client logs carries `t`, whole milliseconds from the first dig
+(`moveTime()` in the modal; the first move is 0, the timer starts right after it, so board generation is
+not the player's time). `claimedDurationMs` is now the winning move's `t`, not the last 100 ms tick, and
+the win clock shows that same number.
+
+**What the server checks** (`timingsFault`, `minesweeper.timings.ts`, before the replay, a failure is a
+400 and the challenge is stored as `rejected`): the first move is at 0, no move precedes the one before
+it, and **the last `t` equals `claimedDurationMs`** - the log describes ONE game of the claimed length.
+`t` is REQUIRED (no fallback for a client that omits it: ranked is already closed to a build that cannot
+make generator 2, and generator 2 had not shipped in a stable, so no ranked client predates timings).
+Nothing judges the PACE: whether it is humanly possible is the moderator's call, watching.
+
+**What is kept.** A verified win stores its log in `minesweeper_replays` (migration 175): one row per
+score, `moves jsonb` of `{type, x, y, t}`, `ON DELETE CASCADE` from the score - so removing a score, or an
+account's erasure (which deletes its scores), removes the replay too (`account-erasure.ts` classifies
+the column as holding no account id). Its own table because the leaderboard, the ranks and `me` read the
+score on every request and a few hundred moves must not ride along. The BOARD is not stored: it is
+regenerated from the challenge's seed, generator and size, as the server's replay does. Storing the log
+is best-effort AFTER the score is saved: a failure is logged at `error` (a score with no replay cannot be
+checked) and the player's win stands.
+
+**The viewer.** `GET /minesweeper/scores/:scoreId/replay` (global admins; `RouteParams` declares
+`scoreId` a uuid) returns the player's name, the recipe and the log, and logs who read it. On the Games
+page an admin gets a "Revoir cette partie" button per row; it opens `MinesweeperReplay.svelte`: the
+board (read-only, the last action ringed), play / pause, restart, a scrubber over the game's length, and
+1x / 2x / 4x / 8x. `replay.ts` rebuilds the board after any move: generation runs ONCE, up front, the
+board right after the first move is copied, and going backwards restarts from that copy and replays the
+few moves between. A score won before this shipped has no replay: 404, said as "no recording was kept".
+
+**Charter.** Principle 1 (your messages are yours) is not touched - a game is not a message - and the
+log is read by global admins only, each read logged; the register (C28) names it, and it lives exactly as
+long as its score.
+
+**Verified:** server specs for the timings (start, order, length), the stored log keeping its
+timestamps, a failed store not failing the win, the replay read (and its 404s, and the trace of who
+read it); client specs for the board after n moves forwards and backwards without regenerating, the
+clock to move count, the viewer's states, the modal stamping a won game (moves from 0, non-decreasing,
+claimed = last `t`) and the Games page button. **Read on dev 2026-11-18 (`1.7.0-alpha.12`):** migration 175
+applied (the replay row stored with the score), and the viewer as a real global admin at phone width
+([readings](../../device-verification.md#the-phone-and-web-readings-of-2026-11-18-s6-170-alpha12-live-moderations-last-halves-the-reel-card-overlays-the-birthday-morning)).

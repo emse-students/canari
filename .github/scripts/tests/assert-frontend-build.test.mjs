@@ -82,8 +82,21 @@ const ci = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'workflows', 'ci.yml'),
   'utf8'
 );
-ok('ci.yml runs the production build on push to main', /if: github\.event_name == 'push'[\s\S]{0,400}BUILD_WEB: '1'/.test(ci));
-ok('ci.yml runs assert-frontend-build.mjs on it', /BUILD_SHA: \$\{\{ github\.sha \}\}\s+run: bun \.github\/scripts\/assert-frontend-build\.mjs frontend "\$BUILD_SHA"/.test(ci));
+// The commands live in checks.sh since 2026-11-15 (`frontend-build`), shared with the local push.
+const checks = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), '..', 'checks.sh'),
+  'utf8'
+);
+ok(
+  'ci.yml runs the production build on push to main',
+  /if: github\.event_name == 'push'[\s\S]{0,400}BUILD_SHA: \$\{\{ github\.sha \}\}\s+run: bash \.github\/scripts\/checks\.sh frontend-build "\$BUILD_SHA"/.test(ci)
+);
+ok(
+  'checks.sh frontend-build builds the web bundle, then runs assert-frontend-build.mjs on it',
+  /BUILD_WEB=1 bun run build\)\s+bun \.github\/scripts\/assert-frontend-build\.mjs frontend "\$sha"/.test(
+    checks
+  )
+);
 
 console.log(failures ? `[frontend-build] ${failures} FAILURE(S)` : '[frontend-build] clean');
 process.exit(failures ? 1 : 0);

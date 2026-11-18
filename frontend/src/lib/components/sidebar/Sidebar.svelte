@@ -129,16 +129,8 @@
     channelWorkspaces?: ChannelWorkspace[];
     /** ID/name of the currently selected conversation. */
     selectedContact: string | null;
-    /** Current value of the new-contact input (controlled). */
-    newContactInput: string;
-    /** Current value of the new-group name input (controlled). */
-    newGroupInput: string;
     /** Current value of the new-channel name input (controlled). */
     newChannelInput?: string;
-    /** Callback fired when the contact input value changes. */
-    onContactInputChange: (value: string) => void;
-    /** Callback fired when the group name input value changes. */
-    onGroupInputChange: (value: string) => void;
     /** Callback fired when the channel name input value changes. */
     onChannelInputChange?: (value: string) => void;
     /**
@@ -148,9 +140,12 @@
      * nothing, so the modal closed on every call and a member whose conversation had just been
      * refused was shown a sidebar that had not changed, with no line anywhere saying why.
      */
-    onAddContact: (contactId?: string) => Promise<ConversationOutcome>;
-    /** Callback to create a new group conversation with the given name. Answers, like `onAddContact`. */
-    onCreateGroup: (groupName?: string) => Promise<ConversationOutcome>;
+    onAddContact: (contactId: string) => Promise<ConversationOutcome>;
+    /**
+     * Callback to create a group of `memberIds`, named `groupName` - or UNNAMED when it is `''`
+     * (owner, 2026-11-17). Answers, like `onAddContact`.
+     */
+    onCreateGroup: (groupName: string, memberIds: string[]) => Promise<ConversationOutcome>;
     /** Callback to create a new channel inside the specified workspace. */
     onCreateChannel?: (
       workspaceId: string,
@@ -227,11 +222,7 @@
     conversations,
     channelWorkspaces = [],
     selectedContact,
-    newContactInput,
-    newGroupInput,
     newChannelInput = '',
-    onContactInputChange,
-    onGroupInputChange,
     onChannelInputChange,
     onAddContact,
     onCreateGroup,
@@ -263,12 +254,9 @@
   let showNewChannelModal = $state(false);
   let showCommunityAdminPanel = $state(false);
   let showNewCommunityModal = $state(false);
-  let activeTab = $state<'contact' | 'group'>('contact');
   let activeSidebarTab = $derived(
     (viewMode === 'communities' ? 'channels' : 'discussions') as 'channels' | 'discussions'
   );
-  let contactId = $state('');
-  let groupName = $state('');
   /**
    * The refusal the new-chat panel is currently showing, and whether a creation is in flight.
    *
@@ -457,15 +445,12 @@
     )
   );
 
-  function openNewChatModal(tab: 'contact' | 'group' | 'channel' = 'contact') {
-    if (tab === 'channel') {
+  function openNewChatModal(panel: 'discussion' | 'channel' = 'discussion') {
+    if (panel === 'channel') {
       channelName = newChannelInput || '';
       channelVisibility = 'public';
       showNewChannelModal = true;
     } else {
-      activeTab = tab;
-      contactId = newContactInput || '';
-      groupName = newGroupInput || '';
       newChatError = '';
       showNewChatModal = true;
     }
@@ -492,15 +477,12 @@
   /**
    * Runs one creation and decides what the panel does with the answer.
    *
-   * THE FIELD IS CLEARED ONLY ON SUCCESS, which is the other half of staying open: a member who is
-   * told "this contact has never signed in" is looking at the id they typed, and blanking it would
-   * make them type it again to read it. On success the panel closes and the sidebar shows the
+   * THE CHOICE IS KEPT ON A REFUSAL, which is the other half of staying open: a member who is told
+   * "this contact has never signed in" is looking at the person they chose, and losing the choice
+   * would make them pick again to read it. On success the panel closes and the sidebar shows the
    * conversation, which is the signal - no toast is added for it.
    */
-  async function runCreation(
-    create: () => Promise<ConversationOutcome>,
-    clearField: () => void
-  ): Promise<void> {
+  async function runCreation(create: () => Promise<ConversationOutcome>): Promise<void> {
     if (newChatBusy) return;
     newChatBusy = true;
     newChatError = '';
@@ -510,38 +492,22 @@
         newChatError = conversationRefusalMessage(outcome.reason);
         return;
       }
-      clearField();
       closeNewChatModal();
     } finally {
       newChatBusy = false;
     }
   }
 
-  function handleAddContact() {
-    const value = contactId.trim();
+  function handleStartDirect(peerId: string) {
+    const value = peerId.trim();
     if (!value) return;
     if (currentUserId && value.toLowerCase() === currentUserId.toLowerCase()) return;
-    onContactInputChange(value);
-    void runCreation(
-      () => onAddContact(value),
-      () => {
-        contactId = '';
-        onContactInputChange('');
-      }
-    );
+    void runCreation(() => onAddContact(value));
   }
 
-  function handleCreateGroup() {
-    const value = groupName.trim();
-    if (!value) return;
-    onGroupInputChange(value);
-    void runCreation(
-      () => onCreateGroup(value),
-      () => {
-        groupName = '';
-        onGroupInputChange('');
-      }
-    );
+  function handleCreateGroup(name: string, memberIds: string[]) {
+    if (memberIds.length < 2) return;
+    void runCreation(() => onCreateGroup(name.trim(), memberIds));
   }
 
   function handleCreateChannel() {
@@ -591,7 +557,7 @@
   'communities'
     ? 'flex-row'
     : 'flex-col'} {drawerMode
-    ? 'animate-panel-in fixed top-0 bottom-0 left-0 z-(--z-nav-drawer) pt-(--safe-area-inset-top) pb-[var(--safe-area-inset-bottom,0px)] shadow-2xl md:hidden ' +
+    ? 'animate-panel-in fixed top-0 bottom-0 left-0 z-(--z-nav-drawer) pt-(--safe-area-inset-top) pb-[calc(var(--safe-area-inset-bottom,0px)+var(--keyboard-occlusion-bottom,0px))] shadow-2xl md:hidden ' +
       (viewMode === 'communities' ? 'w-[95vw] max-w-md' : 'w-[88vw] max-w-sm')
     : viewMode === 'communities'
       ? 'w-full md:w-96'
@@ -714,7 +680,7 @@
         onSearchQueryChange={(value) => {
           searchQuery = value;
         }}
-        onOpenNewChat={() => openNewChatModal('contact')}
+        onOpenNewChat={() => openNewChatModal('discussion')}
       />
     {:else}
       <!-- A plain header, no glass box of its own: `.glass-chrome` is unlayered, so its full border and square corners beat the utilities and cut into the panel's rounded corner on pc and ran to the screen's edge on a phone. Same surface as the panel, one bottom rule, the 16px gutter kept. -->
@@ -811,7 +777,7 @@
               <p class="mb-4 text-xs">{m.sidebar_start_writing()}</p>
               <button
                 type="button"
-                onclick={() => openNewChatModal('contact')}
+                onclick={() => openNewChatModal('discussion')}
                 class="text-on-accent bg-accent rounded-xl px-4 py-2 text-xs font-semibold transition-all active:scale-95"
               >
                 {m.chat_new_discussion_label()}
@@ -950,30 +916,14 @@
 
 <SidebarNewChatModal
   open={showNewChatModal}
-  {activeTab}
-  {contactId}
-  {groupName}
   {currentUserId}
   {recentPeers}
   error={newChatError}
   busy={newChatBusy}
   onClose={closeNewChatModal}
-  onPickPeer={(peerId) => {
-    contactId = peerId;
-    handleAddContact();
-  }}
-  onTabChange={(tab) => {
-    activeTab = tab;
-    newChatError = '';
-  }}
-  onContactIdChange={(value) => {
-    contactId = value;
-  }}
-  onGroupNameChange={(value) => {
-    groupName = value;
-  }}
-  onSubmitContact={handleAddContact}
-  onSubmitGroup={handleCreateGroup}
+  onStartDirect={handleStartDirect}
+  onCreateGroup={handleCreateGroup}
+  onNameStepClose={() => (newChatError = '')}
 />
 
 <SidebarNewChannelModal

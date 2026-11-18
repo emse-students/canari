@@ -59,13 +59,14 @@ on-disk state is BEHIND by the frames received since the last checkpoint. The th
 
 Three things are out of scope: commits, which `persistNow` checkpoints at once under any policy; this
 device's own sends, which are checkpointed on the send path; and the replay marks, which are already
-bound to the checkpoint (`commitPendingHistoryMarks`).
+bound to the checkpoint (staged into the state it writes, `stagePendingHistoryMarks`).
 
 **Why this is a decision and not a fix.** Skipping the checkpoint WEAKENS durability. A process
 death leaves `mls.bin` behind by up to N received generations. The MLS layer recovers from that, but
 three app-level consequences are not measured:
 
-1. **The seen-cipher ledger is written per frame** (`noteFrameConsumed`, `localStorage`). After a
+1. **The seen-cipher ledger is written per frame** (`noteFrameConsumed`; since KILL-2 it travels
+   inside the MLS state, so this item applies to the marks staged between checkpoints). After a
    crash it can say "read" for a frame the restored state could still read. The rows for those frames
    are written at the same drain end as today's checkpoint, so nothing new is lost. The open part is
    that a replay skips the frame. This is the safe direction of TAB-3b; the defect it fixes runs the
@@ -202,6 +203,14 @@ Both on DEV (`dev.canari-emse.fr`, a pre-release carrying the switch), the switc
    and every notification shown matches a message in the conversation.
 
 Either one failing keeps the switch `off` and reopens this section.
+
+### DECIDED 2026-11-14 - a member's removal by another member cancels the device proof
+
+Owner, 2026-11-14: *"Retiré = non prouvé"*. A commit by ANOTHER user that removes every leaf of a
+user cancels that user's sighting (`member_sightings.rs`), so an entry of theirs afterwards with no
+member's Add is NOT proven; a commit by the user's own device removing their own leaves cancels
+nothing. Built on #3519, with real-MLS tests both ways
+([mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23)).
 
 ### QUESTION - can an identity provider that stops answering exhaust anything in core-service? (2026-11-12)
 
@@ -497,7 +506,13 @@ Two shapes, and the choice is the user's:
 started - it is a real work package, and NOTIF-12 records the current behaviour rather than failing
 on it, so nothing here blocks the campaign.
 
-### QUESTION - a reconciler's SILENCE means both "we agree" and "nobody answered", and only one of them is safe to escalate on
+### ~~QUESTION - a reconciler's SILENCE means both "we agree" and "nobody answered", and only one of them is safe to escalate on~~
+
+**ANSWERED 2026-11-17, by a fourth option.** The agreeing responder acks only when the ask carries the
+asker's proof of incompleteness (`incomplete: true` on the probe, answered by `history_cannot_repair`),
+so the ack costs nothing on the common path and the walk past an agreeing member advances on an
+answer rather than on a silence ([history-reconciliation](protocols/history-reconciliation.md#the-fix-the-walk-advances-on-an-answer-built-2026-11-17)).
+The text below is kept for why the other options were not taken.
 
 Split out of the responder P1 on 2026-09-08, when that entry closed on its measurement. **The defect
 is fixed and measured; what is left is a design choice nobody has made**, which is why it belongs
@@ -689,8 +704,9 @@ dead zone for staff - the shop (`ProductsService`, `associationVisibleToViewerSq
 (`PartnershipsService`, a claim answering 404), the association directory, an institution's lives,
 and its posts and events with no reach (legacy) - ask whether the reader sees the ASSOCIATION, and
 carry no public. Opening an institution to every staff account of a campus its rules reach would
-widen all of them at once; it was not taken by default. (The signed agenda subscription link already
-gives staff their whole campus, `campusWideReaderCampus`: a selection, not a reader predicate.)
+widen all of them at once; it was not taken by default. (The agenda subscription link gives staff
+nothing of their campus either: it serves its holder's in-app agenda,
+[decided 2026-11-15](profiles-and-access.md#a-staff-accounts-subscription-shows-its-in-app-agenda-owner-2026-11-15).)
 
 The question as it was asked:
 
@@ -713,3 +729,41 @@ account with no membership, grant or follow.
 **The same question holds for an institution's calendar events (2026-11-13)**: their "Personnel" public
 has exactly the posts' meaning ([as built](profiles-and-access.md#an-institutions-reach-per-calendar-event-as-built-owner-2026-11-13)),
 so one answer settles both, and widening would add the same disjunct to `eventVisibleToUserSql`.
+
+## Should Canari suspend an account? (asked 2026-11-15)
+
+**Parked by the owner on 2026-11-15**, while deciding the [moderation grid](moderation-authority.md#sanctions):
+the strongest sanction today is the mute (one platform-wide row: no post, reaction, comment, live or
+chat line; votes, comment likes and nicknames to be added) and the withdrawal of the right to
+broadcast. **No route suspends or bans an account** - core-service and social-service have none, and
+an account is deactivated only by its owner's own erasure
+(`apps/core-service/src/account-erasure/`).
+
+**Why it is a question and not a work package**: signing in is MiConnect's (the School's identity
+provider), so a suspension either lives in Canari alone (a refused session, which every service must
+honour, encrypted conversations included) or is asked of the identity provider - and which, and who
+may decide it (the platform admin alone, or a BDE for its spaces), touches the [charter](../principes.md)'s
+first principle as much as moderation. No code until it is answered.
+
+## Should the privacy policy describe named readers? (parked 2026-11-15)
+
+The privacy policy (`frontend/src/routes/legal/privacy/+page.svelte`) does not describe named readers at
+all - neither the read grants of 2026-10-07 nor the comments switch that narrows them. The register row
+C5 already says what they read ([register](compliance/register-of-processing.md)). Whether the public
+policy should say it too is the owner's call. Moved here when its reading entry was deleted on the
+owner's decision of 2026-11-15 ("Supprimer cette lecture"), so the question is not lost with it.
+
+## Should a BDE moderator read a reported COMMENT under a post that is not out yet? (asked 2026-11-15)
+
+**Today**: a BDE moderator's read of a post scheduled later opens only once it is published, or while
+an OPEN report targets the POST (owner, 2026-11-15: *"Exclure les posts programmes"*;
+[the moderation read](moderation-and-blocking.md#the-moderation-read-of-a-post-its-comments-and-its-replay-owner-2026-11-15)).
+A comment reported under such a post is listed in the moderator's queue, in scope, WITHOUT its text
+until then; the platform admin reads it.
+
+**Why it is a question**: the report is theirs to handle and they cannot read what it is about. The
+reading taken, reversible: the [charter](../principes.md)'s first principle wins - the post is not
+published, so nothing under it is the BDE's to read on a comment's report alone - and the platform
+admin is the recourse. The other answer is that an open report on a comment opens that one comment
+(not its post) to the moderator in scope. In practice a comment under an unpublished post is rare:
+only the author's side can write one.

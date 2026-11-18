@@ -6,7 +6,6 @@ import {
   HttpCode,
   Logger,
   Param,
-  ParseUUIDPipe,
   Post,
   Req,
   UseGuards,
@@ -14,12 +13,14 @@ import {
 import { Throttle } from '@nestjs/throttler';
 import type { Request } from 'express';
 import { clientAddress } from '../common/client-address';
+import { CLIENT_VERSION_HEADER, clientVersionOf } from '../common/client-version';
 import { ClientIpThrottlerGuard } from '../common/guards/client-ip-throttler.guard';
 import { GuestReceiptDto, GuestSubmitFormDto } from './dto/form.dto';
 import { CONFIRM_PAYMENT_PER_MINUTE } from './forms.controller';
 import { FormsService } from './forms.service';
 import type { GuestReceiptView } from './guest-receipt';
 import { GuestReceiptThrottlerGuard } from './guest-receipt-throttler.guard';
+import { RouteParams } from '../common/route-params';
 
 /**
  * A PUBLIC FORM, ANSWERED WITHOUT AN ACCOUNT (user, 2026-09-30) - the two routes a guest on a
@@ -30,6 +31,7 @@ import { GuestReceiptThrottlerGuard } from './guest-receipt-throttler.guard';
  * guests behind one NAT - a school network at an event - shares it, which is why the limit sits
  * well above what one person types and bounds only what a script can make this service store.
  */
+@RouteParams({ id: 'uuid' })
 @Controller('public/forms')
 export class PublicFormsController {
   private readonly logger = new Logger(PublicFormsController.name);
@@ -38,7 +40,7 @@ export class PublicFormsController {
 
   /** The questions of a public form. Unthrottled: a database read, as the post preview JSON is. */
   @Get(':id')
-  get(@Param('id', ParseUUIDPipe) id: string) {
+  get(@Param('id') id: string) {
     return this.service.getPublic(id);
   }
 
@@ -51,11 +53,7 @@ export class PublicFormsController {
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @Post(':id/submit')
   @HttpCode(200)
-  async submit(
-    @Param('id', ParseUUIDPipe) id: string,
-    @Body() dto: GuestSubmitFormDto,
-    @Req() req: Request
-  ) {
+  async submit(@Param('id') id: string, @Body() dto: GuestSubmitFormDto, @Req() req: Request) {
     // A filled honeypot is answered like a FREE answer, stored nowhere, and logged, so a rise in
     // them is seen rather than guessed. On a paid form a bot can tell it from a real reply (no payer
     // page): an identical one would need a real Lydia request for the bot (forms.md, WP-P3).
@@ -73,6 +71,13 @@ export class PublicFormsController {
         guestLastName: dto.guestLastName,
         guestFirstName: dto.guestFirstName,
         guestEmail: dto.guestEmail,
+        // What the form asks a guest to declare (`respondent-identity.ts`), judged the same way.
+        declaredFormation: dto.declaredFormation,
+        declaredPromo: dto.declaredPromo,
+        declaredStatus: dto.declaredStatus,
+        declaredCampus: dto.declaredCampus,
+        // The build the page names: an older one cannot draw the declared questions.
+        clientVersion: clientVersionOf(req.headers[CLIENT_VERSION_HEADER]),
       },
       'guest',
       // The visitor a paid answer is counted against (PP5): the address the throttle counts too.

@@ -104,11 +104,10 @@ describe('the order across every grid', () => {
 
     const state = fillPriceState({
       basePrice: 0,
-      pricing: null,
+      slices: [{ pricing: null, productGridPrices: prices }],
       items,
       visibleItems: items,
       selections,
-      productGridPrices: prices,
     });
     expect(state.gridCents).toBe(11900);
     expect(state.total).toBe(11900);
@@ -117,11 +116,10 @@ describe('the order across every grid', () => {
   it('adds the grids to the base price and the supplements, as the server does', () => {
     const state = fillPriceState({
       basePrice: 500,
-      pricing: null,
+      slices: [{ pricing: null, productGridPrices: prices }],
       items,
       visibleItems: items,
       selections: { q_hoodie: { 'noir:l': 1 }, q_jacket: {} },
-      productGridPrices: prices,
     });
     expect(state.total).toBe(3300);
   });

@@ -62,6 +62,12 @@ describe('PublicController.getPublishedCarte (WP-CARTO-1, one live map per space
       null,
     ]);
     expect(served.name).toBe('Carte 2026');
+    // A served card names a person, never an account.
+    expect(served.units[0].cards.map((c) => Object.keys(c).sort())).toEqual([
+      ['avatarUrl', 'name'],
+      ['avatarUrl', 'name'],
+    ]);
+    expect(JSON.stringify(served)).not.toMatch(/"u1"|"u2"|userId/);
   });
 
   it.each([

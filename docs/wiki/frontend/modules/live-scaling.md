@@ -15,6 +15,14 @@ which moves the delivery recommendation from a plain cache rule to an R2 bucket;
 wish turns "open production at 24 with a `live complet` screen" (D-4 there) into a decision to take
 again ([O-3](#7-the-decisions-owed-by-the-owner)).
 
+> **Superseded on delivery, 2026-11-17:** the owner refused R2 and Cloudflare Stream - the lives stay
+> on the server and the quality steps down instead ([section 3](#3-the-recommendation),
+> [section 7](#7-the-decisions-owed-by-the-owner)). And B1's ~90-107 Mb/s was the measuring
+> workstation's path, not the host's: the host serves ~600 Mb/s and more to a close client
+> ([realtime-media-feasibility 4](../../infrastructure/realtime-media-feasibility.md#4-network-capacity)),
+> so arithmetic A below rests on the wrong number until `LIVE_HOST_EGRESS_BPS` is
+> [re-derived](../../backlog.d/live-host-egress-constant-rests-on-the-workstation-path.md).
+
 **Convention: a claim not read in this repository's code, measured, or read at a cited URL on
 2026-10-21 is marked _(unverified)_.**
 
@@ -32,7 +40,7 @@ then the arithmetic.
 | B5 | **media-service and Garage fan-out** | the `live_segments` cache with `proxy_cache_lock`: ONE upstream read per segment per 2 min, whatever the audience ([lives](../../services/lives.md#serving-a-segment-from-the-nginx-cache-wp-l4), read on a running container) | **does not bind on audience** - ~0.5 reads/s per live. It binds on the NUMBER OF LIVES through the cache size (arithmetic C) | per live, not per viewer |
 | B6 | **Redis seats** | `live:seats`, ONE sorted set for the estate; one Lua script per key read and per manifest poll (`live-seats.ts`): `ZREMRANGEBYSCORE` + `ZSCORE` + `ZCARD` + `ZADD`, O(log S) | not at 24. **With #2202 (open) the script also walks the WHOLE set (`ZRANGE 0 -1`) to count one live's viewers: O(S) per poll, O(N^2) per second** - fine at 24, the first thing to change past it (arithmetic D) | yes |
 | B7 | **The per-viewer manifest poll** | 1 poll/s per viewer (`LIVE_MANIFEST_POLL_MS`, client), each: one `auth_request` to core-service (an HS256 verify), then in social-service up to **7 PostgreSQL queries** (`assertMayWatch`: the live with its visibility SQL, the block, the removal; the segment window; with the chat cursors: the viewer's blocks, the messages, the reaction bursts) and **1 Redis script**; pool of 10 connections, of which ingest may use 4 | **unmeasured**: invisible at 24, the wall at a few hundred (arithmetic E) | yes |
-| B8 | **The broadcaster's encode and upload** | the phone encodes and seals; the server transcodes nothing (C3). 3.08 Mb/s from the Mi 9T app WebView at a 2.5 Mb/s ask, the Android encoder floored at ~2.6 Mb/s even at 480p; 2.32 Mb/s from iPhone Safari (WP-L1, draft #2109); 4 stores at once per social-service instance (`LIVE_INGEST_MAX_CONCURRENT`) | **never on audience** - a viewer costs the broadcaster nothing. It bounds the number of simultaneous LIVES and the live's own length (battery: ~40 %/h on a charger) | per live |
+| B8 | **The broadcaster's encode and upload** | the phone encodes and seals; the server transcodes nothing (C3). 3.08 Mb/s from the Mi 9T app WebView at a 2.5 Mb/s ask, the Android encoder floored at ~2.6 Mb/s even at 480p - a `MediaRecorder` floor, WebCodecs on the same phone delivers 1.00 for 1.0 ([stage 0 (ii)](#stage-0-ii---the-bitrate-floor-measured-2026-11-17)); 2.32 Mb/s from iPhone Safari (WP-L1, draft #2109); 4 stores at once per social-service instance (`LIVE_INGEST_MAX_CONCURRENT`) | **never on audience** - a viewer costs the broadcaster nothing. It bounds the number of simultaneous LIVES and the live's own length (battery: ~40 %/h on a charger) | per live |
 
 ### The arithmetic
 
@@ -45,6 +53,7 @@ then the arithmetic.
 | 3.0 Mb/s | `LIVE_VIEWER_BITRATE_BPS` (the code) | **24** |
 | 2.6 Mb/s | the Android floor at a lower ask (480p, WP-L1) | 27.7 |
 | 2.32 Mb/s | iPhone Safari, 2.5 Mb/s ask (WP-L1) | 31.0 |
+| 1.06 Mb/s | WebCodecs H.264 `constant` at 1.0 Mb/s, 720p, both phones, plus 0.064 audio ([stage 0 (ii)](#stage-0-ii---the-bitrate-floor-measured-2026-11-17)) | 67.7 |
 | 107 x 0.8 = 85.6 Mb/s at 3.0 | the upper measured ceiling | 28.5 |
 
 One viewer-hour is 3.08 Mb/s x 3 600 s = 11 088 Mb = **1.39 GB out of the host**. A live of 100 viewers
@@ -71,7 +80,7 @@ else moved.)
 **D - the seat script (B6).** Today: O(log S) per call, N calls a second. With #2202's count: each
 call reads the whole set, S members, so N viewers polling once a second cost N x S = N^2 member reads
 a second inside Redis's single thread: 576 at 24, 10 000 at 100, **250 000 at 500**. The release of an
-ended live (`RELEASE_LIVE_SEATS_LUA`) already walks the whole set, once per end. Both stop growing
+ended live (`CLOSE_LIVE_LUA`) already walks the whole set, once per end. Both stop growing
 with one sorted set PER LIVE (`ZCARD` is O(1), the end is a `DEL`) - follow-up F1 below, owned by
 whoever lands after #2202, since #2202 owns `live-seats.ts`.
 
@@ -213,24 +222,154 @@ and (before (a2)) the uplink. A guard there is legitimate; a `live complet` scre
 
 ## 3. The recommendation
 
-**(a2) for the bytes, F1-F3 for the manifest, (e) for what remains, (c) for the number of lives.**
-(a1) is refused by the terms as read; (b) and (d) are not capacity answers on this design.
+**DECIDED by the owner, 2026-11-17: the lives stay wholly on the server.** *"Rester totalement sur le
+serveur, quitte a degrader la qualite si trop de spectateurs"* (principle 4 of
+[the charter](../../../principes.md), independence;
+[decisions](../../backlog.d/owner-decisions-of-2026-11-17.md)). **No R2 and no Cloudflare Stream**:
+Stream must read the cleartext to transcode, which breaks principle 1, and it bills per viewer-minute;
+R2 is refused for now. The storage stays S3-generic (media-service already speaks S3 to Garage), so
+moving the segments to a SELF-HOSTED store, or to R2 if ever reopened, stays a configuration change and
+never a redesign. The recommendation of 2026-10-21 - (a2), segments to an R2 bucket - is withdrawn; the
+analysis of (a) above stays as the record of why it was weighed.
+
+**So: F1-F3 for the manifest, (c) - the live's one tier steps down - as THE audience answer (D2
+reversed, O-5), and (e) for what remains: the soft "Connexion au direct..." retry, never `live
+complet`.** (b) and (d) are not capacity answers on this design. **The bytes stay on the host, so the
+audience stays bounded by the host's egress** - and that bound is now known to be far above the
+~90 Mb/s the code assumes (2026-11-17: ~600 Mb/s and more to a close client,
+[realtime-media-feasibility 4](../../infrastructure/realtime-media-feasibility.md#4-network-capacity)),
+so `LIVE_HOST_EGRESS_BPS` and the 24 seats are re-derived first
+([entry](../../backlog.d/live-host-egress-constant-rests-on-the-workstation-path.md)).
 
 | Stage | What changes | Measured on | Measured how | Moves on when |
 | --- | --- | --- | --- | --- |
-| **0 - measure, no code** | nothing | LOCAL estate (a load test on the shared host is not ours to run unasked), then dev | (i) a headless VIEWER load script - **owed: the WP-L1 rig (`tools/live-bench`, draft #2109) injects a broadcaster and collects, it has no viewer swarm**; with it, 24 / 100 / 300 viewers polling the dev-shaped stack: polls/s, social-service CPU, pool wait, Redis scripts/s, p95 manifest latency (B7, B6). (ii) WP-L1 again from the APP WebViews at 360p and at 1.0 / 0.6 Mb/s asks (does the Android floor hold?) - feeds (c). (iii) the written question to Cloudflare on R2-served video | the B7 curve is on this page |
+| **0 - measure, no code** | nothing | LOCAL estate (a load test on the shared host is not ours to run unasked), then dev | (i) a headless VIEWER load script - **owed: the WP-L1 rig (`tools/live-bench`, draft #2109) injects a broadcaster and collects, it has no viewer swarm**; with it, 24 / 100 / 300 viewers polling the dev-shaped stack: polls/s, social-service CPU, pool wait, Redis scripts/s, p95 manifest latency (B7, B6). (ii) the encoders' floor - **approved 2026-11-17, after the `alpha.8` readings:** `MediaRecorder` at 1 and 1.5 Mb/s, WebCodecs at a fixed bitrate at 720p and 480p, encode and decode support of H.264, H.265 and AV1 on the Mi 9T and the iPhone 12 (every viewer decodes the broadcaster's codec, the server transcoding nothing, so H.264 unless every viewer decodes another) - feeds (c). **Measured 2026-11-17 ([below](#stage-0-ii---the-bitrate-floor-measured-2026-11-17)) at 720p and 480p: the floor is `MediaRecorder`'s; WebCodecs holds about 1 Mb/s at 720p on both phones. 360p was not measured.** (iii) the host's egress from a client that is not the bottleneck (done 2026-11-17, above) | the B7 curve and the encoder floor are on this page |
 | **1 - the manifest stops costing a full check per poll** | F1, F2, F3 below; helps at 24 too; no infrastructure | local, then dev | stage 0 (i) again, before / after | polls cost one indexed read + one O(1) Redis op |
-| **2 - segments to R2 on dev** | (a2) on dev only: the bucket, `segmentBase`, CORS, CSP, the purge against R2; register C19 and the privacy text drafted (HELD, as the lives text was until [live-production](live-production.md#5-the-privacy-policy-and-the-terms---written-2026-10-29-owed-the-owners-reread) 5) | dev, behind its real edge | `X-Canari-Cache` gone from the viewer path; the host's interface bytes during a live (`/proc/net/dev`, read-only) ~3 Mb/s per live whatever N; R2's operation counts per live-hour against the table above; glass-to-glass with the WP-L1 collector (does R2 add to the 5.8-7.3 s?); the purge's empty listing in R2 after an end and after a cut | host egress independent of N, latency unchanged within a second |
-| **3 - the visible cap goes** | seats -> counter (F1 done), `LIVE_FULL` and its screen retired, the guards of (e) in place, `limit_conn` per address deleted (segments no longer reach our nginx), Redis-down behaviour per O-4 | dev, then the first announced production live | the admission spike of a real follower push (stage 0's script firing N joins in a second); 429 rates; no `LIVE_FULL` in any log | the owner's yes on O-1..O-4 |
-| **4 - the number of lives** | (c) as D2 continued: the tier of each live from the total upload load | dev | WP-L1's restart gap on both phones (LIVE-B1 row 8) | only if lives at once approach ~23 |
+| **2 - the cap re-derived** | `LIVE_HOST_EGRESS_BPS`, `LIVE_EGRESS_SHARE` and the cap from the measured egress and the school IT department's share (G14) | dev, then production | the host's interface bytes during a dev live (`/proc/net/dev`, read-only) against the viewer count | the constant reads a measured figure |
+| **3 - quality steps down instead of refusing** | (c): seats count (F1), the server tells the broadcaster a `targetBps` in the ingest answer from the total audience, the broadcaster restarts its recorder at the next segment boundary; `LIVE_FULL` and its screen retired; (e)'s guards in place, "Connexion au direct..." for what is still refused | dev, then the first announced production live | the restart gap of a new recorder on both phones (LIVE-B1 row 8); the admission spike of a real follower push (stage 0's script firing N joins in a second); 429 rates; no `LIVE_FULL` in any log | stage 0 (ii) shows a tier below the current one |
 
 **Five lines:**
 
-1. The visible cap exists only because every viewer's copy leaves the school host's ~90 Mb/s uplink (24 x 3 Mb/s); nothing else binds below the hundreds.
-2. Move the segments to an R2 bucket on our own `canari-emse.fr` zone: the host uploads one copy per live, viewers fetch ciphertext from Cloudflare, the key and the manifest stay per-viewer on the host.
-3. Before or alongside it, make the manifest poll cheap (per-live seat set, the watch rule checked once per seat lease, a server-told poll interval) - the next wall at a few hundred viewers.
-4. Then retire `LIVE_FULL`: seats only count, and what still needs a guard answers "Connexion au direct..." with an automatic retry, never "complet".
-5. Quality step-down (c) bounds the number of simultaneous lives, not the audience; tiers (b) and peer assist (d) are not on the path.
+1. The visible cap exists because every viewer's copy leaves the school host, at a figure (~90 Mb/s) that was the measuring workstation's path, not the host's.
+2. The bytes stay on the host (owner, 2026-11-17): no R2, no Stream; the store stays S3-generic so a self-hosted one remains possible.
+3. Make the manifest poll cheap first (per-live seat set, the watch rule checked once per seat lease, a server-told poll interval) - the next wall at a few hundred viewers.
+4. Past the host's share, the live's one tier steps down for everyone (D2 reversed), bounded by the encoder floor stage 0 (ii) measures.
+5. What still needs a guard answers "Connexion au direct..." with an automatic retry, never "complet"; Redis down still fails closed, since a cap remains.
+
+### Stage 0 (ii) - the bitrate floor, measured 2026-11-17
+
+**The question**: can a live go down to about 1 Mb/s, so that (c) - quality steps down when the
+audience grows, the owner's choice of 2026-11-17 with lives kept on our own server - has room to
+step into? Taken with [`tools/live-bench/codec-bench.js`](../../../../tools/live-bench/README.md#the-bitrate-floor-and-codec-bench-live-scaling-stage-0-ii-2026-11-17),
+no network and no account.
+
+**How.** Mi 9T **inside the app's WebView** (Android 16, WebView 152); iPhone 12 in **Safari**
+(iOS 27.0.1: the TestFlight WKWebView is not inspectable, and a LAN `http://` test page gets no
+camera; Safari runs the same WebKit and VideoToolbox). Each run: 60 s, video only, 30 fps asked,
+**2 s keyframes** as the product asks. Two sources: the **back camera** (portrait track,
+720x1280 / 480x848; both phones lie on a desk, so the scene is near-static and flatters every
+encoder), and a **synthetic busy scene** (seeded circles and text panned 2 px a frame, a turning bar,
+1280x720 / 848x480, the same on both phones - the worst case the camera could not give).
+`MediaRecorder` (MR) runs exactly the product's shape: `video/mp4;codecs=avc1.42E01F`, a 2 s
+timeslice, `videoKeyFrameIntervalDuration` 2 s. WebCodecs (WC) runs `VideoEncoder` with `bitrate`,
+`bitrateMode: 'constant'`, `latencyMode: 'realtime'`, `hardwareAcceleration: 'prefer-hardware'`
+(every probe answered supported on both phones), and a keyframe every 60 frames. **Delivered** =
+bytes x 8 / wall time; **steady** leaves out the first 10 s; a segment is 2 s of output. Audio is
+not in these numbers: the product adds `LIVE_AUDIO_BPS` = 0.064 Mb/s.
+
+**Mi 9T (app WebView), Mb/s**
+
+| API | Source | Codec | Size | Ask | Delivered (steady) | 2 s segment p50 / max | Keyframes | fps out |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| MR | camera | H.264 baseline | 720p | 1.0 | **2.49** (2.50) | 618 / 1 248 KB | 28/28 aligned | - |
+| MR | camera | H.264 baseline | 720p | 1.5 | **2.48** (2.49) | 618 / 1 243 KB | 28/28 | - |
+| MR | camera | H.264 baseline | 480p | 1.0 | **2.47** (2.58) | 614 / 1 245 KB | 25/25 | - |
+| MR | camera | H.264 baseline | 480p | 1.5 | **2.47** (2.48) | 617 / 1 245 KB | 27/27 | - |
+| MR | synthetic | H.264 baseline | 720p | 1.0 | 1.27 | 313 / 664 KB | 29/29 | - |
+| MR | synthetic | H.264 baseline | 480p | 1.0 | 0.85 | 205 / 448 KB | 29/29 | - |
+| WC | camera | H.264 baseline `avc1.42E01F` | 720p | 1.0 / 1.5 | **1.00 / 1.50** | 244 / 248, 366 / 373 KB | 1 per 60 frames | 30 |
+| WC | camera | H.264 baseline | 480p | 1.0 / 1.5 | **1.00 / 1.50** | 244 / 249, 366 / 373 KB | idem | 30 |
+| WC | camera | H.264 main `avc1.4D401F` | 720p | 1.0 / 1.5 | **1.00 / 1.50** | 244 / 248, 366 / 372 KB | idem | 30 |
+| WC | camera | H.264 main | 480p | 1.0 / 1.5 | **1.00 / 1.50** | 244 / 249, 366 / 373 KB | idem | 30 |
+| WC | camera | H.264 baseline | 720p | **0.6** | **0.60** | 146 / 149 KB | idem | 30 |
+| WC | camera | H.265 `hvc1` | 720p | 1.0 | 1.00 | 244 / 248 KB | idem | 30 |
+| WC | synthetic | H.264 baseline | 720p | 1.0 / 1.5 | 0.93 / 1.39 | 229 / 246, 341 / 369 KB | idem | 27.9 |
+| WC | synthetic | H.264 baseline | 480p | 1.0 | 0.99 | 242 / 320 KB | idem | 29.8 |
+| WC | synthetic | H.265 `hvc1` | 720p | 1.0 | 0.93 | 230 / 243 KB | idem | 27.9 |
+
+**iPhone 12 (Safari), Mb/s**
+
+| API | Source | Codec | Size | Ask | Delivered (steady) | 2 s segment p50 / max | Keyframes | fps out (frames skipped by the encoder) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| MR | camera | H.264 baseline | 720p | 1.0 / 1.5 | 0.94 / 1.34 | 232 / 237, 330 / 337 KB | 30/30 aligned | - |
+| MR | camera | H.264 baseline | 480p | 1.0 / 1.5 | 0.88 / 1.34 | 217 / 221, 331 / 336 KB | 30/30 | - |
+| MR | synthetic | H.264 baseline | 720p | 1.0 | **1.70** | 416 / 558 KB | 30/30 | - |
+| MR | synthetic | H.264 baseline | 480p | 1.0 | **1.70** | 420 / 456 KB | 30/30 | - |
+| WC | camera | H.264 baseline | 720p | 1.0 / 1.5 | 0.89 / 1.37 | 218 / 233, 330 / 360 KB | 1 per 60 frames | 29.5 (1.5 %) / 30 |
+| WC | camera | H.264 baseline | 480p | 1.0 / 1.5 | 0.90 / 1.35 | 219 / 227, 331 / 339 KB | idem | 30 |
+| WC | camera | H.264 main | 720p | 1.0 / 1.5 | 0.88 / 1.34 | 214 / 230, 326 / 345 KB | idem | 29.6 (1.5 %) / 30 |
+| WC | camera | H.264 main | 480p | 1.0 / 1.5 | 0.89 / 1.35 | 217 / 226, 329 / 338 KB | idem | 30 |
+| WC | camera | H.264 baseline | 720p | **0.6** | 0.51 | 125 / 133 KB | idem | 28.5 (5 %) |
+| WC | camera | H.265 `hvc1` | 720p | 1.0 | 0.95 | 233 / 245 KB | idem | 30 |
+| WC | synthetic | H.264 baseline | 720p | 1.0 / 1.5 | **0.94** / 1.41 | 230 / 248, 347 / 382 KB | idem | 25.8 (7 %) / 27.8 |
+| WC | synthetic | H.264 baseline | 480p | 1.0 | 0.94 | 232 / 248 KB | idem | 27.8 |
+| WC | synthetic | H.265 `hvc1` | 720p | 1.0 | **1.13** | 286 / 400 KB | idem (keyframes 146 KB) | 27.8 |
+
+The synthetic source reached the encoders at ~27.8 fps (the page draws it), so a WC delivery of 0.93
+there is the 1.0 ask per frame. Every MR chunk carrying a fragment started on a sync sample, on both
+phones and every run; the Mi's chunks still come in pairs (the 2 x p50 maxima: L-F1).
+
+**The picture.** A decoded frame of each run (~30 s; for WC the 15th frame after a keyframe, so a
+predicted frame) was put full screen on the phone and screenshotted; the screenshots are not
+committed (they carry the phone's status bar). Read by eye, at phone size: on the camera scene, WC at
+1.0 and even 0.6 Mb/s shows no blocking on either phone, only a slight softening at 0.6 - which says
+little, the scene being static. On the **synthetic** scene, **720p at 1.0 Mb/s (WC on both phones,
+MR on the Mi at 1.27) is acceptable**: text from ~14 px up is legible, the 10 px text smears, the
+moving bar has no blocking. 480p at 1.0 is softer still once scaled to the screen width and is not
+better per bit, so at ~1 Mb/s 720p is the better use of the bits on this content. 0.6 Mb/s on a busy
+scene was not measured.
+
+**What it says.**
+
+1. **The Android floor is a `MediaRecorder` artefact, and WebCodecs avoids it.** In the same app
+   WebView, the same phone's hardware H.264 encoder delivers exactly what WebCodecs asks - 0.60, 1.00,
+   1.50 Mb/s at 720p and 480p, 30 fps, nothing skipped - while `MediaRecorder` on the camera delivers
+   ~2.48 Mb/s whatever the ask (1.0 or 1.5) and whatever the size (720p or 480p), as WP-L1 found
+   (2.6). It is not the content: `MediaRecorder` fed the busier synthetic canvas delivers 1.27 for 1.0.
+   It is the camera-to-recorder path. **Asking `MediaRecorder` for less on Android changes nothing.**
+2. **The iPhone honours its ask only on an easy scene.** MR delivers 0.94 for 1.0 on the camera but
+   **1.70 for 1.0 on the busy scene** - the ask is a target, not a cap. WC `constant` holds the rate
+   (0.94 for 1.0 on the busy scene) by skipping frames when pressed (7 % at 720p 1.0; 5 % at 0.6 on
+   the camera).
+3. **The lowest delivered bitrate at acceptable quality: ~1.0 Mb/s at 720p, both phones, by
+   WebCodecs H.264 (`constant`)** - Mi 0.93-1.00, iPhone 0.89-0.94. 480p at the same rate holds too
+   and buys nothing. By `MediaRecorder` it is **~2.5 Mb/s on Android** (a floor) and **0.9-1.7 Mb/s on
+   the iPhone** (scene-dependent), so a 1 Mb/s step-down is not reachable with the recorder the
+   product uses today.
+4. **Arithmetic A at 1.0 Mb/s**: 72 / 1.06 (with audio) = **~67 viewers** on the share, against 24
+   today - the (c) step-down is real, but only through a WebCodecs broadcaster.
+
+**What a WebCodecs broadcaster would owe (not built, not measured here):** an fMP4 muxer of our own
+(WC hands out raw chunks; `MediaRecorder` muxed them), audio through `AudioEncoder` (AAC or Opus in
+MP4 on both engines: unmeasured), and a sealed segment cut at each requested keyframe. In exchange,
+the bitrate is a `configure()` away mid-live _(unverified: a reconfigure's gap was not measured)_,
+which is what (c) and [O-5](#7-the-decisions-owed-by-the-owner) need instead of a recorder restart.
+
+**Codec support** (S = supported; hw = the `prefer-hardware` probe; the iPhone answers `true` to
+every hint, so its hw column does not discriminate):
+
+| Codec | Mi 9T record (MR) | Mi 9T encode (WC, hw) | Mi 9T decode (MSE / WC) | iPhone record (MR) | iPhone encode (WC) | iPhone decode (ManagedMediaSource / WC) |
+| --- | --- | --- | --- | --- | --- | --- |
+| H.264 baseline / main | S / S | S, hw, `constant` | S / S, power-efficient | S / S | S, `constant` | S / S, power-efficient |
+| H.264 high | S | hw only (no software) | S / S | S | S | S / S |
+| H.265 `hvc1` / `hev1` | S / S | hw only | S / S, power-efficient | S / S | S | S / S, not smooth per `mediaCapabilities` |
+| AV1 `av01` | no | no | S / S, software (not power-efficient) | no | no | no / no |
+
+**Which codecs.** **H.264 stays** - everything encodes and decodes it in hardware, and the viewers'
+desktop browsers decode it. H.265 encodes on both phones but saved nothing at the same rate here
+(1.00 vs 1.00 on the Mi; on the iPhone its `constant` mode overshot, 1.13 for 1.0), and desktop
+decode of it is not universal _(not measured here)_. AV1 is out: neither phone encodes it, and the
+iPhone 12 cannot decode it.
 
 ## 4. The follow-ups this design writes and does not build
 
@@ -270,15 +409,18 @@ moves ciphertext and counts; none moves a key.**
 
 ## 7. The decisions owed by the owner
 
-| # | Decision | Recommendation |
-| --- | --- | --- |
-| O-1 | **Cloudflare R2 as the store and the delivery of live segments** - a new processor that sees viewers' IP addresses, the live id and timing (register C19, privacy policy section 4, an EU-located bucket _(availability unverified)_) | **Yes** - it is the only option that removes the uplink bound, and the content stays sealed |
-| O-2 | **Ask Cloudflare in writing** whether R2 on a custom domain may serve these segments under the CDN clause, before building stage 2 | **Yes** - an action on the zone would take dev, the legacy names and our SSH path with it |
-| O-3 | **Production before stage 2**: (i) open at 24 as [live-production](live-production.md#7-the-decisions-owed-by-the-owner) D-4 planned, with `live complet` replaced by the automatic-retry "Connexion au direct..." of (e) - a ceiling with a softer face; or (ii) no public production live until stage 2 | **(i)**, said plainly as a ceiling that remains until stage 2, because every later stage needs production readings - but it REVERSES the letter of the wish for that period, so it is the owner's call |
-| O-4 | **Redis down with no cap**: keep playing (the count is unknown, nothing is overrun once segments are off the host) or stop every viewer as today | **Keep playing after stage 2**, with an `error` line; stop as today before it |
-| O-5 | **Reverse D2** (bitrate fixed at launch) to allow the live's single tier to step down mid-live, for the number of lives (stage 4) | **Not now** - only if stage 0 (ii) shows the encoders go lower and the restart gap is short |
-| O-6 | **A block or a space change takes effect within one seat lease (30 s)** instead of one poll, for the manifest's cost (F2); a removal stays immediate | **Yes** |
-| O-7 | **The blocked-author filter of the chat moves to the client** (a blocked author's sealed lines reach the blocker's device and are dropped there), so the tail can be shared - already listed on [live](live.md#the-manifest-poll-grows-with-the-audience-too) | **Yes**, it is ciphertext the viewer already holds the key to |
+**Answered by the owner on 2026-11-17** ([decisions](../../backlog.d/owner-decisions-of-2026-11-17.md));
+the recommendations of 2026-10-21 are kept in the third column as the record.
+
+| # | Decision | Recommended 2026-10-21 | **Answer, 2026-11-17** |
+| --- | --- | --- | --- |
+| O-1 | **Cloudflare R2 as the store and the delivery of live segments** - a new processor that sees viewers' IP addresses, the live id and timing | Yes | **No, for now.** The lives stay on the server (principle 4); Cloudflare Stream is refused as well (it reads the cleartext - principle 1 - and bills per viewer-minute). The storage stays S3-generic, so a SELF-HOSTED store remains possible |
+| O-2 | **Ask Cloudflare in writing** whether R2 on a custom domain may serve these segments under the CDN clause | Yes | **Moot** (no R2). For the record: the CDN terms ask for a paid service of the Developer Platform (or Images, or Stream) to serve video, as read in [(a)](#a-segments-from-cloudflare-not-from-the-host) from the [Service-Specific Terms](https://www.cloudflare.com/service-specific-terms-application-services/); whether a free R2 bucket qualifies is unresolved |
+| O-3 | **Production before stage 2**: open at 24 with "Connexion au direct..." in place of `live complet`, or no public production live until stage 2 | (i) | **(i) is the standing state**: there is no R2 stage to wait for; the cap remains, re-derived from the measured egress (stage 2 of section 3), and a refused viewer meets (e)'s retry, never `live complet` |
+| O-4 | **Redis down with no cap**: keep playing, or stop every viewer as today | Keep playing after stage 2 | **Moot**: a cap remains, so Redis down fails closed as today |
+| O-5 | **Reverse D2** (bitrate fixed at launch) so the live's single tier steps down mid-live | Not now | **Yes**: the quality step-down (c) is the audience answer, bounded by the encoder floor stage 0 (ii) measures. Measured 2026-11-17: lower is reachable through WebCodecs only; the reconfigure gap is still unmeasured |
+| O-6 | **A block or a space change takes effect within one seat lease (30 s)** instead of one poll, for the manifest's cost (F2); a removal stays immediate | Yes | Not asked again; the recommendation stands until F2 is built |
+| O-7 | **The blocked-author filter of the chat moves to the client**, so the tail can be shared | Yes | Not asked again; the recommendation stands until F3 is built |
 
 ## See also
 

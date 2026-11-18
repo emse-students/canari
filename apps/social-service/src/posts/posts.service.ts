@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument */
 import { assertWithinPostAttachmentCap } from './post-attachment-cap';
+import { readRetentionDays } from '../common/retention-settings';
 import {
   memberRepostContext,
   EMPTY_MEMBER_REPOST_CONTEXT,
@@ -36,8 +37,8 @@ import {
 import {
   DAY_MS,
   REEL_EXPIRY_WARNING_DAYS,
-  REEL_RETENTION_DAYS,
   isExpiredPost,
+  reelLimits,
   type PostKind,
 } from './reel.constants';
 import { assertReelEditShape } from './reel-rules';
@@ -138,18 +139,25 @@ interface RankedArm {
   banded: boolean;
 }
 import {
+  authorDoorHoldsSql,
   commentsWithheldFromViewerSql,
   postVisibleToViewerSql,
   readInFeedAudience,
   reviewCohortAuthorFilterSql,
   type PostAccessIntent,
 } from '../spaces/reader-spaces';
-import { POST_EDIT_PUBLISHER_ONLY, bdeModeratesContentSql } from '../spaces/bde-moderation';
+import { POST_EDIT_PUBLISHER_ONLY, bdeModerationReadsPostSql } from '../spaces/bde-moderation';
 import { sameSideOfReviewCohort } from '../review-cohort';
 import { PINNED_FOR_VIEWER_IDS_SQL, pinnedForViewerSql, type PinSpace } from './space-pins';
 import { SpacePinsService } from './space-pins.service';
 import { SCHEDULED_EDIT_CANDIDATES_SQL, SCHEDULED_EDIT_LIMIT } from './scheduled-edit';
 import { assertFormNotDraft } from '../forms/form-status';
+import { assertAuthorManagesForm, assertFormOfAssociation } from '../forms/form-ownership';
+import {
+  assertNoFormOnAnonymousPost,
+  assertNoInlineFormsList,
+  withholdFormsOfHiddenAuthor,
+} from './attached-form';
 import {
   commentsWithheldPostIds,
   ownEntryOnly,
@@ -163,6 +171,20 @@ import {
   republishersOf,
   type Republisher,
 } from './republication-sql';
+
+/** What the writer rule (`viewerSeesWriter`) reads of a reader: the moderation half of the context. */
+type WriterViewer = Pick<PostViewerContext, 'viewerId' | 'isGlobalAdmin' | 'moderatedIds'>;
+
+/** What the writer rule reads of a post: under which name it was published, and by whom. */
+interface ServedWriterPost {
+  id?: string;
+  anonymous?: boolean;
+  associationId?: string | null;
+  authorId?: string | null;
+}
+
+/** A row of `/posts/hidden`: the post's id, and its columns as served to this moderator. */
+type HiddenPostRow = Record<string, unknown> & { id: string };
 
 /**
  * Who is reading, and what they already hold - resolved once per request and carried into every
@@ -227,6 +249,15 @@ interface PostViewerContext {
    * 2026-11-04) - `commentsWithheldPostIds`, the one predicate. Served as `canSeeComments: false`.
    */
   commentsWithheldIds: Set<string>;
+  /**
+   * Ids, among the batch, of the posts the reader may ACT on as a reader - open to them by the
+   * audience predicate with no admin widening (`postVisibleToViewerSql`, grants counted, as a reaction
+   * asks). `null` means every post of the batch: a reader who moderates none of it is only ever
+   * served a post they see. Read for a platform admin and for a BDE moderator of a post of the
+   * batch, who may be served it through the moderation read (2026-11-14; owner, 2026-11-15).
+   * Served as `canParticipate`.
+   */
+  participableIds: Set<string> | null;
 }
 
 /** A request one of the reader's associations made for a personal post and that still stands (D38b). */
@@ -268,8 +299,17 @@ interface PostCapabilities {
   pinSpaces: PinSpace[];
   /** WP-PIN: shown pinned in one of the READER's spaces (their own, or a read grant's cell). */
   pinned: boolean;
-  /** The flag. Withheld only from the post's own publisher - reporting yourself means nothing. */
+  /**
+   * The flag. Withheld from the post's own publisher - reporting yourself means nothing - and from a
+   * reader who may not act on it (`canParticipate` false): the report asks the reader's gate.
+   */
   canReport: boolean;
+  /**
+   * The reader may react to and comment on this post: it is open to them as a reader. False only
+   * for a platform admin served it by the moderation read (the post by id) outside their own
+   * audience (2026-11-14): the card then offers no reaction, comment or report control.
+   */
+  canParticipate: boolean;
   /** Clears an anonymous post's flag, revealing its author. The moderation tier (`viewerModerates`). */
   canUnmaskAnonymous: boolean;
   /**
@@ -510,16 +550,17 @@ export class PostsService {
     pinnedIds: new Set(),
     pinSpaces: new Map(),
     commentsWithheldIds: new Set(),
+    participableIds: new Set(),
   };
 
   /**
    * Builds the per-reader context for a batch of rows: two queries for a whole page, whatever its
    * length, and none at all for a reader whose answer is already known.
    *
-   * A global administrator short-circuits both - `viewerCapabilities` grants them every control
-   * before it looks at either field. The D38b fields are the exception, read for an administrator
-   * too: asking an author is a right the administrator tier does not grant, so they need their own
-   * memberships like anybody else.
+   * A global administrator short-circuits the moderation and management fields - the admin tier
+   * holds them. The grant-free set (a vote, a republication) and the D38b fields are read for an
+   * administrator too: participating and asking an author are rights the administrator tier does
+   * not grant (2026-11-14), so they need their own sight and memberships like anybody else.
    */
   private async viewerContext(
     rows: { id?: string; associationId?: string | null }[],
@@ -540,12 +581,21 @@ export class PostsService {
       const adminAssociationIds = rows
         .map((row) => row.associationId)
         .filter((id): id is string => !!id);
+      // A vote and a republication ask an admin the ordinary reader's right (2026-11-14), so their
+      // controls are read from the same grant-free set as anyone's - one query for the page.
+      const grantFree = await this.grantFreeVisibleIds(postIds, viewerId);
+      // What they may act on, and whose comments are withheld from them, as the reader they are:
+      // the moderation read opens a post to an admin, never a reaction or a comment (2026-11-14).
+      const participableIds = await this.readerVisibleIds(postIds, viewerId);
       return {
         memberReposts: await memberRepostContext(this.postRepo.manager, postIds, viewerId),
         ...(await this.pinContext(postIds, viewerId, true)),
-        // Nothing is withheld from an administrator: the predicate's `adminSeesAll` arm opens every
-        // post to them without a grant, so asking it would cost a query to learn an empty set.
-        commentsWithheldIds: new Set(),
+        commentsWithheldIds: await commentsWithheldPostIds(
+          this.postRepo.manager,
+          postIds.filter((id) => participableIds.has(id) && !grantFree.grantFreeIds.has(id)),
+          viewerId
+        ),
+        participableIds,
         viewerId,
         isGlobalAdmin: true,
         moderatedIds: new Set(),
@@ -560,8 +610,8 @@ export class PostsService {
               )
             : new Set<string>(),
         republishAsIds: new Set(),
-        grantFreeIds: new Set(),
-        firstHandIds: new Set(),
+        grantFreeIds: grantFree.grantFreeIds,
+        firstHandIds: grantFree.firstHandIds,
         ...(await this.personalRequestContext(personalIds, viewerId, memberships.personal)),
       };
     }
@@ -579,12 +629,21 @@ export class PostsService {
         memberRepostContext(this.postRepo.manager, postIds, viewerId),
         this.pinContext(postIds, viewerId, false),
       ]);
+    // A BDE moderator may be served a post they moderate through the moderation read (owner,
+    // 2026-11-15: "Oui, dans ses espaces"), never to act on it outside their own audience: those
+    // posts alone are asked the ordinary reader's predicate. `null` when they moderate none of the
+    // page - every post served is then one they see, and no query is made.
+    const participableIds =
+      moderatedIds.size > 0 ? await this.participableAmong(postIds, moderatedIds, viewerId) : null;
     // Only a post the reader does NOT see without a grant can have its comments withheld (the
     // predicate's own last term), so the predicate is asked of those alone: none on an ordinary
-    // reader's page, and no query for it at all.
+    // reader's page, and no query for it at all. A post read as its moderator is not withheld.
     const commentsWithheldIds = await commentsWithheldPostIds(
       this.postRepo.manager,
-      postIds.filter((id) => !grantFree.grantFreeIds.has(id)),
+      postIds.filter(
+        (id) =>
+          !grantFree.grantFreeIds.has(id) && (participableIds === null || participableIds.has(id))
+      ),
       viewerId
     );
     return {
@@ -598,6 +657,7 @@ export class PostsService {
       grantFreeIds: grantFree.grantFreeIds,
       firstHandIds: grantFree.firstHandIds,
       commentsWithheldIds,
+      participableIds,
       ...(await this.personalRequestContext(personalIds, viewerId, memberships.personal)),
     };
   }
@@ -626,6 +686,43 @@ export class PostsService {
   }
 
   /**
+   * Of `postIds`, those `viewerId` sees as an ORDINARY READER - the audience predicate, grants
+   * counted, no admin widening: what a reaction or a comment asks (`readPostOpenVerdict` without
+   * `allowHidden`). One query for the page; asked of whoever may be served a post through the
+   * moderation read - a platform admin, a BDE moderator (`participableIds`).
+   */
+  private async readerVisibleIds(postIds: string[], viewerId: string): Promise<Set<string>> {
+    if (postIds.length === 0) return new Set();
+    const rows: unknown = await this.postRepo.manager.query(
+      `SELECT posts.id FROM posts WHERE posts.id = ANY($1::uuid[])
+         AND ${postVisibleToViewerSql('posts', '$2')}`,
+      [postIds, viewerId]
+    );
+    const ids = new Set((Array.isArray(rows) ? (rows as { id: string }[]) : []).map((r) => r.id));
+    if (ids.size < postIds.length) {
+      this.logger.debug(
+        `[VISIBILITY] moderator ${viewerId.slice(0, 8)}: ${postIds.length - ids.size} of ${postIds.length} post(s) served by the moderation read only`
+      );
+    }
+    return ids;
+  }
+
+  /**
+   * A BDE moderator's `participableIds`: every post of the page they do not moderate (served to
+   * them by the ordinary predicate, so seen), plus those they moderate AND see as a reader. Only
+   * the moderated ones are queried.
+   */
+  private async participableAmong(
+    postIds: string[],
+    moderatedIds: Set<string>,
+    viewerId: string
+  ): Promise<Set<string>> {
+    const moderated = postIds.filter((id) => moderatedIds.has(id));
+    const seen = await this.readerVisibleIds(moderated, viewerId);
+    return new Set(postIds.filter((id) => !moderatedIds.has(id) || seen.has(id)));
+  }
+
+  /**
    * Of `postIds`, those `viewerId` sees WITHOUT a read grant - ONE query for a page, through the
    * same `postVisibleToViewerSql` (`readGrants: false`) that `assertVisible(.., 'VOTE')` and the
    * republication path enforce, so a control is offered exactly when its write is accepted.
@@ -639,9 +736,9 @@ export class PostsService {
     if (postIds.length === 0) return { grantFreeIds, firstHandIds };
     const rows: unknown = await this.postRepo.manager.query(
       `SELECT posts.id,
-              ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: true, readGrants: false, memberReposts: false })} AS "firstHand"
+              ${postVisibleToViewerSql('posts', '$2', { readGrants: false, memberReposts: false })} AS "firstHand"
          FROM posts WHERE posts.id = ANY($1::uuid[])
-         AND ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: true, readGrants: false })}`,
+         AND ${postVisibleToViewerSql('posts', '$2', { readGrants: false })}`,
       [postIds, viewerId]
     );
     for (const r of Array.isArray(rows) ? (rows as { id: string; firstHand: boolean }[]) : []) {
@@ -720,7 +817,7 @@ export class PostsService {
             AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= now())
             AND (posts."expiresAt" IS NULL OR posts."expiresAt" > now())
             AND posts.kind <> 'replay'
-            AND ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: false, readGrants: false, memberReposts: false })}
+            AND ${postVisibleToViewerSql('posts', '$2', { readGrants: false, memberReposts: false })}
             AND NOT EXISTS (SELECT 1 FROM user_blocks req_block
               WHERE (req_block."blockerId" = $2 AND req_block."blockedId" = posts."authorId")
                  OR (req_block."blockerId" = posts."authorId" AND req_block."blockedId" = $2))`,
@@ -801,7 +898,7 @@ export class PostsService {
   }
 
   /** The reader moderates this post: a platform admin, or a BDE whose governed spaces hold it. */
-  private viewerModerates(post: { id?: string }, viewer: PostViewerContext): boolean {
+  private viewerModerates(post: { id?: string }, viewer: WriterViewer): boolean {
     return viewer.isGlobalAdmin || (!!post.id && viewer.moderatedIds.has(post.id));
   }
 
@@ -833,20 +930,24 @@ export class PostsService {
     const isPublisher = this.viewerIsPublisher(post, viewer);
     const isModeratorTier = this.viewerModerates(post, viewer);
     const pinSpaces = (post.id && viewer.pinSpaces.get(post.id)) || [];
+    const participates =
+      !!viewer.viewerId &&
+      (viewer.participableIds === null || (!!post.id && viewer.participableIds.has(post.id)));
     return {
       canManage: isModeratorTier || isPublisher,
       canEdit: isPublisher,
       canPin: pinSpaces.length > 0,
       pinSpaces,
       pinned: !!post.id && viewer.pinnedIds.has(post.id),
-      canReport: !!viewer.viewerId && !isPublisher,
+      canReport: !!viewer.viewerId && !isPublisher && participates,
+      canParticipate: participates,
       canUnmaskAnonymous: !!post.anonymous && isModeratorTier,
       canRepublish: this.viewerMayRepublish(post, viewer),
       canProposeRepublication:
         !!viewer.viewerId && !!post.associationId && (viewer.isGlobalAdmin || isPublisher),
       canUnrepublishAs: this.viewerMayUnrepublishAs(post, viewer),
-      canVote:
-        !!viewer.viewerId && (viewer.isGlobalAdmin || this.viewerSeesWithoutGrant(post, viewer)),
+      // An admin votes where an ordinary reader would (`assertMayVote`, 2026-11-14).
+      canVote: !!viewer.viewerId && this.viewerSeesWithoutGrant(post, viewer),
       canSeeComments: !post.id || !viewer.commentsWithheldIds.has(post.id),
       canRequestRepublication: this.viewerMayRequestRepublication(post, viewer),
       republicationRequests: post.id
@@ -923,57 +1024,65 @@ export class PostsService {
     viewer: PostViewerContext
   ): boolean {
     if (!viewer.viewerId || !post.associationId) return false;
-    if (viewer.isGlobalAdmin) return true;
     // A grant opens a post to read only, and a member's repost is not a door an association
-    // republishes through (no chain): either is a 404 (`RepublicationsService`).
+    // republishes through (no chain): either is a 404 (`RepublicationsService`). An admin too: a
+    // republication is participation, asked of their own first-hand sight (2026-11-14).
     if (!post.id || !viewer.firstHandIds.has(post.id)) return false;
+    if (viewer.isGlobalAdmin) return true;
     const already = new Set((post.republishedBy ?? []).map((r) => r.id));
     return [...viewer.republishAsIds].some((id) => id !== post.associationId && !already.has(id));
   }
 
   /**
-   * Whether THIS viewer must have `authorId` withheld on a post marked `anonymous`.
+   * THE ONE RULE FOR "THE WRITER BEHIND A NAME": does THIS reader see the account that wrote a post
+   * published under a name that is not that account's - "Anonyme", or an association's (decision
+   * 11 of [moderation-authority](docs/wiki/moderation-authority.md), owner 2026-11-15).
    *
-   * A moderator, a platform admin, and the post's OWN author all see past the flag (a user
-   * request, 2026-09-17: *"il faut aussi qu'un moderateur sache qu'un poste a ete publie en
-   * anonyme, meme s'il peut voir le nom du posteur - pareil pour le posteur lui-meme quand il voit
-   * son post"*) - same shape as `listMembers`'s `permissions` vs `isAdmin` (the row's own owner
-   * gets the raw field too, not just an admin). `anonymous` itself is never stripped for anyone,
-   * so the client can still show it was published anonymously to whichever of these three receives
-   * the real `authorId`.
+   * A personal post signed by its author has nothing to withhold. Otherwise the writer is seen by
+   * whoever moderates the post (a platform admin, a BDE whose spaces hold it - `viewerModerates`)
+   * and by the writer themself; nobody else, the association's other holders included (nothing was
+   * decided for them). The anonymous half is a user request of 2026-09-17: *"il faut aussi qu'un
+   * moderateur sache qu'un poste a ete publie en anonyme, meme s'il peut voir le nom du posteur -
+   * pareil pour le posteur lui-meme quand il voit son post"*; the association half is the owner's,
+   * as an association COMMENT's writer already is (`seesAccount`, `comment-identity.ts`).
+   *
+   * Every read that serves a post asks THIS, through `withholdWriterUnlessSeen` - the card, by id,
+   * the feeds, the search and `/posts/hidden` - so no two screens can disagree about one post.
    */
-  private mustHideAnonymousAuthor(
-    post: { id?: string; anonymous?: boolean; authorId?: string | null },
-    viewer: PostViewerContext
-  ) {
-    if (!post.anonymous) return false;
-    if (this.viewerModerates(post, viewer)) return false;
-    return !viewer.viewerId || viewer.viewerId !== post.authorId;
+  private viewerSeesWriter(post: ServedWriterPost, viewer: WriterViewer): boolean {
+    if (!post.associationId && !post.anonymous) return true;
+    if (this.viewerModerates(post, viewer)) return true;
+    return !!viewer.viewerId && viewer.viewerId === post.authorId;
+  }
+
+  /**
+   * Removes the writer from served row `out` when `viewerSeesWriter` says this reader does not see
+   * it - the id and the name columns, and an anonymous post's forms (they would name their
+   * manager). The ONLY place a served post loses its `authorId`: a read that builds its rows any
+   * other way serves a writer the card hides, which is how `/posts/hidden` once did.
+   */
+  private withholdWriterUnlessSeen(
+    out: Record<string, unknown>,
+    post: ServedWriterPost,
+    viewer: WriterViewer
+  ): void {
+    if (this.viewerSeesWriter(post, viewer)) return;
+    if (!post.associationId) withholdFormsOfHiddenAuthor(out);
+    delete out.authorId;
+    delete out.authorDisplayName;
+    delete out.authorFirstName;
+    delete out.authorLastName;
   }
 
   /** Strip publisher identity and attach association display for API responses. */
   private shapeListRow(p: any, viewer: PostViewerContext): any {
     const capabilities = this.viewerCapabilities(p, viewer);
     const polls = servePolls(p.polls, viewer.viewerId);
-    if (!p.associationId) {
-      const out: any = { ...p, ...capabilities, ...(p.polls !== undefined ? { polls } : {}) };
-      foldServedReach(out);
-      if (!capabilities.canSeeComments) withholdCommentsAndPeople(out, viewer.viewerId);
-      if (this.mustHideAnonymousAuthor(p, viewer)) {
-        delete out.authorId;
-        delete out.authorDisplayName;
-        delete out.authorFirstName;
-        delete out.authorLastName;
-      }
-      return out;
-    }
     const out: any = { ...p, ...capabilities, ...(p.polls !== undefined ? { polls } : {}) };
     foldServedReach(out);
     if (!capabilities.canSeeComments) withholdCommentsAndPeople(out, viewer.viewerId);
-    delete out.authorId;
-    delete out.authorDisplayName;
-    delete out.authorFirstName;
-    delete out.authorLastName;
+    this.withholdWriterUnlessSeen(out, p, viewer);
+    if (!p.associationId) return out;
     if (out.assocJoinId) {
       out.association = {
         id: out.assocJoinId,
@@ -1016,13 +1125,8 @@ export class PostsService {
     Object.assign(raw, this.viewerCapabilities(raw, viewer));
     if (raw.polls !== undefined) raw.polls = servePolls(raw.polls, viewer.viewerId);
     if (raw.canSeeComments === false) withholdCommentsAndPeople(raw, viewer.viewerId);
-    if (!raw.associationId) {
-      if (this.mustHideAnonymousAuthor(post, viewer)) {
-        delete raw.authorId;
-      }
-      return raw;
-    }
-    delete raw.authorId;
+    this.withholdWriterUnlessSeen(raw, post, viewer);
+    if (!raw.associationId) return raw;
     const rows: { id: string; name: string; slug: string; logoUrl: string | null; type: string }[] =
       await this.postRepo.manager.query(
         `SELECT id, name, slug, "logoUrl", type FROM associations WHERE id = $1`,
@@ -1184,6 +1288,15 @@ export class PostsService {
   }
 
   /**
+   * `GET /api/posts/reel-limits`: the CanaReels numbers, the lifetime as the admin setting holds it
+   * NOW (`platform_config.retention_reel_days`) - the one a reel published next is stamped with.
+   */
+  async reelLimitsInForce(): Promise<ReturnType<typeof reelLimits>> {
+    const { reelDays } = await readRetentionDays(this.postRepo.manager, this.logger);
+    return reelLimits(reelDays);
+  }
+
+  /**
    * Refuses a post `viewerId` may not open, by its id - THE SAME GATE AS `getById`
    * (`assertOpenable`, which is `readPostOpenVerdict`), so a reaction, a comment, a comment like or
    * the comment page is refused on every post the read refuses: outside the audience, a block
@@ -1214,6 +1327,35 @@ export class PostsService {
     }
     const blockedIds = await this.assertOpenable(post, { ...opts, viewerId }, intent);
     return { post, blockedIds };
+  }
+
+  /**
+   * Refuses (400 `FORM_NOT_OF_ENTITY`) a post attaching a form that is not its own entity's: an
+   * association's, institution's or list's post only its association's forms (the agenda event's
+   * rule, `assertFormOfAssociation`), a personal post only a form its author manages
+   * (`assertAuthorManagesForm` - what the composer offers a person), an ANONYMOUS post none
+   * (400 `FORM_NOT_ON_ANONYMOUS_POST`: the form would name who manages it). Asked at create, and at
+   * an edit that CHANGES the form, never for one the post already carries.
+   */
+  private async assertAttachableForm(
+    formId: string,
+    post: { associationId: string | null; anonymous: boolean },
+    author: { userId: string; isGlobalAdmin: boolean }
+  ): Promise<void> {
+    assertNoFormOnAnonymousPost(post.anonymous, formId);
+    const associationId = post.associationId;
+    const manager = this.postRepo.manager;
+    if (associationId) {
+      await assertFormOfAssociation(manager, formId, associationId, 'a post attachment');
+      return;
+    }
+    await assertAuthorManagesForm(
+      manager,
+      formId,
+      author,
+      (userId, assoc, flag, opts) => this.associationsService.mayAct(userId, assoc, flag, opts),
+      'a personal post attachment'
+    );
   }
 
   async createPost(data: any, isGlobalAdmin: boolean) {
@@ -1247,6 +1389,17 @@ export class PostsService {
     // A post is read by its audience: a DRAFT form attached to it would show them a form they cannot
     // open (`form-status.ts`). Published first, attached after.
     await assertFormNotDraft(this.postRepo.manager, data.attachedFormId, 'a post');
+    // A post presents its OWN entity's form, as an agenda event does (`form-ownership.ts`), by
+    // `attachedFormId` alone: the inline `forms` list no client ever wrote is refused.
+    assertNoInlineFormsList(data.forms);
+    delete data.forms;
+    if (data.attachedFormId) {
+      await this.assertAttachableForm(
+        data.attachedFormId,
+        { associationId: data.associationId ?? null, anonymous: data.anonymous === true },
+        { userId: typeof data.authorId === 'string' ? data.authorId : '', isGlobalAdmin }
+      );
+    }
     if (Array.isArray(data.polls)) {
       data.polls = this.normalizePolls(data.polls);
     }
@@ -1279,8 +1432,13 @@ export class PostsService {
     let reelMediaIds: string[] = [];
     if (data.kind === 'reel') {
       reelMediaIds = postMediaIds({ media: data.media });
+      // The lifetime IN FORCE NOW, stamped once (owner, 2026-11-14): a duration an admin lowers
+      // later applies to reels published after it, never to this one. Read before the claim, so an
+      // unreadable setting refuses the publish before the blob changes class.
+      const { reelDays } = await readRetentionDays(this.postRepo.manager, this.logger);
       await this.claimReelBlob(authorId, reelMediaIds);
-      data.expiresAt = new Date(Date.now() + REEL_RETENTION_DAYS * DAY_MS);
+      data.expiresAt = new Date(Date.now() + reelDays * DAY_MS);
+      this.logger.debug(`createPost: reel by ${authorId} expires in ${reelDays} days`);
     } else {
       data.kind = 'post';
       delete data.durationMs;
@@ -2389,23 +2547,59 @@ export class PostsService {
   /**
    * Returns the posts currently hidden by moderation, with their pending report count, within the
    * caller's scope (owner, 2026-11-02): every one for a platform admin, those of its governed spaces
-   * for a BDE `MODERATE` holder (`bdeModeratesContentSql`). The caller is a moderator already.
+   * for a BDE `MODERATE` holder its moderation read (`bdeModerationReadsPostSql`: a hidden post
+   * scheduled later only while an open report targets it, owner 2026-11-15, "Exclure les posts
+   * programmes"). The caller is a moderator already.
    */
-  async getHiddenPosts(scope: { userId: string; isGlobalAdmin: boolean }): Promise<any[]> {
-    return this.postRepo.manager.query(
-      `SELECT p.id, p."authorId", p.markdown, p."createdAt", p."associationId",
+  async getHiddenPosts(scope: {
+    userId: string;
+    isGlobalAdmin: boolean;
+  }): Promise<HiddenPostRow[]> {
+    const rows: (ServedWriterPost & { id: string })[] = await this.postRepo.manager.query(
+      `SELECT p.id, p."authorId", p.anonymous, p.markdown, p."createdAt", p."associationId",
               (SELECT COUNT(*)::int FROM content_reports cr
                WHERE cr."contentId" = p.id::text AND cr.status = 'pending') AS "pendingReportCount"
        FROM posts p
        WHERE p."hiddenByModeration" = true
-         AND ($2::boolean OR ${bdeModeratesContentSql('$1', 'p."associationId"', 'p."authorId"')})
+         AND ($2::boolean OR ${bdeModerationReadsPostSql('$1', 'p')})
        ORDER BY p."createdAt" DESC
        LIMIT 200`,
       [scope.userId ?? '', scope.isGlobalAdmin]
     );
+    // The writer is served by the card's own rule (decision 11), never as a raw column: every row
+    // here is in the caller's scope, so a moderator sees each writer - because the rule says so.
+    const viewer: WriterViewer = {
+      viewerId: scope.userId || undefined,
+      isGlobalAdmin: scope.isGlobalAdmin,
+      moderatedIds: scope.isGlobalAdmin
+        ? new Set<string>()
+        : await this.associationsService.moderatedPostIds(
+            scope.userId,
+            rows.map((r) => r.id)
+          ),
+    };
+    // Which writer this caller may MUTE - asked of the unredacted column, answered as a bare fact:
+    // the "delete and mute" control is drawn from it alone, never offered to be refused (a BDE mutes
+    // the people of its own spaces only, an institution's `MODERATE` holder none).
+    const mutable = await this.associationsService.moderatedUserIds(
+      scope.userId,
+      rows.map((r) => (typeof r.authorId === 'string' ? r.authorId : '')),
+      { isGlobalAdmin: scope.isGlobalAdmin }
+    );
+    const served = rows.map((row) => {
+      const out: HiddenPostRow = { ...row };
+      this.withholdWriterUnlessSeen(out, row, viewer);
+      out.canMuteAuthor = typeof row.authorId === 'string' && mutable.has(row.authorId);
+      return out;
+    });
+    this.logger.debug(
+      `[MODERATION] hidden posts (${scope.isGlobalAdmin ? 'admin' : 'bde'}): ${served.length} row(s), ` +
+        `${served.filter((r) => r.authorId === undefined).length} writer(s) withheld`
+    );
+    return served;
   }
 
-  /** Hides a post from public feeds pending moderator review. Admin only. */
+  /** Hides a post from public feeds pending review. Moderators of it only (`mayModeratePost`). */
   async hidePostByModeration(postId: string): Promise<{ ok: boolean }> {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException('Post not found');
@@ -2425,7 +2619,7 @@ export class PostsService {
     return { ok: true };
   }
 
-  /** Restores a moderation-hidden post back to the public feed. Admin only. */
+  /** Restores a moderation-hidden post to the feeds. Moderators of it only (`mayModeratePost`). */
   async unhidePost(postId: string): Promise<{ ok: boolean }> {
     await this.postRepo.manager.query(
       `UPDATE posts SET "hiddenByModeration" = false WHERE id = $1`,
@@ -2498,8 +2692,8 @@ export class PostsService {
    * the fact rather than inventing a second, invertible copy of it that could drift from the
    * first. `linkedCalendarEventId` is only ever set together with an `associationId`
    * (`resolvePostCalendarEventLink` requires one), so the row this finds is always an association
-   * post - `mustHideAnonymousAuthor` never applies to it, but `shapeListRow` still runs, for the
-   * same moderation-hidden and capability fields every other read path carries.
+   * post - its writer is served by `viewerSeesWriter` like any association post's, and `shapeListRow`
+   * runs, for the same moderation-hidden and capability fields every other read path carries.
    *
    * ONLY AN EVENT PRESENTED IN ITS ASSOCIATION'S NAME (`event-presentation.ts`): a post card names
    * its association, so the post of a neutral event would name the owner the presentation hides.
@@ -2555,6 +2749,10 @@ export class PostsService {
   async getById(
     id: string,
     opts?: {
+      /**
+       * An already-decided moderation read. Absent, it is asked here of the one predicate,
+       * `mayReadToModeratePost` (owner, 2026-11-15: a platform admin, a BDE moderator in scope).
+       */
       allowHidden?: boolean;
       viewerId?: string;
       isGlobalAdmin?: boolean;
@@ -2570,12 +2768,33 @@ export class PostsService {
       );
       throw new NotFoundException('Post not found');
     }
-    const blockedIds = await this.assertOpenable(post, opts ?? {}, 'READ_OR_REACT');
+    const allowHidden = opts?.allowHidden ?? (await this.moderatesPost(post.id, opts));
+    const blockedIds = await this.assertOpenable(
+      post,
+      { viewerId: opts?.viewerId, allowHidden },
+      'READ_OR_REACT'
+    );
     return this.serveToReader(
       post,
       { viewerId: opts?.viewerId, isGlobalAdmin: opts?.isGlobalAdmin === true },
       blockedIds
     );
+  }
+
+  /**
+   * THE MODERATION READ'S ONE QUESTION (owner, 2026-11-15: "Oui, dans ses espaces"): does this reader
+   * moderate this post - a platform admin, a BDE `MODERATE` holder within its scope, a scheduled post
+   * excepted for the latter (`AssociationsService.mayReadToModeratePost`, the one predicate). Asked
+   * by the reads that may open a post to moderate it - by id, its comment page - never by a write.
+   */
+  private async moderatesPost(
+    postId: string,
+    reader: { viewerId?: string; isGlobalAdmin?: boolean } | undefined
+  ): Promise<boolean> {
+    if (!reader?.viewerId && reader?.isGlobalAdmin !== true) return false;
+    return this.associationsService.mayReadToModeratePost(reader?.viewerId, postId, {
+      isGlobalAdmin: reader?.isGlobalAdmin === true,
+    });
   }
 
   /**
@@ -2622,7 +2841,7 @@ export class PostsService {
     otherReactionCounts?: Record<string, number>;
   }> {
     const rows: { visible: boolean; withheld: boolean }[] = await this.postRepo.manager.query(
-      `SELECT ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: true })} AS visible,
+      `SELECT ${postVisibleToViewerSql('posts', '$2')} AS visible,
               ${commentsWithheldFromViewerSql('posts', '$2')} AS withheld
          FROM posts WHERE posts.id = $1`,
       [postId, viewerId]
@@ -2716,11 +2935,14 @@ export class PostsService {
     viewerId: string | undefined,
     opts: { cursor?: number; limit?: number; order?: CommentOrder; isGlobalAdmin?: boolean }
   ) {
-    // `getById`'s gate, `allowHidden` included: a platform admin reads a hidden post's comments as
-    // they read the post itself.
+    // `getById`'s gate, the moderation read included: whoever moderates the post reads its comments
+    // as they read the post itself (owner, 2026-11-15).
     // `'COMMENT'`: a named reader from whom the comments are withheld gets the 404 of a missing post.
     const { post, blockedIds } = await this.assertVisible(postId, viewerId, 'COMMENT', {
-      allowHidden: opts.isGlobalAdmin === true,
+      allowHidden: await this.moderatesPost(postId, {
+        viewerId,
+        isGlobalAdmin: opts.isGlobalAdmin === true,
+      }),
     });
     const page = pageComments((post.comments ?? []) as any[], { ...opts, blockedIds });
     const isGlobalAdmin = opts.isGlobalAdmin === true;
@@ -2789,6 +3011,15 @@ export class PostsService {
     if ('attachedFormId' in data) {
       if (data.attachedFormId !== post.attachedFormId) {
         await assertFormNotDraft(this.postRepo.manager, data.attachedFormId, 'a post');
+        // Judged for the post's AUTHOR, who presents it: an editor's own rights add nothing, and a
+        // global admin's count only on their own post (as at create).
+        if (data.attachedFormId) {
+          await this.assertAttachableForm(
+            data.attachedFormId,
+            { associationId: post.associationId ?? null, anonymous: post.anonymous === true },
+            { userId: post.authorId, isGlobalAdmin: isGlobalAdmin && post.authorId === userId }
+          );
+        }
       }
       post.attachedFormId = data.attachedFormId ?? null;
     }
@@ -3011,6 +3242,9 @@ export class PostsService {
     const capacity = await this.assertMayManage(post, userId, isAdmin);
     // Read before the row goes: its media ids are only in the row.
     const orphanedMedia = [...postMediaIds(post), ...commentMediaIds(post.comments)];
+    // The repository's remove clears `post.id` on the entity it was given, so the id is kept here
+    // for the reel log lines below (they read `delete of undefined`).
+    const removedPostId = post.id;
     await this.postRepo.remove(post);
     // After the delete has committed, and never gating it. The post is gone either way; the worst
     // a failure here costs is objects kept past the moment they stopped being referenced, which
@@ -3018,6 +3252,7 @@ export class PostsService {
     if (post.kind === 'reel') {
       await this.discardReelBlobs(
         post,
+        removedPostId,
         orphanedMedia,
         capacity === 'moderator' ? 'moderation' : 'author'
       );
@@ -3042,6 +3277,7 @@ export class PostsService {
    */
   private async discardReelBlobs(
     post: Post,
+    postId: string,
     allMediaIds: string[],
     reason: Extract<ReelPurgeReason, 'author' | 'moderation'>
   ): Promise<void> {
@@ -3050,7 +3286,7 @@ export class PostsService {
       ...commentMediaOwners(post.comments),
     ];
     this.logger.log(
-      `[REEL] delete of ${post.id} by its ${reason === 'author' ? 'publisher' : 'moderator'}: ${items.length} blob(s), reason ${reason}`
+      `[REEL] delete of ${postId} by its ${reason === 'author' ? 'publisher' : 'moderator'}: ${items.length} blob(s), reason ${reason}`
     );
     try {
       const results = await this.mediaRetention.purgeReelBlobs(items, reason);
@@ -3059,13 +3295,13 @@ export class PostsService {
         .map(({ mediaId }) => mediaId);
       if (notGone.length > 0) {
         this.logger.warn(
-          `[REEL] delete of ${post.id}: ${notGone.length} blob(s) not deleted, released to the idle clock`
+          `[REEL] delete of ${postId}: ${notGone.length} blob(s) not deleted, released to the idle clock`
         );
         await this.mediaRetention.release(notGone);
       }
     } catch (e) {
       this.logger.warn(
-        `[REEL] delete of ${post.id}: the media service was unreachable (${
+        `[REEL] delete of ${postId}: the media service was unreachable (${
           e instanceof Error ? e.message : String(e)
         }), blobs released to the idle clock`
       );
@@ -3081,8 +3317,10 @@ export class PostsService {
    * and `expiringSoon` is decided HERE from the server's clock, so the one definition of "about to
    * expire" is `REEL_EXPIRY_WARNING_DAYS` and not a number each client chose. The row carries the
    * media key and IV - which is why this is the author's route and no one else's: it is what a
-   * client needs to decrypt and save the video before the worker deletes it. Association and
-   * anonymous reels are included, they are the caller's. A reel past its expiry is not listed.
+   * client needs to decrypt and save the video before the worker deletes it. Anonymous reels are
+   * included, they are the caller's; an association's reel only while the caller holds its author's
+   * door (`authorDoorHoldsSql`: a membership of the association, 2026-11-14) - a member who left
+   * gets neither its key nor its row. A reel past its expiry is not listed.
    */
   async getMyReels(userId: string) {
     // ONE clock for both questions: the database's. `expiringSoon` and the row filter are computed
@@ -3093,10 +3331,11 @@ export class PostsService {
       `SELECT id, "createdAt", "expiresAt", "durationMs", markdown, images AS media,
               (("expiresAt" - $3::timestamptz) <= make_interval(days => $2)) AS "expiringSoon"
          FROM posts
-        WHERE "authorId" = $1 AND kind = 'reel' AND "expiresAt" > $3::timestamptz
+        WHERE ${authorDoorHoldsSql('posts', '$1')} AND kind = 'reel' AND "expiresAt" > $3::timestamptz
         ORDER BY "expiresAt" ASC`,
       [userId, REEL_EXPIRY_WARNING_DAYS, now]
     );
+    this.logger.debug(`[REEL] own reels of ${userId.slice(0, 8)}: ${reels.length} listed`);
     return {
       serverNow: new Date(now).toISOString(),
       warningWindowDays: REEL_EXPIRY_WARNING_DAYS,

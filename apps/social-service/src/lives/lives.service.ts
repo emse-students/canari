@@ -13,6 +13,11 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
+import {
+  AdminQueueSignal,
+  type AdminQueueChange,
+} from '../admin-queues/admin-queue-signal.service';
+import { readRetentionDays } from '../common/retention-settings';
 import { createHash, randomUUID } from 'crypto';
 import type { DataSource, EntityManager } from 'typeorm';
 import { AssociationsService } from '../associations/associations.service';
@@ -42,7 +47,6 @@ import {
   LIVE_REPLAY_MAX_MS,
   LIVE_REPLAY_MIN_MS,
   LIVE_REPLAY_PAGE,
-  LIVE_REPLAY_RETENTION_DAYS,
   LIVE_REPLAY_EVICTION_KEEP_DAYS,
   liveReplayTotalMaxBytes,
   LIVE_TRIM_BATCH,
@@ -56,7 +60,7 @@ import {
   type LiveCutReason,
   type LiveEndReason,
 } from './live.constants';
-import { LiveSeats } from './live-seats';
+import { LiveSeatRefused, LiveSeats } from './live-seats';
 import { LIVE_SEGMENT_STORE, type LiveSegmentStore } from './live-segment-store';
 import { LiveAnnouncer, type ClaimedLive } from './live-announcer';
 import {
@@ -64,6 +68,7 @@ import {
   lockStanding,
   otherCutsOnRecord,
   standingOf,
+  standingsOf,
   type LiveStanding,
   type LiveStrikeConsequence,
 } from './live-strikes';
@@ -358,6 +363,17 @@ function endFacts(r: {
 /** How many plaintext keys one query of the backfill takes; it loops until none is left. */
 const PLAINTEXT_KEY_BATCH = 100;
 
+/** The most withdrawn accounts one staff read lists (a withdrawal is rare; the list is the lift's door). */
+const WITHDRAWN_LIST_MAX = 500;
+
+/** One account's standing as STAFF read it (`GET /api/lives/broadcasters/...`). */
+export interface BroadcasterStanding extends LiveStanding {
+  userId: string;
+  displayName: string;
+  /** The reason code of the withdrawal, null while the right is not withdrawn. */
+  withdrawalReason: LiveCutReason | null;
+}
+
 /** An association id: a uuid, checked before it reaches a `uuid` column (a 500 otherwise). */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -402,6 +418,21 @@ export class LivesService implements OnModuleDestroy {
    * `LIVE_REPLAY_TOTAL_MAX_GB` stops the service at boot instead of meaning "no cap".
    */
   private readonly replayCapBytes = liveReplayTotalMaxBytes();
+
+  /**
+   * The admin badges' signal (`AdminQueueSignal`), injected by PROPERTY so the specs that build this
+   * service by hand need no new argument. NOT optional: Nest refuses to boot without it (a global
+   * module provides it; `admin-queue-signal.wiring.spec` asserts the dependency is declared), so it
+   * is absent only in a spec built by hand.
+   */
+  @Inject(AdminQueueSignal) private readonly adminQueueSignal?: AdminQueueSignal;
+
+  /** An item entered or left an admin queue: whoever may act on it recounts. Never throws. */
+  private async tellAdminQueues(change: AdminQueueChange): Promise<void> {
+    // Absent only outside Nest (a spec that builds this service by hand): Nest refuses to boot
+    // without it, which `admin-queue-signal.wiring.spec` holds. No production path skips it.
+    await this.adminQueueSignal?.changed(change);
+  }
 
   constructor(
     @InjectDataSource() private readonly db: DataSource,
@@ -538,6 +569,8 @@ export class LivesService implements OnModuleDestroy {
       }
       throw e;
     }
+    // A live nobody was removed from yet.
+    await this.openToSeats(row.id, []);
     // The title's length, never its text: a log line is no place for what a member wrote.
     this.logger.log(
       `[LIVE] ${row.id} started by ${short(broadcasterId)}, title ${title === null ? 'none' : `${[...title].length} chars`}, replay ${keepsReplay ? 'kept' : 'none'}`
@@ -770,11 +803,27 @@ export class LivesService implements OnModuleDestroy {
    * One page of a live's REPLAY for one viewer (docs/wiki/live-replays.md). NO SEAT: a replay is
    * uncapped like a reel. The gate is the replay POST's own (`readPostOpenVerdict`, the one predicate
    * every path that acts on a post asks): its audience - the live's, with the viewers the broadcaster
-   * removed taken out (`postVisibleToUserSql`) - moderation, a block with a personal author. A replay
+   * removed taken out (`postVisibleToUserSql`), a platform admin widened only as the live widens them
+   * (a review account's, `adminSeesCohort`) - moderation, a block with a personal author. A replay
    * past its `expiresAt` (database clock), absent, or refused for any reason is the same 404
    * `LIVE_NOT_FOUND`, asked before anything else, so an id lifted from a link learns nothing.
+   *
+   * THE MODERATION READ (owner, 2026-11-15: "La moderation des lives doit avoir le meme regulateur
+   * que les posts"): `read.moderate` is the explicit intent a moderation screen sends. It opens the
+   * replay to whoever may read its post to moderate it - `AssociationsService.mayReadToModeratePost`, the post moderation
+   * scope: a platform admin, a BDE `MODERATE` holder within its governed spaces - past the viewer's
+   * gate, and serves the page a viewer gets. Anyone else sending it gets the ordinary gate. The read
+   * hands out the replay's key (docs/wiki/moderation-and-blocking.md).
+   *
+   * @param read.moderate the caller asks to judge this replay (the moderation preview).
+   * @param read.isGlobalAdmin the gateway's `x-global-admin`, as every moderation route reads it.
    */
-  async replay(viewerId: string, liveId: string, from = 0): Promise<LiveReplayPage> {
+  async replay(
+    viewerId: string,
+    liveId: string,
+    from = 0,
+    read: { moderate?: boolean; isGlobalAdmin?: boolean } = {}
+  ): Promise<LiveReplayPage> {
     const rows: (StoredLiveKey & {
       postId: string;
       authorId: string;
@@ -798,24 +847,48 @@ export class LivesService implements OnModuleDestroy {
       this.logger.debug(`[LIVE_REPLAY] ${liveId}: no replay alive for ${short(viewerId)}`);
       throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
     }
-    const verdict = await readPostOpenVerdict(
-      this.db.manager,
-      {
-        id: found.postId,
-        authorId: found.authorId,
-        associationId: found.associationId,
-        anonymous: found.anonymous,
-        hiddenByModeration: found.hiddenByModeration,
-        scheduledAt: found.scheduledAt,
-        kind: 'replay',
-        expiresAt: found.expiresAt,
-      },
-      { viewerId },
-      'READ_OR_REACT'
-    );
-    if (verdict.refusal !== null) {
-      this.logger.debug(`[LIVE_REPLAY] ${liveId} withheld from ${short(viewerId)}: ${verdict.why}`);
-      throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
+    // THE MODERATION READ has the post's own regulator (owner, 2026-11-15): whoever MODERATES the
+    // replay's post (`mayReadToModeratePost`: a platform admin, a BDE `MODERATE` holder within its scope)
+    // reads it to judge it, past the viewer's gate - a removal or a block by the broadcaster, the
+    // "Entre etudiants" switch. It hands out the replay's key, so it is logged.
+    const moderates =
+      read.moderate === true &&
+      (await this.associations.mayReadToModeratePost(viewerId, found.postId, {
+        isGlobalAdmin: read.isGlobalAdmin === true,
+      }));
+    if (moderates) {
+      this.logger.log(
+        `[LIVE_REPLAY] ${liveId} (post ${short(found.postId)}) MODERATION READ by ${short(viewerId)}: moderates its post${read.isGlobalAdmin === true ? ' (platform admin)' : ' (BDE moderator in scope)'}`
+      );
+    } else {
+      if (read.moderate === true) {
+        this.logger.debug(
+          `[LIVE_REPLAY] ${liveId}: ${short(viewerId)} asked a moderation read and does not moderate its post, the ordinary gate decides`
+        );
+      }
+      const verdict = await readPostOpenVerdict(
+        this.db.manager,
+        {
+          id: found.postId,
+          authorId: found.authorId,
+          associationId: found.associationId,
+          anonymous: found.anonymous,
+          hiddenByModeration: found.hiddenByModeration,
+          scheduledAt: found.scheduledAt,
+          kind: 'replay',
+          expiresAt: found.expiresAt,
+        },
+        // The live's own gate (`WATCH_ONLY`): a platform admin is an ordinary viewer, but for a
+        // review account's replay - never wider than the live was.
+        { viewerId, adminSeesCohort: true },
+        'READ_OR_REACT'
+      );
+      if (verdict.refusal !== null) {
+        this.logger.debug(
+          `[LIVE_REPLAY] ${liveId} withheld from ${short(viewerId)}: ${verdict.why}`
+        );
+        throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
+      }
     }
     const key = openLiveKeyOr503(liveId, found);
     const listed: { index: number; name: string; bytes: number; atMs: string }[] =
@@ -899,15 +972,26 @@ export class LivesService implements OnModuleDestroy {
     if (step.kind === 'ended') throw liveEnded(step.endedAt, step.endReason);
 
     // NO TRANSACTION IS OPEN HERE: the reservation committed, and the store may take its time.
+    // THE LIVE IS SAID OPEN TO REDIS NOW, beside the store and awaited before the reservation is
+    // given up (the confirm, or the release): the reservation just read the live open, and while it
+    // stands the purge keeps the row and its tombstone, so this write can never follow a purge -
+    // an end that crossed it finds the tombstone and is not undone ({@link openToSeats}). It never
+    // rejects. It runs beside the store, so the ingest slot is held longer only when Redis answers
+    // slower than the store - a Redis that does not answer costs each segment up to the command
+    // timeout and its retries. BOTH awaits below are load-bearing: an open still in flight after
+    // the confirm or the release could land after the purge.
+    const opening = this.openToSeats(liveId);
     try {
       await this.store.store(liveId, step.name, data);
     } catch (e) {
       this.logger.warn(
         `[LIVE] segment ${index} of ${liveId} not stored, reservation released: ${causeOf(e)}`
       );
+      await opening;
       await this.release(liveId, step.name);
       throw new ServiceUnavailableException({ code: 'LIVE_STORE_UNAVAILABLE' });
     }
+    await opening;
 
     const outcome = await this.confirm(liveId, index, step.name, data.length, sha256);
     if (outcome.kind === 'ended') {
@@ -1650,11 +1734,13 @@ export class LivesService implements OnModuleDestroy {
       );
     });
     this.logger.log(`[LIVE] ${liveId}: viewer ${short(viewer)} removed by the broadcaster`);
-    // The removal is the row above; the seat is freed now rather than when its lease lapses, and a
-    // failure here only means it lapses (the removed viewer's next poll is refused 403 anyway).
-    await this.seats.release(liveId, viewer).catch((e: unknown) => {
+    // The removal is the row above. Redis is told now, the bar and the seat's release in ONE script,
+    // so a key read that passed the watch rule before the commit takes no seat after it. A failure
+    // leaves the seat to its lease and the bar to the next segment's {@link openToSeats}; the removed
+    // viewer's next poll is refused 403 by the row either way.
+    await this.seats.bar(liveId, viewer).catch((e: unknown) => {
       this.logger.warn(
-        `[LIVE_SEAT] ${liveId}: removed viewer's seat left to its lease: ${String(e)}`
+        `[LIVE_SEAT] ${liveId}: removed viewer not barred in Redis, its seat left to its lease: ${String(e)}`
       );
     });
     return { liveId, viewerId: viewer };
@@ -1699,6 +1785,8 @@ export class LivesService implements OnModuleDestroy {
     const { reason, details } = parseModerationNote(input);
 
     let replayEnded = false;
+    /** The live's pending reports this cut closed, so their moderators recount. */
+    let closedReportIds: string[] = [];
     const result = await this.db.transaction(async (tx): Promise<LiveCutResult> => {
       replayEnded = false;
       // THE STANDING LOCK FIRST, the row lock second - the order a start takes them too, so the two
@@ -1785,11 +1873,12 @@ export class LivesService implements OnModuleDestroy {
         : (await this.cutOf(tx, liveId))!;
       if (newlyCut) {
         // The report's own trail, as a moderator closing it by hand would leave it.
-        await tx.query(
+        const [closed] = (await tx.query(
           `UPDATE content_reports SET status = 'reviewed', "reviewedBy" = $2, "reviewedAt" = now()
-            WHERE "contentType" = 'live' AND "contentId" = $1 AND status = 'pending'`,
+            WHERE "contentType" = 'live' AND "contentId" = $1 AND status = 'pending' RETURNING id`,
           [liveId, reviewerId]
-        );
+        )) as [{ id: string }[], number];
+        closedReportIds = closed.map((r) => r.id);
       }
       return {
         liveId,
@@ -1813,6 +1902,9 @@ export class LivesService implements OnModuleDestroy {
           (result.standing.withdrawalDue ? ' withdrawalDue' : '')
       );
       await this.notifyCut(result);
+    }
+    if (closedReportIds.length > 0) {
+      void this.tellAdminQueues({ queue: 'moderation', reportIds: closedReportIds });
     }
     if (replayEnded) await this.replayFeedsChanged(liveId, 'a cut ended its replay');
     await this.purgeBestEffort(liveId, 'after a cut');
@@ -2117,10 +2209,102 @@ export class LivesService implements OnModuleDestroy {
     });
     if (lifted) {
       this.logger.log(`[LIVE_STRIKE] ${short(target)}'s withdrawal lifted by ${short(reviewerId)}`);
+      // Told like the sanction was (principle 6: a sanction lifted has the voice of the sanction):
+      // no actor, one fixed sentence. Best effort - the lift is made, a lost notice is logged.
+      try {
+        await this.notifications.createNotification({
+          recipientId: target,
+          type: 'live_reinstated',
+          postId: target,
+          actorId: '',
+          actorName: '',
+          text: '',
+          pushData: { target: NOTIFICATIONS_TARGET },
+        });
+      } catch (e) {
+        this.logger.warn(
+          `[LIVE_STRIKE] ${short(target)}: the reinstatement notice was not written: ${causeOf(e)}`
+        );
+      }
     } else {
       this.logger.debug(`[LIVE_STRIKE] lift of ${short(target)}: nothing withdrawn`);
     }
     return { userId: target, lifted };
+  }
+
+  /**
+   * STAFF READ of one account's standing, with no report in between (`GET
+   * /api/lives/broadcasters/:userId/standing`): the cuts on record, the suspension, the withdrawal
+   * with its reason, and the name to draw. The caller's scope is the controller's.
+   */
+  async broadcasterStanding(userId: string): Promise<BroadcasterStanding> {
+    const target = parseAccountId(userId);
+    this.logger.debug(`[LIVE_STRIKE] staff read of ${short(target)}'s standing`);
+    const rows = await this.broadcasterStandingRows([target]);
+    return rows[0] ?? (await this.unknownBroadcasterStanding(target));
+  }
+
+  /**
+   * Every account whose right to broadcast is withdrawn, newest withdrawal first, narrowed by `scope`
+   * (the people the caller may act on) BEFORE the cap of {@link WITHDRAWN_LIST_MAX}, so a scoped
+   * moderator never misses a row because other people's withdrawals filled the page. Only ids are
+   * read unbounded (a withdrawal is rare). The list reads `live_broadcast_withdrawals`, never a
+   * report: a withdrawal is a standing of the member and must stay reachable once every report
+   * naming them is handled.
+   */
+  async listWithdrawn(
+    scope: (userIds: string[]) => Promise<Set<string>>
+  ): Promise<BroadcasterStanding[]> {
+    const all: { userId: string }[] = await this.db.query(
+      `SELECT "userId" FROM live_broadcast_withdrawals ORDER BY "withdrawnAt" DESC, "userId"`
+    );
+    const allowed = await scope(all.map((r) => r.userId));
+    const kept = all
+      .map((r) => r.userId)
+      .filter((id) => allowed.has(id))
+      .slice(0, WITHDRAWN_LIST_MAX);
+    this.logger.debug(
+      `[LIVE_STRIKE] withdrawn list read: ${kept.length} of ${all.length} row(s) in scope`
+    );
+    return this.broadcasterStandingRows(kept);
+  }
+
+  private async broadcasterStandingRows(ids: string[]): Promise<BroadcasterStanding[]> {
+    if (ids.length === 0) return [];
+    const standings = await standingsOf(this.db.manager, ids);
+    const rows: {
+      id: string;
+      displayName: string | null;
+      reason: LiveCutReason | null;
+    }[] = await this.db.query(
+      `SELECT u.id, u."displayName", w.reason
+         FROM unnest($1::varchar[]) WITH ORDINALITY AS i(id, ord)
+         JOIN users u ON u.id = i.id
+         LEFT JOIN live_broadcast_withdrawals w ON w."userId" = u.id
+        ORDER BY i.ord`,
+      [ids]
+    );
+    return rows.flatMap((r) => {
+      const s = standings.get(r.id);
+      if (!s) return [];
+      return [
+        {
+          userId: r.id,
+          displayName: r.displayName ?? r.id,
+          cutsOnRecord: s.cutsOnRecord,
+          suspendedUntil: s.suspendedUntil,
+          withdrawnAt: s.withdrawnAt,
+          withdrawalDue: s.withdrawalDue,
+          withdrawalReason: s.withdrawnAt ? r.reason : null,
+        },
+      ];
+    });
+  }
+
+  /** An id that names no account: 404, never a clean standing (a typo must not read as "fine"). */
+  private async unknownBroadcasterStanding(target: string): Promise<never> {
+    this.logger.warn(`[LIVE_STRIKE] standing asked of ${short(target)}: no such account`);
+    throw new NotFoundException({ code: 'LIVE_BROADCASTER_NOT_FOUND' });
   }
 
   /**
@@ -2288,6 +2472,17 @@ export class LivesService implements OnModuleDestroy {
       this.logger.warn(`[LIVE_GC] ${liveId} is OPEN: the purge path refuses it`);
       return 'kept';
     }
+    // THE LIVE IS CLOSED TO SEATS FIRST, whatever else this pass decides (lives.md, "No seat is
+    // taken on a closed live"): every end comes through here once its commit is done, and after
+    // this script no take is granted - a request that passed the watch rule before the commit
+    // included. A cut, an erasure or a row-less folder owes nothing to anybody, so its seats go in
+    // the same script and the next live's viewers do not wait a lease for them; an ordinary end
+    // keeps them, they are what the drain below waits for. Idempotent, so every sweep says it again.
+    await this.seats.close(liveId, !row || row.removed).catch((e: unknown) => {
+      this.logger.warn(
+        `[LIVE_SEAT] ${liveId}: ended live NOT closed to seats, a late take would last its lease: ${String(e)}`
+      );
+    });
     if (row?.replayPostId) {
       // THE PURGE WAITS FOR THE REPLAY POST, AND FOR NOTHING ELSE (docs/wiki/live-replays.md): its
       // deletion - by the hourly worker at its expiry, by its author or staff - releases the segments.
@@ -2311,14 +2506,6 @@ export class LivesService implements OnModuleDestroy {
         );
         return 'kept';
       }
-    } else if (!row || row.removed) {
-      // A cut, an erasure or a row-less folder: nothing is owed to anybody, so every seat goes now
-      // and the next live's viewers do not wait a lease for them. Best-effort: a failure is the lease.
-      await this.seats.releaseLive(liveId).catch((e: unknown) => {
-        this.logger.warn(
-          `[LIVE_SEAT] ${liveId}: ended live's seats left to their lease: ${String(e)}`
-        );
-      });
     }
     if (row?.storeInFlight) {
       this.logger.debug(`[LIVE_GC] ${liveId} kept: a segment or its poster is still storing`);
@@ -2343,6 +2530,11 @@ export class LivesService implements OnModuleDestroy {
     await this.seats.forgetArrivals(liveId).catch((e: unknown) => {
       this.logger.warn(`[LIVE_ARRIVAL] ${liveId}: arrivals left to their TTL: ${String(e)}`);
     });
+    // The row is gone: the watch rule now refuses this live before any take is asked, so the
+    // tombstone that refused its reopening has nothing left to order.
+    await this.seats.forget(liveId).catch((e: unknown) => {
+      this.logger.warn(`[LIVE_SEAT] ${liveId}: purged live's entries left in Redis: ${String(e)}`);
+    });
     this.logger.debug(`[LIVE_GC] ${liveId} deleted (${result.deleted} segment object(s))`);
     return 'deleted';
   }
@@ -2363,8 +2555,8 @@ export class LivesService implements OnModuleDestroy {
    * - long enough: `lastSegmentAt - startedAt >= LIVE_REPLAY_MIN_MS` (D4) and a segment stored.
    *
    * The post: the broadcaster as author, the live's association, its title as the text, `publishedAt`
-   * = the end, `expiresAt` = the end + {@link LIVE_REPLAY_RETENTION_DAYS} days (the database clock,
-   * written once), `durationMs` from the first to the last kept segment, never "Entre étudiants" (D8),
+   * = the end, `expiresAt` = the end + `retention_live_replay_days` days (the admin setting in force
+   * now, the database clock, written once), `durationMs` from the first to the last kept segment, never "Entre étudiants" (D8),
    * no member repost, and `feedNotifiedAt` set so the announcement sweep never pushes it (no push,
    * lead decision). The arrival keys are forgotten after the commit, as at a purge.
    */
@@ -2403,6 +2595,9 @@ export class LivesService implements OnModuleDestroy {
           return 'ineligible';
         }
         const spanMs = Math.min(Number(live.spanMs), 2_147_483_647);
+        // The replay's lifetime IN FORCE NOW, read in this transaction and stamped once (owner,
+        // 2026-11-14): a duration an admin changes later never moves a replay already published.
+        const { liveReplayDays } = await readRetentionDays(tx, this.logger);
         const inserted: { id: string; expiresAt: Date }[] = await tx.query(
           `INSERT INTO posts ("authorId", "associationId", markdown, kind, "durationMs", "expiresAt",
                               "liveId", "publishedAt", "feedNotifiedAt", anonymous, "studentsOnly",
@@ -2412,14 +2607,7 @@ export class LivesService implements OnModuleDestroy {
              FROM lives l WHERE l.id = $1
            ON CONFLICT ("liveId") WHERE "liveId" IS NOT NULL DO NOTHING
            RETURNING id, "expiresAt"`,
-          [
-            liveId,
-            live.broadcasterId,
-            live.associationId,
-            live.title ?? '',
-            spanMs,
-            LIVE_REPLAY_RETENTION_DAYS,
-          ]
+          [liveId, live.broadcasterId, live.associationId, live.title ?? '', spanMs, liveReplayDays]
         );
         await tx.query(`UPDATE lives SET "replayPostedAt" = now() WHERE id = $1`, [liveId]);
         await tx.query(`DELETE FROM live_chat_messages WHERE "liveId" = $1`, [liveId]);
@@ -2542,10 +2730,53 @@ export class LivesService implements OnModuleDestroy {
   }
 
   /**
+   * Says to Redis that the live is open to seats, with the viewers removed from it
+   * (`LiveSeats.open`): at the start, and with every segment while its reservation stands - so a
+   * Redis that lost its data knows the live again within a segment, its removals re-read from the
+   * database.
+   *
+   * NO LOCK AND NO TRANSACTION AROUND THE REDIS CALL: the order against an end is Redis's own. An
+   * end closes the live there after its commit, and the open script refuses a closed live, so a
+   * write that read the live open and then lost to an end reopens nothing. The removals are added,
+   * never replaced: a removal committed after this read has written its own bar.
+   *
+   * Best effort - it never rejects, a failure must not fail a start or a segment - and it accuses:
+   * until the next segment's succeeds, no viewer is seated.
+   *
+   * @param removedViewers the removals when the caller knows them (none at a start); read otherwise.
+   */
+  private async openToSeats(liveId: string, removedViewers?: readonly string[]): Promise<void> {
+    try {
+      const removed =
+        removedViewers ??
+        (
+          (await this.db.query(`SELECT "viewerId" FROM live_removed_viewers WHERE "liveId" = $1`, [
+            liveId,
+          ])) as { viewerId: string }[]
+        ).map((r) => r.viewerId);
+      await this.seats.open(liveId, removed);
+    } catch (e) {
+      this.logger.error(
+        `[LIVE_SEAT] ${liveId}: NOT opened to seats, viewers are refused until a segment's write succeeds: ${String(e)}`
+      );
+    }
+  }
+
+  /**
    * THE VIEWER CAP (lives.md, "The viewer cap"): a viewer reading the key or polling the manifest
    * takes or renews a seat, 503 `LIVE_FULL` past the host's cap. Taken AFTER the watch check, so a
    * removed, blocked or ended answer is never masked as "full". The broadcaster takes none: its
    * reads cost the uplink nothing a viewer's would.
+   *
+   * THE WATCH CHECK IS A READ, AND AN END CAN COMMIT AFTER IT. So the take itself refuses a live
+   * that has closed and a viewer that was removed, inside Redis, in the evaluation that grants
+   * (`LiveSeats.take`, {@link LiveSeatRefused}) - no seat exists even for an instant. Redis says
+   * only THAT it refused; the row says why, so the watch rule is asked again and throws the typed
+   * refusal (410, 403, 404). If the row still allows the viewer, Redis does not know a live that
+   * is open - it lost its data, or the start's write failed: 503 `LIVE_SEATS_UNAVAILABLE` and a
+   * line that accuses ({@link seatsUnknown}), until the broadcaster's next segment says it again
+   * ({@link openToSeats}).
+   * Refusing is the only safe reading of an unknown live: admitting would be the uncounted seat.
    *
    * Answers the live's viewer count as the take counted it, or `null` for the broadcaster (no seat,
    * no take) - who asks {@link viewerCount} instead, and only where a count is shown.
@@ -2555,7 +2786,16 @@ export class LivesService implements OnModuleDestroy {
     viewerId: string
   ): Promise<number | null> {
     if (row.broadcasterId === viewerId) return null;
-    const watching = await this.seats.take(row.id, viewerId);
+    let watching: number;
+    try {
+      watching = await this.seats.take(row.id, viewerId);
+    } catch (e) {
+      if (!(e instanceof LiveSeatRefused)) throw e;
+      await this.assertMayWatch(this.db.manager, viewerId, row.id, WATCH_ONLY);
+      this.seatsUnknown(row.id, e.why);
+      throw new ServiceUnavailableException({ code: 'LIVE_SEATS_UNAVAILABLE' });
+    }
+    this.seatsKnown(row.id);
     // THE ARRIVAL (owner, 2026-11-07): noted once per viewer per live, and NEVER for a reader the
     // chat is withheld from - they take no part in it, so nobody is told they are here - nor for
     // one who watches only through the review cohort's exception (a platform admin judging a report:
@@ -2565,6 +2805,58 @@ export class LivesService implements OnModuleDestroy {
       await this.noteArrival(row.id, viewerId);
     }
     return watching;
+  }
+
+  /**
+   * The lives Redis refuses seats on while their row is open, each with the takes refused since the
+   * first: durable state, no timer, as {@link arrivalOutages}. The FIRST refusal is logged at ERROR
+   * (it accuses); the ones after it - every poll of every viewer until a segment lands - only
+   * count, and the first seat granted again says how many. PER INSTANCE: the purge forgets what is
+   * left on the instance that runs it, with a warning; another instance's entry for a purged live
+   * stays, one number, until that process ends.
+   */
+  private readonly unknownToRedis = new Map<string, number>();
+
+  /**
+   * The lives on which Redis bars a viewer the row allows, each with the takes refused so: counted
+   * apart from {@link unknownToRedis}, because a seat granted to somebody else says nothing about
+   * a bar. PER INSTANCE, as that map: each instance logs its own first refusal, and the purge
+   * reports and forgets the count on the instance that runs it.
+   */
+  private readonly barredWithoutRow = new Map<string, number>();
+
+  private seatsUnknown(liveId: string, why: LiveSeatRefused['why']): void {
+    if (why === 'barred') {
+      const refused = this.barredWithoutRow.get(liveId);
+      this.barredWithoutRow.set(liveId, (refused ?? 0) + 1);
+      if (refused !== undefined) return;
+      // THE ONE KNOWN WAY HERE IS WANTED BEHAVIOUR: no route lifts a removal, and the only delete
+      // of a removal while its live is open is the removed viewer's account erasure - back under
+      // the same id, that person stays out of the live they were removed from (lives.md, "What is
+      // not closed", 7). IT STAYS AN ERROR ALL THE SAME, because nothing here can tell that case
+      // from a bar written by a defect: the row that would say "removed, then erased" is the one
+      // the erasure deleted, and social-service keeps no record of an erasure. A level lowered on
+      // an inference would hide the defect; one line per live PER INSTANCE is what the certainty costs.
+      this.logger.error(
+        `[LIVE_SEAT] ${liveId}: Redis bars a viewer the row allows - expected only for a removed viewer whose account was erased and who came back; no seat for that viewer until the live closes (further refusals are counted, not logged)`
+      );
+      return;
+    }
+    const refused = this.unknownToRedis.get(liveId);
+    this.unknownToRedis.set(liveId, (refused ?? 0) + 1);
+    if (refused !== undefined) return;
+    this.logger.error(
+      `[LIVE_SEAT] ${liveId}: Redis does not hold the live open while its row is open - no seat until its next segment says it again (further refusals are counted, not logged)`
+    );
+  }
+
+  private seatsKnown(liveId: string): void {
+    const refused = this.unknownToRedis.get(liveId);
+    if (refused === undefined) return;
+    this.unknownToRedis.delete(liveId);
+    this.logger.log(
+      `[LIVE_SEAT] ${liveId}: seats are granted again after ${refused} refused take(s)`
+    );
   }
 
   /**
@@ -2613,6 +2905,20 @@ export class LivesService implements OnModuleDestroy {
 
   /** The live is purged: an outage still open on it is reported with its count, then forgotten. */
   private closeArrivalOutages(liveId: string): void {
+    const refused = this.unknownToRedis.get(liveId);
+    if (refused !== undefined) {
+      this.unknownToRedis.delete(liveId);
+      this.logger.warn(
+        `[LIVE_SEAT] ${liveId}: purged while Redis still refused its seats (${refused} refused take(s))`
+      );
+    }
+    const barred = this.barredWithoutRow.get(liveId);
+    if (barred !== undefined) {
+      this.barredWithoutRow.delete(liveId);
+      this.logger.log(
+        `[LIVE_SEAT] ${liveId}: purged, ${barred} take(s) were refused to a viewer Redis barred and the row allowed`
+      );
+    }
     for (const op of ['note', 'read'] as const) {
       const failed = this.arrivalOutages[op].get(liveId);
       if (failed === undefined) continue;

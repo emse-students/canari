@@ -61,6 +61,7 @@ describe('attachedFormsLoader', () => {
       loader = attachedFormsLoader(() => sources, reads);
     });
     flushSync();
+    await settle();
 
     answerAll('A');
     await settle();
@@ -69,7 +70,6 @@ describe('attachedFormsLoader', () => {
 
     expect(reads.checkSubmission).toHaveBeenCalledTimes(2);
     expect(loader.infos.map((fi) => fi.id)).toEqual(['A', 'B']);
-    expect(loader.pending).toEqual([]);
     cleanup();
   });
 
@@ -106,10 +106,10 @@ describe('attachedFormsLoader', () => {
       loader = attachedFormsLoader(() => sources, reads);
     });
     flushSync();
+    await settle();
     answerAll('B');
     await settle();
     expect(loader.infos.map((fi) => fi.id)).toEqual(['B']);
-    expect(loader.pending).toEqual(['A']);
     answerAll('A');
     await settle();
     expect(loader.infos.map((fi) => fi.id)).toEqual(['A', 'B']);
@@ -125,7 +125,6 @@ describe('attachedFormsLoader sources', () => {
     const cleanup = $effect.root(() => {
       const loader = attachedFormsLoader(build, reads);
       void loader.infos;
-      void loader.pending;
     });
     await settle();
     expect(build).toHaveBeenCalledTimes(1);
@@ -146,6 +145,24 @@ describe('attachedFormSources', () => {
     expect(sources.map((s) => s.id)).toEqual(['A']);
     expect(warn).toHaveBeenCalledTimes(1);
     warn.mockRestore();
+  });
+
+  it('reads the opening date even when the post already names the title', async () => {
+    const future = new Date(Date.now() + 86_400_000).toISOString();
+    const reads: AttachedFormReads = {
+      getForm: vi.fn(async (id: string) => ({ id, title: 'server title', opensAt: future })),
+      checkSubmission: vi.fn(async () => ({ hasSubmitted: false })),
+    };
+    let loader!: ReturnType<typeof attachedFormsLoader>;
+    const cleanup = $effect.root(() => {
+      loader = attachedFormsLoader(() => [{ id: 'A', title: 'post title' }], reads);
+    });
+    flushSync();
+    await settle();
+    expect(loader.infos).toEqual([
+      { id: 'A', title: 'post title', submitted: false, opensAt: future },
+    ]);
+    cleanup();
   });
 
   it('says it ONCE per post however often the list is rebuilt, and once per post id', () => {

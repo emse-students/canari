@@ -38,7 +38,15 @@ import {
 } from '../grainedb.mjs';
 import { PEER_NAME, PORTS, VENUE } from '../names.mjs';
 import { mark, record, unmet } from '../results.mjs';
-import { consoleLines, gate, ignoringExpectedRefusal, report, watch } from '../watch.mjs';
+import {
+  SALON_SESSION_NARRATION,
+  consoleLines,
+  gate,
+  ignoringExpectedLog,
+  ignoringExpectedRefusal,
+  report,
+  watch,
+} from '../watch.mjs';
 
 const w1 = await client(PORTS.W1);
 const w2 = await client(PORTS.W2);
@@ -218,10 +226,13 @@ const raw = [
 // salon's endpoint answering 403 to a non-member is the assertion above, and leaving it in the dirt
 // would make COMM-8 permanently `PASS-DIRTY` - which is dirt nobody reads.
 const obs = {
-  W1: await report(wa),
-  W2: ignoringExpectedRefusal(await report(wb), [
-    { path: new RegExp(`/api/channels/${channelId}/messages$`), status: [403, 404] },
-  ]),
+  W1: ignoringExpectedLog(await report(wa), SALON_SESSION_NARRATION),
+  W2: ignoringExpectedLog(
+    ignoringExpectedRefusal(await report(wb), [
+      { path: new RegExp(`/api/channels/${channelId}/messages$`), status: [403, 404] },
+    ]),
+    SALON_SESSION_NARRATION
+  ),
 };
 const gated = gate(verdict, obs);
 

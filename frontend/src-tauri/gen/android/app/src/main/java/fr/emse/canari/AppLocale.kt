@@ -30,7 +30,7 @@ internal fun appLocaleContext(context: Context): Context {
         config.setLocale(java.util.Locale.forLanguageTag(tag))
         context.createConfigurationContext(config)
     } catch (e: Exception) {
-        Log.w(TAG, "appLocaleContext: cannot apply locale '$tag' - falling back to the system one: ${e.message}")
+        Log.w(TAG, "appLocaleContext: cannot apply locale '$tag' - falling back to the system one: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
         context
     }
 }

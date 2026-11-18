@@ -89,7 +89,7 @@ object CallRingPlayer {
                         context, ring.groupId, ring.callId, ring.callerId, ring.hasVideo, silent,
                     )
                 } catch (e: Exception) {
-                    Log.e(TAG, "native ring of call=${short(ring.callId)} could not be posted: ${e.javaClass.simpleName}: ${e.message}", e)
+                    Log.e(TAG, "native ring of call=${short(ring.callId)} could not be posted: ${e.javaClass.simpleName}: ${e.message}", e) // log-safe: message of a system or native call (Exception); this try parses and names no user input
                 }
             }, "canari-ring-post").start()
         }
@@ -140,7 +140,7 @@ object CallRingPlayer {
             try {
                 it.stop()
             } catch (e: IllegalStateException) {
-                Log.w(TAG, "stop: the player was not playing: ${e.message}")
+                Log.w(TAG, "stop: the player was not playing: ${e.message}") // log-safe: message of a system or native call (IllegalStateException); this try parses and names no user input
             }
             it.release()
         }
@@ -192,7 +192,7 @@ object CallRingPlayer {
             Log.i(TAG, "play: the Canari ring plays on the ringtone stream, looped")
         } catch (e: Exception) {
             // The tone is gone for this ring; the vibration and the screen still say a call is there.
-            Log.e(TAG, "play: the ring could not be played: ${e.javaClass.simpleName}: ${e.message}")
+            Log.e(TAG, "play: the ring could not be played: ${e.javaClass.simpleName}: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
             mp.release()
         }
     }

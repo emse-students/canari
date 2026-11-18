@@ -41,6 +41,7 @@ import {
   ERASURE_TIER_ORDER,
   erasureParams,
 } from '../internal/account-erasure';
+import { untilWaiting } from '../common/lock-wait.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -109,7 +110,7 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
         post: () => of({ data: { ok: true, url: 'https://pay.test/1', id: 'f'.repeat(32) } }),
       },
       // Payments are routed and ready: what is under test is the rank, not the routing.
-      pricingFacts: { profileFor: () => Promise.resolve({ promo: null, formation: null }) },
+      pricingFacts: { cursusFor: () => Promise.resolve([{ promo: null, formation: null }]) },
       activePaymentProvider: () => Promise.resolve('lydia'),
       // No bridge here: the proof of an issued request is a no-op.
       associationsService: { noteLydiaRequestIssued: () => Promise.resolve() },
@@ -299,49 +300,89 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
    */
   async function underHeldLock<T>(userId: string, tag: string, work: () => Promise<T>) {
     await admin.query('BEGIN');
-    await admin.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
-      buyerTierLockKey(ASSO, userId),
-    ]);
-    await admin.query(
-      `INSERT INTO user_tags ("userId", "tagName", "issuingAssocId", "grantedBy") VALUES ($1, $2, $3, 'it')`,
-      [userId, tag, ASSO]
-    );
-    const pending = work().then(
-      (value) => ({ value, error: null as unknown }),
-      (e: unknown) => ({ value: null as T | null, error: e })
-    );
-    expect(await waitersReach(1, buyerTierLockKey(ASSO, userId))).toBe(1);
-    await admin.query('COMMIT');
-    return pending;
+    let waiting = 0;
+    let pending: Promise<{ value: T | null; error: unknown }>;
+    // `admin` is the suite's ONE shared connection: its transaction ends before anything is
+    // asserted, so a count that fails never leaves it holding the lock for the tests that follow.
+    try {
+      await admin.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
+        buyerTierLockKey(ASSO, userId),
+      ]);
+      await admin.query(
+        `INSERT INTO user_tags ("userId", "tagName", "issuingAssocId", "grantedBy") VALUES ($1, $2, $3, 'it')`,
+        [userId, tag, ASSO]
+      );
+      pending = work().then(
+        (value) => ({ value, error: null as unknown }),
+        (e: unknown) => ({ value: null as T | null, error: e })
+      );
+      waiting = await waitersReach(1, buyerTierLockKey(ASSO, userId));
+    } finally {
+      await admin.query('COMMIT');
+    }
+    // The work is awaited before the count is asserted, so a failing count leaves nothing of this
+    // test running into the next one.
+    const outcome = await pending;
+    expect(waiting).toBe(1);
+    return outcome;
+  }
+
+  /**
+   * Holds `buyer`'s tier lock on the test's own connection while `start` launches its operations
+   * one by one, each seen WAITING on that lock before the next starts; then releases it. Answers
+   * the count read after each start - asserted by the caller AFTER the release, for the reason
+   * {@link underHeldLock} gives.
+   */
+  async function queuedOnHeldLock(buyer: string, start: (() => void)[]): Promise<number[]> {
+    const seen: number[] = [];
+    await admin.query('BEGIN');
+    try {
+      await admin.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
+        buyerTierLockKey(ASSO, buyer),
+      ]);
+      for (const [i, launch] of start.entries()) {
+        launch();
+        seen.push(await waitersReach(i + 1, buyerTierLockKey(ASSO, buyer)));
+      }
+    } finally {
+      await admin.query('COMMIT');
+    }
+    return seen;
   }
 
   /**
    * Reads `pg_locks` until `n` of THIS run's sessions (the pools' `application_name`, never the test's
-   * own connection) wait on the advisory lock `key` (`null`: on any lock, a row lock included), or a
-   * bounded number of reads has gone by; answers the last count. Scoped so a concurrent run on the
-   * same cluster cannot be counted. A read loop, never a clock.
+   * own connection) wait on the advisory lock `key` (`null`: on any lock, a row lock included);
+   * answers the last count. Scoped so a concurrent run on the same cluster cannot be counted. It
+   * RETURNS when the bound of reads is spent ({@link untilWaiting}, `onAbsent: 'return'`) rather
+   * than throwing; the caller asserts the count AFTER releasing `admin`'s lock, so neither a
+   * blocked writer nor an open transaction on the shared connection is left behind.
    */
   async function waitersReach(n: number, key: string | null): Promise<number> {
-    let waiting = 0;
-    for (let i = 0; i < 10_000 && waiting < n; i++) {
-      // `pg_stat_activity` is snapshotted once per transaction, and `admin` reads it inside the
-      // transaction holding the lock: without a fresh snapshot a pool session opened since is unseen.
-      await admin.query('SELECT pg_stat_clear_snapshot()');
-      const [row] = (
-        await admin.query(
-          `SELECT count(*)::int AS n FROM pg_locks l
-            WHERE NOT l.granted AND l.pid <> pg_backend_pid()
-              AND l.pid IN (SELECT pid FROM pg_stat_activity WHERE application_name = $1)` +
-            (key === null
-              ? ''
-              : ` AND l.locktype = 'advisory' AND l.objsubid = 1
-                  AND (l.classid::int8 << 32 | l.objid::int8) = hashtextextended($2, 0)`),
-          key === null ? [schema] : [schema, key]
-        )
-      ).rows as { n: number }[];
-      waiting = row.n;
-    }
-    return waiting;
+    const { seen } = await untilWaiting({
+      what: 'the writers',
+      atLeast: n,
+      onAbsent: 'return',
+      waiting: async () => {
+        // `pg_stat_activity` is snapshotted once per transaction, and `admin` reads it inside the
+        // transaction holding the lock: without a fresh snapshot a pool session opened since is unseen.
+        await admin.query('SELECT pg_stat_clear_snapshot()');
+        const [row] = (
+          await admin.query(
+            `SELECT count(*)::int AS n FROM pg_locks l
+              WHERE NOT l.granted AND l.pid <> pg_backend_pid()
+                AND l.pid IN (SELECT pid FROM pg_stat_activity WHERE application_name = $1)` +
+              (key === null
+                ? ''
+                : ` AND l.locktype = 'advisory' AND l.objsubid = 1
+                    AND (l.classid::int8 << 32 | l.objid::int8) = hashtextextended($2, 0)`),
+            key === null ? [schema] : [schema, key]
+          )
+        ).rows as { n: number }[];
+        return row.n;
+      },
+    });
+    return seen;
   }
 
   /** Settles a promise into a value or an error, so a test can await it after a commit. */
@@ -355,18 +396,18 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     const buyer = newBuyer();
     const a = await openAttempt(buyer, TIER_A);
 
-    await admin.query('BEGIN');
-    await admin.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
-      buyerTierLockKey(ASSO, buyer),
+    let manual!: ReturnType<typeof settled>;
+    let paid!: ReturnType<typeof settled>;
+    const queued = await queuedOnHeldLock(buyer, [
+      // The manager's grant of tier B waits for the lock ...
+      () => (manual = settled(tags.grantCotisant(ASSO, buyer, 'manager', 'b'))),
+      // ... and so does the payment of tier A.
+      () => (paid = settled(settle(a.id))),
     ]);
-    // The manager's grant of tier B waits for the lock ...
-    const manual = settled(tags.grantCotisant(ASSO, buyer, 'manager', 'b'));
-    expect(await waitersReach(1, buyerTierLockKey(ASSO, buyer))).toBe(1);
-    // ... and so does the payment of tier A.
-    const paid = settled(settle(a.id));
-    expect(await waitersReach(2, buyerTierLockKey(ASSO, buyer))).toBe(2);
-    await admin.query('COMMIT');
+    // The operations are awaited before the count is asserted: a failing count then leaves nothing
+    // of this test running into the next one.
     const [m, p] = await Promise.all([manual, paid]);
+    expect(queued).toEqual([1, 2]);
 
     expect(m.error).toBeNull();
     expect(p.error).toBeNull();
@@ -428,17 +469,15 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
   it('two tabs opening two SIBLING tiers at once: one attempt opens, the other is refused', async () => {
     const buyer = newBuyer();
 
-    await admin.query('BEGIN');
-    await admin.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
-      buyerTierLockKey(ASSO, buyer),
-    ]);
+    let first!: ReturnType<typeof settled>;
+    let second!: ReturnType<typeof settled>;
     // Both pass the sibling settle and the preparation before the lock - nothing is open yet.
-    const first = settled(service.createCheckoutSession(ASSO, TIER_A, buyer));
-    expect(await waitersReach(1, buyerTierLockKey(ASSO, buyer))).toBe(1);
-    const second = settled(service.createCheckoutSession(ASSO, TIER_B, buyer));
-    expect(await waitersReach(2, buyerTierLockKey(ASSO, buyer))).toBe(2);
-    await admin.query('COMMIT');
+    const queued = await queuedOnHeldLock(buyer, [
+      () => (first = settled(service.createCheckoutSession(ASSO, TIER_A, buyer))),
+      () => (second = settled(service.createCheckoutSession(ASSO, TIER_B, buyer))),
+    ]);
     const outcomes = await Promise.all([first, second]);
+    expect(queued).toEqual([1, 2]);
 
     const refused = outcomes.filter((o) => o.error !== null);
     expect(refused).toHaveLength(1);

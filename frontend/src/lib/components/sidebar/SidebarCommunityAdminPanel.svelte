@@ -46,8 +46,10 @@
   } from '$lib/crypto/graineConstants';
   import { m } from '$lib/paraglide/messages';
   import { resolveUserDisplayName } from '$lib/utils/users/displayName';
-  import { membersByFamilyName } from '$lib/utils/users/memberOrder.svelte';
+  import { membersByFamilyName, removeControlDisabled } from '$lib/utils/users/memberOrder.svelte';
+  import { userDisplayNames } from '$lib/utils/users/displayNames.svelte';
   import { Log } from '$lib/utils/Log';
+  import { confirmMemberRemoval } from '$lib/utils/users/memberRemovalConfirm';
   import { copyText } from '$lib/utils/clipboard';
   import Picker from '../ui/Picker.svelte';
   import type { PickerOption } from '../ui/picker';
@@ -142,6 +144,8 @@
   let memberRemoving = $state<Record<string, boolean>>({});
   // The rows are READ by family name (user, 2026-10-05); the order is frozen per member once their
   // profile settles, so a name landing late never moves a row (see `membersByFamilyName`).
+  // THE NAMES THE REMOVE CONTROL ANNOUNCES: a screen reader heard "Retirer le membre" on every row.
+  const memberNames = userDisplayNames(() => communityMembers.map((mem) => mem.userId));
   const memberOrder = membersByFamilyName(() => communityMembers.map((mem) => mem.userId));
   const orderedMembers = $derived.by(() => {
     const byId = new Map(communityMembers.map((mem) => [mem.userId, mem]));
@@ -465,12 +469,8 @@
   async function handleRemoveMember(userId: string) {
     const workspaceDbId = selectedWorkspace?.workspaceDbId;
     if (!workspaceDbId) return;
-    if (
-      !(await showConfirm(m.chat_community_remove_member_confirm(), {
-        danger: true,
-        confirmLabel: m.common_remove_label(),
-      }))
-    ) {
+    if (!(await confirmMemberRemoval(userId, m.chat_community_remove_member_confirm))) {
+      Log.d('communityAdmin.handleRemoveMember declined at its confirmation', { userId });
       return;
     }
     memberRemoving = { ...memberRemoving, [userId]: true };
@@ -982,13 +982,27 @@
                             </span>
                           {/if}
                         </div>
+                        <!--
+                          NOT LIVE WHILE A LOOKUP IS PENDING (`removeControlDisabled`). A member
+                          whose profile lookup is in flight WILL be inserted at their place, moving
+                          every row below it (1.7.0-alpha.9: a removal aimed at beta removed alpha,
+                          4/4). This only NARROWS the window: rows still move when a newcomer
+                          settles later, or when a member leaves or another admin removes one. The
+                          GUARANTEE is the dialog, which names the member the tapped row carried.
+                        -->
                         <button
                           type="button"
+                          data-remove-member={member.userId}
                           onclick={() => handleRemoveMember(member.userId)}
-                          disabled={memberRemoving[member.userId]}
+                          disabled={removeControlDisabled(
+                            memberRemoving[member.userId],
+                            memberOrder.pending
+                          )}
                           class="ui-icon-button text-red-err hover:bg-red-err/10 rounded-lg transition-all"
                           title={m.chat_community_remove_member_title()}
-                          aria-label={m.chat_community_remove_member_title()}
+                          aria-label={m.chat_community_remove_member_label({
+                            member: memberNames.get(member.userId) ?? member.userId,
+                          })}
                         >
                           {#if memberRemoving[member.userId]}
                             <Loader size={16} class="animate-spin" />

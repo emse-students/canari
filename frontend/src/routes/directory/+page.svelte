@@ -111,7 +111,7 @@
     try {
       associations = await listAssociations();
     } catch (err) {
-      Log.d('[directory] association list failed, the filter offers none', err);
+      Log.d('directory', 'association list failed, the filter offers none', err);
     }
   }
 
@@ -128,9 +128,9 @@
         limit: SUGGESTION_SIZE + 1,
       });
       suggestions = res.users.filter((u) => u.id !== me).slice(0, SUGGESTION_SIZE);
-      Log.d('[directory] class suggestions', { promo, n: suggestions.length });
+      Log.d('directory', 'class suggestions', { promo, n: suggestions.length });
     } catch (err) {
-      Log.d('[directory] class suggestions unavailable', err);
+      Log.d('directory', 'class suggestions unavailable', err);
     }
   }
 
@@ -169,7 +169,7 @@
       total = res.total;
     } catch (err) {
       if (mine !== seq) return;
-      Log.d('[directory] search failed', err);
+      Log.d('directory', 'search failed', err);
       error = describeRefusalCode(refusalCode(err)) ?? m.directory_search_error_fallback();
       results = [];
       total = 0;
@@ -194,7 +194,7 @@
       results = [...results, ...res.users.filter((u) => !known.has(u.id))];
       total = res.total;
     } catch (err) {
-      Log.d('[directory] load more failed', err);
+      Log.d('directory', 'load more failed', err);
       moreError = describeRefusalCode(refusalCode(err)) ?? m.directory_more_error();
     } finally {
       loadingMore = false;
@@ -281,7 +281,12 @@
     {#if error}
       <p class="text-red-err text-sm" role="alert">{error}</p>
     {:else if loading}
-      <ul class="space-y-1" aria-busy="true" aria-label={m.directory_loading_label()}>
+      <ul
+        class="space-y-1"
+        data-loading-skeleton
+        aria-busy="true"
+        aria-label={m.directory_loading_label()}
+      >
         {#each [0, 1, 2, 3, 4] as i (i)}
           <li class="flex items-center gap-3 px-2 py-2.5" data-directory-skeleton>
             <div class="bg-cn-surface-alt h-12 w-12 shrink-0 animate-pulse rounded-full"></div>

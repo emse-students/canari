@@ -30,6 +30,7 @@ import { m } from '$lib/paraglide/messages';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { POST_ATTACHMENTS_MAX, POST_ATTACHMENTS_TOO_MANY } from '$lib/posts/attachmentCap';
 import { STUDENTS_ONLY_NOT_OFFERED } from '$lib/posts/studentsOnly';
+import { FORM_NOT_OF_ENTITY, FORM_NOT_ON_ANONYMOUS_POST } from '$lib/posts/editableForms';
 import {
   INSTITUTION_REACH_INVALID,
   INSTITUTION_REACH_NOT_OFFERED,
@@ -101,6 +102,14 @@ export function publishFailureMessage(error: unknown, fallback: string): string 
       case INSTITUTION_REACH_OUTSIDE_AUDIENCE:
         return m.post_reach_outside_audience();
     }
+  }
+  // The attached form refused (2026-11-14): the pickers offer only what the identity may attach, so
+  // reaching these means a list read before a change - each still names what to fix.
+  if (error instanceof ApiRefusalError && error.code === FORM_NOT_OF_ENTITY) {
+    return m.post_form_not_of_entity();
+  }
+  if (error instanceof ApiRefusalError && error.code === FORM_NOT_ON_ANONYMOUS_POST) {
+    return m.post_form_not_on_anonymous();
   }
   // A reply to (or a like of) a comment moderation removed while this copy still showed it live.
   if (error instanceof ApiRefusalError && error.code === COMMENT_REMOVED_BY_MODERATION) {

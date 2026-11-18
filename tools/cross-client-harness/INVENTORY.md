@@ -78,6 +78,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `iosbench.mjs` | Asks a BENCH iPhone build about its own native stores - the `bench_native_store` command, invoked in |
 | `killrows.mjs` | THE KILL ROWS OF THE 1.4.1 CAMPAIGN - KILL-1..5 and RM-3 - their table and their judges. |
 | `launch.mjs` | Launching and killing the test browsers - W1/W2 (owner/peer), the W3 scratch device, and W4/W5 |
+| `leafrows.mjs` | THE LEAF-REFRESH ROWS - LEAF-REFRESH-1, -2 and -4 - their table and their judges, pure. |
 | `listracerows.mjs` | LIST-RACE-1 - A SALON HEARD OF LIVE WHILE ITS COMMUNITY'S LISTING IS IN FLIGHT (2026-10-26). |
 | `liverows.mjs` | LIVE-WEB-2 AND LIVE-STALL-1 - A LIVE BROADCAST FROM THE MI 9T, WATCHED FROM THE WEB (2026-10-27). |
 | `login.mjs` | Drives the login for one of the campaign accounts, over CDP. |
@@ -113,7 +114,6 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `scriptpath.mjs` | WHERE ONE OF THIS RIG'S SCRIPTS ACTUALLY LIVES, resolved once instead of guessed four times. |
 | `seed-bench.mjs` | Tops the LOCAL estate up with what the verification rows need to look at: a feed long enough to |
 | `seedargs.mjs` | The argument grammar of `seed-bench.mjs`, kept pure so `archive/seedargs-selftest.mjs` can hold it. |
-| `seenset.mjs` | WHAT A WEB CLIENT REMEMBERS HAVING ALREADY READ - the seen-ciphertext ledger, read off the client. |
 | `send.mjs` | Sends one message from one client, and ends when that client's own pane shows it. |
 | `sendtrace.mjs` | WHETHER THE SERVER TOOK ONE DEVICE'S SEND, read off chat-delivery's own trace - for a client whose |
 | `serial.mjs` | WHICH PHONE adb SHOULD TALK TO - one resolver, and it REFUSES TO GUESS between two of them. |
@@ -154,7 +154,7 @@ A gesture other rows REST ON, measured by a row of its own so a failure in it is
 
 One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`. See [`archive/README.md`](archive/README.md).
 
-95 scripts.
+96 scripts.
 
 | script | what it is |
 |---|---|
@@ -209,6 +209,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 | `archive/healrevoke.mjs` | THE REVOKED DEVICE THAT COMES BACK AFTER THE WORLD MOVED - one runner, one row per invocation. |
 | `archive/k.mjs` | NOTIF-6c - the notification QUICK REPLY from a merely BACKGROUNDED app (WP-NOTIF-1). |
 | `archive/kill.mjs` | THE KILL ROWS OF THE 1.4.1 CAMPAIGN - a process that dies with a commit in flight. |
+| `archive/leaf.mjs` | THE LEAF-REFRESH ROWS - a due refresh meets a cut link, a reload and a revoked device. |
 | `archive/life.mjs` | LIFE-1..8 - the phone in every state an OS can put it in, one check per run. |
 | `archive/listrace.mjs` | LIST-RACE-1: a salon heard of live while its community's listing is held - listed after the release? |
 | `archive/liveweb.mjs` | LIVE-WEB-2 AND LIVE-STALL-1 - A LIVE FROM THE MI 9T, WATCHED FROM THE WEB, ONE ROW PER PROCESS. |
@@ -258,7 +259,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 
 These test the HARNESS, not the product, and record nothing: they are the gated suite `make test-harness` runs. A failure here means an instrument is lying, which is worse than a failing row.
 
-70 scripts.
+72 scripts.
 
 | script | what it is |
 |---|---|
@@ -299,6 +300,7 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 | `archive/ios-device-selftest.mjs` | `tools/ios-device/ios.mjs`'s decisions, pinned with no phone: what `type` sends and compares, what |
 | `archive/ios-observables-selftest.mjs` | THE iPHONE'S WDA-ONLY OBSERVABLES (O3, O6-O11 of docs/wiki/cross-client-ios.md) - every decision |
 | `archive/kill-selftest.mjs` | THE KILL ROWS' OWN JUDGEMENTS, PINNED (`killrows.mjs`). |
+| `archive/leaf-selftest.mjs` | THE LEAF-REFRESH ROWS' OWN JUDGEMENTS, PINNED (`leafrows.mjs`). |
 | `archive/listrace-selftest.mjs` | LIST-RACE-1'S TABLE AND JUDGE, PINNED (`listracerows.mjs`). |
 | `archive/liveweb-selftest.mjs` | THE LIVE ROWS' OWN JUDGEMENTS AND NARRATION, PINNED (`liverows.mjs`). |
 | `archive/logcatclassify-selftest.mjs` | EVERY RULE OF THE PHONE CLASSIFIER, PINNED AGAINST A LINE WHOSE BUCKET IS KNOWN. |
@@ -311,6 +313,7 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 | `archive/phonefocus-selftest.mjs` | Pins `focusOf` (phonefocus.mjs): the app in front, the app behind, and the dump that says neither - |
 | `archive/picker-selftest.mjs` | THE RIG CHOOSES AN OPTION OF THE IN-APP PICKER BY ITS DRAWN LABEL, AND REFUSES WITH A REASON. |
 | `archive/ports-selftest.mjs` | A RUNNER MUST SAY WHICH DEVICE IT IS ABOUT. `names.mjs` IS WHERE A DEVICE IS NAMED. |
+| `archive/purgedevices-selftest.mjs` | THE DEVICE PANEL'S ROW HOOK AND THE TOOL THAT READS IT MUST STILL AGREE. |
 | `archive/ready-selftest.mjs` | The preflight's readiness probe, exercised on the pages it has to tell apart. |
 | `archive/removals-selftest.mjs` | THE REMOVAL ROWS' JUDGE, PINNED (`removalrows.mjs`): a clean measurement passes, each fact broken |
 | `archive/residue-selftest.mjs` | Pins the border between what a native wipe must leave nothing of and what it may leave. |
@@ -390,4 +393,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-329 scripts in total.
+332 scripts in total.

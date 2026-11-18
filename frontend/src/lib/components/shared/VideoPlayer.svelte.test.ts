@@ -31,12 +31,16 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function mountPlayer(src = 'blob:clip', soundScope?: 'app' | 'local') {
+function mountPlayer(
+  src = 'blob:clip',
+  soundScope?: 'app' | 'local',
+  extra: { streamed?: boolean; declaredDurationMs?: number | null } = {}
+) {
   vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue();
   vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
   const target = document.createElement('div');
   document.body.appendChild(target);
-  const component = mount(VideoPlayer, { target, props: { src, soundScope } });
+  const component = mount(VideoPlayer, { target, props: { src, soundScope, ...extra } });
   mounted.push(() => unmount(component));
   flushSync();
   const root = target.querySelector('[role="group"]') as HTMLElement;
@@ -342,7 +346,7 @@ it("a tap on a control is the control's, and is not the sound tap", () => {
 });
 
 it('draws one glass bar whose buttons wear no blur of their own, and a glass play triangle with no disc', () => {
-  // A MOUSE, so the speaker's volume pill is rendered: it too wears the FLAT tint inside the bar.
+  // A MOUSE, so the speaker's volume pill is rendered: it too wears the fake glass inside the bar.
   const fine = (q: string) =>
     ({
       matches: true,
@@ -357,11 +361,14 @@ it('draws one glass bar whose buttons wear no blur of their own, and a glass pla
   flushSync();
   const pill = target.querySelector<HTMLElement>('[data-video-bar] [data-video-volume]');
   expect(pill, 'the pill is rendered inside the bar').not.toBeNull();
-  expect(pill!.dataset.glass, 'and flat, with no blur of its own').toBe('flat');
-  expect(target.querySelectorAll('[data-video-bar] .glass-video').length).toBe(0);
+  expect(pill!.dataset.glass, 'the base recipe off iOS: no blur').toBe('fake');
+  expect(pill!.className).toContain('glass-video');
+  // The buttons draw no chip of their own: the one fake-glass piece inside the bar is the volume pill.
+  expect(target.querySelectorAll('[data-video-bar] .glass-video').length).toBe(1);
   expect(target.querySelector('[data-video-bar]')!.className).toContain('glass-video');
   const glyph = target.querySelector('[data-video-play-glyph]')!;
-  expect(glyph.querySelector('.glass-video-shape'), 'the triangle is the glass').not.toBeNull();
+  expect(glyph.querySelector('.glass-video-shape'), 'the resting triangle is flat').toBeNull();
+  expect(glyph.querySelector('[data-video-resting-play]')).not.toBeNull();
   expect(glyph.className).not.toMatch(/glass-video|rounded-full|bg-accent/);
 });
 
@@ -482,32 +489,24 @@ it('minimal: shows no glyph at load, at an engine pause, or at the end', () => {
 });
 
 /**
- * THE REEL'S GESTURES ARE EVERY PLAYER'S (owner, 2026-11-09): a tap is the sound - the app's one
- * answer, remembered - with its glyph, and a press held pauses until released. Instagram's reel tap
- * pauses; Canari's does not, by decision.
+ * A REEL'S TAP IS THE OVERLAY'S, NOT THE PLAYER'S (owner, 2026-11-18, superseding 2026-11-09): the
+ * viewer hides or shows its caption, rail and tabs on a single tap (`reelOverlayTap`), so the
+ * player itself neither pauses, mutes nor unmutes - a press held pauses until released, and the rail's
+ * speaker is the sound. The one thing a tap still answers is an autoplay the engine REFUSED.
  */
-it('minimal: a tap turns a muted sound on with its glyph (no pause), and the next pauses, never mutes', () => {
+it('minimal: a tap on a playing reel does nothing to the player - no pause, no sound change', () => {
   const { target, root, video } = mountMinimal();
   video.dispatchEvent(new Event('loadeddata'));
   startPlaying(video);
   vi.mocked(HTMLMediaElement.prototype.play).mockClear();
+  const muted = video.muted;
   tap(root);
-  video.dispatchEvent(new Event('volumechange'));
+  tap(root);
   flushSync();
-  expect(video.muted).toBe(false);
-  expect(videoSound.muted).toBe(false);
-  expect(target.querySelector('[data-video-glyph]')!.getAttribute('data-video-glyph')).toBe(
-    'sound-on'
-  );
+  expect(video.muted, 'a tap never changes the sound').toBe(muted);
   expect(HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
   expect(HTMLMediaElement.prototype.pause).not.toHaveBeenCalled();
-  // The second tap (the owner's defect): the sound stays on, the reel pauses.
-  tap(root);
-  video.dispatchEvent(new Event('volumechange'));
-  flushSync();
-  expect(video.muted, 'a tap on a reel with sound never mutes it').toBe(false);
-  expect(videoSound.muted).toBe(false);
-  expect(HTMLMediaElement.prototype.pause).toHaveBeenCalledTimes(1);
+  expect(target.querySelector('[data-video-glyph]'), 'no pop: the player did nothing').toBeNull();
 });
 
 it('minimal: a press held pauses the reel and the release resumes it', () => {
@@ -798,6 +797,61 @@ it('conversation viewer: a tap on the picture pauses it and the next plays it', 
 });
 
 /**
+ * ONE GLYPH AT THE CENTRE AT ANY INSTANT (owner, 2026-11-15, "c'est moche"): a pause drew the pop's
+ * glass bars AND the resting play triangle together, superimposed. The resting triangle now waits for
+ * the pop's own `animationend`. Asserted at every step of a pause and a play (the conversation viewer; the feed, chat and reel share the gate).
+ */
+const centreGlyphs = (target: HTMLElement) =>
+  target.querySelectorAll(
+    '[data-video-glyph="play"], [data-video-glyph="pause"], [data-video-play-glyph]'
+  ).length;
+
+for (const variant of ['conversation'] as const) {
+  it(`${variant}: never two of the play and pause glyphs through a pause and a play`, () => {
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue();
+    vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const component = mount(VideoPlayer, {
+      target,
+      props: { src: 'blob:one-glyph', variant, soundScope: 'local' },
+    });
+    mounted.push(() => unmount(component));
+    flushSync();
+    const root = target.querySelector('[role="group"]') as HTMLElement;
+    const video = target.querySelector('video')!;
+    let paused = true;
+    Object.defineProperty(video, 'paused', { configurable: true, get: () => paused });
+    video.dispatchEvent(new Event('loadeddata'));
+    flushSync();
+    expect(centreGlyphs(target), 'at rest, paused: the triangle alone').toBe(1);
+
+    // PLAY: the triangle leaves as the pop comes in.
+    tap(root);
+    paused = false;
+    video.dispatchEvent(new Event('play'));
+    flushSync();
+    expect(centreGlyphs(target)).toBeLessThanOrEqual(1);
+    target.querySelector('[data-video-glyph]')?.dispatchEvent(new Event('animationend'));
+    flushSync();
+    expect(centreGlyphs(target), 'playing: nothing at the centre').toBe(0);
+
+    // PAUSE: the pop alone, THEN the resting triangle once the pop has ended.
+    tap(root);
+    paused = true;
+    video.dispatchEvent(new Event('pause'));
+    flushSync();
+    expect(centreGlyphs(target), 'the pause pop and the triangle are never together').toBe(1);
+    expect(target.querySelector('[data-video-glyph="pause"]')).not.toBeNull();
+    expect(target.querySelector('[data-video-play-glyph]')).toBeNull();
+    target.querySelector('[data-video-glyph]')!.dispatchEvent(new Event('animationend'));
+    flushSync();
+    expect(centreGlyphs(target)).toBe(1);
+    expect(target.querySelector('[data-video-play-glyph]'), 'the triangle follows').not.toBeNull();
+  });
+}
+
+/**
  * "ON NE PEUT PLUS AVANCER DANS LES VIDEOS" (owner, 2026-11-10): a press on the line seeks once the
  * element knows its length - which every file now declares (`mp4Duration.ts`). With no length there
  * is nothing to map the press onto, and the line lands nowhere rather than at a made-up time.
@@ -827,12 +881,13 @@ it('the line seeks where it is pressed once the duration is known, and not befor
 });
 
 /**
- * A STREAM WITH NO LENGTH YET STILL HAS A LINE (owner, 2026-11-11: CanaReels showed no seek line).
- * Until its tail gives the source a length (`segmentedMediaStream`), the line maps onto what the
- * engine can seek - what is buffered - and moves; the length, once set, takes over. The player says
- * nothing of a stream's missing length at its metadata: the stream names why when it cannot learn it.
+ * THE LINE IS FIXED TO THE VIDEO'S TOTAL FROM THE FIRST FRAME (owner, 2026-11-18: on a slow link the
+ * line "went back" as segments loaded). It supersedes 2026-11-11, which mapped a stream with no length
+ * onto what it had buffered - the very mapping that grows with every segment. A stream whose total
+ * nobody knows yet (undeclared, tail not read) draws NO played part and cannot be sought (`unknown`,
+ * said once in the log); its length, once the stream learns it, takes over and stays.
  */
-it('a stream with no length maps its line onto what it can seek, then onto the length once known', () => {
+it('a stream with no length draws no played part - never a line mapped onto what it has loaded', () => {
   const info = vi.spyOn(console, 'info').mockImplementation(() => {});
   const { target, video } = mountConversation('blob:undeclared-stream', true);
   const slider = target.querySelector<HTMLElement>('[role="slider"]')!;
@@ -844,41 +899,120 @@ it('a stream with no length maps its line onto what it can seek, then onto the l
     slider.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1 }));
   };
   const ranges = (end: number) => ({ length: 1, start: () => 0, end: () => end });
-  Object.defineProperty(video, 'buffered', { configurable: true, get: () => ranges(8) });
-  Object.defineProperty(video, 'seekable', { configurable: true, get: () => ranges(8) });
+  let loadedEnd = 8;
+  Object.defineProperty(video, 'buffered', { configurable: true, get: () => ranges(loadedEnd) });
+  Object.defineProperty(video, 'seekable', { configurable: true, get: () => ranges(loadedEnd) });
   withDuration(video, Number.POSITIVE_INFINITY);
   video.dispatchEvent(new Event('loadedmetadata'));
   flushSync();
   expect(info.mock.calls.map((c) => String(c[0])).join(' ')).not.toContain('no duration');
-  expect(slider.getAttribute('aria-valuemax'), 'the line maps onto the 8 s it can seek').toBe('8');
+  const line = target.querySelector<HTMLElement>('[data-video-progress]')!;
+  expect(line.getAttribute('data-video-length')).toBe('unknown');
+  expect(slider.getAttribute('aria-valuemax'), 'no total, no scale').toBe('0');
+  expect(target.querySelector('[data-video-loaded]'), 'no loaded part against nothing').toBeNull();
   press(100);
-  expect(video.currentTime).toBe(4);
+  expect(video.currentTime, 'no total, no seek').toBe(0);
+
+  // Segments arrive: the line stays as it was - it does not move onto the new loaded end.
+  video.currentTime = 3;
+  loadedEnd = 24;
+  video.dispatchEvent(new Event('progress'));
+  flushSync();
+  expect(slider.getAttribute('aria-valuemax')).toBe('0');
+  expect(target.querySelector<HTMLElement>('[data-video-played]')!.getAttribute('style')).toContain(
+    'width: 0%'
+  );
 
   // The stream read 61 s from its tail and set it on the source.
   withDuration(video, 61);
   video.dispatchEvent(new Event('durationchange'));
   flushSync();
+  expect(line.getAttribute('data-video-length')).toBe('known');
   expect(slider.getAttribute('aria-valuemax')).toBe('61');
   press(200);
   expect(video.currentTime).toBe(61);
 });
 
-it('the bar draws no buffered part until the length is known - never a full bar of "what is loaded"', () => {
-  const { target, video } = mountPlayer('blob:bar-stream');
+it("a stream's line is the PUBLISHER's declared length before the engine knows one, and the played fraction never decreases as segments arrive", () => {
+  const { target, video } = mountPlayer('blob:declared-stream', undefined, {
+    streamed: true,
+    declaredDurationMs: 20_000,
+  });
   const ranges = (end: number) => ({ length: 1, start: () => 0, end: () => end });
-  Object.defineProperty(video, 'buffered', { configurable: true, get: () => ranges(8) });
-  Object.defineProperty(video, 'seekable', { configurable: true, get: () => ranges(8) });
+  let loadedEnd = 2;
+  Object.defineProperty(video, 'buffered', { configurable: true, get: () => ranges(loadedEnd) });
+  Object.defineProperty(video, 'seekable', { configurable: true, get: () => ranges(loadedEnd) });
+  withDuration(video, Number.POSITIVE_INFINITY);
+  const widthOf = (selector: string) =>
+    Number.parseFloat(
+      /width: ([0-9.]+)%/.exec(
+        target.querySelector<HTMLElement>(selector)!.getAttribute('style')!
+      )![1]
+    );
+  const playedBar = () => widthOf('[data-video-progress="bar"] [data-video-played]');
+
+  // Fixed from the very first frame, before any media event named a duration.
+  video.dispatchEvent(new Event('progress'));
+  flushSync();
+  expect(
+    target.querySelector('[data-video-progress="bar"]')!.getAttribute('data-video-length')
+  ).toBe('known');
+
+  let previous = -1;
+  const steps: [number, number, number][] = [
+    // [playhead, loaded end, engine duration]
+    [0, 2, Number.POSITIVE_INFINITY],
+    [1.5, 2, Number.POSITIVE_INFINITY],
+    [1.5, 6, Number.POSITIVE_INFINITY],
+    [3, 9, Number.POSITIVE_INFINITY],
+    [3, 13, 20],
+    [6, 20, 20],
+  ];
+  for (const [at, end, duration] of steps) {
+    loadedEnd = end;
+    video.currentTime = at;
+    withDuration(video, duration);
+    video.dispatchEvent(new Event('timeupdate'));
+    video.dispatchEvent(new Event('progress'));
+    flushSync();
+    const played = playedBar();
+    expect(played, `playhead ${at} s, ${end} s loaded`).toBeGreaterThanOrEqual(previous);
+    expect(played).toBeCloseTo((at / 20) * 100, 5);
+    previous = played;
+  }
+  // The loaded part is grey on the same track, under the played part.
+  const loaded = target.querySelector<HTMLElement>(
+    '[data-video-progress="bar"] [data-video-loaded]'
+  )!;
+  expect(loaded.getAttribute('style')).toContain('width: 100%');
+});
+
+it('the bar draws every loaded range as a grey stretch of the total, none until the total is known', () => {
+  const { target, video } = mountPlayer('blob:bar-stream', undefined, { streamed: true });
+  const spans = [
+    [0, 4],
+    [8, 12],
+  ];
+  const ranges = {
+    length: spans.length,
+    start: (i: number) => spans[i][0],
+    end: (i: number) => spans[i][1],
+  };
+  Object.defineProperty(video, 'buffered', { configurable: true, get: () => ranges });
+  Object.defineProperty(video, 'seekable', { configurable: true, get: () => ranges });
   withDuration(video, Number.POSITIVE_INFINITY);
   video.dispatchEvent(new Event('progress'));
   flushSync();
-  const bufferedBar = () =>
-    target.querySelector<HTMLElement>('[data-video-bar] .bg-white\\/35')!.getAttribute('style');
-  expect(bufferedBar()).toContain('width: 0%');
+  const loaded = () => [...target.querySelectorAll<HTMLElement>('[data-video-loaded]')];
+  expect(loaded().length).toBe(0);
 
   withDuration(video, 16);
   video.dispatchEvent(new Event('durationchange'));
   flushSync();
-  expect(bufferedBar()).toContain('width: 50%');
+  expect(loaded().map((el) => el.getAttribute('style'))).toEqual([
+    'left: 0%; width: 25%;',
+    'left: 50%; width: 25%;',
+  ]);
 });
 
 it('a FILE that declares no length is said, naming that it is the file', () => {

@@ -197,6 +197,14 @@ Both findings this section carried have closed, one of them before it was writte
   three files had drifted out of shape with no red run to show for it. `ci.yml` runs `format:check`
   there now.
 
+**CANARI MOVED ITS PULL-REQUEST CHECKS TO COMMIT AND PUSH ON 2026-11-15, AND THE OTHER FOUR WILL WANT
+THE SAME SHAPE** (owner: *"tout ce qui est verifie a la PR devrait etre verifie au commit, la fusion de
+PR devrait etre une formalite"*). The shape: one script that says which CI jobs a change owes
+(`ci-scopes.sh`), one that holds every check's command (`checks.sh`), both called by CI AND by the
+tracked hooks, and a pre-push that merges the latest `main` first
+([cicd](cicd.md#checks-at-commit-at-push-and-in-ci-only)). Not carried to Sky, MiGallery,
+Portail-etu or Le Cercle yet: they are COMPLETE, and the shape is proven here before it travels.
+
 ### Where each repo's deploy job RUNS, and the one asymmetry that is left
 
 One model in all five: `release.yml` is the only thing that deploys, and its deploy job runs **on
@@ -1207,6 +1215,39 @@ run by hand and is wired into no pipeline. Its README says where the four are AL
 lockfile refresh of a Dependabot cargo bump, inside a `# canari-only:` region the comparison cuts
 first, so every edit outside it still forks ([cicd](cicd.md#a-dependabot-cargo-bump-that-is-incomplete-by-construction-is-completed-and-merged-wp-rust-lock-automerge-2026-10-18)).
 The siblings commit no `Cargo.lock` at all (measured 2026-10-19), so they have nothing to complete.
+
+**The arming line is a declared difference too, and it rests on one measured fact (decided
+2026-11-14).** Canari arms with GitHub's `enablePullRequestAutoMerge` mutation and merges only
+behind its own reads ([cicd](cicd.md#package-1-opening-a-pull-request-ciyml)); the three siblings
+keep `gh pr merge --auto`, which merges by itself when a pull request looks mergeable to it. The
+difference is not a debt, because of who may bypass each ruleset, read from the API on 2026-11-14:
+
+| Repository | Ruleset | Bypass actors | Required check |
+| --- | --- | --- | --- |
+| Canari | 22152902 | the admin role AND the arming App | `CI passed` |
+| Sky | 22233778 | the admin role | `CI passed` |
+| MiGallery | 22233779 | the admin role | `CI passed` |
+| Portail-etu | 10687261 (also requires signed commits) | the admin role | `CI passed` |
+
+Where the App bypasses nothing, a merge `gh` chooses is judged by the ruleset itself, so by
+`CI passed`: the short step is correct. Porting the mutation alone would break the siblings - it
+refuses a pull request that is already mergeable, and without Canari's gated merge that pull
+request would never land - and porting all of it is about 350 lines per repository for a hazard
+they do not have. **What holds the fact**: a ruleset is a setting changed in a browser, with no
+commit for `shape.mjs` to compare, so `scheduled.yml`'s `arming-bypass` job re-reads it daily with
+the App's own token (`.github/scripts/sibling-arming-bypass.sh`) and goes red if the App can bypass
+a sibling whose step still calls `gh pr merge --auto` (a sibling that bypasses is green only on
+positive evidence that it sends the mutation). It also fails if no active ruleset of a sibling
+requires `CI passed` on its default branch any more, since that leaves the same merge unjudged.
+A refused API, a missing field or a repository with no ruleset is red too, and the same token must
+see Canari's own bypass (the control) before a "never" is believed. Classic branch protection is
+not read: none of the four uses it. **First real run, 2026-11-14** (run 43645795532, by hand
+dispatch): one token of the App was minted for the four repositories, and it read `always` on
+Canari's ruleset and `never` on the three others' - so GitHub does fill `current_user_can_bypass`
+for an App installation token, which its documentation does not say, and the same script run with
+an admin identity reads `always` everywhere. The red path has only been seen in the self-test.
+The day it goes red, the answer is to port Canari's whole
+step to that sibling or to take the App out of its bypass actors - not to quiet the job.
 
 **WHAT ONLY THE USER CAN DO, and it is why mail keeps arriving.** The notification volume is an
 ACCOUNT setting, not a repository one: `github.com/settings/notifications` -> Actions email OFF, and

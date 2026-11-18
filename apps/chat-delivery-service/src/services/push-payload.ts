@@ -379,6 +379,44 @@ export interface ApnsRequest {
   pushType: 'alert' | 'background';
   /** APNs priority: 10 for alerts, 5 for background pushes. */
   priority: number;
+  /**
+   * The `apns-collapse-id` header: a new alert with the same id REPLACES the delivered one. Set from
+   * the data map's `collapseId` (one live notification per post, owner 2026-11-14) when it fits the
+   * 64 bytes APNs accepts; absent otherwise.
+   */
+  collapseId?: string;
+}
+
+/** The most bytes APNs accepts in `apns-collapse-id`. */
+export const APNS_COLLAPSE_ID_MAX_BYTES = 64;
+
+/**
+ * The `collapseId` of a reaction's push - the decimal the author's iPhone files it under, ONE per
+ * reactor and message, and the very identifier the author's page gives its own notification of it (the notification
+ * plugin's request id, `"\(notification.id)"`), so the system REPLACES one by the other instead of
+ * showing two (review of #3792). The frontend's `reactionCollapseId` (`reactionNotification.ts` over
+ * `stableNotifId.ts`) is the other copy; the two languages cannot share code, so both test suites
+ * assert the same vector.
+ *
+ * Java's string hash of `reaction:<messageId>:<actor>`, folded positive - the plugin's id space.
+ *
+ * NO INSTANT (2026-11-18): a reactor who changed one emoji for another left two entries in
+ * Notification Center, where Android replaces the line. A reactor's newer reaction to one message
+ * replaces their older one; the push and the page's post of the same reaction still share the id.
+ *
+ * THE REACTED-TO MESSAGE'S ID, NEVER THE CONVERSATION'S (review of #3792, round 3). This rides the
+ * content-free wake as an APNs header Apple reads. A hash of `<groupId>:<actor>:<at>` was a hash of
+ * values Apple can learn elsewhere - a call ring carries the group and the caller in clear - so a few
+ * thousand candidate instants would confirm "A reacted in G" on a push meant to say nothing. The
+ * message id travels in no wake and no ring, so the hash cannot be checked against a guess.
+ */
+export function reactionCollapseId(messageId: string, actorId: string): string {
+  const key = `reaction:${messageId}:${actorId.toLowerCase()}`;
+  let hash = 0;
+  for (let i = 0; i < key.length; i++) {
+    hash = (Math.imul(31, hash) + key.charCodeAt(i)) | 0;
+  }
+  return String(Math.abs(hash) || 1);
 }
 
 /**
@@ -721,14 +759,19 @@ export function buildInternalApnsRequest(
   // does NOT - iOS may skip it under memory pressure, and a reaction filed under `canari_social`
   // there is the stray notification this whole change removes.
   //
-  // A reaction to a POST stacks under that post (`post_reaction_<id>`), the iOS half of the one
-  // notification Android keeps per post. The NSE does not rewrite it, so this line is what applies.
+  // ONE LIVE NOTIFICATION PER POST (owner, 2026-11-14): a comment or a reaction on the reader's
+  // post carries `collapseId`, the identity every platform replaces by - here the thread AND the
+  // `apns-collapse-id`, so the new alert replaces the delivered one instead of stacking. `quiet`
+  // is the update while the post still has an unread bell row: no sound and `passive`, filed in
+  // Notification Center without lighting the screen. The NSE does not rewrite either.
+  const collapseId = data.collapseId || undefined;
+  const quiet = data.quiet === 'true';
   const threadId = data.channelId
     ? `channel_${data.channelId}`
     : data.reaction === 'true' && data.groupId
       ? data.groupId
-      : data.contentKey === 'social_reaction' && data.postId
-        ? `post_reaction_${data.postId}`
+      : collapseId
+        ? collapseId
         : data.type === 'form_reminder'
           ? 'canari_forms'
           : 'canari_social';
@@ -738,13 +781,16 @@ export function buildInternalApnsRequest(
       aps: {
         'mutable-content': 1,
         alert: { title: title || 'Canari', body: body || apnsFallbackBody(locale) },
-        sound: internalApnsSound(data),
+        ...(quiet ? { 'interruption-level': 'passive' } : { sound: internalApnsSound(data) }),
         'thread-id': threadId,
       },
       ...data,
     },
     pushType: 'alert',
     priority: 10,
+    ...(collapseId && Buffer.byteLength(collapseId) <= APNS_COLLAPSE_ID_MAX_BYTES
+      ? { collapseId }
+      : {}),
   };
 }
 

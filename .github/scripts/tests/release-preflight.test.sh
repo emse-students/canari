@@ -13,6 +13,8 @@
 #                          pushes to `main` any more (2026-10-30).
 #   classify_prerelease_currency  gate 2 for a pre-release: nothing with a higher store build
 #                          number was released already - a rerun of a stale alpha would move dev back.
+#   classify_stable_source gate 4 for a stable: it builds EXACTLY its latest pre-release's commit,
+#                          whatever `main` holds (owner, 2026-11-14).
 #   classify_dev_coverage  whether the dev estate has already served the commit being shipped. An
 #                          inverted reading here reports a lagging estate as healthy, which is the
 #                          one thing the check exists to prevent.
@@ -179,6 +181,66 @@ check_latest v1.0.1-alpha.10 1.0.1 v1.0.1-alpha.2 v1.0.1-alpha.10 v1.0.1-alpha.9
 check_latest v1.0.1-alpha.2 1.0.1 v1.0.1-alpha.2 v1.0.2-alpha.7 v1.0.10-alpha.1 v1.0.1
 check_latest '' 1.0.1 v1.0.2-alpha.1 v1.0.1 v1.0.11-alpha.1
 check_latest '' 1.0.1
+
+printf '\na stable builds exactly its latest pre-release, whatever main holds\n'
+# =================================================================================================
+# OWNER, 2026-11-14: "La stable devrait toujours etre build depuis la derniere alpha, independamment
+# de main." The resolve step of release.yml derives the commit; before this gate nothing asserted it,
+# so main's head (what the stable's own tag names when typed against main) passed gates 2 and 4.
+ALPHA=fa1bc265595c88c0a864e0f97168a8383c498c92
+MAIN_HEAD=640aa34b2e09a2d55fe0eac8e87021839d41dab0
+source_of() {
+  local want="$1" what="$2"; shift 2
+  local got; got="$(classify_stable_source "$@")"
+  if [ "$got" = "$want" ]; then pass "$what"; else fail "$what - expected '$want', got '$got'"; fi
+}
+if ! declare -F classify_stable_source >/dev/null; then
+  fail 'classify_stable_source does not exist - nothing asserts which commit a stable builds'
+  classify_stable_source() { printf 'missing\n'; }
+fi
+source_of "exact v1.6.12-alpha.2" "the latest alpha's own commit is what the stable builds" \
+  "$ALPHA" v1.6.12-alpha.2 "$ALPHA"
+source_of "mismatch v1.6.12-alpha.2 $ALPHA" "main's head is refused, even though main contains the alpha" \
+  "$MAIN_HEAD" v1.6.12-alpha.2 "$ALPHA"
+source_of 'undecidable no pre-release of this version exists' 'a stable with no alpha is refused' \
+  "$ALPHA" '' ''
+source_of 'undecidable the commit of v1.6.12-alpha.2 could not be read (nothing)' \
+  'an unreadable alpha commit is not permission' "$ALPHA" v1.6.12-alpha.2 ''
+source_of 'undecidable the target fa1bc265 is not a full commit sha' \
+  'a short target is not compared by prefix' fa1bc265 v1.6.12-alpha.2 "$ALPHA"
+# AND THE PREFLIGHT ASKS IT: a classifier nothing calls asserts nothing.
+# shellcheck disable=SC2016 # the pattern is the script's literal text
+if grep -qF 'SOURCE="$(classify_stable_source "$TARGET_SHA" "$ALPHA_TAG" "$ALPHA_SHA")"' \
+  "$HERE/../release-preflight.sh"; then
+  pass "release-preflight.sh asks gate 4's first question of every stable"
+else
+  fail "release-preflight.sh never compares the stable's commit with its latest pre-release's"
+fi
+
+printf '\nand its tag was published on that commit, so the workflow files come from the alpha too\n'
+# =================================================================================================
+# LEAD, 2026-11-14. GitHub runs a release event's workflow files (and every workflow_call callee)
+# from the commit the tag named AT PUBLICATION. v1.6.12 was typed against main, so its production
+# deploy ran main's serve-prod.yml around the alpha's tree. The same classifier judges the published
+# commit (github.sha, handed in as PUBLISHED_SHA), and anything but the alpha's commit is refused.
+source_of "mismatch v1.6.12-alpha.2 $ALPHA" 'a stable tag typed against main is refused (the v1.6.12 case)' \
+  "$MAIN_HEAD" v1.6.12-alpha.2 "$ALPHA"
+source_of 'undecidable the target (empty) is not a full commit sha' \
+  'a published commit nobody handed in is not permission' '' v1.6.12-alpha.2 "$ALPHA"
+# shellcheck disable=SC2016 # the patterns are the files' literal text
+if grep -qF 'PUBLISHED="$(classify_stable_source "${PUBLISHED_SHA:-}" "$ALPHA_TAG" "$ALPHA_SHA")"' \
+  "$HERE/../release-preflight.sh" &&
+  grep -qF 'gh release create v$VERSION --target $ALPHA_SHA --generate-notes' "$HERE/../release-preflight.sh"; then
+  pass 'release-preflight.sh judges the published commit and names the --target command to type'
+else
+  fail "release-preflight.sh never compares the stable tag's published commit with the alpha's"
+fi
+# shellcheck disable=SC2016 # a GitHub expression, not a shell one
+if grep -qF 'PUBLISHED_SHA: ${{ github.sha }}' "$HERE/../../workflows/release.yml"; then
+  pass 'release.yml hands the published commit (github.sha) to the gates'
+else
+  fail 'release.yml does not hand PUBLISHED_SHA to the gates, so the published-commit check reads nothing'
+fi
 
 printf '\na pre-release older than one already released is refused, not redeployed\n'
 # =================================================================================================
@@ -370,6 +432,103 @@ if grep -qF 'PROD_SHA="$(gh api "repos/$REPO/git/ref/tags/prod-released" --jq '"
 else
   fail "gate 6 does not diff from the prod-released marker"
 fi
+
+printf '\ngate 7: a stable is refused while an advisory touches what it ships (owner, 2026-11-17)\n'
+# =================================================================================================
+# THE AUDIT'S THREE EXITS, AND ONLY ONE OF THEM IS PERMISSION. An outage is not a clean tree: a
+# stable whose shipped closure nobody audited has no evidence, so it is refused like an advisory,
+# and anything the script never returns is undecidable - a refusal too.
+shipped() {
+  local got
+  got="$(classify_shipped_audit "$1")"
+  if [ "$got" = "$2" ]; then pass "$3"; else fail "$3 - expected '$2', got '$got'"; fi
+}
+shipped 0 'clean'          'exit 0 is a clean production closure, the only permission'
+shipped 1 'advisory'       'exit 1 is an advisory in what ships'
+shipped 2 'unanswered'     'exit 2 is an unanswered registry, told apart so the refusal says why'
+shipped 127 'undecidable 127' 'any other exit decides nothing'
+shipped '' 'undecidable nothing' 'no exit at all decides nothing'
+# shellcheck disable=SC2016 # the patterns are the script's literal text
+if grep -qF 'source "$HERE/lib/audit-trees.sh"' "$PREFLIGHT" && grep -qxF '  shipped_closure_gate' "$PREFLIGHT"; then
+  pass "release-preflight.sh asks gate 7 through shipped_closure_gate and the pull-request audit's own table"
+else
+  fail "release-preflight.sh does not run gate 7 from lib/audit-trees.sh"
+fi
+
+# THE LOOP ITSELF, against a fake audit: what it refuses, what evidence it prints, and how few
+# attempts an outage costs after the first tree. The fake answers per tree from a file
+# (`<tree> <exit> <one output line>`) and logs the AUDIT_ATTEMPTS each call was given.
+# shellcheck source-path=SCRIPTDIR source=../lib/audit-trees.sh
+source "$HERE/../lib/audit-trees.sh"
+G7="$(mktemp -d)"
+cat >"$G7/audit.sh" <<'FAKE'
+#!/usr/bin/env bash
+line="$(grep -m 1 -F "$1 " "$G7_ANSWERS")"
+printf '%s attempts=%s\n' "$1" "${AUDIT_ATTEMPTS:-default}" >>"$G7_CALLS"
+rest="${line#* }"
+printf '%s\n' "${rest#* }"
+exit "${rest%% *}"
+FAKE
+# gate7 <answers file content>: runs the loop with stub printers, sets G7_OUT and G7_REFUSED.
+gate7() {
+  printf '%s\n' "$1" >"$G7/answers"
+  : >"$G7/calls"
+  G7_OUT="$(
+    FAILED=0
+    ok() { printf 'OK %s\n' "$1"; }
+    refuse() { FAILED=1; printf 'REFUSE %s\n' "$1"; }
+    hint() { printf 'HINT %s\n' "$1"; }
+    G7_ANSWERS="$G7/answers" G7_CALLS="$G7/calls" GITHUB_RUN_ID=4242 AUDIT_SCRIPT="$G7/audit.sh" shipped_closure_gate
+    printf 'FAILED=%s\n' "$FAILED"
+  )"
+}
+# answers <index> <exit> <line>: every tree clean except the one at <index> (-1: none).
+answers() {
+  local i=0 t
+  for t in "${AUDIT_TREES[@]}"; do
+    if [ "$i" -eq "$1" ]; then printf '%s %s %s\n' "$t" "$2" "$3"; else printf '%s 0 No vulnerabilities found\n' "$t"; fi
+    i=$((i + 1))
+  done
+}
+
+gate7 "$(answers -1 0 none)"
+if grep -qx 'FAILED=0' <<<"$G7_OUT" && [ "$(grep -c '^OK ' <<<"$G7_OUT")" -eq "${#AUDIT_TREES[@]}" ] && ! grep -q '^HINT' <<<"$G7_OUT"; then
+  pass "every tree clean: gate 7 passes, one ok per tree, no evidence printed"
+else
+  fail "a clean table did not pass cleanly: $G7_OUT"
+fi
+
+gate7 "$(answers 1 1 'high: typeorm > tinyglobby > picomatch GHSA-zzzz')"
+if grep -qx 'FAILED=1' <<<"$G7_OUT" && grep -qF 'HINT   | high: typeorm > tinyglobby > picomatch GHSA-zzzz' <<<"$G7_OUT"; then
+  pass "an advisory refuses, and its WHOLE output (package and path) is the evidence"
+else
+  fail "an advisory refusal lost its evidence: $G7_OUT"
+fi
+
+gate7 "$(answers 2 1 'error: something nobody has seen before')"
+if grep -qx 'FAILED=1' <<<"$G7_OUT" && grep -qF 'HINT   | error: something nobody has seen before' <<<"$G7_OUT"; then
+  pass "an exit 1 that names no advisory still refuses WITH what it printed"
+else
+  fail "an unrecognised exit 1 refused without evidence: $G7_OUT"
+fi
+
+gate7 "$(answers 0 7 'Segmentation fault')"
+if grep -qx 'FAILED=1' <<<"$G7_OUT" && grep -qF 'exited 7, which is no verdict' <<<"$G7_OUT" && grep -qF 'HINT   | Segmentation fault' <<<"$G7_OUT"; then
+  pass "an exit that is no verdict refuses, with its output"
+else
+  fail "an undecidable exit was not refused with evidence: $G7_OUT"
+fi
+
+gate7 "$(answers 0 2 'error: POST advisories/bulk - 503')"
+first_attempts="$(sed -n 1p "$G7/calls")"
+later_attempts="$(sed -n '2,$p' "$G7/calls" | grep -vc 'attempts=1$')"
+if grep -qx 'FAILED=1' <<<"$G7_OUT" && grep -qF 'gh run rerun 4242' <<<"$G7_OUT" &&
+  [ "$first_attempts" = "${AUDIT_TREES[0]} attempts=default" ] && [ "$later_attempts" -eq 0 ]; then
+  pass "an outage refuses naming 'gh run rerun <run>', and every later tree is asked ONCE"
+else
+  fail "the outage path: first '$first_attempts', later calls not at 1: $later_attempts; $G7_OUT"
+fi
+rm -rf "$G7"
 
 printf '\n'
 if [ "$FAIL" -ne 0 ]; then

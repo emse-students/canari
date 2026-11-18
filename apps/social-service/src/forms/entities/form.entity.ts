@@ -1,4 +1,5 @@
-import type { GuestIdentityField } from '../guest-identity';
+import type { AskedField } from '../guest-identity';
+import type { AccountField } from '../respondent-identity';
 import type { FormStatus } from '../form-status';
 import type { AudienceCondition } from '../../pricing/audience';
 import type { PriceMatrix } from '../../pricing/price-matrix';
@@ -129,12 +130,24 @@ export class Form {
   isPublic: boolean;
 
   /**
-   * What a PUBLIC form asks a guest about who they are (migration 138, owner 2026-11-06): a list
-   * drawn from `lastName`, `firstName`, `email`, each required once asked. Null asks nothing - the
-   * default, and every form before 138. A member is never asked (`guest-identity.ts`).
+   * What the form ASKS of whoever it cannot read from an account (migration 138, owner 2026-11-06;
+   * extended 2026-11-16): a guest's `lastName`, `firstName`, `email` (a public form), and the
+   * declared `cursus`, `status`, `campus` (a guest, or any respondent of an anonymous form), each
+   * required once asked. Null asks nothing - the default, and every form before 138. A member of a
+   * named form is never asked: their fields are joined from the account (`respondentFields`). The
+   * column keeps its 138 name: renaming it would break the containers still running during a deploy.
    */
   @Column({ type: 'jsonb', nullable: true })
-  guestFields: GuestIdentityField[] | null;
+  guestFields: AskedField[] | null;
+
+  /**
+   * What the form JOINS from a member's account to each answer (migration 174, owner 2026-11-16):
+   * a list drawn from `lastName`, `firstName`, `cursus`, `status`, `campus`, read at submit time
+   * and stored with the answer (`respondent-identity.ts`). Defaults to the two names, which every
+   * named form showed before 174; always empty on an anonymous form.
+   */
+  @Column({ type: 'jsonb', default: () => `'["lastName","firstName"]'::jsonb` })
+  respondentFields: AccountField[];
 
   /** When true, a user can submit the form multiple times (e.g. product orders). */
   @Column({ default: false })

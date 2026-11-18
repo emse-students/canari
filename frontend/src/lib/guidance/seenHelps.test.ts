@@ -27,6 +27,8 @@ vi.mock('$lib/stores/connectivity.svelte', () => ({
 
 const { SeenHelps } = await import('./seenHelps.svelte');
 const { ACCOUNT_KEY } = await import('$lib/utils/accountLocalKeys');
+const { SessionEndedByDeviceRevocationError, SessionExpiredError, SignOutInProgressError } =
+  await import('$lib/stores/auth');
 
 const json = (status: number, body: unknown = {}) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -54,6 +56,35 @@ describe('SeenHelps', () => {
     expect(store.ready).toBe(true);
     expect(store.has('welcome-tour')).toBe(true);
     expect(apiFetch).toHaveBeenCalledWith('https://core.test/api/users/me/help-seen');
+  });
+
+  it.each([
+    [
+      'a device its owner revoked',
+      () => new SessionEndedByDeviceRevocationError({ userId: 'u1', deviceId: 'd1' }),
+    ],
+    ['a session the server declared dead', () => new SessionExpiredError()],
+    ['a sign-out already under way', () => new SignOutInProgressError('request')],
+  ])('stands down quietly when the session ended under the read: %s', async (_name, make) => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    apiFetch.mockRejectedValueOnce(make());
+
+    await store.load('u1');
+
+    expect(error).not.toHaveBeenCalled();
+    expect(store.ready).toBe(false);
+  });
+
+  it('still accuses a read that failed for any other reason', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    apiFetch.mockRejectedValueOnce(new Error('boom'));
+
+    await store.load('u1');
+
+    expect(error).toHaveBeenCalledWith(
+      '[seenHelps] reading the seen set failed',
+      expect.any(Error)
+    );
   });
 
   it('records optimistically, then on the server', async () => {

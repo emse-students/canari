@@ -34,7 +34,8 @@
  * dropping the underscore in `dm_groups`, reports a dozen live links as dead and the next reader
  * deletes the test rather than the links.
  */
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, normalize, relative, resolve, sep } from 'node:path';
 
 const ROOT = resolve(process.argv[2] ?? join(import.meta.dirname, '..', '..', '..'));
@@ -54,15 +55,25 @@ const SKIP = new Set([
   'gen',
 ]);
 
-/** Collects every markdown file under `dir`, skipping generated and vendored trees. */
-function collect(dir, out = []) {
-  for (const entry of readdirSync(dir)) {
-    if (SKIP.has(entry)) continue;
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) collect(full, out);
-    else if (entry.endsWith('.md')) out.push(full);
-  }
-  return out;
+/**
+ * Every TRACKED markdown file, skipping generated and vendored trees.
+ *
+ * `git ls-files` and not a walk of the disk (2026-11-15), for two reasons that are one: CI checks
+ * out exactly the tracked files, so a walk saw on a workstation what no runner sees (an untracked
+ * scratch page, a stray worktree) and failed for it; and the walk entered every `node_modules`
+ * and `target` just to skip them - 9 s on Windows, which is what kept this test out of the
+ * pre-commit hook, where it now runs on every commit that touches a page or deletes a file.
+ * A file staged for this commit is in the index, so it is listed.
+ */
+function collect(root) {
+  return execFileSync('git', ['-c', 'core.quotePath=false', 'ls-files', '--', '*.md'], {
+    cwd: root,
+    encoding: 'utf8',
+  })
+    .split(/\r?\n/)
+    .filter((f) => f && !f.split('/').some((part) => SKIP.has(part)))
+    .map((f) => join(root, f))
+    .filter((f) => existsSync(f));
 }
 
 /** GitHub's heading slug. See the header comment - every clause here was a false positive first. */

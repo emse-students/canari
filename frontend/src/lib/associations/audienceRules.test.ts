@@ -4,6 +4,8 @@ import {
   campusCells,
   cellOf,
   coverage,
+  offersCampus,
+  offersEveryone,
   reachChoiceToRules,
   reachedCells,
   toggleGroup,
@@ -61,6 +63,39 @@ describe('audience rules as pairs', () => {
     const some = new Set([cellOf('ICM', 'gardanne')]);
     expect(coverage(campus, some)).toBe('some');
     expect(coverage(campus, toggleGroup(some, campus))).toBe('all');
+  });
+});
+
+describe('who a grid offers the everyone box to', () => {
+  it('offers it to an institution alone: what the server would refuse is not offered', () => {
+    expect(offersEveryone('institution')).toBe(true);
+    for (const type of ['association', 'list', 'a type added later']) {
+      expect(offersEveryone(type)).toBe(false);
+    }
+  });
+});
+
+describe('which campus a grid offers once one is set', () => {
+  const se = new Set([cellOf('ICM', 'saint-etienne')]);
+
+  it('offers every campus while nothing is reached, then only the one that is', () => {
+    for (const type of ['association', 'list', 'a type added later']) {
+      expect(offersCampus(type, new Set(), 'saint-etienne')).toBe(true);
+      expect(offersCampus(type, new Set(), 'gardanne')).toBe(true);
+      expect(offersCampus(type, se, 'saint-etienne')).toBe(true);
+      expect(offersCampus(type, se, 'gardanne')).toBe(false);
+    }
+  });
+
+  it('offers nothing more to an entity already on two campuses: it can only be brought back to one', () => {
+    const both = new Set([cellOf('ICM', 'saint-etienne'), cellOf('ICM', 'gardanne')]);
+    expect(offersCampus('association', both, 'saint-etienne')).toBe(false);
+    expect(offersCampus('association', both, 'gardanne')).toBe(false);
+  });
+
+  it('offers both campuses to an institution, whatever it reaches', () => {
+    expect(offersCampus('institution', se, 'gardanne')).toBe(true);
+    expect(offersCampus('institution', new Set(ALL_CELLS), 'saint-etienne')).toBe(true);
   });
 });
 

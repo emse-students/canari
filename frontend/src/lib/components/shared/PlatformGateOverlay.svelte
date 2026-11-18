@@ -53,7 +53,7 @@
   async function handleMaintenanceLogout() {
     loggingOut = true;
     try {
-      await clearAuth();
+      await clearAuth('platform-gate');
       await leaveSignedOut();
     } finally {
       loggingOut = false;

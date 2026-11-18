@@ -20,9 +20,17 @@ describe('PostsService.getById scheduling', () => {
     const postRepo = {
       findOne: jest.fn(() => Promise.resolve(post)),
       // Every reader here is inside the post's audience (WP6b): what is asserted is the schedule.
+      // The author's door holds for its writer (`authorDoorHoldsSql`, proven against PostgreSQL in
+      // `entity-author-door.integration.spec.ts`); it is asked of the writer alone.
       manager: {
         query: jest.fn((sql: string) =>
-          Promise.resolve(sql.includes('AS visible') ? [{ visible: true }] : [])
+          Promise.resolve(
+            sql.includes('AS visible')
+              ? [{ visible: true }]
+              : sql.includes('AS holds')
+                ? [{ holds: true }]
+                : []
+          )
         ),
       },
     };
@@ -37,6 +45,7 @@ describe('PostsService.getById scheduling', () => {
         isContentModerator: () => Promise.resolve(false),
         moderatedPostIds: () => Promise.resolve(new Set<string>()),
         mayModeratePost: () => Promise.resolve(false),
+        mayReadToModeratePost: () => Promise.resolve(false),
       } as unknown as AssociationsService,
       {} as PostNotificationsService,
       { release: jest.fn() } as unknown as PostMediaRetentionService

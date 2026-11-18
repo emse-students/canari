@@ -1,5 +1,7 @@
 import { HttpException } from '@nestjs/common';
 import {
+  AUDIENCE_ERROR,
+  assertAudienceAllowedForType,
   assertBdeMayReadAudience,
   assertBdeMayWriteAudience,
   changedRules,
@@ -12,6 +14,54 @@ import {
  * per-campus bound let one rewrite the other's associations. The real SQL feeding it is proven in
  * `audience-takeover.integration.spec.ts`.
  */
+describe('what the type of an entity allows its audience to be (decisions 3 and 6)', () => {
+  const codeOf = (type: string, rules: { formation: string | null; campus: string | null }[]) => {
+    try {
+      assertAudienceAllowedForType(type, rules);
+      return null;
+    } catch (e) {
+      return ((e as HttpException).getResponse() as { code: string }).code;
+    }
+  };
+  const se = { formation: null, campus: 'saint-etienne' };
+  const seIcm = { formation: 'ICM', campus: 'saint-etienne' };
+  const seIsmin = { formation: 'ISMIN', campus: 'saint-etienne' };
+  const gaIcm = { formation: 'ICM', campus: 'gardanne' };
+
+  it.each(['association', 'list', 'a type added later'])(
+    'holds a %s to ONE campus, however many of its formations',
+    (type) => {
+      expect(codeOf(type, [])).toBeNull();
+      expect(codeOf(type, [se])).toBeNull();
+      expect(codeOf(type, [seIcm, seIsmin])).toBeNull();
+      // Present on two campuses, it is two entities - whoever writes, the platform admin included.
+      expect(codeOf(type, [seIcm, gaIcm])).toBe(AUDIENCE_ERROR.ONE_CAMPUS_ONLY);
+      expect(codeOf(type, [se, gaIcm])).toBe(AUDIENCE_ERROR.ONE_CAMPUS_ONLY);
+      // `everyone` is named as such, with or without a campus rule beside it.
+      expect(codeOf(type, [{ formation: null, campus: null }])).toBe(
+        AUDIENCE_ERROR.EVERYONE_INSTITUTION_ONLY
+      );
+      expect(codeOf(type, [se, { formation: 'ICM', campus: null }])).toBe(
+        AUDIENCE_ERROR.EVERYONE_INSTITUTION_ONLY
+      );
+    }
+  );
+
+  it('refuses a stored two-campus audience written back UNCHANGED: the rule is about what an entity holds, not about what changed', () => {
+    // No such entity exists (measured on production, 2026-11-15). Were one to appear - a row
+    // written before the rule, a restore - its editor would be answered the typed refusal until
+    // the audience is brought to one campus: it is never kept by resubmitting it.
+    const stored = [seIcm, gaIcm];
+    expect(codeOf('association', stored)).toBe(AUDIENCE_ERROR.ONE_CAMPUS_ONLY);
+    expect(codeOf('association', [seIcm])).toBeNull();
+  });
+
+  it('lets an institution address two campuses, or everyone', () => {
+    expect(codeOf('institution', [seIcm, gaIcm])).toBeNull();
+    expect(codeOf('institution', [{ formation: null, campus: null }])).toBeNull();
+  });
+});
+
 describe('ruleInsideGovernedSpaces', () => {
   const se = (formation: string, governed: boolean): SpaceStanding => ({
     formation,

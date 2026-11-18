@@ -236,6 +236,107 @@ describe('LiveBroadcast - the first-live rules (L11)', () => {
   });
 });
 
+describe('LiveBroadcast - the right to broadcast, read before Start (WP-L8)', () => {
+  const UNTIL = '2026-11-20T10:00:00.000Z';
+  const CLEAR = { cutsOnRecord: 1, suspendedUntil: null, withdrawnAt: null };
+  const SUSPENDED = { cutsOnRecord: 2, suspendedUntil: UNTIL, withdrawnAt: null };
+  const WITHDRAWN = {
+    cutsOnRecord: 3,
+    suspendedUntil: UNTIL,
+    withdrawnAt: '2026-11-01T08:00:00.000Z',
+  };
+  const suspendedRefusal = () =>
+    new LiveRefusalError(
+      403,
+      'LIVE_BROADCAST_SUSPENDED',
+      '',
+      'suspended',
+      null,
+      null,
+      null,
+      null,
+      UNTIL
+    );
+
+  async function readyWith(standing: typeof CLEAR | typeof SUSPENDED | typeof WITHDRAWN) {
+    const f = fakeDeps();
+    f.deps.fetchLiveStanding.mockResolvedValue(standing);
+    const cam = fakeCamera();
+    const b = new LiveBroadcast(cam.session, null, f.deps);
+    await cam.session.start();
+    await b.loadLimits();
+    return { ...f, b };
+  }
+
+  it('a member with cuts on record and no suspension may start', async () => {
+    const { b } = await readyWith(CLEAR);
+    expect(b.standingBar).toBeNull();
+    expect(b.canStart).toBe(true);
+  });
+
+  it('a running suspension is known before Start: Start is not offered and no start is sent', async () => {
+    const { b, deps } = await readyWith(SUSPENDED);
+    expect(b.standingBar).toBe('suspended');
+    expect(b.standing?.suspendedUntil).toBe(UNTIL);
+    expect(b.canStart).toBe(false);
+    await b.start();
+    expect(deps.startLive).not.toHaveBeenCalled();
+    expect(b.startProblem).toBeNull();
+  });
+
+  it('a withdrawal comes before a suspension: it has no end to wait for', async () => {
+    const { b } = await readyWith(WITHDRAWN);
+    expect(b.standingBar).toBe('withdrawn');
+    expect(b.canStart).toBe(false);
+  });
+
+  it('a standing that cannot be read is the limits problem, and Start waits', async () => {
+    const f = fakeDeps();
+    f.deps.fetchLiveStanding.mockRejectedValueOnce(new TransportFailureError(new TypeError('x')));
+    const cam = fakeCamera();
+    const b = new LiveBroadcast(cam.session, null, f.deps);
+    await cam.session.start();
+    await b.loadLimits();
+    expect(b.limitsProblem).toBe('offline');
+    expect(b.standing).toBeNull();
+    expect(b.canStart).toBe(false);
+    // The Retry reads the three again.
+    await b.loadLimits();
+    expect(b.limitsProblem).toBeNull();
+    expect(b.canStart).toBe(true);
+  });
+
+  it('reading again after the suspension ended offers Start', async () => {
+    const { b, deps } = await readyWith(SUSPENDED);
+    deps.fetchLiveStanding.mockResolvedValue(CLEAR);
+    await b.loadLimits();
+    expect(b.standingBar).toBeNull();
+    expect(b.canStart).toBe(true);
+  });
+
+  it('a start refused for a suspension that landed since: the standing is read again and says it, once', async () => {
+    const { b, deps } = await readyWith(CLEAR);
+    deps.startLive.mockRejectedValueOnce(suspendedRefusal());
+    deps.fetchLiveStanding.mockResolvedValue(SUSPENDED);
+    await b.start();
+    expect(deps.fetchLiveStanding).toHaveBeenCalledTimes(2);
+    expect(b.phase).toBe('preview');
+    expect(b.standingBar).toBe('suspended');
+    expect(b.startProblem).toBeNull();
+    expect(b.canStart).toBe(false);
+  });
+
+  it('a start refused for the standing whose re-read fails: the limits Retry, Start waits', async () => {
+    const { b, deps } = await readyWith(CLEAR);
+    deps.startLive.mockRejectedValueOnce(suspendedRefusal());
+    deps.fetchLiveStanding.mockRejectedValueOnce(new TransportFailureError(new TypeError('x')));
+    await b.start();
+    expect(b.limitsProblem).toBe('offline');
+    expect(b.standing).toBeNull();
+    expect(b.canStart).toBe(false);
+  });
+});
+
 describe('LiveBroadcast - on air', () => {
   it("a chunk is sealed for the live and queued at the uploader's next index", async () => {
     const { b, deps, recorders, uploaders } = await ready();

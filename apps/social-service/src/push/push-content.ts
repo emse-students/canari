@@ -46,6 +46,9 @@ export type PushContentKey =
   | 'social_live_cut'
   | 'social_live_suspended'
   | 'social_live_withdrawn'
+  | 'social_live_reinstated'
+  | 'social_admin_profile_correction'
+  | 'social_admin_report'
   | 'social_booking_cancelled'
   | 'social_booking_withdrawn'
   | 'social_booking_added'
@@ -147,6 +150,8 @@ export type PushContent = {
    * - the three live moderation keys (`social_live_cut`, `_suspended`, `_withdrawn`): nothing, always
    *   empty - the reason is a WORD, so it stays on the in-app row, which the client words
    * - the two form reminder keys: nothing, always empty
+   * - the two admin queue keys (`social_admin_profile_correction`, `social_admin_report`): nothing,
+   *   always empty - the content-free rule
    * - `form_paid_over_capacity`: the form's own title - never the payer's name, never the amount
    * - the two `lydia_payments_*` keys: the association's name, nothing else
    * - the five event keys: the event's own title, which is not translatable either
@@ -160,9 +165,11 @@ export type PushContent = {
    */
   arg: string;
   /**
-   * A number the sentence needs, set by ONE key family only: the three campus-trend keys, where it
-   * is how many OTHER accounts reacted besides the named `actorName` ("et 9 autres"). Sent as
-   * `contentCount` (decimal) and absent everywhere else - absent means absent, as for the icon.
+   * A number the sentence needs, set by two key families only: the three campus-trend keys, where it
+   * is how many OTHER accounts reacted besides the named `actorName` ("et 9 autres"), and
+   * `social_comment` / `social_reaction` on the reader's own post (2026-11-14), where it is how many
+   * OTHER people did the same among the post's unread rows ("Alice et 4 autres ont commenté"). Sent
+   * as `contentCount` (decimal) and absent everywhere else - absent means absent, as for the icon.
    */
   count?: number;
   legacyTitle: string;
@@ -310,12 +317,18 @@ export function replyContent(actorName: string, preview: string, icon?: PushIcon
 }
 
 /** Someone commented on the recipient's post. */
-export function commentContent(actorName: string, preview: string, icon?: PushIcon): PushContent {
+export function commentContent(
+  actorName: string,
+  preview: string,
+  icon?: PushIcon,
+  others?: number
+): PushContent {
   return {
     key: 'social_comment',
     icon,
     actorName,
     arg: preview,
+    ...(others !== undefined ? { count: others } : {}),
     legacyTitle: `${actorName} a commenté`,
     legacyBody: preview || 'Nouveau commentaire',
   };
@@ -367,12 +380,18 @@ export function reactionTypeToEmoji(reactionType: string): string {
  * The only key whose TITLE names no actor, so the actor travels in the body instead - which is why
  * the native side composes title and body per key rather than from one shared shape.
  */
-export function reactionContent(actorName: string, reaction: string, icon?: PushIcon): PushContent {
+export function reactionContent(
+  actorName: string,
+  reaction: string,
+  icon?: PushIcon,
+  others?: number
+): PushContent {
   return {
     key: 'social_reaction',
     icon,
     actorName,
     arg: reaction,
+    ...(others !== undefined ? { count: others } : {}),
     legacyTitle: 'Nouvelle réaction',
     legacyBody: `${actorName} a réagi ${reaction} à votre publication`,
   };
@@ -983,6 +1002,52 @@ export function liveWithdrawnContent(): PushContent {
     arg: '',
     legacyTitle: 'Droit de lancer un live retiré',
     legacyBody: 'La modération vous a retiré le droit de lancer un live.',
+  };
+}
+
+/**
+ * Staff gave the right to broadcast back (the lift of a withdrawal). See {@link liveCutContent}. A
+ * running suspension is NOT lifted with it, so the sentence promises nothing while one runs.
+ */
+export function liveReinstatedContent(): PushContent {
+  return {
+    key: 'social_live_reinstated',
+    actorName: '',
+    arg: '',
+    legacyTitle: 'Droit de lancer un live rétabli',
+    legacyBody:
+      "La modération vous a rendu le droit de lancer un live ; une suspension en cours reste appliquée jusqu'à sa fin.",
+  };
+}
+
+/**
+ * A NEW ITEM IN A GLOBAL ADMIN'S QUEUE (owner, 2026-11-18): a profile correction was asked for, or a
+ * subject was reported for the first time while nothing else was pending on it. Told to every
+ * global admin (`AdminQueuesService.announce`), and the bell row clears for all of them as soon as one
+ * handles the item (`BELL_ROW_GATE`).
+ *
+ * FIXED SENTENCES, NO ACTOR, NO FRAGMENT, NO ICON - THE CONTENT-FREE RULE. Who asked, what they
+ * wrote, what was reported and by whom stay on the server and in the queue; Google and Apple carry
+ * the key alone (and, in `full` push mode, the legacy sentence below, which names nothing either).
+ */
+export function adminProfileCorrectionContent(): PushContent {
+  return {
+    key: 'social_admin_profile_correction',
+    actorName: '',
+    arg: '',
+    legacyTitle: 'Demande de correction de profil',
+    legacyBody: 'Une personne demande une correction de son profil.',
+  };
+}
+
+/** A subject reported with nothing else pending on it. See {@link adminProfileCorrectionContent}. */
+export function adminReportContent(): PushContent {
+  return {
+    key: 'social_admin_report',
+    actorName: '',
+    arg: '',
+    legacyTitle: 'Nouveau signalement',
+    legacyBody: 'Un contenu ou une personne a été signalé.',
   };
 }
 

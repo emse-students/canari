@@ -8,7 +8,6 @@ import {
   Logger,
   Headers,
   Param,
-  ParseUUIDPipe,
   Patch,
   Post as HttpPost,
   Query,
@@ -19,7 +18,6 @@ import { FeedAudienceGuard } from './feed-audience.guard';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { PostsService } from './posts.service';
 import { assertCreateKindShape } from './reel-rules';
-import { reelLimits } from './reel.constants';
 import { resolveListFeed } from './list-feed';
 import { PostInteractionsService } from './post-interactions.service';
 import { PostNotificationsService, bellPageLimit } from './post-notifications.service';
@@ -41,8 +39,16 @@ import {
   UpdatePostDto,
   WithdrawPostDto,
 } from './dto/post.dto';
+import { RouteParams } from '../common/route-params';
 
 /** Manages post resources including reactions, comments, polls, and notifications. */
+@RouteParams({
+  postId: 'uuid',
+  associationId: 'uuid',
+  eventId: 'uuid',
+  pollId: 'opaque',
+  commentId: 'opaque',
+})
 @Controller('posts')
 export class PostsController {
   private readonly logger = new Logger(PostsController.name);
@@ -96,10 +102,7 @@ export class PostsController {
   /** Marks notifications about one post as read when the post is opened. */
   @UseGuards(NginxAuthGuard)
   @HttpPost(':postId/notifications/read')
-  markPostRead(
-    @Headers('x-user-id') xUserId: string,
-    @Param('postId', ParseUUIDPipe) postId: string
-  ) {
+  markPostRead(@Headers('x-user-id') xUserId: string, @Param('postId') postId: string) {
     return this.notifications.markPostRead(xUserId, postId);
   }
 
@@ -126,14 +129,14 @@ export class PostsController {
   }
 
   /**
-   * The CanaReels numbers (longest reel, retention, "about to expire" window), so no client is
-   * built carrying a copy - see `reel.constants.ts`. Declared before `:postId` like every literal
+   * The CanaReels numbers (longest reel, retention IN FORCE, "about to expire" window), so no client
+   * is built carrying a copy - see `reel.constants.ts`. Declared before `:postId` like every literal
    * segment here.
    */
   @UseGuards(NginxAuthGuard)
   @Get('reel-limits')
   getReelLimits() {
-    return reelLimits();
+    return this.service.reelLimitsInForce();
   }
 
   /**
@@ -206,7 +209,7 @@ export class PostsController {
   @UseGuards(NginxAuthGuard)
   @Get('reach-options/:associationId')
   listInstitutionReachOptions(
-    @Param('associationId', ParseUUIDPipe) associationId: string,
+    @Param('associationId') associationId: string,
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') xGlobalAdmin?: string
   ) {
@@ -287,7 +290,7 @@ export class PostsController {
   @UseGuards(NginxAuthGuard, FeedAudienceGuard)
   @Get(':postId/calendar-link')
   async getPostCalendarLink(
-    @Param('postId', ParseUUIDPipe) postId: string,
+    @Param('postId') postId: string,
     @Headers('x-user-id') xUserId: string
   ) {
     // The event of a post the reader may not see is that post's content: same 404 as the post.
@@ -317,19 +320,19 @@ export class PostsController {
   }
 
   /**
-   * Returns a single post by its ID. Global admins may load moderation-hidden posts; the author
-   * may load their own post before its scheduled publication date, nobody else can.
+   * Returns a single post by its ID. Whoever MODERATES it (a platform admin, a BDE moderator in
+   * scope - `getById` asks `mayReadToModeratePost`) reads it to moderate, hidden or outside their audience
+   * included; the author may load their own post before its scheduled publication date.
    */
   @UseGuards(NginxAuthGuard, FeedAudienceGuard)
   @Get(':postId')
   getPost(
-    @Param('postId', ParseUUIDPipe) postId: string,
+    @Param('postId') postId: string,
     @Headers('x-global-admin') xGlobalAdmin?: string,
     @Headers('x-user-id') userId?: string,
     @Query('withReplays') withReplays?: string
   ) {
     return this.service.getById(postId, {
-      allowHidden: xGlobalAdmin === 'true',
       viewerId: userId,
       isGlobalAdmin: xGlobalAdmin === 'true',
       withReplays: withReplays === 'true',
@@ -345,7 +348,7 @@ export class PostsController {
   updatePost(
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') ga: string,
-    @Param('postId', ParseUUIDPipe) postId: string,
+    @Param('postId') postId: string,
     @Body() body: UpdatePostDto
   ) {
     return this.service.updatePost(postId, xUserId, body, ga === 'true');
@@ -360,19 +363,19 @@ export class PostsController {
   @HttpPost(':postId/withdraw')
   withdrawPost(
     @Headers('x-user-id') xUserId: string,
-    @Param('postId', ParseUUIDPipe) postId: string,
+    @Param('postId') postId: string,
     @Body() body: WithdrawPostDto
   ) {
     return this.service.withdrawPost(postId, xUserId, body?.mediaIds ?? []);
   }
 
-  /** Deletes a post; global admins may delete any post. */
+  /** Deletes a post: its publisher, a platform admin, or a moderator of it (`assertMayManage`). */
   @UseGuards(NginxAuthGuard)
   @Delete(':postId')
   deletePost(
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
-    @Param('postId', ParseUUIDPipe) postId: string
+    @Param('postId') postId: string
   ) {
     return this.service.deletePost(postId, xUserId, xGlobalAdmin === 'true');
   }
@@ -391,7 +394,7 @@ export class PostsController {
   @HttpPost(':postId/polls/:pollId/vote')
   async votePoll(
     @Headers('x-user-id') xUserId: string,
-    @Param('postId', ParseUUIDPipe) postId: string,
+    @Param('postId') postId: string,
     @Param('pollId') pollId: string,
     @Body() body: VotePollDto,
     @Headers('x-global-admin') xGlobalAdmin?: string
@@ -409,7 +412,7 @@ export class PostsController {
   @HttpPost(':postId/reactions')
   async addReaction(
     @Headers('x-user-id') xUserId: string,
-    @Param('postId', ParseUUIDPipe) postId: string,
+    @Param('postId') postId: string,
     @Body() body: AddReactionDto
   ) {
     await this.assertNotMuted(xUserId);
@@ -422,10 +425,7 @@ export class PostsController {
   /** Removes the calling user's reaction from a post. */
   @UseGuards(NginxAuthGuard)
   @Delete(':postId/reactions')
-  async removeReaction(
-    @Headers('x-user-id') xUserId: string,
-    @Param('postId', ParseUUIDPipe) postId: string
-  ) {
+  async removeReaction(@Headers('x-user-id') xUserId: string, @Param('postId') postId: string) {
     const answer = await this.interactions.removeReaction(postId, xUserId);
     // Not gated (it adds nothing), so its answer is what must not list the reactors to whoever
     // holds an id: `serveReactionsTo` hands an outsider their own entry only.
@@ -438,7 +438,7 @@ export class PostsController {
   listComments(
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
-    @Param('postId', ParseUUIDPipe) postId: string,
+    @Param('postId') postId: string,
     @Query() query: ListCommentsQueryDto
   ) {
     return this.service.listComments(postId, xUserId, {
@@ -453,7 +453,7 @@ export class PostsController {
   async addComment(
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
-    @Param('postId', ParseUUIDPipe) postId: string,
+    @Param('postId') postId: string,
     @Body() body: AddCommentDto
   ) {
     // The mute is the real account's, whatever the comment will say it is.
@@ -479,7 +479,7 @@ export class PostsController {
   async likeComment(
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
-    @Param('postId', ParseUUIDPipe) postId: string,
+    @Param('postId') postId: string,
     @Param('commentId') commentId: string
   ) {
     await this.service.assertVisible(postId, xUserId, 'COMMENT');
@@ -490,19 +490,19 @@ export class PostsController {
    * Updates the text of a comment the caller may edit (`commentRights`). Behind the `'COMMENT'` read:
    * the answer serves the comment (who liked it included) to a reader the comments may be withheld
    * from - a named reader's own comment, written while their switch was on. Deleting it stays open.
+   * A WRITE, so never `allowHidden`: a platform admin edits their own comment only where an ordinary
+   * reader could (2026-11-14, profiles-and-access.md).
    */
   @UseGuards(NginxAuthGuard)
   @Patch(':postId/comments/:commentId')
   async editComment(
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
-    @Param('postId', ParseUUIDPipe) postId: string,
+    @Param('postId') postId: string,
     @Param('commentId') commentId: string,
     @Body() body: EditCommentDto
   ) {
-    await this.service.assertVisible(postId, xUserId, 'COMMENT', {
-      allowHidden: xGlobalAdmin === 'true',
-    });
+    await this.service.assertVisible(postId, xUserId, 'COMMENT');
     return this.interactions.editComment(
       postId,
       commentId,
@@ -518,7 +518,7 @@ export class PostsController {
   deleteComment(
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
-    @Param('postId', ParseUUIDPipe) postId: string,
+    @Param('postId') postId: string,
     @Param('commentId') commentId: string
   ) {
     return this.interactions.deleteComment(postId, commentId, xUserId, xGlobalAdmin === 'true');
@@ -530,7 +530,7 @@ export class PostsController {
   async unmaskPost(
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
-    @Param('postId', ParseUUIDPipe) postId: string
+    @Param('postId') postId: string
   ) {
     await this.assertModeratesPost(xUserId, xGlobalAdmin, postId);
     return this.service.clearAnonymousFlag(postId);
@@ -574,7 +574,7 @@ export class PostsController {
   async hidePost(
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
-    @Param('postId', ParseUUIDPipe) postId: string
+    @Param('postId') postId: string
   ) {
     await this.assertModeratesPost(xUserId, xGlobalAdmin, postId);
     return this.service.hidePostByModeration(postId);
@@ -586,7 +586,7 @@ export class PostsController {
   async unhidePost(
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
-    @Param('postId', ParseUUIDPipe) postId: string
+    @Param('postId') postId: string
   ) {
     await this.assertModeratesPost(xUserId, xGlobalAdmin, postId);
     return this.service.unhidePost(postId);

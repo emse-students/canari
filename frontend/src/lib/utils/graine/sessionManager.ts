@@ -64,6 +64,20 @@ export interface GraineOutboundDeps {
    * with it - a v2 seed handed over without one is refused by every reader.
    */
   endorse: (session: StoredGraineSession) => Promise<StoredGraineV2>;
+  /**
+   * Whether this tab may still write the shared session store - read AT EACH WRITE, after every
+   * await before it (`IStorage.saveGraineSession`'s `onlyWhile`). The reservation is a
+   * read-modify-write serialized only within this document: a tab that stopped leading during it
+   * (a freeze resumed minutes later) would write back a count read before the new leader's sends,
+   * rolling the index back to one already sealed. Refused instead (`StoreWriteRefusedError`), nothing
+   * written. Absent: always (a single-document runtime, a test).
+   *
+   * NOT THE PROOF, only the first refusal: leadership is read at the write, and a tab that lost the
+   * lock and has not yet been told still answers `true`. The proof is the store's compare-and-swap
+   * on the count read here (`saveGraineSession`'s `sentCountWas`), which refuses that tab's write
+   * whatever it believes.
+   */
+  mayWrite?: () => boolean;
   /** Injectable clock, for tests. Never used to decide anything but the age threshold. */
   now?: () => number;
 }
@@ -207,7 +221,12 @@ async function reserve(
   if (verdict === 'reuse' && current) {
     const index = current.firstIndex + (current.sentCount ?? 0);
     const updated: StoredGraineSession = { ...current, sentCount: (current.sentCount ?? 0) + 1 };
-    await deps.storage.saveGraineSession(updated, deps.deviceKeyB64);
+    await deps.storage.saveGraineSession(
+      updated,
+      deps.deviceKeyB64,
+      deps.mayWrite,
+      current.sentCount
+    );
     return { session: updated, index, minted: false, redistributed: false };
   }
 
@@ -228,7 +247,12 @@ async function reserve(
         redistributed: true,
       },
     };
-    await deps.storage.saveGraineSession(updated, deps.deviceKeyB64);
+    await deps.storage.saveGraineSession(
+      updated,
+      deps.deviceKeyB64,
+      deps.mayWrite,
+      current.sentCount
+    );
     console.info(
       `[GRAINE] reused session ${current.sessionId} for channel ${scope.channelId.slice(0, 8)} ` +
         `across epoch ${current.distributionEpoch}->${run.epoch} run ${run.runId.slice(0, 8)}, ` +
@@ -259,7 +283,7 @@ async function reserve(
   const minted: StoredGraineSession = { ...draft, v2: await deps.endorse(draft) };
   const distributionFrame = await deps.distribute(minted);
   const stored: StoredGraineSession = { ...minted, sentCount: 1, distributionFrame };
-  await deps.storage.saveGraineSession(stored, deps.deviceKeyB64);
+  await deps.storage.saveGraineSession(stored, deps.deviceKeyB64, deps.mayWrite);
   // Meant to be rare since 2026-10-22: once per removal or new user in the key group, or per cap.
   // The run id is printed so a reading can tell a reset (`[GRAINE] run reset reason=...`, from the
   // MLS layer) apart from a cap: a new session under the SAME run as the previous one was a cap.

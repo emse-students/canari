@@ -54,9 +54,9 @@ describe('the refresh transport', () => {
   it('is the cookie for the web on BOTH deployments, where HttpOnly is a real protection', () => {
     // The web app is SAME-site with its API - it is served by the same nginx - so it has no
     // third-party problem to solve and must never be handed a token in a body it can read.
-    expect(usesBodyRefreshTransport('https://canari-emse.fr', ISSUES_COOKIE)).toBe(false);
+    expect(usesBodyRefreshTransport('https://canari.emse.fr', ISSUES_COOKIE)).toBe(false);
     expect(usesBodyRefreshTransport('http://localhost:5173', ISSUES_COOKIE)).toBe(false);
-    expect(usesBodyRefreshTransport('https://canari-emse.fr', CANNOT)).toBe(false);
+    expect(usesBodyRefreshTransport('https://canari.emse.fr', CANNOT)).toBe(false);
     expect(usesBodyRefreshTransport('http://localhost:5173', CANNOT)).toBe(false);
   });
 

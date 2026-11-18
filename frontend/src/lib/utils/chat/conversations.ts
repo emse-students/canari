@@ -25,6 +25,7 @@ import type { IMlsService } from '$lib/mlsService';
 import type { Conversation, ConversationLifecycle } from '$lib/types';
 import { getUserDisplayNameSync, peekUserDisplayName } from '$lib/utils/users/displayName';
 import { foldForSearch } from '$lib/utils/textFold';
+import { unnamedGroupLabelOf } from './groupTreeMembers';
 import { forgetGroupReconciliation } from './historyReconcile';
 import { mergeMessagePage } from './messageMerge';
 import { countingReadPoint, derivedUnreadCount } from './readState';
@@ -109,6 +110,8 @@ export function toConversationMeta(
     serverReadWatermarks: convo.serverReadWatermarks,
     historyFloor: convo.historyFloor,
     startedAt: convo.startedAt,
+    ...(convo.nameAt !== undefined ? { nameAt: convo.nameAt } : {}),
+    ...(convo.nameSync !== undefined ? { nameSync: convo.nameSync } : {}),
     // A number when this session knows it; absent otherwise, which the store reads as "keep what
     // the row holds", never as 0: the store migration wrote it, and only it.
     ...(typeof convo.localReadSeed === 'number' ? { localReadSeed: convo.localReadSeed } : {}),
@@ -491,6 +494,10 @@ export interface ConversationRowSpec {
   serverReadWatermarks?: Conversation['serverReadWatermarks'];
   historyFloor?: Conversation['historyFloor'];
   startedAt?: Conversation['startedAt'];
+  /** See {@link Conversation.nameAt}; absent keeps `existing`'s. */
+  nameAt?: Conversation['nameAt'];
+  /** See {@link Conversation.nameSync}; absent keeps `existing`'s. */
+  nameSync?: Conversation['nameSync'];
   /** See {@link Conversation.localReadSeed}; only a number is carried, absent keeps `existing`'s. */
   localReadSeed?: Conversation['localReadSeed'];
   /** See {@link Conversation.awaitingAdmission}; absent keeps what `existing` holds. */
@@ -534,6 +541,15 @@ export function buildConversationRow(spec: ConversationRowSpec): Conversation {
   const serverReadWatermarks = spec.serverReadWatermarks ?? existing?.serverReadWatermarks;
   const historyFloor = spec.historyFloor ?? existing?.historyFloor;
   const startedAt = spec.startedAt ?? existing?.startedAt;
+  // A DATED NAME IS NOT A SITE'S TO REPLACE. Once an MLS frame stated this group's name, only a later
+  // statement changes it (`groupName.ts`); a site rebuilding the row from the server's list or a
+  // placeholder carries an undated name, which it beats by definition. Groups only - a DM's or a
+  // channel's name is never dated.
+  const keepsDatedName =
+    conversationType === 'group' && spec.nameAt === undefined && existing?.nameAt !== undefined;
+  const nameAt = conversationType === 'group' ? (spec.nameAt ?? existing?.nameAt) : undefined;
+  const name = keepsDatedName && existing ? existing.name : identity.displayName;
+  const nameSync = conversationType === 'group' ? (spec.nameSync ?? existing?.nameSync) : undefined;
   const awaitingAdmission = spec.awaitingAdmission ?? existing?.awaitingAdmission;
   // A number, or nothing: the seed is written by the STORE MIGRATION (SQLite v20, IndexedDB 14), and a save that
   // states nothing keeps it (`saveConversation`).
@@ -544,7 +560,7 @@ export function buildConversationRow(spec: ConversationRowSpec): Conversation {
   return {
     id,
     contactName: identity.contactName,
-    name: identity.displayName,
+    name,
     messages: existing?.messages ?? [],
     lifecycle,
     mlsStateHex: null,
@@ -557,6 +573,8 @@ export function buildConversationRow(spec: ConversationRowSpec): Conversation {
     ...(serverReadWatermarks !== undefined ? { serverReadWatermarks } : {}),
     ...(historyFloor !== undefined ? { historyFloor } : {}),
     ...(startedAt !== undefined ? { startedAt } : {}),
+    ...(nameAt !== undefined ? { nameAt } : {}),
+    ...(nameSync !== undefined ? { nameSync } : {}),
     ...(typeof localReadSeed === 'number' ? { localReadSeed } : {}),
     ...(awaitingAdmission === true ? { awaitingAdmission } : {}),
   };
@@ -661,14 +679,20 @@ export function resolveConversationListPresentation(
   }
 
   const fb = input.name.trim();
+  // A GROUP WITH NO NAME IS DRAWN BY ITS MEMBERS' FIRST NAMES (owner, 2026-11-17), read from this
+  // device's own copy of the tree and its own name cache - nothing is stored or sent, and the label
+  // follows who joins and leaves (`groupTreeMembers.ts`). A salon is never unnamed.
+  const membersLabel = isChannelConversationId(input.id)
+    ? null
+    : unnamedGroupLabelOf(input.id, userId);
   return {
     conversationType: 'group',
     contactId: input.id,
     // The last resort, and the ONE place the word is written now that the Welcome handler's early
     // placeholder no longer invents it: a raw id is not a name, and saying "Groupe" is the honest
-    // answer. Through Paraglide because it reaches a reader's screen - a `.ts` util is not an
-    // exemption, it is just where nothing reminds you.
-    displayName: fb && !isRawId(fb) ? fb : m.conversation_unnamed_group(),
+    // answer while the tree is unread or holds nobody else. Through Paraglide because it reaches a
+    // reader's screen - a `.ts` util is not an exemption, it is just where nothing reminds you.
+    displayName: membersLabel ?? (fb && !isRawId(fb) ? fb : m.conversation_unnamed_group()),
     displayNameResolved: true,
   };
 }
@@ -1037,6 +1061,8 @@ export function restoredConversationRow(
     serverReadWatermarks: meta.serverReadWatermarks,
     historyFloor: meta.historyFloor,
     startedAt: meta.startedAt,
+    nameAt: meta.nameAt,
+    nameSync: meta.nameSync,
     localReadSeed: meta.localReadSeed,
     awaitingAdmission: meta.awaitingAdmission,
   });
@@ -1066,10 +1092,11 @@ function bootUnreadCount(
     'messages' | 'readWatermarks' | 'serverReadWatermarks' | 'localReadSeed' | 'lifecycle'
   >,
   userId: string
-): { count: number; source: ReturnType<typeof countingReadPoint>['source'] } {
+): { count: number; source: ReturnType<typeof countingReadPoint>['source']; inactive?: true } {
   if (convo.lifecycle !== 'active') {
-    console.debug(`[RESTORE] ${id.slice(0, 8)} is ${convo.lifecycle} - unread 0, it takes no mark`);
-    return { count: 0, source: 'none' };
+    // NO LINE PER ROW: it was said twice per removed conversation on every boot (stored page, then
+    // replay). The decision is counted into the ONE census line (`inactive`) by its caller.
+    return { count: 0, source: 'none', inactive: true };
   }
   const userNorm = userId.toLowerCase();
   const point = countingReadPoint(convo, userNorm);
@@ -1508,8 +1535,9 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
           publishBootCount(meta.id, 'failed load');
         }
       }
-      const census = { seeded: 0, withBadge: 0, total: 0 };
-      for (const { count, source } of published.values()) {
+      const census = { seeded: 0, withBadge: 0, total: 0, inactive: 0 };
+      for (const { count, source, inactive } of published.values()) {
+        if (inactive) census.inactive += 1;
         if (source === 'seed') census.seeded += 1;
         if (count > 0) {
           census.withBadge += 1;
@@ -1518,7 +1546,8 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
       }
       ctx.log(
         `[RESTORE] unread census: ${census.seeded} conversation(s) counted from the upgrade's local read seed, ` +
-          `${census.withBadge} with a badge, ${census.total} unread in all`
+          `${census.withBadge} with a badge, ${census.total} unread in all, ` +
+          `${census.inactive} removed or pending (they take no mark)`
       );
       // Nothing to commit is said as `undefined`, so the helper owes no checkpoint for it.
       return pendingCommits.length > 0 ? pendingCommits : undefined;

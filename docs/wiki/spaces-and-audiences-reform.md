@@ -142,7 +142,7 @@ Round 7 ids are the owner's own labels; they are distinct from the G1-G7 of the 
 | P2 | **Governance and audience move each other** | `spaces.service.ts:224-258` | neither change is visible as what it is |
 | P3 | **Two granularities** (space vs campus), live on the split campus | `bde.ts:35-41` vs `47-49` | each of the two BDEs of one campus may rewrite the other's audiences |
 | P4 | **Default audience crosses BDE borders** | `audience-policy.ts:58-68` | every new association on the split campus is governed by both BDEs |
-| P5 | **Decision 3 half-enforced** | `audience-policy.ts:42-51` | two-campus audiences still creatable by the admin |
+| P5 | **Decision 3 half-enforced** - **closed 2026-11-15** (`AUDIENCE_ONE_CAMPUS_ONLY`, [as built](profiles-and-access.md)) | `audience-policy.ts:42-51` | two-campus audiences were still creatable by the admin |
 | P6 | **`MODERATE` is global** | `associations.service.ts:1994-1998` | any BDE moderates, pins, unmasks everywhere (`posts.service.ts:606-608`) |
 | P7 | **Moderators edit others' posts** | `posts.service.ts:605` | contradicts G3 |
 | P8 | **Institutions under BDEs**: no type check in the super-admin tier | `mayAct` 2018-2035; delete route 743-757 | a reaching BDE manages an institution's members, and may DELETE it |
@@ -1019,7 +1019,9 @@ F4, question 3 is F5, question 4 is F6 (section 0).
 **BUILT (2026-11-03, branch `feat/space-pins`)** - as designed below; what was built, where:
 
 - **One SQL module**, `apps/social-service/src/posts/space-pins.ts`: who pins (`bdePinsInSpaceSql` =
-  `bdeStandingInSpaceSql` at `MODERATE`, the platform admin decided by the caller), what is pinnable
+  `bdeStandingInSpaceSql` at `MODERATE`, the governor of type `association` since 2026-11-17 - an
+  institution governing a space is no BDE there, [moderation-authority](moderation-authority.md)
+  decision 3 - the platform admin decided by the caller), what is pinnable
   (`postPinnableInSpaceSql` = `postReachesSpaceSql` in `spaces/reader-spaces.ts` + the feed's own
   lifecycle terms: published, not hidden by moderation, not a dead reel), THE rank (`rankedPinsSql`),
   the reader's pins (`pinnedForViewerSql`, over `isPinSpaceOfUserSql` = own spaces + read-grant

@@ -38,6 +38,8 @@ export function sealUnavailableMessage(reason: GraineSealUnavailableReason): str
       return m.chat_error_main_tab_failed();
     case 'main-tab-key-changed':
       return m.chat_error_main_tab_key_changed();
+    case 'main-tab-lead-lost':
+      return m.chat_error_main_tab_lead_lost();
     case 'tab-reloading':
       return m.chat_error_tab_reloading();
   }

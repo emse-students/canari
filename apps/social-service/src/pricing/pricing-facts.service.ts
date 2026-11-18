@@ -1,15 +1,35 @@
 import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { UserTagService } from '../users/user-tag.service';
-import type { PricingFacts } from './audience';
+import { NO_CURSUS, type CursusView, type PricingFacts } from './audience';
 import { coreUrl } from '../internal/service-urls';
+import type { AccountIdentity } from '../forms/respondent-identity';
 
-/** What core-service's internal profile route answers with. */
+/**
+ * What core-service's internal profile route answers with - the part read here. `cursusViews` is
+ * every cursus the person is priced through (D32), already reconciled by core-service
+ * (`cursusViewsOf`: the well-formed entries plus the legacy pair when no entry carries it), so
+ * nothing is reconciled here. Absent from a core-service older than it.
+ */
 interface InternalPublicProfile {
   id: string;
-  displayName: string | null;
-  promo: number | null;
-  formation: string | null;
+  cursusViews?: CursusView[];
 }
+
+/**
+ * The `code` of the 503 a profile-priced operation gets when core-service answers without
+ * `cursusViews` - a core-service OLDER than this service, which only a ROLLBACK produces (a forward
+ * deploy replaces core-service first; `cicd.md`). Typed so the log and the answer name the cause.
+ */
+export const PRICING_CORE_BEHIND = 'PRICING_CORE_BEHIND';
+
+/**
+ * The `code` core-service's `respondent-identity` 404 carries for an unknown account. A 404 WITHOUT
+ * it is a core-service that has no such route - an older one, which only a rollback produces.
+ */
+const RESPONDENT_UNKNOWN = 'RESPONDENT_UNKNOWN';
+
+/** The `code` of the 503 a submit gets when core-service is older than the account fields. */
+export const RESPONDENT_CORE_BEHIND = 'RESPONDENT_CORE_BEHIND';
 
 /**
  * Assembles the facts a price's criteria are evaluated against, once per request.
@@ -18,11 +38,13 @@ interface InternalPublicProfile {
  * is the point: one grid, one bucket predicate, one set of facts. A price that disagreed with
  * itself between the two surfaces would be nobody's bug to report.
  *
- * `promo` and `formation` live in core-service's `users` table and are written ONLY by
- * `findOrCreateFromOidc`, from the identity provider, at every sign-in - `PATCH /api/users/me`
- * accepts `bio` and nothing else. That is what makes them safe to price on: nobody can edit
- * themselves into a cheaper cell. **If `UpdateUserDto` ever gains either field, every price resting
- * on it becomes self-service.**
+ * The cursus (`promo` and `formation` per entry, and the legacy columns derived from it) live in
+ * core-service's `users` table, written by `findOrCreateFromOidc` (from the identity provider, at
+ * every sign-in) and by the platform admin's profile edit (`ProfileEditService.applyEdit`, audited)
+ * - `PATCH /api/users/me` accepts `bio` and nothing else. That is what makes them safe to price on:
+ * nobody can edit themselves into a cheaper cell. Under D32 an admin adding a second cursus can move
+ * that person's price, since the cheapest cursus wins. **If `UpdateUserDto` ever gains `promo`,
+ * `formation` or `cursus`, every price resting on it becomes self-service.**
  *
  * They are fetched over the Docker network from `/api/internal/users/:id/public-profile`, which
  * exists, is `INTERNAL_SECRET`-gated and has no nginx location. Deliberately not obtained by
@@ -60,8 +82,8 @@ export class PricingFactsService {
         ? await this.userTagService.listHeldCotisationTiers(input.userId, input.associationId)
         : [];
 
-    const profile = await this.profileFor(input.userId, input.needProfile);
-    return { ...profile, cotisationTiers, answers };
+    const cursus = await this.cursusFor(input.userId, input.needProfile);
+    return { cursus, cotisationTiers, answers };
   }
 
   /**
@@ -81,33 +103,36 @@ export class PricingFactsService {
    *
    * Split out for a LIST: the boutique prices many products, of many associations, for one person.
    * The cotisation half differs per association and is already loaded in bulk by the caller; the
-   * promo and the formation are one person's and must be fetched ONCE, not once per product - N
-   * calls to core-service to answer the same question is how a listing becomes the slowest page.
+   * cursus are one person's and must be fetched ONCE, not once per product - N calls to
+   * core-service to answer the same question is how a listing becomes the slowest page.
    *
-   * A guest, or a caller whose criteria need no profile, gets both as null without a round trip.
+   * A guest, or a caller whose criteria need no profile, gets `NO_CURSUS` without a round trip.
    */
-  async profileFor(
+  async cursusFor(
     userId: string | undefined,
     needProfile: boolean
-  ): Promise<{ promo: number | null; formation: string | null }> {
-    if (!needProfile || !userId) return { promo: null, formation: null };
-    return this.fetchProfile(userId);
+  ): Promise<readonly CursusView[]> {
+    if (!needProfile || !userId) return NO_CURSUS;
+    return this.fetchCursus(userId);
   }
 
   /**
-   * Fetches promo and formation, or refuses the operation.
+   * Fetches every cursus entry (promo and formation of each), or refuses the operation.
    *
    * Fails CLOSED and loudly. Both silent alternatives are wrong in a way nobody would notice: the
    * "everyone else" cell overcharges a student who qualified for a discount, and a guessed bucket
    * undercharges the association. A transport failure is not an answer, so it produces neither - it
    * produces a 503 saying it is us and to retry.
    *
-   * A 404 IS an answer: core-service has no such user, so there is no promo and no formation, and
-   * the submitter belongs in the "everyone else" bucket. That is the one status treated as data.
+   * A 404 IS an answer: core-service has no such user, so there is no cursus, and the submitter
+   * belongs in the "everyone else" bucket. That is the one status treated as data. So is an EMPTY
+   * cursus (staff, a post only): `NO_CURSUS`, one view with nothing in it.
+   *
+   * A 200 WITHOUT `cursusViews` is a core-service older than D32 (a rollback window): refused with
+   * the typed `PRICING_CORE_BEHIND`, rather than priced as somebody with no cursus - that would
+   * overcharge every student it served.
    */
-  private async fetchProfile(
-    userId: string
-  ): Promise<{ promo: number | null; formation: string | null }> {
+  private async fetchCursus(userId: string): Promise<readonly CursusView[]> {
     const url = coreUrl(`internal/users/${encodeURIComponent(userId)}/public-profile`);
     let res: Response;
     try {
@@ -127,7 +152,7 @@ export class PricingFactsService {
       this.logger.warn(
         `[PRICING] profile MISS user=${userId.slice(0, 8)} - no such user in core-service, priced as "everyone else"`
       );
-      return { promo: null, formation: null };
+      return NO_CURSUS;
     }
     if (!res.ok) {
       this.logger.error(
@@ -138,10 +163,95 @@ export class PricingFactsService {
       );
     }
     const profile = (await res.json()) as InternalPublicProfile;
+    if (!Array.isArray(profile.cursusViews)) {
+      this.logger.error(
+        `[PRICING] ${PRICING_CORE_BEHIND} user=${userId.slice(0, 8)} - core-service older than the ` +
+          'cursus views (a rollback window); refusing rather than pricing on nothing'
+      );
+      throw new ServiceUnavailableException({
+        code: PRICING_CORE_BEHIND,
+        message:
+          'Cannot check your profile right now, so this cannot be priced. Please try again in a moment.',
+      });
+    }
+    const cursus = profile.cursusViews.map((view) => ({
+      promo: view.promo ?? null,
+      formation: view.formation ?? null,
+    }));
     this.logger.debug(
-      `[PRICING] profile user=${userId.slice(0, 8)} promo=${profile.promo ?? 'null'} formation=${profile.formation ?? 'null'}`
+      `[PRICING] profile user=${userId.slice(0, 8)} cursus=` +
+        (cursus.length ? cursus.map((c) => `${c.formation}:${c.promo}`).join(',') : 'none')
     );
-    return { promo: profile.promo ?? null, formation: profile.formation ?? null };
+    return cursus.length ? cursus : NO_CURSUS;
+  }
+
+  /**
+   * The account fields a form joins to a member's answer (`forms/respondent-identity.ts`, owner
+   * 2026-11-16) when it ticks a cursus or a status (`joinsNeedCore`; the names and the campus are read
+   * from the shared `users` table, `FormsService.sharedAccountFields`), read from core-service AT SUBMIT TIME - never from the request, so a respondent
+   * cannot send another name or promo than their account's. Here because this is the one place
+   * social-service reads a person's identity-provider profile from core-service.
+   *
+   * Fails CLOSED like the cursus read: the organiser was promised these fields with every answer,
+   * so an answer stored without them would be an answer that silently says less than the form
+   * says it does. A transport failure or a non-404 status is a 503 to retry. A 404 carrying
+   * `RESPONDENT_UNKNOWN` IS an answer (no such account - null, accused); a 404 without it is a
+   * core-service older than this route (`RESPONDENT_CORE_BEHIND`).
+   */
+  async accountIdentity(userId: string): Promise<AccountIdentity | null> {
+    const url = coreUrl(`internal/users/${encodeURIComponent(userId)}/respondent-identity`);
+    const refuse = (code?: string) =>
+      new ServiceUnavailableException({
+        ...(code ? { code } : {}),
+        message: 'Cannot read your profile right now. Please try again in a moment.',
+      });
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        headers: { 'x-internal-secret': process.env.INTERNAL_SECRET ?? '' },
+      });
+    } catch (e) {
+      this.logger.error(
+        `[FORMS] respondent identity fetch FAILED user=${userId.slice(0, 8)} - the answer is refused ` +
+          `rather than stored without the fields its form joins: ${e instanceof Error ? e.message : String(e)}`
+      );
+      throw refuse();
+    }
+    if (res.status === 404) {
+      const body = (await res.json().catch(() => null)) as { code?: string } | null;
+      if (body?.code === RESPONDENT_UNKNOWN) {
+        this.logger.warn(
+          `[FORMS] respondent identity MISS user=${userId.slice(0, 8)} - no such account in core-service, joined empty`
+        );
+        return null;
+      }
+      this.logger.error(
+        `[FORMS] ${RESPONDENT_CORE_BEHIND} user=${userId.slice(0, 8)} - core-service has no respondent-identity ` +
+          'route (older than this service, a rollback window); refusing the answer'
+      );
+      throw refuse(RESPONDENT_CORE_BEHIND);
+    }
+    if (!res.ok) {
+      this.logger.error(
+        `[FORMS] respondent identity fetch returned ${res.status} user=${userId.slice(0, 8)} - refusing the answer`
+      );
+      throw refuse();
+    }
+    const raw = (await res.json()) as Partial<AccountIdentity>;
+    const identity: AccountIdentity = {
+      firstName: raw.firstName ?? null,
+      lastName: raw.lastName ?? null,
+      campus: raw.campus ?? null,
+      posts: Array.isArray(raw.posts) ? raw.posts : [],
+      cursusViews: Array.isArray(raw.cursusViews)
+        ? raw.cursusViews.map((c) => ({ promo: c.promo ?? null, formation: c.formation ?? null }))
+        : [],
+    };
+    this.logger.debug(
+      `[FORMS] respondent identity user=${userId.slice(0, 8)} cursus=${identity.cursusViews.length} ` +
+        `posts=${identity.posts.length} campus=${identity.campus ?? 'none'}`
+    );
+    return identity;
   }
 
   /**

@@ -3,7 +3,7 @@
  * THE SHARED-POST BUBBLE, state by state: loading, image, video, reel, text-only, unavailable - and
  * the rule that only a card that came near the viewport asks the server anything.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 
 const getPost = vi.fn();
@@ -85,6 +85,16 @@ function tap(target: HTMLElement) {
 
 const base = { id: P1, markdown: 'La **soirée** de rentrée', authorFirstName: 'Ada', media: [] };
 
+/**
+ * The card and the reel viewer load their picture and viewer lazily, and each lazy module here is a
+ * mocked stub whose factory compiles a .svelte file on FIRST import. Cold under load that cost more
+ * than the 1 s of `vi.waitFor`, so the test saw no viewer. Warm both once, outside any waiter.
+ */
+beforeAll(async () => {
+  await import('$lib/components/posts/PostMedia.svelte');
+  await import('$lib/components/reels/ReelViewer.svelte');
+}, 60_000);
+
 beforeEach(() => {
   near = true;
   getPost.mockReset();
@@ -129,9 +139,36 @@ describe('SharedPostCard', () => {
     );
     expect(target.textContent).toContain('Ada');
     expect(target.textContent).toContain('La soirée de rentrée');
-    expect(target.querySelector('[data-video-glass-glyph]')).toBeNull();
+    expect(target.querySelector('[data-video-resting-play]')).toBeNull();
     tap(target);
     await vi.waitFor(() => expect(navigateInAppFromHref).toHaveBeenCalledWith(URL_P));
+  });
+
+  it('renders the caption as the feed does: hashtags as links, line breaks, markdown, clamped, inert', async () => {
+    getPost.mockResolvedValue({
+      ...base,
+      markdown: 'Entrainement **UTMB**\n#strava #utmb',
+    });
+    const target = render();
+    await settled(target, 'post');
+    const box = target.querySelector('.post-markdown') as HTMLElement;
+    expect(box.querySelector('strong')?.textContent).toBe('UTMB');
+    expect(box.textContent).toContain('#strava');
+    expect(box.querySelector('br')).not.toBeNull();
+    expect(box.className).toContain('line-clamp-4');
+    expect(box.closest('[inert]')).not.toBeNull();
+    expect(box.innerHTML).not.toContain('<script');
+  });
+
+  it('never loads a remote picture written in the caption (tracking vector)', async () => {
+    getPost.mockResolvedValue({
+      ...base,
+      markdown: 'Salut ![pixel](https://tracker.example/p.png) fin',
+    });
+    const target = render();
+    await settled(target, 'post');
+    const box = target.querySelector('.post-markdown') as HTMLElement;
+    expect(box.querySelector('img[src*="tracker.example"]')).toBeNull();
   });
 
   it('draws a video post as a poster with the decorative glass play glyph, no download', async () => {
@@ -142,7 +179,7 @@ describe('SharedPostCard', () => {
     const target = render();
     await settled(target, 'post');
     expect(target.querySelector('[data-shared-post-media="video"]')).not.toBeNull();
-    const glyph = target.querySelector('[data-video-glass-glyph="play"]')!;
+    const glyph = target.querySelector('[data-video-resting-play]')!;
     expect(glyph.tagName).toBe('SPAN');
     expect(glyph.getAttribute('aria-hidden')).toBe('true');
     expect(target.querySelector('[data-video-play-glyph]')).toBeNull();

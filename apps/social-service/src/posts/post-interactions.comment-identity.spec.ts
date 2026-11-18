@@ -35,8 +35,20 @@ describe('PostInteractionsService - comment identity', () => {
       ),
       // The daily cap, proven in `engagement-push-cap.integration.spec.ts`: open here.
       withinPushBudget: jest.fn((_type: string, ids: string[]) => Promise.resolve(ids)),
+      // The author's door, proven in `entity-author-door.integration.spec.ts`: open here.
+      postAuthorIsTold: jest.fn(() => Promise.resolve(true)),
+      // The post's author is told through the per-post notice (owner, 2026-11-14), proven in
+      // `post-activity-notice.integration.spec.ts`: its row and its push are recorded here.
+      notifyPostActivity: jest.fn(),
     };
-    const push = { notifyContent: jest.fn(() => Promise.resolve()) };
+    const push = { notifyContent: jest.fn((..._args: unknown[]) => Promise.resolve()) };
+    notifications.notifyPostActivity.mockImplementation(
+      async (n: Record<string, unknown> & { content: (others: number) => unknown }) => {
+        created.push(n);
+        await push.notifyContent(n.recipientId, n.content(0), {});
+        return { alert: true, others: 0 };
+      }
+    );
     const query = jest.fn((sql: string) =>
       Promise.resolve(sql.includes('FROM associations') ? [{ name: 'BDE' }] : [])
     );
@@ -45,11 +57,17 @@ describe('PostInteractionsService - comment identity', () => {
       save: jest.fn((p: unknown) => Promise.resolve(p)),
       manager: lockedCommentsManager(post as { comments?: unknown[] }, query),
     };
+    const mayActOnAny = jest.fn((_u: string, ids: string[]) => Promise.resolve(new Set(ids)));
     const associations = {
       isContentModerator: jest.fn(() => Promise.resolve(false)),
       moderatedPostIds: () => Promise.resolve(new Set<string>()),
       mayModeratePost: jest.fn(() => Promise.resolve(false)),
-      mayActOnAny: jest.fn((_u: string, ids: string[]) => Promise.resolve(new Set(ids))),
+      mayActOnAny,
+      // The pencil's membership read, answered by `mayActOnAny` above: no institution moderated.
+      commentStandings: jest.fn(async (u: string, ids: string[]) => ({
+        postAs: await mayActOnAny(u, ids),
+        moderatedInstitutions: new Set<string>(),
+      })),
       listFlagHolders: jest.fn(() => Promise.resolve(holders)),
     };
     const identity = new CommentIdentityService(
@@ -81,6 +99,10 @@ describe('PostInteractionsService - comment identity', () => {
       );
       associations.moderatedAssociationIds = jest.fn((_u: string, ids: string[]) =>
         Promise.resolve(new Set(ids.filter((id) => id === CLUB)))
+      );
+      // A BDE's moderator holds MODERATE in no institution, and the pencil is nobody's here.
+      associations.commentStandings = jest.fn((_u: string, _ids: string[]) =>
+        Promise.resolve({ postAs: new Set<string>(), moderatedInstitutions: new Set<string>() })
       );
       associations.refuseModeration = jest.fn(() =>
         Promise.reject(new ForbiddenException({ code: 'MODERATION_RESERVED_TO_PLATFORM_ADMIN' }))

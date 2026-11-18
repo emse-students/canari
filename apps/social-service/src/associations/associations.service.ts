@@ -1,3 +1,7 @@
+import {
+  AdminQueueSignal,
+  type AdminQueueChange,
+} from '../admin-queues/admin-queue-signal.service';
 import { OFFERED_BY_SPACE_KEY_SQL, type PublicSpaceKey } from '../spaces/public-space';
 import {
   BadRequestException,
@@ -6,6 +10,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Inject,
   PayloadTooLargeException,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -52,10 +57,15 @@ import { releaseUncitedPosters } from '../bookings/booking-poster-media';
 import type { SpaceSelection } from './directory-query';
 import {
   AGENDA_SELECTION_FORBIDDEN,
+  agendaSubscriptionToken,
+  assertAgendaSigningKey,
+  legacyAgendaLinkShape,
   selectionWithinSpaces,
   signAgendaSelection,
 } from './agenda-signature';
 import { Association } from './entities/association.entity';
+import { isForeignKeyViolation } from '../common/pg-errors';
+import { agendaSelectionKey } from './entities/agenda-subscription.entity';
 import {
   assertReviewerReachesAssociation,
   assertRosterStaysOnOneSide,
@@ -166,6 +176,7 @@ import { Post } from '../posts/entities/post.entity';
 import { Form } from '../forms/entities/form.entity';
 import { FORM_DRAFT, FORM_IS_DRAFT, FORM_PUBLISHED } from '../forms/form-status';
 import { retireForms } from '../forms/retire-forms';
+import { assertFormOfAssociation } from '../forms/form-ownership';
 import { formsWithUnpublishedChanges } from '../forms/form-draft-revision';
 import {
   AddMemberDto,
@@ -213,7 +224,11 @@ import {
   servedInstitutionReach,
   type InstitutionReachSpace,
 } from '../spaces/institution-reach';
-import { assertAudienceAllowedForType, defaultCampusRules } from '../spaces/audience-policy';
+import {
+  assertAudienceAllowedForType,
+  defaultCampusRules,
+  defaultSpacesFromParent,
+} from '../spaces/audience-policy';
 import { normaliseRules, smallestRules } from '../spaces/spaces.service';
 import { writeDependencyJournal } from '../spaces/dependency-journal';
 import {
@@ -239,11 +254,15 @@ import { BDES_WHERE_USER_HOLDS_SQL } from '../spaces/bde';
 import {
   BDE_MODERATED_ASSOCIATION_IDS_SQL,
   BDE_MODERATED_POST_IDS_SQL,
+  BDE_MODERATION_READ_OPENS_POST_SQL,
   BDE_MODERATED_USER_IDS_SQL,
   BDE_MODERATES_COMMENT_SQL,
   BDE_MODERATES_LIVE_SQL,
   BDE_MODERATES_REPORT_SQL,
+  MODERATED_INSTITUTION_IDS_SQL,
+  MODERATES_SOMEWHERE_SQL,
   MODERATION_OUT_OF_SCOPE,
+  MODERATION_OUTSIDE_OWN_INSTITUTION,
   MODERATION_RESERVED_SQL,
   MODERATION_RESERVED_TO_PLATFORM_ADMIN,
   MODERATOR_REQUIRED,
@@ -419,6 +438,14 @@ function calendarDateRefusal(
  * an anonymous reader - so this is optional by construction, and an absent viewer gets the whole
  * window exactly as before. The limit itself is `promoCutoffFor`, shared with the posts feed.
  */
+/** What a subscription link reads of its row: the holder and the selection. */
+export interface AgendaSubscriptionRow {
+  userId: string;
+  campus: SpaceSelection['campus'];
+  formation: SpaceSelection['formation'];
+  associationId: string | null;
+}
+
 export interface CalendarViewer {
   userId?: string;
   isGlobalAdmin?: boolean;
@@ -623,6 +650,21 @@ export function shownParentId(
 @Injectable()
 export class AssociationsService {
   private readonly logger = new Logger(AssociationsService.name);
+  /**
+   * The admin badges' signal (`AdminQueueSignal`), injected by PROPERTY so the specs that build this
+   * service by hand need no new argument. NOT optional: Nest refuses to boot without it (a global
+   * module provides it; `admin-queue-signal.wiring.spec` asserts the dependency is declared), so it
+   * is absent only in a spec built by hand.
+   */
+  @Inject(AdminQueueSignal) private readonly adminQueueSignal?: AdminQueueSignal;
+
+  /** An item entered or left an admin queue: whoever may act on it recounts. Never throws. */
+  private async tellAdminQueues(change: AdminQueueChange): Promise<void> {
+    // Absent only outside Nest (a spec that builds this service by hand): Nest refuses to boot
+    // without it, which `admin-queue-signal.wiring.spec` holds. No production path skips it.
+    await this.adminQueueSignal?.changed(change);
+  }
+
   constructor(
     @InjectRepository(Association)
     private readonly assoRepo: Repository<Association>,
@@ -955,7 +997,16 @@ export class AssociationsService {
         const governed = await manager.find(Space, {
           where: { bdeAssociationId: dependency.parentId },
         });
-        const fromParent = smallestRules(governed);
+        // One campus per association or list (decision 3): a parent governing spaces of two
+        // campuses hands its child the ones of the CREATOR's campus, read only then. A creator
+        // whose profile names neither is refused, typed; thrown here, the row saved above rolls back.
+        const spansCampuses = new Set(governed.map((s) => s.campus)).size > 1;
+        const [creator] = spansCampuses
+          ? ((await manager.query(READER_PROFILE_SQL, [userId])) as { campus: string | null }[])
+          : [];
+        const fromParent = smallestRules(
+          defaultSpacesFromParent(governed, creator?.campus ?? null)
+        );
         this.logger.log(
           `[spaces] ${saved.id} reaches its parent's spaces: ${fromParent.map((r) => `${r.formation ?? '*'}|${r.campus ?? '*'}`).join(', ')}`
         );
@@ -1154,7 +1205,7 @@ export class AssociationsService {
    * `opts.viewerId` makes it THE DIRECTORY of that reader (D37): an association is kept when its
    * rules reach one of the reader's spaces, the reader is a member of it, or a nominative read
    * grant of the reader reaches it (owner, 2026-11-14: a grant opens everything of its cell) -
-   * `associationVisibleToViewerSql` with read grants, what the signed-in agenda already counts, so
+   * `associationVisibleToViewerSql`, which counts read grants as the signed-in agenda does, so
    * the two never disagree. A global admin is an ordinary reader here. No viewer is the whole catalogue (the public listing and
    * `?scope=all`). `opts.campus` / `opts.formation` keep the associations whose OWN rules reach a
    * space matching them (the association map).
@@ -1171,10 +1222,9 @@ export class AssociationsService {
     if (type) qb.andWhere('a.type = :directoryType', { directoryType: type });
     if (opts.viewerId) {
       this.logger.debug(`[DIRECTORY] restricted to the spaces of ${opts.viewerId.slice(0, 8)}`);
-      qb.andWhere(
-        associationVisibleToViewerSql('a.id', ':directoryViewerId', { readGrants: true }),
-        { directoryViewerId: opts.viewerId }
-      );
+      qb.andWhere(associationVisibleToViewerSql('a.id', ':directoryViewerId'), {
+        directoryViewerId: opts.viewerId,
+      });
     }
     const campus = opts.campus ?? null;
     const formation = opts.formation ?? null;
@@ -1842,8 +1892,9 @@ export class AssociationsService {
    * WHAT THE SHOWCASE DRAWS (owner, 2026-11-02): the name, the role, the promo, whether they sit
    * on the board, and the photo as a URL reached through the roster row (`avatarUrl`,
    * {@link publicMemberAvatarUrl}) rather than through the account. `id` is the roster row's own
-   * random id, the showcase's list key. `userId` and `createdAt` are still served while the
-   * showcase moves its photos onto `avatarUrl` (`PublicMember`). Never the raw permission bitmask.
+   * random id, the showcase's list key. The account id and the joining date are read
+   * here (the review-cohort filter, the order) and NEVER served (`PublicMember`). Never the raw
+   * permission bitmask.
    * Ordered like the public members grid (sortOrder, then createdAt). See
    * docs/wiki/anonymous-surface.md.
    */
@@ -1866,7 +1917,6 @@ export class AssociationsService {
       .filter((r) => !isInReviewCohort(r.m_userId))
       .map((r) => ({
         id: r.m_id,
-        userId: r.m_userId,
         role: r.m_role,
         isAdmin: Number(r.m_permissions ?? 0) > 0,
         // The same precedence every other surface uses - this line built its own, preferring
@@ -1875,7 +1925,6 @@ export class AssociationsService {
         firstName: r.firstName || null,
         lastName: r.lastName || null,
         promo: r.promo ?? null,
-        createdAt: r.m_createdAt,
         avatarUrl: publicMemberAvatarUrl(r.m_id),
       }));
   }
@@ -2595,14 +2644,13 @@ export class AssociationsService {
     associationId: string,
     manager?: EntityManager
   ) {
-    const f = await (manager ? manager.getRepository(Form) : this.formRepo).findOne({
-      where: { id: formId },
-      select: { id: true, associationId: true, status: true },
-    });
-    if (!f) throw new BadRequestException('Linked form not found');
-    if (f.associationId !== associationId) {
-      throw new BadRequestException('Form must belong to this association');
-    }
+    // The ONE ownership rule, shared with a post's attachment (`form-ownership.ts`).
+    const f = await assertFormOfAssociation(
+      manager ?? this.formRepo.manager,
+      formId,
+      associationId,
+      'an agenda event link'
+    );
     // An agenda entry is read by the association's audience: a DRAFT linked to it would hand them a
     // link to a form they cannot open. Published first, linked after (`form-status.ts`).
     if (f.status === FORM_DRAFT) {
@@ -2859,8 +2907,8 @@ export class AssociationsService {
    * Default window for the aggregated calendar feed when `from`/`to` are omitted: 3 months back
    * to the end of the 12th month ahead. A "subscribe by URL" feed (`.ics`) is saved once by the
    * calendar app and re-polled with the exact same URL forever - requiring the caller to always
-   * supply a window defeats that, since nothing ever adds one after the first save. Mirrors the
-   * range the frontend itself computes for the same purpose (`icsSubscriptionRangeISO`).
+   * supply a window defeats that, since nothing ever adds one after the first save. This is the ONE
+   * definition of a subscription's window: the links the frontend builds carry no `from`/`to`.
    */
   private static defaultCalendarFeedRange(): { from: Date; to: Date } {
     const now = new Date();
@@ -3169,9 +3217,11 @@ export class AssociationsService {
   }
 
   /**
-   * Returns true if userId holds `flag` in ANY BDE association. For `MANAGE_ASSO` - management - an
-   * institution governing a space does not count: it answers for that space's agenda and people,
-   * and manages nothing (reform 2.3, `governorIsAnAssociationSql`).
+   * Returns true if userId holds `flag` in ANY BDE association - of type `association`: an
+   * institution governing a space answers for that space's agenda only, and neither manages nor
+   * moderates anything as a BDE (reform 2.3, `governorIsAnAssociationSql`; owner, 2026-11-15,
+   * decision 3). The moderation door, which an institution's own moderators also pass, is
+   * `isContentModerator`.
    */
   async callerHasAnyBdeFlag(userId: string, flag: AssociationPermissionFlag): Promise<boolean> {
     const qb = this.memberRepo
@@ -3179,8 +3229,8 @@ export class AssociationsService {
       .innerJoin(Association, 'a', 'a.id = m.associationId')
       .where('m.userId = :userId', { userId })
       .andWhere(isBdeAssociationSql('a'))
+      .andWhere(`a.type = 'association'`)
       .andWhere('(m.permissions & :flag) <> 0', { flag });
-    if (flag === AssociationPermissionFlag.MANAGE_ASSO) qb.andWhere(`a.type = 'association'`);
     return (await qb.getCount()) > 0;
   }
 
@@ -3207,8 +3257,9 @@ export class AssociationsService {
   }
 
   /**
-   * Does `userId` moderate SOMEWHERE - a platform administrator, or a member holding `MODERATE` in
-   * the BDE of at least one space?
+   * Does `userId` moderate SOMEWHERE - a platform administrator, a member holding `MODERATE` in the
+   * BDE of at least one space, or in an INSTITUTION, which moderates its own content (owner,
+   * 2026-11-15, decision 4; `MODERATES_SOMEWHERE_SQL`)?
    *
    * THE DOOR, NOT THE REACH (owner, 2026-11-02): since `MODERATE` is scoped (`spaces/bde-moderation.ts`)
    * this answers only who may open the moderation surfaces at all - the queue, the lists - and
@@ -3220,7 +3271,26 @@ export class AssociationsService {
   async isContentModerator(userId: string, opts?: { isGlobalAdmin?: boolean }): Promise<boolean> {
     if (opts?.isGlobalAdmin) return true;
     if (!userId) return false;
-    return this.callerHasAnyBdeFlag(userId, AssociationPermissionFlag.MODERATE);
+    const standing = await this.moderationStanding(userId);
+    return standing.asBde || standing.asInstitution;
+  }
+
+  /** Where `userId` moderates (`MODERATES_SOMEWHERE_SQL`): as a BDE, as an institution, both or neither. */
+  private async moderationStanding(
+    userId: string
+  ): Promise<{ asBde: boolean; asInstitution: boolean }> {
+    const rows: { asBde: boolean; asInstitution: boolean }[] = await this.memberRepo.query(
+      MODERATES_SOMEWHERE_SQL,
+      [userId]
+    );
+    const standing = {
+      asBde: rows[0]?.asBde === true,
+      asInstitution: rows[0]?.asInstitution === true,
+    };
+    this.logger.debug(
+      `[MODERATION] door user=${sanitizeLog(userId.slice(0, 8))} bde=${standing.asBde} institution=${standing.asInstitution}`
+    );
+    return standing;
   }
 
   /**
@@ -3247,6 +3317,35 @@ export class AssociationsService {
       `[MODERATION] scope user=${sanitizeLog(userId.slice(0, 8))} posts=${unique.length} moderated=${rows.length}`
     );
     return new Set(rows.map((r) => r.id));
+  }
+
+  /**
+   * THE MODERATION READ'S ONE QUESTION - may `userId` open post `postId` to moderate it: by id, its
+   * comments, its replay (owner, 2026-11-15: "Oui, dans ses espaces"). Asked by every such read
+   * (`PostsService.getById` / `listComments`, `LivesService.replay`), never by a write.
+   * - A platform admin: always, a post scheduled later included - the owner's exclusion below names
+   *   the BDE moderator, and the admin's read is left as it was.
+   * - A BDE `MODERATE` holder: a post in its scope, EXCEPT an unpublished scheduled one that no open
+   *   report targets (owner, 2026-11-15: *"Exclure les posts programmes"*) -
+   *   `BDE_MODERATION_READ_OPENS_POST_SQL`, one statement. Hiding and deleting keep the unnarrowed
+   *   scope (`mayModeratePost`).
+   */
+  async mayReadToModeratePost(
+    userId: string | undefined,
+    postId: string,
+    opts?: { isGlobalAdmin?: boolean }
+  ): Promise<boolean> {
+    if (opts?.isGlobalAdmin) return true;
+    if (!userId) return false;
+    const rows: { reads: boolean }[] = await this.memberRepo.query(
+      BDE_MODERATION_READ_OPENS_POST_SQL,
+      [userId, postId.toLowerCase()]
+    );
+    const reads = rows[0]?.reads === true;
+    this.logger.debug(
+      `[MODERATION] read scope user=${sanitizeLog(userId.slice(0, 8))} post=${sanitizeLog(postId.slice(0, 8))} reads=${String(reads)}`
+    );
+    return reads;
   }
 
   /** `moderatedPostIds` asked of one post, whatever the case its id is spelled in. */
@@ -3302,7 +3401,9 @@ export class AssociationsService {
 
   /**
    * Of `userIds`, the people `userId` may moderate as people (mute, withdraw a broadcast right): all
-   * for a platform admin; for a BDE `MODERATE` holder, those belonging to one of its spaces.
+   * for a platform admin; for a BDE `MODERATE` holder, those belonging to one of its spaces; for an
+   * institution's `MODERATE` member, none - not even the people of a space the institution governs
+   * (owner, 2026-11-15, decision 3; `bdeModeratesUserSql`).
    */
   async moderatedUserIds(
     userId: string | undefined,
@@ -3357,10 +3458,11 @@ export class AssociationsService {
   }
 
   /**
-   * Of `associationIds`, those whose PUBLISHED content `userId` moderates (`bdeModeratesPublisherSql`):
-   * every one for a platform admin; for a BDE `MODERATE` holder, the associations its governed spaces
-   * reach - never an institution, never another BDE. What `commentRights` reads for a comment in an
-   * association's name; empty for an unknown caller.
+   * Of `associationIds`, those whose PUBLISHED content `userId` moderates (`moderatesPublisherSql`):
+   * every one for a platform admin; for a BDE `MODERATE` holder, the associations its BDE is the
+   * PARENT of (WP-D2) and the BDE itself - never an institution, never another BDE; for an
+   * institution's `MODERATE` member, that institution (decision 4). What `commentRights` reads for a
+   * comment in an association's name under a post the reader moderates; empty for an unknown caller.
    */
   async moderatedAssociationIds(
     userId: string | undefined,
@@ -3381,31 +3483,62 @@ export class AssociationsService {
   }
 
   /**
+   * Of `associationIds`, the INSTITUTIONS in which `userId` holds `MODERATE`
+   * (`MODERATED_INSTITUTION_IDS_SQL`): a comment in such a name is that institution's content
+   * wherever it sits, so `commentRights` reads this set without asking the post (owner, 2026-11-15,
+   * decision 4). Every one for a platform admin; empty for an unknown caller.
+   */
+  async moderatedInstitutionIds(
+    userId: string | undefined,
+    associationIds: string[],
+    opts?: { isGlobalAdmin?: boolean }
+  ): Promise<Set<string>> {
+    const unique = [...new Set(associationIds.filter(Boolean).map((id) => id.toLowerCase()))];
+    if (opts?.isGlobalAdmin) return new Set(unique);
+    if (!userId || unique.length === 0) return new Set();
+    const rows: { id: string }[] = await this.memberRepo.query(MODERATED_INSTITUTION_IDS_SQL, [
+      userId,
+      unique,
+    ]);
+    this.logger.debug(
+      `[MODERATION] institutions user=${sanitizeLog(userId.slice(0, 8))} asked=${unique.length} moderated=${rows.length}`
+    );
+    return new Set(rows.map((r) => r.id));
+  }
+
+  /**
    * THE TYPED REFUSAL of a moderation act, classified at the throw: 403 `MODERATOR_REQUIRED` when the
    * caller moderates nowhere; 403 `MODERATION_RESERVED_TO_PLATFORM_ADMIN` when the target is published
-   * in an institution's or a BDE's name (owner, 2026-11-03: only the platform admin moderates those);
-   * 403 `MODERATION_OUT_OF_SCOPE` otherwise - outside the spaces the caller's BDE governs. Logged with
-   * the target's kind, never its content.
+   * in an institution's or a BDE's name (owner, 2026-11-03 and 2026-11-15: only its own moderators,
+   * who pass the act, and the platform admin moderate those); 403 `MODERATION_OUT_OF_SCOPE` for a BDE
+   * moderator otherwise - outside the spaces its BDE governs; 403
+   * `MODERATION_OUTSIDE_OWN_INSTITUTION` for a caller who moderates only as an institution, which
+   * reaches its own content and no person (decisions 3 and 4). Logged with the target's kind, never
+   * its content.
    */
   async refuseModeration(userId: string | undefined, target: ModerationTarget): Promise<never> {
-    const somewhere = !!userId && (await this.isContentModerator(userId));
+    const standing = userId
+      ? await this.moderationStanding(userId)
+      : { asBde: false, asInstitution: false };
+    const somewhere = standing.asBde || standing.asInstitution;
     const reserved = somewhere && (await this.isReservedToPlatformAdmin(target));
-    const code = !somewhere
-      ? MODERATOR_REQUIRED
+    const [code, message] = !somewhere
+      ? [MODERATOR_REQUIRED, 'MODERATE in a BDE or an institution, or global admin, required']
       : reserved
-        ? MODERATION_RESERVED_TO_PLATFORM_ADMIN
-        : MODERATION_OUT_OF_SCOPE;
+        ? [
+            MODERATION_RESERVED_TO_PLATFORM_ADMIN,
+            "Content in an institution's or a BDE's name is moderated by its own moderators and the platform admin only",
+          ]
+        : standing.asBde
+          ? [MODERATION_OUT_OF_SCOPE, 'Outside the spaces your BDE governs']
+          : [
+              MODERATION_OUTSIDE_OWN_INSTITUTION,
+              'An institution moderates its own content only, and no person',
+            ];
     this.logger.log(
       `[MODERATION] refused user=${sanitizeLog((userId ?? '').slice(0, 8))} target=${target.kind}:${sanitizeLog(target.id)} code=${code}`
     );
-    throw new ForbiddenException({
-      code,
-      message: !somewhere
-        ? 'BDE MODERATE permission or global admin required'
-        : reserved
-          ? "Content in an institution's or a BDE's name is moderated by the platform admin only"
-          : 'Outside the spaces your BDE governs',
-    });
+    throw new ForbiddenException({ code, message });
   }
 
   /** Is `target` published in an institution's or a BDE's name (`MODERATION_RESERVED_SQL`)? */
@@ -3493,8 +3626,61 @@ export class AssociationsService {
     flag: AssociationPermissionFlag,
     opts?: { isGlobalAdmin?: boolean }
   ): Promise<Set<string>> {
+    return (await this.actOnAny(userId, associationIds, flag, opts)).granted;
+  }
+
+  /**
+   * A comment thread's two standings over the associations its comments speak for, in ONE membership
+   * read (owner, 2026-11-15, decision 4): `postAs`, where the reader holds `POST_AS_ASSO` (`mayActOnAny`,
+   * the comment's author); `moderatedInstitutions`, the INSTITUTIONS among them whose `MODERATE` the
+   * reader holds - a comment in such a name is that institution's content wherever it sits. The kinds
+   * are read only when a membership row carries `MODERATE` at all, so an ordinary reader pays the
+   * membership read the pencil already cost and nothing more. `POST_AS_ASSO` has no super-admin tier
+   * and no kind excludes it, so the rows cover every id asked.
+   */
+  async commentStandings(
+    userId: string | undefined,
+    associationIds: string[]
+  ): Promise<{ postAs: Set<string>; moderatedInstitutions: Set<string> }> {
+    const { granted, rows } = await this.actOnAny(
+      userId,
+      associationIds,
+      AssociationPermissionFlag.POST_AS_ASSO
+    );
+    const moderating = rows
+      .filter((r) => (r.permissions & AssociationPermissionFlag.MODERATE) !== 0)
+      .map((r) => r.associationId);
+    if (moderating.length === 0) return { postAs: granted, moderatedInstitutions: new Set() };
+    const kinds = await this.assoRepo.find({
+      where: { id: In(moderating) },
+      select: { id: true, type: true },
+    });
+    const moderatedInstitutions = new Set(
+      kinds.filter((k) => k.type === 'institution').map((k) => k.id.toLowerCase())
+    );
+    this.logger.debug(
+      `[MODERATION] comment standings user=${sanitizeLog((userId ?? '').slice(0, 8))} moderate-rows=${moderating.length} institutions=${moderatedInstitutions.size}`
+    );
+    return { postAs: granted, moderatedInstitutions };
+  }
+
+  /**
+   * `mayActOnAny`'s three tiers, with the caller's own membership rows they read (empty when no row
+   * was read: an admin, an anonymous caller, nothing to judge) - so `commentStandings` answers a
+   * second question from the same read.
+   */
+  private async actOnAny(
+    userId: string | undefined,
+    associationIds: string[],
+    flag: AssociationPermissionFlag,
+    opts?: { isGlobalAdmin?: boolean }
+  ): Promise<{
+    granted: Set<string>;
+    rows: { associationId: string; permissions: number }[];
+  }> {
+    const none = { granted: new Set<string>(), rows: [] };
     let unique = [...new Set(associationIds.filter(Boolean))];
-    if (unique.length === 0) return new Set();
+    if (unique.length === 0) return none;
     if ((flag & ANY_TYPE_EXCLUDED_FLAGS) !== 0) {
       // The kind's exclusion, as in `mayAct`: nobody holds the flag on a kind that excludes it.
       const kinds = await this.assoRepo.find({
@@ -3509,11 +3695,11 @@ export class AssociationsService {
           `[PERM] flag=${flag} held by nobody on ${excluded.size}/${unique.length} assocs (kind)`
         );
         unique = unique.filter((id) => !excluded.has(id));
-        if (unique.length === 0) return new Set();
+        if (unique.length === 0) return none;
       }
     }
-    if (opts?.isGlobalAdmin) return new Set(unique);
-    if (!userId) return new Set();
+    if (opts?.isGlobalAdmin) return { granted: new Set(unique), rows: [] };
+    if (!userId) return none;
 
     // The super-admin tier is scoped per association too: the associations among `unique` that a BDE
     // where the caller holds MANAGE_ASSO governs - never all of them because it governs some.
@@ -3530,7 +3716,7 @@ export class AssociationsService {
         `[PERM] super-admin granted user=${userId.slice(0, 8)} flag=${flag} on ${granted.size}/${unique.length} assocs`
       );
     }
-    if (rest.length === 0) return granted;
+    if (rest.length === 0) return { granted, rows: [] };
 
     const rows = await this.memberRepo.find({
       where: { userId, associationId: In(rest) },
@@ -3542,7 +3728,7 @@ export class AssociationsService {
     this.logger.debug(
       `[PERM] user=${userId.slice(0, 8)} holds flag=${flag} on ${granted.size}/${unique.length} assocs`
     );
-    return granted;
+    return { granted, rows };
   }
 
   /**
@@ -3663,17 +3849,17 @@ export class AssociationsService {
   }
 
   /**
-   * Signs the agenda selection a signed-in reader asks to subscribe to (D40 amended 2026-10-06).
-   * Only selections inside the reader's OWN spaces are signed - their campus, their formations, a
-   * pair of both (`READER_SPACES_SQL`, the twin of `readerSpaces`); an association needs no
-   * membership, only to exist. A reader with a campus and NO cursus (EMSE staff) is signed their
-   * own campus alone, no formation = every formation of it (user, 2026-10-07). The returned `sig` goes into the feed URL unchanged.
+   * THE BOUND ON WHAT A SUBSCRIPTION SELECTOR MAY NAME (D40 amended 2026-10-06, tightened 2026-10-07):
+   * a pair that is one of the reader's OWN spaces (`READER_SPACES_SQL`, the twin of `readerSpaces`),
+   * or - for a reader with a campus and NO cursus (EMSE staff) - their own campus alone; an
+   * association needs no membership, only to exist (404 otherwise). 403 `AGENDA_SELECTION_FORBIDDEN`
+   * outside it. It bounds the SELECTOR only: what a link serves is decided at every read.
    */
-  async signAgendaFeedSelection(
+  private async assertAgendaSelectionAllowed(
     userId: string,
     selection: SpaceSelection,
     associationId: string | null
-  ): Promise<{ sig: string }> {
+  ): Promise<void> {
     if (associationId) await this.findById(associationId);
     const spaces = (await this.assoRepo.manager.query(READER_SPACES_SQL, [userId])) as SpacePair[];
     // A reader tied to no formation (EMSE staff) has no space: they may follow their own campus
@@ -3689,14 +3875,103 @@ export class AssociationsService {
     }
     if (!selectionWithinSpaces(selection, spaces, campusWide)) {
       this.logger.warn(
-        `[AGENDA_SIG] refused to sign campus=${selection.campus} formation=${selection.formation} for ${userId.slice(0, 8)}: outside their spaces`
+        `[AGENDA_SIG] refused campus=${selection.campus} formation=${selection.formation} for ${userId.slice(0, 8)}: outside their spaces`
       );
       throw new ForbiddenException({
         code: AGENDA_SELECTION_FORBIDDEN,
         message: 'You can only subscribe to the agenda of your own campus and formations',
       });
     }
+  }
+
+  /**
+   * LEGACY (docs/wiki/legacy-compatibility.md): signs a selection for the store builds that still
+   * build `sig` links - a PAIR only (a campus AND a formation, with or without an association), the
+   * one shape a `sig` still serves anything for (`AssociationsController.legacySelectionRead`). Any
+   * other shape is the typed 403 `AGENDA_SELECTION_FORBIDDEN` the old modal already shows: minting a
+   * link that would serve nothing, silently, is worse than a refusal.
+   */
+  async signAgendaFeedSelection(
+    userId: string,
+    selection: SpaceSelection,
+    associationId: string | null
+  ): Promise<{ sig: string }> {
+    if (selection.campus === null || selection.formation === null) {
+      this.logger.warn(
+        `[AGENDA_SIG] refused a legacy signature for ${userId.slice(0, 8)}: not a pair (shape=${legacyAgendaLinkShape(selection)})`
+      );
+      throw new ForbiddenException({
+        code: AGENDA_SELECTION_FORBIDDEN,
+        message: 'Update the app to subscribe to this agenda',
+      });
+    }
+    await this.assertAgendaSelectionAllowed(userId, selection, associationId);
     return { sig: signAgendaSelection({ ...selection, associationId }) };
+  }
+
+  /**
+   * THE HOLDER'S SUBSCRIPTION LINK (owner, 2026-11-14, "Respecter les publics"): the row of
+   * `agenda_subscriptions` for (reader, selection), created on first ask, and its token. ONE statement:
+   * the same selection meets the unique key (`"userId"`, `"selectionKey"`, `agendaSelectionKey`) and
+   * gives the same row back, so the same link, until the reader revokes. The signing key is checked
+   * BEFORE the write, so a misconfigured estate leaves no row behind its 503. An association deleted
+   * between the check and the write is the 404 `findById` gives (classified by SQLSTATE). The
+   * selection is bounded as the legacy one was; what the link SERVES is the holder's signed-in agenda,
+   * read at every poll.
+   */
+  async subscribeAgenda(
+    userId: string,
+    selection: SpaceSelection,
+    associationId: string | null
+  ): Promise<{ token: string }> {
+    await this.assertAgendaSelectionAllowed(userId, selection, associationId);
+    assertAgendaSigningKey();
+    const key = agendaSelectionKey({ ...selection, associationId });
+    let rows: Array<{ id: string }>;
+    try {
+      rows = (await this.assoRepo.manager.query(
+        `INSERT INTO agenda_subscriptions ("userId", campus, formation, "associationId", "selectionKey")
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT ("userId", "selectionKey") DO UPDATE SET "userId" = EXCLUDED."userId"
+           RETURNING id`,
+        [userId, selection.campus, selection.formation, associationId, key]
+      )) as Array<{ id: string }>;
+    } catch (err) {
+      if (isForeignKeyViolation(err)) {
+        this.logger.warn(
+          `[AGENDA_SUBSCRIPTION] association ${associationId?.slice(0, 8)} deleted while ${userId.slice(0, 8)} subscribed`
+        );
+        throw new NotFoundException('Association not found');
+      }
+      throw err;
+    }
+    this.logger.debug(
+      `[AGENDA_SUBSCRIPTION] link ${rows[0].id.slice(0, 8)} for ${userId.slice(0, 8)} campus=${selection.campus ?? '-'} formation=${selection.formation ?? '-'} association=${associationId ? associationId.slice(0, 8) : '-'}`
+    );
+    return { token: agendaSubscriptionToken(rows[0].id) };
+  }
+
+  /**
+   * Revokes every subscription link of the reader: their rows go, so every link they handed out
+   * answers 403, and the next {@link subscribeAgenda} mints a new id, hence a new link.
+   */
+  async revokeAgendaSubscriptions(userId: string): Promise<{ revoked: number }> {
+    const result = (await this.assoRepo.manager.query(
+      `DELETE FROM agenda_subscriptions WHERE "userId" = $1 RETURNING id`,
+      [userId]
+    )) as [unknown[], number];
+    const revoked = result[1];
+    this.logger.log(`[AGENDA_SUBSCRIPTION] ${userId.slice(0, 8)} revoked ${revoked} link(s)`);
+    return { revoked };
+  }
+
+  /** The subscription row a verified token names, or null when it is gone (revoked, erased). */
+  async findAgendaSubscription(id: string): Promise<AgendaSubscriptionRow | null> {
+    const rows = (await this.assoRepo.manager.query(
+      `SELECT "userId", campus, formation, "associationId" FROM agenda_subscriptions WHERE id = $1`,
+      [id]
+    )) as AgendaSubscriptionRow[];
+    return rows[0] ?? null;
   }
 
   /**
@@ -3962,6 +4237,8 @@ ${rejectionReason}`
         `[EVENT_REOPENED] ${sanitizeLog(ev.id.slice(0, 8))} (${reason}): the status could not be re-read, not announced`,
         err instanceof Error ? err.stack : String(err)
       );
+      // Not announced, but the write that reopened it committed: the badges still recount.
+      await this.tellAdminQueues({ queue: 'agenda', associationId: ev.associationId });
       return;
     }
     if (current?.status !== AssociationCalendarEventStatus.Pending) {
@@ -3973,27 +4250,50 @@ ${rejectionReason}`
     this.logger.log(
       `[EVENT_REOPENED] ${sanitizeLog(ev.id.slice(0, 8))} back to pending: ${reason} (by ${sanitizeLog(actorId.slice(0, 8))})`
     );
+    // The parties are read ONCE, before anything is written, and that one set decides both writes
+    // below: which validators' rows replace a party's (`toldAsParty`), and who is left to tell.
+    let partyIds: ReadonlySet<string>;
+    try {
+      partyIds = await this.eventPartyIds(ev);
+    } catch (err) {
+      this.logger.warn(
+        `[EVENT_REOPENED] ${sanitizeLog(ev.id.slice(0, 8))} (${reason}): the parties could not be read, not announced`,
+        err instanceof Error ? err.stack : String(err)
+      );
+      await this.tellAdminQueues({ queue: 'agenda', associationId: ev.associationId });
+      return;
+    }
     // Validators FIRST, and the parties exclude them: somebody who is both a validator and a party
     // gets ONE notice, the validator's - the one that is actionable. A push that fails AFTER the
     // rows were saved still counts as told (typed, NotificationPushFailedError). DEGRADED CASE: when
     // the validators' notice wrote NOTHING (logged inside, the function never rejects), it returns
     // nobody, so nobody is excluded and that person is told once as a party instead - a notice with
     // the reason, but not the actionable one.
-    const validatorIds: string[] = await (async () => {
-      // An ACCEPTANCE is not a proposal: the acceptor must not be shown as proposing, so it has its
-      // own typed notice; a date move keeps the proposal's.
-      return reason === 'coorganiser_joined'
-        ? this.notifyEventValidatorsOfProposal(ev.associationId, actorId, ev.title, {
-            type: EVENT_REOPEN_NOTIFICATION_TYPE[reason],
-            meta: { reason, audience: 'validators' },
-            // 'proposed' IS THE QUEUE TARGET of the push deep link (socialDeepLink): a validator lands
-            // on the validation queue, as for a proposal, never on the plain agenda.
-            pushData: { associationId: ev.associationId, action: 'proposed', reason },
-          })
-        : this.notifyEventValidatorsOfProposal(ev.associationId, actorId, ev.title);
-    })();
+    const validatorIds: string[] = await this.notifyEventValidatorsOfProposal(
+      ev.associationId,
+      actorId,
+      ev.title,
+      {
+        // An ACCEPTANCE is not a proposal: the acceptor must not be shown as proposing, so it has
+        // its own typed notice; a date move keeps the proposal's.
+        type:
+          reason === 'coorganiser_joined'
+            ? EVENT_REOPEN_NOTIFICATION_TYPE[reason]
+            : 'event_proposed',
+        // `eventId` on EVERY reopening: the row of a validator the dedupe took out of the parties
+        // (`toldAsParty`, added per recipient) stays while either right holds (`BELL_ROW_GATE`).
+        meta: { reason, audience: 'validators', eventId: ev.id },
+        // 'proposed' IS THE QUEUE TARGET of the push deep link (socialDeepLink): a validator lands
+        // on the validation queue, as for a proposal, never on the plain agenda.
+        pushData:
+          reason === 'coorganiser_joined'
+            ? { associationId: ev.associationId, action: 'proposed', reason }
+            : { associationId: ev.associationId, action: 'proposed' },
+      },
+      partyIds
+    );
     try {
-      await this.notifyEventReopenedParties(ev, reason, actorId, new Set(validatorIds));
+      await this.notifyEventReopenedParties(ev, reason, actorId, partyIds, new Set(validatorIds));
     } catch (err) {
       this.logger.warn(
         `[EVENT_REOPENED] ${sanitizeLog(ev.id.slice(0, 8))} (${reason}): the parties were not told`,
@@ -4013,32 +4313,42 @@ ${rejectionReason}`
     ev: ReopenedEvent,
     reason: EventReopenReason,
     actorId: string,
+    partyIds: ReadonlySet<string>,
     alreadyTold: ReadonlySet<string>
   ): Promise<void> {
-    const coOwners = await this.coOwnerRepo.find({ where: { eventId: ev.id } });
-    const associationIds = [ev.associationId, ...coOwners.map((c) => c.associationId)];
-    const members = await this.memberRepo.find({
-      where: { associationId: In(associationIds) },
-      select: { userId: true, permissions: true },
-    });
-    const recipientIds = [
-      ...new Set(
-        members
-          .filter((m) => (m.permissions & AssociationPermissionFlag.PROPOSE_EVENT) !== 0)
-          .map((m) => m.userId)
-      ),
-    ].filter((id) => !alreadyTold.has(id));
+    const recipientIds = [...partyIds].filter((id) => !alreadyTold.has(id));
     const written = await this.notifications.createNotifications({
       recipientIds,
       type: EVENT_REOPEN_NOTIFICATION_TYPE[reason],
       postId: ev.associationId,
       actorId,
       text: ev.title,
-      meta: { reason },
+      // `eventId`: what the bell re-asks at every read - a partner's row is shown while its reader
+      // still holds PROPOSE_EVENT in an accepted co-organiser of THIS event (`BELL_ROW_GATE`).
+      meta: { reason, eventId: ev.id },
       pushData: { associationId: ev.associationId, action: 'pending', reason },
     });
     this.logger.debug(
       `[EVENT_REOPENED] ${sanitizeLog(ev.id.slice(0, 8))} (${reason}): ${written} organiser/partner notice(s) written`
+    );
+  }
+
+  /**
+   * AN EVENT'S PARTIES: the `PROPOSE_EVENT` holders of its organiser and of each ACCEPTED partner -
+   * the people `notifyEventReopenedParties` tells, read once by `announceEventReopened` so the
+   * validators' write and the parties' write agree on who is both.
+   */
+  private async eventPartyIds(ev: ReopenedEvent): Promise<ReadonlySet<string>> {
+    const coOwners = await this.coOwnerRepo.find({ where: { eventId: ev.id } });
+    const associationIds = [ev.associationId, ...coOwners.map((c) => c.associationId)];
+    const members = await this.memberRepo.find({
+      where: { associationId: In(associationIds) },
+      select: { userId: true, permissions: true },
+    });
+    return new Set(
+      members
+        .filter((m) => (m.permissions & AssociationPermissionFlag.PROPOSE_EVENT) !== 0)
+        .map((m) => m.userId)
     );
   }
 
@@ -4060,6 +4370,11 @@ ${rejectionReason}`
    * at all (`TARGETS_AN_UNGOVERNED_SPACE_SQL`): for that slice of the audience they are the only
    * validators, and a proposal they are not told of waits on a page nobody opens. The warning stays
    * for the one case where nobody at all could be told.
+   *
+   * `parties` (a reopening only): the event's parties. A validator among them is told HERE and not as
+   * a party, so their row records it (`meta.toldAsParty`) - the fact the bell's gate reads to keep
+   * that row while either right holds, and to serve it as the party notice it replaced once only the
+   * party right is left (`PostNotificationsService.getNotifications`).
    */
   private async notifyEventValidatorsOfProposal(
     associationId: string,
@@ -4069,25 +4384,33 @@ ${rejectionReason}`
       type: NotificationType;
       meta: Record<string, unknown>;
       pushData: Record<string, string>;
-    }
+    },
+    parties?: ReadonlySet<string>
   ): Promise<string[]> {
     // NEVER REJECTS, and that is the contract of this function - not of its callers: it runs after a
     // commit and is mostly fire-and-forget (`void`), where a rejection is an unhandled rejection
     // (social-service has no handler) and a notice's failure must never fail a committed write.
-    // Every failure is logged at WARN with its stack; it then told NOBODY, and returns no ids.
+    // Every failure is logged at WARN with its stack, and it returns no ids. THE NOTICE IS TWO WRITES
+    // (validators who are also parties, then the others), so a failure may have told one group and
+    // not the other: returning no ids makes the parties' notice tell every party, and the log says
+    // "not all", which is what is known here.
     try {
       return await this.notifyEventValidatorsOfProposalOrThrow(
         associationId,
         actorId,
         eventTitle,
-        notice
+        notice,
+        parties
       );
     } catch (err) {
       this.logger.warn(
-        `[notify] the validators of asso ${sanitizeLog(associationId)} were not told about an event waiting for validation`,
+        `[notify] the validators of asso ${sanitizeLog(associationId)} were not all told about an event waiting for validation`,
         err instanceof Error ? err.stack : String(err)
       );
       return [];
+    } finally {
+      // THE ONE PLACE AN EVENT STARTS WAITING (a proposal, a reopening): the agenda badges recount.
+      await this.tellAdminQueues({ queue: 'agenda', associationId });
     }
   }
 
@@ -4100,7 +4423,8 @@ ${rejectionReason}`
       type: NotificationType;
       meta: Record<string, unknown>;
       pushData: Record<string, string>;
-    }
+    },
+    parties?: ReadonlySet<string>
   ): Promise<string[]> {
     const validators: { userId: string }[] = await this.memberRepo.query(
       BDE_AGENDA_RIGHT_HOLDERS_OVER_SQL,
@@ -4116,28 +4440,47 @@ ${rejectionReason}`
       `[notify] event proposed for asso ${sanitizeLog(associationId)}: ${validators.length} BDE validator(s), ${admins.length} platform admin(s) for an ungoverned space`
     );
 
-    let written: number;
-    try {
-      written = await this.notifications.createNotifications({
-        recipientIds,
-        type: notice?.type ?? 'event_proposed',
-        postId: associationId,
-        actorId,
-        text: eventTitle,
-        ...(notice ? { meta: notice.meta } : {}),
-        pushData: notice?.pushData ?? { associationId, action: 'proposed' },
-      });
-    } catch (err) {
-      // The rows are saved and only the push failed: the validators HAVE their notice in the bell,
-      // so they are still returned (a validator who is also a party must not get a second row).
-      // Anything else wrote nothing and propagates, and then nobody is excluded.
-      if (!(err instanceof NotificationPushFailedError)) throw err;
-      this.logger.warn(
-        `[notify] event waiting for validation (asso ${sanitizeLog(associationId)}): the validators' rows are saved, their push failed`,
-        err.stack
+    // Two groups, one notice: the validators who are also parties carry `toldAsParty` (see the doc
+    // above); a first proposal names no parties, so it is one group.
+    const asParty = recipientIds.filter((id) => parties?.has(id) === true);
+    const onlyValidators = recipientIds.filter((id) => parties?.has(id) !== true);
+    const write = async (ids: string[], meta?: Record<string, unknown>): Promise<number> => {
+      try {
+        return await this.notifications.createNotifications({
+          recipientIds: ids,
+          type: notice?.type ?? 'event_proposed',
+          postId: associationId,
+          actorId,
+          text: eventTitle,
+          ...(meta ? { meta } : {}),
+          pushData: notice?.pushData ?? { associationId, action: 'proposed' },
+        });
+      } catch (err) {
+        // The rows are saved and only the push failed: the validators HAVE their notice in the
+        // bell, so they are still returned (a validator who is also a party must not get a second
+        // row). Anything else wrote nothing and propagates, and then nobody is excluded.
+        if (!(err instanceof NotificationPushFailedError)) throw err;
+        this.logger.warn(
+          `[notify] event waiting for validation (asso ${sanitizeLog(associationId)}): the validators' rows are saved, their push failed`,
+          err.stack
+        );
+        return err.recipientIds.length;
+      }
+    };
+    if (asParty.length > 0) {
+      this.logger.debug(
+        `[notify] event proposed for asso ${sanitizeLog(associationId)}: ${asParty.length} validator(s) told in place of their party notice`
       );
-      written = err.recipientIds.length;
     }
+    // One write per non-empty group, and always one (an empty notice is how "nobody could be told"
+    // reaches the warning below).
+    const written =
+      (onlyValidators.length > 0 || asParty.length === 0
+        ? await write(onlyValidators, notice?.meta)
+        : 0) +
+      (asParty.length > 0
+        ? await write(asParty, notice ? { ...notice.meta, toldAsParty: true } : undefined)
+        : 0);
     if (written === 0) {
       // Nobody at all could be told: no BDE governs a targeted space AND no platform admin exists,
       // or the only one is the proposer. The exact shape of the defect this method was written for.
@@ -4664,6 +5007,7 @@ ${rejectionReason}`
     if (!outcome.changed) return this.serializeCalendarEvent(outcome.ev);
     const saved = outcome.ev;
     this.logger.debug(`Event validated: ${saved.id} by ${userId}`);
+    void this.tellAdminQueues({ queue: 'agenda', associationId: saved.associationId });
     // Notify asso admins that their event has been validated
     void this.notifyAssocAdminsOfEventAction(saved.associationId, userId, saved.title, 'validated');
     return this.serializeCalendarEvent(saved);
@@ -4692,6 +5036,7 @@ ${rejectionReason}`
     if (!outcome.changed) return this.serializeCalendarEvent(outcome.ev);
     const saved = outcome.ev;
     this.logger.debug(`Event rejected: ${saved.id} by ${userId}`);
+    void this.tellAdminQueues({ queue: 'agenda', associationId: saved.associationId });
     void this.notifyAssocAdminsOfEventAction(
       saved.associationId,
       userId,
@@ -4721,6 +5066,9 @@ ${rejectionReason}`
       const targetAssocId = ev.associationId;
       const title = ev.title;
       await this.calendarRepo.delete({ id: eventId });
+      // Told whatever the status READ above: the row was read unlocked, so a demotion committed
+      // since would make "it was not pending" a guess - and a deletion is rare.
+      void this.tellAdminQueues({ queue: 'agenda', associationId: targetAssocId });
       this.logger.debug(
         `Event deleted: ${sanitizeLog(eventId)} by ${sanitizeLog(callerOpts?.callerUserId)}`
       );
@@ -4743,6 +5091,8 @@ ${rejectionReason}`
         throw partnerOrganiserOnlyRefusal('delete');
       }
       await this.calendarRepo.delete({ id: eventId });
+      // Whatever the status read above, as for a cross-association deletion.
+      void this.tellAdminQueues({ queue: 'agenda', associationId: ev.associationId });
       this.logger.debug(
         `Event deleted: ${sanitizeLog(eventId)} by ${sanitizeLog(callerOpts?.callerUserId)}`
       );
@@ -5853,6 +6203,58 @@ ${rejectionReason}`
       delegates,
       delegatesWithheld,
     };
+  }
+
+  /**
+   * Whether a purchase refused `PAYMENT_ROUTING_CHANGED` was moved by a bridge's SWITCH BACK - and
+   * if so counts its re-issue (`reissueCount`), in ONE statement, so the proof and the count are
+   * the same write. True only when every fact agrees: the same payee association, provider and
+   * delegation on both sides, `from` naming that association's bridge's ENROLLED Business, `to` its
+   * HISTORICAL account, and the bridge reading `historical` now. Any other routing change is false:
+   * the caller keeps the 409 (lead, 2026-11-14, docs/wiki/frontend/modules/payments.md). Never
+   * throws: a failure is an ERROR line and false, so the payer gets the 409 as before.
+   */
+  async countReissueAfterSwitchBack(from: PaymentTarget, to: PaymentTarget): Promise<boolean> {
+    const shapeAgrees =
+      from.provider === 'lydia' &&
+      to.provider === 'lydia' &&
+      from.targetAssociationId === to.targetAssociationId &&
+      from.delegated === to.delegated &&
+      to.ready &&
+      !!from.connectAccountId &&
+      !!to.connectAccountId &&
+      from.connectAccountId !== to.connectAccountId;
+    if (!shapeAgrees) {
+      this.logger.debug(
+        `${LYDIA_BRIDGE_LOG_TAG} routing change on ${sanitizeLog(from.targetAssociationId)} -> ` +
+          `${sanitizeLog(to.targetAssociationId)} is not a switch back - the 409 stands`
+      );
+      return false;
+    }
+    try {
+      const updated: unknown[] = await this.assoRepo.query(
+        `UPDATE lydia_account_bridges SET "reissueCount" = "reissueCount" + 1
+          WHERE "associationId" = $1 AND state = 'historical'
+            AND "enrolledVendorToken" = $2 AND "historicalVendorToken" = $3
+          RETURNING "associationId"`,
+        [from.targetAssociationId, from.connectAccountId, to.connectAccountId]
+      );
+      // node-postgres answers an UPDATE ... RETURNING through TypeORM as [rows, count].
+      const rows = Array.isArray(updated[0]) ? (updated[0] as unknown[]) : updated;
+      const switchedBack = rows.length > 0;
+      this.logger.log(
+        `${LYDIA_BRIDGE_LOG_TAG} association ${sanitizeLog(from.targetAssociationId)}: routing ` +
+          `change ${switchedBack ? 'IS its switch back - re-issue counted' : 'is not its switch back - the 409 stands'}`
+      );
+      return switchedBack;
+    } catch (err: unknown) {
+      this.logger.error(
+        `${LYDIA_BRIDGE_LOG_TAG} association ${sanitizeLog(from.targetAssociationId)}: reading a ` +
+          `routing change against its bridge FAILED - the 409 stands: ` +
+          `${err instanceof Error ? err.message : String(err)}`
+      );
+      return false;
+    }
   }
 
   /** Counts one payment re-issued on a bridge's historical account (`reissueCount`, migration 167). */

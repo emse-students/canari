@@ -317,7 +317,7 @@ describe('archive replays a restore skipped on a link known down', () => {
     restoreThatSkips();
     const convs = useConversations();
     const ctx = makeCtx();
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
 
     await convs.loadAndRestoreConversations(ctx);
     expect(replayLines(ctx)).toEqual([]);
@@ -329,7 +329,7 @@ describe('archive replays a restore skipped on a link known down', () => {
     ]);
 
     // ONCE: a later edge owes nothing.
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     connectivity.notifyServerReachable();
     await settle();
     expect(replayLines(ctx)).toHaveLength(1);
@@ -348,13 +348,13 @@ describe('archive replays a restore skipped on a link known down', () => {
     );
     const convs = useConversations();
     const ctx = makeCtx();
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     await convs.loadAndRestoreConversations(ctx);
     expect(withMlsBulkIngest).not.toHaveBeenCalled();
 
     // The first archive's read gets no answer: the link is known down again.
     withMlsBulkIngest.mockImplementationOnce(async () => {
-      connectivity.notifyServerUnreachable();
+      connectivity.notifyServerUnreachable('test');
     });
     connectivity.notifyServerReachable();
     await settle();
@@ -404,7 +404,7 @@ describe('archive replays a restore skipped on a link known down', () => {
     });
     const convs = useConversations();
     const ctx = makeCtx();
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     await convs.loadAndRestoreConversations(ctx);
 
     connectivity.notifyServerReachable();
@@ -423,7 +423,7 @@ describe('archive replays a restore skipped on a link known down', () => {
     restoreThatSkips();
     const convs = useConversations();
     const ctx = makeCtx();
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     await convs.loadAndRestoreConversations(ctx);
 
     convs.invalidateRestores();

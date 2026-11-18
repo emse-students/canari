@@ -9,6 +9,104 @@ a corner speaker. The history of the player before this page (the bar, the fade,
 arbiter, the lightbox's zoom) is in [posts](posts.md#a-video-is-canaris-to-play-videoplayer-never-controls-2026-10-01).
 
 
+## A tap on a chat video opens the viewer (owner, 2026-11-15)
+
+*"le lecteur video de messages n'est pas homogene avec celui des posts/CanaReels : quand je clique
+dessus ca coupe et met le son alors qu'on avait statue la dessus."* Asked what the tap should do, the
+owner chose **"Ouvrir le plein ecran"**. The `chat` row of `utils/videoTapAction.ts` is now the feed's:
+
+- **The tap opens the conversation viewer** (`variant="conversation"`), on the time the bubble had
+  reached, and **never touches the sound**. With no viewer handed down (`onOpen` absent) it plays or
+  pauses. Enter on the focused picture opens it too, as on the feed. **Supersedes** "the first tap
+  plays it, audible, and once started the tap is its sound" below.
+- **The expand chip is removed (`VideoExpandButton` deleted, `video_expand_label` with it)**: the tap
+  does its job, and a second control for one action is what the owner called not homogeneous. The
+  accessible name `openLabel` now sits on the picture itself, as the feed's does.
+- **The pause chip is removed**: a hold on the picture pauses (the feed's rule, unchanged). A chip
+  beside it would be a second way to do the same thing, and the feed has none.
+- **The big play triangle is a POSTER in a chat, not a button** (review, 2026-11-15): it carries no
+  `data-video-controls`, so a tap on it is a tap on the picture and opens the viewer, which plays. An
+  inline chat video therefore starts from the keyboard (Space) or the viewer; with no viewer handed
+  down the triangle is the play button again.
+- **Assistive technology**: the inline picture is `role="button"` with the `openLabel` name, and a click
+  with `detail` 0 (a VoiceOver or TalkBack activation, which `videoGestures` never reads as a tap)
+  opens the viewer too. `MessageMediaRenderer.openViewer` is idempotent, so a double tap opens one.
+- **The speaker is the ONLY inline control for the sound** and is the feed's: a bare `quiet` glyph,
+  drawn once the video has started (the feed's: while it plays). **The message's actions chip
+  (`onActions`) stays**: a hold is taken by the pause, so a bubble that is nothing but its video would
+  otherwise have no way to its sheet; it is not a video control.
+- **What stays different, on purpose**: the feed autoplays muted while on screen, a chat video is
+  played when asked, audible, never looped (user, 2026-10-02) - a conversation is a place where the
+  reader chose to press play, a feed is a place where videos arrive by scrolling.
+
+## One art direction: flat at rest, glass while transient (owner, 2026-11-15)
+
+*"l'icone permanente est plate mais l'icone au survol est glass. On peut imaginer un truc hybride sur
+toutes les plateformes ? Mais coherents dans toutes les parties de l'app ?"* and *"Il faut
+homogeneiser entre les plateformes, je ne veux qu'une DA."* The rule, identical on iOS, Android and the
+web, on every surface:
+
+- **(a) ON SCREEN AT REST = FLAT**: a bare white lucide glyph with a drop shadow, no chip, no blur.
+- **(b) TRANSIENT, SHOWN ON INTERACTION = FAKE GLASS**: the raised bar, the volume slider, the time
+  bubble, the gesture's pop. One recipe (below); iOS adds a blur on top.
+
+| Control | Players | Class | Drawn as |
+| --- | --- | --- | --- |
+| Big play triangle (poster, paused, refused autoplay) | chat, conversation, lightbox, reel (refusal), every poster/tile (`VideoPoster`, `SharedMediaThumb`, `ChatReelTile`, `SharedPostCard`, `ReplayCard`) | (a) | `VideoRestingPlay`: lucide `Play`, filled, `drop-shadow-md` (was the glass triangle, SUPERSEDED) |
+| Speaker in a corner | feed (while playing), chat (once started), conversation viewer, live | (a) | `VideoSoundButton quiet`: bare 18 px `Volume2`/`VolumeX` |
+| Speaker on the rail | CanaReels | (a) | `VideoSoundButton rail`: bare 26 px |
+| Message actions `...` | chat | (a) | `VideoChipButton glass={false}`, 18 px `Ellipsis` (was a glass chip) |
+| Seek line (2 px, 32 px target) | chat, conversation, reel | (a) | the kit's `VideoScrubber line`; its time bubble is (b) |
+| Time bubble while dragging | every scrubber | (b) | `.glass-video` pill |
+| Control bar (play/pause, time, scrubber, speaker, full screen) | lightbox | (b) | ONE `.glass-video` pill; its buttons draw no chip of their own |
+| Volume slider rising above the speaker | every player, under a mouse | (b) | `.glass-video` pill |
+| Play/pause pop at the centre (600 ms) | chat-viewer, reel, feed, conversation | (b) | `VideoGlassGlyph` |
+| Sound pop at the centre | same | (b) | `.glass-video` chip, 22 px glyphs |
+
+Removed instead of aligned: the chat's expand chip and pause chip (see the section above).
+
+**ONE GLYPH AT THE CENTRE AT ANY INSTANT** (owner, 2026-11-15: at a pause the pop's glass bars and the
+resting triangle were drawn together, superimposed - *"c'est moche"*). The cause: two elements keyed on
+two different states, the gesture (`feedback`) and `paused`. The resting triangle now waits while a
+play/pause pop is on screen: `VideoFeedbackGlyph` reports `onTransport`, which owns the pop's lifetime
+(its `animationend`, also under `prefers-reduced-motion`, where it is a fade) - no timer. Test:
+`VideoPlayer.svelte.test.ts`, "never two of the play and pause glyphs".
+
+### Owner, 2026-11-15: one recipe, the blur is an iOS enhancement on top; Android measured and refused
+
+The Mi 9T measured the blur over a playing 1080p clip at 98-99 % janky frames against 38-44 % flat
+([the reading](#the-mi-9t-reading-of-2026-11-15---glass-fails-the-pass-mark)). The owner: *"Faux verre
+sans flou partout"*, then *"small differences are acceptable when they give each platform its best"*.
+So the build is **progressive enhancement over ONE recipe**:
+
+- **Base, every platform**: `.glass-video` (`app.css`, tokens `--glass-video-*`) is FAKE GLASS - a
+  translucent dark fill (56 % black), a 26 % white hairline, an inner highlight (rim and sheen) and a
+  shadow. NO `backdrop-filter`. Shapes, sizes, icons and tokens are identical on every platform.
+- **Enhancement, iOS (WebKit) only**: `data-glass='blur'` adds `backdrop-filter: blur(12px)
+  saturate(160%)` ON TOP of the same recipe and lowers the fill to 42 % so both read as one object.
+  `utils/videoGlass.ts` is the ONE place that decides ("blur available"): `decideVideoGlass({ ios })`,
+  iOS = the Tauri iOS app or any iPhone/iPad browser; Android and desktop stay on the base.
+  `ANDROID_VIDEO_GLASS`, the low-end heuristics and the flat chip are deleted.
+- Reduced transparency and `prefers-contrast: more` set the fill near-solid, the sheen off and the blur
+  off through the same tokens. `styles/videoGlass.test.ts` pins that the blur lives in one rule and in
+  no component.
+- **Legibility** (the 2026-10-01 report), crops from the Mi 9T over a white and a saturated green frame,
+  in `chat-video-1115/legibility-{white,green}-old-fake-flat.png` (old shipped glass at 28 % black,
+  the new fake glass, the old flat chip): the old 28 % glass left a white glyph weak on white; the
+  56 % fill reads on both frames and keeps the highlight.
+- **The fake glass's own cost on the Mi 9T** (same blob method, three pairs alternating order, 30 s,
+  vs the old flat solid chip). **First recipe, WITH an outer shadow** (`0 2px 10px` black 40 %): flat
+  28.48 / 23.31 / 29.42 % janky (median 12 ms), fake 37.12 / 28.93 / 30.73 % (13 / 12 / 13 ms): mean
+  +5.2 points, +0.7 ms - over the +3 budget, so the owner had the shadow dropped. **Final recipe, NO
+  outer shadow** (depth is an inset 1 px bottom shade drawn inside the same box): flat 27.24 / 34.30 /
+  31.87 % (median 12 / 13 / 12 ms), fake 26.11 / 28.90 / 28.63 % (12 / 12 / 12 ms): mean -3.3 points
+  (fake 27.9 % against flat 31.1 %, the baseline moving 7 points between runs) and 0 ms - **within the
+  +3 points / +1 ms budget, so it ships**. Legibility of the final recipe over white and green:
+  `chat-video-1115/lite-white-green.png`.
+- **iOS cost: OWED, a check and not a gate** (the iPhone was busy): the procedure is "The iPhone 12 - a
+  check, not a gate" below. A visible stutter or FPS under 55 with the bar up would send iOS to the base
+  recipe too, by changing `decideVideoGlass` to `false`.
+
 ## A tap in full screen never mutes (owner, 2026-11-10)
 
 *"c'est insupportable que le clic coupe le son en plein ecran ... n'importe quel clic sur l'interface coupe le son."*
@@ -28,6 +126,31 @@ sources: [9to5Google](https://9to5google.com/2026/03/19/instagram-finally-settle
   playback as it was. The live viewer has no pause: its tap only turns the sound on.
 - The inline feed player is unchanged: muted at start, its tap opens the viewer, its chip is the sound.
 
+## The conversation viewer's seek line could not be touched (owner, 2026-11-15)
+
+*"le lecteur plein ecran des messages est a revoir completement aussi ... la barre de lecture n'est
+pas 'touchable'"*. **The cause is an overlay, not the scrubber**: the kit's `line` (2 px drawn, 32 px
+to touch, captured pointer) works alone and in the CanaReels viewer. In `FullScreenViewer`, `immersive`
+draws the `footer` snippet as an absolute `z-20` strip over the bottom of the picture, padded to the
+safe inset - and `MediaLightbox` ALWAYS hands it a footer (the gallery dots), empty when a viewer has no
+dots (a conversation's has none: `dotCount={0}`). That strip sat on the lower half of the line's touch
+zone, exactly where a thumb lands, and took the touch for itself. **Fix**: the immersive footer is
+`pointer-events-none`; the gallery dots' WRAPPER was the same full-width strip with `pointer-events-auto`
+(review: it too covered a lightbox video's seek line), so only the dot buttons opt in, and a hidden footer is
+`inert` (invisible dots are neither tappable nor focusable). A test
+(`MediaLightbox.seekLine.svelte.test.ts`) pins both the overlay and a touch press-then-drag that seeks
+inside the real viewer.
+
+**Can the conversation viewer BE the CanaReels viewer? Not as one component, and it already shares what
+matters.** Both are `VideoPlayer` (variants `conversation` and `reel`) on the same kit, tap map and seek
+line. The shells differ in what they exist for: the reel pager is a vertical feed with likes, comments,
+a rail and a caption; the conversation viewer is `MediaLightbox`, which also shows PHOTOS, zooms, pans,
+swipes between a conversation's media and has an info sheet. Folding one into the other would give a
+reel viewer that zooms photos or a lightbox with a rail - two features dragged in to remove a variant
+that is only a placement of the speaker. The drift risk is in the CONTROLS, handled by the hybrid
+art-direction decision (one table of controls, flat at rest and glass while transient), not by
+merging the shells.
+
 ## The owner's decisions (2026-11-09, final)
 
 1. **ONE player for every surface** - feed, CanaReels, chat video, lightbox, live viewer - with a
@@ -37,14 +160,14 @@ sources: [9to5Google](https://9to5google.com/2026/03/19/instagram-finally-settle
    (`--glass-video-*`), degrading without a timer. No SVG `feDisplacementMap` lensing: WebKit does
    not apply an SVG filter to a live `<video>` (Aave, "Building Glass for the Web"), so it cannot be
    the same on the iPhone. **Android is flat until a Mi 9T measurement shows no janky-frame
-   regression** ([the glass budget](#the-glass-budget)).
+   regression** ([the glass budget](#the-glass-budget)) - SUPERSEDED 2026-11-15: measured and refused, one fake-glass recipe everywhere, blur on iOS only ([one recipe](#owner-2026-11-15-one-recipe-the-blur-is-an-ios-enhancement-on-top-android-measured-and-refused)).
 3. **The gestures, the same everywhere**: a single TAP toggles the SOUND (amended 2026-11-10: in full screen it plays or pauses and never mutes, see below) (a speaker glyph pops and
    fades); a PRESS HELD pauses while held and resumes on release; a DOUBLE TAP likes where likes
    exist (CanaReels, a feed post) and leaves the sound as it was. A small speaker stays visible on
    the video for discoverability (feed: bottom-right, Instagram's ~24 dp). The lightbox and full
    screen keep a scrubber (a time bubble, no frame thumbnail) and a play/pause button. Where a tap used
    to OPEN the lightbox (feed, chat), an expand chip takes that job. **Amended 2026-11-10**: a feed tap
-   opens full screen again, and a conversation's viewer taps to pause -
+   opens full screen again (**and the chat's, 2026-11-15, with no expand chip at all**), and a conversation's viewer taps to pause -
    [the decisions of 2026-11-10](#the-owners-decisions-of-2026-11-10---full-screen-is-canareels).
 4. **The sound is remembered per device** (this replaces the 2026-09-29 rule "muted at every start,
    in memory only"): across videos, sessions and cold starts; never audible on the first ever run;
@@ -209,10 +332,10 @@ It hands the length to `MediaSource.duration` **inside the append chain**: the s
   [its own entry](../../backlog.d/p2-a-seek-ahead-in-a-stream-fetches-every-segment-before-it.md).
 - **A stream that cannot learn its length** says why, once, at WARN (a fallback is a signal): `[media-seg] <label> <id>: no
   declared length, and none read from its tail - <why>` (`no mfro at the end of the file`, `no moov in
-  the head`, its last segments did not arrive, ...). Its line still draws: `videoPlayback.scrubLength`
-  maps it onto the end of the element's `seekable` range - what is buffered - so it moves and seeks
-  within what is there instead of vanishing. The bar's BUFFERED part is drawn only against a real
-  length: mapped onto what is buffered it would always read full.
+  the head`, its last segments did not arrive, ...). Its line stays at an UNKNOWN length
+  (no played part, no seek) - **superseded 2026-11-18**: mapping it onto the buffered end made the line
+  rewind ([reels](reels.md#the-playback-bar-never-goes-back-defect-same-day)). The loaded part is drawn
+  only against a real length.
 - **The player's line** `the engine knows no duration` is gone for streams (at their metadata they
   hold only their head; the stream speaks for them). A FILE that declares none still says so:
   `[VideoPlayer] <variant>: the file declares no duration`.
@@ -252,7 +375,7 @@ allows them ([controls](../controls.md)).
 | --- | --- |
 | `VideoChipButton` | the kit's one button: a transparent 44 px `.ui-icon-button` holding a 28 px round `glass-video` chip (`glass` off inside a glass bar, so blurs never stack); stops its press from the player's tap |
 | `VideoSoundButton` | the speaker: state by shape (struck / waves) and `aria-pressed`; the sound-on glyph is the only yellow glyph |
-| `VideoExpandButton` | opens the full-screen viewer where a tap used to |
+| ~~`VideoExpandButton`~~ | DELETED 2026-11-15: a tap opens the viewer, with no chip |
 | `VideoPlayGlyph` | the play button: a rounded triangle that IS the glass, no disc, in an invisible 64 px (72 px `lg`) hit square; shown only when it answers "is this playing?" |
 | `VideoGlassGlyph` | the shape itself - play triangle or pause bars - clipped out of a `.glass-video-shape` layer, with an SVG rim and a sibling shadow; also the feedback glyph's play/pause and the poster's triangle |
 | `VideoScrubber` | `line` (2 px, 32 px to touch, thickens with a handle while touched) and `bar` (4 px with buffered); the played part is yellow; a glass time bubble above the handle while dragged |
@@ -539,6 +662,8 @@ second meter, no second law, no second route.
 
 ## The glass play glyph - a triangle with no disc (owner, 2026-11-09)
 
+> **SUPERSEDED 2026-11-15 for the RESTING triangle**: it is flat now ([one art direction](#one-art-direction-flat-at-rest-glass-while-transient-owner-2026-11-15)). The glass glyph stays as the gesture's play/pause pop.
+
 > *"J'aurais juste fait le triangle en liquid glass."* The play glyph ITSELF is the glass: no circle
 > behind it, on every surface at once (viewer, reels, feed, chat, live, the poster before a first
 > frame). The pause bars the same way where they are shown (the gesture's feedback glyph).
@@ -573,6 +698,8 @@ nothing but its own box.
 
 ## The glass
 
+> **SUPERSEDED 2026-11-15** where it says flat chip, `--glass-video-flat-bg`, `data-glass="flat"`, `ANDROID_VIDEO_GLASS` or the low-end heuristics: those are deleted. The recipe is now ONE fake glass with an iOS-only blur on top ([one recipe](#owner-2026-11-15-one-recipe-the-blur-is-an-ios-enhancement-on-top-android-measured-and-refused)); the `data-glass` values are `blur` and `fake`.
+
 `.glass-video` in `app.css`, beside `.glass-chrome` and built the same way, with what makes it read
 as Liquid Glass rather than frosted grey: a specular rim (`--glass-video-rim`, an inset top line), a
 sheen (`--glass-video-sheen`, a top-down white gradient) and a dark tint (`--glass-video-bg`, black at
@@ -598,6 +725,8 @@ disc may take the frame's colour through its blur, the glyph cannot.
 Tests: `styles/videoGlass.test.ts` (each fallback line), `utils/videoGlass.test.ts`.
 
 ## The glass budget
+
+> **Narrowed 2026-11-15**: the budget now covers the TRANSIENT glass only (bar, slider, bubble, pop); resting controls are flat on every platform.
 
 The Android default is flat until a reading on the Mi 9T says the blur costs no janky frames
 (owner, 2026-11-09). **The lead takes the readings, on a pre-release carrying the lightbox migration;
@@ -641,9 +770,38 @@ avoids a second install.
    A Chrome trace (`chrome://inspect` > Performance, 10 s, with the bar up) is the deeper reading if the
    numbers are near the line: look for `Paint` / `RasterTask` time per frame with glass vs flat.
 
+### The Mi 9T reading of 2026-11-15 - glass FAILS the pass mark
+
+Build 1.7.0-alpha.1 (versionCode 100700001), Mi 9T, app on the feed, Chrome DevTools over the WebView's
+socket. **Method, and its one deviation**: no 1080p clip was on a post, and the WebView's HTTP scope
+refuses `localhost`, so a 35 s 1080p30 H.264 testsrc2 clip (3 Mbps) was pushed into the page as a blob
+and played looping, full screen, over the feed, with the WORST-CASE transient glass drawn over it by the
+app's own `.glass-video` class: the raised bar (full width, 56 px), the volume pill (44 x 120) and the
+time bubble, all three at once. `data-glass` was flipped `flat`/`glass` on those three elements; each run is
+30 s after `gfxinfo reset`; six pairs, order alternated (the bar and slider are the same CSS and
+blur radius as the real ones, not their components - the cost being measured is the blur over a decoder).
+
+| Pair | Flat: janky / median | Glass: janky / median |
+| --- | --- | --- |
+| 1 | 43.46 % / 13 ms | 99.12 % / 21 ms |
+| 2 | 43.03 % / 13 ms | 99.89 % / 21 ms |
+| 3 | 38.89 % / 13 ms | 99.45 % / 21 ms |
+| 4 | 43.63 % / 13 ms | 99.78 % / 21 ms |
+| 5 | 37.54 % / 13 ms | 99.67 % / 20 ms |
+| 6 | 42.57 % / 13 ms | 98.45 % / 21 ms |
+
+**Verdict: the glass fails the pass mark (+3 points, +1 ms) by a factor of twenty** - +56 points of
+janky frames and +8 ms of median frame time, every pair, both orders, so the 12 px blur over a live 1080p
+decode is not affordable on this GPU, even for three small transient pieces. (The flat baseline is itself
+~40 % janky here: a full-screen 1080p decode over the feed on a Snapdragon 730; the comparison is the
+difference.) A first run, started twice by mistake and overlapping itself, gave the same alternation and
+was discarded; the table is the clean rerun. **Decided by the owner, 2026-11-15: no blur on Android; one
+fake-glass recipe, the blur an iOS-only enhancement** ([above](#owner-2026-11-15-one-recipe-the-blur-is-an-ios-enhancement-on-top-android-measured-and-refused)). The raw logs are in the
+harness folder (`chat-video-1115/measure3.log`).
+
 ### The iPhone 12 - a check, not a gate
 
-The iPhone draws glass already (WebKit, `decideVideoGlass`). The reading confirms it does not cost a
+The iPhone is the ONE platform that adds the blur on top of the fake glass (`decideVideoGlass`). **OWED.** The reading confirms it does not cost a
 dropped frame there: on the pre-release, the same 30 s clip in the lightbox with the bar held up
 (Safari Web Inspector on the Mac, the same console line as step 2), and the device log read with
 `python -m pymobiledevice3 syslog live` filtered on the app for `[VIDEO]` and WebKit's
@@ -732,7 +890,8 @@ poster and the unplayable notice are the same code.
   disc** until it is started, and again on a pause or at its end; **the first tap plays it**, audible,
   as the disc does, and **once started the tap is its sound**. Once started, **a pause/play chip
   bottom-left, its speaker bottom-right and the `line` scrubber stay**. The expand chip (top-right)
-  opens the viewer, which resumes where it was (`videoResume`); on a phone **the message's actions
+  opens the viewer, which resumes where it was (`videoResume`). **SUPERSEDED 2026-11-15: the tap opens
+  the viewer, no expand chip, no pause chip; see the top of this page.** On a phone **the message's actions
   chip** (top-left, `onActions`, the bubble's sheet) sits opposite it - see the next bullet.
 - **What the expand chip changed**: the whole picture was the viewer's button
   (`data-double-tap-defers`, the click held for the double-tap window). The picture's tap is now the
@@ -769,7 +928,7 @@ judge) and it is not a clip with a duration - and takes the kit around it:
 | A | tokens, fallback, the kit, the gestures, the remembered sound | built |
 | B | lightbox (`VideoPlayer` full mode) on the kit; the measurement protocol | built - readings owed ([the glass budget](#the-glass-budget)) |
 | C | CanaReels (`variant="reel"`): tap = sound, hold = pause, the rail's speaker is the kit's | built - readings owed (a reel tap, a hold, a double-tap like on both phones) |
-| D | feed (`variant="feed"`) and chat (`variant="chat"`); `InlineVideo` deleted | built - readings owed (a feed tap and the expand chip, a chat disc, a hold that opens no sheet) |
+| D | feed (`variant="feed"`) and chat (`variant="chat"`); `InlineVideo` deleted | built - readings owed (a feed tap, a chat tap that opens the viewer (2026-11-15), a hold that opens no sheet) |
 | E | the live viewer: the kit's speaker, tap = sound, no hold; a refused audible start no longer remembered as "off" | built - readings owed (a live tap and the speaker on both phones) |
 
 ## A link slower than the video: one honest load (2026-11-11)
@@ -838,3 +997,11 @@ wait itself rather than group it.
 
 **Readings owed.** A reel and a feed video on a throttled link (about 250 KB/s) on both phones: one
 wait, then no stop.
+
+## A CanaReel's tap is the overlay's (owner, 2026-11-18)
+
+**Supersedes the `reel` rows above** (the tap plays or pauses, a muted tap turns the sound on): in the
+CanaReels viewer a single tap hides or shows the overlay and the player does nothing with it, except to
+start a video whose autoplay the engine refused. The pause is the press held; the sound is the rail's
+speaker. The `lightbox` and `conversation` rows are unchanged. The seek line is now fixed to the video's
+real total and draws the loaded ranges in grey: [reels](reels.md#a-tap-hides-the-overlay-and-the-playback-bar-is-fixed-to-the-real-total-owner-2026-11-18).

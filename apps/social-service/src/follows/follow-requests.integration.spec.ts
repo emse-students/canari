@@ -25,6 +25,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Client } from 'pg';
+import { PG_SESSION_OPTIONS } from '../common/pg-session-options';
 import { DataSource } from 'typeorm';
 import { ReviewCohortBoundaryException } from '../review-cohort';
 import { UserFollow } from './entities/user-follow.entity';
@@ -42,10 +43,13 @@ import {
 } from './follow-requests.service';
 import { InternalController } from '../internal/internal.controller';
 import { PostNotification } from '../posts/entities/post-notification.entity';
-import { POST_LIST_CACHE_PREFIX } from '../posts/post-list-cache';
+import { POST_LIST_CACHE_PREFIX, POST_LIST_GENERATION_KEY } from '../posts/post-list-cache';
 import { FOLLOW_CURSOR_INVALID } from './follow-cursor';
 import { PostNotificationsService } from '../posts/post-notifications.service';
-import { createPostNotificationsTable } from '../posts/post-notifications.it-schema';
+import {
+  createPostNotificationsTable,
+  createBellTargetTables,
+} from '../posts/post-notifications.it-schema';
 import type { PushContent } from '../push/push-content';
 import { FOLLOW_REQUESTS_TARGET, NOTIFICATIONS_TARGET } from '../push/push-target';
 
@@ -103,7 +107,14 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
   /** The push transport, the one thing not real: what the mapping produced is the assertion. */
   /** The feed cache: what was dropped is the assertion. */
   const dropped: string[] = [];
+  /** The per-reader generations moved: whose pages alone were dropped. */
+  const droppedFor: string[] = [];
   const redis = {
+    incrEach: (keys: readonly string[]) => {
+      droppedFor.push(...keys);
+      return Promise.resolve();
+    },
+    deleteMatching: () => Promise.resolve(0),
     incr: () => Promise.resolve(1),
     deleteByPattern: (match: string) => {
       dropped.push(match);
@@ -153,7 +164,9 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
       -- (the post predicate) read since WP-F6: the visibility schema, through its migrations below.
       CREATE TABLE posts (id uuid PRIMARY KEY, "authorId" varchar(255) NOT NULL, "associationId" uuid, "studentsOnly" boolean NOT NULL DEFAULT false, "reachPublic" varchar(16), "reachSpaces" jsonb,
         anonymous boolean NOT NULL DEFAULT false, "hiddenByModeration" boolean NOT NULL DEFAULT false,
-        "publishedAt" timestamptz NOT NULL DEFAULT now());
+        "publishedAt" timestamptz NOT NULL DEFAULT now(),
+        -- The bell reads a comment's writer behind an empty actor (bellRowActorAccountSql).
+        comments jsonb NOT NULL DEFAULT '[]');
       CREATE TABLE associations (id uuid PRIMARY KEY, name varchar NOT NULL, slug varchar NOT NULL,
         type varchar NOT NULL DEFAULT 'association', archived boolean NOT NULL DEFAULT false,
         "isBDE" boolean NOT NULL DEFAULT false, "createdBy" varchar(255));
@@ -195,10 +208,16 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
       url: URL,
       entities: [UserFollow, PostNotification],
       synchronize: false,
-      extra: { options: `-c search_path=${schema}` },
+      // The service's own session settings (`PG_SESSION_OPTIONS`), as `AppModule` opens its pool.
+      extra: { options: `${PG_SESSION_OPTIONS} -c search_path=${schema}` },
     });
     await ds.initialize();
-    follows = new FollowsService({} as never, ds.getRepository(UserFollow), {} as never);
+    follows = new FollowsService(
+      {} as never,
+      ds.getRepository(UserFollow),
+      {} as never,
+      redis as never
+    );
     notifications = new PostNotificationsService(
       ds.getRepository(PostNotification),
       { manager: ds.manager } as never,
@@ -208,6 +227,8 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
     requests = new FollowRequestsService(follows, notifications, ds, redis as never);
     secretBefore = process.env.INTERNAL_SECRET;
     process.env.INTERNAL_SECRET = IT_SECRET;
+    // The bell's one statement reads what its target gates name (`bell-row-gates.ts`).
+    await createBellTargetTables(q);
   });
 
   afterAll(async () => {
@@ -221,6 +242,7 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
   beforeEach(async () => {
     pushed.length = 0;
     dropped.length = 0;
+    droppedFor.length = 0;
     await q(`DELETE FROM user_follows; DELETE FROM user_blocks; DELETE FROM post_notifications;
              DELETE FROM user_follow_notices`);
   });
@@ -875,6 +897,14 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
     expect(dropped).toEqual([`${POST_LIST_CACHE_PREFIX}*`]);
   });
 
+  it("an ACCEPTANCE drops the new follower's own feed pages, and nobody else's: the follow exists from that write", async () => {
+    await requests.ask('ann', 'bob');
+    expect(droppedFor).toEqual([]);
+    await requests.accept('bob', 'ann');
+    expect(droppedFor).toEqual([`${POST_LIST_GENERATION_KEY}:ann`]);
+    expect(dropped).toEqual([]);
+  });
+
   describe('withdraw: only a request nobody answered (engagement WP-2)', () => {
     it('removes a pending request and its bell row, and answers ok', async () => {
       await requests.ask('ann', 'bob');
@@ -928,7 +958,7 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
         seen.push(sql);
         return ds.query(sql, p);
       }) as never);
-      const svc = new FollowsService({} as never, repo, {} as never);
+      const svc = new FollowsService({} as never, repo, {} as never, {} as never);
       await svc.userFollowStatuses('ann', ['bob', 'bob', 'cid', 'dan', 'eve']);
       spy.mockRestore();
       expect(seen).toHaveLength(1);

@@ -52,7 +52,10 @@ padding or a corner on a control: that is the drift this page exists to stop.
   edge, neutral fill: cancel, back, "Modifier"), `ghost` (no fill, no edge), `danger-outline` (red text and a thin red edge on the neutral fill: a
   destructive action on a list row or a panel - delete, leave, revoke, mute, reject - which reads as
   destructive without outshouting the primary) and `danger` (SOLID red, kept for the final confirm
-  INSIDE a confirmation; one solid red per view at most);
+  INSIDE a confirmation; one solid red per view at most); and two box-less ones: `link` (accent text
+  inside a line) and `bare` (a whole surface that is one tap and has no address, the PDF row of an
+  attachment card: no `.ui-control`, no colour, a focus ring, the call site giving only its layout -
+  so no call site ever cancels the control box with overrides);
   sizes `default` and `compact`; `icon` (a square the height of the row, needs an `aria-label`);
   `loading` (spinner, inert) and `disabled`; `href` (renders an anchor in the same box). The old
   `outline` variant (a 2 px black edge, the one in the screenshot) is gone: its three users are

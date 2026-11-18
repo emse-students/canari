@@ -1,6 +1,8 @@
-## Reading owed - a rolling replace's 502, at its next recurrence
+## P2 - a rolling replace answered two 502s once: its evidence must survive the retire first
 
-target: 1.7.0
+target: 1.7.1
+
+_2026-11-17: moved to 1.7.1 by the owner's 2026-11-17 scope cut ([decisions](owner-decisions-of-2026-11-17.md))._
 
 Re-read 2026-11-11: nothing new; the retired replica's error log is still deleted with it, so the next occurrence will be as unreadable as the first. Re-read again 2026-12-11.
 
@@ -24,3 +26,5 @@ Re-read 2026-11-11: nothing new; the retired replica's error log is still delete
 3. Fix the order in the deploy library if the swap drops a request. A retry or a wider timeout is not the fix.
 
 Filed from #2286.
+
+**Re-triaged 2026-11-14 (owner: every owed reading is read or deleted, never left waiting).** Not a reading: nothing here can be read until step 1 is built, since `retire` still deletes the one log that names the hop. The work is steps 1-3 above, in that order.

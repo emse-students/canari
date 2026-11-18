@@ -82,6 +82,8 @@ describe('FormsService - the seat a pending payment holds', () => {
     priceMatrix?: unknown;
     /** The facts builder; default a stub that knows nobody's promo, formation or cotisation. */
     pricingFacts?: unknown;
+    /** The manager's close, or a past end date: the form takes no new answer (`assertFormOpen`). */
+    closedAt?: Date | null;
   }) {
     let now = T0;
     // A seeded row naming a request was issued to the form's Business ('vendor'), as `submit` writes.
@@ -106,7 +108,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       allowCashPayment: opts.allowCashPayment ?? false,
       currency: 'eur',
       opensAt: null,
-      closedAt: null,
+      closedAt: opts.closedAt ?? null,
       items: [],
     };
 
@@ -240,6 +242,9 @@ describe('FormsService - the seat a pending payment holds', () => {
           const releases: (() => void)[] = [];
           const manager = {
             query: async (sql: string, [formId]: string[]) => {
+              // The association's archive, read FOR SHARE before the seat lock: never archived
+              // here (the archive itself is proven on PostgreSQL, answer-edit.integration).
+              if (sql.includes('FROM associations')) return [];
               expect(sql).toBe('SELECT 1 FROM forms WHERE id = $1 FOR UPDATE');
               while (locks.has(formId)) await locks.get(formId);
               let release!: () => void;
@@ -304,8 +309,7 @@ describe('FormsService - the seat a pending payment holds', () => {
     const formRepo: any = { findOne: jest.fn(async () => ({ ...form })) };
     const pricingFacts: any = opts.pricingFacts ?? {
       build: jest.fn(async (input: { answers?: Record<string, string[]> }) => ({
-        promo: null,
-        formation: null,
+        cursus: [{ promo: null, formation: null }],
         cotisationTiers: [],
         answers: input.answers ?? {},
       })),
@@ -568,6 +572,41 @@ describe('FormsService - the seat a pending payment holds', () => {
         expect(core.calls.map((c) => c.route)).toEqual(['create-checkout-session']);
       }
     );
+  });
+
+  // "Clore le formulaire" (owner, 2026-11-16): the close refuses a NEW answer (`submit`, an edit),
+  // and nothing else. A payment already issued settles or expires through the row's own paths,
+  // which never read `closedAt` - the form's close is not the payer's loss.
+  describe('a form closed while a payment is in progress', () => {
+    const closedAt = new Date(T0.getTime() - 1000);
+
+    it('refuses a new answer, typed', async () => {
+      const { service, rows } = makeStore({ maxSubmissions: null, rows: [], closedAt });
+      await expect(
+        service.submit('f1', { userId: 'u1', answers: {} } as any)
+      ).rejects.toMatchObject({ response: { code: 'FORM_CLOSED' } });
+      expect(rows).toHaveLength(0);
+    });
+
+    it('still takes the payment of a pending row that started before the close', async () => {
+      const { service, rows } = makeStore({
+        maxSubmissions: 1,
+        closedAt,
+        rows: [row({ id: 'p', paymentStatus: 'pending', paymentRequestedAt: ago(1000) })],
+      });
+      await service.markPaid('p', 'req-1');
+      expect(rows[0].paymentStatus).toBe('paid');
+    });
+
+    it('still lets the expiry job release a pending row, so its seat is not held for ever', async () => {
+      const { service, rows } = makeStore({
+        maxSubmissions: 1,
+        closedAt,
+        rows: [row({ id: 'p', paymentStatus: 'pending', paymentRequestedAt: ago(HOLD_MS + 1000) })],
+      });
+      expect(await service.expireStalePendingPayments(ago(HOLD_MS))).toBe(1);
+      expect(rows[0].paymentStatus).toBe('expired');
+    });
   });
 
   describe('the expiry job', () => {

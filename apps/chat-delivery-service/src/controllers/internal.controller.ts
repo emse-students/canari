@@ -1,3 +1,4 @@
+import { deleteUninvitedEntriesOfAccount } from '../utils/uninvited-entries';
 import {
   Controller,
   Get,
@@ -57,6 +58,7 @@ import { isEntitledToDistributionGroup } from '../internal/distribution-entitlem
 import { RETENTION_WINDOW_MS } from '../retention.constants';
 import { parsePresenceAudienceBody } from '../utils/presence-audience';
 import { describeSeat, readDeviceSeat, type DeviceSeat } from '../utils/device-seat';
+import { RouteParams } from '../common/route-params';
 
 /**
  * Whether a flagged 1:1's roster lets an erasure END the conversation: KNOWN (something still names
@@ -72,6 +74,15 @@ function isOneToOneRoster(roster: Set<string> | undefined): boolean {
  * NOT exposed through Nginx.
  * Auth: X-Internal-Secret header matched against INTERNAL_SECRET env var.
  */
+@RouteParams({
+  token: 'opaque',
+  userId: 'opaque',
+  deviceId: 'opaque',
+  sessionId: 'uuid',
+  scope: 'opaque',
+  scopeId: 'uuid',
+  departure: 'opaque',
+})
 @Controller('internal')
 export class InternalController {
   private readonly logger = new Logger(InternalController.name);
@@ -1155,6 +1166,8 @@ export class InternalController {
       manager.query(`DELETE FROM dm_join_ask_pushes WHERE "userId" = $1`, [userId]),
       // What the account sent, by id: the receipts that answer its resends (migration 048).
       manager.query(`DELETE FROM dm_sent_frame_receipt WHERE "senderId" = $1`, [userId]),
+      // The uninvited entries counted against it (migration 053), by the shortened id they hold.
+      deleteUninvitedEntriesOfAccount(manager, userId),
       // The key groups its revoked devices held: a binding for a person nothing will answer for.
       manager.delete(RevokedDeviceGroup, { userId }),
       // An invite link the account minted keeps working for the group; only the name goes.

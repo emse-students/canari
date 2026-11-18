@@ -79,7 +79,15 @@ describe('guest identity on a public form', () => {
       } as any,
       {} as any,
       {} as any,
-      { build: jest.fn(() => Promise.resolve({ answers: {} })) } as any,
+      {
+        build: jest.fn(() =>
+          Promise.resolve({
+            cursus: [{ promo: null, formation: null }],
+            cotisationTiers: [],
+            answers: {},
+          })
+        ),
+      } as any,
       { count: jest.fn() } as any,
       {} as any,
       { enabled: () => false } as any,

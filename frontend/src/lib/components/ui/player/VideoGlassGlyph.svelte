@@ -7,23 +7,20 @@
   import { videoGlass } from '$lib/utils/videoGlass';
 
   /**
-   * A PLAY OR PAUSE GLYPH THAT IS ITSELF THE GLASS - NO DISC BEHIND IT (owner, 2026-11-09: *"J'aurais
-   * juste fait le triangle en liquid glass"*). Four layers in one box, none of them an ancestor of
-   * another's blur:
+   * THE PLAY / PAUSE POP: A GLYPH THAT IS ITSELF THE (FAKE) GLASS - NO DISC BEHIND IT (owner,
+   * 2026-11-09: *"J'aurais juste fait le triangle en liquid glass"*; 2026-11-15: no blur, anywhere).
+   * Three layers in one box:
    *
-   * 1. a soft shadow - the same shape, blurred, a sibling underneath (a `filter` on an ANCESTOR would
-   *    make it the backdrop root and the glass would blur nothing but its own box);
-   * 2. the glass - `.glass-video-shape` clipped to the shape: the video's blur and the dark tint
-   *    exist only inside the triangle (or the two bars), so a white frame and a black one both leave
-   *    the white fill legible;
+   * 1. a soft shadow - the same shape, blurred, a sibling underneath;
+   * 2. the fake glass - `.glass-video-shape` clipped to the shape: the translucent dark fill and the
+   *    sheen exist only inside the triangle (or the two bars), so a white frame and a black one both
+   *    leave the white glyph legible. NO backdrop filter (the Mi 9T measured it at 98-99 % janky);
    * 3. the rim - the same path stroked in a light that fades from the top-left edge, the specular
-   *    line a disc got from an inset shadow (a clipped element cannot carry its own border);
-   * 4. nothing else: it is not a button. The caller wraps it (`VideoPlayGlyph`) or leaves it decorative.
+   *    line a disc got from an inset shadow (a clipped element cannot carry its own border).
    *
-   * `data-glass='flat'` and the CSS fallbacks (no `backdrop-filter`, reduced transparency, more
-   * contrast) drop the blur and the sheen and keep a solid dark tint - the triangle stays, with its
-   * rim. WebKit's behaviour of a blur through a clipped shape is NOT verified here (docs
-   * `video-player.md`, "the glass glyph"): the iPhone reading decides.
+   * It is not a button; it is only drawn as the gesture's pop (`VideoFeedbackGlyph`) - a RESTING
+   * triangle is the flat `VideoRestingPlay`. Reduced transparency and more contrast make the fill
+   * near-solid through the tokens.
    */
   interface Props {
     kind: GlassGlyphKind;

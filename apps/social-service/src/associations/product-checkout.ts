@@ -2,7 +2,9 @@
  * The rules of a boutique checkout attempt, as data and pure functions (migration 101,
  * docs/wiki/frontend/modules/payments.md "A product checkout is a row, one per attempt").
  */
+import { ConflictException } from '@nestjs/common';
 import { LYDIA_REQUEST_UUID_RE } from '../forms/seat-hold';
+import type { PaymentTarget } from './payment-delegation.util';
 
 /**
  * How long a product's Lydia request stays payable, in whole seconds (Lydia's `expire_time`). Set
@@ -191,6 +193,24 @@ export function withCheckoutReturnKey(
  * lock, since it calls another service - and the moment the attempt is written under that lock.
  */
 export const PAYMENT_ROUTING_CHANGED = 'PAYMENT_ROUTING_CHANGED';
+
+/**
+ * The 409 `PAYMENT_ROUTING_CHANGED` as a TYPE, carrying the two routings it compared - the one the
+ * purchase was prepared against (`from`) and the one read under the lock (`to`) - so a caller
+ * decides on those facts (a Lydia bridge's switch back is re-issued, `openCheckoutAttempt`), never
+ * on the message. The payer reads the same body as before.
+ */
+export class PaymentRoutingChangedException extends ConflictException {
+  constructor(
+    readonly from: PaymentTarget,
+    readonly to: PaymentTarget
+  ) {
+    super({
+      code: PAYMENT_ROUTING_CHANGED,
+      message: 'The payment account of this association changed while the purchase was opened.',
+    });
+  }
+}
 
 /**
  * Which request a state read of this attempt names, as core-service's `payments/request-state`

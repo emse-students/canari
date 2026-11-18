@@ -1,3 +1,4 @@
+import { claimUninvitedEntry, type UninvitedEntryRow } from '../utils/uninvited-entries';
 import {
   Injectable,
   Logger,
@@ -22,6 +23,7 @@ import {
 } from 'typeorm';
 import * as crypto from 'crypto';
 import { RefusalCode, refusalBody } from '../utils/refusal-codes';
+import { describeFcmFailure, fcmErrorCode, isTerminalPushTokenError } from '../utils/fcm-errors';
 import Redis from 'ioredis';
 import {
   ADDRESSED_HISTORY_CAPABILITY,
@@ -29,6 +31,7 @@ import {
   devicePresenceKey,
   addressabilityOf,
   publishIfAddressable,
+  type Addressability,
 } from './addressing';
 import { getApps } from 'firebase-admin/app';
 import { getMessaging, type Message } from 'firebase-admin/messaging';
@@ -39,7 +42,7 @@ import { KeyPackage } from '../entities/key-package.entity';
 import { OneTimeKeyPackage } from '../entities/one-time-key-package.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { PushToken } from '../entities/push-token.entity';
-import { categoryOfDataPush } from './push-category';
+import { categoryOfDataPush, pushKindOf } from './push-category';
 import { appVersionAtLeast, MIN_APP_VERSION_DATA_KEY } from '../utils/app-version';
 import { readDisabledCategories, readGroupNotificationLevel } from './notification-preferences';
 import { MlsCommitLog } from '../entities/mls-commit-log.entity';
@@ -156,6 +159,7 @@ import {
   LONGEST_FALLBACK_LOCALE,
   buildInternalAndroidHalf,
   buildInternalApnsHalf,
+  buildInternalApnsRequest,
   decideProtoCarriage,
   measureDataFields,
   measureApnsPayload,
@@ -535,6 +539,20 @@ export interface SendWelcomeBody {
   welcomePayload: string;
   ratchetTreePayload?: string;
   groupId: string;
+}
+
+/**
+ * What `POST /api/mls/welcome` answers once the Welcome is stored and handed to its device.
+ *
+ * `addressability` is whether that device can be ADDRESSED a history answer at the time of the
+ * answer (`addressabilityOf`): `addressable`, `offline` (no presence key) or `undeclared` (a live
+ * session did not declare `addressed-history-1`). The inviter's join push reads it and sends nothing
+ * where the send would be refused (`MessagingService.welcomeAnswer`). Absent when it could not be
+ * read - the shape every older server answers.
+ */
+export interface WelcomeAnswer {
+  status: 'queued';
+  addressability?: Addressability;
 }
 
 /**
@@ -1249,19 +1267,6 @@ export class MessagingService {
     }
   }
 
-  private isTerminalPushTokenError(error: unknown): boolean {
-    const rawCode =
-      typeof error === 'object' && error && 'code' in error
-        ? (error as { code?: unknown }).code
-        : undefined;
-    const code = typeof rawCode === 'string' ? rawCode : '';
-
-    return (
-      code === 'messaging/invalid-registration-token' ||
-      code === 'messaging/registration-token-not-registered'
-    );
-  }
-
   /**
    * Whether FCM refused a message for SIZE rather than for the token or the network.
    *
@@ -1274,9 +1279,9 @@ export class MessagingService {
    * @param error - Whatever `getMessaging().send()` threw.
    */
   private isPayloadTooLargeError(error: unknown): boolean {
-    const asRecord = typeof error === 'object' && error ? (error as Record<string, unknown>) : {};
-    const code = typeof asRecord.code === 'string' ? asRecord.code : '';
+    const code = fcmErrorCode(error);
     if (code === 'messaging/payload-size-limit-exceeded') return true;
+    const asRecord = typeof error === 'object' && error ? (error as Record<string, unknown>) : {};
     const message = typeof asRecord.message === 'string' ? asRecord.message : '';
     return code === 'messaging/invalid-argument' && /too large/i.test(message);
   }
@@ -1298,7 +1303,15 @@ export class MessagingService {
     key: WakeKey,
     silent: boolean,
     mentionsOnly: boolean,
-    android: { priority: 'high'; ttl?: number }
+    android: { priority: 'high'; ttl?: number },
+    /**
+     * The `apns-collapse-id` the FULL push of the same content would carry (`buildInternalApnsRequest`),
+     * for a REACTION only: the identifier the device files it under, which a wake must keep - one
+     * reaction's push and the page's own notification of it are ONE request only if both carry it
+     * (review of #3792). It is a hash over the message id, which nothing else sent to Apple names;
+     * an id that names content - or hashes only what Apple can learn elsewhere - never goes here.
+     */
+    collapseId?: string
   ): Message {
     if (pt.platform === 'ios') {
       const request = buildWakeApnsRequest(key, silent, mentionsOnly, pt.locale);
@@ -1309,6 +1322,7 @@ export class MessagingService {
           headers: {
             'apns-push-type': request.pushType,
             'apns-priority': String(request.priority),
+            ...(collapseId ? { 'apns-collapse-id': collapseId } : {}),
           },
         },
       };
@@ -1610,14 +1624,15 @@ export class MessagingService {
           );
         }
       } catch (e) {
-        if (this.isTerminalPushTokenError(e)) {
+        if (isTerminalPushTokenError(e)) {
           await this.pushTokenRepo.delete({ id: pt.id });
           this.logger.warn(
             `[PUSH_SEND][${traceId}] Deleted invalid push token user=${queued.recipientId} device=${pt.deviceId}`
           );
         }
-        this.logger.warn(
-          `[PUSH_SEND][${traceId}] FCM failed user=${queued.recipientId} device=${pt.deviceId} err=${String(e)}`
+        const failure = describeFcmFailure(e);
+        this.logger[failure.level](
+          `[PUSH_SEND][${traceId}] FCM failed user=${queued.recipientId} device=${pt.deviceId} ${failure.text}`
         );
         // A size refusal is the one failure whose cause is entirely in our hands, and the error
         // FCM returns names no quantity at all - ten of them in one run said only "too large".
@@ -4777,6 +4792,14 @@ export class MessagingService {
     return (await this.memberOfGroupKind(group, groupId, userId)).isMember;
   }
 
+  /**
+   * Counts one uninvited entry ({@link claimUninvitedEntry}): `true` when this call wrote its row,
+   * so the caller prints it; `false` when it was counted before - by any replica, before any deploy.
+   */
+  async claimUninvitedEntry(entry: UninvitedEntryRow): Promise<boolean> {
+    return claimUninvitedEntry(this.groupRepo.manager, entry);
+  }
+
   /** Whether `userId` is on the user roster of `groupId`, admitted or still awaiting a member. */
   private async isOnRoster(groupId: string, userId: string): Promise<boolean> {
     return (await this.rosterSeat(groupId, userId)) !== null;
@@ -5527,7 +5550,7 @@ export class MessagingService {
   async sendWelcome(
     authUserIdRaw: string | undefined,
     body: SendWelcomeBody
-  ): Promise<{ status: string }> {
+  ): Promise<WelcomeAnswer> {
     const traceId = this.makeTraceId('welcome-send');
     const targetDeviceId = sanitizeQueryValue(body.targetDeviceId, 'targetDeviceId');
     const targetUserId = sanitizeOptionalQueryValue(body.targetUserId, 'targetUserId');
@@ -5629,7 +5652,7 @@ export class MessagingService {
           `group=${safeGroupId} - the same Welcome is already queued, nothing stored again; its row is delivered again`
       );
       await this.deliverWelcome(stored, traceId);
-      return { status: 'queued' };
+      return this.welcomeAnswer(group, deviceInfo.userId, targetDeviceId, safeGroupId, traceId);
     }
     this.logger.log(
       `[WELCOME][${traceId}] QUEUED id=${queuedWelcome.id} recipient=${deviceInfo.userId}:${targetDeviceId} group=${safeGroupId}`
@@ -5656,7 +5679,56 @@ export class MessagingService {
       `[WELCOME][${traceId}] DONE group=${safeGroupId} target=${deviceInfo.userId}:${targetDeviceId}`
     );
 
-    return { status: 'queued' };
+    return this.welcomeAnswer(group, deviceInfo.userId, targetDeviceId, safeGroupId, traceId);
+  }
+
+  /**
+   * The answer to a stored Welcome, carrying whether its device can be ADDRESSED a history answer
+   * now ({@link WelcomeAnswer.addressability}).
+   *
+   * WHY THE WELCOME SAYS IT. The inviter follows every delivered Welcome with a join push, an
+   * addressed transport frame, which {@link assertConversationAddressable} refuses for a device that
+   * is offline or holds a session that did not declare the capability. Only this service knows
+   * either fact, so the inviter used to learn it by failing: one `400 addressed_unsupported` per
+   * stale device of every Add (nine in one rig run, 2026-11-15). The verdict is read HERE by the
+   * same script that decides the send (check only, nothing published), so the inviter does not make
+   * a request this service would refuse. The send's own check is unchanged and stays the authority:
+   * a device that disconnects between the two reads is still refused there.
+   *
+   * A verdict that cannot be read is said at error and left OUT of the answer: the Welcome is
+   * stored and delivered whatever this read does, and an answer without the field is what every
+   * older server gives - the inviter then pushes and the send's check decides.
+   *
+   * NOT READ FOR A KEY GROUP: a community's key group gets no join push (it carries no history), so
+   * the verdict would answer a question nobody asks there.
+   */
+  private async welcomeAnswer(
+    group: Group | null,
+    userId: string,
+    deviceId: string,
+    groupId: string,
+    traceId: string
+  ): Promise<WelcomeAnswer> {
+    if (distributionScopeOf(group) !== null) {
+      this.logger.log(
+        `[WELCOME][${traceId}] group=${groupId} is a key group - no join push follows, addressability of ${cutUserId(userId)}:${deviceId} not read`
+      );
+      return { status: 'queued' };
+    }
+    let addressability: Addressability;
+    try {
+      addressability = await addressabilityOf(this.redis, userId, deviceId);
+    } catch (e) {
+      this.logger.error(
+        `[WELCOME][${traceId}] addressability of ${cutUserId(userId)}:${deviceId} in group=${groupId} could not be read - answered without it, the join push's own send decides: ${String(e).slice(0, 160)}`
+      );
+      return { status: 'queued' };
+    }
+    this.logger.log(
+      `[WELCOME][${traceId}] ADDRESSABILITY group=${groupId} target=${cutUserId(userId)}:${deviceId} ` +
+        `is ${addressability}${addressability === 'addressable' ? '' : ' - the inviter sends it no addressed answer'}`
+    );
+    return { status: 'queued', addressability };
   }
 
   /**
@@ -8307,14 +8379,15 @@ export class MessagingService {
             `[WELCOME_REQ][${traceId}] FCM welcome_request_pending user=${pt.userId} device=${pt.deviceId}`
           );
         } catch (e) {
-          if (this.isTerminalPushTokenError(e)) {
+          if (isTerminalPushTokenError(e)) {
             await this.pushTokenRepo.delete({ id: pt.id });
             this.logger.warn(
               `[WELCOME_REQ][${traceId}] Deleted invalid push token user=${pt.userId} device=${pt.deviceId}`
             );
           }
-          this.logger.warn(
-            `[WELCOME_REQ][${traceId}] FCM failed user=${pt.userId} device=${pt.deviceId} err=${String(e)}`
+          const failure = describeFcmFailure(e);
+          this.logger[failure.level](
+            `[WELCOME_REQ][${traceId}] FCM failed user=${pt.userId} device=${pt.deviceId} ${failure.text}`
           );
         }
       })
@@ -8536,14 +8609,25 @@ export class MessagingService {
           // The content-free wake: the device fetches the envelope and runs it through the path
           // this full push would have taken. Android keeps the full push's options.
           await getMessaging().send(
-            this.buildWakeMessage(pt, { envelopeId }, isInternalSilent(data), false, {
-              priority: 'high',
-            })
+            this.buildWakeMessage(
+              pt,
+              { envelopeId },
+              isInternalSilent(data),
+              false,
+              { priority: 'high' },
+              // A REACTION's collapse id is kept: a hash of the reacted-to message's id - which no
+              // wake and no ring carries, so it cannot be checked against a guess
+              // (`reactionCollapseId`) - and what makes its push and the page's notification one.
+              // A post's names the post (`post_activity_<id>`), which a wake must never carry.
+              data.reaction === 'true'
+                ? buildInternalApnsRequest(title, body, data, pt.locale).collapseId
+                : undefined
+            )
           );
           sent++;
           this.logger.log(
             `[SOCIAL_PUSH][${traceId}] sent user=${userId} device=${pt.deviceId} platform=${pt.platform} ` +
-              `mode=wake kind=${data.type ?? 'none'} envelope=${envelopeId.slice(0, 8)}`
+              `mode=wake kind=${pushKindOf(data)} envelope=${envelopeId.slice(0, 8)}`
           );
           continue;
         }
@@ -8558,6 +8642,8 @@ export class MessagingService {
               headers: {
                 'apns-push-type': ios.payload.pushType,
                 'apns-priority': String(ios.payload.priority),
+                // One live notification per post: the new alert replaces the delivered one.
+                ...(ios.payload.collapseId ? { 'apns-collapse-id': ios.payload.collapseId } : {}),
               },
             },
           });
@@ -8573,7 +8659,7 @@ export class MessagingService {
         sent++;
         this.logger.log(
           `[SOCIAL_PUSH][${traceId}] sent user=${userId} device=${pt.deviceId} platform=${pt.platform} ` +
-            `mode=full inline=${Object.keys(inline).length === 0 ? 'none' : half.inlined} bytes=${half.bytes}`
+            `mode=full kind=${pushKindOf(data)} inline=${Object.keys(inline).length === 0 ? 'none' : half.inlined} bytes=${half.bytes}`
         );
         if (Object.keys(inline).length > 0 && !half.inlined) {
           // Not a failure - the device fetches the message and draws the fallback - but a budget
@@ -8587,14 +8673,15 @@ export class MessagingService {
         }
       } catch (e) {
         failed++;
-        if (this.isTerminalPushTokenError(e)) {
+        if (isTerminalPushTokenError(e)) {
           await this.pushTokenRepo.delete({ id: pt.id });
           this.logger.warn(
             `[SOCIAL_PUSH][${traceId}] deleted invalid token user=${userId} device=${pt.deviceId}`
           );
         }
-        this.logger.warn(
-          `[SOCIAL_PUSH][${traceId}] FCM failed user=${userId} device=${pt.deviceId} err=${String(e)}`
+        const failure = describeFcmFailure(e);
+        this.logger[failure.level](
+          `[SOCIAL_PUSH][${traceId}] FCM failed user=${userId} device=${pt.deviceId} ${failure.text}`
         );
       }
     }

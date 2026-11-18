@@ -1,6 +1,3 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   markConnectionCaughtUp,
@@ -10,6 +7,7 @@ import {
   setSessionCaughtUp,
   takePendingCallAccept,
 } from './pendingCallAccept';
+import { readSource, relativeTo, sourceFiles } from '../../test/sourceTree';
 
 vi.mock('$lib/utils/sessionLog', () => ({ appendLog: vi.fn() }));
 
@@ -80,10 +78,7 @@ describe('a native answer is acted on once the session has caught up', () => {
   });
 
   it('the session reports the socket state at the end of the catch-up, not a constant', () => {
-    const session = readFileSync(
-      join(dirname(fileURLToPath(import.meta.url)), '../composables/useChatSession.svelte.ts'),
-      'utf8'
-    );
+    const session = readSource('src/lib/composables/useChatSession.svelte.ts');
     expect(session).toContain('onConnectionCaughtUp: () => markConnectionCaughtUp(isWsConnected)');
   });
 
@@ -115,25 +110,23 @@ describe('the native accept file', () => {
  * handler reads no answer from a link.
  */
 describe('a link never answers a call', () => {
-  const SRC = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
-  const sources = (dir: string): string[] =>
-    readdirSync(dir).flatMap((name) => {
-      const path = join(dir, name);
-      if (statSync(path).isDirectory())
-        return name === 'wasm' || name === 'proto' ? [] : sources(path);
-      return /\.(ts|svelte)$/.test(name) && !name.endsWith('.test.ts') ? [path] : [];
-    });
-
+  // The run's source snapshot: the scan is a filter over strings in memory, with no disk walk.
   it('only the native drain records an answer', () => {
-    const recorders = sources(SRC)
-      .filter((p) => readFileSync(p, 'utf8').includes('setPendingCallAccept('))
-      .map((p) => relative(SRC, p).replace(/\\/g, '/'));
+    const sources = sourceFiles({
+      under: 'src',
+      extensions: ['ts', 'svelte'],
+      tests: 'exclude',
+      skipDirs: ['wasm', 'proto'],
+    });
+    expect(sources.map((f) => f.path)).toContain('src/lib/stores/pendingCallAccept.ts');
+    const recorders = sources
+      .filter(({ text }) => text.includes('setPendingCallAccept('))
+      .map(({ path }) => relativeTo(path, 'src'));
     expect(recorders).toEqual(['lib/stores/pendingCallAccept.ts']);
-    // A scan of the whole source tree: seconds under a loaded parallel run, never a hang.
-  }, 60_000);
+  });
 
   it('the deep-link handler records nothing from acceptCall', () => {
-    const hooks = readFileSync(join(SRC, 'hooks.client.ts'), 'utf8');
+    const hooks = readSource('src/hooks.client.ts');
     expect(hooks).not.toMatch(/import\(\s*'\$lib\/stores\/pendingCallAccept'\s*\)/);
     expect(hooks).not.toMatch(/from '\$lib\/stores\/pendingCallAccept'/);
     expect(hooks).not.toMatch(/searchParams\.get\('acceptCall'\)/);

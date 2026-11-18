@@ -85,7 +85,9 @@ jobs:
       packages: read
     environment:
       name: production
-      url: https://${{ env.DOMAIN }}
+      # The CANONICAL name, spelt here and not derived from `DOMAIN`: `DOMAIN` is still the legacy
+      # `canari-emse.fr` because it is also the Cloudflare zone and dev's suffix (render-env.sh).
+      url: https://canari.emse.fr
     steps:
       # THE COMMIT, NEVER THE BRANCH, AND THIS IS THE TREE PRODUCTION IS ACTUALLY SERVED FROM:
       # `docker-compose.prod.yml`, the nginx configuration and the migration SQL all come from here,
@@ -160,6 +162,7 @@ jobs:
           CLOUDFLARE_SFU_APP_ID: ${{ secrets.CLOUDFLARE_SFU_APP_ID }}
           CLOUDFLARE_SFU_APP_SECRET: ${{ secrets.CLOUDFLARE_SFU_APP_SECRET }}
           LIVE_REPLAY_TOTAL_MAX_GB: ${{ secrets.LIVE_REPLAY_TOTAL_MAX_GB }}
+          CAMPUS_TREND_THRESHOLD: ${{ secrets.CAMPUS_TREND_THRESHOLD }}
           GARAGE_RPC_SECRET: ${{ secrets.GARAGE_RPC_SECRET }}
           GARAGE_ADMIN_TOKEN: ${{ secrets.GARAGE_ADMIN_TOKEN }}
           GARAGE_ACCESS_KEY_ID: ${{ secrets.GARAGE_ACCESS_KEY_ID }}

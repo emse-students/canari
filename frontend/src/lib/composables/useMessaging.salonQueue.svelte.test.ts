@@ -99,7 +99,7 @@ function posted(call: number) {
 
 /** The link drops the way `trackedFetch` reports it: the store learns it BEFORE the throw reaches us. */
 function dropTheLink() {
-  connectivity.notifyServerUnreachable();
+  connectivity.notifyServerUnreachable('test');
   return Promise.reject(new TransportFailureError(new TypeError('Failed to fetch')));
 }
 
@@ -127,7 +127,7 @@ afterEach(() => {
 
 describe('a salon send while offline', () => {
   it('is HELD as pending, seals nothing, and goes on the reconnect under its client id', async () => {
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     sendMock.mockResolvedValue({ id: 'srv-offline-1', serverMs: 5_000 });
     const { useMessaging } = await import('./useMessaging.svelte');
     const ctx = makeContext();
@@ -335,7 +335,7 @@ describe('a repeat nobody asked for waits for the server to prove it safe', () =
   });
 
   it('a send HELD offline before any POST still goes on the reconnect: nothing can have landed', async () => {
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     sendMock.mockResolvedValue({ id: 'srv-held' });
     const { useMessaging } = await import('./useMessaging.svelte');
     const ctx = makeContext();
@@ -440,7 +440,7 @@ describe('a salon send the server answered "not now" (R05)', () => {
     expect(ledger().map((e) => e.messageId)).toEqual([clientId]);
 
     sendMock.mockResolvedValueOnce({ id: 'srv-after-deploy' });
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     connectivity.notifyServerReachable();
     await vi.waitFor(() => expect(rows(ctx)[0]).toMatchObject({ id: 'srv-after-deploy' }));
     expect(rows(ctx)[0].status).toBe('sent');
@@ -474,7 +474,7 @@ describe('a salon send the server answered "not now" (R05)', () => {
     const ctx = makeContext();
     await useMessaging().handleSendChat(ctx, 'both at once');
 
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     connectivity.notifyServerReachable();
     await vi.advanceTimersByTimeAsync(60_000);
     await vi.waitFor(() => expect(rows(ctx)[0]).toMatchObject({ id: 'srv-once' }));
@@ -592,7 +592,7 @@ describe('a salon send the server answered "not now" (R05)', () => {
       { messageId: clientId, unavailableAnswers: MAX_UNAVAILABLE_ANSWERS },
     ]);
     // A reconnect proves the link, not the route: it sends nothing more, nor does the clock.
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     connectivity.notifyServerReachable();
     await climb(3);
     expect(sendMock).toHaveBeenCalledTimes(MAX_UNAVAILABLE_ANSWERS);
@@ -644,7 +644,7 @@ describe('a salon send the server answered "not now" (R05)', () => {
     expect(rows(ctx)).toEqual([]);
     expect(ledger()).toEqual([]);
     expect(textWaitOf(clientId)).toBeUndefined();
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     connectivity.notifyServerReachable();
     await climb(3);
     expect(sendMock).toHaveBeenCalledTimes(1);
@@ -662,7 +662,7 @@ describe('a salon send the server answered "not now" (R05)', () => {
     forgetDeliveredSalonSend(clientId, 'me');
     expect(isSalonWriteOwed(`send:${clientId}`)).toBe(false);
     expect(textWaitOf(clientId)).toBeUndefined();
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     connectivity.notifyServerReachable();
     await climb(3);
     expect(sendMock).toHaveBeenCalledTimes(1);

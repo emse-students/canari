@@ -9,9 +9,11 @@
     index: number;
     /** The cell whose first dig is being prepared: shown pressed until the board exists. */
     pending: boolean;
+    /** Ringed: the cell the last action of a replay landed on. */
+    marked?: boolean;
   }
 
-  let { cell, index, pending }: Props = $props();
+  let { cell, index, pending, marked = false }: Props = $props();
 
   /**
    * Revealed-number colours: a deep shade on the light board, a bright one on the black board (the
@@ -36,7 +38,7 @@
    */
   const tone = $derived(
     pending
-      ? 'bg-cn-bg animate-pulse'
+      ? 'bg-cn-bg ms-pending'
       : cell.state !== 'revealed'
         ? 'ms-hidden'
         : cell.mine
@@ -51,7 +53,9 @@
 <button
   type="button"
   data-cell={index}
-  class="box-border flex h-[length:var(--ms-cell)] w-[length:var(--ms-cell)] shrink-0 touch-manipulation items-center justify-center rounded-md font-mono text-xs font-bold select-none sm:text-sm {tone} {numberColor}"
+  class="box-border flex h-[length:var(--ms-cell)] w-[length:var(--ms-cell)] shrink-0 touch-manipulation items-center justify-center rounded-md font-mono text-xs font-bold select-none sm:text-sm {tone} {numberColor} {marked
+    ? 'ring-accent ring-2 ring-inset'
+    : ''}"
 >
   {#if cell.state === 'flagged'}
     <Flag size={14} class="dark:text-accent-icon text-accent-text" />
@@ -63,6 +67,21 @@
 </button>
 
 <style>
+  /*
+   * The pressed first-dig cell pulses at Tailwind's own rhythm (2 s) scaled by the player's animation
+   * speed (`--ms-anim`, set on the modal). A factor of 0 makes the duration zero, which ends the
+   * infinite animation at once - the "off" setting.
+   */
+  @keyframes ms-pending-pulse {
+    50% {
+      opacity: 0.5;
+    }
+  }
+
+  .ms-pending {
+    animation: ms-pending-pulse calc(2s * var(--ms-anim, 1)) cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
   /* Hidden tile: the board colour pulled 14% toward the text colour, 22% on hover and 30% pressed. */
   .ms-hidden {
     background: color-mix(in srgb, var(--text-main) 14%, var(--cn-bg));

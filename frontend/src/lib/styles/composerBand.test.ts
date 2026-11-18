@@ -68,9 +68,11 @@ describe('the composer band', () => {
    * permanently hidden rather than occasionally overlapped, which is worse than the report.
    */
   it('keeps reserving the composer height, so the thread still ends above the bar at rest', () => {
-    const scroller = css.slice(at('.chat-messages-scroll {'));
-    expect(scroller.slice(0, scroller.indexOf('\n}'))).toContain(
-      'padding-bottom: var(--chat-composer-height'
+    // The rule of its own, not the one that resolves the floor on it and the footer.
+    const scroller = css.slice(css.indexOf('\n\n.chat-messages-scroll {'));
+    // The keyboard's room is added to it (Android's layout inset, 0 elsewhere - keyboard ride).
+    expect(scroller.slice(0, scroller.indexOf('\n}'))).toMatch(
+      /padding-bottom: (calc\(\s*)?var\(--chat-composer-height/
     );
   });
 });
@@ -82,5 +84,93 @@ describe('the thread panel on desktop', () => {
     const block = css.slice(css.lastIndexOf('.chat-thread-panel {', from), from);
     expect(block).toContain('overflow: clip;');
     expect(block).not.toContain('overflow: hidden');
+  });
+
+  /**
+   * A KEYBOARD MOVE CHANGES THE THREAD'S BOTTOM IN ONE STYLE PASS (review of #3556, D2). The floor
+   * moves when the bottom safe area is pinned for a keyboard; `--chat-composer-height` is published a
+   * frame late and leaves the floor out (`composerHeight.ts`), so every footer floor and every thread
+   * padding must name the same `--chat-composer-floor` - a raw `max(0.75rem, ...)` in either is the
+   * 12 px step under the ride.
+   */
+  it('names one floor in the footer and in the thread padding', () => {
+    // Resolved on the pieces that read it (the docked banners too), from the leaf channel's twin first (the keyboard's
+    // announcement writes it on them) and the root's safe area otherwise.
+    expect(css).toMatch(
+      /\.chat-composer-footer,\s*\.chat-messages-scroll,\s*\.chat-docked-banner\s*\{\s*--chat-composer-floor:\s*max\(\s*0\.75rem,\s*var\(--keyboard-leaf-safe-area-inset-bottom, var\(--safe-area-inset-bottom, 0px\)\)\s*\);/
+    );
+    const rules = css
+      .split('\n}')
+      .filter((r) => /\.chat-(composer-footer|messages-scroll)[^{]*\{/.test(r));
+    const footers = rules.filter((r) => /\.chat-composer-footer[^{]*\{[^}]*padding-bottom/.test(r));
+    const threads = rules.filter((r) => /\.chat-messages-scroll\s*\{[^}]*padding-bottom/.test(r));
+    expect(footers.length).toBeGreaterThan(2);
+    expect(threads.length).toBeGreaterThan(2);
+    for (const rule of footers) {
+      expect(rule).not.toMatch(/padding-bottom:\s*max\(0\.75rem/);
+    }
+    for (const rule of threads) {
+      expect(rule).toMatch(
+        /padding-bottom:\s*calc\([^;]*var\(--chat-composer-floor\)[^;]*var\(--chat-keyboard-room\)/
+      );
+    }
+    // The GIF panel's 0 is said to both pieces, where the floor is resolved.
+    expect(css).toMatch(
+      /\.chat-thread-panel:has\(\.chat-composer-footer\.has-keyboard-panel\)\s*:is\(\.chat-composer-footer, \.chat-messages-scroll\)\s*\{\s*--chat-composer-floor:\s*0px;/
+    );
+  });
+
+  /**
+   * THE LEAF CHANNEL (keyboard-and-send-motion.md, section 6): the twins the keyboard's announcement
+   * writes on a riding piece, and the terms resolved from them, are registered NOT inherited - an
+   * inherited one written on the thread's scroller restyled its 840 descendants (20 ms, as much as a
+   * `:root` write), a non-inherited one restyles the scroller alone (0.1 ms).
+   */
+  it('registers the leaf twins and the terms resolved from them as not inherited', () => {
+    for (const name of [
+      '--keyboard-leaf-layout-inset-bottom',
+      '--keyboard-leaf-occlusion-bottom',
+      '--keyboard-leaf-safe-area-inset-bottom',
+      '--chat-composer-floor',
+      '--chat-keyboard-room',
+    ]) {
+      expect(css).toMatch(
+        new RegExp(`@property ${name} \\{\\s*syntax: '\\*';\\s*inherits: false;\\s*\\}`)
+      );
+    }
+    expect(css).toMatch(
+      /--chat-keyboard-room: var\(\s*--keyboard-leaf-layout-inset-bottom,\s*var\(--keyboard-layout-inset-bottom, 0px\)\s*\);/
+    );
+  });
+});
+
+/**
+ * A BANNER THAT TAKES THE COMPOSER'S PLACE TAKES ITS FLOOR TOO (user report on 1.6.12, Android
+ * 3-button navigation): the deleted-conversation footer sat at `bottom: 0` with a flat `py-3`, so the
+ * navigation bar drew over its "Supprimer localement" button. The composer reserves the bottom safe
+ * area through `--chat-composer-floor`; every branch that replaces it (deleted, unopenable here, no
+ * right to write) must stand on that ONE floor, never on a padding of its own.
+ */
+describe('the banners docked in the composer place', () => {
+  const chatArea = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '..', 'components', 'chat', 'ChatArea.svelte'),
+    'utf8'
+  );
+
+  it('resolves the composer floor on the docked banner and pads its bottom with it', () => {
+    expect(css).toMatch(
+      /\.chat-composer-footer,\s*\.chat-messages-scroll,\s*\.chat-docked-banner\s*\{\s*--chat-composer-floor:/
+    );
+    // The rule of its own, not the group that resolves the floor on it.
+    const rule = css.slice(css.lastIndexOf('\n.chat-docked-banner {'));
+    const body = rule.slice(0, rule.indexOf('\n}'));
+    expect(body).toContain('padding-bottom: var(--chat-composer-floor);');
+    expect(body).toContain('bottom: 0;');
+  });
+
+  it('is the class of every branch that replaces the composer, and no banner pads itself', () => {
+    expect(chatArea.match(/class="chat-docked-banner"/g)?.length).toBe(3);
+    // No bottom-docked banner of the pane keeps the old self-padded shape.
+    expect(chatArea).not.toMatch(/absolute inset-x-0 bottom-0 z-20 [^"]*py-3/);
   });
 });

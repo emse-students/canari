@@ -97,6 +97,7 @@
       <RevealedAuthorLine
         userId={revealed.userId}
         fallback={revealed.name}
+        under={revealed.under}
         class="text-text-muted"
       />
     {/if}

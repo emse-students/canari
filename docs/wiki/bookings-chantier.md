@@ -470,6 +470,19 @@ same pull request.
   in one transaction committed BEFORE any send: two replicas never both send, a crash after the
   commit loses that reminder (at most once, as the forms reminder). The reference test runs two at
   once and counts one per person.
+- **The reminder says WHEN, not "soon"** (owner, 2026-11-15, measured on production `1.6.12`: a
+  "la veille" reminder read "commence bientot"). The row now carries `meta` (`bookingNoticeMeta`: place,
+  start, zone), and the client words the sentence AS OF THE SENDING (`reminderWhen`, `lib/bookings/noticeText.ts`;
+  the sending instant is the row's `createdAt`): under an hour "dans N min", a whole number of hours up
+  to six "dans N h", else the space's own day - "aujourd'hui a", "demain a", or the weekday and date.
+  The sentence is worded from the CHOSEN delay, which the scheduler writes into `meta.reminderMinutes` (cron sends 0-60 s late, so the raw gap would read "dans 59 min"); a row without it snaps the measured gap to 5 minutes. Every branch is true at send time. A row with no `meta` (every row before) keeps
+  `notif_booking_reminder_text` and logs at debug - a data gap, not a path. **The push body is the
+  locale-neutral line** the three native tables draw verbatim, so it does not translate a day word: it
+  leads with `dd/MM` when the reminder goes out on another local day than the slot (`reminderLine`,
+  judged on the space's zone), "place · 16/11 14:00". **The list chip** (`reminderChip`,
+  `lib/bookings/bookingRow.ts`) shows the time alone on the booking's own day, "Auj. / Dem. / weekday"
+  before it otherwise, and nothing once `reminderSentAt` (now returned by `mine` for the reader's own
+  delay) is set or its instant has passed: a past time is never shown as pending.
 - **The avatar of a booking notice** (owner, 2026-10-30): the bell row draws the logo of the
   association that owns the booked space. `cancelled` / `added` already did when the organiser acted
   (`present`); the REMINDER, which had the platform's neutral avatar, now carries `associationId`,
@@ -1117,7 +1130,12 @@ the blocks it created). Nobody else is sent it.
 
 - **A LINK-ONLY SPACE IS NEVER LISTED, WHOEVER ASKS** - its organiser included: it is reached by
   its link or QR code (the psychologist case). **A PERSONAL space is listed to its owner alone
-  (D43), and an ARCHIVED association's to nobody.** The audience is judged per space with that
+  (D43), and an ARCHIVED association's to nobody - and BY ITS LINK an archived association's space
+  opens to its managers alone (2026-11-14): every read, booking, upload and holder's edit answers
+  404 `space-not-found` (`assertSpaceVisible`, the linked account included; `book` and `edit` re-read
+  the association `FOR SHARE` before the space's lock), while a booking already made keeps its
+  people's exits (`mine`, `cancel`, `withdraw`, the calendar link)
+  ([associations](frontend/modules/associations.md#what-an-archive-closes)).** The audience is judged per space with that
   space's own association's facts, as `assertMayUse` judges a read, so a listed space always opens.
 - **A SPACE FOLLOWS THE CAMPUS (owner, 2026-10-31)**: an association space is listed only when its
   association is visible to the reader (D37's predicate: a member of it, or its rules reach one of

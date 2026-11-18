@@ -488,16 +488,16 @@ export class RepublicationsService implements OnModuleInit, ProposalKindHandler 
   }
 
   /**
-   * The pull path's "a post one's association already sees": the actor is in its audience - the
-   * audience term of reading it by its id (`readPostOpenVerdict`, `adminSeesAll` included), so a
-   * global admin acting in an association's name may republish what they can open.
+   * The pull path's "a post one's association already sees": the actor is in its audience as an
+   * ORDINARY READER - a platform admin included: the admin's by-id widening is the moderation read,
+   * and a republication is participation, never moderation (2026-11-14, profiles-and-access.md).
    *
    * GRANT-FREE (`readGrants: false`): a nominative read grant opens a post to READ, never to
    * republish it - publishing goes through an institution (user, 2026-10-07).
    */
   async assertVisibleTo(postId: string, actorId: string): Promise<void> {
     const rows: { visible: boolean }[] = await this.repo.manager.query(
-      `SELECT ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: true, readGrants: false, memberReposts: false })} AS visible
+      `SELECT ${postVisibleToViewerSql('posts', '$2', { readGrants: false, memberReposts: false })} AS visible
          FROM posts WHERE posts.id = $1`,
       [postId, actorId]
     );

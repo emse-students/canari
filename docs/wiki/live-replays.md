@@ -48,8 +48,9 @@ stays a cut of a live, with its strike, and deletes the replay first; D7 covers 
 les vidéos du genre ? 90 s et vidéos verticales ?"*: every vertical video of 90 s or less is a
 CanaReel, and CanaReels are kept one year, the existing ones too. That work moves
 `REEL_RETENTION_DAYS` and the `kind = 'reel'` rows; **a replay is untouched by it**: its
-`expiresAt` is written once from `LIVE_REPLAY_RETENTION_DAYS` (3) at its publication, never from
-`REEL_RETENTION_DAYS`, and any re-dating of existing reels must name `kind = 'reel'`, never `'replay'`.
+`expiresAt` is written once at its publication from the admin setting `retention_live_replay_days`
+(3 by default, a constant until 2026-11-14 - [retention-settings](retention-settings.md)), never from
+the reels' own setting, and any re-dating of existing reels must name `kind = 'reel'`, never `'replay'`.
 
 ## 1. What a replay costs, measured
 
@@ -343,7 +344,11 @@ so with the switch off nothing changes for any live.
   association's replay included, as its live was (the feed's `blockedAuthorSql` exempts every other
   association post, a replay alone not: the live had already named its broadcaster) - and the
   **removed viewer** (a viewer the broadcaster removed from the live never sees the replay). Any
-  refusal and an expired replay are the same `404 LIVE_NOT_FOUND`.
+  refusal and an expired replay are the same `404 LIVE_NOT_FOUND`. **`?moderation=true`** is the
+  MODERATION READ (owner, 2026-11-15): whoever moderates the replay's post (`mayReadToModeratePost`)
+  reads it past that gate, logged - the rule of the post by id and its comments (*"Oui, dans ses
+  espaces"*); anyone else gets the gate above
+  ([moderation-and-blocking](moderation-and-blocking.md#the-moderation-read-of-a-post-its-comments-and-its-replay-owner-2026-11-15)).
 - **`withReplays`** on `GET /api/posts` (the feed, and `kind=reel` - the CanaReels list) and on
   `GET /api/posts/:id`: a client that does not say it can draw a replay never receives one - a
   replay by id is then `404`. Search, the linked-event post, pins, member-repost cards and the

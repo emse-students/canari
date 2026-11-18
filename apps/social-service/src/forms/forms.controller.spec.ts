@@ -6,6 +6,7 @@ import { join } from 'path';
 import { UnauthorizedException } from '@nestjs/common';
 
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
+import { ROUTE_PARAMS_KEY, type RouteParamKinds } from '../common/route-params';
 import { FormsController } from './forms.controller';
 
 /**
@@ -75,20 +76,74 @@ describe('FormsController - auth_request identifies, the guard refuses', () => {
  * EVERY FORM ID IS VALIDATED BEFORE THE DATABASE IS ASKED ANYTHING.
  *
  * The columns are `uuid`, so an id that is not one reached Postgres and came back as a 500 - a
- * promise that the server is broken, for a request that was merely malformed. Asserted against the
- * SOURCE rather than through the framework, because what has to hold is a property of the file: a
- * route added tomorrow without the pipe is the case this exists to catch, and it would satisfy any
- * test written against today's handlers.
+ * promise that the server is broken, for a request that was merely malformed. The class declares
+ * its path parameters uuids (`@RouteParams`, read by the global guard before any other guard), and
+ * `route-params.coverage.spec.ts` fails on a route parameter no declaration names. What is held
+ * HERE is that this controller has no parameter of another kind: a route added tomorrow with an
+ * `opaque` one fails, and whoever adds it says why a form route takes something else than a uuid.
  */
 describe('FormsController - ids are validated at the boundary', () => {
   const source = readFileSync(join(__dirname, 'forms.controller.ts'), 'utf8');
-  const params = [...source.matchAll(/@Param\((['"])(\w+)\1([^)]*)\)/g)];
+  const params = [...source.matchAll(/@Param\((['"])(\w+)\1/g)].map((m) => m[2]);
+  const declared = (Reflect.getMetadata(ROUTE_PARAMS_KEY, FormsController) ??
+    {}) as RouteParamKinds;
 
   it('finds the parameters it is meant to be checking', () => {
     expect(params.length).toBeGreaterThan(15);
   });
 
-  it.each(params.map((m) => [m[2], m[3]]))('@Param(%s) parses as a UUID', (_name, rest) => {
-    expect(rest).toContain('ParseUUIDPipe');
+  it('declares every path parameter of the class a uuid', () => {
+    expect(Object.keys(declared).sort()).toEqual(['fileId', 'id', 'submissionId']);
+    expect([...new Set(Object.values(declared))]).toEqual(['uuid']);
+  });
+
+  it('no handler declares a kind of its own, and no @Param names anything else', () => {
+    expect([...new Set(params)].filter((name) => declared[name] !== 'uuid')).toEqual([]);
+    const own = Object.getOwnPropertyNames(FormsController.prototype).filter(
+      (name) =>
+        name !== 'constructor' &&
+        Reflect.getMetadata(
+          ROUTE_PARAMS_KEY,
+          Reflect.get(FormsController.prototype, name) as object
+        ) !== undefined
+    );
+    expect(own).toEqual([]);
+  });
+});
+
+/**
+ * A FORM'S AGENDA LINK ANSWERS WHAT ITS READ ANSWERS (2026-11-14): a form the reader may not read -
+ * a draft, one of an archived association - answers no link, exactly as an absent form, and the
+ * agenda is not even asked; a form they may read is looked up as before.
+ */
+describe('FormsController - the agenda link follows the form read', () => {
+  function controllerWith(mayRead: boolean) {
+    const findCalendarEventByLinkedForm = jest.fn(async () => null);
+    const controller = new FormsController(
+      { mayRead: jest.fn(async () => mayRead) } as never,
+      { findCalendarEventByLinkedForm } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never
+    );
+    return { controller, findCalendarEventByLinkedForm };
+  }
+
+  it('answers no link, and asks nothing, for a form the reader may not read', async () => {
+    const { controller, findCalendarEventByLinkedForm } = controllerWith(false);
+    await expect(controller.getFormCalendarLink('f1', 'u1')).resolves.toEqual({
+      linkedEvent: null,
+    });
+    expect(findCalendarEventByLinkedForm).not.toHaveBeenCalled();
+  });
+
+  it('looks the link up for a form the reader may read', async () => {
+    const { controller, findCalendarEventByLinkedForm } = controllerWith(true);
+    await controller.getFormCalendarLink('f1', 'u1', 'false');
+    expect(findCalendarEventByLinkedForm).toHaveBeenCalledWith('f1', {
+      userId: 'u1',
+      isGlobalAdmin: false,
+    });
   });
 });

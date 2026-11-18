@@ -83,9 +83,15 @@
       adopt: (takeId: string, uploaded: PublishedReelUpload) => Promise<void>;
       endWait: (takeId: string) => void;
     } | null;
+    /**
+     * The step was opened over a CONVERSATION (its camera's "Ajouter des destinataires" with
+     * "Publier" ticked, reels-in-chat section 22): once published the camera closes back onto the
+     * conversation instead of navigating to the feed.
+     */
+    onpublishedHere?: () => void;
   }
 
-  let { clip, limits, onclose, deps, composer, chatTake = null }: Props = $props();
+  let { clip, limits, onclose, deps, composer, chatTake = null, onpublishedHere }: Props = $props();
 
   // Read once: the step starts from the composer and is the member's to change from there.
   let caption = $state(untrack(() => composer?.start.caption ?? ''));
@@ -254,6 +260,11 @@
         composer.onpublished(identity);
         return;
       }
+      if (onpublishedHere) {
+        console.debug('[reel-publish] published from a conversation camera: back to it');
+        onpublishedHere();
+        return;
+      }
       await goto(resolve('/posts'), { replace: true });
     } catch (err) {
       const cause = err instanceof ReelPublishError ? err.cause : err;
@@ -279,7 +290,7 @@
 </script>
 
 <div
-  class="bg-cn-bg text-text-main absolute inset-0 z-20 flex flex-col"
+  class="bg-cn-bg text-text-main absolute inset-0 z-20 flex flex-col pb-(--keyboard-occlusion-bottom,0px)"
   in:fade={{ duration: 150 }}
   data-reel-publish
 >
@@ -326,10 +337,7 @@
     <PostIdentityPicker id="reel-identity-select" {associations} bind:value={identity} />
     {#if studentsOnlyAssociation}
       <div class="mt-3">
-        <StudentsOnlySwitch
-          bind:checked={studentsOnly}
-          associationName={studentsOnlyAssociation.name}
-        />
+        <StudentsOnlySwitch bind:checked={studentsOnly} />
       </div>
     {/if}
     {#if reachAssociation}

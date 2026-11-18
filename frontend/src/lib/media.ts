@@ -211,6 +211,7 @@ import { encryptMediaBuffer } from '$lib/mediaCrypto';
 import { canvasToBlob } from '$lib/utils/canvasBlob';
 import {
   SEGMENTED_MEDIA_ENCODING,
+  SEGMENT_TAG_BYTES,
   SEGMENTED_MEDIA_WRITER_ENABLED,
   encryptSegmentedMedia,
   segmentedCiphertextLength,
@@ -257,6 +258,27 @@ export function mediaTypeOf(mimeType: string): MediaType {
   if (mimeType.startsWith('image/')) return 'image';
   if (mimeType.startsWith('audio/')) return 'audio';
   return 'file';
+}
+
+/**
+ * HOW A QUEUED CHAT ATTACHMENT LEAVES (2026-11-16, the iPhone's 13 MB send that restarted at half):
+ * `null` when its blob fits ONE request body ({@link MEDIA_REQUEST_BODY_BUDGET_BYTES}) and keeps the
+ * single POST it always took; otherwise the blob format of a RESUMABLE SESSION - the format
+ * `encryptAndUpload` would have written, so a reader sees the same bytes either way (a photo's push
+ * thumbnail depends on the single-block FORMAT, which both routes write, not on the route).
+ * `SEGMENT_TAG_BYTES` is the AES-GCM tag, the same 16 bytes a single block carries. The legacy chunk route it replaces for these files opened a fresh
+ * uploadId per attempt: any cut, stall or kill sent the whole file again from byte 0.
+ */
+export function resumableEncodingFor(
+  plaintextBytes: number,
+  mimeType: string
+): ResumableBlobEncoding | null {
+  const segmented = writesSegmented(mimeType);
+  const blobBytes = segmented
+    ? segmentedCiphertextLength(plaintextBytes)
+    : plaintextBytes + SEGMENT_TAG_BYTES;
+  if (blobBytes <= MEDIA_REQUEST_BODY_BUDGET_BYTES) return null;
+  return segmented ? SEGMENTED_MEDIA_ENCODING : 'single-block';
 }
 
 /** How many times `complete` is asked for ONE uploadId when its answer is lost. */
@@ -1027,6 +1049,62 @@ export class MediaService {
       ...(width && height ? { width, height } : {}),
       ...(done.encoding ? { encoding: done.encoding } : {}),
     };
+  }
+
+  /**
+   * Uploads a file the chat OUTBOX holds - the one route decision for a queued attachment:
+   * - a CHAT REEL: a `segmented-v1` resumable session (RC-5), as since it was built;
+   * - a file whose blob is over one request body ({@link resumableEncodingFor}): a resumable session
+   *   in the format `encryptAndUpload` would have written, so a cut, a stall or a kill costs the
+   *   parts the server does not hold, never the whole file again;
+   * - anything smaller: the single POST of {@link encryptAndUpload}.
+   *
+   * @param resume Where the session's state is persisted (the outbox row), and what a previous
+   *               attempt recorded. Absent, every file takes the non-resumable route.
+   */
+  async uploadQueuedAttachment(
+    bytes: Uint8Array,
+    file: { mimeType: string; fileName?: string },
+    token: () => Promise<string>,
+    dimensions: Partial<ImageDimensions> | undefined,
+    retentionClass: MediaRetentionClass,
+    resume?: {
+      state?: ResumableUploadState;
+      persist: (state: ResumableUploadState) => Promise<void>;
+    },
+    transport?: XhrUploadOptions
+  ): Promise<MediaRef> {
+    // A chat reel keeps exactly the metadata it always had.
+    if (resume && retentionClass === 'chat-reel') {
+      return this.uploadResumably(
+        bytes,
+        file,
+        token,
+        dimensions,
+        retentionClass,
+        { ...resume, encoding: SEGMENTED_MEDIA_ENCODING },
+        transport
+      );
+    }
+    // THE ONE-SHOT ROUTE'S METADATA, ON EITHER ROUTE: `encryptAndUpload` reads them from a `File`,
+    // so the name is 'file' when none was kept and the type is the File-normalised one (lower-cased,
+    // empty when not printable ASCII). An empty `File` normalises them without copying the bytes.
+    const named = new File([], file.fileName ?? 'file', { type: file.mimeType });
+    const encoding = resume ? resumableEncodingFor(bytes.byteLength, named.type) : null;
+    if (resume && encoding) {
+      return this.uploadResumably(
+        bytes,
+        { mimeType: named.type, fileName: named.name },
+        token,
+        dimensions,
+        retentionClass,
+        { ...resume, encoding },
+        transport
+      );
+    }
+    // The view, not its buffer: a view over a larger buffer would upload the bytes around it too.
+    const blob = new File([bytes as Uint8Array<ArrayBuffer>], named.name, { type: named.type });
+    return this.encryptAndUpload(blob, await token(), dimensions, retentionClass, transport);
   }
 
   /**

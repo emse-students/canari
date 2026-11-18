@@ -19,10 +19,11 @@
  * NAMES ARE NOT IN THIS FILE. Product names and host names of the school's own infrastructure are
  * exactly what this guard keeps out of the repository, so they cannot be committed as its denylist.
  * They are read, one per line (`#` comments allowed), from the file named by
- * `DOCS_PRIVATE_DENYLIST_FILE`, which lives outside the repository. Without it that half of the scan
- * is SKIPPED and says so on stderr; nothing else is skipped. THE DENYLIST HALF IS LOCAL-ONLY AND NOT
- * ENFORCED IN CI, by the owner's decision (2026-10-28): CI holds no copy of the list, so it runs the
- * pattern half alone, and the names half runs on a workstation that has the file.
+ * `DOCS_PRIVATE_DENYLIST_FILE`, which lives outside the repository. UNSET, the test FAILS; set to
+ * `none`, that half of the scan is skipped and says so on stderr; nothing else is ever skipped.
+ * THE DENYLIST HALF IS LOCAL-ONLY AND NOT ENFORCED IN CI, by the owner's decision (2026-10-28): CI
+ * holds no copy of the list, so it declares `none` and runs the pattern half alone, and the names
+ * half runs on a workstation that has the file - at every commit that touches a scanned file.
  *
  * `PENDING_CLEANUP` lists the files another documentation pass has not cleaned yet. It is a
  * work list and NOT a licence: a file leaves it in the pull request that cleans it, and a new file
@@ -86,12 +87,30 @@ export function commentsOf(source) {
   return out.join('\n');
 }
 
-/** Reads the out-of-repo denylist: one literal per line, `#` comments and blanks ignored. */
+/** A configuration fault: said in one line, without a stack trace a reader has to dig through. */
+function refuse(message) {
+  console.error(`docs-private-guard: ${message}`);
+  process.exit(1);
+}
+
+/**
+ * Reads the out-of-repo denylist: one literal per line, `#` comments and blanks ignored.
+ *
+ * THE ABSENCE IS DECLARED, NEVER INFERRED (2026-11-15). An UNSET variable throws: until that day it
+ * skipped with one stderr line, so a workstation that had never been configured passed every run
+ * and nobody noticed the names half had never run there. `none` is the declaration that this run
+ * has no list on purpose - CI (owner, 2026-10-28: CI holds no copy) and a contributor without the
+ * private notes - and returns null, which the caller reports on stderr.
+ */
 function loadDenylist() {
   const file = process.env.DOCS_PRIVATE_DENYLIST_FILE;
-  if (!file) return null;
-  if (!existsSync(file))
-    throw new Error(`DOCS_PRIVATE_DENYLIST_FILE names a missing file: ${file}`);
+  if (!file) {
+    refuse(
+      "DOCS_PRIVATE_DENYLIST_FILE is not set. Point it at the out-of-repo denylist (one name per line), or set it to 'none' to declare that this run has no list (CI does) - see docs/wiki/cicd.md#checks-at-commit-at-push-and-in-ci-only"
+    );
+  }
+  if (file === 'none') return null;
+  if (!existsSync(file)) refuse(`DOCS_PRIVATE_DENYLIST_FILE names a missing file: ${file}`);
   return readFileSync(file, 'utf8')
     .split(/\r?\n/)
     .map((l) => l.replace(/#.*/, '').trim())
@@ -142,7 +161,7 @@ const sources = tracked('*.ts', '*.mjs').filter((f) => f !== SELF);
 const denylist = loadDenylist();
 if (denylist === null) {
   console.error(
-    'docs-private-guard: DENYLIST SKIPPED - DOCS_PRIVATE_DENYLIST_FILE is not set, so the named-infrastructure half of the scan did not run'
+    'docs-private-guard: DENYLIST DECLARED ABSENT (DOCS_PRIVATE_DENYLIST_FILE=none) - the named-infrastructure half of the scan did not run'
   );
 }
 

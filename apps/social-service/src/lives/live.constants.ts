@@ -55,8 +55,9 @@ export const LIVE_REPLAY_MAX_MS = 3 * 60 * 60 * 1000;
  */
 export const LIVE_REPLAY_MIN_MS = 30_000;
 
-/** How long a replay is kept after its live's END (owner, 2026-11-07): written once into `posts."expiresAt"`. */
-export const LIVE_REPLAY_RETENTION_DAYS = 3;
+// How long a replay is kept after its live's END is no constant since 2026-11-14: the admin setting
+// `platform_config.retention_live_replay_days` (3 days by default, core migration 025), read at the
+// replay's publication and written once into `posts."expiresAt"` (`common/retention-settings.ts`).
 
 /** How many segments one page of `GET /api/lives/:id/replay` lists; the client asks `from=nextFrom`. */
 export const LIVE_REPLAY_PAGE = 200;
@@ -264,6 +265,9 @@ export const LIVE_RULES_VERSION = 2;
  * THE LONGEST CHAT MESSAGE, in UTF-16 code units of plain text (WP-L6, C11). The server never sees
  * the text - it is sealed with the live key - so this is the CLIENT's bound, published here so an
  * installed build reads it rather than carries it; the server bounds the sealed size below.
+ * It is ALSO the v1 chat format's bound (`LIVE_CHAT_V1_MAX_CHARS`, frontend `liveChatCrypto.ts`): a
+ * viewer drops a longer line, so raising it is a format v2, never an edit here. Held equal by
+ * `liveChatCrypto.test.ts`.
  */
 export const LIVE_CHAT_MESSAGE_MAX_CHARS = 300;
 

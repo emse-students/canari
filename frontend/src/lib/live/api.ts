@@ -15,6 +15,7 @@
  */
 
 import { apiFetch, type ApiFetchOptions } from '$lib/utils/apiFetch';
+import { readApiJson } from '$lib/utils/apiJson';
 import { mediaUrl, socialUrl } from '$lib/utils/apiUrl';
 import { CLIENT_VERSION_HEADER, withClientVersionHeader } from '$lib/utils/appVersion';
 import { ApiRefusalError, refusalFromResponse } from '$lib/utils/apiRefusalError';
@@ -31,6 +32,8 @@ import type {
   LiveLimits,
   LiveCutReason,
   LiveCutResult,
+  LiveBroadcasterStanding,
+  LiveWithdrawalLift,
   LiveWithdrawalResult,
   LiveEndReason,
   LiveListItem,
@@ -40,6 +43,7 @@ import type {
   LiveRefusalKind,
   LiveRemovedViewer,
   LiveReplayPage,
+  LiveOwnStanding,
   LiveRulesStatus,
   LiveTitleResult,
   LiveView,
@@ -226,7 +230,9 @@ async function liveJson<T>(
 ): Promise<T> {
   const res = await apiFetch(url, withClientVersion(init));
   if (!res.ok) throw await liveRefusal(res, what, false, expected);
-  return (await res.json()) as T;
+  // The body is read through the one reader that types a LOST body (the head came, the stream died: an
+  // app suspended mid-request) as a transport failure, never as the engine's bare TypeError.
+  return (await readApiJson(res, what, init.signal)) as T;
 }
 
 /** `GET /api/lives/limits` - the server's numbers; a client keeps no copy of them. */
@@ -249,6 +255,27 @@ export async function listOpenLives(): Promise<LiveListItem[]> {
 export async function fetchLiveRules(): Promise<LiveRulesStatus> {
   console.debug('[LIVE] rules');
   return liveJson<LiveRulesStatus>(`${livesBase()}/rules`, 'Live rules');
+}
+
+/** `GET /api/lives/standing` - the caller's own right to broadcast: cuts on record, suspension, withdrawal. */
+export async function fetchLiveStanding(): Promise<LiveOwnStanding> {
+  console.debug('[LIVE] standing');
+  return liveJson<LiveOwnStanding>(`${livesBase()}/standing`, 'Live standing');
+}
+
+/**
+ * `GET /api/lives/broadcasters/withdrawn` - STAFF: the accounts whose right to broadcast is
+ * withdrawn, newest first, narrowed server-side to the people the caller may act on. The lift's
+ * door, independent of any report. Refusal: `LIVE_WITHDRAWAL_FORBIDDEN` (403).
+ */
+export async function fetchWithdrawnBroadcasters(): Promise<LiveBroadcasterStanding[]> {
+  console.debug('[LIVE] withdrawn broadcasters');
+  const rows = await liveJson<LiveBroadcasterStanding[]>(
+    `${livesBase()}/broadcasters/withdrawn`,
+    'Live withdrawn broadcasters'
+  );
+  console.debug(`[LIVE] ${rows.length} withdrawn broadcaster(s)`);
+  return rows;
 }
 
 /**
@@ -308,13 +335,22 @@ export async function fetchLive(liveId: string): Promise<LiveView> {
  * `GET /api/lives/:id/replay[?from=<index>]` - one page of a finished live's three-day REPLAY: the
  * key, the segments from `from` with their place on the time line, `nextFrom`. Takes NO seat. Every
  * refusal is the same `not-found` (an outsider, a block, a removed viewer, an expired replay).
+ * `moderation` is the moderation read the reported-content preview asks (`?moderation=true`, lead
+ * 2026-11-14): the server opens the replay to whoever moderates its post, and to nobody else.
  */
-export async function fetchLiveReplay(liveId: string, from?: number): Promise<LiveReplayPage> {
-  console.debug(`[LIVE_REPLAY] page of ${liveId} from ${from ?? 0}`);
-  return liveJson<LiveReplayPage>(
-    `${livePath(liveId)}/replay${from === undefined ? '' : `?from=${from}`}`,
-    'Live replay'
+export async function fetchLiveReplay(
+  liveId: string,
+  from?: number,
+  opts: { moderation?: boolean } = {}
+): Promise<LiveReplayPage> {
+  console.debug(
+    `[LIVE_REPLAY] page of ${liveId} from ${from ?? 0}${opts.moderation ? ' (moderation read)' : ''}`
   );
+  const query = new URLSearchParams();
+  if (from !== undefined) query.set('from', String(from));
+  if (opts.moderation) query.set('moderation', 'true');
+  const qs = query.toString();
+  return liveJson<LiveReplayPage>(`${livePath(liveId)}/replay${qs ? `?${qs}` : ''}`, 'Live replay');
 }
 
 /**
@@ -403,8 +439,9 @@ export async function hideLiveMessage(liveId: string, messageId: string): Promis
 
 /**
  * `POST /api/lives/:id/mention-audience` - which of `ids` the `@` picker of the live's chat may
- * suggest (owner, 2026-11-09): the ones who can see the live, with no block either way. The picker
- * asks it of the accounts a name search found, so it never offers someone a mention would not reach.
+ * suggest (owner, 2026-11-09): the accounts a chatter can already see - who shares the live's spaces,
+ * who wrote one of the chat's recent lines - with no block either way. The picker asks it of the
+ * accounts a name search found.
  */
 export async function fetchLiveMentionAudience(
   liveId: string,
@@ -531,6 +568,22 @@ export async function withdrawBroadcaster(
   console.log(
     `[LIVE] right of ${userId} withdrawn (${done.newlyWithdrawn ? 'new' : 'repeat'}, ${done.cutsOnRecord} cuts)`
   );
+  return done;
+}
+
+/**
+ * `DELETE /api/lives/broadcasters/:userId/withdrawal` - a content moderator gives an account back its
+ * right to broadcast. Idempotent (`lifted: false` when nothing was withdrawn). Refusals, read by
+ * `code`: `LIVE_WITHDRAWAL_FORBIDDEN` (403), `LIVE_ACCOUNT_INVALID` (400).
+ */
+export async function liftBroadcasterWithdrawal(userId: string): Promise<LiveWithdrawalLift> {
+  console.debug(`[LIVE] lift the withdrawal of ${userId}`);
+  const done = await liveJson<LiveWithdrawalLift>(
+    `${livesBase()}/broadcasters/${encodeURIComponent(userId)}/withdrawal`,
+    'Live withdrawal lift',
+    { method: 'DELETE' }
+  );
+  console.log(`[LIVE] withdrawal of ${userId} ${done.lifted ? 'lifted' : 'was not there'}`);
   return done;
 }
 

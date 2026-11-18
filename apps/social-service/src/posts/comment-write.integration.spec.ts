@@ -20,6 +20,7 @@ import { ModerationService } from '../moderation/moderation.service';
 import { Post } from './entities/post.entity';
 import { PostInteractionsService } from './post-interactions.service';
 import type { StoredComment } from './comment-identity';
+import { ACTIVITY_DUMP_SQL, untilWaiting } from '../common/lock-wait.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -35,17 +36,24 @@ maybe('comment writes against PostgreSQL: none is lost to another', () => {
     (await client.query(`SELECT comments FROM posts WHERE id = $1`, [postId])).rows[0]
       .comments as StoredComment[];
 
-  /** Waits, by asking PostgreSQL and never a clock, until `n` backends are queued on a lock. */
-  const queuedOnLock = async (n: number) => {
-    for (let asked = 0; asked < 10_000; asked++) {
-      const { rows } = await client.query(
-        `SELECT count(*)::int AS n FROM pg_stat_activity
-          WHERE datname = current_database() AND wait_event_type = 'Lock'`
-      );
-      if ((rows[0].n as number) >= n) return;
-    }
-    throw new Error(`never saw ${n} writer(s) queued on the post's lock`);
-  };
+  /**
+   * Waits, by asking PostgreSQL and never a clock, until `n` sessions of THIS suite's pool (its
+   * `application_name`; the suites share one database) are queued on a lock.
+   */
+  const queuedOnLock = (n: number) =>
+    untilWaiting({
+      what: `the ${n} writer(s) on the post's lock`,
+      atLeast: n,
+      waiting: async () => {
+        const { rows } = await client.query(
+          `SELECT count(*)::int AS n FROM pg_stat_activity
+            WHERE application_name = $1 AND wait_event_type = 'Lock'`,
+          [schema]
+        );
+        return rows[0].n as number;
+      },
+      dump: async () => (await client.query(ACTIVITY_DUMP_SQL)).rows,
+    });
 
   /** Runs `start` while another connection holds post `postId`'s row lock; lets go once all queued. */
   const raceUnderHeldLock = async <T>(postId: string, writers: (() => Promise<T>)[]) => {
@@ -84,7 +92,8 @@ maybe('comment writes against PostgreSQL: none is lost to another', () => {
       url: URL,
       entities: [Post, ContentReport],
       synchronize: true,
-      extra: { options: `-c search_path=${schema},public`, max: 6 },
+      // Named after the suite's schema: a lock wait is looked for among THIS suite's sessions.
+      extra: { options: `-c search_path=${schema},public`, application_name: schema, max: 6 },
     });
     await ds.initialize();
     await client.query(`
@@ -101,6 +110,8 @@ maybe('comment writes against PostgreSQL: none is lost to another', () => {
       mentionRecipientsOf: jest.fn(() => Promise.resolve([] as string[])),
       // The daily cap, proven in `engagement-push-cap.integration.spec.ts`: open here.
       withinPushBudget: jest.fn((_type: string, ids: string[]) => Promise.resolve(ids)),
+      // The author's door, proven in `entity-author-door.integration.spec.ts`: open here.
+      postAuthorIsTold: jest.fn(() => Promise.resolve(true)),
     };
     interactions = new PostInteractionsService(
       ds.getRepository(Post),

@@ -21,8 +21,7 @@
     hasPermissionFlag,
     findBdeAssociationWithFlag,
     AssociationPermissionFlag,
-    aggregatedCalendarFeedIcsAbsoluteUrl,
-    icsSubscriptionRangeISO,
+    agendaSubscriptionIcsAbsoluteUrl,
     type AssociationCalendarFeedEvent,
     type Association,
     ensureAssociationSuperAdmin,
@@ -51,7 +50,7 @@
     type AgendaReader,
     type AgendaSelection,
   } from '$lib/calendar/agendaSelection';
-  import { createFeedSigner } from '$lib/calendar/signedFeedUrl.svelte';
+  import { createSubscriptionLink } from '$lib/calendar/subscriptionLink.svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import Card from '$lib/components/ui/Card.svelte';
   import MonthCalendarGridRich from '$lib/components/calendar/MonthCalendarGridRich.svelte';
@@ -300,30 +299,23 @@
   });
 
   /**
-   * The server signs the selection - only the reader's own spaces, or one association - and the link
-   * carries that signature (2026-10-06). Asked while the modal is open, for nothing else.
+   * The reader's own subscription link for the selection (2026-11-14): the server binds it to their
+   * account and serves what they see - only their own spaces, or one association, may be asked.
+   * Made when the reader asks for it in the modal, never on sight; the URL carries the token alone.
    */
-  const feedSigner = createFeedSigner(() => {
+  const subscriptionLink = createSubscriptionLink(() => {
     if (!showSubscribeModal) return null;
     if (filterAssociationId) return { associationId: filterAssociationId };
     if (!isAgendaSelected(feedSelection)) return null;
     return { campus: feedSelection.campus, formation: feedSelection.formation };
   });
 
-  /** https:// URL to the aggregated .ics feed; `CalendarSubscribeModal` derives webcal/Google variants. */
+  /** https:// URL to the reader's `.ics` link; `CalendarSubscribeModal` derives webcal/Google variants. */
   const calendarIcsUrl = $derived.by(() => {
     if (typeof window === 'undefined') return '';
     if (!filterAssociationId && !isAgendaSelected(feedSelection)) return '';
-    if (!feedSigner.sig) return '';
-    const { from, to } = icsSubscriptionRangeISO();
-    return aggregatedCalendarFeedIcsAbsoluteUrl({
-      from,
-      to,
-      associationId: filterAssociationId || undefined,
-      campus: filterAssociationId ? undefined : feedSelection.campus || undefined,
-      formation: filterAssociationId ? undefined : feedSelection.formation || undefined,
-      sig: feedSigner.sig,
-    });
+    if (!subscriptionLink.token) return '';
+    return agendaSubscriptionIcsAbsoluteUrl(subscriptionLink.token);
   });
 
   const sortedEvents = $derived(
@@ -509,7 +501,7 @@
     } catch (e) {
       // The right was checked before the call, so a refusal here is the transport or a rule that
       // moved - either way the picker is empty and the reason must not vanish with it.
-      Log.d('[calendar] link candidates failed', e);
+      Log.d('calendar', 'link candidates failed', e);
     }
   }
 
@@ -869,7 +861,10 @@
       open={showSubscribeModal}
       onClose={() => (showSubscribeModal = false)}
       icsUrl={calendarIcsUrl}
-      signing={feedSigner.status}
+      signing={subscriptionLink.status}
+      onAsk={subscriptionLink.ask}
+      revokeStatus={subscriptionLink.revokeStatus}
+      onRevoke={subscriptionLink.revoke}
       intro={m.calendar_subscribe_intro()}
     >
       {#snippet selector()}

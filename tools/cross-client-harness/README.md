@@ -31,7 +31,7 @@ check spells a name.
 | ------------------------------ | ---------------------------------------------------------------------- |
 | `test-accounts.json`           | Logins and PINs for the two campaign accounts. This repository is PUBLIC: outside the work tree they cannot be committed at all, which is a structure; a `.gitignore` rule would only be a policy. |
 | `chrome-w1/` `chrome-w2/`      | These directories ARE W1 and W2 - profile holds the MLS identity, the session and the enrolment. `git clean -xdf` does not spare a gitignored directory. **Since 2026-09-02 losing one no longer costs a 2FA**: the campaign's accounts are dedicated test accounts. It still costs a DEVICE, which is what actually changes what a row measures. |
-| `test-accounts.json`           | Still outside, and still for the same reason after the move to a LOCAL target: the accounts are ordinary users on the PRODUCTION identity provider, because local authenticates against it by decision 8 of the workflow migration. A local target does not make the password local. |
+| `test-accounts.json`           | Still outside, and still for the same reason after the move to a LOCAL target: the accounts are ordinary users on the PRODUCTION identity provider, because local authenticates against it by decision 8 of the workflow migration. A local target does not make the password local. **Test accounts never sign in through CAS (owner, 2026-11-16)**: they use MiConnect's local password login ("Connexion par mot de passe"), and its credentials are in this file and nowhere else. |
 | `results.ndjson`               | The verdict record. A row carries the condensed dirt of its run, which quotes captured console lines naming real conversations. |
 | `apk/` `a1-baseline/` `logs/`  | Bulk artefacts. No script references them; they are installed and read by hand. |
 
@@ -482,7 +482,8 @@ instead every build appends its APK's sha256, origin and bundle verdict to `a1-b
 Installing is a deliberate gesture: an `install -r` keeps the enrolment, an uninstall costs the device.
 
 **A Play TESTER build is recorded, never installed, by `bun a1tester.mjs --tag vX.Y.Z-alpha.N`.**
-A Play-signed app cannot be replaced by the rig's APK (another signature, and no uninstall), so a
+A Play-signed app cannot be replaced by the rig's APK (another signature; only an uninstall crosses
+that line, allowed on the bench phones since 2026-11-16 but never taken by the rig on its own), so a
 phone the tester programme moved stays there, and `pin.mjs` refuses an app no record vouches for.
 `a1tester.mjs` reads the facts where they live: the installed versionName/versionCode from `dumpsys`,
 the running bundle's stamp from the app, and the release, its Android job and that job's log from
@@ -594,12 +595,14 @@ reported FAIL against a page that was visibly rendering posts, because it counte
 
 `burn.mjs` is the one to copy the SHAPE of. It reproduces a RACE - send, reload inside the
 unawaited-checkpoint window, send again - and a run that loses that race delivers the second message
-exactly like a run that wins it. So it reads the premise separately from the result (the durable
-send-ledger's deficit, before and after the reload) and answers `INCONCLUSIVE` rather than `PASS`
-when the window was never entered. It does NOT rest its verdict on the repair's log line either: a
-reload that skips the PIN gate initialises before a session can attach, and on the passing run that
-line was missed entirely while the repair had plainly happened. The reload is gated on the ledger
-actually showing a deficit, because a fixed delay cannot reliably enter a window ~58 ms wide on web.
+exactly like a run that wins it. So it reads the premise separately from the result and answers
+`INCONCLUSIVE` rather than `PASS` when the window was never entered. Since KILL-2 (#2515) the send
+ledger's `persisted` half is sealed inside the MLS state, so the deficit is no longer readable from
+the page: the reload is fired the instant the `emitted` count in IndexedDB moves (the frame is
+counted, after its encrypt and before its POST, because a fixed delay cannot reliably enter a window
+~58 ms wide on web), and the premise is the repair's own line on the load (`Restored state for ... was
+N generation(s) behind`). A reload that skips the PIN gate initialises before the session re-attaches
+and can miss that line; such a run is `INCONCLUSIVE`, never a pass.
 
 **Tools** - `launch.mjs` `reload.mjs` `bundle-id.mjs` `cleanup.mjs` `dismiss.mjs` `shot.mjs` `navstack.mjs` `state.mjs` `results.mjs` `verdicts.mjs`
 
@@ -814,7 +817,7 @@ next one's symptom names the wrong cause.
    `adb tcpip 5555` it does not have.
 2. `bun phone.mjs 9333` (ONE positional port, not `--ensure`). It forwards the app's WebView on
    9333 **and Chrome's own on 9334** - both are needed, because the login is not in the app.
-3. `bun login.mjs --device A1`. Idempotent: a device the IdP still knows reports `already
+3. `bun login.mjs --device A1` (the account signs in with MiConnect's local password login, never CAS). Idempotent: a device the IdP still knows reports `already
    authenticated` and fills nothing. When CAS's cookie has expired the form appears in the Custom
    Tab, and this fills it there. **The app's WebView may die during the hop** - that is not a
    failure, and the landing is re-resolved.
@@ -920,8 +923,10 @@ next one's symptom names the wrong cause.
   stale. Three details, each of which has cost a session:
   - **`npx tauri` does not resolve on this box** (`could not determine executable to run`), and
     `bun tauri` shells out the same way. Call the binary in `node_modules/.bin` directly.
-  - **`install -r`, never an uninstall.** It keeps the app data, which is the enrolment and the MLS
-    store; an uninstall costs a re-enrolment. **That is no longer a 2FA** - since 2026-09-02 the
+  - **`install -r` by default; an uninstall is ALLOWED, and chosen knowingly.** The bench phones
+    (Mi 9T, iPhone 12) are a sandbox and uninstalling the app on them is permitted (owner,
+    2026-11-16; the earlier "never uninstall" rule is withdrawn). `install -r` keeps the app data,
+    which is the enrolment and the MLS store; an uninstall costs a re-enrolment. **That is no longer a 2FA** - since 2026-09-02 the
     test accounts sign in without a second factor - but it is still a new DEVICE,
     with no history for any HEAL row to reason about. **And nothing afterwards says the uninstall
     happened**: the package reads the right version and launches. `install -r` preserves
@@ -985,6 +990,7 @@ other: the phone that sounds wrong FROM it, or makes it conceal, is the faulty o
 - `--launch` starts the profile with a FAKE microphone (Chrome's beep, or `--wav`). The flags are
   read at start, so a profile already up is refused: `bun launch.mjs close w3` first.
 - Without `--launch` it attaches to the running profile, microphone as is.
+- A web-seat DIAL must be started with `--launch` (a fresh browser with the fake-media flags): against an already-running seat without them the caller waits on the microphone prompt for ever, sits at "Appel..." and never rings (measured on dev, 2026-11-15).
 - It installs a peer-connection tracker before the app loads, then reloads.
 - `--dial` presses the header's audio-call button, `--accept` presses Accept when the phone rings.
   Both labels are read from `frontend/messages/fr.json`.
@@ -994,6 +1000,23 @@ other: the phone that sounds wrong FROM it, or makes it conceal, is the faulty o
   `--out`, default the OS temp dir. `--hangup` ends the call and waits for the end-of-call report.
 - The profile must be signed in on the estate the phone uses (`--url`). Accounts stay in
   `test-accounts.json`, out of tree.
+
+### A browser seat that must PUBLISH media (a live, a reel camera) - 2026-11-15
+
+`bun launch.mjs start w5 --fake-media` (the flags are `FAKE_MEDIA_FLAGS` in `launch.mjs`, the same
+ones `callpeer.mjs --launch` uses; `--log-dir <dir>` adds Chrome's own log and crash dumps). A seat
+started without them has no camera, `getUserMedia` is refused and "Demarrer le live" stays disabled.
+Read at start, so `bun launch.mjs close w5` first. Measured on dev, W5 as the fourth account: a live
+started from `/posts` > Publier > En direct held 65 s twice and ended cleanly, Chrome 157 alive
+throughout, no crash dump, no Windows application error. **Chrome did not die from the fake capture or
+the encoder.** The one thing that ended a live mid-run was a SECOND CDP client on the same port
+(another session's `archive/graineauth.mjs` attached to W5 and navigated the page, which closes the
+broadcaster overlay). Before a long gesture on a seat: `netstat -ano | grep :<port>` must show only
+the browser's own pid.
+
+**A chrome-devtools MCP page labelled `viewer-<name>` proves nothing about the account.** The label is
+the `isolatedContext` string whoever called `new_page` typed (`docs/wiki/development.md`); it is a
+cookie-jar name, never read from the session. Check who is signed in from the page, not the label.
 
 ### `deployed-wasm-check.mjs` - ask a DEPLOYED estate whether its wasm can panic
 
@@ -1113,6 +1136,28 @@ rebuilt. **What a fault provokes is forgiven exactly, one line each**: `rowkit.m
 5xx once in invariant 4 and names it as an approximation. DUP-7 needs a new device and is played by
 the device runner.
 
+
+```sh
+bun archive/leaf.mjs --row LEAF-REFRESH-1|LEAF-REFRESH-2   # W6 (owner account) + W7 (peer account)
+bun archive/leaf.mjs --row LEAF-REFRESH-4                  # REVOKES W7's device: re-enrol W7 after (newdevice.mjs)
+bun archive/run.mjs LEAF                                    # -1 and -2
+```
+
+**A LEAF-REFRESH ROW ARMS A DUE REFRESH ON THE SPARE SEATS AND FAULTS ITS COMMIT.** W6 mints the row's group
+and Adds W7 (its own commit dates its leaf), then `mlsrow.mjs` `armLeafRefresh` backdates the ledger eight
+days AFTER the fault is armed, so W6's next send is the trigger. -1 holds the refresh's commit POST, cuts the
+link (`net.mjs` `cutHard`) and fails the held request (it never left), lets the client say `unknown`, then
+answers the settlement `503` with the link UP: there the owner's row-group texts must not reach the peer
+while its text in a SIDE group does (DUP-5's control). -2 reloads W6 with the POST held and reads the
+`[COMMIT] settling N staged commit(s)` line, the resubmission and the ledger naming the server's epoch. -4
+revokes W7's own campaign-owned device and, in the SAME page script, attempts a commit from it (refused
+`DEVICE_REVOKED`), then reloads W6 and counts one `[STRAY] ... revoked device(s) still hold a leaf - removing`
+per group. **-4 opens its gate window two seconds before its start**: docker reads a fractional `--since`
+exactly, and a `REJECT` line that followed the start by well under a second was dropped on dev, so the cause is
+the offset between the host's clock and the container's. **What the rows narrate** (`LEAF_ROW_NARRATION`,
+`LEAF_REVOKED_WIPE_NARRATION`, `LEAF_REVOKED_REFUSALS`) is each sentence read on a run, at its level; a line it
+does not name is dirt, and a defect (the group-creation placeholder, fixed by #3666 and [read](../../docs/wiki/device-verification.md#the-leaf-refresh-rows-on-the-web-rig-2026-11-16-170-alpha2-then-alpha3-dev-builds-dev9ca790c-and-dev68983e3))
+is filed, not narrated. Judgements in `leafrows.mjs`, pinned by `archive/leaf-selftest.mjs`.
 ```sh
 bun archive/gap.mjs --row GAP-1|GAP-2   # frames ahead of their commits; past-epoch frames again
 bun archive/gap.mjs --row GAP-3         # 2100 sends, then a pull that starts past 2050 - run alone
@@ -1198,6 +1243,8 @@ carries it. DUP-7 and DEV-7 pick ONE group's request on a shared route with `fau
 a new device makes its owner commit in every group at once. **W6 is the owner's second scratch
 profile**: it must be declared in `names.mjs` (owner account) and signed in once by a human. DEV-5 is
 played with CORRUPT-8. Judgements in `devicerows.mjs`, pinned by `archive/devrows-selftest.mjs`.
+
+**RE-ENROLLING A SPARE SEAT WHOSE VAULT IS LOCKED BY A STALE PIN (2026-11-16).** A seat enrolled before the account's PIN was last reset reads "Vos messages enregistres sur cet appareil sont verrouilles par un autre PIN" at `pin.mjs`, and recovering it would reset the account's PIN for EVERY device. Do not recover: make it a NEW device. `bun newdevice.mjs --device W6 --keep-open` (W6 and W7 are in its `WIPEABLE`; a seat is added by a repository edit) clears the origin, signs in, answers the PIN of record, and purges the id it abandoned through the product's device panel - no PIN reset, no other device touched, about 40 s. `unlock.mjs` skips a seat no account's `clients` list names (W6-W8 are not in the file), so use `pin.mjs --device W6 --stay` for them. A seat signed in as ANOTHER account (`login.mjs --device W7 --account third`) is undone the same way: `newdevice.mjs --device W7` signs it back in as its own account (it reports `sameAccount=false` for that one run, and the id it calls purged is the OTHER account's, which this seat's device panel cannot delete: check that account's panel). **A block between two bench accounts severs their follows both ways and lifting it restores none** - re-create the follow row on dev if a phone sitting relied on it.
 
 ```sh
 bun archive/salon.mjs --row RM-4|RM-4b|RM-5|RM-6
@@ -1310,7 +1357,7 @@ The browser report attributes every console line to the ORIGIN that emitted it (
   2026-09-04 for exactly that reason). The estate is `infrastructure/local/docker-compose.yml`, built
   and served by nginx on `${CANARI_LOCAL_API_PORT:-8081}`; its database holds no production data (production data is never copied to a workstation).
   **Two things do NOT become local with it.** The identity provider is still
-  `auth.canari-emse.fr` by decision 8 of the workflow migration, so the accounts and their passwords
+  production's MiConnect (`miconnect.emse.fr`, formerly `auth.canari-emse.fr`) by decision 8 of the workflow migration, so the accounts and their passwords
   are production's - and the local Authentik client is a SEPARATE provider (`Canari Local`), which is
   where a local redirect URI has to be declared or the login dies on "Redirect URI Error". And the
   object store starts EMPTY, so a row whose question is about media uploads what it then reads.

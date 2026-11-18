@@ -7,9 +7,11 @@ vi.mock('$lib/utils/appVersion', () => ({
 }));
 
 import {
+  composePlainNotificationText,
   notificationGroupName,
   notificationIsGroup,
   postNativeMessageNotification,
+  postNativeReactionNotification,
   type NativeMessageNotification,
 } from './nativeNotification';
 
@@ -77,6 +79,8 @@ describe('postNativeMessageNotification', () => {
       authorProven: false,
       // The push's `isGroup`: the name cannot answer it for an unnamed group (review of #3344, M1).
       isGroup: false,
+      // A message, not a reaction: the builder picks the messages or mentions channel.
+      reaction: false,
     });
   });
 
@@ -130,6 +134,63 @@ describe('postNativeMessageNotification', () => {
   });
 });
 
+describe('postNativeReactionNotification', () => {
+  beforeEach(() => {
+    invoke.mockReset();
+    isAndroidTauriRuntime.mockReset();
+  });
+
+  const REACTION = {
+    conversationId: 'grp-aaaa-bbbb',
+    messageId: 'msg-1',
+    actorId: 'peer-1',
+    actorName: 'Alice',
+    emoji: '❤️',
+    at: 1_700_000_000_123,
+  };
+
+  it('does not reach the native builder off Android', async () => {
+    isAndroidTauriRuntime.mockReturnValue(false);
+    expect(await postNativeReactionNotification(REACTION)).toBe(false);
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it('asks the ONE builder with the reaction flag, the emoji as the body and the push shape', async () => {
+    // The frame trigger of a reaction (2026-11-17): the same command a message takes, so Kotlin
+    // composes the push's own sentence (`notif_reaction_body`) on the reactions channel under
+    // `reaction:<groupId>` - the key the push posts under too.
+    isAndroidTauriRuntime.mockReturnValue(true);
+    invoke.mockResolvedValue(true);
+
+    expect(await postNativeReactionNotification(REACTION)).toBe(true);
+    expect(invoke).toHaveBeenCalledWith('notifier_message_natif', {
+      groupId: 'grp-aaaa-bbbb',
+      senderId: 'peer-1',
+      senderName: 'Alice',
+      groupName: '',
+      body: '❤️',
+      mentionsMe: false,
+      // The reaction's own instant, which the push carries too: one reaction, one line.
+      sentAt: 1_700_000_000_123,
+      serverAt: 0,
+      covers: 1,
+      authorProven: false,
+      isGroup: null,
+      reaction: true,
+    });
+  });
+
+  it('reports a throw where it accuses, and raises nothing else', async () => {
+    isAndroidTauriRuntime.mockReturnValue(true);
+    invoke.mockRejectedValue(new Error('no JavaVM'));
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    expect(await postNativeReactionNotification(REACTION)).toBe(false);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('no JavaVM'));
+    error.mockRestore();
+  });
+});
+
 describe('notificationIsGroup', () => {
   it('reads the type, never the name: a group and a salon are groups, a DM is not', () => {
     expect(notificationIsGroup('group')).toBe(true);
@@ -167,5 +228,49 @@ describe('notificationGroupName', () => {
 
   it('falls back to the stored name when there is no auxiliary label', () => {
     expect(notificationGroupName('group', '', 'grp-1')).toBe('grp-1');
+  });
+
+  it("titles a group as the list draws it - an unnamed group by its members' first names", () => {
+    // The row of an unnamed group holds only its id; the list names it "Alice et Bob".
+    expect(notificationGroupName('group', 'grp-1', 'grp-1', 'Alice et Bob')).toBe('Alice et Bob');
+  });
+
+  it('never lets a group title rename a channel or title a direct message', () => {
+    expect(notificationGroupName('channel', 'channel_1', 'general', 'X')).toBe('general');
+    expect(notificationGroupName('direct', 'peer-1', 'me::peer-1', 'X')).toBe('');
+  });
+});
+
+describe('composePlainNotificationText', () => {
+  // The preview is Paraglide's `chat_preview_media`, so both locales reach here as a plain string.
+  it.each([
+    ['fr', '[Média]'],
+    ['en', '[Media]'],
+  ])('titles a group by its name and leads the body with the speaker (%s)', (_locale, preview) => {
+    expect(
+      composePlainNotificationText('Alice', preview, { groupName: 'Les Canaris', isGroup: true })
+    ).toEqual({ title: 'Les Canaris', body: `Alice: ${preview}` });
+  });
+
+  it('keeps the sender as the title of a direct message', () => {
+    expect(
+      composePlainNotificationText('Alice', '[Media]', { groupName: '', isGroup: false })
+    ).toEqual({ title: 'Alice', body: '[Media]' });
+  });
+
+  it('keeps the sender as the title when a group has no name to show', () => {
+    expect(
+      composePlainNotificationText('Alice', '[Media]', { groupName: '  ', isGroup: true })
+    ).toEqual({ title: 'Alice', body: '[Media]' });
+  });
+
+  it('never titles a conversation typed direct by a stale name', () => {
+    expect(
+      composePlainNotificationText('Alice', 'hi', { groupName: 'Alice', isGroup: false })
+    ).toEqual({ title: 'Alice', body: 'hi' });
+  });
+
+  it('is the input untouched when the call carries nothing native (a call site without a row)', () => {
+    expect(composePlainNotificationText('Alice', 'hi')).toEqual({ title: 'Alice', body: 'hi' });
   });
 });

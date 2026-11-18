@@ -99,7 +99,7 @@ describe('the restore against a server that got no answer', () => {
 
   /** What the real delivery API does on no answer: tells the store, then throws (typed). */
   const noAnswer = (e: unknown) => {
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     throw e;
   };
 
@@ -162,8 +162,8 @@ describe('the restore against a server that got no answer', () => {
     // The first replay's history read gets no answer: it tells the store (twice - one stall is not
     // an outage) and returns its empty page, as the real delivery API does.
     replay.mockImplementationOnce(async () => {
-      connectivity.notifyServerUnreachable();
-      connectivity.notifyServerUnreachable();
+      connectivity.notifyServerUnreachable('test');
+      connectivity.notifyServerUnreachable('test');
       return undefined;
     });
 

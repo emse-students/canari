@@ -65,6 +65,7 @@ import {
   READMISSION_NARRATION,
   awaitLine,
   consoleLines,
+  GROUP_REMOVAL_ROW_NARRATION,
   ignoringExpectedLog,
   ignoringExpectedRefusal,
   ignoringOfflineCut,
@@ -769,8 +770,11 @@ async function grp3() {
         // W2 ALONE, and only this row: `READMISSION_RACE_403` says why the removed device cannot
         // avoid asking, and why forgiving it anywhere else would hide a regression.
         {
-          W1: await asCreator(o1),
-          W2: ignoringExpectedRefusal(await asCreator(o2), READMISSION_RACE_403),
+          W1: ignoringExpectedLog(await asCreator(o1), GROUP_REMOVAL_ROW_NARRATION),
+          W2: ignoringExpectedLog(
+            ignoringExpectedRefusal(await asCreator(o2), READMISSION_RACE_403),
+            GROUP_REMOVAL_ROW_NARRATION
+          ),
         }
       );
       return ok;

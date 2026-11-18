@@ -1,6 +1,6 @@
 ## Decided - the owner's answers of 2026-11-01, what `1.5.5` carries and what is left to build
 
-target: 1.7.0
+target: 1.7.1
 
 Decisions, not open questions; each is built or owed as stated, and this entry is deleted when the
 last one ships.
@@ -14,7 +14,7 @@ last one ships.
 - **Calls** ([calls](../frontend/modules/calls.md)): the incoming-call screen is in-app plus Android
   full screen, with the same design (#2835); the live end keeps the red X, since a confirmation modal
   exists. RNNoise ships OFF with an in-call switch
-  ([entry](call-noise-suppression-clean-speech-gate-fails-and-readings-owed.md)).
+  ([calls](../frontend/modules/calls.md#noise-suppression-rnnoise---decided-2026-10-31-built-its-clean-speech-row-fails); entry closed 2026-11-16).
 - **Migrations**: applied only if additive, reviewed, and with a backup just before - a held
   migration now fails the deploy until the owner approves it
   ([the gate](../cicd.md#a-migration-the-owner-must-approve-is-held-2026-11-01)).

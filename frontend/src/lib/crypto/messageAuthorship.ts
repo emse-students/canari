@@ -27,11 +27,11 @@ import type { DevicePin } from '$lib/mls-client/deviceTrust';
 import { canonicalIdentity } from '$lib/mls-client/leafIdentity';
 
 /** The label opening every descriptor - distinct from every Graine label. */
-export const AUTHOR_DESCRIPTOR_LABEL = 'canari-mls-author-v1';
+const AUTHOR_DESCRIPTOR_LABEL = 'canari-mls-author-v1';
 /** `AppMessage` field number of the proof (`libs/proto/canari.proto`). */
-export const AUTHOR_PROOF_FIELD = 14;
+const AUTHOR_PROOF_FIELD = 14;
 /** The only proof layout this build reads. */
-export const AUTHOR_PROOF_VERSION = 1;
+const AUTHOR_PROOF_VERSION = 1;
 
 /**
  * A message's proof as a device keeps it and a bundle relays it: the exact bytes the author signed

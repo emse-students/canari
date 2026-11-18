@@ -9,6 +9,9 @@ import { BaseMlsService } from './BaseMlsService';
 const proto = BaseMlsService.prototype as unknown as Record<string, unknown>;
 
 export const keyPackageWaitFields = () => ({
+  // A RETURNING device by default (an id stored before this boot): it reads its publication. A test
+  // of a device minted in this process overrides it.
+  stateWasExpected: true,
   keyPackageRoundInFlight: null as Promise<unknown> | null,
   keyPackageRoundsActive: 0,
   keyPackageRoundsSettled: 0,

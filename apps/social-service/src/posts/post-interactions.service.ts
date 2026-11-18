@@ -34,6 +34,7 @@ import {
 } from './comment-removal';
 import { forgetCommentNotices, writeComments } from './comment-write';
 import { announceCampusTrend } from './campus-trend';
+import { authorNoticeKind } from './post-activity-notice';
 import { COMMENT_DELETE_FORBIDDEN, COMMENT_EDIT_AUTHOR_ONLY } from '../spaces/bde-moderation';
 import { PostMediaRetentionService, commentMediaIds } from './post-media-retention.service';
 import { isExpiredPost } from './reel.constants';
@@ -98,7 +99,8 @@ export class PostInteractionsService {
     await this.postRepo.save(post);
 
     // Notify post author of a new reaction (not for self-reactions or changes), never across the
-    // review cohort's boundary (review-cohort.ts).
+    // review cohort's boundary (review-cohort.ts), and for an entity's post only while its writer
+    // is still a member there (`postAuthorIsTold`, 2026-11-14).
     if (
       isNew &&
       post.authorId &&
@@ -107,31 +109,26 @@ export class PostInteractionsService {
     ) {
       void (async () => {
         try {
+          if (!(await this.notifications.postAuthorIsTold(postId))) return;
           const actorName = await this.notifications.resolveActorName(userId);
-          await this.notifications.createNotification({
+          // ONE NOTIFICATION PER POST, never counted (owner, 2026-11-14): it alerts when the post had
+          // no unread row, and updates silently otherwise. THE ACTOR'S FACE, AND THE EMOJI RATHER
+          // THAN THE STORED LABEL (user, 2026-10-08 - six faceless "a réagi Marteau" for one post).
+          await this.notifications.notifyPostActivity({
             recipientId: post.authorId,
             type: 'reaction',
             postId,
             actorId: userId,
+            actorName,
             text: reactionType,
-            skipPush: true,
+            content: (others) =>
+              reactionContent(
+                actorName,
+                reactionTypeToEmoji(reactionType),
+                { kind: 'user', userId },
+                others
+              ),
           });
-          // THE DAILY CAP (engagement WP-8, owner 2026-11-10): a reaction counts against it.
-          const [pushTo] = await this.notifications.withinPushBudget('reaction', [post.authorId]);
-          if (!pushTo) return;
-          // THE ACTOR'S FACE, AND THE EMOJI RATHER THAN THE STORED LABEL: this push carried
-          // neither (user, 2026-10-08 - six faceless "a réagi Marteau" for one post).
-          await this.push.notifyContent(
-            post.authorId,
-            reactionContent(actorName, reactionTypeToEmoji(reactionType), {
-              kind: 'user',
-              userId,
-            }),
-            {
-              type: 'social',
-              postId,
-            }
-          );
         } catch (e) {
           this.logger.warn(
             `[NOTIFY] reaction notification failed for post.authorId=${post.authorId}`,
@@ -289,7 +286,7 @@ export class PostInteractionsService {
         actorName = await this.notifications.resolveActorName(data.userId);
       }
       const alreadyNotified = new Set<string>([data.userId]);
-      const notify = (recipientId: string, type: 'comment' | 'reply' | 'mention') =>
+      const notify = (recipientId: string, type: 'reply' | 'mention') =>
         this.notifications.createNotification({
           recipientId,
           type,
@@ -301,7 +298,6 @@ export class PostInteractionsService {
           skipPush: true,
         });
       const pushContentFor = {
-        comment: commentContent,
         reply: replyContent,
         mention: mentionContent,
       };
@@ -312,9 +308,25 @@ export class PostInteractionsService {
           this.logger.log(`[NOTIFY] ${type} not sent: across the review cohort's boundary`);
           return;
         }
+        if (type === 'comment') {
+          // ONE NOTIFICATION PER POST, never counted (owner, 2026-11-14): the post's author is told
+          // of every comment, alerting only when the post had no unread row.
+          await this.notifications.notifyPostActivity({
+            recipientId,
+            type,
+            postId,
+            actorId,
+            actorName,
+            text: preview,
+            commentId: comment.id,
+            content: (others) => commentContent(actorName, pushPreview, undefined, others),
+            pushData: { commentId: comment.id },
+          });
+          return;
+        }
         await notify(recipientId, type);
-        // THE DAILY CAP (engagement WP-8, owner 2026-11-10): a comment counts, a reply and a
-        // mention do not (`PUSH_BUDGET`) - one table answers, so this asks it for every type.
+        // Replies and mentions are never counted (`PUSH_BUDGET`); asked all the same, so the one
+        // table stays the one answer.
         const [pushTo] = await this.notifications.withinPushBudget(type, [recipientId]);
         if (!pushTo) return;
         await this.push.notifyContent(recipientId, pushContentFor[type](actorName, pushPreview), {
@@ -324,10 +336,48 @@ export class PostInteractionsService {
         });
       };
 
-      if (post.authorId && !alreadyNotified.has(post.authorId)) {
-        alreadyNotified.add(post.authorId);
+      // The parent comment's association holders, read ONCE for both uses below: the author's notice
+      // kind (a reply to a comment spoken for an association the author holds) and the reply's
+      // recipients. null = unreadable or no association.
+      let parentHolders: string[] | null = null;
+      if (parent?.associationId) {
         try {
-          await send(post.authorId, 'comment');
+          parentHolders = await this.identity.holdersOf(parent.associationId);
+        } catch (e) {
+          this.logger.warn(
+            `[NOTIFY] holders of association ${String(parent.associationId)} unreadable: the author's notice stays a comment and the reply goes to no holder`,
+            e
+          );
+        }
+      }
+
+      if (post.authorId && !alreadyNotified.has(post.authorId)) {
+        // A reply to the author's own comment, or a mention of them, rings of its own and is never
+        // folded into the post's live notification (owner, 2026-11-15); the rest keeps the fold.
+        const kind = authorNoticeKind({
+          authorId: post.authorId,
+          parentWriterId: parent?.userId,
+          authorHoldsParentAssociation: parentHolders?.includes(post.authorId) ?? false,
+          mentionedIds: data.text ? this.notifications.resolveMentionedUserIds(data.text) : [],
+        });
+        try {
+          // The post's comment notice reaches an entity post's writer only while they are still a
+          // member there (2026-11-14); a reply to their own comment or a mention of them is theirs
+          // as that writer, under those rules, whatever the post.
+          if (kind === 'comment' && !(await this.notifications.postAuthorIsTold(postId))) {
+            this.logger.log(
+              `[NOTIFY] post=${postId.slice(0, 8)} author notice not sent: no longer a member of its entity`
+            );
+          } else {
+            alreadyNotified.add(post.authorId);
+            this.logger.log(
+              `[NOTIFY] post=${postId.slice(0, 8)} author notice kind=${kind} ` +
+                (kind === 'comment'
+                  ? '(folded into the post activity notification)'
+                  : '(targets the author: rings of its own, outside the fold)')
+            );
+            await send(post.authorId, kind);
+          }
         } catch (e) {
           this.logger.warn(
             `[NOTIFY] comment notification failed for post.authorId=${post.authorId}`,
@@ -340,17 +390,7 @@ export class PostInteractionsService {
         // A reply to an association's comment reaches everyone who speaks for it; to an anonymous
         // one, the real account behind it - the replier never learns who that is.
         let recipients: string[] = parent?.userId ? [parent.userId] : [];
-        if (parent?.associationId) {
-          try {
-            recipients = await this.identity.holdersOf(parent.associationId);
-          } catch (e) {
-            this.logger.warn(
-              `[NOTIFY] holders of association ${String(parent.associationId)} unreadable, reply not delivered`,
-              e
-            );
-            recipients = [];
-          }
-        }
+        if (parent?.associationId) recipients = parentHolders ?? [];
         // A reply pushes ITS text: only to who may read this post's comments, through the same gate
         // as a mention (`'COMMENT'`) - a named reader whose comments are withheld (owner,
         // 2026-11-04), or a parent's writer who has lost the post since, is told nothing. The post's

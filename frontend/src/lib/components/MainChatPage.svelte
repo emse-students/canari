@@ -9,6 +9,7 @@
 
 <script lang="ts">
   import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
+  import type { InboundReaction } from '$lib/utils/chat/reactionNotification';
   import { onDestroy, onMount, untrack } from 'svelte';
   import { foldForSearch } from '$lib/utils/textFold';
   import { goto } from '$app/navigation';
@@ -112,7 +113,6 @@
     Conversation,
     MessageBatchOrigin,
   } from '$lib/types';
-  import type { BulkIngestPhase } from '$lib/mls-client';
   import { buildMentionRoster } from '$lib/utils/users/mentionRoster';
   import { describeCaughtError } from '$lib/utils/describeCaughtError';
   import { communityNicknameScope } from '$lib/utils/users/conversationNicknames.svelte';
@@ -488,6 +488,7 @@
       playReceiveTone: notifs.playReceiveTone,
       playReadTone: notifs.playReadTone,
       sendSystemNotification: notifs.sendSystemNotification,
+      sendReactionNotification: notifs.sendReactionNotification,
       signalChannelRead: (channelId: string) => void channelService.markChannelRead(channelId),
       onChannelWriteRefused: channels.handleChannelWriteRefused,
     };
@@ -504,9 +505,7 @@
       endConversationSource: () => convs.endConversationSource(),
       addMessageToChat: (sid: string, content: string, contactName: string, options?: any) =>
         messaging.addMessageToChat(sid, content, contactName, msgCtx(), options),
-      beginBulkMessageIngest: (phase: BulkIngestPhase) => messaging.beginBulkMessageIngest(phase),
-      endBulkMessageIngest: (phase: BulkIngestPhase) =>
-        messaging.endBulkMessageIngest(msgCtx(), phase),
+      messageIngestObserver: messaging.bulkIngestObserver(msgCtx),
       batchAddMessages: (
         msgs: Parameters<typeof messaging.batchAddMessages>[0],
         contactName: string,
@@ -525,6 +524,8 @@
         if (e.conversationKey !== convs.selectedContact) return;
         notifs.playReadTone();
       },
+      onInboundReaction: (reaction: InboundReaction) =>
+        messaging.notifyInboundReaction(reaction, msgCtx()),
       log,
       messageReactions: messaging.messageReactions,
       getSelectedContact: () => convs.selectedContact,
@@ -545,38 +546,18 @@
       viewMode: (routeMode === 'communities' ? 'communities' : 'chat') as 'chat' | 'communities',
       conversations: convs.conversations,
       selectedContact: convs.selectedContact,
-      newContactInput: convs.newContactInput,
-      newGroupInput: convs.newGroupInput,
       newChannelInput: convs.newChannelInput,
       channelWorkspaces: channels.channelWorkspaces,
       selectedChannelId: channels.selectedChannelConversationId,
       currentUserId: session.userId,
-      onContactInputChange: (v: string) => {
-        convs.newContactInput = v;
-      },
-      onGroupInputChange: (v: string) => {
-        convs.newGroupInput = v;
-      },
       onChannelInputChange: (v: string) => {
         convs.newChannelInput = v;
       },
-      // BOTH ANSWER, because the sidebar closes its creation panel on the answer. The input is
-      // cleared here as before - the panel keeps its own copy of the text and decides, from the
-      // outcome, whether to blank it.
-      onAddContact: async (value?: string) => {
-        const c = (value ?? convs.newContactInput).trim();
-        if (!c) return { ok: true, key: null } as const;
-        const outcome = await convs.startNewConversation(c, convCtx());
-        convs.newContactInput = '';
-        return outcome;
-      },
-      onCreateGroup: async (value?: string) => {
-        const g = (value ?? convs.newGroupInput).trim();
-        if (!g) return { ok: true, key: null } as const;
-        const outcome = await convs.createNewGroup(g, convCtx());
-        convs.newGroupInput = '';
-        return outcome;
-      },
+      // BOTH ANSWER, because the sidebar closes its creation panel on the answer.
+      onAddContact: (contactId: string) => convs.startNewConversation(contactId, convCtx()),
+      // A blank name creates an UNNAMED group (owner, 2026-11-17).
+      onCreateGroup: (name: string, memberIds: string[]) =>
+        convs.createGroupWithMembers(name, memberIds, convCtx()),
       onCreateChannel: (workspaceId: string, value?: string, visibility?: 'public' | 'private') => {
         const ch = (value ?? convs.newChannelInput).trim();
         if (!ch) return;
@@ -858,7 +839,8 @@
     // nothing.
     if (verdict === 'idle') {
       Log.d(
-        `[READ] ${convs.selectedContact.slice(0, 12)} not marked: nobody has touched this window ` +
+        'READ',
+        `${convs.selectedContact.slice(0, 12)} not marked: nobody has touched this window ` +
           `for ${ATTENTION_WINDOW_MS / 1000} s - the first gesture marks it`
       );
       return;

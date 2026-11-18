@@ -15,7 +15,7 @@ Most `/api` locations carry `auth_request /internal/auth/verify`, which calls `c
 | `X-User-Id` | OIDC sub | Authenticated user ID |
 | `X-Logged-In` | `true` / `false` | **`false` for an anonymous caller, and the request is still proxied** |
 | `X-Global-Admin` | `true` / `false` | Global admin flag |
-| `X-Session-Id` | session UUID or empty | The `sid` of the access token: the login it was minted for. chat-delivery binds a push registration to it ([sessions](../sessions.md#a-session-that-ends-takes-its-devices-push-registration-with-it-2026-10-22)); empty for a token minted before the claim |
+| `X-Session-Id` | session UUID or empty | The `sid` of the access token: the login it was minted for. chat-delivery binds a push registration to it ([sessions](../sessions.md#a-session-that-ends-takes-its-devices-push-registration-with-it-2026-10-22)); empty for an anonymous request |
 
 ## Route table
 
@@ -283,7 +283,10 @@ level AND in the header set every `proxy_pass` uses. nginx inherits `proxy_set_h
 ENCLOSING level (the enclosing location for a nested one, the server for a top-level one), and only
 into a level that declares none of its own, so that set is the nearest level, itself first, that
 declares any. `auth-request-coverage.test.mjs` models that inheritance, reads every location whatever
-its modifier, and carries self-tests of the nested shape.
+its modifier, and carries self-tests of the nested shape. The other nginx on that network, `mesh`
+(`infrastructure/edge/mesh.conf`), is where services call each other: it is reachable from no edge,
+and forwards every header untouched, that one included
+([cicd](../cicd.md#service-to-service-calls-go-through-the-mesh)).
 
 **On the two Axum crates there is no guard layer at all**, so the handler's own body is the whole of
 the enforcement: `get_presence` and `get_admin_presence` read the headers nginx set

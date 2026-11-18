@@ -149,6 +149,12 @@ log; the access log still writes one redacted line per socket, with its status a
 fails if it finds neither socket. Moving the credential out of the URL is the design improvement
 that makes the level moot ([backlog](../backlog.d/p3-the-socket-credential-moves-out-of-the-url.md)).
 
+**The calendar feed is the same case without the upgrade (2026-11-14).** A calendar app polls
+`/api/associations/calendar/feed.ics?token=...` with a bearer subscription token in the query (the
+URL is the only thing such an app can carry - [D40 re-decided](../profiles-and-access.md#d40-re-decided-2026-11-14---the-link-is-its-holders)),
+so its location declares the same `crit` error log, and the same test fails it without one. Its
+upstream errors are in the social-service log and the access log's `ust=` instead.
+
 **A SIZE CAP IS NOT AN AGE CAP.** `max-size: 10m` / `max-file: "3"` bounds the bytes, so the oldest
 line held is the one written 30 MB ago. A busy container rolls that over in minutes
 ([backlog](../backlog.md), the 2026-10-12 decision row); a quiet one - postgres, redis, garage, the

@@ -33,6 +33,18 @@ import { toBase64 } from '$lib/utils/hex';
  */
 
 /**
+ * One "turn" of the simulated browser: a macrotask, but taken from `setImmediate`, never from a
+ * timer. A `setTimeout(0)` turn is clamped to a real clock tick (about 15 ms on Windows, far more
+ * under a loaded parallel suite) and 60 of them per `settle()` pushed single tests past the 5 s
+ * default; an immediate turn keeps the exact ordering of separate macrotasks (commits, signals and
+ * lock hand-offs still interleave turn by turn) and waits on no clock, so the duration of a test no
+ * longer depends on the machine.
+ */
+const turn = (): Promise<void> => new Promise((r) => setImmediate(r));
+/** Turns `settle()` yields: far above the deepest chain of commits, signals and lock hand-offs here. */
+const SETTLE_TURNS = 60;
+
+/**
  * The origin's IndexedDB, as this module sees it: one database per ACCOUNT, every transaction
  * serialised (IndexedDB orders `readwrite` transactions over the same store), each one taking a
  * different number of turns to commit - and its write VISIBLE to other documents only once it has.
@@ -40,11 +52,11 @@ import { toBase64 } from '$lib/utils/hex';
  */
 function sharedDatabases() {
   const databases = new Map<string, Map<string, DelegationRecord>>();
-  let turn = 0;
+  let commits = 0;
   /** A commit takes 1 to 4 turns, deterministically varied, so no two paths line up by accident. */
   const commitDelay = async () => {
-    turn += 1;
-    for (let i = 0; i < 1 + (turn % 4); i++) await new Promise((r) => setTimeout(r, 0));
+    commits += 1;
+    for (let i = 0; i < 1 + (commits % 4); i++) await turn();
   };
   const clone = <T>(v: T): T => (v === undefined ? v : (JSON.parse(JSON.stringify(v)) as T));
 
@@ -159,7 +171,7 @@ function channelBus() {
     post(from: string, event: TabCommitEvent) {
       for (const [doc, handlers] of subscribers) {
         if (doc === from) continue;
-        for (const h of handlers) setTimeout(() => h(event), 0);
+        for (const h of handlers) setImmediate(() => h(event));
       }
     },
     subscribe(doc: string, handler: (e: TabCommitEvent) => void) {
@@ -232,7 +244,7 @@ function tab(doc: string, world: ReturnType<typeof makeWorld>, role: Role) {
 
 /** Lets every pending turn - commits, signals, lock hand-offs - run. */
 async function settle(): Promise<void> {
-  for (let i = 0; i < 60; i++) await new Promise((r) => setTimeout(r, 0));
+  for (let i = 0; i < SETTLE_TURNS; i++) await turn();
 }
 
 /** Executors that record every run, answering at once. */

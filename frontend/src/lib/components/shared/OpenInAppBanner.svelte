@@ -28,7 +28,7 @@
   const offer = $derived(userAgent ? openInAppOffer(page.url.href, userAgent) : null);
 
   $effect(() => {
-    if (offer) Log.d(`[openInApp] offering the app from an in-app browser (${offer.os})`);
+    if (offer) Log.d('openInApp', `offering the app from an in-app browser (${offer.os})`);
   });
 </script>
 
@@ -45,7 +45,7 @@
     <a
       href={offer.openHref}
       class="text-cn-ink w-full max-w-sm rounded-full bg-white px-6 py-3.5 text-base font-bold shadow-md"
-      onclick={() => Log.d(`[openInApp] open tapped (${offer.os})`)}
+      onclick={() => Log.d('openInApp', `open tapped (${offer.os})`)}
     >
       {m.open_in_app_banner_open()}
     </a>

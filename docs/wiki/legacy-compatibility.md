@@ -60,6 +60,78 @@ before the raise). An older figure on this page is the floor at the date its ent
 - **Removal.** Nothing to remove (no shim in the code): the degradation ends when `minClientVersion`
   passes the first stable carrying the caption edit, and this entry is then deleted.
 
+### Removal once `minClientVersion` passes `1.7.0` - a salon invitation notice sent as a sentence (2026-11-16)
+
+**Site:** `CHANNEL_NOTICE_IDS_WRITER_ENABLED` and `channelMemberAddedData`
+(`frontend/src/lib/utils/chat/channelNotice.ts`).
+**What it humours:** a build older than the id reader (`channelSystemEnvelope`) draws a salon notice's
+`system.data` as text, so the id shape `{ "newUsers": [id] }`
+([chat](frontend/modules/chat.md#a-salons-membership-notice-carries-ids-2026-11-16)) would reach its
+screen as raw JSON. So the reader ships first and the inviter keeps sending the localized sentence
+every build draws. **The cost while it stands:** the notice keeps the inviter's language and the names
+as the inviter's device knew them. No wire field is added beside `data`: it would touch the signed
+frame for a cosmetic gain, and the floor reaches the reader anyway.
+**Removal condition:** `minClientVersion` at or above the first stable carrying the reader (`1.7.0`)
+on both estates. Then, in one pull request
+([planned](backlog.d/a-salon-invitation-notice-sends-ids-once-the-floor-reads-them.md)): set the switch
+to `true`, then delete it, the sentence branch of `channelMemberAddedData` and its test, and this
+entry. **What stays:** the legacy-sentence branch of `channelSystemEnvelope` - rows are never
+rewritten, so a salon archive holds sentence notices for ever.
+
+### Removal once `minClientVersion` passes the first stable that seals - an unsealed history answer (2026-11-17)
+
+**Site:** the `[LEGACY]` branch of the `history_bundle` receiver (`noteUnsealedAnswerOnce`,
+`systemMessageHandler.ts`), and the answerer's unsealed branch for an ask that carries no
+`answerKey` (`sendBundleChunks`, `groupActions.ts`).
+**What it humours:** a build older than option B
+([history-answer-addressing](protocols/history-answer-addressing.md#sealing-the-answer-to-the-asker---option-b-2026-11-17))
+answers a keyed ask in clear - still addressed to the asker alone - and asks without a key. Both are
+accepted, the first said once per session at error so its population is counted.
+**The cost while it stands:** an answer between two builds of which one predates sealing is protected
+by the server's routing alone, as it was under step A.
+**Removal condition:** `minClientVersion` at or above the first stable carrying option B, on both
+estates. Then, in one pull request
+([planned](backlog.d/p3-a-history-answer-is-sealed-or-refused-once-the-floor-seals.md)): an unsealed
+answer to a keyed ask is refused at error, an ask with no `answerKey` is malformed and answered
+nothing (as one with no `requestId` is, D211), `noteHistoryAsk`'s `null` secret goes, and so does
+this entry.
+
+### Removal once `minClientVersion` passes the first stable carrying it - the bound on register asks (2026-11-17)
+
+**Site:** `REGISTER_ASKS_MAX`, `noteRegisterAsked` and `endSpentRegisterAsks` (`registerOwed.ts`),
+called from `sendHistoryProbe` (`groupActions.ts`).
+**What it humours:** a responder older than the register ask
+([history-answer-addressing](protocols/history-answer-addressing.md#the-newcomer-asks-for-its-register-2026-11-17))
+ignores `register` and answers the digest alone - or, its store matching ours, sends nothing: no
+register and no decline. Such an ask stays counted, and after five unanswered asks the newcomer stops
+asking, said at warn. A responder on this build declines instead, and its FIRST decline gives its
+ask back (later ones from the same device count like silence), so at most five asks plus one per
+other device ever leave; the asking also ends when every other device of the tree has declined.
+**The cost while it stands:** a newcomer whose only register holders run an older build asks five
+times (a digest instead of the state key each time), keeps the nicknames it had, and declines -
+never answers empty - while it has taken none.
+**Removal condition:** `minClientVersion` at or above the first stable carrying the register ask, on
+both estates. Every responder then answers or declines `register`; the bound stays (a server that
+cannot address) but its line is raised from warn to error, since only a defect reaches it - in the
+same pull request as the sealed-answer refusal
+([planned](backlog.d/p3-a-history-answer-is-sealed-or-refused-once-the-floor-seals.md)) - and this
+entry goes.
+
+### Removal once `minClientVersion` passes the first stable carrying it - the iOS fold of the app's former seed mirror (2026-11-17)
+
+**Site:** `fold_legacy_seed_mirror` and its call in `seed_mirror_home` (`frontend/src-tauri/src/commands/push.rs`).
+**What it humours:** an iPhone install whose older build kept a seed mirror of its own in
+`app_data_dir` beside the App Group's, and copied it over the group's on every lifecycle event
+([channel-encryption section 27](protocols/channel-encryption.md#27-the-iphone-held-two-seed-mirrors-and-the-one-without-the-extensions-seeds-won---fixed-2026-11-17)).
+The first foreground mirror edit of a newer build folds that copy into the group's (a union) and
+deletes it, so it runs once per install and then finds nothing.
+**Removal condition:** `minClientVersion` at or above the first stable carrying the fold, on both
+estates. That does NOT prove every install folded: a store update skips versions, so an iPhone may go
+from a build without the fold straight to one without it. So the fold is REPLACED, not deleted: its
+call becomes an unconditional delete of `{app_data_dir}/graine_seeds.json` (the group's copy already
+holds what the last lifecycle copy put there), and the function and its four tests go. **The cost of
+keeping it meanwhile:** one `stat` per foreground mirror edit on iOS.
+
 ### A tolerated breakage: an institution post from a build older than the reach (owner, 2026-11-10)
 
 - **What.** An institution's post must carry a reach (migration 162,
@@ -95,6 +167,70 @@ The events twin of the entry above.
   shows its generic deposit failure; an update or the web files it.
 - **Removal.** Nothing to remove (no shim in the code): the breakage ends when `minClientVersion`
   passes the first stable carrying the event reach, and this entry is then deleted.
+
+### A legacy shape at rest: a carte directory line with no roster (2026-11-14)
+
+- **What.** A carte published before the structured roster stores each directory entry as
+  `{ assoId, line }`: the printed names, no account id
+  ([carte-vie-asso](carte-vie-asso.md#rules)). Such a publication is **served as stored until the
+  first account erasure or its map's next publication**. An erasure cannot tell whose name a line
+  holds, so the first one after this change blanks EVERY non-empty line-only entry, in every map
+  (`settleCarteDirectory`, matched by `LEGACY_DIRECTORY_LINE` in `account-erasure.ts`); the map stays
+  live with that roster text withheld. No new one is written: a publish refuses it
+  (`CARTE_ROSTER_UNSTRUCTURED`), and an editor older than the roster is told to reload.
+- **Measured by.** The WARN the social service writes once per map an erasure blanks:
+  `[CARTE] account erasure of user=... withheld N legacy directory line(s) of live map <id> until
+  its next publication`, and the refusal's WARN `[CARTE] publish of map <id> refused:
+  CARTE_ROSTER_UNSTRUCTURED`.
+- **The step that closes the past (owner, 2026-11-14).** An account erased BEFORE this change is
+  still on the live maps - a card with its id, a name in a line - and no later erasure matches its
+  id. So the lead REPUBLISHES EVERY LIVE MAP ONCE, right after the release carrying #3526: a publish
+  by the new editor keeps current members only and stores rosters, so those cards and the legacy
+  lines go (the gesture, step by step:
+  [carte-vie-asso](carte-vie-asso.md#after-the-release-that-carries-3526-republish-every-live-carte-once)).
+  No migration. It is done when both counts below read `0` (cards and roster members whose
+  `userId` has no `users` row) and the line-only count of the removal condition reads `0`:
+
+  ```sql
+  SELECT
+    (SELECT count(*) FROM poster_projects p,
+            jsonb_array_elements(CASE WHEN jsonb_typeof(p.publication -> 'units') = 'array'
+                                      THEN p.publication -> 'units' ELSE '[]'::jsonb END) u,
+            jsonb_array_elements(CASE WHEN jsonb_typeof(u.value -> 'cards') = 'array'
+                                      THEN u.value -> 'cards' ELSE '[]'::jsonb END) c
+      WHERE NOT EXISTS (SELECT 1 FROM users WHERE id::text = lower(c.value ->> 'userId')))
+      AS cards_of_no_account,
+    (SELECT count(*) FROM poster_projects p,
+            jsonb_array_elements(CASE WHEN jsonb_typeof(p.publication #> '{directory,zones}') = 'array'
+                                      THEN p.publication #> '{directory,zones}' ELSE '[]'::jsonb END) z,
+            jsonb_array_elements(CASE WHEN jsonb_typeof(z.value -> 'assos') = 'array'
+                                      THEN z.value -> 'assos' ELSE '[]'::jsonb END) a,
+            jsonb_array_elements(CASE WHEN jsonb_typeof(a.value -> 'members') = 'array'
+                                      THEN a.value -> 'members' ELSE '[]'::jsonb END) m
+      WHERE NOT EXISTS (SELECT 1 FROM users WHERE id::text = lower(m.value ->> 'userId')))
+      AS roster_members_of_no_account;
+  ```
+
+- **Removal condition.** No map stores a line-only entry any more - this count reads `0` - **and no
+  restorable backup predates this change**: a restore brings line-only entries back, and the
+  erasure replay that follows it must still blank them.
+
+  ```sql
+  SELECT count(*) FROM poster_projects
+   WHERE publication IS NOT NULL AND EXISTS (
+     SELECT 1
+       FROM jsonb_array_elements(CASE WHEN jsonb_typeof(publication #> '{directory,zones}') = 'array'
+                                      THEN publication #> '{directory,zones}' ELSE '[]'::jsonb END) z,
+            jsonb_array_elements(CASE WHEN jsonb_typeof(z.value -> 'assos') = 'array'
+                                      THEN z.value -> 'assos' ELSE '[]'::jsonb END) a
+      WHERE a.value -> 'members' IS NULL
+        AND COALESCE(a.value ->> 'line', '') <> '');
+  ```
+
+- **Then delete.** The blanking branch of `settleCarteDirectory`, its predicate
+  `LEGACY_DIRECTORY_LINE` (and its use in `ERASURE_CARTES_TOUCHED` and `CANDIDATE_CARTES_SQL`), and
+  `cartesWithheld` with the WARN `internal.controller.ts` writes from it. The publish refusal stays:
+  it is the rule, not a shim.
 
 ### Entries `1.6.6` retires or unblocks (the owner's raise of 2026-11-08)
 
@@ -222,7 +358,7 @@ REST: those rows need a count, then a migration.
 | Reaction push keeps wire type `social` + a generic `body` (`notify-reaction`; had no entry here) | clients knowing `reaction: 'true'` (2026-08-15) | version YES (`v0.14.0`) | none | server + Kotlin dispatch | NOT removed, same iOS-alert question as the row above |
 | Post `images` field (in and out, `posts.service.ts`; had no entry here) | clients sending `media` | not established | `posts.images` is the column itself | DTO + normaliser | NOT removed: the client switch is undated; find it before judging |
 | Pre-MLS send path + `queued_message.content` | log silence (`LEGACY_CONTENT_PATH`/`_ROW`), dated 2026-11-19 | not a version question | the column | `else` arm + migration | owed: log read + count + migration |
-| Graine v1 reader | 0 unsigned rows | NO | 373 rows (2026-10-14) | - | revisit 2027-10-13 |
+| Graine v1 reader | 0 unsigned rows | NO | 373 rows (2026-10-14; re-read 2026-11-14: unchanged, newest 2026-10-09, 0 unsigned rows written since) | - | revisit 2027-10-13 |
 | `read_receipt` (both entries), `remove_reaction`, `pin`/`unpin` undated, no `sender_device_id`, no `message_id` | live peers (met) AND archive retention | live half YES, archive NO | Redis history streams | per entry | dates 2026-11-13 to 2026-12-15 stand |
 | Refresh cookie on `tauri://localhost` | floor AND a desktop measurement | floor YES, measurement NO | none | - | unchanged |
 | MiConnect `formation`/`promo` claims | WP9 | NO (not a version) | Authentik attributes | - | unchanged |
@@ -231,7 +367,7 @@ REST: those rows need a count, then a migration.
 | Form `dependsOn`/`dependsValue` (`forms/visibility.ts`; no entry here) | no stored form uses the pair | not a version question | `forms.items` | reader branch | owed: count |
 | State blob v1 header WRITER (`frame_v1`, CORRUPT-1/2) | floor >= the reader (`v0.18.18`) | YES | it CHANGES device data at rest | 1 line + `serverProse.test.ts` | FLIPPED in its own MLS PR (PK1, 2026-10-17, unshipped until a tag carries it); the LEGACY reader stays for blobs not yet rewritten ([backlog](backlog.md)) |
 | `MLS_STATE_SEAL_V2_WRITER_ENABLED` | `minClientVersion` AND the web rollback floor >= the tag carrying the HARDENED v2 reader (#2074) - a v2 reader alone (`v1.2.7`) is not enough: `v1.2.7` and `v1.4.0` misread a refused v2 blob, the second as `STATE_ALTERED` | NO (floor `1.2.7`; the hardened reader is in no tag yet) | it CHANGES device data at rest | 1 line in its own PR, then the encrypt worker | NOT done: #2074 ships the reader with the writer OFF ([mls-protocol](protocols/mls-protocol.md#v2---the-browser-seals-with-webcrypto-every-platform-reads-it-2026-10-12)) |
-| `CHAT_REEL_WRITER_ENABLED` (`reels/chatReelWriter.ts`, [reels-in-chat](frontend/modules/reels-in-chat.md#7-the-work-packages-in-order) item 6) | `minClientVersion` on the estate the writer writes to >= `v1.2.2`, the first stable carrying the reader (#1659, RC-1: a reel message is drawn as a tile, never as a downloadable chat video); a push says "CanaReel" from `v1.3.1` (#2112, RC-7), below it "video" - a softer line, not a misread. RC-6's "CanaReel supprime" (#2911) is NOT part of the floor: an older reader draws the player's expired state on the same `410` | YES on both estates, read 2026-11-02 from `GET /api/version`: production `1.5.1`, dev `1.2.7` (the push half too on production; on dev a `1.2.7`-`1.3.0` device would announce a reel as "video") | none | the floor is a precondition, nothing to remove | MET - the switch waits only for its other items (section 7) and the bench readings; how it turns on for dev only is the switch's own PR |
+| `CHAT_REEL_WRITER_ENABLED` (`reels/chatReelWriter.ts`, [reels-in-chat](frontend/modules/reels-in-chat.md#7-the-work-packages-in-order) item 6) | `minClientVersion` on the estate the writer writes to >= `v1.2.2`, the first stable carrying the reader (#1659, RC-1: a reel message is drawn as a tile, never as a downloadable chat video); a push says "CanaReel" from `v1.3.1` (#2112, RC-7), below it "video" - a softer line, not a misread. RC-6's "CanaReel supprime" (#2911) is NOT part of the floor: an older reader draws the player's expired state on the same `410` | YES on both estates, read 2026-11-02 from `GET /api/version`: production `1.5.1`, dev `1.2.7` (the push half too on production; on dev a `1.2.7`-`1.3.0` device would announce a reel as "video") | none | the floor is a precondition, nothing to remove | MET - re-read 2026-11-16 from `GET /api/version`: both estates serve `minClientVersion` `1.6.6`, above the reader, the push line and the `410` tombstone (#2911, `v1.6.3`), so every admitted client draws a chat reel as a tile and a purged one as "CanaReel supprime"; **the switch is a constant `true` since the `1.7.0` production flip** ([21.1](frontend/modules/reels-in-chat.md#211-the-switch-and-the-flip-pr)) |
 | The `1.2.1` key-group epoch floor (backlog owed line) | floor >= `1.2.1` | YES | - | - | closed (floor `1.5.1` on production, read 2026-10-31) |
 | Group removal hold (#1878) | floor >= the release carrying it | YES on production since 2026-10-29 (floor `1.2.9`) | - | - | floor met |
 | `GET mls/groups/:id` and `GET mls/group-info/:id` answer `{ found: false }` / `{ groupInfo: null }` instead of a bare `null` (an empty untyped 200), #2428 | the server deploys | not a version question: a deploy-order WINDOW | none | - | A stable ships both stores BEFORE production deploys, so for days new native clients talk to the old server. There, an empty untyped 200 reads as `error`, so a group deleted for everyone is not auto-purged on those clients until the server ships. That costs cleanup, not data. Once the server deploys, OLD clients change too: `fetchGroupInfo` returns `null` instead of throwing on an unpublished base (benign), and their `GroupInfo fetch failed` warn goes quiet ([chat](frontend/modules/chat.md#a-2xx-a-captive-portal-answered-is-no-answer-2026-10-25)) |
@@ -245,6 +381,7 @@ REST: those rows need a count, then a migration.
 | `follow-status` answers `following: true` for a PENDING follow request (`posts.controller.ts`, `getUserFollowStatus`; WP-F1) | floor past the first stable carrying the request screens (WP-F4), which read `status` | NO (unbuilt) | none | drop `following`, or make it mean accepted | waits for the floor. An older client's button shows the leave action for a request, so its user can withdraw what they asked; reading `following` as "accepted" would show "Suivre" and leave the request unwithdrawable there ([profiles-and-access](profiles-and-access.md#follow-requests-member-reposts-and-visibility-between-spaces---the-decisions-of-2026-10-25-all-shipped)) |
 | The account-seat `awaitingAdmission` on the groups list read off `deviceMembership.awaitingAdmission` when a row lacks it (`syncAdmissionFlags`, `admissionState.ts`; #2894) | production's chat-delivery serves the top-level field (one read of `GET mls/users/:userId/groups` on production showing it) | not a client version question: a deploy-order WINDOW, a store build ahead of production | none | the `??` arm and its WARN line | remove once production serves the field; until then each pass that takes it logs `[DISCOVERY] [WARN] ... read off this device's seat` |
 | The `join-ask-1` capability gate: `group.join_ask` / `group.join_ask.settled` reach only devices every session of which declared `join-ask-1` (chat-delivery `JOIN_ASK_PUBLISH_LUA`, gateway `requiresCapability`) | floor >= the first stable carrying the ask frames (#2442), raised once BOTH stores serve it | NO (unreleased) | none - the gateway's twin hash `addressing:join-ask:*`, one field per session with a TTL | the twin hash + its script + the `requiresCapability` field + `JOIN_ASK_CAPABILITY` in three places; the presence check stays | waits for the floor: an older build routes only `channel.`/`workspace.` frames and would log each ask as reaching no handler, so until the floor the gate is what keeps that line from every older client ([mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23), [chat-gateway](services/chat-gateway.md#presence)) |
+| The `admin-queues-1` capability gate: `admin.queues.changed` reaches only the sessions that declared `admin-queues-1` (gateway `requiresCapability` on `chat:channel_events`, edge-only) | floor >= `1.7.1`, the first stable routing the frame, raised once BOTH stores serve it | NO (unreleased) | none | the `requiresCapability` argument of the one publish + `ADMIN_QUEUES_CAPABILITY` in three places (social-service, gateway, client) | waits for the floor: an older build routes no `admin.` frame and would log each one as reaching no handler ([admin](frontend/modules/admin.md#pending-counts-and-the-admin-notices-owner-2026-11-18)) |
 | `PUT associations/:id/lydia-business-key` answers a typed `410 LYDIA_KEY_PASTE_RETIRED` and writes nothing; `GET` on the same path still answers `{ set }` (enrolment lot 1) | `minClientVersion` past the first build without the paste field, on BOTH stores | NO (unreleased) | none - the key column stays, written at `business/create` | 2 routes + `isLydiaBusinessKeySet` + 1 spec block | waits for the floor ([diary](#no-date-yet---the-lydia-key-paste-field-of-a-build-older-than-enrolment-lot-1)) |
 | A `closed` admission classification dropped at load (`drop_closed_admission_policies`, `mls-core` `state.rs`; review of #2817) | every device that ran a dev build of #2815 has loaded its state once on a later build - dev and alpha builds only, nothing shipped `closed` to a store | not a version question (dev/alphas) | `PersistedState.admission` in `mls.bin` | 1 function + 1 call + 1 test | remove 2027-02-01, or when the fix-forward re-arms the rule - whichever is first, since a re-armed rule writes `closed` again and must not have it dropped ([mls-protocol](protocols/mls-protocol.md)) |
 | `canari_admission_frozen` removed at session setup (`forgetLegacyAdmissionFreeze`, `setupMessageHandler.ts`; review of #2817) | every device that ran a dev build of #2815 has opened a session on a later build | not a version question (dev/alphas) | one device-global `localStorage` key, read by nothing | 1 function + 1 call + 1 test | remove 2027-02-01 ([mls-protocol](protocols/mls-protocol.md)) |
@@ -269,6 +406,69 @@ SELECT count(*) FROM lives WHERE "liveKey" IS NOT NULL;
 ---
 
 ## The diary
+
+### Removal once every account has opened its state on a build with KILL-2 - the `localStorage` ledger migration (#2515)
+
+`mls-client/stateLedgerMigration.ts` moves the seen-ciphertext marks
+(`history_seen_cipher:<user>:*` and its index) and the send ledger (`mls_send_ledger_<user>`) from
+`localStorage` into the MLS state, once per state without the `ledger-format` key. A count of states
+without the format is not measurable server-side (the state is sealed), so the condition is the
+floor (`minClientVersion`) at the first stable carrying #2515, plus one release cycle. Removing it
+early costs one re-walk per account that had not migrated - never a lost message.
+
+### Removal when fewer than 10 distinct pair links are seen over 7 days, floor at the token release - the `sig` agenda link (owner, 2026-11-14)
+
+**Site:** the `sig` branch of `GET /api/associations/calendar/feed.ics` and of the anonymous
+`calendar/feed` (`assertAgendaAccess`, `assertAgendaSignature`, `legacySelectionRead` and its
+`DailySightings` in `associations.controller.ts`), `POST calendar/feed-signature` and
+`AssociationsService.signAgendaFeedSelection`, and `legacyAgendaLinkShape` / `logDigest`
+(`agenda-signature.ts`).
+**What a `sig` read is answered:** a link names no holder, so the JSON feed answers it the events
+with every field naming an account (`createdBy`, `validatedBy`, `rejectedBy`) at `null`
+(`withoutAccountIds`); the `.ics` never carried one.
+**What it humours:** a calendar subscription saved from a selection link (`?campus=..&formation=..`,
+`?campus=..`, `?associationId=..` with `&sig=`, D40 amended 2026-10-06), and a store build older than
+the token link, whose modal still asks `feed-signature` and builds such links. Since 2026-11-14 a link
+is its holder's (`?token=`, [D40 re-decided](profiles-and-access.md#d40-re-decided-2026-11-14---the-link-is-its-holders));
+a `sig` names no one, so it serves only what EVERY reader who could hold it sees: a PAIR (campus AND
+formation, with or without an association) as before - every legitimate holder was in that space -
+and ANY OTHER SHAPE (a campus alone, a formation alone, an association alone) a valid EMPTY calendar
+(200, no event): the link still resolves, the app keeps it, it shows nothing. `feed-signature` signs
+pairs only; any other shape is the typed 403 `AGENDA_SELECTION_FORBIDDEN` the old modal already shows.
+**The cost while it stands:** a second agenda link that names no holder and cannot be revoked alone
+(only a key rotation ends it).
+**Measured by:** ONE WARN line per distinct link per process per UTC day,
+`[AGENDA_LEGACY_LINK] shape=pair|campus|formation|association link=<8 hex>` - the link is named by the
+first 8 hex characters of SHA-256 of its `sig`, which names no one and cannot be turned back into the
+link. **Count distinct `link=` values, never lines:** N replicas log one link up to N times a day, and
+a calendar app that polls a hundred times a day is still one link.
+**Removal condition:** fewer than 10 distinct `link=` values of `shape=pair` over 7 consecutive days
+(the other shapes already serve nothing, so they do not hold the shim up), AND NOT BEFORE
+`minClientVersion` is at least the store version that ships the token link (the floor rule above).
+Why 10 and not zero: a saved subscription is polled for as long as the calendar app lives, by people
+who never open Canari again, so zero may never come; under 10, ten people re-subscribing once costs
+less than keeping a second, unrevocable link kind alive. Then, in one pull request: the `sig` branch of
+both feeds (a `sig` is then the 403 it was without a signature), `feed-signature`,
+`signAgendaFeedSelection`, `legacySelectionRead`, `DailySightings`, `logDigest`, their
+specs, and this entry. The one-event link (`eventId` + its own `sig`) is NOT part of it.
+
+### A tolerated degradation: ranked Minesweeper for a build older than generator 2 (owner, 2026-11-13)
+
+- **What.** `POST /minesweeper/challenges` answers `426 generator_update_required` to a client that does not
+  say it can make the latest generator (`issuedGeneratorVersion`, `minesweeper.service.ts`;
+  [minesweeper](frontend/modules/minesweeper.md#generator-v2-owner-2026-11-13)). An older build, which sends no
+  `maxGeneratorVersion`, cannot start a ranked game: it falls back to an unranked one (its screen
+  treats any failure to start as "play casual") and shows nothing about why.
+- **Who.** Native apps older than the first release carrying generator 2 (they embed their own engine); the web
+  app is always current.
+- **Why accepted knowingly.** The owner's decision: the ranking compares times, and a time on an easier board
+  is not comparable. Issuing such a build the old generator would have kept it ranked, on boards nobody else
+  plays. It still plays the game; it only is not ranked.
+- **What stays in the code, and its removal.** The engine still replays generator 1, for the challenges
+  issued with it before the deploy and still open (two hours). Two hours after the deploy, with no open row
+  at `"generatorVersion" = 1`, drop the `generator === 1` branch of `placeMinesFor` and its fingerprint test
+  (`placeMines` stays: generator 2 starts from it). The refusal itself is not removed: it is how a future
+  generator 3 closes the ranking to generator 2.
 
 ### Removal once no association is left with a historical active account - the Lydia account bridge (owner, 2026-11-13)
 
@@ -311,6 +511,100 @@ to an upstream build whose own `libpq` is `>= 18.7-r0` - read in the scan of tha
 adminer:<tag>@sha256:<digest>` with `canari.deploy.replace: pinned` and no `build:`; delete the
 Dockerfile, its `build.yml` and `scheduled.yml` lines, the image checks of `adminer-route.test.mjs`, and
 this entry. The scan then reads the upstream reference again (`image-scan-targets.sh`).
+
+### Removal with WP6, once `[PROFILE_CURSUS_BEHIND]` is silent for 7 days - the legacy pair as a cursus view (D32, 2026-11-14)
+
+**Site:** `cursusViewsOf` (`apps/core-service/src/users/miconnect-profile.ts`), served as
+`cursusViews` by `internal/users/:id/public-profile`; the legacy half of `cursusEntryFilter`
+(`users/cursus-filter.ts`, the directory's promo and formation filters) and of `FORMATIONS_SQL`
+(`internal/internal-users.controller.ts`, the criterion editor's formation picker).
+**What it humours:** people whose `users.promo` / `users.formation` columns are set while `cursus` is
+empty or has no entry carrying that pair - the WP3 backfill not applied to them and no sign-in since
+([profiles-and-access](profiles-and-access.md)). Before D32 every price, question condition, audience
+and directory filter read those columns; D32 reads every cursus entry. So the pair stays a VIEW (D32
+only ever adds): nobody is priced higher, refused, shown fewer questions or dropped from the directory
+or the picker than before it. Each time it is added, core-service logs WARN
+`[PROFILE_CURSUS_BEHIND] user=<8-char prefix> legacy promo=.. formation=.. is in no cursus entry`.
+**The cost while it stands:** a second source for one fact on every profile-priced operation, and two
+`OR` branches in two queries.
+**Measured on production, 2026-11-14** (read-only count authorised by the owner, the query in #3530's
+body): `not_array` 0, `legacy_only` 0, `first_entry_disagrees` 0, `multi_cursus` 0 over 563 accounts.
+So that day nobody depended on the legacy pair alone, the first entry agreed with the columns
+everywhere, and nobody had two cursus yet: the shim was a guard, not a rescue.
+`[PROFILE_CURSUS_BEHIND]` stays the witness of any later drift (a write path that sets the columns
+without the cursus).
+**Removal condition:** no `[PROFILE_CURSUS_BEHIND]` line for 7 days, then WITH WP6 - dropping the
+`promo`/`formation` columns is that later chantier, not D32's pull request: delete the legacy half of `cursusViewsOf`, of
+`cursusEntryFilter` and of `FORMATIONS_SQL`, their spec cases and this entry.
+
+### Removal once `minClientVersion` passes the release carrying D32 - the single pricing slice of a fill page (2026-11-14)
+
+**Site:** `pricing` and `productGridPrices` in `FormsService.hasSubmission` (`/forms/:id/check`) and
+`FormsService.getPublic` (`apps/social-service/src/forms/forms.service.ts`), beside `cursusSlices`; and
+on the client, the branch of `cursusSlicesOf` (`frontend/src/lib/forms/fillPricing.ts`) that reads a
+server serving no `cursusSlices`.
+**What it humours:** a fill page older than D32 reads the single slice: it is served the FIRST cursus's
+(what it showed when one cursus was all anybody had), and the server still charges the cheapest, so it
+can only overstate or close what a newer page opens - never undercharge. The other way round, a page
+carrying D32 that reaches a server older than it (a rollback window) reads that server's single slice
+as its one slice, logged `[FORMS] the server serves no cursusSlices`.
+**The cost while it stands:** the first slice sent twice per answer, and one client branch.
+**Removal condition:** `minClientVersion` on both estates passes the first stable carrying D32, and no
+estate older than it is served. Then delete the two fields from both answers and their types, the
+`cursusSlicesOf` branch, its test and this entry.
+
+### Removal once `minClientVersion` passes the release carrying the account fields - a form editor that sends `guestFields` alone (2026-11-16)
+
+**Site:** `legacyGuestFieldsMerge` (`apps/social-service/src/forms/guest-identity.ts`), called by
+`FormsService.update` when an edit carries `guestFields` and no `respondentFields`, logged
+`[LEGACY] edit of ... sends guestFields without respondentFields`.
+**What it humours:** an editor older than [the respondent's account fields](frontend/modules/forms.md#the-respondents-account-fields-owner-2026-11-16)
+knows the guest's name and e-mail only, and sends them as the whole `guestFields` list on every save
+(`[]` on a form that is not public). Taken as sent, it would erase the declared asks (promo and
+formation, status, campus) the new editor ticked. Its names and e-mail are taken, the stored declared
+asks kept; `respondentFields` is absent from its body, so it keeps the stored value as any absent field.
+**The cost while it stands:** one branch on the edit path.
+**Removal condition:** `minClientVersion` on both estates passes the first stable carrying the account
+fields, and the `[LEGACY]` line is absent from production for a week. Then delete the helper, its
+branch, its test and this entry.
+
+### Removal once `minClientVersion` passes the release carrying the account fields - an export asked without identity words (2026-11-16)
+
+**Site:** `LEGACY_IDENTITY_EXPORT_LABELS` (`apps/social-service/src/forms/export-labels.ts`), used by
+`FormsService.exportSubmissions` when the form writes a promo, status or campus column and the
+request's labels carry no `identity`, logged `[LEGACY] export of ... without identity words`.
+**What it humours:** a store build older than the account fields sends the export words it knows,
+and none for those columns. Refusing it would leave an organiser on an old app with no export at all
+(lead, 2026-11-16: an old client's ordinary request is never refused); the columns are written in
+French, the words that build's own French catalogue holds (`form_respondent_*`).
+**The cost while it stands:** one constant and one branch; an English-speaking organiser on an old
+build reads those four headers in French.
+**Removal condition:** `minClientVersion` on both estates passes the first stable carrying the account
+fields, and the `[LEGACY]` line is absent from production for a week. Then make `identity` required
+in `parseExportLabels`, delete the constant, its branch, its test and this entry.
+
+### Removal once `minClientVersion` passes `1.7.0` - an answer from a build that cannot draw the declared questions (2026-11-16)
+
+**Site:** `predatesDeclaredFields` and the `olderClient` branch of `declaredIdentityFor`
+(`apps/social-service/src/forms/respondent-identity.ts`), fed by `X-Canari-Client-Version` on both
+submit routes (`forms.controller.ts`, `public-forms.controller.ts`), logged `[LEGACY] answer to
+form=... from a build older than 1.7.0`.
+**What it humours:** a store build older than `RESPONDENT_FIELDS_MIN_CLIENT_VERSION` (`1.7.0`) cannot
+draw "Promo et formation", "Statut" or "Campus" on an ANONYMOUS form (or a guest page it embeds), and
+names no build on a submit. Its answer carrying NONE of them is taken, stored
+`{ source: 'declared', notDeclared: [...] }`, and the organiser reads "Non déclaré" in those columns of
+the responses list and the export - never a blank that looks like an answer, never a refusal. A
+build that names `1.7.0` or later is judged in full (`FORM_GUEST_IDENTITY_MISSING`), and so is any
+declared field an older build does send. The version is a FACT the client states, not inferred from
+what is missing: a current build that forgot a field is refused, not marked.
+**The cost while it stands:** one branch on the submit path; such answers stay marked for good (the
+data's meaning, not a shim - the cell keeps reading "not declared" after the removal).
+**Removal condition:** `minClientVersion` on both estates passes `1.7.0` and the `[LEGACY]` line is
+absent from production for a week. Then delete the `olderClient` branch, `predatesDeclaredFields`, the
+header plumbing of the two submit routes, their tests and this entry; keep `notDeclared` on the read
+side.
+The answers given before migration 174 carry no snapshot and read the account's name live, as every
+answer always did: that is the data's meaning, not a client shim, and has no removal date.
 
 ### Removal once both estates log `drained=0` - live segments an older release left in Garage (2026-11-09)
 
@@ -394,19 +688,17 @@ that id (never the caller's own, which is the one the install is using). Permane
 date.
 **Condition:** every estate serves migration 040 (one deploy of each). The date is when to check.
 
-### Removal at deploy + one access-token lifetime - an access token that names no session
+### A tolerated breakage: a client older than `1.5.0` retiring its abandoned id (2026-11-17)
 
-**Site:** the `legacy` branch of `AuthController.sessionOfToken` in
-`apps/core-service/src/auth/auth.controller.ts`.
-**What it humours:** an access token minted before its issuer wrote `sid`. The issuer always writes it
-now, so such a token is pre-deploy by construction and dies by its own `exp` within
-`ACCESS_TOKEN_TTL_SECONDS` (1 h) of the deploy; it is accepted without a session read, `X-Session-Id`
-empty, logged once per process at `log`. Refusing it would answer every client signed in at the
-deploy anonymous for up to that hour. The dev estate cannot rehearse it (its tokens already carry
-`sid`).
-**Condition:** production has run the release carrying the check for longer than one access-token
-lifetime. Then delete the branch, so a token naming no session is answered anonymous like an ended
-one ([sessions](sessions.md#an-access-token-is-only-as-alive-as-its-session-2026-10-25)).
+**Site:** the own-device refusal of `DevicesController.deleteDevice` (chat-delivery,
+[auth](frontend/modules/auth.md#a-removed-row-whose-device-the-server-no-longer-lists)).
+**What breaks:** a client older than `1.5.0` (the `?reason=retired` parameter, #2450) retires the id
+its own rotation abandoned with a plain delete, read as an owner's; while its session is still bound to
+that id (until its next unlock rebinds it) the server now answers `409 OWN_DEVICE`, and the id is
+retired at a later round instead. Nothing is lost: the abandoned id holds no state the install uses.
+**Measured 2026-11-17 on production:** the KeyPackages published in the last 7 days name only
+`1.6.0` and later (the web is always current), so the population is ZERO.
+**Condition:** none - no shim was added.
 
 ### No date yet - a frontend image older than the target lists, drained by DNS (2026-11-01)
 
@@ -954,6 +1246,9 @@ an unknown id by its absence, so an answer with the field MISSING is read the ol
 `UserProfileFetchError(404)`, cached, rendered as the unknown-user label, one `console.debug` per
 chunk. Without it every absent id counted as a contract breach (`console.error`, 502, never cached)
 and `displayName.ts` warned, backed off 120 s and asked again.
+**Since 2026-11-14 the answer is `{ users, deleted, malformed }`** (a string that is not an account id
+is named in `malformed`, never `deleted`); a missing `malformed` is read as empty and needs no shim of
+its own, because only an older server omits it and such a server never classified an id.
 **Removal condition:** every estate's core-service sends `deleted` (dev and production both deployed
 past #2022, and no rollback below it planned); then the `legacyAnswer` branch goes and a missing
 field becomes the breach. A server version, not a client floor.
@@ -1047,18 +1342,18 @@ to close what PKCE alone does not.
 
 ### No date yet - the exclusions route answered without `withheld`, by a server older than 2026-10-22
 
-**Sites:** `entitledHistorySelection` (the inviter's push) and `dropOwnExcludedMessages` (the
-receiver), both in `frontend/src/lib/utils/chat/historyEntitlement.ts`, on `WithheldUnsupportedError`
-(thrown by `MlsDeliveryApi.getGroupWithheld`) and on nothing else.
+**Site:** `dropOwnExcludedMessages` (the receiver), in
+`frontend/src/lib/utils/chat/historyEntitlement.ts`, on `WithheldUnsupportedError` (thrown by
+`MlsDeliveryApi.getGroupWithheld`) and on nothing else. The push's site (`entitledHistorySelection`,
+with its once-per-session accusation) was DELETED on 2026-11-17: the push carries no message since,
+so it reads no withheld set
+([history-answer-addressing](protocols/history-answer-addressing.md#what-is-not-sealed-the-inviters-join-push---so-it-carries-no-message-2026-11-17)).
 **Shim (2026-10-22):** a server that predates the field answers the exclusions route without
-`withheld`, which is an ordinary state while a store build runs ahead of production. Both sites then
-do exactly what they did before the field existed. The push filters on the union of gaps, so a
-continuous member's new device and a 1:1 keep their restore. The receiver filters on its own gaps.
-**What it costs:** in that window a genuine newcomer to a group conversation is still pushed what
-preceded their arrival - the leak the field exists to close, unchanged from before it. That is why
-the push's branch is a FALLBACK and accuses: one `console.error` per session. The receiver's line is
-per bundle. Every other failure of the read still sends and ingests nothing.
-**Removal condition:** every estate's chat-delivery answers `withheld`; then both branches go and the
+`withheld`, which is an ordinary state while a store build runs ahead of production. The receiver
+then filters on its own gaps, as it did before the field existed.
+**What it costs:** nothing on the sending side any more. The receiver's line is per bundle. Every
+other failure of the read still ingests nothing.
+**Removal condition:** every estate's chat-delivery answers `withheld`; then the branch goes and the
 error is an ordinary refusal. A server version, not a client floor.
 
 ### No date yet - the exclusions route answered without `addressedAnswers`, by a server older than step A
@@ -1068,7 +1363,7 @@ error is an ordinary refusal. A server version, not a client floor.
 ([history-answer-addressing](protocols/history-answer-addressing.md), rule 2).
 **Shim (2026-10-22):** a server that predates step A refuses an addressed conversation frame, so
 every history answer - the push, the diff, the scrollback - is sent as the broadcast it was before,
-filtered on the union of gaps (plus the invitee's span on a push).
+filtered on the union of gaps (the push carries no message since 2026-11-17).
 **What it costs:** against such a server the answer is a broadcast, filtered on the union of gaps
 and, on the receiving side, on that receiver's own windows. It is a FALLBACK and accuses: one
 `console.error` per session.
@@ -1590,11 +1885,13 @@ a subscription is restricted to the reader's own spaces by a signed URL, and the
 - **Who is affected:** every calendar subscription saved from `/calendar` between the D40 release
   (selection URLs `?campus=..&formation=..`) and this one, and any association subscription saved
   before (`?associationId=..`). The calendar app shows an error or an empty calendar until the reader
-  subscribes again from `/calendar` or the association's page; the modal says so (`calendar_subscribe_old_links_notice`).
+  subscribes again from `/calendar` or the association's page; the modal said so until 2026-11-14
+  (`calendar_subscribe_old_links_notice`, removed when the link became its holder's).
   The single-event link (`?eventId=`) is NOT affected. An installed app embeds the old frontend, so its
   modal builds unsigned links until it updates: they are refused.
 - **Why nothing is removed later:** the signature IS the rule. Rotating `AGENDA_SIGNING_KEY` repeats this
-  break on purpose (it is the revocation) and needs no code.
+  break on purpose and needs no code. Since 2026-11-14 a holder also revokes their own links alone, and
+  the `sig` link itself is a dated shim (the diary entry above).
 
 ## Nothing to remove - an UNSIGNED single-event calendar link now gets a 403 (2026-11-02)
 

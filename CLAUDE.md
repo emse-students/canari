@@ -53,7 +53,7 @@
 - SURGICAL EDITS: touch ONLY requested code. Map changes 1:1 to the prompt.
 - FIX, NEVER DEFER: a warning or failure you meet is yours, whether or not you caused it - "pre-existing" is not a disposition. FACE THE BLOCKAGE: fix the cause of a failing hook (`bun run format`), never stash or bypass it.
 - WORKFLOW CYCLE: Plan -> Ask if uncertain -> Execute (surgical) -> Test -> commit -> pull request -> merge -> update SESSION STATE -> STOP. **WORK GOES THROUGH A PULL REQUEST, AND IT MERGES ITSELF; NOTHING DEPLOYS ON A PUSH** - the commands are in THE DEVELOPMENT CYCLE below. Model on [workflow-migration](docs/wiki/workflow-migration.md) and [cicd](docs/wiki/cicd.md), the only copies. **Admin bypass is the EMERGENCY path only**: taking it means production is broken right now, and it is written into `CHANGELOG.md` when taken. **At every milestone** (merged PR, pre-release, stable, phone reading) update the touched `target:` lines and regenerate [plan](docs/wiki/plan.md), append to [roadmap](docs/wiki/roadmap.md)'s log (**a shipped version: re-read the plan whole**), and tell the lead to republish the private artifact.
-- **RELEASE AUTHORITY** (user, 2026-10-11): the lead agent arms a pull request after an adversarial review and a green CI, and cuts pre-releases AND stables once the pre-release is read on a phone and nothing blocks, telling the user each time; **owner, 2026-11-10: the lead may also push store texts, screenshots and a new version (privacy URL included) to the App Store and Play consoles, and cut the 1.6.9 stable before the owner is back, on the same condition (read on both phones);** **feature switches (`calls_mode`, the CanaReels writer switch, any `*_COMPILED` or server mode) are the lead's to flip once their readings pass** (user, 2026-11-02: *"Tu peux tout activer en autonomie"*). **During the owner's long absence (granted 2026-11-02):** a migration, destructive ones included, merges after an adversarial review and a pass on dev (a HELD one: its approval line is merged by the owner OR by the lead under the 2026-11-03 delegation, [three conditions](docs/wiki/backlog.d/owner-decisions-of-2026-11-03-evening.md)); production down with no other fix may be RESTARTED or ROLLED BACK to the last good release (never a data deletion, never a host security setting), written into `CHANGELOG.md`; a new design question takes the recommended option when reversible (written to the wiki) and is parked in `open-questions.md` when not; progress is reported on one private tracking page. Any other direct production change or deletion still waits for the user's yes ([durable-rules](docs/wiki/durable-rules.md#release-and-ci---cicd); the 48-hour window of 2026-10-22 has ended). **NEVER INFER A STORE, A VERSION OR A CI STATE FROM A LINE HERE.** `gh release list` is the shipped version, `git log <latest stable>..origin/main` the unreleased work, Play a MEASUREMENT (`bun tools/play-vitals/vitals.mjs`), CI `gh run list`.
+- **RELEASE AUTHORITY** (user, 2026-10-11): the lead agent arms a pull request after an adversarial review and a green CI, and cuts pre-releases AND stables once the pre-release is read on a phone and nothing blocks, telling the user each time; **owner, 2026-11-10: the lead may also push store texts, screenshots and a new version (privacy URL included) to the App Store and Play consoles, and cut the 1.6.9 stable before the owner is back, on the same condition (read on both phones);** **feature switches (`calls_mode`, the CanaReels writer switch, any `*_COMPILED` or server mode) are the lead's to flip once their readings pass** (user, 2026-11-02: *"Tu peux tout activer en autonomie"*). **Owner, 2026-11-18:** the lead's release authority runs past 1.7.1 under the same rules; a reading needing a human hand that is not a regression is deferred to the next alpha; a production data repair runs under four conditions ([decisions](docs/wiki/backlog.d/owner-decisions-of-2026-11-18.md)). **During the owner's long absence (granted 2026-11-02):** a migration, destructive ones included, merges after an adversarial review and a pass on dev (a HELD one: its approval line is merged by the owner OR by the lead under the 2026-11-03 delegation, [three conditions](docs/wiki/backlog.d/owner-decisions-of-2026-11-03-evening.md)); production down with no other fix may be RESTARTED or ROLLED BACK to the last good release (never a data deletion, never a host security setting), written into `CHANGELOG.md`; a new design question takes the recommended option when reversible (written to the wiki) and is parked in `open-questions.md` when not; progress is reported on one private tracking page. Any other direct production change or deletion still waits for the user's yes ([durable-rules](docs/wiki/durable-rules.md#release-and-ci---cicd); the 48-hour window of 2026-10-22 has ended). **NEVER INFER A STORE, A VERSION OR A CI STATE FROM A LINE HERE.** `gh release list` is the shipped version, `git log <latest stable>..origin/main` the unreleased work, Play a MEASUREMENT (`bun tools/play-vitals/vitals.mjs`), CI `gh run list`.
 - **FOUR WORKFLOWS ARE VISIBLE IN THE ACTIONS LIST, AND THAT IS DELIBERATE** (user, 2026-09-04: *"le moins de workflows differents possibles, ca inonde la console github"*): `ci.yml`, `release.yml`, `arm-auto-merge.yml`, `scheduled.yml`; the rest are `workflow_call` libraries ([cicd](docs/wiki/cicd.md)). **A fifth visible workflow needs a reason beyond "another topic".**
 - COMMIT **AND PUSH** IN THE BACKGROUND, ALWAYS - both are minutes long and neither is worth a blocked session. The pre-commit hook sweeps the WHOLE frontend (2-3 min) and re-stages it; a push to this remote routinely exceeds a 5-min foreground timeout. Isolate unrelated dirty files first. `rm -rf apps/*/dist` before `git push`.
 - STATE PRUNING: when updating SESSION STATE, DELETE completed work outright. Its rule goes to `durable-rules`, its story to `CHANGELOG.md`, its mechanism to the wiki page that entry points at. **Do not reconstruct shipped work here.**
@@ -78,7 +78,7 @@ Portail-etu since 2026-09-04, minus the bump and the two stores.
    gh pr create                                             |
         |                                          release.yml, ONE run
         +--> CI ------------------+                         |
-        |     tests + security    |                  6 gates (no bypass)
+        |     tests + security    |                  7 gates (no bypass)
         |     -> `CI passed`      |                         |
         +--> arm-auto-merge ------+                    bump + push
               (IN PARALLEL)       |                         |
@@ -95,7 +95,9 @@ Portail-etu since 2026-09-04, minus the bump and the two stores.
 
 **Before every commit**: `bun run check` (0 errors), `bun run lint`, `bun run format` in `frontend/` -
 the hook runs them anyway and re-stages, so run them first rather than reading a commit you have not
-seen. Then commit AND push in the background.
+seen. Then commit AND push in the background. **The commit runs path-scoped checks; the push merges
+`origin/main`, runs the locally runnable CI jobs its range triggers, and after a merge asks for the same push again**
+(owner, 2026-11-15; needs `DOCS_PRIVATE_DENYLIST_FILE` set, or `none`; [tiers](docs/wiki/cicd.md#checks-at-commit-at-push-and-in-ci-only)).
 
 **GESTURE ONE, and the whole of it.** `git switch -c`, commit, `gh pr create` - then **nothing**.
 No approval is required, the merge and the branch deletion are automatic, and `main` carries ruleset
@@ -113,22 +115,23 @@ the App Store, Play and the GitHub release body through ONE implementation, read
 MARKETING_VERSION=0.16.2 bun tools/app-store/submit.mjs --check-notes
 ```
 
-**A STABLE SHIPS THE LATEST `vX.Y.Z-alpha.N` OF ITS VERSION** (built on `release/vX.Y.Z` like every pre-release, tag moved to the shipped commit, so `main` may keep merging) **and is REFUSED without one that served dev**, so the ordinary
+**A STABLE SHIPS THE LATEST `vX.Y.Z-alpha.N` OF ITS VERSION** (built on `release/vX.Y.Z` like every pre-release, tag moved to the shipped commit, so `main` may keep merging) **and is REFUSED without one that served dev, or when its tag is not typed ON that alpha's commit** (`--target`: GitHub runs the workflow files from it, [cicd](docs/wiki/cicd.md#the-stables-commit-is-asserted-not-only-derived-2026-11-14)), so the ordinary
 sequence is two releases:
 
 ```sh
 gh release create v0.16.2-alpha.1 --prerelease --generate-notes   # -> dev + testers, moves the marker
 # wait for it to be green; merging to main meanwhile is fine - the stable ships THIS pre-release
-gh release create v0.16.2 --generate-notes                        # -> production + both stores
+ALPHA=$(gh api repos/emse-students/canari/commits/v0.16.2-alpha.1 --jq .sha)  # the LATEST alpha's commit
+gh release create v0.16.2 --target "$ALPHA" --generate-notes     # -> production + both stores
 ```
 
-**The six gates, and there is no bypass input** (`.github/scripts/release-preflight.sh`): the
+**The seven gates, and there is no bypass input** (`.github/scripts/release-preflight.sh`): the
 version parses; `main` contains the commit (merging after the cut is free: every bump pushes
 `release/vX.Y.Z`, `land` carries it to `main`, [cicd](docs/wiki/cicd.md#a-pre-release-is-pinned-on-its-release-branch-decided-2026-10-30)) and a pre-release is the newest release (no tag has a higher store build); `CI passed` is green ON that
 commit - **main's OWN CI takes 14-22 min (17-20 typical, measured 2026-10-18) after a merge, so a release cut in the minute after one is
 REFUSED with `CI passed never ran on <sha>`; wait for `gh run list --branch main`, then `gh run
 rerun`, which needs no new tag** (2026-09-07). **A RERUN RESCUES THAT GATE ONLY, AND ONLY WHILE NOTHING NEWER SHIPPED** - it re-reads the SAME tag, so once a later pre-release is out the rerun is REFUSED (it would move dev and the store build back) and the answer is a NEW tag at the current head; dev has served it
-(stables); the notes name it; no held migration ships without its approval line merged by hand, by the owner or by the lead under the 2026-11-03 delegation ([held](docs/wiki/cicd.md#a-migration-the-owner-must-approve-is-held-2026-11-01)). *A skip flag is a fallback, and the fix belongs where the primary path
+(stables); the notes name it; no held migration ships without its approval line merged by hand, by the owner or by the lead under the 2026-11-03 delegation ([held](docs/wiki/cicd.md#a-migration-the-owner-must-approve-is-held-2026-11-01)); no advisory touches what a stable ships ([audit](docs/wiki/cicd.md#the-audit-blocks-on-what-we-ship-2026-11-17)). *A skip flag is a fallback, and the fix belongs where the primary path
 failed.* The emergency path is a human with admin rights, written into `CHANGELOG.md` when taken.
 
 **Afterwards**: delete the local branch (`git branch -D`; squash merges are invisible to `--merged`,

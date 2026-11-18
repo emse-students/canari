@@ -375,7 +375,7 @@ export interface ListedSpace {
 }
 
 /** The person a booker may write to about a space. */
-export interface SpaceContact {
+interface SpaceContact {
   userId: string;
   displayName: string;
 }
@@ -463,6 +463,8 @@ export interface MyBooking extends BookingView {
   privateInfo: { spacePrivateInfo: string | null; resourcePrivateInfo: string | null } | null;
   /** THE READER's own reminder delay on it, in minutes; null = none (WP-N, Q-R1). */
   reminderMinutes: number | null;
+  /** When THE READER's reminder went out (ISO), null while it has not - absent from an older server. */
+  reminderSentAt?: string | null;
 }
 
 /** What a booking request carries (D4, D7, D20); instants are ISO with their zone. */

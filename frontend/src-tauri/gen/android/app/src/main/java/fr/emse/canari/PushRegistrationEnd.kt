@@ -116,7 +116,7 @@ object PushRegistrationEnd {
             Tasks.await(FirebaseMessaging.getInstance().deleteToken(), FCM_TIMEOUT_S, TimeUnit.SECONDS)
             true
         } catch (e: Exception) {
-            Log.e(TAG, "completeOwedDeletion: FCM deleteToken failed - still owed: ${e.javaClass.simpleName}: ${e.message}")
+            Log.e(TAG, "completeOwedDeletion: FCM deleteToken failed - still owed: ${e.javaClass.simpleName}: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
             false
         }
 
@@ -140,7 +140,7 @@ object PushRegistrationEnd {
             val token = try {
                 Tasks.await(FirebaseMessaging.getInstance().token, FCM_TIMEOUT_S, TimeUnit.SECONDS)
             } catch (e: Exception) {
-                Log.w(TAG, "fetchFreshToken: FCM refused - the next launch fetches it: ${e.message}")
+                Log.w(TAG, "fetchFreshToken: FCM refused - the next launch fetches it: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
                 return
             }
             if (token.isNullOrEmpty()) {
@@ -154,7 +154,7 @@ object PushRegistrationEnd {
                     .edit().putString(CanariFirebaseMessagingService.KEY_FCM_TOKEN, token).apply()
                 Log.i(TAG, "fetchFreshToken: fresh token mirrored for the next registration")
             } catch (e: Exception) {
-                Log.e(TAG, "fetchFreshToken: unable to write $FCM_TOKEN_FILE: ${e.message}")
+                Log.e(TAG, "fetchFreshToken: unable to write $FCM_TOKEN_FILE: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
             }
         }
     }

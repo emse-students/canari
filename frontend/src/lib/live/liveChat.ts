@@ -45,7 +45,12 @@ import {
 import { LIVE_MANIFEST_POLL_MS } from './constants';
 import { liveRetryDelayMs } from './liveViewerState';
 import { liveViewerCount } from './liveViewerCount';
-import { LiveChatOpenError, openLiveChatMessage, sealLiveChatMessage } from './liveChatCrypto';
+import {
+  LIVE_CHAT_V1_MAX_CHARS,
+  LiveChatOpenError,
+  openLiveChatMessage,
+  sealLiveChatMessage,
+} from './liveChatCrypto';
 import type {
   LiveChatBlock,
   LiveChatMessageWire,
@@ -232,7 +237,12 @@ export class LiveChatSession {
   private readonly verifiedEchoes = new Set<string>();
 
   private keyHex: string | null = null;
-  private maxChars: number | null = null;
+  /**
+   * The longest line this client sends: the server's `chatMessageMaxChars`, never past the v1
+   * format's bound - and that bound from the start, because the limits arrive asynchronously and a
+   * longer line would be stored (the server counts bytes) yet dropped by every viewer (review of #3783).
+   */
+  private maxChars: number = LIVE_CHAT_V1_MAX_CHARS;
   private tapCap: number | null = null;
   private messagesAfter: number | undefined;
   private reactionsAfter: number | undefined;
@@ -297,12 +307,12 @@ export class LiveChatSession {
 
   /** The server's numbers (`GET /api/lives/limits`): the longest message and a burst's taps. */
   setLimits(limits: Pick<LiveLimits, 'chatMessageMaxChars' | 'reactionTapsPerWindow'>): void {
-    this.maxChars = limits.chatMessageMaxChars;
+    this.maxChars = Math.min(limits.chatMessageMaxChars, LIVE_CHAT_V1_MAX_CHARS);
     this.tapCap = limits.reactionTapsPerWindow;
   }
 
-  /** The longest message, or null before the limits arrived. */
-  get messageMaxChars(): number | null {
+  /** The longest message this client sends (the v1 format's bound until the limits arrive). */
+  get messageMaxChars(): number {
     return this.maxChars;
   }
 
@@ -370,7 +380,7 @@ export class LiveChatSession {
     }
     const text = raw.trim();
     if (text === '') return 'empty';
-    if (this.maxChars !== null && text.length > this.maxChars) {
+    if (text.length > this.maxChars) {
       console.warn(
         `[LIVE_CHAT] ${this.liveId}: a ${text.length}-char message refused before sealing`
       );

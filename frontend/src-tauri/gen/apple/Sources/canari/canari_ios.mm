@@ -230,7 +230,7 @@ static void CanariReportSettledKeyboardGeometry(WKWebView *webView) {
               if (error != nil || ![result isKindOfClass:[NSString class]]) {
                 NSLog(@"[CanariIOS] keyboard settled: native offset=%.1f content=%.1f bounds=%.1f | "
                       @"page geometry NOT read: %@",
-                      offset, content, bounds, error);
+                      offset, content, bounds, CanariErrorReason(error));
                 return;
               }
               NSLog(@"[CanariIOS] keyboard settled: native offset=%.1f content=%.1f bounds=%.1f | page %@",
@@ -300,7 +300,7 @@ static void CanariKeyboardLayoutSettled(WKWebView *webView) {
 /// Calls `then` once WebKit has put on screen every update pending NOW - the page's reaction to a
 /// call that has returned, or to a resize that was just set: `takeSnapshotWithConfiguration:` with
 /// `afterScreenUpdates`, which WebKit takes "after incorporating any pending screen updates", on a
-/// 1 pt rect whose image is dropped. The public form of Android's `postVisualStateCallback`;
+/// 1 pt rect whose image is dropped (the public form of a WebView visual-state callback);
 /// `_doAfterNextPresentationUpdate:` is the private one and is never used in a store build. `then`
 /// receives the proof's own duration and its error, if any.
 static void CanariAfterScreenUpdates(WKWebView *webView, void (^then)(double proofMs, NSError *error)) {
@@ -331,7 +331,7 @@ static void CanariSnapKeyboardFrame(WKWebView *webView, CGRect target) {
       return;
     }
     if (error != nil) {
-      NSLog(@"[CanariIOS] ERROR keyboard settle: the screen-update proof failed (%@)", error);
+      NSLog(@"[CanariIOS] ERROR keyboard settle: the screen-update proof failed (%@)", CanariErrorReason(error));
     }
     CanariKeyboardLayoutSettled(webView);
   });
@@ -349,8 +349,9 @@ static void CanariEndPendingRise(NSString *why) {
         why);
 }
 
-/// A KEYBOARD RISE, IN THE ORDER THAT SHOWS NO TRAILING FRAME - the iOS half of the hand-off Android
-/// takes in `MainActivity.handOffIme` (keyboard-and-send-motion.md), on the same page contract.
+/// A KEYBOARD RISE, IN THE ORDER THAT SHOWS NO TRAILING FRAME, on the page contract Android also
+/// announces to (`window.canariImeTarget`; Android no longer resizes its WebView at all since #3556 -
+/// keyboard-and-send-motion.md).
 ///
 /// 1. The page is told the keyboard's height (`window.canariImeTarget`, `keyboardViewport.svelte.ts`
 ///    + `imeTarget.ts`; a WKWebView CSS px is a point) and lays itself out for it, synchronously,
@@ -384,8 +385,8 @@ static void CanariHandKeyboardRiseToPage(WKWebView *webView, CGRect target, CGFl
               if (!taken) {
                 g_keyboardRisePending = NO;
                 NSLog(@"[CanariIOS] ERROR keyboard rise #%lu: the page did not take the target after "
-                      @"%.0f ms (%@) - resizing now, its old frame may show cropped",
-                      (unsigned long)seq, scriptMs, error ?: result);
+                      @"%.0f ms (%@; page %@) - resizing now, its old frame may show cropped",
+                      (unsigned long)seq, scriptMs, CanariErrorReason(error), result);
                 CanariSnapKeyboardFrame(webView, target);
                 return;
               }
@@ -397,7 +398,7 @@ static void CanariHandKeyboardRiseToPage(WKWebView *webView, CGRect target, CGFl
                 if (proofError != nil) {
                   NSLog(@"[CanariIOS] ERROR keyboard rise #%lu: the screen-update proof failed after "
                         @"%.0f ms (%@) - resizing anyway",
-                        (unsigned long)seq, proofMs, proofError);
+                        (unsigned long)seq, proofMs, CanariErrorReason(proofError));
                 } else {
                   NSLog(@"[CanariIOS] keyboard rise #%lu: the page's keyboard layout is on screen "
                         @"after %.0f ms (script %.0f ms, proof %.0f ms) - webview height %.0f",
@@ -573,12 +574,32 @@ static void CanariApplyWebViewTransparency(void) {
 /// bottom one (WebKit reports `env(safe-area-inset-*)` as 0 here, so nothing else can tell the page).
 /// Measured on its own this was a defect - the page drew under the clock with no inset to avoid it -
 /// which is why the two halves ship together and the top consumers read the variable, not env().
-static void CanariApplyEdgeToEdge(void) {
-  WKWebView *webView = CanariFindWebView();
-  if (webView == nil) {
+///
+/// THE TWO HALVES HAVE ONE CALLER, `CanariPublishSafeAreaInsets`, which runs this before it measures
+/// (bench iPhone 12, 1.7.0-alpha.12, 2026-11-18: a white band of 47 pt above the header). The
+/// safe-area hook publishes at LAUNCH, before `didBecomeActive` - syslog: `top 47 pt` published at
+/// 09.133, activation at 09.364 - and this used to run at activation only. Between the two the page
+/// padded 47 pt while UIKit still inset the scroll view by 47 pt: the status bar counted twice. A
+/// launch that does not become active at once (under a system alert, in the background) kept that
+/// state on screen, and the old activation-time switch left UIKit's offset (-47) stranded: it ran
+/// before the scroll-range observer was installed, and a document that never scrolls never fired it
+/// again. Idempotent: a WebView already edge to edge is left alone.
+static void CanariApplyEdgeToEdge(WKWebView *webView) {
+  UIScrollView *scrollView = webView.scrollView;
+  if (scrollView.contentInsetAdjustmentBehavior == UIScrollViewContentInsetAdjustmentNever) {
     return;
   }
-  webView.scrollView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
+  CGFloat before = scrollView.contentOffset.y;
+  scrollView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
+  // The offset UIKit set for the old inset (-47 pt) is put on the new top HERE, as part of the
+  // switch: left to `CanariClampDocumentScroll` it would read as a stranding defect on every launch.
+  CGFloat top = -scrollView.adjustedContentInset.top;
+  if (!scrollView.tracking && !scrollView.dragging && !scrollView.decelerating && before < top) {
+    scrollView.contentOffset = CGPointMake(scrollView.contentOffset.x, top);
+  }
+  NSLog(@"[CanariIOS] WebView made edge to edge: UIKit's scroll view inset withdrawn (top now %.0f pt), "
+        @"offset %.1f -> %.1f",
+        scrollView.adjustedContentInset.top, before, scrollView.contentOffset.y);
 }
 
 /// Makes the system chrome follow the APP's theme, not the phone's. The status bar is
@@ -715,7 +736,135 @@ static void CanariSafeAreaDidChange(id self, SEL _cmd) {
   CanariPublishSafeAreaInsets();
 }
 
-/// Installs both hooks on tao's controller, each once: the orientation mask and the safe-area change.
+/// A TURN SHOWS NO STALE LAYOUT (owner, iPhone 12 and Mi 9T, 2026-11-15: "Garder l'ancienne image
+/// jusqu'a la nouvelle"; screen-orientation.md, "A turn shows no stale frame"). UIKit turns the
+/// WebView's frame inside its rotation animation, but WebKit keeps drawing the page laid out at the
+/// OLD size until the web process commits one at the new size, so the turn ended on the old layout
+/// pinned to a corner beside empty space. Safari hides that with a private animated-resize API; the
+/// public form is to HOLD THE OLD PICTURE: the root view as it was (`snapshotViewAfterScreenUpdates:NO`)
+/// is laid over everything and counter-rotated by the inverse of the coordinator's `targetTransform`
+/// alongside UIKit's own animation, so it stays exactly where it was on the glass while the interface
+/// turns under it. It is released by two proofs, the Android mechanism's, never by a delay:
+///
+/// 1. the PAGE has the new width (`CanariTurnPageAtWidth`: `callAsyncJavaScript` resolving once
+///    `innerWidth` is the WebView's width within one CSS px, now or on a `resize`) - a screen-update
+///    proof alone can be answered before the web process has the new size, which Android measured
+///    (2 turns in 8 answered by an old-size frame). Only the width: the keyboard path moves the
+///    WebView's height, never its width, so the height is not a size this proof can wait for;
+/// 2. then WebKit has put its pending updates on screen (`CanariAfterScreenUpdates`, the keyboard
+///    path's proof).
+///
+/// THE LIMIT, stated: no public iOS event says the web process is hung (Android has
+/// `onRenderProcessUnresponsive`), so a WebContent process that stops answering without crashing
+/// keeps the old picture until it answers - a crash or a navigation does end the script with an error.
+///
+/// A failed script (a navigation or a WebContent crash ends it with an error) releases at ERROR: no
+/// answer can come. Only a turn is held: the shape flips AND the interface rotates (a non-identity
+/// `targetTransform`) - a keyboard, an iPad Split View or a Stage Manager resize is not one. ANY transition while a picture is held drops it first, with a line - a 180-degree turn or an
+/// interrupting one would otherwise leave it counter-rotated by the wrong angle - and supersedes the
+/// held turn's proofs.
+typedef void (*CanariWillTransitionIMP)(id, SEL, CGSize, id<UIViewControllerTransitionCoordinator>);
+static CanariWillTransitionIMP CanariOrigWillTransition = NULL;
+static UIView *g_canariTurnHold = nil;
+static NSUInteger g_canariTurnSeq = 0;
+
+/// Calls `then` once the page's layout viewport is `width` CSS px wide (within one), or with the
+/// script's error. One shared definition with Android's `pageMatchesBox`: within one CSS px.
+static void CanariTurnPageAtWidth(WKWebView *webView, CGFloat width, void (^then)(NSError *error)) {
+  NSString *body =
+      @"return await new Promise(function (done) {"
+       "  function check() {"
+       "    if (Math.abs(innerWidth - width) <= 1) { removeEventListener('resize', check); done(innerWidth); }"
+       "  }"
+       "  addEventListener('resize', check);"
+       "  check();"
+       "});";
+  [webView callAsyncJavaScript:body
+                     arguments:@{@"width" : @(width)}
+                       inFrame:nil
+                inContentWorld:WKContentWorld.pageWorld
+             completionHandler:^(__unused id result, NSError *error) {
+               then(error);
+             }];
+}
+
+static void CanariWillTransitionToSize(id self, SEL _cmd, CGSize size,
+                                       id<UIViewControllerTransitionCoordinator> coordinator) {
+  CanariOrigWillTransition(self, _cmd, size, coordinator);
+  if (g_canariTurnHold != nil) {
+    NSLog(@"[CanariOrientation] turn %lu: a new transition began while its old picture was held - dropped",
+          (unsigned long)g_canariTurnSeq);
+    [g_canariTurnHold removeFromSuperview];
+    g_canariTurnHold = nil;
+    g_canariTurnSeq += 1;
+  }
+  UIView *root = ((UIViewController *)self).view;
+  WKWebView *webView = CanariFindWebView();
+  CGSize old = root.bounds.size;
+  if (webView == nil || root == nil || old.width <= 0 || old.height <= 0 || size.width <= 0 ||
+      size.height <= 0 || (old.width > old.height) == (size.width > size.height)) {
+    return;
+  }
+  if (CGAffineTransformIsIdentity(coordinator.targetTransform)) {
+    // The shape flipped with no rotation: an iPad Split View or Stage Manager resize, Android's
+    // `isUnrotatedFlip`. Not a turn, so not held - and said, since a missed turn would look the same.
+    NSLog(@"[CanariOrientation] %.0fx%.0f -> %.0fx%.0f pt with no rotation (a window resize) - not held",
+          old.width, old.height, size.width, size.height);
+    return;
+  }
+  NSUInteger seq = ++g_canariTurnSeq;
+  UIView *hold = [root snapshotViewAfterScreenUpdates:NO];
+  if (hold == nil) {
+    NSLog(@"[CanariOrientation] ERROR turn %lu: no snapshot of the screen - the turn shows WebKit's old layout",
+          (unsigned long)seq);
+    return;
+  }
+  hold.userInteractionEnabled = NO;
+  hold.bounds = CGRectMake(0, 0, old.width, old.height);
+  hold.center = CGPointMake(old.width / 2.0, old.height / 2.0);
+  [root addSubview:hold];
+  g_canariTurnHold = hold;
+  NSLog(@"[CanariOrientation] turn %lu: %.0fx%.0f -> %.0fx%.0f pt, the old picture held until WebKit has its new layout on screen",
+        (unsigned long)seq, old.width, old.height, size.width, size.height);
+  CFTimeInterval started = CACurrentMediaTime();
+  CGAffineTransform counter = CGAffineTransformInvert(coordinator.targetTransform);
+  void (^release)(NSString *) = ^(NSString *how) {
+    if (seq != g_canariTurnSeq) return;
+    [hold removeFromSuperview];
+    if (g_canariTurnHold == hold) g_canariTurnHold = nil;
+    NSLog(@"[CanariOrientation] turn %lu: %@ %.0f ms after the turn began - old picture released", (unsigned long)seq,
+          how, (CACurrentMediaTime() - started) * 1000.0);  // log-safe: a turn counter, a fixed phrase and a duration
+  };
+  [coordinator
+      animateAlongsideTransition:^(__unused id<UIViewControllerTransitionCoordinatorContext> context) {
+        hold.transform = counter;
+        hold.center = CGPointMake(CGRectGetMidX(root.bounds), CGRectGetMidY(root.bounds));
+      }
+      completion:^(__unused id<UIViewControllerTransitionCoordinatorContext> context) {
+        if (seq != g_canariTurnSeq) return;
+        CanariTurnPageAtWidth(webView, webView.bounds.size.width, ^(NSError *pageError) {
+          if (seq != g_canariTurnSeq) return;
+          if (pageError != nil) {
+            NSLog(@"[CanariOrientation] ERROR turn %lu: the page could not answer its width (%@) - released WITHOUT the proof",
+                  (unsigned long)seq, CanariErrorReason(pageError));
+            release(@"no answer can come,");
+            return;
+          }
+          NSLog(@"[CanariOrientation] turn %lu: the page is at the new width %.0f ms after the turn began - waiting for the screen",
+                (unsigned long)seq, (CACurrentMediaTime() - started) * 1000.0);  // log-safe: a turn counter and a duration
+          CanariAfterScreenUpdates(webView, ^(__unused double proofMs, NSError *error) {
+            if (error != nil) {
+              NSLog(@"[CanariOrientation] ERROR turn %lu: the screen-update proof failed (%@) - released on its answer",
+                    (unsigned long)seq, CanariErrorReason(error));
+            }
+            release(@"new layout on screen");
+          });
+        });
+      }];
+}
+
+/// Installs the hooks on tao's controller, each once: the orientation mask, the safe-area change and
+/// the turn's held picture.
 static void CanariInstallOrientationHook(NSString *where) {
   if (CanariOrigSupportedOrientations == NULL) {
     CanariOrigSupportedOrientations = (CanariSupportedOrientationsIMP)CanariHookTaoController(
@@ -725,6 +874,11 @@ static void CanariInstallOrientationHook(NSString *where) {
   if (CanariOrigSafeAreaDidChange == NULL) {
     CanariOrigSafeAreaDidChange = (CanariSafeAreaDidChangeIMP)CanariHookTaoController(
         @selector(viewSafeAreaInsetsDidChange), (IMP)CanariSafeAreaDidChange, @"safe-area", where);
+  }
+  if (CanariOrigWillTransition == NULL) {
+    CanariOrigWillTransition = (CanariWillTransitionIMP)CanariHookTaoController(
+        @selector(viewWillTransitionToSize:withTransitionCoordinator:), (IMP)CanariWillTransitionToSize,
+        @"turn-hold", where);
   }
 }
 
@@ -774,7 +928,7 @@ static void CanariApplyOrientation(NSString *mode) {
       [[UIWindowSceneGeometryPreferencesIOS alloc] initWithInterfaceOrientations:mask];
   [scene requestGeometryUpdateWithPreferences:preferences
                                  errorHandler:^(NSError *error) {
-                                   NSLog(@"[CanariOrientation] ERROR the scene refused %@: %@", mode, error);
+                                   NSLog(@"[CanariOrientation] ERROR the scene refused %@: %@", mode, CanariErrorReason(error));
                                  }];
 }
 
@@ -841,7 +995,7 @@ static void CanariPushCameraEvent(NSString *name, NSString *detail) {
   [webView evaluateJavaScript:js
             completionHandler:^(__unused id result, NSError *error) {
               if (error != nil) {
-                NSLog(@"[CanariCamera] ERROR %@ not delivered to the page: %@", name, error);
+                NSLog(@"[CanariCamera] ERROR %@ not delivered to the page: %@", name, CanariErrorReason(error));
               }
             }];
 }
@@ -926,7 +1080,7 @@ static void CanariStartCameraAngle(void) {
       startAccelerometerUpdatesToQueue:[NSOperationQueue mainQueue]
                            withHandler:^(CMAccelerometerData *data, NSError *error) {
                              if (error != nil) {
-                               NSLog(@"[CanariCamera] ERROR accelerometer: %@", error);
+                               NSLog(@"[CanariCamera] ERROR accelerometer: %@", CanariErrorReason(error));
                                return;
                              }
                              if (!g_canariCameraArmed || data == nil) return;
@@ -1148,25 +1302,6 @@ static void CanariRegisterCallPageHandlers(NSString *where) {
   }
 }
 
-/// Publishes the home indicator's inset to the page as `--safe-area-inset-bottom` - the iOS peer of
-/// what Android's window insets give the same 35 consumers (`app.html` names that variable "the one
-/// place this is decided").
-///
-/// WebKit reports EVERY `env(safe-area-inset-*)` as 0 in this WebView, the bottom included: the page
-/// reaches the screen's bottom edge (`innerHeight` 797 of 844 because UIKit insets the top by the
-/// status bar and the bottom by nothing), so nothing on the web side could keep a control out of the
-/// home indicator - the post composer's "Publier" sat 26 pt into it. Measured over the bench's CDP
-/// on an iPhone 12, 2026-09-30. `contentInsetAdjustmentBehavior = .never` was tried and is WRONG:
-/// the viewport became the whole screen, the insets stayed 0, and the page drew under the status bar.
-/// So the top stays UIKit's (the page starts below the bar) and only the bottom is told to the page.
-///
-/// The inset is the window's bottom safe area MINUS the part of it the WebView no longer reaches,
-/// so a WebView shrunk above the keyboard publishes 0 - the same outcome `.keyboard-open` has on
-/// Android, and what the old comment on CanariApplyKeyboardLayout relied on UIKit to do through env().
-/// Re-read at every activation (a reload of the page loses the property), after every keyboard
-/// resize, and at every change of the root controller's safe area (`CanariSafeAreaDidChange`: the video
-/// and camera screens rotate since 2026-11-09, and then the notch's side is published as
-/// `--safe-area-inset-left/right`).
 /// Republishes the inset when a page finishes loading: a document that loads after the publish
 /// starts without the property (seen on a cold start, where the first `didBecomeActive` precedes the
 /// end of the initial load - syslog showed 34 pt published and the page still read 0).
@@ -1186,14 +1321,41 @@ static void CanariRegisterCallPageHandlers(NSString *where) {
 }
 @end
 
+/// Publishes the safe area to the page as `--safe-area-inset-bottom`, `-top`, `-left` and `-right` -
+/// the iOS peer of what Android's window insets give the same consumers (`app.html` names the bottom
+/// variable "the one place this is decided").
+///
+/// WebKit reports EVERY `env(safe-area-inset-*)` as 0 in this WebView (measured over the bench's CDP
+/// on an iPhone 12, 2026-09-30), so nothing on the web side could keep a control out of the home
+/// indicator - the post composer's "Publier" sat 26 pt into it - or out of the status bar.
+///
+/// THE TOP HAS ONE OWNER, THIS FUNCTION (2026-11-18). `.never` alone was measured WRONG on
+/// 2026-09-30 (the page drew under the clock with nothing telling it to keep out); with the top
+/// published beside it, it is the immersive layout. Both halves happen here, the switch first
+/// (`CanariApplyEdgeToEdge`), because a publish that ran before the switch - the safe-area hook fires
+/// at launch, before `didBecomeActive` - counted the status bar twice.
+///
+/// The bottom is the window's bottom safe area MINUS the part of it the WebView no longer reaches,
+/// so a WebView shrunk above the keyboard publishes 0 - the same outcome `.keyboard-open` has on
+/// Android. Re-read at every activation (a reload of the page loses the property), after every
+/// keyboard resize, at every page load (`CanariLoadObserver`), and at every change of the root
+/// controller's safe area (`CanariSafeAreaDidChange`: the video and camera screens rotate since
+/// 2026-11-09, and then the notch's side is published as `--safe-area-inset-left/right`).
 static void CanariPublishSafeAreaInsets(void) {
   static CGFloat published = -1;
+  static CGFloat publishedTop = -1;
   static CGFloat publishedLeft = -1;
   static CGFloat publishedRight = -1;
   static CanariLoadObserver *loadObserver = nil;
   WKWebView *webView = CanariFindWebView();
+  if (webView == nil) {
+    return;
+  }
+  // THE ONE OWNER OF THE TOP: UIKit is told to give the page nothing before the page is told what
+  // it owes, so the two can never both count the status bar.
+  CanariApplyEdgeToEdge(webView);
   UIWindow *window = webView.window;
-  if (webView == nil || window == nil) {
+  if (window == nil) {
     return;
   }
   if (loadObserver == nil) {
@@ -1204,8 +1366,14 @@ static void CanariPublishSafeAreaInsets(void) {
   CGFloat unreached = MAX(0.0, CGRectGetHeight(window.bounds) - CGRectGetMaxY(inWindow));
   CGFloat inset = MAX(0.0, window.safeAreaInsets.bottom - unreached);
   // The top mirrors the bottom: the window's top safe area minus the part the WebView's frame
-  // starts below. With the page edge to edge (CanariApplyEdgeToEdge) the frame starts at the screen's
-  // top, so that is the status bar's whole height.
+  // starts below. With the page edge to edge (CanariApplyEdgeToEdge, just above) the frame starts at
+  // the screen's top and UIKit insets nothing, so that is the status bar's whole height.
+  CGFloat scrollTop = webView.scrollView.adjustedContentInset.top;
+  if (scrollTop > 0.5) {
+    NSLog(@"[CanariIOS] ERROR the WebView's scroll view still insets its top by %.0f pt after the edge-to-edge switch - "
+          @"the status bar is counted twice",
+          scrollTop);  // log-safe: a length in points
+  }
   CGFloat top = MAX(0.0, window.safeAreaInsets.top - MAX(0.0, CGRectGetMinY(inWindow)));
   // The SIDES, for the video and camera screens that turn (screen-orientation.md): in landscape the
   // notch is on the left or the right, and 0 in portrait. Same rule - the part the frame reaches.
@@ -1227,8 +1395,9 @@ static void CanariPublishSafeAreaInsets(void) {
                 CanariApplyTheme(result);
               }
             }];
-  if (inset != published || left != publishedLeft || right != publishedRight) {
+  if (inset != published || top != publishedTop || left != publishedLeft || right != publishedRight) {
     published = inset;
+    publishedTop = top;
     publishedLeft = left;
     publishedRight = right;
     NSLog(@"[CanariIOS] safe area published to the page: bottom %.0f pt, top %.0f pt, left %.0f pt, right %.0f pt",
@@ -1311,7 +1480,7 @@ static void CanariPublishForeground(NSString *_Nullable opening) {
               if (error != nil) {
                 // A page that cannot be told keeps its last value; said, because a silent failure
                 // here reads exactly like the defect this exists to fix.
-                NSLog(@"[CanariIOS] ERROR foreground=%@ not published to the page: %@", value, error);
+                NSLog(@"[CanariIOS] ERROR foreground=%@ not published to the page: %@", value, CanariErrorReason(error));
               }
             }];
   NSLog(@"[CanariIOS] foreground=%@ published to the page (opens a link=%d)", value,
@@ -1423,7 +1592,7 @@ static void CanariSetAppGroupForegroundFlag(BOOL inForeground) {
     NSError *error = nil;
     if (![[NSFileManager defaultManager] removeItemAtURL:flag error:&error] &&
         error.code != NSFileNoSuchFileError) {
-      NSLog(@"[CanariIOS] foreground flag not removed: %@", error);
+      NSLog(@"[CanariIOS] foreground flag not removed: %@", CanariErrorReason(error));
     }
   }
 }
@@ -1610,7 +1779,6 @@ static void CanariOnDidBecomeActive(__unused NSNotification *note) {
   CanariSetAppGroupForegroundFlag(YES);
   canari_ios_on_resume();
   CanariApplyWebViewTransparency();
-  CanariApplyEdgeToEdge();
   CanariObserveDocumentScrollRange();
   CanariObserveTheme();
   CanariObserveOrientation();
@@ -1633,10 +1801,10 @@ static void CanariOnDidBecomeActive(__unused NSNotification *note) {
   CanariDrainAppGroupFcmCache();
   // A share the Share Extension made while Canari was away - the banner's tap lands here.
   CanariImportAppGroupShareIfUnlocked(@"activation");
-  // Refresh the App Group mirror: the push context, the seeds and the secret. Its mls.bin half is
-  // no longer what keeps the extension current - every write of the state carries the copy along
-  // (`write_slot_mls_bin`, concurrency.rs), since a process killed in the foreground never reaches
-  // willResignActive; here it only re-copies the slot as it stands.
+  // Refresh the App Group mirror: the push context and the secret (the seed mirror lives there
+  // already). Its mls.bin half is no longer what keeps the extension current - every write of the
+  // state carries the copy along (`write_slot_mls_bin`, concurrency.rs), since a process killed in
+  // the foreground never reaches willResignActive; here it only re-copies the slot as it stands.
   CanariMirrorPushStateToAppGroup();
   // The FCM token, asked for HERE and not at bootstrap. By the time the app is active,
   // registerForRemoteNotifications has run and APNs has usually answered - which is the
@@ -1651,7 +1819,7 @@ static void CanariOnWillResignActive(__unused NSNotification *note) {
   g_isInForeground = false;
   CanariSetAppGroupForegroundFlag(NO);
   canari_ios_on_pause();
-  // Snapshot the push context, seeds and secret into the App Group container before suspending
+  // Snapshot the push context and secret into the App Group container before suspending
   // (mls.bin already follows each of its writes - see didBecomeActive).
   CanariMirrorPushStateToAppGroup();
   // The quick-action titles are the one native string iOS lets us re-register, and this is the last

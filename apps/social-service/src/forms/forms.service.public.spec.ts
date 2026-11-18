@@ -59,7 +59,15 @@ describe('FormsService - public forms', () => {
       manager: { transaction: jest.fn((_l: string, fn: any) => fn(manager)) },
     };
     const namesByIds = jest.fn((_ids: string[]) => Promise.resolve(new Map<string, string>()));
-    const pricingFacts: any = { build: jest.fn(() => Promise.resolve({ answers: {} })) };
+    const pricingFacts: any = {
+      build: jest.fn(() =>
+        Promise.resolve({
+          cursus: [{ promo: null, formation: null }],
+          cotisationTiers: [],
+          answers: {},
+        })
+      ),
+    };
     const service = new FormsService(
       formRepo,
       submissionRepo,
@@ -101,6 +109,15 @@ describe('FormsService - public forms', () => {
       expect(form.id).toBe('f1');
       expect(form.submissionCount).toBe(0);
       expect(form.associationName).toBeNull();
+      expect(form.windowState).toBe('open');
+    });
+
+    it('says closed on the single read of a form whose end has passed, whatever the reader clock', async () => {
+      const { service } = makeService({
+        form: baseForm({ closedAt: new Date(Date.now() - 1000) }),
+      });
+      expect((await service.get('f1')).windowState).toBe('closed');
+      expect((await service.getPublic('f1')).windowState).toBe('closed');
     });
 
     it('carries the association name on the single read, as the list does', async () => {
@@ -170,6 +187,7 @@ describe('FormsService - public forms', () => {
           'basePrice',
           'closedAt',
           'currency',
+          'cursusSlices',
           'description',
           'formFull',
           'guestFields',
@@ -181,9 +199,12 @@ describe('FormsService - public forms', () => {
           'pricing',
           'productGridPrices',
           'title',
+          'windowState',
         ].sort()
       );
       expect(form).toMatchObject({ basePrice: 1200, allowCashPayment: true, pricing: null });
+      // A guest has no cursus: one slice, the same one the legacy fields carry.
+      expect(form.cursusSlices).toEqual([{ pricing: null, productGridPrices: {} }]);
     });
 
     // Owner, 2026-11-02: a paid form of an entity that cannot collect now (a list whose delegation
@@ -259,9 +280,11 @@ describe('FormsService - public forms', () => {
       expect(saved[0].userId).toBeNull();
       expect(saved[0].paymentStatus).toBe('free');
       expect(saved[0]).not.toHaveProperty('createdAt');
-      // The one statement is the form's seat lock: a guest is never written to the registry.
-      expect(manager.query).toHaveBeenCalledTimes(1);
-      expect(manager.query.mock.calls[0][0]).toContain('FOR UPDATE');
+      // The two statements are the association's archive read and the form's seat lock: a guest
+      // is never written to the registry.
+      expect(manager.query).toHaveBeenCalledTimes(2);
+      expect(manager.query.mock.calls[0][0]).toContain('FROM associations');
+      expect(manager.query.mock.calls[1][0]).toContain('FOR UPDATE');
     });
 
     it('cuts the time to the day when the public form is also anonymous', async () => {

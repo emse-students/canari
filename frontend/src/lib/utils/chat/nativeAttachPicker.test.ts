@@ -55,3 +55,39 @@ describe('take_picked_file is reachable from the page', () => {
     expect(lib).toMatch(/use crate::commands::picked_files::take_picked_file;/);
   });
 });
+
+describe('pickNatively - a pick that cannot be read is said', () => {
+  it('keeps the readable files and warns once with the count of the others', async () => {
+    const { toastStore, dismissToast } = await import('$lib/stores/toast.svelte');
+    const { m } = await import('$lib/paraglide/messages');
+    const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
+    dialogOpen.mockResolvedValue([
+      'file:///Library/Caches/canari-pick-a/a.heic',
+      'file:///Library/Caches/canari-pick-b/b.heic',
+      'file:///Library/Caches/canari-pick-c/c.heic',
+    ]);
+    invoke
+      .mockResolvedValueOnce(new ArrayBuffer(1))
+      .mockRejectedValueOnce('picked file unreadable: No such file or directory (os error 2)')
+      .mockRejectedValueOnce('picked file unreadable: No such file or directory (os error 2)');
+
+    const files = await pickNatively('library');
+
+    expect(files.map((f) => f.name)).toEqual(['a.heic']);
+    const warnings = toastStore.toasts.filter((t) => t.type === 'warning');
+    expect(warnings.map((t) => t.message)).toEqual([
+      m.composer_native_pick_unread({ count: 2, total: 3 }),
+    ]);
+    for (const t of toastStore.toasts) dismissToast(t.id);
+    quiet.mockRestore();
+  });
+
+  it('says nothing when every file was read', async () => {
+    const { toastStore } = await import('$lib/stores/toast.svelte');
+    dialogOpen.mockResolvedValue(['file:///Library/Caches/canari-pick-a/a.heic']);
+    invoke.mockResolvedValue(new ArrayBuffer(1));
+    const before = toastStore.toasts.length;
+    await pickNatively('library');
+    expect(toastStore.toasts.length).toBe(before);
+  });
+});

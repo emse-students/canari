@@ -189,7 +189,7 @@ class RingSequencer(
             // Nothing was posted: the claim goes with it, or a dedupe entry would refuse every later
             // post of a call that never rang.
             native.remove(callId)
-            output.log(true, "native ring of call=${short(callId)} FAILED to post - claim released: ${e.javaClass.simpleName}: ${e.message}")
+            output.log(true, "native ring of call=${short(callId)} FAILED to post - claim released: ${e.javaClass.simpleName}: ${e.message}") // log-safe: posting a notification (NotificationManager); the names read before it catch their own parse errors
             throw e
         }
     }
