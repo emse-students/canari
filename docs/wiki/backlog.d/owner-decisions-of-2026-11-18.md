@@ -11,8 +11,8 @@ Recorded so no question answered here is asked again. Taken by the owner in pers
    entry is deleted, and no reading of the step exists
    ([readings](../device-verification.md#the-phone-readings-of-2026-11-18-170-alpha11-a-new-groups-invitation-with-the-creators-web-seat-online-and-reactions-in-the-background),
    [live-production G9](../frontend/modules/live-production.md#2-the-gates-each-with-its-evidence)). The
-   moderation screens and the three broadcaster pushes stay owed in
-   [their own entry](reading-owed-live-moderation-pushes-lift-and-the-lives-switch.md).
+   moderation screens and the three broadcaster pushes, owed in their own entry, were read on both phones by
+   sitting S6 and that entry is deleted ([readings](../device-verification.md#the-phone-and-web-readings-of-2026-11-18-s6-170-alpha12-live-moderations-last-halves-the-reel-card-overlays-the-birthday-morning)).
 2. **A reading that needs a human hand on the phone** (rotating it, lighting a scene, a physical button)
    **and is not a regression is deferred by the lead alone to the next version's alpha**, written in
    [device-verification](../device-verification.md) and the [plan](../plan.md) (its entry's `target:`

@@ -1329,7 +1329,7 @@ What is left:
   and `unverifiable` shown with ONE weight, "not proven", [why](#a-reported-chat-line-wp-l8b)) are
   built too (`ModerationLiveBlock`, `ModerationChatLineBlock`), and so is the control lifting a
   withdrawal (2026-11-17, now also from the withdrawn list, with no report: 1.7.0, [the moderation client](../frontend/modules/live.md#the-moderation-client-wp-l8s-client-half-2026-10-19)).
-  Nothing is left in code; the readings are [their own entry](../backlog.d/reading-owed-live-moderation-pushes-lift-and-the-lives-switch.md).
+  Nothing is left in code; the readings were all taken by 2026-11-18 ([S6](../device-verification.md#the-phone-and-web-readings-of-2026-11-18-s6-170-alpha12-live-moderations-last-halves-the-reel-card-overlays-the-birthday-morning)).
 
 ## Decisions of 2026-10-20: moderation, reactions, the audience
 
