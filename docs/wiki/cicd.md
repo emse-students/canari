@@ -3385,10 +3385,14 @@ directory holding no `audit.toml`, against the database the audit step just fetc
 only in 0.7.6) turned `main` red on 2026-10-24 in all four trees. It cannot be taken by a lockfile
 change: crypto-bigint 0.7 means elliptic-curve 0.14, and every p256/p384 0.13 user here is at its
 newest release (jsonwebtoken 11.1.0, openmls_rust_crypto 0.6.0, webrtc 0.17.2's dtls). It is
-unreachable in chat-gateway (HS256 only), mls-wasm and src-tauri (one X25519/Ed25519 suite), and
+unreachable in mls-wasm and src-tauri (one X25519/Ed25519 suite), and
 **reachable in code in call-service**, whose DTLS runs P-256/P-384 ECDHE on a per-handshake
 ephemeral secret - bounded by that secret living for one operation and by the SFU never having
 placed a production call. The webrtc 0.21 port ([calls](frontend/modules/calls.md#the-webrtc-020-port-measured-2026-09-15)) removes that edge.
+
+jsonwebtoken 12.0.0 (2026-11-18) moved onto elliptic-curve 0.14 and rsa 0.10, so chat-gateway's tree
+reports neither `RUSTSEC-2026-0387` nor the `rsa` Marvin advisory (`RUSTSEC-2023-0071`) and carries
+no ignore at all; call-service keeps `-0387` on its webrtc dtls edge alone.
 
 `RUSTSEC-2026-0441` (pin-utils, an "unmaintained" status warning only, 2026-11-09) is ignored in call-service on the same webrtc 0.17 edge (webrtc-util -> nix 0.26.4 -> pin-utils): no lockfile bump drops it, the webrtc 0.21 port does; re-examine by then or 2027-01-31.
 
