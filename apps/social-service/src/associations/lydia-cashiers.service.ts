@@ -54,8 +54,8 @@ export const LYDIA_CASHIER_ROLE_FIXED = 'LYDIA_CASHIER_ROLE_FIXED';
 export const LYDIA_NO_BUSINESS = 'LYDIA_NO_BUSINESS';
 export { LYDIA_CASHIER_NUMBER_CHANGED, LYDIA_CASHIER_PHONE_IN_USE };
 
-/** What a cashier phone must look like: E.164, as core-service validated it. */
-const E164_RE = /^\+[1-9]\d{7,14}$/;
+/** What a cashier phone must look like: E.164, no French trunk `0`, as core-service validated it. */
+const E164_RE = /^\+(?!330)[1-9]\d{7,14}$/;
 
 /** How long one erasure removal may take at core-service before it is given up (best effort). */
 export const ERASURE_REVOKE_TIMEOUT_MS = 30_000;
@@ -260,7 +260,8 @@ export class LydiaCashiersService {
    * The checks and claim before Lydia is asked to change cashier `cashierId`'s role (a re-add with
    * the new set): the row is live on the current Business (`LYDIA_CASHIER_NOT_FOUND`) and is not
    * the Responsable (`LYDIA_CASHIER_ROLE_FIXED`), and its number is not one of the Responsable's
-   * (`LYDIA_CASHIER_PHONE_IN_USE`; a seal that does not open counts as one). Answers its number, opened, for the re-add.
+   * (`LYDIA_CASHIER_PHONE_IN_USE`; a seal that does not open counts as one), and its person is still a
+   * member (`LYDIA_CASHIER_NOT_A_MEMBER`, the claim released). Answers its number, opened, for the re-add.
    */
   async claimRoleChange(
     id: string,
@@ -269,7 +270,7 @@ export class LydiaCashiersService {
     if (input.role !== 'tresorier' && input.role !== 'vendeur') {
       throw new BadRequestException('role must be tresorier or vendeur');
     }
-    return this.claimWithin(id, 'role change', (_vendor, rows) => {
+    const claimed = await this.claimWithin(id, 'role change', (_vendor, rows) => {
       const row = rows.find((r) => r.id === input.cashierId);
       if (!row) {
         this.logger.warn(`[LYDIA-CASHIER] role change refused on ${sanitizeLog(id)}: no such row`);
@@ -298,6 +299,17 @@ export class LydiaCashiersService {
       }
       return { phone, userId: row.userId };
     });
+    // A member who left keeps the row (and Lydia's rights) until a manager removes it; giving them
+    // a role is never offered (review of the 1.7.1 flip). Read after the claim, released on refusal.
+    if (!(await this.associations.isMember(claimed.userId, id))) {
+      this.logger.warn(`[LYDIA-CASHIER] role change refused on ${sanitizeLog(id)}: not a member`);
+      await this.release(id, claimed.claimToken);
+      throw new BadRequestException({
+        code: LYDIA_CASHIER_NOT_A_MEMBER,
+        message: 'A cashier must be a member of the association',
+      });
+    }
+    return claimed;
   }
 
   /**

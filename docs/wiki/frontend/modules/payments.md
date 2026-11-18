@@ -848,7 +848,7 @@ after error 5) updates the cause and its date, with no transition and no second 
   revert, so the two serialise (an integration spec races them). The transition is the designed
   path, logged at INFO (1.7.1; it was a WARN that production read as an alarm):
   `[LYDIA-READINESS] holder <id> marked READY by <cause> (<where>); before: <the earlier marking, or
-  "no earlier marking on record">; managers notified`, or `managers not notified (notices off by
+  "no earlier marking on record">; managers told next` (`at the first request Lydia issues on it` after a bridge switch), or `managers not notified (notices off by
   switch, LYDIA_PAYMENTS_NOTIFICATIONS_ENABLED)` while that switch waits on its floor. The anomalies
   of this path keep their level: the held refusal and the bridge switch at WARN, the revert at ERROR.
 - **Reverted** when `request/do` answers **error 5** (not validated; core's typed
@@ -1026,6 +1026,14 @@ A WARN `Lydia did not accept the call (...) - the re-read decides` between 1 and
 itself: the re-read decides. An add reads the same way: `adding a vendeur (phone ending NN, 1 right(s))`,
 then `vendeur confirmed with exactly 1 right(s)`, then social's `[AUDIT] Lydia cashier added ...`; with
 the cashier notice switched off (below), the notifier says so at DEBUG and nothing at WARN or ERROR.
+
+**What the gate does not cover yet** (review of the flip, owed in 1.7.1:
+[entry](../../backlog.d/p2-a-lydia-cashier-who-leaves-keeps-the-rights-and-an-add-overwrites-a-number-lydia-knows.md)):
+a member who leaves keeps the row and Lydia's rights until a manager removes it (a role change now
+re-checks membership); the member check binds the person, not the number typed, while the cashier
+notice is off; an add does not read the number first, so a number Lydia lists outside Canari has its
+rights replaced. A French number typed with its trunk 0 (`+330...`) is refused by every server check
+and rewritten by the client, so one line has one spelling for the number-in-use check.
 
 **Removing** (`.../:cashierId/revoke`, body `{ number: 'current' | 'previous' }`): social-service checks
 and claims (`lydia-cashier-revoke-claim`) and hands core what the call needs, opened server-side only.

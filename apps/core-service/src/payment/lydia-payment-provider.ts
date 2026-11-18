@@ -244,8 +244,14 @@ export const LYDIA_CASHIER_PERMISSIONS = [
   'access_easeofpayment',
 ] as const;
 
-/** A cashier phone as Lydia takes it: E.164, `+` and 8 to 15 digits (`+33...`, accepted 2026-10-30). */
-export const LYDIA_CASHIER_PHONE_RE = /^\+[1-9]\d{7,14}$/;
+/**
+ * A cashier phone as Lydia takes it: E.164, `+` and 8 to 15 digits (`+33...`, accepted 2026-10-30).
+ * A French number keeping its trunk `0` (`+330...`) is refused: no French E.164 number has one, and
+ * accepting it would let ONE line be typed in two spellings, which the one-number-one-row check
+ * (string compare of the opened numbers) could not see as the same (review of the 1.7.1 flip).
+ * social-service's checks hold the same pattern.
+ */
+export const LYDIA_CASHIER_PHONE_RE = /^\+(?!330)[1-9]\d{7,14}$/;
 
 /** What `business/getpermission` read for one cashier: every right, true when it reads 1. */
 export type LydiaCashierRights = Readonly<

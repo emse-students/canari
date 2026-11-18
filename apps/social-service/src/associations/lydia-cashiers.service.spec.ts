@@ -365,6 +365,14 @@ describe('LydiaCashiersService - the checks, with a mocked database', () => {
     }
   });
 
+  it('a role change of a cashier who left the association is NOT_A_MEMBER, the claim released', async () => {
+    const { service, asso } = make([responsable(), vendeur()], { member: false });
+    await expect(
+      service.claimRoleChange(ASSO, { cashierId: 'v1', role: 'tresorier' })
+    ).rejects.toMatchObject({ response: { code: LYDIA_CASHIER_NOT_A_MEMBER } });
+    expect(asso).toMatchObject({ claimed: false, token: null });
+  });
+
   it('the Responsable role is never changed through a role change', async () => {
     await expect(
       make([responsable()]).service.claimRoleChange(ASSO, { cashierId: 'r1', role: 'vendeur' })

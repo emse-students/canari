@@ -516,8 +516,8 @@ function lydiaBusinessChanged(): ConflictException {
 /** HKDF purpose of a cashier phone's encryption key (migration 118); bump the suffix to rotate. */
 export const LYDIA_CASHIER_PHONE_PURPOSE = 'lydia-cashier-phone/v1';
 
-/** What a cashier phone must look like when stored: E.164, as core-service validated it. */
-const E164_RE = /^\+[1-9]\d{7,14}$/;
+/** What a cashier phone must look like when stored: E.164, no French trunk `0`, as core-service validated it. */
+const E164_RE = /^\+(?!330)[1-9]\d{7,14}$/;
 
 /** Where a readiness change came from, for its log line. */
 export interface LydiaReadinessRef {
@@ -5964,9 +5964,13 @@ ${rejectionReason}`
       : 'no earlier marking on record';
     // The managers' notice is OFF by design until its floor version (legacy-compatibility.md): a
     // stated fact on the line, never a reason to raise its level.
-    const notices = this.lydiaNotifier.enabled()
-      ? 'managers notified'
-      : 'managers not notified (notices off by switch, LYDIA_PAYMENTS_NOTIFICATIONS_ENABLED)';
+    // Written BEFORE the notice is attempted, so it says what is next, never that it was sent; a
+    // bridge switch tells the managers only at the first request Lydia issues (below).
+    const notices = !this.lydiaNotifier.enabled()
+      ? 'managers not notified (notices off by switch, LYDIA_PAYMENTS_NOTIFICATIONS_ENABLED)'
+      : switched
+        ? 'managers told at the first request Lydia issues on it'
+        : 'managers told next';
     if (ready) {
       // The designed path (the webhook or an admin validation): INFO. An anomaly on this path is
       // logged where it is decided - the held refusal and the bridge switch above, at WARN.

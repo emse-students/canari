@@ -5,6 +5,7 @@ import { InternalLydiaCashiersController } from './internal-lydia-cashiers.contr
 import {
   LYDIA_CASHIER_ADD_DISABLED,
   LYDIA_CASHIER_ADD_ENABLED,
+  LYDIA_CASHIER_PHONE_RE,
   LYDIA_CASHIER_REMOVAL_PRECONDITION,
   LYDIA_CASHIER_REVOKE_UNCONFIRMED,
   LYDIA_CASHIER_RIGHTS_INCOMPLETE,
@@ -96,6 +97,12 @@ describe('LydiaCashiersController - the owner gate (lot 3)', () => {
       response: { code: LYDIA_CASHIER_ADD_DISABLED },
     });
     expect(mockedAxios.post.mock.calls).toHaveLength(0);
+  });
+
+  it('a French number keeping its trunk 0 is not a cashier phone: one line, one spelling', () => {
+    expect(LYDIA_CASHIER_PHONE_RE.test('+33612345678')).toBe(true);
+    expect(LYDIA_CASHIER_PHONE_RE.test('+330612345678')).toBe(false);
+    expect(LYDIA_CASHIER_PHONE_RE.test('+3225123456')).toBe(true);
   });
 
   it('every manager route runs NginxAuthGuard', () => {

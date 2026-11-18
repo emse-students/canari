@@ -182,7 +182,7 @@ describe('AssociationsService.setLydiaReadiness - one writer, the UPDATE decides
     ]);
     expect(logs.log.join('|')).toContain(
       `${LYDIA_READINESS_LOG_TAG} holder ${HOLDER} marked READY by webhook-validated (webhook); ` +
-        'before: no earlier marking on record; managers notified'
+        'before: no earlier marking on record; managers told next'
     );
     // The designed transition is not an anomaly: nothing at WARN or ERROR.
     expect(logs.warn).toHaveLength(0);
