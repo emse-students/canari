@@ -316,7 +316,7 @@ describe('the relay routes refuse a caller with no seat in the group they name',
         expect.any(String),
         expect.objectContaining({
           at: '1700000000123',
-          collapseId: reactionCollapseId('m-1', MEMBER, 1_700_000_000_123),
+          collapseId: reactionCollapseId('m-1', MEMBER),
         })
       );
     });

@@ -573,8 +573,9 @@ export function useNotifications() {
   /**
    * THE PREAMBLE EVERY SYSTEM NOTIFICATION SHARES - a message's and a reaction's - so neither can
    * drift from the other's refusal or throttle. Whether one may be raised now under `convKey` (the
-   * conversation for a message, `reaction:<conversation>` for a reaction); when it may, the throttle
-   * window is taken.
+   * conversation for a message, `reaction:<message>:<reactor>:<at>` - ONE reaction - for a reaction);
+   * when it may, the throttle window is taken. A reaction's key is new per reaction, so the map gains
+   * one entry per reaction raised in the session - deliberately, the price of never swallowing one.
    */
   function mayRaise(convKey: string): boolean {
     if (typeof window === 'undefined') return false;
@@ -667,13 +668,16 @@ export function useNotifications() {
    * ONE REACTION, ONE NOTIFICATION, WHICHEVER TRIGGER LANDS SECOND. Android asks the native builder,
    * which stamps the line with the reaction's own instant exactly as the push does, so the second is
    * recognised (`alreadyPosted`, the alerted ledger). iOS, desktop and the browser post a plain one
-   * whose id is {@link reactionCollapseKey}'s - on iOS the push's `apns-collapse-id` is that same
+   * whose id is {@link reactionCollapseKey}'s, one per reactor and message - on iOS the push's
+   * `apns-collapse-id` is that same
    * decimal, so the system replaces one by the other. It never replaces the conversation's message
    * notification. Throttled per that reaction, so a burst of different reactions loses none.
    */
   async function sendReactionNotification(reaction: NativeReactionNotification) {
-    const reactionKey = reactionCollapseKey(reaction.messageId, reaction.actorId, reaction.at);
-    if (!mayRaise(reactionKey)) return;
+    const reactionKey = reactionCollapseKey(reaction.messageId, reaction.actorId);
+    // Throttled per REACTION (its instant included), never per slot: a reactor's quick second emoji
+    // is a new reaction, and it must replace the first rather than be swallowed by the window.
+    if (!mayRaise(`${reactionKey}:${reaction.at}`)) return;
     if (isAndroidTauriRuntime()) {
       const accepted = await postNativeReactionNotification(reaction);
       const shade = reactionNotificationKey(reaction.conversationId);
@@ -699,9 +703,9 @@ export function useNotifications() {
    * message and a reaction, so neither can drift from the other's permission, tap and sound rules.
    *
    * @param p.idKey what the notification's id (plugin) or tag (browser) is derived from: the
-   *   conversation for a message (a second message updates the first), the reaction itself for a
-   *   reaction (`reactionCollapseKey`, the push's own collapse id on iOS) - so the two kinds never
-   *   replace each other.
+   *   conversation for a message (a second message updates the first), the reactor and the message
+   *   for a reaction (`reactionCollapseKey`, the push's own collapse id on iOS: a reactor's second
+   *   reaction to one message replaces the first) - so the two kinds never replace each other.
    * @param p.conversationId where a tap leads.
    */
   async function postPlainNotification(p: {
