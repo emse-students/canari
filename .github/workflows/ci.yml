@@ -1085,7 +1085,9 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: frontend/src-tauri
-          key: ios-app
+          # The Xcode in the key: a build tree from another toolchain carries its link search paths
+          # and its swift-rs archives, which Xcode 27 links differently (docs/wiki/cicd.md).
+          key: ios-app-xcode-27
 
       # THE SWIFT PACKAGE DOWNLOADS, SAVED HERE AND ONLY RESTORED BY THE RELEASE (`ios.yml`, the same
       # key). `Package.resolved` pins 13 packages (Firebase and its binary xcframeworks among them),

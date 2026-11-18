@@ -2126,6 +2126,16 @@ it with `dtolnay/rust-toolchain`). The standard label, not `-xlarge`: the larger
 request never compiles on another toolchain than the one the release archives with. The move and
 what closes it: [the backlog entry](backlog.d/p2-ios-builds-need-the-ios-27-sdk-before-april-2027.md).
 
+**Xcode 27 makes a Swift `@_cdecl` export a LOCAL symbol.** The first compile on the new runner
+failed at the link with `Undefined symbols: _init_plugin_customtabs`, `_init_plugin_gallery`,
+`_init_plugin_keystore`, `_init_plugin_system_components` - the entry point of every Swift plugin.
+`swift-rs` 1.0.9 promotes those symbols back to global with `llvm-objcopy` from rustup's
+`llvm-tools` component (Apple ships none), and when the tool is missing it only prints a
+`cargo:warning` and lets the link fail. `ios-libapp.sh`, the one script both jobs run, now
+`rustup component add llvm-tools` into the pinned toolchain beside the iOS target. The
+`compile-ios-app` Rust cache key names the Xcode (`ios-app-xcode-27`): a tree built under Xcode 26
+carried its toolchain's link search paths into the first run.
+
 ### A green run is not proof that *your* file compiled
 
 The iOS `project.pbxproj` is hand-maintained (there is no xcodegen here), so a source file that is

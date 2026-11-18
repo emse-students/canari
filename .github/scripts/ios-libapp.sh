@@ -18,7 +18,7 @@
 # `IOS_EXTRA_CARGO_FEATURES` (comma-separated, optional) is the bench build's `tauri/devtools,
 # bench-observables`; a store build and the pull-request compile leave it empty.
 #
-# Needs: rustup, macOS. `frontend/build` must already exist (`generate_context!()` embeds it).
+# Needs: rustup, macOS with Xcode 27. `frontend/build` must already exist (`generate_context!()` embeds it).
 # Usage: bash .github/scripts/ios-libapp.sh
 set -euo pipefail
 
@@ -36,6 +36,13 @@ echo "cargo features: $features"
 # rust-toolchain.toml pins the compiler and lists no `targets`, so the iOS std must be added to the
 # toolchain cargo actually uses.
 rustup target add aarch64-apple-ios
+# XCODE 27 EMITS A SWIFT `@_cdecl` EXPORT AS A LOCAL SYMBOL, so every Swift plugin's
+# `init_plugin_*` is invisible to the linker ("Undefined symbols ... _init_plugin_customtabs", the
+# first compile on the `xcode-27` runner). swift-rs promotes them back to global with rustup's
+# `llvm-objcopy` (Apple ships none) and, when the tool is missing, only WARNS and links nothing -
+# so the component is installed into the toolchain cargo uses, not left to chance
+# (docs/wiki/cicd.md#the-ios-toolchain-is-pinned-xcode-27-since-180).
+rustup component add llvm-tools
 cargo build --lib --release --target aarch64-apple-ios --features "$features"
 
 lib="$(find target/aarch64-apple-ios/release -maxdepth 1 -name 'libmines_app_lib.a' | sed -n 1p)"
