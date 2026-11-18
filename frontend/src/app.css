@@ -108,6 +108,9 @@
   --banner-height-thin: 1.5rem;
   --color-banner: var(--banner-bg);
   --color-banner-warn: var(--banner-warn-bg);
+  /* The ERROR twin of `banner-warn`, opaque for the same reason: an error toast is drawn over a
+     dialog, and the tinted `bg-red-500/10` it had let the dialog's title read through its red text. */
+  --color-banner-danger-soft: var(--banner-danger-bg);
   /* The three STRONG variants, fixed in both themes for the same reason as `cn-scrim`: they carry
      white or ink text and interrupt on purpose, so a theme flip must not soften them. */
   --color-banner-notice: #f59e0b;
