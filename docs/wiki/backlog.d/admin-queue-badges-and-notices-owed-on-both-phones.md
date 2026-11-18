@@ -19,7 +19,7 @@ global admin of dev, a test account filing the items:
    badges drop within a few seconds with no action on that phone (the `admin.queues.changed` frame,
    no timer); the bell row is gone at its next load. Then background the first phone, file and
    answer another correction from the second, and bring the first back: its badges are right on
-   return.
+   return. On a computer, with two tabs of the web app open, the badges move in BOTH tabs.
 3. A test account reports a post twice from two accounts: ONE push and ONE bell row; dismissing both
    reports clears them.
 4. A test account reports a post in a BDE moderator's space while that moderator's phone is open:

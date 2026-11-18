@@ -5,10 +5,10 @@ import { describe, expect, it, vi } from 'vitest';
  * and its one effect is that the badges ask the server for their counts - never an "unhandled" line.
  */
 
-const counts = vi.hoisted(() => ({ loadAdminQueueCounts: vi.fn(async () => undefined) }));
+const counts = vi.hoisted(() => ({ adminQueuesChanged: vi.fn() }));
 vi.mock('$lib/admin/adminQueueCounts.svelte', () => ({
   ADMIN_QUEUES_CHANGED_FRAME: 'admin.queues.changed',
-  loadAdminQueueCounts: counts.loadAdminQueueCounts,
+  adminQueuesChanged: counts.adminQueuesChanged,
 }));
 vi.mock('$lib/stores/typingStore.svelte', () => ({ setTyping: vi.fn() }));
 vi.mock('$lib/stores/pinStore.svelte', () => ({ applyPin: vi.fn() }));
@@ -40,7 +40,8 @@ describe('channelEventHandler - admin.queues.changed', () => {
         onOutOfSync: vi.fn(),
       } as any
     );
-    expect(counts.loadAdminQueueCounts).toHaveBeenCalledTimes(1);
+    expect(counts.adminQueuesChanged).toHaveBeenCalledTimes(1);
+    expect(counts.adminQueuesChanged).toHaveBeenCalledWith('frame');
     expect(log).not.toHaveBeenCalledWith(expect.stringContaining('Unhandled'));
   });
 });

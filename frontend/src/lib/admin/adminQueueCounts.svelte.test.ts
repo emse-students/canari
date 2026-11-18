@@ -5,7 +5,9 @@
  * kept (a malformed answer draws no badge); the Administration entry is the SUM of what the reader
  * can act on; a call made while one is in flight sends ONE more after it (the first may have left
  * before the caller's change committed); an answer for an account that ended is dropped; no answer
- * or a refusal keeps the counts drawn (a wrong zero would hide waiting items).
+ * or a refusal keeps the counts drawn (a wrong zero would hide waiting items). Told, never polled:
+ * a frame or a socket reopen asks again - in every tab of the browser, never while hidden, never for
+ * a reader with no badge - and no clock ever does.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { TransportFailureError } from '$lib/utils/transportFailure';
@@ -31,6 +33,7 @@ vi.mock('$lib/utils/users/peerNameDirectory', () => ({
 
 import {
   adminQueueCounts,
+  adminQueuesChanged,
   followAdminQueueCounts,
   loadAdminQueueCounts,
   readAdminQueueCounts,
@@ -128,5 +131,62 @@ describe('adminQueueCounts', () => {
     document.dispatchEvent(new Event('visibilitychange'));
     await Promise.resolve();
     expect(apiFetch).toHaveBeenCalledTimes(3);
+  });
+
+  it('no clock ever asks: an hour passes with nothing sent', async () => {
+    vi.useFakeTimers();
+    try {
+      apiFetch.mockResolvedValue(answer(200, { counts: {} }));
+      const stop = followAdminQueueCounts();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(apiFetch).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
+      expect(apiFetch).toHaveBeenCalledTimes(1);
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a frame or a socket reopen asks again, and tells the other tabs; nothing without a follower', async () => {
+    apiFetch.mockResolvedValue(answer(200, { counts: { moderation: 1 } }));
+    adminQueuesChanged('socket-open');
+    await Promise.resolve();
+    expect(apiFetch).not.toHaveBeenCalled();
+
+    const otherTab = new BroadcastChannel('canari-admin-queues');
+    const heard = vi.fn();
+    otherTab.onmessage = heard;
+    const stop = followAdminQueueCounts();
+    await vi.waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(1));
+    adminQueuesChanged('frame');
+    await vi.waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(heard).toHaveBeenCalledTimes(1));
+    adminQueuesChanged('socket-open');
+    await vi.waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(3));
+
+    // A follower tab: another tab's word is enough to ask.
+    otherTab.postMessage('recount');
+    await vi.waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(4));
+    stop();
+    otherTab.close();
+  });
+
+  it('a frame heard while hidden asks nothing - the return to the foreground does', async () => {
+    apiFetch.mockResolvedValue(answer(200, { counts: {} }));
+    const stop = followAdminQueueCounts();
+    await vi.waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(1));
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+    try {
+      adminQueuesChanged('frame');
+      await Promise.resolve();
+      expect(apiFetch).toHaveBeenCalledTimes(1);
+      visibility.mockReturnValue('visible');
+      document.dispatchEvent(new Event('visibilitychange'));
+      await vi.waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(2));
+    } finally {
+      visibility.mockRestore();
+      stop();
+    }
   });
 });

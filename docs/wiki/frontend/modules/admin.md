@@ -198,11 +198,17 @@ reader's associations, including those they cannot validate. Asked:
   stores, so a tier published late (a membership probe retried after a failure) starts following and
   a member is asked nothing. The layout warms the membership probe once per account
   (`ensureMyAssociations`, memoized and shared by every page that needs it) so a BDE moderator's
-  tiers are published without visiting a page. Asked at once, then on every `admin.queues.changed`
-  frame (above; routed by `isChannelEventFrame`'s `admin.` family to `handleChannelEvent`), and on
-  what a frame cannot cover: the app coming back to the foreground (`visibilitychange`) and the link
-  coming back (`connectivity.onReconnect`), since a frame sent while the socket was down is not
-  replayed. A reload or another device is right from the server's answer, since nothing is kept;
+  tiers are published without visiting a page. Asked at once, then through ONE entry,
+  `adminQueuesChanged`, on every `admin.queues.changed` frame (above; routed by
+  `isChannelEventFrame`'s `admin.` family to `handleChannelEvent`; the socket declares
+  `admin-queues-1` in `caps=`) and on every socket (re)open (`syncConnectionAfterWsOpen`: a frame
+  sent while the socket was down is never replayed - the gateway restarting, an idle socket killed).
+  On the web only the leader tab holds the socket (`tabLeader.ts`), so that entry passes the word
+  on over a `BroadcastChannel` (`canari-admin-queues`, content-free) and every other tab that
+  follows asks for its own counts. A frame heard while the app is HIDDEN asks nothing: the return
+  to the foreground (`visibilitychange`) asks anyway, as does the link coming back
+  (`connectivity.onReconnect`). Nothing is asked for a reader who follows no badge. A reload or
+  another device is right from the server's answer, since nothing is kept;
 - afresh when the hub or the dashboard opens;
 - right after an item leaves a queue through this client: `reviewReport`, `deleteReportedComment`,
   `validateAssociationCalendarEvent`, `rejectAssociationCalendarEvent`, `refuseCorrection`, and

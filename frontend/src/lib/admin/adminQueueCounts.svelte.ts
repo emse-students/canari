@@ -130,16 +130,60 @@ export function loadAdminQueueCounts(): Promise<void> {
 }
 
 /**
+ * The other tabs of this browser. On the web only the LEADER tab holds the socket (`tabLeader.ts`),
+ * so a frame or a socket reopen heard there is passed on here, content-free, and every tab that
+ * follows asks for its own counts.
+ */
+const TAB_CHANNEL = 'canari-admin-queues';
+let tabChannel: BroadcastChannel | null = null;
+/** How many followers are running: a socket reopen asks nothing of a reader who has no badge. */
+let following = 0;
+
+/** Asks for the counts unless the app is hidden - its return to the foreground asks anyway. */
+function recountIfVisible(why: string): void {
+  if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+    Log.d('adminQueueCounts', `${why} while hidden: asked on the return to the foreground`);
+    return;
+  }
+  Log.d('adminQueueCounts', `${why}: counts asked again`);
+  void loadAdminQueueCounts();
+}
+
+/**
+ * What this tab's socket says about the queues: an `admin.queues.changed` frame (routed by
+ * `handleChannelEvent`), or the socket (re)opening (`syncConnectionAfterWsOpen`), after which any
+ * frame sent while it was down is lost - the gateway replays nothing. Either way the counts are
+ * asked again, here and in every other tab of this browser. Nothing while no follower runs.
+ */
+export function adminQueuesChanged(why: 'frame' | 'socket-open'): void {
+  if (following === 0) {
+    Log.d('adminQueueCounts', `${why}: no badge is drawn, nothing asked`);
+    return;
+  }
+  try {
+    tabChannel?.postMessage('recount');
+  } catch (err) {
+    Log.w('adminQueueCounts', 'the other tabs could not be told', err);
+  }
+  recountIfVisible(why === 'frame' ? 'a queue changed' : 'the socket opened');
+}
+
+/**
  * Keeps the counts current while the reader may open `/admin` - TOLD, NEVER POLLED (lead,
  * 2026-11-18): the counts are asked at once, then again on each `admin.queues.changed` frame the
- * server sends when an item enters or leaves a queue this reader may act on (routed by
- * `handleChannelEvent`, which calls {@link loadAdminQueueCounts}), and on what a frame cannot cover:
- * the app coming back to the foreground and the link coming back (a frame sent while the socket was
- * down is never replayed). No timer. The CALLER decides when - the root layout runs it inside an
+ * server sends when an item enters or leaves a queue this reader may act on, on every socket
+ * (re)open (a frame sent while it was down is never replayed) - both through
+ * {@link adminQueuesChanged}, relayed to the other tabs - and on the app coming back to the
+ * foreground and the link coming back. No timer. The CALLER decides when - the root layout runs it inside an
  * effect over the tier stores, so a tier published late starts it and an account that loses every
  * tier stops it. Returns the cleanup.
  */
 export function followAdminQueueCounts(): () => void {
+  following++;
+  if (!tabChannel && typeof BroadcastChannel !== 'undefined') {
+    tabChannel = new BroadcastChannel(TAB_CHANNEL);
+    tabChannel.onmessage = () => recountIfVisible('another tab heard a queue change');
+  }
   void loadAdminQueueCounts();
   const onVisibility = () => {
     if (document.visibilityState !== 'visible') return;
@@ -156,5 +200,10 @@ export function followAdminQueueCounts(): () => void {
       document.removeEventListener('visibilitychange', onVisibility);
     }
     stopReconnect();
+    following--;
+    if (following === 0 && tabChannel) {
+      tabChannel.close();
+      tabChannel = null;
+    }
   };
 }
