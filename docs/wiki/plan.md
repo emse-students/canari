@@ -106,7 +106,6 @@ earliest version, as a checklist.
 - [P3 - READ ON THE NEXT 1.7.1 PRE-RELEASE: the error toast over a dialog is opaque](backlog.d/p3-an-error-toast-over-a-dialog-lets-the-text-under-it-show-through.md)
 - [P3 - A hidden post's row names the author instead of the institution that published it (2026-11-18)](backlog.d/p3-hidden-post-row-names-the-author-not-the-association.md)
 - [P3 - salon texts held by a `502` are posted in the order their backoffs end, not the order they were written](backlog.d/p3-salon-texts-held-by-a-502-are-posted-out-of-order.md)
-- [P3 - the share targets are republished twenty-three times during an account's first sync](backlog.d/p3-the-share-targets-are-republished-twenty-three-times-in-the-first-sync.md)
 - [P3 - READ ON THE NEXT 1.7.1 PRE-RELEASE: the Thème control fits a doubled font](backlog.d/p3-the-theme-control-runs-off-the-screen-at-a-doubled-font.md)
 - [P3 - what the production log read of the `1.7.0` stable day left unexplained or noisy (2026-11-18)](backlog.d/p3-what-the-1-7-0-stable-day-log-read-left-unexplained-or-noisy.md)
 - [P3 - Reading owed - the CanaReel overlay tap and the fixed playback bar, on both phones](backlog.d/reading-owed-reel-overlay-tap-and-playback-bar.md)
@@ -116,6 +115,7 @@ earliest version, as a checklist.
 - [ ] [the iPhone's one seed mirror keeps the extension's seeds through a foreground (2026-11-17)](backlog.d/reading-owed-ios-seed-mirror-one-copy.md)
 - [ ] [a native device with no push token row now says why, and registers again (production, after the `1.7.0` stable)](backlog.d/reading-owed-a-device-with-no-push-token-now-says-so.md)
 - [ ] [a live viewer sent to the background mid-request retries instead of stopping (iPhone)](backlog.d/reading-owed-a-live-viewer-suspended-mid-request-retries.md)
+- [ ] [the share targets are sent once, when the member leaves the app, after an account's first sync](backlog.d/reading-owed-the-share-targets-publish-during-a-first-sync.md)
 
 ## 1.8.0
 
