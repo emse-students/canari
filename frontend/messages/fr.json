@@ -6053,6 +6053,7 @@
   "notif_live_cut_text": "Votre live a été interrompu par la modération",
   "notif_live_suspended_text": "Vous ne pouvez plus diffuser pendant un temps",
   "notif_live_withdrawn_text": "Votre droit de diffuser a été retiré",
+  "notif_live_reinstated_text": "Votre droit de diffuser a été rétabli ; une suspension en cours reste appliquée jusqu'à sa fin.",
   "moderation_type_live": "Live",
   "moderation_type_live_chat": "Message de live",
   "moderation_chat_line_verified": "Texte vérifié par le serveur",
@@ -6111,6 +6112,10 @@
   "moderation_live_lift_already": "Le droit de diffuser n'était plus retiré.",
   "moderation_live_lift_forbidden": "Vous n'avez pas le droit de rétablir le droit de diffuser.",
   "moderation_live_lift_error": "Impossible de rétablir le droit. Réessayez.",
+  "moderation_withdrawn_tab": "Diffusion retirée",
+  "moderation_withdrawn_empty": "Aucun droit de diffuser n'est retiré actuellement.",
+  "moderation_withdrawn_reason": "Motif : {reason}",
+  "moderation_load_withdrawn_error": "Impossible de charger les comptes dont le droit de diffuser est retiré.",
   "moderation_live_prior_cuts": [
     {
       "declarations": ["input count", "local countPlural = count: plural"],

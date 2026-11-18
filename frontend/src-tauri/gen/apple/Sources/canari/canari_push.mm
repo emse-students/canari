@@ -840,6 +840,7 @@ static void CanariComposeServerNotification(NSDictionary *data, NSString **title
     @"social_live_cut" : @"live_cut",
     @"social_live_suspended" : @"live_suspended",
     @"social_live_withdrawn" : @"live_withdrawn",
+    @"social_live_reinstated" : @"live_reinstated",
   };
   NSString *fixedStem = fixedSocial[key];
   if (fixedStem) {

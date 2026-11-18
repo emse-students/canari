@@ -101,6 +101,7 @@ describe('categoryOfDataPush', () => {
     'social_live_cut',
     'social_live_suspended',
     'social_live_withdrawn',
+    'social_live_reinstated',
   ];
 
   it('names the live moderation keys exactly as social-service declares them', () => {

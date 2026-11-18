@@ -213,7 +213,7 @@ switches still silence it in one gesture. Principle 1 is untouched: the push car
      `event_proposed`, `event_validated`, `event_rejected`, `event_updated`, `event_deleted`,
      `event_pending`, `event_pending_coorganiser`, `profile_correction_applied`,
      `profile_correction_refused`, `repost_personal_requested`, `repost_personal_accepted`,
-     `repost_personal_refused`, `live_cut`, `live_suspended`, `live_withdrawn`,
+     `repost_personal_refused`, `live_cut`, `live_suspended`, `live_withdrawn`, `live_reinstated`,
      `form_paid_over_capacity`, `lydia_payments_active`, `lydia_payments_paused`,
      `lydia_refund_issued`, `lydia_cashier_added`, `delegation_revoked`,
      `delegation_receiver_not_ready`, `delegation_resumed`).

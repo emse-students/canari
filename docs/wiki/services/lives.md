@@ -139,7 +139,9 @@ Refusals are typed: the body's `code` is the discriminator, never the message.
 | `POST /api/lives/:id/removed-viewers` `{ viewerId }` | the broadcaster | `{ liveId, viewerId }`, idempotent; `400 LIVE_VIEWER_IS_SELF` |
 | `POST /api/lives/:id/cut` `{ reason, details? }` | a content moderator (`isContentModerator`) | `{ liveId, broadcasterId, reason, cutAt, endReason, newlyCut, priorCuts, strike, consequence, standing }`, idempotent ([the ladder](#the-strike-ladder-wp-l8b)). `403 LIVE_CUT_FORBIDDEN` (asked before the live is read), `400 LIVE_CUT_REASON_INVALID` (`spam`/`harassment`/`inappropriate`/`other`), `400 LIVE_CUT_DETAILS_INVALID` (over 500 characters), `404 LIVE_NOT_FOUND` ([moderation](#moderation-wp-l8-server-half)) |
 | `POST /api/lives/broadcasters/:userId/withdrawal` `{ reason, details? }` | a content moderator | `{ userId, reason, withdrawnAt, newlyWithdrawn, cutsOnRecord }`, idempotent. `403 LIVE_WITHDRAWAL_FORBIDDEN` (asked first), `400 LIVE_ACCOUNT_INVALID`, the cut's two `400`s, `409 LIVE_WITHDRAWAL_NOT_DUE` (with `cutsOnRecord`, `required: 3`) |
-| `DELETE /api/lives/broadcasters/:userId/withdrawal` | a content moderator | `{ userId, lifted }`, idempotent; `403 LIVE_WITHDRAWAL_FORBIDDEN`, `400 LIVE_ACCOUNT_INVALID` |
+| `DELETE /api/lives/broadcasters/:userId/withdrawal` | a content moderator | `{ userId, lifted }`, idempotent; `403 LIVE_WITHDRAWAL_FORBIDDEN`, `400 LIVE_ACCOUNT_INVALID`. A real lift (`lifted: true`) writes the member's `live_reinstated` notice and push ([below](#the-three-pushes-a-broadcaster-gets-wp-l8b)) |
+| `GET /api/lives/broadcasters/withdrawn` | a content moderator | the accounts whose right is withdrawn, newest first (at most 500 read), each `{ userId, displayName, cutsOnRecord, suspendedUntil, withdrawnAt, withdrawalDue, withdrawalReason }`, **narrowed to the people the caller may act on** (`moderatedUserIds`: all for a platform admin, the people of its own spaces for a BDE holder, none for an institution holder) so the list never offers a lift the server would refuse. Reads `live_broadcast_withdrawals`, never a report. `no-store`; `403 LIVE_WITHDRAWAL_FORBIDDEN` |
+| `GET /api/lives/broadcasters/:userId/standing` | a content moderator, in scope | the same row for ONE account, with no report in between; `403 LIVE_WITHDRAWAL_FORBIDDEN`, `403 MODERATION_OUT_OF_SCOPE` (the withdrawal's own door and scope), `404 LIVE_BROADCASTER_NOT_FOUND` (an id that is no account: never a clean standing). `no-store` |
 
 **Every `410` is `{ code: 'LIVE_ENDED', endedAt, endReason }`** (one constructor, `liveEnded`): `endReason` is `broadcaster`, `dropped`, `erased` or `cut` (`max_duration` is no longer written: no live has a longest duration, and the database check still allows it for rows of the past), and a screen branches on it, never on a message.
 
@@ -1126,7 +1128,8 @@ rolling 90 days). No automatic cut: every rung starts from a person's cut. Code:
 - **The notice** (`post_notifications`, `text` = the reason code, no actor) **and its push**: `live_cut`
   for strike 1 when the cut ended the live (as before); **`live_suspended`** for strike 2 and later
   (whether or not the live was still open: a suspension is news either way); **`live_withdrawn`** at a
-  withdrawal. A strike-1 cut of a live the broadcaster had already ended is not notified (unchanged).
+  withdrawal; **`live_reinstated`** (1.7.0, floor `1.7.0`) when a staff lift really removed the row
+  (`lifted: true`; a repeat writes nothing; no actor, no text, best effort and logged). A strike-1 cut of a live the broadcaster had already ended is not notified (unchanged).
   The bell rows for all three are built (`NotificationRow`, `notif_live_*_text`, the reason label).
 
 ### The three pushes a broadcaster gets (WP-L8b)
@@ -1139,6 +1142,7 @@ Built 2026-10-21. The three notices above are pushed through the one pipeline
 | `live_cut` | `social_live_cut` | "Votre live a été interrompu" / "La modération a coupé votre live. Ceci est un avertissement." ("Your live was stopped" / "Moderators cut your live. This is a warning.") |
 | `live_suspended` | `social_live_suspended` | "Lives suspendus" / "Après une nouvelle coupure par la modération, vous ne pouvez plus lancer de live pour le moment." ("Lives suspended" / "After another cut by moderators, you cannot start a live for now.") |
 | `live_withdrawn` | `social_live_withdrawn` | "Droit de lancer un live retiré" / "La modération vous a retiré le droit de lancer un live." ("Right to go live withdrawn" / "Moderators have withdrawn your right to start a live.") |
+| `live_reinstated` (1.7.0) | `social_live_reinstated` | "Droit de lancer un live rétabli" / "La modération vous a rendu le droit de lancer un live ; une suspension en cours reste appliquée jusqu'à sa fin." ("Right to go live restored" / "Moderators gave back your right to start a live; a running suspension still applies until it ends.") - a running suspension is NOT lifted with it, so the sentence promises nothing while one runs (charter, principle 6: a sanction lifted has the voice of the sanction) |
 
 - **Fixed sentences, composed on the device** (`notif_social_live_*` on Android, `notif.social.live_*`
   in the iOS app and NSE, fr + en): no actor (which moderator acted is not the broadcaster's to
@@ -1324,7 +1328,7 @@ What is left:
   report, the withdraw button and the `live_chat` row with its integrity (`altered`, `key-rotated`
   and `unverifiable` shown with ONE weight, "not proven", [why](#a-reported-chat-line-wp-l8b)) are
   built too (`ModerationLiveBlock`, `ModerationChatLineBlock`), and so is the control lifting a
-  withdrawal (2026-11-17, [the moderation client](../frontend/modules/live.md#the-moderation-client-wp-l8s-client-half-2026-10-19)).
+  withdrawal (2026-11-17, now also from the withdrawn list, with no report: 1.7.0, [the moderation client](../frontend/modules/live.md#the-moderation-client-wp-l8s-client-half-2026-10-19)).
   Nothing is left in code; the readings are [their own entry](../backlog.d/reading-owed-live-moderation-pushes-lift-and-the-lives-switch.md).
 
 ## Decisions of 2026-10-20: moderation, reactions, the audience

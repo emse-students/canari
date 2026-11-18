@@ -6044,6 +6044,7 @@
   "notif_live_cut_text": "Your live was stopped by moderators",
   "notif_live_suspended_text": "You can no longer broadcast for a while",
   "notif_live_withdrawn_text": "Your right to broadcast was withdrawn",
+  "notif_live_reinstated_text": "Your right to broadcast was restored; a running suspension still applies until it ends.",
   "moderation_type_live": "Live",
   "moderation_type_live_chat": "Live chat message",
   "moderation_chat_line_verified": "Text verified by the server",
@@ -6102,6 +6103,10 @@
   "moderation_live_lift_already": "The right to broadcast was no longer withdrawn.",
   "moderation_live_lift_forbidden": "You are not allowed to restore the right to broadcast.",
   "moderation_live_lift_error": "The right could not be restored. Try again.",
+  "moderation_withdrawn_tab": "Broadcast withdrawn",
+  "moderation_withdrawn_empty": "No right to broadcast is withdrawn at the moment.",
+  "moderation_withdrawn_reason": "Reason: {reason}",
+  "moderation_load_withdrawn_error": "Could not load the accounts whose right to broadcast is withdrawn.",
   "moderation_live_prior_cuts": [
     {
       "declarations": ["input count", "local countPlural = count: plural"],
