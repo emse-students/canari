@@ -71,6 +71,11 @@
   import { useScreenOrientation } from '$lib/mobile/screenOrientation.svelte';
   import { previewDoubleTap } from '$lib/reels/previewDoubleTap';
   import { sideSafePadding } from '$lib/utils/sideSafeArea';
+  import {
+    LIVE_TOP_ACTIONS_CLASS,
+    LIVE_TOP_BAR_CLASS,
+    LIVE_TOP_IDENTITY_CLASS,
+  } from './liveTopBar';
 
   interface Props {
     /** Broadcast AS this association (`POST_AS_ASSO` there), or null for the member. */
@@ -313,8 +318,8 @@
   }
 
   /** The suspension sentence, with its end date in the reader's locale when the server sent one. */
-  function suspendedText(): string {
-    const until = broadcast.startSuspendedUntil ? new Date(broadcast.startSuspendedUntil) : null;
+  function suspendedText(iso: string | null): string {
+    const until = iso ? new Date(iso) : null;
     if (!until || Number.isNaN(until.getTime())) return m.live_start_suspended_no_date();
     return m.live_start_suspended({
       date: new Intl.DateTimeFormat(getLocale(), { day: 'numeric', month: 'long' }).format(until),
@@ -336,7 +341,7 @@
   const START_TEXT: Record<LiveStartProblem, () => string> = {
     muted: m.live_start_muted,
     'rules-not-accepted': m.live_start_rules_not_accepted,
-    suspended: suspendedText,
+    suspended: () => suspendedText(broadcast.startSuspendedUntil),
     withdrawn: m.live_start_withdrawn,
     'already-open': m.live_start_already_open,
     'association-forbidden': m.live_start_association_forbidden,
@@ -439,12 +444,13 @@
   {/if}
 
   <!-- The top row: close (never while on air: End is the way out) and the lens. -->
-  <div
-    class="absolute inset-x-0 top-0 flex items-start justify-between gap-3 p-3 pt-[calc(var(--safe-area-inset-top,0px)+0.75rem)]"
-    style={sideSafePadding('0.75rem')}
-  >
+  <div class={LIVE_TOP_BAR_CLASS} style={sideSafePadding('0.75rem')} data-live-top-bar>
     {#if onAir || broadcast.phase === 'starting' || broadcast.phase === 'ending'}
-      <div class="flex flex-col items-start gap-2" role="status">
+      <div
+        class="{LIVE_TOP_IDENTITY_CLASS} flex flex-col items-start gap-2"
+        role="status"
+        data-live-top-identity
+      >
         {#if onAir}
           <!-- Who is on air, then the badge, the time and the audience: Instagram Live's corner. -->
           {#if broadcasterId}
@@ -541,7 +547,7 @@
       </CameraControlButton>
     {/if}
 
-    <div class="flex shrink-0 items-center gap-2">
+    <div class={LIVE_TOP_ACTIONS_CLASS} data-live-top-actions>
       {#if broadcast.phase === 'preview' && orientation.canRotate}
         <RotateButton onrotate={orientation.rotate} />
       {/if}
@@ -625,7 +631,7 @@
   {#if broadcast.phase === 'preview' || broadcast.phase === 'starting'}
     <!-- Turned, the sheet takes the left side and leaves the picture on the right. -->
     <div
-      class="absolute inset-x-0 bottom-0 flex max-h-[calc(100%-var(--safe-area-inset-top,0px)-4rem)] flex-col gap-3 overflow-y-auto bg-linear-to-t from-black/90 via-black/70 to-transparent px-4 pt-12 pb-[calc(var(--safe-area-inset-bottom,0px)+1.25rem)] landscape:max-w-md"
+      class="absolute inset-x-0 bottom-(--keyboard-occlusion-bottom,0px) flex max-h-[calc(100%-var(--safe-area-inset-top,0px)-4rem-var(--keyboard-occlusion-bottom,0px))] flex-col gap-3 overflow-y-auto bg-linear-to-t from-black/90 via-black/70 to-transparent px-4 pt-12 pb-[calc(var(--safe-area-inset-bottom,0px)+1.25rem)] landscape:max-w-md"
       style={sideSafePadding('1rem')}
       data-no-double-tap
       data-live-prelive-sheet
@@ -750,6 +756,28 @@
         <p class="text-sm text-white/70">{m.live_limits_loading()}</p>
       {/if}
 
+      {#if broadcast.standingBar}
+        <!-- Said BEFORE Start, from the standing the server answered: Start is not offered. "Retry"
+             reads it again - a suspension that ended, a withdrawal staff lifted. -->
+        <div class="flex items-center justify-between gap-3" role="alert" data-live-standing>
+          <p class="text-sm font-semibold text-red-300">
+            {broadcast.standingBar === 'withdrawn'
+              ? m.live_start_withdrawn()
+              : suspendedText(broadcast.standing?.suspendedUntil ?? null)}
+          </p>
+          <Button
+            variant="secondary"
+            size="compact"
+            class="shrink-0"
+            onclick={() => void broadcast.loadLimits()}
+            data-live-standing-retry
+          >
+            <RefreshCcw size={16} strokeWidth={2.5} />
+            {m.live_retry()}
+          </Button>
+        </div>
+      {/if}
+
       {#if broadcast.startProblem}
         <p class="text-sm font-semibold text-red-300" role="alert" data-live-start-problem>
           {START_TEXT[broadcast.startProblem]()}
@@ -802,58 +830,63 @@
 
   <!-- The chat while on air (WP-L6): its own ONE loop, a hide button on every line, above the End
        button. Under the away layer in paint order, and kept mounted through it, so its lines and
-       cursors survive a camera taken away. A verdict that the live is over goes to the machine. -->
-  {#if onAir && broadcast.liveId && broadcast.chatKey}
+       cursors survive a camera taken away. A verdict that the live is over goes to the machine.
+       The desktop's scene bar on air (owner, 2026-11-14) shares ONE flex row with it: the chat takes
+       the room the bar leaves, so the two cannot overlap at any width and no width is written down;
+       the sound and the microphone say so above the bar when they need a click. -->
+  {#if onAir && ((broadcast.liveId && broadcast.chatKey) || studio)}
     <div
-      class="pointer-events-none absolute inset-x-0 top-1/4 bottom-(--safe-area-inset-bottom,0px) landscape:max-w-sm"
+      class="pointer-events-none absolute inset-x-0 top-1/4 bottom-[calc(var(--safe-area-inset-bottom,0px)+var(--keyboard-occlusion-bottom,0px))] flex items-end gap-3"
       style={sideSafePadding()}
-      data-no-double-tap
-      data-live-broadcaster-chat-box
     >
-      {#key broadcast.liveId}
-        <LiveBroadcasterChat
-          liveId={broadcast.liveId}
-          keyHex={broadcast.chatKey}
-          visible={chatOpen}
-          onEnded={(verdict) => broadcast.chatHeardEnd(verdict)}
-          onViewers={(count) => (viewers = count)}
-        />
-      {/key}
-    </div>
-  {/if}
-
-  {#if studio && onAir}
-    <!-- The desktop's scene bar on air (owner, 2026-11-14), at the bottom right, clear of the chat
-         at the left; the sound and the microphone say so here when they need a click. -->
-    <div
-      class="pointer-events-none absolute right-0 bottom-0 flex max-w-xl flex-col items-end gap-2 p-3 pb-[calc(var(--safe-area-inset-bottom,0px)+0.75rem)] *:pointer-events-auto"
-      style={sideSafePadding('0.75rem')}
-      data-no-double-tap
-      data-live-onair-scenes
-    >
-      {#if !studio.audioRunning}
-        <Button
-          variant="danger-outline"
-          size="compact"
-          onclick={() => studio.wakeAudio()}
-          data-live-audio-suspended
+      {#if broadcast.liveId && broadcast.chatKey}
+        <div
+          class="relative h-full min-w-0 flex-1 landscape:max-w-sm"
+          data-no-double-tap
+          data-live-broadcaster-chat-box
         >
-          <Volume2 size={16} strokeWidth={2.5} />
-          {m.live_audio_suspended()}
-        </Button>
+          {#key broadcast.liveId}
+            <LiveBroadcasterChat
+              liveId={broadcast.liveId}
+              keyHex={broadcast.chatKey}
+              visible={chatOpen}
+              onEnded={(verdict) => broadcast.chatHeardEnd(verdict)}
+              onViewers={(count) => (viewers = count)}
+            />
+          {/key}
+        </div>
       {/if}
-      {#if studio.micPhase === 'error'}
-        <Button
-          variant="danger-outline"
-          size="compact"
-          onclick={() => void studio.reopenMicrophone()}
-          data-live-mic-fault
+      {#if studio}
+        <div
+          class="ms-auto flex shrink-0 flex-col items-end gap-2 p-3 pb-[calc(var(--safe-area-inset-bottom,0px)+0.75rem)] *:pointer-events-auto"
+          data-no-double-tap
+          data-live-onair-scenes
         >
-          <RefreshCcw size={16} strokeWidth={2.5} />
-          {m.live_mic_fault()}
-        </Button>
+          {#if !studio.audioRunning}
+            <Button
+              variant="danger-outline"
+              size="compact"
+              onclick={() => studio.wakeAudio()}
+              data-live-audio-suspended
+            >
+              <Volume2 size={16} strokeWidth={2.5} />
+              {m.live_audio_suspended()}
+            </Button>
+          {/if}
+          {#if studio.micPhase === 'error'}
+            <Button
+              variant="danger-outline"
+              size="compact"
+              onclick={() => void studio.reopenMicrophone()}
+              data-live-mic-fault
+            >
+              <RefreshCcw size={16} strokeWidth={2.5} />
+              {m.live_mic_fault()}
+            </Button>
+          {/if}
+          <LiveSceneBar {studio} onAir />
+        </div>
       {/if}
-      <LiveSceneBar {studio} />
     </div>
   {/if}
 

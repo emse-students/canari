@@ -137,6 +137,14 @@ describe('GifMediaController', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('lets a bug in the guard surface as one, never as KLIPY unreachable', async () => {
+    const bug = new TypeError('a bug of ours');
+    guardMock.mockRejectedValue(bug);
+    const { res } = makeRes();
+    await expect(controller.relay(GIF_URL, ticket, res as never)).rejects.toBe(bug);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('relays the GIF with its headers, asks KLIPY nothing of the reader, and caches it', async () => {
     fetchMock.mockResolvedValueOnce(gifAnswer());
     const first = makeRes();

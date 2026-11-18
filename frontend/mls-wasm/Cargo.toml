@@ -1,6 +1,6 @@
 [package]
 name = "mls-wasm"
-version = "1.6.12-alpha.2"
+version = "1.7.0-alpha.12"
 edition = "2021"
 
 [lib]
@@ -14,3 +14,14 @@ getrandom = { version = "0.2", features = ["js"] }
 getrandom_v04 = { package = "getrandom", version = "0.4", features = ["wasm_js"] }
 js-sys = "0.3.90"
 log = "0.4.29"
+
+# THE HOST TOOLS ARE NEVER STRIPPED (2026-11-18). A release build strips debuginfo by default, the
+# `build-override` profile included - the proc macros and build scripts cargo compiles for the HOST
+# and loads there. On the `xcode-27` macOS runner the stripped `libsqlx_macros-*.dylib` was refused
+# by macOS 27's dyld ("mis-aligned LINKEDIT string pool"), and whether it showed depended on a
+# cache. Declared here, in the profile every build of this crate reads, and not as one script's
+# environment: no host build of it escapes. What ships is untouched - cargo never strips a
+# staticlib or a wasm, and the Xcode archive strips the app
+# (docs/wiki/cicd.md#the-ios-toolchain-is-pinned-xcode-27-since-171).
+[profile.release.build-override]
+strip = false

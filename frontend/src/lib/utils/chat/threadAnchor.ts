@@ -27,8 +27,14 @@ export interface ThreadGrowth {
    * content growing under a stationary reader fires none.
    */
   wasNearBottom: boolean;
-  /** Older messages are being prepended - `loadOlderGroups` restores the position itself. */
+  /** Older messages are being prepended - the row at the top of the viewport is kept. */
   isLoadingOlder: boolean;
+  /**
+   * The pane's own box changed height in this change (the keyboard, a resize) - measured apart from
+   * the content, so a box change landing in the same mutation as a prepend is still seen. Optional: a
+   * caller that cannot tell says nothing, and the change is treated as content alone.
+   */
+  boxChanged?: boolean;
   /** The conversation is still being entered - its position is the bottom, whatever moves under it. */
   isEntering: boolean;
 }
@@ -86,10 +92,15 @@ export type ThreadGrowthResponse = 'follow-bottom' | 'hold-bottom' | 'keep-row';
  * `wasNearBottom` says, since a scroll measured while the list is hidden is not the reader's.
  */
 export function threadGrowthResponse(growth: ThreadGrowth): ThreadGrowthResponse {
-  // PREPENDING IS GROWTH THAT MEANS THE OPPOSITE. `loadOlderGroups` adds height ABOVE the reader and
-  // restores `scrollTop` by exactly that much; following the bottom here would throw away the
-  // history it had just fetched and land them where they already were.
-  if (growth.isLoadingOlder) return 'keep-row';
+  // PREPENDING IS GROWTH THAT MEANS THE OPPOSITE. `loadOlderGroups` adds height ABOVE the reader,
+  // and the row anchor keeps their row; following the bottom here would throw away the history it
+  // had just fetched.
+  // EXCEPT A BOX CHANGE UNDER A READER AT THE BOTTOM (review of #3545): a keyboard moving while the
+  // store is read moved the bottom, and that reader follows it - whatever the content did in the same
+  // change, since a prepend above a reader at the bottom leaves them at the bottom anyway.
+  if (growth.isLoadingOlder) {
+    return growth.wasNearBottom && growth.boxChanged === true ? 'follow-bottom' : 'keep-row';
+  }
   if (!growth.wasNearBottom && !growth.isEntering) return 'keep-row';
   return growth.currentReach === growth.previousReach ? 'hold-bottom' : 'follow-bottom';
 }
@@ -176,7 +187,8 @@ export interface KeyboardChange {
 }
 
 /**
- * WHETHER A KEYBOARD RISING OR FALLING TAKES THE THREAD TO ITS LAST MESSAGE.
+ * WHETHER A KEYBOARD RISING OR FALLING TAKES THE THREAD TO ITS LAST MESSAGE - for the ONE reader the
+ * thread's own observer does not already hold there.
  *
  * **A KEYBOARD RISING FOR THE COMPOSER IS THE COMPOSER BEING TAKEN UP, whether or not a focus event
  * came with it.** Focusing the field already goes to the end (`ChatArea`), from any distance. But an
@@ -188,10 +200,21 @@ export interface KeyboardChange {
  * 483 after; the owner's report on 1.5.0). So the rise answers like the focus does.
  *
  * A keyboard FALLING moves only a reader at the bottom - one reading history is left where they are.
+ *
+ * **A READER AT THE BOTTOM IS THE OBSERVER'S, AND ONLY THE OBSERVER'S (review of #3556, D2).** Every
+ * keyboard move changes the thread's reach - its box (iOS, a browser) or its bottom padding (the
+ * Android app) - and `observeThreadGrowth` pins a reader who was at the bottom in the very layout
+ * that changed it, before the keyboard ride reads where the rows went. A second scroll to the bottom
+ * a frame later was a second writer of the same pixel: harmless while both agreed, a step under the
+ * ride the moment they did not (Mi 9T: scrollTop 4085 then 4073). So this answers `follow-bottom`
+ * only for the reader the observer leaves alone - one ABOVE the bottom whose composer the rising
+ * keyboard is for - and a fall, which only ever follows a reader at the bottom, is the observer's
+ * entirely.
  */
 export function keyboardChangeResponse(change: KeyboardChange): 'follow-bottom' | 'stay' {
-  if (!change.wasOpen && change.isOpen && change.composerFocused) return 'follow-bottom';
-  if (change.wasOpen && !change.isOpen && change.isNearBottom) return 'follow-bottom';
+  if (!change.wasOpen && change.isOpen && change.composerFocused && !change.isNearBottom) {
+    return 'follow-bottom';
+  }
   return 'stay';
 }
 

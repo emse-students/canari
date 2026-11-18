@@ -159,7 +159,7 @@ describe("A signs out with its final write held, B signs in, A's write lands lat
     expect(session.callService.mls).toBe(clientA);
 
     // A signs out; its final checkpoint is in flight and stays there.
-    await clearAuth();
+    await clearAuth('chosen');
     expect(clientA.pauseSocket).toHaveBeenCalledTimes(1);
     expect(a.flushEncrypted).toHaveBeenCalledTimes(1);
 
@@ -196,7 +196,7 @@ describe("A signs out with its final write held, B signs in, A's write lands lat
   it('a final write that FAILS still retires A and releases what A registered', async () => {
     const { session, clientA, a } = signedInAsA();
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
-    await clearAuth();
+    await clearAuth('chosen');
 
     a.land(new Error('disk full'));
     await settle();
@@ -221,6 +221,7 @@ const WELCOME: DeliveredWelcome = {
   userId: 'newcomer',
   deviceId: 'newcomer-dev',
   welcome: new Uint8Array([1]),
+  addressability: 'addressable',
 };
 
 describe('the join push is wired into every client the session builds', () => {
@@ -234,7 +235,7 @@ describe('the join push is wired into every client the session builds', () => {
     await vi.waitFor(() => expect(clientA.isDistributionGroup).toHaveBeenCalledWith('group-1'));
 
     // A signs out, B signs in on the same process.
-    await clearAuth();
+    await clearAuth('chosen');
     session.initServices(() => {});
     const clientB = made[1];
     expect(session.ensureMls()).toBe(clientB);

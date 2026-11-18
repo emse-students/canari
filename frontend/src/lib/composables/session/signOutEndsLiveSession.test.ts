@@ -43,6 +43,26 @@ describe('every sign-out ends the live session on the device', () => {
     expect(handler).toContain('_loginInProgress = false;');
   });
 
+  it('a deleted account skips the push deregistration the erasure job owns, and says so', () => {
+    // The 401 it used to earn was logged at error level as "the server still lists device ...":
+    // false, the account was gone and the erasure job owns the row (S7, 2026-11-18). The danger zone latches the
+    // fact from the deletion's 204; the live-session deregistration reads it.
+    const from = sessionAuth.indexOf('function deregisterPushOfLiveSession(');
+    expect(from).toBeGreaterThan(-1);
+    const deregistration = sessionAuth.slice(from, sessionAuth.indexOf('\n}\n', from));
+    expect(deregistration).toContain('if (isAccountErasedOnServer()) {');
+    expect(deregistration.indexOf('isAccountErasedOnServer()')).toBeLessThan(
+      deregistration.indexOf('stopPushService(')
+    );
+    const danger = read('../../components/settings/SettingsDangerZone.svelte');
+    expect(danger.indexOf('noteAccountErasedOnServer();')).toBeGreaterThan(
+      danger.indexOf('await deleteMyAccount()')
+    );
+    expect(danger.indexOf('noteAccountErasedOnServer();')).toBeLessThan(
+      danger.indexOf("clearAuth('account-deleted')")
+    );
+  });
+
   it('a session that unlocked re-arms the expiry logout, so the next expiry signs out again', () => {
     // Set by the first expiry and reset by nothing, the guard swallowed every later expiry of the
     // same process. The unlock is where a live credential is proven, so that is where it ends.

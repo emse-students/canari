@@ -1,3 +1,7 @@
+vi.mock('$lib/utils/chat/backgroundJoins', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/utils/chat/backgroundJoins')>()),
+  forgetBackgroundJoin: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock('$lib/utils/hex', () => ({
   saveMlsState: vi.fn().mockResolvedValue(undefined),
   saveMlsStateEncrypted: vi.fn().mockResolvedValue(undefined),
@@ -57,6 +61,9 @@ vi.mock('$lib/utils/chat/recovery', () => ({
 }));
 
 import { setupMessageHandler } from './setupMessageHandler';
+import { isRegisterOwed } from '$lib/utils/chat/registerOwed';
+import { adoptBackgroundJoins, forgetBackgroundJoin } from '$lib/utils/chat/backgroundJoins';
+import { takeAddressedAsk } from '$lib/utils/chat/historyAddressing';
 import { messageRowStore, placement, storedRow } from '../test/fixtures/messageRowStore';
 import { resetUnackedFrames } from './unackedFrames';
 import { activeMlsStatePersister } from '../mlsStatePersisterRegistry';
@@ -64,6 +71,8 @@ import { m } from '$lib/paraglide/messages';
 import * as codec from '$lib/proto/codec';
 import * as messageUtils from '$lib/utils/chat/messageUtils';
 import { createMlsServiceStub } from '../test/fixtures/mlsServiceStub';
+import { openExternalCommitWindow } from '$lib/utils/chat/externalCommitVerdict';
+import { compareConversationRecency, conversationRecency } from '$lib/utils/chat/conversations';
 import {
   createTestConversations,
   createTestMessageReactions,
@@ -74,6 +83,17 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
   // Console spies a test installs, restored even when one of its assertions fails.
   const restores: (() => void)[] = [];
   afterEach(() => restores.splice(0).forEach((restore) => restore()));
+  // This file runs without a DOM, and a processed Welcome writes the durable register-owed marker
+  // (`registerOwed.ts`): a store in memory, so the write is real and nothing says it failed.
+  beforeEach(() => {
+    const map = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => map.get(k) ?? null,
+      setItem: (k: string, v: string) => void map.set(k, v),
+      removeItem: (k: string) => void map.delete(k),
+    });
+  });
+  afterEach(() => vi.unstubAllGlobals());
 
   const groupId = '11111111-1111-4111-8111-111111111111';
 
@@ -314,6 +334,73 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     // the messages the outbox held for it (`resumeOutboxGroup`). Pinned since 2026-10-31 - only the
     // redelivered-Welcome path was.
     expect(onGroupReady).toHaveBeenCalledWith(groupId);
+  });
+
+  /**
+   * THE ADMISSION MAKES THE DEVICE OWE ITSELF THE CONVERSATION'S STATE (`registerOwed.ts`): written
+   * durably beside the in-memory join ask, so a device the inviter's push never reached - offline at
+   * the delivery, or reloaded before it - asks for it by its own reconciliation.
+   */
+  it.each([
+    ['a conversation group owes its register', false, true],
+    ['a key group owes none - it has no conversation state', true, false],
+  ])('a processed Welcome: %s', async (_case, keyGroup, owed) => {
+    const deps = baseDeps();
+    const mls = deps.mlsService as any;
+    mls.processWelcome = vi.fn().mockResolvedValue(groupId);
+    mls.getDeviceId = vi.fn().mockReturnValue('dev-x');
+    mls.isDistributionGroup = vi.fn(() => keyGroup);
+    setupMessageHandler(deps as any);
+    const onMsg = mls.onMessage.mock.calls[0][0] as (
+      a: string,
+      b: Uint8Array,
+      c?: string,
+      d?: boolean,
+      e?: Uint8Array,
+      f?: boolean
+    ) => Promise<boolean>;
+    await onMsg('peer-user', new Uint8Array([1, 2]), groupId, true, undefined, false);
+
+    expect(isRegisterOwed('user-a', groupId)).toBe(owed);
+    // A FRESH JOIN, told to the announcement as a fact: what runs the newcomer's reconciliation. A
+    // key group's Welcome takes the Graine handler, which announces nothing to the conversation layer.
+    expect(mls.noteWelcomeInstalled.mock.calls).toEqual(keyGroup ? [] : [[groupId]]);
+  });
+
+  it("the page's own install forgets the group's background note - the next start owes nothing again (P2-2)", async () => {
+    vi.mocked(forgetBackgroundJoin).mockClear();
+    const deps = baseDeps();
+    const mls = deps.mlsService as any;
+    mls.processWelcome = vi.fn().mockResolvedValue(groupId);
+    mls.getDeviceId = vi.fn().mockReturnValue('dev-x');
+    setupMessageHandler(deps as any);
+    const onMsg = mls.onMessage.mock.calls[0][0] as (
+      a: string,
+      b: Uint8Array,
+      c?: string,
+      d?: boolean
+    ) => Promise<boolean>;
+    await onMsg('peer-user', new Uint8Array([1, 2]), groupId, true);
+
+    expect(vi.mocked(forgetBackgroundJoin).mock.calls).toEqual([[groupId]]);
+  });
+
+  it('a Welcome delivered with no envelope group id leaves no install mark - the drain reads none', async () => {
+    const deps = baseDeps();
+    const mls = deps.mlsService as any;
+    mls.processWelcome = vi.fn().mockResolvedValue(groupId);
+    mls.getDeviceId = vi.fn().mockReturnValue('dev-x');
+    setupMessageHandler(deps as any);
+    const onMsg = mls.onMessage.mock.calls[0][0] as (
+      a: string,
+      b: Uint8Array,
+      c?: string,
+      d?: boolean
+    ) => Promise<boolean>;
+    await onMsg('peer-user', new Uint8Array([1, 2]), undefined, true);
+
+    expect(mls.processWelcome).toHaveBeenCalled();
+    expect(mls.noteWelcomeInstalled).not.toHaveBeenCalled();
   });
 
   /**
@@ -986,6 +1073,236 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     expect(mls.processWelcome).not.toHaveBeenCalled();
     expect(mls.sendWelcomeRequest).not.toHaveBeenCalled();
     expect(onGroupReady).toHaveBeenCalledWith(groupId);
+    // Joins nothing, so the announcement must not reconcile it as a fresh join.
+    expect(mls.noteWelcomeInstalled).not.toHaveBeenCalled();
+  });
+
+  it('the redelivered Welcome of a group the push service JOINED is its admission - once', async () => {
+    // P2-a of the review of #3777: an Android background join installs the group with no page
+    // running, so the page's first Welcome for it is this redelivery.
+    const deps = baseDeps();
+    const mls = deps.mlsService as any;
+    mls.getLocalGroups = vi.fn().mockReturnValue([groupId]);
+    mls.isDistributionGroup = vi.fn().mockReturnValue(false);
+    mls.getDeviceId = vi.fn().mockReturnValue('dev-x');
+    adoptBackgroundJoins(
+      mls,
+      'me',
+      [groupId],
+      () => true,
+      () => {}
+    );
+    setupMessageHandler(deps as any);
+    const onMsg = mls.onMessage.mock.calls[0][0] as (
+      a: string,
+      b: Uint8Array,
+      c?: string,
+      d?: boolean,
+      e?: Uint8Array
+    ) => Promise<boolean>;
+
+    expect(await onMsg('peer', new Uint8Array([1]), groupId, true, undefined)).toBe(true);
+    expect(mls.noteWelcomeInstalled.mock.calls).toEqual([[groupId]]);
+    // The inviter's push is solicited, from the user the Welcome came from only.
+    expect(takeAddressedAsk(groupId, undefined, 'carol:carol-dev', true)).toBeNull();
+    expect(takeAddressedAsk(groupId, undefined, 'peer:peer-dev', true)?.ask.kind).toBe('join');
+
+    // A second redelivery is a redelivery like any other.
+    expect(await onMsg('peer', new Uint8Array([1]), groupId, true, undefined)).toBe(true);
+    expect(mls.noteWelcomeInstalled).toHaveBeenCalledTimes(1);
+  });
+
+  it("a conversation Welcome arriving while this device's own external commit awaits the gate installs once it is refused", async () => {
+    // The key group's race (iPhone 12, 2026-11-16) on the conversation path: the same predicate.
+    const deps = baseDeps();
+    const mls = deps.mlsService as any;
+    let held = [groupId];
+    mls.getLocalGroups = vi.fn(() => held);
+    mls.isGroupActive = vi.fn().mockResolvedValue(true);
+    mls.processWelcome = vi.fn().mockResolvedValue(groupId);
+    mls.getDeviceId = vi.fn().mockReturnValue('dev-x');
+    const closeWindow = openExternalCommitWindow(mls, groupId);
+    setupMessageHandler(deps as any);
+    const onMsg = mls.onMessage.mock.calls[0][0] as (
+      a: string,
+      b: Uint8Array,
+      c?: string,
+      d?: boolean,
+      e?: Uint8Array
+    ) => Promise<boolean>;
+
+    const ack = onMsg('peer', new Uint8Array([1]), groupId, true, undefined);
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    expect(mls.processWelcome).not.toHaveBeenCalled();
+    held = [];
+    closeWindow();
+
+    expect(await ack).toBe(true);
+    expect(mls.processWelcome).toHaveBeenCalled();
+  });
+
+  it('a conversation Welcome waits for a join that took the MLS lock after its settled read', async () => {
+    const deps = baseDeps();
+    const mls = deps.mlsService as any;
+    let held: string[] = [];
+    mls.getLocalGroups = vi.fn(() => held);
+    mls.isGroupActive = vi.fn().mockResolvedValue(true);
+    mls.getDeviceId = vi.fn().mockReturnValue('dev-x');
+    let closeWindow: (() => void) | undefined;
+    mls.processWelcome = vi.fn(async () => {
+      if (held.length > 0) throw new Error('GROUP_ALREADY_HELD: ' + groupId);
+      return groupId;
+    });
+    let calls = 0;
+    mls.runUnderMlsLock = vi.fn(async (fn: () => Promise<unknown>) => {
+      if (calls++ === 0) {
+        closeWindow = openExternalCommitWindow(mls, groupId);
+        held = [groupId];
+      }
+      return fn();
+    });
+    setupMessageHandler(deps as any);
+    const onMsg = mls.onMessage.mock.calls[0][0] as (
+      a: string,
+      b: Uint8Array,
+      c?: string,
+      d?: boolean,
+      e?: Uint8Array
+    ) => Promise<boolean>;
+
+    const ack = onMsg('peer', new Uint8Array([1]), groupId, true, undefined);
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    expect(mls.processWelcome).not.toHaveBeenCalled();
+    held = [];
+    closeWindow!();
+
+    expect(await ack).toBe(true);
+    expect(mls.processWelcome).toHaveBeenCalledTimes(1);
+    await expect(mls.processWelcome.mock.results[0].value).resolves.toBe(groupId);
+  });
+
+  /**
+   * A JOINED CONVERSATION IS ORDERED BY ITS ADMISSION, never by 0 (iPhone 12, `1.7.0-alpha.5`,
+   * 2026-11-16: two groups joined with the list in front were not drawn for minutes, then listed
+   * on the first screen after a resume). The row a Welcome writes holds notices at most - and a
+   * notice is not activity (`conversationRecency`) - so with no seed its sort key was 0: the LAST row
+   * of a long list, below the screen, where a phone's visible tree never reached it. The creator's
+   * row is seeded with its creation moment (`groupCreation`); the joiner's now carries the server's
+   * time of the Welcome that admitted it.
+   */
+  describe('a Welcome orders the joined conversation by the server time of its admission', () => {
+    const joined = '55555555-5555-4555-8555-555555555555';
+    const older = '66666666-6666-4666-8666-666666666666';
+    const ADMITTED_AT = 1_763_302_051_000;
+
+    async function deliverWelcome(
+      meta: unknown,
+      deliveryMeta: { queuedCreatedAt?: number } | undefined,
+      overrides: Record<string, unknown> = {}
+    ) {
+      const deps = baseDeps({
+        conversations: createTestConversations([
+          [
+            older,
+            emptyConversation(older, {
+              lifecycle: 'active',
+              conversationType: 'group',
+              lastMessageAt: ADMITTED_AT - 60_000,
+            }),
+          ],
+        ]),
+        ...overrides,
+      });
+      const mls = deps.mlsService as any;
+      mls.getGroupMeta = vi.fn().mockResolvedValue(meta);
+      mls.processWelcome = vi.fn().mockResolvedValue(joined);
+      mls.getDeviceId = vi.fn().mockReturnValue('dev-x');
+      setupMessageHandler(deps as any);
+      const onMsg = mls.onMessage.mock.calls[0][0] as (...a: unknown[]) => Promise<boolean>;
+      expect(
+        await onMsg('peer-user', new Uint8Array([1]), joined, true, undefined, false, deliveryMeta)
+      ).toBe(true);
+      return { deps, mls };
+    }
+
+    it('a new group sorts above a conversation last active before the admission', async () => {
+      const { deps } = await deliverWelcome(
+        { name: 'IPH6G', isGroup: true },
+        { queuedCreatedAt: ADMITTED_AT }
+      );
+
+      const row = deps.conversations.get(joined)!;
+      expect(row.lastMessageAt).toBe(ADMITTED_AT);
+      expect(conversationRecency(row)).toBe(ADMITTED_AT);
+      const order = [...deps.conversations.values()].sort(compareConversationRecency);
+      expect(order.map((c) => c.id)).toEqual([joined, older]);
+    });
+
+    it('a new DM is seeded the same way', async () => {
+      const { deps } = await deliverWelcome(
+        { name: 'user-a::peer-user', isGroup: false },
+        { queuedCreatedAt: ADMITTED_AT }
+      );
+
+      expect(deps.conversations.get(joined)?.conversationType).toBe('direct');
+      expect(deps.conversations.get(joined)?.lastMessageAt).toBe(ADMITTED_AT);
+    });
+
+    it('a group joined in the background gets the seed from its redelivered Welcome', async () => {
+      const deps = baseDeps({ conversations: createTestConversations([]) });
+      const mls = deps.mlsService as any;
+      mls.getLocalGroups = vi.fn().mockReturnValue([joined]);
+      mls.getGroupMeta = vi.fn().mockResolvedValue({ name: 'Equipe', isGroup: true });
+      setupMessageHandler(deps as any);
+      const onMsg = mls.onMessage.mock.calls[0][0] as (...a: unknown[]) => Promise<boolean>;
+
+      await onMsg('peer', new Uint8Array([1]), joined, true, undefined, false, {
+        queuedCreatedAt: ADMITTED_AT,
+      });
+
+      expect(deps.conversations.get(joined)?.lastMessageAt).toBe(ADMITTED_AT);
+    });
+
+    it('a row that already has a seed keeps it: a re-Welcome is no reason to move it', async () => {
+      const seeded = ADMITTED_AT - 3_600_000;
+      const { deps } = await deliverWelcome(
+        { name: 'Equipe', isGroup: true },
+        { queuedCreatedAt: ADMITTED_AT },
+        {
+          conversations: createTestConversations([
+            [joined, emptyConversation(joined, { lifecycle: 'pending', lastMessageAt: seeded })],
+          ]),
+        }
+      );
+
+      expect(deps.conversations.get(joined)?.lastMessageAt).toBe(seeded);
+    });
+
+    it('a row restored with the persisted 0 of an unseeded row takes the admission', async () => {
+      // `toConversationMeta` writes `updatedAt` as the recency, 0 for a row with no message, seed or
+      // start, and the load reads it back as `lastMessageAt: 0` - a value that is the ABSENCE of a seed.
+      const { deps } = await deliverWelcome(
+        { name: 'Equipe', isGroup: true },
+        { queuedCreatedAt: ADMITTED_AT },
+        {
+          conversations: createTestConversations([
+            [joined, emptyConversation(joined, { lifecycle: 'pending', lastMessageAt: 0 })],
+          ]),
+        }
+      );
+
+      expect(deps.conversations.get(joined)?.lastMessageAt).toBe(ADMITTED_AT);
+    });
+
+    it('a Welcome with no server time leaves no seed, and says so at warn', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      restores.push(() => warn.mockRestore());
+
+      const { deps } = await deliverWelcome({ name: 'IPH6G', isGroup: true }, undefined);
+
+      expect(deps.conversations.get(joined)?.lastMessageAt).toBeUndefined();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('no server time'));
+    });
   });
 
   /**
@@ -1231,6 +1548,91 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
       expect(await onMsg('admin', new Uint8Array([1]), keyGroup, true)).toBe(true);
       expect(mls.processWelcome).not.toHaveBeenCalled();
       expect(mls.updateInvitationStatus).toHaveBeenCalled();
+    });
+
+    /**
+     * THE IPHONE 12 READING OF 2026-11-16. The key group was held by this device's own external
+     * commit, built on a base read before the admitter's Add and not yet answered by the gate. The
+     * Welcome read that as "already held" and was thrown away; the gate then refused the commit
+     * (`epoch_mismatch`), the state was dropped, and the salon stayed unreadable for good.
+     */
+    describe("arriving while this device's own external commit awaits the gate", () => {
+      it('installs once the gate REFUSES the commit and the state is dropped', async () => {
+        const { deps, mls, onMsg } = keyGroupDeps({ distributionWorkspaceId: 'ws-1' });
+        // Held, with this device's leaf in it: exactly what an unanswered external commit leaves.
+        let held = [keyGroup];
+        mls.getLocalGroups = vi.fn(() => held);
+        mls.isGroupActive = vi.fn().mockResolvedValue(true);
+        const closeWindow = openExternalCommitWindow(mls, keyGroup);
+
+        const ack = onMsg('admin', new Uint8Array([1]), keyGroup, true);
+        for (let i = 0; i < 20; i++) await Promise.resolve();
+        expect(mls.processWelcome).not.toHaveBeenCalled();
+
+        // The refusal: `externalJoin` drops the state, then closes the window.
+        held = [];
+        closeWindow();
+
+        expect(await ack).toBe(true);
+        expect(mls.processWelcome).toHaveBeenCalled();
+        const lines = deps.log.mock.calls.map((c: unknown[]) => String(c[0]));
+        expect(lines.some((l: string) => l.includes('redelivered Welcome ignored'))).toBe(false);
+        expect(
+          lines.some((l: string) =>
+            l.includes('awaited the gate - read after its answer, held now: false')
+          )
+        ).toBe(true);
+      });
+
+      it('a join that takes the MLS lock between the settled read and the install is waited for too', async () => {
+        // The read and the install are two steps: a join of this group whose base predated the Add
+        // can take the lock in between and build, and an install then would land on a group held by
+        // a commit nobody has accepted - refused by the engine, ACKed, and gone when the gate refuses.
+        const { mls, onMsg } = keyGroupDeps({ distributionWorkspaceId: 'ws-1' });
+        let held: string[] = [];
+        mls.getLocalGroups = vi.fn(() => held);
+        mls.isGroupActive = vi.fn().mockResolvedValue(true);
+        let closeWindow: (() => void) | undefined;
+        let installedWhileOpen = false;
+        mls.processWelcome = vi.fn(async () => {
+          if (closeWindow && held.length > 0) installedWhileOpen = true;
+          return keyGroup;
+        });
+        let calls = 0;
+        mls.runUnderMlsLock = vi.fn(async (fn: () => Promise<unknown>) => {
+          // The first time, `externalJoin` was granted the lock first: it opened its window and built.
+          if (calls++ === 0) {
+            closeWindow = openExternalCommitWindow(mls, keyGroup);
+            held = [keyGroup];
+          }
+          return fn();
+        });
+
+        const ack = onMsg('admin', new Uint8Array([1]), keyGroup, true);
+        for (let i = 0; i < 20; i++) await Promise.resolve();
+        expect(installedWhileOpen).toBe(false);
+        expect(mls.processWelcome).not.toHaveBeenCalled();
+
+        held = [];
+        closeWindow!();
+
+        expect(await ack).toBe(true);
+        expect(mls.processWelcome).toHaveBeenCalledTimes(1);
+        expect(installedWhileOpen).toBe(false);
+      });
+
+      it('control: an ACCEPTED commit leaves the group joined, and the Welcome is redundant', async () => {
+        const { mls, onMsg } = keyGroupDeps({ distributionWorkspaceId: 'ws-1' });
+        mls.getLocalGroups = vi.fn(() => [keyGroup]);
+        mls.isGroupActive = vi.fn().mockResolvedValue(true);
+        const closeWindow = openExternalCommitWindow(mls, keyGroup);
+
+        const ack = onMsg('admin', new Uint8Array([1]), keyGroup, true);
+        closeWindow();
+
+        expect(await ack).toBe(true);
+        expect(mls.processWelcome).not.toHaveBeenCalled();
+      });
     });
 
     it('ACKs a Welcome that fails to install, asking for no recovery - the own load is the door', async () => {
@@ -1763,6 +2165,135 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
 
       expect(mls.republishKeyMaterial).toHaveBeenCalledWith('key-after-pin-change');
       expect(mls.republishKeyMaterial).not.toHaveBeenCalledWith('key-before-pin-change');
+    });
+  });
+
+  /**
+   * THE FRAME TRIGGER OF A REACTION NOTIFICATION (review of #3792): every applied reaction frame is
+   * handed to `onInboundReaction` with what `applyReactionFrame` established - whether it changed
+   * anything, whose message it landed on (the shown row, else the STORED row) - and whether it came
+   * live (`isLiveDelivery`). The decision is the caller's; these pin what it is told.
+   */
+  describe('a reaction frame is handed to onInboundReaction', () => {
+    const REACTION = { messageId: 'm-mine', emoji: '+1', at: 1_700_000_000_123, removed: false };
+
+    async function deliver(
+      opts: {
+        shown: boolean;
+        meta?: Record<string, unknown>;
+        stored?: unknown;
+        storeThrows?: boolean;
+        stated?: string;
+      },
+      frames = 1
+    ) {
+      const mine = { id: 'm-mine', senderId: 'user-a', content: 'hi' } as any;
+      const onInboundReaction = vi.fn();
+      const deps = baseDeps({
+        conversations: createTestConversations([
+          [groupId, emptyConversation(groupId, { messages: opts.shown ? [mine] : [] })],
+        ]),
+        storage: {
+          mergeMessages: vi.fn(async (_c: string, ids: string[]) => new Set(ids)),
+          getMessagesByIds: vi.fn(async () => {
+            if (opts.storeThrows) throw new Error('store closed');
+            return {
+              rows: new Map(opts.stored ? [['m-mine', opts.stored]] : []),
+              unreadable: new Set(),
+            };
+          }),
+        },
+        onInboundReaction,
+      });
+      const mls = deps.mlsService as any;
+      mls.processIncomingMessage = vi
+        .fn()
+        .mockResolvedValue({ plaintext: new Uint8Array([7]), author: 'unsigned' });
+      mls.getLocalGroups = vi.fn().mockReturnValue([groupId]);
+      setupMessageHandler(deps as any);
+      const onMsg = mls.onMessage.mock.calls[0][0];
+      for (let i = 0; i < frames; i++) {
+        vi.mocked(codec.decodeAppMessage).mockReturnValueOnce({
+          reaction: opts.stated ? { ...REACTION, targetAuthorId: opts.stated } : REACTION,
+          messageId: `mid-r-${i}`,
+        } as any);
+        await onMsg('Peer', new Uint8Array([1]), groupId, false, undefined, false, opts.meta);
+      }
+      return onInboundReaction;
+    }
+
+    it('tells a LIVE fresh reaction to my shown message, with its author and its own instant', async () => {
+      const seen = await deliver({ shown: true, meta: { channel: 'live' } });
+      expect(seen).toHaveBeenCalledTimes(1);
+      expect(seen).toHaveBeenCalledWith({
+        conversationKey: groupId,
+        messageId: 'm-mine',
+        reactorId: 'peer',
+        emoji: '+1',
+        at: 1_700_000_000_123,
+        removed: false,
+        changed: true,
+        messageAuthorId: 'user-a',
+        authorLookupFailed: false,
+        live: true,
+      });
+    });
+
+    it('names the author the frame STATES when this device holds no copy of the message', async () => {
+      const seen = await deliver({ shown: false, meta: { channel: 'live' }, stated: 'user-a' });
+      expect(seen.mock.calls[0][0]).toMatchObject({
+        messageAuthorId: 'user-a',
+        authorLookupFailed: false,
+      });
+    });
+
+    it('prefers the row it holds over the stated author', async () => {
+      const seen = await deliver({
+        shown: true,
+        meta: { channel: 'live' },
+        stated: 'someone-else',
+      });
+      expect(seen.mock.calls[0][0].messageAuthorId).toBe('user-a');
+    });
+
+    it('says the store FAILED, so a null author is a real unknown', async () => {
+      const seen = await deliver({ shown: false, meta: { channel: 'live' }, storeThrows: true });
+      expect(seen.mock.calls[0][0]).toMatchObject({
+        messageAuthorId: null,
+        authorLookupFailed: true,
+      });
+    });
+
+    it('names the author from the STORED row when the message is not in memory', async () => {
+      const seen = await deliver({
+        shown: false,
+        meta: { channel: 'live' },
+        stored: { id: 'm-mine', senderId: 'user-a', content: 'hi', reactions: [] },
+      });
+      expect(seen.mock.calls[0][0]).toMatchObject({ changed: true, messageAuthorId: 'user-a' });
+    });
+
+    it('names nobody, and changes nothing, for a message held neither shown nor stored', async () => {
+      const seen = await deliver({ shown: false, meta: { channel: 'live' } });
+      expect(seen.mock.calls[0][0]).toMatchObject({
+        changed: false,
+        messageAuthorId: null,
+        authorLookupFailed: false,
+      });
+    });
+
+    it('says a replay changed nothing', async () => {
+      const seen = await deliver({ shown: true, meta: { channel: 'live' } }, 2);
+      expect(seen.mock.calls.map((c) => c[0].changed)).toEqual([true, false]);
+    });
+
+    it.each([
+      ['a pulled row', { channel: 'pull' }],
+      ['a frame ahead of an unlisted mailbox', { channel: 'live', aheadOfMailbox: true }],
+      ['a frame with no delivery facts', undefined],
+    ])('marks %s as not live', async (_, meta) => {
+      const seen = await deliver({ shown: true, meta });
+      expect(seen.mock.calls[0][0].live).toBe(false);
     });
   });
 

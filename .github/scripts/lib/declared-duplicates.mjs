@@ -59,6 +59,17 @@ export const DECLARED_GROUPS = [
     ],
   },
   {
+    what: 'the declaration of path parameters and the global guard that reads it',
+    compare: 'exact',
+    why: 'no shared TS package, for the reason the CORS allowlist below gives; each service provides the guard in its own AppModule (route-params-wired.test.mjs), and the one spec sits beside the first copy',
+    files: [
+      'apps/social-service/src/common/route-params.ts',
+      'apps/core-service/src/common/route-params.ts',
+      'apps/media-service/src/common/route-params.ts',
+      'apps/chat-delivery-service/src/common/route-params.ts',
+    ],
+  },
+  {
     what: 'the CORS origin allowlist every service applies',
     compare: 'exact',
     why: 'no shared TS package; one would add a build stage and the --install-links trap to four production images (see the docblock in any copy)',
@@ -224,6 +235,15 @@ export const DECLARED_GROUPS = [
     compare: 'exact',
     why: 'chat-gateway and call-service are two crates with no shared library, and both sockets must read `ALLOW_ORIGIN` by one rule. Its tests sit in the file, so each crate runs them. A shared crate is the entry docs/wiki/backlog.d/p3-the-two-rust-services-share-no-crate.md.',
     files: ['apps/chat-gateway/src/origin.rs', 'apps/call-service/src/origin.rs'],
+  },
+  {
+    what: 'the one lock-wait loop of the integration suites: reached, settled without waiting, or bounded with a dump',
+    compare: 'code',
+    why: 'social-service and chat-delivery are two packages with no shared TS package, and both suites must fail a wait that never comes by ONE rule (a message, never a jest timeout). Each file introduces itself with the folder its own build excludes, which is why this is compared as code.',
+    files: [
+      'apps/social-service/src/common/lock-wait.it-fixture.ts',
+      'apps/chat-delivery-service/src/testing/lockWait.ts',
+    ],
   },
 ];
 

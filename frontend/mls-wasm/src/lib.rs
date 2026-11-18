@@ -216,6 +216,41 @@ pub fn graine_verify_signatures(packed: &[u8]) -> Result<Vec<String>, JsValue> {
         .map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
+/// A fresh X25519 pair for ONE history ask, `{secret, public}` (`mls_core::history_seal`).
+/// Stateless: the asker keeps the secret beside its open ask, in memory, and nothing in WASM keeps it.
+#[wasm_bindgen]
+pub fn history_answer_keypair() -> Result<JsValue, JsValue> {
+    let pair = mls_core::history_seal::history_answer_keypair()
+        .map_err(|e| JsValue::from_str(e.code()))?;
+    let obj = js_sys::Object::new();
+    let secret = js_sys::Uint8Array::from(pair.secret.as_slice());
+    let public = js_sys::Uint8Array::from(pair.public.as_slice());
+    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("secret"), &secret);
+    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("public"), &public);
+    Ok(obj.into())
+}
+
+/// Seals a history answer's content to the asker's key, bound to `aad`. Rejects with the engine's
+/// CODE (`HistorySealError::code`), never a sentence.
+#[wasm_bindgen]
+pub fn seal_history_answer(
+    public_key: &[u8],
+    aad: &[u8],
+    plaintext: &[u8],
+) -> Result<Vec<u8>, JsValue> {
+    mls_core::history_seal::seal_history_answer(public_key, aad, plaintext)
+        .map_err(|e| JsValue::from_str(e.code()))
+}
+
+/// Opens a sealed history answer with the ask's secret. Rejects with the engine's CODE. The secret
+/// is taken OWNED, so the copy wasm-bindgen makes in linear memory is zeroized on return rather than
+/// freed with the bytes still in it.
+#[wasm_bindgen]
+pub fn open_history_answer(secret: Vec<u8>, aad: &[u8], sealed: &[u8]) -> Result<Vec<u8>, JsValue> {
+    mls_core::history_seal::open_history_answer_owned(secret, aad, sealed)
+        .map_err(|e| JsValue::from_str(e.code()))
+}
+
 // Wrapper structure exposed to JavaScript.
 #[wasm_bindgen]
 pub struct WasmMlsClient {
@@ -426,6 +461,29 @@ impl WasmMlsClient {
                 .save_state()
                 .map_err(|e| JsValue::from_str(&e.to_string()))
         }
+    }
+
+    /// Applies the app's staged ledger changes, `{ "key": "value" | null }` as JSON, to the state the
+    /// next `save_state` exports (`mls_core::app_ledgers`). Returns how many keys changed.
+    #[wasm_bindgen]
+    pub fn apply_app_ledgers(&mut self, changes_json: &str) -> Result<u32, JsValue> {
+        self.manager
+            .apply_app_ledgers_json(changes_json)
+            .map(|n| n as u32)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Every ledger the state carries, as a JSON object of strings.
+    #[wasm_bindgen]
+    pub fn app_ledgers(&self) -> String {
+        self.manager.app_ledgers_json()
+    }
+
+    /// Takes `live`'s ledgers into this client, which is about to replace it - see
+    /// `MlsManager::adopt_app_ledgers` for why a swap must carry them.
+    #[wasm_bindgen]
+    pub fn adopt_app_ledgers(&mut self, live: &WasmMlsClient) {
+        self.manager.adopt_app_ledgers(&live.manager);
     }
 
     /// The device's STATIC fallback. Reusable: the delivery service serves this one package to
@@ -680,6 +738,21 @@ impl WasmMlsClient {
             .into_iter()
             .map(|e| e as f64)
             .collect()
+    }
+
+    /// What this device can prove, alone, about `user_id` having been a member of `group_id`, as JSON
+    /// `{ firstSeenEpoch, watchedFromEpoch }` (each a number or `null`). See
+    /// `MlsManager::membership_evidence`.
+    #[wasm_bindgen]
+    pub fn membership_evidence(
+        &self,
+        group_id: String,
+        user_id: String,
+    ) -> Result<String, JsValue> {
+        mls_core::member_sightings::evidence_json(
+            &self.manager.membership_evidence(&group_id, &user_id),
+        )
+        .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
     /// Every device event recorded since the last call, as a JSON array of

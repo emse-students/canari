@@ -706,9 +706,15 @@ pub(crate) async fn recuperer_cle_session_mls(
 ///
 /// The length is kept rather than nothing because a write that reports no size is a write nothing
 /// can sanity-check, and eight bytes is not a cost.
+///
+/// `ledgers` are the app's staged ledger changes (`mls_core::app_ledgers`), applied to the live
+/// manager BEFORE the export, so this write - and every later one, whoever makes it - carries them
+/// in the same file as the ratchets they describe. Applied even when the write below fails: the live
+/// manager is where they belong, and the next write of it takes them.
 #[tauri::command]
 pub(crate) async fn sauvegarder_mls_et_persister(
     device_key_b64: String,
+    ledgers: Option<std::collections::HashMap<String, Option<String>>>,
     state: tauri::State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<usize, String> {
@@ -720,6 +726,15 @@ pub(crate) async fn sauvegarder_mls_et_persister(
         // so without this the guard lapses mid-checkpoint on a backgrounded app and a background
         // engine writes back the state it loaded BEFORE this one started (see `concurrency.rs`).
         let _checkpoint = ForegroundCritical::enter();
+        if let Some(changes) = ledgers.filter(|c| !c.is_empty()) {
+            let mut lock = manager_state
+                .lock()
+                .map_err(|_| "Failed to lock state".to_string())?;
+            let manager = lock
+                .as_mut()
+                .ok_or_else(|| "MLS Manager not initialized".to_string())?;
+            manager.apply_app_ledgers(changes);
+        }
         let key = session_at_rest_key(&device_key_b64, &device_key_state)?;
         // The manager lock spans the export only; the seal and the write run on the copy, in
         // checkpoint order - see `checkpoint_live_manager` for what that freed and what it kept.
@@ -945,6 +960,20 @@ pub(crate) fn oublier_groupe(
     Ok(())
 }
 
+/// Every ledger the live state carries (`mls_core::app_ledgers`), read once by the app after the
+/// state opens - they arrive with the state, so nothing else needs to be read back.
+#[tauri::command]
+pub(crate) fn lire_ledgers_mls(
+    state: tauri::State<AppState>,
+) -> Result<std::collections::HashMap<String, String>, String> {
+    let lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    Ok(manager.app_ledgers().clone())
+}
+
 #[tauri::command]
 pub(crate) fn lister_groupes(state: tauri::State<AppState>) -> Result<Vec<String>, String> {
     let lock = state
@@ -1167,6 +1196,23 @@ pub(crate) fn epoques_departs(
         .map_err(|_| "Failed to lock state")?;
     let manager = crate::state::live_manager(&lock)?;
     Ok(manager.removal_epochs(&group_id, &user_id))
+}
+
+/// What this device can prove, alone, about `user_id` having been a member of `group_id` - see
+/// `MlsManager::membership_evidence`. Serialised `{ firstSeenEpoch, watchedFromEpoch }`, as the WASM
+/// binding writes it.
+#[tauri::command]
+pub(crate) fn preuves_appartenance(
+    group_id: String,
+    user_id: String,
+    state: tauri::State<AppState>,
+) -> Result<mls_core::MembershipEvidence, String> {
+    let lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = crate::state::live_manager(&lock)?;
+    Ok(manager.membership_evidence(&group_id, &user_id))
 }
 
 /// Every device event recorded since the last call, and forgets them - see
@@ -2085,6 +2131,100 @@ pub(crate) async fn graine_verify_signatures(packed_b64: String) -> Result<Vec<S
     .await
     .map_err(|e| {
         log::error!("[GRAINE_SIG] signature batch task failed: {e}");
+        e.to_string()
+    })?
+}
+
+/// A fresh X25519 pair for ONE history ask (`mls_core::history_seal`), both halves base64.
+///
+/// Stateless, like the Graine session pair: the asking page keeps the secret beside its open ask,
+/// in memory, and nothing native holds it after the call.
+#[derive(serde::Serialize)]
+pub(crate) struct HistoryAnswerKeyPairDto {
+    secret: String,
+    public: String,
+}
+
+#[tauri::command]
+pub(crate) fn history_answer_keypair() -> Result<HistoryAnswerKeyPairDto, String> {
+    use base64::Engine;
+    log::debug!("[HISTORY_SEAL] history_answer_keypair");
+    let pair =
+        mls_core::history_seal::history_answer_keypair().map_err(|e| e.code().to_string())?;
+    let b64 = base64::engine::general_purpose::STANDARD;
+    Ok(HistoryAnswerKeyPairDto {
+        secret: b64.encode(pair.secret.as_slice()),
+        public: b64.encode(&pair.public),
+    })
+}
+
+/// Decodes one base64 argument of the history seal commands, naming the field on a contract break.
+fn history_seal_arg(field: &str, b64: &str) -> Result<Vec<u8>, String> {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD
+        .decode(b64)
+        .map_err(|e| {
+            log::error!(
+                "[HISTORY_SEAL] an argument of {} chars is not base64 - nothing sealed or opened",
+                b64.len()
+            );
+            format!("{field} is not base64: {e}")
+        })
+}
+
+/// Seals a history answer's content to the asker's key, bound to `aad`, every value base64 (a chunk
+/// is up to 200 messages: one string crosses the bridge, never a number per byte). The error is the
+/// engine's CODE (`HistorySealError::code`), which the frontend classifies on.
+///
+/// `async` + `spawn_blocking`: a chunk can be a few hundred kilobytes, which a synchronous command
+/// would seal on the main thread.
+#[tauri::command]
+pub(crate) async fn seal_history_answer(
+    public_key_b64: String,
+    aad_b64: String,
+    plaintext_b64: String,
+) -> Result<String, String> {
+    use base64::Engine;
+    let public = history_seal_arg("public key", &public_key_b64)?;
+    let aad = history_seal_arg("aad", &aad_b64)?;
+    let plaintext = history_seal_arg("plaintext", &plaintext_b64)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        mls_core::history_seal::seal_history_answer(&public, &aad, &plaintext)
+            .map(|sealed| base64::engine::general_purpose::STANDARD.encode(sealed))
+            .map_err(|e| e.code().to_string())
+    })
+    .await
+    .map_err(|e| {
+        log::error!("[HISTORY_SEAL] seal task failed: {e}");
+        e.to_string()
+    })?
+}
+
+/// Opens a sealed history answer with the ask's secret; base64 in and out like
+/// [`seal_history_answer`]. The error is the engine's CODE.
+#[tauri::command]
+pub(crate) async fn open_history_answer(
+    secret_b64: String,
+    aad_b64: String,
+    sealed_b64: String,
+) -> Result<String, String> {
+    use base64::Engine;
+    // WRAPPED BEFORE ANYTHING CAN FAIL: an argument below that is not base64 returns early, and the
+    // secret's string is then zeroized on drop rather than freed with the bytes still in it.
+    let mut secret_b64 = mls_core::history_seal::Zeroizing::new(secret_b64);
+    let aad = history_seal_arg("aad", &aad_b64)?;
+    let sealed = history_seal_arg("sealed", &sealed_b64)?;
+    // The secret is handed to mls-core still base64, its buffer MOVED out (no copy): it decodes and
+    // zeroizes both the string and the bytes (`open_history_answer_with_b64_secret`).
+    let secret_b64 = std::mem::take(&mut *secret_b64);
+    tauri::async_runtime::spawn_blocking(move || {
+        mls_core::history_seal::open_history_answer_with_b64_secret(secret_b64, &aad, &sealed)
+            .map(|plain| base64::engine::general_purpose::STANDARD.encode(plain))
+            .map_err(|e| e.code().to_string())
+    })
+    .await
+    .map_err(|e| {
+        log::error!("[HISTORY_SEAL] open task failed: {e}");
         e.to_string()
     })?
 }

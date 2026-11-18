@@ -60,6 +60,18 @@ maybe('one Lydia order_ref per request of a form answer, against PostgreSQL', ()
       extra: { options: `-c search_path=${schema},public` },
     });
     await ds.initialize();
+    // The respondent `where` reads the form's association's archive (`respondentFormWhere`).
+    await ds.query(
+      `CREATE TABLE associations (id uuid PRIMARY KEY, archived boolean NOT NULL DEFAULT false)`
+    );
+    // The `users` table social-service shares with core-service (same database): a member's
+    // submit reads the names its form joins there (`sharedAccountFields`, migration 174).
+    await ds.query(
+      `CREATE TABLE users (id text PRIMARY KEY, "firstName" text, "lastName" text, campus text)`
+    );
+    await ds.query(
+      `INSERT INTO users (id, "firstName", "lastName") VALUES ('member-1', 'Mia', 'MEMBER')`
+    );
     const associationsService: any = {
       assertPaymentsReady: async () => undefined,
       canTakePaymentsNow: async () => true,

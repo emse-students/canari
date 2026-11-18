@@ -34,6 +34,7 @@ import {
 } from './dto/user.dto';
 import { AuthSessionsService } from '../auth/auth-sessions.service';
 import { UserIdTakenError } from './user-write';
+import { userIdRuleBroken } from './user-id';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 import { AccountErasureService } from '../account-erasure/account-erasure.service';
@@ -41,6 +42,7 @@ import { RefusalCode, refusalBody } from '../common/refusal-codes';
 import { isInReviewCohort } from '../review-cohort';
 import { TAURI_WEBVIEW_ORIGINS } from '../cors-origins';
 import { avatarAccessOf, type AvatarAccess } from './avatar-access';
+import { RouteParams } from '../common/route-params';
 
 /**
  * The most ids one `GET /users/batch` may carry.
@@ -96,6 +98,7 @@ type AvatarLogOutcome =
   | 'rejected'
   | 'refused';
 
+@RouteParams({ id: 'opaque', otherUserId: 'opaque', blockedId: 'opaque', requestId: 'uuid' })
 @Controller('users')
 export class UsersController {
   private readonly logger = new Logger(UsersController.name);
@@ -275,11 +278,24 @@ export class UsersController {
         `too many ids (${requested.length} > ${MAX_PROFILE_BATCH}) - split the request`
       );
     }
+    // ONLY A WELL-FORMED ID CAN BE A DELETED ACCOUNT. A string no account could ever have (a name, a
+    // sentence, an id with a colon) is a DEFECT of whoever asked, and labelling it `deleted` made the
+    // client cache "Compte supprime" for it - for a whole membership notice whose payload held
+    // strings instead of ids. It is named apart in `malformed`, by the one mint rule (`user-id.ts`),
+    // and said at warn with a count, never the strings.
+    const wellFormed = requested.filter((id) => userIdRuleBroken(id) === null);
+    const malformed = requested.filter((id) => userIdRuleBroken(id) !== null);
+    if (malformed.length > 0) {
+      this.logger.warn(
+        `[USERS_BATCH] ${malformed.length} of ${requested.length} requested id(s) are not account ids ` +
+          `(lengths ${malformed.map((id) => id.length).join(',')}) - named in malformed, never in deleted`
+      );
+    }
     // Across the review cohort's boundary an id reads as an unknown one (`review-cohort.ts`).
-    const open = await this.usersService.profilesOpenTo(requesterId, requested);
+    const open = await this.usersService.profilesOpenTo(requesterId, wellFormed);
     const users = await this.usersService.findManyPublic(open);
     const found = new Set(users.map((u) => u.id));
-    return { users, deleted: requested.filter((id) => !found.has(id)) };
+    return { users, deleted: wellFormed.filter((id) => !found.has(id)), malformed };
   }
 
   /**

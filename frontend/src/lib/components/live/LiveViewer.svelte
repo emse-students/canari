@@ -71,6 +71,11 @@
 
   let { live, onClose, deps, chatDeps, fetchLimits = fetchLiveLimits }: Props = $props();
 
+  import {
+    LIVE_TOP_ACTIONS_CLASS,
+    LIVE_TOP_BAR_CLASS,
+    LIVE_TOP_IDENTITY_CLASS,
+  } from './liveTopBar';
   /** Registered while open: z-index by open order, the last opened on top (`utils/overlayStack.ts`). */
   const layer = useOverlayLayer(() => true, 'LiveViewer');
 
@@ -217,7 +222,8 @@
         chatMaxChars = session.messageMaxChars;
       },
       (e: unknown) => {
-        // The composer still works; a message past the bound is the server's 400, said on its line.
+        // The composer still works, bounded by the v1 format's own length (the session's and the
+        // panel's default): the server counts sealed BYTES, not characters, so it is no backstop.
         console.warn(`[LIVE_CHAT] the live limits could not be read (${String(e)})`);
       }
     );
@@ -356,12 +362,15 @@
     {/if}
 
     <div
-      class="absolute inset-x-0 top-0 flex items-center gap-2 bg-linear-to-b from-black/60 to-transparent p-3 pt-[calc(var(--safe-area-inset-top,0px)+0.75rem)]"
+      class="{LIVE_TOP_BAR_CLASS} bg-linear-to-b from-black/60 to-transparent"
       style={sideSafePadding('0.75rem')}
     >
       <!-- Instagram Live's corner: who, then LIVE, the time and the audience; the controls and the
            close X at the right. -->
-      <span class="flex min-w-0 flex-1 flex-col items-stretch gap-1 text-sm">
+      <span
+        class="{LIVE_TOP_IDENTITY_CLASS} flex flex-col items-stretch gap-1 text-sm"
+        data-live-top-identity
+      >
         <LiveIdentity {live} size="sm" onName={(n) => (name = n)} />
         <span class="flex items-center gap-1.5">
           {#if viewerState.kind !== 'ended'}
@@ -381,58 +390,64 @@
           {/if}
         </span>
       </span>
-      <LiveReportControl {live} onBlocked={() => overlay.dismissFromUi()} />
-      <!-- The kit's speaker, the same object as on every other video (owner, 2026-11-09). -->
-      <VideoSoundButton
-        muted={videoSound.muted}
-        onToggle={toggleSound}
-        onLevel={(v) => videoSound.setVolume(v)}
-        data-live-sound
-      />
-      {#if orientation.canRotate && !terminal}
-        <RotateButton onrotate={orientation.rotate} />
-      {/if}
-      <!-- Withheld: no toggle either - a button that shows and hides nothing is a dead control. -->
-      {#if !chatWithheld}
+      <!-- The actions are ONE group that never shrinks: when the name's column would fall under its
+           minimum (a 360-436 px portrait phone), the whole group wraps to its own row under the
+           name and the count instead of crushing the name or overlapping the second row. -->
+      <span class={LIVE_TOP_ACTIONS_CLASS} data-live-top-actions>
+        <LiveReportControl {live} onBlocked={() => overlay.dismissFromUi()} />
+        <!-- The kit's speaker, the same object as on every other video (owner, 2026-11-09). -->
+        <VideoSoundButton
+          muted={videoSound.muted}
+          onToggle={toggleSound}
+          onLevel={(v) => videoSound.setVolume(v)}
+          quiet
+          data-live-sound
+        />
+        {#if orientation.canRotate && !terminal}
+          <RotateButton onrotate={orientation.rotate} />
+        {/if}
+        <!-- Withheld: no toggle either - a button that shows and hides nothing is a dead control. -->
+        {#if !chatWithheld}
+          <button
+            type="button"
+            class="ui-icon-button bg-cn-scrim/40 hover:bg-cn-scrim/60 focus-visible:ring-accent-icon rounded-full outline-none focus-visible:ring-2"
+            aria-label={chatOpen ? m.live_chat_toggle_hide() : m.live_chat_toggle_show()}
+            title={chatOpen ? m.live_chat_toggle_hide() : m.live_chat_toggle_show()}
+            aria-pressed={chatOpen}
+            onclick={() => (chatOpen = !chatOpen)}
+            data-live-chat-toggle
+          >
+            {#if chatOpen}
+              <MessageCircle size={22} />
+            {:else}
+              <MessageCircleOff size={22} />
+            {/if}
+          </button>
+        {/if}
+        {#if !terminal}
+          <button
+            type="button"
+            class="ui-icon-button focus-visible:ring-accent-icon rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2"
+            aria-label={m.live_share_label()}
+            title={m.live_share_label()}
+            onclick={() => shareLiveLink(live.id)}
+            data-live-share
+          >
+            <Share2 size={22} />
+          </button>
+        {/if}
         <button
-          type="button"
-          class="ui-icon-button bg-cn-scrim/40 hover:bg-cn-scrim/60 focus-visible:ring-accent-icon rounded-full outline-none focus-visible:ring-2"
-          aria-label={chatOpen ? m.live_chat_toggle_hide() : m.live_chat_toggle_show()}
-          title={chatOpen ? m.live_chat_toggle_hide() : m.live_chat_toggle_show()}
-          aria-pressed={chatOpen}
-          onclick={() => (chatOpen = !chatOpen)}
-          data-live-chat-toggle
-        >
-          {#if chatOpen}
-            <MessageCircle size={22} />
-          {:else}
-            <MessageCircleOff size={22} />
-          {/if}
-        </button>
-      {/if}
-      {#if !terminal}
-        <button
+          bind:this={closeButton}
           type="button"
           class="ui-icon-button focus-visible:ring-accent-icon rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2"
-          aria-label={m.live_share_label()}
-          title={m.live_share_label()}
-          onclick={() => shareLiveLink(live.id)}
-          data-live-share
+          aria-label={m.live_viewer_close()}
+          title={m.live_viewer_close()}
+          onclick={() => overlay.dismissFromUi()}
+          data-live-close
         >
-          <Share2 size={22} />
+          <X size={24} strokeWidth={2.5} />
         </button>
-      {/if}
-      <button
-        bind:this={closeButton}
-        type="button"
-        class="ui-icon-button focus-visible:ring-accent-icon rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2"
-        aria-label={m.live_viewer_close()}
-        title={m.live_viewer_close()}
-        onclick={() => overlay.dismissFromUi()}
-        data-live-close
-      >
-        <X size={24} strokeWidth={2.5} />
-      </button>
+      </span>
     </div>
 
     <LiveReactionsLayer bind:this={reactions} />
@@ -445,7 +460,7 @@
 
     {#if !terminal}
       <div
-        class="from-cn-scrim/60 via-cn-scrim/30 pointer-events-none absolute inset-x-0 bottom-0 flex items-end gap-2 bg-linear-to-t to-transparent p-3 pt-24 pb-[calc(var(--safe-area-inset-bottom,0px)+0.75rem)]"
+        class="from-cn-scrim/60 via-cn-scrim/30 pointer-events-none absolute inset-x-0 bottom-(--keyboard-occlusion-bottom,0px) flex items-end gap-2 bg-linear-to-t to-transparent p-3 pt-24 pb-[calc(var(--safe-area-inset-bottom,0px)+0.75rem)]"
         style={sideSafePadding('0.75rem')}
       >
         <div class="min-w-0 flex-1 landscape:max-w-md">

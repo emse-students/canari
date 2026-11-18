@@ -490,11 +490,12 @@ client's guard against a server that ignores an exclusion stopped it instead. Fi
 measured against a real key, a warning when an exclusion cannot be used, and a test whose fixture is
 the shape this platform issues rather than `ua:da`.
 
-**What is still open is that SILENCE CARRIES TWO MEANINGS.** *We agree* and *nobody answered* are the
-same observation, which is why the escalation has to be gated on local evidence instead of on the
-absence of a reply. Making the agreeing responder ack would cost one frame per group per ask - the
-saving the state key exists for - so it is a design question, not an oversight
-([backlog](../backlog.md)).
+**SILENCE CARRIES TWO MEANINGS**, *we agree* and *nobody answered*, which is why the escalation
+is gated on local evidence instead of on the absence of a reply. **Answered 2026-11-17 for the case
+that matters:** the agreeing responder acks (`history_cannot_repair`) only when the ask carried the
+asker's proof of incompleteness, so the common agreement still costs one frame and the walk past an
+agreeing member advances on an answer - see
+[the fix](#the-fix-the-walk-advances-on-an-answer-built-2026-11-17).
 
 ### The second leg does not need a live waiter, and requiring one cost three messages for ever
 
@@ -902,7 +903,7 @@ GRP-ADDR-1** ([cross-client-testing](../cross-client-testing.md)).
 **What neither closes.** An older client keeps pushing and answering by broadcast until
 `minClientVersion` is a release carrying A, and that floor moves only once both stores serve the
 reader. The server cannot refuse such a frame, because it cannot read it. What a newcomer has already
-received cannot be taken back. Tracked in [backlog](../backlog.d/p1-a-new-member-of-a-group-conversation-receives-its-whole-past-decided-2026-10.md).
+received cannot be taken back. The floor that ends it is tracked in [p3-a-history-answer-is-sealed-or-refused-once-the-floor-seals](../backlog.d/p3-a-history-answer-is-sealed-or-refused-once-the-floor-seals.md); the rig row GRP-ADDR-1 was read whole on 2026-11-18 ([readings](../device-verification.md#the-web-and-phone-readings-of-2026-11-18-s7-170-alpha12-the-last-sitting-before-the-stable)).
 
 **Every road to a newcomer, read on 2026-10-31** (with #2791, which adds a member's new device by
 itself and asks only about a new person):
@@ -1521,6 +1522,8 @@ photo notice it never drew, which had left a device that met that frame only in 
 short as well.
 
 **The row carries ids, the reader draws the names** (2026-11-09, 1.6.8: the latest join read "Utilisateur inconnu a rejoint" for good). The stored sentence froze whatever `resolveDisplayNames` answered at write time, and a newcomer's profile is often unreadable then (a 404 or a nameless row, both cached as the unknown label). The stored envelope now holds `notice: { event, actor, targets, name }` beside the fallback `text` (`visibleNoticeContent`, `memberLeftContent`; `noticeText` is the one sentence builder), and `MessageBubble` draws the sentence from the ids through the single-flight `resolveUserDisplayName`, so the row redraws when the name lands - but only once EVERY name it holds is known on this device (`noticeDisplayText`): until then the stored sentence shows, since the writer drew it with the names it had and a cold cache (a relaunch, offline) must not turn a row that named everyone into the unknown label. The resolver keeps a 404 or a nameless profile as the unknown label for the whole session, so a row written in that state redraws at the next launch, not before. The uninvited-entry and unvouched-device lines (`deviceNotices`) carry the same structure. An older app reads the envelope's `text` and ignores `notice`; this app reads an old plain-sentence row as before. Rows written before this keep their stored sentence. Salon rows (`mkSystemEnvelope` in the community code) and call rows are still frozen text.
+
+**The ids survive a load from the store** (2026-11-16, `1.7.0-alpha.1`: "Utilisateur inconnu a ajouté Utilisateur inconnu au groupe" on the iPhone and on gamma's web seat, for good; the same cause as "Compte supprimé a ajouté Compte supprimé" before the server named malformed ids). `retroactivelyResolveHexIds` (`history.ts`) runs on every stored page to name the 64-hex ids a sentence kept when its lookups failed. It replaced them ANYWHERE in the row's JSON, so the notice's `actor` and `targets` became display names on the first load - the joiner from a Welcome meets it at once, since its first sight of a new group is a load, while a device holding the row in memory met it at its next reload. The renderer then asked `/api/users/batch?ids=canari%20test%20delta,...` (read on the web seat), the server answered `malformed`, the resolver cached the unknown label as the answer, and `noticeDisplayText` drew it over a stored sentence that was right. The pass now rewrites the sentence (`text`) alone and puts every other field back untouched. A row it already emptied is repaired by the same pass: a notice with a person value outside the client's id grammar (`ADDRESSABLE_HALF` in `leafIdentity.ts` - a space, a non-ASCII letter, which a full name almost always carries) is dropped and its stored sentence stands - the ids are lost, and the sentence was resolved with the same names. Only that is taken as damage: "not 64 hex" would prove nothing, since the server's mint rule still admits legacy ids that are not hex (and an upper-case hex id is an id), and an id dropped here would be lost for good. So a name that is one ASCII token ("Alice") stays unrepaired - its shape cannot be told from an id's - and keeps drawing the label the server's answer gives it. One warn per load names how many rows were repaired, and the repair is persisted, so each row is repaired once. The old pass damaged other structured fields the same way - a call record's `callEvent.starterId` (`finalizeCallRecord` then resolves a name and no longer finds `starter === ctx.userId`) and the 64-hex fields of a channel invitation card. Those are fixed going forward and not repaired: nothing on the row can rebuild the lost value, and unlike a notice there is no structure whose removal lets a correct stored sentence take over. Pinned by `history.noticeIds.test.ts`.
 
 **Mixed versions need nothing.** An older acting device still lacks its row, and converges as before
 (one relay, marked). An older member's digest names the notice the updated acting device now holds,
@@ -3035,8 +3038,9 @@ held 2 762 row keys and 2 073 fingerprints, under the old SHARED cap of 5 000 th
 5 000 of the mixture - so row keys pushed fingerprints out first. Across the profile: 169 ledgers,
 247 kB, mean 1.5 kB each, and nothing bounded their number.
 
-**What bounds it now** (`frontend/src/lib/utils/chat/seenLedgerBounds.ts`, called by
-`saveSeenCipherHashes`):
+**What bounds it now** (`frontend/src/lib/utils/chat/seenLedgerBounds.ts`, applied when a group's
+marks are staged into the MLS state - they travel inside it since KILL-2,
+[mls-desync-prevention](mls-desync-prevention.md#the-ledgers-that-describe-the-state-travel-inside-it-kill-2-2026-10-26)):
 
 | Bound | Value | Why this number |
 | --- | --- | --- |
@@ -3069,7 +3073,7 @@ in [backlog](../backlog.md).
 
 Shipped and in `CHANGELOG.md`: the two silent decrypt paths that spent a generation without recording it
 (`noteFrameConsumed`, asserted by `historyFrameConsumptionSeam.test.ts`), the checkpoint-bound replay marks
-(`commitPendingHistoryMarks`) and the ack barrier (`announceAck` / `ackInFlight`). Run-by-run evidence is on
+(staged into the checkpoint's own state since KILL-2, `stagePendingHistoryMarks`) and the ack barrier (`announceAck` / `ackInFlight`). Run-by-run evidence is on
 the TAB-3b row of [cross-client-testing](../cross-client-testing.md).
 
 **What is left, measured 2026-09-08 with the cap and hydration both exonerated (`seenset.mjs`).** Each
@@ -3106,7 +3110,7 @@ it is not that. On a phone this is a minute of an empty conversation.
 
 ## HEAL-repair lands on a coin flip: the measurement and the root cause (2026-09-08)
 
-The open line is in [backlog](../backlog.d/p1-the-repair-of-a-rewound-sender-lands-on-a-coin-flip-the-ask-cadence-is.md). The row HEAL-repair and its `PASS` of 2026-09-06 were one draw of a three-sided coin (ten runs across three builds, 2026-09-08). Two candidate causes were refuted by A/B and are not to be re-opened without new evidence ([durable-rules](../durable-rules.md)).
+**Built 2026-11-17** - see [the fix](#the-fix-the-walk-advances-on-an-answer-built-2026-11-17) below; the harness batch that confirms it is owed in [backlog](../backlog.d/p2-a-repair-ask-is-absorbed-by-another-device-s-exchange.md). The row HEAL-repair and its `PASS` of 2026-09-06 were one draw of a three-sided coin (ten runs across three builds, 2026-09-08). Two candidate causes were refuted by A/B and are not to be re-opened without new evidence ([durable-rules](../durable-rules.md)).
 
 **What separates a healed run from a partial one is not the asking.** The cadence is identical: three asks about 33 s apart, `escalated: true` every time. The difference is whether any one is ANSWERED. Every PARTIAL run contains zero `[HISTORY_BUNDLE]` lines; every HEALED run contains exactly one, answering the LAST ask (172 ms after it in the sampled run), never the first.
 
@@ -3118,7 +3122,28 @@ The open line is in [backlog](../backlog.d/p1-the-repair-of-a-rewound-sender-lan
 
 **The rule that makes it fixable**: the asker holds POSITIVE PROOF that it is incomplete (frames it has and cannot read - the evidence `escalateReconciliation` is already gated on), so *a peer's agreement is not a termination while this device holds frames it cannot read; it is a reason to EXCLUDE that peer and elect another*. That drives the exclusion walk from an ANSWER rather than from an absence, the only safe form - the 2026-09-08 attempt that drove it from an absence excluded W1 200 ms after electing it. [durable-rules](../durable-rules.md) already says a deadline is not a termination proof, and a leg that needs no remembered state to answer must not require a live waiter.
 
-**Not built, deliberately**: three earlier attempts to carry "this group is incomplete" across an exchange were each wrong in a different way (a durable marker read as "have I already asked", a coalescing clock, an absence read as silence). This one needs its state specified first: WHAT is remembered, for HOW LONG, and WHAT discharges it - the discharge being the repair landing, never any peer saying anything.
+Three earlier attempts to carry "this group is incomplete" across an exchange were each wrong in a different way (a durable marker read as "have I already asked", a coalescing clock, an absence read as silence), so the state was specified before it was built.
+
+### The fix: the walk advances on an answer (built 2026-11-17)
+
+**Re-measured against the code first.** By 2026-11-17 `escalateReconciliation` already excluded a member that stayed SILENT, but only while the ask it argued with was inside the 30 s coalescing window. The measured asks were ~33 s apart, so each was a fresh `reconcileGroup` that cleared the walk and drew again from the whole membership - the coin flip was still there, and an AGREEING member was never excluded at all.
+
+**The state, specified** (`unrepaired` in `historyReconcile.ts`):
+
+| | |
+| --- | --- |
+| WHAT | per group: an entry exists while this device holds a frame it cannot read and no repair has landed since; its set names the members that ANSWERED an ask carrying that proof with `history_cannot_repair`. A member that said nothing is never in it. |
+| opened by | an evidence edge only: `raiseReconcile` (a live `LOST frame`) and `escalateReconciliation` (a replay's unreadable frames). A LIVE loss (`raiseReconcile`) also EMPTIES the set: a frame lost after the answers is a message their senders may hold, and keeping them excluded ended every later ask of the session on an empty election (review of #3762). A replay re-accuses frames already asked about and keeps it |
+| HOW LONG | in memory, until discharged. The next boot replays the frames and proves the gap again |
+| WHAT discharges it | `noteRepairLanded`: a `history_bundle` that ADDED messages to this group's store. An agreement compares two stores; once a repair changed ours, every recorded agreement was about a store we no longer have. Never a peer's statement, never the window, never a clock. Also `forgetGroupReconciliation` and the session reset |
+
+**The exchange.** While the entry is open, EVERY ask for the group (whatever raised it: the escalation, the connection pass, the deferred retry) excludes the members in the set and carries `incomplete: true` on its first leg (`history_state` or, from an empty store, `history_digest`; the second-leg digest re-reads the proof when it is sent). A responder that would otherwise stay silent - keys equal, or a digest leaving it nothing to send - answers `history_cannot_repair {from, to, since}` instead (`stateWeCannotRepair`), and that frame REPLACES its coverage statement, because both would start a walk on the asker. The asker's `noteCannotRepair` adds the member to the set and elects again at once. The ordinary agreement, from an asker with no proof, is still one frame and silence.
+
+**Why it terminates.** Each answer adds one member, the set only grows while the proof stands, and the server answers `no_peer_online` with a positive `excludedOnline` when nobody reachable is left - logged `every reachable member (n) holds nothing <group> lacks`, not deferred: the holder of a frame this device cannot read is its sender, which was online to send it, and a presence edge would only replay the same election each time a member flaps. A server that re-elects an excluded member is stopped by the existing guard (`which we asked it to skip`). The walk therefore reaches the holder, or ends on a delivered fact, in at most one election per member.
+
+**Mixed versions.** An older responder ignores `incomplete` and stays silent - the silence escalation still applies. An older asker never sends `incomplete`, so it never receives the new frame; an unknown system event is acked silently anyway.
+
+**Known costs, stated.** A device that ACCUSES frames falsely (the TAB-3b shape below) now walks the online membership once per evidence edge instead of asking once - bounded and logged at each step, but about 2·N_online·M decrypts per cold start where it used to be about M; the figures, the measurement owed and the candidate answers are in [backlog](../backlog.d/p2-a-false-accuser-costs-n-online-elections-per-cold-start.md). And the 01:07 `same state` anomaly above is not explained by this fix: if a state key ever agrees falsely, the walk excludes a member that held the messages. The reading entry says what would show that.
 
 ## Open questions
 

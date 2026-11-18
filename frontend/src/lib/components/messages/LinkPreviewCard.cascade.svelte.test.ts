@@ -25,7 +25,7 @@ const PAYLOAD = {
 vi.mock('$lib/utils/apiFetch', () => ({
   apiFetch: async () => new Response(JSON.stringify(PAYLOAD), { status: 200 }),
 }));
-vi.mock('$lib/utils/apiUrl', () => ({ deliveryUrl: () => 'https://canari-emse.fr' }));
+vi.mock('$lib/utils/apiUrl', () => ({ deliveryUrl: () => 'https://canari.emse.fr' }));
 vi.mock('$lib/utils/previewTicket.svelte', () => ({
   ensurePreviewTicket: async () => {},
   previewTicket: () => 'tkt',
@@ -36,7 +36,7 @@ import LinkPreviewCard from './LinkPreviewCard.svelte';
 
 /** The proxied form of a raw URL, as `proxiedPreviewImageUrl` builds it. */
 const proxied = (raw: string) =>
-  `https://canari-emse.fr/api/mls/link-preview/image?url=${encodeURIComponent(raw)}&t=tkt`;
+  `https://canari.emse.fr/api/mls/link-preview/image?url=${encodeURIComponent(raw)}&t=tkt`;
 
 /** Keeps the registered callback reachable, which is the only way to say "it came near" here. */
 class FakeObserver {

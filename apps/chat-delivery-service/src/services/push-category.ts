@@ -233,7 +233,7 @@ const CATEGORY_BY_CONTENT_KEY: Readonly<Record<string, NotificationCategory>> = 
  * the machinery that keeps the account decryptable. None of them is "a notification" in the sense a
  * setting means, and filtering one would break a conversation rather than quiet it.
  *
- * The same decision for `social_live_cut`, `social_live_suspended` and `social_live_withdrawn`
+ * The same decision for `social_live_cut`, `social_live_suspended`, `social_live_withdrawn` and `social_live_reinstated`
  * (WP-L8b), deliberately absent from the map: a moderation sanction on the reader's own account is
  * not a feed the reader chose, and the switch that quiets the posts of the people they follow must
  * not hide that their right to broadcast was suspended.
@@ -251,4 +251,17 @@ export function categoryOfDataPush(data: Record<string, string>): NotificationCa
     default:
       return null;
   }
+}
+
+/**
+ * The KIND a `[SOCIAL_PUSH] sent` line names, so a count of one kind of push is one `grep` away.
+ *
+ * A reaction to a MESSAGE rides on `type: social` without being one (`mls/notify-reaction`), so its
+ * `type` cannot name it: it is `message_reaction`, distinct from `social_reaction`, the content key
+ * of a reaction to a POST. Without it the share of message reactions a device actually draws could
+ * not be measured against the ones sent (2026-11-17). Otherwise the content key, else the type.
+ */
+export function pushKindOf(data: Record<string, string>): string {
+  if (data.reaction === 'true') return 'message_reaction';
+  return data.contentKey || data.type || 'none';
 }

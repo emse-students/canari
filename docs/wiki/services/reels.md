@@ -66,8 +66,8 @@ square** video, or a vertical one past 3 minutes, stays an ordinary post video.
   a take outside the rule as a post with a WARN. **The camera's own cap is unchanged** (90 s, C4): the
   rule decides what a video IS, not how long the camera films. A take for a conversation keeps the
   2026-11-09 rule and the 60 s chat cap.
-- **The videos already posted become CanaReels** ("Oui, toutes"): HELD migration 172
-  (`172_gallery_videos_become_reels.sql`, `-- canari:hold-for-owner`) converts every published post
+- **The videos already posted become CanaReels** ("Oui, toutes"): HELD migration 176
+  (`176_gallery_videos_become_reels.sql`, `-- canari:hold-for-owner`) converts every published post
   whose ONLY content is one video into a reel expiring **one year after its publication** - so a
   video older than a year is deleted at the reel worker's next tick, which the owner accepted. **A
   post with several media (a video beside photos, two videos) STAYS A POST** (owner, 2026-11-14:
@@ -79,7 +79,7 @@ square** video, or a vertical one past 3 minutes, stays an ordinary post video.
   the owner's, not written here.
 
 The rule of 2026-11-09, as it stood until then (the "Existing posts are not converted" line is
-superseded by migration 172, and "every other video stays a post" by the OR above):
+superseded by migration 176, and "every other video stays a post" by the OR above):
 
 **Decided by the owner, 2026-11-09: every VERTICAL video of 90 s or less is a CanaReel** - filmed in
 the CanaReels tab or imported from the gallery into a post composer alike. It is published as a reel
@@ -118,7 +118,7 @@ YEAR** (was C6's month); the reels already published were moved to the year by m
   - the door is the rule - and bounded: on a phone those apps' filmed takes are vertical (the
   capture saves the portrait preview box's frame, `framedCapture.ts`), and the member can still
   publish the video as a post from "Nouvelle publication".
-- ~~**Existing posts are not converted**~~ - superseded 2026-11-14 by held migration 172, above.
+- ~~**Existing posts are not converted**~~ - superseded 2026-11-14 by held migration 176, above.
 
 ### Publishing: `POST /api/posts` with `kind: "reel"`
 
@@ -163,6 +163,7 @@ days before 2026-11-09).
 **Editing** (`PATCH /api/posts/:id`): a reel's caption is the only thing that can change. A payload
 naming `media`, `images`, `polls`, `attachedFormId`, `linkedCalendarEventId` or `scheduledAt` on a
 reel is a `400` - the video, its duration and its expiry are fixed at publication.
+**The editor honours it (2026-11-16):** `EditPostForm` sends a reel's caption (and the students-only switch, the reach) and nothing else - no `media`, `polls`, `scheduledAt`, `attachedFormId` - and draws no attachment chip, media strip, drop target or "1/10" attachment counter (`PostComposerBar` `captionOnly`; the video is not an attachment the author edits - the counter was still drawn on 1.7.0-alpha.5). It used to resend the reel's own video as `media`, so every caption save answered 400. The server rule is unchanged on purpose: the client is the one that knows it changed nothing else. The save is held while the caption is blank (the server refuses an empty body naming no media, and a reel edit may not name one). Ordinary posts keep sending their media. Test: `EditPostForm.reel.svelte.test.ts`.
 
 ### Reading
 

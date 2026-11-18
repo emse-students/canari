@@ -36,7 +36,7 @@ vi.mock('$lib/follows/api', async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
   countFollowRequests: () => new Promise(() => {}),
 }));
-vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
+vi.mock('$app/navigation', () => ({ goto: vi.fn(), afterNavigate: vi.fn() }));
 vi.mock(
   '$lib/components/notifications/NotificationRow.svelte',
   async () => import('../../test/stubs/NotificationRowStub.svelte')

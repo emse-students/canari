@@ -30,7 +30,7 @@ beforeEach(() => {
 
 describe('a sign-out erases the share sheet suggestions', () => {
   it('clearAuth clears them, beside the shared-out file and with the conversation shortcuts', async () => {
-    await clearAuth();
+    await clearAuth('chosen');
     expect(eraseAccountShortcuts).toHaveBeenCalledTimes(1);
     expect(eraseAccountShortcuts).toHaveBeenCalledWith('signed out');
     expect(discardSharedOut).toHaveBeenCalledTimes(1);

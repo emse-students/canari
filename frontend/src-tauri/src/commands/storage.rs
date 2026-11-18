@@ -384,6 +384,13 @@ fn reload_into(
     if let Some(dir) = path.parent() {
         report_background_stages(dir, &candidate);
     }
+    // THE APP'S LEDGERS STAY THE LIVE ONES (`mls_core::app_ledgers`): the file holds them as the last
+    // write left them, and the app may have staged newer ones into the live manager since. Sound
+    // only because both guards above held - the file is at or ahead of every live ratchet.
+    let mut candidate = candidate;
+    if let Some(current) = live.as_ref() {
+        candidate.adopt_app_ledgers(current);
+    }
     *live = Some(candidate);
     log::debug!("[RESUME] foreground manager reloaded from mls.bin (C2)");
     Ok(ReloadOutcome::Reloaded)
@@ -425,6 +432,13 @@ pub(crate) const KEY_GROUP_PUSH_JOIN_LEDGER_FILE: &str = "key_group_push_joins.j
 /// foreground is either seen settled or seen GONE - never silently lost. It describes `mls.bin`, so it
 /// leaves with it.
 pub(crate) const BACKGROUND_STAGES_FILE: &str = "background_stages.json";
+
+/// The groups a background Welcome JOINED into `mls.bin` while the app was shut
+/// (`mobile/background.rs`, `note_background_join`): `{groupId: true}`. The app takes and clears it
+/// once per start (`take_background_joins`), so a conversation joined with no page running is owed
+/// its register like one joined by the page (`registerOwed.ts`). It describes `mls.bin`, so it
+/// leaves with it.
+pub(crate) const BACKGROUND_JOINS_FILE: &str = "background_joins.json";
 
 /// Runs `edit` on the JSON-object ledger `file_name` beside `mls.bin`, under the process-wide
 /// `mls.bin` write lock (every FCM thread shares that process), writing it back by rename when
@@ -602,8 +616,9 @@ pub(crate) fn report_what_a_live_persist_erases(
 ///
 /// **THE FILE IS READ WHETHER OR NOT A STAGE IS NOTED.** The stages ledger names only the background
 /// Welcome's stages; other background writers - a Welcome received in the background joining a new
-/// group (`process_welcome_background_with_key`) - write `mls.bin` with nothing noted, and the
-/// persist erases them just the same. Returns the counts of [`report_what_a_live_persist_erases`],
+/// group (`process_welcome_background_with_key`) - write `mls.bin` with no stage noted (that join is
+/// noted only for the app's register ask, `BACKGROUND_JOINS_FILE`), and the persist erases them just
+/// the same. Returns the counts of [`report_what_a_live_persist_erases`],
 /// `None` when the file could not be read or opened.
 fn report_what_keeping_the_live_state_loses(
     current: &MlsManager,
@@ -690,12 +705,13 @@ pub(crate) fn remove_mls_state_held(data_dir: &std::path::Path) -> Result<(), St
 /// record LAST - a removal or a move cut part-way leaves the state WITH the record naming whose it
 /// is, never staged epoch secrets beside no state, nor a state nobody is named for.
 pub(crate) fn mls_state_file_names() -> Vec<String> {
-    let mut names = Vec::with_capacity(12);
+    let mut names = Vec::with_capacity(14);
     for built_from_it in [
         STALE_WELCOME_LEDGER_FILE,
         STAGED_KEY_GROUP_JOIN_FILE,
         KEY_GROUP_PUSH_JOIN_LEDGER_FILE,
         BACKGROUND_STAGES_FILE,
+        BACKGROUND_JOINS_FILE,
     ] {
         names.push(built_from_it.to_string());
         names.push(format!("{built_from_it}.tmp"));
@@ -1001,22 +1017,15 @@ fn wipe_native_app_data(
         (Err(e), Ok(())) => Err(e),
         (Err(e), Err(w)) => Err(format!("{e}; {w}")),
     };
-    // The mirrored names also live in the iOS App Group container, which the walk above never
-    // reaches. Same policy as the account deletion: no container is logged at ERROR and returned,
-    // after everything else was removed.
+    // The mirrored names, the share and the seed mirror also live in the iOS App Group container,
+    // which the walk above never reaches ([`wipe_app_group`]). Same policy as the account deletion:
+    // no container is logged at ERROR and returned, after everything else was removed.
     #[cfg(target_os = "ios")]
     {
-        // The names copy, and the share the Share Extension left there - its manifest and its
-        // copies - which no sign-out reaches if nobody signed in (`app_group_share`).
-        let group = crate::app_group::app_group_dir().and_then(|g| {
-            let names = wipe_group_names(&g);
-            let share = crate::commands::app_group_share::wipe_group_share(&g);
-            match (names, share) {
-                (Ok(()), Ok(())) => Ok(()),
-                (Err(a), Err(b)) => Err(format!("{a}; {b}")),
-                (Err(e), Ok(())) | (Ok(()), Err(e)) => Err(e),
-            }
-        });
+        // `wipe_app_group` locks `graine_seeds.lock` in the App Group: an app suspended holding a
+        // shared-container lock is killed (`0xdead10cc`, `app_group::BackgroundTime`).
+        let _background = crate::app_group::BackgroundTime::begin(c"canari-factory-wipe");
+        let group = crate::app_group::app_group_dir().and_then(|g| wipe_app_group(&g));
         if let Err(e) = group {
             log::error!("[RESET] the App Group was not entirely wiped: {e}");
             return match wiped {
@@ -1026,6 +1035,34 @@ fn wipe_native_app_data(
         }
     }
     wiped
+}
+
+/// The App Group half of the factory wipe: the names copy, the share the Share Extension left there
+/// (its manifest and its copies, which no sign-out reaches if nobody signed in - `app_group_share`),
+/// and the Graine seed mirror, the iPhone's ONLY copy since channel-encryption section 27 (no
+/// lifecycle copy replaces it any more, so left here it would outlive the wipe). Every part is
+/// attempted; the failures are joined.
+#[cfg(any(target_os = "ios", test))]
+pub(crate) fn wipe_app_group(group: &std::path::Path) -> Result<(), String> {
+    let mut failures = Vec::new();
+    if let Err(e) = wipe_group_names(group) {
+        failures.push(e);
+    }
+    if let Err(e) = crate::commands::app_group_share::wipe_group_share(group) {
+        failures.push(e);
+    }
+    match crate::commands::push::remove_graine_mirror(group) {
+        Ok(had) => log::info!("[RESET] App Group seed mirror: removed={had}"),
+        Err(e) => {
+            log::error!("[RESET] the App Group seed mirror was not removed: {e}");
+            failures.push(e);
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; "))
+    }
 }
 
 /// Removes the App Group copies of `display_names.json` and `conversation_nicknames.json`. A factory
@@ -1562,6 +1599,34 @@ mod tests {
             lost.is_empty(),
             "{} bundle(s) the completed mint persisted are absent from the installed keystore -              the snapshot was read before the call rather than during it",
             lost.len()
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A RESUME RELOAD KEEPS THE APP'S LEDGERS THE LIVE MANAGER HOLDS (KILL-2, 2026-10-26).
+    ///
+    /// The app staged a newer seen-ciphertext ledger into the live manager after `mls.bin` was last
+    /// written. The file is installed - nothing is ahead in a ratchet - and without the carry-over
+    /// the next write would put the older ledger back on disk under the same ratchets.
+    #[test]
+    fn a_reload_keeps_the_ledgers_the_app_staged_into_the_live_manager() {
+        let dir = temp_dir("resume-ledgers");
+        let path = dir.join("mls.bin");
+        let mut live_manager = MlsManager::load_or_create("u-resume-ledgers", "d1", None).unwrap();
+        live_manager.apply_app_ledgers([("seen:g".to_string(), Some("old".to_string()))]);
+        persist(&live_manager, &path);
+        live_manager.apply_app_ledgers([("seen:g".to_string(), Some("new".to_string()))]);
+
+        let mut live: Option<MlsManager> = Some(live_manager);
+        let outcome = reload_into(&mut live, &path, "u-resume-ledgers", "d1", DEV_KEY_B64).unwrap();
+        assert_eq!(outcome, ReloadOutcome::Reloaded);
+        assert_eq!(
+            live.as_ref()
+                .unwrap()
+                .app_ledgers()
+                .get("seen:g")
+                .map(String::as_str),
+            Some("new")
         );
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -2108,6 +2173,25 @@ mod tests {
         assert!(group.join("push_context.json").exists());
         // Nothing to remove is a success, not a failure.
         wipe_group_names(&group).unwrap();
+        std::fs::remove_dir_all(&group).ok();
+    }
+
+    /// The factory wipe takes the App Group's seed mirror too: since channel-encryption section 27 it
+    /// is the iPhone's ONLY copy, and no lifecycle copy replaces it any more - left there, every seed
+    /// of the wiped install would outlive the wipe. Taken under the writers' lock, which stays.
+    #[test]
+    fn the_wipe_removes_the_app_group_seed_mirror() {
+        let group = temp_dir("group-seeds");
+        std::fs::write(group.join("graine_seeds.json"), b"CNSEAL1-sealed").unwrap();
+        std::fs::write(group.join("push_context.json"), b"{}").unwrap();
+
+        wipe_app_group(&group).unwrap();
+
+        assert!(!group.join("graine_seeds.json").exists());
+        assert!(group.join("graine_seeds.lock").exists());
+        assert!(group.join("push_context.json").exists());
+        // Nothing to remove is a success, not a failure.
+        wipe_app_group(&group).unwrap();
         std::fs::remove_dir_all(&group).ok();
     }
 

@@ -309,18 +309,28 @@ test-frontend:
 # binary and every developer machine that has one can answer this in a second - a gate reachable
 # only from a runner is a gate discovered by a red pull request. Skipped with a NAMED line when the
 # binary is absent, never silently: a lint that quietly does not run is worse than no lint.
+# FILES=<paths> narrows the run to those of them that CI lints - the commit tier passes the staged
+# scripts (`local-ci.sh shellcheck`); `-x` still follows what they source. The push lints them all.
 lint-ci-scripts:
 	@echo "${BLUE}🧹 shellcheck (the same file set as ci.yml)…${RESET}"
-	@if command -v shellcheck >/dev/null 2>&1; then 		shellcheck -x 			.github/scripts/*.sh .github/scripts/lib/*.sh .github/scripts/tests/*.sh .github/scripts/tests/rolling-fixture/*.sh 			infrastructure/dev/*.sh infrastructure/deploy/*.sh 			infrastructure/local/*.sh infrastructure/backup/*.sh 			infrastructure/lib/*.sh infrastructure/egress-probe/*.sh infrastructure/authentik/*.sh 			scripts/*.sh; 	else 		echo "${YELLOW}⚠️  shellcheck absent - CI WILL still run it, at the version in .shellcheck-version ($$(tr -d '[:space:]' < .shellcheck-version)). winget install koalaman.shellcheck${RESET}"; 	fi
+	@set -- $(if $(FILES),$(filter $(FILES),$(wildcard $(CI_SHELL_SCRIPTS))),$(CI_SHELL_SCRIPTS)); \
+	if [ $$# -eq 0 ]; then echo "none of the staged scripts is in the set CI lints"; \
+	elif command -v shellcheck >/dev/null 2>&1; then shellcheck -x "$$@"; \
+	else echo "${YELLOW}⚠️  shellcheck absent - CI WILL still run it, at the version in .shellcheck-version ($$(tr -d '[:space:]' < .shellcheck-version)). winget install koalaman.shellcheck${RESET}"; fi
+
+# The shell scripts CI lints, the ONE list here: shellcheck-scope.test.mjs compares it to ci.yml's.
+CI_SHELL_SCRIPTS = .github/scripts/*.sh .github/scripts/lib/*.sh .github/scripts/tests/*.sh .github/scripts/tests/rolling-fixture/*.sh infrastructure/dev/*.sh infrastructure/deploy/*.sh infrastructure/local/*.sh infrastructure/backup/*.sh infrastructure/lib/*.sh infrastructure/egress-probe/*.sh infrastructure/authentik/*.sh scripts/*.sh
 
 test-ci-scripts: lint-ci-scripts
 	@echo "${BLUE}🧪 CI script self-tests…${RESET}"
 	@bash .github/scripts/tests/ceiling.test.sh
 	@bash .github/scripts/tests/workflow-expressions.test.sh
 	@bun .github/scripts/tests/action-pins.test.mjs
+	@bun .github/scripts/tests/secret-levels.test.mjs
 	@bash .github/scripts/tests/compose-wiring.test.sh
 	@bash .github/scripts/tests/compose-logging.test.sh
 	@bun .github/scripts/tests/image-user.test.mjs
+	@bun .github/scripts/tests/route-params-wired.test.mjs
 	@bash .github/scripts/tests/log-retention.test.sh
 	@bash .github/scripts/tests/resolver-report.test.sh
 	@bash .github/scripts/tests/upstream-reachability-report.test.sh
@@ -328,6 +338,7 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/upstream-monitor-freshness.test.sh
 	@bash .github/scripts/tests/local-copy-guards.test.sh
 	@bash .github/scripts/tests/pre-commit-restage.test.sh
+	@bash .github/scripts/tests/local-ci.test.sh
 	@bash .github/scripts/tests/dev-reset-guards.test.sh
 	@bun test ./tools/dev-seed/
 	@bun test ./tools/play-vitals/
@@ -339,7 +350,9 @@ test-ci-scripts: lint-ci-scripts
 	@bun .github/scripts/tests/migration-numbers.test.mjs
 	@bash .github/scripts/tests/deploy-registry-retry.test.sh
 	@bash .github/scripts/tests/deploy-replace.test.sh
-	@bash .github/scripts/tests/deploy-rolling.test.sh
+	@if [ "$$(docker info --format '{{.OperatingSystem}}' 2>/dev/null)" = "Docker Desktop" ]; then \
+	echo "deploy-rolling.test.sh: NOT RUN under Docker Desktop - it measures a Linux engine's reload timing and fails here on it; CI runs it (docs/wiki/cicd.md#checks-at-commit-at-push-and-in-ci-only)"; \
+	else bash .github/scripts/tests/deploy-rolling.test.sh; fi
 	@bash .github/scripts/tests/dependency-ceiling.test.sh
 	@bash .github/scripts/tests/mls-forward-compat.test.sh
 	@bun .github/scripts/tests/changes-outputs.test.mjs
@@ -351,6 +364,7 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/vendored-upstream-report.test.sh
 	@bash .github/scripts/tests/arm-auto-merge-app.test.sh
 	@bash .github/scripts/tests/github-alerts-report.test.sh
+	@bash .github/scripts/tests/sibling-arming-bypass.test.sh
 	@bash .github/scripts/tests/bump-version.test.sh
 	@bash .github/scripts/tests/bump-staging.test.sh
 	@bash .github/scripts/tests/release-preflight.test.sh
@@ -361,6 +375,7 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/scheduled.test.sh
 	@bash .github/scripts/tests/audit-dependencies.test.sh
 	@bash .github/scripts/tests/stream-json-premise.test.sh
+	@bun .github/scripts/tests/picomatch-premise.test.mjs
 	@bash .github/scripts/tests/ignored-advisories-still-reported.test.sh
 	@bash .github/scripts/tests/image-scan-targets.test.sh
 	@bun .github/scripts/tests/image-scan-allowlist.test.mjs
@@ -374,6 +389,7 @@ test-ci-scripts: lint-ci-scripts
 	@bun .github/scripts/tests/docs-merge-artefacts.test.mjs
 	@bun .github/scripts/tests/line-endings.test.mjs
 	@bun .github/scripts/tests/assert-frontend-build.test.mjs
+	@bun .github/scripts/tests/dead-code-ratchet.test.mjs
 	@bun .github/scripts/tests/wiki-links.test.mjs
 	@bun .github/scripts/tests/docs-private-guard.test.mjs
 	@bun .github/scripts/tests/pipefail-early-reader.test.mjs
@@ -490,6 +506,7 @@ test-harness:
 	@bun tools/cross-client-harness/archive/usability-selftest.mjs
 	@bun tools/cross-client-harness/archive/sourcestamp-selftest.mjs
 	@bun tools/cross-client-harness/archive/selector-selftest.mjs
+	@bun tools/cross-client-harness/archive/purgedevices-selftest.mjs
 	@bun tools/cross-client-harness/archive/caption-selftest.mjs
 	@bun tools/cross-client-harness/archive/picker-selftest.mjs
 	@bun tools/cross-client-harness/archive/names-selftest.mjs
@@ -511,6 +528,7 @@ test-harness:
 	@bun tools/cross-client-harness/archive/floor-selftest.mjs
 	@bun tools/cross-client-harness/archive/cc-selftest.mjs
 	@bun tools/cross-client-harness/archive/settle-selftest.mjs
+	@bun tools/cross-client-harness/archive/leaf-selftest.mjs
 	@bun tools/cross-client-harness/archive/gap-selftest.mjs
 	@bun tools/cross-client-harness/archive/offline-selftest.mjs
 	@bun tools/cross-client-harness/archive/kill-selftest.mjs
@@ -552,9 +570,9 @@ test-gateway:
 
 # Tests Service Historique
 # `node --run`, matching `.github/workflows/ci.yml` exactly. These suites are jest, and jest
-# under the bun runtime fails `src/controllers/admin-storage.controller.mls.spec.ts` - which
-# lives in THIS service, so `bun run` here meant `make test` and the pipeline executed the same
-# files on two different runtimes. `node --run` forwards everything after `--` (verified), so
+# under the bun runtime fails in all four services (measured 2026-11-17, the table in
+# docs/wiki/services/nestjs-framework.md), so `bun run` here meant `make test` and the pipeline
+# executed the same files on two different runtimes. `node --run` forwards everything after `--` (verified), so
 # `--coverage` still reaches jest. No npm: the runtime is the dependency, the package manager
 # is not.
 test-history:
@@ -697,9 +715,13 @@ update-services-prod: production-check
 	@echo "${GREEN}✅ Services rechargés${RESET}"
 
 # ── CI Pipeline ──────────────────────────────────────────────────────────────
-# Runs all checks locally: Rust tests, TS type-check, frontend lint, frontend build.
+# EVERY CHECK A WORKSTATION CAN RUN, whatever changed: the pre-push plan with every scope on
+# (`.github/scripts/local-ci.sh all`, 2026-11-15), through the same commands CI runs. It used to
+# be `lint-frontend test`, a second list of its own that ran neither the services nor the Rust
+# gates the way CI does. docs/wiki/cicd.md, "Checks at commit, at push, and in CI only".
 # Usage: make run-ci
-run-ci: lint-frontend test
+run-ci:
+	@bash .github/scripts/local-ci.sh all
 	@echo ""
 	@echo "${BOLD}${GREEN}✅ CI COMPLETE - tous les checks ont passé${RESET}"
 	@echo ""

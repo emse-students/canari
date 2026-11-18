@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { decodeAppMessage } from '$lib/proto/codec';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 import { SvelteMap } from 'svelte/reactivity';
@@ -1840,6 +1841,42 @@ describe('useChannelWorkspaces - hydrateJoinedCommunity', () => {
     );
     expect(listUserWorkspaces).toHaveBeenCalledTimes(2);
   });
+
+  it('draws a community joined elsewhere while the socket was down, when the stream returns', async () => {
+    const api = useChannelWorkspaces();
+    const ctx = makeContext();
+    expect(api.channelWorkspaces).toHaveLength(0);
+
+    await api.resyncAfterLiveStreamGap(ctx);
+
+    expect(api.channelWorkspaces.find((w) => w.id === 'unr-11')?.channels).toHaveLength(3);
+    expect(listUserWorkspaces).toHaveBeenCalledTimes(1);
+    expect(ctx.log).toHaveBeenCalledWith(expect.stringContaining('live stream back after a gap'));
+  });
+
+  it('owes the return one more listing when one was already in flight', async () => {
+    let releaseFirst: (value: WorkspaceDto[]) => void = () => {};
+    listUserWorkspaces.mockReset();
+    listUserWorkspaces.mockImplementationOnce(
+      () => new Promise<WorkspaceDto[]>((resolve) => (releaseFirst = resolve))
+    );
+    listUserWorkspaces.mockResolvedValue([makeWorkspaceDto('ws-new', 'UNR-11', 'unr-11')]);
+    const api = useChannelWorkspaces();
+    const ctx = makeContext();
+
+    resetSalonSendGate();
+    const startup = api.loadChannelWorkspacesFromBackend(ctx);
+    await tick();
+    await api.resyncAfterLiveStreamGap(ctx);
+    expect(listUserWorkspaces).toHaveBeenCalledTimes(1);
+
+    releaseFirst([]);
+    await startup;
+    await vi.waitFor(() =>
+      expect(api.channelWorkspaces.find((w) => w.id === 'unr-11')?.channels).toHaveLength(3)
+    );
+    expect(listUserWorkspaces).toHaveBeenCalledTimes(2);
+  });
 });
 
 /**
@@ -2158,6 +2195,23 @@ describe('useChannelWorkspaces - the membership notice', () => {
     expect(options).toEqual({ silent: true });
   });
 
+  // The id shape (`{ newUsers }`) is read by this build, but a build at the floor draws `system.data`
+  // as text: until `minClientVersion` passes the reader, the frame stays the sentence every supported
+  // build draws (`CHANNEL_NOTICE_IDS_WRITER_ENABLED`, legacy-compatibility).
+  it('sends the sentence every supported build reads, never raw ids, while the writer is off', async () => {
+    await useChannelWorkspaces().inviteMemberToChannel(
+      'channel_c1',
+      'newcomer',
+      'member',
+      makeContext()
+    );
+
+    const bytes = sendEncryptedChannelMessage.mock.calls[0][1] as Uint8Array;
+    const sent = decodeAppMessage(bytes)!;
+    expect(sent.system?.event).toBe('memberAdded');
+    expect(sent.system?.data).toBe('notice');
+  });
+
   // A member hands the newcomer the past only on a proof it can check: the admission this device
   // signs travels WITH the invitation and is stored on the newcomer's membership row.
   it('sends the admission this device signed with the invitation (channel-encryption section 25)', async () => {
@@ -2277,5 +2331,25 @@ describe('useChannelWorkspaces - the history rule moving under an open session',
     store.setRoleLabel('r2', 'Bureau');
     store.setRoleLabel('r2', 'Bureau');
     expect(store.roleLabels.r2).toBe('Bureau');
+  });
+});
+
+describe('useChannelWorkspaces - a live removal is noted for the pages in hand', () => {
+  it('notes the removal even when no copy of the row is on screen to mark', async () => {
+    const { watchSalonRemovals } = await import('$lib/utils/chat/salonRemovals');
+    const store = useChannelWorkspaces();
+    const watch = watchSalonRemovals();
+    const ctx = makeContext();
+    ctx.conversations.set('channel_c1', { id: 'channel_c1', messages: [] } as never);
+
+    store.handleChannelMessageDeleted({ channelId: 'c1', messageId: 'row-not-drawn' }, ctx);
+    store.handleChannelMessageDeleted(
+      { channelId: 'c-unknown', messageId: 'row-of-no-salon' },
+      ctx
+    );
+
+    expect(watch.has('row-not-drawn')).toBe(true);
+    expect(watch.has('row-of-no-salon')).toBe(true);
+    watch.close();
   });
 });

@@ -212,7 +212,7 @@ handed out cannot be taken back. A client that sends no `draft` gets a published
 `create without draft` ([legacy-compatibility](../../legacy-compatibility.md)).
 
 **A draft is invisible to every respondent read.** One `where`, `respondentFormWhere` (`form-status.ts`:
-id, not archived, `status = 'published'`), answers each of them, and a draft answers exactly what an
+id, not archived, `status = 'published'`, its association not archived - [2026-11-14](#an-archived-associations-form-is-closed-by-its-link-2026-11-14)), answers each of them, and a draft answers exactly what an
 absent form answers, so its id cannot be probed:
 
 | Read path | What a draft answers |
@@ -770,6 +770,16 @@ in `criteriaOptions.ts`, `FIRST_PROMO_YEAR` in `pricing/validate.ts` - because `
 `2024` matches nobody for ever, and a criterion that silently matches nobody is what this module
 refuses everywhere else.
 
+**A formation criterion names a formation a profile can carry** (2026-11-15). A cursus may only name
+the five of `SPACE_FORMATIONS` (D4: `Autre` is the one bucket for masters, doctorates and the rest),
+so any other string in a criterion - a question's `showIf`, the submit condition, a grid dimension -
+matches nobody for ever. `asFormationValues` (`pricing/validate.ts`) refuses it where it is written,
+`400 { code: 'AUDIENCE_FORMATION_UNKNOWN' }`, worded through Paraglide (`paymentRefusal.ts`). The
+picker offers the values in use (`GET forms/criteria/formations`), a subset of the five, so the
+refusal reaches an older client or a hand-made request only. Measured on production the same day:
+the only formation any stored criterion names is `ICM`, and no profile names one outside the five -
+no stored form is refused by this, and no data needed rewriting.
+
 ## One predicate, three uses
 
 The criteria that divide a price grid are the same criteria that gate a question and gate the form:
@@ -1081,6 +1091,9 @@ the association's Achats tab names it "Invité". Both fill pages total with ONE 
 
 ### A guest's name and e-mail, when the form asks (2026-11-06)
 
+**Widened on 2026-11-16** into the form's respondent fields - the same block, also joining a member's
+account fields and asking promo, status and campus: [the respondent's account fields](#the-respondents-account-fields-owner-2026-11-16).
+
 Owner's decisions of 2026-11-06, built for `1.6.6`. **Off by default**: a guest is asked nothing
 about who they are. The creator ticks any of **Nom / Prénom / E-mail** ("Demander aux invités",
 `GuestIdentitySettings.svelte`, drawn under the "Formulaire public" switch while it is on) - three
@@ -1246,6 +1259,132 @@ the price is only as good as the answer it is computed from:
   answered with an option no group holds. The manager prices that cell or marks it unavailable; a
   required, unconditional question whose every option is grouped never reaches it, so a 0 there is
   accepted.
+
+## The respondent's account fields (owner, 2026-11-16)
+
+**The decision.** An organiser chooses, PER FORM, which of the respondent's fields are joined to each
+answer: "Nom", "Prénom", "Promo et formation", "Statut élève / personnel", "Campus" (and, on a public
+form, a guest's "E-mail", as before). Each is optional. The respondent sees, before sending, which
+fields will reach the organiser; the organiser reads them as columns of the responses list and of the
+XLSX export, with a filter by promo, formation and status. Whoever the form cannot read from an
+account - a guest on a public form, any respondent of an anonymous form - is ASKED the fields instead,
+as a guest's name was asked since 2026-11-06.
+
+**Principle 1 of the charter ("Vos messages sont à vous", [docs/principes.md](../../../principes.md):
+"chaque donnée que nous gardons est déclarée").** Nothing about a respondent leaves their account
+unless the organiser ticked it AND the respondent was told before sending; the default is what every
+named form already showed (the two names), so no form starts transmitting more than it did; an
+anonymous form joins nothing from the account and never asks a name or an e-mail. Register C8 and the
+privacy policy name the fields.
+
+**Built on the guest block, not beside it** (owner, 2026-11-16: *"Il y a déjà ça, c'est à
+améliorer"*). The editor's "Demander aux invités" became **"Qui a répondu"**
+(`GuestIdentitySettings.svelte`, drawn on every form now, not only a public one): ONE set of boxes,
+saved as the two lists the server keeps (`respondentSettingsPayload`,
+`frontend/src/lib/forms/respondentFields.ts`):
+
+| Column | Holds | Read for |
+|---|---|---|
+| `forms.respondentFields` (migration 174, jsonb, default `["lastName","firstName"]`) | what is JOINED from the account: `lastName`, `firstName`, `cursus`, `status`, `campus` | a member of a NAMED form; stored `[]` and read empty on an anonymous form (`joinedAccountFields`) |
+| `forms.guestFields` (migration 138, same column, wider list) | what is ASKED: a guest's `lastName`, `firstName`, `email`, and the declared `cursus`, `status`, `campus` | a guest on a public form; EVERY respondent of an anonymous form (declared fields only) |
+
+| Form | Offered boxes | A member | A guest |
+|---|---|---|---|
+| named, not public | names, promo / formation, status, campus | joined from the account, listed in the notice | - |
+| named, public | the same and the e-mail | joined (the e-mail is a guest's: Canari keeps none for a member) | asked, each required |
+| anonymous | promo / formation, status, campus | ASKED, declared, never joined | asked, declared |
+
+**The snapshot** (`submissions.respondentIdentity`, migration 174,
+`apps/social-service/src/forms/respondent-identity.ts`): `{ source: 'account' | 'declared', lastName?,
+firstName?, cursus?: [{promo, formation}], status?: ('student'|'staff')[], campus? }`, holding only the
+fields the form joined or asked. For a member of a named form the values are read from the ACCOUNT AT
+SUBMIT TIME, never from the request: a member's body carrying a declared field is refused
+`FORM_GUEST_IDENTITY_NOT_ASKED`. **Where they are read decides what the submit depends on** (lead,
+2026-11-16: the default path makes no cross-service call):
+
+- **The names and the campus** come from the `users` table social-service shares with core-service
+  (`FormsService.sharedAccountFields`, read as the responses list always read names). The default form
+  (the two names) therefore submits with core-service down or older than this release; an account the
+  table does not hold is joined empty, accused.
+- **"Promo et formation" and the status** come from core-service (`joinsNeedCore`,
+  `PricingFactsService.accountIdentity` -> `GET internal/users/:id/respondent-identity`, an
+  `INTERNAL_SECRET` route beside the pricing one), and only when the form ticks one of them. Their
+  columns (`cursus`, `promo`, `formation`, `posts`) ARE in the shared table; what is not is the RULE:
+  every cursus is `cursusViewsOf` (D32, the well-formed entries plus the legacy promo / formation pair),
+  the one reconciliation pricing reads too, and the status is derived from it. A second spelling here
+  could list a promo the same person is not priced by. That read fails CLOSED (503, retry - the client
+  words it "réessayez dans un instant", the form kept): an answer stored without the fields its form
+  joins would say less than the form says it does; a typed 404 (`RESPONDENT_UNKNOWN`) is an answer
+  (joined empty, accused), a 404 without it is a core-service older than the route
+  (`RESPONDENT_CORE_BEHIND`), which only a form ticking a cursus or a status can meet. A form joining nothing reads nothing and stores
+`{ source: 'account' }`, so a NULL snapshot means one thing only: an answer given before 174, whose
+names are read live, as every answer's always were (`respondentNames`, `legacyNameIds` - no backfill,
+no fallback: the NULL is the row's era). A payment retry that reuses its row re-reads the snapshot with
+the new submit; a respondent's own edit of their answer (`editAnswer`) keeps it.
+
+- **Promo et formation** is EVERY cursus (D32's `cursusViewsOf`, the one reconciliation pricing
+  reads), so a person in two cursus shows both ("2024; 2022" / "ICM; Autre" in the export).
+- **Statut** is derived, not a claim: a cursus makes a student, a post (EMSE, ME, Alumni) makes staff,
+  both at once possible (D1). **Canari reads no `school_status` claim, and needs none**: the
+  "Personnel de l'école" choice became an EMSE post in the MiConnect profile (D27), which the sign-in
+  stores in `users.posts` and replaces wholesale at every sign-in, so a post that disappears at the
+  provider clears here too ([profiles-and-access](../../profiles-and-access.md)).
+- **Campus** is `users.campus`, the person's own choice at enrolment (D6).
+- **Declared** values are judged by `declaredIdentityFor`: every asked field required
+  (`FORM_GUEST_IDENTITY_MISSING`), an unasked one refused (`FORM_GUEST_IDENTITY_NOT_ASKED`); a
+  formation of the spaces' list with an entry year (1900..2100), or `none` (no cursus - staff) with
+  none; a status `student` / `staff`; a campus of the two.
+
+**The respondent notice** (`RespondentNotice.svelte`, member fill page): "Transmis à l'organisateur
+avec votre réponse : Nom, Prénom, Promo et formation", from the form's `respondentFields` as
+`GET /forms/:id` serves them (read as the submit reads them). The declared fields are drawn by
+`DeclaredIdentityFields.svelte` ("À propos de vous") on `/f/:id` and on an anonymous form's fill page,
+whose hint says the answer stays anonymous.
+
+**The organiser.** `getSubmissions` serves `respondentIdentity` (the manager allowlist,
+`submission.projection.ts`) and names a member by the snapshot; the responses list draws a column per
+kept field after the name (`identityColumnsOf`, the server's rule mirrored: a field joined or asked
+now, or carried by an answer from when it was) and, when promo / formation or status is kept, three
+pickers filtering by them - promo and formation judged on ONE cursus entry together, as a price is.
+The export writes "Promo", "Formation", "Statut", "Campus" in the client's words
+(`ExportLabels.identity`); a store build older than the account fields sends none and gets the
+columns in the default French words, logged `[LEGACY]`, never a refusal
+([legacy-compatibility](../../legacy-compatibility.md#removal-once-minclientversion-passes-the-release-carrying-the-account-fields---an-export-asked-without-identity-words-2026-11-16)).
+An answer from a build older than `1.7.0` to a form that asks declared fields (it cannot draw them, and
+names its build on a submit through `X-Canari-Client-Version`) is taken without them and marked
+`notDeclared`, read "Non déclaré" by the organiser
+([legacy-compatibility](../../legacy-compatibility.md#removal-once-minclientversion-passes-170---an-answer-from-a-build-that-cannot-draw-the-declared-questions-2026-11-16)). Account
+erasure clears a member's snapshot with the rest of the answer (`account-erasure.ts`).
+
+**Reversible choices taken without the owner (2026-11-16), each a one-line change:**
+
+1. **An anonymous form never asks a name or an e-mail**, even ticked: the decision says its fields
+   are asked instead, but asking a name would break the promise the form makes
+   (`FORM_ANONYMOUS_GUEST_IDENTITY`, unchanged). Promo, status and campus are asked.
+2. **One set of ticks for members and guests.** A public form saved before this joined the member's
+   names and asked guests only what was ticked; the editor opens on the union, so its next save also
+   asks GUESTS the names if they were not asked. Unticking them stops both.
+3. **The e-mail stays a guest's field**: Canari keeps no e-mail for a member, so a member is never
+   asked it and it is not offered on a named form that is not public.
+4. **Declared fields are required once asked**, like a guest's name; "Aucune (pas de cursus)" answers
+   the promo for someone who has none.
+5. **The notice lists the fields, not their values.** The values would cost a core-service read on
+   every page open; the decision asks which fields.
+
+**Rollout.** Migration 174 is additive (two columns, a constant default, no UPDATE - not held). An
+unpublished revision open when it runs is told once that the form changed since it ("Publier quand
+même"), as with 166: the fingerprint covers every column. An older editor's save is humoured
+([legacy-compatibility](../../legacy-compatibility.md#removal-once-minclientversion-passes-the-release-carrying-the-account-fields---a-form-editor-that-sends-guestfields-alone-2026-11-16)).
+
+Tests: `forms.service.respondent-identity.spec.ts` (the rule; the member snapshot read from the
+account, a declared field from a member refused, nothing read when nothing is joined, a default form submitting with core-service down (names and campus from the shared table, core reached only for a cursus or a status); an anonymous
+member and a guest asked, refused until they answer; the create default; the export's columns in the
+client's words, a pre-174 answer named live, an older client's export in the default words and its
+answer taken "not declared"),
+`internal-users.controller.spec.ts` (the core route), `api.clientVersion.test.ts` (both submits name the build), `respondentFields.test.ts` (the editor's two
+lists, the declared values, the columns, cells and filter), `GuestIdentitySettings.svelte.test.ts`,
+`RespondentNotice.svelte.test.ts`, `DeclaredIdentityFields.svelte.test.ts`,
+`FormResponsesPanel.svelte.test.ts` (the columns and filters).
 
 ## A respondent changes their own answer (owner, 2026-11-13)
 
@@ -1873,7 +2012,7 @@ falls back to a system face without saying so. The file lands as `canari-qr-<slu
 
 ### It encodes the ordinary URL, so the deep link is the app's, not the code's
 
-There is no scheme of our own in the payload: it is the same `https://canari-emse.fr/forms/<id>` the
+There is no scheme of our own in the payload: it is the same `https://canari.emse.fr/forms/<id>` the
 copy button hands out, which the Android manifest claims with an `autoVerify` intent-filter
 (`pathPrefix="/forms/"`) backed by `/.well-known/assetlinks.json`. A scan that lands in a browser
 rather than in the app therefore says something about App Link verification on that device, never
@@ -1985,6 +2124,108 @@ Found while scoping it, so it is not re-derived (Lydia is live in production sin
   A leftover `stripe` or `disabled` provider shows an explicit "unavailable" line, an unknown one a
   neutral line without description - never a default. Saved cards stay Stripe-only via
   `supportsSavedCards` until the backend batch (see [payments](payments.md)).
+
+## Closing a form by hand, and the closing date (owner, 2026-11-16)
+
+*"Il faudrait un bouton pour clore le formulaire."* The form already had `closedAt` (`isFormOpen`,
+`assertFormOpen`, the refusal `FORM_CLOSED`, the fill page's "Ce formulaire est ferme", the link
+preview's "Ferme"); only the manager's way to write it was missing.
+
+- **Close / reopen**: `POST /forms/:id/close` and `POST /forms/:id/reopen`
+  (`FormsService.setClosed`), gated by `assertFormManager` - the owner of a personal form, a member
+  holding MANAGE_FORMS on the association, a global admin; the creator of an association's form who
+  does not hold the flag is refused (2026-11-14 rule). Both are idempotent: closing a form already
+  closed keeps its first end date, closing one whose end is still to come ends it now, reopening
+  clears the column whether the end is past or to come. Not a draft's action (the menu hides it).
+- **Not in the revision**: `closedAt` is excluded from the draft fingerprint
+  (`FORM_FINGERPRINT_SQL`), and the two routes write the column alone, so closing never shows
+  "Modifications non publiees".
+- **An edit no longer reopens a form** (found while building it): `update` used to store `null`
+  whenever the payload carried no `closedAt`, so publishing any edit reopened a closed form. Absent now
+  KEEPS the stored end and `null` clears it. The editor sends `closedAt` only when its field differs
+  from the published form's (`closedAtPayload`), so a revision never repeats a stored value and undoes
+  a close made since; a manager who types a date in the field AND closes from the list before
+  publishing still publishes the typed one (rare, visible in the field).
+- **The date field**: "Date de cloture" after "Date d'ouverture" in the advanced settings, the same
+  `DateTimeField` with `min` set to the opening. An end that is not after the opening
+  (`formWindowInvalid`) is said under the field and refused at "Publier"; the server refuses it too,
+  typed (`FORM_CLOSE_BEFORE_OPEN`, `form-window.ts`), on create and on edit, judged on the values the
+  save will store.
+- **The list**: a closed form (its end has passed; a future end is a scheduled close and shows
+  nothing) carries a "Ferme" badge and its menu offers "Rouvrir" instead of "Clore le formulaire".
+  Closing asks a confirmation, reopening does not.
+- **THE SERVER DECIDES WHETHER A FORM IS OPEN, NEVER THE DEVICE CLOCK** (read on the Mi 9T,
+  2026-11-17; owner directive "deterministe, pas de pansements"). `formWindowState`
+  (`form-window.ts`) is the ONE rule - `not-yet` before the opening, `closed` from the end instant on,
+  else `open` - and `isFormOpen` / `assertFormOpen` (the refusals `FORM_NOT_OPEN_YET` /
+  `FORM_CLOSED`) are built on it. `GET /forms`, `GET /forms/:id`, `GET /public/forms/:id` and the
+  close/reopen answer all carry its verdict as `windowState`. The client's `formWindowState` /
+  `isClosedForm` / `opensLater` (`formWindow.ts`) read that field, so the list badge, the public
+  page and the member page share one implementation and a phone whose clock is behind the server no
+  longer reads a just-closed form open (after the close answer, and after a refetch). The old
+  `<=` (client) against `<` (server) mismatch is gone: the end INSTANT is closed on both sides (`<=`),
+  so a close, which writes `closedAt = now`, answers `closed` from the very instant it stored - the
+  answer is computed from that same `now`, never from a second clock read.
+  - **Additive**: an older server sends no `windowState`; the client then falls back to comparing the
+    dates with its own clock and logs ONCE at warn that the server sent none (reaching it means the
+    server is older than the client: a signal, not a path). An older client ignores the field.
+  - **Every screen reads it**: the list, both fill pages and the link-preview card
+    (`formStateLabel`, "Ouvre le ...") call `formWindowState`; none compares `opensAt` / `closedAt`
+    with `Date.now()` any more (a phone behind the server drew an already-open form as "opens on
+    ..." and locked it). The two fill pages share `useFormWindow` (`useFormWindow.svelte.ts`).
+  - **The link-preview cache is acceptable as is**: the label it keeps is the server's verdict AT THE
+    READ (`windowState` of the fetched form), held for the session, like the rest of the card. It is a
+    snapshot of a past server answer, not a clock judgement that drifts - a form closed afterwards
+    shows its old card until the next session, and the page behind the card says the truth.
+    `FormCard` (a post's own form card) still takes its "opens on" from the post's `opensAt`; it
+    does not decide whether the form takes answers.
+  - **The member page** shows "Ce formulaire est ferme.", locks the questions and disables send; and
+    `handleSubmit` and `saveEdit` each refuse a closed form without a request.
+  - **While the page stays open**: a typed `FORM_CLOSED` / `FORM_NOT_OPEN_YET` refusal of a send or a
+    changed answer is the server's NEWER verdict (`windowRefusalState`): the page takes it
+    (`useFormWindow.adopt`) and redraws closed (or not-yet) at once, on the public page as on the member
+    page. A not-yet refusal on a form loaded with no `opensAt` draws "Ce formulaire n'est pas encore
+    ouvert." (no date) and disables send; a successful read of the form clears the adopted state. That covers a manager closing the
+    form, or a scheduled end coming, while a respondent has it open. **No timer switches the page at
+    the scheduled end**: the refusal path alone is judged sufficient - nothing is lost (the refused
+    answer is not stored) and a timer or a `closesInMs` countdown would be a second clock to keep
+    right for what the typed refusal already says.
+- **A form not open yet cannot be closed** (lead, 2026-11-16, during the owner's absence; reversible,
+  option (a) of the PR review). Closing writes `closedAt = now`, which would fall BEFORE a future
+  `opensAt`: every later edit was then refused `FORM_CLOSE_BEFORE_OPEN` over a date the manager
+  never typed. `setClosed` now refuses it, typed (`FORM_CLOSE_NOT_OPEN_YET`, `form-window.ts`,
+  "Ce formulaire n'est pas encore ouvert..."), and the list hides "Clore le formulaire" while the
+  opening is to come (`opensLater`); such a form takes no answer yet, so its opening is what to move
+  or clear. "Rouvrir" is unchanged. The other option, judging the window only on bounds an edit
+  writes, was not taken: it keeps a state the invariant calls impossible.
+- **A close is never written back by an edit that did not carry it**: absent, `closedAt` is left out
+  of `update`'s whole-entity save, so a close committing between an edit's read and its save stands.
+
+### A payment in progress when the form closes
+
+`assertFormOpen` has TWO call sites: `submit` (a new answer) and `editAnswer` (a respondent changing
+one). `myEditableAnswers` reads `isFormOpen` to offer nothing. Nothing else reads `closedAt`: the
+payer's return (`confirmPayment`), the provider's callbacks, `markPaid`, a cancellation and the expiry
+job settle a row through the row's own state. So when a form closes with a payment started:
+
+- the pending row keeps its seat for its 30 minutes and is paid normally (`markPaid` -> `paid`);
+- if it is never paid, the expiry job moves it to `expired` and the seat is released;
+- a late payment on an expired row is decided by capacity as before, closed or not;
+- no NEW answer is accepted (`FORM_CLOSED`), and an answer already stored cannot be edited.
+
+Tests: `forms.service.close.spec.ts` (who may, what is written, the edit keeping the end, the window)
+and `forms.service.seat-hold.spec.ts` ("a form closed while a payment is in progress").
+
+## An archived association's form is closed by its link (2026-11-14)
+
+`respondentFormWhere` carries one more clause: the form's association, when it has one, is not
+ARCHIVED (`associationArchivedSql`). So every respondent path above answers a form of an archived
+association exactly as it answers a draft - 404, or the absent-form shape on `check` - and
+`GET /forms/:id` serves it to its managers alone, judged by that same `where`. A submit and an answer
+edit read the association again `FOR SHARE` before the form's seat lock. A submitter's own answer,
+its cancellation, `confirm-payment` and the payment callbacks never read the archive, so money issued
+before it settles. The rule, the defaults taken and the proof are in
+[associations](associations.md#what-an-archive-closes).
 
 ## A form with submissions is archived, never removed (2026-10-11)
 

@@ -8,12 +8,6 @@
 import type { DocumentReviewerGrant, ReadGrant } from '$lib/associations/api';
 import { CAMPUSES, FORMATIONS, type Campus, type Formation } from '$lib/profile/miconnectProfile';
 
-/** One cell: a campus, and a formation or `null` for the whole campus. */
-export interface ReadCell {
-  campus: Campus;
-  formation: Formation | null;
-}
-
 /** A cell's identity: one string per (person, campus, formation-or-whole-campus). */
 export function cellKey(userId: string, campus: string, formation: string | null): string {
   return `${userId}|${campus}|${formation ?? '*'}`;

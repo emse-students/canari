@@ -1,18 +1,9 @@
-import {
-  Body,
-  Controller,
-  Get,
-  Headers,
-  HttpCode,
-  Param,
-  ParseUUIDPipe,
-  Post,
-  UseGuards,
-} from '@nestjs/common';
+import { Body, Controller, Get, Headers, HttpCode, Param, Post, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { NginxAuthGuard } from '../../common/guards/nginx-auth.guard';
 import { UserResourceThrottlerGuard } from '../../common/guards/user-resource-throttler.guard';
 import { RefundsService, type RefundInput } from './refunds.service';
+import { RouteParams } from '../../common/route-params';
 
 /**
  * The refund routes (enrolment chantier lot 4). Every one is for a `MANAGE_PAYOUT_ACCOUNT` holder of
@@ -20,6 +11,7 @@ import { RefundsService, type RefundInput } from './refunds.service';
  * permission of every other Lydia route - not `MANAGE_PRODUCTS`, which the purchases list asks.
  * Kept in its own controller so this lot touches none of `AssociationsController`'s routes.
  */
+@RouteParams({ id: 'uuid', purchaseId: 'uuid', refundId: 'uuid' })
 @Controller('associations')
 export class RefundsController {
   constructor(private readonly refunds: RefundsService) {}
@@ -30,7 +22,7 @@ export class RefundsController {
   async describe(
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga: string | undefined,
-    @Param('id', ParseUUIDPipe) id: string
+    @Param('id') id: string
   ) {
     await this.refunds.assertPayoutManager(userId, id, ga === 'true');
     return this.refunds.describe(id);
@@ -47,8 +39,8 @@ export class RefundsController {
   async refund(
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga: string | undefined,
-    @Param('id', ParseUUIDPipe) id: string,
-    @Param('purchaseId', ParseUUIDPipe) purchaseId: string,
+    @Param('id') id: string,
+    @Param('purchaseId') purchaseId: string,
     @Body() body: RefundInput
   ) {
     await this.refunds.assertPayoutManager(userId, id, ga === 'true');
@@ -65,8 +57,8 @@ export class RefundsController {
   async resolve(
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga: string | undefined,
-    @Param('id', ParseUUIDPipe) id: string,
-    @Param('refundId', ParseUUIDPipe) refundId: string,
+    @Param('id') id: string,
+    @Param('refundId') refundId: string,
     @Body() body: { refunded?: unknown }
   ) {
     await this.refunds.assertPayoutManager(userId, id, ga === 'true');
@@ -82,7 +74,7 @@ export class RefundsController {
   async statement(
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga: string | undefined,
-    @Param('id', ParseUUIDPipe) id: string
+    @Param('id') id: string
   ) {
     await this.refunds.assertPayoutManager(userId, id, ga === 'true');
     return this.refunds.statement(id);

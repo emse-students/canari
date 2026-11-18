@@ -8,6 +8,7 @@ import { AssociationCalendarEvent } from './entities/association-calendar-event.
 import { AssociationCalendarEventCoOwner } from './entities/association-calendar-event-co-owner.entity';
 import { AssociationDocument } from './entities/association-document.entity';
 import { DocumentReviewerGrant } from './entities/document-reviewer-grant.entity';
+import { AgendaSubscription } from './entities/agenda-subscription.entity';
 import { PosterZone } from './entities/poster-zone.entity';
 import { PosterEntry } from './entities/poster-entry.entity';
 import { PosterProject } from './entities/poster-project.entity';
@@ -80,6 +81,7 @@ import { RefundsController } from './refunds/refunds.controller';
       Space,
       AssociationAudience,
       LydiaRefund,
+      AgendaSubscription,
     ]),
     FollowsModule,
     UserTagModule,
@@ -134,6 +136,12 @@ import { RefundsController } from './refunds/refunds.controller';
     LydiaPaymentsNotifier,
     LydiaCashierNotifier,
     LydiaCashiersService,
+    // The admin queues' notices write through it (`AdminQueuesModule`), with the same mapping.
+    // Exported from HERE and not reached through `PostsModule`, because `PostsModule` imports
+    // `ModerationModule`, which imports `AdminQueuesModule` (a report is announced when filed): an
+    // edge back to `PostsModule` would be a cycle. `InternalModule` imports both modules, so it may
+    // be handed either instance - harmless, the service holds no state (see the provider above).
+    PostNotificationsService,
   ],
 })
 export class AssociationsModule {}

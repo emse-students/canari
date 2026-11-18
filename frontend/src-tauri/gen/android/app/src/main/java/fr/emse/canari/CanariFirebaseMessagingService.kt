@@ -47,10 +47,10 @@ import fr.emse.canari.push.ChannelReadMark
 import fr.emse.canari.push.ConversationShape
 import fr.emse.canari.push.FallbackLine
 import fr.emse.canari.push.GenericBannerLedger
+import fr.emse.canari.push.throwableSite
 import fr.emse.canari.push.GroupLocality
 import fr.emse.canari.push.KeyGroupPushJoin
 import fr.emse.canari.push.NotificationLevelGate
-import fr.emse.canari.push.PostReactionGroup
 import fr.emse.canari.push.PushRecoveryLadder
 import fr.emse.canari.push.QueuedSendAnswer
 import fr.emse.canari.push.RepostAlert
@@ -201,7 +201,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 try {
                     task()
                 } catch (e: Throwable) {
-                    Log.e(TAG, "[PUSH_WAKE] an action released by a deadline threw: ${e.javaClass.simpleName}", e)
+                    Log.e(TAG, "[PUSH_WAKE] an action released by a deadline threw: ${throwableSite(e)}")
                 }
             }, delayMs, TimeUnit.MILLISECONDS)
         }
@@ -513,7 +513,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 // which an API below 26 does not filter by channel and a channel move would miss.
                 manager.cancel(WAKE_UNAVAILABLE_NOTIF_ID)
             } catch (e: Exception) {
-                Log.w(TAG, "cancelAllMessageNotifications: ${e.message}")
+                Log.w(TAG, "cancelAllMessageNotifications: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
             }
         }
 
@@ -564,7 +564,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                         Log.w(TAG, "retrievePushSecret: pending_push_secret.txt present but empty - falling through to the Keystore")
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "retrievePushSecret: pending_push_secret.txt unreadable: ${e.message}")
+                    Log.e(TAG, "retrievePushSecret: pending_push_secret.txt unreadable: ${e.javaClass.simpleName}")
                 }
 
                 val stored = PushSecretKeystore.retrieve(context)
@@ -609,7 +609,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     .build()
                 if (ConversationShortcuts.push(context, info)) id else null
             } catch (e: Exception) {
-                Log.e(TAG, "publishConversationShortcut: refused for group=${groupId.take(8)}: ${e.message}")
+                Log.e(TAG, "publishConversationShortcut: refused for group=${groupId.take(8)}: ${e.javaClass.simpleName}")
                 null
             }
         }
@@ -752,7 +752,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 manager.notify(notifId, builder.build())
                 Log.i(TAG, "repostReplyPending: re-posted group=${groupId.take(8)} - spinner cleared, actions restored")
             } catch (e: Exception) {
-                Log.e(TAG, "repostReplyPending: ${e.message}", e)
+                Log.e(TAG, "repostReplyPending: ${e.message}", e) // log-safe: message of a system or native call (Exception); this try parses and names no user input
             }
         }
 
@@ -772,43 +772,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         internal fun reactionNotifKey(groupId: String): String = "reaction:$groupId"
 
         /**
-         * The [getStableNotifId] key for the ONE notification all reactions to a POST share. A
-         * namespace of its own so a post id can never collide with a conversation's.
+         * The [getStableNotifId] key for the ONE notification a post's comments and reactions share
+         * (owner, 2026-11-14): the server's `collapseId` (`post_activity_<postId>`), in a namespace of
+         * its own so it can never collide with a conversation's.
          */
-        internal fun postReactionNotifKey(postId: String): String = "postreaction:$postId"
-
-        private const val POST_REACTION_PREFS = "canari_post_reactions"
-        private const val POST_REACTION_KEY = "ledgers"
-        private const val MAX_POST_REACTION_LEDGERS = 50
-        private val POST_REACTION_LOCK = Any()
-
-        /**
-         * Draws up to three already-circular faces into ONE icon: two side by side, three in a
-         * triangle, the newest (first) on top. Each is scaled to 62 % of the edge, so the overlap
-         * is small and every face stays recognisable at notification size.
-         */
-        private fun composeFaceCollage(faces: List<Bitmap>): Bitmap {
-            val edge = faces.maxOf { maxOf(it.width, it.height) }
-            val output = Bitmap.createBitmap(edge, edge, Bitmap.Config.ARGB_8888)
-            val canvas = Canvas(output)
-            val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
-            val d = (edge * 0.62f).toInt()
-            val near = 0
-            val far = edge - d
-            val mid = (edge - d) / 2
-            // Top-left corner of each face, newest first; drawn in reverse so the newest is on top.
-            val corners = if (faces.size == 2) {
-                listOf(far to mid, near to mid)
-            } else {
-                listOf(mid to near, near to far, far to far)
-            }
-            for (i in faces.indices.reversed()) {
-                val (x, y) = corners[i]
-                canvas.drawBitmap(faces[i], null, Rect(x, y, x + d, y + d), paint)
-                faces[i].recycle()
-            }
-            return output
-        }
+        internal fun collapsedNotifKey(collapseId: String): String = "collapse:$collapseId"
 
         /**
          * The messages this device has ALREADY ALERTED FOR, newest last, bounded.
@@ -973,7 +941,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             } catch (e: Throwable) {
                 // UnsatisfiedLinkError included: the seal is a JNI call, and an older native library
                 // has no such symbol - a crash here would take the notification with it.
-                Log.e(TAG, "writeFcmCache: failed: ${e.javaClass.simpleName}: ${e.message}")
+                Log.e(TAG, "writeFcmCache: failed: ${e.javaClass.simpleName}")
             }
         }
 
@@ -1071,7 +1039,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 }
                 Log.d(TAG, "appendReadWatermark: group=${groupId.take(8)} at=$at serverAt=$serverAt recorded for the next boot")
             } catch (e: Exception) {
-                Log.w(TAG, "appendReadWatermark: failed: ${e.message}")
+                Log.w(TAG, "appendReadWatermark: failed: ${e.javaClass.simpleName}")
             }
         }
 
@@ -1088,7 +1056,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             return try {
                 java.time.Instant.parse(iso).toEpochMilli().coerceAtLeast(0L)
             } catch (e: Exception) {
-                Log.w(TAG, "serverInstantOf: unreadable createdAt '${iso.take(40)}': ${e.message}")
+                Log.w(TAG, "serverInstantOf: unreadable createdAt '${iso.take(40)}': ${e.javaClass.simpleName}")
                 0L
             }
         }
@@ -1116,7 +1084,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                         byGroup[g] = ShadeReadMark(maxOf(held?.at ?: 0L, a), maxOf(held?.serverAt ?: 0L, s))
                     }
                 } catch (e: Exception) {
-                    Log.w(TAG, "parseReadWatermarks: unparsable line dropped: ${e.message}")
+                    Log.w(TAG, "parseReadWatermarks: unparsable line dropped: ${e.javaClass.simpleName}")
                 }
             }
             return byGroup
@@ -1144,7 +1112,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     CACHE_LOCK.unlock()
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "shadeReadWatermark: unreadable for group=${groupId.take(8)}: ${e.message}")
+                Log.w(TAG, "shadeReadWatermark: unreadable for group=${groupId.take(8)}: ${e.javaClass.simpleName}")
                 none
             }
         }
@@ -1171,7 +1139,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * @property unusable null when the file names this account; otherwise the token
          *   [ChannelBannerAuthor.NameBook.Unusable] carries: `no-account`, `no-name-file`,
          *   `other-account`, `no-names`, `unreadable`.
-         * @property detail the exception message of an `unreadable` file, for its log line.
+         * @property detail the exception CLASS of (never its message: org.json quotes the whole file) an `unreadable` file, for its log line.
          */
         internal class DisplayNamesRead(val names: JSONObject?, val unusable: String?, val detail: String? = null)
 
@@ -1195,7 +1163,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                         ?: DisplayNamesRead(null, "no-names")
                 }
             } catch (e: Exception) {
-                DisplayNamesRead(null, "unreadable", e.message)
+                DisplayNamesRead(null, "unreadable", e.javaClass.simpleName)
             }
         }
 
@@ -1228,7 +1196,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 }
                 ConversationNicknames.Book(root.optString("userId").lowercase(), scopes, channels)
             } catch (e: Exception) {
-                Log.w(TAG, "$label conversation_nicknames.json unreadable: ${e.message}")
+                Log.w(TAG, "$label conversation_nicknames.json unreadable: ${e.javaClass.simpleName}")
                 null
             }
         }
@@ -1589,7 +1557,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 if (justCancelled != 0) ids.remove(justCancelled)
                 ids.size
             } catch (e: Exception) {
-                Log.w(TAG, "countUnreadConversations: ${e.message}")
+                Log.w(TAG, "countUnreadConversations: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
                 0
             }
         }
@@ -1817,7 +1785,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 MlsStateLock.LOCK.tryLock(10, java.util.concurrent.TimeUnit.SECONDS)
             } catch (e: InterruptedException) {
                 Thread.currentThread().interrupt()
-                Log.e(TAG, "encryptQueuedMessages: interrupted during tryLock: ${e.message}")
+                Log.e(TAG, "encryptQueuedMessages: interrupted during tryLock: ${e.message}") // log-safe: message of a system or native call (InterruptedException); this try parses and names no user input
                 return null
             }
             if (!lockAcquired) {
@@ -1863,7 +1831,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 }
                 return out
             } catch (e: Exception) {
-                Log.e(TAG, "encryptQueuedMessages: exception: ${e.message}")
+                Log.e(TAG, "encryptQueuedMessages: exception: ${e.javaClass.simpleName}")
                 return null
             } finally {
                 MlsStateLock.LOCK.unlock()
@@ -1942,7 +1910,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     conn.disconnect()
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "sendQueuedMessagePush: exception: ${e.message}")
+                Log.e(TAG, "sendQueuedMessagePush: exception: ${e.javaClass.simpleName}")
                 null
             }
         }
@@ -1994,7 +1962,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     conn.disconnect()
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "postChannelRead: exception: ${e.message}")
+                Log.w(TAG, "postChannelRead: exception: ${e.javaClass.simpleName}")
                 false
             }
         }
@@ -2027,7 +1995,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     }
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "readOutboxMirror: ${e.message}")
+                Log.w(TAG, "readOutboxMirror: ${e.javaClass.simpleName}")
                 emptyList()
             }
         }
@@ -2052,7 +2020,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 }
                 file.writeText(body + "\n")
             } catch (e: Exception) {
-                Log.w(TAG, "rewriteOutboxMirror: ${e.message}")
+                Log.w(TAG, "rewriteOutboxMirror: ${e.javaClass.simpleName}")
             }
         }
 
@@ -2085,7 +2053,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     conn.disconnect()
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "refreshTokenOnBackend: exception: ${e.message}")
+                Log.w(TAG, "refreshTokenOnBackend: exception: ${e.javaClass.simpleName}")
             }
         }
 
@@ -2105,7 +2073,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 val lines = ids.joinToString("\n") { if (it.receivedAt > 0L) "${it.id}\t${it.receivedAt}" else it.id }
                 file.writeText(existing + lines + "\n")
             } catch (e: Exception) {
-                Log.w(TAG, "appendOutboxSent: ${e.message}")
+                Log.w(TAG, "appendOutboxSent: ${e.javaClass.simpleName}")
             }
         }
 
@@ -2251,6 +2219,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          *   conversation type - the fact the push carries as `isGroup`, so both triggers draw an
          *   unnamed group as a group ([ConversationShape.isGroup]). Null when the row has no type:
          *   not said, and the name rule decides.
+         * @param reaction whether this frame is a REACTION to one of this account's messages rather
+         *   than a message (2026-11-17): [body] is then the emoji, [senderId] / [senderName] the
+         *   actor, [sentAt] the reaction's own instant, and the post is [showReactionNotification] -
+         *   the push's own composition, on [CHANNEL_REACTIONS] under [reactionNotifKey].
          */
         @JvmStatic
         fun notifyMessageFromWebSocket(
@@ -2265,11 +2237,26 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             covers: Int,
             authorProven: Boolean,
             isGroup: Boolean?,
+            reaction: Boolean,
         ): Boolean {
             val context = CanariApplication.appContext()
             if (context == null) {
                 Log.w(TAG, "notifyMessageFromWebSocket: no Application context - nothing posted")
                 return false
+            }
+            if (reaction) {
+                // THE FRAME TRIGGER OF A REACTION: the WebView decided this conversation is off
+                // screen. The push may draw the same reaction too; the shared stamp makes them one.
+                Log.d(TAG, "notifyMessageFromWebSocket: reaction queued groupId=${groupId.take(8)} actor=${senderId.take(8)}")
+                WS_NOTIF_LANE.execute {
+                    try {
+                        context.showReactionNotification(groupId, senderId, senderName, body, sentAt, suppressInForeground = false)
+                    } catch (e: Exception) {
+                        // EVERY SWALLOWED BRANCH LOGS: in the foreground this lane is the only path.
+                        Log.e(TAG, "notifyMessageFromWebSocket: reaction build failed for ${groupId.take(8)}: ${throwableSite(e)}")
+                    }
+                }
+                return true
             }
             Log.d(TAG, "notifyMessageFromWebSocket: queued groupId=${groupId.take(8)} mentionsMe=$mentionsMe sentAt=$sentAt serverAt=$serverAt covers=$covers authorProven=$authorProven isGroup=$isGroup")
             WS_NOTIF_LANE.execute {
@@ -2336,11 +2323,72 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     // EVERY SWALLOWED BRANCH LOGS: this lane is the only path to a banner for a
                     // message the server will never push, so a silent throw here is a message the
                     // user is never told about.
-                    Log.e(TAG, "notifyMessageFromWebSocket: build failed for ${groupId.take(8)}: ${e.message}", e)
+                    Log.e(TAG, "notifyMessageFromWebSocket: build failed for ${groupId.take(8)}: ${throwableSite(e)}")
                 }
             }
             return true
         }
+
+        /**
+         * Posts (or updates) a conversation's REACTION notification - the ONE composition both
+         * triggers of a reaction share: the push ([handleReactionNotification], app not in front)
+         * and the WebSocket frame ([notifyMessageFromWebSocket] with `reaction = true`, that
+         * conversation off screen, decided in the WebView by `reactionNotification.ts`). Both may fire
+         * for one reaction; the stamp below makes them one.
+         *
+         * Filed on [CHANNEL_REACTIONS] under [reactionNotifKey], so it never overwrites the
+         * conversation's unread message notification and a second reaction joins the first. A push
+         * and a frame for ONE reaction land on one notification AND one line: both stamp it with the
+         * reaction's own instant ([reactionAt]), which `alreadyPosted` and the alerted ledger in
+         * [showMessageNotification] match on, under [REACTION_POST_LOCK]. No quick actions: there is
+         * nothing to reply to and nothing to mark read. The sentence is `notif_reaction_body`, the
+         * same string for both.
+         *
+         * @param fallbackName the actor's name when this conversation holds no nickname for them -
+         *   the push's title, or the name the WebView resolved.
+         * @param reactionAt the reaction's own instant (`ReactionMsg.at`, the reactor's clock): the
+         *   frame's `at`, and the push's `at` (sent since 2026-11-17). 0 from a reactor predating
+         *   that field - the line is then stamped now, and a push and a frame of that one reaction
+         *   cannot be recognised as one (two lines, two alerts), exactly as before.
+         * @param suppressInForeground TRUE for the push, which knows only whether the app is in
+         *   front; FALSE for the frame, whose trigger already asked the finer question.
+         */
+        internal fun Context.showReactionNotification(
+            groupId: String,
+            actorId: String,
+            fallbackName: String,
+            emoji: String,
+            reactionAt: Long,
+            suppressInForeground: Boolean = true,
+        ) {
+            // The actor's nickname in that conversation first (owner, 2026-11-14), else the fallback.
+            val actorName = nicknameLookup(
+                this, MlsContextLoader.loadPushContext(this)?.userId, salon = false, conversation = groupId, label = "[REACTION_NAME]",
+            )(actorId) ?: fallbackName
+            val largeIcon = (if (actorId.isNotEmpty()) fetchAvatar(actorId) else null)
+                ?: generateInitialsBitmap(actorName)
+            // ONE CHECK-AND-POST AT A TIME: the push (its FCM thread) and the frame (the WebSocket
+            // lane) may build the SAME reaction at once now that the frame trigger no longer defers to
+            // the push. Each asks the shade and the alerted ledger, then posts and records; two
+            // interleaved would both find nothing and both alert. Held only around that, never the
+            // avatar fetch above.
+            synchronized(REACTION_POST_LOCK) {
+                showMessageNotification(
+                    senderName = actorName,
+                    groupName = "",
+                    body = appLocaleContext(this).getString(R.string.notif_reaction_body, emoji),
+                    largeIcon = largeIcon,
+                    groupId = groupId,
+                    channel = CHANNEL_REACTIONS,
+                    quickActions = false,
+                    sentAt = reactionAt,
+                    suppressInForeground = suppressInForeground,
+                )
+            }
+        }
+
+        /** Serialises [showReactionNotification]'s check-and-post across its two triggers. */
+        private val REACTION_POST_LOCK = Any()
 
         // --- The message notification, and the avatar chain it needs -------------------
         //
@@ -2544,7 +2592,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                             }
                             Log.d(TAG, "$label: cached for ${subject.take(8)}")
                         } catch (e: Exception) {
-                            Log.w(TAG, "$label: unable to save the cache: ${e.message}")
+                            Log.w(TAG, "$label: unable to save the cache: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
                         }
                         decodeSampled(target) { BitmapFactory.decodeByteArray(bytes, 0, bytes.size, it) }
                             ?.let { circleCrop(it, target) }
@@ -2560,7 +2608,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                             }
                             Log.d(TAG, "$label: HTTP 404 for ${subject.take(8)} -> no picture, remembered for ${AVATAR_CACHE_MAX_AGE_MS / 3_600_000}h")
                         } catch (e: Exception) {
-                            Log.w(TAG, "$label: HTTP 404 for ${subject.take(8)}, and the no-picture marker could not be saved: ${e.message}")
+                            Log.w(TAG, "$label: HTTP 404 for ${subject.take(8)}, and the no-picture marker could not be saved: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
                         }
                         null
                     } else {
@@ -2588,12 +2636,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 // A transport failure - the bad Wi-Fi of 2026-10-01 - is not an answer either. Said
                 // at WARN: the picture is lost for this notification, and a run of these is a radio
                 // or a server worth reading about.
-                Log.w(TAG, "$label: transport failure for ${subject.take(8)} (${e.javaClass.simpleName}: ${e.message}) -> initials, not remembered")
+                Log.w(TAG, "$label: transport failure for ${subject.take(8)} (${e.javaClass.simpleName}) -> initials, not remembered")
                 null
             } catch (e: Exception) {
                 // Not the network: a defect in how this was called - a fetch on the main thread
                 // (`NetworkOnMainThreadException`, the review of #2877), a bad URL. It ACCUSES.
-                Log.e(TAG, "$label: ${e.javaClass.simpleName} fetching ${subject.take(8)} - a defect, not the network: ${e.message}")
+                Log.e(TAG, "$label: ${e.javaClass.simpleName} fetching ${subject.take(8)} - a defect, not the network: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
                 null
             }
         }
@@ -2810,7 +2858,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val existingNotif = try {
                 manager.activeNotifications.firstOrNull { it.id == notifId }?.notification
             } catch (e: Exception) {
-                Log.w(TAG, "showNotification: activeNotifications unavailable: ${e.message}")
+                Log.w(TAG, "showNotification: activeNotifications unavailable: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
                 null
             }
 
@@ -2864,8 +2912,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // something visible, it is a second announcement of something the user already dismissed.
             //
             // Only where a SENDER'S stamp exists, which is the same condition `alreadyPosted` carries
-            // and for the same reason: a reaction reaches here with `sentAt = 0`, no message of its
-            // own can be identified, and this must never guess. A salon push carried 0 until
+            // and for the same reason: a reaction from a reactor predating `at` reaches here with
+            // `sentAt = 0`, no reaction of its own can be identified, and this must never guess. A salon push carried 0 until
             // 2026-09-22 and now carries `createdAt`.
             //
             // AND NEVER AGAINST A SUPERSEDE, which is the half that would otherwise break the
@@ -3349,7 +3397,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val dataDir = MlsContextLoader.tauriDataDir(this).also { it.mkdirs() }
             File(dataDir, "fcm_token.txt").writeText(token)
         } catch (e: Exception) {
-            Log.w(TAG, "onNewToken: unable to write fcm_token.txt: ${e.message}")
+            Log.w(TAG, "onNewToken: unable to write fcm_token.txt: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
         }
         // FCM2: push the new token to the backend WITHOUT waiting for the next foreground open.
         // A token rotated while the app is killed would stay stale server-side (push to a dead
@@ -3525,26 +3573,22 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 else                                   -> "fr.emse.canari://posts"
             }
             val channel = if (msgType == "form_reminder") CHANNEL_FORMS else CHANNEL_SOCIAL
-            // REACTIONS TO ONE POST ARE ONE NOTIFICATION, UPDATED IN PLACE (user, 2026-10-08: six
-            // faceless "a reagi" stacked in the shade for a single post). Keyed on the post, so it
-            // needs the post id; a reaction push without one is logged and drawn ungrouped.
-            if (msgType == "social" && data["contentKey"] == "social_reaction") {
-                if (postId.isNotEmpty()) {
-                    runWithWakeLock("fcm_post_reaction") {
-                        showPostReactionNotification(data, postId, deepLink, channel)
-                    }
-                    return
-                }
-                Log.w(TAG, "social_reaction push without postId - nothing to group it under, drawn alone")
-            }
-            Log.d(TAG, "showSimpleNotification: type=$msgType channel=$channel titleChars=${title.length} deepLink=$deepLink")
+            // ONE LIVE NOTIFICATION PER POST (owner, 2026-11-14): the comments and reactions on MY
+            // post carry the server's `collapseId`, so each one REPLACES the post's notification
+            // (the stable-id mechanism of a conversation), and `quiet` - the post still has an unread
+            // bell row, the server decided - updates it without sound or heads-up. The server's
+            // unread state is the one decider; the shade's is not asked.
+            val collapseId = data["collapseId"].orEmpty()
+            val stableId = if (collapseId.isNotEmpty()) getStableNotifId(this, collapsedNotifKey(collapseId)) else null
+            val quiet = collapseId.isNotEmpty() && data["quiet"] == "true"
+            Log.d(TAG, "showSimpleNotification: type=$msgType channel=$channel titleChars=${title.length} deepLink=$deepLink collapsed=${stableId != null} quiet=$quiet")
             // A THREAD, because this branch now fetches a picture. Everything above is a map lookup
             // and stays here; [socialLargeIcon] may touch the disk cache, the Keystore and the
             // network, and `onMessageReceived` must return promptly or Android stops delivering to
             // this process. The WakeLock is what [handleReactionNotification] already takes for the
             // same reason, one line below.
             runWithWakeLock("fcm_social") {
-                showSimpleNotification(title, body, deepLink, channel, socialLargeIcon(data))
+                showSimpleNotification(title, body, deepLink, channel, socialLargeIcon(data), stableId, quiet)
             }
             return
         }
@@ -3852,7 +3896,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     enqueueRefusedFrameWorker()
                 }
                 buildFallbackText(appLocaleContext(this), shownName, groupName, isGroup)
-                    .also { Log.w(TAG, "Fallback notification: $it") }
+                    .also { Log.w(TAG, "Fallback notification: shown chars=${it.length} named=${shownName != null && shownName.isNotEmpty()} group=${groupId.take(8)}") }
             }
 
         if (silent) {
@@ -4024,14 +4068,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                         .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "canari:$name")
                     wl.acquire(timeoutMs)
                 } catch (e: Throwable) {
-                    Log.e(TAG, "$name: wake lock NOT taken, running without it: ${e.javaClass.simpleName}", e)
+                    Log.e(TAG, "$name: wake lock NOT taken, running without it: ${e.javaClass.simpleName}", e) // log-safe: message of a system or native call (Throwable); this try parses and names no user input
                 }
                 try {
                     block()
                 } catch (e: Throwable) {
                     // A task that dies must not take the lane with it: the executor would keep running,
                     // but this is the only place the failure is visible at all.
-                    Log.e(TAG, "$name: uncaught in the MLS push lane: ${e.message}", e)
+                    Log.e(TAG, "$name: uncaught in the MLS push lane: ${throwableSite(e)}")
                 } finally {
                     if (wl?.isHeld == true) wl.release()
                 }
@@ -4068,7 +4112,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 conn.disconnect()
             }
         } catch (e: Exception) {
-            Log.w(TAG, "markMembershipActive: exception: ${e.message}")
+            Log.w(TAG, "markMembershipActive: exception: ${e.javaClass.simpleName}")
         }
     }
 
@@ -4286,7 +4330,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 conn.disconnect()
             }
         } catch (e: Exception) {
-            Log.e(TAG, "acquireAddLock: exception: ${e.message}")
+            Log.e(TAG, "acquireAddLock: exception: ${e.javaClass.simpleName}")
             null
         }
     }
@@ -4320,7 +4364,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 conn.disconnect()
             }
         } catch (e: Exception) {
-            Log.e(TAG, "releaseAddLock: exception: ${e.message}")
+            Log.e(TAG, "releaseAddLock: exception: ${e.javaClass.simpleName}")
         }
     }
 
@@ -4361,7 +4405,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 conn.disconnect()
             }
         } catch (e: Exception) {
-            Log.e(TAG, "fetchKeyPackage: exception: ${e.message}")
+            Log.e(TAG, "fetchKeyPackage: exception: ${e.javaClass.simpleName}")
             null
         }
     }
@@ -4422,7 +4466,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 conn.disconnect()
             }
         } catch (e: Exception) {
-            Log.e(TAG, "sendWelcomeAndCommit: exception: ${e.message}")
+            Log.e(TAG, "sendWelcomeAndCommit: exception: ${e.javaClass.simpleName}")
             BackgroundWelcomeAnswer.classify(null, null, null, null)
         }
     }
@@ -4585,7 +4629,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             MlsStateLock.LOCK.tryLock(5, java.util.concurrent.TimeUnit.SECONDS)
         } catch (e: InterruptedException) {
             Thread.currentThread().interrupt()
-            Log.e(TAG, "tryDecrypt: thread interrupted during tryLock MlsStateLock: ${e.message}")
+            Log.e(TAG, "tryDecrypt: thread interrupted during tryLock MlsStateLock: ${e.message}") // log-safe: message of a system or native call (InterruptedException); this try parses and names no user input
             return PushDecrypt.Refused
         }
         if (!lockAcquired) {
@@ -4682,7 +4726,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                             "- its deadline settled it first; the frame stays queued for the next open")
                 }
             } catch (e: Throwable) {
-                Log.e(TAG, "[PUSH_WAKE] a released action threw queued=$queuedMessageId: ${e.javaClass.simpleName}", e)
+                Log.e(TAG, "[PUSH_WAKE] a released action threw queued=$queuedMessageId: ${throwableSite(e)}")
             }
         }
         try {
@@ -4703,7 +4747,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                         outcome = fetchWakeFrameWithinDeadline(queuedMessageId, silent, remainingMs)
                     }
                 } catch (e: Throwable) {
-                    Log.e(TAG, "[PUSH_WAKE] fetch threw queued=$queuedMessageId: ${e.javaClass.simpleName}", e)
+                    Log.e(TAG, "[PUSH_WAKE] fetch threw queued=$queuedMessageId: ${throwableSite(e)}")
                 } finally {
                     settle(outcome)
                     if (wl?.isHeld == true) wl.release()
@@ -4712,7 +4756,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         } catch (e: RejectedExecutionException) {
             // Never expected (the pool is never shut down) - and if it ever is, the ticket is settled
             // HERE, so no later push waits even for the deadline.
-            Log.e(TAG, "[PUSH_WAKE] fetch NOT scheduled queued=$queuedMessageId: ${e.message}")
+            Log.e(TAG, "[PUSH_WAKE] fetch NOT scheduled queued=$queuedMessageId: ${e.message}") // log-safe: message of a system or native call (RejectedExecutionException); this try parses and names no user input
             settle(WakeAnswer.Outcome.Failed("not-scheduled"))
         }
     }
@@ -4737,7 +4781,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             call.cancel(true)
             WakeAnswer.Outcome.Failed("deadline-${phase.get()}")
         } catch (e: java.util.concurrent.ExecutionException) {
-            Log.e(TAG, "[PUSH_WAKE] fetch threw queued=$queuedMessageId: ${e.cause?.javaClass?.simpleName}", e.cause)
+            Log.e(TAG, "[PUSH_WAKE] fetch threw queued=$queuedMessageId: ${throwableSite(e.cause ?: e)}")
             WakeAnswer.Outcome.Failed("uncaught")
         }
     }
@@ -4879,7 +4923,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 if (attempt == 0) Thread.sleep(1_000)
             }
         }
-        Log.e(TAG, "fetchProtoFromBackend: failed after 2 attempts: ${lastException?.message}")
+        Log.e(TAG, "fetchProtoFromBackend: failed after 2 attempts: ${lastException?.javaClass?.simpleName}")
         return null
     }
 
@@ -4954,7 +4998,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             MlsStateLock.LOCK.tryLock(10, java.util.concurrent.TimeUnit.SECONDS)
         } catch (e: InterruptedException) {
             Thread.currentThread().interrupt()
-            Log.e(TAG, "processReceivedWelcomeBackground: interrupted during tryLock: ${e.message}")
+            Log.e(TAG, "processReceivedWelcomeBackground: interrupted during tryLock: ${e.message}") // log-safe: message of a system or native call (InterruptedException); this try parses and names no user input
             return
         }
         if (!jniLockAcquired) {
@@ -5032,7 +5076,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 conn.disconnect()
             }
         } catch (e: Exception) {
-            Log.e(TAG, "fetchWelcomeBundle: exception: ${e.message}")
+            Log.e(TAG, "fetchWelcomeBundle: exception: ${e.javaClass.simpleName}")
             null
         }
     }
@@ -5067,10 +5111,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val claim = try {
             JSONObject(nativeClaimDeviceNotices(MlsContextLoader.tauriDataDir(this).also { it.mkdirs() }.absolutePath, keys.toString()))
         } catch (e: UnsatisfiedLinkError) {
-            Log.e(TAG, "$where: native library not loaded - new-device notice not raised: ${e.message}")
+            Log.e(TAG, "$where: native library not loaded - new-device notice not raised: ${e.javaClass.simpleName}")
             return
         } catch (e: Exception) {
-            Log.e(TAG, "$where: new-device claim failed - notice not raised: ${e.message}")
+            Log.e(TAG, "$where: new-device claim failed - notice not raised: ${throwableSite(e)}")
             return
         }
         val claimed = claim.optJSONArray("claimed") ?: JSONArray()
@@ -5144,7 +5188,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     // Rust refused these v1 seeds (channel-encryption 21.7); its own line goes
                     // nowhere in a killed app, so the reason is said here.
                     json.optJSONArray("v1Refused")?.let {
-                        Log.w(TAG, "$where: REFUSED ${it.length()} v1 seed(s) $it - a v1 seed is no longer accepted")
+                        Log.w(TAG, "$where: REFUSED ${it.length()} v1 seed(s) - a v1 seed is no longer accepted")
                     }
                     PushDecrypt.KeyMaterial(seeds)
                 }
@@ -5231,10 +5275,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val jsonStr = nativeDecryptMessageWithKey(stateBytes, keyB64, userId, deviceId, groupId, senderId, cipherBytes, locale)
             parseNativeDecrypt(jsonStr, "decryptProto")
         } catch (e: UnsatisfiedLinkError) {
-            Log.e(TAG, "decryptProto: native library not loaded: ${e.message}")
+            Log.e(TAG, "decryptProto: native library not loaded: ${e.javaClass.simpleName}")
             PushDecrypt.Refused
         } catch (e: Exception) {
-            Log.e(TAG, "decryptProto: exception: ${e.message}")
+            Log.e(TAG, "decryptProto: exception: ${e.javaClass.simpleName}")
             PushDecrypt.Refused
         }
     }
@@ -5267,7 +5311,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val cipherBytes = try {
             Base64.decode(protoB64, Base64.DEFAULT)
         } catch (e: Exception) {
-            Log.e(TAG, "catchup: proto base64 invalid: ${e.message}"); return null
+            Log.e(TAG, "catchup: proto base64 invalid: ${e.javaClass.simpleName}"); return null
         }
 
         // 1) Read the current epoch (brief lock: mls.bin + Argon2 via JNI).
@@ -5300,12 +5344,19 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         return withMlsStateLock(5) {
             if (foregroundTookOver("catchup")) return@withMlsStateLock null
             val stateBytes = MlsContextLoader.loadMlsState(this) ?: return@withMlsStateLock null
-            decryptProtoWithCommits(
+            // WHAT THE CATCH-UP COST, said on every one: nothing persists it, so every salon push of
+            // a shut phone pays it again, and its size grows with the key group and the days the
+            // app stayed shut (channel-encryption section 28). Read on the rig from logcat.
+            val startedAt = android.os.SystemClock.elapsedRealtime()
+            val outcome = decryptProtoWithCommits(
                 stateBytes, ctx.userId, ctx.deviceId, groupId, commitsJson, cipherBytes,
                 senderId = senderId,
                 deviceKeyB64 = ctx.deviceKeyB64,
                 locale = ctx.locale,
             )
+            val elapsedMs = android.os.SystemClock.elapsedRealtime() - startedAt
+            Log.i(TAG, "catchup: replay since epoch=$epoch took $elapsedMs ms (state ${stateBytes.size} B, commits ${commitsJson.length} ch) outcome=${outcome.javaClass.simpleName} group=${groupId.take(8)}")
+            outcome
         }
     }
 
@@ -5315,7 +5366,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             MlsStateLock.LOCK.tryLock(timeoutSec, java.util.concurrent.TimeUnit.SECONDS)
         } catch (e: InterruptedException) {
             Thread.currentThread().interrupt()
-            Log.e(TAG, "withMlsStateLock: interrupted: ${e.message}")
+            Log.e(TAG, "withMlsStateLock: interrupted: ${e.message}") // log-safe: message of a system or native call (InterruptedException); this try parses and names no user input
             return null
         }
         if (!acquired) {
@@ -5357,10 +5408,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 Log.d(TAG, "groupLocality: epoch=$epoch group=${groupId.take(8)}")
                 if (epoch >= 0) GroupLocality.LOCAL else GroupLocality.ABSENT
             } catch (e: UnsatisfiedLinkError) {
-                Log.e(TAG, "groupLocality: native library not loaded: ${e.message}")
+                Log.e(TAG, "groupLocality: native library not loaded: ${e.message}") // log-safe: message of a system or native call (UnsatisfiedLinkError); this try parses and names no user input
                 GroupLocality.UNKNOWN
             } catch (e: Exception) {
-                Log.e(TAG, "groupLocality: exception: ${e.message}")
+                Log.e(TAG, "groupLocality: exception: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
                 GroupLocality.UNKNOWN
             }
         }
@@ -5394,9 +5445,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val jsonStr = nativeDecryptMessageWithCommitsWithKey(stateBytes, keyB64, userId, deviceId, groupId, senderId, commitsJson, cipherBytes, locale)
             parseNativeDecrypt(jsonStr, "decryptProtoWithCommits")
         } catch (e: UnsatisfiedLinkError) {
-            Log.e(TAG, "decryptProtoWithCommits: native library not loaded: ${e.message}"); PushDecrypt.Refused
+            Log.e(TAG, "decryptProtoWithCommits: native library not loaded: ${e.javaClass.simpleName}"); PushDecrypt.Refused
         } catch (e: Exception) {
-            Log.e(TAG, "decryptProtoWithCommits: exception: ${e.message}"); PushDecrypt.Refused
+            Log.e(TAG, "decryptProtoWithCommits: exception: ${e.javaClass.simpleName}"); PushDecrypt.Refused
         }
     }
 
@@ -5448,7 +5499,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 conn.disconnect()
             }
         } catch (e: Exception) {
-            Log.w(TAG, "fetchCommitsFromBackend: exception: ${e.message}")
+            Log.w(TAG, "fetchCommitsFromBackend: exception: ${e.javaClass.simpleName}")
             null
         }
     }
@@ -5612,7 +5663,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             Log.d(TAG, "fetchAndDecryptMedia: thumbnail ready ${mediaId.take(8)} (${plaintext.size}B)")
             Pair(uri, decrypted.mimeType ?: "image/jpeg")
         } catch (e: Exception) {
-            Log.d(TAG, "fetchAndDecryptMedia: ${e.message} -> text only")
+            Log.d(TAG, "fetchAndDecryptMedia: ${e.javaClass.simpleName} -> text only")
             null
         }
     }
@@ -5658,6 +5709,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         largeIcon: Bitmap? = null,
         /** A stable id makes this notification UPDATE in place; null is a fresh one each time. */
         stableId: Int? = null,
+        /** An update the server decided must not alert: no sound, no vibration, no heads-up. */
+        quiet: Boolean = false,
     ) {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         ensureNotificationChannels(manager)
@@ -5681,108 +5734,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setContentIntent(pendingIntent)
             .apply { largeIcon?.let { setLargeIcon(it) } }
-            // A call holds the sound ([CallSoundHold]): shown, without its sound.
-            .setSilent(callHolds)
+            // A call holds the sound ([CallSoundHold]): shown, without its sound. A quiet update of a
+            // post's notification (owner, 2026-11-14) is shown the same way.
+            .setSilent(callHolds || quiet)
             .build()
-        Log.d(TAG, "showSimpleNotification: notifId=$notifId channel=$channel largeIcon=${largeIcon != null} silentForCall=$callHolds")
+        Log.d(TAG, "showSimpleNotification: notifId=$notifId channel=$channel largeIcon=${largeIcon != null} silentForCall=$callHolds quiet=$quiet")
         manager.notify(notifId, notification)
-    }
-
-    // --- Reactions to a POST, one notification each ------------------------------
-
-    /**
-     * Draws the reactions to ONE post as ONE notification that every new reaction updates.
-     *
-     * Reported by the user on 2026-10-08, from a Pixel 6a: six notifications "Nouvelle reaction -
-     * X a reagi Marteau a votre publication" for a single post, each alone and each without a
-     * face. The server now names the actor's picture and sends the emoji; this keys the
-     * notification on the POST (the way [reactionNotifKey] keys a conversation's), so the next
-     * reaction replaces the last, accumulating who reacted.
-     *
-     * **THE LEDGER IS DURABLE STATE AND THE SHADE DECIDES WHEN IT ENDS - NO CLOCK.** Actors are kept
-     * in SharedPreferences per post. A reaction joins the existing group only when that
-     * notification is still posted; once it was swiped or opened, the next reaction starts a new
-     * one ("A a reagi", not "A, B et 4 autres" about reactions the user has already seen).
-     * [PostReactionGroup] holds the pure half (ledger, sentence shape, faces) and is unit-tested.
-     *
-     * The picture is the actor's for one person and a small collage of up to three faces for
-     * several; a face that cannot be had is the initials disc the message path draws, logged.
-     */
-    private fun showPostReactionNotification(
-        data: Map<String, String>,
-        postId: String,
-        deepLink: String,
-        channel: String,
-    ) {
-        // THE LOCK COVERS THE POST AS WELL AS THE LEDGER. Each push runs on a thread of its own, and
-        // the join-or-restart decision reads "is the notification still shown": with the lock
-        // released before `notify`, a burst (six reactions at once - the very case this exists for)
-        // found the shade still empty, restarted the ledger each time and kept only the last
-        // reactor. Held across the face fetch, the second push waits and then finds the first one
-        // posted; faces are cached for 24 h, so the wait is one fetch per new face.
-        synchronized(POST_REACTION_LOCK) {
-            showPostReactionNotificationLocked(data, postId, deepLink, channel)
-        }
-    }
-
-    private fun showPostReactionNotificationLocked(
-        data: Map<String, String>,
-        postId: String,
-        deepLink: String,
-        channel: String,
-    ) {
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        val notifId = getStableNotifId(this, postReactionNotifKey(postId))
-        val newcomer = PostReactionGroup.Actor(data["iconUserId"].orEmpty(), data["actorName"].orEmpty())
-        val emoji = data["contentArg"].orEmpty()
-
-        val actors = synchronized(POST_REACTION_LOCK) {
-            val prefs = getSharedPreferences(POST_REACTION_PREFS, Context.MODE_PRIVATE)
-            val ledger = JSONObject(prefs.getString(POST_REACTION_KEY, "{}") ?: "{}")
-            val stillShown = manager.activeNotifications.any { it.id == notifId }
-            val previous = if (stillShown) PostReactionGroup.decode(ledger.optString(postId)) else emptyList()
-            if (!stillShown && ledger.has(postId)) {
-                Log.d(TAG, "post reaction: post=${postId.take(8)} notification no longer shown -> a new group")
-            }
-            val updated = PostReactionGroup.add(previous, newcomer)
-            // Re-inserted last, so the oldest posts are the ones the bound drops.
-            ledger.remove(postId)
-            ledger.put(postId, PostReactionGroup.encode(updated))
-            while (ledger.length() > MAX_POST_REACTION_LEDGERS) {
-                ledger.remove(ledger.keys().next())
-            }
-            prefs.edit().putString(POST_REACTION_KEY, ledger.toString()).commit()
-            updated
-        }
-
-        val res = appLocaleContext(this).resources
-        val body = when (val shape = PostReactionGroup.shape(actors)) {
-            is PostReactionGroup.Shape.One ->
-                res.getString(R.string.notif_social_reaction_body, shape.a.name, emoji)
-            is PostReactionGroup.Shape.Two ->
-                res.getString(R.string.notif_social_reaction_body_two, shape.a.name, shape.b.name)
-            is PostReactionGroup.Shape.Three ->
-                res.getString(R.string.notif_social_reaction_body_three, shape.a.name, shape.b.name, shape.c.name)
-            is PostReactionGroup.Shape.Many ->
-                res.getString(R.string.notif_social_reaction_body_many, shape.a.name, shape.b.name, shape.others)
-            null -> {
-                Log.e(TAG, "post reaction: empty ledger after adding actor=${newcomer.id.take(8)} - nothing to say")
-                return
-            }
-        }
-
-        val faces = PostReactionGroup.faces(actors).map { actor ->
-            val photo = if (actor.id.isNotEmpty()) fetchAvatar(actor.id) else null
-            if (photo == null) {
-                Log.d(TAG, "post reaction: no picture for ${actor.identity.take(8)} -> initials")
-            }
-            photo ?: generateInitialsBitmap(actor.name)
-        }
-        val icon = if (faces.size == 1) faces[0] else composeFaceCollage(faces)
-        Log.d(TAG, "post reaction: post=${postId.take(8)} actors=${actors.size} faces=${faces.size}")
-        showSimpleNotification(
-            res.getString(R.string.notif_social_reaction_title), body, deepLink, channel, icon, notifId,
-        )
     }
 
     // --- Reaction push -----------------------------------------------------------
@@ -5864,14 +5821,31 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 res.getString(R.string.notif_social_reply_title, actor),
                 arg.ifEmpty { res.getString(R.string.notif_social_reply_body) }
             )
+            // A comment or a reaction on MY post (owner, 2026-11-14): `contentCount` is how many OTHER
+            // people did the same while the post's notification stayed unread - one sentence per
+            // count form, mirroring the bell's "et 1 autre" / "et N autres".
             "social_comment" -> Pair(
-                res.getString(R.string.notif_social_comment_title, actor),
+                when (val others = (data["contentCount"]?.toIntOrNull() ?: 0).coerceAtLeast(0)) {
+                    0 -> res.getString(R.string.notif_social_comment_title, actor)
+                    1 -> res.getString(R.string.notif_social_comment_title_others_one, actor)
+                    else -> res.getString(R.string.notif_social_comment_title_others_many, actor, others)
+                },
                 arg.ifEmpty { res.getString(R.string.notif_social_comment_body) }
             )
-            "social_reaction" -> Pair(
-                res.getString(R.string.notif_social_reaction_title),
-                res.getString(R.string.notif_social_reaction_body, actor, arg)
-            )
+            "social_reaction" -> when (val others = (data["contentCount"]?.toIntOrNull() ?: 0).coerceAtLeast(0)) {
+                0 -> Pair(
+                    res.getString(R.string.notif_social_reaction_title),
+                    res.getString(R.string.notif_social_reaction_body, actor, arg)
+                )
+                1 -> Pair(
+                    res.getString(R.string.notif_social_reaction_title_count, others + 1),
+                    res.getString(R.string.notif_social_reaction_body_others_one, actor)
+                )
+                else -> Pair(
+                    res.getString(R.string.notif_social_reaction_title_count, others + 1),
+                    res.getString(R.string.notif_social_reaction_body_others_many, actor, others)
+                )
+            }
             // The two publication notices. `actor` is the ASSOCIATION's name for the first and
             // the author's for the second; `arg` is the opening of the post, empty when the post
             // is images only, which is why the body falls back to a fixed sentence.
@@ -5966,6 +5940,20 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             "social_live_withdrawn" -> Pair(
                 res.getString(R.string.notif_social_live_withdrawn_title),
                 res.getString(R.string.notif_social_live_withdrawn_body)
+            )
+            "social_live_reinstated" -> Pair(
+                res.getString(R.string.notif_social_live_reinstated_title),
+                res.getString(R.string.notif_social_live_reinstated_body)
+            )
+            // A new item in a global admin's queue (owner, 2026-11-18): fixed sentences - who asked
+            // or what was reported stays in the queue (the content-free rule).
+            "social_admin_profile_correction" -> Pair(
+                res.getString(R.string.notif_social_admin_profile_correction_title),
+                res.getString(R.string.notif_social_admin_profile_correction_body)
+            )
+            "social_admin_report" -> Pair(
+                res.getString(R.string.notif_social_admin_report_title),
+                res.getString(R.string.notif_social_admin_report_body)
             )
             // The bookings' notices (WP-N): who acted names the title - a person, or the
             // association of the space - and the body is the place, the organiser's word for a
@@ -6109,10 +6097,6 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val groupId = data["groupId"] ?: ""
         val emoji = data["emoji"] ?: ""
         val actorId = data["senderId"] ?: ""
-        // The actor's nickname in that conversation first (owner, 2026-11-14), else the push's title.
-        val actorName = nicknameLookup(
-            this, MlsContextLoader.loadPushContext(this)?.userId, salon = false, conversation = groupId, label = "[REACTION_NAME]",
-        )(actorId) ?: data["title"] ?: getString(R.string.app_name)
 
         if (groupId.isEmpty()) {
             // Without it there is no conversation to attach to and no stable id to reuse, so the
@@ -6122,18 +6106,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         Log.d(TAG, "reaction: group=${groupId.take(8)} actor=${actorId.take(8)}")
-        val largeIcon = (if (actorId.isNotEmpty()) fetchAvatar(actorId) else null)
-            ?: generateInitialsBitmap(actorName)
-
-        showMessageNotification(
-            senderName = actorName,
-            groupName = "",
-            body = appLocaleContext(this).getString(R.string.notif_reaction_body, emoji),
-            largeIcon = largeIcon,
-            groupId = groupId,
-            channel = CHANNEL_REACTIONS,
-            quickActions = false,
-        )
+        // The reaction's own instant, the stamp the frame trigger uses too; absent from an older reactor.
+        val reactionAt = data["at"]?.toLongOrNull() ?: 0L
+        // The push's title is the server's name for the actor - the fallback behind their nickname.
+        showReactionNotification(groupId, actorId, data["title"] ?: getString(R.string.app_name), emoji, reactionAt)
     }
 
     // --- Channel (community) message push --------------------------------------
@@ -6352,7 +6328,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val claim = try {
             KeyGroupPushJoin.readClaim(nativeKeyGroupJoinClaim(filesDir, cacheKey, ctx.userId, groupId))
         } catch (e: UnsatisfiedLinkError) {
-            Log.e(TAG, "joinKeyGroupFromPush: native library not loaded: ${e.message}")
+            Log.e(TAG, "joinKeyGroupFromPush: native library not loaded: ${e.message}") // log-safe: message of a system or native call (UnsatisfiedLinkError); this try parses and names no user input
             return
         }
         val skipBaseAt = when (claim) {
@@ -6369,7 +6345,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         } catch (e: Exception) {
             // Anything thrown before the install is a join that did not happen; the staged state,
             // if any, is deleted so it can never be installed later by mistake.
-            Log.e(TAG, "joinKeyGroupFromPush: exception group=$tag: ${e.message}")
+            Log.e(TAG, "joinKeyGroupFromPush: exception group=$tag: ${e.javaClass.simpleName}")
             nativeAbandonKeyGroupJoin(filesDir, ctx.userId)
             KeyGroupPushJoin.Settlement.Retryable("exception")
         }
@@ -6527,7 +6503,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 conn.disconnect()
             }
         } catch (e: Exception) {
-            Log.w(TAG, "postPushSecretJson: $route no answer: ${e.message}")
+            Log.w(TAG, "postPushSecretJson: $route no answer: ${e.javaClass.simpleName}")
             null to null
         }
     }
@@ -6640,7 +6616,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     buildChannelFallbackText(res, channelName)
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "handleChannelMessage: decrypt exception: ${e.javaClass.simpleName}: ${e.message}")
+                Log.e(TAG, "handleChannelMessage: decrypt exception: ${e.javaClass.simpleName}")
                 refusal = BlindBannerReport.EXCEPTION
                 buildChannelFallbackText(res, channelName)
             }
@@ -6797,7 +6773,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 conn.disconnect()
             }
         } catch (e: Exception) {
-            Log.w(TAG, "reportBlindBanner: exception: ${e.message}")
+            Log.w(TAG, "reportBlindBanner: exception: ${e.javaClass.simpleName}")
         }
     }
 
@@ -6847,7 +6823,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         } catch (e: Throwable) {
             // UnsatisfiedLinkError included: an older native library has no such symbol, and a
             // crash in a push handler takes the whole notification with it.
-            Log.e(TAG, "absorbGraineSeeds: ${e.message}")
+            Log.e(TAG, "absorbGraineSeeds: ${e.javaClass.simpleName}")
         }
     }
 
@@ -6894,7 +6870,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             try {
                 postChannelNotification(cacheKey, frame.data, seedHeld = true, supersedes = frame.genericStamp)
             } catch (e: Exception) {
-                Log.e(TAG, "drainPendingChannelFrames: redraw failed channel=${frame.data["channelId"]}: ${e.message}")
+                Log.e(TAG, "drainPendingChannelFrames: redraw failed channel=${frame.data["channelId"]}: ${throwableSite(e)}")
             }
         }
     }
@@ -6921,7 +6897,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             held == 1
         } catch (e: Throwable) {
             // UnsatisfiedLinkError included, as in [absorbGraineSeeds].
-            Log.e(TAG, "graineSeedHeld: ${e.message}")
+            Log.e(TAG, "graineSeedHeld: ${e.message}") // log-safe: message of a system or native call (Throwable); this try parses and names no user input
             false
         }
     }

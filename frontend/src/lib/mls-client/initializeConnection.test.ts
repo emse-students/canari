@@ -46,6 +46,8 @@ vi.mock('$lib/utils/chat/historyReconcile', async (importOriginal) => {
 });
 
 import { initializeConnection, openGatewayConnection } from './initializeConnection';
+import { markGroupInCreation } from '$lib/utils/chat/groupsInCreation';
+import { noteConnection, resetAuditRecord } from '$lib/utils/chat/historyReconcile';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 
 describe('initializeConnection (realistic connect + membership sync)', () => {
@@ -158,7 +160,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
     // Group in WASM -> no onGroupMissing
     expect(onGroupMissing).not.toHaveBeenCalledWith('g-in-wasm');
     // Group absent from server -> forgotten, tree and distribution registration together
-    expect(mls.forgetDistributionGroupById).toHaveBeenCalledWith('g-orphan');
+    expect(mls.forgetDistributionGroupById).toHaveBeenCalledWith('g-orphan', 'absent from server');
     expect(mls.forgetGroup).toHaveBeenCalledWith('g-orphan', 0);
     // No direct sendWelcomeRequest (onGroupMissing is provided)
     expect(mls.sendWelcomeRequest).not.toHaveBeenCalled();
@@ -466,5 +468,92 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       log: vi.fn(),
     });
     expect(order).toEqual(['connect', 'settle', 'fetch']);
+  });
+});
+
+/**
+ * A GROUP THIS DEVICE IS CREATING IS NOT ASKED ABOUT BY THE CONNECTION'S HISTORY PASS, IN EITHER MODE.
+ *
+ * It is local from `createGroup` on, long before the creation ends, and has no past to compare:
+ * LEAF-REFRESH-1 (2026-11-16) showed the pass auditing one between its `create_group` and its Add
+ * (`no member online ... - will ask when one returns`). The creation's mark is read in the turn the
+ * local groups are, before the mode is chosen, so a sweep and an audit both leave it out. What the
+ * group owes afterwards is the creation's to settle: recorded on success, still owed on failure.
+ */
+describe('initializeConnection - the history pass leaves a group being created out', () => {
+  function creatingMls() {
+    return {
+      connect: vi.fn().mockResolvedValue(undefined),
+      gatewaySocketSettled: vi.fn().mockResolvedValue(undefined),
+      socketFence: () => 0,
+      settleUnresolvedCommits: vi.fn().mockResolvedValue(undefined),
+      isDestroyed: () => false,
+      fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
+      onDisconnect: vi.fn(),
+      sendDisconnect: vi.fn(),
+      generateKeyPackage: vi.fn().mockResolvedValue(undefined),
+      reconcilePublishedKeyPackages: vi.fn().mockResolvedValue(undefined),
+      getLocalGroups: vi.fn().mockReturnValue(['g-old', 'g-creating']),
+      isDistributionGroup: vi.fn().mockReturnValue(false),
+      registerDistributionGroup: vi.fn(),
+      getUserGroups: vi.fn().mockResolvedValue([
+        { groupId: 'g-old', name: 'Old', isGroup: true },
+        { groupId: 'g-creating', name: 'New', isGroup: true },
+      ]),
+      getDeviceId: vi.fn().mockReturnValue('dev-c'),
+      waitForMessageQueueIdle: vi.fn().mockResolvedValue(undefined),
+    };
+  }
+
+  async function connect(mls: ReturnType<typeof creatingMls>, log = vi.fn()) {
+    await initializeConnection({
+      mlsService: mls as any,
+      userId: 'u-c',
+      deviceKeyB64: 'pin',
+      scheduleReconnect: vi.fn(),
+      setIsWsConnected: vi.fn(),
+      onCaughtUp: vi.fn(),
+      setReconnectAttempts: vi.fn(),
+      processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
+      log,
+      onGroupMissing: vi.fn().mockResolvedValue(undefined),
+      onStrandedSeat: vi.fn().mockResolvedValue(undefined),
+    });
+    return log;
+  }
+
+  beforeEach(() => {
+    getIsTabLeaderMock.mockReturnValue(true);
+    reconcileAllGroupsMock.mockClear();
+    resetAuditRecord('u-c', 'dev-c');
+    try {
+      localStorage.clear();
+    } catch {
+      /* happy-dom always has one */
+    }
+  });
+
+  it('sweep mode (no connection record): every group but the one being created', async () => {
+    const release = markGroupInCreation('g-creating');
+    try {
+      const log = await connect(creatingMls());
+      expect(log).toHaveBeenCalledWith(expect.stringContaining('sweeping every group'));
+    } finally {
+      release();
+    }
+    expect(reconcileAllGroupsMock).toHaveBeenCalledTimes(1);
+    expect(reconcileAllGroupsMock.mock.calls[0][1]).toEqual(['g-old']);
+  });
+
+  it('audit mode: the group being created is not owed by this pass', async () => {
+    noteConnection('u-c', 'dev-c');
+    const release = markGroupInCreation('g-creating');
+    try {
+      const log = await connect(creatingMls());
+      expect(log).toHaveBeenCalledWith(expect.stringContaining('auditing 1 group(s)'));
+    } finally {
+      release();
+    }
+    expect(reconcileAllGroupsMock.mock.calls[0][1]).toEqual(['g-old']);
   });
 });

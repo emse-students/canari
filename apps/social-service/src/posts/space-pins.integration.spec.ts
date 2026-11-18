@@ -36,6 +36,7 @@ import {
   SPACE_PIN_LIMIT_CODE,
 } from './space-pins';
 import { SpacePinsService, type PinActor } from './space-pins.service';
+import { ACTIVITY_DUMP_SQL, untilWaiting } from '../common/lock-wait.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -96,6 +97,8 @@ maybe('pins per space against PostgreSQL', () => {
     )[0].id;
   let icmSe: string;
   let isminSe: string;
+  /** PDIS x saint-etienne: governed by the INSTITUTION with no BDE (WP-D1) inside its own test only. */
+  let pdisSe: string;
 
   const pinnedFor = async (viewer: string): Promise<string[]> =>
     (await q<{ id: string }>(PINNED_FOR_VIEWER_IDS_SQL, [Object.values(P), viewer]))
@@ -119,7 +122,8 @@ maybe('pins per space against PostgreSQL', () => {
       type: 'postgres',
       url: URL,
       synchronize: false,
-      extra: { options: `-c search_path=${schema},public`, max: 4 },
+      // Named after the suite's schema: the gate looks for a blocked session of THIS suite.
+      extra: { options: `-c search_path=${schema},public`, application_name: schema, max: 4 },
     });
     await ds.initialize();
     await q(`CREATE SCHEMA ${schema}`);
@@ -171,10 +175,12 @@ maybe('pins per space against PostgreSQL', () => {
     await q(`UPDATE spaces SET "bdeAssociationId" = NULL`);
     await q(`UPDATE spaces SET "bdeAssociationId" = $1 WHERE id = $2`, [A.bdeIcm, icmSe]);
     await q(`UPDATE spaces SET "bdeAssociationId" = $1 WHERE id = $2`, [A.bdeIsmin, isminSe]);
+    pdisSe = await space('PDIS', 'saint-etienne');
     const members: [string, string, number][] = [
       ['icmMod', A.bdeIcm, MODERATE],
       ['icmVal', A.bdeIcm, VALIDATE_EVENTS], // another BDE flag: pins nothing
       ['isminMod', A.bdeIsmin, MODERATE],
+      ['instMod', A.inst, MODERATE], // MODERATE in the institution governing pdisSe
     ];
     for (const [userId, asso, permissions] of members) {
       await q(
@@ -281,6 +287,24 @@ maybe('pins per space against PostgreSQL', () => {
     expect(await outcome(service.pin(P.inst, GRANT, isminSe))).toBe('accepted');
   });
 
+  it('an institution governing a space is no BDE there: its MODERATE pins nothing (owner, 2026-11-15, decision 3)', async () => {
+    // P.inst's rule (NULL, saint-etienne) reaches pdisSe, so the post is pinnable there - by the
+    // platform admin, never by the governing institution's moderator. Governed here only, so the
+    // migration 128 population below keeps its two BDE spaces.
+    await q(`UPDATE spaces SET "bdeAssociationId" = $1 WHERE id = $2`, [A.inst, pdisSe]);
+    try {
+      expect(await outcome(service.pin(P.inst, asUser('instMod'), pdisSe))).toBe(
+        SPACE_PIN_FORBIDDEN
+      );
+      expect(await outcome(service.pin(P.inst, asUser('instMod'), icmSe))).toBe(
+        SPACE_PIN_FORBIDDEN
+      );
+    } finally {
+      await q(`DELETE FROM post_space_pins WHERE space_id = $1`, [pdisSe]);
+      await q(`UPDATE spaces SET "bdeAssociationId" = NULL WHERE id = $1`, [pdisSe]);
+    }
+  });
+
   it('pins only a post visible in that space, and live there', async () => {
     expect(await outcome(service.pin(P.isminStudent, asUser('icmMod'), icmSe))).toBe(
       POST_NOT_IN_SPACE
@@ -314,22 +338,33 @@ maybe('pins per space against PostgreSQL', () => {
   /**
    * A service whose pin transactions meet at a GATE just before reading the shown count: each waits
    * there until the other has arrived too - or is blocked waiting for an advisory lock (read from
-   * `pg_locks`, never from a clock). Without the space lock both arrive, both read 2 and both insert;
+   * `pg_locks`, never from a clock, and for a session of THIS suite: the suites share one database,
+   * and another suite's advisory waiter would open the gate with nothing proved). Without the space
+   * lock both arrive, both read 2 and both insert;
    * with it the second is blocked before the gate, so the first goes on alone and commits first.
    */
   function gatedService(): SpacePinsService {
     let arrived = 0;
     const gate = async (): Promise<void> => {
       arrived += 1;
-      for (;;) {
-        if (arrived >= 2) return;
-        const [{ blocked }] = await q<{ blocked: boolean }>(
-          `SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND NOT granted) AS blocked`
-        );
-        if (blocked) return;
-        await new Promise((resolve) => setImmediate(resolve));
-      }
+      // A pin that never reaches the gate (refused earlier) and a pin that never blocks would leave
+      // this one here for good: it fails with a message instead, never a bare jest timeout.
+      await untilWaiting({
+        what: 'the first pin at the gate',
+        waiting: async () => {
+          if (arrived >= 2) return 1;
+          const [{ blocked }] = await q<{ blocked: boolean }>(
+            `SELECT EXISTS (SELECT 1 FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
+                             WHERE l.locktype = 'advisory' AND NOT l.granted
+                               AND a.application_name = $1) AS blocked`,
+            [schema]
+          );
+          return blocked ? 1 : 0;
+        },
+        dump: () => q(ACTIVITY_DUMP_SQL),
+      });
     };
+
     const gated = (m: EntityManager) =>
       ({
         query: async (sql: string, params?: unknown[]) => {

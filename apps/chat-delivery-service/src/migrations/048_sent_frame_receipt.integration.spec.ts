@@ -22,6 +22,8 @@ import { SentFrameReceipt } from '../entities/sent-frame-receipt.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { QueuedPayload } from '../entities/queued-payload.entity';
 import { saveWithSharedPayload } from '../utils/queued-payload';
+import { settledFlag } from '../testing/lockWait';
+import { untilBlockedBehind } from '../testing/lockBehind';
 import {
   claimSentFrameReceipt,
   deleteSentFrameReceiptsBefore,
@@ -63,22 +65,9 @@ maybe('migration 048 (dm_sent_frame_receipt) against PostgreSQL', () => {
     await client.query(`SET search_path TO ${schema}`);
     return client;
   };
-  /** Resolves once a session is blocked behind `holder`. Polled, never timed. */
-  const untilBlockedBy = async (holder: Client) => {
-    const [{ pid }] = (await holder.query(`SELECT pg_backend_pid() AS pid`)).rows as Array<{
-      pid: number;
-    }>;
-    for (;;) {
-      const [{ waiting }] = (
-        await admin.query(
-          `SELECT count(*)::int AS waiting FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`,
-          [pid]
-        )
-      ).rows as Array<{ waiting: number }>;
-      if (waiting >= 1) return;
-      await new Promise((resolve) => setImmediate(resolve));
-    }
-  };
+  /** Resolves once a session is blocked behind `holder`; `claim` settling first fails it, with a message. */
+  const untilBlockedBy = (holder: Client, claim: Promise<unknown>) =>
+    untilBlockedBehind(admin, holder, { what: 'the claim', settled: settledFlag(claim) });
   /** Inserts `k` from another session inside an open transaction, and hands the session back. */
   const holdKey = async (k: SentFrameKey) => {
     const holder = await connect();
@@ -151,7 +140,7 @@ maybe('migration 048 (dm_sent_frame_receipt) against PostgreSQL', () => {
     const holder = await holdKey(first);
     try {
       const second = claim(key('m-3', '2026-11-13T10:02:05.000Z'));
-      await untilBlockedBy(holder);
+      await untilBlockedBy(holder, second);
       await holder.query('COMMIT');
 
       await expect(second).resolves.toEqual({
@@ -167,7 +156,7 @@ maybe('migration 048 (dm_sent_frame_receipt) against PostgreSQL', () => {
     const holder = await holdKey(key('m-4', '2026-11-13T10:03:00.000Z'));
     try {
       const second = claim(key('m-4', '2026-11-13T10:03:05.000Z'));
-      await untilBlockedBy(holder);
+      await untilBlockedBy(holder, second);
       await holder.query('ROLLBACK');
 
       await expect(second).resolves.toEqual({ kind: 'claimed' });

@@ -2,7 +2,9 @@
   import type { CanariLinkPreview } from '$lib/utils/canariLinkPreview';
 
   interface Props {
-    preview: CanariLinkPreview | null;
+    /** The in-app target's metadata; null draws the Canari logo (a form, a plain route). */
+    preview: Pick<CanariLinkPreview, 'imageUrl'> | null;
+    /** Draws the pulsing placeholder: the metadata has not arrived. */
     loading?: boolean;
   }
 
@@ -24,31 +26,25 @@
   went with it - it is what makes white text legible over a photo, and nothing is ever drawn over
   this tile, so all it did was grey the lower half of whatever logo it was given.
 -->
-<div
-  class="relative flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-black/5 sm:h-[4.5rem] sm:w-[4.5rem] dark:border-white/10"
->
-  {#if loading}
-    <div
-      class="absolute inset-0 animate-pulse bg-black/15 dark:bg-white/10"
-      aria-hidden="true"
-    ></div>
-  {:else if preview?.imageUrl}
-    <img
-      src={preview.imageUrl}
-      alt=""
-      class="absolute inset-0 h-full w-full object-cover"
-      loading="lazy"
-    />
-  {:else}
-    <div
-      class="from-cn-ink to-accent/70 via-cn-ink-soft absolute inset-0 bg-gradient-to-br"
-      aria-hidden="true"
-    ></div>
-    <img
-      src="/favicon.svg"
-      alt=""
-      class="pointer-events-none relative z-[1] h-9 w-9 object-contain select-none sm:h-10 sm:w-10"
-      aria-hidden="true"
-    />
-  {/if}
-</div>
+<!-- The CONTENT of the tile only: the box (size, corner, border) is `AttachmentCard`'s. -->
+{#if loading}
+  <div class="absolute inset-0 animate-pulse bg-black/15 dark:bg-white/10" aria-hidden="true"></div>
+{:else if preview?.imageUrl}
+  <img
+    src={preview.imageUrl}
+    alt=""
+    class="absolute inset-0 h-full w-full object-cover"
+    loading="lazy"
+  />
+{:else}
+  <div
+    class="from-cn-ink to-accent/70 via-cn-ink-soft absolute inset-0 bg-gradient-to-br"
+    aria-hidden="true"
+  ></div>
+  <img
+    src="/favicon.svg"
+    alt=""
+    class="pointer-events-none relative z-[1] h-9 w-9 object-contain select-none"
+    aria-hidden="true"
+  />
+{/if}

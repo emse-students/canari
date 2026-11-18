@@ -227,8 +227,13 @@ export class AddMemberDto {
   @Min(0)
   @Max(ALL_PERMISSION_FLAGS) // derived from the enum - never a literal, see the entity
   // Note: BDE-only flags (VALIDATE_EVENTS=32, MANAGE_ASSO=64, MODERATE=128) are silently
-  // inert unless the association is the BDE of a space (`spaces/bde.ts`), and then reach only
-  // what that space governs (MODERATE too since 2026-11-02, `spaces/bde-moderation.ts`).
+  // inert unless the association is the BDE of a space (`spaces/bde.ts`). MANAGE_ASSO then reaches the
+  // associations it is the PARENT of (WP-D2); MODERATE reaches what those associations publish AND
+  // the people of every space it governs, with their personal posts (`bdeModeratesUserSql`,
+  // `spaces/bde-moderation.ts`). Two exceptions by kind (owner, 2026-11-15): MODERATE in an
+  // INSTITUTION reaches that institution's own content, governing a space or not, and never a
+  // person (`institutionModeratesOwnSql`); VALIDATE_EVENTS in an institution governing a space keeps
+  // that space's agenda.
   permissions: number;
 }
 

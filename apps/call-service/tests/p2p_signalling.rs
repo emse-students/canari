@@ -200,7 +200,7 @@ fn session_token(user: &str) -> String {
     encode(
         &Header::default(),
         &json!({ "sub": user, "exp": exp() }),
-        &EncodingKey::from_secret(JWT_SECRET.as_bytes()),
+        &EncodingKey::from_secret(JWT_SECRET.as_bytes()).unwrap(),
     )
     .unwrap()
 }
@@ -214,7 +214,7 @@ fn room_token_with_seats(user: &str, room: &str, seats: usize) -> String {
     encode(
         &Header::default(),
         &json!({ "sub": user, "room_id": room, "group_id": "g", "exp": exp(), "max_seats": seats }),
-        &EncodingKey::from_secret(ROOM_SECRET.as_bytes()),
+        &EncodingKey::from_secret(ROOM_SECRET.as_bytes()).unwrap(),
     )
     .unwrap()
 }
@@ -223,7 +223,7 @@ fn room_token_for_group(user: &str, room: &str, group: &str) -> String {
     encode(
         &Header::default(),
         &json!({ "sub": user, "room_id": room, "group_id": group, "exp": exp() }),
-        &EncodingKey::from_secret(ROOM_SECRET.as_bytes()),
+        &EncodingKey::from_secret(ROOM_SECRET.as_bytes()).unwrap(),
     )
     .unwrap()
 }
@@ -1193,7 +1193,7 @@ fn sfu_room_token(user: &str, room: &str, seats: usize, mode: Option<&str>) -> S
     encode(
         &Header::default(),
         &claims,
-        &EncodingKey::from_secret(ROOM_SECRET.as_bytes()),
+        &EncodingKey::from_secret(ROOM_SECRET.as_bytes()).unwrap(),
     )
     .unwrap()
 }

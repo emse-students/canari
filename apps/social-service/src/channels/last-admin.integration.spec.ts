@@ -37,6 +37,12 @@ import { ChannelMember } from './entities/channel-member.entity';
 import { ChannelMessage } from './entities/channel-message.entity';
 import { WorkspaceInvite } from './entities/workspace-invite.entity';
 import type { RedisService } from '../common/redis';
+import {
+  ACTIVITY_DUMP_SQL,
+  settledFlag,
+  untilWaiting,
+  type LockWaitResult,
+} from '../common/lock-wait.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -244,26 +250,33 @@ maybe('the last admin against PostgreSQL', () => {
   };
 
   /**
-   * Starts `operation` and returns once PostgreSQL reports another session waiting on a lock - the
-   * operation is blocked behind the transaction the caller holds - or once the operation settled
-   * without ever waiting. A state read from the server, never a clock. The outcome comes back
-   * WRAPPED: awaiting a bare promise here would wait for the operation, which waits for the caller.
+   * Starts `operation` and returns once PostgreSQL reports a session of THIS suite's pool (its
+   * `application_name`; the suites share one database) waiting on a lock - the operation is blocked
+   * behind the transaction the caller holds - or once the operation settled without ever waiting.
+   * A state read from the server, never a clock. The outcome comes back
+   * WRAPPED (with the wait's own result, which the caller asserts): awaiting a bare promise here would wait for the operation, which waits for the caller.
    */
   const startUntilWaiting = async (
     operation: () => Promise<unknown>
-  ): Promise<{ outcome: Promise<unknown> }> => {
-    let settled = false;
-    const outcome = settle(operation()).finally(() => {
-      settled = true;
+  ): Promise<{ outcome: Promise<unknown>; waited: LockWaitResult }> => {
+    const outcome = settle(operation());
+    // Called from INSIDE a service transaction's hook, a throw here would surface as that service's
+    // own failure and hide this message: the wait is RETURNED, and each caller ASSERTS `waited`.
+    const waited = await untilWaiting({
+      what: 'the operation',
+      settled: settledFlag(outcome),
+      onAbsent: 'return',
+      waiting: async () => {
+        const { rows } = await admin.query<{ n: number }>(
+          `SELECT count(*)::int AS n FROM pg_stat_activity
+            WHERE application_name = $1 AND wait_event_type = 'Lock'`,
+          [schema]
+        );
+        return rows[0].n;
+      },
+      dump: async () => (await admin.query(ACTIVITY_DUMP_SQL)).rows,
     });
-    while (!settled) {
-      const { rows } = await admin.query<{ n: number }>(
-        `SELECT count(*)::int AS n FROM pg_stat_activity
-          WHERE datname = current_database() AND wait_event_type = 'Lock'`
-      );
-      if (rows[0].n > 0) break;
-    }
-    return { outcome };
+    return { outcome, waited };
   };
 
   /** Swaps chat-delivery for one call: `hook` runs, then the call is answered as usual. */
@@ -296,7 +309,8 @@ maybe('the last admin against PostgreSQL', () => {
       synchronize: false,
       uuidExtension: 'pgcrypto',
       installExtensions: false,
-      extra: { options: `-c search_path=${schema}` },
+      // Named after the suite's schema: a lock wait is looked for among THIS suite's sessions.
+      extra: { options: `-c search_path=${schema}`, application_name: schema },
     });
     await ds.initialize();
     await ds.synchronize();
@@ -514,18 +528,19 @@ maybe('the last admin against PostgreSQL', () => {
     // waiting on a lock, then commits.
     const { ws } = await community();
     const { token } = await service.createWorkspaceInvite(ws, 'a1');
-    let deletion: Promise<unknown> = Promise.resolve();
+    let started: Awaited<ReturnType<typeof startUntilWaiting>> | undefined;
     const ran = insideTransaction(
       'save',
       (_entity, row) => (row as { userId?: string } | undefined)?.userId === 'n1',
       async () => {
-        deletion = (await startUntilWaiting(() => service.deleteWorkspace(ws, 'a1', 'W'))).outcome;
+        started = await startUntilWaiting(() => service.deleteWorkspace(ws, 'a1', 'W'));
       }
     );
     const accepted = await settle(service.acceptWorkspaceInvite(token, 'n1'));
     expect(ran()).toBe(true);
     expect(accepted).toBe('allowed');
-    expect(await deletion).toBe('allowed');
+    expect(started?.waited).toMatchObject({ outcome: 'waiting' });
+    expect(await started!.outcome).toBe('allowed');
     expect(await leftOf(ws)).toEqual({ workspaces: 0, members: 0, salons: 0 });
   });
 
@@ -534,19 +549,20 @@ maybe('the last admin against PostgreSQL', () => {
     // until the deletion is waiting on a lock. In two orders the two would deadlock.
     const { ws } = await community();
     await privateSalon(ws, ['a1', 'a2']);
-    let deletion: Promise<unknown> = Promise.resolve();
+    let started: Awaited<ReturnType<typeof startUntilWaiting>> | undefined;
     const ran = insideTransaction(
       'find',
       (entity, options) =>
         entity === ChannelMember && (options as ReadOptions)?.lock?.mode === 'pessimistic_read',
       async () => {
-        deletion = (await startUntilWaiting(() => service.deleteWorkspace(ws, 'a1', 'W'))).outcome;
+        started = await startUntilWaiting(() => service.deleteWorkspace(ws, 'a1', 'W'));
       }
     );
     const kicked = await settle(service.kickFromWorkspace(ws, 'm1', 'a2'));
     expect(ran()).toBe(true);
     expect(kicked).toBe('allowed');
-    expect(await deletion).toBe('allowed');
+    expect(started?.waited).toMatchObject({ outcome: 'waiting' });
+    expect(await started!.outcome).toBe('allowed');
     expect(await leftOf(ws)).toEqual({ workspaces: 0, members: 0, salons: 0 });
   });
 
@@ -579,7 +595,7 @@ maybe('the last admin against PostgreSQL', () => {
       [erased, ws]
     );
     const salon = await privateSalon(ws, [erased]);
-    let grant: Promise<unknown> = Promise.resolve();
+    let started: Awaited<ReturnType<typeof startUntilWaiting>> | undefined;
     const grantTo = (userId: string) =>
       (
         service as unknown as {
@@ -593,12 +609,13 @@ maybe('the last admin against PostgreSQL', () => {
         Array.isArray((partial as { roleIds?: unknown })?.roleIds) &&
         (partial as { roleIds: string[] }).roleIds.includes(roles.admin),
       async () => {
-        grant = (await startUntilWaiting(() => grantTo('m1'))).outcome;
+        started = await startUntilWaiting(() => grantTo('m1'));
       }
     );
     expect(await settle(service.removeAccountFromWorkspaces(erased))).toBe('allowed');
     expect(ran()).toBe(true);
-    expect(await grant).toBe('allowed');
+    expect(started?.waited).toMatchObject({ outcome: 'waiting' });
+    expect(await started!.outcome).toBe('allowed');
     expect(await adminsOf(ws, roles.admin)).toEqual(['m1']);
     const [row] = (await q(`SELECT "allowedUsers" FROM channels WHERE id = $1`, [salon])) as {
       allowedUsers: string;

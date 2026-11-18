@@ -10,7 +10,10 @@
   import { ReelStream } from '$lib/reels/reelStream.svelte';
   import LinkPreviewCard from '../messages/LinkPreviewCard.svelte';
   import PostMarkdown from './PostMarkdown.svelte';
-  import { extractPreviewUrls } from '$lib/utils/chat/messageDisplay';
+  import FormCard from './FormCard.svelte';
+  import PostEventCard from './PostEventCard.svelte';
+  import { planPostAttachments, type PostCardItem } from '$lib/utils/posts/postAttachments';
+  import type { AttachedFormInfo } from '$lib/posts/attachedForms.svelte';
   import { watchClampOverflow } from '$lib/utils/posts/clampOverflow';
   import { ensureHljsTheme } from '$lib/utils/posts/hljsTheme';
   import { onMount, tick } from 'svelte';
@@ -19,6 +22,7 @@
   import { postAuthorName } from '$lib/posts/postAuthorName';
   import {
     DEFAULT_MEDIA_ASPECT,
+    FORM_CARD_PLACEHOLDER_MIN_HEIGHT,
     REEL_FALLBACK_ASPECT,
     mediaAspectStyle,
     resolveMediaType,
@@ -29,7 +33,6 @@
   import { SvelteSet } from 'svelte/reactivity';
   import { postGalleryLayout } from '$lib/utils/posts/postGalleryLayout';
   import { Log } from '$lib/utils/Log';
-  import { usesCompactDocumentRows } from '$lib/utils/posts/documentRows';
 
   interface Props {
     /** The post whose markdown content and images are rendered. */
@@ -40,9 +43,15 @@
     fullContent?: boolean;
     /** The signed-in reader, handed to the reel viewer so a double tap there likes; absent, it cannot. */
     likerId?: string;
+    /**
+     * The post's attached forms, read by the card (`attachedFormsLoader`): `ids` in the post's
+     * order, `infos` once each is read. Absent (the moderation preview), no form card is drawn and a
+     * link to a form keeps its own card.
+     */
+    attachedForms?: { ids: string[]; infos: AttachedFormInfo[] };
   }
 
-  let { post, authToken = '', fullContent = false, likerId }: Props = $props();
+  let { post, authToken = '', fullContent = false, likerId, attachedForms }: Props = $props();
 
   onMount(() => {
     ensureHljsTheme();
@@ -75,24 +84,24 @@
   let lightboxIndex = $state<number | null>(null);
 
   const postMedia = $derived<PostMediaRef[]>(post.media ?? post.images ?? []);
-  /** Image and video are the only types the lightbox can display. */
-  function isLightboxable(media: PostMediaRef): boolean {
-    const type = resolveMediaType(media);
-    return type === 'image' || type === 'video';
-  }
+
+  /** A live replay: no media, a card that opens the CanaReels viewer (`ReplayCard`). */
+  const replay = $derived(isReplay(post));
+
+  /**
+   * TEXT, MEDIA, CARDS - IN THAT ORDER, ALWAYS (owner, 2026-11-15). The plan decides the text as
+   * drawn (a URL with a card leaves it), the gallery's pictures and videos, and the card zone in its
+   * fixed order (event, forms, files, links), each form once, and whether its lone card is a hero
+   * (`planPostAttachments`). The poll and the action bar follow, drawn by `PostCard`.
+   */
+  const plan = $derived(planPostAttachments(post, attachedForms?.ids ?? [], replay));
 
   /** Media follows the text, so the text hands over 8 px instead of the 12 it keeps before the action bar. */
-  const hasMedia = $derived(postMedia.length > 0 && Boolean(authToken));
+  const hasMedia = $derived(plan.media.length > 0 && Boolean(authToken));
 
-  // Compacted on purpose: a document is skipped. The gallery's cells are drawn FROM this array, so
-  // a cell's position IS its lightbox index - a document can never renumber the pictures after it.
-  const lightboxMedia = $derived<PostMediaRef[]>(postMedia.filter(isLightboxable));
-  /** Files and audio: never squeezed into a square cell, drawn as rows under the grid instead. */
-  const documentMedia = $derived<PostMediaRef[]>(
-    postMedia.filter((media) => !isLightboxable(media))
-  );
-  /** From two files on every file is a compact row (`usesCompactDocumentRows`, the one rule). */
-  const compactDocuments = $derived(usesCompactDocumentRows(documentMedia));
+  // Pictures and videos only. The gallery's cells are drawn FROM this array, so a cell's position
+  // IS its lightbox index - a document (a card) can never renumber the pictures after it.
+  const lightboxMedia = $derived<PostMediaRef[]>(plan.media);
   /** Square cells and a "+N" past four (`postGalleryLayout`), for a post of two media or more. */
   const gallery = $derived(postGalleryLayout(lightboxMedia.length));
 
@@ -118,9 +127,6 @@
     if (lightboxIndex === null || lightboxMedia.length === 0) return;
     lightboxIndex = (lightboxIndex + 1) % lightboxMedia.length;
   }
-
-  /** One preview per distinct link of the post, in the order of the text (owner, 2026-11-13). */
-  const previewLinks = $derived(post.markdown ? extractPreviewUrls(post.markdown) : []);
 
   /**
    * Which attachments have come near the viewport, by media id.
@@ -190,9 +196,6 @@
    * the card: most cards are never opened full screen.
    */
   let reelStream = $state.raw<ReelStream | null>(null);
-  /** A live replay: no media, a card that opens the CanaReels viewer (`ReplayCard`). */
-  const replay = $derived(isReplay(post));
-
   /**
    * FULL SCREEN IS THE CANAREELS VIEWER (owner, 2026-11-10): a tap on a feed video - a CanaReel or a
    * post's video - opens the viewer on THAT video, at the time it had reached (`videoResume`), and a
@@ -222,6 +225,14 @@
     for (const media of postMedia) endVideoHandBack(media.mediaId);
   }
 
+  /** The card zone's key: a file by position and id, a form by id, a link by URL. */
+  function cardKey(card: PostCardItem, index: number): string {
+    if (card.kind === 'file') return `file:${index}:${card.media.mediaId}`;
+    if (card.kind === 'form') return `form:${card.formId}`;
+    if (card.kind === 'link') return `link:${card.url}`;
+    return 'event';
+  }
+
   /** What a tap on a video of this post opens: the CanaReels viewer, else `undefined` (the media viewer). */
   function videoOpener(media: PostMediaRef, index: number): (() => void) | undefined {
     if (resolveMediaType(media) !== 'video') return undefined;
@@ -232,11 +243,11 @@
   }
 </script>
 
-{#if post.markdown}
+{#if plan.markdown}
   <div class="px-4 {hasMedia ? 'pb-2' : 'pb-3'}">
     <div class="text-text-main text-sm wrap-break-word">
       <PostMarkdown
-        markdown={post.markdown}
+        markdown={plan.markdown}
         bind:element={markdownEl}
         class={clamped ? 'line-clamp-8' : ''}
       />
@@ -250,30 +261,25 @@
         </button>
       {/if}
     </div>
-    {#each previewLinks as url (url)}
-      <LinkPreviewCard {url} />
-    {/each}
   </div>
 {/if}
 
 {#if replay}
   <ReplayCard {post} onOpen={() => openReelViewer(0)} />
-{:else if postMedia.length > 0 && authToken}
+{:else if hasMedia}
   <div
-    class="w-full overflow-hidden first:rounded-t-2xl last:rounded-b-2xl {post.markdown
+    class="w-full overflow-hidden first:rounded-t-2xl last:rounded-b-2xl {plan.markdown
       ? ''
       : 'mt-2'}"
   >
     {#if reel}
-      {@render singleMedia(postMedia[0], true)}
-    {:else if postMedia.length === 1}
-      {@render singleMedia(postMedia[0])}
+      {@render singleMedia(lightboxMedia[0], true)}
     {:else}
       <!-- MULTI-MEDIA: SQUARE CELLS, A "+N" PAST FOUR (user, 2026-10-05). Cells that kept their own
            shapes left blank areas beside the shorter pictures of a two-column grid. A square is
            also a height known before the download, so the box below never moves. Only pictures
            and videos are cells - drawn FROM `lightboxMedia`, so a cell's position IS its viewer
-           index; files and audio are rows under the grid, drawn as a single attachment is. -->
+           index; files and audio are cards of the card zone below. -->
       {#if gallery.shape === 'single'}
         {@render singleMedia(lightboxMedia[0])}
       {:else if gallery.shape !== 'none'}
@@ -333,18 +339,57 @@
           {/each}
         </div>
       {/if}
-      {#each documentMedia as media, i (`${i}:${media.mediaId}`)}
-        <div class={gallery.shape !== 'none' || i > 0 ? 'mt-2' : ''} data-gallery-document>
-          {@render singleMedia(media, false, compactDocuments)}
-        </div>
-      {/each}
     {/if}
   </div>
 {/if}
 
-<!-- One attachment drawn at its own shape: a single-attachment post, a lone picture beside files,
-     and each file row under a gallery. -->
-{#snippet singleMedia(media: PostMediaRef, asReel = false, compact = false)}
+<!-- THE CARD ZONE (owner, 2026-11-15): every attachment that is not a picture or a video, in ONE card
+     family (`AttachmentCard`) and a fixed order - event, attached forms, files, the text's links - on
+     the text's 16 px inset, under the media and above the poll and the action bar. A lone card with
+     little text is drawn large (`plan.hero`). -->
+{#if plan.cards.length > 0}
+  <div class="space-y-2 px-4 pb-3 {hasMedia || replay ? 'pt-3' : ''}" data-post-cards>
+    {#each plan.cards as card, i (cardKey(card, i))}
+      {#if card.kind === 'event' && post.linkedCalendarEvent}
+        <PostEventCard postId={post.id} event={post.linkedCalendarEvent} hero={plan.hero} />
+      {:else if card.kind === 'form'}
+        {@const info = attachedForms?.infos.find((f) => f.id === card.formId)}
+        {#if info}
+          <FormCard
+            formId={info.id}
+            href="/forms/{info.id}?redirect=/posts"
+            title={info.title}
+            submitted={info.submitted}
+            opensAt={info.opensAt}
+            hero={plan.hero}
+          />
+        {:else}
+          <div
+            class="animate-pulse rounded-2xl border border-black/5 bg-black/5 dark:border-white/10 dark:bg-white/5"
+            style="min-height: {FORM_CARD_PLACEHOLDER_MIN_HEIGHT}"
+            aria-hidden="true"
+            data-form-placeholder
+          ></div>
+        {/if}
+      {:else if card.kind === 'file' && authToken}
+        <div use:nearViewport={watchNear(card.media)}>
+          <PostMedia
+            media={card.media}
+            {authToken}
+            compact={!plan.hero}
+            deferred={!nearMedia.has(card.media.mediaId)}
+            {postInfo}
+          />
+        </div>
+      {:else if card.kind === 'link'}
+        <LinkPreviewCard url={card.url} standalone hero={plan.hero} />
+      {/if}
+    {/each}
+  </div>
+{/if}
+
+<!-- One picture or video drawn at its own shape: a single-media post, and a reel. -->
+{#snippet singleMedia(media: PostMediaRef, asReel = false)}
   {@const reserved = reservesAspectRatio(resolveMediaType(media))}
   {@const isVideo = resolveMediaType(media) === 'video'}
   <div use:nearViewport={watchNear(media)}>
@@ -352,7 +397,7 @@
          existed because edge-to-edge corners cut across the card's corner, which the block above now
          clips to when it is the card's first or last block). The box is sized by `aspect-ratio` under
          a `max-height`, so it keeps `w-full`: without it a tall video shrinks its width to fit the
-         ceiling instead of being cropped by it. A document card keeps `px-4`, the post text's inset. -->
+         ceiling instead of being cropped by it. -->
     <div
       class="relative overflow-hidden {reserved
         ? `w-full ${isVideo ? 'bg-cn-card' : 'bg-black/5 dark:bg-white/5'}`
@@ -367,7 +412,6 @@
         {authToken}
         letterbox={reserved}
         deferred={!nearMedia.has(media.mediaId)}
-        compact={compact && resolveMediaType(media) === 'file'}
         onOpen={videoOpener(media, 0)}
         durationMs={asReel ? post.durationMs : null}
         {postInfo}

@@ -1340,7 +1340,10 @@ const NOTABLE = [
   // `[TAB] Another tab is active`, `[TAB] Race election` or `[TAB] Promoted to leader` - none of them
   // classified anywhere here, so all three still land in `unexplained` and break `clean`. The
   // absence of those lines beside this one is precisely what identified the boot gap.
+  // Since 2026-11-10 the follower says it ONCE per page (`saidFollowerHandsOver`, outbox.ts), in
+  // this wording; the old one is kept for logs of earlier builds.
   /^\[OUTBOX\] Flush skipped - follower tab/,
+  /^\[OUTBOX\] Follower tab - every flush is asked of the leader tab/,
   // THE RESUME DECLINING ON A SOCKET THAT DISAGREES WITH OUR FLAG - and ONLY then. Both answering
   // `true` is the ordinary case (a tab hidden and shown again over a live socket) and sits in
   // `BENIGN`; `socket=false` or `socket=null` beside `flag=true` means our own state lagged the
@@ -1380,6 +1383,13 @@ export async function watch(cx, label) {
   await cx.send(isWebKitAgent(ua) ? 'Console.enable' : 'Log.enable');
   await cx.send('Network.enable');
   await cx.send('Page.enable');
+  // WHAT THE PAGE SAID BEFORE THIS WINDOW OPENED IS SET ASIDE, NOT DROPPED. A revived seat is
+  // watched only once its PIN is cleared (`reviveSeat`), and the unlock is what starts the history
+  // catch-up - so the first lines of that catch-up, the ones a lost seen-mark turns into a false
+  // `frame never read here` accusation (KILL-2), were logged before `watch()` and discarded here.
+  // The window itself is unchanged (the classifier never reads this); `consoleSinceAttach` does.
+  // FIRST WATCH ONLY, CONSOLE ONLY: see `firstGapOf`.
+  cx.beforeWindow ??= firstGapOf(cx);
   cx.events.length = 0;
   // THE ARCHIVE `report` FILLS AS IT DRAINS. Classifying consumes `cx.events` on purpose - a
   // second report must cover only what happened since the first - but the RAW log has to survive
@@ -1451,13 +1461,68 @@ export function consoleDump(observers) {
  * @returns {{text: string, level: string}[]}
  */
 export function consoleEntries(cx) {
-  return (cx.consumed ?? [])
-    .concat(cx.events)
+  return entriesOf((cx.consumed ?? []).concat(cx.events)).map(({ text, level }) => ({ text, level }));
+}
+
+/**
+ * The page's console as the rig FIRST found it, `level text` lines: what it said between `client()`
+ * (which enables `Runtime` at once) and the first `watch()` on that connection.
+ *
+ * Only that first gap, and only console events. A revived seat's history catch-up starts at its PIN
+ * unlock, before the row can watch it - that is the gap this keeps. A later `watch()` on the same
+ * connection opens a window after one the rig already read, so nothing is set aside again: a cx is
+ * watched again and again (about 180 call sites) and must not carry every window it ever had.
+ */
+function firstGapOf(cx) {
+  return entriesOf(cx.events);
+}
+
+/**
+ * EVERY console line the page emitted since the rig connected, as `level text` lines: the gap
+ * before the first `watch()` ({@link firstGapOf}) followed by the current window - which
+ * {@link consoleEntries} reads without that gap, on purpose, since it is outside the classified window.
+ *
+ * For a question about the WHOLE life of a page rather than about a window: a revived seat's
+ * catch-up starts at its PIN unlock, before the row can watch it (KILL-1..3, `revivedAccusations`).
+ *
+ * ONE CALL IS ONE LINE. `Log.entryAdded` and `Runtime.consoleAPICalled` surface the same call
+ * twice within a millisecond, which would count one accusation twice; the copies are collapsed on
+ * the sentence within {@link SAME_CALL_MS}, as the timeline does, and a genuine repeat later is kept.
+ *
+ * @returns {string[]}
+ */
+export function consoleSinceAttach(cx) {
+  const entries = (cx.beforeWindow ?? []).concat(entriesOf((cx.consumed ?? []).concat(cx.events)));
+  const last = new Map();
+  const out = [];
+  for (const e of entries) {
+    const key = stripStamp(e.text);
+    const prev = last.get(key);
+    if (prev !== undefined && e.at !== null && Math.abs(e.at - prev) < SAME_CALL_MS) continue;
+    if (e.at !== null) last.set(key, e.at);
+    out.push(`${e.level} ${e.text}`);
+  }
+  return out;
+}
+
+/** How close two surfacings of one sentence must be to be one console call (the timeline's bound). */
+const SAME_CALL_MS = 250;
+
+/**
+ * The console entries among raw CDP (or WebKit) events: the text, the level it was printed at, and
+ * when (`at`, epoch ms, null when the event carries no clock).
+ */
+function entriesOf(events) {
+  return events
     .map(fromWebKit)
     .filter((e) => e.method === 'Runtime.consoleAPICalled' || e.method === 'Log.entryAdded')
     .map((e) =>
       e.method === 'Log.entryAdded'
-        ? { text: String(e.params.entry.text ?? '').slice(0, 260), level: e.params.entry.level }
+        ? {
+            text: String(e.params.entry.text ?? '').slice(0, 260),
+            level: e.params.entry.level,
+            at: Number.isFinite(e.params.entry.timestamp) ? e.params.entry.timestamp : null,
+          }
         : {
             text: e.params.args
               .map((a) => a.value ?? a.description ?? '')
@@ -1469,6 +1534,7 @@ export function consoleEntries(cx) {
                 : e.params.type === 'error'
                   ? 'error'
                   : 'info',
+            at: Number.isFinite(e.params.timestamp) ? e.params.timestamp : null,
           }
     );
 }
@@ -2199,7 +2265,7 @@ export async function logcatSince(sinceMs) {
 
 /** What a DELIBERATE network cut makes a healthy client say. Nothing here is a defect on its own. */
 const OFFLINE_NOISE =
-  /ERR_INTERNET_DISCONNECTED|ERR_NETWORK_CHANGED|ERR_NAME_NOT_RESOLVED|ERR_CONNECTION_(REFUSED|RESET|CLOSED)|Failed to fetch|NetworkError|server unreachable \(transport failure\)/i;
+  /ERR_INTERNET_DISCONNECTED|ERR_NETWORK_CHANGED|ERR_NAME_NOT_RESOLVED|ERR_CONNECTION_(REFUSED|RESET|CLOSED)|Failed to fetch|NetworkError|server unreachable \((transport failure[^)]*|\d+ request deadlines in a row|login without a token|token still unavailable)\)/i;
 
 /**
  * The app's OWN reaction to a cut, which is a different set of lines from the browser's.
@@ -2792,6 +2858,15 @@ export const AUTH_TEARDOWN_NARRATION = [/^\[A\] clear$/, /^\[A\] ws-$/];
  */
 export const BLOCK_LIST_READ_NARRATION = [/^\[blocks\.listBlockedUsers\]$/];
 
+
+/** The overlay stack registering and releasing the panels a check opens, and a navigation closing them. */
+export const OVERLAY_STACK_NARRATION = [
+  /^\[overlayStack\] (?:register|release) \w+#\d+, depth \d+$/,
+  /^\[historyOverlay\] a navigation closes \d+ open overlay\(s\)$/,
+];
+
+/** The drain's checkpoint of progress markers: a boot step, said once per ingest. */
+export const BULK_INGEST_CHECKPOINT = /^\[MLS\] Bulk ingest checkpoint landed - committing its progress markers\.$/;
 /**
  * WHAT ANY PAGE LOAD SAYS ABOUT ITSELF, so a row that RELOADS a client names it instead of widening
  * the classifier. Each is a function-entry or restore log the project's standard requires and none
@@ -2821,9 +2896,9 @@ export const PAGE_BOOT_NARRATION = [
   /^\[UNREAD\] communities loaded: joined the counts request already in flight$/,
   /^\[AvatarPresence\] \d+ of \d+ have no photo - not requested$/,
   /^\[RoutePreload\] \{"pathname":"\/[a-z]*","first":true\}$/,
-  /^\[MLS\] Bulk ingest checkpoint landed - committing its progress markers\.$/,
+  BULK_INGEST_CHECKPOINT,
   /^\[STRAY\] compared \d+ tree\(s\): \d+ roster\(s\) in one read, 0 refused, 0 not answered \(nobody removed in them\)$/,
-  /^\[CHAT_VIEW\] channel_ messages \d+ \(hasNewMessage=(?:true|false), response=[a-z-]+\)$/,
+  /^\[CHAT_VIEW\] channel_ messages \d+ \(hasNewMessage=(?:true|false), response=[a-z/-]+\)$/,
   // THREE MORE, read on the first live FLOOR draw on dev (1.4.1-alpha.3, 2026-10-25): the device
   // notices kept across the reload, the trust consumer taking over device events, and the at-rest
   // format the session's first checkpoint is sealed in (`legacy` until the blob-header writer may
@@ -2831,6 +2906,163 @@ export const PAGE_BOOT_NARRATION = [
   /^\[DEVICE_NOTICE\] \d+ unseen new-device alert\(s\) restored$/,
   /^\[TRUST\] device-event consumer registered$/,
   /^\[MLS\] web checkpoint seal format: legacy \(WASM ChaCha20\)$/,
+  // THE BOOT'S OWN DECISIONS, read on GRAINE-AUTH-1, -2 and -6 against `dev.78988dd` (2026-11-15),
+  // where every reload was PASS-DIRTY on them. Each is the decision log the coding standard asks for,
+  // said once per boot (or once per key group), and none carries a value that could be a finding:
+  // the tab-commit drain's three states, the guidance and birthday reads (`seenHelps`, `birthdays`:
+  // what the device held and what the server answered), the router and publish queue coming up, the
+  // avatar token and own-photo presence, the peer names read from the device, the boot's community
+  // read, the tab leader link, the boot pull, the drain gate per key group (not yet drained, then
+  // drained - the pair is the gate working), the unread census inputs, the admission vouchers
+  // waiting for that drain, and the window waking on its first gesture. An ERROR or WARN of the same
+  // tags (`[seenHelps] ... refused`, `[birthdays] ... could not`) is not matched and stays dirt.
+  /^\[TAB-COMMIT\] drain \((?:executors registered|this tab is unavailable|this tab is ready)\)$/,
+  /^\[seenHelps\] local copy: \d+ seen, \d+ owed, confirmed by an earlier answer - drawn now$/,
+  /^\[seenHelps\] server answered: \d+ seen, \d+ owed$/,
+  /^\[birthdays\] own birthday: device copy (?:true|false), asking the server$/,
+  /^\[birthdays\] own birthday read: (?:set|none), change opens \S+$/,
+  /^\[birthdays\] today \(\d{4}-\d\d-\d\d\): \d+ celebrant\(s\)$/,
+  /^\[router\] ready - deferred one-shot inputs may be taken$/,
+  /^\[PUBLISH-QUEUE\] started$/,
+  /^\[AvatarUrl\] avatar token adopted$/,
+  /^\[ownProfilePhoto\] presence for the signed-in account: (?:true|false)$/,
+  /^\[PEER-NAMES\] \d+ name\(s\) read from the device, no network$/,
+  /^\[BOOT_READS\] asking \d+ communities in \d+ request\(s\)$/,
+  /^\[TAB\] leader link published: connected$/,
+  /^\[PENDING\] boot pull issued - the restore seeded the conversation rows$/,
+  /^\[QUEUE\] group [0-9a-f]{8} not known drained: pulled=(?:true|false) pulling=(?:true|false) owed=(?:true|false) socket=(?:true|false) idle=(?:true|false)$/,
+  /^\[QUEUE\] group [0-9a-f]{8} drained \(pull ended\) - waking \d+ waiter\(s\)$/,
+  /^\[RESTORE\] [0-9a-f]{8} unread \d+ of \d+ held, read point: (?:saved|seed|own|none)$/,
+  /^\[RESTORE\] unread census: \d+ conversation\(s\) counted from the upgrade's local read seed, \d+ with a badge, \d+ unread in all, \d+ removed or pending \(they take no mark\)$/,
+  /^\[GRAINE\] \d+ admission voucher\(s\) not observed yet: key group [0-9a-f]{8} is not drained on this device$/,
+  /^\[GRAINE\] key group [0-9a-f]{8} drained - observing the admission vouchers of community [0-9a-f]{8}$/,
+  /^\[CHANNEL\] channel_[0-9a-f]{8} stored page drawn \(\d+ row\(s\)\) before the server page$/,
+  /^\[CHAT_VIEW\] channel_ entry settled: pinned=(?:true|false) isNearBottom=(?:true|false) newestVisible=(?:true|false) rows=\d+ fromBottom=\d+$/,
+  /^\[nav\] gotoAppPath -> \/[a-z]*$/,
+  /^\[ATTENTION\] a gesture after idleness - this window is attended again$/,
+];
+
+/**
+ * WHAT A CHECK THAT CREATES A SALON, POSTS IN IT AND GRANTS A MEMBER ACCESS SAYS, per seat, so
+ * COMM-8 names the narration it PROVOKES instead of widening the shared classifier.
+ *
+ * Read on COMM-8 against `dev.78988dd` (2026-11-15), `PASS-DIRTY` since the row existed. Every line
+ * is a decision or a hand-off the coding standard asks the app to log, with the ids shrunk the way
+ * the app shrinks them: the overlay stack registering and releasing the panels the check opens, the
+ * new salon being joined and its view settling, the first send held until the salon is loaded and
+ * released the moment it is (the pair is the gate working), the unsent ledger forgetting what the
+ * server holds, the access list loaded and edited, the grant echoed back, the admission of the
+ * grantee (one Welcome per device, so `no join push` for a key group is the other door being
+ * correctly shut), the history/seed answer and the drain re-reading once for what it brought.
+ *
+ * IT FORGIVES NO OUTCOME: a refused admission, a withheld seed, a Welcome that never lands and any
+ * `warn`/`error` of the same tags have other spellings and stay dirt; and COMM-8 still asserts the
+ * absence of the seed on the excluded client by name.
+ */
+export const SALON_SESSION_NARRATION = [
+  /^\[nav\] gotoAppPath -> \/[a-z]*$/,
+  ...OVERLAY_STACK_NARRATION,
+  /^Joined channel [0-9a-f]{8}…$/,
+  /^\[CHAT_VIEW\] channel_ entry settled: pinned=(?:true|false) isNearBottom=(?:true|false) newestVisible=(?:true|false) rows=\d+ fromBottom=\d+$/,
+  /^\[CHAT_VIEW\] channel_ messages \d+ \(hasNewMessage=(?:true|false), response=[a-z/-]+\)$/,
+  /^\[SEND\] channel send [0-9a-f]{8}\.\.\. HELD: salon [0-9a-f]{8} is not loaded on this device yet$/,
+  /^\[SEND\] channel send [0-9a-f]{8}\.\.\. released: its salon is loaded$/,
+  /^\[CHANNEL\] page of [0-9a-f]{8} decoded after its salon entry was decided$/,
+  /^\[SALON-UNSENT\] \d+ entr\(y\/ies\) forgotten: the server holds them$/,
+  // The sender's own row going out and settling under the server's id. A `failed` or `removed` echo
+  // is another spelling and stays dirt.
+  /^\[SALON-ECHO\] [0-9a-f]{8}… (?:sending|settled as [0-9a-f]{8}…)$/,
+  /^\[SALON-REPEAT\] the server echoed client id [0-9a-f]{8}\.\.\.: a repeated send is answered with its row - \d+ waiting repeat\(s\) released$/,
+  /^\[channelSettings\.loadChannelAccess\] channel_[0-9a-f]{8}…$/,
+  /^\[channelSettings\.addAllowedUser\] \{"channelId":"channel_[0-9a-f]{8}…","userId":"[0-9a-f]{8}…"\}$/,
+  /^\[CHANNEL\] #[0-9a-f]{8}… updated - canWrite=(?:true|false|unchanged) writePolicy=\w+$/,
+  /^\[GRAINE\] ADMIT salon grantee [0-9a-f]{8} to [0-9a-f]{8} \(community [0-9a-f]{8}\)$/,
+  /^\[JOIN_PUSH\] [0-9a-f]{8}\.\.\. is a key group - no join push to \S+$/,
+  /^\[GRAINE\] answered [0-9a-f]{8}…:\S+ with \d+ seed\(s\) in \d+ page\(s\)$/,
+  // ALL ABSORBED OR ALL ALREADY HELD, never a shortfall: \`absorbed 2/3 (0 already held)\` is the shape
+  // of an answer whose seeds were refused (the app's own comment over the line says so).
+  /^\[GRAINE\] absorbed (?:(\d+)\/\1 seed\(s\) \(\d+ already held|0\/(\d+) seed\(s\) \(\2 already held)(?:; endorsements verified: \d+ from the tree, \d+ from the server's published keys)?\) from \S+ in community [0-9a-f]{8} - salon\(s\) .+$/,
+  /^\[GRAINE\] drain over - re-reading \d+ salon\(s\) once for the seeds it brought$/,
+  /^\[QUEUE\] Welcome for key group [0-9a-f]{8}\.\.\. - not announced to the conversation layer$/,
+  /^\[WELCOME\] [0-9a-f]{8}\S* is a KEY-DISTRIBUTION group \(server row\) - installing it as a seed carrier$/,
+  // The GRANTEE's side of the same admission: its device is told a Welcome is owed and does NOT open
+  // a second door by external commit. The sibling saying the owed-ness could not be READ is not
+  // matched and stays dirt.
+  /^\[GRAINE\] salon [0-9a-f]{8} of [0-9a-f]{8}: a Welcome is owed to this device \((?:welcome-queued|add-in-flight)\) - not joining by external commit, the admitter's Welcome is the door$/,
+];
+
+/**
+ * WHAT GRP-3 (a member removed from a group) SAYS ABOUT ITS OWN SETUP AND ITS REMOVAL, per row.
+ *
+ * Read on GRP-3 against `dev.78988dd` (2026-11-15). The group is created with a member whose seven
+ * devices all take the Add, so each device is announced, pushed its history (`join push ->`, one per
+ * Welcome delivered: a push is a per-device act, not a repeat) and then found already in the tree by
+ * the pending-invitation sync, which vouches and retires the row (`already in tree`, the line the
+ * 2026-09-15 fix made fire ONCE per device instead of on every sync). The Remove itself is narrated
+ * on the acting device (`removed from the group (committed)`) and writes the notice under the id
+ * every member's device writes. The overlay stack is the panel the check opens, and the group view
+ * settling is the group form of the `channel_` line.
+ *
+ * NOTHING HERE FORGIVES AN OUTCOME: a push that was NOT DELIVERED, a Welcome pushed twice, a refused
+ * Remove and any warn/error have other spellings and stay dirt. GRP-3 still asserts the removed
+ * device's eviction and the absence of a way back by name.
+ */
+export const GROUP_REMOVAL_ROW_NARRATION = [
+  ...OVERLAY_STACK_NARRATION,
+  BULK_INGEST_CHECKPOINT,
+  /^\[JOIN_PUSH\] [0-9a-f]{8}\.\.\. join push -> [0-9a-f]{8}…:\S+$/,
+  /^\[PENDING\] \S+ already in tree for [0-9a-f]{8}… - invitation fulfilled, vouching$/,
+  /^\[REMOVE_MEMBER\] [0-9a-f]{8} removed from the group \(committed\)$/,
+  /^\[NOTICE\] memberRemoved written on the acting device in [0-9a-f]{8}… as [0-9a-f]{8} - the id every member's device writes$/,
+  /^\[CHAT_VIEW\] [0-9a-f]{8} entry settled: pinned=(?:true|false) isNearBottom=(?:true|false) newestVisible=(?:true|false) rows=\d+ fromBottom=\d+$/,
+];
+
+/**
+ * WHAT A FRESHLY MINTED DEVICE'S FIRST SESSION SAYS (HEAL-NEW-0, the W3 mint), per row.
+ *
+ * Read on HEAL-NEW-0 against `dev.78988dd` (2026-11-15). A device with no state boots, shows the PIN
+ * keypad and asks the salt, publishes its first KeyPackage, finds the groups it is already a leaf of
+ * and the ones it must wait to be Added to, restores what its sibling relays and mounts the feed.
+ * Every line is a decision the coding standard asks the app to log, and each is the ONLY trace of
+ * why the device is in the state it is in:
+ *  - the commit gate refusing an external join until the server holds this device's KeyPackage, and
+ *    the wake when the round settles (`externalJoin ... waits`, `woken`, `round waits`); the tree
+ *    holding the account's OTHER device is "a member's Add is its door", not a join built here;
+ *  - a restored message marked unverified because its author's device has no leaf and no pin yet:
+ *    the sentences are pinned to THAT cause (`no leaf in the tree and no pin - no trusted key`),
+ *    any other reason an authorship cannot be proven stays dirt, and a FORGED proof is refused
+ *    elsewhere with its own line;
+ *  - the history of a community not asked because nobody could answer (info, with its reason);
+ *  - the PIN keypad's own sequence, the overlay gate it registers, and the call view held under it;
+ *  - the feed and its video player mounting (`[LIVE]`, `[VideoPlayer]`, `[media-seg]`,
+ *    `[progressive-mount]`), the device panel listing, the placeholder of a group discovered.
+ * The boot's own lines come with it (`PAGE_BOOT_NARRATION`), the mint being a boot.
+ */
+export const FRESH_DEVICE_FIRST_SESSION_NARRATION = [
+  ...PAGE_BOOT_NARRATION,
+  ...OVERLAY_STACK_NARRATION,
+  /^Initialising MLS\.\.\.$/,
+  /^\[PIN\] (?:Asking the salt while the keypad is up\.|Salt asked while the keypad was up\.|Keypad shown \(open\) - the unlock is owed to the member)$/,
+  /^\[overlayStack\] (?:register|release) gate PinModal \(Modal\)(?:, z \d+)?$/,
+  /^\[CallView\] (?:held under the PIN lock|PIN lock gone)$/,
+  /^\[VAULT\] persistence already off - every slot kept$/,
+  /^\[POSTS\] first page not stored - the device key is not in hand for this account$/,
+  /^\[LIVE\] feed card: \d+ open live\(s\)$/,
+  /^\[VIDEO\] network link changed: now \w+$/,
+  /^\[VideoPlayer\] (?:mounted as feed|load \d+ started|intrinsic \d+x\d+ in a \d+x\d+ box)$/,
+  /^\[media-seg\] open: \d+ bytes, \d+ segment\(s\) of \d+$/,
+  /^\[media-seg\] stream \S+ \(video\/mp4; codecs="[^"]+"\) through MediaSource, paced \(\d+ head, \d+ s ahead\)$/,
+  /^\[media-seg\] stream \S+: holding at segment \d+ \(paced\)$/,
+  /^\[progressive-mount\] all \d+ mounted$/,
+  /^\[DevicePanel\] Found \d+ device\(s\)$/,
+  /^\[DISCOVERY\] Placeholder [0-9a-f]{8}… created\.$/,
+  /^\[GRAINE\] the history of community [0-9a-f]{8} is not asked: no other member, and none of our other devices on its key group is online to receive the request$/,
+  /^\[MLS\] externalJoin [0-9a-f]{8}\.\.\. waits for the server to hold this device's KeyPackage \((?:absent|first publication running, not read), a round is running\): the commit gate refuses an activation without one$/,
+  /^\[MLS\] externalJoin [0-9a-f]{8}\.\.\. woken by a settled key package round - reading the fact again$/,
+  /^\[MLS\] externalJoin [0-9a-f]{8}\.\.\. the tree holds this account's other device and not this one - not built, a member's Add is its door$/,
+  /^\[MLS\] fresh key package round waits for the round in flight to settle$/,
+  /^\[AUTHORSHIP\] restored (?:deletion of )?[0-9a-f]{8} not provable (?:here|now): \S+ has no leaf in the tree and no pin - no trusted key$/,
+  /^\[AUTHORSHIP\] \d+ restored message\(s\) in [0-9a-f]{8}… relayed by [0-9a-f]{8} carry no author proof - kept, marked unverified$/,
 ];
 
 /**

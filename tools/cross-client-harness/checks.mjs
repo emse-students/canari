@@ -10,6 +10,7 @@ import { REMOVAL_ROWS } from './removalrows.mjs';
 import { DEV_ROWS } from './devicerows.mjs';
 import { FLOOR_ROWS } from './floorrows.mjs';
 import { KILL_ROWS } from './killrows.mjs';
+import { LEAF_ROWS } from './leafrows.mjs';
 import { OFFLINE_ROWS } from './offlinerows.mjs';
 
 const HARNESS = dirname(fileURLToPath(import.meta.url));
@@ -512,6 +513,15 @@ export const PHASES = {
     scripts: ['kill.mjs --row KILL-1', 'kill.mjs --row KILL-2', 'kill.mjs --row KILL-3', 'kill.mjs --row KILL-5', 'kill.mjs --row RM-3'],
     needs: ['W1', 'W2', 'W4', 'W5'],
   },
+  // THE PERIODIC LEAF REFRESH MEETS A CUT LINK AND A RELOAD (LEAF-REFRESH-1, -2), on the two spare
+  // browsers only - `needs` names W6 and W7, which W1-W5's rows never open. LEAF-REFRESH-4 is NOT here: it
+  // REVOKES W7's own device, which wipes the seat, so it is run alone and W7 is re-enrolled by hand -
+  // `bun archive/leaf.mjs --row LEAF-REFRESH-4`. LEAF-REFRESH-3 arms no fault and was read by hand.
+  LEAF: {
+    title: 'the leaf refresh: a due refresh submitted into a cut link, and a page reloaded with its commit held',
+    scripts: ['leaf.mjs --row LEAF-REFRESH-1', 'leaf.mjs --row LEAF-REFRESH-2'],
+    needs: ['W6', 'W7'],
+  },
   // A GROUP LINK AND ITS ASK (ADM-1..4, ADM-8..10), browsers only. ADM-5..7 are NOT here: they need A1 on
   // the v1.4.0 APK, installed by the operator - `bun archive/admit.mjs --row ADM-5|ADM-6|ADM-7`.
   ADMIT: {
@@ -697,6 +707,7 @@ const onlyOf = (words) => {
 export const ROW_TABLES = {
   'offline.mjs': OFFLINE_ROWS,
   'kill.mjs': KILL_ROWS,
+  'leaf.mjs': LEAF_ROWS,
   'admit.mjs': ADMIT_ROWS,
   'devrows.mjs': DEV_ROWS,
   'big.mjs': BIG_ROWS,

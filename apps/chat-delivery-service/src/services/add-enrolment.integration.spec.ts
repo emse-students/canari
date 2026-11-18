@@ -49,6 +49,7 @@ import {
 } from '../utils/group-membership';
 import { memberCommitFrame } from '../testing/mlsFrameFixture';
 import { isEntitledToDistributionGroup } from '../internal/distribution-entitlement';
+import { ACTIVITY_DUMP_SQL, settledFlag, untilWaiting } from '../testing/lockWait';
 
 // social-service's entitlement answer, for the one key-group case.
 jest.mock('../internal/distribution-entitlement', () => ({
@@ -361,9 +362,9 @@ maybe('an Add enrols its invitee with the accepted commit (PostgreSQL)', () => {
   it('the same Welcome sent again - its first answer lost - is stored once and its one row delivered again (DUP-7)', async () => {
     await addCommit(1);
     deliverWelcome().mockClear();
-    await expect(welcome()).resolves.toEqual({ status: 'queued' });
+    await expect(welcome()).resolves.toEqual({ status: 'queued', addressability: 'addressable' });
     // The client re-sends the owed Welcome it never read an answer for: the same bytes.
-    await expect(welcome()).resolves.toEqual({ status: 'queued' });
+    await expect(welcome()).resolves.toEqual({ status: 'queued', addressability: 'addressable' });
     expect(await queuedWelcomes()).toBe(1);
     // ...and the ONE row is delivered again: the first request may have died between its store
     // and its delivery, and only the re-send is left to arm the live publish and the push.
@@ -903,15 +904,21 @@ maybe('an Add enrols its invitee with the accepted commit (PostgreSQL)', () => {
           writePendingSeats(ds.manager, fresh, who.userId, [who.deviceId], 'creator');
         const racing = Promise.all([asCreator(INVITER), asCreator(INVITEE)]);
         // Both are waiting on the lock: two ungranted advisory locks on this key.
-        for (let waiting = 0; waiting < 2;) {
-          const [row]: { n: string }[] = await q(
-            `SELECT COUNT(*) AS n FROM pg_locks
-             WHERE locktype = 'advisory' AND NOT granted
-               AND ((classid::bigint << 32) | objid::bigint) = hashtextextended($1, 0)`,
-            [`seat:${fresh}`]
-          );
-          waiting = Number(row.n);
-        }
+        await untilWaiting({
+          what: 'the two creator writes',
+          atLeast: 2,
+          settled: settledFlag(racing),
+          waiting: async () => {
+            const [row]: { n: string }[] = await q(
+              `SELECT COUNT(*) AS n FROM pg_locks
+               WHERE locktype = 'advisory' AND NOT granted
+                 AND ((classid::bigint << 32) | objid::bigint) = hashtextextended($1, 0)`,
+              [`seat:${fresh}`]
+            );
+            return Number(row.n);
+          },
+          dump: () => q(ACTIVITY_DUMP_SQL),
+        });
         await holder.query('COMMIT');
 
         expect(await racing).toEqual(['written', 'not_creator']);

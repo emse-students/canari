@@ -8,6 +8,7 @@
  * what the media service did not confirm gone, because the worker will never come back for a row
  * that no longer exists.
  */
+import { authorDoorHoldsSql } from '../spaces/reader-spaces';
 import { pinnedForViewerSql } from './space-pins';
 import {
   BadRequestException,
@@ -107,6 +108,7 @@ function makeService(opts: {
       isContentModerator: () => Promise.resolve(false),
       moderatedPostIds: () => Promise.resolve(new Set<string>()),
       mayModeratePost: () => Promise.resolve(false),
+      mayReadToModeratePost: () => Promise.resolve(false),
       mayActOnAny: () => Promise.resolve(new Set()),
     } as unknown as AssociationsService,
     { resolveMentionedUserIds: () => [] } as unknown as PostNotificationsService,
@@ -747,6 +749,28 @@ describe('deletePost - a reel deleted by hand', () => {
     expect(retention.release).toHaveBeenCalledWith([BLOB, COMMENT_BLOB]);
   });
 
+  it("every [REEL] log line carries the post's id, though the repository's remove clears it", async () => {
+    const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+    const { service, postRepo } = makeService({
+      existing: { ...reel },
+      purge: () => Promise.resolve({ [BLOB]: 'failed', [COMMENT_BLOB]: 'deleted' }),
+    });
+    // TypeORM's `remove` resets the primary key on the entity it was handed.
+    postRepo.remove.mockImplementation(((post: { id?: string }) => {
+      delete post.id;
+      return Promise.resolve(post);
+    }) as unknown as () => Promise<Partial<Post>>);
+
+    await service.deletePost('r1', 'alice', false);
+
+    const lines = [...log.mock.calls, ...warn.mock.calls].map(([m]) => String(m));
+    expect(lines.filter((m) => m.startsWith('[REEL] delete of')).length).toBeGreaterThanOrEqual(2);
+    for (const m of lines.filter((l) => l.startsWith('[REEL] delete of'))) {
+      expect(m).toMatch(/^\[REEL\] delete of r1[ :]/);
+    }
+  });
+
   it('leaves an ordinary post on the release path it always had', async () => {
     const { service, retention } = makeService({
       existing: {
@@ -772,7 +796,10 @@ describe('getMyReels - the expiry signal', () => {
     expect(out.serverNow).toBe(new Date(NOW).toISOString());
     expect(out.warningWindowDays).toBe(7);
     const reels = queries.find((q) => /FROM posts/.test(q.sql));
-    expect(reels?.sql).toContain(`"authorId" = $1 AND kind = 'reel' AND "expiresAt" > $3`);
+    // The author's door (`authorDoorHoldsSql`, proven in `entity-author-door.integration.spec.ts`):
+    // the caller's own reels, an entity's only while they are a member of it.
+    expect(reels?.sql).toContain(authorDoorHoldsSql('posts', '$1'));
+    expect(reels?.sql).toContain(`AND kind = 'reel' AND "expiresAt" > $3`);
     expect(reels?.sql).toContain('"expiringSoon"');
     // The author's id is the only identity in the query: nobody else's reels, and the same instant
     // for the filter and the flag.

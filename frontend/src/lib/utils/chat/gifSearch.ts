@@ -32,7 +32,7 @@ export interface GifRendition {
 }
 
 /** Whether the relay will carry this rendition: only a DECLARED size over its ceiling says no. */
-export function fitsRelay(r: GifRendition): boolean {
+function fitsRelay(r: GifRendition): boolean {
   return r.bytes === undefined || r.bytes <= GIF_MAX_BYTES;
 }
 

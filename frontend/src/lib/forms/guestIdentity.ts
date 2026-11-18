@@ -13,7 +13,7 @@ import { GUEST_EMAIL_MAX_LENGTH, GUEST_NAME_MAX_LENGTH } from './answerBounds';
  */
 
 /** The fields a form may ask of a guest, in the order the page and the settings show them. */
-export const GUEST_IDENTITY_FIELDS = ['lastName', 'firstName', 'email'] as const;
+const GUEST_IDENTITY_FIELDS = ['lastName', 'firstName', 'email'] as const;
 export type GuestIdentityField = (typeof GUEST_IDENTITY_FIELDS)[number];
 
 /** What a guest typed, by field; a field the form does not ask stays empty and is never sent. */

@@ -103,6 +103,7 @@ The 2026-10-02 fix above covered the QUEUED half of the same teardown; this is t
 | DELETE | `/api/media/:id`                       | `INTERNAL_SECRET` | Delete media blob - **server-to-server only** (`assertInternalSecret`)                                                                                                           |
 | POST   | `/api/media/internal/retention-class`  | `INTERNAL_SECRET` | Set an existing object's class (`ephemeral`, `archive`, `association`; required, no `null`) - see retention below                                                                |
 | POST   | `/api/media/internal/retention-changed` | `INTERNAL_SECRET` | Re-read the retention durations this service HOLDS and stamps (sent by core-service on an admin change, by social-service at its boot); answers `{ refreshed, readAt }` - [retention-settings](../retention-settings.md#media-service-holds-the-durations-it-stamps) |
+| GET    | `/api/media/internal/retention` | `INTERNAL_SECRET` | The retention durations this service HOLDS and when it read them, `{ held, readAt }` (`held: null` before its first read) - core-service compares them with the columns for the admin page's "pas encore appliqué aux fichiers" - [retention-settings](../retention-settings.md#media-service-holds-the-durations-it-stamps) |
 | POST   | `/api/media/internal/reel-claim`       | `INTERNAL_SECRET` | `{mediaIds, ownerId}` - class `reel` on what `ownerId` uploaded; see [reels](reels.md)                                                                                           |
 | POST | `/api/media/internal/poster-claim` | `INTERNAL_SECRET` | `{mediaIds, ownerId, spaceId, retentionClass}` - `poster`/`poster-association` on `ownerId`'s fresh `poster-pending` upload, bound to `spaceId`; idempotent for that space |
 | POST | `/api/media/internal/poster-release` | `INTERNAL_SECRET` | `{mediaIds}` - a CLAIMED poster to `ephemeral`; any other class is refused and untouched |
@@ -128,6 +129,28 @@ present - and it is declared BEFORE the catch-all `:id` for the same reason `int
 `GET :id`. **Nothing in the chat or channel paths deletes an ordinary blob** - see retention below;
 the one exception is a REEL file, on its sender's release or a salon moderator's purge
 ([holds](#holds-one-file-for-the-feed-and-the-chats-rc-14-2026-11-01)).
+
+## Path parameters are declared (2026-11-14)
+
+The guard and the coverage spec are social-service's ([there](social-service.md#path-parameters-are-declared-and-one-global-guard-reads-the-declaration-2026-11-14)). **Every path
+parameter of this service is declared `opaque`, and that is the decision, not an omission.** None
+of them is a database key, and the service already judges each one itself, more strictly than the
+guard would:
+
+- a media id, a chunked-upload id and an upload-session id are checked against a version-4 uuid
+  pattern in `media.service.ts` and `upload-session.service.ts` before anything is looked up or any
+  path is built: a malformed one is a `400` (`Invalid mediaId`, `Invalid uploadId`), a well-formed
+  unknown one a `404`, a purged one a `410`. The paths built from them are also resolved and
+  confined to their directory;
+- a live id and a segment name are uuids checked by `live-segments.service.ts`, in lower-case
+  canonical form only on the public read, because that route is cached by its exact spelling;
+- a part `index` is digits only, and the `userId` of the internal erasure route is only compared
+  with the owners recorded in the index.
+
+Declaring the ids `uuid` would put a looser check (any canonical shape, either case) in front of
+stricter ones and change which layer writes the `400`, for nothing it protects. So what the
+mechanism gives here is the other half: `route-params.coverage.spec.ts` fails on a new route whose
+parameter nobody declared, and whoever adds a parameter that IS a database key writes `uuid`.
 
 ## The upload ceiling is ONE number, and the box publishes it (2026-09-24)
 
@@ -641,7 +664,7 @@ routes in `media.controller.ts` (NO `FileInterceptor`: a spec reads the route me
   `413` before a byte is read**, more than the part's exact length `413`, fewer `400`. The request stream
   is piped through a byte counter into `createWriteStream(..., {flags: 'r+', start: index * partBytes})`
   with 64 KiB buffers - heap is the buffer, not the part. Only a part whose every byte landed is recorded;
-  an interrupted one is `400` and absent from `status`. **A re-sent part rewrites the same bytes at the same
+  an interrupted one is `408` (temporary: a `400` from us is a refusal for good to the client, which then dropped the file; 2026-11-16) and absent from `status`. **A re-sent part rewrites the same bytes at the same
   offset**: this is the defect of `appendChunk`, which appends and so doubled a chunk whose answer was lost.
   Same-index PUTs are serialised, different indexes run in parallel. **A re-sent part is UNMARKED
   (durably) before its first byte is rewritten and re-marked when the whole body landed**, so a retry cut

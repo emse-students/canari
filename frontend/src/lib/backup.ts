@@ -91,7 +91,8 @@ interface SerializedGraineRow {
   senderId: string;
   firstIndex: number;
   createdAt: number;
-  sentCount?: number;
+  // NO `sentCount`: a seed is restored to read, never to seal under (see `importBackup`). Files
+  // written before 2026-11-15 carry one; it is not read.
   iv: number[];
   cipherText: number[];
 }
@@ -270,7 +271,6 @@ export async function exportBackup(
     senderId: r.senderId,
     firstIndex: r.firstIndex,
     createdAt: r.createdAt,
-    ...(r.sentCount === undefined ? {} : { sentCount: r.sentCount }),
     iv: Array.from(r.iv),
     cipherText: Array.from(r.cipherText),
   }));
@@ -505,6 +505,13 @@ export async function importBackup(
   // `pending` on a second device because that device is not yet an MLS member and must wait for a
   // Welcome; a Graine seed carries no such membership - it is a symmetric key, re-sealed under this
   // session's key, and it opens exactly the messages it always opened.
+  //
+  // A SEED COMES BACK TO READ, NEVER TO SEAL UNDER. The next index of an outbound session is
+  // `firstIndex + sentCount`, and the file's count is the one at export: every message this device
+  // sealed after it is behind that count. So no `sentCount` is written - the one fact that makes a
+  // session this device's outbound one (`reserveOutboundSlot`) - and the first send after the
+  // restore mints a new session. A session the device still holds is not touched at all
+  // (`importEncryptedGraineRow` is non-destructive), so its live count stays.
   for (const row of graineRows) {
     const sealed = await intoSessionKey(row.iv, row.cipherText);
     if (!sealed) {
@@ -518,7 +525,6 @@ export async function importBackup(
       senderId: typeof row.senderId === 'string' ? row.senderId : '',
       firstIndex: Number(row.firstIndex) || 0,
       createdAt: Number(row.createdAt) || 0,
-      sentCount: row.sentCount,
       ...sealed,
     });
   }

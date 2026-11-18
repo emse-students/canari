@@ -27,12 +27,16 @@ describe('PostsService post management rights', () => {
    * `flagHolders` maps a user id to the associations where they hold POST_AS_ASSO; `moderators`
    * lists the users holding MODERATE in a BDE whose governed spaces hold the post; `elsewhere` those
    * holding it in a BDE that does NOT govern the post (owner, 2026-11-02: MODERATE is scoped).
+   * `ordinaryReaders` are the platform admins who see the post as an ORDINARY reader (the
+   * `participableIds` read, 2026-11-14); any other admin reaches it by the moderation read alone.
    */
   function makeService(
     post: Partial<Post>,
     flagHolders: Record<string, string[]> = {},
     moderators: string[] = [],
-    elsewhere: string[] = []
+    elsewhere: string[] = [],
+    ordinaryReaders: string[] = [],
+    muters: string[] = []
   ) {
     const postRepo = {
       findOne: jest.fn(() => Promise.resolve(post)),
@@ -54,6 +58,13 @@ describe('PostsService post management rights', () => {
                     campus: 'saint-etienne',
                     rank: null,
                   }))
+                : []
+            );
+          }
+          if (sql.startsWith('SELECT posts.id FROM posts WHERE posts.id = ANY')) {
+            return Promise.resolve(
+              ordinaryReaders.includes(params[1] as string)
+                ? (params[0] as string[]).map((id) => ({ id }))
                 : []
             );
           }
@@ -82,8 +93,18 @@ describe('PostsService post management rights', () => {
       moderatedPostIds: jest.fn((userId: string | undefined, ids: string[]) =>
         Promise.resolve(new Set(userId && moderators.includes(userId) ? ids : []))
       ),
+      moderatedUserIds: jest.fn(
+        (userId: string | undefined, ids: string[], opts?: { isGlobalAdmin?: boolean }) =>
+          Promise.resolve(
+            new Set(opts?.isGlobalAdmin === true || (userId && muters.includes(userId)) ? ids : [])
+          )
+      ),
       mayModeratePost: jest.fn((userId: string | undefined) =>
         Promise.resolve(!!userId && moderators.includes(userId))
+      ),
+      mayReadToModeratePost: jest.fn(
+        (userId: string | undefined, _postId: string, opts?: { isGlobalAdmin?: boolean }) =>
+          Promise.resolve(opts?.isGlobalAdmin === true || (!!userId && moderators.includes(userId)))
       ),
       refuseModeration: jest.fn(() =>
         Promise.reject(new ForbiddenException({ code: 'MODERATION_OUT_OF_SCOPE' }))
@@ -166,9 +187,9 @@ describe('PostsService post management rights', () => {
       await expect(service.getById('p1')).resolves.toMatchObject({ canManage: false });
     });
 
-    it('never leaks the author of an association post while answering it', async () => {
-      const { service } = makeService(assoPost, { officer: [ASSO] });
-      await expect(service.getById('p1', { viewerId: 'officer' })).resolves.not.toHaveProperty(
+    it("never serves an association post's writer to another holder of its flag", async () => {
+      const { service } = makeService(assoPost, { officer: [ASSO], colleague: [ASSO] });
+      await expect(service.getById('p1', { viewerId: 'colleague' })).resolves.not.toHaveProperty(
         'authorId'
       );
     });
@@ -236,7 +257,8 @@ describe('PostsService post management rights', () => {
    */
   describe('the content moderator tier (BDE MODERATE, scoped)', () => {
     it('may delete and pin a post of its spaces, may report it, and never edit it', async () => {
-      const { service } = makeService(assoPost, {}, ['bde']);
+      // A reader of the post too: a report is a reader's act (owner, 2026-11-15).
+      const { service } = makeService(assoPost, {}, ['bde'], [], ['bde']);
       await expect(service.getById('p1', { viewerId: 'bde' })).resolves.toMatchObject({
         canManage: true,
         canEdit: false,
@@ -379,6 +401,44 @@ describe('PostsService post management rights', () => {
         service.getById('p1', { viewerId: 'admin', isGlobalAdmin: true })
       ).resolves.toMatchObject({ canManage: true, canPin: true });
     });
+
+    it('serves the participation of every signed-in reader, and refuses an anonymous one', async () => {
+      const { service } = makeService(assoPost, {});
+      await expect(service.getById('p1', { viewerId: 'reader' })).resolves.toMatchObject({
+        canParticipate: true,
+      });
+      await expect(service.getById('p1')).resolves.toMatchObject({ canParticipate: false });
+    });
+
+    it('a platform admin outside the audience (moderation read only): no participation, no report (2026-11-14)', async () => {
+      const { service } = makeService(assoPost, {});
+      await expect(
+        service.getById('p1', { viewerId: 'admin', isGlobalAdmin: true })
+      ).resolves.toMatchObject({ canParticipate: false, canReport: false });
+    });
+
+    it('a platform admin inside their own audience participates and reports as the reader they are', async () => {
+      const { service } = makeService(assoPost, {}, [], [], ['admin']);
+      await expect(
+        service.getById('p1', { viewerId: 'admin', isGlobalAdmin: true })
+      ).resolves.toMatchObject({ canParticipate: true, canReport: true });
+    });
+
+    it('a BDE moderator outside the audience (moderation read only): no participation, no report (owner, 2026-11-15)', async () => {
+      const { service } = makeService(assoPost, {}, ['bdeMod']);
+      await expect(service.getById('p1', { viewerId: 'bdeMod' })).resolves.toMatchObject({
+        canParticipate: false,
+        canReport: false,
+      });
+    });
+
+    it('a BDE moderator inside their own audience participates and reports as the reader they are', async () => {
+      const { service } = makeService(assoPost, {}, ['bdeMod'], [], ['bdeMod']);
+      await expect(service.getById('p1', { viewerId: 'bdeMod' })).resolves.toMatchObject({
+        canParticipate: true,
+        canReport: true,
+      });
+    });
   });
 
   /**
@@ -466,6 +526,90 @@ describe('PostsService post management rights', () => {
       await expect(service.getById('p2', { viewerId: 'bde' })).resolves.toMatchObject({
         canUnmaskAnonymous: false,
       });
+    });
+  });
+
+  /**
+   * THE WRITER OF AN ASSOCIATION'S POST IS SEEN BY ITS MODERATORS (decision 11 of
+   * docs/wiki/moderation-authority.md, owner 2026-11-15) - and by the writer, as an anonymous post's
+   * is. Before, the card deleted it for every reader while `/posts/hidden` served it as a raw
+   * column: the two screens disagreed about one post.
+   */
+  describe("an association post's writer (decision 11)", () => {
+    const READERS: [string, boolean, { viewerId?: string; isGlobalAdmin?: boolean }][] = [
+      ['a BDE moderator whose spaces hold it', true, { viewerId: 'bde' }],
+      ['the platform admin', true, { viewerId: 'admin', isGlobalAdmin: true }],
+      ['its own writer', true, { viewerId: 'officer' }],
+      ['a BDE moderator out of scope', false, { viewerId: 'otherBde' }],
+      ['another holder of POST_AS_ASSO', false, { viewerId: 'colleague' }],
+      ['a reader', false, { viewerId: 'reader' }],
+      ['a signed-out reader', false, {}],
+    ];
+
+    it.each(READERS)('by id, %s: writer served = %s', async (_who, served, reader) => {
+      const { service } = makeService(
+        assoPost,
+        { officer: [ASSO], colleague: [ASSO] },
+        ['bde'],
+        ['otherBde']
+      );
+      const row = await service.getById('p1', reader);
+      expect(row.authorId).toBe(served ? 'officer' : undefined);
+      expect('authorId' in row).toBe(served);
+    });
+
+    it.each(READERS)('in /posts/hidden, %s: writer served = %s', async (_who, served, reader) => {
+      const { service, postRepo } = makeService(
+        assoPost,
+        { officer: [ASSO], colleague: [ASSO] },
+        ['bde'],
+        ['otherBde']
+      );
+      // The list's own statement is not asked here (its scope is the PostgreSQL spec's,
+      // `post-openable.integration.spec.ts`): what it returns is a row, and the row is served.
+      (postRepo.manager.query as jest.Mock).mockImplementation((sql: string) =>
+        Promise.resolve(
+          sql.includes('"hiddenByModeration" = true')
+            ? [{ ...assoPost, anonymous: false, pendingReportCount: 2 }]
+            : []
+        )
+      );
+      const [row] = await service.getHiddenPosts({
+        userId: reader.viewerId ?? '',
+        isGlobalAdmin: reader.isGlobalAdmin === true,
+      });
+      expect(row).toMatchObject({ id: 'p1', pendingReportCount: 2 });
+      expect(row.authorId).toBe(served ? 'officer' : undefined);
+      expect('authorId' in row).toBe(served);
+    });
+
+    it.each([
+      ['a platform admin', { userId: 'admin', isGlobalAdmin: true }, true],
+      ['a moderator whose scope holds the writer', { userId: 'bde', isGlobalAdmin: false }, true],
+      ['a moderator who may mute nobody', { userId: 'inst', isGlobalAdmin: false }, false],
+    ])('/posts/hidden tells %s whether the writer may be muted: %s', async (_who, scope, can) => {
+      const { service, postRepo } = makeService(assoPost, {}, ['bde', 'inst'], [], [], ['bde']);
+      (postRepo.manager.query as jest.Mock).mockImplementation((sql: string) =>
+        Promise.resolve(
+          sql.includes('"hiddenByModeration" = true') ? [{ ...assoPost, anonymous: false }] : []
+        )
+      );
+      const [row] = await service.getHiddenPosts(scope);
+      expect(row.canMuteAuthor).toBe(can);
+    });
+
+    it('/posts/hidden builds every row through the shaping that serves the card - a raw column cannot pass', async () => {
+      const { service, postRepo } = makeService(assoPost, {}, ['bde']);
+      const rows = [
+        { ...assoPost, anonymous: false },
+        { ...personalPost, anonymous: true },
+      ];
+      (postRepo.manager.query as jest.Mock).mockImplementation((sql: string) =>
+        Promise.resolve(sql.includes('"hiddenByModeration" = true') ? rows : [])
+      );
+      const shaping = jest.spyOn(service as never, 'withholdWriterUnlessSeen' as never);
+      await service.getHiddenPosts({ userId: 'bde', isGlobalAdmin: false });
+      expect(shaping).toHaveBeenCalledTimes(rows.length);
     });
   });
 });

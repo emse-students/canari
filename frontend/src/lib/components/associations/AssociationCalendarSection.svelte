@@ -10,8 +10,7 @@
     deleteAssociationCalendarEvent,
     validateAssociationCalendarEvent,
     listAssociationLinkCandidates,
-    aggregatedCalendarFeedIcsAbsoluteUrl,
-    icsSubscriptionRangeISO,
+    agendaSubscriptionIcsAbsoluteUrl,
     listEventCoOrganisers,
     getEventWriteSide,
     type AssociationCalendarEvent,
@@ -55,7 +54,7 @@
   import CalendarScheduleList from '$lib/components/calendar/CalendarScheduleList.svelte';
   import { createEventPoster } from '$lib/calendar/eventPoster.svelte';
   import { eventReachOffered } from '$lib/calendar/eventReach';
-  import { createFeedSigner } from '$lib/calendar/signedFeedUrl.svelte';
+  import { createSubscriptionLink } from '$lib/calendar/subscriptionLink.svelte';
   import { fromPostOf, openEventLinkedToPost } from '$lib/calendar/postEventLink';
   import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
@@ -156,13 +155,15 @@
 
   let showSubscribeModal = $state(false);
 
-  /** ~15 months window for feed subscription (server max ~18 months). */
-  const feedSigner = createFeedSigner(() => (showSubscribeModal ? { associationId } : null));
-  const calendarIcsUrl = $derived.by(() => {
-    if (!browser || !feedSigner.sig) return '';
-    const { from, to } = icsSubscriptionRangeISO();
-    return aggregatedCalendarFeedIcsAbsoluteUrl({ from, to, associationId, sig: feedSigner.sig });
-  });
+  /** The reader's own link to this association's agenda (2026-11-14): made when they ask, in the modal. */
+  const subscriptionLink = createSubscriptionLink(() =>
+    showSubscribeModal ? { associationId } : null
+  );
+  const calendarIcsUrl = $derived(
+    browser && subscriptionLink.token
+      ? agendaSubscriptionIcsAbsoluteUrl(subscriptionLink.token)
+      : ''
+  );
 
   function associationPageUrl(): string {
     if (!browser || !associationSlug?.trim()) return '';
@@ -198,7 +199,7 @@
     } catch (e) {
       // An empty picker is what the editor sees; without this line it is also all anyone would
       // ever know about it.
-      Log.d('[asso-calendar] link candidates failed', e);
+      Log.d('asso-calendar', 'link candidates failed', e);
       linkCandidates = { forms: [] };
     }
   }
@@ -246,15 +247,8 @@
     )
   );
 
+  /** Closes the detail and hands over to `removeEvent`, which owns the ONE confirmation. */
   async function handleDetailDelete(id: string) {
-    if (
-      !(await showConfirm(m.asso_calendar_confirm_delete(), {
-        danger: true,
-        confirmLabel: m.common_delete_button(),
-      }))
-    ) {
-      return;
-    }
     agenda.detailModalOpen = false;
     agenda.detailEvent = null;
     await removeEvent(id);
@@ -344,7 +338,7 @@
       }))
     )
       return;
-    Log.d('[asso-calendar] withdrawing from event', editingId);
+    Log.d('asso-calendar', 'withdrawing from event', editingId);
     await updateAssociationCalendarEvent(associationId, editingId, {
       coOwnerIds: withdrawalCoOwnerIds(formValues.coOwnerStates, associationId),
     });
@@ -632,6 +626,9 @@
   open={showSubscribeModal}
   onClose={() => (showSubscribeModal = false)}
   icsUrl={calendarIcsUrl}
-  signing={feedSigner.status}
+  signing={subscriptionLink.status}
+  onAsk={subscriptionLink.ask}
+  revokeStatus={subscriptionLink.revokeStatus}
+  onRevoke={subscriptionLink.revoke}
   intro={m.asso_calendar_subscribe_intro()}
 />

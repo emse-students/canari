@@ -1,6 +1,6 @@
 [package]
 name = "chat-gateway"
-version = "1.6.12-alpha.2"
+version = "1.7.0-alpha.12"
 edition = "2024"
 
 [dependencies]
@@ -22,7 +22,7 @@ tower = { version = "0.5.3", features = ["util"] }
 tower-http = { version = "0.7.0", features = ["fs", "trace", "cors"] }
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.20.0", features = ["serde", "v4"] }
-jsonwebtoken = { version = "11.0.0", features = ["use_pem", "rust_crypto"] }
+jsonwebtoken = { version = "12.0.0", features = ["use_pem", "rust_crypto"] }
 reqwest = { version = "0.13.3", features = ["json"] }
 bytes = "1"
 base64 = "0.23"

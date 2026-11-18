@@ -223,7 +223,8 @@ describe('a conversation notification shows one identity (user, 2026-10-05)', ()
       'utf8'
     );
     expect(shortcuts).toContain('val ids = record.readOrNull(context) ?: return null');
-    expect(record).toMatch(/is unreadable: \$\{e\.message\}"\)\s*null\s*\}/);
+    // Said by class: the record is JSON, and its parse error would quote it (nativeLogContent.test.ts).
+    expect(record).toMatch(/is unreadable: \$\{e\.javaClass\.simpleName\}"\)\s*null\s*\}/);
     expect(application).toMatch(
       /if \(removed != null\) \{\s*migrations\.edit\(\)\.putBoolean\(SALON_SHORTCUTS_RETIRED, true\)\.apply\(\)/
     );

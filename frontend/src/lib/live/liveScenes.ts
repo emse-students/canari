@@ -1,6 +1,6 @@
 /**
  * THE SCENES OF A DESKTOP LIVE (owner, 2026-11-14): ready-made layouts switched in one click while on
- * air, OBS's idea made much simpler - no free layers, five scenes, and a camera overlay that snaps
+ * air, OBS's idea made much simpler - no free layers, four scenes, and a camera overlay that snaps
  * to a corner. Everything here is PURE: which sources a scene shows, where each one is drawn on the
  * fixed output frame, where a dragged overlay lands, and what a click on a scene must do. The
  * canvas that draws it is `liveCompositor.ts`, the state that holds it `liveStudio.svelte.ts`.
@@ -38,8 +38,8 @@ export const STUDIO_FRAME: Readonly<Size> = Object.freeze({
   height: LIVE_CAPTURE_SHORT_SIDE_PX,
 });
 
-/** The five scenes, in the order the bar shows them. */
-export const LIVE_SCENES = ['camera', 'screen', 'screen-camera', 'side-by-side', 'pause'] as const;
+/** The four scenes, in the order the bar shows them. */
+export const LIVE_SCENES = ['camera', 'screen', 'screen-camera', 'pause'] as const;
 
 /** What a desktop live shows: one of {@link LIVE_SCENES}. */
 export type LiveScene = (typeof LIVE_SCENES)[number];
@@ -71,26 +71,23 @@ export const DEFAULT_OVERLAY: Readonly<OverlaySettings> = Object.freeze({
 });
 
 /** The overlay's height as a share of the frame's height, per size. */
-export const OVERLAY_HEIGHT_SHARE: Readonly<Record<OverlaySize, number>> = Object.freeze({
+const OVERLAY_HEIGHT_SHARE: Readonly<Record<OverlaySize, number>> = Object.freeze({
   small: 0.22,
   medium: 0.3,
   large: 0.4,
 });
 
 /** The gap between the overlay and the frame's edges, as a share of the frame's height. */
-export const OVERLAY_MARGIN_SHARE = 0.035;
-
-/** The share of the frame's width the screen takes in `side-by-side`; the camera has the rest. */
-export const SIDE_BY_SIDE_SCREEN_SHARE = 0.7;
+const OVERLAY_MARGIN_SHARE = 0.035;
 
 /** Whether `scene` draws the shared screen (and lets the share's own sound be heard). */
 export function sceneShowsScreen(scene: LiveScene): boolean {
-  return scene === 'screen' || scene === 'screen-camera' || scene === 'side-by-side';
+  return scene === 'screen' || scene === 'screen-camera';
 }
 
 /** Whether `scene` draws the camera. */
 export function sceneShowsCamera(scene: LiveScene): boolean {
-  return scene === 'camera' || scene === 'screen-camera' || scene === 'side-by-side';
+  return scene === 'camera' || scene === 'screen-camera';
 }
 
 /**
@@ -144,23 +141,6 @@ export function sceneLayout(
         { kind: 'source', source: 'screen', box: whole, fit: 'contain', round: false },
         camera(overlayBox(overlay, frame), 'cover', overlay.shape === 'round'),
       ];
-    case 'side-by-side': {
-      const split = Math.round(frame.width * SIDE_BY_SIDE_SCREEN_SHARE);
-      return [
-        {
-          kind: 'source',
-          source: 'screen',
-          box: { x: 0, y: 0, width: split, height: frame.height },
-          fit: 'contain',
-          round: false,
-        },
-        camera(
-          { x: split, y: 0, width: frame.width - split, height: frame.height },
-          'cover',
-          false
-        ),
-      ];
-    }
     case 'pause':
       return [{ kind: 'card', card: 'pause', box: whole, round: false }];
   }

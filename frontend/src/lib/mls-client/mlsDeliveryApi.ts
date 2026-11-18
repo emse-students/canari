@@ -23,9 +23,14 @@ import type {
 import { toBase64, fromBase64 } from '$lib/utils/hex';
 import { trackedFetch } from '$lib/utils/trackedFetch';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
-import { isTransportFailure, TransportFailureError } from '$lib/utils/transportFailure';
+import {
+  isTransportFailure,
+  TransportFailureError,
+  transportFailureEvidence,
+} from '$lib/utils/transportFailure';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { ApiRefusalError, responseOrigin, type ResponseOrigin } from '$lib/utils/apiRefusal';
+import { noteServerTime } from '$lib/utils/chat/serverClock';
 import {
   assertAnsweredByApi,
   isAwaitingAdmissionBody,
@@ -264,6 +269,38 @@ export class AddressedUnsupportedError extends Error {
     );
     this.name = 'AddressedUnsupportedError';
   }
+}
+
+/**
+ * Whether the device a Welcome was just delivered to can be ADDRESSED a history answer, as the
+ * delivery service read it when it answered `POST /api/mls/welcome`: `addressable`, `offline` (no
+ * presence key) or `undeclared` (online, with a live session that did not declare
+ * `addressed-history-1`). The two refusals are the ones `addressed_unsupported` would name at the
+ * send - read once, by the server's own script, so the inviter's join push does not make a request
+ * the server would refuse (docs/wiki/protocols/history-answer-addressing.md, rule 3).
+ */
+export type WelcomeAddressability = 'addressable' | 'offline' | 'undeclared';
+
+/**
+ * Reads `addressability` out of a Welcome's answer. `null` when the answer carries none - a delivery
+ * service that predates the field, or one that could not read it (said at error on the server) - or
+ * an unknown value, which a caller must treat as "not said", never as a verdict. An unknown value is
+ * a contract this client does not know, said at error HERE, where it is met.
+ */
+function parseWelcomeAddressability(raw: unknown, where: string): WelcomeAddressability | null {
+  if (raw === null || typeof raw !== 'object') {
+    console.error(
+      `[DELIVERY] ${where}: the Welcome's answer is not an object - addressability not said`
+    );
+    return null;
+  }
+  const value = (raw as { addressability?: unknown }).addressability;
+  if (value === undefined) return null;
+  if (value === 'addressable' || value === 'offline' || value === 'undeclared') return value;
+  console.error(
+    `[DELIVERY] ${where}: the Welcome's answer carries an unknown addressability ${JSON.stringify(value).slice(0, 40)} - read as not said`
+  );
+  return null;
 }
 
 /**
@@ -1014,6 +1051,16 @@ async function deliveryRefusedRenewed(
   return new DeliveryRefusedRenewedTokenError(where, code);
 }
 
+/**
+ * The server's clock when it answered (ms), from the HTTP `Date` header, or `undefined` when the
+ * header is absent or unreadable (a cross-origin read the service did not expose it to). To the
+ * second, which is all a bound counted in hours needs.
+ */
+export function serverDateOf(res: Pick<Response, 'headers'>): number | undefined {
+  const at = Date.parse(res.headers.get('date') ?? '');
+  return Number.isFinite(at) && at > 0 ? at : undefined;
+}
+
 export type MlsDeliveryApiOptions = {
   historyUrl: string;
   getToken: () => Promise<string>;
@@ -1659,7 +1706,12 @@ export class MlsDeliveryApi {
     }
   }
 
-  /** Registers this device on the delivery service with its initial KeyPackage and metadata. */
+  /**
+   * Registers this device on the delivery service with its initial KeyPackage and metadata.
+   *
+   * Answers whether the service HOLDS a push registration for this device (`pushRegistered`), or
+   * `null` from a service that does not say - the fact `reconcilePushRegistration` acts on.
+   */
   async registerDeviceKeyPackage(params: {
     keyPackageBase64: string;
     /**
@@ -1671,8 +1723,13 @@ export class MlsDeliveryApi {
     deviceName?: string;
     deviceOs: string;
     deviceAppVersion?: string;
-  }): Promise<void> {
-    await this.underDeadline('register-device', async (signal) => {
+    /**
+     * What this install's push registration last came to (`pushOutcomeForReport`), printed by the
+     * server when it holds no registration for the device. Native only; the web registers none.
+     */
+    pushOutcome?: string;
+  }): Promise<{ pushRegistered: boolean | null }> {
+    return await this.underDeadline('register-device', async (signal) => {
       const response = await this.f(`${this.historyUrl}/api/mls/register-device`, {
         method: 'POST',
         signal,
@@ -1685,6 +1742,7 @@ export class MlsDeliveryApi {
           ...(params.deviceName ? { deviceName: params.deviceName } : {}),
           deviceOs: params.deviceOs,
           ...(params.deviceAppVersion ? { deviceAppVersion: params.deviceAppVersion } : {}),
+          ...(params.pushOutcome ? { pushOutcome: params.pushOutcome } : {}),
         }),
       });
 
@@ -1708,7 +1766,11 @@ export class MlsDeliveryApi {
         throw await refusalFromResponse(response, 'Failed to publish KeyPackage');
       }
       // A portal's 2xx registered nothing: no answer, never a registration.
-      assertAnsweredByApi(response, 'POST /api/mls/register-device');
+      const body = (await readApiJson(response, 'POST /api/mls/register-device', signal)) as {
+        push?: { registered?: unknown };
+      } | null;
+      const held = body?.push?.registered;
+      return { pushRegistered: typeof held === 'boolean' ? held : null };
     });
   }
 
@@ -1779,6 +1841,9 @@ export class MlsDeliveryApi {
    * ever be addressed to that device. Every caller (the Add's sender, the pending sweep, the
    * `welcome_request` answer, the admission, the owed-Welcome drain) knows it; a fan-out to the
    * account's roster had no caller left and was deleted (2026-11-06).
+   *
+   * @returns whether the server can address the device a history answer now
+   *   ({@link WelcomeAddressability}), or `null` when its answer did not say.
    */
   async sendWelcome(
     welcomeBytes: Uint8Array,
@@ -1786,7 +1851,7 @@ export class MlsDeliveryApi {
     groupId: string,
     targetDeviceId: string,
     ratchetTreeBytes?: Uint8Array
-  ): Promise<void> {
+  ): Promise<WelcomeAddressability | null> {
     const response = await this.f(`${this.historyUrl}/api/mls/welcome`, {
       method: 'POST',
       headers: await this.auth({ 'Content-Type': 'application/json' }),
@@ -1815,6 +1880,23 @@ export class MlsDeliveryApi {
     await assertOkMlsDeliveryResponse(
       response,
       `Welcome delivery to ${targetUserId}:${targetDeviceId} (group ${groupId})`
+    );
+    // THE WELCOME IS STORED from here: a body that cannot be read loses only the addressability,
+    // which is then "not said" - the join push is sent and the server's own check decides. A 2xx
+    // JSON answer whose body cannot be read is a server or proxy defect, said at error.
+    let answered: unknown;
+    try {
+      answered = await response.json();
+    } catch (e) {
+      console.error(
+        `[DELIVERY] Welcome to ${targetDeviceId} in ${groupId.slice(0, 8)}... stored, but its answer could not be read - its addressability is not known:`,
+        e
+      );
+      return null;
+    }
+    return parseWelcomeAddressability(
+      answered,
+      `Welcome to ${targetDeviceId} in ${groupId.slice(0, 8)}...`
     );
   }
 
@@ -2163,14 +2245,17 @@ export class MlsDeliveryApi {
     }
   }
 
-  /** Creates a new group row on the delivery service and returns the assigned `groupId`. */
-  async createRemoteGroup(name: string, isGroup: boolean): Promise<string> {
+  /**
+   * Creates a new group row on the delivery service and returns the assigned `groupId`. A `null`
+   * name (an unnamed group) sends no `name` at all, and the row's column stays NULL.
+   */
+  async createRemoteGroup(name: string | null, isGroup: boolean): Promise<string> {
     try {
       const res = await this.f(`${this.historyUrl}/api/mls/groups`, {
         method: 'POST',
         headers: await this.auth({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
-          name,
+          ...(name !== null ? { name } : {}),
           createdBy: this.userId,
           isGroup,
           creatorDeviceId: this.deviceId,
@@ -2562,7 +2647,8 @@ export class MlsDeliveryApi {
       // the whole batch rather than one per chunk. NO ANSWER is told to the connectivity store, which
       // the caller reads to decide whether the link is known down; a deadline is not - one expiry
       // is a slow moment (`STALLS_BEFORE_UNREACHABLE` counts those where they are tracked).
-      if (e instanceof TransportFailureError) connectivity.notifyServerUnreachable();
+      if (e instanceof TransportFailureError)
+        connectivity.notifyServerUnreachable(transportFailureEvidence(e));
       if (isTransportFailure(e)) throw e;
       console.error(`[History] batch of ${chunk.length} group(s) could not be sent:`, e);
     }
@@ -2959,12 +3045,19 @@ export class MlsDeliveryApi {
    * public readers ({@link getGroupMeta}, {@link getGroupServerStatus}) parse it differently but ask
    * the same question, and each used to send its own request (14 calls for 7 groups, HAR 2026-10-05).
    */
-  private readGroupRow(
-    groupId: string
-  ): Promise<{ ok: boolean; status: number; text: string; fromApi: boolean }> {
+  private readGroupRow(groupId: string): Promise<{
+    ok: boolean;
+    status: number;
+    text: string;
+    fromApi: boolean;
+    serverNow: number | undefined;
+  }> {
     return this.joinInFlight(`group:${groupId}`, async () => {
+      // `no-store`: the answer's `Date` is the server's clock NOW (`GroupMeta.serverNow`), which a
+      // stored answer would not be.
       const res = await this.f(`${this.historyUrl}/api/mls/groups/${encodeURIComponent(groupId)}`, {
         headers: await this.auth(),
+        cache: 'no-store',
       });
       return {
         ok: res.ok,
@@ -2972,6 +3065,7 @@ export class MlsDeliveryApi {
         text: res.ok ? await res.text() : '',
         // WHO ANSWERED, read from the head (`responseOrigin`): a portal's page is not a group row.
         fromApi: responseOrigin(res) === 'gateway',
+        serverNow: serverDateOf(res),
       };
     });
   }
@@ -2987,6 +3081,11 @@ export class MlsDeliveryApi {
       if (!res.ok) {
         throw await refusalFromResponse(res, 'getUserGroups failed');
       }
+      // THE LIST'S `Date` IS A SERVER TIME AFTER EVERY NAME IT RETURNS was stated: a row named from
+      // it shows a name whose frame was stamped no later than this answer. Noted (serverClock.ts),
+      // it is what a rename made over such an undated name dates its base by (`PendingRename
+      // .serverSeenAt`) - only from the API's own answer, never a portal's.
+      if (responseOrigin(res) === 'gateway') noteServerTime(userId, serverDateOf(res));
       return (await res.json()) as UserGroupRow[];
     });
   }
@@ -3006,7 +3105,7 @@ export class MlsDeliveryApi {
    *    conversation locally (banner + manual deletion).
    */
   async getGroupServerStatus(groupId: string): Promise<'absent' | 'error' | GroupMeta> {
-    let res: { ok: boolean; status: number; text: string; fromApi: boolean };
+    let res: Awaited<ReturnType<MlsDeliveryApi['readGroupRow']>>;
     try {
       res = await this.readGroupRow(groupId);
     } catch {
@@ -3074,6 +3173,8 @@ export class MlsDeliveryApi {
           ? (g as { isGroup: boolean }).isGroup
           : undefined,
       deletedAt: (g as { deletedAt?: string | null }).deletedAt ?? null,
+      // The server's clock, from its own answer (`fromApi` is established above).
+      ...(res.serverNow !== undefined ? { serverNow: res.serverNow } : {}),
       // CARRIED, and they were not. `GroupMeta` has documented these as "the discriminator a
       // destructive sweep needs" since WP-22, `decideAbsentLocalGroupFate` reads them, and this
       // mapper dropped them on the floor - so the only thing that ever kept a distribution group
@@ -3174,6 +3275,8 @@ export class MlsDeliveryApi {
             ? (g as { isGroup: boolean }).isGroup
             : undefined,
         deletedAt: (g as { deletedAt?: string | null }).deletedAt ?? null,
+        // The server's clock only from the server's own answer: a portal's `Date` is the portal's.
+        ...(res.fromApi && res.serverNow !== undefined ? { serverNow: res.serverNow } : {}),
         // THE WELCOME HANDLER READS THESE since channel-encryption section 20 made an admitter
         // Welcome a newcomer into a key group: without them it cannot tell a seed carrier from a
         // conversation and builds a sidebar row for it. Same mapping as `getGroupServerStatus`.
@@ -3348,6 +3451,20 @@ export class MlsDeliveryApi {
         { method: 'DELETE', headers: await this.auth() }
       );
       if (!res.ok) {
+        // The server refuses, as a typed answer, to ban the device the calling session is bound to
+        // (`OWN_DEVICE`): classified here, at the throw, so the panel never reads it as a retry.
+        if (res.status === 409) {
+          const body = (await res.json().catch(() => null)) as { code?: unknown } | null;
+          if (body?.code === 'OWN_DEVICE') {
+            console.warn(`[deleteDevice] refused: ${deviceId} is this session's own device`);
+            return {
+              status: 'own_device',
+              groupsCleaned: 0,
+              keyPackagesDeleted: 0,
+              oneTimeKeyPackagesDeleted: 0,
+            };
+          }
+        }
         console.error(`deleteDevice failed: ${res.status}`);
         return {
           status: 'error',

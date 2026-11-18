@@ -105,3 +105,12 @@ describe('ChannelPoll early close', () => {
     expect(showConfirm).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('ChannelPoll frame', () => {
+  it('keeps its inset on every side inside a bubble, top included (a post closes on the cards above)', () => {
+    render(() => {});
+    const block = document.querySelector<HTMLElement>('[data-post-polls]')!;
+    expect(block.className).toContain('py-4');
+    expect(block.className).toContain('px-5');
+  });
+});

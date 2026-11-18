@@ -1104,7 +1104,7 @@ mod tests {
                 exp: 4_000_000_000,
                 kind: Some("access".to_string()),
             },
-            &jsonwebtoken::EncodingKey::from_secret(SECRET.as_bytes()),
+            &jsonwebtoken::EncodingKey::from_secret(SECRET.as_bytes()).unwrap(),
         )
         .unwrap()
     }

@@ -1,17 +1,39 @@
-## P2 - native devices with no push token stay silent: a fifth cause
+## Reading owed - a native device with no push token row now says why, and registers again (production, after the `1.7.0` stable)
 
-target: 1.7.0
+target: 1.7.1
 
-**What is built:** a device with no push token now says so
+_2026-11-18, sitting [S7](../device-verification.md#the-web-and-phone-readings-of-2026-11-18-s7-170-alpha12-the-last-sitting-before-the-stable): **read in production the day after both stores carry `1.7.0`; it does NOT block cutting the stable** (the lead's line of 2026-11-17). It stays a `1.7.0` reading only because a reading may name the earliest version alone._
 
-**The reading that closes it:** after the next release a tokenless device either acquires one or prints `[PUSH_UNAVAILABLE]` naming a cause; silence with a tokenless device still in `key_package` means a FIFTH cause
+**What is built.** A device that ends a registration without a token reports it (`[PUSH_UNAVAILABLE]`);
+`register-device` answers whether the server holds the device's `push_token` row and the phone
+registers again on `false` (#3649); every `register-device` states the last outcome, QUALIFIED since
+2026-11-17 - `unauthorized:<cause>`, `in-progress:<stage>`, `started:<stage>` - and the daily
+`[PUSH_COVERAGE]` WARN per `(os, build)` carries the tally of those outcomes (`last:`), so the branch
+is read from the report without log access. Mechanism and every measurement:
+[chat-delivery](../services/chat-delivery.md#the-servers-row-decides-whether-a-registration-is-owed-2026-11-15).
 
-**Read on production 2026-11-14** (15.5 hours after the `v1.6.11` deploy): of the 84 native
-devices that fetched history, 83 hold a `push_token` row; ONE does not - an iOS `1.6.6` device,
-still in `key_package`, not revoked - and no `[PUSH_UNAVAILABLE]` line was written at all. That is
-this entry's "silence" case, but one device cannot separate a fifth cause from the documented one:
-an app closed inside the four-minute registration ladder reports nothing
-(`PushNotificationService.ts`). Owed: the same read after the next stable; the same device silent
-across days, or more than one, is the fifth cause.
+**What it replaces.** The P1 "a third of the `1.6.12` native devices hold no push token row" (filed
+2026-11-15, its build work done, file deleted 2026-11-17) and this entry's earlier "fifth cause"
+readings (2026-11-14, two tokenless devices among 194). Production re-read 2026-11-17, read-only,
+still on `1.6.12`: older builds 0 of 117 tokenless, `1.6.12` 15 of 75 Android and 12 of 59 iOS; none
+of them sent a registration request or a report, most launched once. The cause is NOT established:
+every branch that ends without a request is client-side, and only the qualified `last=` of a `1.7.0`
+phone can name it.
 
-**Read again 2026-11-14, after the `1.6.12` deploy (read-only):** of the 194 native devices that fetched from chat-delivery since the deploy, TWO hold no `push_token` row - an Android `1.6.10` and an iOS `1.6.7` device, both with a KeyPackage of 2026-11-12/13, neither revoked, both already seen in the first read - and still not ONE `[PUSH_UNAVAILABLE]` line on production. More than one device, silent across two deploys: by this entry's own rule that is a FIFTH cause, a token lost after registration (or never asked) on a path that reports nothing. Next: read each device's own log for its `[Push]` lines (the Mi 9T reproduces the Android shape if a token row can be removed on dev), and find which writer deletes a `push_token` row without the device learning it.
+**The reading that closes it**, on production, the day after the `1.7.0` stable reaches both stores,
+read-only:
+
+1. The `[PUSH_COVERAGE]` daily line on chat-delivery: no WARN for any `1.7.0` build, or every one
+   carrying a `last:` tally that names the branch.
+2. The query of the chat-delivery wiki section (`utils/push-coverage.ts`, `PUSH_COVERAGE_SQL`) grouped
+   by `"pushOutcome"`: the `1.7.0` phones that ran and hold no row beyond the ten-minute grace read 0.
+3. If not 0: the tally names the fix - `unauthorized:<cause>` points at the session's token source,
+   `in-progress:<stage>` / `started:<stage>` at the await the ladder never left - and that fix is
+   filed as its own P1 for `1.7.1` with the tally as its evidence.
+
+On dev the count is not comparable (a reset truncates `push_token`, `infrastructure/lib/copy-strips.sh`);
+dev read 2026-11-17: both `1.7.0-alpha.7` phones hold their row (`registered`), one `alpha.6` Android
+that ran once states `in-progress` with no row - a process that ended inside its ladder, the case the
+new `started:<stage>` names.
+
+Charter: principle 1 (your messages are yours - a message that cannot ring is lost to the phone).

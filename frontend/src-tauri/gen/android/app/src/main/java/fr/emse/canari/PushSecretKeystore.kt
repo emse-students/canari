@@ -93,7 +93,7 @@ object PushSecretKeystore {
             cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(GCM_TAG_LENGTH, iv))
             String(cipher.doFinal(Base64.decode(encB64, Base64.NO_WRAP)), Charsets.UTF_8)
         } catch (e: Exception) {
-            Log.e(TAG, "retrieve: Keystore AES-GCM failure: ${e.message}", e)
+            Log.e(TAG, "retrieve: Keystore AES-GCM failure: ${e.javaClass.simpleName}")
             null
         }
     }
@@ -125,7 +125,7 @@ object PushSecretKeystore {
                 Log.e(TAG, "getOrCreateKey: key present but unreadable while locked - refusing to recreate")
                 throw IllegalStateException("push secret key not available before first unlock", e)
             }
-            Log.w(TAG, "getOrCreateKey: existing key unusable, recreating: ${e.message}")
+            Log.w(TAG, "getOrCreateKey: existing key unusable, recreating: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
             try { ks.deleteEntry(KEY_ALIAS) } catch (_: Exception) {}
         }
         val spec = KeyGenParameterSpec.Builder(

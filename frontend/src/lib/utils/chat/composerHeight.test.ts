@@ -86,17 +86,36 @@ describe('publishComposerHeight', () => {
     stop();
   });
 
-  it('publishes at once, then again when the padding grows the footer', () => {
+  it('publishes at once, then again when the content grows the footer', () => {
     install();
     const { footer, resize } = footerMeasuring(64);
     const root = document.documentElement;
     const stop = publishComposerHeight(footer, root);
     expect(root.style.getPropertyValue(COMPOSER_HEIGHT_PROPERTY)).toBe('64px');
-    // A 24 px navigation-bar inset reaching the WebView after mount: 0.75rem of padding becomes 24.
-    resize(76);
+    resize(84); // a second line of text
     nextFrame();
-    expect(root.style.getPropertyValue(COMPOSER_HEIGHT_PROPERTY)).toBe('76px');
+    expect(root.style.getPropertyValue(COMPOSER_HEIGHT_PROPERTY)).toBe('84px');
     stop();
+  });
+
+  it('publishes the height WITHOUT the floor: a keyboard pinning the safe area changes nothing (D2)', () => {
+    install();
+    const { footer, resize } = footerMeasuring(76);
+    footer.style.paddingBottom = '24px'; // max(0.75rem, a 24 px navigation bar)
+    document.body.append(footer);
+    const root = document.documentElement;
+    const write = vi.spyOn(root.style, 'setProperty');
+    const stop = publishComposerHeight(footer, root);
+    expect(root.style.getPropertyValue(COMPOSER_HEIGHT_PROPERTY)).toBe('52px');
+    write.mockClear();
+    // The keyboard rises: the safe area is pinned to 0, the floor falls to 0.75rem, the footer to 64.
+    footer.style.paddingBottom = '12px';
+    resize(64);
+    nextFrame();
+    expect(write).not.toHaveBeenCalled();
+    expect(root.style.getPropertyValue(COMPOSER_HEIGHT_PROPERTY)).toBe('52px');
+    stop();
+    footer.remove();
   });
 
   /**

@@ -79,7 +79,10 @@ describe('DevicesController - the cap counts live devices', () => {
         { provide: getRepositoryToken(GroupMember), useValue: { find: jest.fn(() => []) } },
         { provide: getRepositoryToken(Group), useValue: { find: jest.fn(() => []) } },
         { provide: getRepositoryToken(DeviceGroupMembership), useValue: {} },
-        { provide: getRepositoryToken(PushToken), useValue: {} },
+        {
+          provide: getRepositoryToken(PushToken),
+          useValue: { existsBy: jest.fn(async () => true) },
+        },
         {
           provide: getRepositoryToken(RevokedDevice),
           useValue: { findOne: jest.fn().mockResolvedValue(null), find: jest.fn(() => []) },

@@ -21,13 +21,12 @@
  *    ratios the wiki quotes: text 4.5:1, glyph and border 3:1, ink on the fill 4.5:1.
  */
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { join, dirname, relative, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { shippedSourceFiles, withoutAnyComments } from './markupSources';
+import { withoutAnyComments } from './markupSources';
+import { shippedSources } from './markupTree';
+import { readSource, relativeTo } from '../../test/sourceTree';
 
-const src = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const css = readFileSync(join(src, 'app.css'), 'utf8');
+const src = 'src';
+const css = readSource(`${src}/app.css`);
 
 /** Raw amber-scale usages that are justified, by file and exact count. None today. */
 const ALLOWED_RAW_AMBER: Record<string, { count: number; why: string }> = {};
@@ -36,17 +35,33 @@ const RAW_AMBER = /(?<![\w-])amber-(?:50|100|200|300|400|500|600|700|800|900|950
 const CN_YELLOW_UTILITY =
   /(?<![\w-])(?:[a-z0-9-]+:)*(?:text|bg|border|ring|from|to|via|fill|stroke|outline|decoration|divide|shadow)(?:-[trblxyse])?-cn-yellow(?:-hover)?(?![\w-])/g;
 
+/** Every shipped source, comment-free, taken from the run's snapshot and stripped ONCE for the sweeps below. */
+let sources: { file: string; body: string }[] | null = null;
+function commentFreeSources(): { file: string; body: string }[] {
+  sources ??= shippedSources(src).map(({ path, text }) => ({
+    file: relativeTo(path, src),
+    body: withoutAnyComments(text),
+  }));
+  return sources;
+}
+
 function count(re: RegExp): Record<string, number> {
   const found: Record<string, number> = {};
-  for (const file of shippedSourceFiles(src)) {
-    const body = withoutAnyComments(readFileSync(file, 'utf8'));
+  for (const { file, body } of commentFreeSources()) {
     const n = body.match(re)?.length ?? 0;
-    if (n > 0) found[relative(src, file).replaceAll(sep, '/')] = n;
+    if (n > 0) found[file] = n;
   }
   return found;
 }
 
 describe('the amber scale is not an accent', () => {
+  it('reads the tree it thinks it does: the shipped code and the nav are in the scan', () => {
+    const files = commentFreeSources().map(({ file }) => file);
+    expect(files.length).toBeGreaterThan(1000);
+    expect(files).toContain('lib/components/navigation/BottomNav.svelte');
+    expect(files.some((f) => f.includes('/paraglide/') || f.endsWith('.test.ts'))).toBe(false);
+  });
+
   it('appears only where ALLOWED_RAW_AMBER says, by count', () => {
     const found = count(RAW_AMBER);
     const expected = Object.fromEntries(
@@ -95,7 +110,7 @@ function over(fg: string, bg: string, alpha: number): string {
 
 describe('the active place is an ink glyph on the accent pill', () => {
   it('the bottom nav paints the active icon box with accent and on-accent', () => {
-    const nav = readFileSync(join(src, 'lib/components/navigation/BottomNav.svelte'), 'utf8');
+    const nav = readSource(`${src}/lib/components/navigation/BottomNav.svelte`);
     expect(nav).toMatch(/rounded-full[^"]*\{isActive\s*\?\s*'bg-accent text-on-accent'/);
     expect(nav).toContain('motion-safe:transition-');
   });
@@ -163,11 +178,9 @@ describe('a solid accent fill carries the ink token', () => {
 
   it('uses text-on-accent, never cn-dark / black / white / a theme text colour', () => {
     const offenders: string[] = [];
-    for (const file of shippedSourceFiles(src)) {
-      const body = withoutAnyComments(readFileSync(file, 'utf8'));
+    for (const { file, body } of commentFreeSources()) {
       for (const piece of body.split(/["'`\n]/))
-        if (SOLID.test(piece) && WRONG_INK.test(piece))
-          offenders.push(`${relative(src, file).replaceAll(sep, '/')}: ${piece.trim()}`);
+        if (SOLID.test(piece) && WRONG_INK.test(piece)) offenders.push(`${file}: ${piece.trim()}`);
     }
     expect(
       offenders,

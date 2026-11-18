@@ -99,3 +99,30 @@ export function assertAgendaAccess(args: {
   }
   assertAgendaSignature({ ...args.selection, associationId }, args.sig);
 }
+
+/** The code of the 400 a subscription token gets when its request names anything else. */
+export const AGENDA_TOKEN_NOT_ALONE = 'AGENDA_TOKEN_NOT_ALONE';
+
+/**
+ * A SUBSCRIPTION TOKEN IS ALONE IN ITS REQUEST (owner, 2026-11-14): the token names its holder and
+ * its selection, so a `sig`, a campus, a formation, an association or an event beside it is a
+ * request that means two things - a 400 `AGENDA_TOKEN_NOT_ALONE`, never one of them silently.
+ * `from` / `to` stay free, as they always were.
+ */
+export function assertSubscriptionTokenAlone(args: {
+  token: string;
+  sig?: string;
+  campus?: string;
+  formation?: string;
+  associationId?: string;
+  eventId?: string;
+}): void {
+  const others = (['sig', 'campus', 'formation', 'associationId', 'eventId'] as const).filter(
+    (key) => Boolean(args[key]?.trim())
+  );
+  if (others.length === 0) return;
+  throw new BadRequestException({
+    code: AGENDA_TOKEN_NOT_ALONE,
+    message: `A subscription token takes no other selection: drop ${others.join(', ')}`,
+  });
+}

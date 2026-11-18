@@ -28,6 +28,7 @@ a job in this file, not a fifth visible workflow). Each spec is gated on `SOCIAL
 and reports SKIPPED without it - and until that day nothing set it, so every one was skipped on
 every pull request and `CI passed` was green for the reason that they had not run. The day the job
 was written, the migration 082 spec turned out to have failed on EVERY run since its merge (#1913).
+**Reproduce them locally on `postgres:18-alpine`, never 16**: CI (`ci.yml`) and both estates run PostgreSQL 18 ([databases](infrastructure/databases.md)), and some SQL uses 18-only syntax (`campus-trend.ts` reads `RETURNING OLD/NEW`), so on 16 `campus-trend.integration.spec.ts` fails 27 tests with `missing FROM-clause entry for table "new"` while CI and production are fine.
 The job runs them in band against production's PostgreSQL, pinned by the digest the compose files
 carry, and its last step FAILS unless jest ran as many suites as there are files on disk and skipped
 none: a jest run that selects nothing is no longer a pass (the `test` scripts lost `--passWithNoTests` in WP-T2), but a gate that selects by name still needs its own count of what ran.
@@ -77,6 +78,52 @@ pull request must not be a draft again; and `CI passed` must be GitHub Actions' 
 sha, the NEWEST of them, concluded `success` - not any app's, not one green among several. What is
 left is the instant between those reads and the merge call (a re-run started on the same commit),
 on a commit that was already green. `arm-auto-merge-app.test.sh` B33 pins each refusal.
+
+**A BASE THAT MOVES UNDER THE ARMING IS A REASON TO ASK AGAIN, AND THE ONLY ONE (2026-11-14, Canari
+only).** On a pull request that is already mergeable, `gh pr merge --auto` merges at once, and GitHub
+refuses that merge when `main` took another one in the same seconds ("Base branch was modified",
+measured on #3519, run 43605328429). The step used to treat it as final and to print a cause it had
+not observed, so a ready, green pull request stayed unarmed. One attempt is now a function; the step
+reads the tip of the base before and after it, **as data, never from the prose of the refusal**, and
+asks again only when the pull request is still open, ready, on the judged head AND that tip changed.
+Each further attempt therefore answers one observed change of that tip, there are four attempts at
+most, and nothing waits. Every other refusal fails once and names what was read: the pull request's state and
+merge state, whether its head moved, whether the base moved, and the `CI passed` reading when that
+is what refused the immediate merge. A pull request found merged after a refusal ends the step
+green. `arm-auto-merge-app.test.sh` B35 pins these with a fake whose refusal text never varies. **What it
+does not close**: right after a base moves GitHub reads the merge state `UNKNOWN` for a moment, and a
+refusal met there with the base standing still fails once, naming `UNKNOWN`.
+
+**THE ARMING IS GITHUB'S MUTATION, NEVER `gh pr merge --auto`: THE STEP CAN ARM, OR MERGE BEHIND ITS
+OWN READS, AND NOTHING ELSE DECIDES (2026-11-14, Canari first).** `gh pr merge --auto` reads the merge
+state itself and, when the pull request looks mergeable to it, sends `mergePullRequest` instead of
+arming - the refusal measured on #3519 (run 43605328429, attempt 1) was signed `(mergePullRequest)` although the step had only
+asked to arm. With an App that bypasses the ruleset, that merge was judged by `gh`'s reading alone,
+beside the strict reads described above. The step now sends
+[`enablePullRequestAutoMerge`](https://docs.github.com/en/graphql/reference/pulls) through
+`gh api graphql`, with `mergeMethod: SQUASH` (the documented default is MERGE) and `expectedHeadOid`
+set to the head the guard judged. That mutation arms or refuses. When it refuses, the step reads the
+state as data, as before, and the ONLY merge it ever makes is the explicit
+`gh pr merge --squash --match-head-commit` behind `mergeStateStatus` and its own `CI passed` read.
+**What the documentation does not say**: what the mutation answers on a pull request that is already
+mergeable. That it refuses is a measurement (#3202, "unstable status"), not a documented fact, and
+the step does not depend on the wording: any refusal leads to the same reads.
+**Observed on the first two real pull requests, both already mergeable when the step ran
+(2026-11-14).** #3559, run 43637460344: the mutation was refused (`Pull request Pull request is in
+unstable status`), the step logged `#3559 is already UNSTABLE and CI passed is green on eec504e... -
+merging it now.` and its explicit merge landed. #3560, run 43637462313, met the same refusal and the
+same read, then its explicit merge was refused, `Base branch was modified. Review and try the merge
+again. (mergePullRequest)` - #3559 had just landed - so the step logged `main moved during attempt 1
+(fe4a472... -> 5274f25...) and the pull request is not armed - asking again.`, and the second
+attempt's mutation was ACCEPTED: `Auto-merge armed. GitHub will squash-merge #3560 as soon as CI
+passed goes green.` GitHub merged it thirteen seconds after #3559. So each path was seen once: the
+refusal followed by the gated merge, and the mutation arming; the retry was justified by a base tip
+that had been read to move, not by a clock.
+`arm-auto-merge-app.test.sh` B32 fails if a `gh pr merge --auto` comes back, and B36 that across
+every case of the step none was sent, that an accepted arming merges nothing, and that a refused one
+on a clean, green pull request is followed by exactly one explicit merge. **Sky, MiGallery and
+Portail-etu still call `gh pr merge --auto`**: the line is a declared `# canari-only:shared`
+difference until each takes this same step, in its own pull request.
 
 **THE CEILING IS A CHECK SINCE 2026-09-03, AND THAT IS ONE HALF OF ONE MECHANISM FOR EVERY PULL
 REQUEST** (user: _"le auto-merge et les CI doivent considerer toutes les PR, les miennes ou
@@ -179,6 +226,10 @@ request they had to run on, the one doing the renaming, is the one they were ski
 rebuilt the poll composer, `channel_poll_add_option` and `channel_poll_option_placeholder` went
 with it, and the rig could not compose a poll until 2026-09-24, when an unrelated workflow edit
 made CI run everything and said so. The trigger now names the two app paths those tests read.
+**And all of `tools/`, since 2026-11-14**: the recipe's second lint reads every directory under
+`tools/`, and a pull request that edited `tools/ios-device/` alone merged a warning the gate never
+saw - which then failed every later pull request that did trigger it. A trigger is what the recipe
+READS, so it is `tools/` whole, and the lint configuration at the root.
 
 **`typecheck` IS A SEPARATE STEP FROM `build`, AND THE DIFFERENCE IS THE TESTS.** `bun run build`
 is `nest build`, which reads `tsconfig.build.json`; every service excludes `*.spec.ts` there. Jest
@@ -278,6 +329,9 @@ exists for every service, so re-running an old release's `Deploy to Production S
 release back. It used to deploy `latest`, and v0.16.1's rerun redeployed v0.16.4 while passing twenty
 steps (2026-09-06). `release-chain.test.sh` pins the pair; the GHCR prune keeps 30 pushes.
 A rollback does not revert a migration the newer release applied: read it before rolling back across one.
+**A rollback to a build older than 2026-11-15 reopens the live seats' two-build window**, and so does the
+re-deployment after it: a live served only by old instances is refused (`503`) to the viewers a new instance
+serves; bound: the rolling replace, plus one segment ([lives](services/lives.md#no-seat-is-taken-on-a-closed-live-2026-11-15)).
 A rollback also runs the services in the SAME order as a forward deploy (`replace-modes.py`, from
 `depends_on`), so a contract a newer core-service serves and a newer social-service reads has a window
 on the way back that it has not on the way forward: the older core-service is up while the newer
@@ -369,8 +423,8 @@ or the file is reverted. That is the design: the yes is asked where it can no lo
   request number, so it describes whatever the head was at that read**: the head is read after it,
   and the run arms only while that head is still the event's own commit. A head that moved means a
   newer push, whose own `synchronize` run reads the new list (and disarms, if that push brought an
-  owner's file). And the arming itself names that commit (`gh pr merge --auto --match-head-commit`,
-  as the Dependabot path always did), so a push between the guard and the arming call makes GitHub
+  owner's file). And the arming itself names that commit (`expectedHeadOid` on the
+  `enablePullRequestAutoMerge` mutation; `--match-head-commit` on the explicit merge), so a push between the guard and the arming call makes GitHub
   refuse it: that run fails, and the run the push raised judges the new head.
 - **An arming made by hand is undone too, except on a fork's pull request** (which the job skips by
   its `if:`). The workflow listens to `auto_merge_enabled` (Canari only; `tools/ecosystem-shape` reads
@@ -724,9 +778,9 @@ declaration cannot hold:
 
 | Mode        | Meaning                                         | Services                                                                                            | What it requires                                             |
 | ----------- | ----------------------------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| `overlap`   | two replicas at once, as above                  | gateway, chat-delivery, core, social, frontend-ssr, frontend                                        | no host port, no writable volume, a healthcheck with `start_interval`, a `canari.deploy.rotation` |
+| `overlap`   | two replicas at once, as above                  | gateway, chat-delivery, core, social, frontend-ssr, frontend                                        | no host port, no writable volume, a healthcheck with `start_interval`, a `canari.deploy.rotation` naming every proxy in front (`frontend:3012,mesh:3012`) |
 | `exclusive` | recreated in place - a short gap remains        | media-service (its metadata index is one JSON file on `media_meta`), call-service (rooms in memory), adminer (built here while upstream lacks a fixed `libpq`, [legacy](legacy-compatibility.md)) | -                                                            |
-| `pinned`    | a third-party image, never changed by a release | postgres, redis, garage, `edge`                                                                     | not an image this repository builds                          |
+| `pinned`    | a third-party image, never changed by a release | postgres, redis, garage, `edge`, `mesh`                                                             | not an image this repository builds                          |
 
 **A PINNED DIGEST THAT MOVES IS PULLED BEFORE ANY `up`, THROUGH THE REGISTRY RETRY.** The release's
 pull names only what it built, so the day a pinned digest moves the host does not hold the image.
@@ -791,25 +845,9 @@ log (the redirect failed before `2>/dev/null` applied); that noise is gone too.
   an error the member sees.
 - media-service and call-service are `exclusive`: their few seconds of gap remain
   ([backlog](backlog.md)).
-- **The lists govern the two nginx, and nothing else: every service-to-service call still goes
-  around them** (enumerated in both compose files, 2026-11-01 second review). A caller resolves its
-  peer through Docker's DNS, which names the retiring replica until it stops:
-
-  | Caller | Peer (overlap) | Variables |
-  | --- | --- | --- |
-  | chat-gateway | chat-delivery-service | `DELIVERY_SERVICE_URL` - the message-send path itself |
-  | chat-gateway | social-service | `SOCIAL_SERVICE_URL` |
-  | core-service | social-service | `FORM_URL`, `FORM_SERVICE_URL` |
-  | social-service | core-service | `USER_SERVICE_URL`, `PAYMENT_SERVICE_URL` |
-  | social-service | chat-delivery-service | `DELIVERY_INTERNAL_URL` |
-  | frontend-ssr | core-service, social-service, chat-delivery-service | `CORE_SERVICE_URL`, `SOCIAL_SERVICE_URL`, `DELIVERY_SERVICE_URL` |
-
-  (media-service, reached by three of them, is `exclusive`: its gap is the one above.) For these
-  callers the retiring replica never leaves rotation, so `wait_unqueued`'s two clean reads of its
-  accept queue are a CLOCK, not a proof: a call can land in the queue after them and be reset when
-  the listener closes - a POST among them answered with an error (not observed). That is a gap, owned
-  in the queue: [backlog](backlog.d/p2-service-to-service-calls-bypass-the-rotation.md). Every claim
-  of "no 502" in this section is about requests that go through nginx.
+- **A call from one service to another goes through the mesh** since 2026-11-07, and is covered by
+  the same take-out ([below](#service-to-service-calls-go-through-the-mesh)); what it still does not
+  cover is said there.
 - **The transition deploy** - the first one carrying this - moves the port from the frontend to the
   edge: about one second with nothing on `8081`. And compose 2.26 hashes a service with `depends_on`
   differently with and without `--no-deps`, so the deploy ALWAYS uses `--no-deps`; a manual `up -d`
@@ -824,6 +862,95 @@ log (the redirect failed before `2>/dev/null` applied); that noise is gone too.
 - The `*/5` Le Cercle webhook retry (`retryDueWebhookDeliveries`) does not claim its rows, so both
   replicas can retry in the overlap. Harmless: Le Cercle inserts with `ON CONFLICT(payment_intent_id)`,
   so no member is credited twice; only a counter update and a `[CERCLE]` line are doubled.
+
+#### Service-to-service calls go through the mesh
+
+**The cause (read in the code, 2026-11-07).** The replica lists governed the frontend and the edge,
+but a service called its peer by Docker's DNS: `http://core-service:3012` from chat-delivery, media,
+social and the SSR, `http://social-service:3014` from chat-delivery and media, and back. Docker's DNS
+names a retiring replica until it STOPS, so a call can be accepted into its backlog after
+`wait_unqueued` read it empty, and is reset when the listener closes - a POST cannot be replayed. The
+first enumeration also missed four calls made by CODE DEFAULTS that no compose file set
+(chat-delivery's `CORE_SERVICE_INTERNAL_URL` and `SOCIAL_SERVICE_URL`, core's `CHAT_DELIVERY_URL`,
+media's `SOCIAL_SERVICE_URL` in `lives-mode.ts`). **And the callers held the address longer than
+Docker did** (2026-11-07 review): the services run on Bun, whose `fetch` keeps a resolved address
+30 s by default, so a caller went on dialling a replica's address after Docker had stopped naming
+it. That is most of the control's failures below: with the 2 s cache the callers now keep, the same
+calls by DNS saw no failure in one CI run (2026-11-13). The mesh stays, because the race it closes by
+construction - a call queued on a replica that DNS still names as it stops - is not shown gone by one
+clean run (the control is run with Bun's 30 s, as the services had it before).
+
+**The fix: one more proxy in the rotation, `mesh`** (`infrastructure/edge/mesh.conf`):
+
+- An nginx on the edge's image and digest, one `server` per routed service ON THAT SERVICE'S PORT
+  (3010, 3012, 3014), each `proxy_pass http://$target_<svc>` from its own list `targets/mesh.conf`.
+  A caller changes its host and nothing else: `http://mesh:3012`.
+- **Pinned**: no release replaces it, a deploy only RELOADS it, and a reload keeps the listening
+  sockets - so the proxy itself never leaves a gap.
+- `keepalive_timeout 0`: no idle connection from a caller, so a reload's old worker holds nothing it
+  must close. The variable `proxy_pass` keeps no upstream connection, so the pairing check (no old
+  worker's socket on the retiring replica) means what it says.
+- Headers and body pass untouched. The frontend nginx could not be the mesh: it strips `X-Internal-*`
+  and runs `auth_request`, and it is replaced by every release.
+- The rotation label is a list: `canari.deploy.rotation: frontend:3012,mesh:3012`. A take-out writes
+  and reloads EVERY proxy named, and is refused at the first that fails; a restore tries them all
+  and reports a failure only after.
+- **Every Bun caller keeps a resolved address the resolver lifetime** (2 s,
+  `BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS` in both compose files, held equal to
+  `ROLLING_RESOLVER_TTL_SECONDS` by `deploy-replace.test.sh`), not Bun's 30 s: the mesh's address
+  changes when it is recreated, and the review measured failures until t=30 s across a compose-style
+  recreate with the default.
+- An answer's headers get the frontend @ssr location's 32 KB buffer, not nginx's 4 KB: past it nginx
+  answers a `502` the service never sent.
+- **A mesh routing nowhere does not deploy green.** After its reload, `deploy-environment.sh` asks
+  every route the plan gives it (`mesh_route_status`) for the routed service's `/api/health`, from
+  inside that service, through the mesh, and fails the deploy on anything but `200` - every other
+  post-deploy check goes through the edge and the frontend, and stayed `200` with the mesh dead.
+
+**Two gates keep it whole.** `replace-modes.py` refuses, before anything stops, an `environment` value
+naming a rotated service by its DNS name (`calls core-service by Docker's DNS, around its
+rotation`). `.github/scripts/tests/internal-url-defaults.py`, run by `deploy-replace.test.sh` on both
+estates, finds every `scheme://<service>:<port>` default in a service's production sources and
+requires the deployed compose file to SET one of the variables in front of it - a code default
+nobody set is how the four calls above were missed. Both fail on the compose files of `v1.6.6`.
+
+**The reproduction.** `deploy-rolling.test.sh` case 2c deploys a release while a `caller` container
+POSTs to the replaced `api`: through `http://mesh:3000`, pooled and not, every call answers `200`;
+the control, the same caller on `http://api:3000`, sees the reset. Storm 2b reloads the mesh with the
+frontend and the edge under a pooled caller, with no failure. Measured 2026-11-07 on a workstation:
+through the mesh, 4,872 pooled and 5,160 unpooled calls, all `200`, both versions answering; by DNS,
+4,008 `200` beside 2,609 refused and 12 hung to the client's 10 s bound; the storm, 41,281 calls
+through the mesh, all `200`. Case 2d recreates the mesh itself under two callers: the one keeping an
+address the resolver lifetime sends nothing that fails once the new mesh has settled (healthy, plus
+that lifetime and a second), and is answered after it. A caller on Bun's 30 s default beside it is
+printed, not asserted: on CI the stale address refused at once and Bun re-resolved (0.13 s of
+failures for both), on the review's workstation it swallowed the connection and the gap lasted 30 s -
+a property of the Docker host, which is why the setting is held by a test rather than measured.
+
+**The count stays.** `rolling.sh` (`transport_resets`) reads each retiring replica's log before its
+`docker rm`, and one sweep at the end of `replace_services` reads every running container of every
+replaced service: `[TRANSPORT_RESETS] service=<name> container=<id> state=<retired|running>
+count=<n>`, then `total=<n> unknown=<k>`; an unreadable log is `unknown` with a `::warning::`, never
+`0`. The logs do not name the peer (bun 1.4 says `ECONNRESET` with no host), so the count includes
+external callers and is read against an ordinary day; after the mesh, a rise at deploys is a defect.
+
+**What it does not cover:**
+
+- **The first deploy carrying it**: callers not yet replaced still call by DNS, and the mesh is
+  created by `up` before its first reload. From the next deploy on, every call goes through it. A
+  rollback to an older release returns to DNS, and `--remove-orphans` removes the mesh.
+- **A bump of the nginx image recreates it** (it shares the edge's digest): calls fail until the new
+  container is healthy and the callers' 2 s address cache has expired - a few seconds, not the
+  edge's one.
+- **A rollback to a release from before the mesh** runs that release's library, which never takes a
+  replica out of the mesh, and its `git reset --hard` deletes `edge/mesh.conf` under the running mesh:
+  callers not yet rolled back still call through it and can be reset as before this, and a mesh that
+  restarted in that window could not load its configuration. `--remove-orphans` removes it once every
+  caller is back on DNS, which bounds the window to that one deploy.
+- media-service and call-service are `exclusive`: a call to them keeps their stop-first gap, which a
+  caller's address cache lengthened to up to 30 s before the 2 s setting above.
+- A public throttled route called from inside (the SSR to `/api/public/*`, no `X-Real-IP`) is keyed
+  on the mesh's address instead of the SSR's - one internal caller either way.
 
 #### A rollback across the replica lists
 
@@ -1224,7 +1351,7 @@ run. So the paths are told apart by the EVENT TYPE:
 | event         | estate               | Play         | App Store                |
 | ------------- | -------------------- | ------------ | ------------------------ |
 | `prereleased` | `dev.canari-emse.fr` | `internal`   | TestFlight               |
-| `released`    | `canari-emse.fr`     | `production` | submitted for **review** |
+| `released`    | `canari.emse.fr`     | `production` | submitted for **review** |
 
 **AND THAT CLOSED A DEFECT NOTHING COULD SEE.** `published`, the old trigger, fires for BOTH kinds,
 so the "Set as a pre-release" checkbox was invisible and the version string was the only statement
@@ -1259,7 +1386,7 @@ landing on two unrelated commits with nothing comparing them; and each chain res
 itself. All three are the same defect - a decision taken more than once, and a precondition
 asserted nowhere.
 
-#### The six gates, and the one that makes a lag impossible
+#### The seven gates, and the one that makes a lag impossible
 
 `.github/scripts/release-preflight.sh` runs before the bump, so a refusal refuses the deployment,
 both store uploads and the version bump itself:
@@ -1269,9 +1396,10 @@ both store uploads and the version bump itself:
 | 1   | Is the version a version?                            | a typo must not reach a store band computation                                                        |
 | 2   | Is the released commit on `main`?                    | everything downstream reads the trunk                                                                 |
 | 3   | Did `CI passed` conclude **success** on THAT commit? | "if the tests are green" was written nowhere at all, and an ABSENT check is not a passing one         |
-| 4   | Has the dev estate already served it? (stable only)  | **production cannot be ahead of dev**                                                                 |
+| 4   | Is it EXACTLY the latest pre-release's commit, and has the dev estate already served it? (stable only) | **production cannot be ahead of dev**, and a stable is built from its last alpha, never from `main` ([2026-11-14](#the-stables-commit-is-asserted-not-only-derived-2026-11-14)) |
 | 5   | Do the App Store release notes name THIS version?    | Apple refuses a submission without them, and refusing at the END of a release costs the whole release |
 | 6   | Does it ship a held migration the owner has not approved? | the deploy would refuse it after the bump and the store builds ([held](#a-migration-the-owner-must-approve-is-held-2026-11-01)) |
+| 7   | Does an advisory touch what it ships? (stable only)  | an advisory published after the commit's CI is exactly what production would receive ([2026-11-17](#the-audit-blocks-on-what-we-ship-2026-11-17)) |
 
 **Gate 4 is why this file exists** (user, 2026-09-03: _"Je ne veux pas un detecteur de retard, je ne
 veux pas que ca soit possible"_). It compares the released commit against the `dev-deployed` marker
@@ -1475,7 +1603,8 @@ _"une release n'opere que sur le tag de la derniere pre-release"_):
   version (`latest_prerelease_tag`, version order) and resolves THAT commit once; no such tag is an
   error naming the command to cut one. The stable's own tag is not read.
 - **Gates.** 2 asks only that `main` contains the commit (the fast-forward question has nobody
-  asking it); 3 reads `CI passed` on it; 4 and 5 are unchanged.
+  asking it); 3 reads `CI passed` on it; 4 first asserts the commit IS the latest pre-release's
+  (below), then that dev served it; 5 is unchanged.
 - **Bump.** The bump runs on that commit, whose `changelog.d/` holds exactly the entries it
   contains, and pushes to **`release/vX.Y.Z`** (force: a re-run rewrites it), never to `main`. The
   stable tag is then **moved to that commit**, so `vX.Y.Z` names what production runs.
@@ -1486,6 +1615,41 @@ _"une release n'opere que sur le tag de la derniere pre-release"_):
   shipped commit carried, touches NO manifest (main's version is its latest pre-release's), and
   retries the push when a merge wins the race. Idempotent; a red `land` is re-run, it never holds
   production back. Test: `land-release.test.sh`.
+
+#### The stable's commit is asserted, not only derived (2026-11-14)
+
+Owner, 2026-11-14: _"La stable devrait toujours etre build depuis la derniere alpha, independamment
+de main."_ That was already how the resolve step CHOSE the commit, but nothing CHECKED the choice:
+gate 2 asks only that `main` contains the commit and gate 4 only that dev is at or past it, so
+`main`'s head would have passed both. Gate 4 now opens by re-deriving the latest
+`vX.Y.Z-label` tag and its commit from the API and refusing anything but equality
+(`classify_stable_source` in `lib/release-preconditions.sh`, asserted with the `v1.6.12` pair by
+`release-preflight.test.sh`, which also checks the preflight calls it).
+
+**What raised it, and why it was a misreading.** `v1.6.12` was typed against `main`
+(`gh release create v1.6.12 --generate-notes`), nine pull requests past `v1.6.12-alpha.2`. The run's
+`headSha` and the tag as first fetched both read `main`'s head (`640aa34b`), and `git log
+v1.6.12-alpha.2..v1.6.12` listed nine commits dev never served. The run's own log says otherwise:
+the resolve step printed `Stable 1.6.12 ships v1.6.12-alpha.2`, the preflight ran at `fa1bc265`, the
+bump committed `0b6947d2` on it and moved the tag there, and every arm checked out `0b6947d2`
+(`git log fa1bc265..0b6947d2` is the bump alone; no migration, no group-call code). Two traps to
+read a stable by:
+
+- **A run's `headSha` is the commit the tag named WHEN PUBLISHED**, never what the arms built. Read
+  `Every arm of this release builds <sha>` in the bump job.
+- **`git fetch --tags` never updates a tag that moved** - the stale local `vX.Y.Z` keeps naming the
+  commit the human typed against. `git fetch --tags --force`, or `git ls-remote origin refs/tags/vX.Y.Z`.
+
+**What does come from `main`'s head: the workflow files.** GitHub runs a release event's workflows
+(and every `workflow_call` they make) from the commit the tag named at publication, so `release.yml`,
+`serve-prod.yml` and the rest ran from `640aa34b`. The built tree, the deploy scripts and the
+migrations are the alpha's; only the YAML is not. For `v1.6.12` that meant two extra secrets passed
+by `serve-prod.yml` that the shipped compose file never reads. **Closed the same day (lead):** gate 4
+also judges the commit the tag was published on (`PUBLISHED_SHA`, `github.sha`) with the same
+classifier, and refuses a stable not typed ON the latest alpha's commit; the refusal names the
+command, `gh release create vX.Y.Z --target <alpha sha> --generate-notes`, after
+`gh release delete vX.Y.Z --cleanup-tag`. `release-preflight.test.sh` asserts the refusal and that
+`release.yml` hands `PUBLISHED_SHA` in.
 
 ### A pre-release is pinned on its release branch (decided 2026-10-30)
 
@@ -1566,7 +1730,86 @@ the stable fold), `bump-version.test.sh` (`--code`, `--codes`), `release-chain.t
 
 ## GitHub Secrets
 
-See [`infrastructure/MIGRATION.md`](../../infrastructure/MIGRATION.md) (section 3) for the full secrets inventory.
+See [`infrastructure/MIGRATION.md`](../../infrastructure/MIGRATION.md) (section 3) for the full secrets inventory,
+with the LEVEL of each secret in one table.
+
+### Where a secret lives, and why
+
+**THE CAP.** GitHub holds at most 100 secrets per repository and 100 per environment. Canari reached
+the repository cap on 2026-11-13: a `PUT` on a 101st secret answers a bare `HTTP 400`, with no message
+saying why (owner, the same day: *"Range TOUS les secrets github"*). Every secret of both estates had
+been born at repository level, and the dev twins (`DEV_*`) doubled the count.
+
+**THE MECHANISM.** A job that declares `environment: X` reads X's secrets, and an environment secret
+OVERRIDES a repository secret of the same name for that job; a name X lacks is read from the
+repository level. A job with no `environment:` sees the repository level only. `secrets: inherit`
+from `release.yml` passes the repository level down, and a called job that declares an environment
+still resolves that environment's secrets - `serve-dev`'s smoke sign-in has read `DEV_SMOKE_*`, which
+exist only in `development`, since 2026-10-18. Neither environment has a protection rule or a branch
+policy (read 2026-11-13), so declaring one never waits for an approval.
+
+**THE THREE LEVELS**, decided by who reads the secret:
+
+- **`repo`** - read by a job with no environment: the Android and Apple signing material and store
+  keys (one keystore, one identity, for testers and stores alike, so there is nothing to split), the
+  auto-merge App, the Dependabot token, and `LYDIA_ENV`, which the preflight reads to refuse a stable
+  BEFORE the stores take it. The exception, never the default.
+- **`production` / `development`** - read only by that estate's deploy job (`deploy-to-server`,
+  `deploy-dev`). **A new secret read only by a deploy job is born in its environment.**
+- **`production, development`** - one name in both environments, each estate its own value: the
+  build-time names (`BASE_URL`, `AUTHENTIK_URL`, `AUTHENTIK_CLIENT_ID`, `ANDROID_APP_LINK_SHA256`)
+  that `build-frontend`, `build-android` and `build-ios` read. Each of those jobs declares the
+  environment of its estate (`environment: { name: <estate>, deployment: false }`, the estate from
+  `inputs.estate` or `inputs.prerelease`; an iOS local-device build reads `production`, whose identity
+  provider it signs in through). The `DEV_` set those jobs read before, and the shell branch that
+  chose between the two sets, are deleted: a job sees ONE environment, so "no fallback between the two
+  sets" is GitHub's boundary rather than a convention three files restated.
+
+**`deployment: false`** (GitHub, March 2026) lets a job read an environment's secrets without
+creating a deployment, so the three build jobs draw no row in the deployments list and do not become
+the "latest deployment" of `production` on the repository page. It is compatible with the absence of
+protection rules; GitHub documents it as incompatible with a CUSTOM (App) protection rule only.
+
+**THE ONE HOLE, AND THE GATE THAT CLOSES IT.** For a name kept in both environments, an environment
+that LACKS it falls back to a repository copy - the other estate's value. A pre-release would build
+against production's identity client and hand it to the tester programmes, which is exactly what the
+second estate exists to prevent. So those names must NEVER exist at repository level, and
+`release.yml`'s preflight - a job with no environment, which therefore sees only the repository level -
+refuses the release while any of them does (`No estate secret is kept at repository level`). The
+URL half was already caught by `classify_backend_url`; the client id had no such witness.
+
+**DEV'S DEPLOY KEEPS THE `DEV_` NAMES, INSIDE `development`.** `render-env.sh` reads `DEV_<name>`
+for dev and never the bare name, and that indirection is KEPT: while production's bare names still
+exist at repository level (they are deleted only after a green stable reads them from `production`),
+a dev deploy reading a bare name would inherit production's value for every name `development` lacks
+- `cd-dev.yml`'s defect, `JWT_SECRET` included. With the prefix, a name dev lacks is EMPTY whatever
+the repository holds, and a `required` row stops the deploy. **The unification is a later, separate
+step**, safe only once no deploy-read bare name remains at repository level: re-supply each `DEV_X`
+of `development` as `X`, drop the prefix in `secret_value`, rename the `serve-dev.yml` block, extend
+the preflight's guard to every manifest `secret:` row - the guard then proves the precondition on
+every release - and delete the `DEV_X` copies after the alpha that reads `X`. Until then
+`development` holds the four build-time values twice (`BASE_URL` for the build, `DEV_BASE_URL` for the
+deploy, and so on) - the same value, set together.
+
+**THE ORDER OF A MOVE**, so no release ever runs with a secret missing or borrowed: (1) SET the
+environment copy - it shadows the repository one at once, so this leaves no gap; (2) a GREEN RUN that
+reads it - a pre-release for `development`, a stable for `production` - and the estate answers; (3)
+DELETE the repository copy. GitHub never returns a value, so each copy is read from where the value
+is rendered (the estate's `.env`), never printed. A name the build jobs read in both environments is
+the one exception to (2)-before-(3): the preflight refuses every release while its repository copy
+exists, so it is deleted right after the merge that moves its readers, once the environment copies
+are set (listing the names of each environment is the check). A rerun of a release cut BEFORE that
+merge reads the old workflow files, whose build jobs declare no environment, and fails loudly on the
+missing names - the answer is a new tag.
+
+`secret-levels.test.mjs` holds the table and the workflows together: a secret a workflow reads that
+the table does not list, an environment secret read by a job that declares no such environment
+(which would read it EMPTY), or a both-environment name the preflight does not guard, fails
+`make test-ci-scripts`.
+
+**THE RENDERED FILE IS PRIVATE TO ITS OWNER.** `render-env.sh` writes each estate's `.env` with mode
+`0600` (a `umask 077` around the write and a `chmod 600` before the `mv`), whatever umask the runner
+uses; `deploy-env.test.sh` asserts it on Linux.
 
 **A credential is real in THREE places, not two.** The CD regenerates `infrastructure/.env` from the
 repo secrets, so a value set over SSH lasts until the next deploy. It must therefore be a GitHub
@@ -1735,11 +1978,13 @@ here rather than fixed silently.
 ## Release workflow
 
 ```
-gh release create vX.Y.Z --target $(git rev-parse HEAD)      <- the human gesture, and the last one
+gh release create vX.Y.Z-alpha.N --prerelease --generate-notes   <- a pre-release: main's head
+gh release create vX.Y.Z --target <latest alpha's commit> --generate-notes
+                                                     <- a stable: ON its alpha, or gate 4 refuses
   |
   '- Release (release.yml), ONE run
        |
-       |- preflight   six gates; a refusal ends it here, having moved nothing
+       |- preflight   seven gates; a refusal ends it here, having moved nothing
        |- bump        writes the version into 18 files, commits, pushes to release/vX.Y.Z, outputs the SHA
        |- land        (parallel, blocks nothing) carries the version / the changelog onto main
        |
@@ -1755,7 +2000,7 @@ gh release create vX.Y.Z --target $(git rev-parse HEAD)      <- the human gestur
        |    '- dev.canari-emse.fr - never held behind a store queue an alpha does not use
        |
        '- serve-prod.yml  STABLE ONLY, needs [build, android, ios]
-            '- canari-emse.fr - and only once BOTH stores accepted this version
+            '- canari.emse.fr - and only once BOTH stores accepted this version
 ```
 
 A pre-release stops at TestFlight and the Play `internal` track, which is what a tester programme
@@ -1858,6 +2103,69 @@ It is a **need of `CI passed`**, so a Swift error fails the merge gate.
 - **What it does not replace:** signing, the icon tint, the archive-only assertions and TestFlight
   stay in `ios.yml`. `swift-syntax.sh` (parse only) still runs in `test-ci-scripts`.
 - Shape pinned by `.github/scripts/tests/ios-compile-job.test.mjs`.
+
+### The iOS toolchain is pinned: Xcode 27 since 1.7.1
+
+Both Apple jobs - `build-ios` in `ios.yml` (the release archive) and `compile-ios-app` in `ci.yml`
+(the pull-request compile) - run on GitHub's **`xcode-27`** label and select Xcode with
+`maxim-lobanov/setup-xcode` and `xcode-version: '^27.0'`, which takes the newest 27.x on the image
+and **fails the run when there is none**. The pin is REQUIRED, never merely allowed, for two reasons:
+
+- **The store.** App Store Connect accepted builds `100700011` and `100700012` (built on `macos-15`
+  with the iOS 26.2 SDK) with warning ITMS-90725: from April 2027 it accepts only uploads built with
+  the iOS 27 SDK, Xcode 27 or later.
+- **Liquid Glass.** The native tab bar compiles its glass branch under `#if compiler(>=6.2)`; a
+  toolchain older than Xcode 26 builds the classic bar with no error.
+
+The image, read in `actions/runner-images` on 2026-11-18: the README lists "Xcode 27" (arm64,
+labels `xcode-27` or `xcode-27-xlarge`, still badged *preview*, runner-images issue 14404); its
+software list `images/macos/xcode-27-arm64-Readme.md` gives macOS 27.0.1, image `20261104.0337.1`,
+Xcode 27.0, 27.1 (default) and 27.2, iOS SDKs 27.0-27.2, and no preinstalled Rust (both jobs install
+it with `dtolnay/rust-toolchain`). The standard label, not `-xlarge`: the larger runner is billed.
+`ios-compile-job.test.mjs` asserts the two jobs name the SAME runner and the SAME pin, so a pull
+request never compiles on another toolchain than the one the release archives with. The move and
+what closes it: [the backlog entry](backlog.d/p2-ios-builds-need-the-ios-27-sdk-before-april-2027.md).
+
+**Xcode 27 makes a Swift `@_cdecl` export a LOCAL symbol.** The first compile on the new runner
+failed at the link with `Undefined symbols: _init_plugin_customtabs`, `_init_plugin_gallery`,
+`_init_plugin_keystore`, `_init_plugin_system_components` - the entry point of every Swift plugin.
+`swift-rs` 1.0.9 promotes those symbols back to global with `llvm-objcopy` from rustup's
+`llvm-tools` component (Apple ships none), and when the tool is missing it only prints a
+`cargo:warning` and lets the link fail. `ios-libapp.sh`, the one script both jobs run, now
+`rustup component add llvm-tools` into the pinned toolchain beside the iOS target. The
+`compile-ios-app` Rust cache key names the Xcode (`ios-app-xcode-27`): a tree built under Xcode 26
+carried its toolchain's link search paths into the first run.
+
+**macOS 27's dyld refuses a stripped proc-macro dylib.** The first COLD build on the runner (new
+cache key, nothing restored) failed in `sqlx`: `dlopen(.../libsqlx_macros-*.dylib): mis-aligned
+LINKEDIT string pool`. Cargo's release profile strips debuginfo by default, the `build-override`
+profile that builds proc macros and build scripts included, and the stripped host dylib no longer
+loads; the cache from `macos-15` had hidden it in the first run. The fix is in the PROFILE, so no
+host build escapes it: `[profile.release.build-override] strip = false` in
+`frontend/src-tauri/Cargo.toml` and `frontend/mls-wasm/Cargo.toml` (the MLS WASM build runs on the
+same runner). Nothing that ships changes: cargo never strips a `staticlib` or a wasm, and the Xcode
+archive strips the app. `build-mls-wasm` names the Xcode major on macOS in BOTH of its caches:
+the built-artefact key (`mls-wasm-macOS-xcode27-...`) and the `cache-key` of the Rust target cache
+that `setup-rust-toolchain` restores on a miss - the first version keyed only the former, and run
+44278923984 restored `frontend/mls-wasm/target` from another key on a "full match". A new Xcode major
+therefore finds neither entry and rebuilds both from source; no host dylib crosses an image.
+
+**What else the move added.** `ios-libapp.sh` asserts after `cargo build` that every
+`_init_plugin_*` the Rust objects reference is an EXTERNAL `T` symbol of `libapp.a` (rustup's `llvm-nm -g`: Xcode's `nm` cannot read rustc's bitcode), so a
+plugin swift-rs failed to re-export fails there, by name. Every `xcodebuild` build and archive names
+`-destination 'generic/platform=iOS'` (Xcode 27 otherwise warns "Using the first of multiple matching
+destinations"). `ios.yml` installs the provisioning profiles into both stores Xcode scans
+(`~/Library/MobileDevice/Provisioning Profiles` and `~/Library/Developer/Xcode/UserData/Provisioning
+Profiles`) and writes `xcodebuild -version`, the iOS SDK, the runner image and the `altool` it will
+upload with (`xcrun --find altool`, version printed; the step FAILS naming it when absent, so the
+first pre-release on a new Xcode proves the upload tool before the upload needs it) to the run summary.
+
+**The `xcode-27` label is a preview, and its queue time is not bounded.** `build-ios` carries
+`timeout-minutes: 90` (a clean signed run measured about 20 minutes), so a hung job cannot hold
+`release.yml`'s `release` concurrency group - and with it the next cut - for GitHub's default 360
+minutes. The timeout counts from the job's start, not from its wait for a runner. The proof that a
+runner is available before a STABLE is the iOS leg of that version's pre-release going green: a
+stable is cut only after it.
 
 ### A green run is not proof that *your* file compiled
 
@@ -2338,7 +2646,7 @@ Neither mechanism above reaches a crate replaced through `[patch.crates-io]` by 
 of `scheduled.yml` (the Monday `0 4 * * 1` slot it shares with `cargo-unreachable`; by hand: dispatch
 job `vendored-upstream`) runs `.github/scripts/vendored-upstream-report.sh`, which compares, for each
 crate on its ALLOWLIST (`tauri-plugin-websocket`, `wry`, and since 2026-11-11
-`tauri-plugin-system-components` and `tauri-plugin-keystore` - every `[patch.crates-io]` entry), the
+`tauri-plugin-system-components` and `tauri-plugin-keystore`, and since 2026-11-18 `tauri-plugin-dialog` - every `[patch.crates-io]` entry), the
 fork's `[package]` version with crates.io:
 
 - **a fork of a STABLE release is compared with `max_stable_version` only.** Upstream's pre-releases
@@ -2707,17 +3015,13 @@ will not produce on demand, and `make test-ci-scripts` runs every suite in secon
 decision, change its assertion, and prove the assertion by breaking the thing it guards - a test
 that passes on a mutation is a test that asserts nothing.
 
-**And lint before pushing, because this workstation has no `shellcheck` and CI does.** A change to
-these scripts went red on 2026-09-01 for two findings a local run would have named in one second
+**`shellcheck` runs at commit now, and the hooks refuse to run without it.** A change to these
+scripts went red on 2026-09-01 for two findings a local run would have named in one second
 (`SC1091` - `# shellcheck source-path=SCRIPTDIR` is **per-command, not per-file**, so a second
 `source` needs its own copy - and `SC2016` on a `'${'` case pattern that meant the brace literally).
-Fetch the pinned version into a scratch directory and use the invocation `ci.yml` uses:
-
-```sh
-curl -sSL -o sc.zip https://github.com/koalaman/shellcheck/releases/download/v0.10.0/shellcheck-v0.10.0.zip
-# unzip, then, from the repo root:
-./shellcheck.exe -x .github/scripts/*.sh .github/scripts/lib/*.sh .github/scripts/tests/*.sh
-```
+Since 2026-11-15 a staged `.sh` runs `make lint-ci-scripts`, the invocation CI uses, and a machine
+without `shellcheck`, or with another version than `.shellcheck-version` (0.11 names an indirect call SC2329 where the pinned 0.10 says SC2317, which turned #3623 red in CI after a green push), is refused and told which release to install
+([the tiers](#checks-at-commit-at-push-and-in-ci-only)).
 
 ### The npm advisory endpoint's silence is not a verdict, and telling them apart is one script
 
@@ -2842,6 +3146,94 @@ things a gate must not confuse, so the job is back in `ci-passed`'s `needs` with
 merge, exit 2 (npm never answered) passes as a warning. The cost accepted with it: a new advisory on
 untouched code turns every pull request red until its fix merges, and an outage makes the job slow
 without making it red. The block above `dependency-audit` in `ci.yml` is the only other copy.
+
+### The audit blocks on what we ship (2026-11-17)
+
+**Owner, 2026-11-17 ("Ce qu'on livre"):** a pull request and a stable are refused only by an advisory
+in what we SHIP. An advisory in build or test tooling is reported by the nightly `scheduled.yml`
+audit, where it is still a failure, and freezes no merge. #1229's hole stays closed for shipped code.
+
+**What forced it.** `GHSA-fc5q-39xc-vjpf` (high, picomatch ReDoS through single-branch repeated
+extglobs, every version `<= 4.0.7`, which covers the 2.x copies too) was reviewed on 2026-11-17 and
+turned the audit red in all five trees. **No fixed release exists**: 4.0.7 is the latest, so no
+upgrade or override can clear it, and `bun audit fix` does nothing. It arrives through vite, vitest,
+knip, svelte-check and paraglide (frontend) and through `@nestjs/cli`, `@angular-devkit` and jest
+(services). The ReDoS needs an attacker to choose the glob PATTERN.
+
+**One table, three readers.** `.github/scripts/lib/audit-trees.sh` holds every tree's install flags,
+level, closure and ignores. The pull-request audit reads it with `closure: production`
+(`ci.yml` passes it to `code-analysis.yml`). The nightly reads it with `full`. Gate 7 of
+`release-preflight.sh` reads it with `production`, stables only. `audit-dependencies.test.sh`
+pins the flags and asserts that the table's trees are exactly the directories of
+`git ls-files '*bun.lock'` (minus commented exclusions, none today) and the matrix's. That is how
+`libs/handoff` (its `jose`, audited by nothing until then) joined, as a sixth tree audited like a
+service.
+
+**What "what we ship" means, per tree. It is measured, not assumed:**
+
+| Tree | Production closure | Why |
+| ---- | ------------------ | --- |
+| the four services, `libs/handoff` | `bun audit --prod` | the image runs `bun dist/main.js`, which loads only what `dependencies` reaches. `--prod` (and `--production`, `-p`) is missing from `bun audit --help` in bun 1.4.0 but works: it reads the lockfile alone, and on 2026-11-17 it dropped picomatch from media-service while keeping its five minio advisories |
+| frontend | **the full audit, never `--prod`** | `svelte`, `@sveltejs/kit`, `protobufjs`, `parse5` and `emoji-picker-element-data` are devDependencies and are BUNDLED. The SSR image copies only `build/`, with no `node_modules`. `--prod` would stop auditing the code users run. Treating kit as shipped does not help either: `bun audit --prod` follows kit's PEER `vite` and brings picomatch back |
+
+**The frontend is the one exception to "a tool's advisory does not block a pull request"**: its
+pull-request audit still blocks on a devDependency advisory, because its devDependencies are bundled
+into what ships.
+
+**picomatch, measured on 2026-11-17:**
+
+- **frontend**: outside what ships. Its shipped closure (dependencies plus every devDependency not
+  declared build-only, 137 packages) reaches no picomatch. The `1.7.0-alpha.9` `frontend-build`
+  artefact holds none of its code: no `picomatch`, `POSIX_REGEX_SOURCE` or `REGEX_NON_SPECIAL_CHARS`,
+  object keys that minification keeps.
+- **media-service**: `--prod` reports no picomatch at all.
+- **core, social, chat-delivery**: **picomatch is shipped and loaded** as
+  `typeorm@1.1.3 > tinyglobby > picomatch`. `ConnectionMetadataBuilder` requires the loader when the
+  service boots. But TypeORM calls `globSync` only for the STRING entries of `entities`, `migrations`
+  and `subscribers`. All three pass classes only (social uses `autoLoadEntities`), so no pattern is
+  ever compiled, and a pattern would be ours anyway.
+
+So `--ignore=GHSA-fc5q-39xc-vjpf` is granted in the production closure of the frontend and the three
+TypeORM trees. `.github/scripts/picomatch-premise.mjs <tree> production` asserts the premise on each
+installed tree, and `tests/picomatch-premise.test.mjs` is its self-test:
+
+- frontend: picomatch is unreached. A new devDependency counts as shipped until declared build-only.
+- the three TypeORM trees: picomatch's only shipped parent is tinyglobby, and tinyglobby's is typeorm.
+  Inside typeorm only `util/DirectoryExportedClassesLoader.js` imports tinyglobby. **No string reaches
+  it, asserted at runtime**: each service's `app-module.boot-spec.ts` (the `boot-nest-apps` job) reads
+  `entities`, `migrations` and `subscribers` off the DataSource the real AppModule built and expects
+  no string, which a shorthand, a const, a spread or a factory cannot evade. The premise script
+  refuses the ignore if that assertion leaves the spec. It also keeps a grep for a LITERAL string in
+  every shipped `src` file, because it runs in the audit job of every pull request (the boot runs
+  only when a service changed) and reads a DataSource built outside the AppModule, which the boot
+  never constructs.
+
+**The nightly ignores it too, in all five trees that hold picomatch, on another premise (coordinator, 2026-11-17).** In
+the full closure the build tools DO hold picomatch, and the audit has reported it (every pull request of 2026-11-17). A
+nightly that stays red until upstream ships is noise: its reader learns to skip it, and it hides the
+next advisory. So the full closure carries the same ignore, and `picomatch-premise.mjs <tree> full`
+asserts that **no fixed release exists**. It reads GitHub's advisory record
+(`GET /advisories/GHSA-fc5q-39xc-vjpf`) and refuses the ignore when any picomatch entry has a
+`first_patched_version`, when the advisory is withdrawn, or when the record cannot be read after one
+retry five seconds later. The day a
+fix ships, the nightly goes red, which is exactly when there is something to do: upgrade.
+
+`Every ignored advisory is still reported` then retires the ignore once the upgrade has landed and nothing reports the advisory any more.
+
+**Gate 7 on an outage, and its evidence.** Every refusal prints the audit's whole output, indented:
+the package and path of an advisory, or what an unrecognised failure said. Once one tree's registry
+has not answered, the remaining trees are asked with `AUDIT_ATTEMPTS=1`. An outage then costs one
+tree's three attempts plus one per other tree, not three each (up to 80 minutes). Its remedy is
+`gh run rerun <run>`, which re-reads the same tag. `release-preflight.test.sh` runs the loop
+(`shipped_closure_gate`) against a fake audit.
+
+**What else the production audit reads (2026-11-17):** a LOW `fast-xml-parser` advisory
+(GHSA-474x-hrwr-fgx4, via minio and firebase-admin) is below the services' `moderate` level.
+
+**What the service images really contain is a separate defect.** Each service Dockerfile installs
+without `--production` and copies the whole `node_modules`, dev tools included, into the runtime
+stage ([backlog](backlog.d/p2-service-images-ship-their-dev-dependencies.md)). Those tools are
+never loaded, so the closure above is what RUNS. They are still on the image's disk.
 
 **THE BACKOFF IS WHAT MAKES AN EXHAUSTED BUDGET MEAN SOMETHING.** `BACKOFF_BASE_S=20` sleeps 20s
 then 40s, so three attempts span a minute plus `bun audit`'s own timeout. Three consecutive 503s are
@@ -3038,9 +3430,9 @@ The open line is in [backlog](backlog.d/p3-audit-advisories-are-suppressed-becau
 
 **Retirement is ASSERTED, not polled (2026-10-10).** The premises step audits media-service without its ignores and fails when any ignored id is no longer reported (`ignored-advisories-still-reported.sh`, `tests/ignored-advisories-still-reported.test.sh`; a registry that did not answer concludes nothing). The five hand re-checks logged here until 2026-10-09 each found `minio` still 8.0.7, `query-string: ^7.1.3`, `stream-json: ^1.8.0`.
 
-### One frontend advisory is ignored, and it is not about kit (2026-10-28)
+### The frontend audit carries one ignore, picomatch's (2026-11-17)
 
-(The two SvelteKit GHSAs it once carried left with the kit 3 upgrade.) `GHSA-gcqx-w48m-w2h4` (2026-10-28), is the other kind: LOW, `deepmerge` <= 4.3.1, no fixed version, reachable only through build tooling (`@sveltejs/vite-plugin-svelte`, `@rollup/plugin-node-resolve`), merging the project's own configuration. That no copy reaches the shipped bundle was not verified; the same retirement step removes it when the audit stops naming it.
+`GHSA-gcqx-w48m-w2h4` (LOW, `deepmerge` <= 4.3.1) was ignored from 2026-10-28. The audit stopped reporting it (the dependency moved), `Every ignored advisory is still reported` failed as designed, and the `--ignore` was deleted on 2026-11-16. Since 2026-11-17 the frontend carries `GHSA-fc5q-39xc-vjpf` only, with its asserted premise ([what we ship](#the-audit-blocks-on-what-we-ship-2026-11-17)). It is audited at bun's default level.
 
 ### The Rust ignores live in `.cargo/audit.toml` and retire themselves too (2026-10-24)
 
@@ -3056,10 +3448,14 @@ directory holding no `audit.toml`, against the database the audit step just fetc
 only in 0.7.6) turned `main` red on 2026-10-24 in all four trees. It cannot be taken by a lockfile
 change: crypto-bigint 0.7 means elliptic-curve 0.14, and every p256/p384 0.13 user here is at its
 newest release (jsonwebtoken 11.1.0, openmls_rust_crypto 0.6.0, webrtc 0.17.2's dtls). It is
-unreachable in chat-gateway (HS256 only), mls-wasm and src-tauri (one X25519/Ed25519 suite), and
+unreachable in mls-wasm and src-tauri (one X25519/Ed25519 suite), and
 **reachable in code in call-service**, whose DTLS runs P-256/P-384 ECDHE on a per-handshake
 ephemeral secret - bounded by that secret living for one operation and by the SFU never having
 placed a production call. The webrtc 0.21 port ([calls](frontend/modules/calls.md#the-webrtc-020-port-measured-2026-09-15)) removes that edge.
+
+jsonwebtoken 12.0.0 (2026-11-18) moved onto elliptic-curve 0.14 and rsa 0.10, so chat-gateway's tree
+reports neither `RUSTSEC-2026-0387` nor the `rsa` Marvin advisory (`RUSTSEC-2023-0071`) and carries
+no ignore at all; call-service keeps `-0387` on its webrtc dtls edge alone.
 
 `RUSTSEC-2026-0441` (pin-utils, an "unmaintained" status warning only, 2026-11-09) is ignored in call-service on the same webrtc 0.17 edge (webrtc-util -> nix 0.26.4 -> pin-utils): no lockfile bump drops it, the webrtc 0.21 port does; re-examine by then or 2027-01-31.
 
@@ -3090,6 +3486,229 @@ npm is gone (`node --run test` replaced the one `npm test` in `ci.yml` and the o
 
 **The work**: port four NestJS services from jest to `bun test` - `jest.fn()`/`jest.spyOn` to bun's `mock`/`spyOn`, `ts-jest` (which TypeScript 7 already could not load, see [ecosystem-convergence](ecosystem-convergence.md) section 9), the `moduleNameMapper`, the `@nestjs/testing` fixtures. Days, not hours, and it touches suites guarding MLS storage - the wrong place to discover a mock that silently stopped asserting. It waits for the campaign ladder to reach the bottom, because a test-framework migration changes what "green" means for every rung still to be taken. Until then: bun is the package manager and runtime everywhere except one test invocation, which runs on node on purpose.
 
+## Checks at commit, at push, and in CI only
+
+**The owner's decision, 2026-11-15:** *"tout ce qui est vérifié à la PR devrait être vérifié au
+commit, la fusion de PR devrait être une formalité"*. Four choices came with it:
+
+1. **At commit**, fast checks scoped to the touched files: doc links, the plan regeneration, the
+   log guards, the ratchets and allowlists, the touched modules' unit tests. Seconds, not minutes.
+2. **At push**, what the pushed files touch - see the owner's correction below.
+3. **CI only**, what a Windows workstation cannot run, and the full suites a range does not touch.
+
+**The owner's correction, 2026-11-16 - *alléger le push*:** a push of "everything a workstation can
+run" measured about an hour on this workstation, `make test-ci-scripts` alone about 56 minutes, and
+that is not a formality. The push tier therefore runs ONLY what the changed files touch: the same
+path filters as CI's `changes` job (`ci-scopes.sh`), applied to the diff since the last verified
+commit (the stamp, or the merged `origin/main` on a branch's first push). The full suites -
+`test-ci-scripts` included - stay in CI only (the evening correction below removed the exception
+for a CI-script range). The commit tier stays fast.
+
+**The owner's second correction, 2026-11-16 evening - *la rapidité*:** even scoped, a push still ran
+a service's whole jest suite, a crate's `cargo test`, `make test-ci-scripts` on any CI-script change
+and the whole vitest suite on any deleted `frontend/src` file - 40 min to 2 h each here, and with
+several agents pushing at once the workstation saturated (90% RAM, vitest workers timing out, pushes
+refused for load, not code). The owner: *"Je veux que ce soit le plus rapide possible. La raison pour
+laquelle on a fait du pre-push sur le PC, c'est que la PR échouait souvent au bout de 20 minutes pour
+des raisons futiles. Si on ne gagne pas de temps, ça ne sert à rien."* So the push keeps ONLY what
+catches those futile failures in minutes - the path rules and whole-tree scans, the ratchet, the
+lockfile and Tauri-parity guards, `frontend-generated`, `frontend-lint` (lint + `svelte-check`) and
+the vitest run of the tests the range reaches. Everything else in `JOB_TIERS` is `ci-only` or
+`split`, and the push names each on stderr (`CI only: ...`), so the reader knows what it did not
+prove. Agents push with at most four developers at once (owner, same evening).
+4. **The pre-push hook merges the latest `origin/main` before its checks.** The failures that day
+   were "main moved" ratchet drift (#3580, #3599) and dead wiki links found only by CI (#3607,
+   #3608, #3599).
+
+### One copy of every command
+
+Three scripts, and nothing else names a check's command:
+
+| Script | Answers | Called by |
+| --- | --- | --- |
+| `.github/scripts/ci-scopes.sh` | WHICH areas a range touches (`frontend=true`, the rust matrix...) | the `changes` job of `ci.yml`, and the pre-push |
+| `.github/scripts/checks.sh` | HOW a check runs (`rust <crate> [step]`, `ts <svc> [step]`, `frontend-lint`, `dead-code`, `frontend-test`, `frontend-build`, `mls-wasm-build`/`verify`, `lockfile-version`, `tauri-parity`) | `ci.yml`, `code-analysis.yml`, the `build-mls-wasm` action, and the push tier |
+| `.github/scripts/local-ci.sh` | WHEN a check runs locally: `commit`, `push`, `all` (`make run-ci`), and `JOB_TIERS`, the tier of every `ci.yml` job | `.husky/pre-commit`, `.husky/pre-push`, the Makefile |
+
+A Make target (`test-ci-scripts`, `test-harness`, `lint-ci-scripts`) is the fourth kind of copy,
+called by name from both sides. `local-ci.test.sh` (in `make test-ci-scripts`) fails when a job of
+`ci.yml` has no tier in `JOB_TIERS`, when `JOB_TIERS` names a job that is gone, and when this
+section does not name every job - so a new CI job cannot arrive without deciding where it runs
+before the pull request.
+
+### The inventory - every job of `ci.yml`
+
+Durations measured on the Windows workstation (OXYGEN, 2026-11-15, under the load of other
+sessions - a Linux runner is faster). "Push" means the pre-push runs it when `ci-scopes.sh` says the
+pushed range (the merged `origin/main` to HEAD) touches its area. **Since the evening correction of
+2026-11-16 only the minutes-long checks keep that tier** (the path rules, the whole-tree scans, the
+ratchet, the lockfile and Tauri-parity guards, `frontend-generated`, `frontend-lint`, the related
+vitest run); every other row below is `ci-only` or `split`, and the push names it on stderr. A
+docs-only push runs the path rules and the whole-tree scans, in seconds.
+
+| Job | Tier | Runs locally as | Measured | Why |
+| --- | --- | --- | --- | --- |
+| `changes` | push | `ci-scopes.sh <merge-base> HEAD` | < 1 s | the same filters, read from the same script |
+| `test-rust` | CI only since 2026-11-16 evening (was push) | `checks.sh rust <crate>` per crate in scope: lockfile, fmt, clippy, task | cold, from an empty target: mls-core 165 s, call-service 117 s, chat-gateway 119 s, mls-wasm 39 s; src-tauri not measured | the gateway's Redis-backed half needs a Redis service: CI only |
+| `test-typescript-backend` | CI only since 2026-11-16 evening (was push) | `checks.sh ts <svc>` per service in scope: install, lint, format, typecheck, build, unit specs | core 29 s, media 28 s, chat-delivery 80 s, social 208 s | - |
+| `test-frontend` | split since 2026-11-16 evening: generated and lint at push, dead-code and build CI only | `local-ci.sh generated` (install, sync, proto, wasm), `checks.sh frontend-lint`, `dead-code`, `frontend-build` | lint 13 s, `svelte-check` 53 s, format 4 s, dead-code 24 s, wasm build 1 min 55 s when its source changed (0 s otherwise), install 24 s | - |
+| `test-frontend-shards` | split since 2026-11-16 evening: the related tests at push; the whole suite (the cases below) is CI's, said by a named line | `checks.sh frontend-test-related <base>`: `vitest related` over the range's changed `frontend/src` files, plus every source-tree scan (`src/test/sourceTree`) and every test naming a changed file - what the import graph cannot see. **A change to the test setup** (the top-level configs of it are ALSO in `ci-scopes.sh`'s `frontend=true`, asserted alone by `local-ci.test.sh` since 2026-11-16, or the whole-suite rule below would never be reached; `vite.config.js`, `vitest.config.ts`, `kit.config.js`, `tsconfig.json`, `package.json`, `bun.lock`, `src/test/`, `messages/`, `project.inlang/`, `static/`, the two MLS crates and `libs/proto` - generated into `src` - and `libs/contracts`), **or a deletion under `frontend/src`** (no import graph is left to ask), owes the whole suite, which the push does NOT run since the evening correction: it says by a named line that the suite is CI's (owner, 2026-11-16) | the whole suite 12-15 min here (1786 files, 19165 tests; ~6-7 min per shard on a CI runner) | the whole suite with coverage is CI's |
+| `test-android` | CI only since 2026-11-16 evening (was push) | `android-unit-tests.sh` (a JDK) | 75 s (272 tests) | - |
+| `test-harness` | CI only since 2026-11-16 evening (was push) | `make test-harness` | 41 s | - |
+| `test-ci-scripts` | split since 2026-11-16 evening: the whole-tree scans and path rules at push, `make test-ci-scripts` CI only (was push, by range) | until 2026-11-16 evening, `make test-ci-scripts` when the range touched a CI script; now on every push only its whole-tree scans (`control-characters`, `no-nul-in-source`, `line-endings`) and the path rules over the range; then `ratchet-not-raised.mjs` against the merge base | `make test-ci-scripts`: 43 min here without `deploy-rolling.test.sh` (the push of 2026-11-15), 46 min with it (6 min on a CI runner) | CI runs this suite on every pull request, and the push leaves it to CI, said by name on stderr (one of several places the push proves less since the evening correction). Needs `shellcheck`. **`deploy-rolling.test.sh` does not run under Docker Desktop** (the recipe reads `docker info`, prints a named line, and runs it on any other engine): it measures a Linux engine's reload timing, and here it failed twice in two runs on two different cases - its own control saw no failure from DNS-name calls, then one `ConnectionRefused` in 44502 POSTs across 450 reloads. CI, on a Linux engine, is green on it. Not diagnosed further; open in [backlog.d](backlog.d/p3-the-checks-at-commit-shape-is-carried-to-the-other-repos-and-the-ci-only-list-shrinks.md) |
+| `mls-forward-compat` | CI only since 2026-11-16 evening (was push) | `mls-forward-compat.sh` | 107 s | - |
+| `security` | split | the lockfile and Tauri-parity guards at push (`checks.sh lockfile-version`, `tauri-parity`, < 1 s each) | - | CodeQL and the secret scan are GitHub services: CI only |
+| `boot-nest-apps` | CI only | - | - | boots each service on PostgreSQL, Redis and an S3 endpoint |
+| `test-social-integration` | CI only | - | - | integration specs on PostgreSQL and Redis |
+| `test-chat-delivery-integration` | CI only | - | - | integration specs on PostgreSQL |
+| `compile-android-app` | CI only | - | - | needs the Android SDK and NDK |
+| `compile-ios-app` | CI only | - | - | needs macOS and Xcode |
+| `test-call-service-e2e` | CI only | - | - | coturn and five headless browsers on a Linux runner |
+| `dependency-ceiling` | CI only | - | - | decides on a Dependabot pull request only |
+| `dependency-audit` | CI only | - | - | a verdict on the advisory databases, not on the commit; ~5 min per tree |
+| `test-miconnect-blueprints` | CI only | - | - | a full Authentik pair in Docker, twice |
+| `upstream-monitor-freshness` | CI only | - | - | a push to `main` only; reads GitHub |
+| `ci-passed` | CI only | - | - | the aggregation of the jobs above |
+
+The pre-push prints the CI-only jobs its range will trigger, so nobody reads a green push as a
+green pull request. Three of them could run on a workstation with Docker or an SDK and were not
+measured there; that is open in
+[backlog.d](backlog.d/p3-the-checks-at-commit-shape-is-carried-to-the-other-repos-and-the-ci-only-list-shrinks.md).
+
+### The commit tier - what fires on which staged path
+
+`local-ci.sh commit` runs after the pre-commit fixers. Each rule fires only when a staged path
+matches it; a commit touching none of them pays nothing.
+
+| Staged path | Check | Measured |
+| --- | --- | --- |
+| a `.md`, or any deletion or rename | `wiki-links.test.mjs` (reads `git ls-files`, no disk walk) | 0.4 s |
+| a `.md` | `docs-merge-artefacts.test.mjs` | 0.3 s |
+| `docs/wiki/backlog.d/`, `backlog.md`, `plan.md`, `tools/backlog-plan/` | `plan.mjs` re-run and `plan.md` staged, then `backlog-plan.test.mjs`; `backlog-fragments`, `backlog-closed` | 0.5 s, 0.1 s, 0.2 s |
+| `CLAUDE.md` | `claude-md-cap.test.mjs` | 0.05 s |
+| `.md`, `.sh`, `.yml`, `.ts`, `.mjs`, `.env.example` | `docs-private-guard.test.mjs` | 3.3 s |
+| a `.sh` or `.husky/` | `executable-bit`; `pipefail-early-reader`; shellcheck on the staged scripts of the set CI lints (`make lint-ci-scripts FILES=...`, `-x` follows what they source) | 0.15 s, 0.16 s, ~1 s (the whole set, 15-37 s, is the push's) |
+| `.github/` or the Makefile | the CI-definition guards: `changes-outputs`, `ios-compile-job`, `ci-passed-gate`, `action-pins`, `secret-levels`, `codeql-category`, `shellcheck-scope`, `recipe-covers-tests`, `workflow-expressions` | 2.7 s together (`local-ci.test.sh`, 43 s, is the push's) |
+| a `.ts` under `frontend/src` or `apps/*/src` | `declared-duplicates`, `undeclared-duplicates` | 0.8 s |
+| a migration | `migration-numbers.test.mjs` | 0.06 s |
+| `infrastructure/` or a Dockerfile | `image-scan-allowlist.test.mjs` | 1.2 s |
+| `rawControlsRatchet.json` | `ratchet-not-raised.mjs` | < 1 s |
+| a native source under `src-tauri` | vitest `nativeLogContent.test.ts` | ~2.5 s |
+| a `.svelte` file or the ratchet | vitest `controlsGuard.test.ts` | ~2.5 s |
+| a frontend module | its sibling tests (`x.test.ts`, `x.*.test.ts`) in one vitest run | ~2.5 s per file |
+| a service module | its sibling unit specs under jest (integration specs are CI's) | ~9 s for one spec (ts-jest start-up) |
+
+**What is NOT at commit, and why**: `vitest related` (65-114 s for one file - it walks the whole
+import graph) and the dead-code ratchet (24 s, a whole-program scan) are at push. A merge commit
+skips the module tests (the push runs `vitest related` over the merged range). The whole-tree scans of
+`make test-ci-scripts` (`control-characters` 24 s, `no-nul-in-source` 7 s) stay at push: they read
+every file whatever was staged.
+
+### Generated artefacts are built, never assumed
+
+The commit tier's vitest step first runs `local-ci.sh artefacts`: `svelte-kit sync` when
+`.svelte-kit` is missing or a route is staged, Paraglide when its output is missing or a message
+file is staged, `proto:gen` when the protobuf output is missing or `libs/proto` is staged. A
+missing wasm is REFUSED with the command that builds it (`cd frontend && bun run wasm:build`) -
+two minutes is not a commit's to spend silently. The push tier's `local-ci.sh generated` builds
+everything: install, sync, protobuf, and the wasm when its source key changed. The key is the git
+tree ids of `frontend/mls-wasm`, `frontend/mls-core` and `rust-toolchain.toml` plus the `wasm-pack`
+version, written to `frontend/src/lib/wasm/.canari-source-key` - the same inputs as the CI cache
+key. It installs the pinned `wasm-pack` through `scripts/install-wasm-pack.sh` and always ends with
+`checks.sh mls-wasm-verify`, CI's own verification.
+
+### The denylist: unset fails, `none` declares
+
+`docs-private-guard.test.mjs` reads infrastructure names from `DOCS_PRIVATE_DENYLIST_FILE`, a file
+outside the public repository. It used to pass silently when the variable was unset - a gate that
+skips reads exactly like a gate that passed. Now:
+
+- **unset**: refused, pointing here. The push refuses before its first check, not minutes in.
+- **`none`**: the run prints `DENYLIST DECLARED ABSENT` and checks only the built-in patterns. CI
+  sets it, since the runners have no copy.
+- **a path that does not exist**: refused.
+
+Each workstation sets the variable once, to its local copy (or to `none`, said out loud).
+
+### Hooks that cannot be skipped without anyone knowing
+
+On #3611 a commit made in a fresh `git worktree` ran NO hook: `core.hooksPath` pointed at
+`.husky/_`, a directory `husky install` generates inside `node_modules`'s reach, and a worktree
+without it makes git skip the hook silently. **`core.hooksPath` is now `.husky`, the tracked
+directory itself** - `pre-commit` and `pre-push` are committed with mode 100755 and git calls them
+directly, so every worktree of the clone has them. `frontend/scripts/install-husky.js` (run by the
+frontend `bun install`) sets and asserts that value; it no longer runs the husky binary.
+`husky-hookspath.test.mjs` asserts the value and the tracked modes. **And both tiers refuse any
+`core.hooksPath` but `.husky` or `.husky/_`** (`assert_hooks_path` in `local-ci.sh`): the same day
+the shared value was found UNSET (no hook ran in any worktree). `.husky/_` is what an older
+branch's `bun install` writes, and stays the expected state until every branch carries the new
+install script, so it is SAID (one line naming what a fresh worktree loses), not refused - the hook
+running at all proves this checkout has the wrappers. **The shared config is never written by hand
+or by a hook**: it follows the install script of whatever branch a HUMAN ran `bun install` in last,
+so it converges on `.husky` as branches take main. The push tier's own `bun install` sets
+`CANARI_KEEP_HOOKS_PATH=1`, and `install-husky.js` then writes nothing - stopped at the source, not
+written and restored (`husky-hookspath.test.mjs` runs the installer both ways). `local-ci.test.sh` refuses an unset and an absolute
+value at both tiers, and accepts `.husky/_` with its line.
+
+A hook that runs but lacks its toolchain FAILS, naming what to install: `bun` not on PATH, a
+package's `node_modules` missing (with its `bun install` line), `cargo` for a staged crate, and at
+push `shellcheck`, `cargo`, `node` or `java` as the planned checks need them.
+`local-ci.test.sh` covers the tracked hooks and the refusals.
+
+### The push: merge, check, and push again
+
+`local-ci.sh push`, from `.husky/pre-push`:
+
+1. It refuses a push of anything but the checked-out commit (the checks run on the working tree;
+   an annotated tag is read as the commit under it), a dirty tree, and `LOCAL_CI_DRY_RUN=1` - the
+   commit tier's switch, which at push would send commits nothing checked. A push of deletions only
+   passes.
+2. **The destination decides the merge.** A push to `refs/heads/main` is refused by name (main
+   takes changes through a pull request). A release branch (`refs/heads/release/*`), a tag, or any
+   ref outside `refs/heads/` is NOT headed for main: merging main into a release fix would ship
+   main's unreleased work with it, so it is checked as it is, against what the remote already holds
+   under that name (or, for a new ref, where it leaves `origin/main`), and never merged. Any other
+   branch is a feature branch: `git fetch origin main`, and when `origin/main` is not already in
+   HEAD, `git merge --no-edit origin/main`. **A conflict aborts the merge and refuses the push**,
+   listing the files; a check failing after a merge says *"HEAD now includes a merge of
+   origin/main (<sha>)"*, since the branch is no longer what was committed.
+3. The plan for the range `origin/main..HEAD` - or, when a commit already verified here (the
+   stamp) is in HEAD, for `stamp..HEAD`: its tree passed what its range owed, so only what came in
+   since is checked. Without that a branch whose plan outlasts main's merge rate never converges
+   (measured 2026-11-15: an hour-long plan, main moved twice during it). The plan is the path rules over every file of the range (the
+   commit tier's, re-proved for the whole branch), the whole-tree scans, and each job whose
+   `ci-scopes.sh` scope the range triggers - with a progress line each (`[push 3/9] frontend-lint ... ok (13s)`);
+   a failure prints the last 40 lines of its log (`.git/canari-local-ci/<check>.log`, per worktree)
+   and stops. `local-ci.sh push-plan <base>` prints that plan and runs nothing - how the self-test
+   reads it; the self-test runs the push itself for real, against stub checks.
+4. On success it stamps the verified commit - the ONE writer of the stamp, never reached without
+   the checks running. **If it merged, it refuses once**: git chose the
+   pushed commits before the hook ran, so the merge cannot ride this push - *"Run the same git push
+   again"*. The second push finds HEAD is the merge it asked for (`resend-head`, beside the stamp) and
+   passes at once - **before any fetch**, so main moving during the run does not start a third: CI
+   tests the pull request merged onto the current main regardless (measured 2026-11-15: with that
+   check after the fetch, three runs in a row were each refused because main had moved meanwhile).
+   A stamped commit the hook did NOT just merge is still fetched and merged when main moved.
+
+**A hook's environment is not CI's.** Git hands a hook `GIT_DIR` (and, at commit, `GIT_INDEX_FILE`),
+and every check inherits it. The first push run on 2026-11-15 ran `local-ci.test.sh`, whose
+`git -C "$scratch" ...` then wrote into the REAL repository: two `base` commits on the pushed branch
+and a test identity with signing off in the shared `.git/config`, and `core.bare=true` (from `git init`
+re-initialising a `GIT_DIR` with no work tree), which broke the main checkout - all undone by hand.
+The keys the leak could touch are what the test's `configure` and `git init` write: `user.name`,
+`user.email`, `commit.gpgsign`, `core.hooksPath`, `core.autocrlf` and `core.bare`. `local-ci.sh`
+now unsets `git rev-parse --local-env-vars` first, keeping only the commit's index for the one read
+of what is staged, and `local-ci.test.sh` asserts it with a decoy `GIT_DIR`, then compares the real repository's `core.bare`, `core.hooksPath`, `user.*` and `commit.gpgsign` with what they were before its run.
+
+A push that needs CI's verdict on an unmerged range is not possible from here on; that is the
+point. The emergency path is unchanged: a human with admin rights, written into `CHANGELOG.md`.
+
+### The other repositories
+
+Sky, MiGallery, Portail-etu and Le Cercle keep their hooks for now. The convergence will want the
+same shape - one scope script, one command script, tracked hooks - once it has run here for a
+release ([ecosystem-convergence](ecosystem-convergence.md#6-the-gates-and-whether-anything-runs-them)).
+
 ## Notable CI gotchas
 
 - **A CONFLICTING PR PRODUCES NO `pull_request` RUN, AND THE CHECKS LIST STILL LOOKS BUSY.** The `pull_request` event is computed against the MERGE ref; with a conflict GitHub cannot build one, so `CI` is never queued - not red, not skipped, simply never created. `arm-auto-merge` is `pull_request_target`, evaluates against the base, and runs anyway, so one green row sits there while nothing tests the code. PR #525 waited twice and survived a close/reopen before the state was actually asked for. `gh run list` returning nothing is an ANSWER: read `gh pr view <n> --json mergeable,mergeStateStatus` (`CONFLICTING` / `DIRTY`), then rebase on a freshly fetched `main` and `git push --force-with-lease`.
@@ -3099,7 +3718,7 @@ npm is gone (`node --run test` replaced the one `npm test` in `ci.yml` and the o
 - iOS `altool` can exit 0 while output says `UPLOAD FAILED` — the workflow greps for failure markers in the transcript.
 - Android Play API rejects `changesNotSentForReview` post-launch — never include this flag.
 - `workflow_run` triggered off a release-triggered workflow must NOT have a `branches` filter (GitHub silently drops them).
-- Pre-commit hooks sweep the whole frontend and re-stage — isolate unrelated dirty files before committing (`git stash` them).
+- Pre-commit hooks sweep the whole frontend and re-stage — isolate unrelated dirty files before committing (`git stash` them). The pre-push refuses a dirty tree outright ([the tiers](#checks-at-commit-at-push-and-in-ci-only)).
 - Never assert a wall clock in a test. An unseeded generator with rejection sampling once drew 31s against a 15s budget on a runner and took CD down: seed the input, and let the `it` timeout guard non-termination.
 - **`gh run rerun` replays the workflow FILE as it existed at that run's ORIGINAL trigger, never the current one on `main`.** Fixing a workflow bug and re-running the failed run will silently re-run the old, broken definition - confirmed on the v0.14.5 iOS recovery, where the rerun's step list was missing a step added by the fix. Only a fresh trigger (`workflow_dispatch`, or a new event) resolves the current file.
 - **`softprops/action-gh-release` is no longer used in this repository, and this is why.** It can 403 with `Resource not accessible by integration` pointing at `update-a-release`, on its OWN second, `github.ref`-shaped lookup - after it has already found the release by `tag_name`. First seen for `refs/heads/main` under `workflow_dispatch` (where `github.ref` is the branch, not the tag). **The tag variant then cost Apple a whole release**: on the stable `v0.16.0` the iOS arm was refused with `Contents: write` granted and printed by the runner, on `refs/tags/v0.16.0` under a `release` event, and the re-run reproduced it - while the Android arm's identical step succeeded on the same release 24 minutes earlier, and on every stable since. The cause of that refusal is unexplained and now unanswerable, which does not matter: **attaching a file to a release needs no release UPDATE**, so both arms use `gh release upload "$TAG" ... --clobber`, one call, creating nothing when the release is absent. `release-chain.test.sh` refuses an `uses:` in either step.

@@ -1,6 +1,6 @@
 ## The owner's decisions of 2026-11-14
 
-target: 1.7.0
+target: 1.7.1
 
 Recorded so no question answered here is asked again (owner: *"note mes réponses, je n'aime pas me
 répéter"*). Each line names where its detail lives.
@@ -119,7 +119,11 @@ répéter"*). Each line names where its detail lives.
   (2) DM reactions travel as an MLS frame, never as a plaintext push side channel; (3) salon
   mentions computed on the device; (4) shorter retention durations; (5) group and community photos
   encrypted, ALL of them (owner: *"Oui, toutes"*); (6) group names encrypted; (7) a sealed community
-  state - name, photo, salons, role labels and community nicknames, read by members only.
+  state - name, photo, salons, role labels and community nicknames, read by members only;
+  (8) **cross-signing of a user's devices** - a user's devices vouch for one another, so a device
+  can no longer be passed off under a member's self-asserted user id; designed in the wiki first,
+  after step 7. #3519 merges without it
+  ([mls-protocol](../protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23)).
   Steps 2 to 5 are independent of one another.
 - **There is no community directory**: a community is entered only by an invitation or a member's
   opaque invite link (`/c/join/<token>`). Nothing forces any community name or photo to stay public,
@@ -151,6 +155,20 @@ répéter"*). Each line names where its detail lives.
 - **The anonymous link preview of a post stays as it is** (*"Garder l'aperçu"*).
 - **Staff in the app** (agenda, shop, partnerships, directory of their campus): NOT opened by campus;
   the read grant above is the door.
+
+### An entry no member made - the device decides (#3519)
+
+- **The proof is on the device**, never the server's roster (*"Preuve sur l'appareil. mais il faut
+  un truc solide, robuste, et résilient"*): each device records who it saw hold a leaf of each
+  conversation, in its sealed MLS state
+  ([mls-protocol](../protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23)).
+- **Retired is not proven** (*"Retiré = non prouvé"*): a commit by ANOTHER member that removes every
+  leaf of a user cancels that user's proof, so their later entry alone is not proven; a user
+  removing their own device cancels nothing. Since a user's last leaf always leaves through another
+  member's commit, every self-admitted entry of a user absent from the tree is reported
+  `new-person` in practice; the way back is a member's Add.
+- **Cross-signing of a user's devices is step 8 of the privacy chantier** (above), which closes the
+  impersonation of a past member.
 
 ### Answers of the afternoon (relayed by the lead, same day)
 

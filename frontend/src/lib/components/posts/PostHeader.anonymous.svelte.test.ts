@@ -5,7 +5,7 @@
  *
  * User request, 2026-09-17: *"il faut aussi qu'un moderateur sache qu'un poste a ete publie en
  * anonyme, meme s'il peut voir le nom du posteur - pareil pour le posteur lui-meme quand il voit
- * son post"*. The server (`PostsService.mustHideAnonymousAuthor`) only omits `authorId` for a
+ * son post"*. The server (`PostsService.viewerSeesWriter`) only omits `authorId` for a
  * regular reader - a moderator/admin/self-viewer's payload keeps it - so `PostHeader` branches on
  * `post.authorId` being present, never on `post.anonymous` alone, to decide which treatment to
  * draw. `Avatar`/`AnonymousAvatar` never fetch anything relevant here, so this is a synchronous,
@@ -112,6 +112,35 @@ describe('PostHeader anonymous post', () => {
     expect(target.querySelector('a[href^="/profile/"]')).not.toBeNull();
     expect(target.textContent).not.toContain('Anonyme');
     expect(target.querySelector('[data-revealed-author]')).toBeNull();
+  });
+});
+
+/**
+ * THE WRITER OF AN ASSOCIATION'S POST, for the reader the server serves it to (decision 11 of
+ * `docs/wiki/moderation-authority.md`: its moderators, and the writer) - drawn like the anonymous
+ * reveal: the association's name big, the writer small under it. Everyone else is served no
+ * `authorId` and sees the association alone.
+ */
+describe('PostHeader association post', () => {
+  const association = { id: 'a1', name: 'BDE', slug: 'bde', logoUrl: null };
+
+  it('a reader served no authorId sees the association alone', () => {
+    const target = renderHeader(basePost({ association } as Partial<PostEntity>));
+    expect(target.querySelector('.text-sm.font-bold')!.textContent!.trim()).toBe('BDE');
+    expect(target.querySelector('[data-revealed-author]')).toBeNull();
+  });
+
+  it('a moderator served the authorId sees the association big and the writer small under it', () => {
+    const target = renderHeader(
+      basePost({ association, authorId: 'officer-id' } as Partial<PostEntity>)
+    );
+    expect(target.querySelector('.text-sm.font-bold')!.textContent!.trim()).toBe('BDE');
+    const line = target.querySelector('[data-revealed-author="officer-id"]')!;
+    expect(line).not.toBeNull();
+    expect(line.getAttribute('title')).toBe(m.post_association_writer_hint());
+    expect(line.textContent).toContain(m.post_association_writer_label());
+    expect(line.querySelector('a[href="/profile/officer-id"]')).not.toBeNull();
+    expect(line.textContent).toContain('User officer-id');
   });
 });
 

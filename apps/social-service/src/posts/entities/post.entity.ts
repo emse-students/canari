@@ -128,7 +128,7 @@ export class Post {
   /**
    * `'post'` for every row that predates CanaReels, `'reel'` for a short video that expires,
    * `'replay'` for a finished live kept three days (migration 156). Fixed at creation. The columns
-   * of each kind are one fact (`posts_kind_shape`): a reel has an `expiresAt` and a `durationMs` (NULL only on a reel held migration 172 converted), a
+   * of each kind are one fact (`posts_kind_shape`): a reel has an `expiresAt` and a `durationMs` (NULL only on a reel held migration 176 converted), a
    * replay those and a `liveId`, a post none of them.
    */
   @Column({ type: 'varchar', length: 16, default: 'post' })
@@ -136,7 +136,7 @@ export class Post {
 
   /**
    * The length the CLIENT declared for a reel (`isReelVideo`'s bounds); null on a post, and on a reel
-   * converted from a post by held migration 172, whose length nobody declared - a reader then takes
+   * converted from a post by held migration 176, whose length nobody declared - a reader then takes
    * the video's own. Never verified server-side - the video is ciphertext.
    */
   @Column({ type: 'integer', nullable: true, default: null })

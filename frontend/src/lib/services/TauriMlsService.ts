@@ -1,5 +1,7 @@
 import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
 import { tauriGraineSignatureEngine } from '$lib/mls-client/tauriGraineSignatureEngine';
+import { tauriHistorySealEngine } from '$lib/mls-client/tauriHistorySealEngine';
+import type { HistorySealEngine } from '$lib/crypto/historySeal';
 import { getClientAppVersion } from '$lib/utils/appVersion';
 import { isChannelEventFrame, isHeartbeatFrame } from '$lib/mls-client/channelEventTypes';
 import { invoke } from '@tauri-apps/api/core';
@@ -37,7 +39,12 @@ import {
   type OwedWelcome,
   type PendingSubmissionRead,
 } from '$lib/mls-client/commitSubmission';
-import type { DeviceEvent, DevicePin, KeyPackageVerdict } from '$lib/mls-client/deviceTrust';
+import type {
+  DeviceEvent,
+  DevicePin,
+  KeyPackageVerdict,
+  MembershipEvidence,
+} from '$lib/mls-client/deviceTrust';
 import type { DatedKeyPackage } from '$lib/mls-client/keyPackages';
 import { liveMlsFrameMessage } from '$lib/mls-client/liveFrame';
 import { gatewaySocketUrl } from '$lib/mls-client/frameDelivery';
@@ -46,8 +53,10 @@ import {
   type GatewaySocketOpen,
 } from '$lib/mls-client/gatewaySocketOpen';
 import { getToken, signOutGeneration } from '$lib/stores/auth';
+import { pushOutcomeForReport, reconcilePushRegistration } from './PushNotificationService';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
-import { toBase64, toHex } from '$lib/utils/hex';
+import { toBase64, toHex, type MlsStateWriteLatch } from '$lib/utils/hex';
+import type { StateLedgerChanges } from '$lib/mls-client/stateLedgers';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { getLocale } from '$lib/i18n';
 import {
@@ -1045,8 +1054,17 @@ export class TauriMlsService extends BaseMlsService {
    * second write went in 2026-08-14; the marshalling it blamed only went when the command stopped
    * returning the blob at all.
    */
-  protected async writeCheckpoint(deviceKeyB64: string): Promise<void> {
-    await this.persistState(deviceKeyB64);
+  protected async writeCheckpoint(
+    deviceKeyB64: string,
+    _latch: MlsStateWriteLatch,
+    ledgers?: StateLedgerChanges
+  ): Promise<void> {
+    await this.persistState(deviceKeyB64, ledgers);
+  }
+
+  /** The ledgers the opened native state carries (`mls-core/src/app_ledgers.rs`). */
+  protected async readStateLedgers(): Promise<Record<string, string>> {
+    return invoke<Record<string, string>>('lire_ledgers_mls');
   }
 
   /**
@@ -1076,10 +1094,15 @@ export class TauriMlsService extends BaseMlsService {
    * A length, by contrast, is eight bytes and answers the one question a caller can have about a
    * write it did not perform itself.
    */
-  async persistState(deviceKeyB64: string): Promise<number> {
+  async persistState(deviceKeyB64: string, ledgers?: StateLedgerChanges): Promise<number> {
     await this.awaitRustMutations();
-    // ONE invoke for encrypt + write: the JS side never sees the blob, which is the point.
-    return invoke<number>('sauvegarder_mls_et_persister', { deviceKeyB64 });
+    // ONE invoke for encrypt + write: the JS side never sees the blob, which is the point. The
+    // ledgers ride the same invoke and are applied to the manager before its export
+    // (`stateLedgers.ts`), so they reach `mls.bin` in the write that holds their ratchets.
+    return invoke<number>('sauvegarder_mls_et_persister', {
+      deviceKeyB64,
+      ledgers: ledgers ?? null,
+    });
   }
 
   /**
@@ -1581,6 +1604,14 @@ export class TauriMlsService extends BaseMlsService {
     return invoke<number[]>('epoques_departs', { groupId, userId });
   }
 
+  /** Tauri-native `invoke` wrapper - `preuves_appartenance` (`MembershipEvidence`, camelCase). */
+  protected async membershipEvidenceNative(
+    groupId: string,
+    userId: string
+  ): Promise<MembershipEvidence> {
+    return invoke<MembershipEvidence>('preuves_appartenance', { groupId, userId });
+  }
+
   /** Tauri-native `invoke` wrapper - `prendre_evenements_appareils` (`DeviceEvent`, camelCase). */
   protected async takeDeviceEventsNative(): Promise<DeviceEvent[]> {
     return invoke<DeviceEvent[]>('prendre_evenements_appareils');
@@ -1877,13 +1908,19 @@ export class TauriMlsService extends BaseMlsService {
     const storedName =
       localStorage.getItem(ACCOUNT_KEY.deviceName(this.userId, this.deviceId)) || undefined;
     const deviceAppVersion = getClientAppVersion();
-    await this.delivery.registerDeviceKeyPackage({
+    const deviceOs = detectRuntimeDeviceOs('desktop');
+    const pushes = deviceOs === 'android' || deviceOs === 'ios';
+    const answer = await this.delivery.registerDeviceKeyPackage({
       keyPackageBase64: base64,
       notAfterSecs: keyPackage.notAfterSecs,
       deviceName: storedName,
-      deviceOs: detectRuntimeDeviceOs('desktop'),
+      deviceOs,
       deviceAppVersion,
+      ...(pushes ? { pushOutcome: pushOutcomeForReport() } : {}),
     });
+    // The delivery service's push row is the fact a registration is owed against - this call runs at
+    // every unlock and every key-package renewal, so a lost or never-written row is re-driven here.
+    if (pushes) reconcilePushRegistration(answer.pushRegistered);
   }
 
   /** Returns the list of MLS group IDs known locally, populated from Rust via `lister_groupes` at init time. */
@@ -1948,6 +1985,11 @@ export class TauriMlsService extends BaseMlsService {
   /** The Rust engine's Ed25519 commands: the one standalone implementation, `tauriGraineSignatureEngine`. */
   graineSignatureEngine(): GraineSignatureEngine {
     return tauriGraineSignatureEngine();
+  }
+
+  /** The Rust engine's HPKE commands for a sealed history answer (`tauriHistorySealEngine`). */
+  historySealEngine(): HistorySealEngine {
+    return tauriHistorySealEngine();
   }
 
   /**

@@ -49,7 +49,8 @@
   /* THE ONE ACCENT (owner, 2026-11-09, option B + rule C; docs/wiki/frontend/design-reference.md).
      `accent` is the FILL (bars, tabs, buttons, selected states) and always carries `on-accent`
      ink. Yellow cannot be text on a light surface (1.66:1 on white), so the same hue has three
-     more jobs: `accent-text` (a link, a counter, a mention: 4.5:1), `accent-icon` (a glyph, a
+     more jobs: `accent-text` (a link, a counter, a mention: 4.5:1; inside your own bubble a mention
+     takes `currentColor`, the bubble being filled with the accent), `accent-icon` (a glyph, a
      border, a focus ring that must read as yellow: 3:1) and `accent-hover`. The Tailwind amber
      scale is NOT an accent and `accentTokens.test.ts` counts it; amber survives as a warning only,
      through `amber-warn`. */
@@ -107,6 +108,9 @@
   --banner-height-thin: 1.5rem;
   --color-banner: var(--banner-bg);
   --color-banner-warn: var(--banner-warn-bg);
+  /* The ERROR twin of `banner-warn`, opaque for the same reason: an error toast is drawn over a
+     dialog, and the tinted `bg-red-500/10` it had let the dialog's title read through its red text. */
+  --color-banner-danger-soft: var(--banner-danger-bg);
   /* The three STRONG variants, fixed in both themes for the same reason as `cn-scrim`: they carry
      white or ink text and interrupt on purpose, so a theme flip must not soften them. */
   --color-banner-notice: #f59e0b;
@@ -327,12 +331,51 @@
   --z-skip-link: 500;
 }
 
+/* THE KEYBOARD'S LEAF CHANNEL (keyboard-and-send-motion.md, section 6). `keyboardViewport` is the one
+   writer of the keyboard's variables and has TWO targets: `:root`, which every screen reads, and the
+   pieces that ride the keyboard (`[data-keyboard-leaf]`), which read these twins first. Measured in
+   Chromium (Mi 9T, 1156 elements; the desktop bench `bench/keyboard-announcement` gives the same
+   shape): ANY custom property written on `:root` costs 17-30 ms of style for the whole document, an
+   unused one included, while a NON-INHERITED one written on one element costs 0.1-0.2 ms - even on
+   the thread's scroller, whose 840 descendants an inherited one would restyle (20 ms). So the
+   announcement writes these on the riding pieces, the ride's first frame is drawn without the
+   whole-document pass, and the root is written once that frame is out, at the same values: the
+   pieces read the same lengths through either name and move once. Not inherited, so a twin is read
+   only by the element it is written on; no initial value, so an unwritten twin falls back to the
+   root's variable. */
+@property --keyboard-leaf-layout-inset-bottom {
+  syntax: '*';
+  inherits: false;
+}
+@property --keyboard-leaf-occlusion-bottom {
+  syntax: '*';
+  inherits: false;
+}
+@property --keyboard-leaf-safe-area-inset-bottom {
+  syntax: '*';
+  inherits: false;
+}
+/* Resolved on each piece that reads them (`.chat-composer-footer`, `.chat-messages-scroll`), from the
+   twins above or the root's variables - not inherited, so the thread's rows never restyle for them. */
+@property --chat-composer-floor {
+  syntax: '*';
+  inherits: false;
+}
+@property --chat-keyboard-room {
+  syntax: '*';
+  inherits: false;
+}
+
 :root {
   /* Default assumes the native Tauri WebView (env() answers a real question there); app.html's
    * inline script overrides this to 0px before first paint when not running in Tauri, since a
    * plain browser tab already excludes the system nav/gesture area from its own viewport - see
    * that script for why. Every safe-area-bottom consumer reads this variable, never env() itself. */
-  --safe-area-inset-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-area-inset-bottom: var(--safe-area-inset-bottom-unpinned);
+  /* The same, under a name the keyboard's pin never replaces: what `--safe-area-inset-bottom` goes
+   * back to when the pin is released, which the leaf channel writes on a riding piece before the root
+   * itself is released (`keyboardViewport.svelte.ts`, `keyboardLeafValues`). */
+  --safe-area-inset-bottom-unpinned: env(safe-area-inset-bottom, 0px);
   /* THE TOP PEER, for the same reason: on iOS WebKit reports env() as 0 here and the native side
    * publishes the real status-bar height (canari_ios.mm), so every top consumer reads THIS. On
    * Android and in a browser env() answers for itself. */
@@ -479,22 +522,30 @@
   --glass-chrome-shadow: color-mix(in srgb, var(--cn-dark) 14%, transparent);
   /* ONE blur for every floating surface; the fallback block at the end of this file turns it off. */
   --glass-chrome-blur: blur(18px) saturate(180%);
-  /* GLASS OVER A PLAYING VIDEO - see `.glass-video`. One set for both themes: a video is dark
-     whatever the app's theme, so the tint is black, never the surface colour (a white frame under a
-     light-surface tint would leave a white glyph unreadable). The FLAT pair is what every fallback
-     below switches to: an opaque-ish dark chip, no blur, no sheen - still legible, still the shape. */
-  --glass-video-bg: color-mix(in srgb, #000000 28%, transparent);
-  --glass-video-edge: color-mix(in srgb, #ffffff 22%, transparent);
-  --glass-video-rim: inset 0 1px 0 color-mix(in srgb, #ffffff 45%, transparent);
+  /* FAKE GLASS OVER A PLAYING VIDEO - see `.glass-video`. THE BASE RECIPE, IDENTICAL ON EVERY PLATFORM
+     (owner, 2026-11-15, after the Mi 9T measured the blur at 98-99 % janky frames against 38-44 % flat):
+     a translucent dark fill, a light hairline and an inner highlight and shade (rim, sheen, bottom shade),
+     which imitate the glass and cost one static paint with no outer shadow. One set for both themes: a video is dark whatever the
+     app's theme, so the fill is black, never the surface colour (a white frame under a light fill would
+     leave a white glyph unreadable). The fill is 56 % black: legible under a white glyph on a white frame
+     and on a saturated green one (video-player.md, "legibility"). The SOLID pair is what reduced
+     transparency and more contrast switch to. */
+  --glass-video-fill: color-mix(in srgb, var(--color-black) 56%, transparent);
+  /* THE BLUR ENHANCEMENT, iOS ONLY (`utils/videoGlass.ts`, owner 2026-11-15): the same recipe with a
+     backdrop blur on top and a lighter fill, so the two read as one object. Never on Android. */
+  --glass-video-fill-blur: color-mix(in srgb, var(--color-black) 42%, transparent);
+  --glass-video-blur: blur(12px) saturate(160%);
+  --glass-video-fill-solid: color-mix(in srgb, var(--color-black) 80%, transparent);
+  --glass-video-edge: color-mix(in srgb, var(--color-white) 26%, transparent);
+  --glass-video-rim: inset 0 1px 0 color-mix(in srgb, var(--color-white) 40%, transparent);
   --glass-video-sheen: linear-gradient(
     180deg,
-    color-mix(in srgb, #ffffff 16%, transparent),
+    color-mix(in srgb, var(--color-white) 14%, transparent),
     transparent 55%
   );
-  --glass-video-shadow: 0 4px 18px color-mix(in srgb, #000000 35%, transparent);
-  /* 12px, not the chrome's 18px: the cost scales with the radius, and this one sits over a decoder. */
-  --glass-video-blur: blur(12px) saturate(160%);
-  --glass-video-flat-bg: color-mix(in srgb, #000000 62%, transparent);
+  /* NO OUTER SHADOW (owner, 2026-11-15, Mi 9T: it cost janky frames over a decoder): the depth is an inset
+     shade on the bottom edge, drawn inside the same box. */
+  --glass-video-shade: inset 0 -1px 0 color-mix(in srgb, var(--color-black) 30%, transparent);
   --app-viewport-height: 100dvh;
   /* Ceiling for any media box that reserves an aspect ratio in a scrolling surface - the feed, a
      comment, a chat bubble. Without it a tall picture is as tall as it likes: the ratio clamp alone
@@ -504,9 +555,10 @@
      `svh` and not `dvh`: the SMALL viewport is the stable one, so the cap does not re-layout the
      feed every time the mobile URL bar collapses. Deliberately NOT `--app-viewport-height`, which
      tracks the soft keyboard - a picture must not resize because someone started typing.
-     BUT IN THE APP `svh` TRACKS THE KEYBOARD TOO: Android pads the WebView by the IME inset and iOS
-     shrinks its frame, so the LAYOUT viewport shrinks and every viewport unit with it (`lvh`
-     included). Mi 9T, 2026-11-13: 567 px closed, 353 px with the keyboard up, a chat screenshot
+     BUT IN THE iOS APP `svh` TRACKS THE KEYBOARD TOO: iOS shrinks the WebView's frame, so the LAYOUT
+     viewport shrinks and every viewport unit with it (`lvh` included). The Android app did the same
+     until 2026-11-14, when it stopped resizing the WebView for the keyboard (keyboard ride). Mi 9T,
+     2026-11-13: 567 px closed, 353 px with the keyboard up, a chat screenshot
      cropped top and bottom. `--keyboard-free-viewport-height` is the height before the keyboard,
      written by `keyboardViewport.svelte.ts` only while a keyboard holds the layout viewport, and
      absent otherwise - so a browser, a desktop resize and a rotation keep plain `svh`. */
@@ -1782,31 +1834,70 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
   }
 }
 
+/* THE COMPOSER'S FLOOR AND THE KEYBOARD'S ROOM, resolved on the two pieces that read them: the chat
+   footer's bottom padding, and the same terms in the thread's own padding under its last row. Named
+   once so both change in the SAME style pass when the bottom safe area is pinned for a keyboard
+   (`keyboardSafeAreaBottomOverride`): `--chat-composer-height` is published a frame late and leaves
+   the floor out (`composerHeight.ts`, review of #3556, D2). Each reads the leaf channel's twin first
+   (`--keyboard-leaf-*`, written on the piece itself by the announcement) and the root's variable
+   otherwise - the same length either way. */
+.chat-composer-footer,
+.chat-messages-scroll,
+.chat-docked-banner {
+  --chat-composer-floor: max(
+    0.75rem,
+    var(--keyboard-leaf-safe-area-inset-bottom, var(--safe-area-inset-bottom, 0px))
+  );
+  --chat-keyboard-room: var(
+    --keyboard-leaf-layout-inset-bottom,
+    var(--keyboard-layout-inset-bottom, 0px)
+  );
+}
+
 .chat-messages-scroll {
-  /* --chat-composer-height already includes var(--safe-area-inset-bottom, 0px) via the footer's own
-     padding-bottom, so it must not be added again here (only the unset-var fallback needs it). */
-  padding-bottom: var(--chat-composer-height, calc(7.5rem + var(--safe-area-inset-bottom, 0px)));
-  scroll-padding-bottom: var(
-    --chat-composer-height,
-    calc(7.5rem + var(--safe-area-inset-bottom, 0px))
+  /* The footer's height without its floor, plus the floor, plus the keyboard's room - see
+     `--chat-composer-floor`: the floor is composed HERE so a keyboard move lands in one style pass.
+     THE KEYBOARD'S ROOM IS THIS PADDING, NEVER A SMALLER BOX (keyboard ride, 2026-11-14): in the
+     Android app the keyboard covers the shell without shrinking it, and the thread's box keeps its
+     height so its rows can ride up into the room the padding opens. `--chat-keyboard-room` (the
+     layout inset) is 0 everywhere else, so on the web and iOS this is the padding it always was. */
+  padding-bottom: calc(
+    var(--chat-composer-height, 6.75rem) + var(--chat-composer-floor) + var(--chat-keyboard-room)
+  );
+  scroll-padding-bottom: calc(
+    var(--chat-composer-height, 6.75rem) + var(--chat-composer-floor) + var(--chat-keyboard-room)
   );
   /* Keep scrolling inside the message list - no chaining/rubber-band to the page that
      would drag content off-screen (notably while the keyboard is open). */
   overscroll-behavior: contain;
 }
 
+/* A THREAD SHORTER THAN ITS PANE SITS AT THE BOTTOM, against the composer, as in Messenger and
+   Messages (owner, 2026-11-14). The first child takes the free space ABOVE it; once the thread
+   overflows there is no free space and the margin is zero, so a long thread's top stays reachable -
+   which `justify-content: flex-end` would break (it overflows upward, past scrollTop 0). */
+.chat-messages-scroll > :first-child {
+  margin-top: auto;
+}
+
 @media (min-width: 768px) {
   .chat-messages-scroll {
-    padding-bottom: calc(var(--chat-composer-height, 6.5rem));
-    scroll-padding-bottom: calc(var(--chat-composer-height, 6.5rem));
+    padding-bottom: calc(
+      var(--chat-composer-height, 5.75rem) + var(--chat-composer-floor) + var(--chat-keyboard-room)
+    );
+    scroll-padding-bottom: calc(
+      var(--chat-composer-height, 5.75rem) + var(--chat-composer-floor) + var(--chat-keyboard-room)
+    );
   }
 }
 
 .mobile-convo-open .chat-messages-scroll {
-  /* --chat-composer-height already includes var(--safe-area-inset-bottom, 0px) via the footer's
-     padding-bottom, so we must not add it again here. */
-  padding-bottom: var(--chat-composer-height, 6rem);
-  scroll-padding-bottom: var(--chat-composer-height, 6rem);
+  padding-bottom: calc(
+    var(--chat-composer-height, 5.25rem) + var(--chat-composer-floor) + var(--chat-keyboard-room)
+  );
+  scroll-padding-bottom: calc(
+    var(--chat-composer-height, 5.25rem) + var(--chat-composer-floor) + var(--chat-keyboard-room)
+  );
 }
 
 /* THE THREAD'S GROUND, NAMED RATHER THAN COPIED - because the band below has to BE it, and a second
@@ -1825,7 +1916,11 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 0;
+  /* ON THE KEYBOARD: the layout inset is what the keyboard covers of the shell, non-zero only in the
+     Android app, where the shell keeps its height. No `transition` on it: the keyboard ride
+     (`keyboardRide.ts`) moves the composer on the keyboard's own timing, from where it stood - a
+     transition would move the box itself and leave the ride nothing to measure. */
+  bottom: var(--chat-keyboard-room);
   /* OPAQUE, AND IT USED TO BE TRANSPARENT ON PURPOSE (user, 2026-09-18: *"le fait que l'on puisse
      avoir des messages ou reactions derriere la barre de saisie est moche"*). The list already
      RESERVES this height with `padding-bottom`, so a thread at rest ends above the bar; what showed
@@ -1837,21 +1932,40 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
      all: it is the ground the thread already sits on, made opaque so nothing slides under it. */
   background: var(--chat-thread-ground, var(--cn-bg));
   padding-top: 0.5rem;
-  padding-bottom: max(0.75rem, var(--safe-area-inset-bottom, 0px));
+  padding-bottom: var(--chat-composer-floor);
   pointer-events: none;
   z-index: var(--z-page-overlay);
-  transition: bottom 180ms ease;
+}
+
+/* A BANNER IN THE COMPOSER'S PLACE STANDS ON THE COMPOSER'S FLOOR. The branches of the chat pane that
+   replace the composer (a deleted conversation, one unopenable here, a salon this person may not
+   write in) were docked at `bottom: 0` with a flat 12px, so on Android's 3-button navigation the bar
+   drew over the "Supprimer localement" button (user report on 1.6.12). The floor is the composer's
+   own (`--chat-composer-floor`: 12px, or the bottom safe area when it is larger), resolved on this
+   class with the composer's, so the two can never disagree. */
+.chat-docked-banner {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  border-top: 1px solid var(--cn-border);
+  background: var(--color-surface);
+  padding: 0.75rem 1rem;
+  padding-bottom: var(--chat-composer-floor);
 }
 
 /* The chat composer is only visible when the BottomNav is unmounted (mobile-convo-open),
    so no extra padding is needed to clear it. */
 
-/* Keyboard open: shell height follows visual viewport; only lift composer when layout did not resize (adjustPan).
-   Same floor as the keyboard-closed rule below - the reserved space must not visibly shrink
-   just because the keyboard opened. */
+/* Keyboard open: the same floor as the keyboard-closed rule below - the reserved space must not
+   visibly shrink just because the keyboard opened. */
 .keyboard-open .chat-composer-footer {
-  bottom: var(--keyboard-layout-inset-bottom, 0px);
-  padding-bottom: max(0.75rem, var(--safe-area-inset-bottom, 0px)) !important;
+  padding-bottom: var(--chat-composer-floor) !important;
 }
 
 /* `.app-layout` deliberately has NO keyboard-open height override (WP-KBD-1). Its ancestor
@@ -1864,25 +1978,23 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
    it is not doing it twice. */
 
 .keyboard-open .chat-messages-scroll {
-  /* --chat-composer-height already includes its own padding-bottom (set by
-     .keyboard-open .chat-composer-footer above), so only the extra lift from
-     --keyboard-layout-inset-bottom is added on top - never the safe area again. */
+  /* The same three terms as at rest (`--chat-composer-floor`). */
   padding-bottom: calc(
-    var(--chat-composer-height, 6rem) + var(--keyboard-layout-inset-bottom, 0px)
+    var(--chat-composer-height, 5.25rem) + var(--chat-composer-floor) + var(--chat-keyboard-room)
   );
   scroll-padding-bottom: calc(
-    var(--chat-composer-height, 6rem) + var(--keyboard-layout-inset-bottom, 0px)
+    var(--chat-composer-height, 5.25rem) + var(--chat-composer-floor) + var(--chat-keyboard-room)
   );
 }
 
 /* When a conversation is open on mobile the BottomNav is unmounted - drop its
    reserved height so the composer sits flush with the safe area. */
 .mobile-convo-open .chat-composer-footer {
-  padding-bottom: max(0.75rem, var(--safe-area-inset-bottom, 0px));
+  padding-bottom: var(--chat-composer-floor);
 }
 
 .mobile-convo-open.keyboard-open .chat-composer-footer {
-  padding-bottom: max(0.75rem, var(--safe-area-inset-bottom, 0px)) !important;
+  padding-bottom: var(--chat-composer-floor) !important;
 }
 
 /* THE GIF PANEL TAKES THE KEYBOARD'S PLACE, SO THE COMPOSER SITS ON IT AS IT SITS ON A KEYBOARD
@@ -1892,10 +2004,15 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
    keeps its own content clear of the home indicator. With the margin on the panel and not on the
    footer, the hand-off (panel shrinking to 0 while the keyboard rises) leaves the composer exactly
    0.75rem above whichever is under it, with no step when the panel unmounts. The second selector
-   outranks the `!important` keyboard rule above. */
+   outranks the `!important` keyboard rule above. The thread composes the same floor under its last
+   row (`--chat-composer-floor`, resolved on each of the two pieces), so the panel's 0 is said to both. */
 .chat-composer-footer.has-keyboard-panel,
 .mobile-convo-open.keyboard-open .chat-composer-footer.has-keyboard-panel {
   padding-bottom: 0 !important;
+}
+.chat-thread-panel:has(.chat-composer-footer.has-keyboard-panel)
+  :is(.chat-composer-footer, .chat-messages-scroll) {
+  --chat-composer-floor: 0px;
 }
 .composer-gif-panel {
   margin-top: 0.75rem;
@@ -1913,7 +2030,7 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
   left: 0;
   height: var(--app-viewport-height, 100dvh);
   padding-top: var(--safe-area-inset-top, 0px);
-  padding-bottom: var(--safe-area-inset-bottom, 0px);
+  padding-bottom: calc(var(--safe-area-inset-bottom, 0px) + var(--keyboard-occlusion-bottom, 0px));
   background-color: var(--cn-surface);
 }
 
@@ -1938,36 +2055,30 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
    inset top line), a sheen (the top-down gradient) and a dark tint that keeps a white glyph legible
    on a white frame. The glyph is white and its state is its SHAPE; the brand yellow is only the
    played part of a scrubber and the sound-on glyph, so the frame's colour never tints a state.
-   COST: one of these per visible player at most, and a hidden one is UNMOUNTED - a transparent layer
-   with a backdrop filter still pays. No SVG lensing: WebKit does not apply it to a live video.
-   `[data-glass='flat']` is the decided cheap form (Android until its measurement, a low-end device:
-   `utils/videoGlass.ts`); the fallback block at the end of this file flattens every one. */
+   COST: a static paint, none per frame. No SVG lensing; the base recipe has no backdrop filter (the Mi 9T measured
+   the blur at 98-99 % janky frames, video-player.md).
+   THE BASE RECIPE HAS NO BLUR (owner, 2026-11-15; `videoGlass.test.ts` asserts it); iOS adds one on top. */
 .glass-video {
-  background: var(--glass-video-sheen), var(--glass-video-bg);
-  -webkit-backdrop-filter: var(--glass-video-blur);
-  backdrop-filter: var(--glass-video-blur);
+  background: var(--glass-video-sheen), var(--glass-video-fill);
   border: 1px solid var(--glass-video-edge);
-  box-shadow: var(--glass-video-rim), var(--glass-video-shadow);
-  color: #ffffff;
+  box-shadow: var(--glass-video-rim), var(--glass-video-shade);
+  color: var(--color-white);
 }
-/* THE GLASS OF A GLYPH THAT HAS NO BOX (`VideoGlassGlyph`: the play triangle, the pause bars): the
-   same tint, sheen and blur as `.glass-video`, clipped to the shape by the element's own
-   `clip-path`. No border and no box shadow - a clipped element cannot carry them - so the rim and the
-   shadow are drawn beside it in SVG. The fallbacks flatten it through the same variables. */
+/* THE FAKE GLASS OF A GLYPH THAT HAS NO BOX (`VideoGlassGlyph`: the pop's play triangle and pause bars):
+   the same fill and sheen as `.glass-video`, clipped to the shape by the element's own `clip-path`.
+   No border and no box shadow - a clipped element cannot carry them - so the rim and the shadow are
+   drawn beside it in SVG. No `backdrop-filter`: nothing in the player blurs. */
 .glass-video-shape {
-  background: var(--glass-video-sheen), var(--glass-video-bg);
+  background: var(--glass-video-sheen), var(--glass-video-fill);
+}
+/* THE iOS ENHANCEMENT, ON TOP OF THE SAME RECIPE (`data-glass='blur'`, `utils/videoGlass.ts`): the blur,
+   and a lighter fill so it reads as the same object. Reduced transparency and more contrast reset the
+   two tokens below to none / solid, so the same rule serves them. */
+.glass-video[data-glass='blur'],
+.glass-video-shape[data-glass='blur'] {
+  background: var(--glass-video-sheen), var(--glass-video-fill-blur);
   -webkit-backdrop-filter: var(--glass-video-blur);
   backdrop-filter: var(--glass-video-blur);
-}
-.glass-video-shape[data-glass='flat'] {
-  --glass-video-bg: var(--glass-video-flat-bg);
-  --glass-video-sheen: none;
-  --glass-video-blur: none;
-}
-.glass-video[data-glass='flat'] {
-  --glass-video-bg: var(--glass-video-flat-bg);
-  --glass-video-sheen: none;
-  --glass-video-blur: none;
 }
 
 /* THE CONVERSATION'S CHROME FLOATS OVER THE THREAD IN THE PHONE APPS (`ChatArea` puts
@@ -2180,7 +2291,18 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
 }
 
 html.keyboard-open .page-scroll-wrap {
-  scroll-padding-bottom: calc(var(--bottom-nav-reserve) + var(--keyboard-layout-inset-bottom, 0px));
+  scroll-padding-bottom: var(--bottom-nav-reserve);
+}
+
+/* A PAGE ENDS ABOVE THE KEYBOARD (keyboard ride, 2026-11-14). In the Android app the keyboard
+   covers the shell without shrinking it, so the page's scroller - a form, the search, a settings
+   page, and every `sticky bottom-0` bar in them - is made to end where the keyboard begins, as the
+   shell shrinking used to make it. A CSS box shrinking is no WebView resize: it lands in the
+   announcement's own frame, with nothing stale to show. Not the chat's, whose thread keeps its box
+   and takes the keyboard's room as padding (`.chat-messages-scroll`) so its rows can ride. The inset
+   is 0 on the web and iOS. */
+.page-scroll-wrap:not(:has(.app-layout)) {
+  bottom: var(--keyboard-layout-inset-bottom, 0px);
 }
 
 /* Block background scroll only in chat (non-chat pages like forms must keep their scroll) */
@@ -2188,13 +2310,20 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   overflow: hidden;
 }
 
-/* Fixed bottom bars on non-chat pages (forms, etc.) */
+/* A sheet anchored to the bottom of a `fixed` layer (the comments drawer): it stands on what the
+   keyboard covers of the window, which is 0 wherever the WebView itself is resized, and is never
+   taller than what the keyboard leaves. No transition: a piece that must move with the keys rides them
+   (`data-keyboard-ride`, keyboardRide.ts) at their own duration, curve and phase - a clock of its own
+   could only disagree with the keyboard's (#3556, N4). Every keyboard term reads the leaf channel's
+   twin first (`--keyboard-leaf-*`, see the `@property` block), so the sheet's comment thread is never
+   restyled for a keyboard move. */
 .keyboard-aware-bottom {
-  transition: bottom 180ms ease;
-}
-
-.keyboard-open .keyboard-aware-bottom {
-  bottom: var(--keyboard-layout-inset-bottom, 0px);
+  bottom: var(--keyboard-leaf-occlusion-bottom, var(--keyboard-occlusion-bottom, 0px));
+  max-height: calc(
+    var(--app-viewport-height, 100dvh) - var(--safe-area-inset-top, 0px) - 3rem -
+      var(--keyboard-leaf-occlusion-bottom, var(--keyboard-occlusion-bottom, 0px))
+  );
+  padding-bottom: var(--keyboard-leaf-safe-area-inset-bottom, var(--safe-area-inset-bottom, 0px));
 }
 
 /* Fullscreen overlays: modals, PIN, sync, payment, calendar pickers… */
@@ -2208,7 +2337,11 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   padding-top: max(1rem, var(--safe-area-inset-top, 0px));
   padding-right: max(1rem, env(safe-area-inset-right, 0px));
   padding-left: max(1rem, env(safe-area-inset-left, 0px));
-  padding-bottom: max(1rem, var(--safe-area-inset-bottom, 0px));
+  /* The backdrop keeps the whole window; its content keeps clear of what the keyboard covers of it
+     (the Android app, where `--app-viewport-height` stays the full height). */
+  padding-bottom: calc(
+    max(1rem, var(--safe-area-inset-bottom, 0px)) + var(--keyboard-occlusion-bottom, 0px)
+  );
   transition:
     height 180ms ease,
     top 180ms ease,
@@ -2227,8 +2360,13 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   scroll-margin-block-end: 6.5rem;
 }
 
+/* The cap is the space above the keyboard: `92dvh` and `--app-viewport-height` follow a WebView the
+   keyboard resizes (iOS), and lose what the keyboard covers where it does not (the Android app). */
 .keyboard-aware-modal-panel {
-  max-height: min(92dvh, var(--app-viewport-height, 100dvh)) !important;
+  max-height: min(
+    calc(92dvh - 0.92 * var(--keyboard-occlusion-bottom, 0px)),
+    calc(var(--app-viewport-height, 100dvh) - var(--keyboard-occlusion-bottom, 0px))
+  ) !important;
 }
 
 /*
@@ -2246,55 +2384,39 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   .modal-phone-full .keyboard-aware-modal-panel {
     max-height: none !important;
     padding-top: var(--safe-area-inset-top, 0px);
-    padding-bottom: var(--safe-area-inset-bottom, 0px);
+    padding-bottom: calc(
+      var(--safe-area-inset-bottom, 0px) + var(--keyboard-occlusion-bottom, 0px)
+    );
   }
 
   .keyboard-open .modal-phone-full .keyboard-aware-modal-panel {
-    padding-bottom: 0;
+    padding-bottom: var(--keyboard-occlusion-bottom, 0px);
   }
 }
 
 /* Message action wheel (long-press menu) - above composer / bottom nav */
 [data-keyboard-aware-actions] {
   bottom: calc(
-    max(4.5rem, var(--safe-area-inset-bottom, 0px) + 3rem) +
-      var(--keyboard-layout-inset-bottom, 0px)
+    max(4.5rem, var(--safe-area-inset-bottom, 0px) + 3rem) + var(--keyboard-occlusion-bottom, 0px)
   );
   transition: bottom 180ms ease;
 }
 
 .mobile-convo-open [data-keyboard-aware-actions] {
   bottom: calc(
-    max(1rem, var(--safe-area-inset-bottom, 0px) + 1rem) + var(--keyboard-layout-inset-bottom, 0px)
+    max(1rem, var(--safe-area-inset-bottom, 0px) + 1rem) + var(--keyboard-occlusion-bottom, 0px)
   );
 }
 
-.keyboard-open [data-keyboard-aware-toast] {
-  bottom: calc(
-    var(--safe-area-inset-bottom, 0px) + 1rem + var(--keyboard-layout-inset-bottom, 0px)
-  ) !important;
-}
-
-/* Side panels (group settings, channel members) with bottom actions */
+/* Side panels (group settings, channel members) with bottom actions. The keyboard is kept clear of
+   by `.side-panel` itself, so these add only the safe area. */
 .keyboard-aware-panel-scroll {
   padding-bottom: max(1.25rem, var(--safe-area-inset-bottom, 0px));
-}
-
-.keyboard-open .keyboard-aware-panel-scroll {
-  padding-bottom: calc(
-    max(1.25rem, var(--safe-area-inset-bottom, 0px)) + var(--keyboard-layout-inset-bottom, 0px)
-  ) !important;
 }
 
 .keyboard-aware-panel-footer {
   padding-bottom: max(1.25rem, var(--safe-area-inset-bottom, 0px));
   transition: padding-bottom 180ms ease;
-}
-
-.keyboard-open .keyboard-aware-panel-footer {
-  padding-bottom: calc(
-    max(1.25rem, var(--safe-area-inset-bottom, 0px)) + var(--keyboard-layout-inset-bottom, 0px)
-  ) !important;
 }
 
 [data-theme='dark'] .chat-composer-footer {
@@ -2321,6 +2443,10 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   top: 0;
   right: 0;
   bottom: 0;
+  /* ITS CONTENT ENDS ABOVE THE KEYBOARD, its surface does not: what the keyboard covers of the window
+     (the drawer, `fixed`) and of the shell (the column, `static` from 1280px) are the same number,
+     and 0 wherever the WebView itself is resized. */
+  padding-bottom: var(--keyboard-occlusion-bottom, 0px);
   z-index: var(--overlay-z, auto);
   width: 100%;
   /* A PHONE GETS THE WHOLE SCREEN (owner, 2026-11-04): no cap below 768px, where the drawer used to
@@ -3389,9 +3515,6 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
     --glass-chrome-bg: var(--cn-surface);
     --glass-chrome-edge: var(--cn-border);
     --glass-chrome-blur: none;
-    --glass-video-bg: var(--glass-video-flat-bg);
-    --glass-video-sheen: none;
-    --glass-video-blur: none;
   }
 }
 @media (prefers-reduced-transparency: reduce) {
@@ -3399,20 +3522,21 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
     --glass-chrome-bg: var(--cn-surface);
     --glass-chrome-edge: var(--cn-border);
     --glass-chrome-blur: none;
-    --glass-video-bg: var(--glass-video-flat-bg);
-    --glass-video-sheen: none;
+    --glass-video-fill: var(--glass-video-fill-solid);
+    --glass-video-fill-blur: var(--glass-video-fill-solid);
     --glass-video-blur: none;
+    --glass-video-sheen: none;
   }
 }
-/* `prefers-contrast: more` too, for the VIDEO glass: WebKit does not expose
+/* `prefers-contrast: more` too, for the VIDEO fake glass: WebKit does not expose
    `prefers-reduced-transparency` (caniuse, 2026-11), so on an iPhone this is the one query that reaches
-   a reader who asked for legibility. The chrome glass keeps its two queries; widening them is a
-   separate decision. */
+   a reader who asked for legibility: the fill goes near-solid and the sheen goes. */
 @media (prefers-contrast: more) {
   :root:root {
-    --glass-video-bg: var(--glass-video-flat-bg);
-    --glass-video-sheen: none;
+    --glass-video-fill: var(--glass-video-fill-solid);
+    --glass-video-fill-blur: var(--glass-video-fill-solid);
     --glass-video-blur: none;
+    --glass-video-sheen: none;
   }
 }
 

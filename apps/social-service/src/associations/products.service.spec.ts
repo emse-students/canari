@@ -270,6 +270,8 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       deleteMediaBestEffort: jest.fn(() => Promise.resolve()),
       revertLydiaReadinessAfterRefusal: jest.fn(() => Promise.resolve()),
       noteLydiaRequestIssued: jest.fn(() => Promise.resolve()),
+      // No bridge in these tests: a routing change is never a switch back (the 409 stands).
+      countReissueAfterSwitchBack: jest.fn(() => Promise.resolve(false)),
     };
     // Only reached by a product carrying a pricing grid; the default fixtures carry none.
     const pricingFacts = {
@@ -4451,6 +4453,56 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         );
         expect(t.calls.filter((c) => c.route === 'create-checkout-session')).toEqual([]);
         expect(t.checkouts.rows).toEqual([]);
+        // Asked of the bridge with BOTH routings, typed; no bridge here, so the 409 stood.
+        expect(t.associationsService.countReissueAfterSwitchBack).toHaveBeenCalledTimes(1);
+        expect(t.associationsService.countReissueAfterSwitchBack).toHaveBeenCalledWith(
+          expect.objectContaining({ connectAccountId: 'acct_1' }),
+          expect.objectContaining({ connectAccountId: 'acct_2' })
+        );
+      });
+
+      /** The account moves from acct_1 to each of `accounts` in turn, once per routing fetched. */
+      function accountMovesWhileFetched(t: ReturnType<typeof cercleBuyer>, accounts: string[]) {
+        const fetchProvider = (t.service as any).activePaymentProvider.bind(t.service);
+        const next = [...accounts];
+        jest.spyOn(t.service as any, 'activePaymentProvider').mockImplementation(() => {
+          const account = next.shift();
+          if (account) {
+            t.assoRepo.findOne.mockResolvedValue(
+              asso({ slug: 'cercle', cotisationMode: 'lifetime', lydiaAccountId: account })
+            );
+          }
+          return fetchProvider();
+        });
+      }
+
+      it('a routing change the bridge proves to be ITS switch back re-enters ONCE: issued once, on the account read under the lock', async () => {
+        const t = cercleBuyer();
+        (t.associationsService.countReissueAfterSwitchBack as jest.Mock).mockResolvedValue(true);
+        accountMovesWhileFetched(t, ['acct_2']);
+        const opened = await t.open('prod-avec');
+        const issued = t.calls.filter((c) => c.route === 'create-checkout-session');
+        expect(issued.map((c) => c.body.connectAccountId)).toEqual(['acct_2']);
+        expect(t.checkouts.rows).toHaveLength(1);
+        expect(t.checkouts.rows[0]).toMatchObject({ id: opened.checkoutId, vendorToken: 'acct_2' });
+        expect(t.associationsService.countReissueAfterSwitchBack).toHaveBeenCalledTimes(1);
+      });
+
+      it('a second routing change during the re-entry is the 409, never a third attempt', async () => {
+        const t = cercleBuyer();
+        (t.associationsService.countReissueAfterSwitchBack as jest.Mock).mockResolvedValue(true);
+        accountMovesWhileFetched(t, ['acct_2', 'acct_3']);
+        const err = await t.open('prod-avec').then(
+          () => null,
+          (e: unknown) => e
+        );
+        expect(((err as ConflictException).getResponse() as { code: string }).code).toBe(
+          'PAYMENT_ROUTING_CHANGED'
+        );
+        // The re-entry does not ask the bridge again: one re-entry, whatever it would answer.
+        expect(t.associationsService.countReissueAfterSwitchBack).toHaveBeenCalledTimes(1);
+        expect(t.calls.filter((c) => c.route === 'create-checkout-session')).toEqual([]);
+        expect(t.checkouts.rows).toEqual([]);
       });
 
       // EVERY field of the routing is compared, not only the account and the receiving association:
@@ -4848,6 +4900,36 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       });
       expect(t.calls.filter((c) => c.route === 'create-checkout-session')).toEqual([]);
       expect(t.checkouts.rows).toHaveLength(0);
+    });
+
+    it('a product WITHHELD by a revert committed before the purchase: the typed not-ready 409, never "not found"', async () => {
+      // A switch back onto a historical account that is not ready withholds the products; the
+      // re-issue, or the payer's retry, is owed the reason, as `decidePurchase` answers it.
+      const t = setup({ isActive: false, activationWithheld: true } as any);
+      t.assoRepo.findOne.mockResolvedValue(
+        asso({ lydiaOnboardingComplete: false, lydiaReadinessCause: 'request-refused' })
+      );
+      const refusal = await t.checkout().catch((e: unknown) => e);
+      expect(refusal).toBeInstanceOf(ConflictException);
+      expect((refusal as ConflictException).getResponse()).toMatchObject({
+        code: 'PAYMENTS_NOT_ACTIVATED',
+      });
+      expect(t.calls.filter((c) => c.route === 'create-checkout-session')).toEqual([]);
+      expect(t.checkouts.rows).toHaveLength(0);
+    });
+
+    it('a product a manager took off sale stays "not found", whatever the readiness; a withheld one of a ready association too', async () => {
+      for (const [overrides, ready] of [
+        [{ isActive: false, activationWithheld: false }, false],
+        [{ isActive: false, activationWithheld: false }, true],
+        [{ isActive: false, activationWithheld: true }, true],
+      ] as const) {
+        const t = setup(overrides as any);
+        t.assoRepo.findOne.mockResolvedValue(asso({ lydiaOnboardingComplete: ready }));
+        await expect(t.checkout()).rejects.toBeInstanceOf(NotFoundException);
+        expect(t.calls.filter((c) => c.route === 'create-checkout-session')).toEqual([]);
+        expect(t.checkouts.rows).toHaveLength(0);
+      }
     });
 
     describe('an attempt whose request/do was LOST (no answer) is read by its order_ref', () => {

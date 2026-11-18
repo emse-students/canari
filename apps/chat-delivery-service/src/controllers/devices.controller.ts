@@ -27,6 +27,7 @@ import {
   lastResortDeadline,
 } from '../entities/key-package.entity';
 import { OneTimeKeyPackage, usableOneTimePackage } from '../entities/one-time-key-package.entity';
+import { parsePushOutcome, pushPresenceLine } from '../utils/push-coverage';
 import { GroupMember } from '../entities/group-member.entity';
 import { Group } from '../entities/group.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
@@ -58,10 +59,16 @@ import {
   upsertRevocation,
 } from '../utils/revocation';
 import { parseSessionId } from '../utils/session-id';
-import { DeviceSessionsNotEndedError, endDeviceSessions } from '../internal/device-sessions';
+import {
+  DeviceSessionsNotEndedError,
+  SessionBindingUnknownError,
+  endDeviceSessions,
+  sessionBoundDevice,
+} from '../internal/device-sessions';
 import type { RevocationReason } from '../entities/revoked-device.entity';
 import { RefusalCode } from '../utils/refusal-codes';
 import { upsertDeviceKeyPackage } from '../utils/device-key-package';
+import { RouteParams } from '../common/route-params';
 
 /**
  * Why a device cannot be handed a KeyPackage right now - and whether that is for ever.
@@ -78,6 +85,7 @@ export type KeyPackageRefusal = 'revoked' | 'unregistered' | 'expired';
 export type KeyPackageResolution = { keyPackage: string } | { refusal: KeyPackageRefusal };
 
 /** Device registration, key packages, device metadata, and device deletion. */
+@RouteParams({ userId: 'opaque', deviceId: 'opaque' })
 @Controller()
 export class DevicesController {
   private readonly logger = new Logger(DevicesController.name);
@@ -321,6 +329,8 @@ export class DevicesController {
       deviceName?: string;
       deviceOs?: string;
       deviceAppVersion?: string;
+      /** What the device's last push registration came to - see `parsePushOutcome`. */
+      pushOutcome?: unknown;
     },
     @Headers('x-user-id') headerUserId?: string
   ) {
@@ -361,6 +371,7 @@ export class DevicesController {
     const deviceName = sanitizeOptionalDeviceName(body.deviceName);
     const deviceOs = sanitizeOptionalDeviceOs(body.deviceOs);
     const deviceAppVersion = sanitizeOptionalDeviceAppVersion(body.deviceAppVersion);
+    const pushOutcome = parsePushOutcome(body.pushOutcome);
 
     // Enforce the per-user device limit (M5) against LIVE devices - see countLiveDevices for what
     // that means and why the old row count was the wrong quantity. The device being registered is
@@ -426,6 +437,7 @@ export class DevicesController {
         deviceName,
         deviceOs,
         deviceAppVersion,
+        pushOutcome: pushOutcome === 'unstated' ? null : pushOutcome,
       },
       crypto.randomUUID()
     );
@@ -461,7 +473,34 @@ export class DevicesController {
     this.logger.log(
       `[REGISTER_DEVICE][${traceId}] DONE user=${userId} device=${deviceId} isNew=${isNew} pendingGroups=${pendingGroups}`
     );
-    return { status: 'registered' };
+    // WHETHER THIS DEVICE CAN BE WOKEN, answered on the call it makes at every unlock and key-package
+    // renewal: the `push_token` row is the fact, and the client re-registers on `false` instead of
+    // trusting its own copy of it (`reconcilePushRegistration`). A row missing from a phone is said
+    // here with what the device states its last attempt came to - see `utils/push-coverage.ts`.
+    // A LOOKUP THAT FAILED IS NOT AN ANSWER, and it must not cost the registration it follows: the
+    // device is answered `null` (unknown), which the client reads as "do not re-drive".
+    let pushRegistered: boolean | null;
+    try {
+      pushRegistered = await this.pushTokenRepo.existsBy({ userId, deviceId });
+    } catch (e) {
+      pushRegistered = null;
+      this.logger.error(
+        `[PUSH_MISSING] user=${userId} device=${deviceId} the push row lookup FAILED - answered ` +
+          `unknown, nothing re-driven: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+    if (pushRegistered !== null) {
+      const presence = pushPresenceLine({
+        userId,
+        deviceId,
+        deviceOs,
+        build: deviceAppVersion,
+        held: pushRegistered,
+        outcome: pushOutcome,
+      });
+      if (presence) this.logger[presence.level](presence.line);
+    }
+    return { status: 'registered', push: { registered: pushRegistered } };
   }
 
   @UseGuards(HeaderAuthGuard)
@@ -934,6 +973,14 @@ export class DevicesController {
     // every conversation. No admin exemption (owner, 2026-11-02).
     assertCallerOwnsUserId(headerUserId, safeUserId, 'Cannot delete another user device');
 
+    // 0. AN OWNER NEVER BANS THE DEVICE HE IS CALLING FROM. The panel checks its own id, but that is
+    //    the client's idea of it - stale after an identity rotation, or when the binding moved - and
+    //    banning it wipes the machine in the user's hand. The calling session's binding is the fact,
+    //    held by core-service: read it BEFORE anything is purged, and refuse when it names this id.
+    //    A retirement is exempt: its id IS the caller's own abandoned one, still bound until the
+    //    next unlock rebinds the session.
+    if (reason === 'owner') await this.refuseOwnDevice(safeUserId, safeDeviceId, callerSessionId);
+
     // 1. Purge the full per-device footprint (shared helper with the stale-device GC), recording the
     //    key groups the device held: its rows were the binding the revoked-leaves question reads.
     const purge = await this.messagingService.purgeDeviceFootprint(safeUserId, safeDeviceId, {
@@ -1000,5 +1047,49 @@ export class DevicesController {
       status: 'device_deleted',
       ...purge,
     };
+  }
+
+  /**
+   * Throws a typed `OWN_DEVICE` 409 when the calling session is bound to `deviceId`, and a 503 when
+   * the binding cannot be read (the delete it gates destroys, so an unknown answer refuses). A call
+   * naming no session is refused too, as a typed 400 `SESSION_UNNAMED` (never a 401/403, which
+   * would end the client's session): nginx forwards the verified token's `sid`, every access token
+   * has carried one since 2026-10-25 and lives one hour, so no legitimate caller arrives without.
+   */
+  private async refuseOwnDevice(
+    userId: string,
+    deviceId: string,
+    callerSessionId: string | null
+  ): Promise<void> {
+    if (!callerSessionId) {
+      this.logger.error(
+        `[DELETE_DEVICE] user=${userId} device=${deviceId} REFUSED: the request names no calling session, so its own-device binding cannot be checked (SESSION_UNNAMED)`
+      );
+      throw new BadRequestException({
+        code: 'SESSION_UNNAMED',
+        message: 'An owner device delete must come from a named session.',
+      });
+    }
+    let bound: string | null;
+    try {
+      bound = await sessionBoundDevice(userId, callerSessionId);
+    } catch (e) {
+      if (!(e instanceof SessionBindingUnknownError)) throw e;
+      this.logger.error(
+        `[DELETE_DEVICE] user=${userId} device=${deviceId} REFUSED: the caller session's binding is unknown (${e.detail}) - answering 503, nothing destroyed`
+      );
+      throw new ServiceUnavailableException({
+        message: "The calling session's device could not be read yet. Retry.",
+      });
+    }
+    if (bound === deviceId) {
+      this.logger.warn(
+        `[DELETE_DEVICE] user=${userId} device=${deviceId} REFUSED: it is the device the calling session is bound to (OWN_DEVICE)`
+      );
+      throw new ConflictException({
+        code: 'OWN_DEVICE',
+        message: 'This is the device the calling session is bound to; it cannot ban itself.',
+      });
+    }
   }
 }

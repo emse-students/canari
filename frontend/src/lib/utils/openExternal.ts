@@ -4,6 +4,7 @@ import { confirmUnsafeLinkIfNeeded } from '$lib/utils/checkLinkSafety';
 import { isTauriRuntime } from '$lib/utils/tauriRuntime';
 import { MOBILE_APP_PROTOCOL } from '$lib/mobile/appSiteAssociation';
 import { handlePlaceLinkClick } from '$lib/navigation/scrollToTop';
+import { BACK_LINK_ATTRIBUTE, backLinkTaken } from '$lib/navigation/backToOrigin';
 
 export { isTauriRuntime };
 
@@ -62,6 +63,13 @@ export function handleAppLinkClick(event: MouseEvent): boolean {
     rawHref.startsWith('/') && !rawHref.startsWith('//') ? rawHref : anchor.href || rawHref;
 
   if (handlePlaceLinkClick(anchor, window.location.pathname)) {
+    event.preventDefault();
+    event.stopPropagation();
+    return true;
+  }
+
+  // A Back arrow returns to the page the reader came from when that is not its structural parent.
+  if (anchor.hasAttribute(BACK_LINK_ATTRIBUTE) && backLinkTaken(anchor)) {
     event.preventDefault();
     event.stopPropagation();
     return true;

@@ -26,6 +26,11 @@
     submitterName,
   } from '$lib/forms/submissionTable';
   import { m } from '$lib/paraglide/messages';
+  import {
+    identityCellText,
+    respondentChoiceLabel,
+    type DeclaredField,
+  } from '$lib/forms/respondentFields';
 
   /**
    * ONE FORM'S RESPONSES, AND THE ANSWERS IN THEM.
@@ -76,6 +81,11 @@
      * owns them (`FormResponsesPanel.svelte`), beside the delete control.
      */
     rowActions?: Snippet<[Submission]>;
+    /**
+     * Who answered, as the form kept it (owner, 2026-11-16): the promo and formation, status and
+     * campus columns, after the name - `identityColumnsOf`, decided by the form like every column.
+     */
+    identityColumns?: DeclaredField[];
   }
 
   let {
@@ -87,6 +97,7 @@
     deletingId,
     onDelete,
     rowActions,
+    identityColumns = [],
   }: Props = $props();
 
   const columns = $derived(answerColumns(items ?? [], maxAnswerColumns(requiresPayment)));
@@ -305,6 +316,11 @@
         {#if !anonymous}
           <th class="pr-4 pb-2 whitespace-nowrap">{m.form_list_col_name()}</th>
         {/if}
+        {#each identityColumns as field (field)}
+          <th class="pr-4 pb-2 whitespace-nowrap" data-testid="identity-col-{field}">
+            {respondentChoiceLabel(field)}
+          </th>
+        {/each}
         {#each columns as column (column.id)}
           <!-- The width lives on a DIV, not on the cell: `max-width` on a `<th>` or `<td>` is a
                suggestion under auto table layout and the browser widens it anyway, so the column was
@@ -331,6 +347,12 @@
           {#if !anonymous}
             <td class="py-2 pr-4 whitespace-nowrap">{@render submitter(sub)}</td>
           {/if}
+          {#each identityColumns as field (field)}
+            {@const text = identityCellText(sub.respondentIdentity, field)}
+            <td class="py-2 pr-4 text-xs whitespace-nowrap">
+              {#if text}{text}{:else}<span class="text-text-muted/50">-</span>{/if}
+            </td>
+          {/each}
           {#each columns as column (column.id)}
             {@const text = answered.find((a) => a.item.id === column.id)?.text}
             <td class="py-2 pr-4">
@@ -363,7 +385,10 @@
         {#if expanded[sub.id]}
           <tr>
             <td
-              colspan={columns.length + (requiresPayment ? 6 : 4) - (anonymous ? 1 : 0)}
+              colspan={columns.length +
+                identityColumns.length +
+                (requiresPayment ? 6 : 4) -
+                (anonymous ? 1 : 0)}
               class="bg-cn-border/10 px-3 py-3"
             >
               {@render answersPanel(sub)}
@@ -387,6 +412,14 @@
           </p>
           {#if !anonymous}
             <p class="text-text-main truncate font-semibold">{@render submitter(sub)}</p>
+          {/if}
+          {#if identityColumns.length > 0}
+            <p class="text-text-muted text-xs">
+              {identityColumns
+                .map((field) => identityCellText(sub.respondentIdentity, field))
+                .filter(Boolean)
+                .join(' · ')}
+            </p>
           {/if}
           {#if requiresPayment}
             <p class="mt-1 flex items-center gap-2">

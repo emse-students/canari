@@ -46,7 +46,9 @@ import { expireUnansweredAsks, seatKey } from './utils/group-membership';
 import { announceExpiredAsks, trackJoinAskWork } from './utils/join-ask-announce';
 import { checkDatabaseClockAgreement } from './utils/clock-agreement';
 import { reportOrphanDevices } from './utils/orphan-devices';
+import { reportPushCoverage } from './utils/push-coverage';
 import { deleteSentFrameReceiptsBefore } from './utils/sent-frame-receipt';
+import { deleteUninvitedEntriesPastRetention } from './utils/uninvited-entries';
 import { takeSafeBrowsingRefusalCount } from './utils/safe-browsing';
 import {
   REPORT_KINDS,
@@ -71,6 +73,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   private cleanupStalePushTokensInterval: ReturnType<typeof setInterval>;
   private cleanupStalePendingInvitationsInterval: ReturnType<typeof setInterval>;
   private cleanupExpiredRevocationsInterval: ReturnType<typeof setInterval>;
+  private pruneUninvitedEntriesInterval: ReturnType<typeof setInterval>;
   private reclaimExpiredKeyPackagesInterval: ReturnType<typeof setInterval>;
   private reportQueueDepthInterval: ReturnType<typeof setInterval>;
   private reportStrandedMembershipsInterval: ReturnType<typeof setInterval>;
@@ -78,6 +81,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   private reportSingleHolderInterval: ReturnType<typeof setInterval>;
   private reportCommitLogInterval: ReturnType<typeof setInterval>;
   private reportOrphanDevicesInterval: ReturnType<typeof setInterval>;
+  private reportPushCoverageInterval: ReturnType<typeof setInterval>;
   private reportSafeBrowsingInterval: ReturnType<typeof setInterval>;
   private reportKnownAccusationsInterval: ReturnType<typeof setInterval>;
   private initialSweepTimeout: ReturnType<typeof setTimeout>;
@@ -229,6 +233,14 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       );
     }, 24 * ONE_HOUR);
 
+    // Age the uninvited-entry count out with the log line it de-duplicates (migration 053) - see
+    // pruneUninvitedEntries.
+    this.pruneUninvitedEntriesInterval = setInterval(() => {
+      void this.pruneUninvitedEntries().catch((e) =>
+        this.logger.error('[CRON] pruneUninvitedEntries failed', e)
+      );
+    }, 24 * ONE_HOUR);
+
     // Reclaim one-time key packages past their own MLS lifetime, and REPORT the last-resort rows
     // past theirs - see reclaimExpiredKeyPackages for why one is deleted and the other cannot be.
     this.reclaimExpiredKeyPackagesInterval = setInterval(() => {
@@ -243,6 +255,15 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     this.reportOrphanDevicesInterval = setInterval(() => {
       void this.reportOrphanDevices().catch((e) =>
         this.logger.error('[CRON] reportOrphanDevices failed', e)
+      );
+    }, 24 * ONE_HOUR);
+
+    // Count the phones that ran and hold no push registration, per build. Purely a report, daily, and
+    // it exists because a third of one build's phones stopped registering and only a hand-written
+    // query saw it (production 2026-11-15) - see utils/push-coverage.ts.
+    this.reportPushCoverageInterval = setInterval(() => {
+      void this.reportPushCoverage().catch((e) =>
+        this.logger.error('[CRON] reportPushCoverage failed', e)
       );
     }, 24 * ONE_HOUR);
 
@@ -316,8 +337,8 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
         'orphan group purge (6h), ' +
         'soft-deleted groups purge (24h), stale push tokens purge (24h), ' +
         'stale pending invitations purge (24h), ' +
-        'expired device revocations purge (24h), orphan device report (24h), ' +
-        'known accusations summary (24h) scheduled'
+        'expired device revocations purge (24h), orphan device report (24h), push coverage report (24h), ' +
+        'known accusations summary (24h), uninvited-entry count prune (24h) scheduled'
     );
 
     // A `setInterval` FIRES FOR THE FIRST TIME ONE INTERVAL LATER, so a job scheduled every 24 h
@@ -347,6 +368,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       ['cleanupExpiredRevocations', () => this.cleanupExpiredRevocations()],
       ['reclaimExpiredKeyPackages', () => this.reclaimExpiredKeyPackages()],
       ['pruneExpiredCommitLog', () => this.messagingService.pruneExpiredCommitLog()],
+      ['pruneUninvitedEntries', () => this.pruneUninvitedEntries()],
       // Last on purpose: they report the estate as the GC leaves it, not as it found it -
       // `cleanupStalePendingInvitations` above is the job that deletes what the second one reads.
       ['reportQueueDepth', () => this.reportQueueDepth()],
@@ -357,6 +379,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       ['reportCommitLogHealth', () => this.reportCommitLogHealth()],
       // After the GC above, so it counts only what the GC left - the population it cannot reach.
       ['reportOrphanDevices', () => this.reportOrphanDevices()],
+      ['reportPushCoverage', () => this.reportPushCoverage()],
       // After the four reports that settle their ledgers, so it counts what they just left there.
       ['reportKnownAccusations', () => this.reportKnownAccusations()],
     ];
@@ -406,6 +429,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     clearInterval(this.cleanupStalePushTokensInterval);
     clearInterval(this.cleanupStalePendingInvitationsInterval);
     clearInterval(this.cleanupExpiredRevocationsInterval);
+    clearInterval(this.pruneUninvitedEntriesInterval);
     clearInterval(this.reclaimExpiredKeyPackagesInterval);
     clearInterval(this.reportQueueDepthInterval);
     clearInterval(this.reportStrandedMembershipsInterval);
@@ -413,6 +437,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     clearInterval(this.reportSingleHolderInterval);
     clearInterval(this.reportCommitLogInterval);
     clearInterval(this.reportOrphanDevicesInterval);
+    clearInterval(this.reportPushCoverageInterval);
     clearInterval(this.reportSafeBrowsingInterval);
     clearInterval(this.reportKnownAccusationsInterval);
     clearTimeout(this.initialSweepTimeout);
@@ -1340,6 +1365,11 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     await summarizeAccusations(this.groupRepo.manager, this.logger, labels);
   }
 
+  /** The daily push-coverage count - read-only; see {@link reportPushCoverage}. */
+  private async reportPushCoverage() {
+    await reportPushCoverage(this.groupRepo.manager, this.logger);
+  }
+
   /** The daily orphan-device count - read-only; see {@link reportOrphanDevices}. */
   private async reportOrphanDevices() {
     await reportOrphanDevices(this.groupRepo.manager, this.logger);
@@ -1598,6 +1628,25 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     if (result.affected && result.affected > 0) {
       this.logger.log(
         `[CRON] cleanupExpiredRevocations: deleted ${result.affected} revocation(s) past their window`
+      );
+    }
+  }
+
+  /**
+   * Deletes the counted uninvited entries (`uninvited_entries`, migration 053) first counted before
+   * the retention window: the row holds what the `[UNINVITED_ENTRY]` line printed, so it is kept as
+   * long as that line could be, and no longer, on the database's clock. A row deleted early only
+   * lets one more report of the same entry print again; it never decides anything else. Also in the
+   * initial sweep: a daily interval never fires in a service redeployed more often than daily.
+   */
+  private async pruneUninvitedEntries() {
+    const removed = await deleteUninvitedEntriesPastRetention(
+      this.queuedMessageRepo.manager,
+      RETENTION_WINDOW_MS
+    );
+    if (removed > 0) {
+      this.logger.log(
+        `[CRON] pruneUninvitedEntries: deleted ${removed} counted entr${removed === 1 ? 'y' : 'ies'} past the retention window`
       );
     }
   }

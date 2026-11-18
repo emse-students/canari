@@ -435,7 +435,7 @@ CID=<the Canari Dev client_id>
 for uri in "https://dev.canari-emse.fr/auth/callback" "fr.emse.canari://callback"; do
   enc=$(python -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=''))" "$uri")
   curl -s -o /dev/null -w "$uri -> %{http_code} %{redirect_url}\n" \
-    "https://auth.canari-emse.fr/application/o/authorize/?client_id=$CID&redirect_uri=$enc&response_type=code&scope=openid+profile&state=probe"
+    "https://miconnect.emse.fr/application/o/authorize/?client_id=$CID&redirect_uri=$enc&response_type=code&scope=openid+profile&state=probe"
 done
 ```
 
@@ -803,6 +803,18 @@ collection of name and first name, as one required tick, for new AND existing ac
 > MiConnect, so the hold covers both. **Lifting it is `git revert` of the hold's commit**, after the
 > three conditions in [backlog](../backlog.d/p1-the-miconnect-terms-stage-reaches-production-with-the-next-stable-three.md).
 > The page `/legal/miconnect` stays published.
+
+> **BOUND TO ONE PROVIDER, 2026-11-17 (owner's yes):** the held blueprint's objects were applied by hand and
+> only the harness client's provider (`Canari Local`) authorizes through `miconnect-authorization`; the other
+> eight keep the implicit-consent flow (listed before and after, unchanged). Driven on a test account: terms
+> page, tick, redirect, and a second authorization skipping the page. **Revert:** set that provider's
+> `authorization_flow` back to `default-provider-authorization-implicit-consent` (`ak shell`), or wait for the
+> next stable's `apply-blueprints.sh`, which resets it. The phone readings are still owed before the hold lifts.
+>
+> **ENDED 2026-11-18 at 09:08 UTC** by the `1.7.0` stable's `apply-blueprints.sh apply`, as planned: all nine
+> providers read `default-provider-authorization-implicit-consent` afterwards. The phone readings were not
+> taken (sitting S8). **A pre-release build authorizes through `Canari Dev`**, so a phone reading in the app
+> needs `miconnect-canari-dev` bound, not `Canari Local` ([backlog](../backlog.d/p1-the-miconnect-terms-stage-reaches-production-with-the-next-stable-three.md)).
 
 - **Where:** `blueprints/45-consent.yaml` (HELD: `blueprints/held/`), flow `miconnect-authorization`, which the eight OAuth2
   providers now name instead of `default-provider-authorization-implicit-consent`. The enrolment flow

@@ -17,7 +17,9 @@
  */
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { PG_SESSION_OPTIONS } from '../common/pg-session-options';
 import { DataSource } from 'typeorm';
+import { createBellTargetTables } from './post-notifications.it-schema';
 import {
   BadRequestException,
   ConflictException,
@@ -54,6 +56,7 @@ import { bellRowShownSql, type PostNotificationsService } from './post-notificat
 import { PostsService } from './posts.service';
 import { dropRepublicationsOf } from './republication-sql';
 import { RepublicationsService } from './republications.service';
+import { ACTIVITY_DUMP_SQL, untilWaiting } from '../common/lock-wait.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -215,23 +218,24 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
   }
 
   /**
-   * Resolves once at least `n` backends of this database wait on a lock - how a two-connection case
+   * Resolves once at least `n` sessions of THIS suite's pool (its `application_name`; the suites
+   * share one database) wait on a lock - how a two-connection case
    * knows a transaction has REACHED its wait, rather than guessing a duration.
    */
   async function lockWaiters(n: number): Promise<void> {
-    for (let i = 0; i < 400; i++) {
-      const rows: { n: number }[] = await q(
-        `SELECT count(*)::int AS n FROM pg_stat_activity
-          WHERE datname = current_database() AND wait_event_type = 'Lock'`
-      );
-      if (rows[0].n >= n) return;
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
-    const seen: unknown[] = await q(
-      `SELECT pid, state, wait_event_type, wait_event, left(query, 120) AS query FROM pg_stat_activity
-        WHERE datname = current_database() AND pid <> pg_backend_pid()`
-    );
-    throw new Error(`never ${n} backend(s) waiting on a lock: ${JSON.stringify(seen)}`);
+    await untilWaiting({
+      what: 'the transaction',
+      atLeast: n,
+      waiting: async () => {
+        const rows: { n: number }[] = await q(
+          `SELECT count(*)::int AS n FROM pg_stat_activity
+            WHERE application_name = $1 AND wait_event_type = 'Lock'`,
+          [schema]
+        );
+        return rows[0].n;
+      },
+      dump: () => q(ACTIVITY_DUMP_SQL),
+    });
   }
 
   async function sees(postId: string, userId: string): Promise<boolean> {
@@ -257,7 +261,12 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
       url: URL,
       entities: [Proposal, PostRepublication],
       synchronize: false,
-      extra: { options: `-c search_path=${schema},public` },
+      // The service's own session settings (`PG_SESSION_OPTIONS`), as `AppModule` opens its pool.
+      // Named after the suite's schema: a lock wait is looked for among THIS suite's sessions.
+      extra: {
+        options: `${PG_SESSION_OPTIONS} -c search_path=${schema},public`,
+        application_name: schema,
+      },
     });
     await ds.initialize();
     await q(`CREATE SCHEMA ${schema}`);
@@ -424,6 +433,8 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
       proposals
     );
     personal.onModuleInit();
+    // The bell's one statement reads what its target gates name (`bell-row-gates.ts`).
+    await createBellTargetTables(q);
   });
 
   afterAll(async () => {
@@ -802,9 +813,9 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
       );
       let proposalFree: boolean;
       try {
-        // Waits on the hide's row, whatever its order; this sleep only lets it get there. The
-        // verdict is the lock state below, never the duration.
-        await new Promise((resolve) => setTimeout(resolve, 300));
+        // Waits on the hide's row, whatever its order: seen waiting, by the server's own account.
+        // The verdict is the lock state below.
+        await lockWaiters(1);
         // The acceptance waits on the post and has NOT taken the proposal, so the hide could still
         // delete it. Taking the proposal first would make this NOWAIT fail (SQLSTATE 55P03).
         proposalFree = await q(`SELECT 1 FROM proposals WHERE id = $1 FOR UPDATE NOWAIT`, [

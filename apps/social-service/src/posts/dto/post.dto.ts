@@ -1,5 +1,6 @@
 import { Transform, Type } from 'class-transformer';
 import {
+  Allow,
   ArrayMaxSize,
   ArrayMinSize,
   IsArray,
@@ -213,81 +214,6 @@ export class PollInputDto {
   anonymous?: boolean;
 }
 
-export class FormOptionInputDto {
-  @IsString()
-  @IsOptional()
-  id?: string;
-
-  @IsString()
-  @IsNotEmpty()
-  label: string;
-
-  @IsNumber()
-  priceModifier: number;
-}
-
-export class FormItemInputDto {
-  @IsString()
-  @IsOptional()
-  id?: string;
-
-  @IsString()
-  @IsNotEmpty()
-  label: string;
-
-  @IsBoolean()
-  required: boolean;
-
-  @IsString()
-  @IsNotEmpty()
-  type: string;
-
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => FormOptionInputDto)
-  @IsOptional()
-  options?: FormOptionInputDto[];
-
-  @IsArray()
-  @IsString({ each: true })
-  @IsOptional()
-  rows?: string[];
-
-  @IsOptional()
-  scale?: {
-    min: number;
-    max: number;
-    minLabel?: string;
-    maxLabel?: string;
-  };
-}
-
-export class FormInputDto {
-  @IsString()
-  @IsOptional()
-  id?: string;
-
-  @IsString()
-  @IsNotEmpty()
-  title: string;
-
-  @IsString()
-  @IsNotEmpty()
-  eventId: string;
-
-  @IsNumber()
-  @Min(0)
-  basePrice: number;
-
-  @IsString()
-  currency: string;
-
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => FormItemInputDto)
-  items: FormItemInputDto[];
-}
-
 /**
  * The publish queue's withdrawal of a post it queued (`POST /posts/:id/withdraw`): the media it
  * uploaded for it, which social-service deletes unless a live row cites them.
@@ -362,11 +288,14 @@ export class CreatePostDto {
   @Type(() => PollInputDto)
   polls?: PollInputDto[];
 
-  @IsArray()
-  @IsOptional()
-  @ValidateNested({ each: true })
-  @Type(() => FormInputDto)
-  forms?: FormInputDto[];
+  /**
+   * The retired inline `forms` list: no client of this repository ever wrote it (the composer has
+   * sent `attachedFormId` since its first version), so `createPost` refuses it, typed
+   * (`POST_FORMS_RETIRED`). Declared only so the whitelist hands it to that refusal instead of
+   * dropping it unseen.
+   */
+  @Allow()
+  forms?: unknown;
 
   /**
    * Publish AS this association (`canPostAs` decides whether the author may). A uuid or nothing: a

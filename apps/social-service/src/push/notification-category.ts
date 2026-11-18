@@ -114,6 +114,7 @@ export const NOTIFICATION_TYPE_CATEGORY: Readonly<Record<NotificationType, strin
   live_cut: null,
   live_suspended: null,
   live_withdrawn: null,
+  live_reinstated: null,
   form_paid_over_capacity: 'forms',
   lydia_payments_active: 'forms',
   lydia_payments_paused: 'forms',
@@ -136,6 +137,9 @@ export const NOTIFICATION_TYPE_CATEGORY: Readonly<Record<NotificationType, strin
   friend_comment: 'posts',
   birthday: 'birthdays',
   campus_trend: SUGGESTIONS_CATEGORY,
+  // An item waiting in a global admin's queue: operational, no switch silences it.
+  admin_profile_correction: null,
+  admin_report: null,
 };
 
 /**
@@ -182,6 +186,7 @@ export const BELL_ROW_GATE: Readonly<Record<NotificationType, string | null>> = 
   live_cut: null,
   live_suspended: null,
   live_withdrawn: null,
+  live_reinstated: null,
   form_paid_over_capacity: null,
   lydia_payments_active: null,
   lydia_payments_paused: null,
@@ -200,6 +205,8 @@ export const BELL_ROW_GATE: Readonly<Record<NotificationType, string | null>> = 
   booking_removed: null,
   booking_open: null,
   member_repost: null,
+  admin_profile_correction: null,
+  admin_report: null,
 };
 
 /**

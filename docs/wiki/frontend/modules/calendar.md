@@ -738,31 +738,36 @@ the same aggregated feed as `GET /api/associations/calendar/feed` (JSON), with a
 `from`/`to` are optional on both routes: a "subscribe by URL" link is saved once by the calendar app
 and re-polled forever with the exact same URL, so the caller can never add parameters to it after the
 fact. When omitted, `AssociationsService.defaultCalendarFeedRange()` supplies a rolling
-3-months-back/12-months-forward window - the same window the frontend computes for the link it
-builds (`icsSubscriptionRangeISO()` in `frontend/src/lib/associations/api.ts`, shared by
-`AssociationCalendarSection.svelte` and `routes/calendar/+page.svelte`).
+3-months-back/12-months-forward window. Since 2026-11-14 the subscription link the frontend builds
+carries NO window (`agendaSubscriptionIcsPath`, the token alone), so a link saved today still shows the
+coming months a year later.
 
 ## The subscription link is SIGNED, and the selector offers only the reader's own spaces (2026-10-06)
 
 `feed.ics` refuses a campus / formation / association selection without the `sig` the server made for
 it, and signs only the reader's own spaces (design and codes:
 [profiles-and-access, D40 amended](../../profiles-and-access.md#d40-amended---the-selection-is-signed-and-only-the-readers-own-spaces-are-signed-2026-10-06)).
-In the frontend: `signAgendaFeed` (`associations/api.ts`) calls `POST /api/associations/calendar/feed-signature`;
-`createFeedSigner` (`calendar/signedFeedUrl.svelte.ts`) asks while the subscribe modal is open and holds
-`sig` apart from the selection it was made for, so a URL is never built from the PREVIOUS choice;
-`/calendar` and the association's calendar section pass `sig` to `aggregatedCalendarFeedIcsAbsoluteUrl`.
-`CalendarSubscribeModal` takes `signing` and states that links saved before 2026-10-06 stopped working.
+**Since 2026-11-14 the link is its HOLDER's** ([D40 re-decided](../../profiles-and-access.md#d40-re-decided-2026-11-14---the-link-is-its-holders)).
+In the frontend: `requestAgendaSubscription` (`associations/api.ts`) calls `POST /api/associations/calendar/subscription`
+and answers the token; `createSubscriptionLink` (`calendar/subscriptionLink.svelte.ts`) asks ONLY on
+the reader's tap (`ask()`, the modal's "Obtenir mon lien d'abonnement"; opening the modal leaves no
+live bearer row) and for the selection shown at that tap, and holds the token apart from that selection,
+so a URL is never built from the PREVIOUS choice; `/calendar` and the association's calendar section build the URL with
+`agendaSubscriptionIcsAbsoluteUrl(token)` - the token alone. `CalendarSubscribeModal` takes `signing`,
+`onAsk`, `onRevoke` and `revokeStatus`: it says a link shows what its holder sees, and its revoke button,
+once `showConfirm` is answered yes, calls `revokeAgendaSubscriptions` (`DELETE
+/api/associations/calendar/subscriptions`); the next link is asked like the first.
 `AgendaSelectionFields` takes the `reader` and offers `campusSelectOptions(reader)` /
 `formationSelectOptions(reader)` - "any" plus the reader's own values - on both the modal and the PDF export.
-The one-event link (`eventIcsAbsoluteUrl`) stays unsigned.
+The one-event link (`eventIcsAbsoluteUrl`) carries its own event signature (`icsSig`, 2026-11-02).
 
 ## A post links an event; the event does not link a post
 
 `Post.linkedCalendarEventId` is the only column - there is no `linkedPostId` on
 `AssociationCalendarEvent`, unlike `linkedFormId`, which the event DOES carry (see above).
 `resolvePostCalendarEventLink` requires an `associationId` to set it, so a post carrying this field
-is always an association post, never a personal or anonymous one - `mustHideAnonymousAuthor` never
-has an opinion about it.
+is always an association post, never a personal or anonymous one - its writer is served like any
+association post's (`viewerSeesWriter`: to its moderators and its writer only).
 
 **The event's own card shows the post by asking, not by reading a column** - reported by a user
 2026-09-18 after the reverse direction rendered nothing. `PostsService.findPostLinkedToCalendarEvent`
@@ -885,7 +890,8 @@ MASKED, yet knows it is the BDE's by the queue it came in.
 
 | Surface | What it shows for a neutral event |
 | --- | --- |
-| month grid, day panel, schedule list (`eventOwners`, `eventAccentColor`) | one identity "Campus", key `campus`, no logo, drawn with `NeutralEventMark` (a generic calendar icon in a muted disc, never the orange initials an avatar falls back to, owner 2026-11-13), one accent derived from that key - the same for a steward, who receives the owner but is shown what readers see |
+| month grid cell (`MonthCalendarGridRich`) | the "Campus" colour only: no logo watermark and no initials, as on the export (the cell kept its watermark after #3455 and wore a translucent "CA" until 1.7.1, owner 2026-11-18; `MonthCalendarGridRich.neutral.svelte.test.ts`) |
+| day panel, schedule list (`eventOwners`, `eventAccentColor`) | one identity "Campus", key `campus`, no logo, drawn with `NeutralEventMark` (a generic calendar icon in a muted disc, never the orange initials an avatar falls back to, owner 2026-11-13), one accent derived from that key - the same for a steward, who receives the owner but is shown what readers see |
 | detail modal | a "Campus" chip (the same `NeutralEventMark`) that links nowhere; the share / add-to-calendar source URL is `/calendar` |
 | `.ics` (subscription and one event) | `SUMMARY: <title> - Campus`, `URL: <site>/calendar` |
 | PDF / PNG export (`calendarExport.ts`) | the "Campus" colour band only: no logo watermark, no initials, no mark, no missing-logo warning |

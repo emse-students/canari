@@ -931,7 +931,7 @@
         <aside
           aria-label={m.media_viewer_info()}
           class="absolute inset-x-0 bottom-0 z-30 max-h-[60%] overflow-y-auto rounded-t-2xl bg-neutral-900 text-white md:relative md:inset-auto md:max-h-none md:w-80 md:shrink-0 md:rounded-none md:border-l md:border-white/10"
-          style="padding-bottom: max(1rem, env(safe-area-inset-bottom, 1rem));"
+          style="padding-bottom: max(1rem, var(--safe-area-inset-bottom, 1rem));"
           transition:fly={{ y: 32, duration: 200 }}
           onclick={(e) => e.stopPropagation()}
           role="presentation"
@@ -1000,7 +1000,8 @@
 
     {#snippet footer()}
       {#if dotCount > 1 && onDotSelect}
-        <div class="pointer-events-auto flex justify-center gap-1.5 pt-2">
+        <!-- The wrapper takes NO touch: it spans the width above a video's seek line. Only the dots do. -->
+        <div class="pointer-events-none flex justify-center gap-1.5 pt-2">
           {#each { length: dotCount } as _, i (i)}
             <button
               type="button"
@@ -1010,7 +1011,7 @@
                 measured = null;
                 onDotSelect!(i);
               }}
-              class="h-2 w-2 rounded-full transition-all {i === dotIndex
+              class="pointer-events-auto h-2 w-2 rounded-full transition-all {i === dotIndex
                 ? 'bg-white'
                 : 'bg-white/35'}"
               aria-label={m.media_lightbox_dot_aria({ index: i + 1 })}

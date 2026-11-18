@@ -65,6 +65,14 @@ describe('PostsController - the write routes ask the read gate', () => {
       {
         isContentModerator: jest.fn(() => Promise.resolve(false)),
         mayActOnAny: jest.fn(() => Promise.resolve(new Set<string>())),
+        commentStandings: jest.fn(() =>
+          Promise.resolve({ postAs: new Set<string>(), moderatedInstitutions: new Set<string>() })
+        ),
+        // The moderation read's one predicate: here the platform admin alone moderates.
+        mayReadToModeratePost: jest.fn(
+          (_user: unknown, _post: unknown, opts?: { isGlobalAdmin?: boolean }) =>
+            Promise.resolve(opts?.isGlobalAdmin === true)
+        ),
       } as unknown as AssociationsService,
       {} as PostNotificationsService,
       {} as PostMediaRetentionService

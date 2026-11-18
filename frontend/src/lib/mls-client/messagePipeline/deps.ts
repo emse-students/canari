@@ -11,6 +11,7 @@ import type {
 import type { SvelteMap } from 'svelte/reactivity';
 import type { AnnouncedJoinAsk } from '$lib/utils/chat/actions';
 import type { SettledJoinAsk } from '$lib/utils/chat/joinRequests.svelte';
+import type { InboundReaction } from '$lib/utils/chat/reactionNotification';
 
 /**
  * Dependencies injected into setupMessageHandler.
@@ -125,6 +126,13 @@ export interface MessageHandlerDeps {
    */
   onSalonUnreadCleared?: (event: { workspaceId: string }) => void;
   /**
+   * A live salon message this device could not OPEN (its seed has not landed, most often: a salon
+   * granted or a community joined a moment ago), from another member and not silent. Its row is not
+   * drawn, so the live tally cannot count it, and the repair that draws it later is a history load,
+   * which counts nothing. The server's count does: the handler asks it (`noteUncountedSalonArrival`).
+   */
+  onSalonArrivalUncounted?: (event: { channelId: string; messageId: string }) => void;
+  /**
    * This device's own role in a community changed, pushed by the server to the member it concerns.
    *
    * Carries what the role GRANTS rather than only its name: the client caches `viewerCanManage`,
@@ -165,6 +173,12 @@ export interface MessageHandlerDeps {
   onJoinAskSettled?: (settled: SettledJoinAsk) => void;
   /** A participant's read watermark moved forward - `at` is how far they have now read. */
   onReadStateAdvanced?: (event: { conversationKey: string; senderId: string; at: number }) => void;
+  /**
+   * Every reaction frame applied - DM, group or salon - with what it changed and whose message it
+   * landed on: the frame trigger of a reaction notification (`useMessaging.notifyInboundReaction`,
+   * `reactionNotification.ts`). Optional: a context without it raises no reaction notification.
+   */
+  onInboundReaction?: (reaction: InboundReaction) => void;
   /**
    * A call signal arrived. `at` is when its frame happened (`receivedNoticeTime`: the frame's
    * `sentAt` and the server's acceptance), `null` when neither is known - the call record is dated

@@ -3,8 +3,6 @@ import { Log } from '$lib/utils/Log';
 import type { CreateFormPayload } from './api';
 import { FORM_DRAFT_CONFLICT, FormDraftConflictError } from './draftConflict';
 
-export { FORM_DRAFT_CONFLICT };
-
 /** How long the editor waits after the last keystroke before saving: a burst of typing is one save. */
 export const AUTOSAVE_DELAY_MS = 1500;
 

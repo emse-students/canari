@@ -26,6 +26,7 @@ import { ExternalModule } from './external/external.module';
 import { InternalModule } from './internal/internal.module';
 import { SkyModule } from './sky/sky.module';
 import { typeormSynchronize } from './typeorm-synchronize';
+import { ROUTE_PARAMS_GUARD } from './common/route-params';
 
 /** Root NestJS module - wires up TypeORM, config, auth, users, payments, and version. */
 @Module({
@@ -77,6 +78,6 @@ import { typeormSynchronize } from './typeorm-synchronize';
     SkyModule,
   ],
   controllers: [AppController, HealthController],
-  providers: [AppService],
+  providers: [AppService, ROUTE_PARAMS_GUARD],
 })
 export class AppModule {}

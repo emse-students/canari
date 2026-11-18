@@ -9,7 +9,6 @@ import {
   Headers,
   Param,
   ParseIntPipe,
-  ParseUUIDPipe,
   Post as HttpPost,
   Put,
   Query,
@@ -23,6 +22,7 @@ import { PERSON_KEY } from '../follows/follow-cursor';
 import { FOLLOW_PAGE_MAX } from '../follows/follow-requests.service';
 import { MemberRepostsService } from './member-reposts.service';
 import { RepostAccountConsentDto, RepostPostConsentDto } from './dto/post.dto';
+import { RouteParams } from '../common/route-params';
 
 /**
  * Reposts and take-backs one account may make per minute, per route, ALL posts together: the
@@ -56,6 +56,7 @@ export const REPOST_SETTINGS_READS_PER_MINUTE = 60;
  * Member reposts (WP-F6) under `/api/posts/...`. The caller is always the header, never an id from
  * the URL: a person reposts, takes back and consents for THEMSELVES only.
  */
+@RouteParams({ postId: 'uuid', reposterId: 'opaque' })
 @Controller('posts')
 @UseGuards(NginxAuthGuard)
 export class MemberRepostsController {
@@ -87,10 +88,7 @@ export class MemberRepostsController {
   @HttpPost(':postId/reposts')
   @UseGuards(UserResourceThrottlerGuard)
   @Throttle({ default: { limit: MEMBER_REPOST_WRITES_PER_MINUTE, ttl: 60_000 } })
-  async repost(
-    @Headers('x-user-id') xUserId: string,
-    @Param('postId', ParseUUIDPipe) postId: string
-  ) {
+  async repost(@Headers('x-user-id') xUserId: string, @Param('postId') postId: string) {
     if (await this.moderation.isUserMuted(xUserId)) {
       throw new ForbiddenException('Your account has been restricted. You cannot post or react.');
     }
@@ -101,7 +99,7 @@ export class MemberRepostsController {
   @Delete(':postId/reposts')
   @UseGuards(UserResourceThrottlerGuard)
   @Throttle({ default: { limit: MEMBER_REPOST_WRITES_PER_MINUTE, ttl: 60_000 } })
-  unrepost(@Headers('x-user-id') xUserId: string, @Param('postId', ParseUUIDPipe) postId: string) {
+  unrepost(@Headers('x-user-id') xUserId: string, @Param('postId') postId: string) {
     return this.reposts.unrepost(postId, xUserId);
   }
 
@@ -114,7 +112,7 @@ export class MemberRepostsController {
   @Throttle({ default: { limit: REPOST_SETTINGS_READS_PER_MINUTE, ttl: 60_000 } })
   reposters(
     @Headers('x-user-id') xUserId: string,
-    @Param('postId', ParseUUIDPipe) postId: string,
+    @Param('postId') postId: string,
     @Query('limit', new DefaultValuePipe(FOLLOW_PAGE_MAX), ParseIntPipe) limit: number,
     @Query('after') after?: string
   ) {
@@ -127,7 +125,7 @@ export class MemberRepostsController {
   @Throttle({ default: { limit: MEMBER_REPOST_WRITES_PER_MINUTE, ttl: 60_000 } })
   removeRepost(
     @Headers('x-user-id') xUserId: string,
-    @Param('postId', ParseUUIDPipe) postId: string,
+    @Param('postId') postId: string,
     @Param('reposterId') reposterId: string
   ) {
     // Not a user id this server could hold (`PERSON_KEY`): a 400 before any query.
@@ -146,7 +144,7 @@ export class MemberRepostsController {
   @Throttle({ default: { limit: REPOST_CONSENT_WRITES_PER_MINUTE, ttl: 60_000 } })
   setPostConsent(
     @Headers('x-user-id') xUserId: string,
-    @Param('postId', ParseUUIDPipe) postId: string,
+    @Param('postId') postId: string,
     @Body() body: RepostPostConsentDto
   ) {
     return this.reposts.setPostConsent(postId, xUserId, body.allowReposts);

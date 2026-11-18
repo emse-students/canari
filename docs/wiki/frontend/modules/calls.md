@@ -386,7 +386,7 @@ neither form is in this repository - and decide together with B5's wording, so t
 | Call metadata in clear on the server (room binding, presence, ring fan-out; logs per C13) | Usage Data > Product Interaction, linked to the user, App Functionality - only if the current label does not already cover messaging metadata | App activity > Other actions, collected, App functionality - same proviso |
 | The peer and Cloudflare see each device's public IP, on every ANSWERED call (an unanswered call sends it to neither) | Apple counts an IP as an identifier only for tracking or as derived location; neither applies, so probably no new row | no new data type if no location is derived from it; Cloudflare is a service provider (the form's sharing exemption) |
 | The `[CALL_REPORT]` lines in the in-app log | not collected: the log leaves the device only when the member exports it | same |
-| The ring push carries caller and conversation names (C7, C21) | already covered by the messaging rows, if they name push content | same |
+| The ring push carries ids only - conversation, call and caller ids, `hasVideo`, and on VoIP `ringUntil` - never a name (decision 6; C7, C21) | already covered by the messaging rows, if they name push content | same |
 
 **What remains after these drafts**: the owner's answers to the table, the demo pair, the video
 (recorded during the Tier B runs, never staged), and the listing texts
@@ -676,6 +676,19 @@ Objective-C was not compiled at all** (written on Windows; the iOS CI job is its
 | K8b - the caller cancels: the screen goes away | within seconds (`call_ring_end`) | the named limitation: may ring to the deadline |
 | K6 - screen locked mid-call keeps the audio | the call service | the `audio` mode |
 | Logs | `IncomingCallActivity` and `canUseFullScreenIntent` lines | `[CanariCallKit] voip credentials updated`, `ringing call=` |
+
+**iPhone 12 column READ on 2026-11-15** (TestFlight `1.6.12-alpha.2`, dev, a web seat calling):
+- **K7**: the CallKit banner named the caller. Answer, then the app PIN, joined in about 12 s
+  (`an answer waits - the page was told`), and the caller received live audio.
+- **K6**: the phone was locked 25 s mid-call. The caller's inbound track stayed live and unmuted.
+- **K8**: full-screen CallKit on the lock screen. Slide to answer, then "More > Open in Canari", then
+  the PIN, joined. The bench phone has no device passcode, so no Face ID step showed. An answer
+  opened 42 s late lost the call
+  ([P3](../../backlog.d/p3-ios-an-answer-on-the-locked-callkit-screen-is-lost-if-the-app-opens-after-the-ring-deadline.md)).
+- **K8b**: the caller's cancel ended the CallKit ring within a second (`ended (reason=2)`), better
+  than the named limitation.
+- **The foreground ring** flashed a CallKit banner over the in-app ring
+  ([P3](../../backlog.d/p3-ios-a-foreground-ring-flashes-the-callkit-banner-over-the-in-app-ring.md)).
 
 **Operator actions (the owner's):**
 - **Play Console**: Android 14+ grants `USE_FULL_SCREEN_INTENT` by default only to calling and alarm
@@ -2223,13 +2236,18 @@ the CLEAN reference; `noisy` = the reference under steady band noise + hum 10 dB
 4. **Cost on the desktop: 0.01-0.26 ms per 10 ms frame (0.1-2.6 % of one core in real time)**;
    the Mi 9T's number is owed.
 
-**Owed** ([backlog](../../backlog.d/call-noise-suppression-clean-speech-gate-fails-and-readings-owed.md)):
-the owner took the call on row 3 (OFF by default, 2026-11-01, above); what turns it back ON by
-default is a real call on the bench phones that sounds good with the switch on. The readings, each
-in a call where the switch was turned ON - `ns=on` and the end line on the Mi 9T (Android WebView)
-and the iPhone 12 (WKWebView, AudioWorklet since iOS 14.5; whether its worklet scope has
-WebAssembly, and whether a second AudioContext moves the call's audio route), the switch turned on
-in a call answered from the native ring, a real voice and music with the switch on and off.
+**Decided and read** (the backlog entry was closed 2026-11-16): the owner took the call on row 3 -
+RNNoise ships OFF by default (`CALL_NOISE_SUPPRESSION_DEFAULT = false`, 2026-11-01), the in-call
+switch kept, and `[CALL_REPORT] ns=off` is the ordinary value. The gated rig row `app-ns` failed on
+the synthetic clean reference (LSD 11.0 dB against 7, HF tilt -14.8 against -6, 1.3 s of dropouts
+against 0.25) while it lowered a steady background by 25 dB. What would lift it to ON by default is
+the OWNER's listening to a real call with the switch on (not a bench reading; his 2026-11-15 sitting
+said "dans l'ensemble ca a l'air bien" and did not change the default), after which the `app-ns`
+thresholds are re-read for a suppressor, or another model (GTCRN, Speex) is measured on the same
+rows. The mechanical readings all PASS on both phones (Mi 9T `1.6.12-alpha.2` to `1.7.0-alpha.4`,
+iPhone 12 `1.7.0-alpha.2` and `alpha.4`): worklet ready, `ns=on`, `ns_fallbacks=0`, cost 0.5-1.3 ms
+per frame, the audio route unchanged on both, a call answered from the native ring ends `ns=on`, a
+12 s lock survived on the iPhone, no `unavailable (` line. Readings: [device-verification](../../device-verification.md#the-both-phones-readings-of-2026-11-16-on-170-alpha4).
 
 ## CALL-E2E-BYPASS-MI9T (2026-10-20) - Chromium short-circuits a transform assigned one task late
 
@@ -2980,7 +2998,7 @@ notification (`useNotifications.notifyIncomingCall`) is now DEFERRED while the p
 posted if the app leaves the screen while the call still rings, dropped when the ring ends; logged
 `[NOTIF] incoming call in <group> rings in-app - no OS notification while the app is on screen`.
 If a banner still shows in the foreground on the next reading, it is not this path - see
-[backlog](../../backlog.d/p3-an-os-incoming-call-banner-over-the-in-app-ring-if-it-outlives-the-web-fix.md).
+[backlog](../../backlog.d/p3-ios-a-foreground-ring-flashes-the-callkit-banner-over-the-in-app-ring.md).
 
 ### One call screen on every platform (2026-10-23)
 
@@ -3366,7 +3384,7 @@ answer, and the one every calling app holds.
 | The transition table | `call/OngoingCall.kt` (`decide`) | start / update / stop / hang-up against the CALL ID in the foreground (null when none); every command is logged with its effect. A start of the running call is a refresh; a start of ANOTHER call while one runs takes the foreground over and logs an ERROR (the earlier call's stop was lost); an update or a stop of a call that is not the running one is an earlier call's command landing late, or one in flight when the service had left - EXPECTED, logged at INFO with that cause; a stop naming no call (the page gone, a new page) stops whatever runs; the notification's hang-up makes the service LEAVE THE FOREGROUND ITSELF and then tells the page, which ends the call - the service's end never waits on a page being there |
 | The bridge | `CallBridge.kt` (`window.canariCall`: `start(json)`, `update(json)` - the description plus the `callId` the page draws per call -, `stop(callId, reason)`, `pageLoaded()`) and one DOM event up, `canari:call-native` (`started`, `failed` with a `code` - `off-screen` or `refused` -, `stopped`, `hangup`, `mute`, `foreground`), every one naming its `callId`; the page DROPS an event of another call | registered by `MainActivity` ONLY when the service is in the merged manifest. `start` is refused BEFORE it is attempted when the activity is not RESUMED (`off-screen`) or `RECORD_AUDIO` is not granted (`refused`) - the two preconditions of a microphone service, known here, never learnt from a crash. The start is a PLAIN `startService` (legal: the app is on screen), and the service calls `startForeground` in `onStartCommand`: a refusal is then a logged exception and a `failed` event, where after `startForegroundService` a service stopping without `startForeground` is counted as a crash of the process. A `SecurityException` or `ForegroundServiceStartNotAllowedException` met while the app is NOT on screen (HOME pressed between the bridge's check and `startForeground` on the main thread) is `off-screen`, not `refused` (`classifyStartRefusal`). Every `stopSelf` names its `startId`, so a start delivered before a preceding stop was handled is not destroyed with it |
 | The page's side | `lib/mobile/androidCallService.ts`, opened by `CallOverlay` once per call | `ongoingCallSpec` turns the call's status kind into the description (a Paraglide word, never the running timer); `start` once the call HOLDS the microphone and is the caller's `ringing` or the callee's `connecting` - seconds after the tap, so on screen with the grant answered; `update` only on a change; `stop` at `ended`. An `off-screen` refusal is a WARN and is asked ONCE more, with the call's current description, when native sends `foreground` (the activity resumed with that refusal pending) - an EVENT, never a clock; a second refusal, or any `refused`, is an ERROR and final for the call. A build without the bridge logs `ERROR this Android build has no ongoing-call service` once per call. The speaker toggle is shown on Android only when the bridge exists - the route IS the service's - and is DISABLED, labelled "output unavailable for now", while a start waits for `foreground` and once the service is refused or gone for the call |
-| Teardown | `MainActivity.onDestroy`, `onTaskRemoved`, `onBackPressed`, `+layout.svelte` | a destroyed activity (its WebView is destroyed with it, and the call) stops the service; a swipe from Recents stops it; a page that LOADS calls `pageLoaded()` once (see "Every end path"); Back at the root during a call moves the task back on API 28-30 (API 31+ does that itself) |
+| Teardown | `MainActivity.onDestroy`, `onTaskRemoved`, `onBackPressed`, `+layout.svelte` | a destroyed activity (its WebView is destroyed with it, and the call) stops the service; a swipe from Recents stops it; a page that LOADS calls `pageLoaded()` once (see "Every end path"); Back at the root moves the task to the background on every API level (owner, 2026-11-14, [mobile](../mobile.md#back-at-a-root-tab-goes-to-the-background-owner-2026-11-14)); during a call on API 28-30 the call branch logs it first |
 
 **The mode has another owner (review F1).** Chromium's `AudioManagerAndroid` may set
 `MODE_IN_COMMUNICATION` itself when the page opens a capture for a call, and put the mode back when

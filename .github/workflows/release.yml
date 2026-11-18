@@ -7,7 +7,7 @@
 #      onto `main` by itself. A merge deploys NOTHING.
 #   2. PUBLISH A PRE-RELEASE `vX.Y.Z-alpha.N`.  Deploys `dev.canari-emse.fr` and feeds the store
 #      tester programmes - if the tests are green.
-#   3. PUBLISH A STABLE `vX.Y.Z`.  Deploys `canari-emse.fr` and both store production channels - if
+#   3. PUBLISH A STABLE `vX.Y.Z`.  Deploys `canari.emse.fr` and both store production channels - if
 #      the tests are green, AND only from a commit the dev estate has already served.
 #
 # THIS FILE IS PACKAGE 2 OF 2, AND IT CARRIES BOTH OF THOSE TWO PATHS. `ci.yml` is the
@@ -18,9 +18,9 @@
 # paths are told apart by the EVENT TYPE, not by a branch and not by a guess:
 #
 #   prereleased -> dev.canari-emse.fr + Play `internal` + TestFlight
-#   released    -> canari-emse.fr     + Play `production` + App Store REVIEW
+#   released    -> canari.emse.fr     + Play `production` + App Store REVIEW
 #
-# and everything before that fork - the six gates and the version bump - is shared, because it
+# and everything before that fork - the seven gates and the version bump - is shared, because it
 # must be identical for both.
 #
 # WHY THIS FILE EXISTS AT ALL. Until 2026-09-03 those two publications drove FOUR workflows chained
@@ -85,7 +85,7 @@ jobs:
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
   # MAY THIS RELEASE START?
   #
-  # Six questions, all of them in `.github/scripts/release-preflight.sh` so they can be tested on
+  # Seven questions, all of them in `.github/scripts/release-preflight.sh` so they can be tested on
   # inputs the API will not produce on demand, and replayed against a release that already happened.
   # The one that matters most is the fourth: a stable may only be published from a commit the dev
   # estate has already served, which is what makes production being ahead of dev IMPOSSIBLE rather
@@ -131,6 +131,32 @@ jobs:
             echo "::error::The GitHub secret LYDIA_ENV is not exactly 'production' (unset, or another word). A stable deploys production, whose render accepts only 'production'; set the secret before tagging, or the deploy would fail AFTER the stores took the version."
             exit 1
           fi
+
+      # NO ESTATE-SCOPED SECRET MAY EXIST AT REPOSITORY LEVEL (2026-11-13). The build jobs read
+      # `BASE_URL`, `AUTHENTIK_URL`, `AUTHENTIK_CLIENT_ID` and `ANDROID_APP_LINK_SHA256` under ONE
+      # name from the environment of their estate (`development` or `production`). GitHub resolves a
+      # name the environment lacks from the REPOSITORY level, so a repository copy is exactly how an
+      # alpha would quietly build against production's identity client. This job declares no
+      # environment, so the only value it can see under these names IS the repository's - and any
+      # value at all refuses the release, before anything is bumped. The list is the names
+      # MIGRATION.md gives the level `production, development`; `secret-levels.test.mjs` holds the
+      # two equal.
+      # Nothing is printed but the names.
+      - name: No estate secret is kept at repository level
+        env:
+          BASE_URL: ${{ secrets.BASE_URL }}
+          AUTHENTIK_URL: ${{ secrets.AUTHENTIK_URL }}
+          AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
+          ANDROID_APP_LINK_SHA256: ${{ secrets.ANDROID_APP_LINK_SHA256 }}
+        run: |
+          found=0
+          for name in BASE_URL AUTHENTIK_URL AUTHENTIK_CLIENT_ID ANDROID_APP_LINK_SHA256; do
+            if [ -n "${!name:-}" ]; then
+              echo "::error::The secret $name exists at REPOSITORY level. It belongs to the environments only (each estate its own value): an environment lacking it would silently read this copy, which is how a pre-release builds against production. Check it is set in both 'development' and 'production', then delete the repository copy (docs/wiki/cicd.md#where-a-secret-lives-and-why)."
+              found=1
+            fi
+          done
+          [ "$found" -eq 0 ]
 
       # WHAT IS BEING RELEASED, AND FROM WHICH COMMIT - the only two facts the gates need.
       #
@@ -245,6 +271,9 @@ jobs:
           REPO: ${{ github.repository }}
           VERSION: ${{ steps.resolve.outputs.version }}
           TARGET_SHA: ${{ steps.resolve.outputs.target_sha }}
+          # The commit the release's tag named AT PUBLICATION - the one GitHub took this run's
+          # workflow files from. Gate 4 refuses a stable where it is not the latest alpha's commit.
+          PUBLISHED_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
 

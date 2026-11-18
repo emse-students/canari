@@ -1,6 +1,8 @@
 import {
   SCHEMA_VERSION,
   conversationAwaitingAdmissionStatement,
+  conversationNameAtStatement,
+  conversationNameSyncStatement,
   conversationServerReadWatermarksStatement,
   conversationStartedAtStatement,
   isFreshDatabase,
@@ -217,7 +219,7 @@ describe('conversationStartedAtStatement (v17)', () => {
 
   it('is a no-op on a fresh database, whose CREATE TABLE already has the column', () => {
     expect(conversationStartedAtStatement(['id', 'name', 'started_at'])).toBeNull();
-    expect(SCHEMA_VERSION).toBe(20);
+    expect(SCHEMA_VERSION).toBe(21);
   });
 });
 
@@ -256,6 +258,38 @@ describe('outboxUnavailableAnswersStatement (v19)', () => {
 
   it('is a no-op on a fresh database, whose CREATE TABLE already has the column', () => {
     expect(outboxUnavailableAnswersStatement(['id', 'unavailable_answers'])).toBeNull();
-    expect(SCHEMA_VERSION).toBe(20);
+    expect(SCHEMA_VERSION).toBe(21);
+  });
+});
+
+/** v20 -> v21 on a REAL in-memory SQLite: an existing row reads "never stated", and a rerun does nothing. */
+describe('conversationNameAtStatement (v21)', () => {
+  it('adds the column to an existing table, its rows read NULL, and is a no-op twice', () => {
+    const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
+    const engine = new DatabaseSync(':memory:');
+    engine.exec(
+      'CREATE TABLE conversations (id TEXT PRIMARY KEY, name TEXT NOT NULL, lifecycle TEXT)'
+    );
+    engine.exec("INSERT INTO conversations (id, name, lifecycle) VALUES ('g1', 'Group', 'active')");
+    const columnsOf = (): string[] =>
+      engine
+        .prepare('PRAGMA table_info(conversations)')
+        .all()
+        .map((c) => String(c.name));
+
+    const sql = conversationNameAtStatement(columnsOf());
+    expect(sql).not.toBeNull();
+    engine.exec(sql!);
+
+    expect(engine.prepare('SELECT name, name_at FROM conversations').get()).toEqual({
+      name: 'Group',
+      name_at: null,
+    });
+    expect(conversationNameAtStatement(columnsOf())).toBeNull();
+    const sync = conversationNameSyncStatement(columnsOf());
+    expect(sync).not.toBeNull();
+    engine.exec(sync!);
+    expect(conversationNameSyncStatement(columnsOf())).toBeNull();
+    expect(SCHEMA_VERSION).toBe(21);
   });
 });

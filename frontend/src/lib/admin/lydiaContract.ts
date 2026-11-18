@@ -15,14 +15,14 @@ export const LYDIA_PAYMENT_KINDS = ['remote', 'qr', 'tap_to_pay'] as const;
 export type LydiaPaymentKind = (typeof LYDIA_PAYMENT_KINDS)[number];
 
 /** A fee per payment, HT: basis points plus cents. */
-export interface LydiaFee {
+interface LydiaFee {
   percentBps: number;
   fixedCents: number;
 }
 
-export type LydiaFeesByKind = Partial<Record<LydiaPaymentKind, LydiaFee>>;
+type LydiaFeesByKind = Partial<Record<LydiaPaymentKind, LydiaFee>>;
 
-export interface LydiaBand {
+interface LydiaBand {
   fromCents: number;
   fees: LydiaFeesByKind;
 }
@@ -37,7 +37,7 @@ export interface LydiaContractSettings {
 }
 
 /** The figures of a contract year's flux, whole or for one association, cents TTC. */
-export interface LydiaFluxFigures {
+interface LydiaFluxFigures {
   paidCents: number;
   paymentCount: number;
   refundedCents: number;
@@ -50,7 +50,7 @@ export interface LydiaFluxFigures {
 }
 
 /** One association's part of the flux (social-service `measureLydiaFlux`). */
-export interface LydiaFluxShare extends LydiaFluxFigures {
+interface LydiaFluxShare extends LydiaFluxFigures {
   associationId: string;
   /** NULL when the association no longer exists. */
   name: string | null;
@@ -112,7 +112,7 @@ export async function saveLydiaContract(
   if (res.status === 400) {
     const body = (await res.json().catch(() => null)) as { field?: unknown } | null;
     const field = typeof body?.field === 'string' ? body.field : null;
-    Log.w(`[admin.lydia] terms refused field=${field ?? 'none'}`);
+    Log.w('admin.lydia', `terms refused field=${field ?? 'none'}`);
     throw new LydiaContractRefused(field);
   }
   if (!res.ok) throw new Error(`lydia contract write answered ${res.status}`);
@@ -148,7 +148,7 @@ export function hundredthsToDecimal(value: number | null | undefined): string {
 }
 
 /** One fee as typed: two decimals, either may be empty. */
-export interface LydiaFeeInputs {
+interface LydiaFeeInputs {
   percent: string;
   fixed: string;
 }

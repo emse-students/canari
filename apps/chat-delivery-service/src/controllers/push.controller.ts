@@ -52,6 +52,7 @@ import { parseGroupCallVersion } from '../utils/group-calls-mode';
 import { serveEnvelope, sweepDeviceEnvelopes } from '../utils/push-envelope';
 import { cutDeviceId } from '../utils/log-repeat';
 import { coreUrl, mediaUrl, socialUrl } from '../internal/service-urls';
+import { RouteParams } from '../common/route-params';
 
 /**
  * Max size of an encrypted media blob the push proxy will relay for a notification thumbnail
@@ -153,6 +154,7 @@ const QUEUED_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 type AvatarPushOutcome = 'served' | 'absent' | 'unavailable' | 'unreachable' | 'rejected';
 
 /** Push notification token management and Firebase Cloud Messaging dispatch. */
+@RouteParams({ targetUserId: 'opaque', mediaId: 'opaque', deviceId: 'opaque' })
 @Controller()
 export class PushController {
   private readonly logger = new Logger(PushController.name);
@@ -181,19 +183,6 @@ export class PushController {
     deviceId: string
   ): Promise<void> {
     await verifyPushSecret(this.pushTokenRepo, this.logger, authHeader, userId, deviceId);
-  }
-
-  private isTerminalPushTokenError(error: unknown): boolean {
-    const rawCode =
-      typeof error === 'object' && error && 'code' in error
-        ? (error as { code?: unknown }).code
-        : undefined;
-    const code = typeof rawCode === 'string' ? rawCode : '';
-
-    return (
-      code === 'messaging/invalid-registration-token' ||
-      code === 'messaging/registration-token-not-registered'
-    );
   }
 
   /**
@@ -359,8 +348,10 @@ export class PushController {
    * caller's access token, set by nginx from core-service's verify (never by the client - nginx
    * overwrites it on every authenticated location). Ending that session deletes this row and no
    * other, so a re-sign-in on the same device, which rewrites the row with its own session, is never
-   * undone by the old session's end. Written on EVERY registration, null included: a row rewritten
-   * by a token without the claim must not keep naming a session that did not write it.
+   * undone by the old session's end. A registration naming no session is refused, typed
+   * `SESSION_UNNAMED` (a 400, never a 401/403): verify answers a token without the claim as anonymous
+   * since 2026-11-17, so no authenticated caller arrives without one. Rows written with a null session
+   * before that stay at rest, and `endSessionPushRegistration`'s `ifBoundTo=none` still reaches them.
    */
   @UseGuards(HeaderAuthGuard, UserThrottlerGuard)
   @Post('mls/push/register')
@@ -382,6 +373,15 @@ export class PushController {
     const userId = sanitizeQueryValue(userIdRaw, 'userId');
     const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
     const sessionId = parseSessionId(sessionIdRaw, 'X-Session-Id');
+    if (!sessionId) {
+      this.logger.error(
+        `[PUSH_REGISTER] user=${userId} device=${deviceId} REFUSED: the request names no session (SESSION_UNNAMED)`
+      );
+      throw new BadRequestException({
+        code: 'SESSION_UNNAMED',
+        message: 'A push registration must come from a named session.',
+      });
+    }
 
     if (typeof body.token !== 'string' || !body.token.trim()) {
       throw new BadRequestException('token is required');
@@ -457,7 +457,7 @@ export class PushController {
     this.logger.log(
       `[PUSH_REGISTER] user=${userId} device=${deviceId} platform=${platform} ` +
         `locale=${locale ?? 'unstated'} voip=${voipToken === undefined ? 'unstated' : voipToken === null ? 'none' : 'set'} ` +
-        `session=${sessionId ? sessionId.slice(0, 8) : 'none'} wake=${wakeVersion} groupCall=${groupCallVersion}`
+        `session=${sessionId.slice(0, 8)} wake=${wakeVersion} groupCall=${groupCallVersion}`
     );
     // THE APP IS OPEN, so the envelopes this device was woken for are on screen over HTTP - the second
     // of an envelope's three deaths (`utils/push-envelope.ts`). A failure here costs storage, never

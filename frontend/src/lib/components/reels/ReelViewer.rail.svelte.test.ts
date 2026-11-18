@@ -89,6 +89,14 @@ function post(id: string, fields: Partial<PostEntity> = {}): PostEntity {
   };
 }
 
+/**
+ * The viewer opens its share sheet through a lazy `import()`, and the mocked stub's factory compiles
+ * a .svelte file on FIRST import: cold under load that outlasts the 1 s of `vi.waitFor`. Warm it once.
+ */
+beforeAll(async () => {
+  await import('$lib/components/posts/PostShareSheet.svelte');
+}, 60_000);
+
 const mounted: Record<string, unknown>[] = [];
 
 beforeEach(() => {

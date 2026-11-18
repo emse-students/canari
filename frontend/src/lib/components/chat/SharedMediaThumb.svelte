@@ -9,7 +9,7 @@
   } from '$lib/utils/mediaErrors';
   import { mediaFailureLabel } from '$lib/utils/mediaFailureLabel';
   import { ImageOff } from '@lucide/svelte';
-  import VideoGlassGlyph from '$lib/components/ui/player/VideoGlassGlyph.svelte';
+  import VideoRestingPlay from '$lib/components/ui/player/VideoRestingPlay.svelte';
   import { m } from '$lib/paraglide/messages';
   import { nearViewport } from '$lib/actions/nearViewport';
 
@@ -104,7 +104,7 @@
       <video src={blobUrl} class="h-full w-full object-cover" muted playsinline preload="metadata"
       ></video>
       <span class="pointer-events-none absolute inset-0 flex items-center justify-center">
-        <VideoGlassGlyph kind="play" size={32} />
+        <VideoRestingPlay size={32} />
       </span>
     {:else}
       <img src={blobUrl} alt={media.fileName ?? 'media'} class="h-full w-full object-cover" />

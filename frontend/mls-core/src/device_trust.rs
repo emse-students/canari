@@ -45,9 +45,10 @@ use openmls_traits::OpenMlsProvider;
 use openmls_traits::crypto::OpenMlsCrypto;
 use openmls_traits::types::HashType;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::admission::AdmissionPolicy;
+use crate::member_sightings::{MemberSighting, MemberSightings, MembershipEvidence};
 use crate::members::credential_identity;
 
 /// The most device events kept while nobody takes them. An event is a few hundred bytes of
@@ -326,6 +327,9 @@ pub struct DeviceTrust {
     departures: VecDeque<Departure>,
     /// Whether this process already said the departure record is full.
     departures_full_reported: bool,
+    /// Who this device saw hold a leaf of each conversation's tree, and from which epoch
+    /// ([`crate::member_sightings`]). Persisted.
+    sightings: MemberSightings,
     /// Groups the load did NOT seed because a commit was staged in them. In memory only: the next
     /// load decides again. Seeded at the first commit merged on their tree
     /// ([`Self::observe_merged_commit`]), or when their staged commit is cleared.
@@ -365,6 +369,8 @@ pub fn canonical_user_id(user_id: &str) -> String {
 /// ([`identity_names`]), the pins, the lookups, the leaf a replace removes. Two spellings the
 /// binding accepts as one device must be one device everywhere else too.
 pub fn canonical_identity(identity: &str) -> Option<String> {
+    #[cfg(test)]
+    tests::CANONICALISATIONS.with(|n| n.set(n.get() + 1));
     if !is_well_formed_identity(identity) {
         return None;
     }
@@ -410,8 +416,19 @@ pub fn identity_names(found: &str, expected: &str) -> bool {
 /// Whether two identities name the same USER (the user half, ignoring ASCII case, as
 /// [`identity_names`] compares it).
 pub(crate) fn same_user(a: &str, b: &str) -> bool {
-    let user = |s: &str| s.split_once(':').map_or(s, |(u, _)| u).to_string();
-    user(a).eq_ignore_ascii_case(&user(b))
+    user_half(a) == user_half(b)
+}
+
+/// The user half of an identity as [`same_user`] compares it: everything before the first ':' (the
+/// whole string when there is none), ASCII-lowercased. Two identities are the same user exactly
+/// when their halves are equal, so a set of them answers [`same_user`] against a whole tree at once.
+fn user_half(identity: &str) -> String {
+    #[cfg(test)]
+    tests::CANONICALISATIONS.with(|n| n.set(n.get() + 1));
+    identity
+        .split_once(':')
+        .map_or(identity, |(u, _)| u)
+        .to_ascii_lowercase()
 }
 
 /// `events` as the JSON array a binding without serde of its own hands to TypeScript (the WASM
@@ -457,6 +474,7 @@ impl DeviceTrust {
         pruned: Vec<String>,
         events: Vec<DeviceEvent>,
         departures: Vec<Departure>,
+        sightings: Vec<MemberSighting>,
     ) -> Self {
         // EVERY PIN THIS CODE WRITES IS KEYED CANONICALLY ([`Self::insert_pin`]), and no released
         // build wrote pins before that. A record under any other key is therefore not a pin of this
@@ -500,8 +518,57 @@ impl DeviceTrust {
             full_reported: false,
             departures: departures.into_iter().collect(),
             departures_full_reported: false,
+            sightings: MemberSightings::from_persisted(sightings),
             unseeded: Default::default(),
         }
+    }
+
+    /// The member sightings, as they are persisted ([`crate::member_sightings`]).
+    pub(crate) fn persisted_sightings(&self) -> Vec<MemberSighting> {
+        self.sightings.persisted()
+    }
+
+    /// Records every user of `leaves`, a tree of `group_id` this device accepted at `epoch`, as seen
+    /// there - unless the group is a key group (`door` is `Open`), which records none
+    /// ([`crate::member_sightings`]).
+    ///
+    /// @returns whether anything was written.
+    pub(crate) fn record_sightings(
+        &mut self,
+        group_id: &str,
+        epoch: u64,
+        leaves: &[LeafKey],
+        door: Option<AdmissionPolicy>,
+    ) -> bool {
+        if door == Some(AdmissionPolicy::Open) {
+            return false;
+        }
+        self.sightings.record_tree(group_id, epoch, leaves)
+    }
+
+    /// Forgets the sightings of `group_id`: the tree it held is gone (`why`).
+    ///
+    /// @returns whether anything was dropped.
+    pub(crate) fn forget_sightings(&mut self, group_id: &str, why: &str) -> bool {
+        self.sightings.forget_group(group_id, why)
+    }
+
+    /// Drops the sightings of groups not in `held_groups`, only past the threshold
+    /// ([`crate::member_sightings::SIGHTINGS_PRUNE_THRESHOLD`]).
+    pub(crate) fn prune_sightings(
+        &mut self,
+        held_groups: &std::collections::HashSet<&str>,
+    ) -> usize {
+        self.sightings.prune(held_groups)
+    }
+
+    /// What this device can prove about `user_id` in `group_id`, from what it saw itself in the
+    /// lineage it holds and that no other member's commit retired since: the first epoch it saw the
+    /// user hold a leaf there, and the first epoch its record of the group covers
+    /// ([`crate::member_sightings`]). A departure is NOT evidence of membership (owner, 2026-11-14:
+    /// retired is not proven). Never asks anybody.
+    pub fn membership_evidence(&self, group_id: &str, user_id: &str) -> MembershipEvidence {
+        self.sightings.evidence(group_id, user_id)
     }
 
     /// Records that the load did not seed `group_id` (a commit was staged in it).
@@ -603,7 +670,7 @@ impl DeviceTrust {
         before: &[LeafKey],
         after: &[LeafKey],
     ) -> bool {
-        let remaining: std::collections::HashSet<String> = after
+        let remaining: HashSet<String> = after
             .iter()
             .filter_map(|(_, id, _)| canonical_user_of(id))
             .collect();
@@ -621,10 +688,16 @@ impl DeviceTrust {
         }
         // EVERY DEVICE whose leaf went, its user staying or not: the record that tells a device
         // coming back by its own commit from one that was never here ([`DeviceEvent::first_in_group`]).
+        // Canonicalised once, for the reason `observe_merged_commit` gives: a scan of the tree after
+        // for each leaf before was quadratic. An identity that is not well formed is dropped either way.
+        let after_devices: HashSet<String> = after
+            .iter()
+            .filter_map(|(_, id, _)| canonical_identity(id))
+            .collect();
         let mut devices_gone: Vec<(String, String)> = before
             .iter()
-            .filter(|(_, id, _)| !after.iter().any(|(_, a, _)| same_identity(a, id)))
             .filter_map(|(_, id, _)| canonical_identity(id))
+            .filter(|id| !after_devices.contains(id))
             .filter_map(|id| {
                 id.split_once(':')
                     .map(|(u, d)| (u.to_string(), d.to_string()))
@@ -655,6 +728,45 @@ impl DeviceTrust {
             });
         }
         !gone.is_empty() || !devices_gone.is_empty()
+    }
+
+    /// Cancels the sighting of every user whose LAST leaf this commit removed when the committer is
+    /// ANOTHER user (or unknown): retired is not proven (owner, 2026-11-14,
+    /// [`crate::member_sightings`]). A commit of the user's own device removing their own leaves
+    /// cancels nothing.
+    ///
+    /// @returns whether anything was written.
+    fn retire_removed_users(
+        &mut self,
+        group_id: &str,
+        epoch: u64,
+        before: &[LeafKey],
+        after: &[LeafKey],
+        committer: Option<&str>,
+    ) -> bool {
+        let committer_user = committer.and_then(canonical_user_of);
+        let remaining: std::collections::HashSet<String> = after
+            .iter()
+            .filter_map(|(_, id, _)| canonical_user_of(id))
+            .collect();
+        let mut gone: Vec<String> = before
+            .iter()
+            .filter_map(|(_, id, _)| canonical_user_of(id))
+            .filter(|u| !remaining.contains(u))
+            .collect();
+        gone.sort();
+        gone.dedup();
+        let mut wrote = false;
+        for user in gone {
+            if committer_user.as_deref() == Some(user.as_str()) {
+                log::info!(
+                    "[SIGHTINGS] {group_id} epoch {epoch}: {user} removed their own leaves - still proven a member"
+                );
+                continue;
+            }
+            wrote |= self.sightings.retire(group_id, &user, epoch);
+        }
+        wrote
     }
 
     /// The persisted form of the pins, sorted so two saves of one record are byte-identical.
@@ -887,8 +999,9 @@ impl DeviceTrust {
     }
 
     /// Records a tree this device has just JOINED (a Welcome, an external commit): pins the
-    /// identities seen for the first time, and records an event for every leaf whose identity is
-    /// pinned under another key.
+    /// identities seen for the first time, records an event for every leaf whose identity is pinned
+    /// under another key, and records every user as seen in the group at `epoch` unless `door` is
+    /// `Open` ([`crate::member_sightings`]).
     ///
     /// @returns whether anything was written.
     pub(crate) fn observe_joined_tree(
@@ -897,10 +1010,15 @@ impl DeviceTrust {
         epoch: u64,
         leaves: &[LeafKey],
         own_identity: &str,
+        door: Option<AdmissionPolicy>,
     ) -> bool {
         // Joining pins the whole tree below, which is everything a later seed would do.
         self.unseeded.remove(group_id);
-        let mut wrote = false;
+        // A JOINED TREE STARTS A NEW LINEAGE: what an earlier copy of the group recorded is not
+        // evidence here ([`crate::member_sightings`]). Every user of this tree was a member of it at
+        // this epoch.
+        let mut wrote = self.forget_sightings(group_id, "a fresh tree was joined");
+        wrote |= self.record_sightings(group_id, epoch, leaves, door);
         for (_, identity, key) in leaves {
             let (trust, pinned) = self.observe(identity, key);
             wrote |= pinned;
@@ -941,7 +1059,10 @@ impl DeviceTrust {
     /// over PAIRS, not indexes, and a pinned pair is not news: a leaf that moved index, or a device
     /// removed and re-added under its pinned key (a heal), is the same device and says nothing.
     ///
-    /// `door` is the group's admission policy ([`crate::admission`]). It decides nothing here - the
+    /// Both trees are recorded as member sightings ([`crate::member_sightings`]) unless `door` is
+    /// `Open` (a key group).
+    ///
+    /// `door` is the group's admission policy ([`crate::admission`]). It decides no event - the
     /// event is recorded whatever it says - and only names the door a device's entry by its own
     /// commit came through, in its info line.
     ///
@@ -967,6 +1088,11 @@ impl DeviceTrust {
             );
             wrote |= self.seed_from_tree(before);
         }
+        // Both trees are ones this device accepted: the one the commit was built on (epoch - 1) -
+        // which also covers a group whose record started with this build - and the one it produced.
+        wrote |= self.record_sightings(group_id, epoch.saturating_sub(1), before, door);
+        wrote |= self.record_sightings(group_id, epoch, after, door);
+        wrote |= self.retire_removed_users(group_id, epoch, before, after, added_by);
         wrote |= self.record_departures(group_id, epoch, before, after);
         // The committer signed this commit with the key its leaf carries: a proof it holds that key.
         if let Some(committer) = added_by
@@ -974,17 +1100,32 @@ impl DeviceTrust {
         {
             wrote |= self.reaffirm(committer, key);
         }
+        // THE TREE BEFORE, NORMALISED ONCE, AND EVERY QUESTION BELOW ASKS THESE SETS. Each leaf after
+        // the commit used to be compared with each leaf before it through `same_identity` and
+        // `same_user`, which normalise - allocate - both sides on every call: quadratic in the tree,
+        // and on a 400-device key group 95% of what a merged commit cost. A shut phone's salon push
+        // replays every commit since the app last ran, so it paid that on each
+        // (`tests/push_catchup_at_scale.rs`, channel-encryption section 28). Same predicates: an
+        // identity that is not well formed matches no device, as `same_identity` answers, and a
+        // user half is compared as `same_user` compares it.
+        let mut before_devices: HashMap<String, Vec<&[u8]>> = HashMap::new();
+        for (_, id, k) in before {
+            if let Some(c) = canonical_identity(id) {
+                before_devices.entry(c).or_default().push(k.as_slice());
+            }
+        }
+        let before_users: HashSet<String> = before.iter().map(|(_, id, _)| user_half(id)).collect();
         for (_, identity, key) in after {
-            let existed = before
-                .iter()
-                .any(|(_, id, k)| same_identity(id, identity) && k == key);
+            let canonical = canonical_identity(identity);
+            let held_keys = canonical.as_ref().and_then(|c| before_devices.get(c));
+            let existed = held_keys.is_some_and(|keys| keys.contains(&key.as_slice()));
             if existed {
                 continue;
             }
+            let user_was_present = before_users.contains(&user_half(identity));
             // PER GROUP, NEVER FROM THE PIN: no leaf of this device in the tree the commit was built
             // on, and no departure of it recorded here. A pin is one store any group's tree writes.
-            let first_in_group = !before.iter().any(|(_, id, _)| same_identity(id, identity))
-                && !self.device_left_group(group_id, identity);
+            let first_in_group = held_keys.is_none() && !self.device_left_group(group_id, identity);
             // This device's own leaf entering its own group (an external join it made) is not a
             // device being added to anybody's conversation.
             if same_identity(identity, own.0) && key.as_slice() == own.1 {
@@ -1004,7 +1145,7 @@ impl DeviceTrust {
                 LeafTrust::Pinned
                     if !(first_in_group
                         && added_by.is_some_and(|c| same_identity(c, identity))
-                        && before.iter().any(|(_, id, _)| same_user(id, identity))) =>
+                        && user_was_present) =>
                 {
                     // A package under the pinned key reached somebody: the device still holds it.
                     wrote |= self.reaffirm(identity, key);
@@ -1041,7 +1182,7 @@ impl DeviceTrust {
                     added_by.unwrap_or("an unreadable sender"),
                 ),
             }
-            let member_already_present = before.iter().any(|(_, id, _)| same_user(id, identity));
+            let member_already_present = user_was_present;
             self.push_event(DeviceEvent {
                 group_id: group_id.to_string(),
                 epoch,
@@ -1069,6 +1210,77 @@ impl DeviceTrust {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    thread_local! {
+        /// How many identities [`canonical_identity`] canonicalised on this thread - the unit the
+        /// cost of a merged commit's observation is counted in, rather than a clock.
+        pub(super) static CANONICALISATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    /// A MERGED COMMIT IS OBSERVED IN TIME LINEAR IN THE TREE (2026-11-17). A shut phone's salon
+    /// push re-applies every commit of the key group since the app last ran
+    /// (`decrypt_push_message_with_commits_with_key`), and this observation ran on each of them,
+    /// comparing leaves after the commit with every leaf before it - normalising both sides of each
+    /// comparison. On a 400-device key group it was 95% of a commit's cost: ~74 ms of ~78 ms on one
+    /// workstation, the MLS work itself under 4 ms (`tests/push_catchup_at_scale.rs`). Counted in
+    /// normalisations (`canonical_identity` and the user half `same_user` compares), not
+    /// milliseconds, so the bound holds on any machine. The commit brings many leaves of every kind
+    /// the loop tells apart - a new device of a present user, a new user, a device pinned in another
+    /// group - so a scan of the tree per new leaf, on any of its branches, breaks the bound.
+    #[test]
+    fn a_merged_commit_is_observed_in_time_linear_in_the_tree() {
+        const LEAVES: usize = 400;
+        const EACH: usize = 40;
+        let mut t = DeviceTrust::default();
+        let own = ("me:phone", &[0u8; 32][..]);
+        let open = Some(AdmissionPolicy::Open);
+        let pinned: Vec<LeafKey> = (0..EACH as u32)
+            .map(|i| (i, format!("pinned{i}:d"), vec![9u8; 32]))
+            .collect();
+        t.observe_merged_commit("other", 3, &[], &pinned, None, own, open);
+        let before: Vec<LeafKey> = (0..LEAVES as u32)
+            .map(|i| (i, format!("user{i}:dev{i}"), vec![(i % 251) as u8; 32]))
+            .collect();
+        t.observe_merged_commit("kg", 10, &before, &before, None, own, open);
+        t.take_events();
+        let mut after = before.clone();
+        let mut next = LEAVES as u32;
+        for i in 0..EACH {
+            after.push((next, format!("user{i}:dev{i}-b"), vec![5u8; 32]));
+            after.push((next + 1, format!("fresh{i}:d"), vec![6u8; 32]));
+            after.push((next + 2, format!("pinned{i}:d"), vec![9u8; 32]));
+            next += 3;
+        }
+        CANONICALISATIONS.with(|n| n.set(0));
+        t.observe_merged_commit("kg", 11, &before, &after, Some("user0:dev0"), own, open);
+        let counted = CANONICALISATIONS.with(|n| n.get());
+        let leaves = before.len() + after.len();
+        assert!(
+            counted <= 20 * leaves,
+            "one merged commit normalised {counted} identities for {leaves} leaves before and after - \
+             quadratic, and a push replaying a key group's commits pays it on every one"
+        );
+        let events = t.take_events();
+        assert_eq!(
+            events.len(),
+            2 * EACH,
+            "every new device is an event; a device pinned elsewhere re-entering under its key is not"
+        );
+        assert!(
+            events
+                .iter()
+                .filter(|e| e.identity.starts_with("user"))
+                .all(|e| e.member_already_present),
+            "a new device of a present user says so"
+        );
+        assert!(
+            events
+                .iter()
+                .filter(|e| e.identity.starts_with("fresh"))
+                .all(|e| !e.member_already_present && e.first_in_group),
+            "a new user is not already present, and is first in the group"
+        );
+    }
 
     fn lk(index: u32, identity: &str, key: u8) -> LeafKey {
         (index, identity.to_string(), vec![key; 32])
@@ -1322,12 +1534,122 @@ mod tests {
         // A never-pruned first sight is anchored; the flag survives persistence.
         t.observe("new:d", b"k");
         assert!(t.pin_naming("new:d").unwrap().anchored);
-        let again =
-            DeviceTrust::from_persisted(t.persisted_pins(), t.persisted_pruned(), vec![], vec![]);
+        let again = DeviceTrust::from_persisted(
+            t.persisted_pins(),
+            t.persisted_pruned(),
+            vec![],
+            vec![],
+            vec![],
+        );
         assert!(!again.pin_naming("u5:d").unwrap().anchored);
         assert!(
             again.pruned.contains(&"u6:d".to_string()),
             "the pruned identities persist"
+        );
+    }
+
+    #[test]
+    fn membership_evidence_is_the_sightings_and_a_removal_by_another_member_retires() {
+        let leaf = |id: &str| (0u32, id.to_string(), b"k".to_vec());
+        // A departure recorded before the sightings existed is NOT evidence: retired is not proven.
+        let departed = Departure {
+            group_id: "g".into(),
+            user_id: "bob".into(),
+            epoch: 4,
+            device_id: Some("d1".into()),
+            user_left: true,
+        };
+        let mut t = DeviceTrust::from_persisted(vec![], vec![], vec![], vec![departed], vec![]);
+        t.record_sightings("g", 6, &[leaf("alice:d")], None);
+        assert_eq!(t.membership_evidence("g", "bob").first_seen_epoch, None);
+        assert_eq!(
+            t.membership_evidence("g", "alice").first_seen_epoch,
+            Some(6)
+        );
+
+        // A commit merged since: both trees are recorded, the one it was built on at epoch - 1.
+        let own = ("alice:d", b"k".as_slice());
+        t.observe_merged_commit(
+            "g",
+            8,
+            &[leaf("alice:d")],
+            &[leaf("alice:d"), leaf("carol:d"), leaf("carol:d2")],
+            Some("alice:d"),
+            own,
+            None,
+        );
+        assert_eq!(
+            t.membership_evidence("g", "carol").first_seen_epoch,
+            Some(8)
+        );
+
+        // carol's own device removes her other one: she stays, and stays proven.
+        let both = [leaf("alice:d"), leaf("carol:d"), leaf("carol:d2")];
+        let one = [leaf("alice:d"), leaf("carol:d2")];
+        t.observe_merged_commit("g", 9, &both, &one, Some("carol:d2"), own, None);
+        assert_eq!(
+            t.membership_evidence("g", "carol").first_seen_epoch,
+            Some(8)
+        );
+
+        // A commit of carol's own removing every leaf of hers cancels nothing (MLS cannot build it -
+        // a commit never removes its sender - but the rule is the owner's, kept exact).
+        let none = [leaf("alice:d")];
+        t.observe_merged_commit("g", 10, &one, &none, Some("carol:d3"), own, None);
+        assert_eq!(
+            t.membership_evidence("g", "carol").first_seen_epoch,
+            Some(8)
+        );
+
+        // alice removes dave's every leaf: dave is retired, no longer proven.
+        let with_dave = [leaf("alice:d"), leaf("dave:d")];
+        t.observe_merged_commit("g", 11, &none, &with_dave, Some("alice:d"), own, None);
+        assert_eq!(
+            t.membership_evidence("g", "dave").first_seen_epoch,
+            Some(11)
+        );
+        t.observe_merged_commit("g", 12, &with_dave, &none, Some("alice:d"), own, None);
+        assert_eq!(t.membership_evidence("g", "dave").first_seen_epoch, None);
+        // A committer nobody can name retires too.
+        let with_erin = [leaf("alice:d"), leaf("erin:d")];
+        t.observe_merged_commit("g", 13, &none, &with_erin, Some("alice:d"), own, None);
+        t.observe_merged_commit("g", 14, &with_erin, &none, None, own, None);
+        assert_eq!(t.membership_evidence("g", "erin").first_seen_epoch, None);
+
+        // A key group's commit records no sighting.
+        t.observe_merged_commit(
+            "kg",
+            2,
+            &[leaf("alice:d")],
+            &[leaf("alice:d"), leaf("carol:d")],
+            Some("alice:d"),
+            own,
+            Some(AdmissionPolicy::Open),
+        );
+        assert_eq!(
+            t.membership_evidence("kg", "alice").watched_from_epoch,
+            None
+        );
+
+        // A freshly joined tree of the same group starts a new lineage: nothing carries over.
+        t.observe_joined_tree("g", 20, &[leaf("alice:d")], "alice:d", None);
+        assert_eq!(t.membership_evidence("g", "carol").first_seen_epoch, None);
+        assert_eq!(
+            t.membership_evidence("g", "alice").first_seen_epoch,
+            Some(20)
+        );
+
+        // Persisted with the rest.
+        let again = DeviceTrust::from_persisted(
+            vec![],
+            vec![],
+            vec![],
+            t.persisted_departures(),
+            t.persisted_sightings(),
+        );
+        assert_eq!(
+            again.membership_evidence("g", "alice"),
+            t.membership_evidence("g", "alice")
         );
     }
 

@@ -23,12 +23,20 @@
  * Everything happens in a throwaway schema, dropped at the end.
  */
 import { readFileSync } from 'fs';
+import { createBellTargetTables } from '../posts/post-notifications.it-schema';
 import { join } from 'path';
 import { Client } from 'pg';
 import type { DataSource, EntityManager } from 'typeorm';
 import type { RedisService } from '../common/redis/redis.service';
 import { commentsWithheldPostIds, withholdCommentsAndPeople } from '../posts/comments-withheld';
-import { bellRowShownSql, PostNotificationsService } from '../posts/post-notifications.service';
+import {
+  bellRowActorAccountSql,
+  bellRowShownSql,
+  bellRowVisibleSql,
+  PostNotificationsService,
+} from '../posts/post-notifications.service';
+import { sameSideOfReviewCohortSql } from './reader-spaces';
+import { REVIEW_COHORT_ENV } from '../review-cohort';
 import { readPostOpenVerdict, type OpenablePost } from '../posts/post-openable';
 import { PostsService } from '../posts/posts.service';
 import { ReadGrantsService } from '../read-grants/read-grants.service';
@@ -49,7 +57,11 @@ const maybe = URL ? describe : describe.skip;
 
 const migration = (name: string) => readFileSync(join(__dirname, '..', 'migrations', name), 'utf8');
 
-/** The cast: students, a poster (author of every entity post) and four named readers. */
+/**
+ * The cast: students, a poster (author of every entity post) and four named readers. The poster
+ * is a member of none of those entities, so the author's door of an entity's post does not open
+ * to them (2026-11-14): they read none of those posts, as a former officer would not.
+ */
 const USERS = {
   icmSe: { campus: 'saint-etienne', cursus: [{ formation: 'ICM', promo: 2023 }] },
   isminGa: { campus: 'gardanne', cursus: [{ formation: 'ISMIN', promo: 2023 }] },
@@ -103,21 +115,21 @@ const POSTS: {
     label: 'an ICM x Saint-Etienne association post: its ticked cells and nobody else',
     authorId: 'poster',
     associationId: A1,
-    seenBy: ['icmSe', 'poster', 'grantIcmSe', 'grantBoth'],
+    seenBy: ['icmSe', 'grantIcmSe', 'grantBoth'],
   },
   {
     id: '00000000-0000-4000-8000-000000000002',
     label: 'a whole-Gardanne association post',
     authorId: 'poster',
     associationId: A2,
-    seenBy: ['isminGa', 'poster', 'grantGa', 'grantBoth'],
+    seenBy: ['isminGa', 'grantGa', 'grantBoth'],
   },
   {
     id: '00000000-0000-4000-8000-000000000003',
     label: 'an institution addressing everyone: every named reader whose cell holds a space',
     authorId: 'poster',
     associationId: I_ALL,
-    seenBy: ['icmSe', 'isminGa', 'poster', ...GRANTEES],
+    seenBy: ['icmSe', 'isminGa', ...GRANTEES],
   },
   {
     id: '00000000-0000-4000-8000-000000000004',
@@ -139,14 +151,14 @@ const POSTS: {
     authorId: 'poster',
     associationId: A2,
     republishedBy: [A1],
-    seenBy: ['isminGa', 'icmSe', 'poster', 'grantGa', 'grantIcmSe', 'grantBoth'],
+    seenBy: ['isminGa', 'icmSe', 'grantGa', 'grantIcmSe', 'grantBoth'],
   },
   {
     id: '00000000-0000-4000-8000-000000000007',
     label: 'an institution of the Gardanne campus: seen by a grantee ticking Gardanne',
     authorId: 'poster',
     associationId: I_GA,
-    seenBy: ['isminGa', 'poster', 'grantGa', 'grantBoth'],
+    seenBy: ['isminGa', 'grantGa', 'grantBoth'],
   },
 ];
 
@@ -252,6 +264,8 @@ maybe('nominative read grants against PostgreSQL (migration 078 included)', () =
          ('00000000-0000-4000-8000-0000000000e1', $1), ('00000000-0000-4000-8000-0000000000e2', $2)`,
       [A1, A2]
     );
+    // The bell's one statement reads what its target gates name (`bell-row-gates.ts`).
+    await createBellTargetTables((sql) => client.query(sql));
   });
 
   afterAll(async () => {
@@ -270,7 +284,7 @@ maybe('nominative read grants against PostgreSQL (migration 078 included)', () =
     for (const post of personal) {
       for (const id of GRANTEES) {
         const { rows } = await client.query(
-          `SELECT ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: true })} AS visible
+          `SELECT ${postVisibleToViewerSql('posts', '$2')} AS visible
              FROM posts WHERE posts.id = $1`,
           [post.id, id]
         );
@@ -285,10 +299,10 @@ maybe('nominative read grants against PostgreSQL (migration 078 included)', () =
 
   it('READ, REACT and COMMENT open on an in-scope post; a VOTE and a REPUBLICATION never do', async () => {
     // `assertVisible('READ_OR_REACT')` is the default predicate, `assertVisible('VOTE')` and the
-    // republication gate pass `readGrants: false`. Both with `adminSeesAll`, as the services do.
+    // republication gate pass `readGrants: false`.
     const open = async (postId: string, id: UserId, readGrants?: boolean) => {
       const { rows } = await client.query(
-        `SELECT ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: true, readGrants })} AS visible
+        `SELECT ${postVisibleToViewerSql('posts', '$2', { readGrants })} AS visible
            FROM posts WHERE posts.id = $1`,
         [postId, id]
       );
@@ -660,13 +674,15 @@ maybe('nominative read grants against PostgreSQL (migration 078 included)', () =
       type: string,
       recipientId: string,
       actorId = 'isminGa',
-      commentId: string | null = null
+      commentId: string | null = null,
+      meta: Record<string, unknown> | null = null
     ) =>
       (
         await client.query(
           `SELECT ${bellRowShownSql('n')} AS shown FROM (VALUES ($1::varchar, $2::varchar,
-             $3::varchar, $4::varchar, $5::varchar)) AS n(type, "postId", "recipientId", "actorId", "commentId")`,
-          [type, POST, recipientId, actorId, commentId]
+             $3::varchar, $4::varchar, $5::varchar, $6::jsonb))
+             AS n(type, "postId", "recipientId", "actorId", "commentId", meta)`,
+          [type, POST, recipientId, actorId, commentId, meta === null ? null : JSON.stringify(meta)]
         )
       ).rows[0].shown;
 
@@ -693,6 +709,55 @@ maybe('nominative read grants against PostgreSQL (migration 078 included)', () =
           id,
           shown: true,
         });
+      }
+    });
+
+    it("a row marked as the post's own mention keeps the post's rule, whatever its actor (an association's post names nobody)", async () => {
+      expect(await shown('mention', 'grantGa', '', null, { mentionIn: 'post' })).toBe(true);
+      expect(await shown('mention', 'grantGa', '', 'c1', { mentionIn: 'post' })).toBe(false);
+    });
+
+    it('a row naming nobody stands on the side of the person who acted: the bell shows what the push sent (review cohort)', async () => {
+      // The push of a post's mention, and of a comment's, is gated on the REAL writer's side
+      // (`mentionRecipientsOf` at the post's write, `sameSideOfReviewCohort` at the comment's).
+      const sameSide = async (actorId: string, recipientId: string, commentId: string | null) =>
+        (
+          await client.query(
+            `SELECT ${sameSideOfReviewCohortSql(bellRowActorAccountSql('n'), 'n."recipientId"')} AS same
+               FROM (VALUES ('mention'::varchar, $1::varchar, $2::varchar, $3::varchar, $4::varchar))
+               AS n(type, "postId", "recipientId", "actorId", "commentId")`,
+            [POST, recipientId, actorId, commentId]
+          )
+        ).rows[0].same;
+      const before = process.env[REVIEW_COHORT_ENV];
+      await client.query('BEGIN');
+      try {
+        // The post's author is a review account here, with `reviewer`; it writes comment `c9`.
+        process.env[REVIEW_COHORT_ENV] = 'poster,reviewer';
+        await client.query(
+          `UPDATE posts SET comments = comments || '[{"id": "c9", "userId": "poster", "text": "x"}]'
+            WHERE id = $1`,
+          [POST]
+        );
+        // A post's mention in an association's or an anonymous post: no actor, the post's author.
+        expect(await sameSide('', 'reviewer', null)).toBe(true);
+        expect(await sameSide('', 'grantGa', null)).toBe(false);
+        // An anonymous or association comment's mention: no actor, the comment's writer.
+        expect(await sameSide('', 'reviewer', 'c9')).toBe(true);
+        expect(await sameSide('', 'grantGa', 'c9')).toBe(false);
+        // A comment gone from the post leaves nobody to stand for: the empty actor, as before.
+        expect(await sameSide('', 'grantGa', 'gone')).toBe(true);
+        // A named actor is read as it is.
+        expect(await sameSide('poster', 'reviewer', null)).toBe(true);
+        expect(await sameSide('poster', 'grantGa', null)).toBe(false);
+        // And it is THE term the bell (and the per-post unread question) applies.
+        expect(bellRowVisibleSql('n')).toContain(
+          sameSideOfReviewCohortSql(bellRowActorAccountSql('n'), 'n."recipientId"')
+        );
+      } finally {
+        await client.query('ROLLBACK');
+        if (before === undefined) delete process.env[REVIEW_COHORT_ENV];
+        else process.env[REVIEW_COHORT_ENV] = before;
       }
     });
 

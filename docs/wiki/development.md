@@ -27,7 +27,7 @@ make all                  # installs deps + builds frontend + starts services
 make install              # installs Node, Bun, Rust, wasm-pack, frontend + service deps,
                          # then generates the MLS WASM and protobuf bindings - both are
                          # build artefacts and are NOT in git
-make install-hooks        # installs Git hooks (Husky + oxlint + oxfmt + svelte-check)
+make install-hooks        # points git at the tracked hooks in .husky/ (pre-commit, pre-push)
 make build-frontend       # builds WASM + protobuf bindings + SvelteKit
 make run-services         # starts Docker Compose (local dev)
 ```
@@ -52,7 +52,7 @@ bun run dev
 | `make install-wasm-pack` | Installs `wasm-pack`, PINNED, via `scripts/install-wasm-pack.sh` |
 | `make install-frontend` | `bun install` + `svelte-kit sync` + `bun run generate` in `frontend/` |
 | `make install-services` | `bun install` in every NestJS service directory |
-| `make install-hooks` | Husky + pre-commit hooks |
+| `make install-hooks` | points `core.hooksPath` at the tracked `.husky/` (pre-commit, pre-push) |
 
 #### `core.hooksPath` is shared by every worktree, and must stay RELATIVE
 
@@ -73,12 +73,16 @@ the four values actually observed.
 If commits stop re-staging, read it back before anything else:
 
 ```sh
-git config core.hooksPath      # must print .husky/_ and nothing else
-git config core.hooksPath .husky/_
+git config core.hooksPath      # .husky; .husky/_ while an older branch ran the last bun install
+git config core.hooksPath .husky
 ```
 
-A checkout that has never run `bun install` has no `.husky/_` at all, and git runs no hook there -
-that case is an un-armed checkout, not a hijacked one, and `make install-hooks` fixes it.
+**THE VALUE NAMES A TRACKED DIRECTORY SINCE 2026-11-15.** It was `.husky/_`, the wrappers husky
+GENERATES on `bun install` - so a fresh worktree with no `node_modules` had no `.husky/_`, git ran
+no hook there and said nothing, and PR #3611 was committed that way. `.husky/` itself is tracked, so
+every checkout has `pre-commit` and `pre-push` the moment it exists; a hook that then finds no
+`node_modules`, no bun or no cargo FAILS and names the install. `husky-hookspath.test.mjs` pins
+the value and that both hooks are tracked with the executable bit.
 
 ### Build
 
@@ -280,8 +284,11 @@ from the source.
   check - `CI passed` - then `gh pr merge --squash --delete-branch`. No approval is required, so the
   whole loop costs a minute; what it buys is a readable diff and a CI run on the MERGED result
   rather than on the branch alone. The admin role can bypass, and that is the emergency path only.
-- Before pushing: `rm -rf apps/*/dist`, then `git pull --rebase --autostash origin main`. A stale
-  `dist/` makes the pre-push hook replay compiled specs.
+- Before pushing, nothing by hand: the pre-push hook merges the latest `origin/main` into a feature
+  branch (never into a release branch or a tag, and a push to main is refused) and runs what the
+  pushed files touch - CI's own filters and commands, the full suites staying CI's
+  ([cicd](cicd.md#checks-at-commit-at-push-and-in-ci-only)). It refuses a dirty tree, so commit or
+  stash first; when it merged, it asks for the same `git push` once more.
 - Commit signing is on globally over SSH (`gpg.format ssh`,
   `user.signingkey ~/.ssh/id_ed25519.pub`). Every commit is Verified — do not disable it.
 - Driving several logged-in sessions at once (chrome-devtools MCP): `new_page` with
@@ -335,7 +342,7 @@ visible in the output; each is found by reading a value back.
   or write the whole file with Write. Then read the bytes back (`grep -n` piped to `cat -A`).
 - **`core.hooksPath` can point at another machine's (or a deleted checkout's) path**, carried by a copied
   `.git` from a handoff bundle or a restore; git then runs no hook and says nothing. Run
-  `git config core.hooksPath` after any clone or restore - it must print `.husky/_` (see
+  `git config core.hooksPath` after any clone or restore - it must print `.husky` (see
   [`core.hooksPath` is shared by every worktree](#corehookspath-is-shared-by-every-worktree-and-must-stay-relative)).
 
 ### Compiling Android Rust from Windows
@@ -559,7 +566,7 @@ something you learn by failing. Installing 0.11.0 locally once reported two find
 a local run that is *cleaner* than the pipeline is the same defect pointing the other way.
 
 ```sh
-winget install koalaman.shellcheck   # then check `shellcheck --version` against .shellcheck-version
+winget install koalaman.shellcheck --version 0.10.0   # exactly .shellcheck-version: the hooks refuse any other
 make lint-ci-scripts                 # exactly the file set ci.yml lints
 ```
 

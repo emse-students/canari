@@ -7,7 +7,7 @@
  * asked nothing until the next focus: presence went dark on a flaky link. The cache is written
  * through the module itself, so this test restates no storage format.
  */
-export {};
+import { beforeAll } from 'vitest';
 
 // The paraglide barrel is the import cost and nothing here asserts a message (see
 // appVersionCheck.importIsQuiet.test.ts).
@@ -22,6 +22,13 @@ const SERVER_INFO = {
   maintenance: { enabled: false },
   presencePost: true,
 };
+
+// Each test resets the module registry on purpose (fresh module state), so each `import()` below
+// evaluates the module again. The FIRST one also transforms it, which under load outlasts the 5 s
+// test timeout; do that once here, outside any test.
+beforeAll(async () => {
+  await import('./appVersionCheck.svelte');
+}, 60_000);
 
 describe('serverPresencePost', () => {
   beforeEach(() => {

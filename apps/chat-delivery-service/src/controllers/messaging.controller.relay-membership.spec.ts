@@ -15,7 +15,12 @@
 import { ForbiddenException, ServiceUnavailableException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { MessagingController } from './messaging.controller';
+import {
+  MessagingController,
+  REACTION_AT_MAX_AHEAD_MS,
+  REACTION_MESSAGE_ID_MAX_LENGTH,
+} from './messaging.controller';
+import { reactionCollapseId } from '../services/push-payload';
 import { MessagingService } from '../services/messaging.service';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { GroupMember } from '../entities/group-member.entity';
@@ -301,6 +306,62 @@ describe('the relay routes refuse a caller with no seat in the group they name',
         expect.any(String),
         expect.objectContaining({ groupId: GROUP, senderId: MEMBER })
       );
+    });
+
+    it("carries the reaction's own instant AND its collapse id, so the author's device makes one notification of push and frame", async () => {
+      await controller.notifyReaction(MEMBER, { ...reaction(GROUP), at: 1_700_000_000_123 });
+      expect(push).toHaveBeenCalledWith(
+        AUTHOR,
+        'Someone',
+        expect.any(String),
+        expect.objectContaining({
+          at: '1700000000123',
+          collapseId: reactionCollapseId('m-1', MEMBER),
+        })
+      );
+    });
+
+    it('forwards no instant when none, or no plausible one, is given - and says the implausible', async () => {
+      const warned = jest.spyOn((controller as any).logger, 'warn').mockImplementation(() => {});
+      await controller.notifyReaction(MEMBER, reaction(GROUP));
+      await controller.notifyReaction(MEMBER, { ...reaction(GROUP), at: -5 });
+      await controller.notifyReaction(MEMBER, { ...reaction(GROUP), at: 1.5 });
+      // More than a day ahead of the server: no phone's clock drifts that far.
+      await controller.notifyReaction(MEMBER, {
+        ...reaction(GROUP),
+        at: Date.now() + REACTION_AT_MAX_AHEAD_MS + 60_000,
+      });
+      expect(push).toHaveBeenCalledTimes(4);
+      for (const call of push.mock.calls) {
+        expect(call[3]).not.toHaveProperty('at');
+        expect(call[3]).not.toHaveProperty('collapseId');
+      }
+      expect(warned).toHaveBeenCalledTimes(3);
+    });
+
+    it('forwards the stamp but NO collapse id when the reactor names no message - never one over the conversation', async () => {
+      const { messageId: _, ...unnamed } = reaction(GROUP);
+      await controller.notifyReaction(MEMBER, { ...unnamed, at: 1_700_000_000_123 });
+      expect(push.mock.calls[0][3]).toHaveProperty('at', '1700000000123');
+      expect(push.mock.calls[0][3]).not.toHaveProperty('collapseId');
+    });
+
+    it('hashes no message id past the bound - the stamp alone, said once', async () => {
+      const warned = jest.spyOn((controller as any).logger, 'warn').mockImplementation(() => {});
+      await controller.notifyReaction(MEMBER, {
+        ...reaction(GROUP),
+        messageId: 'm'.repeat(REACTION_MESSAGE_ID_MAX_LENGTH + 1),
+        at: 1_700_000_000_123,
+      });
+      expect(push.mock.calls[0][3]).toHaveProperty('at', '1700000000123');
+      expect(push.mock.calls[0][3]).not.toHaveProperty('collapseId');
+      expect(warned).toHaveBeenCalledTimes(1);
+    });
+
+    it('forwards an instant up to a day ahead of the server', async () => {
+      const at = Date.now() + REACTION_AT_MAX_AHEAD_MS - 60_000;
+      await controller.notifyReaction(MEMBER, { ...reaction(GROUP), at });
+      expect(push.mock.calls[0][3]).toHaveProperty('at', String(at));
     });
 
     it('refuses a caller with no seat, and pushes nothing', async () => {

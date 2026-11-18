@@ -3,9 +3,10 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { assertInternalSecret } from './internal-secret.util';
 import { User } from '../users/entities/user.entity';
-import { cursusViewsOf, type CursusView } from '../users/miconnect-profile';
+import { cursusViewsOf, type Campus, type CursusView, type Post } from '../users/miconnect-profile';
 import { cursusEntriesSql, WELL_FORMED_ENTRY_SQL } from '../users/cursus-filter';
 import { isInReviewCohort } from '../review-cohort';
+import { RouteParams } from '../common/route-params';
 
 /**
  * The minimum a `/profile/:id` share needs to render a preview, plus what social-service prices on.
@@ -25,6 +26,29 @@ export interface InternalPublicProfile {
 }
 
 /**
+ * What a form may join to an answer from the respondent's account (forms, "the respondent's account
+ * fields", owner 2026-11-16): read by social-service AT SUBMIT TIME and stored with the answer as a
+ * snapshot. Every field is the identity provider's (D9: edited by an admin only), so a respondent
+ * cannot type a cheaper or another identity here. `cursusViews` is built by `cursusViewsOf`, the
+ * one reconciliation pricing also reads; `posts` is what tells staff (D2, D27: the former
+ * "Personnel de l'ecole" claim became an EMSE post), so no new claim is read.
+ */
+export interface InternalRespondentIdentity {
+  firstName: string | null;
+  lastName: string | null;
+  campus: Campus | null;
+  posts: Post[];
+  cursusViews: CursusView[];
+}
+
+/**
+ * The typed `code` of the 404 for an unknown account, so social-service tells it from the 404 an
+ * OLDER core-service answers for a route it does not have (a rollback window): the first is an
+ * answer, the second is not.
+ */
+export const RESPONDENT_UNKNOWN = 'RESPONDENT_UNKNOWN';
+
+/**
  * Session-free display-name lookup, called by the web SSR process when it renders the Open Graph
  * head of `/profile/:id`.
  *
@@ -37,6 +61,7 @@ export interface InternalPublicProfile {
  * NOT reachable through nginx: `/api/internal` has no location, so this is Docker-network only,
  * and gated on INTERNAL_SECRET on top of that.
  */
+@RouteParams({ id: 'opaque' })
 @Controller('internal')
 export class InternalUsersController {
   private readonly logger = new Logger(InternalUsersController.name);
@@ -53,10 +78,10 @@ export class InternalUsersController {
    * still counts, and a person counts once per formation however many places name it.
    *
    * Called by social-service to populate a form's "filtrer par formation" picker. It offers what
-   * EXISTS rather than a hard-coded list, because `formation` comes from Authentik and the next
-   * value arrives with no deploy - prod holds ICM, ISMIN and Master today (measured 2026-08-23),
-   * and an enum in code would silently stop matching the fourth. The counts are there so a manager
-   * can see a criterion reaches 3 people before building a price around it.
+   * is IN USE, a subset of `FORMATIONS` since a cursus may name nothing else (D4), so a manager is
+   * not offered a formation nobody carries; what a criterion may NAME is the full list, enforced by
+   * social-service where the form is saved. The counts are there so a manager can see a criterion
+   * reaches 3 people before building a price around it.
    *
    * Aggregate only: no id, no name, nothing about any individual.
    */
@@ -94,6 +119,32 @@ export class InternalUsersController {
       displayName: user.displayName ?? null,
       promo: user.promo ?? null,
       formation: user.formation ?? null,
+      cursusViews: cursusViewsOf(user),
+    };
+  }
+
+  /**
+   * The account fields a form may join to an answer ({@link InternalRespondentIdentity}), read by
+   * social-service when a member submits. A review account is answered like any account: the form
+   * it answers is its own cohort's (`assertReviewerReachesAssociation` runs before this is asked).
+   */
+  @Get('users/:id/respondent-identity')
+  async respondentIdentity(
+    @Param('id') id: string,
+    @Headers('x-internal-secret') secret?: string
+  ): Promise<InternalRespondentIdentity> {
+    assertInternalSecret(secret);
+    const user = await this.userRepo.findOne({ where: { id } });
+    if (!user) {
+      this.logger.warn(`internal respondent-identity miss id=${id.slice(0, 8)}`);
+      throw new NotFoundException({ code: RESPONDENT_UNKNOWN, message: 'No such account.' });
+    }
+    this.logger.debug(`internal respondent-identity id=${id.slice(0, 8)}`);
+    return {
+      firstName: user.firstName ?? null,
+      lastName: user.lastName ?? null,
+      campus: user.campus ?? null,
+      posts: Array.isArray(user.posts) ? user.posts : [],
       cursusViews: cursusViewsOf(user),
     };
   }

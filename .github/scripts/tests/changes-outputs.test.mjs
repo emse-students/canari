@@ -47,11 +47,17 @@ function declaredStepOutputs() {
   return [...block.matchAll(/steps\.matrix\.outputs\.([A-Za-z0-9_-]+)/g)].map((m) => m[1]);
 }
 
-/** Every name `run_all` writes into `$GITHUB_OUTPUT`. */
+/**
+ * Every name `run_all` writes into `$GITHUB_OUTPUT`. It lives in `ci-scopes.sh` since 2026-11-15,
+ * the filters `ci.yml` shares with the local pre-push run; the outputs block stays in `ci.yml`.
+ */
 function writtenByRunAll() {
-  const start = ci.indexOf('run_all() {');
-  if (start === -1) throw new Error('no `run_all() {` in ci.yml - this test is measuring nothing');
-  const body = ci.slice(start, ci.indexOf('}', start));
+  const scopes = readFileSync(resolve(repoRoot, '.github/scripts/ci-scopes.sh'), 'utf8');
+  const start = scopes.indexOf('run_all() {');
+  if (start === -1) {
+    throw new Error('no `run_all() {` in ci-scopes.sh - this test is measuring nothing');
+  }
+  const body = scopes.slice(start, scopes.indexOf('}', start));
   return [...body.matchAll(/echo "([A-Za-z0-9_-]+)=/g)].map((m) => m[1]);
 }
 

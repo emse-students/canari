@@ -1,5 +1,7 @@
 import type { IMlsService } from './IMlsService';
 import { DELIVERY } from './frameDelivery';
+import { isTransportFailure } from '$lib/utils/transportFailure';
+import { FollowerTabSendError } from './commitSubmission';
 import { promotedSinceLoad, refusesCommitsHere } from './stateAuthority';
 import { openSealedBytes, sealBytes } from '$lib/encryption';
 import { requireGraineRuntime } from '$lib/utils/graine/runtime';
@@ -10,6 +12,7 @@ import {
   type DelegationRefusal,
   type HandedFrameDelivery,
   type HandedOverBytes,
+  type HandoverUnsent,
 } from '$lib/utils/chat/tabCommitDelegation';
 
 /**
@@ -35,12 +38,35 @@ import {
  *   changed between the follower's seal and the leader's open (a PIN change); nothing was sent;
  * - `reload-owed`: this tab was promoted to leader IN PLACE and reloads to read the state as it now
  *   stands - its copy may not send, and there is no other leader to hand the frame to. Refused at
- *   once, never written as a request nobody would run.
+ *   once, never written as a request nobody would run;
+ * - `lead-lost`: the leader that took the request lost the lead before it posted the frame
+ *   ({@link HandoverUnsent}) - nothing was posted. Never handed on a second time: one gesture is one
+ *   request, so the handover terminates whatever the lead does.
  */
-export type FrameNotSentReason = DelegationRefusal | 'device-key-changed' | 'reload-owed';
+export type FrameNotSentReason =
+  | DelegationRefusal
+  | 'device-key-changed'
+  | 'reload-owed'
+  | HandoverUnsent;
 
-/** A frame this tab could not send itself was not sent for it either, for a typed reason. */
+/**
+ * The handover answers after which the frame's FATE IS UNKNOWN - never "not sent":
+ * - `leader-gone`: the leader died holding the request, and may have posted it before it died
+ *   (`tabCommitDelegation.ts`: never run again, for that very reason);
+ * - `failed`: the leader's executor threw instead of answering - its own transport failure among
+ *   others - so whether its post reached the server is exactly what the throw did not say.
+ * Every other reason is a proof that nothing was posted (refused before the run, a key that did not
+ * open, a lead lost before the post).
+ */
+const FRAME_FATE_UNKNOWN: ReadonlySet<FrameNotSentReason> = new Set(['leader-gone', 'failed']);
+
+/**
+ * A frame this tab could not send itself was not sent for it either, for a typed reason - or was
+ * handed to a leader that may have sent it ({@link fateUnknown}).
+ */
 export class FrameNotHandedError extends Error {
+  /** True when the frame may be on the server all the same - see {@link FRAME_FATE_UNKNOWN}. */
+  readonly fateUnknown: boolean;
   constructor(
     readonly groupId: string,
     readonly reason: FrameNotSentReason
@@ -49,7 +75,17 @@ export class FrameNotHandedError extends Error {
       `the MLS frame of ${groupId.slice(0, 8)}... handed to the leader tab was not sent (${reason})`
     );
     this.name = 'FrameNotHandedError';
+    this.fateUnknown = FRAME_FATE_UNKNOWN.has(reason);
   }
+}
+
+/**
+ * Whether a failed frame send left the frame's fate UNKNOWN - the one predicate a caller that must
+ * not read "no answer" as "not sent" asks, decided by type at the throw: no answer from the server
+ * ({@link isTransportFailure}), or a handover to a leader that may have posted it.
+ */
+export function isFrameFateUnknown(error: unknown): boolean {
+  return isTransportFailure(error) || (error instanceof FrameNotHandedError && error.fateUnknown);
 }
 
 /**
@@ -86,6 +122,11 @@ export async function openHandedOver(sealed: HandedOverBytes): Promise<Uint8Arra
  * Sends one application frame from whichever tab the gesture is made in, and resolves with the
  * server's acceptance time - see the module comment.
  *
+ * A SEND BEGUN WHILE THIS TAB LED AND REFUSED BECAUSE THE LEAD LEFT DURING IT (`sendMessage`'s
+ * `FollowerTabSendError('lead-lost')`: nothing was posted) is handed to the leader like any
+ * follower's - the lead moved, the gesture did not. Rethrown, it reached each caller as a type none
+ * of them names, and a caller that only logs (the channel invitation) lost it.
+ *
  * @throws {FrameNotHandedError} in a follower, when the leader did not send it (closed, locked, a
  *   device key changed, or a failure it met), and in a leader promoted in place before its reload -
  *   the caller's existing failed-send branch.
@@ -98,13 +139,20 @@ export async function sendFrameFromThisTab(
 ): Promise<{ receivedAt: number | null }> {
   const delivery = options.delivery ?? 'visible';
   if (!refusesCommitsHere()) {
-    const sent = await mlsService.sendMessage(
-      groupId,
-      bytes,
-      options.messageId,
-      DELIVERY[delivery]
-    );
-    return { receivedAt: sent.receivedAt };
+    try {
+      const sent = await mlsService.sendMessage(
+        groupId,
+        bytes,
+        options.messageId,
+        DELIVERY[delivery]
+      );
+      return { receivedAt: sent.receivedAt };
+    } catch (e) {
+      if (!(e instanceof FollowerTabSendError) || e.refusal !== 'lead-lost') throw e;
+      console.warn(
+        `[SEND] ${groupId.slice(0, 8)}... the lead left this tab during the send, nothing was posted - the frame is handed to the leader tab`
+      );
+    }
   }
   if (promotionReloadOwed(`the frame of ${groupId.slice(0, 8)}...`)) {
     throw new FrameNotHandedError(groupId, 'reload-owed');
@@ -128,6 +176,12 @@ export async function sendFrameFromThisTab(
     );
     throw new FrameNotHandedError(groupId, answer.value.unopened);
   }
+  if ('unsent' in answer.value) {
+    console.warn(
+      `[SEND] ${groupId.slice(0, 8)}... frame handed to the leader tab was not sent: that tab lost the lead before posting it`
+    );
+    throw new FrameNotHandedError(groupId, answer.value.unsent);
+  }
   console.debug(`[SEND] ${groupId.slice(0, 8)}... frame sent by the leader tab for this one`);
   return answer.value;
 }
@@ -145,12 +199,27 @@ export function frameHandoverExecutors(
         );
         return { unopened: 'device-key-changed' };
       }
-      const sent = await ensureMls().sendMessage(
-        op.groupId,
-        bytes,
-        op.messageId,
-        DELIVERY[op.delivery]
-      );
+      // THE LEAD CAN LEAVE THIS TAB AT ANY AWAIT OF THE RUN (a freeze, a handover to a visible tab):
+      // an expected event, answered BY VALUE. `sendMessage` NEVER DELEGATES, and it classifies the
+      // loss at its own throw wherever it is met before the post - at its entry (which covers the
+      // open above), after a kept commit's settlement, before the encrypt, after the count
+      // (`FollowerTabSendError` `lead-lost`, nothing posted). A loss met during the post is a frame
+      // on the wire: sent, and answered as such. Every other failure still throws: a defect.
+      let sent;
+      try {
+        sent = await ensureMls().sendMessage(
+          op.groupId,
+          bytes,
+          op.messageId,
+          DELIVERY[op.delivery]
+        );
+      } catch (e) {
+        if (!(e instanceof FollowerTabSendError) || e.refusal !== 'lead-lost') throw e;
+        console.warn(
+          `[SEND] ${op.groupId.slice(0, 8)}... a follower's frame was not sent: the lead left this tab during the run - nothing posted, the follower is told`
+        );
+        return { unsent: 'lead-lost' };
+      }
       console.debug(`[SEND] ${op.groupId.slice(0, 8)}... frame sent for a follower tab`);
       return { receivedAt: sent.receivedAt };
     },

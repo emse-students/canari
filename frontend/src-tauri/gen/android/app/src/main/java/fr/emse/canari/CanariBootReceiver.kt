@@ -7,6 +7,7 @@ import android.os.PowerManager
 import android.util.Log
 import com.google.android.gms.tasks.Tasks
 import com.google.firebase.messaging.FirebaseMessaging
+import fr.emse.canari.push.throwableSite
 import java.io.File
 import java.util.concurrent.TimeUnit
 
@@ -54,7 +55,7 @@ class CanariBootReceiver : BroadcastReceiver() {
                 reRegisterToken(appContext)
                 drainPendingOutbox(appContext)
             } catch (e: Exception) {
-                Log.e(TAG, "onReceive: exception: ${e.message}")
+                Log.e(TAG, "onReceive: exception: ${throwableSite(e)}")
             } finally {
                 if (wakeLock.isHeld) wakeLock.release()
                 pendingResult.finish()
@@ -78,7 +79,7 @@ class CanariBootReceiver : BroadcastReceiver() {
         val token = try {
             Tasks.await(FirebaseMessaging.getInstance().token, TOKEN_FETCH_TIMEOUT_S, TimeUnit.SECONDS)
         } catch (e: Exception) {
-            Log.w(TAG, "reRegisterToken: FCM token fetch failed: ${e.message}")
+            Log.w(TAG, "reRegisterToken: FCM token fetch failed: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
             return
         }
         if (token.isNullOrEmpty()) {
@@ -94,7 +95,7 @@ class CanariBootReceiver : BroadcastReceiver() {
             val dataDir = MlsContextLoader.tauriDataDir(context).also { it.mkdirs() }
             File(dataDir, "fcm_token.txt").writeText(token)
         } catch (e: Exception) {
-            Log.w(TAG, "reRegisterToken: unable to write fcm_token.txt: ${e.message}")
+            Log.w(TAG, "reRegisterToken: unable to write fcm_token.txt: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
         }
         Log.i(TAG, "reRegisterToken: token ${if (token == previous) "unchanged" else "ROTATED"}")
 

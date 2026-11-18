@@ -6,7 +6,6 @@ import {
   Get,
   Headers,
   Param,
-  ParseUUIDPipe,
   Post,
   Query,
   UseGuards,
@@ -17,8 +16,10 @@ import { BanMinesweeperUserDto } from './dto/ban-minesweeper-user.dto';
 import { StartMinesweeperDto } from './dto/start-minesweeper.dto';
 import { SubmitMinesweeperDto } from './dto/submit-minesweeper.dto';
 import { MinesweeperService } from './minesweeper.service';
+import { RouteParams } from '../common/route-params';
 
 /** Ranked Minesweeper API — challenges, verified submits, leaderboard. */
+@RouteParams({ id: 'uuid', scoreId: 'uuid', userId: 'opaque' })
 @Controller('minesweeper')
 @UseGuards(NginxAuthGuard)
 export class MinesweeperController {
@@ -105,11 +106,15 @@ export class MinesweeperController {
   /** Removes one verified score. The player keeps their others. */
   @Delete('scores/:scoreId')
   @UseGuards(GlobalAdminGuard)
-  removeScore(
-    @Headers('x-user-id') adminId: string,
-    @Param('scoreId', ParseUUIDPipe) scoreId: string
-  ) {
+  removeScore(@Headers('x-user-id') adminId: string, @Param('scoreId') scoreId: string) {
     return this.minesweeperService.removeScore(scoreId, adminId);
+  }
+
+  /** The timed move log and board of one verified win, for a moderator to watch back. */
+  @Get('scores/:scoreId/replay')
+  @UseGuards(GlobalAdminGuard)
+  replay(@Headers('x-user-id') adminId: string, @Param('scoreId') scoreId: string) {
+    return this.minesweeperService.replay(scoreId, adminId);
   }
 
   /** Everyone banned from the ranked game. */

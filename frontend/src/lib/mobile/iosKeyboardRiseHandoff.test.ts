@@ -14,6 +14,8 @@ describe('the iOS keyboard hand-off (canari_ios.mm)', () => {
   const native = readFileSync('src-tauri/gen/apple/Sources/canari/canari_ios.mm', 'utf8');
   const viewport = readFileSync('src/lib/stores/keyboardViewport.svelte.ts', 'utf8');
   const chatArea = readFileSync('src/lib/components/chat/ChatArea.svelte', 'utf8');
+  const composer = readFileSync('src/lib/components/chat/ChatComposer.svelte', 'utf8');
+  const appCss = readFileSync('src/app.css', 'utf8');
   const body = (signature: string) => {
     const from = native.slice(native.indexOf(signature));
     return from.slice(0, from.indexOf('\n}\n'));
@@ -98,8 +100,27 @@ describe('the iOS keyboard hand-off (canari_ios.mm)', () => {
     expect(apply).toContain('CanariObserveKeyboardNavigation(webView);');
   });
 
-  it('the conversation marks its riding pieces: the composer band by its box, the thread by its last row', () => {
-    expect(chatArea).toContain('data-keyboard-ride="box"');
+  it('the conversation marks its riding pieces: the composer footer by its box, the thread by its last row', () => {
     expect(chatArea).toContain('data-keyboard-ride="last-row"');
+    // The piece that rides is the one that MOVES. On the Android overlay the band around the
+    // composer stays at the window's bottom and only the footer moves (`bottom:
+    // var(--keyboard-layout-inset-bottom)`): a marker on the band measured a distance of 0 and the
+    // composer jumped at the end of the ride (#3556, Mi 9T). Exactly one of the two carries it - on
+    // iOS the footer moves with its band, and both marked would ride it twice.
+    const footerTag = composer.slice(
+      composer.indexOf('<footer'),
+      composer.indexOf('>', composer.indexOf('<footer'))
+    );
+    expect(footerTag).toContain('class="chat-composer-footer"');
+    expect(footerTag).toContain('data-keyboard-ride="box"');
+    expect(chatArea).not.toContain('data-keyboard-ride="box"');
+    const footerRule = appCss.slice(appCss.indexOf('.chat-composer-footer {'));
+    // It moves by the keyboard's room: the leaf twin when the announcement wrote it, else the layout
+    // inset (#3569's leaf channel).
+    expect(footerRule.slice(0, footerRule.indexOf('}'))).toContain(
+      'bottom: var(--chat-keyboard-room)'
+    );
+    const room = appCss.slice(appCss.indexOf('--chat-keyboard-room: var('));
+    expect(room.slice(0, room.indexOf(';'))).toContain('--keyboard-layout-inset-bottom');
   });
 });

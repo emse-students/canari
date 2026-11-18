@@ -22,6 +22,7 @@ import {
   presentationOf,
   isInternalSilent,
   type EnvelopeContent,
+  reactionCollapseId,
 } from './push-payload';
 
 /** The step-1 wake key every wake builder test names. */
@@ -423,24 +424,48 @@ describe('buildInternalApnsRequest', () => {
     expect((form.payload.aps as Record<string, unknown>)['thread-id']).toBe('canari_forms');
   });
 
-  it('stacks the reactions to one post under that post, and other posts apart', () => {
-    const react = (postId: string) =>
-      buildInternalApnsRequest('Nouvelle réaction', '', {
+  it("collapses a post's comments and reactions into ONE notification: thread and apns-collapse-id (owner, 2026-11-14)", () => {
+    const activity = (postId: string, contentKey: string, extra: Record<string, string> = {}) =>
+      buildInternalApnsRequest('x', 'y', {
         type: 'social',
-        contentKey: 'social_reaction',
+        contentKey,
         postId,
+        collapseId: `post_activity_${postId}`,
+        ...extra,
       });
-    const thread = (r: ReturnType<typeof react>) =>
-      (r.payload.aps as Record<string, unknown>)['thread-id'];
-    expect(thread(react('p1'))).toBe('post_reaction_p1');
-    expect(thread(react('p2'))).toBe('post_reaction_p2');
-    // A comment on the same post is a different notification and keeps the coarse thread.
-    const comment = buildInternalApnsRequest('x', 'y', {
-      type: 'social',
-      contentKey: 'social_comment',
-      postId: 'p1',
+    const aps = (r: ReturnType<typeof activity>) => r.payload.aps as Record<string, unknown>;
+    const reaction = activity('p1', 'social_reaction');
+    const comment = activity('p1', 'social_comment');
+    // One identity for the post, whatever the kind; another post is another notification.
+    expect(aps(reaction)['thread-id']).toBe('post_activity_p1');
+    expect(aps(comment)['thread-id']).toBe('post_activity_p1');
+    expect(reaction.collapseId).toBe('post_activity_p1');
+    expect(comment.collapseId).toBe('post_activity_p1');
+    expect(activity('p2', 'social_comment').collapseId).toBe('post_activity_p2');
+    // An ALERT rings as every social push does.
+    expect(aps(comment).sound).toBe('default');
+    expect(aps(comment)['interruption-level']).toBeUndefined();
+    // A QUIET update replaces it with no sound, filed passively, and says so to a wake too.
+    const quiet = activity('p1', 'social_comment', { quiet: 'true' });
+    expect(aps(quiet).sound).toBeUndefined();
+    expect(aps(quiet)['interruption-level']).toBe('passive');
+    expect(quiet.pushType).toBe('alert');
+    expect(quiet.collapseId).toBe('post_activity_p1');
+    expect(presentationOf(quiet)).toEqual({
+      title: 'x',
+      body: 'y',
+      threadId: 'post_activity_p1',
+      interruptionLevel: 'passive',
     });
-    expect(thread(comment)).toBe('canari_social');
+    // A push with no identity keeps the coarse thread and no collapse id.
+    const plain = buildInternalApnsRequest('x', 'y', {
+      type: 'social',
+      contentKey: 'social_mention',
+    });
+    expect(aps(plain)['thread-id']).toBe('canari_social');
+    expect(plain.collapseId).toBeUndefined();
+    // An identity APNs would refuse (over 64 bytes) is not sent as a header.
+    expect(activity('p'.repeat(60), 'social_comment').collapseId).toBeUndefined();
   });
 
   it('names the palette-A trill Android files the same push under, and the default elsewhere', () => {
@@ -801,5 +826,45 @@ describe('the MLS frame answer carries its presentation', () => {
     expect(
       presentationOf(buildInternalApnsRequest('t', 'b', { type: 'channel_read' }, 'fr'))
     ).toBeNull();
+  });
+});
+
+/**
+ * ONE REACTION, ONE iOS NOTIFICATION (review of #3792): the push's `apns-collapse-id` must be the
+ * very identifier the author's page gives its own notification of that reaction. The frontend's
+ * `reactionCollapseId` (`reactionNotification.test.ts`) asserts THIS vector too - two copies in two
+ * packages, held together by one number.
+ */
+describe('reactionCollapseId - the shared vector with the page', () => {
+  it("is the page's identifier for the same reaction", () => {
+    expect(reactionCollapseId('msg-1', 'Peer-User')).toBe('97988016');
+    expect(reactionCollapseId('srv-row-9', 'peer')).toBe('71866787');
+  });
+
+  it("is ONE per reactor and message: a reactor's second reaction replaces the first on the iPhone", () => {
+    expect(reactionCollapseId('msg-1', 'peer')).toBe(reactionCollapseId('msg-1', 'Peer'));
+    expect(reactionCollapseId('msg-1', 'peer')).not.toBe(reactionCollapseId('msg-1', 'other'));
+  });
+
+  it('hashes the reacted-to MESSAGE, never the conversation: a guess over what a ring names cannot confirm it', () => {
+    // A call ring carries the group and the caller in clear; the old key hashed exactly those plus
+    // an instant, so Apple could test candidates. The message id is in no wake and no ring.
+    const ofGroup = reactionCollapseId('grp-1', 'peer');
+    expect(reactionCollapseId('msg-1', 'peer')).not.toBe(ofGroup);
+  });
+
+  it('is a decimal the notification plugin can own, and fits an apns-collapse-id', () => {
+    const id = reactionCollapseId('a'.repeat(200), 'b');
+    expect(id).toMatch(/^[0-9]{1,10}$/);
+  });
+
+  it('is what the full push carries', () => {
+    const data = {
+      type: 'social',
+      reaction: 'true',
+      groupId: 'grp-1',
+      collapseId: reactionCollapseId('msg-1', 'peer-user'),
+    };
+    expect(buildInternalApnsRequest('t', 'b', data).collapseId).toBe('97988016');
   });
 });

@@ -499,7 +499,7 @@ class IncomingCallActivity : Activity() {
             Log.i(TAG, "answer handed to the app for call=${callId.take(8)}")
         } catch (e: PendingIntent.CanceledException) {
             // The ring's intents were cancelled with it: the call is already over.
-            Log.w(TAG, "answer not delivered - the ring already ended: ${e.message}")
+            Log.w(TAG, "answer not delivered - the ring already ended: ${e.message}") // log-safe: message of a system or native call (PendingIntent.CanceledException); this try parses and names no user input
         }
         finish()
     }
@@ -509,7 +509,7 @@ class IncomingCallActivity : Activity() {
         try {
             decline.send()
         } catch (e: PendingIntent.CanceledException) {
-            Log.w(TAG, "decline not delivered - the ring already ended: ${e.message}")
+            Log.w(TAG, "decline not delivered - the ring already ended: ${e.message}") // log-safe: message of a system or native call (PendingIntent.CanceledException); this try parses and names no user input
         }
         finish()
     }

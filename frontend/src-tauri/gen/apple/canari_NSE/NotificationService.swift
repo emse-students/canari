@@ -170,6 +170,7 @@ class NotificationService: UNNotificationServiceExtension {
       // the app (canari_push.mm `CanariHandleFcmData`, which clears the channel's notification);
       // it never reaches this process. Listing it here read as "handled" and was a dead branch.
       applyServerContent(userInfo: userInfo, content: content)
+      applyQuietUpdate(userInfo: userInfo, content: content)
       trace?.mark("attach")
       attachSocialIcon(userInfo: userInfo, content: content)
       trace?.outcome = "server-content"
@@ -177,6 +178,23 @@ class NotificationService: UNNotificationServiceExtension {
     default:
       handleMlsMessage(userInfo: userInfo, content: content)
     }
+  }
+
+  /// A QUIET update of a post's one notification (owner, 2026-11-14): the server decided the post
+  /// still has an unread bell row, so this replaces the delivered notification (same
+  /// `apns-collapse-id`) without a sound and passively. The server already sent it so; this holds it
+  /// whatever the payload's `aps` says, so no later rewrite can make a quiet update ring.
+  private func applyQuietUpdate(
+    userInfo: [AnyHashable: Any],
+    content: UNMutableNotificationContent
+  ) {
+    guard Self.string(userInfo["quiet"]) == "true", Self.nonEmpty(Self.string(userInfo["collapseId"])) != nil
+    else { return }
+    content.sound = nil
+    if #available(iOS 15.0, *) {
+      content.interruptionLevel = .passive
+    }
+    NseLog.log.notice("[CanariNSE] social push is a quiet update of its post's notification")
   }
 
   /// Files the generic incoming-call alert: stacked under its conversation, opening it on a tap, and
@@ -222,13 +240,14 @@ class NotificationService: UNNotificationServiceExtension {
     let locale = loadPushContext()?.locale
     let actor = Self.string(userInfo["actorName"]) ?? ""
     let arg = Self.string(userInfo["contentArg"]) ?? ""
+    /// How many OTHER people the line names, for the keys that carry `contentCount`; 0 otherwise.
+    let others = max(0, Int(Self.string(userInfo["contentCount"]) ?? "") ?? 0)
 
     /// A campus trend's body (owner, 2026-11-10): the followed account who liked the post, named in
     /// `actorName`, and how many others reacted in `contentCount` - one sentence per count form, so
     /// the plural is exact; the fixed sentence `fallback` when the server names nobody.
     func trendBody(_ fallback: String) -> String {
       if actor.isEmpty { return Self.localized(fallback, locale: locale) }
-      let others = max(0, Int(Self.string(userInfo["contentCount"]) ?? "") ?? 0)
       switch others {
       case 0: return Self.localizedFormat("notif.social.campus_trend.liked_by", actor, locale: locale)
       case 1:
@@ -250,7 +269,25 @@ class NotificationService: UNNotificationServiceExtension {
     switch key {
     case "social_mention": composed = actorTitled("mention")
     case "social_reply": composed = actorTitled("reply")
-    case "social_comment": composed = actorTitled("comment")
+    // A comment on MY post (owner, 2026-11-14): `contentCount` is how many OTHER people commented
+    // while the post's notification stayed unread - "Alice et 4 autres ont commenté", the latest
+    // comment as the body.
+    case "social_comment":
+      let (title, body) = actorTitled("comment")
+      switch others {
+      case 0: composed = (title, body)
+      case 1:
+        composed = (
+          Self.localizedFormat("notif.social.comment.title_others_one", actor, locale: locale), body
+        )
+      default:
+        composed = (
+          String(
+            format: Self.localized("notif.social.comment.title_others_many", locale: locale),
+            actor, String(others)),
+          body
+        )
+      }
     // The two publication notices take the same shape as a comment: the actor names the
     // title - an association for the first, a person for the second - and the post's own
     // opening is the body, or a fixed sentence when the post carries only images.
@@ -332,18 +369,38 @@ class NotificationService: UNNotificationServiceExtension {
       )
     // The strike ladder's three notices to a broadcaster (WP-L8b): fixed sentences, no actor and
     // no fragment.
-    case "social_live_cut", "social_live_suspended", "social_live_withdrawn":
+    // The two notices of a new item in a global admin's queue (owner, 2026-11-18) take the same
+    // shape: fixed sentences, nothing variable (the content-free rule).
+    case "social_live_cut", "social_live_suspended", "social_live_withdrawn",
+      "social_live_reinstated", "social_admin_profile_correction", "social_admin_report":
       let stem = String(key.dropFirst("social_".count))
       composed = (
         Self.localized("notif.social.\(stem).title", locale: locale),
         Self.localized("notif.social.\(stem).body", locale: locale)
       )
+    // A reaction on MY post (owner, 2026-11-14): "12 réactions" once others reacted while the
+    // post's notification stayed unread, naming the latest.
     case "social_reaction":
-      composed = (
-        Self.localized("notif.social.reaction.title", locale: locale),
-        String(
-          format: Self.localized("notif.social.reaction.body", locale: locale), actor, arg)
-      )
+      switch others {
+      case 0:
+        composed = (
+          Self.localized("notif.social.reaction.title", locale: locale),
+          String(
+            format: Self.localized("notif.social.reaction.body", locale: locale), actor, arg)
+        )
+      case 1:
+        composed = (
+          Self.localizedFormat("notif.social.reaction.title_count", String(others + 1), locale: locale),
+          Self.localizedFormat("notif.social.reaction.body_others_one", actor, locale: locale)
+        )
+      default:
+        composed = (
+          Self.localizedFormat("notif.social.reaction.title_count", String(others + 1), locale: locale),
+          String(
+            format: Self.localized("notif.social.reaction.body_others_many", locale: locale),
+            actor, String(others))
+        )
+      }
     case "form_opening_soon":
       composed = (
         Self.localized("notif.form.opening_soon.title", locale: locale),
@@ -1508,6 +1565,9 @@ class NotificationService: UNNotificationServiceExtension {
       !cipher.isEmpty
     else { return nil }
 
+    // WHAT THE CATCH-UP COST, said on every one: nothing persists it, so every salon push of a shut
+    // phone pays it again, inside the extension's time and memory (channel-encryption section 28).
+    let startedAt = DispatchTime.now().uptimeNanoseconds
     let json = state.withUnsafeBytes { statePtr -> String? in
       cipher.withUnsafeBytes { cipherPtr -> String? in
         guard let raw = canari_native_decrypt_message_with_commits(
@@ -1519,6 +1579,8 @@ class NotificationService: UNNotificationServiceExtension {
         return String(cString: raw)
       }
     }
+    let elapsedMs = (DispatchTime.now().uptimeNanoseconds - startedAt) / 1_000_000
+    NseLog.log.info("[CanariNSE] catchup: replay since epoch=\(epoch, privacy: .public) took \(elapsedMs, privacy: .public) ms (state \(state.count, privacy: .public) B, commits \(commitsJson.count, privacy: .public) ch) answered=\(json != nil, privacy: .public) group=\(groupId.prefix(8), privacy: .public)")
     Self.announceOwnDevicesAdded(json, ctx: ctx, source: "catchup")
     return json
   }

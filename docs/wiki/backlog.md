@@ -28,6 +28,8 @@ what is built and the reading that closes it, and it targets the EARLIEST versio
 marre de trainer ca"*). Where an entry keeps an open half, the shipped half is a pointer, never a
 retelling.
 
+**READINGS MUST BE AT 0 BEFORE A STABLE ONLY** (owner, 2026-11-15). A pre-release may ship so that the readings that need its code can be read on it; the stable waits for 0.
+
 **NO ENTRY IS WRITTEN HERE.** A heading added to this page is refused by
 `.github/scripts/tests/backlog-fragments.test.mjs`; `backlog-plan.test.mjs` refuses a fragment with no
 target or an unknown one, and a `plan.md` that is not what the targets produce.
@@ -45,7 +47,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 | What | Kind | Where the substance is |
 | --- | --- | --- |
 | **open dev's calls once after the deploy that carries migration 014** (B12): `/admin/platform`, `Audio et video` - the migration lands `off` on an existing database. (The TURN meter's four secrets EXIST since 2026-10-21, Account Analytics read only.) | 1 click | [calls](frontend/modules/calls.md#the-servers-kill-switch-and-the-metered-turn-budget-b12-b7-2026-10-21) |
-| **reread the terms' lives paragraph and the privacy text (written 2026-10-29, draft pull request, the points to decide on [live-production](frontend/modules/live-production.md#5-the-privacy-policy-and-the-terms---written-2026-10-29-owed-the-owners-reread)), and write the filtering statement for the store review** | 1 reread, 1 statement | [live moderation](backlog.d/p1-live-moderation-wp-l8-merged-the-client-s-standing-refusals-the-vie.md) |
+| **reread the terms' lives paragraph and the privacy text (written 2026-10-29, draft pull request, the points to decide on [live-production](frontend/modules/live-production.md#5-the-privacy-policy-and-the-terms---written-2026-10-29-owed-the-owners-reread)), and write the filtering statement for the store review** | 1 reread, 1 statement | [live-production](frontend/modules/live-production.md#2-the-gates-each-with-its-evidence) (G10, G11) |
 | **send the DPO dossier to the school's DPO** and bring back the answers to its three questions (the school's role, the hosting agreement with the DSI, the MiGallery DPIA); MiTV keeps the proof of each member's face-recognition consent | 1 e-mail, 1 conversation | [the GDPR entry](backlog.d/p2-gdpr-compliance-the-open-items-of-the-register-2026-10-16.md), [dso-dossier](compliance/dso-dossier.md) |
 | **Lydia's three still-open Livrable A answers** - the KYC document list (channel confirmed: email, not yet arrived), the minimum payable amount, and rate limits/webhook-sandbox testing | blocked upstream | [WP-LYDIA-1](frontend/modules/payments.md) |
 | **the dev mobile half: a dev keystore and where it is backed up, and a second package id so a pre-release installs beside the production app** (push is NOT in it: dev sends push since 2026-10-21, measured 2026-11-14). A pre-release store build points at dev and replaces production's app on a device, with production's FCM sender app | 1 console visit, 1 decision | [the second package id](backlog.d/p3-a-second-package-id-so-a-pre-release-can-be-measured-against-production.md) |

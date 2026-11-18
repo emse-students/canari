@@ -84,9 +84,12 @@ describe('PostsService hides a blocked account, and only where the author was vi
     const postRepo = { manager: { query }, findOne: findOne ?? jest.fn() };
     const associations = {
       mayActOnAny: jest.fn(() => Promise.resolve(new Set<string>())),
+      commentStandings: () =>
+        Promise.resolve({ postAs: new Set<string>(), moderatedInstitutions: new Set<string>() }),
       isContentModerator: jest.fn(() => Promise.resolve(false)),
       moderatedPostIds: () => Promise.resolve(new Set<string>()),
       mayModeratePost: () => Promise.resolve(false),
+      mayReadToModeratePost: () => Promise.resolve(false),
     };
     const follows = {
       getFollowedAssociationIdsForUser: jest.fn(() => Promise.resolve([])),

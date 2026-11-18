@@ -38,7 +38,7 @@ export async function openEventLinkedToPost(
   try {
     const { linkedEvent } = await getCalendarEventLinkedToPost(postId);
     if (!linkedEvent) {
-      Log.d(`[calendar] post ${postId} links no visible event`);
+      Log.d('calendar', `post ${postId} links no visible event`);
       return false;
     }
     if (opts.showItsMonth) {
@@ -52,7 +52,7 @@ export async function openEventLinkedToPost(
     agenda.openDetail(linkedEvent);
     return true;
   } catch (err) {
-    Log.w('[calendar] opening the event of a post failed', err);
+    Log.w('calendar', 'opening the event of a post failed', err);
     return false;
   }
 }

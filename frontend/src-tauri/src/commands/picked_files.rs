@@ -100,6 +100,33 @@ pub(crate) fn remove_emptied_share_dir(file: &Path, inbox: &Path) {
     }
 }
 
+/// The prefix of the directory the patched iOS picker (`patches/tauri-plugin-dialog`) makes for EACH
+/// pick under the app cache: one directory per pick is what keeps two picks of the same file name
+/// from overwriting each other.
+pub(crate) const PICK_DIR_PREFIX: &str = "canari-pick-";
+
+/// Once a pick's copy is read or discarded its `canari-pick-<uuid>/` directory is empty: removed
+/// here, never left to accumulate. Only a directory so named, and only when empty (`remove_dir`
+/// refuses one that is not).
+pub(crate) fn remove_emptied_pick_dir(file: &Path) {
+    let Some(dir) = file.parent() else { return };
+    let named = dir
+        .file_name()
+        .is_some_and(|n| n.to_string_lossy().starts_with(PICK_DIR_PREFIX));
+    if !named {
+        return;
+    }
+    match std::fs::remove_dir(dir) {
+        Ok(()) => log::debug!("[PickedFiles] emptied pick directory removed"),
+        Err(e)
+            if matches!(
+                e.kind(),
+                std::io::ErrorKind::DirectoryNotEmpty | std::io::ErrorKind::NotFound
+            ) => {}
+        Err(e) => log::warn!("[PickedFiles] emptied pick directory kept ({e})"),
+    }
+}
+
 /// What a log line may say of a picked or shared copy: the id of the share it belongs to, or that
 /// it is a picker's copy - NEVER its path. A shared copy is named `<index>_<sender's file name>` and
 /// a picker's copy keeps the photo's or document's own name, and a file name is content a log line
@@ -153,6 +180,7 @@ pub(crate) async fn take_picked_file<R: Runtime>(
             if let Some(inbox) = &inbox {
                 remove_emptied_share_dir(&canonical, inbox);
             }
+            remove_emptied_pick_dir(&canonical);
         }
         Err(e) => log::warn!("[PickedFiles] {label} kept after read ({e})"),
     }
@@ -177,6 +205,7 @@ pub(crate) async fn discard_picked_file<R: Runtime>(
     if let Some(inbox) = &inbox {
         remove_emptied_share_dir(&canonical, inbox);
     }
+    remove_emptied_pick_dir(&canonical);
     Ok(())
 }
 
@@ -209,6 +238,33 @@ mod tests {
             "nothing deeper than a share directory is touched"
         );
         assert!(inbox.exists(), "the inbox itself is never removed");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_emptied_pick_directory_goes_and_no_other_does() {
+        let root = std::env::temp_dir().join(format!("canari-pickdir-{}", std::process::id()));
+        let pick = root.join(format!("{PICK_DIR_PREFIX}A1"));
+        let other = root.join("not-a-pick");
+        let full = root.join(format!("{PICK_DIR_PREFIX}B2"));
+        for d in [&pick, &other, &full] {
+            std::fs::create_dir_all(d).expect("dir");
+        }
+        std::fs::write(full.join("kept.heic"), b"x").expect("file");
+
+        remove_emptied_pick_dir(&pick.join("IMG_0001.heic"));
+        remove_emptied_pick_dir(&other.join("IMG_0001.heic"));
+        remove_emptied_pick_dir(&full.join("IMG_0001.heic"));
+
+        assert!(!pick.exists(), "the emptied pick directory is removed");
+        assert!(
+            other.exists(),
+            "a directory not named as a pick's is never touched"
+        );
+        assert!(
+            full.join("kept.heic").exists(),
+            "a pick directory still holding a copy is kept"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 

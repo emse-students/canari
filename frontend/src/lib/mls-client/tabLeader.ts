@@ -175,6 +175,13 @@ export function setTabLeaderDemotedHandler(handler: (() => 'reloads' | void) | n
   leaderDemotedHandler = handler;
 }
 
+/**
+ * Ends this document's hold on the leader lock: `follower` FIRST, then the release, so nothing this
+ * document runs after the lock is gone still believes it leads. Set while the lock is held, `null`
+ * otherwise; called by the unload and by a freeze ({@link watchPageLifecycle}), whichever comes first.
+ */
+let releaseLeaderLock: (() => void) | null = null;
+
 /** This document held the leader lock and released it on `beforeunload` (see {@link leaderLockReleasedForUnload}). */
 let releasedForUnload = false;
 
@@ -189,21 +196,149 @@ export function leaderLockReleasedForUnload(): boolean {
   return releasedForUnload;
 }
 
-function holdLeaderLockUntilUnload(): Promise<void> {
+/**
+ * Lets go of the lock this document holds, whatever its role: set for the whole life of a hold, so a
+ * hold whose ROLE ended without a release - the lead handed to a visible tab that has not stolen it
+ * yet ({@link watchHandover}) - can still be released by a freeze. `null` when nothing is held.
+ * Calling it on a hold another tab stole releases nothing (the browser already moved the lock).
+ */
+let heldLock: (() => void) | null = null;
+
+/**
+ * A hold this document's request had is gone: the request rejected, so the lock was STOLEN from it
+ * (or never granted). `hold` is that request's own {@link heldLock}, so a rejection of another
+ * request - a queued one a freeze withdrew - never forgets a hold that is still this document's.
+ */
+function forgetHold(hold: (() => void) | null): void {
+  if (hold !== null && heldLock === hold) heldLock = null;
+}
+
+/**
+ * Holds the lock until the unload, a freeze or a steal. `onHold` receives this hold's release, so
+ * the request that holds it can forget it when it rejects ({@link forgetHold}).
+ */
+function holdLeaderLockUntilUnload(onHold: (letGo: () => void) => void): Promise<void> {
   return new Promise<void>((release) => {
     if (typeof window === 'undefined') {
       release();
       return;
     }
+    const letGo = () => {
+      if (heldLock === letGo) heldLock = null;
+      release();
+    };
+    heldLock = letGo;
+    onHold(letGo);
+    const end = () => {
+      if (releaseLeaderLock !== end) return;
+      releaseLeaderLock = null;
+      decide('follower');
+      letGo();
+    };
+    releaseLeaderLock = end;
+    // The unload is the one release a later write must name as such (`leaderLockReleasedForUnload`);
+    // a freeze that released first leaves nothing for it to end.
     window.addEventListener(
       'beforeunload',
       () => {
+        if (releaseLeaderLock !== end) return;
         releasedForUnload = true;
-        decide('follower');
-        release();
+        end();
       },
       { once: true }
     );
+  });
+}
+
+/**
+ * The blocking request this follower holds in the lock's queue, so a freeze can withdraw it. `null`
+ * when there is none: a leader, a document leaving, or a request withdrawn by a freeze.
+ */
+let promotionRequest: AbortController | null = null;
+/** A freeze withdrew this follower's queued request: its resume queues it again. */
+let requestWithdrawnByFreeze = false;
+/** This document's demotion reloads it: it neither queues again nor takes the lead back. */
+let leaving = false;
+let lifecycleWatched = false;
+
+/**
+ * A FROZEN DOCUMENT HOLDS NOTHING (2026-11-10, with the hand-over below).
+ *
+ * Chromium freezes some hidden pages (Energy Saver freezing), and a frozen page runs no task: it
+ * answers no `outbox_flush_request`, posts no relay, and cannot answer a hand-over ask either. Its
+ * Web Lock, though, stays held, so every other tab of the account would stay a follower - the shape
+ * of the owner's report (a photo queued in a visible follower, unsent while the leader was hidden;
+ * on Firefox there, which has no freeze, and which {@link watchHandover} covers). A frozen leader is
+ * not a leader.
+ *
+ * So the lock follows the lifecycle, from the browser's own events and never from a clock:
+ * - **`freeze`** (and `pagehide` into the back/forward cache, the other way a document stops running
+ *   while it exists): a LEADER becomes a follower and releases the lock, which the browser grants at
+ *   once to the next queued tab; its demotion handler closes its socket and schedules its reload,
+ *   which runs when the page is resumed. Chrome's own guidance for `freeze` is "release any held Web
+ *   Locks" (developer.chrome.com/docs/web-platform/page-lifecycle-api, the Frozen state). A FOLLOWER
+ *   withdraws its queued request, since a lock granted to a frozen page would be held by a document
+ *   that cannot run the promotion.
+ * - **`resume`** / **`pageshow` from the cache**: a follower whose request a freeze withdrew queues it
+ *   again; a former leader is already on its way out (its reload).
+ *
+ * THE SINGLE WRITER HOLDS ACROSS IT: `follower` is decided synchronously inside the freeze handler,
+ * before the release, and every MLS write reads it at its last synchronous step (the send's
+ * `refusesCommitsHere` before the encrypt, the commit guards), so a continuation that resumes in the
+ * old document after the lock moved refuses instead of writing on a stale copy. The tab granted the
+ * lock reloads before it serves (its promotion), so it reads the state as the old leader left it.
+ *
+ * What this does NOT cover: a leader whose main thread is wedged (it runs no handler at all), and
+ * an engine that suspends a page without dispatching `freeze` (only Chromium dispatches it): there
+ * is no event to act on, and a clock would be a guess about a live document.
+ */
+function watchPageLifecycle(log: (msg: string) => void): void {
+  if (lifecycleWatched || typeof window === 'undefined' || typeof document === 'undefined') return;
+  lifecycleWatched = true;
+  const suspend = (cause: string) => {
+    if (leadership === 'leader' && releaseLeaderLock) {
+      log(
+        `[TAB] Page suspended by the browser (${cause}) while leading - the lock is released so a tab that can run takes the lead.`
+      );
+      releaseLeaderLock();
+      // A document whose demotion does not reload it (no session yet) queues again here - and a
+      // request queued by a frozen page is withdrawn below like any other.
+      handOver();
+    }
+    if (promotionRequest) {
+      log(
+        `[TAB] Page suspended by the browser (${cause}) while waiting for the lead - the request is withdrawn until it resumes.`
+      );
+      const request = promotionRequest;
+      promotionRequest = null;
+      requestWithdrawnByFreeze = true;
+      request.abort();
+    }
+    // A LEAD HANDED OVER AND NOT TAKEN YET: this document is a follower already, but the lock is
+    // still its own until the asker steals it - and an asker that closed, or reloads, never will.
+    // Held by a frozen page, it would leave every tab a follower until this one is thawed. After
+    // the withdrawal above, so the release cannot grant the lock to this page's own request.
+    if (heldLock && leadership !== 'leader') {
+      log(
+        `[TAB] Page suspended by the browser (${cause}) holding a lead it handed over and nobody took yet - the lock is released.`
+      );
+      heldLock();
+    }
+  };
+  const resume = (cause: string) => {
+    if (!requestWithdrawnByFreeze) return;
+    requestWithdrawnByFreeze = false;
+    if (leaving || leadership === 'leader') return;
+    log(`[TAB] Page resumed (${cause}) - queueing for the lead again.`);
+    queueForPromotion(log);
+  };
+  document.addEventListener('freeze', () => suspend('freeze'));
+  document.addEventListener('resume', () => resume('resume'));
+  window.addEventListener('pagehide', (e) => {
+    if ((e as PageTransitionEvent).persisted) suspend('pagehide into the back/forward cache');
+  });
+  window.addEventListener('pageshow', (e) => {
+    if ((e as PageTransitionEvent).persisted) resume('pageshow from the back/forward cache');
   });
 }
 
@@ -233,7 +368,10 @@ function handOver(): void {
   clearPromotionReload();
   // Notify the session to close its WebSocket (otherwise the MLS ratchet would advance in two tabs
   // simultaneously) - and learn from its answer whether this document is ending.
-  if (leaderDemotedHandler?.() === 'reloads') return;
+  if (leaderDemotedHandler?.() === 'reloads') {
+    leaving = true;
+    return;
+  }
   requeue?.();
 }
 
@@ -337,6 +475,8 @@ function consumePromotionReload(): boolean {
 function onLeaderLockRejected(e: unknown, log: (msg: string) => void): void {
   if (leadership !== 'leader' || (e as { name?: unknown } | null)?.name !== 'AbortError') return;
   log('[TAB] Leader lock reclaimed by a tab reloading after its promotion - handing over.');
+  // The lock is no longer this document's: nothing may release it again (a freeze, the unload).
+  releaseLeaderLock = null;
   decide('follower');
   handOver();
 }
@@ -355,8 +495,18 @@ function onLeaderLockRejected(e: unknown, log: (msg: string) => void): void {
  * `initTabLeadershipAsync` is memoised to prevent, and it must not come back in through here.
  */
 function queueForPromotion(log: (msg: string) => void): void {
+  if (leaving) return;
+  // Withdrawable, so a freeze can take it out of the queue (`watchPageLifecycle`).
+  const request = new AbortController();
+  promotionRequest = request;
+  let hold: (() => void) | null = null;
   void navigator.locks
-    .request('canari-tab-leader', { mode: 'exclusive' }, async () => {
+    .request('canari-tab-leader', { mode: 'exclusive', signal: request.signal }, async () => {
+      if (promotionRequest === request) promotionRequest = null;
+      // GRANTED, THEN WITHDRAWN: a freeze aborted the request after the browser granted it but
+      // before this callback ran - the abort is then ignored. A page that withdrew does not lead:
+      // returning releases the lock to the next tab, and its resume queues this page again.
+      if (request.signal.aborted) return;
       if (leadership === 'leader') return;
       decide('leader');
       log('[TAB] Promoted to leader (Web Locks).');
@@ -364,9 +514,115 @@ function queueForPromotion(log: (msg: string) => void): void {
       tabChannel?.postMessage({ type: 'leader_promoted', tabId: TAB_ID });
       notifyTabLeaderPromoted();
 
-      await holdLeaderLockUntilUnload();
+      await holdLeaderLockUntilUnload((letGo) => (hold = letGo));
     })
-    .catch((e: unknown) => onLeaderLockRejected(e, log));
+    .catch((e: unknown) => {
+      forgetHold(hold);
+      onLeaderLockRejected(e, log);
+    });
+}
+
+/**
+ * A HIDDEN LEADER HANDS THE LEAD TO THE VISIBLE TAB THAT NEEDS IT (owner, Firefox 159, 2026-11-10).
+ *
+ * The `freeze` hook above is Chromium's alone: Firefox implements no Page Lifecycle events, and
+ * Safari none either. On Firefox the owner's visible follower queued a photo that stayed unsent
+ * until he brought the HIDDEN leader tab forward - it went out the instant that tab was shown. The
+ * hidden leader was not dead: its log shows it receiving socket frames and raising notifications
+ * while hidden. What it did not do was finish the send while hidden. Rather than chase each thing a
+ * background tab does slowly, the lead goes where the member is - from facts, never a clock:
+ *
+ * - a FOLLOWER that is VISIBLE and has a message of its own waiting on the leader (the outbox says
+ *   so: {@link requestLeaderHandover}) posts `leader_handover_request`;
+ * - the LEADER answers it only when it is itself HIDDEN (a visible leader serves, and keeps the
+ *   lead): it decides `follower` FIRST, so nothing it resumes into writes again (the send guard,
+ *   `refusesCommitsHere` at the encrypt), posts `leader_handover_granted` naming the requester,
+ *   and hands over (its socket paused, its reload scheduled);
+ * - the requester, and only it, then STEALS the lock (`steal: true`): granting it through the
+ *   queue would hand it to whichever tab queued first, possibly another hidden one. Its promotion
+ *   reloads it onto the state the old leader left, and that reload reclaims the lock.
+ *
+ * Portable: a `BroadcastChannel` message is delivered to a background tab that still runs events
+ * (the owner's hidden Firefox leader processed socket frames), and a stolen Web Lock is the
+ * browser's mutual exclusion, whoever held it. A leader that runs no event at all (frozen, wedged)
+ * cannot answer; Chromium's freeze is covered above, a wedged thread is not.
+ */
+function watchHandover(channel: BroadcastChannel, log: (msg: string) => void): void {
+  if (handoverWatched) return;
+  handoverWatched = true;
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') handoverAsked = false;
+    });
+  }
+  channel.addEventListener('message', (ev: MessageEvent) => {
+    const data = ev.data as { type?: unknown; tabId?: unknown; to?: unknown } | null;
+    if (data?.type === 'leader_handover_request' && typeof data.tabId === 'string') {
+      if (leadership !== 'leader' || !releaseLeaderLock) return;
+      if (typeof document === 'undefined' || document.visibilityState !== 'hidden') return;
+      log(
+        `[TAB] Hidden leader asked for the lead by a visible tab (${data.tabId.slice(0, 8)}) - handing it over.`
+      );
+      // The lock is the requester's to steal: this document does not release it into the queue,
+      // which would grant it to whichever tab queued first. The ROLE ends here; the hold stays
+      // until the steal, the unload, or a freeze ({@link heldLock}, `watchPageLifecycle`).
+      releaseLeaderLock = null;
+      decide('follower');
+      channel.postMessage({ type: 'leader_handover_granted', to: data.tabId });
+      handOver();
+      return;
+    }
+    if (data?.type === 'leader_handover_granted' && data.to === TAB_ID) {
+      if (leadership === 'leader' || leaving) return;
+      takeHandedOverLead(log);
+    }
+  });
+}
+
+let handoverWatched = false;
+/** This page already SAID it asks for the lead in this visible stretch (the ask itself repeats). */
+let handoverAsked = false;
+
+/** The requester's half: the lock taken from the hidden leader that granted it. */
+function takeHandedOverLead(log: (msg: string) => void): void {
+  // This document's own place in the queue is moot once it holds the lock.
+  const queued = promotionRequest;
+  promotionRequest = null;
+  queued?.abort();
+  let hold: (() => void) | null = null;
+  void navigator.locks
+    .request('canari-tab-leader', { mode: 'exclusive', steal: true }, async () => {
+      if (leadership === 'leader') return;
+      decide('leader');
+      log('[TAB] Lead handed over by the hidden leader tab - promoted (Web Locks).');
+      requeueForPromotion = () => queueForPromotion(log);
+      tabChannel?.postMessage({ type: 'leader_promoted', tabId: TAB_ID });
+      notifyTabLeaderPromoted();
+      await holdLeaderLockUntilUnload((letGo) => (hold = letGo));
+    })
+    .catch((e: unknown) => {
+      forgetHold(hold);
+      onLeaderLockRejected(e, log);
+    });
+}
+
+/**
+ * From a FOLLOWER: this tab has something of its own waiting on the leader (a queued message), and
+ * the member is looking at it - ask a HIDDEN leader for the lead ({@link watchHandover}). A no-op
+ * unless this page is a visible Web Locks follower. Asked on every flush this follower hands over -
+ * a visible leader ignores it, and a leader hidden SINCE the last ask answers the next one - and
+ * SAID once per visible stretch of this page (the line would otherwise repeat on every trigger).
+ */
+export function requestLeaderHandover(log: (msg: string) => void): void {
+  if (leadership !== 'follower' || leaving || !tabChannel || !handoverWatched) return;
+  if (typeof document === 'undefined' || document.visibilityState !== 'visible') return;
+  if (!handoverAsked) {
+    handoverAsked = true;
+    log(
+      '[TAB] Visible follower with a message waiting on the leader - a hidden leader is asked for the lead (said once while visible).'
+    );
+  }
+  tabChannel.postMessage({ type: 'leader_handover_request', tabId: TAB_ID });
 }
 
 /**
@@ -381,9 +637,12 @@ async function initWithWebLocks(log: (msg: string) => void): Promise<boolean> {
     tabChannel = new BroadcastChannel('canari-mls-tab');
     hearLeaderAnnouncements(tabChannel);
   }
+  watchPageLifecycle(log);
+  watchHandover(tabChannel, log);
 
   const reclaim = consumePromotionReload();
   if (reclaim) log('[TAB] Reloaded after a promotion - reclaiming the leader lock.');
+  let hold: (() => void) | null = null;
   const acquired = await new Promise<boolean>((resolveLeadership) => {
     void navigator.locks
       .request(
@@ -398,10 +657,11 @@ async function initWithWebLocks(log: (msg: string) => void): Promise<boolean> {
           log('[TAB] Leadership acquired (Web Locks).');
           requeueForPromotion = () => queueForPromotion(log);
           resolveLeadership(true);
-          await holdLeaderLockUntilUnload();
+          await holdLeaderLockUntilUnload((letGo) => (hold = letGo));
         }
       )
       .catch((e: unknown) => {
+        forgetHold(hold);
         onLeaderLockRejected(e, log);
         resolveLeadership(false);
       });
@@ -626,6 +886,14 @@ export function resetTabLeaderStateForTests(): void {
   // The memo goes with them, or the next case would be handed the previous case's election.
   election = null;
   requeueForPromotion = null;
+  releaseLeaderLock = null;
+  heldLock = null;
+  promotionRequest = null;
+  requestWithdrawnByFreeze = false;
+  leaving = false;
+  handoverAsked = false;
+  // The channel is closed above: the next election's channel needs its own listener.
+  handoverWatched = false;
   try {
     sessionStorage.removeItem(PROMOTION_RELOAD_KEY);
   } catch {

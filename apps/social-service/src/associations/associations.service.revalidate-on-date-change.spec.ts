@@ -94,6 +94,8 @@ function makeService(event: Overrides) {
     batchLoadCoOwners: jest.fn(async () => new Map()),
     syncCoOwners: jest.fn(async () => []),
     serializeCalendarEvent: jest.fn((e: Overrides) => e),
+    // The event's parties, read once before either notice is written ('author-1' validates too).
+    eventPartyIds: jest.fn(async () => new Set(['author-1'])),
     notifyEventValidatorsOfProposal: notifiedValidators,
     notifyEventReopenedParties: notifiedAssoAdmins,
   });
@@ -135,12 +137,24 @@ describe('updateCalendarEvent - a validated event asks again when its dates move
 
     // Without this the event leaves the public agenda for a queue nobody is told about - worse
     // than the defect it replaces, the event having at least been visible before.
-    expect(notifiedValidators).toHaveBeenCalledWith('asso-1', 'admin-1', 'Gala');
+    // The notice names its event, and hands the parties over so a validator among them is marked.
+    expect(notifiedValidators).toHaveBeenCalledWith(
+      'asso-1',
+      'admin-1',
+      'Gala',
+      {
+        type: 'event_proposed',
+        meta: { reason: 'date_moved', audience: 'validators', eventId: 'ev-1' },
+        pushData: { associationId: 'asso-1', action: 'proposed' },
+      },
+      new Set(['author-1'])
+    );
     expect(notifiedAssoAdmins).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'ev-1', associationId: 'asso-1', title: 'Gala' }),
       'date_moved',
       'admin-1',
-      // Whoever the validators' notice already reached (the stub returned nobody).
+      // The same party set, and whoever the validators' notice already reached (the stub: nobody).
+      new Set(['author-1']),
       expect.any(Set)
     );
   });
@@ -203,6 +217,7 @@ describe('updateCalendarEvent - a validated event asks again when its dates move
 
   it('demotes for a BDE caller too - the authority validates by deciding, never by typing', async () => {
     const { service, saved, notifiedValidators } = makeService({});
+    const announce = jest.spyOn(service, 'announceEventReopened');
 
     await service.updateCalendarEvent(
       'asso-1',
@@ -210,6 +225,8 @@ describe('updateCalendarEvent - a validated event asks again when its dates move
       { startsAt: '2026-10-02T18:00:00.000Z' } as never,
       { isBde: true, callerUserId: 'bde-2' }
     );
+    // The announcement is fire-and-forget (void): await the very promise it returned.
+    await Promise.all(announce.mock.results.map((r) => r.value));
 
     expect(written(saved).status).toBe(AssociationCalendarEventStatus.Pending);
     // The stamp goes with the status: a pending row carrying a `validatedBy` reads as approved to
@@ -223,6 +240,7 @@ describe('updateCalendarEvent - a validated event asks again when its dates move
 
   it('demotes for a global admin too - there is no system-level exception either', async () => {
     const { service, saved, notifiedValidators } = makeService({});
+    const announce = jest.spyOn(service, 'announceEventReopened');
 
     await service.updateCalendarEvent(
       'asso-1',
@@ -230,6 +248,8 @@ describe('updateCalendarEvent - a validated event asks again when its dates move
       { startsAt: '2026-10-02T18:00:00.000Z' } as never,
       { isGlobalAdmin: true, callerUserId: 'root-1' }
     );
+    // The announcement is fire-and-forget (void): await the very promise it returned.
+    await Promise.all(announce.mock.results.map((r) => r.value));
 
     expect(written(saved).status).toBe(AssociationCalendarEventStatus.Pending);
     expect(written(saved).validatedAt).toBeNull();

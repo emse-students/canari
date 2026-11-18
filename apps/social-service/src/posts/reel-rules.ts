@@ -14,7 +14,7 @@ interface KindedCreateBody {
   media?: Array<{ type?: string; mimeType?: string; width?: number; height?: number }>;
   images?: unknown[];
   polls?: unknown[];
-  forms?: unknown[];
+  forms?: unknown;
   attachedFormId?: string | null;
   linkedCalendarEventId?: string | null;
   scheduledAt?: string | null;

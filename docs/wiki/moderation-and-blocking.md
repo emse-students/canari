@@ -5,6 +5,10 @@ Two mechanisms that look adjacent and are deliberately kept apart.
 A **report** asks a moderator to look at something. It is a public act inside the platform: it
 creates a row a third party reads and acts on.
 
+**Who may do what to whom** - every role, every content kind, the target decided on 2026-11-15 and
+today's gaps - is [moderation-authority](moderation-authority.md), the one copy. This page explains
+the mechanisms; it does not restate that grid.
+
 A **block** is between two people and reaches nobody else. It is not a moderation signal, it is not
 counted anywhere, and no administrator sees it - by the user's decision of 2026-08-27, because these
 are conflicts, break-ups and fallings-out, and a dashboard tallying them would turn a private
@@ -44,11 +48,27 @@ describing it as a live rival is what made it look like a design decision rather
 | `live_chat` | a live chat MESSAGE's id (with `liveId` and the plaintext `message`) | the kept line's text, plus `liveChat: { text, authorName, keptUntil, integrity, ... }` ([lives](services/lives.md#a-reported-chat-line-wp-l8b)) |
 | `nickname` | ONE version of a community nickname, `<member row id>@<set-at ms>` | that version's text while it is still shown, null once it was changed or cleared ([chat](frontend/modules/chat.md#per-conversation-nicknames-modifier-les-pseudos-2026-11-08)) |
 
+**WHO A REPORT IS ABOUT IS READ BY THE SERVER, AND HELD FOR THE MODERATORS.** `reportedUserId` is
+the account a moderator's mute acts on from the queue, so no client names it: the server reads it
+from the content at report time, for every type - a comment's writer, a personal post's author (an
+anonymous one included), a live's broadcaster, a chat line's author, a nickname's setter, the
+reported account itself for `user` - and stores null for a post in an association's name, whose
+writer is not the moderators' to read here. The request has no such field (a shipped client that
+still sends one has it stripped by the service's validation pipe, `whitelist: true`, and is answered
+as before). And `POST /api/moderation/reports` answers the reporter a RECEIPT - `id`, `contentType`,
+`contentId`, `status`, `createdAt` (`receiptOf`) - never the stored row: what was shown anonymously
+stays anonymous to the one who reported it (charter, principle 1).
+
 `nickname` arrived on 2026-11-08 ("Modifier les pseudos"): reportable by a member of that community
 only, its `reportedUserId` the setter read from the membership row, every refusal the `404
 CONTENT_NOT_FOUND` of a post. Only global admins see it in the queue: a BDE's scope
 (`reportInBdeScopeSql`) does not name it. A community moderator reverses one by clearing it. An MLS
-group's nicknames never reach a server and are not reportable.
+group's nicknames never reach a server and are not reportable. **A gap**: no community moderator
+sees the report, and the platform admin who does has no route to clear the nickname (owner,
+2026-11-15: it goes to the community's moderators,
+[moderation-authority](moderation-authority.md#people-profile-mute-community-nicknames)). More
+generally the encrypted world - communities, salons, DMs, groups - has NO platform authority: neither
+the platform admin nor a BDE has a route there, and each community regulates itself by its own roles.
 
 `live` arrived with WP-L8 (2026-10-19, decision D6: a live is moderated like a post). Its `reportedUserId` is
 the broadcaster read from the live row, never the client's; the live must still have a row and be
@@ -57,8 +77,9 @@ answer is "delete the post", a live's is **"cut the live"**: `POST /api/lives/:i
 `isContentModerator` predicate, which ends the live for everyone, records the cut (`live_cuts`: who,
 when, which reason code) and marks the live's pending reports `reviewed`. A live is never
 auto-hidden by a count. **A strike ladder reads the cuts** (WP-L8b, 2026-10-21): a warning, then a
-30-day suspension of BROADCASTING (posts untouched - the account mute stays the one posting
-sanction), then a withdrawal staff decide ([lives](services/lives.md#the-strike-ladder-wp-l8b)).
+30-day suspension of BROADCASTING (posts untouched - the account mute stays the posting sanction;
+what it covers is [the sanctions table](moderation-authority.md#sanctions)), then a withdrawal staff
+decide ([lives](services/lives.md#the-strike-ladder-wp-l8b)).
 
 `live_chat` arrived with WP-L8b (2026-10-21): the one case where a report CARRIES content. A live
 chat line is sealed with the live key, which the server holds while the live runs, so unlike an MLS
@@ -132,9 +153,14 @@ The lazy purge is gone, the cron is the only mechanism, and its clock is `review
 
 ### Who may read the queue
 
-`isContentModerator`: a platform admin, or a BDE member holding `MODERATE`. One predicate, shared by
+`isContentModerator` (`MODERATES_SOMEWHERE_SQL`): a platform admin, a member holding `MODERATE` in a
+BDE (an association of type `association` governing a space), or a member holding `MODERATE` in an
+INSTITUTION, which moderates its own content (owner, 2026-11-15, decision 4). One predicate, shared by
 `/api/moderation/*` and by the post controls that give the same people the same reach - and, since
-WP-L8, by the staff cut of a live.
+WP-L8, by the staff cut of a live. **A space's governor may be an INSTITUTION (WP-D1)**: it answers
+for that space's agenda, never for its people - `bdeModeratesUserSql` asks `governorIsAnAssociationSql`
+of the space's governor, so the students of a space with no BDE are the platform admin's (owner,
+2026-11-15, decision 3). The grid is [moderation-authority](moderation-authority.md#the-roles).
 
 **SCOPED SINCE 2026-11-02 (owner).** That predicate is now only the DOOR: a BDE moderator reads the
 reports, the hidden posts and the muted people of the spaces its BDE governs, and every act (hide,
@@ -155,7 +181,10 @@ when it moderates that association too (next paragraph) - which `commentRights.c
 
 **No BDE moderates content in an INSTITUTION's or ANOTHER BDE's name (owner, 2026-11-03).** Whatever
 the path - hide, delete, unmask, reading an association comment's writer, cutting a live, a report on
-any of them - only the platform admin acts on it; a BDE keeps moderating, in its governed spaces, what
+any of them - only the platform admin and that publisher's OWN moderators act on it (an institution's
+`MODERATE` members since 2026-11-15, decision 4: `institutionModeratesOwnSql`, ORed into the publisher
+predicate `moderatesPublisherSql`, so its posts, lives, the comments under them and the comments in its
+name - wherever they sit - follow); a BDE keeps moderating, in its governed spaces, what
 students and the associations and lists it governs publish. ONE predicate decides every act:
 `bdeModeratesPublisherSql` (`spaces/bde-moderation.ts`, the management predicate read for `MODERATE`,
 false for an institution and for another BDE) for whatever is in an association's name, the per-space
@@ -166,8 +195,9 @@ A comment is judged on ITSELF: its replies never shield it (decision below). **T
 only what the BDE may act on** - an escalated item is simply absent from it, and stays in the platform
 admin's queue (decided 2026-11-04, the simpler and reversible of the two options: no "escalated" row to
 render). A refused act is classified at the throw: 403 `MODERATION_RESERVED_TO_PLATFORM_ADMIN` when the
-target is in an institution's or a BDE's name, `MODERATION_OUT_OF_SCOPE` otherwise,
-`MODERATOR_REQUIRED` for a caller who moderates nowhere - each worded by the client through
+target is in an institution's or a BDE's name, `MODERATION_OUT_OF_SCOPE` otherwise for a BDE
+moderator, `MODERATION_OUTSIDE_OWN_INSTITUTION` for a caller who moderates only as an institution
+(2026-11-15), `MODERATOR_REQUIRED` for a caller who moderates nowhere - each worded by the client through
 `describeModerationRefusal` (`frontend/src/lib/moderation/moderationRefusal.ts`), on the post card and
 in the reports queue alike (`ModerationApiError` is an `ApiRefusalError`, so `refusalCode` reads it).
 **Not moderation, and so unchanged:** pinning a post in a space (WP-PIN, a promotion - a BDE may pin
@@ -175,6 +205,88 @@ another BDE's or an institution's post), the agenda rights over an institution's
 2026-11-03, `holdsBdeAgendaRightOverSql`), and a mute or a broadcast withdrawal, which name a person.
 Proved in `bde-moderation.integration.spec.ts` ("the owner's rule of 2026-11-03"). A student's
 content inside an institution's or another BDE's post or live: [the place decides](#decided-by-the-owner-2026-11-04).
+
+#### The moderation read of a post, its comments and its replay (owner, 2026-11-15)
+
+**THE RULE - OWNER, 2026-11-15:** *"Oui, dans ses espaces"*, answering "may a BDE moderator read a
+hidden post, its comments, a replay?". It follows the owner's decision of the same morning on the
+replay, *"La moderation des lives doit avoir le meme regulateur que les posts. Donc ouvrir."*, and
+replaces the lead's "platform admins alone" for all three.
+
+What it means. Whoever MODERATES a post reads it to judge it, and nobody else: the platform admin
+anywhere, a BDE `MODERATE` holder over what its governed spaces hold (a person's post in one of its
+spaces, an association's it governs; never an institution's or another BDE's) - one predicate,
+`AssociationsService.mayReadToModeratePost` (the scope of `mayModeratePost`,
+[who may read the queue](#who-may-read-the-queue), with the exclusion below), asked where each read
+is made and never learned by failing the ordinary read first:
+
+**A POST SCHEDULED LATER - OWNER, 2026-11-15:** *"Exclure les posts programmes"*. A BDE moderator's
+moderation read does NOT open a post still waiting for its publication date: it becomes readable to
+them once it is published, or while an OPEN report (`content_reports.status = 'pending'`) targets
+it. Both facts are read in the one statement that decides (`BDE_MODERATION_READ_OPENS_POST_SQL`),
+so the post, its comments and its replay are excluded from ONE place. **The ruling names the BDE
+moderator: the platform admin's read is deliberately left as it was - it still opens a post
+scheduled later.** Hiding and deleting keep their unnarrowed scope (`mayModeratePost`): only the
+read is excluded. The hidden-posts list (`GET /api/posts/hidden`, `getHiddenPosts`) is a read of the
+same content and asks the same term (`bdeModerationReadsPostSql`): it lists a hidden post scheduled
+later to a BDE moderator only while an open report targets it, and every one to a platform admin.
+The report queue's preview of a reported post (`ModerationService.listAllReports`) is the third such
+read and asks the term too: the queue lists reports of every status, and the 250-character preview of
+a post scheduled later is null for a BDE moderator unless the report is still open or the post is
+published; the report's row stays listed. A reported COMMENT's preview follows the read of the post it
+sits under, as the comments read does: its text is null where the post is not the moderator's to
+read, its `postId` kept (a comment's own report does not open its post). A preview served of a post
+still scheduled later is logged `[MODERATION_READ]`, post ids only - when a text was served (a
+comment with media only has none) and the report it sits under is still OPEN: a handled report
+stays listed while it is kept, and a platform admin's page shows its text at every load, which is
+the same read repeated about nothing left to decide, so it is logged once it matters and not at
+every refresh. A post report's `contentId` is
+stored lowercase, the form the term compares it in (production, read-only count of 2026-11-15: no
+stored post report holds a mixed-case id, so nothing was migrated).
+
+| Read | Where the predicate is asked | Then |
+| --- | --- | --- |
+| The post by id (`GET /api/posts/:id`) | `PostsService.getById` | `readPostOpenVerdict` with `allowHidden` |
+| Its comments (`GET /api/posts/:id/comments`) | `PostsService.listComments` | the same, intent `'COMMENT'` |
+| Its replay (`GET /api/lives/:id/replay?moderation=true`) | `LivesService.replay` | the viewer's gate skipped |
+
+In that scope the read passes every term of a viewer's gate: outside the moderator's audience, hidden
+by moderation, scheduled later, a block with the author, the "Entre etudiants" switch, comments
+withheld from a grant-only reader, a viewer the broadcaster REMOVED from the live. Out of scope - a
+BDE moderator of other spaces, a member without `MODERATE` - the read is the ordinary one, unchanged.
+Every read the moderation opened past a term is logged as the expected event it is
+(`[MODERATION_READ] <intent> post ... opened to ... as its moderator, past: ...`; the replay's
+`[LIVE_REPLAY] ... MODERATION READ by ...`). The SQL visibility predicate has no admin door left
+(`adminSeesAll` / `adminModerates` are deleted): the moderation read is `mayReadToModeratePost`, nothing else.
+
+**PARTICIPATION IS UNCHANGED (2026-11-14).** Outside their own audience a moderator - admin or BDE -
+reacts, comments, votes, reports and republishes as the reader they are: the 404 an ordinary reader
+gets, since no write route asks the moderation read. The page tells the client so: `canParticipate`
+and `canReport` are false for a post served by the moderation read (`participableIds`, asked for an
+admin's page and for a BDE moderator's page holding a post they moderate), so the card is read-only
+and `ReplayPane` asks the replay's moderation read exactly then - no client test of "is admin". The
+moderation preview (`ModerationPostPreviewModal`) and "Voir le post" (`/posts/{id}`) ask the plain
+`getPost`, so both work for a BDE moderator in scope as for an admin.
+
+**What it hands out.** A replay's moderation read serves the page a viewer gets: the replay's KEY and
+its segment list, which decrypt the replay until it is purged. The charter's first principle,
+**1. "Vos messages sont à vous"** ([principes](../principes.md)), is why this is a regulator's
+decision and not a widening a screen may take on its own.
+
+Proved on the real scope predicate over PostgreSQL: `posts/post-openable.integration.spec.ts` (a BDE
+moderator in scope opens a hidden post and one outside its audience and lists their comments; out of
+scope and without `MODERATE`, the ordinary 404; outside its audience, refused a reaction, a comment
+and a vote; a post scheduled later refused to them, opened by an open report and once published,
+still opened to a platform admin; a hidden post in a reader's audience answers a non-moderator 403) and `lives/lives.integration.spec.ts` (the replay, removed and blocked moderators
+included).
+
+**Its cost, measured locally (2026-11-15, PostgreSQL 18, jit off, minimum of 9 runs, a throwaway
+database of 3,000 users, 200 associations, ~6,200 memberships, 20,000 posts):** every by-id read and
+comment page now runs the scope statement once, ~0.22 ms and 11 shared buffers, all index probes
+(`posts_pkey`, `users_pkey`, `association_members ("userId")`); the visibility statement is
+unchanged (~1.16 ms before and after). That figure is a published post's, which never runs the
+open-report sub-select; for a post scheduled later it runs, and the same seed measured ~0.30 ms with
+`content_reports` (500 rows) scanned sequentially. Not measured on dev or production.
 
 #### Decided by the owner (2026-11-04)
 
@@ -248,10 +360,21 @@ whole page (post branch 19 ms, user branch 2 ms; expanding every comment with no
 7 ms), with the same 949 comment rows in scope. A per-report correlated EXISTS was rejected: nothing
 indexes a comment id inside the jsonb, so it would scan every post once per comment report.
 
+**"Supprimer + muter" on a hidden post (1.7.1): drawn from the server's answer, mute first, a refusal stops.**
+`GET /api/posts/hidden` stamps each row `canMuteAuthor` (`moderatedUserIds`, the rule of the report
+queue's `canMuteReportedUser`), and the control exists only where it is `true` - an institution's
+`MODERATE` holder may mute nobody and never sees it. The handler (`handleDeleteAndMute`) mutes first and
+deletes only once the mute succeeded; a refusal is named by its CODE (`describeModerationRefusal`) and
+the post stays, so the moderator is never told both happened when one did not. The old handler swallowed
+the mute's 403 in a bare `catch {}` and deleted anyway
+(`admin/moderation/page.deleteAndMute.svelte.test.ts`, `posts.service.can-manage.spec.ts`).
+
 **A mute and a live withdrawal stay ONE platform-wide row (owner, 2026-11-02: "Laisser tel quel").**
 A measure is about a person, not about a BDE: any BDE whose spaces hold that person may lift it or
 rewrite its reason, whichever BDE took it, and the platform admin always may. Deliberate, not an
-oversight - a second BDE seeing the same person is a second moderator of them.
+oversight - a second BDE seeing the same person is a second moderator of them. The withdrawn-broadcasters
+list (`GET /api/lives/broadcasters/withdrawn`) applies the same predicate per row (`moderatedUserIds`), so a
+BDE holder lists and lifts only the people of its own spaces; an institution holder lists none.
 
 **What an out-of-scope moderator can infer, accepted (owner, 2026-11-02).** On an anonymous post a BDE
 moderator outside its scope is served no pin and no unmask capability, so it can tell the post is not
@@ -262,16 +385,20 @@ others they are not it.
 ### Anonymous posts - the fourth control that predicate now gates
 
 A personal post (never an association one - the two are mutually exclusive, and an association
-post already anonymizes its author for everyone unconditionally) can be marked `anonymous` at
+post already withholds its writer from everyone but its moderators and the writer, by the same rule)
+can be marked `anonymous` at
 creation - one option in the same "who is publishing" identity picker as the personal profile and
 each managed association, open to every user rather than gated to association admins.
-`PostsService.mustHideAnonymousAuthor` strips `authorId` from the response for every viewer
+`PostsService.viewerSeesWriter` (via `withholdWriterUnlessSeen`, the one writer rule, the same for
+an association's post since 2026-11-17 - [moderation-authority](moderation-authority.md), decision 11)
+strips `authorId` from the response for every viewer
 **except** a moderator of THAT post (the platform admin, or since 2026-11-02 a BDE whose governed
 spaces hold it), or the post's own author (2026-09-17: a moderator
 must be able to tell WHO published an anonymous post, and so must the author looking at their own
 post - not just THAT it exists). `canUnmaskAnonymous` (same shape as `canPin`) is drawn from the
 moderator tier only, never from self-authorship. `PATCH /posts/:postId/unmask` (`PostsController`,
-guarded by the same `assertContentModerator` pin/hide already use) clears the flag,
+guarded by `assertModeratesPost` - `mayModeratePost`, the scoped predicate hide and unhide use;
+`assertContentModerator` now guards only `GET /posts/hidden`) clears the flag,
 one-directional: an author who did not choose anonymity at creation has no route back into it
 later, and the flag is otherwise immutable on edit - like `associationId` already is.
 
@@ -280,12 +407,13 @@ On the client, an anonymous post is named "Anonyme" with the mask for EVERY read
 (moderator, admin, or self): "Anonyme" stays the name, big, and the real author follows SMALL under
 it, linking the profile (`RevealedAuthorLine`; user, 2026-10-24 - it replaced the 2026-09-17 shape,
 the real name and photo with an "Anonyme" badge beside the time). The same holds for an anonymous
-COMMENT: `serveComment` sends its `userId` to the writer, a content moderator and a platform admin
-only, the comment stores no name, so the client resolves the name from that id
+COMMENT: `serveComment` sends its `userId` to the writer, a moderator of THAT post and of
+the comment's publisher (`seesAccount`, `posts/comment-identity.ts`) and a platform admin only, the
+comment stores no name, so the client resolves the name from that id
 (`commentRevealedAuthorId`). The client never decides who may see an author; it draws what the
 server sent ([posts](frontend/modules/posts.md#who-wrote-it-anonyme-big-the-real-author-small-2026-10-24)).
 
-**`mustHideAnonymousAuthor` was never wrong; the two feed queries never asked it the real
+**`mustHideAnonymousAuthor` (now `viewerSeesWriter`) was never wrong; the two feed queries never asked it the real
 question (2026-09-18, reported by a user who posted "test" anonymously and read their own name
 off a second account's feed).** `listPosts`'s shared `selectBody` and `searchPosts`'s own copy
 both named `posts."authorId"` but never `posts.anonymous`, so every raw row arrived with
@@ -395,7 +523,7 @@ window and count), `getById` and `pageComments` all apply it. The identity rules
 | --- | --- |
 | `listPosts` (4 feed arms) | the clause in the `WHERE`, never on the page after `LIMIT` - filtering a rendered page would hand back short pages |
 | `searchPosts` | same clause |
-| `getById` | `404`, not `403` - the refusal never says a block caused it. **A platform admin passes** (`allowHidden`, the flag that already opens a moderation-hidden post), so a reported post never 404s for the moderator who has to read it |
+| `getById` | `404`, not `403` - the refusal never says a block caused it. **Whoever moderates the post passes** (`mayReadToModeratePost`, handed to the gate as `allowHidden`: [the moderation read](#the-moderation-read-of-a-post-its-comments-and-its-replay-owner-2026-11-15)), so a reported post never 404s for the moderator who has to read it |
 | `findPostLinkedToCalendarEvent` | same card, same clause |
 
 The **comment window and the comment count are both filtered in SQL**, in `postSelectBody`. They

@@ -22,7 +22,7 @@
  * simulation of one - and it is the same wipe a person performs by opening a private window, which is
  * the shape the user asked for.
  *
- * **WHY THE ORIGIN AND NOT THE PROFILE.** The login hops canari-emse.fr -> auth.canari-emse.fr ->
+ * **WHY THE ORIGIN AND NOT THE PROFILE.** The login hops the app origin -> miconnect.emse.fr ->
  * cas.emse.fr, and CAS remembers a browser it has already challenged. Deleting the whole profile
  * throws that away too, so every row would pay the one step no tool here can answer - SETUP-4's 2FA -
  * and eleven rows would each need a human. Clearing ONE origin leaves the CAS and Authentik sessions
@@ -96,7 +96,10 @@ const keepOpen = argv.includes("--keep-open");
  */
 // W6 JOINED ON 2026-10-25 for the 1.4.1 campaign: DEV-4 races two fresh devices of the owner and
 // DEV-6 needs a second one after the first is revoked. It is a scratch profile like W3 and holds nothing.
-const WIPEABLE = ["W3", "W1", "W6"];
+// W7 JOINED ON 2026-11-16: the peer's second seat, a spare holding no history (its vault was locked by a
+// PIN older than the account's, so it could not be read anyway) - re-enrolled as a NEW device instead of
+// recovered, because a PIN recovery resets the account's PIN for every device.
+const WIPEABLE = ["W3", "W1", "W6", "W7"];
 const device = opt("device", "W3");
 if (!WIPEABLE.includes(device)) {
   throw new Error(

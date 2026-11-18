@@ -56,6 +56,7 @@
   {:else if backHref && backLabel}
     <a
       href={backHref}
+      data-back-link
       class="text-text-muted hover:text-text-main mb-1 inline-flex items-center gap-1.5 text-sm transition-colors"
     >
       <ArrowLeft size={15} />

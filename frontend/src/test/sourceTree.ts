@@ -91,6 +91,11 @@ export function relativeTo(path: string, base: string): string {
   return path.slice(base.replace(/\/+$/, '').length + 1);
 }
 
+/** Whether `path` (frontend-root, POSIX) is in the snapshot: the in-memory answer to "is this a file". */
+export function hasSource(path: string): boolean {
+  return load().has(path);
+}
+
 /** The text of ONE file of the snapshot, by its frontend-root path; throws when it is not in it. */
 export function readSource(path: string): string {
   const text = load().get(path);

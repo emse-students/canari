@@ -25,6 +25,8 @@ vi.mock('$app/navigation', () => ({ goto: vi.fn(async () => {}), beforeNavigate:
 const api = vi.hoisted(() => ({
   status: 'draft' as 'draft' | 'published',
   associationId: null as string | null,
+  /** The published form's end: the manager's close ("Clore") writes it apart from the revision. */
+  closedAt: null as string | null,
   revision: {
     revision: 0,
     document: null as Record<string, unknown> | null,
@@ -55,6 +57,7 @@ vi.mock('$lib/forms/api', async (orig) => ({
     currency: 'eur',
     basePrice: 0,
     associationId: api.associationId,
+    closedAt: api.closedAt,
   }),
   getFormDraft: api.getFormDraft.mockImplementation(async () => api.revision),
   updateForm: api.updateForm,
@@ -156,6 +159,7 @@ afterEach(() => {
   vi.useRealTimers();
   api.revision = { revision: 0, document: null, savedAt: null, saveId: null };
   api.associationId = null;
+  api.closedAt = null;
   caps.formDrafts = true;
   device.copies.clear();
   toastStore.toasts.forEach((t) => dismissToast(t.id));
@@ -188,6 +192,26 @@ function type(input: HTMLInputElement, value: string) {
 }
 
 describe('the editor', () => {
+  it(
+    'a closed form: an edit that leaves the closing date alone does not carry it, so a close made since is kept',
+    async () => {
+      api.status = 'published';
+      api.closedAt = '2026-11-16T09:30:12.345Z';
+      await open();
+      // Opening is not an edit, the stored end included.
+      expect(api.saveFormDraft).not.toHaveBeenCalled();
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      type(titleInput(), 'Gala closed');
+      await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS);
+      await settle();
+      expect(api.saveFormDraft).toHaveBeenCalledTimes(1);
+      const document = (api.saveFormDraft.mock.calls[0] as any[])[2] as Record<string, unknown>;
+      expect(document.title).toBe('Gala closed');
+      expect('closedAt' in document).toBe(false);
+    },
+    MOUNT_BUDGET_MS
+  );
+
   it(
     'a draft: says so, previews in a new tab, saves nothing on opening, and publishes',
     async () => {

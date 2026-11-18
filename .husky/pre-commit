@@ -1,5 +1,17 @@
 #!/bin/sh
-# Pre-commit hook - auto-fixes and re-stages, and does NOTHING that only reports.
+# Pre-commit hook - auto-fixes and re-stages, THEN runs the fast path-scoped checks.
+#
+# THE CHECKS CAME BACK ON 2026-11-15 (owner: *"tout ce qui est verifie a la PR devrait etre verifie
+# au commit, la fusion de PR devrait etre une formalite"*). The fixers below are unchanged; after
+# them, `local-ci.sh commit` runs the checks the staged paths answer to - doc links, the plan, the
+# private-data guard, the ratchets and allowlists, the touched modules' unit tests - in seconds,
+# not the full sweep the paragraph below rightly refused. Which check runs for which path, and what
+# each costs, is docs/wiki/cicd.md ("Checks at commit, at push, and in CI only").
+#
+# GIT CALLS THIS FILE DIRECTLY since the same day (`core.hooksPath` = `.husky`, a tracked directory),
+# not through husky's generated `.husky/_` wrappers - which a fresh worktree did not have, so git ran
+# no hook there at all. So it sets `-e` itself, as the wrapper's `sh -e` did, and a missing toolchain
+# FAILS below and names the install, rather than the hook never running.
 #
 # REDUCED ON 2026-09-02, WHEN THE PROJECT MOVED TO PULL REQUESTS (user: "Cela evite les hooks tres
 # longs"). It used to mirror the CI lint job as well - `svelte-check`, strict `oxlint`,
@@ -19,6 +31,8 @@
 # WHY `format` IS NOW RUN FOR THE SERVICES TOO, and was not before: CI gates their formatting since
 # 2026-09-02, so a service commit that is not formatted is a red pull request. The fixer belongs
 # where the file is written.
+
+set -e
 
 [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
 export PATH="$HOME/.cargo/bin:$PATH"
@@ -70,8 +84,22 @@ BUN_PACKAGES="frontend apps/chat-delivery-service apps/core-service apps/media-s
 # Every Rust crate: `cargo fmt` rewrites, and CI runs `cargo fmt -- --check` on all of them.
 RUST_CRATES="apps/chat-gateway apps/call-service frontend/mls-core frontend/mls-wasm frontend/src-tauri"
 
+# A toolchain this commit needs and this checkout lacks is a FAILURE with the install named - a
+# fresh worktree has no node_modules, and a fixer that cannot run is a fixer that did not run.
+require_deps() {
+  [ -d "$1/node_modules" ] && return 0
+  echo "❌ $1 has no node_modules in this checkout, so its fixers and checks cannot run."
+  echo "   Install them first: (cd $1 && bun install --frozen-lockfile)"
+  exit 1
+}
+command -v bun >/dev/null 2>&1 || {
+  echo "❌ bun is not on PATH, and every check of this hook runs on it. Install bun (version in .bun-version)."
+  exit 1
+}
+
 for pkg in $BUN_PACKAGES; do
   if [ "$RUN_ALL" -eq 1 ] || echo "$STAGED_FILES" | grep -Eq "^$pkg/"; then
+    require_deps "$pkg"
     (cd "$pkg" && bun run lint:fix && bun run format) || {
       echo "❌ $pkg: lint:fix / format failed."
       exit 1
@@ -82,6 +110,10 @@ done
 
 for crate in $RUST_CRATES; do
   if [ "$RUN_ALL" -eq 1 ] || echo "$STAGED_FILES" | grep -Eq "^$crate/"; then
+    command -v cargo >/dev/null 2>&1 || {
+      echo "❌ $crate is staged and cargo is not on PATH: install the Rust toolchain (rust-toolchain.toml)."
+      exit 1
+    }
     (cd "$crate" && cargo fmt) || {
       echo "❌ $crate: cargo fmt failed."
       exit 1
@@ -90,4 +122,6 @@ for crate in $RUST_CRATES; do
   fi
 done
 
-exit 0
+# The fast checks the staged paths answer to (2026-11-15). After the fixers, so they read what
+# will be committed.
+bash .github/scripts/local-ci.sh commit

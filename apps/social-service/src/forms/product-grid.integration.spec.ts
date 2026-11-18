@@ -86,6 +86,19 @@ maybe('the priced grid against PostgreSQL (migration 137)', () => {
       extra: { options: `-c search_path=${schema},public` },
     });
     await ds.initialize();
+    // The respondent `where` reads the form's association's archive (`respondentFormWhere`).
+    await ds.query(
+      `CREATE TABLE associations (id uuid PRIMARY KEY, archived boolean NOT NULL DEFAULT false)`
+    );
+    // The `users` table social-service shares with core-service (same database): a member's
+    // submit reads the names its form joins there (`sharedAccountFields`, migration 174).
+    await ds.query(
+      `CREATE TABLE users (id text PRIMARY KEY, "firstName" text, "lastName" text, campus text)`
+    );
+    await ds.query(
+      `INSERT INTO users (id, "firstName", "lastName") VALUES ($1, 'Cleo', 'COTISANT'), ($2, 'Max', 'MEMBER')`,
+      [COTISANT, MEMBER]
+    );
     // Migration 137 from a table WITHOUT its column, twice: `synchronize` built it from the entity.
     await ds.query(`ALTER TABLE submissions DROP COLUMN lines`);
     const migration = readFileSync(

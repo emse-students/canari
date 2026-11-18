@@ -28,7 +28,8 @@
  * - THE ERROR LOG MUST NOT RECORD A WEBSOCKET REQUEST LINE: the access log's redaction does not
  *   reach it, and it prints the raw request line - query included - for an error on the request
  *   (an upstream reset of an upgraded connection is one). So every location that upgrades a
- *   connection declares its own `error_log` at `crit` or above, which records none of those.
+ *   connection declares its own `error_log` at `crit` or above, which records none of those - and
+ *   so does the calendar feed, polled with a bearer subscription token in its query.
  *
  * Every rule has a case that must be redacted and a near-miss that must stay readable.
  *
@@ -399,6 +400,24 @@ for (let i = 0; i < lines.length; i++) {
 for (const path of ['/api/ws', '/api/call']) {
   if (!upgrading.includes(path)) {
     fail(`no upgrading location ${path} was found - the check above saw nothing`);
+  }
+}
+
+// THE CALENDAR FEED'S ERROR LOG (2026-11-14). It upgrades nothing, but a calendar app polls it with a
+// bearer subscription token in the query, so its request line must stay out of the error log too.
+const ICS_FEED = 'location = /api/associations/calendar/feed.ics {';
+const icsAt = lines.indexOf(ICS_FEED);
+if (icsAt === -1) {
+  fail(`no \`${ICS_FEED}\` was found - the check below would see nothing`);
+} else {
+  let end = lines.findIndex((l, j) => j > icsAt && /^location\s/.test(l));
+  if (end === -1) end = lines.length;
+  const icsErrorLogs = lines.slice(icsAt + 1, end).filter((l) => /^error_log\s/.test(l));
+  if (icsErrorLogs.length !== 1 || !LOUD_ENOUGH_LEVEL.test(icsErrorLogs[0])) {
+    fail(
+      `the calendar feed location does not set its own error_log at crit or above ` +
+        `(found: ${icsErrorLogs.join(' | ') || 'none'}) - the error log would record its token`
+    );
   }
 }
 

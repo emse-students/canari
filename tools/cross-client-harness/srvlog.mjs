@@ -397,7 +397,9 @@ const BENIGN = [
   // to duplicate; a base behind the active epoch is the COMM-8 defect and stays unexplained.
   // `published=false` has no base at all to be stale, and the server prints `base=none` for it, so
   // the two branches are disjoint and neither can launder the other's failure.
-  /\[ChannelService\] \[DISTRIBUTION_GROUP\] served workspace=\S+ user=\S+ group=\S+ (?:published=true base=(\d+) active=\1|published=false base=none active=\d+) devices=(?:\d+|\?)$/,
+  // `seat=` is the asker's own seat in the distribution group (#2358): `unasked` (no seat was asked for)
+  // and `active` are ordinary; `pending` or any other status stays unexplained, a seat part-way through an admission.
+  /\[ChannelService\] \[DISTRIBUTION_GROUP\] served workspace=\S+ user=\S+ group=\S+ (?:published=true base=(\d+) active=\1|published=false base=none active=\d+) devices=(?:\d+|\?)(?: seat=(?:unasked|active))?$/,
   // A POLL BEING POSTED AND VOTED IN, which is content and not an event: the send is an ordinary
   // channel message that happens to carry `metadata.poll`, and a vote is a write into it. Every
   // check that produces these asserts the OUTCOME on the two clients' screens, so a missing line
@@ -579,6 +581,37 @@ const BENIGN = [
   /\[ChannelService\] \[UNREAD\] user=[0-9a-f]{8} salons=\d+ unread=\d+ muted=\d+$/,
   // - an Add's arrival dated at the device's admission, which precedes the roster row on every Add.
   /\[GroupMembership\] \[GROUP_ENROL\] group=[0-9a-f]{8} user=[0-9a-f]{8} admitted \d+ ms before enrolment - arrival recorded on the interval$/,
+  // THE BOOT OF A WEB PAGE AND THE ROUTINE EVENTS AROUND IT, read on LEAF-REFRESH-2 against `dev.68983e3`
+  // (2026-11-16), where every window of the three rows was PASS-DIRTY on them. Each is the decision or
+  // function-entry log the coding standard asks for, written at the level it is written at (`debug` for
+  // a read, `log` for an event), one per read or event and never one per retry; none carries a value that
+  // could be a finding, and the sibling that DOES (a refusal, an unavailable avatar, a connection ended
+  // for a limit, a bell that lost its types) has another spelling and is not matched here.
+  //
+  // - one line per socket, written when the connection ends (`frame_census.rs`): what it sent, the
+  //   numbers a per-connection limit has to sit above. An end by a limit has its own sentence;
+  /\bchat_gateway::frame_census: \[WS FRAMES\] \S+:\S+ closed after \d+s: frames=\d+ heartbeats=\d+ bytes=\d+ largest=\d+ peakPerMinute=\d+$/,
+  // - one line per device of an invited member, when its Welcome is answered: addressable, or offline
+  //   and so sent no addressed answer. A device is addressable or it is not; the REFUSED twin is above;
+  /\[MessagingService\] \[WELCOME\]\[welcome-send-[0-9a-f]+\] ADDRESSABILITY group=\S+ target=\S+ is (?:addressable|offline - the inviter sends it no addressed answer)$/,
+  // - the page's boot reads: the guidance already seen, the birthday copy and the day's celebrants, the
+  //   boot's one community read, the bell's renderable types and the trends it no longer shows;
+  /\[HelpSeenService\] \[HELP_SEEN\] read user=[0-9a-f]{8} seen=\d+$/,
+  /\[BirthdaysService\] \[BIRTHDAY\] own read user=[0-9a-f]{8} set=(?:true|false)$/,
+  /\[BirthdaysService\] \[BIRTHDAY\] today for [0-9a-f]{8}: \d+ celebrant\(s\) on \d{4}-\d\d-\d\d$/,
+  /\[ChannelService\] \[BOOT_READS\] user=[0-9a-f]{8} communities=\d+ \(asked \d+\)$/,
+  /\[PostNotificationsService\] \[NOTIF\] bell of [0-9a-f]{8} for build \S+: \d+ renderable type\(s\)$/,
+  /\[PostNotificationsService\] \[TREND\] bell: \d+ of \d+ naming\(s\) no longer hold, not shown$/,
+  // - an avatar the client already holds, answered `304` to a SIGNED request: the cache working. Its
+  //   frequency (one per avatar per boot) is the thing worth a second look, and a rule cannot carry a rate.
+  /\[UsersController\] \[AVATAR\] outcome=not-modified status=304 ms=\d+ target=[0-9a-f]{8} access=signed$/,
+  // - a session's push registration being ended after a sign-out (`session-push-end.service.ts`), which a
+  //   window on the shared estate meets whenever ANY account signs a device out: queued with the sign-out, a
+  //   first pass, and the closing pass once the session's access tokens expired. The three success sentences
+  //   only; `drain failed`, `could not record`, `was NOT ended` and `REFUSED for good` are other spellings;
+  /\[SessionPushEndService\] \[PUSH_SESSION_END\] queued user=[0-9a-f]{8} device=\S+ session=[0-9a-f]{8} cause=\w+$/,
+  /\[SessionPushEndService\] \[PUSH_SESSION_END\] first pass done user=[0-9a-f]{8} device=\S+ session=[0-9a-f]{8} cause=\w+ removed=(?:\d+|unstated) stale=\S+ - final pass at \S+, once every access token of the session expired$/,
+  /\[SessionPushEndService\] \[PUSH_SESSION_END\] ended user=[0-9a-f]{8} device=\S+ session=[0-9a-f]{8} cause=\w+ removed=(?:\d+|unstated) stale=\S+ attempts=\d+$/,
 ];
 
 /**
@@ -1353,7 +1386,10 @@ const ROW_RULES = [
         String.raw`\[HttpLiveSegmentStore\] \[LIVE\] storing segment [0-9a-f-]{36} of live [0-9a-f-]{36} \(\d+ B\)`,
         String.raw`\[HttpLiveSegmentStore\] \[LIVE\] purging the segments of live [0-9a-f-]{36}`,
         String.raw`\[InternalLivesModeController\] \[LIVE\] lives_mode relayed to media-service: on`,
-        String.raw`\[LiveAnnouncer\] \[LIVE_ANNOUNCE\] [0-9a-f-]{36} by [0-9a-f]{8} kind=member followers=\d+`,
+        // The WHOLE line: every shape here is anchored at its end, and the line has carried
+        // ` titled=` after `followers=` since #3135, so the shape that stopped at `followers=\d+`
+        // matched no announcement at all. An association's live prints `kind=association`.
+        String.raw`\[LiveAnnouncer\] \[LIVE_ANNOUNCE\] [0-9a-f-]{36} by [0-9a-f]{8} kind=(?:member|association) followers=\d+ titled=(?:true|false)`,
         String.raw`\[LivesService\] \[LIVE_GC\] [0-9a-f-]{36} deleted \(\d+ segment object\(s\)\)`,
         // The end's purge WAITS for the viewers still seated (#2689, read on LIVE-WEB-2, `1.5.1-alpha.8`):
         // a viewer keeps the segments its last manifest named. One or more seated; zero is another sentence.
@@ -1625,6 +1661,17 @@ const ROW_RULES = [
     tag: /\[CHANNEL\] grant refused/,
     shape: /\[CHANNEL\] grant refused channel=\S+ user=\S+ outcome=(gone|public|not_member|not_allowed)$/,
     rows: ['RM-5'],
+  },
+  // A PHONE OF THE BENCH ACCOUNT THAT NEVER REGISTERED A PUSH TOKEN (`messaging.service.ts`, said once per
+  // device and then at its 10th, 100th... send). The leaf-refresh rows send from the owner's account, whose roster
+  // holds several stale phone installs of the bench: the line is that population reporting itself (the reading
+  // "a device with no push token now says so"), and the finding it names is the bench's, not the row's. The
+  // web and iOS spellings are BENIGN everywhere (above); a `tauri-` device is dirt in every other row.
+  {
+    name: 'no push token for a phone install of the bench account',
+    tag: /No push token for user=\S+ device=tauri-/,
+    shape: /\[MessagingService\] \[PUSH_SEND\]\[[\w-]+-[0-9a-f]+\] No push token for user=[0-9a-f]{8} device=tauri-[0-9a-f]{6,8}(?: \(repeats are counted, printed at 10, 100\.\.\.\)| - send #\d+ to it)$/,
+    rows: ['LEAF-REFRESH-*'],
   },
   // A REVOKED DEVICE'S TOKEN REFUSED (`auth.controller.ts`): its session ended with the revocation,
   // and its next request is told so. The revocation rows' own consequence, dirt anywhere else.
