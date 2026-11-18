@@ -10,12 +10,30 @@ runs:
   steps:
     # Keyed on the sources, so an unchanged crate never pays for a rebuild and a changed one
     # can never miss it. mls-wasm is bindings over mls-core, so both crates are in the key.
+    #
+    # ON macOS THE XCODE MAJOR IS IN THE KEY (2026-11-18): the host half of this build (proc macros,
+    # build scripts) is linked by Xcode's toolchain and loaded by that image's dyld, and macOS 27
+    # refused a stripped proc macro that macOS 15 loaded. An entry built on another image would
+    # hide such a refusal until it expired; a new Xcode major therefore builds cold once, on purpose.
+    - name: Name the host toolchain
+      id: host
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [ "$RUNNER_OS" = "macOS" ]; then
+          major="$(xcodebuild -version | awk 'NR == 1 {split($2, v, "."); print v[1]}')"
+          echo "tag=-xcode${major}" >> "$GITHUB_OUTPUT"
+          echo "host toolchain: Xcode ${major}"
+        else
+          echo "tag=" >> "$GITHUB_OUTPUT"
+        fi
+
     - name: Restore built WASM
       id: cache
       uses: actions/cache@v6
       with:
         path: frontend/src/lib/wasm
-        key: mls-wasm-${{ runner.os }}-wp0.15.0-${{ hashFiles('frontend/mls-wasm/**', 'frontend/mls-core/**', 'rust-toolchain.toml') }}
+        key: mls-wasm-${{ runner.os }}${{ steps.host.outputs.tag }}-wp0.15.0-${{ hashFiles('frontend/mls-wasm/**', 'frontend/mls-core/**', 'rust-toolchain.toml') }}
 
     - name: Setup Rust
       if: steps.cache.outputs.cache-hit != 'true'

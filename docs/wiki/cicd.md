@@ -2140,9 +2140,21 @@ carried its toolchain's link search paths into the first run.
 cache key, nothing restored) failed in `sqlx`: `dlopen(.../libsqlx_macros-*.dylib): mis-aligned
 LINKEDIT string pool`. Cargo's release profile strips debuginfo by default, the `build-override`
 profile that builds proc macros and build scripts included, and the stripped host dylib no longer
-loads; the cache from `macos-15` had hidden it in the first run. `ios-libapp.sh` exports
-`CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_STRIP=false`: it touches only the host artefacts, never the
-iOS static library (cargo does not strip a `staticlib`) nor the app (the Xcode archive strips it).
+loads; the cache from `macos-15` had hidden it in the first run. The fix is in the PROFILE, so no
+host build escapes it: `[profile.release.build-override] strip = false` in
+`frontend/src-tauri/Cargo.toml` and `frontend/mls-wasm/Cargo.toml` (the MLS WASM build runs on the
+same runner). Nothing that ships changes: cargo never strips a `staticlib` or a wasm, and the Xcode
+archive strips the app. `build-mls-wasm`'s cache key names the Xcode major on macOS
+(`mls-wasm-macOS-xcode27-...`), so a new Xcode builds the WASM cold once instead of restoring an
+entry whose host half another image produced.
+
+**What else the move added.** `ios-libapp.sh` asserts after `cargo build` that every
+`_init_plugin_*` the Rust objects reference is an EXTERNAL `T` symbol of `libapp.a` (`nm -g`), so a
+plugin swift-rs failed to re-export fails there, by name. Every `xcodebuild` build and archive names
+`-destination 'generic/platform=iOS'` (Xcode 27 otherwise warns "Using the first of multiple matching
+destinations"). `ios.yml` installs the provisioning profiles into both stores Xcode scans
+(`~/Library/MobileDevice/Provisioning Profiles` and `~/Library/Developer/Xcode/UserData/Provisioning
+Profiles`) and writes `xcodebuild -version`, the iOS SDK and the runner image to the run summary.
 
 ### A green run is not proof that *your* file compiled
 

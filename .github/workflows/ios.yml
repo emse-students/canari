@@ -164,6 +164,21 @@ jobs:
         with:
           xcode-version: '^27.0'
 
+      # THE BUILD'S PROVENANCE, ON THE RUN PAGE: the Xcode that built it and the runner image it ran
+      # on. App Store Connect judges the SDK (ITMS-90725) after the upload; this says before it
+      # which toolchain a build carried, and two runs that differ can be told apart by reading.
+      - name: Record the toolchain
+        run: |
+          set -euo pipefail
+          {
+            echo "### iOS toolchain"
+            echo '```'
+            xcodebuild -version
+            echo "SDK: $(xcrun --sdk iphoneos --show-sdk-version)"
+            echo "Runner image: ${ImageOS:-not set} ${ImageVersion:-not set}"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
       # THE HAND-MAINTAINED PROJECT IS READ BY XCODE FIRST, IN SECONDS, not at the archive twenty
       # minutes in: a pbxproj with an unclosed object once got past every check on Windows. `plutil`
       # parses its old-style plist syntax; `xcodebuild -list` reads it as a project (targets,
@@ -332,8 +347,14 @@ jobs:
           # Install ALL THREE profiles into the runner's profile store. xcodebuild resolves the
           # PROVISIONING_PROFILE_SPECIFIER names ("Canari", "CanariNotifications", "CanariShare")
           # set in the project by scanning these installed profiles, so all three must be present.
-          PROFILES_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
-          mkdir -p "$PROFILES_DIR"
+          # BOTH STORES (2026-11-18): Xcode 16 and later read `~/Library/Developer/Xcode/UserData/
+          # Provisioning Profiles`, older ones the MobileDevice folder; the archive on the
+          # `xcode-27` runner must find them whichever it scans, so each profile goes into both.
+          PROFILES_DIRS=(
+            "$HOME/Library/MobileDevice/Provisioning Profiles"
+            "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
+          )
+          for d in "${PROFILES_DIRS[@]}"; do mkdir -p "$d"; done
 
           install_profile() {
             local b64="$1"
@@ -344,7 +365,7 @@ jobs:
             uuid=$(security cms -D -i "$tmp" | plutil -extract UUID raw -)
             local name
             name=$(security cms -D -i "$tmp" | plutil -extract Name raw -)
-            cp "$tmp" "$PROFILES_DIR/$uuid.mobileprovision"
+            for d in "${PROFILES_DIRS[@]}"; do cp "$tmp" "$d/$uuid.mobileprovision"; done
             echo "✅ Installed profile '$name' (UUID: $uuid) for $label"
           }
 
@@ -571,6 +592,7 @@ jobs:
             -archivePath "$ARCHIVE" \
             -configuration release \
             -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
@@ -647,6 +669,7 @@ jobs:
             -archivePath "$ARCHIVE_PATH" \
             -configuration release \
             -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
             CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="${APPLE_SIGNING_IDENTITY}" \
             DEVELOPMENT_TEAM="${APPLE_TEAM_ID}"

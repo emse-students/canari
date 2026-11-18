@@ -78,6 +78,7 @@ xcodebuild build \
   -scheme canari_iOS \
   -configuration release \
   -sdk iphoneos \
+  -destination 'generic/platform=iOS' \
   -derivedDataPath "$derived" \
   CODE_SIGNING_ALLOWED=NO \
   CODE_SIGNING_REQUIRED=NO \

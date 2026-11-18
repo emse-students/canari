@@ -39,7 +39,10 @@ scene lifecycle Apple announced as mandatory after iOS 26 (tao's `TaoSceneDelega
 
 **Closes with:** the `1.8.0` pre-release's App Store Connect upload carrying no ITMS-90725, and a
 TestFlight build read on the iPhone 12: the glass tab bar, the notification service extension (a
-push decrypted with the app killed), CallKit (a ring and an answer), the share extension.
+push decrypted with the app killed), CallKit (a ring and an answer), the share extension - and, because llvm-objcopy now rewrites
+every Swift plugin's object (cicd.md, the Xcode 27 `@_cdecl` break), each plugin exercised once: the
+keystore (an unlock by PIN and by the device key), the gallery (save a photo, share suggestions) and
+customtabs (a sign-in that opens and returns).
 
 **Why not `1.7.1`:** a new SDK can change UI defaults (bar appearance, safe areas, sheet behaviour),
 so it ships in a version with room for a full phone pass, not in a fix release. Charter: principle 8

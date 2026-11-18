@@ -43,13 +43,6 @@ rustup target add aarch64-apple-ios
 # so the component is installed into the toolchain cargo uses, not left to chance
 # (docs/wiki/cicd.md#the-ios-toolchain-is-pinned-xcode-27-since-180).
 rustup component add llvm-tools
-# THE HOST TOOLS ARE NOT STRIPPED ON XCODE 27 / macOS 27. A release profile strips debuginfo by
-# default, the build-override profile (proc macros, build scripts) included, and the stripped
-# `libsqlx_macros-*.dylib` was refused by macOS 27's dyld - "mis-aligned LINKEDIT string pool" -
-# on the first cold build on the `xcode-27` runner (a cache from `macos-15` had hidden it). Only
-# the HOST artefacts are concerned: the iOS static library is never stripped by cargo, and the
-# Xcode archive strips the app itself (docs/wiki/cicd.md#the-ios-toolchain-is-pinned-xcode-27-since-180).
-export CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_STRIP=false
 cargo build --lib --release --target aarch64-apple-ios --features "$features"
 
 lib="$(find target/aarch64-apple-ios/release -maxdepth 1 -name 'libmines_app_lib.a' | sed -n 1p)"
@@ -60,4 +53,22 @@ fi
 dest="gen/apple/Externals/arm64/release"
 mkdir -p "$dest"
 cp "$lib" "$dest/libapp.a"
+
+# EVERY SWIFT PLUGIN'S ENTRY POINT IS AN EXTERNAL SYMBOL, checked HERE, by name, rather than met as
+# "Undefined symbols" at the Xcode link. Xcode 27 emits `@_cdecl` exports as LOCAL symbols and
+# swift-rs re-exports them with llvm-objcopy (above); a plugin it skipped would otherwise surface
+# twenty minutes later, without saying which mechanism failed. Every `_init_plugin_*` the Rust
+# objects reference (`U`) must be defined external (`T`) in the same archive.
+wanted="$(nm -g "$dest/libapp.a" | awk '$1 == "U" && $2 ~ /^_init_plugin_/ {print $2}' | sort -u)"
+defined="$(nm -g "$dest/libapp.a" | awk '$2 == "T" && $3 ~ /^_init_plugin_/ {print $3}' | sort -u)"
+if [ -z "$wanted" ]; then
+  echo "::error::libapp.a references no _init_plugin_* symbol - this check would pass on nothing"
+  exit 1
+fi
+missing="$(comm -23 <(echo "$wanted") <(echo "$defined"))"
+if [ -n "$missing" ]; then
+  echo "::error::libapp.a does not export these Swift plugin entry points (local or absent): $(echo "$missing" | tr '\n' ' ')"
+  exit 1
+fi
+echo "Swift plugin entry points exported: $(echo "$wanted" | tr '\n' ' ')"
 echo "libapp.a staged at $dest ($(du -h "$dest/libapp.a" | cut -f1))"

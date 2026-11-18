@@ -62,6 +62,15 @@ check(
   `pins Xcode ${xcodePin(code)}, as ios.yml does`,
   `pins Xcode ${xcodePin(code)} while ios.yml pins ${xcodePin(iosYml)}`,
 );
+// THE RUST CACHE NAMES THE XCODE MAJOR: a tree built under another toolchain carries its link
+// search paths and its host dylibs, and a restore from `macos-15` hid the first Xcode 27 failure.
+const pinMajor = (xcodePin(code) || '').replace(/^\D*/, '').split('.')[0];
+const rustCacheKey = (code.match(/Swatinem\/rust-cache@[\s\S]*?\n\s+key: (\S+)/) || [])[1];
+check(
+  pinMajor !== '' && rustCacheKey !== undefined && rustCacheKey.includes(`xcode-${pinMajor}`),
+  `the rust-cache key ${rustCacheKey} names Xcode ${pinMajor}`,
+  `the rust-cache key ${rustCacheKey} does not name the pinned Xcode major (${pinMajor})`,
+);
 check(
   /if: \$\{\{ needs\.changes\.outputs\.run-ios-app == 'true' \}\}/.test(code),
   'gated on `run-ios-app`',
