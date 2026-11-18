@@ -3193,32 +3193,19 @@ into what ships.
   and `subscribers`. All three pass classes only (social uses `autoLoadEntities`), so no pattern is
   ever compiled, and a pattern would be ours anyway.
 
-So `--ignore=GHSA-fc5q-39xc-vjpf` is granted in the production closure of the frontend and the three
-TypeORM trees. `.github/scripts/picomatch-premise.mjs <tree> production` asserts the premise on each
-installed tree, and `tests/picomatch-premise.test.mjs` is its self-test:
+So `--ignore=GHSA-fc5q-39xc-vjpf` was granted in the production closure of the frontend and the
+three TypeORM trees, each on a premise asserted per installed tree (`picomatch-premise.mjs`, and a
+boot-spec assertion that no STRING reached TypeORM's glob), and in the full closure of all five trees
+on the premise that no fixed release existed.
 
-- frontend: picomatch is unreached. A new devDependency counts as shipped until declared build-only.
-- the three TypeORM trees: picomatch's only shipped parent is tinyglobby, and tinyglobby's is typeorm.
-  Inside typeorm only `util/DirectoryExportedClassesLoader.js` imports tinyglobby. **No string reaches
-  it, asserted at runtime**: each service's `app-module.boot-spec.ts` (the `boot-nest-apps` job) reads
-  `entities`, `migrations` and `subscribers` off the DataSource the real AppModule built and expects
-  no string, which a shorthand, a const, a spread or a factory cannot evade. The premise script
-  refuses the ignore if that assertion leaves the spec. It also keeps a grep for a LITERAL string in
-  every shipped `src` file, because it runs in the audit job of every pull request (the boot runs
-  only when a service changed) and reads a DataSource built outside the AppModule, which the boot
-  never constructs.
-
-**The nightly ignores it too, in all five trees that hold picomatch, on another premise (coordinator, 2026-11-17).** In
-the full closure the build tools DO hold picomatch, and the audit has reported it (every pull request of 2026-11-17). A
-nightly that stays red until upstream ships is noise: its reader learns to skip it, and it hides the
-next advisory. So the full closure carries the same ignore, and `picomatch-premise.mjs <tree> full`
-asserts that **no fixed release exists**. It reads GitHub's advisory record
-(`GET /advisories/GHSA-fc5q-39xc-vjpf`) and refuses the ignore when any picomatch entry has a
-`first_patched_version`, when the advisory is withdrawn, or when the record cannot be read after one
-retry five seconds later. The day a
-fix ships, the nightly goes red, which is exactly when there is something to do: upgrade.
-
-`Every ignored advisory is still reported` then retires the ignore once the upgrade has landed and nothing reports the advisory any more.
+**Retired 2026-11-18: GitHub WITHDREW the advisory** (`withdrawn_at` 2026-11-18T15:38Z on
+`GET /advisories/GHSA-fc5q-39xc-vjpf`). The lockfiles had not moved (`picomatch@4.0.7` in every tree,
+`4.0.4` in core-service by override, `2.3.2` beside it in social, media and chat-delivery), but
+`bun audit` stopped reporting it, `Every ignored advisory is still reported` failed as designed and
+turned every pull request and `main` red, and the ignore was deleted the same day with its premise
+script, its self-test, its workflow step and the three boot-spec assertions that existed only for it.
+Every tree then audits clean with no ignore but media-service's minio ones. The production-closure
+design above stands; it no longer carries any picomatch exception.
 
 **Gate 7 on an outage, and its evidence.** Every refusal prints the audit's whole output, indented:
 the package and path of an advisory, or what an unrecognised failure said. Once one tree's registry
@@ -3430,9 +3417,9 @@ The open line is in [backlog](backlog.d/p3-audit-advisories-are-suppressed-becau
 
 **Retirement is ASSERTED, not polled (2026-10-10).** The premises step audits media-service without its ignores and fails when any ignored id is no longer reported (`ignored-advisories-still-reported.sh`, `tests/ignored-advisories-still-reported.test.sh`; a registry that did not answer concludes nothing). The five hand re-checks logged here until 2026-10-09 each found `minio` still 8.0.7, `query-string: ^7.1.3`, `stream-json: ^1.8.0`.
 
-### The frontend audit carries one ignore, picomatch's (2026-11-17)
+### The frontend audit carries no ignore (2026-11-18)
 
-`GHSA-gcqx-w48m-w2h4` (LOW, `deepmerge` <= 4.3.1) was ignored from 2026-10-28. The audit stopped reporting it (the dependency moved), `Every ignored advisory is still reported` failed as designed, and the `--ignore` was deleted on 2026-11-16. Since 2026-11-17 the frontend carries `GHSA-fc5q-39xc-vjpf` only, with its asserted premise ([what we ship](#the-audit-blocks-on-what-we-ship-2026-11-17)). It is audited at bun's default level.
+`GHSA-gcqx-w48m-w2h4` (LOW, `deepmerge` <= 4.3.1) was ignored from 2026-10-28. The audit stopped reporting it (the dependency moved), `Every ignored advisory is still reported` failed as designed, and the `--ignore` was deleted on 2026-11-16. From 2026-11-17 the frontend carried `GHSA-fc5q-39xc-vjpf` (picomatch) on an asserted premise; GitHub withdrew that advisory on 2026-11-18, the same step failed, and the ignore was deleted that day ([what we ship](#the-audit-blocks-on-what-we-ship-2026-11-17)). It carries none now, and is audited at bun's default level.
 
 ### The Rust ignores live in `.cargo/audit.toml` and retire themselves too (2026-10-24)
 
