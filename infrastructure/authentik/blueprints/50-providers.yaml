@@ -156,7 +156,7 @@ entries:
       signing_key: !Find [authentik_crypto.certificatekeypair, [name, "authentik Self-signed Certificate"]]
       # THE LOCAL ESTATE on a workstation (2026-11-18): its nginx entry (8081, the harness's), the
       # Vite dev server (1420, and 127.0.0.1:1420, Tauri's devUrl) and the harness APK's scheme. Port
-      # 1421 is Vite's HMR socket, never a page, so it never carried a sign-in. Asks for the terms,
+      # 1421 never carried a sign-in on this client (`strictPort` pins the dev server to 1420). Asks for the terms,
       # like dev, so the harness drives them.
       redirect_uris:
         - matching_mode: "strict"

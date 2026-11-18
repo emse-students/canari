@@ -59,7 +59,7 @@ BOUND="miconnect-canari-dev miconnect-canari-local"
 bound="$(awk '
   /^[[:space:]]*-[[:space:]]*model:/ { name = "" }
   /^[[:space:]]*name: "miconnect-/ && name == "" { v = $2; gsub(/"/, "", v); name = v }
-  /authorization_flow: !Find \[authentik_flows.flow, \[slug, "miconnect-authorization"\]\]/ { print name }
+  /authorization_flow:.*miconnect-authorization/ { print name }
 ' "$blueprints/50-providers.yaml" | sort | paste -sd' ' -)"
 if [ "$bound" = "$BOUND" ]; then
   pass "the terms flow is named by exactly: $BOUND (production held)"

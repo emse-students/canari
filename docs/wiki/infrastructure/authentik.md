@@ -308,11 +308,11 @@ Each also lists a `logout` redirect URI per web origin (`<origin>/login`) and
 **The set was cut to what clients use on 2026-11-18** (owner: *"nettoyer tous les endpoints autorises
 de tous les canari sur miconnect"*), on the identity provider's own record: every
 `authorize_application` event carries the redirect URI it ended on, from 2026-03-30 on. Removed:
-the `tauri.localhost` pair from production and dev (an Android build from before the deep link of
-2026-04-25 used it; a Tauri WebView on a phone signs in through `fr.emse.canari://callback`, and no
+the `tauri.localhost` pair from production and dev (last seen 2026-04-25, Android builds from before
+the deep link; a Tauri WebView on a phone signs in through `fr.emse.canari://callback`, and no
 desktop build ships), and every loopback origin from production and dev (`1420` last used against
 production in 2026-09, against dev in 2026-11 - a developer signs in through the LOCAL client), and
-port `1421` everywhere (Vite's HMR socket, never a page). **Kept on production on evidence:**
+port `1421` everywhere (no sign-in through it since April; `strictPort` pins the dev server to 1420). **Kept on production on evidence:**
 `canari-emse.fr` answers a 301 to `canari.emse.fr`, yet a browser that still runs the app it cached
 there starts its sign-in from that origin, and one did on 2026-11-13; it goes when the
 [estate migration](estate-migration.md) retires the origin, after the same measurement. No provider
