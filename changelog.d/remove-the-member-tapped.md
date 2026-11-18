@@ -1,3 +1,0 @@
-### Fixed - removing a member removes the member tapped, and the confirmation names them
-
-A removal could land on another member when the roster inserted a late row under the pointer (a removal aimed at one member removed another on the 1.7.0-alpha.9 bench). Remove controls stay inactive until the roster's order is final, and every removal dialog (group, community, salon access, association) names the member. The inviter's offline-newcomer join push line is now a debug line naming the newcomer's own ask. [chat](docs/wiki/frontend/modules/chat.md#a-removal-names-its-member-and-no-remove-control-is-live-while-the-order-is-settling-2026-11-17)
