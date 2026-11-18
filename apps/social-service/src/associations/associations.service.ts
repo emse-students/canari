@@ -5958,21 +5958,27 @@ ${rejectionReason}`
       );
       return { kind: 'replay', ...previous };
     }
-    const before = `${holder.cause ?? 'nothing recorded'} at ${previousAt ? previousAt.toISOString() : 'no date'}`;
-    const switchedOff = this.lydiaNotifier.enabled()
-      ? ''
-      : ' - managers NOT notified, LYDIA_PAYMENTS_NOTIFICATIONS_ENABLED is off';
+    // The state before this transition, said plainly: a holder never marked has no cause on record.
+    const before = holder.cause
+      ? `was marked by ${holder.cause} at ${previousAt ? previousAt.toISOString() : 'an unrecorded date'}`
+      : 'no earlier marking on record';
+    // The managers' notice is OFF by design until its floor version (legacy-compatibility.md): a
+    // stated fact on the line, never a reason to raise its level.
+    const notices = this.lydiaNotifier.enabled()
+      ? 'managers notified'
+      : 'managers not notified (notices off by switch, LYDIA_PAYMENTS_NOTIFICATIONS_ENABLED)';
     if (ready) {
-      this.logger.warn(
+      // The designed path (the webhook or an admin validation): INFO. An anomaly on this path is
+      // logged where it is decided - the held refusal and the bridge switch above, at WARN.
+      this.logger.log(
         `${LYDIA_READINESS_LOG_TAG} holder ${sanitizeLog(holder.id)} marked READY by ${cause} ` +
-          `(${where}); before: ${before}${switchedOff}`
+          `(${where}); before: ${before}; ${notices}`
       );
     } else {
       this.logger.error(
         `${LYDIA_READINESS_LOG_TAG} holder ${sanitizeLog(holder.id)} reverted: request/do answered ` +
-          `error ${cause === 'request-blocked' ? '2701' : '5'} (${where}); it had been marked ready ` +
-          `by ${before}; ${withheld} on-sale product(s) withheld; ${admins} global admin(s) told` +
-          switchedOff
+          `error ${cause === 'request-blocked' ? '2701' : '5'} (${where}); before: ${before}; ` +
+          `${withheld} on-sale product(s) withheld; ${admins} global admin(s) told; ${notices}`
       );
     }
     await this.invalidatePostListCaches();

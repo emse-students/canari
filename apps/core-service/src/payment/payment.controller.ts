@@ -662,7 +662,7 @@ export class PaymentController {
     this.logger.log(`Lydia Responsable of ${associationId}: number change allowed`);
   }
 
-  /** The owner's gate on a Responsable number change, read through a method so a spec can open it. */
+  /** The owner's gate on a Responsable number change (ON since 1.7.1), a method so a spec can close it. */
   numberChangeEnabled(): boolean {
     return LYDIA_CASHIER_ADD_ENABLED;
   }

@@ -135,7 +135,7 @@ describe('LydiaCashiersService - the checks, with a mocked database', () => {
    */
   function make(
     rows: Row[],
-    opts: { member?: boolean; core?: unknown; asso?: Partial<Asso> } = {}
+    opts: { member?: boolean; core?: unknown; asso?: Partial<Asso>; notifier?: unknown } = {}
   ) {
     const asso: Asso = { vendorToken: 'vendor-1', claimed: false, token: null, ...opts.asso };
     const live = () => rows.filter((r) => !r.removedAt);
@@ -161,6 +161,18 @@ describe('LydiaCashiersService - the checks, with a mocked database', () => {
         asso.token = null;
         return [{ id: ASSO }];
       }
+      if (sql.includes('INSERT INTO lydia_cashiers')) {
+        rows.push({
+          id: 'n1',
+          userId: params[2] as string,
+          role: params[5] as string,
+          phoneSealed: params[3] as string,
+          previousPhoneSealed: null,
+          confirmedAt: params[7] ? new Date() : null,
+        });
+        return [{ id: 'n1' }];
+      }
+      if (sql.includes('SELECT name FROM associations')) return [{ name: 'BDE' }];
       if (sql.includes('ORDER BY id') && sql.includes('FOR UPDATE')) return live();
       if (sql.includes('WHERE c."userId" = $1')) {
         return live()
@@ -231,7 +243,7 @@ describe('LydiaCashiersService - the checks, with a mocked database', () => {
         manager: { transaction: async (fn: (m: unknown) => unknown) => fn({ query }) },
       } as never,
       associations as never,
-      { tellAdded: jest.fn() } as never,
+      (opts.notifier ?? { tellAdded: jest.fn() }) as never,
       httpService as never
     );
     return { service, query, httpService, asso };
@@ -368,6 +380,28 @@ describe('LydiaCashiersService - the checks, with a mocked database', () => {
     confirmed,
     cashierId: 'v1',
     claimToken,
+  });
+
+  it('a confirmed add with the cashier notice switched off (until its floor) logs nothing at WARN or ERROR', async () => {
+    // The beforeEach spies, read back (spyOn on a spied method answers the same spy).
+    const warn = jest.spyOn(Logger.prototype, 'warn');
+    const error = jest.spyOn(Logger.prototype, 'error');
+    const log = jest.spyOn(Logger.prototype, 'log');
+    const rows = [responsable()];
+    const notifications = { createNotifications: jest.fn() };
+    const { service, asso } = make(rows, {
+      asso: { claimed: true, token: TOKEN },
+      notifier: new LydiaCashierNotifier(notifications as never),
+    });
+    await expect(
+      service.record(ASSO, { ...roleRecord(PHONE), role: 'vendeur', cashierId: undefined })
+    ).resolves.toMatchObject({ id: 'n1', role: 'vendeur', state: 'confirmed' });
+    expect(notifications.createNotifications).not.toHaveBeenCalled();
+    expect(asso).toMatchObject({ claimed: false, token: null });
+    // The switched-off notice is a designed state, said at debug: no line at WARN or ERROR.
+    expect(warn).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+    expect(String(log.mock.calls)).toContain('[AUDIT] Lydia cashier added');
   });
 
   it('a role change recorded on the same number clears the removal flag and the claim', async () => {

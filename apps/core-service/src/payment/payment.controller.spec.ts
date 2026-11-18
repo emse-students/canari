@@ -1260,7 +1260,8 @@ describe('PaymentController.setLydiaResponsable - changing the number (lot 3)', 
       removeLydiaCashier: jest.fn().mockResolvedValue(removal),
     };
     const controller = new PaymentController(paymentService as unknown as PaymentService);
-    if (opts.open !== false) jest.spyOn(controller, 'numberChangeEnabled').mockReturnValue(true);
+    // The gate as shipped (ON since 1.7.1) unless a spec closes it to pin the refusal a revert answers.
+    if (opts.open === false) jest.spyOn(controller, 'numberChangeEnabled').mockReturnValue(false);
     return { controller, paymentService };
   }
   const postsTo = (suffix: string) =>
@@ -1277,8 +1278,12 @@ describe('PaymentController.setLydiaResponsable - changing the number (lot 3)', 
     mockedAxios.get.mockReset();
   });
 
-  it('ships OFF with the add gate: the typed 409 PHONE_LOCKED older clients word, the claim released, Lydia never asked', async () => {
-    expect(provider.LYDIA_CASHIER_ADD_ENABLED).toBe(false);
+  it('ships ON with the add gate (1.7.1): the number change is offered', () => {
+    expect(provider.LYDIA_CASHIER_ADD_ENABLED).toBe(true);
+    expect(setup({ verified: true, held: 0 }).controller.numberChangeEnabled()).toBe(true);
+  });
+
+  it('gate off: the typed 409 PHONE_LOCKED older clients word, the claim released, Lydia never asked', async () => {
     const { controller, paymentService } = setup({ verified: true, held: 0 }, { open: false });
     expect(controller.numberChangeEnabled()).toBe(false);
     await expect(

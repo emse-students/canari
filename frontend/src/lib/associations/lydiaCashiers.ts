@@ -7,16 +7,15 @@ import type {
 } from './api';
 
 /**
- * THE OWNER'S GATE (Lydia enrolment lot 3): adding a cashier, and changing a cashier's role, ship
- * HIDDEN. A cashier Canari adds must be removable, and no removal has been observed in production
- * yet: this flips to `true` only after one production removal (revoke) has been seen to succeed.
+ * THE OWNER'S GATE (Lydia enrolment lot 3), ON since 1.7.1 (owner, 2026-11-18): adding a cashier,
+ * changing a cashier's role and changing the Responsable's number are offered.
  *
- * It flips in ONE pull request together with core-service's `LYDIA_CASHIER_ADD_ENABLED` (which
+ * It moves in ONE pull request together with core-service's `LYDIA_CASHIER_ADD_ENABLED` (which
  * refuses the add and the role change with the typed `LYDIA_CASHIER_ADD_DISABLED` while off) and
  * `switches.cashierAddEnabled` in `libs/contracts/lydia-refusal-codes.json`, which
  * `lydiaCodes.contract.test.ts` asserts this equals. Removal is NOT gated: it only takes rights away.
  */
-export const LYDIA_CASHIER_ADD_ENABLED = false;
+export const LYDIA_CASHIER_ADD_ENABLED = true;
 
 /**
  * The Responsable's resend control, in the reader's language. Changing the Responsable's number is

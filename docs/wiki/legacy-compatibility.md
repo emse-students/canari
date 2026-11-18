@@ -896,7 +896,7 @@ The type name is shared through `libs/contracts/lydia-refusal-codes.json`.
 While the number change is switched off (`LYDIA_CASHIER_ADD_ENABLED = false`), core answers another
 number with `LYDIA_RESPONSABLE_PHONE_LOCKED`, the code those clients already word ("the Responsable's
 number cannot be changed yet"); a lot 3 client reads the same code as "not possible yet" through the
-same flag. **After the flip**, those clients can reach a number change and meet codes they do not
+same flag. **After the flip (1.7.1, owner, 2026-11-18)**, those clients can reach a number change and meet codes they do not
 know, each drawn as their generic "Could not save the Responsable." with nothing lost:
 `LYDIA_CASHIER_PHONE_IN_USE` (the number is already a cashier's - nothing claimed, nothing asked of
 Lydia), and `LYDIA_CASHIER_REMOVAL_PRECONDITION` or `LYDIA_CASHIER_REVOKE_UNCONFIRMED` (the new number

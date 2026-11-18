@@ -378,15 +378,18 @@ export const LYDIA_CASHIER_ADD_DISABLED = 'LYDIA_CASHIER_ADD_DISABLED';
 export const LYDIA_CASHIER_REVOKE_UNCONFIRMED = 'LYDIA_CASHIER_REVOKE_UNCONFIRMED';
 
 /**
- * THE OWNER'S GATE (2026-10-30): adding a Tresorier or a Vendeur, and changing a cashier's role,
- * ship OFF. It flips to `true` ONLY AFTER ONE REMOVAL (`removeCashier`, verified at 0 rights) HAS
- * BEEN OBSERVED IN PRODUCTION - nobody is added who Canari has not proven it can take away. The
- * flip is ONE pull request changing this constant, the frontend's constant of the same name
+ * THE OWNER'S GATE (2026-10-30), ON since 1.7.1 (owner, 2026-11-18): adding a Tresorier or a
+ * Vendeur, changing a cashier's role and changing the Responsable's number. It first waited for one
+ * removal observed in production, a condition nothing could meet while adding was off (every
+ * production association held only its Responsable, whose current number is never removed); the
+ * removal path was measured on Lydia homologation 2026-10-30, and the owner's own production trial
+ * (add himself as Vendeur, then remove) is the first production removal. The switch lives in THREE
+ * places changed together - this constant, the frontend's constant of the same name
  * (`frontend/src/lib/associations/lydiaCashiers.ts`) and `switches.cashierAddEnabled` in
- * `libs/contracts/lydia-refusal-codes.json` together; each side's contract spec asserts them equal.
- * The removal path is live meanwhile: it only takes rights away.
+ * `libs/contracts/lydia-refusal-codes.json` - and each side's contract spec asserts them equal.
+ * Turning it off again refuses the three with their typed 409s; removal is never gated.
  */
-export const LYDIA_CASHIER_ADD_ENABLED = false;
+export const LYDIA_CASHIER_ADD_ENABLED = true;
 
 /** `auth/vendortoken`'s answer when the private token does not match the vendor token (homologation, 2026-10-30). */
 const LYDIA_VENDOR_TOKEN_MISMATCH = '103';

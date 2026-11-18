@@ -48,7 +48,7 @@
     "cashierAdded": "lydia_cashier_added"
   },
   "switches": {
-    "cashierAddEnabled": false
+    "cashierAddEnabled": true
   },
   "refund": {
     "description": "Lydia refunds (lot 4, docs/wiki/frontend/modules/payments.md \"Refunds\"). `core` codes are answered by core-service's internal refund route, `social` codes by social-service's refund routes; the frontend words each one. `notificationTypes` is the payer's bell row.",

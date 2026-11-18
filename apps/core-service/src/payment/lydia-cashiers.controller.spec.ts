@@ -42,9 +42,17 @@ function social(answers: Record<string, unknown>) {
 const postsTo = (suffix: string) =>
   mockedAxios.post.mock.calls.filter(([url]) => String(url).endsWith(suffix));
 
-function make(service: Partial<Record<keyof PaymentService, jest.Mock>>, open = false) {
+/**
+ * The controller under test. `live` reads the shipped gate (ON since 1.7.1), so the add, role-change
+ * specs exercise the path production runs; `off` closes it to pin the typed refusal a revert of the
+ * switch would answer.
+ */
+function make(
+  service: Partial<Record<keyof PaymentService, jest.Mock>>,
+  gate: 'live' | 'off' = 'live'
+) {
   const controller = new LydiaCashiersController(service as unknown as PaymentService);
-  if (open) jest.spyOn(controller, 'cashierAddEnabled').mockReturnValue(true);
+  if (gate === 'off') jest.spyOn(controller, 'cashierAddEnabled').mockReturnValue(false);
   return controller;
 }
 
@@ -60,15 +68,16 @@ afterEach(() => {
 });
 
 describe('LydiaCashiersController - the owner gate (lot 3)', () => {
-  it('ships OFF: adding a cashier is refused until a production removal has been observed', () => {
-    expect(LYDIA_CASHIER_ADD_ENABLED).toBe(false);
+  it('ships ON since 1.7.1 (owner, 2026-11-18): adding and changing a role reach Lydia', () => {
+    expect(LYDIA_CASHIER_ADD_ENABLED).toBe(true);
+    expect(make({}).cashierAddEnabled()).toBe(true);
   });
 
   it('gate off: an add is the typed 409 LYDIA_CASHIER_ADD_DISABLED, nothing claimed, nothing sent to Lydia', async () => {
     social({});
     const addLydiaCashier = jest.fn();
     await expect(
-      make({ addLydiaCashier }).addCashier(
+      make({ addLydiaCashier }, 'off').addCashier(
         ASSO,
         { userId: 'u2', phone: PHONE, role: 'vendeur' },
         req
@@ -80,7 +89,9 @@ describe('LydiaCashiersController - the owner gate (lot 3)', () => {
 
   it('gate off: a role change is refused the same way', async () => {
     social({});
-    await expect(make({}).changeRole(ASSO, ROW, { role: 'tresorier' }, req)).rejects.toMatchObject({
+    await expect(
+      make({}, 'off').changeRole(ASSO, ROW, { role: 'tresorier' }, req)
+    ).rejects.toMatchObject({
       status: 409,
       response: { code: LYDIA_CASHIER_ADD_DISABLED },
     });
@@ -95,7 +106,7 @@ describe('LydiaCashiersController - the owner gate (lot 3)', () => {
   });
 });
 
-describe('LydiaCashiersController - adding and changing a role (gate opened for the spec)', () => {
+describe('LydiaCashiersController - adding and changing a role (the gate as shipped, ON)', () => {
   it('claims, adds the role at Lydia, then records the row CONFIRMED with the actor as adder', async () => {
     social({
       '/lydia-cashier-add-claim': { vendorToken: 'vendor-1', claimToken: TOKEN },
@@ -103,7 +114,7 @@ describe('LydiaCashiersController - adding and changing a role (gate opened for 
     });
     const addLydiaCashier = jest.fn().mockResolvedValue(undefined);
     await expect(
-      make({ addLydiaCashier }, true).addCashier(
+      make({ addLydiaCashier }).addCashier(
         ASSO,
         { userId: 'u2', phone: PHONE, role: 'vendeur' },
         req
@@ -130,7 +141,7 @@ describe('LydiaCashiersController - adding and changing a role (gate opened for 
       new HttpException({ code: LYDIA_CASHIER_RIGHTS_INCOMPLETE }, 502)
     );
     await expect(
-      make({ addLydiaCashier: jest.fn().mockRejectedValue(mismatch) }, true).addCashier(
+      make({ addLydiaCashier: jest.fn().mockRejectedValue(mismatch) }).addCashier(
         ASSO,
         { userId: 'u2', phone: PHONE, role: 'tresorier' },
         req
@@ -142,24 +153,20 @@ describe('LydiaCashiersController - adding and changing a role (gate opened for 
   it('a typed refusal before the add answered releases the claim; no answer keeps it', async () => {
     social({ '/lydia-cashier-add-claim': { vendorToken: 'vendor-1', claimToken: TOKEN } });
     await expect(
-      make(
-        { addLydiaCashier: jest.fn().mockRejectedValue(new HttpException({ code: 'X' }, 502)) },
-        true
-      ).addCashier(ASSO, { userId: 'u2', phone: PHONE, role: 'vendeur' }, req)
+      make({
+        addLydiaCashier: jest.fn().mockRejectedValue(new HttpException({ code: 'X' }, 502)),
+      }).addCashier(ASSO, { userId: 'u2', phone: PHONE, role: 'vendeur' }, req)
     ).rejects.toBeInstanceOf(HttpException);
     expect(postsTo('/lydia-cashier-release')).toHaveLength(1);
     // The release carries the claim's token: social-service clears only THAT claim.
     expect(postsTo('/lydia-cashier-release')[0][1]).toEqual({ claimToken: TOKEN });
     mockedAxios.post.mockClear();
     await expect(
-      make(
-        {
-          addLydiaCashier: jest
-            .fn()
-            .mockRejectedValue(new HttpException({ code: LYDIA_UNREACHABLE }, 503)),
-        },
-        true
-      ).addCashier(ASSO, { userId: 'u2', phone: PHONE, role: 'vendeur' }, req)
+      make({
+        addLydiaCashier: jest
+          .fn()
+          .mockRejectedValue(new HttpException({ code: LYDIA_UNREACHABLE }, 503)),
+      }).addCashier(ASSO, { userId: 'u2', phone: PHONE, role: 'vendeur' }, req)
     ).rejects.toBeInstanceOf(HttpException);
     expect(postsTo('/lydia-cashier-release')).toHaveLength(0);
   });
@@ -175,7 +182,7 @@ describe('LydiaCashiersController - adding and changing a role (gate opened for 
       '/lydia-cashier': { cashier: { id: ROW } },
     });
     const addLydiaCashier = jest.fn().mockResolvedValue(undefined);
-    await make({ addLydiaCashier }, true).changeRole(ASSO, ROW, { role: 'tresorier' }, req);
+    await make({ addLydiaCashier }).changeRole(ASSO, ROW, { role: 'tresorier' }, req);
     expect(addLydiaCashier).toHaveBeenCalledWith(ASSO, 'vendor-1', PHONE, 'tresorier');
     expect(postsTo('/lydia-cashier')[0][1]).toMatchObject({
       cashierId: ROW,
