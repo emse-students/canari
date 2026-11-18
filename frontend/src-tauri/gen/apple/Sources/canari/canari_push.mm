@@ -5856,7 +5856,10 @@ static void (^CanariFinishOnMain(void (^handler)(void), NSString *what))(void) {
 /// by this push on arrival, answering None would erase the only record of the reaction - so the answer
 /// is read from what is DELIVERED, not from a belief about iOS: the same identifier delivered -> List
 /// (the entry stays; worst case a double, never a loss), none -> None (nothing of ours carries it, or
-/// the page refused it: the reaction is on screen, or its notification is off). EVERY active push
+/// the page refused it: the reaction is on screen, or its notification is off). SINCE 2026-11-18 THE
+/// IDENTIFIER IS ONE PER REACTOR AND MESSAGE, so a delivered request is EITHER the page's twin of this
+/// reaction OR the same reactor's older reaction to that message: this code cannot tell them apart,
+/// and in both the push takes the slot (the older one is replaced, as on Android). The log says both. EVERY active push
 /// comes here, keyed by its IDENTIFIER and never by its data: a content-free wake whose fetch failed
 /// or answered `gone` keeps `type=wake` in its userInfo yet still carries the reaction's collapse id.
 /// Read on the iPhone 12 on 1.7.0-alpha.10 (docs/wiki/device-verification.md, the alpha.10 sitting).
@@ -5874,8 +5877,9 @@ static void CanariPresentForegroundPush(
     // Completed back ON MAIN: this block runs on a queue of the center's choosing, and iOS asserts
     // the main thread inside a delegate's handler (the 1.6.12-alpha.2 abort, `CanariFinishOnMain`).
     dispatch_async(dispatch_get_main_queue(), ^{
-      NSLog(@"[CanariPush] push while active: a delivered twin %@ - %@",
-            pagePosted ? @"delivered" : @"absent",
+      NSLog(@"[CanariPush] push while active: %@ - %@",
+            pagePosted ? @"its slot is delivered (the page's twin, or this reactor's older reaction)"
+                       : @"its slot is absent",
             pagePosted ? @"kept in the list" : @"not presented");
       completionHandler(pagePosted ? UNNotificationPresentationOptionList
                                    : UNNotificationPresentationOptionNone);

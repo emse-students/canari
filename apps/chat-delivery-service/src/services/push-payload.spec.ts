@@ -837,19 +837,24 @@ describe('the MLS frame answer carries its presentation', () => {
  */
 describe('reactionCollapseId - the shared vector with the page', () => {
   it("is the page's identifier for the same reaction", () => {
-    expect(reactionCollapseId('msg-1', 'Peer-User', 1_700_000_000_123)).toBe('1809935358');
-    expect(reactionCollapseId('srv-row-9', 'peer', 1_700_000_000_123)).toBe('2055444975');
+    expect(reactionCollapseId('msg-1', 'Peer-User')).toBe('97988016');
+    expect(reactionCollapseId('srv-row-9', 'peer')).toBe('71866787');
+  });
+
+  it("is ONE per reactor and message: a reactor's second reaction replaces the first on the iPhone", () => {
+    expect(reactionCollapseId('msg-1', 'peer')).toBe(reactionCollapseId('msg-1', 'Peer'));
+    expect(reactionCollapseId('msg-1', 'peer')).not.toBe(reactionCollapseId('msg-1', 'other'));
   });
 
   it('hashes the reacted-to MESSAGE, never the conversation: a guess over what a ring names cannot confirm it', () => {
     // A call ring carries the group and the caller in clear; the old key hashed exactly those plus
     // an instant, so Apple could test candidates. The message id is in no wake and no ring.
-    const ofGroup = reactionCollapseId('grp-1', 'peer', 1_700_000_000_123);
-    expect(reactionCollapseId('msg-1', 'peer', 1_700_000_000_123)).not.toBe(ofGroup);
+    const ofGroup = reactionCollapseId('grp-1', 'peer');
+    expect(reactionCollapseId('msg-1', 'peer')).not.toBe(ofGroup);
   });
 
   it('is a decimal the notification plugin can own, and fits an apns-collapse-id', () => {
-    const id = reactionCollapseId('a'.repeat(200), 'b', Number.MAX_SAFE_INTEGER);
+    const id = reactionCollapseId('a'.repeat(200), 'b');
     expect(id).toMatch(/^[0-9]{1,10}$/);
   });
 
@@ -858,8 +863,8 @@ describe('reactionCollapseId - the shared vector with the page', () => {
       type: 'social',
       reaction: 'true',
       groupId: 'grp-1',
-      collapseId: reactionCollapseId('msg-1', 'peer-user', 1_700_000_000_123),
+      collapseId: reactionCollapseId('msg-1', 'peer-user'),
     };
-    expect(buildInternalApnsRequest('t', 'b', data).collapseId).toBe('1809935358');
+    expect(buildInternalApnsRequest('t', 'b', data).collapseId).toBe('97988016');
   });
 });

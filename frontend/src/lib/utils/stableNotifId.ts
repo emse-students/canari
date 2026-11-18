@@ -1,7 +1,7 @@
 /**
  * The plugin notification id of a key: a stable positive 32-bit integer (Java's string hash, folded
  * positive), so a second post under the same key REPLACES the first - per conversation for a
- * message, per reaction for a reaction.
+ * message, per reactor and message for a reaction.
  *
  * ON iOS THE PLUGIN'S REQUEST IDENTIFIER IS THIS NUMBER IN DECIMAL (`"\(notification.id)"`,
  * tauri-plugin-notification `NotificationPlugin.swift`), and for a reaction the server sends the

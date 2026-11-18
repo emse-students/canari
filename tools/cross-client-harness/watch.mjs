@@ -2265,7 +2265,7 @@ export async function logcatSince(sinceMs) {
 
 /** What a DELIBERATE network cut makes a healthy client say. Nothing here is a defect on its own. */
 const OFFLINE_NOISE =
-  /ERR_INTERNET_DISCONNECTED|ERR_NETWORK_CHANGED|ERR_NAME_NOT_RESOLVED|ERR_CONNECTION_(REFUSED|RESET|CLOSED)|Failed to fetch|NetworkError|server unreachable \(transport failure\)/i;
+  /ERR_INTERNET_DISCONNECTED|ERR_NETWORK_CHANGED|ERR_NAME_NOT_RESOLVED|ERR_CONNECTION_(REFUSED|RESET|CLOSED)|Failed to fetch|NetworkError|server unreachable \((transport failure[^)]*|\d+ request deadlines in a row|login without a token|token still unavailable)\)/i;
 
 /**
  * The app's OWN reaction to a cut, which is a different set of lines from the browser's.
