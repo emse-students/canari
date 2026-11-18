@@ -137,6 +137,12 @@ preselection, never a destination by itself.
   `conversationSourcesSettled`, whose restore half (`conversationsRestored`) is reset at sign-out
   with the map (`invalidateRestores`), so a departure during the next account's restore sends
   nothing and the following one sends its list. The conversation map is read only at a trigger.
+  On iOS the departure's publish runs under `holdWhileLeaving` (`utils/backgroundFlush.ts`): the
+  native side replaces its donations one by one, and a suspension mid-way would leave none or a
+  few. **Accepted stale cases** (each corrected at the next departure): Android split screen with
+  both apps resumed (Canari never leaves, so nothing is sent); Canari's own in-app share sheet on
+  iOS (it opens over the app, which does not leave); a departure mid-first-sync, which sends the
+  provisional list of that moment.
   Each publish writes ONE in-app log line saying how it differs from the one before
   (`[ShareTargets] published (<reason>): added [id8], removed [id8], N relabelled, reordered|same order; N of M present, N stale left`,
   `describeShareTargetsChange`) - ids as prefixes, never a name.

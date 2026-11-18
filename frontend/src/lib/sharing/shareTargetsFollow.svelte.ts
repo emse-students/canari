@@ -12,6 +12,7 @@
  * one is online. Measured: 23 publishes in one first sync (`1.7.0-alpha.12`, Mi 9T). The moment the
  * member leaves the app IS a fact, and the only one at which the list can be looked at, so it is
  * the trigger: a sync of any length costs no publish while it runs and one when the member leaves.
+ * That publish runs under `holdWhileLeaving`, so iOS does not suspend the app before it lands.
  *
  * The member's switch is the other trigger - an act of theirs, answered at once: off clears, on
  * publishes. The first run of the effect at a start only clears when the switch is already off
@@ -19,6 +20,7 @@
  */
 import { untrack } from 'svelte';
 import { onAppScreenChange } from '$lib/utils/appForeground';
+import { holdWhileLeaving } from '$lib/utils/backgroundFlush';
 import { syncShareTargets, type ShareTargetsInput } from './shareTargets';
 
 /** What {@link followShareTargets} reads; every field is read at the moment of a trigger only. */
@@ -29,6 +31,8 @@ export interface ShareTargetsFollowDeps {
   enabled: () => boolean;
   /** The app's screen transitions; injected for tests (`onAppScreenChange` otherwise). */
   subscribe?: (onChange: (onScreen: boolean) => void) => () => void;
+  /** Keeps the process alive while the departure's publish runs; injected for tests. */
+  hold?: (reason: string, work: () => Promise<unknown>) => Promise<void>;
 }
 
 /**
@@ -37,6 +41,7 @@ export interface ShareTargetsFollowDeps {
  */
 export function followShareTargets(deps: ShareTargetsFollowDeps): void {
   const subscribe = deps.subscribe ?? onAppScreenChange;
+  const hold = deps.hold ?? holdWhileLeaving;
   let previous: boolean | null = null;
   $effect(() => {
     const enabled = deps.enabled();
@@ -52,7 +57,11 @@ export function followShareTargets(deps: ShareTargetsFollowDeps): void {
   $effect(() =>
     untrack(() =>
       subscribe((onScreen) => {
-        if (!onScreen) syncShareTargets(deps.read(), 'left the app');
+        if (onScreen) return;
+        // HELD WHILE IT GOES: on iOS the departure arrives as the app enters the background, and
+        // the native side replaces its donations one by one - a suspension mid-way would leave
+        // none or a few. The hold ends when the native call has answered (`holdWhileLeaving`).
+        void hold('share targets', () => syncShareTargets(deps.read(), 'left the app'));
       })
     )
   );

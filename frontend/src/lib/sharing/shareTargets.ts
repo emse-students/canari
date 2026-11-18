@@ -103,16 +103,14 @@ export interface ShareTargetsInput {
  * Brings the share sheet's suggestions in line with `input` NOW: cleared when the member turned them
  * off, the current top conversations once signed in and the list is read, nothing otherwise (a
  * locked or loading session neither publishes a partial list nor erases a good one - the sign-out
- * is what erases). Phone apps only.
+ * is what erases). Phone apps only. Resolves when the native side has answered (the queued call
+ * settled), so a caller that must keep the process alive - a departure on iOS - can await it.
  */
-export function syncShareTargets(input: ShareTargetsInput, reason: string): void {
-  if (!isMobileTauriRuntime()) return;
-  if (!input.enabled) {
-    void clearShareTargets('suggestions turned off');
-    return;
-  }
-  if (!input.signedIn || !input.conversationsReady) return;
-  void publishShareTargets(
+export function syncShareTargets(input: ShareTargetsInput, reason: string): Promise<void> {
+  if (!isMobileTauriRuntime()) return Promise.resolve();
+  if (!input.enabled) return clearShareTargets('suggestions turned off');
+  if (!input.signedIn || !input.conversationsReady) return Promise.resolve();
+  return publishShareTargets(
     selectShareTargets(input.conversations(), input.currentUserId, input.workspaces()),
     reason
   );

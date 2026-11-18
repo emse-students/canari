@@ -30,10 +30,13 @@ each step to a list nobody reads during the sync, and the end of that sync is no
 holds (a new device's history comes from peers, whenever one is online). **The fix** sends the list
 at the one moment it can be read - the member leaving the app (`followShareTargets`,
 `sharing/shareTargetsFollow.svelte.ts`, on `onAppScreenChange`) - and when the member moves the
-switch; never on a change of the map. Pinned by `shareTargetsFollow.svelte.test.ts`, which replays a
+switch; never on a change of the map. On iOS the departure's publish is held
+(`holdWhileLeaving`) until the native side answers. Pinned by `shareTargetsFollow.svelte.test.ts`, which replays a
 first sync on a live map (restored rows, the gate opening, eight Welcome rows seeded on top, their
 histories landing, a relabel): no publish while it runs, ONE when the member leaves, holding the
-final list, none on a second departure with nothing changed. Each publish keeps its one line
+final list, none on a second departure with nothing changed, and the departure held until the
+native answer; `IncomingShareHost.shareTargets.svelte.test.ts` mounts the host and fails if a list
+change in front publishes. Each publish keeps its one line
 `[ShareTargets] published (left the app): added [id8], removed [id8], N relabelled, reordered|same order; N of M present, N stale left`
 ([sharing](../frontend/sharing.md)).
 

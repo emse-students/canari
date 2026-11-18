@@ -16,6 +16,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 }));
 vi.mock('$lib/utils/appVersion', () => ({
   isAndroidTauriRuntime: () => true,
+  isIosTauriRuntime: () => false,
   isMobileTauriRuntime: () => true,
 }));
 
@@ -54,7 +55,7 @@ async function settle() {
 }
 
 /** A live session: the stores the host reads, and the wiring under test. */
-function session() {
+function session(hold?: (reason: string, work: () => Promise<unknown>) => Promise<void>) {
   const conversations = new SvelteMap<string, Conversation>();
   const state = $state({ enabled: true, ready: false });
   let onChange: ((onScreen: boolean) => void) | null = null;
@@ -74,6 +75,7 @@ function session() {
         onChange = cb;
         return () => (onChange = null);
       },
+      ...(hold ? { hold } : {}),
     });
   });
   flushSync();
@@ -181,6 +183,37 @@ describe('a first sync', () => {
     await settle();
     expect(calls(PUBLISH)).toHaveLength(2);
     expect(calls(PUBLISH)[1][1]).toEqual({ targets: s.final() });
+    s.destroy();
+  });
+});
+
+describe('the departure on iOS', () => {
+  it('runs under the leaving hold, which ends only once the native publish has answered', async () => {
+    let answer!: (v: unknown) => void;
+    invoke.mockImplementation((cmd: string) =>
+      cmd === PUBLISH ? new Promise((r) => (answer = r)) : Promise.resolve(0)
+    );
+    const works: Promise<unknown>[] = [];
+    const hold = vi.fn(async (_reason: string, work: () => Promise<unknown>) => {
+      const p = work();
+      works.push(p);
+      await p;
+    });
+    const s = session(hold);
+    s.state.ready = true;
+    s.set('a', row('a', 'A', { messages: said(1) } as never));
+    s.leave();
+    expect(hold).toHaveBeenCalledTimes(1);
+    expect(hold.mock.calls[0][0]).toBe('share targets');
+    let ended = false;
+    void works[0].then(() => (ended = true));
+    await settle();
+    // The native call is in flight: the work - and so the hold - has not ended.
+    expect(calls(PUBLISH)).toHaveLength(1);
+    expect(ended).toBe(false);
+    answer({ present: 1, leftover: 0 });
+    await settle();
+    expect(ended).toBe(true);
     s.destroy();
   });
 });
