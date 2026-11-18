@@ -20,6 +20,7 @@
    */
   import { onMount, untrack } from 'svelte';
   import { fade } from 'svelte/transition';
+  import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import { Check, ChevronLeft, Film, X } from '@lucide/svelte';
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import ConversationPickList from '$lib/components/shared/ConversationPickList.svelte';
@@ -95,7 +96,7 @@
    */
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- a lookup cache, never rendered
   const memberNames = new Map<string, Promise<string | null>>();
-  let blockedPeerIds = $state<ReadonlySet<string>>(new Set());
+  const blockedPeerIds = new SvelteSet<string>();
   /**
    * Whether the blocked list was ANSWERED. A block does not refuse a DM message server-side
    * (moderation-and-blocking.md: a failure to ask is not an answer), so until it is read - and for
@@ -171,7 +172,7 @@
       : listed
   );
   const sections = $derived(reelSendSections(candidates, query));
-  const listedByKey = $derived(new Map(listed.map((c) => [c.key, c])));
+  const listedByKey = $derived(new SvelteMap(listed.map((c) => [c.key, c])));
   /**
    * THE SEND SET IS selected AND currently listed, in tick order: a tick on a row that is no longer
    * one is dropped. Each carries its full-list row, so its chip is named whatever the search hides.
@@ -228,14 +229,14 @@
     me: string
   ) {
     const members = await read(groupIds);
-    const shownIds = new Map(
+    const shownIds = new SvelteMap(
       [...members].map(([gid, users]) => [
         gid,
         users.filter((u) => u !== me).slice(0, SUBTITLE_NAMES),
       ])
     );
-    const distinct = [...new Set([...shownIds.values()].flat())];
-    const names = new Map(
+    const distinct = [...new SvelteSet([...shownIds.values()].flat())];
+    const names = new SvelteMap(
       await Promise.all(distinct.map(async (u) => [u, await memberName(u)] as const))
     );
     const next = { ...groupSubtitles };
@@ -267,7 +268,8 @@
     );
     void listBlockedUsers().then(
       (rows) => {
-        blockedPeerIds = new Set(rows.map((r) => r.userId));
+        blockedPeerIds.clear();
+        for (const r of rows) blockedPeerIds.add(r.userId);
         blocksState = 'read';
       },
       (e: unknown) => {

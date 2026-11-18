@@ -415,6 +415,26 @@ export function revokedDeviceOfEndedSession(): RevokedDeviceIdentity | null {
   return _sessionEndedByDeviceRevocation;
 }
 
+/**
+ * Latched when the server ANSWERED 204 to this account's deletion: the account is gone, so the
+ * sign-out that follows can only have its bearer refused, whatever state the device's push-token row
+ * is in (chat-delivery's erasure job, queued with the 204, deletes it). Read by {@link isAccountErasedOnServer} to SKIP the push deregistration - the fact is
+ * carried from where it is known (the deletion's answer) to where the decision is made, instead of
+ * sending a call certain to earn a 401 and reading the refusal. In memory only, cleared with the
+ * credential verdicts when a new credential arrives.
+ */
+let _accountErasedOnServer = false;
+
+/** Records that the server erased the signed-in account; see {@link isAccountErasedOnServer}. */
+export function noteAccountErasedOnServer(): void {
+  _accountErasedOnServer = true;
+}
+
+/** True once the server answered this account's deletion and no new credential has arrived. */
+export function isAccountErasedOnServer(): boolean {
+  return _accountErasedOnServer;
+}
+
 /** The app's reaction to a sign-out, registered by the app shell; see {@link setSignOutHandler}. */
 let _signOutHandler: (() => void | Promise<void>) | null = null;
 
@@ -446,6 +466,7 @@ export function setSignOutHandler(fn: (() => void | Promise<void>) | null): void
 function noteRefreshCredentialAlive(): void {
   _refreshCredentialProvenDead = false;
   _sessionEndedByDeviceRevocation = null;
+  _accountErasedOnServer = false;
   _sessionExpiredNotified = false;
   _sessionExpiredTarget = null;
 }

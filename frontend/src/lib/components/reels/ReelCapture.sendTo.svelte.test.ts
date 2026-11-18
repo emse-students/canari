@@ -209,7 +209,7 @@ async function render(extra: Record<string, unknown> = {}) {
   const session = new CameraSession(() => Promise.resolve(stream()));
   const target = document.createElement('div');
   document.body.appendChild(target);
-  mounted.push(mount(ReelCapture, { target, props: { session, ...extra } }));
+  mounted.push(mount(ReelCapture, { target, props: Object.assign({ session }, extra) }));
   await settle();
   const video = target.querySelector('video')!;
   Object.defineProperty(video, 'videoWidth', { value: 720, configurable: true });

@@ -1,12 +1,12 @@
 ## P2 - iOS builds need the iOS 27 SDK before April 2027 (Apple's ITMS-90725 on build 100700011)
 
-target: 1.8.0
+target: 1.7.1
 
 **What Apple said.** The upload of build `100700011` (`1.7.0-alpha.11`) was accepted with the
 warning ITMS-90725: it was built with the iOS 26.2 SDK, and from April 2027 App Store Connect
 accepts only uploads built with the iOS 27 SDK (Xcode 27 or later). Nothing is refused today.
 
-**Where the 26 pin lives.** Two jobs run on `macos-15` and REQUIRE Xcode 26 through
+**Where the 26 pin lived.** Two jobs ran on `macos-15` and REQUIRED Xcode 26 through
 `maxim-lobanov/setup-xcode` with `xcode-version: '^26.0'`: `build-ios` in
 `.github/workflows/ios.yml` (the `runs-on` line and the "Select Xcode 26" step, whose comment
 explains why the pin is REQUIRED, not merely allowed: an older toolchain silently builds the classic
@@ -22,18 +22,39 @@ yet the generally available state a later GitHub post announced for 2026-10-15. 
 image version `20261104.0337.1`, Xcode 27.0, 27.1 (the default) and 27.2, and the iOS SDKs 27.0,
 27.1 and 27.2. The same README announces that the default OpenSSL moves from 3 to 4 on that image.
 
-**The work.**
+**What is built (pull request `ci/ios-27-sdk`, #3813).** Both jobs run on
+`runs-on: xcode-27` and REQUIRE `xcode-version: '^27.0'` (the setup action still pinned by SHA),
+the comments rewritten with both reasons (ITMS-90725, Liquid Glass); `ios-compile-job.test.mjs`
+now asserts the pull-request compile names the SAME runner and the SAME pin as `ios.yml`
+([cicd](../cicd.md#the-ios-toolchain-is-pinned-xcode-27-since-171)). The pull request's own
+`compile-ios-app` run is the compile proof on the iOS 27 SDK.
 
-1. Both jobs to the standard `xcode-27` label (not `-xlarge`), and the pin to `xcode-version:
-   '^27.0'`, REQUIRED the same way (the run fails when no 27.x is on the image); the comments that
-   name Xcode 26 rewritten with the reason kept.
-2. The Liquid Glass and extension assertions of `ios.yml` re-run on the new toolchain (the tab bar's
-   `#if compiler(>=6.2)` glass branch, the push and share extensions bundled and signed).
-3. A TestFlight build read on the iPhone 12: the glass tab bar, the notification service extension
-   (a push decrypted with the app killed), CallKit (a ring and an answer), the share extension.
+**The native code, read for the iOS 27 SDK on 2026-11-18.** Deployment target `16.0` everywhere in
+the pbxproj and `SWIFT_VERSION = 5.0`: neither raised, nothing requires it. The app already runs the
+scene lifecycle Apple announced as mandatory after iOS 26 (tao's `TaoSceneDelegate`, hooked in
+`canari_ios.mm`), so that requirement is met. No `keyWindow`, `UIScreen.main`, `statusBarFrame`,
+`UNNotificationPresentationOptionAlert` or `kSecUseOperationPrompt` use; the one deprecated call,
+`applicationIconBadgeNumber` in `canari_push.mm`, sits in the unreachable pre-16 branch of an
+`@available(iOS 16.0, *)` and does not warn at a 16.0 target. No target treats warnings as errors.
 
-**Closes with:** an App Store Connect upload that carries no ITMS-90725, and that iPhone 12 reading.
+**Closes with:** on the first `1.7.1` pre-release, read on the iPhone 12 from TestFlight - the install
+itself, then the surfaces the new SDK may change (the glass tab bar; the notification service
+extension, a push decrypted with the app killed; CallKit, a ring and an answer; the share extension,
+a photo shared into a conversation), then one concrete action per Swift plugin, because llvm-objcopy
+now rewrites every plugin's object (cicd.md, the Xcode 27 `@_cdecl` break):
 
-**Why not `1.7.1`:** a new SDK can change UI defaults (bar appearance, safe areas, sheet behaviour),
-so it ships in a version with room for a full phone pass, not in a fix release. Charter: principle 8
+- **biometric** - the app unlocked by Face ID;
+- **customtabs** - a sign-in that opens the identity provider in the in-app browser and returns;
+- **dialog** - the native file picker shown to attach a file, and the save sheet for a downloaded file;
+- **gallery** - a received photo saved to the Photos library;
+- **keystore** - the MLS key unlocked by PIN, and by the device key on a relaunch;
+- **notification** - a notification received with the app in the background, and its tap opening the conversation;
+- **opener** - an ecosystem site (the Portail, MiGallery) opened externally in Safari;
+- **system_components** - the native tab bar switching places, and its unread dot shown.
+
+Then that pre-release's App Store Connect upload carrying no ITMS-90725.
+
+**Why `1.7.1` and not `1.8.0`** (lead decision, 2026-11-18, reversible): the signed path (keychain,
+archive, export) is proven on `xcode-27` by the dispatched `ios.yml` run 44278923984, so the move
+needs no version of its own - its readings ride the first `1.7.1` pre-release. Charter: principle 8
 (durability).

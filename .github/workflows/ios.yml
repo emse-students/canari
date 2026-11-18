@@ -103,7 +103,11 @@ on:
 jobs:
   build-ios:
     name: Build iOS IPA
-    runs-on: macos-15 # carries Xcode 26.x, which the step below REQUIRES
+    runs-on: xcode-27 # GitHub's Xcode 27 image (arm64, macOS 27), which the step below REQUIRES
+    # A HUNG JOB MUST NOT HOLD THE NEXT CUT: release.yml's `release` concurrency group waits on this
+    # job, and GitHub's default is 360 minutes. A signed run takes about 20; 90 is the ceiling
+    # (docs/wiki/cicd.md#the-ios-toolchain-is-pinned-xcode-27-since-171).
+    timeout-minutes: 90
     permissions:
       contents: write
     # THE CHANNEL'S ESTATE IS AN ENVIRONMENT (2026-11-13): an alpha reads `BASE_URL` and `AUTHENTIK_*`
@@ -150,16 +154,39 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "Building Canari v${INPUT_VERSION} (prerelease=${INPUT_PRERELEASE})"
 
-      # XCODE 26, REQUIRED AND NOT MERELY ALLOWED (2026-09-29). Liquid Glass exists only in an app
-      # built against the iOS 26 SDK: the native tab bar (tauri-plugin-system-components) compiles
-      # its glass branch under `#if compiler(>=6.2)`, and an older toolchain builds the classic bar
-      # WITHOUT an error - so a runner image that dropped Xcode 26 would ship an app with no glass
-      # and nothing would say so. This used to read `>=16.2.0` and got Xcode 26.3 only because the
-      # image happened to carry it. `^26.0` takes the newest 26.x and FAILS the run if there is none.
-      - name: Select Xcode 26
+      # XCODE 27, REQUIRED AND NOT MERELY ALLOWED, for two reasons
+      # (docs/wiki/cicd.md#the-ios-toolchain-is-pinned-xcode-27-since-171).
+      # THE STORE: App Store Connect warned ITMS-90725 on builds 100700011 and 100700012 (built with
+      # the iOS 26.2 SDK): from April 2027 it accepts only uploads built with the iOS 27 SDK, Xcode 27
+      # or later. THE GLASS (2026-09-29): Liquid Glass exists only in an app built against the iOS 26
+      # SDK or later - the native tab bar (tauri-plugin-system-components) compiles its glass branch
+      # under `#if compiler(>=6.2)`, and an older toolchain builds the classic bar WITHOUT an error.
+      # Either way a runner image that dropped the pinned Xcode would ship something wrong and nothing
+      # would say so. `^27.0` takes the newest 27.x on the image and FAILS the run if there is none.
+      - name: Select Xcode 27
         uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
         with:
-          xcode-version: '^26.0'
+          xcode-version: '^27.0'
+
+      # THE BUILD'S PROVENANCE, ON THE RUN PAGE: the Xcode that built it and the runner image it ran
+      # on. App Store Connect judges the SDK (ITMS-90725) after the upload; this says before it
+      # which toolchain a build carried, and two runs that differ can be told apart by reading.
+      - name: Record the toolchain
+        run: |
+          set -euo pipefail
+          {
+            echo "### iOS toolchain"
+            echo '```'
+            xcodebuild -version
+            echo "SDK: $(xcrun --sdk iphoneos --show-sdk-version)"
+            echo "Runner image: ${ImageOS:-not set} ${ImageVersion:-not set}"
+            # THE UPLOAD TOOL, proven here and not first met at the upload step: `xcrun --find`
+            # exits non-zero and names the tool when this Xcode does not carry it.
+            altool="$(xcrun --find altool)"
+            altool_version="$("$altool" --version 2>&1)"
+            echo "altool: $altool (${altool_version%%$'\n'*})"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
 
       # THE HAND-MAINTAINED PROJECT IS READ BY XCODE FIRST, IN SECONDS, not at the archive twenty
       # minutes in: a pbxproj with an unclosed object once got past every check on Windows. `plutil`
@@ -329,8 +356,14 @@ jobs:
           # Install ALL THREE profiles into the runner's profile store. xcodebuild resolves the
           # PROVISIONING_PROFILE_SPECIFIER names ("Canari", "CanariNotifications", "CanariShare")
           # set in the project by scanning these installed profiles, so all three must be present.
-          PROFILES_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
-          mkdir -p "$PROFILES_DIR"
+          # BOTH STORES (2026-11-18): Xcode 16 and later read `~/Library/Developer/Xcode/UserData/
+          # Provisioning Profiles`, older ones the MobileDevice folder; the archive on the
+          # `xcode-27` runner must find them whichever it scans, so each profile goes into both.
+          PROFILES_DIRS=(
+            "$HOME/Library/MobileDevice/Provisioning Profiles"
+            "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
+          )
+          for d in "${PROFILES_DIRS[@]}"; do mkdir -p "$d"; done
 
           install_profile() {
             local b64="$1"
@@ -341,7 +374,7 @@ jobs:
             uuid=$(security cms -D -i "$tmp" | plutil -extract UUID raw -)
             local name
             name=$(security cms -D -i "$tmp" | plutil -extract Name raw -)
-            cp "$tmp" "$PROFILES_DIR/$uuid.mobileprovision"
+            for d in "${PROFILES_DIRS[@]}"; do cp "$tmp" "$d/$uuid.mobileprovision"; done
             echo "✅ Installed profile '$name' (UUID: $uuid) for $label"
           }
 
@@ -568,6 +601,7 @@ jobs:
             -archivePath "$ARCHIVE" \
             -configuration release \
             -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
@@ -644,6 +678,7 @@ jobs:
             -archivePath "$ARCHIVE_PATH" \
             -configuration release \
             -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
             CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="${APPLE_SIGNING_IDENTITY}" \
             DEVELOPMENT_TEAM="${APPLE_TEAM_ID}"
@@ -665,7 +700,7 @@ jobs:
           bash ../.github/scripts/ios-extensions.sh "$STORE_APP"
 
           # THE ICON IS AN ICON COMPOSER DOCUMENT (gen/apple/AppIcon.icon), written without the Mac app
-          # that normally authors it, and nothing but Xcode 26 can say whether it means what it was
+          # that normally authors it, and nothing but Xcode can say whether it means what it was
           # meant to. `actool` compiles it into Assets.car: list what came out, and FAIL if the icon
           # is not there at all - a build that ships the default blank icon is green otherwise.
           CAR="$(find "$ARCHIVE_PATH/Products/Applications" -name Assets.car | sed -n 1p)"
