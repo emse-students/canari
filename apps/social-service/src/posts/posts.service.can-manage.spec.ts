@@ -35,7 +35,8 @@ describe('PostsService post management rights', () => {
     flagHolders: Record<string, string[]> = {},
     moderators: string[] = [],
     elsewhere: string[] = [],
-    ordinaryReaders: string[] = []
+    ordinaryReaders: string[] = [],
+    muters: string[] = []
   ) {
     const postRepo = {
       findOne: jest.fn(() => Promise.resolve(post)),
@@ -91,6 +92,12 @@ describe('PostsService post management rights', () => {
       ),
       moderatedPostIds: jest.fn((userId: string | undefined, ids: string[]) =>
         Promise.resolve(new Set(userId && moderators.includes(userId) ? ids : []))
+      ),
+      moderatedUserIds: jest.fn(
+        (userId: string | undefined, ids: string[], opts?: { isGlobalAdmin?: boolean }) =>
+          Promise.resolve(
+            new Set(opts?.isGlobalAdmin === true || (userId && muters.includes(userId)) ? ids : [])
+          )
       ),
       mayModeratePost: jest.fn((userId: string | undefined) =>
         Promise.resolve(!!userId && moderators.includes(userId))
@@ -574,6 +581,21 @@ describe('PostsService post management rights', () => {
       expect(row).toMatchObject({ id: 'p1', pendingReportCount: 2 });
       expect(row.authorId).toBe(served ? 'officer' : undefined);
       expect('authorId' in row).toBe(served);
+    });
+
+    it.each([
+      ['a platform admin', { userId: 'admin', isGlobalAdmin: true }, true],
+      ['a moderator whose scope holds the writer', { userId: 'bde', isGlobalAdmin: false }, true],
+      ['a moderator who may mute nobody', { userId: 'inst', isGlobalAdmin: false }, false],
+    ])('/posts/hidden tells %s whether the writer may be muted: %s', async (_who, scope, can) => {
+      const { service, postRepo } = makeService(assoPost, {}, ['bde', 'inst'], [], [], ['bde']);
+      (postRepo.manager.query as jest.Mock).mockImplementation((sql: string) =>
+        Promise.resolve(
+          sql.includes('"hiddenByModeration" = true') ? [{ ...assoPost, anonymous: false }] : []
+        )
+      );
+      const [row] = await service.getHiddenPosts(scope);
+      expect(row.canMuteAuthor).toBe(can);
     });
 
     it('/posts/hidden builds every row through the shaping that serves the card - a raw column cannot pass', async () => {

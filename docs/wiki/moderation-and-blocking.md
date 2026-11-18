@@ -360,6 +360,15 @@ whole page (post branch 19 ms, user branch 2 ms; expanding every comment with no
 7 ms), with the same 949 comment rows in scope. A per-report correlated EXISTS was rejected: nothing
 indexes a comment id inside the jsonb, so it would scan every post once per comment report.
 
+**"Supprimer + muter" on a hidden post (1.7.1): drawn from the server's answer, mute first, a refusal stops.**
+`GET /api/posts/hidden` stamps each row `canMuteAuthor` (`moderatedUserIds`, the rule of the report
+queue's `canMuteReportedUser`), and the control exists only where it is `true` - an institution's
+`MODERATE` holder may mute nobody and never sees it. The handler (`handleDeleteAndMute`) mutes first and
+deletes only once the mute succeeded; a refusal is named by its CODE (`describeModerationRefusal`) and
+the post stays, so the moderator is never told both happened when one did not. The old handler swallowed
+the mute's 403 in a bare `catch {}` and deleted anyway
+(`admin/moderation/page.deleteAndMute.svelte.test.ts`, `posts.service.can-manage.spec.ts`).
+
 **A mute and a live withdrawal stay ONE platform-wide row (owner, 2026-11-02: "Laisser tel quel").**
 A measure is about a person, not about a BDE: any BDE whose spaces hold that person may lift it or
 rewrite its reason, whichever BDE took it, and the platform admin always may. Deliberate, not an

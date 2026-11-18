@@ -16,10 +16,6 @@ earliest version, as a checklist.
 
 ## 1.7.0
 
-**P1 - security, or a user-facing path that is broken**
-
-- [P1 - The MiConnect terms stage reaches production with the next STABLE: three things come first (2026-10-16)](backlog.d/p1-the-miconnect-terms-stage-reaches-production-with-the-next-stable-three.md)
-
 **Chantiers, decisions and questions (no severity)**
 
 - [Decided - the owner's answers of 2026-11-01, what `1.5.5` carries and what is left to build](backlog.d/owner-decisions-of-2026-11-01-for-1-5-5.md)
@@ -47,6 +43,7 @@ earliest version, as a checklist.
 **P1 - security, or a user-facing path that is broken**
 
 - [P1 - Opening a community: F1-F7 BUILT, the 200 ms budget is what is left (user, 2026-10-14; state re-read 2026-10-22)](backlog.d/p1-opening-a-community-f1-f7-built-the-200-ms-budget-is-what-is-left-user-2026.md)
+- [P1 - The MiConnect terms stage reaches production with the next STABLE: three things come first (2026-10-16)](backlog.d/p1-the-miconnect-terms-stage-reaches-production-with-the-next-stable-three.md)
 - [P1 - encrypt the names of groups, communities and salons (raised 2026-10-21, tied to principle 1 of the charter on 2026-11-10)](backlog.d/p1-encrypt-the-names-of-groups-communities-and-salons.md)
 - [P1 - push payloads carry nothing for Google and Apple (owner, recorded 2026-11-01; decided and built 2026-11-02, switch OFF; raised from P2 on 2026-11-10 by principle 1 of the charter)](backlog.d/push-payloads-carry-nothing-for-google-and-apple.md)
 - [P1 - rows before ratchet: what is left once a checkpoint stores the buffered rows first (raised by the second review of #3321, 2026-11-15)](backlog.d/p1-rows-before-ratchet.md)
@@ -90,10 +87,8 @@ earliest version, as a checklist.
 - [P2 - the retention durations a sweep applies are not yet admin settings](backlog.d/retention-durations-not-yet-settings.md)
 - [P2 - a live ended itself (`upload-too-slow`) after 256 s on the iPhone, cause unproven](backlog.d/p2-a-live-ended-itself-upload-too-slow-after-256-s-on-the-iphone.md)
 - [P2 - a live viewer suspended mid-request stops as "Live indisponible" on a transport failure](backlog.d/p2-a-live-viewer-suspended-mid-request-stops-as-unavailable-on-a-transport-failure.md)
-- [P2 - a message with two plural selectors shows its key: "post_attachments_partial" in a toast](backlog.d/p2-a-message-with-two-plural-selectors-shows-its-key.md)
 - [P2 - a freshly minted device logs an error-level `REFUSED` for the join push of groups whose join it never solicited](backlog.d/p2-a-new-device-refuses-the-join-push-of-groups-it-was-admitted-to-unsolicited.md)
 - [P2 - a salon reaction that opens its sender's new seed session is never notified while the app is open (2026-11-18)](backlog.d/p2-a-salon-reaction-that-opens-its-sender-s-new-seed-session-is-never-notified-in-the-foreground.md)
-- [P2 - "Supprimer + muter" swallows the mute's refusal and deletes the post anyway](backlog.d/p2-delete-and-mute-swallows-the-mute-refusal-and-deletes-anyway.md)
 - [P2 - the Android background answer to a `welcome_request` retries the add lock on a clock (2026-11-18)](backlog.d/p2-the-android-background-welcome-answer-retries-the-add-lock-on-a-clock.md)
 - [P2 - the iPhone's photo picker loses most of a multiple pick, and says nothing](backlog.d/p2-the-iphone-photo-picker-loses-most-of-a-multiple-pick-silently.md)
 
